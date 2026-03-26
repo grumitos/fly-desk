@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flight Desk</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <header class="toolbar">
+      <span class="toolbar-brand">FLIGHT DESK</span>
+      <span id="runtimeBadge" class="tag">IDLE</span>
+      <span id="resultPill" class="tag">0</span>
+    </header>
+
+    <form id="searchForm" class="searchbar" novalidate autocomplete="off">
+      <!-- Fila principal -->
+      <div class="searchbar-row">
+        <!-- Modo + Tipo -->
+        <div class="field-group">
+          <div class="f">
+            <span class="f-label">Modo</span>
+            <select name="searchMode" id="searchMode" class="input input--narrow">
+              <option value="exact">Exacto</option>
+              <option value="stay-range">Rango</option>
+              <option value="roundtrip-grid">Matriz</option>
+            </select>
+          </div>
+          <div class="f">
+            <span class="f-label">Tipo</span>
+            <select name="tripType" id="tripType" class="input input--narrow">
+              <option value="round-trip">Ida/Vta</option>
+              <option value="one-way">Solo ida</option>
+            </select>
+          </div>
+        </div>
+
+        <span class="searchbar-sep"></span>
+
+        <!-- Ruta -->
+        <div class="field-group">
+          <div class="f">
+            <span class="f-label">Origen</span>
+            <div class="location-field">
+              <input
+                name="origin"
+                id="origin"
+                class="input input--location"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="Ciudad o IATA"
+                required
+              />
+              <div id="originSuggestions" class="location-menu hidden"></div>
+            </div>
+          </div>
+          <span class="searchbar-arrow">→</span>
+          <div class="f">
+            <span class="f-label">Destino</span>
+            <div class="location-field">
+              <input
+                name="destination"
+                id="destination"
+                class="input input--location"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="Ciudad o IATA"
+                required
+              />
+              <div id="destinationSuggestions" class="location-menu hidden"></div>
+            </div>
+          </div>
+        </div>
+
+        <span class="searchbar-sep"></span>
+
+        <!-- Fechas -->
+        <div class="field-group">
+          <div class="f exact-field">
+            <span class="f-label">Salida</span>
+            <input name="departureDate" id="departureDate" type="date" class="input input--date" autocomplete="off" required />
+          </div>
+          <div class="f exact-field roundtrip-only">
+            <span class="f-label">Regreso</span>
+            <input name="returnDate" id="returnDate" type="date" class="input input--date" autocomplete="off" />
+          </div>
+
+          <div class="f grid-field hidden">
+            <span class="f-label">Sal. desde</span>
+            <input name="departureStart" id="departureStart" type="date" class="input input--date" autocomplete="off" />
+          </div>
+          <div class="f grid-field hidden">
+            <span class="f-label">Sal. hasta</span>
+            <input name="departureEnd" id="departureEnd" type="date" class="input input--date" autocomplete="off" />
+          </div>
+          <div class="f grid-field return-range-field hidden">
+            <span class="f-label">Reg. desde</span>
+            <input name="returnStart" id="returnStart" type="date" class="input input--date" autocomplete="off" />
+          </div>
+          <div class="f grid-field return-range-field hidden">
+            <span class="f-label">Reg. hasta</span>
+            <input name="returnEnd" id="returnEnd" type="date" class="input input--date" autocomplete="off" />
+          </div>
+        </div>
+
+        <span class="searchbar-sep"></span>
+
+        <!-- Pasajeros -->
+        <div class="field-group">
+          <div class="f">
+            <span class="f-label">Adultos</span>
+            <input name="adults" id="adults" type="number" class="input input--num" min="1" max="9" value="1" />
+          </div>
+          <div class="f">
+            <span class="f-label">Niños</span>
+            <input name="children" id="children" type="number" class="input input--num" min="0" max="8" value="0" />
+          </div>
+          <div class="f">
+            <span class="f-label">Infantes</span>
+            <input name="infants" id="infants" type="number" class="input input--num" min="0" max="4" value="0" />
+          </div>
+        </div>
+
+        <span class="searchbar-sep"></span>
+
+        <!-- Cabina + Moneda -->
+        <div class="field-group">
+          <div class="f">
+            <span class="f-label">Cabina</span>
+            <select name="cabin" id="cabin" class="input input--narrow">
+              <option value="ECONOMY">Economy</option>
+              <option value="PREMIUM_ECONOMY">Prem Eco</option>
+              <option value="BUSINESS">Business</option>
+              <option value="FIRST">First</option>
+            </select>
+          </div>
+          <div class="f">
+            <span class="f-label">Moneda</span>
+            <input name="currencyCode" id="currencyCode" class="input input--iata" maxlength="3" value="USD" required />
+          </div>
+        </div>
+
+        <span class="searchbar-sep"></span>
+
+        <button id="submitButton" class="btn btn--go" type="submit">BUSCAR</button>
+      </div>
+
+      <!-- Fila secundaria — siempre visible -->
+      <div class="searchbar-row searchbar-row--secondary">
+        <label class="inline-check"><input name="nonStop" id="nonStop" type="checkbox" /><span>Directos</span></label>
+        <label class="inline-check"><input name="baggageRequired" id="baggageRequired" type="checkbox" /><span>Equipaje</span></label>
+        <span class="searchbar-sep"></span>
+        <div class="f">
+          <span class="f-label">Orden</span>
+          <select name="sortMode" id="sortMode" class="input input--narrow">
+            <option value="cheapest">Precio</option>
+            <option value="best-value">Valor</option>
+            <option value="fastest">Rapido</option>
+          </select>
+        </div>
+        <div class="f">
+          <span class="f-label">Max precio</span>
+          <input name="maxPrice" id="maxPrice" type="number" class="input input--sm" min="0" max="999999" placeholder="—" />
+        </div>
+        <div class="f">
+          <span class="f-label">Max esc.</span>
+          <input name="maxStops" id="maxStops" type="number" class="input input--num" min="0" max="3" placeholder="—" />
+        </div>
+      </div>
+    </form>
+
+    <div id="validationErrors" class="errorbar hidden"></div>
+    <div id="summaryContent" class="infobar"></div>
+
+    <main class="content">
+      <div class="content-layout">
+        <!-- Sidebar de aerolíneas -->
+        <aside id="sidebar" class="sidebar hidden"></aside>
+
+        <!-- Secciones principales -->
+        <div class="content-main">
+          <section id="matrixSection" class="section hidden">
+            <div class="section-head" data-target="matrixSection">
+              <h2>Matriz <span id="matrixCount" class="section-count hidden">0</span></h2>
+              <div id="matrixInfo" class="tag-row"></div>
+            </div>
+            <div class="section-body-wrap">
+              <div id="matrixContent"></div>
+            </div>
+          </section>
+
+          <section id="resultsSection" class="section">
+            <div class="section-head" data-target="resultsSection">
+              <h2>Resultados <span id="resultsCount" class="section-count hidden">0</span></h2>
+            </div>
+            <div class="section-body-wrap">
+              <div id="resultsContent" class="empty-msg">Sin resultados.</div>
+            </div>
+          </section>
+
+          <section id="detailSection" class="section hidden">
+            <div class="section-head" data-target="detailSection">
+              <h2>Detalle</h2>
+              <div class="section-actions" onclick="event.stopPropagation()">
+                <button id="repriceButton" class="btn btn--sm" type="button" disabled>REPRICE</button>
+                <button id="quotationButton" class="btn btn--sm" type="button" disabled>COTIZAR</button>
+              </div>
+            </div>
+            <div class="section-body-wrap">
+              <div id="detailContent"></div>
+            </div>
+          </section>
+
+          <section id="compareSection" class="section hidden">
+            <div class="section-head" data-target="compareSection">
+              <h2>Comparador</h2>
+            </div>
+            <div class="section-body-wrap">
+              <div id="compareContent"></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <!-- Loading overlay -->
+    <div id="loadingOverlay" class="loading-overlay hidden">
+      <div class="spinner"></div>
+    </div>
+
+    <!-- Toast container -->
+    <div id="toastContainer"></div>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>
