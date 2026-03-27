@@ -68,6 +68,7 @@ Estado actual:
 
 - limpieza de codigo muerto en frontend
 - limpieza de `purchasePaths` viejos en memoria
+- launcher estable de un clic con puerto fijo y estado persistido en `.launcher/`
 - ignores para artefactos locales:
   - `.codex/`
   - `.playwright-cli/`
@@ -123,6 +124,23 @@ Estado actual:
 - `src/session-store.ts`
   - jobs en memoria
   - purchase paths
+
+### Launchers para usuario final
+
+Entradas pensadas para abrir/cerrar la app sin terminal:
+
+- `Abrir Fly Desk.vbs`
+- `Cerrar Fly Desk.vbs`
+- `tools/start-fly-desk.ps1`
+- `tools/stop-fly-desk.ps1`
+
+Comportamiento actual:
+
+- puerto fijo `32123`
+- deteccion de instancia ya sana antes de intentar arrancar otra
+- build bajo demanda si `dist/` esta ausente o viejo
+- logs y estado en `.launcher/`
+- wrappers `cmd` y `js` apuntando al mismo flujo PowerShell para evitar divergencias
 
 ## Pruebas vigentes
 

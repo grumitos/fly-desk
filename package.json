@@ -1,8 +1,8 @@
 {
-  "name": "travel-quote-foundation",
+  "name": "fly-desk",
   "private": true,
   "version": "0.1.0",
-  "description": "Base tecnica inicial para un motor de cotizacion aerea para agentes de viajes.",
+  "description": "Workspace local para busqueda y cotizacion aerea orientado a agentes de viajes.",
   "main": "dist/index.js",
   "engines": {
     "node": ">=20"

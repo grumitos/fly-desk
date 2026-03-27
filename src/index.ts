@@ -10,7 +10,7 @@ async function main() {
     server.listen(port, resolve);
   });
 
-  console.log(`Travel Quote Foundation web running at http://localhost:${port}`);
+  console.log(`Fly Desk running at http://localhost:${port}`);
 }
 
 void main();

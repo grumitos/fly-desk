@@ -4,6 +4,43 @@ Set-StrictMode -Version Latest
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $runtimeDir = Join-Path $projectRoot ".launcher"
 $stateFile = Join-Path $runtimeDir "state.json"
+$launcherPort = if ($env:FLY_DESK_LAUNCHER_PORT) { [int]$env:FLY_DESK_LAUNCHER_PORT } else { 32123 }
+$silentMode = $false
+
+function Test-EnabledFlag {
+  param([string]$Value)
+
+  if (-not $Value) {
+    return $false
+  }
+
+  switch ($Value.Trim().ToLowerInvariant()) {
+    "1" { return $true }
+    "true" { return $true }
+    "yes" { return $true }
+    "on" { return $true }
+    default { return $false }
+  }
+}
+
+$silentMode = Test-EnabledFlag -Value $env:FLY_DESK_SILENT
+
+function Show-InfoPopup {
+  param(
+    [string]$Message,
+    [int]$Icon = 64
+  )
+
+  if ($silentMode) {
+    return
+  }
+
+  try {
+    $shell = New-Object -ComObject WScript.Shell
+    [void]$shell.Popup($Message, 0, "Fly Desk", $Icon)
+  } catch {
+  }
+}
 
 function Get-ListeningProcessIdsForPort {
   param([int]$Port)
@@ -21,62 +58,41 @@ function Get-ListeningProcessIdsForPort {
   return $processIds | Sort-Object -Unique
 }
 
-function Stop-PortsInRange {
-  foreach ($port in 3000..3010) {
-    $processIds = Get-ListeningProcessIdsForPort -Port $port
-    foreach ($processId in $processIds) {
-      if ($processId -le 0) {
-        continue
-      }
+function Stop-ProcessTree {
+  param([int]$ProcessId)
 
-      try {
-        Stop-Process -Id $processId -Force -ErrorAction Stop
-      } catch {
-      }
+  if ($ProcessId -le 0) {
+    return
+  }
+
+  try {
+    & taskkill /PID $ProcessId /T /F | Out-Null
+  } catch {
+  }
+}
+
+$stopped = $false
+
+if (Test-Path -LiteralPath $stateFile) {
+  try {
+    $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
+    if ($state.pid) {
+      Stop-ProcessTree -ProcessId ([int]$state.pid)
+      $stopped = $true
     }
-  }
-}
-
-function Show-InfoPopup {
-  param(
-    [string]$Message,
-    [int]$Icon = 64
-  )
-
-  try {
-    $shell = New-Object -ComObject WScript.Shell
-    [void]$shell.Popup($Message, 0, "Fly Desk", $Icon)
   } catch {
   }
 }
 
-if (-not (Test-Path -LiteralPath $stateFile)) {
-  Stop-PortsInRange
-  Show-InfoPopup "Fly Desk no tiene una instancia registrada en ejecucion."
-  exit 0
+foreach ($processId in (Get-ListeningProcessIdsForPort -Port $launcherPort)) {
+  Stop-ProcessTree -ProcessId $processId
+  $stopped = $true
 }
-
-try {
-  $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
-} catch {
-  Remove-Item -LiteralPath $stateFile -Force -ErrorAction SilentlyContinue
-  Show-InfoPopup "El estado del launcher estaba dañado y fue limpiado."
-  exit 0
-}
-
-$serverPid = 0
-if ($state.pid) {
-  $serverPid = [int]$state.pid
-}
-
-if ($serverPid -gt 0) {
-  try {
-    Stop-Process -Id $serverPid -Force -ErrorAction Stop
-  } catch {
-  }
-}
-
-Stop-PortsInRange
 
 Remove-Item -LiteralPath $stateFile -Force -ErrorAction SilentlyContinue
-Show-InfoPopup "Fly Desk fue detenido."
+
+if ($stopped) {
+  Show-InfoPopup "Fly Desk fue detenido."
+} else {
+  Show-InfoPopup "Fly Desk no tenia una instancia activa del acceso directo."
+}

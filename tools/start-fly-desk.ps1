@@ -6,8 +6,30 @@ $script:ProjectRoot = Split-Path -Parent $PSScriptRoot
 $script:RuntimeDir = Join-Path $script:ProjectRoot ".launcher"
 $script:StateFile = Join-Path $script:RuntimeDir "state.json"
 $script:LauncherLog = Join-Path $script:RuntimeDir "launcher.log"
+$script:LauncherPort = if ($env:FLY_DESK_LAUNCHER_PORT) { [int]$env:FLY_DESK_LAUNCHER_PORT } else { 32123 }
 $script:ServerOutLog = ""
 $script:ServerErrLog = ""
+$script:SkipBrowser = $false
+$script:SilentMode = $false
+
+function Test-EnabledFlag {
+  param([string]$Value)
+
+  if (-not $Value) {
+    return $false
+  }
+
+  switch ($Value.Trim().ToLowerInvariant()) {
+    "1" { return $true }
+    "true" { return $true }
+    "yes" { return $true }
+    "on" { return $true }
+    default { return $false }
+  }
+}
+
+$script:SkipBrowser = Test-EnabledFlag -Value $env:FLY_DESK_SKIP_BROWSER
+$script:SilentMode = Test-EnabledFlag -Value $env:FLY_DESK_SILENT
 
 function Ensure-RuntimeDir {
   if (-not (Test-Path -LiteralPath $script:RuntimeDir)) {
@@ -23,23 +45,22 @@ function Write-LauncherLog {
   Add-Content -LiteralPath $script:LauncherLog -Value "[$timestamp] $Message"
 }
 
-function Initialize-RunLogs {
-  Ensure-RuntimeDir
-  $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-  $script:ServerOutLog = Join-Path $script:RuntimeDir "server-$stamp.out.log"
-  $script:ServerErrLog = Join-Path $script:RuntimeDir "server-$stamp.err.log"
-  Set-Content -LiteralPath $script:ServerOutLog -Value "" -Encoding UTF8
-  Set-Content -LiteralPath $script:ServerErrLog -Value "" -Encoding UTF8
-}
+function Show-Popup {
+  param(
+    [string]$Message,
+    [int]$Icon = 64
+  )
 
-function Show-ErrorPopup {
-  param([string]$Message)
+  if ($script:SilentMode) {
+    Write-LauncherLog "Popup omitido por modo silencioso: $Message"
+    return
+  }
 
   try {
     $shell = New-Object -ComObject WScript.Shell
-    [void]$shell.Popup($Message, 0, $script:AppName, 16)
+    [void]$shell.Popup($Message, 0, $script:AppName, $Icon)
   } catch {
-    Write-LauncherLog "No se pudo abrir popup de error: $($_.Exception.Message)"
+    Write-LauncherLog "No se pudo abrir popup: $($_.Exception.Message)"
   }
 }
 
@@ -47,8 +68,17 @@ function Fail-Launcher {
   param([string]$Message)
 
   Write-LauncherLog "ERROR: $Message"
-  Show-ErrorPopup "$Message`n`nRevisa:`n${script:LauncherLog}"
+  Show-Popup "$Message`n`nRevisa:`n$script:LauncherLog" 16
   throw $Message
+}
+
+function Initialize-RunLogs {
+  Ensure-RuntimeDir
+  $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+  $script:ServerOutLog = Join-Path $script:RuntimeDir "server-$stamp.out.log"
+  $script:ServerErrLog = Join-Path $script:RuntimeDir "server-$stamp.err.log"
+  Set-Content -LiteralPath $script:ServerOutLog -Value "" -Encoding UTF8
+  Set-Content -LiteralPath $script:ServerErrLog -Value "" -Encoding UTF8
 }
 
 function Get-CommandPath {
@@ -63,53 +93,32 @@ function Get-CommandPath {
 }
 
 function Get-NodePath {
-  $candidates = @(
+  @(
     (Get-CommandPath "node.exe"),
     (Get-CommandPath "node")
-  ) | Where-Object { $_ }
-
-  foreach ($candidate in $candidates) {
-    if (Test-Path -LiteralPath $candidate) {
-      return $candidate
-    }
-  }
-
-  return $null
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 }
 
 function Get-NpmPath {
-  $candidates = @(
+  @(
     (Get-CommandPath "npm.cmd"),
     (Get-CommandPath "npm")
-  ) | Where-Object { $_ }
-
-  foreach ($candidate in $candidates) {
-    if (Test-Path -LiteralPath $candidate) {
-      return $candidate
-    }
-  }
-
-  return $null
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 }
 
 function Assert-NodeReady {
   $nodePath = Get-NodePath
   if (-not $nodePath) {
-    Fail-Launcher "No se encontro Node.js. Instala Node.js 20 o superior y vuelve a ejecutar el acceso directo."
+    Fail-Launcher "No se encontro Node.js. Instala Node.js 20 o superior y vuelve a abrir Fly Desk."
   }
 
   $versionText = (& $nodePath -v).Trim()
-  if (-not $versionText) {
-    Fail-Launcher "No se pudo leer la version de Node.js."
+  if (-not $versionText -or $versionText -notmatch "^v(?<major>\d+)") {
+    Fail-Launcher "No se pudo leer correctamente la version de Node.js."
   }
 
-  $major = 0
-  if ($versionText -match "^v(?<major>\d+)") {
-    $major = [int]$Matches["major"]
-  }
-
-  if ($major -lt 20) {
-    Fail-Launcher "Este proyecto necesita Node.js 20 o superior. Version detectada: $versionText"
+  if ([int]$Matches["major"] -lt 20) {
+    Fail-Launcher "Fly Desk necesita Node.js 20 o superior. Version detectada: $versionText"
   }
 
   return $nodePath
@@ -118,7 +127,7 @@ function Assert-NodeReady {
 function Assert-NpmReady {
   $npmPath = Get-NpmPath
   if (-not $npmPath) {
-    Fail-Launcher "No se encontro npm. Reinstala Node.js y vuelve a ejecutar el acceso directo."
+    Fail-Launcher "No se encontro npm. Reinstala Node.js y vuelve a abrir Fly Desk."
   }
 
   return $npmPath
@@ -144,7 +153,7 @@ function Invoke-LoggedProcess {
     -RedirectStandardError $script:ServerErrLog
 
   if ($process.ExitCode -ne 0) {
-    Fail-Launcher "$StepName fallo con codigo $($process.ExitCode). Revisa:`n${script:ServerOutLog}`n${script:ServerErrLog}"
+    Fail-Launcher "$StepName fallo con codigo $($process.ExitCode). Revisa:`n$script:ServerOutLog`n$script:ServerErrLog"
   }
 }
 
@@ -189,8 +198,7 @@ function Test-BuildNeeded {
   ) | Where-Object { Test-Path -LiteralPath $_ }
 
   foreach ($configFile in $configFiles) {
-    $configTime = (Get-Item -LiteralPath $configFile).LastWriteTime
-    if ($configTime -gt $distTime) {
+    if ((Get-Item -LiteralPath $configFile).LastWriteTime -gt $distTime) {
       return $true
     }
   }
@@ -203,49 +211,31 @@ function Ensure-DependenciesAndBuild {
   $nodeModules = Join-Path $script:ProjectRoot "node_modules"
 
   if (-not (Test-Path -LiteralPath $nodeModules)) {
-    Write-LauncherLog "No existe node_modules. Ejecutando npm install."
     Invoke-LoggedProcess -FilePath $npmPath -ArgumentList @("install") -WorkingDirectory $script:ProjectRoot -StepName "npm install"
   }
 
   if (Test-BuildNeeded) {
-    Write-LauncherLog "La carpeta dist esta ausente o desactualizada. Ejecutando npm run build."
     Invoke-LoggedProcess -FilePath $npmPath -ArgumentList @("run", "build") -WorkingDirectory $script:ProjectRoot -StepName "npm run build"
   }
 }
 
-function Test-PortAvailable {
+function Test-HealthEndpoint {
   param([int]$Port)
 
-  $listener4 = $null
-  $listener6 = $null
+  $client = $null
   try {
-    $listener4 = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
-    $listener4.Start()
-    $listener6 = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::IPv6Loopback, $Port)
-    $listener6.Server.DualMode = $false
-    $listener6.Start()
-    return $true
+    $handler = [System.Net.Http.HttpClientHandler]::new()
+    $client = [System.Net.Http.HttpClient]::new($handler)
+    $client.Timeout = [TimeSpan]::FromSeconds(2)
+    $response = $client.GetAsync("http://127.0.0.1:$Port/api/health").GetAwaiter().GetResult()
+    return [int]$response.StatusCode -eq 200
   } catch {
     return $false
   } finally {
-    if ($listener4) {
-      $listener4.Stop()
-    }
-    if ($listener6) {
-      $listener6.Stop()
+    if ($client) {
+      $client.Dispose()
     }
   }
-}
-
-function Get-FreePort {
-  $preferredPorts = 3000..3010
-  foreach ($port in $preferredPorts) {
-    if (Test-PortAvailable -Port $port) {
-      return $port
-    }
-  }
-
-  Fail-Launcher "No se encontro un puerto libre entre 3000 y 3010."
 }
 
 function Get-ListeningProcessIdsForPort {
@@ -264,79 +254,19 @@ function Get-ListeningProcessIdsForPort {
   return $processIds | Sort-Object -Unique
 }
 
-function Stop-ProcessesUsingPort {
-  param([int]$Port)
+function Stop-ProcessTree {
+  param([int]$ProcessId)
 
-  $processIds = Get-ListeningProcessIdsForPort -Port $Port
-  foreach ($processId in $processIds) {
-    if ($processId -le 0) {
-      continue
-    }
-
-    try {
-      $process = Get-Process -Id $processId -ErrorAction Stop
-      Write-LauncherLog "Liberando puerto $Port al detener PID $processId ($($process.ProcessName))."
-      Stop-Process -Id $processId -Force -ErrorAction Stop
-    } catch {
-      Write-LauncherLog "No se pudo detener el PID $processId en puerto ${Port}: $($_.Exception.Message)"
-    }
+  if ($ProcessId -le 0) {
+    return
   }
 
-  Start-Sleep -Milliseconds 800
-}
-
-function Release-BlockedPorts {
-  foreach ($port in 3000..3010) {
-    if (Test-PortAvailable -Port $port) {
-      continue
-    }
-
-    if (Test-HealthEndpoint -Port $port) {
-      continue
-    }
-
-    Stop-ProcessesUsingPort -Port $port
+  try {
+    & taskkill /PID $ProcessId /T /F | Out-Null
+    Write-LauncherLog "Se detuvo PID $ProcessId."
+  } catch {
+    Write-LauncherLog "No se pudo detener PID ${ProcessId}: $($_.Exception.Message)"
   }
-}
-
-function Find-HealthyPort {
-  foreach ($port in 3000..3010) {
-    if (Test-HealthEndpoint -Port $port) {
-      return $port
-    }
-  }
-
-  return $null
-}
-
-function Test-HealthEndpoint {
-  param([int]$Port)
-
-  $urls = @(
-    "http://localhost:$Port/api/health",
-    "http://127.0.0.1:$Port/api/health",
-    "http://[::1]:$Port/api/health"
-  )
-
-  foreach ($url in $urls) {
-    $client = $null
-    try {
-      $handler = [System.Net.Http.HttpClientHandler]::new()
-      $client = [System.Net.Http.HttpClient]::new($handler)
-      $client.Timeout = [TimeSpan]::FromSeconds(2)
-      $response = $client.GetAsync($url).GetAwaiter().GetResult()
-      if ([int]$response.StatusCode -eq 200) {
-        return $true
-      }
-    } catch {
-    } finally {
-      if ($client) {
-        $client.Dispose()
-      }
-    }
-  }
-
-  return $false
 }
 
 function Get-State {
@@ -347,7 +277,7 @@ function Get-State {
   try {
     return Get-Content -LiteralPath $script:StateFile -Raw | ConvertFrom-Json
   } catch {
-    Write-LauncherLog "No se pudo leer state.json. Se regenerara."
+    Write-LauncherLog "state.json estaba dañado y sera regenerado."
     return $null
   }
 }
@@ -361,15 +291,13 @@ function Save-State {
   )
 
   Ensure-RuntimeDir
-  $state = [pscustomobject]@{
+  [pscustomobject]@{
     port = $Port
     pid = $ProcessId
     stdoutLog = $StdOutLog
     stderrLog = $StdErrLog
     updatedAt = (Get-Date).ToString("o")
-  }
-
-  $state | ConvertTo-Json | Set-Content -LiteralPath $script:StateFile -Encoding UTF8
+  } | ConvertTo-Json | Set-Content -LiteralPath $script:StateFile -Encoding UTF8
 }
 
 function Clear-State {
@@ -389,43 +317,54 @@ function Test-ProcessAlive {
   }
 }
 
+function Test-ProcessListeningOnPort {
+  param(
+    [int]$ProcessId,
+    [int]$Port
+  )
+
+  if ($ProcessId -le 0) {
+    return $false
+  }
+
+  return @((Get-ListeningProcessIdsForPort -Port $Port)) -contains $ProcessId
+}
+
 function Get-ChromePath {
-  $candidates = @(
+  @(
     "${env:LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe",
     "${env:PROGRAMFILES}\\Google\\Chrome\\Application\\chrome.exe",
     "${env:ProgramFiles(x86)}\\Google\\Chrome\\Application\\chrome.exe"
   ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
-
-  if ($candidates) {
-    return $candidates
-  }
-
-  return $null
 }
 
 function Open-AppInBrowser {
   param([int]$Port)
 
-  $url = "http://localhost:$Port/"
+  $url = "http://127.0.0.1:$Port/"
+
+  if ($script:SkipBrowser) {
+    Write-LauncherLog "Se omite apertura de navegador por FLY_DESK_SKIP_BROWSER en $url"
+    return
+  }
+
   $chromePath = Get-ChromePath
 
   if ($chromePath) {
     try {
-      Start-Process -FilePath $chromePath -ArgumentList @("--new-tab", $url) -WindowStyle Normal | Out-Null
+      Start-Process -FilePath $chromePath -ArgumentList @("--new-window", $url) -WindowStyle Normal | Out-Null
       Write-LauncherLog "Se abrio Chrome en $url"
       return
     } catch {
-      Write-LauncherLog "Chrome detectado pero no se pudo abrir: $($_.Exception.Message)"
+      Write-LauncherLog "No se pudo abrir Chrome automaticamente: $($_.Exception.Message)"
     }
   }
 
   try {
     Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "start", "", $url) -WindowStyle Hidden | Out-Null
-    Write-LauncherLog "Chrome no encontrado. Se abrio el navegador predeterminado en $url"
-    return
+    Write-LauncherLog "Se abrio el navegador predeterminado en $url"
   } catch {
-    Write-LauncherLog "No se pudo abrir ningun navegador automaticamente: $($_.Exception.Message)"
-    Show-ErrorPopup "Fly Desk se inicio correctamente, pero no se pudo abrir el navegador.`n`nAbre manualmente:`n$url"
+    Show-Popup "Fly Desk se inicio correctamente, pero no se pudo abrir el navegador.`n`nAbre manualmente:`n$url" 48
   }
 }
 
@@ -435,13 +374,20 @@ function Wait-ForServer {
     [int]$ProcessId
   )
 
-  $deadline = (Get-Date).AddSeconds(45)
+  $deadline = (Get-Date).AddSeconds(120)
   while ((Get-Date) -lt $deadline) {
+    if ($script:ServerOutLog -and (Test-Path -LiteralPath $script:ServerOutLog)) {
+      $stdout = Get-Content -LiteralPath $script:ServerOutLog -Raw -ErrorAction SilentlyContinue
+      if ($stdout -match "Fly Desk running at http://localhost:$Port") {
+        return $true
+      }
+    }
+
     if (Test-HealthEndpoint -Port $Port) {
       return $true
     }
 
-    if (-not (Test-ProcessAlive -ProcessId $ProcessId)) {
+    if ($ProcessId -gt 0 -and -not (Test-ProcessAlive -ProcessId $ProcessId)) {
       return $false
     }
 
@@ -460,11 +406,6 @@ function Start-ServerProcess {
   $distEntry = Join-Path $script:ProjectRoot "dist\\index.js"
   if (-not (Test-Path -LiteralPath $distEntry)) {
     Fail-Launcher "No existe dist\\index.js despues de compilar."
-  }
-
-  if (Test-HealthEndpoint -Port $Port) {
-    Write-LauncherLog "Ya existe un servicio saludable en el puerto $Port. Se reutilizara."
-    return 0
   }
 
   $previousPort = $env:PORT
@@ -487,27 +428,50 @@ function Start-ServerProcess {
     }
   }
 
-  Write-LauncherLog "Proceso iniciado con PID $($process.Id) en puerto $Port"
+  Write-LauncherLog "Servidor iniciado con PID $($process.Id) en puerto $Port."
   return $process.Id
 }
 
 try {
   Ensure-RuntimeDir
-  Write-LauncherLog "Inicio de launcher."
+  Write-LauncherLog "Inicio del launcher en puerto fijo $script:LauncherPort."
 
   $state = Get-State
-  if ($state -and $state.port -and (Test-HealthEndpoint -Port ([int]$state.port))) {
-    Write-LauncherLog "Instancia existente detectada en puerto $($state.port)."
-    Open-AppInBrowser -Port ([int]$state.port)
+  if ($state) {
+    $statePort = if ($state.port) { [int]$state.port } else { $script:LauncherPort }
+    $statePid = if ($state.pid) { [int]$state.pid } else { 0 }
+    $stateHealthy = Test-HealthEndpoint -Port $statePort
+    $stateListening = Test-ProcessListeningOnPort -ProcessId $statePid -Port $statePort
+
+    if ($stateHealthy -or $stateListening) {
+      Write-LauncherLog "Instancia existente reutilizada en puerto $statePort (health=$stateHealthy, listening=$stateListening, pid=$statePid)."
+      if ($statePid -gt 0) {
+        Save-State -Port $statePort -ProcessId $statePid -StdOutLog ([string]$state.stdoutLog) -StdErrLog ([string]$state.stderrLog)
+      }
+      Open-AppInBrowser -Port $statePort
+      exit 0
+    }
+  }
+
+  if (Test-HealthEndpoint -Port $script:LauncherPort) {
+    Write-LauncherLog "Se detecto una instancia saludable en el puerto del launcher."
+    Save-State -Port $script:LauncherPort -ProcessId 0
+    Open-AppInBrowser -Port $script:LauncherPort
     exit 0
   }
 
-  $healthyPort = Find-HealthyPort
-  if ($healthyPort) {
-    Write-LauncherLog "Instancia saludable encontrada por escaneo en puerto $healthyPort."
-    Save-State -Port $healthyPort -ProcessId 0
-    Open-AppInBrowser -Port $healthyPort
-    exit 0
+  if ($state -and $state.pid -and (Test-ProcessAlive -ProcessId ([int]$state.pid))) {
+    Stop-ProcessTree -ProcessId ([int]$state.pid)
+    Start-Sleep -Milliseconds 800
+  }
+
+  $occupyingPids = @(Get-ListeningProcessIdsForPort -Port $script:LauncherPort)
+  if ($occupyingPids.Count -gt 0) {
+    $knownStatePid = if ($state -and $state.pid) { [int]$state.pid } else { 0 }
+    $foreignPids = @($occupyingPids | Where-Object { $_ -ne $knownStatePid })
+    if ($foreignPids.Count -gt 0) {
+      Fail-Launcher "Fly Desk usa el puerto fijo $script:LauncherPort para el acceso directo, pero esta ocupado por otra aplicacion. Cierra esa aplicacion o libera el puerto y vuelve a intentar."
+    }
   }
 
   Initialize-RunLogs
@@ -515,29 +479,15 @@ try {
 
   $nodePath = Assert-NodeReady
   Ensure-DependenciesAndBuild
-
-  if ($state -and $state.pid -and (Test-ProcessAlive -ProcessId ([int]$state.pid))) {
-    Write-LauncherLog "Limpiando estado previo con PID $($state.pid) no saludable."
-  }
   Clear-State
 
-  Release-BlockedPorts
-
-  $port = Get-FreePort
-  $serverProcessId = Start-ServerProcess -NodePath $nodePath -Port $port
-
-  if ($serverProcessId -eq 0) {
-    Save-State -Port $port -ProcessId 0 -StdOutLog $script:ServerOutLog -StdErrLog $script:ServerErrLog
-    Open-AppInBrowser -Port $port
-    exit 0
+  $serverProcessId = Start-ServerProcess -NodePath $nodePath -Port $script:LauncherPort
+  if (-not (Wait-ForServer -Port $script:LauncherPort -ProcessId $serverProcessId)) {
+    Fail-Launcher "Fly Desk no respondio correctamente en http://127.0.0.1:$script:LauncherPort/. Revisa:`n$script:ServerOutLog`n$script:ServerErrLog"
   }
 
-  if (-not (Wait-ForServer -Port $port -ProcessId $serverProcessId)) {
-    Fail-Launcher "El servidor no respondio correctamente en http://localhost:$port/. Revisa:`n${script:ServerOutLog}`n${script:ServerErrLog}"
-  }
-
-  Save-State -Port $port -ProcessId $serverProcessId -StdOutLog $script:ServerOutLog -StdErrLog $script:ServerErrLog
-  Open-AppInBrowser -Port $port
+  Save-State -Port $script:LauncherPort -ProcessId $serverProcessId -StdOutLog $script:ServerOutLog -StdErrLog $script:ServerErrLog
+  Open-AppInBrowser -Port $script:LauncherPort
   Write-LauncherLog "Launcher completado correctamente."
 } catch {
   $message = if ($_.Exception) { $_.Exception.Message } else { "$_" }

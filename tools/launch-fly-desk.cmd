@@ -1,3 +1,3 @@
 @echo off
 cd /d "%~dp0.."
-node tools\launch-fly-desk.js
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-fly-desk.ps1"
