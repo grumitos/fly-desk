@@ -14,7 +14,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "echo \"No configurado todavia\"",
-    "test": "echo \"No configurado todavia\""
+    "test": "node --test --import tsx test/**/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",

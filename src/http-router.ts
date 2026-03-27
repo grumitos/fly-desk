@@ -128,8 +128,10 @@ function normalizeRequest(input?: SearchPayload["request"]): SearchRequest {
     searchMode: normalizeSearchMode(input?.searchMode),
     legs: [
       {
-        origin: stringValue(leg.origin, "MAD").toUpperCase(),
-        destination: stringValue(leg.destination, "PAR").toUpperCase(),
+        origin: stringValue(leg.origin).toUpperCase(),
+        destination: stringValue(leg.destination).toUpperCase(),
+        originLabel: stringValue(leg.originLabel),
+        destinationLabel: stringValue(leg.destinationLabel),
         departureDate: stringValue(leg.departureDate),
         departureStart: stringValue(leg.departureStart),
         departureEnd: stringValue(leg.departureEnd),
@@ -152,7 +154,6 @@ function normalizeRequest(input?: SearchPayload["request"]): SearchRequest {
       excludedAirlineCodes: stringList(filters.excludedAirlineCodes),
       maxPrice: numberValue(filters.maxPrice),
       maxResults: numberValue(filters.maxResults, 25),
-      maxStops: numberValue(filters.maxStops),
       maxTotalDurationMinutes: numberValue(filters.maxTotalDurationMinutes),
       minDepartureMinutes: numberValue(filters.minDepartureMinutes),
       maxDepartureMinutes: numberValue(filters.maxDepartureMinutes),
@@ -192,6 +193,24 @@ function validateRequest(request: SearchRequest): string[] {
     errors.push("Destination is required and must be an IATA-like code.");
   }
 
+  if (leg.origin && leg.destination && leg.origin === leg.destination) {
+    errors.push("Origin and destination must be different.");
+  }
+
+  if (request.passengers.adults < 1) {
+    errors.push("At least one adult is required.");
+  }
+
+  if (request.passengers.infants > request.passengers.adults) {
+    errors.push("Infants cannot exceed adults.");
+  }
+
+  if (
+    request.passengers.adults + request.passengers.children + request.passengers.infants > 9
+  ) {
+    errors.push("Passenger count cannot exceed 9.");
+  }
+
   if (request.searchMode === "exact") {
     if (!leg.departureDate) {
       errors.push("Departure date is required for exact search.");
@@ -199,6 +218,15 @@ function validateRequest(request: SearchRequest): string[] {
 
     if (request.tripType === "round-trip" && !leg.returnDate) {
       errors.push("Return date is required for round-trip exact search.");
+    }
+
+    if (
+      request.tripType === "round-trip" &&
+      leg.departureDate &&
+      leg.returnDate &&
+      leg.returnDate <= leg.departureDate
+    ) {
+      errors.push("Return date must be after departure date.");
     }
   }
 
@@ -226,6 +254,23 @@ function validateRequest(request: SearchRequest): string[] {
     ) {
       errors.push("Return range is required for round-trip range search.");
     }
+  }
+
+  if (leg.departureStart && leg.departureEnd && leg.departureEnd < leg.departureStart) {
+    errors.push("Departure range end must be on or after departure range start.");
+  }
+
+  if (leg.returnStart && leg.returnEnd && leg.returnEnd < leg.returnStart) {
+    errors.push("Return range end must be on or after return range start.");
+  }
+
+  if (
+    request.tripType === "round-trip" &&
+    leg.departureStart &&
+    leg.returnStart &&
+    leg.returnStart < leg.departureStart
+  ) {
+    errors.push("Return range must start after the departure range.");
   }
 
   dateFields.forEach(([label, value]) => {
