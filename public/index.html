@@ -1,236 +1,287 @@
 <!DOCTYPE html>
 <html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Flight Desk</title>
-    <link rel="stylesheet" href="/app.css" />
-  </head>
-  <body>
-    <header class="toolbar">
-      <span class="toolbar-brand">FLIGHT DESK</span>
-      <span id="runtimeBadge" class="tag">IDLE</span>
-      <span id="resultPill" class="tag">0</span>
-    </header>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fly Desk</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
 
-    <form id="searchForm" class="searchbar" novalidate autocomplete="off">
-      <!-- Fila principal -->
-      <div class="searchbar-row">
-        <!-- Modo + Tipo -->
-        <div class="field-group">
-          <div class="f">
-            <span class="f-label">Modo</span>
-            <select name="searchMode" id="searchMode" class="input input--narrow">
-              <option value="exact">Exacto</option>
-              <option value="stay-range">Rango</option>
-              <option value="roundtrip-grid">Matriz</option>
-            </select>
-          </div>
-          <div class="f">
-            <span class="f-label">Tipo</span>
-            <select name="tripType" id="tripType" class="input input--narrow">
-              <option value="round-trip">Ida/Vta</option>
-              <option value="one-way">Solo ida</option>
-            </select>
-          </div>
+  <!-- ===== HEADER ===== -->
+  <header class="layout-header">
+    <div class="layout-header__brand">
+      <svg class="ico ico--brand"><use href="#ico-plane"/></svg>
+      FLY DESK
+    </div>
+    <div class="layout-header__right">
+      <span id="runtimeBadge" class="badge">IDLE</span>
+      <span id="resultPill" class="badge badge--accent">0</span>
+    </div>
+  </header>
+
+  <!-- ===== SEARCH BAR ===== -->
+  <form id="searchForm" class="search-bar" novalidate autocomplete="off">
+    <!-- Main row -->
+    <div class="search-bar__main">
+      <select name="tripType" id="tripType" class="input input--compact">
+        <option value="round-trip">Ida/Vta</option>
+        <option value="one-way">Solo ida</option>
+      </select>
+
+      <span class="search-bar__divider"></span>
+
+      <!-- Route group -->
+      <div class="search-bar__route">
+        <div class="location-field">
+          <input name="origin" id="origin" class="input input--location" autocomplete="off" spellcheck="false" placeholder="Origen" required />
+          <div id="originSuggestions" class="autocomplete-menu hidden"></div>
         </div>
-
-        <span class="searchbar-sep"></span>
-
-        <!-- Ruta -->
-        <div class="field-group">
-          <div class="f">
-            <span class="f-label">Origen</span>
-            <div class="location-field">
-              <input
-                name="origin"
-                id="origin"
-                class="input input--location"
-                autocomplete="off"
-                spellcheck="false"
-                placeholder="Ciudad o IATA"
-                required
-              />
-              <div id="originSuggestions" class="location-menu hidden"></div>
-            </div>
-          </div>
-          <span class="searchbar-arrow">→</span>
-          <div class="f">
-            <span class="f-label">Destino</span>
-            <div class="location-field">
-              <input
-                name="destination"
-                id="destination"
-                class="input input--location"
-                autocomplete="off"
-                spellcheck="false"
-                placeholder="Ciudad o IATA"
-                required
-              />
-              <div id="destinationSuggestions" class="location-menu hidden"></div>
-            </div>
-          </div>
-        </div>
-
-        <span class="searchbar-sep"></span>
-
-        <!-- Fechas -->
-        <div class="field-group">
-          <div class="f exact-field">
-            <span class="f-label">Salida</span>
-            <input name="departureDate" id="departureDate" type="date" class="input input--date" autocomplete="off" required />
-          </div>
-          <div class="f exact-field roundtrip-only">
-            <span class="f-label">Regreso</span>
-            <input name="returnDate" id="returnDate" type="date" class="input input--date" autocomplete="off" />
-          </div>
-
-          <div class="f grid-field hidden">
-            <span class="f-label">Sal. desde</span>
-            <input name="departureStart" id="departureStart" type="date" class="input input--date" autocomplete="off" />
-          </div>
-          <div class="f grid-field hidden">
-            <span class="f-label">Sal. hasta</span>
-            <input name="departureEnd" id="departureEnd" type="date" class="input input--date" autocomplete="off" />
-          </div>
-          <div class="f grid-field return-range-field hidden">
-            <span class="f-label">Reg. desde</span>
-            <input name="returnStart" id="returnStart" type="date" class="input input--date" autocomplete="off" />
-          </div>
-          <div class="f grid-field return-range-field hidden">
-            <span class="f-label">Reg. hasta</span>
-            <input name="returnEnd" id="returnEnd" type="date" class="input input--date" autocomplete="off" />
-          </div>
-        </div>
-
-        <span class="searchbar-sep"></span>
-
-        <!-- Pasajeros -->
-        <div class="field-group">
-          <div class="f">
-            <span class="f-label">Adultos</span>
-            <input name="adults" id="adults" type="number" class="input input--num" min="1" max="9" value="1" />
-          </div>
-          <div class="f">
-            <span class="f-label">Niños</span>
-            <input name="children" id="children" type="number" class="input input--num" min="0" max="8" value="0" />
-          </div>
-          <div class="f">
-            <span class="f-label">Infantes</span>
-            <input name="infants" id="infants" type="number" class="input input--num" min="0" max="4" value="0" />
-          </div>
-        </div>
-
-        <span class="searchbar-sep"></span>
-
-        <!-- Cabina + Moneda -->
-        <div class="field-group">
-          <div class="f">
-            <span class="f-label">Cabina</span>
-            <select name="cabin" id="cabin" class="input input--narrow">
-              <option value="ECONOMY">Economy</option>
-              <option value="PREMIUM_ECONOMY">Prem Eco</option>
-              <option value="BUSINESS">Business</option>
-              <option value="FIRST">First</option>
-            </select>
-          </div>
-          <div class="f">
-            <span class="f-label">Moneda</span>
-            <input name="currencyCode" id="currencyCode" class="input input--iata" maxlength="3" value="USD" required />
-          </div>
-        </div>
-
-        <span class="searchbar-sep"></span>
-
-        <button id="submitButton" class="btn btn--go" type="submit">BUSCAR</button>
-      </div>
-
-      <!-- Fila secundaria — siempre visible -->
-      <div class="searchbar-row searchbar-row--secondary">
-        <label class="inline-check"><input name="nonStop" id="nonStop" type="checkbox" /><span>Directos</span></label>
-        <label class="inline-check"><input name="baggageRequired" id="baggageRequired" type="checkbox" /><span>Equipaje</span></label>
-        <span class="searchbar-sep"></span>
-        <div class="f">
-          <span class="f-label">Orden</span>
-          <select name="sortMode" id="sortMode" class="input input--narrow">
-            <option value="cheapest">Precio</option>
-            <option value="best-value">Valor</option>
-            <option value="fastest">Rapido</option>
-          </select>
-        </div>
-        <div class="f">
-          <span class="f-label">Max precio</span>
-          <input name="maxPrice" id="maxPrice" type="number" class="input input--sm" min="0" max="999999" placeholder="—" />
-        </div>
-        <div class="f">
-          <span class="f-label">Max esc.</span>
-          <input name="maxStops" id="maxStops" type="number" class="input input--num" min="0" max="3" placeholder="—" />
+        <button type="button" id="swapRouteBtn" class="btn--icon" title="Intercambiar">
+          <svg class="ico"><use href="#ico-swap"/></svg>
+        </button>
+        <div class="location-field">
+          <input name="destination" id="destination" class="input input--location" autocomplete="off" spellcheck="false" placeholder="Destino" required />
+          <div id="destinationSuggestions" class="autocomplete-menu hidden"></div>
         </div>
       </div>
-    </form>
 
-    <div id="validationErrors" class="errorbar hidden"></div>
-    <div id="summaryContent" class="infobar"></div>
+      <span class="search-bar__divider"></span>
 
-    <main class="content">
-      <div class="content-layout">
-        <!-- Sidebar de aerolíneas -->
-        <aside id="sidebar" class="sidebar hidden"></aside>
+      <!-- Dates: exact mode -->
+      <div class="search-bar__dates" id="datesExact">
+        <input name="departureDate" id="departureDate" type="date" class="input input--date" required />
+        <input name="returnDate" id="returnDate" type="date" class="input input--date roundtrip-only" />
+      </div>
 
-        <!-- Secciones principales -->
-        <div class="content-main">
-          <section id="matrixSection" class="section hidden">
-            <div class="section-head" data-target="matrixSection">
-              <h2>Matriz <span id="matrixCount" class="section-count hidden">0</span></h2>
-              <div id="matrixInfo" class="tag-row"></div>
-            </div>
-            <div class="section-body-wrap">
-              <div id="matrixContent"></div>
-            </div>
-          </section>
-
-          <section id="resultsSection" class="section">
-            <div class="section-head" data-target="resultsSection">
-              <h2>Resultados <span id="resultsCount" class="section-count hidden">0</span></h2>
-            </div>
-            <div class="section-body-wrap">
-              <div id="resultsContent" class="empty-msg">Sin resultados.</div>
-            </div>
-          </section>
-
-          <section id="detailSection" class="section hidden">
-            <div class="section-head" data-target="detailSection">
-              <h2>Detalle</h2>
-              <div class="section-actions" onclick="event.stopPropagation()">
-                <button id="repriceButton" class="btn btn--sm" type="button" disabled>REPRICE</button>
-                <button id="quotationButton" class="btn btn--sm" type="button" disabled>COTIZAR</button>
-              </div>
-            </div>
-            <div class="section-body-wrap">
-              <div id="detailContent"></div>
-            </div>
-          </section>
-
-          <section id="compareSection" class="section hidden">
-            <div class="section-head" data-target="compareSection">
-              <h2>Comparador</h2>
-            </div>
-            <div class="section-body-wrap">
-              <div id="compareContent"></div>
-            </div>
-          </section>
+      <!-- Dates: flexible mode (hidden by default) -->
+      <div class="search-bar__flex-dates hidden" id="datesFlex">
+        <div class="flex-duration">
+          <input name="stayDaysMin" id="stayDaysMin" type="number" class="input input--mini" min="1" max="90" placeholder="7" />
+          <span class="flex-duration__sep">-</span>
+          <input name="stayDaysMax" id="stayDaysMax" type="number" class="input input--mini" min="1" max="90" placeholder="14" />
+          <span class="flex-duration__label">dias</span>
         </div>
+        <span class="search-bar__divider"></span>
+        <div class="flex-window">
+          <input name="departureStart" id="departureStart" type="date" class="input input--date" />
+          <span class="flex-window__sep">~</span>
+          <input name="departureEnd" id="departureEnd" type="date" class="input input--date" />
+        </div>
+      </div>
+
+      <span class="search-bar__divider"></span>
+
+      <!-- Pax trigger -->
+      <button type="button" id="paxTrigger" class="chip chip--interactive">
+        <span id="paxLabel">1 ADT</span>
+        <svg class="ico ico--xs"><use href="#ico-chevron-down"/></svg>
+      </button>
+
+      <!-- Hidden pax inputs -->
+      <input name="adults" id="adults" type="hidden" value="1" />
+      <input name="children" id="children" type="hidden" value="0" />
+      <input name="infants" id="infants" type="hidden" value="0" />
+
+      <!-- Search button -->
+      <button id="submitButton" class="btn btn--primary" type="submit">
+        <svg class="ico ico--btn"><use href="#ico-search"/></svg>
+        BUSCAR
+      </button>
+    </div>
+
+    <!-- Pax popover -->
+    <div id="paxPopover" class="pax-popover hidden">
+      <div class="pax-popover__row">
+        <span class="pax-popover__label">Adultos</span>
+        <div class="pax-popover__controls">
+          <button type="button" class="btn--icon" data-pax-action="adults-dec">&minus;</button>
+          <span id="paxAdultsDisplay" class="pax-popover__value">1</span>
+          <button type="button" class="btn--icon" data-pax-action="adults-inc">&plus;</button>
+        </div>
+      </div>
+      <div class="pax-popover__row">
+        <span class="pax-popover__label">Ninos <span class="text-dim">(2-11)</span></span>
+        <div class="pax-popover__controls">
+          <button type="button" class="btn--icon" data-pax-action="children-dec">&minus;</button>
+          <span id="paxChildrenDisplay" class="pax-popover__value">0</span>
+          <button type="button" class="btn--icon" data-pax-action="children-inc">&plus;</button>
+        </div>
+      </div>
+      <div class="pax-popover__row">
+        <span class="pax-popover__label">Bebes <span class="text-dim">(&lt;2)</span></span>
+        <div class="pax-popover__controls">
+          <button type="button" class="btn--icon" data-pax-action="infants-dec">&minus;</button>
+          <span id="paxInfantsDisplay" class="pax-popover__value">0</span>
+          <button type="button" class="btn--icon" data-pax-action="infants-inc">&plus;</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chips row -->
+    <div class="search-bar__chips">
+      <select name="cabin" id="cabin" class="chip chip--select">
+        <option value="ECONOMY">Economy</option>
+        <option value="PREMIUM_ECONOMY">Prem Eco</option>
+        <option value="BUSINESS">Business</option>
+        <option value="FIRST">First</option>
+      </select>
+
+      <div class="chip chip--input">
+        <input name="currencyCode" id="currencyCode" class="chip__input" maxlength="3" value="USD" />
+      </div>
+
+      <label class="chip chip--toggle">
+        <input name="nonStop" id="nonStop" type="checkbox" />
+        <span>Directos</span>
+      </label>
+      <label class="chip chip--toggle">
+        <input name="baggageRequired" id="baggageRequired" type="checkbox" />
+        <span>Equipaje</span>
+      </label>
+
+      <!-- Mode toggle -->
+      <div class="chip-group chip-group--mode">
+        <button type="button" class="chip chip--mode is-active" data-mode="exact">Exacto</button>
+        <button type="button" class="chip chip--mode" data-mode="flexible">Flexible</button>
+      </div>
+
+      <!-- Hidden searchMode for backend compat -->
+      <select name="searchMode" id="searchMode" class="hidden">
+        <option value="exact">Exacto</option>
+        <option value="stay-range">Rango</option>
+        <option value="roundtrip-grid">Matriz</option>
+      </select>
+
+      <div class="chip chip--input">
+        <span class="chip__label">Max $</span>
+        <input name="maxPrice" id="maxPrice" type="number" class="chip__input" min="0" placeholder="—" />
+      </div>
+      <div class="chip chip--input">
+        <span class="chip__label">Esc</span>
+        <input name="maxStops" id="maxStops" type="number" class="chip__input chip__input--narrow" min="0" max="3" placeholder="—" />
+      </div>
+
+      <!-- Hidden sort (controlled by toolbar buttons) -->
+      <select name="sortMode" id="sortMode" class="hidden">
+        <option value="cheapest">Precio</option>
+        <option value="best-value">Valor</option>
+        <option value="fastest">Rapido</option>
+      </select>
+    </div>
+  </form>
+
+  <!-- ===== ERROR BAR ===== -->
+  <div id="validationErrors" class="error-bar hidden"></div>
+
+  <!-- ===== MAIN LAYOUT ===== -->
+  <div class="layout-main">
+
+    <!-- Sidebar -->
+    <aside id="sidebar" class="layout-sidebar"></aside>
+
+    <!-- Content -->
+    <main class="layout-content">
+      <!-- Results toolbar -->
+      <div id="resultsToolbar" class="results-toolbar hidden">
+        <div class="results-toolbar__sort" id="sortButtons">
+          <button type="button" class="results-toolbar__sort-btn is-active" data-sort="cheapest">Precio</button>
+          <button type="button" class="results-toolbar__sort-btn" data-sort="fastest">Duracion</button>
+          <button type="button" class="results-toolbar__sort-btn" data-sort="best-value">Mejor valor</button>
+        </div>
+        <span class="results-toolbar__count" id="resultsCountLabel"></span>
+        <div class="results-toolbar__view" id="viewToggle">
+          <button type="button" class="btn--icon is-active" data-view="list" title="Vista lista">
+            <svg class="ico" viewBox="0 0 16 16"><path fill="currentColor" d="M2 3h12v1H2zm0 4h12v1H2zm0 4h12v1H2z"/></svg>
+          </button>
+          <button type="button" class="btn--icon" data-view="calendar" title="Vista calendario">
+            <svg class="ico" viewBox="0 0 16 16"><path fill="currentColor" d="M1 3h3v3H1zm5 0h3v3H6zm5 0h3v3h-3zM1 8h3v3H1zm5 0h3v3H6zm5 0h3v3h-3z"/></svg>
+          </button>
+        </div>
+        <button type="button" class="btn btn--secondary btn--sm hidden" id="compareBtn">Comparar (<span id="compareBtnCount">0</span>)</button>
+      </div>
+
+      <!-- Results container -->
+      <div id="resultsContainer" class="results-container">
+        <div class="empty-state" id="emptyState">
+          <div class="empty-state__icon">
+            <svg class="ico" style="width:48px;height:48px;opacity:0.3"><use href="#ico-plane"/></svg>
+          </div>
+          <p class="empty-state__text">Ingresa origen, destino y fechas para comenzar</p>
+        </div>
+      </div>
+
+      <!-- Compare section -->
+      <div id="compareSection" class="compare-section hidden">
+        <div class="compare-section__header">
+          <h3 class="compare-section__title">Comparador</h3>
+          <button type="button" class="btn btn--ghost btn--sm" id="compareClear">Limpiar</button>
+        </div>
+        <div id="compareContent"></div>
       </div>
     </main>
 
-    <!-- Loading overlay -->
-    <div id="loadingOverlay" class="loading-overlay hidden">
-      <div class="spinner"></div>
+    <!-- Detail Panel -->
+    <aside id="detailPanel" class="layout-detail">
+      <div class="detail-panel__header">
+        <h3 class="detail-panel__title">Detalle</h3>
+        <div class="detail-panel__actions">
+          <button id="repriceButton" class="btn btn--secondary btn--sm" type="button" disabled>Reprice</button>
+          <button id="quotationButton" class="btn btn--secondary btn--sm" type="button" disabled>Cotizar</button>
+          <button id="detailClose" class="btn--icon" type="button" title="Cerrar">
+            <svg class="ico" viewBox="0 0 16 16"><line x1="4" y1="4" x2="12" y2="12" stroke="currentColor" stroke-width="1.5"/><line x1="12" y1="4" x2="4" y2="12" stroke="currentColor" stroke-width="1.5"/></svg>
+          </button>
+        </div>
+      </div>
+      <div id="detailContent" class="detail-panel__body"></div>
+    </aside>
+  </div>
+
+  <!-- Loading overlay -->
+  <div id="loadingOverlay" class="loading-overlay hidden">
+    <div class="spinner">
+      <svg class="spinner__svg" viewBox="0 0 50 50">
+        <circle class="spinner__track" cx="25" cy="25" r="20"/>
+        <circle class="spinner__fill" cx="25" cy="25" r="20"/>
+      </svg>
     </div>
+    <span class="spinner__text">Consultando vuelos...</span>
+  </div>
 
-    <!-- Toast container -->
-    <div id="toastContainer"></div>
+  <!-- Progress bar -->
+  <div id="progressBar" class="progress-bar hidden"></div>
 
-    <script src="/app.js" defer></script>
-  </body>
+  <!-- Toast container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- SVG sprite -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+    <symbol id="ico-plane" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>
+    </symbol>
+    <symbol id="ico-swap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/>
+    </symbol>
+    <symbol id="ico-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+    </symbol>
+    <symbol id="ico-route" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/>
+    </symbol>
+    <symbol id="ico-luggage" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 20h0a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h0"/><path d="M8 18V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v14"/><path d="M10 20h4"/><circle cx="16" cy="20" r="2"/><circle cx="8" cy="20" r="2"/>
+    </symbol>
+    <symbol id="ico-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+    </symbol>
+    <symbol id="ico-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>
+    </symbol>
+    <symbol id="ico-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m6 9 6 6 6-6"/>
+    </symbol>
+  </svg>
+
+  <script src="/app.js" defer></script>
+</body>
 </html>
