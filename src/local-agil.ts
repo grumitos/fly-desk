@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { spawn, ChildProcess, execFileSync } from "node:child_process";
+import { spawn, ChildProcess } from "node:child_process";
 import { readFileSync, rmSync, mkdirSync, cpSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -61,6 +61,9 @@ interface AgilBaggageInfo {
 }
 
 interface AgilFareBreakdown {
+  passengerType?: {
+    quantity?: number;
+  };
   passengerFare?: {
     baseFare?: number;
     taxes?: number;
@@ -201,12 +204,17 @@ const AGIL_RANGE_SEARCH_CONCURRENCY = Math.max(
 );
 const AGIL_APIM_SUBSCRIPTION_KEY = process.env.AGIL_APIM_SUBSCRIPTION_KEY?.trim()
   || DEFAULT_AGIL_APIM_SUBSCRIPTION_KEY;
+const AGIL_HTTP_TIMEOUT_MS = Math.max(
+  5000,
+  Number(process.env.AGIL_HTTP_TIMEOUT_MS ?? 20000),
+);
 
 export const AGIL_CONCURRENCY = Object.freeze({
   flexibleMinimum: AGIL_MIN_FLEXIBLE_PARALLELISM,
   gdsSearch: AGIL_GDS_SEARCH_CONCURRENCY,
   matrixCell: AGIL_MATRIX_CELL_CONCURRENCY,
   rangeSearch: AGIL_RANGE_SEARCH_CONCURRENCY,
+  httpTimeoutMs: AGIL_HTTP_TIMEOUT_MS,
 });
 
 let playwrightPromise: Promise<typeof import("playwright")> | undefined;
@@ -265,6 +273,20 @@ function resolveBrowserUserDataDir(): string {
   }
 
   return join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
+}
+
+function resolveAgilBrowserEndpoint(): string | undefined {
+  const browserUrl = process.env.AGIL_BROWSER_URL?.trim();
+  if (browserUrl) {
+    return browserUrl;
+  }
+
+  const wsEndpoint = process.env.AGIL_BROWSER_WS_ENDPOINT?.trim();
+  if (wsEndpoint) {
+    return wsEndpoint;
+  }
+
+  return undefined;
 }
 
 function readChromeProfileName(): string {
@@ -350,21 +372,7 @@ function resolveAgilSmartAddress(): string | undefined {
   if (configured) {
     return configured;
   }
-
-  try {
-    const output = execFileSync("nslookup", ["agilsmart.com", "8.8.8.8"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      windowsHide: true,
-    });
-    const lines = output.split(/\r?\n/);
-    const addressLine = lines
-      .map((line) => line.trim())
-      .find((line) => /^Address:\s+\d{1,3}(?:\.\d{1,3}){3}$/.test(line));
-    return addressLine?.replace(/^Address:\s+/, "").trim();
-  } catch {
-    return undefined;
-  }
+  return undefined;
 }
 
 function prepareTemporaryChromeProfile(profileName: string): string {
@@ -451,6 +459,29 @@ async function getPlaywright(): Promise<typeof import("playwright")> {
   }
 
   return playwrightPromise;
+}
+
+async function fetchAgil(
+  url: string,
+  init: RequestInit,
+  label: string,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AGIL_HTTP_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`${label} timed out after ${AGIL_HTTP_TIMEOUT_MS}ms`);
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function readAgilStorageSnapshotFromNavigable(
@@ -551,8 +582,30 @@ async function readAgilStorageSnapshotFromContext(
 }
 
 async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> {
+  const browserEndpoint = resolveAgilBrowserEndpoint();
+  const connectionFailures: string[] = [];
+  if (browserEndpoint) {
+    let browser: Browser | undefined;
+    try {
+      const playwright = await getPlaywright();
+      browser = await playwright.chromium.connectOverCDP(browserEndpoint);
+      const context = browser.contexts()[0];
+      if (!context) {
+        throw new Error("Connected browser exposed no contexts.");
+      }
+      return await readAgilStorageSnapshotFromContext(context);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
+      connectionFailures.push(`connected browser: ${detail}`);
+    } finally {
+      if (browser) {
+        await browser.close().catch(() => undefined);
+      }
+    }
+  }
+
   const profileNames = readChromeProfileCandidates();
-  const failures: string[] = [];
+  const failures: string[] = [...connectionFailures];
 
   for (const profileName of profileNames) {
     const userDataDir = prepareTemporaryChromeProfile(profileName);
@@ -631,7 +684,7 @@ export function parseAgilRefreshTokenPayload(payload: { token?: string; accessTo
 }
 
 async function refreshAgilToken(session: AgilSessionData): Promise<AgilSessionData> {
-  const response = await fetch(`${AGIL_BASE_URL}/auth/api/auth/token`, {
+  const response = await fetchAgil(`${AGIL_BASE_URL}/auth/api/auth/token`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -653,7 +706,7 @@ async function refreshAgilToken(session: AgilSessionData): Promise<AgilSessionDa
       appclient: 2,
       providers: [],
     }),
-  });
+  }, "Agil token refresh");
 
   if (!response.ok) {
     throw new Error(`Agil token refresh failed: ${response.status} ${response.statusText}`);
@@ -872,10 +925,14 @@ function normalizeJourneyCandidates(
         return {
           id: `${direction}-${sliceIndex}-${option.segmentId ?? optionIndex}-${flightIndex}`,
           marketingCarrier,
+          marketingCarrierName: flight.marketingAirline?.name ?? undefined,
           operatingCarrier: flight.operatingAirline?.code ?? marketingCarrier,
+          operatingCarrierName: flight.operatingAirline?.name ?? undefined,
           flightNumber: String(flight.flightNumber ?? flightIndex + 1),
           origin: flight.departureAirport?.code ?? "",
+          originName: flight.departureAirport?.name ?? undefined,
           destination: flight.arrivalAirport?.code ?? "",
+          destinationName: flight.arrivalAirport?.name ?? undefined,
           departureAt: flight.departureDateTime ?? option.startDateTime ?? "",
           arrivalAt: flight.arrivalDateTime ?? option.endDateTime ?? "",
           durationMinutes: parseAgilDurationMinutes(
@@ -1075,7 +1132,7 @@ export async function suggestLocalAgilLocations(query: string, limit = 8): Promi
     return [];
   }
 
-  const response = await fetch(
+  const response = await fetchAgil(
     `${AGIL_BASE_URL}/mv/ubigeo/geotree/${encodeURIComponent(normalizedQuery)}`,
     {
       headers: {
@@ -1084,6 +1141,7 @@ export async function suggestLocalAgilLocations(query: string, limit = 8): Promi
         "Ocp-Apim-Subscription-Key": AGIL_APIM_SUBSCRIPTION_KEY,
       },
     },
+    "Agil location suggest",
   );
 
   if (!response.ok) {
@@ -1229,11 +1287,13 @@ function computeAgilTotalAmount(pricingInfo: AgilPricingInfo | undefined): numbe
       return sum;
     }
 
-    return sum
-      + (passengerFare.totalFare ?? 0)
+    const quantity = Math.max(1, breakdown.passengerType?.quantity ?? 1);
+    const passengerTotal = (passengerFare.totalFare ?? 0)
       + (passengerFare.feeNMV ?? 0)
       + (passengerFare.feePTA ?? 0)
       - (passengerFare.dsctoTaxes ?? 0);
+
+    return sum + (passengerTotal * quantity);
   }, 0);
 
   if (breakdownTotal > 0) {
@@ -1260,10 +1320,12 @@ function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): Canon
 
   const fareBreakDowns = asArray(group.pricingInfo?.itinTotalFare?.fareBreakDowns);
   const baseAmount = fareBreakDowns.reduce((sum, breakdown) => {
-    return sum + (breakdown.passengerFare?.baseFare ?? 0);
+    const quantity = Math.max(1, breakdown.passengerType?.quantity ?? 1);
+    return sum + ((breakdown.passengerFare?.baseFare ?? 0) * quantity);
   }, 0);
   const taxesAmount = fareBreakDowns.reduce((sum, breakdown) => {
-    return sum + (breakdown.passengerFare?.taxes ?? 0);
+    const quantity = Math.max(1, breakdown.passengerType?.quantity ?? 1);
+    return sum + ((breakdown.passengerFare?.taxes ?? 0) * quantity);
   }, 0);
 
   const validatingCarrier = group.pricingInfo?.itinTotalFare?.validatingCarrier
@@ -1300,6 +1362,11 @@ function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): Canon
   const itineraries = inbound
     ? [outbound.itinerary, inbound.itinerary]
     : [outbound.itinerary];
+  const maxStops = Math.max(0, request.filters.maxStops ?? 1);
+  const totalStops = itineraries.reduce((sum, itinerary) => sum + (itinerary.stops ?? 0), 0);
+  if (totalStops > maxStops) {
+    return [];
+  }
   const baggage = buildBaggageSummary(outbound.baggage, inbound?.baggage);
   const mainCarrier = outbound.itinerary.segments[0]?.marketingCarrier ?? validatingCarrier;
   const price = {
@@ -1397,7 +1464,7 @@ async function searchCellWithGds(
   request: SearchRequest,
   gds: number,
 ): Promise<AgilCellQuote | undefined> {
-  const response = await fetch(`${AGIL_BASE_URL}/mv/search`, {
+  const response = await fetchAgil(`${AGIL_BASE_URL}/mv/search`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1406,7 +1473,7 @@ async function searchCellWithGds(
       "Ocp-Apim-Subscription-Key": AGIL_APIM_SUBSCRIPTION_KEY,
     },
     body: JSON.stringify(buildAgilSearchPayload(request, gds)),
-  });
+  }, `Agil matrix search GDS ${gds}`);
 
   if (response.status === 401) {
     throw new Error("AGIL_TOKEN_EXPIRED");
@@ -1418,7 +1485,37 @@ async function searchCellWithGds(
 
   const json = await response.json() as AgilSearchResponse;
   const groups = Array.isArray(json.groups) ? json.groups : [];
+  const maxStops = Math.max(0, request.filters.maxStops ?? 1);
   return groups.reduce<AgilCellQuote | undefined>((best, group) => {
+    const validatingCarrier = group.pricingInfo?.itinTotalFare?.validatingCarrier
+      ?? group.airline?.code
+      ?? undefined;
+    const outboundCandidates = normalizeJourneyCandidates(
+      group.departure,
+      "outbound",
+      validatingCarrier,
+    );
+    if (outboundCandidates.length === 0) {
+      return best;
+    }
+
+    const inboundCandidates = request.tripType === "round-trip"
+      ? normalizeJourneyCandidates(group.returns, "inbound", validatingCarrier)
+      : [];
+    if (request.tripType === "round-trip" && inboundCandidates.length === 0) {
+      return best;
+    }
+
+    const totalStops = (
+      request.tripType === "round-trip"
+        ? [outboundCandidates[0].itinerary, inboundCandidates[0].itinerary]
+        : [outboundCandidates[0].itinerary]
+    ).reduce((sum, itinerary) => sum + (itinerary.stops ?? 0), 0);
+
+    if (totalStops > maxStops) {
+      return best;
+    }
+
     const totalFare = computeAgilTotalAmount(group.pricingInfo);
     if (typeof totalFare !== "number") {
       return best;
@@ -1428,7 +1525,7 @@ async function searchCellWithGds(
       return {
         amount: totalFare,
         currencyCode: group.pricingInfo?.tipoCambio?.code || request.currencyCode,
-        validatingCarrier: group.pricingInfo?.itinTotalFare?.validatingCarrier,
+        validatingCarrier,
       };
     }
 
@@ -1441,7 +1538,7 @@ async function searchGroupsWithGds(
   request: SearchRequest,
   gds: number,
 ): Promise<AgilSearchGroup[]> {
-  const response = await fetch(`${AGIL_BASE_URL}/mv/search`, {
+  const response = await fetchAgil(`${AGIL_BASE_URL}/mv/search`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1450,7 +1547,7 @@ async function searchGroupsWithGds(
       "Ocp-Apim-Subscription-Key": AGIL_APIM_SUBSCRIPTION_KEY,
     },
     body: JSON.stringify(buildAgilSearchPayload(request, gds)),
-  });
+  }, `Agil search GDS ${gds}`);
 
   if (response.status === 401) {
     throw new Error("AGIL_TOKEN_EXPIRED");
@@ -1473,7 +1570,7 @@ async function startAgilSearch(
   session: AgilSessionData,
   request: SearchRequest,
 ): Promise<void> {
-  const response = await fetch(`${AGIL_BASE_URL}/mv/start-search`, {
+  const response = await fetchAgil(`${AGIL_BASE_URL}/mv/start-search`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1482,7 +1579,7 @@ async function startAgilSearch(
       "Ocp-Apim-Subscription-Key": AGIL_APIM_SUBSCRIPTION_KEY,
     },
     body: JSON.stringify(buildAgilStartSearchPayload(request, randomUUID())),
-  });
+  }, "Agil start-search");
 
   if (response.status === 401) {
     throw new Error("AGIL_TOKEN_EXPIRED");
@@ -1673,49 +1770,53 @@ export async function resolveLocalAgilExactProgressive(
   const warnings: string[] = [];
   let partial = false;
 
-  await mapConcurrent(AGIL_GDS_LIST, AGIL_GDS_SEARCH_CONCURRENCY, async (gds) => {
-    try {
-      let resolvedGroups: AgilSearchGroup[];
+  const searchAll = async (): Promise<void> => {
+    await startAgilSearch(session, request);
+
+    await mapConcurrent(AGIL_GDS_LIST, AGIL_GDS_SEARCH_CONCURRENCY, async (gds) => {
       try {
-        resolvedGroups = await searchGroupsWithGds(session, request, gds);
+        const resolvedGroups = await searchGroupsWithGds(session, request, gds);
+        groups.push(...resolvedGroups);
+        const offers = dedupeAgilOffers(
+          groups.flatMap((group) => mapGroupToOffers(group, request)),
+        );
+
+        onUpdate?.({
+          offers,
+          warnings: uniqueStrings([...warnings]),
+          partial: true,
+        });
       } catch (error) {
-        if (error instanceof Error && error.message === "AGIL_TOKEN_EXPIRED") {
-          session = await refreshAgilToken(session);
-          cachedSession = session;
-          resolvedGroups = await searchGroupsWithGds(session, request, gds);
-        } else {
-          throw error;
-        }
+        partial = true;
+        const warning = error instanceof Error
+          ? `Agil GDS ${gds} omitted: ${error.message}`
+          : `Agil GDS ${gds} omitted due to an unknown error.`;
+        warnings.push(warning);
+
+        const offers = dedupeAgilOffers(
+          groups.flatMap((group) => mapGroupToOffers(group, request)),
+        );
+
+        onUpdate?.({
+          offers,
+          warnings: uniqueStrings([...warnings]),
+          partial: true,
+        });
       }
+    });
+  };
 
-      groups.push(...resolvedGroups);
-      const offers = dedupeAgilOffers(
-        groups.flatMap((group) => mapGroupToOffers(group, request)),
-      );
-
-      onUpdate?.({
-        offers,
-        warnings: uniqueStrings([...warnings]),
-        partial: true,
-      });
-    } catch (error) {
-      partial = true;
-      const warning = error instanceof Error
-        ? `Agil GDS ${gds} omitted: ${error.message}`
-        : `Agil GDS ${gds} omitted due to an unknown error.`;
-      warnings.push(warning);
-
-      const offers = dedupeAgilOffers(
-        groups.flatMap((group) => mapGroupToOffers(group, request)),
-      );
-
-      onUpdate?.({
-        offers,
-        warnings: uniqueStrings([...warnings]),
-        partial: true,
-      });
+  try {
+    await searchAll();
+  } catch (error) {
+    if (error instanceof Error && error.message === "AGIL_TOKEN_EXPIRED") {
+      session = await refreshAgilToken(session);
+      cachedSession = session;
+      await searchAll();
+    } else {
+      throw error;
     }
-  });
+  }
 
   const offers = dedupeAgilOffers(
     groups.flatMap((group) => mapGroupToOffers(group, request)),
@@ -1905,6 +2006,37 @@ function buildMatrixConfidenceSummary(cells: MatrixCell[]): Record<string, numbe
   }, {});
 }
 
+function prioritizeMatrixLoadingCells(
+  cells: MatrixCell[],
+  axes: MatrixResponse["axes"],
+  tripType: SearchRequest["tripType"],
+): Array<MatrixCell & { derivedRequest: SearchRequest; confidence: "loading" }> {
+  const departureOrder = new Map(axes.departureDates.map((date, index) => [date, index]));
+  const returnOrder = new Map(axes.returnDates.map((date, index) => [date, index]));
+
+  return cells
+    .filter((cell): cell is MatrixCell & { derivedRequest: SearchRequest; confidence: "loading" } =>
+      cell.confidence === "loading" && Boolean(cell.derivedRequest),
+    )
+    .sort((left, right) => {
+      const leftDeparture = departureOrder.get(left.departureDate) ?? Number.MAX_SAFE_INTEGER;
+      const rightDeparture = departureOrder.get(right.departureDate) ?? Number.MAX_SAFE_INTEGER;
+
+      if (tripType === "one-way") {
+        return leftDeparture - rightDeparture;
+      }
+
+      const leftReturn = returnOrder.get(left.returnDate ?? "") ?? Number.MAX_SAFE_INTEGER;
+      const rightReturn = returnOrder.get(right.returnDate ?? "") ?? Number.MAX_SAFE_INTEGER;
+      const leftWave = leftDeparture + leftReturn;
+      const rightWave = rightDeparture + rightReturn;
+
+      if (leftWave !== rightWave) return leftWave - rightWave;
+      if (leftDeparture !== rightDeparture) return leftDeparture - rightDeparture;
+      return leftReturn - rightReturn;
+    });
+}
+
 export function createLocalAgilMatrixDraft(
   request: SearchRequest,
   providerMeta: ProviderMeta,
@@ -1997,12 +2129,9 @@ export async function resolveLocalAgilMatrixProgressive(
 ): Promise<MatrixResponse> {
   const session = await getAgilSession();
   let partial = false;
+  const prioritizedCells = prioritizeMatrixLoadingCells(draft.cells, draft.axes, request.tripType);
 
-  const resolvedCells = await mapConcurrent(draft.cells, AGIL_MATRIX_CELL_CONCURRENCY, async (cell) => {
-    if (cell.confidence !== "loading" || !cell.derivedRequest) {
-      return cell;
-    }
-
+  const resolvedLoadingCells = await mapConcurrent(prioritizedCells, AGIL_MATRIX_CELL_CONCURRENCY, async (cell) => {
     try {
       const quote = await searchCellPrice(session, cell.derivedRequest);
       const nextCell = quote
@@ -2044,6 +2173,8 @@ export async function resolveLocalAgilMatrixProgressive(
       return nextCell;
     }
   });
+  const resolvedByKey = new Map(resolvedLoadingCells.map((cell) => [cell.key, cell]));
+  const resolvedCells = draft.cells.map((cell) => resolvedByKey.get(cell.key) ?? cell);
 
   const warnings = partial
     ? ["Matrix finished with partial Agil failures."]

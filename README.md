@@ -57,15 +57,23 @@ La integracion actual depende de una sesion real en Chrome o Edge. El flujo loca
 
 Variables utiles:
 
+- `AGIL_BROWSER_URL`
+- `AGIL_BROWSER_WS_ENDPOINT`
 - `AGIL_CHROME_PROFILE`
 - `AGIL_CHROME_USER_DATA_DIR`
 - `AGIL_CHROME_EXECUTABLE`
+- `AGILSMART_HOST_IP`
+- `AGIL_HTTP_TIMEOUT_MS`
 
 Ejemplos:
 
+- Chrome con DevTools remoto: `AGIL_BROWSER_URL=http://127.0.0.1:9222`
+- Timeout HTTP de Agil: `AGIL_HTTP_TIMEOUT_MS=20000`
 - Chrome perfil por defecto: sin variables adicionales
 - Chrome perfil secundario: `AGIL_CHROME_PROFILE=Profile 1`
 - Edge: `AGIL_CHROME_USER_DATA_DIR=%LOCALAPPDATA%\\Microsoft\\Edge\\User Data`
+- Forzar IP de Agil si tu red lo necesita: `AGILSMART_HOST_IP=1.2.3.4`
+- Timeout HTTP a Agil: `AGIL_HTTP_TIMEOUT_MS=20000`
 
 ## Scripts
 

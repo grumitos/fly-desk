@@ -11,9 +11,7 @@ const state = {
   matrixResponse: null,
   matrixJobId: null,
   matrixPollHandle: null,
-  compareResponse: null,
   selectedOfferId: null,
-  compareIds: new Set(),
   quotationText: "",
   selectedMatrixKey: null,
   airlineFilter: { hidden: new Set(), only: null },
@@ -21,6 +19,13 @@ const state = {
   viewMode: "list",
   flexMode: false,
   detailPendingAction: null,
+  matrixExpanded: false,
+  matrixScroll: { top: 0, left: 0 },
+  resultsScroll: { top: 0, left: 0 },
+  pollRenderHandle: null,
+  pollRenderPending: false,
+  pollInteractionAt: 0,
+  pollPointerDown: false,
 };
 
 const autocompleteState = {
@@ -33,6 +38,11 @@ const ALLOWED_DATE_YEAR = "2026";
 const ALLOWED_DATE_MIN = `${ALLOWED_DATE_YEAR}-01-01`;
 const ALLOWED_DATE_MAX = `${ALLOWED_DATE_YEAR}-12-31`;
 const DEFAULT_CURRENCY_CODE = "USD";
+const DEFAULT_MAX_STOPS = 1;
+const SEARCH_CONFIG_CLIPBOARD_KEY = "flydesk.searchClipboard";
+const SEARCH_CONFIG_CLIPBOARD_TYPE = "fly-desk-search-config";
+const SEARCH_CONFIG_CLIPBOARD_VERSION = 1;
+const POLL_RENDER_IDLE_MS = 180;
 
 const $ = (id) => document.getElementById(id);
 
@@ -40,6 +50,7 @@ const rootEl = document.documentElement;
 const searchForm = $("searchForm");
 const workspace = document.querySelector(".workspace");
 const searchMode = $("searchMode");
+const sortMode = $("sortMode");
 const tripType = $("tripType");
 const detailPanel = $("detailPanel");
 const detailClose = $("detailClose");
@@ -54,11 +65,14 @@ const paxAdultsDisplay = $("paxAdultsDisplay");
 const paxChildrenDisplay = $("paxChildrenDisplay");
 const paxInfantsDisplay = $("paxInfantsDisplay");
 const sortButtonsEl = $("sortButtons");
-const compareBtnEl = $("compareBtn");
-const compareBtnCount = $("compareBtnCount");
-const compareClearBtn = $("compareClear");
 const viewToggle = $("viewToggle");
+const matrixExpandBtn = $("matrixExpandBtn");
 const resultsCountLabel = $("resultsCountLabel");
+const matrixFullscreen = $("matrixFullscreen");
+const matrixFullscreenBackdrop = $("matrixFullscreenBackdrop");
+const matrixFullscreenClose = $("matrixFullscreenClose");
+const matrixFullscreenBody = $("matrixFullscreenBody");
+const matrixFullscreenMeta = $("matrixFullscreenMeta");
 const dateTrigger = $("dateTrigger");
 const dateTriggerText = $("dateTriggerText");
 const calendarPopover = $("calendarPopover");
@@ -80,6 +94,8 @@ const repriceButton = $("repriceButton");
 const quotationButton = $("quotationButton");
 const validationBox = $("validationErrors");
 const toastContainer = $("toastContainer");
+const copySearchConfigBtn = $("copySearchConfigBtn");
+const pasteSearchConfigBtn = $("pasteSearchConfigBtn");
 const themeButtons = [...document.querySelectorAll("[data-theme-value]")];
 
 const calendarState = {
@@ -105,6 +121,34 @@ function showToast(message, type = "error") {
 function debounce(fn, ms) {
   let t;
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+async function writeClipboardText(text) {
+  if (!navigator.clipboard?.writeText) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.top = "-9999px";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+    let copied = false;
+    try {
+      copied = document.execCommand("copy");
+    } catch {
+      copied = false;
+    } finally {
+      textarea.remove();
+    }
+    return copied;
+  }
 }
 
 function renderResultsSkeleton(kind = "search") {
@@ -176,6 +220,116 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
+function captureMatrixScroll(container = resultsContainer) {
+  const wrap = container?.querySelector(".matrix-wrap");
+  if (!wrap) return;
+  state.matrixScroll = {
+    top: wrap.scrollTop,
+    left: wrap.scrollLeft,
+  };
+}
+
+function syncMatrixScroll(wrap) {
+  if (!wrap) return;
+  wrap.scrollTop = state.matrixScroll.top;
+  wrap.scrollLeft = state.matrixScroll.left;
+}
+
+function handleMatrixScroll(event) {
+  const wrap = event.currentTarget;
+  if (!(wrap instanceof HTMLElement)) return;
+  markPollingUiInteraction();
+  state.matrixScroll = {
+    top: wrap.scrollTop,
+    left: wrap.scrollLeft,
+  };
+}
+
+function captureResultsScroll(container = resultsContainer) {
+  const wrap = container?.querySelector(".table-wrap");
+  if (!wrap) return;
+  state.resultsScroll = {
+    top: wrap.scrollTop,
+    left: wrap.scrollLeft,
+  };
+}
+
+function syncResultsScroll(wrap) {
+  if (!wrap) return;
+  wrap.scrollTop = state.resultsScroll.top;
+  wrap.scrollLeft = state.resultsScroll.left;
+}
+
+function handleResultsScroll(event) {
+  const wrap = event.currentTarget;
+  if (!(wrap instanceof HTMLElement)) return;
+  markPollingUiInteraction();
+  state.resultsScroll = {
+    top: wrap.scrollTop,
+    left: wrap.scrollLeft,
+  };
+}
+
+function markPollingUiInteraction() {
+  state.pollInteractionAt = Date.now();
+}
+
+function scheduleDeferredPollRender() {
+  if (state.pollRenderHandle) clearTimeout(state.pollRenderHandle);
+  state.pollRenderHandle = setTimeout(() => {
+    if (!state.pollRenderPending) {
+      state.pollRenderHandle = null;
+      return;
+    }
+    if (state.pollPointerDown || (Date.now() - state.pollInteractionAt) < POLL_RENDER_IDLE_MS) {
+      scheduleDeferredPollRender();
+      return;
+    }
+    state.pollRenderHandle = null;
+    renderAll();
+  }, POLL_RENDER_IDLE_MS);
+}
+
+function requestPolledRender() {
+  if (state.pollPointerDown || (Date.now() - state.pollInteractionAt) < POLL_RENDER_IDLE_MS) {
+    state.pollRenderPending = true;
+    scheduleDeferredPollRender();
+    return;
+  }
+  renderAll();
+}
+
+function syncMatrixExpandedUI() {
+  const canExpand = state.viewMode === "calendar" && state.matrixResponse?.cells?.length > 0;
+  const isExpanded = canExpand && state.matrixExpanded;
+  matrixExpandBtn?.classList.toggle("hidden", !canExpand);
+  matrixExpandBtn?.classList.toggle("is-active", isExpanded);
+  matrixFullscreen?.classList.toggle("hidden", !isExpanded);
+  matrixFullscreen?.setAttribute("aria-hidden", String(!isExpanded));
+  document.body.classList.toggle("matrix-expanded-open", isExpanded);
+  if (matrixFullscreenMeta) {
+    matrixFullscreenMeta.textContent = `${state.matrixResponse?.cells?.length ?? 0} celdas`;
+  }
+  if (!isExpanded && matrixFullscreenBody) {
+    matrixFullscreenBody.innerHTML = "";
+  }
+}
+
+function openMatrixExpanded() {
+  if (state.viewMode !== "calendar" || !state.matrixResponse?.cells?.length) return;
+  captureMatrixScroll(resultsContainer);
+  state.matrixExpanded = true;
+  renderAll();
+}
+
+function closeMatrixExpanded({ rerender = true } = {}) {
+  if (!state.matrixExpanded) return;
+  captureMatrixScroll(matrixFullscreenBody);
+  state.matrixExpanded = false;
+  syncMatrixExpandedUI();
+  if (rerender) renderAll();
+}
+
 function formatDuration(minutes) {
   if (!minutes) return "—";
   const h = Math.floor(minutes / 60);
@@ -200,6 +354,29 @@ function formatPassengerSummary(adults, children, infants) {
   if (children > 0) chunks.push(`${children} niño${children === 1 ? "" : "s"}`);
   if (infants > 0) chunks.push(`${infants} bebé${infants === 1 ? "" : "s"}`);
   return chunks.join(", ");
+}
+
+function primarySegmentForOffer(offer) {
+  const outbound = offer?.itineraries?.find((it) => it.direction === "outbound") ?? offer?.itineraries?.[0];
+  return outbound?.segments?.[0] ?? null;
+}
+
+function carrierDisplayParts(offer) {
+  const primarySegment = primarySegmentForOffer(offer);
+  const code = offer?.mainCarrier ?? offer?.validatingCarrier ?? primarySegment?.marketingCarrier ?? "—";
+  const rawName = [
+    primarySegment?.marketingCarrierName,
+    primarySegment?.operatingCarrierName,
+  ].find((value) => typeof value === "string" && value.trim());
+  const name = rawName && rawName.trim().toUpperCase() !== String(code).trim().toUpperCase()
+    ? rawName.trim()
+    : "";
+
+  return {
+    code,
+    name,
+    display: name || code,
+  };
 }
 
 function firstDayOfMonth(iso) {
@@ -273,6 +450,19 @@ function clearResolvedLocation(id, keepValue = true) {
   delete input.dataset.label;
 }
 
+function applyResolvedLocation(id, location = {}) {
+  const input = $(id);
+  if (!input) return;
+  const value = String(location.value || location.label || location.code || "").trim();
+  const code = String(location.code || "").trim().toUpperCase();
+  const label = String(location.label || value).trim();
+  input.value = value;
+  if (code) input.dataset.code = code;
+  else delete input.dataset.code;
+  if (label) input.dataset.label = label;
+  else delete input.dataset.label;
+}
+
 function resolvedLocationCode(id) {
   const input = $(id);
   if (!input) return "";
@@ -318,6 +508,189 @@ function selectLocationSuggestion(id, suggestion) {
   input.dataset.code = suggestion.code;
   input.dataset.label = suggestion.label;
   hideLocationMenu(id);
+}
+
+function parseSearchClipboardPayload(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.type !== SEARCH_CONFIG_CLIPBOARD_TYPE || parsed.version !== SEARCH_CONFIG_CLIPBOARD_VERSION) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function readStoredSearchClipboard() {
+  try {
+    const stored = window.localStorage.getItem(SEARCH_CONFIG_CLIPBOARD_KEY);
+    const payload = parseSearchClipboardPayload(stored);
+    if (!payload && stored) window.localStorage.removeItem(SEARCH_CONFIG_CLIPBOARD_KEY);
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function syncSearchClipboardUI() {
+  if (!pasteSearchConfigBtn) return;
+  pasteSearchConfigBtn.disabled = !Boolean(readStoredSearchClipboard());
+}
+
+function buildSearchClipboardPayload() {
+  const readLocation = (id) => {
+    const input = $(id);
+    return {
+      value: String(input?.value || "").trim(),
+      code: String(input?.dataset.code || "").trim().toUpperCase(),
+      label: String(input?.dataset.label || input?.value || "").trim(),
+    };
+  };
+
+  return {
+    type: SEARCH_CONFIG_CLIPBOARD_TYPE,
+    version: SEARCH_CONFIG_CLIPBOARD_VERSION,
+    copiedAt: new Date().toISOString(),
+    mode: state.flexMode ? "flexible" : "exact",
+    tripType: tripType.value === "one-way" ? "one-way" : "round-trip",
+    origin: readLocation("origin"),
+    destination: readLocation("destination"),
+    dates: {
+      departureDate: controlValue("departureDate"),
+      returnDate: controlValue("returnDate"),
+      departureStart: controlValue("departureStart"),
+      departureEnd: controlValue("departureEnd"),
+      returnStart: controlValue("returnStart"),
+      returnEnd: controlValue("returnEnd"),
+    },
+    stay: {
+      min: controlValue("stayDaysMin"),
+      max: controlValue("stayDaysMax"),
+    },
+    passengers: {
+      adults: controlValue("adults"),
+      children: controlValue("children"),
+      infants: controlValue("infants"),
+    },
+    filters: {
+      nonStop: controlChecked("nonStop"),
+      baggageRequired: controlChecked("baggageRequired"),
+    },
+    sortMode: controlValue("sortMode") || state.sortMode || "cheapest",
+  };
+}
+
+function persistSearchClipboardPayload(payload) {
+  const serialized = JSON.stringify(payload);
+  try {
+    window.localStorage.setItem(SEARCH_CONFIG_CLIPBOARD_KEY, serialized);
+  } catch {
+    // Ignore storage failures; clipboard write still provides a usable path.
+  }
+  return serialized;
+}
+
+async function readSystemSearchClipboard() {
+  if (!navigator.clipboard?.readText) return null;
+  try {
+    return parseSearchClipboardPayload(await navigator.clipboard.readText());
+  } catch {
+    return null;
+  }
+}
+
+function clearRenderedSearchState() {
+  if (state.matrixExpanded) closeMatrixExpanded({ rerender: false });
+  stopMatrixPolling();
+  stopSearchPolling();
+  state.request = null;
+  state.searchResponse = null;
+  state.matrixResponse = null;
+  state.selectedOfferId = null;
+  state.selectedMatrixKey = null;
+  state.quotationText = "";
+  state.detailPendingAction = null;
+  state.airlineFilter.hidden.clear();
+  state.airlineFilter.only = null;
+  state.resultsPage = 1;
+  state.viewMode = "list";
+  state.matrixScroll = { top: 0, left: 0 };
+  state.resultsScroll = { top: 0, left: 0 };
+  closeDetailPanel();
+}
+
+function applySearchClipboardPayload(payload) {
+  if (!payload) return false;
+
+  state.flexMode = payload.mode === "flexible";
+  tripType.value = payload.tripType === "one-way" ? "one-way" : "round-trip";
+  state.sortMode = String(payload.sortMode || "cheapest");
+  sortMode.value = state.sortMode;
+
+  applyResolvedLocation("origin", payload.origin);
+  applyResolvedLocation("destination", payload.destination);
+  hideLocationMenu("origin");
+  hideLocationMenu("destination");
+
+  $("departureDate").value = String(payload.dates?.departureDate || "");
+  $("returnDate").value = String(payload.dates?.returnDate || "");
+  $("departureStart").value = String(payload.dates?.departureStart || "");
+  $("departureEnd").value = String(payload.dates?.departureEnd || "");
+  $("returnStart").value = String(payload.dates?.returnStart || "");
+  $("returnEnd").value = String(payload.dates?.returnEnd || "");
+
+  stayDaysMinEl.value = String(payload.stay?.min || stayDaysMinEl.value || "7");
+  stayDaysMaxEl.value = String(payload.stay?.max || stayDaysMaxEl.value || stayDaysMinEl.value || "14");
+
+  $("adults").value = String(payload.passengers?.adults || "1");
+  $("children").value = String(payload.passengers?.children || "0");
+  $("infants").value = String(payload.passengers?.infants || "0");
+  $("nonStop").checked = payload.filters?.nonStop === true;
+  $("baggageRequired").checked = payload.filters?.baggageRequired === true;
+
+  calendarState.selectionStage = "start";
+  closeCalendarPopover();
+  showErrors([]);
+  updatePaxLabel();
+  updateModeFields();
+  clearRenderedSearchState();
+  renderAll();
+  return true;
+}
+
+async function copySearchConfiguration() {
+  const payload = buildSearchClipboardPayload();
+  const serialized = persistSearchClipboardPayload(payload);
+  const clipboardSynced = await writeClipboardText(serialized);
+
+  syncSearchClipboardUI();
+  showToast(
+    clipboardSynced
+      ? "Configuracion copiada. Ya puedes pegarla en otra pestana."
+      : "Configuracion guardada para pegarla en otra pestana.",
+    "success",
+  );
+}
+
+async function pasteSearchConfiguration() {
+  let payload = readStoredSearchClipboard();
+
+  if (!payload) {
+    payload = await readSystemSearchClipboard();
+    if (payload) persistSearchClipboardPayload(payload);
+  }
+
+  if (!payload) {
+    syncSearchClipboardUI();
+    showToast("No hay una configuracion copiada todavia.");
+    return;
+  }
+
+  applySearchClipboardPayload(payload);
+  syncSearchClipboardUI();
+  showToast("Configuracion pegada. Pulsa Buscar para ejecutarla.", "success");
 }
 
 function renderLocationMenu(id) {
@@ -1473,6 +1846,7 @@ function getFormPayload() {
       },
       filters: {
         nonStop: fd.get("nonStop") === "on",
+        maxStops: DEFAULT_MAX_STOPS,
         baggageRequired: fd.get("baggageRequired") === "on",
         maxResults: disableMaxResults ? undefined : 25,
         includedAirlineCodes: [],
@@ -1523,9 +1897,93 @@ function totalStopsCount(offer) {
   return (offer.itineraries || []).reduce((sum, itinerary) => sum + (itinerary.stops || 0), 0);
 }
 
+function computeLayoverMinutes(itinerary, index) {
+  const layoverMinutes = itinerary?.layoverMinutes?.[index];
+  if (typeof layoverMinutes === "number" && layoverMinutes > 0) {
+    return layoverMinutes;
+  }
+
+  const current = itinerary?.segments?.[index];
+  const next = itinerary?.segments?.[index + 1];
+  if (!current?.arrivalAt || !next?.departureAt) {
+    return null;
+  }
+
+  const currentMs = new Date(current.arrivalAt).getTime();
+  const nextMs = new Date(next.departureAt).getTime();
+  if (!Number.isFinite(currentMs) || !Number.isFinite(nextMs) || nextMs <= currentMs) {
+    return null;
+  }
+
+  return Math.round((nextMs - currentMs) / 60000);
+}
+
+function cityLabel(value = "") {
+  const normalized = String(value).trim();
+  if (!normalized) return "";
+  return normalized
+    .toLowerCase()
+    .split(/[\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function layoverItemsForItinerary(itinerary) {
+  const segments = itinerary?.segments ?? [];
+  if (segments.length < 2) return [];
+
+  return segments.slice(0, -1).map((segment, index) => {
+    const minutes = computeLayoverMinutes(itinerary, index);
+    if (typeof minutes !== "number" || minutes <= 0) {
+      return null;
+    }
+
+    return {
+      city: cityLabel(segment.destinationName || segment.destination || "Escala"),
+      minutes,
+    };
+  }).filter(Boolean);
+}
+
+function layoverItemsForOffer(offer) {
+  return (offer?.itineraries ?? []).flatMap((itinerary) => layoverItemsForItinerary(itinerary));
+}
+
+function renderStopsSummary(offer) {
+  const stops = offer?.comparisonMetrics?.totalStops ?? totalStopsCount(offer);
+  if (stops === 0) {
+    return '<span class="badge badge--success">Directo</span>';
+  }
+
+  const items = layoverItemsForOffer(offer);
+  const toneClass = stops === 1 ? "stops-stack--warning" : "stops-stack--danger";
+  const totalLayoverMinutes = items.reduce((sum, item) => sum + item.minutes, 0);
+  const timeText = totalLayoverMinutes > 0
+    ? formatDuration(totalLayoverMinutes)
+    : items.length
+      ? formatDuration(items[0].minutes)
+      : "Escala";
+  const label = stops === 1 ? "1 escala" : `${stops} escalas`;
+  const primaryCity = items[0]?.city || "Ciudad por confirmar";
+  const citySummary = items.length > 1 ? `${primaryCity} +${items.length - 1}` : primaryCity;
+  const metaText = `${citySummary} · ${label}`;
+  const detailTitle = items.length
+    ? `Tiempo total: ${timeText} | ${items.map((item) => `${item.city}: ${formatDuration(item.minutes)}`).join(" | ")}`
+    : metaText;
+
+  return `
+    <div class="stops-stack ${toneClass}" title="${escapeHtml(detailTitle)}">
+      <span class="stops-stack__time">${escapeHtml(timeText)}</span>
+      <span class="stops-stack__meta">${escapeHtml(metaText)}</span>
+    </div>
+  `;
+}
+
 function getActiveClientFilters() {
   return {
     nonStop: controlChecked("nonStop"),
+    maxStops: DEFAULT_MAX_STOPS,
     baggageRequired: controlChecked("baggageRequired"),
   };
 }
@@ -1539,6 +1997,8 @@ function applyClientOfferControls() {
   const { hidden, only } = state.airlineFilter;
   offers = offers.filter((offer) => {
     const mainCarrier = offer.mainCarrier || offer.validatingCarrier || "";
+    const maxStops = typeof filters.maxStops === "number" ? Math.max(0, filters.maxStops) : DEFAULT_MAX_STOPS;
+    if (totalStopsCount(offer) > maxStops) return false;
     if (filters.nonStop && totalStopsCount(offer) > 0) return false;
     if (filters.baggageRequired && !offer.baggage?.checkedIncluded) return false;
     // Sidebar airline filter
@@ -1590,7 +2050,7 @@ function queueSearchPoll(jobId) {
       if (state.searchJobId !== jobId) return;
       state.request = data.request;
       setSearchResponse(data);
-      renderAll();
+      requestPolledRender();
       if (!data.searchComplete) {
         queueSearchPoll(jobId);
       } else {
@@ -1613,7 +2073,7 @@ function queueMatrixPoll(jobId) {
       if (state.matrixJobId !== jobId) return;
       state.matrixResponse = data;
       state.request = data.request;
-      renderAll();
+      requestPolledRender();
       if (!data.matrixComplete) {
         queueMatrixPoll(jobId);
       } else {
@@ -1678,15 +2138,12 @@ function updateResultsToolbar() {
     });
   }
 
-  // Compare button
-  if (compareBtnEl) {
-    compareBtnEl.classList.toggle("hidden", state.compareIds.size === 0);
-    if (compareBtnCount) compareBtnCount.textContent = state.compareIds.size;
-  }
+  syncMatrixExpandedUI();
 }
 
 function renderResults() {
   if (!resultsContainer) return;
+  captureResultsScroll(resultsContainer);
   const offers = state.searchResponse?.offers ?? [];
   const total = state.searchResponse?.filteredOfferGroups?.length
     ?? buildOfferGroups(state.searchResponse?.filteredOffers ?? state.searchResponse?.allOffers ?? offers).length;
@@ -1709,7 +2166,6 @@ function renderResults() {
   }
 
   html += '<div class="table-wrap"><table class="results-table"><thead><tr>';
-  html += '<th class="col-check">Sel</th>';
   html += '<th>Aerolínea</th>';
   html += '<th>Fechas</th>';
   html += '<th>Duración</th>';
@@ -1729,18 +2185,15 @@ function renderResults() {
     const datesText = ret ? `${dep} → ${ret}` : dep;
     const isActive = group.some(g => g.id === state.selectedOfferId);
     const badge = group.length > 1 ? ` <span class="badge badge--accent" style="font-size:10px;height:18px;padding:0 5px" title="${group.length} opciones de regreso">${group.length}</span>` : "";
-    const stops = o.comparisonMetrics?.totalStops ?? 0;
-    const stopsClass = stops === 0 ? "badge--success" : stops === 1 ? "badge--warning" : "badge--danger";
-    const stopsLabel = stops === 0 ? "Directo" : `${stops} esc`;
     const bagCarry = o.baggage?.carryOnIncluded ? "✓" : "—";
     const bagCheck = o.baggage?.checkedIncluded ? "✓" : "—";
+    const carrier = carrierDisplayParts(o);
 
     html += `<tr data-oid="${o.id}" class="${isActive ? "is-active" : ""}">`;
-    html += `<td class="col-check"><input type="checkbox" data-cid="${o.id}" ${state.compareIds.has(o.id) ? "checked" : ""} /></td>`;
-    html += `<td><span class="cell-main">${escapeHtml(o.mainCarrier ?? o.validatingCarrier ?? "—")}</span></td>`;
+    html += `<td><span class="cell-main carrier-label" title="${escapeHtml(carrier.display)}">${escapeHtml(carrier.display)}</span></td>`;
     html += `<td><span class="cell-sub">${datesText}${badge}</span></td>`;
     html += `<td>${formatDuration(o.comparisonMetrics?.totalDurationMinutes)}</td>`;
-    html += `<td><span class="badge ${stopsClass}">${stopsLabel}</span></td>`;
+    html += `<td>${renderStopsSummary(o)}</td>`;
     html += `<td class="cell-sub">${bagCarry} / ${bagCheck}</td>`;
     html += `<td class="results-price">${formatMoney(o.price?.total)}</td>`;
     html += `<td>${agilPath ? `<a href="${agilPath.url}" target="_blank" rel="noreferrer" class="row-link" data-stop-row="1">Agil</a>` : '<span class="cell-sub">—</span>'}</td>`;
@@ -1757,6 +2210,15 @@ function renderResults() {
   html += `</div>`;
 
   resultsContainer.innerHTML = html;
+  const resultsWrap = resultsContainer.querySelector(".table-wrap");
+  syncResultsScroll(resultsWrap);
+  requestAnimationFrame(() => syncResultsScroll(resultsWrap));
+  resultsWrap?.addEventListener("scroll", handleResultsScroll, { passive: true });
+  resultsWrap?.addEventListener("wheel", markPollingUiInteraction, { passive: true });
+  resultsWrap?.addEventListener("pointerdown", () => {
+    state.pollPointerDown = true;
+    markPollingUiInteraction();
+  });
 }
 
 function handleResultsClick(e) {
@@ -1764,6 +2226,7 @@ function handleResultsClick(e) {
   if (pager) {
     const total = state.searchResponse?.filteredOfferGroups?.length ?? 0;
     const totalPages = resultsPageCount(total);
+    state.resultsScroll = { top: 0, left: 0 };
     if (pager.dataset.resultsPage === "prev") {
       state.resultsPage = Math.max(1, state.resultsPage - 1);
     } else if (pager.dataset.resultsPage === "next") {
@@ -1775,10 +2238,6 @@ function handleResultsClick(e) {
     return;
   }
 
-  if (e.target instanceof HTMLInputElement) {
-    // Checkbox change — handled via change delegation below
-    return;
-  }
   if (e.target.closest("[data-stop-row]")) return;
   const row = e.target.closest("tr[data-oid]");
   if (!row) return;
@@ -1798,18 +2257,18 @@ async function handleMatrixClick(e) {
   if (!cell?.selectable || !cell.derivedRequest) return;
   submitButton.disabled = true;
   state.selectedMatrixKey = btn.dataset.mk;
+  state.matrixExpanded = false;
   try {
     stopMatrixPolling();
     stopSearchPolling();
     state.request = cell.derivedRequest;
     state.matrixResponse = null;
     state.viewMode = "list";
-    state.compareIds.clear();
-    state.compareResponse = null;
     state.quotationText = "";
     state.airlineFilter.hidden.clear();
     state.airlineFilter.only = null;
     state.detailPendingAction = null;
+    state.resultsScroll = { top: 0, left: 0 };
     setSearchResponse(buildPendingSearchResponse(cell.derivedRequest, state.sortMode));
     renderAll();
 
@@ -1859,33 +2318,6 @@ function matrixToneClass(cell, stats) {
   return "matrix-cell--bad";
 }
 
-async function refreshCompare() {
-  const sid = sessionId();
-  if (!sid || state.compareIds.size === 0) {
-    state.compareResponse = null;
-    renderCompare();
-    return;
-  }
-  try {
-    state.compareResponse = await postJson("/api/compare", { searchSessionId: sid, offerIds: [...state.compareIds] });
-  } catch (err) { showToast(err.message); state.compareResponse = null; }
-  renderCompare();
-}
-
-function renderCompare() {
-  const compSection = $("compareSection");
-  if (!state.compareResponse) {
-    if (compSection) compSection.classList.add("hidden");
-    return;
-  }
-  if (compSection) compSection.classList.remove("hidden");
-  const compareContentEl = $("compareContent");
-  if (!compareContentEl) return;
-  const hdr = state.compareResponse.offers.map(o => `<th>${escapeHtml(o.mainCarrier ?? "—")}</th>`).join("");
-  const rows = state.compareResponse.rows.map(r => `<tr><th>${escapeHtml(r.label)}</th>${r.values.map(v => `<td>${escapeHtml(String(v))}</td>`).join("")}</tr>`).join("");
-  compareContentEl.innerHTML = `<div class="table-wrap"><table class="results-table"><thead><tr><th>Campo</th>${hdr}</tr></thead><tbody>${rows}</tbody></table></div>`;
-}
-
 /* ================================================================
    SIDEBAR — airline filter
    ================================================================ */
@@ -1893,10 +2325,12 @@ function renderCompare() {
 function buildAirlineList(allOffers) {
   const map = new Map();
   for (const offer of allOffers) {
-    const code = offer.mainCarrier ?? offer.validatingCarrier ?? "?";
-    if (!map.has(code)) map.set(code, { code, count: 0, minPrice: Infinity, currency: "" });
+    const carrier = carrierDisplayParts(offer);
+    const code = carrier.code || "?";
+    if (!map.has(code)) map.set(code, { code, display: carrier.display, count: 0, minPrice: Infinity, currency: "" });
     const entry = map.get(code);
     entry.count++;
+    if (!entry.display && carrier.display) entry.display = carrier.display;
     const amt = offer.price?.total?.amount;
     if (typeof amt === "number" && amt < entry.minPrice) {
       entry.minPrice = amt;
@@ -1941,7 +2375,7 @@ function renderSidebar() {
           <div class="sidebar__airline ${rowClass}" data-sl-toggle="${a.code}">
             <span class="sidebar__dot"></span>
             <div style="flex:1;min-width:0">
-              <div class="sidebar__code">${escapeHtml(a.code)}</div>
+              <div class="sidebar__code" title="${escapeHtml(a.display)}">${escapeHtml(a.display)}</div>
               <div class="sidebar__meta">×${a.count}${priceStr ? ` · ${priceStr}` : ""}</div>
             </div>
             <button class="sidebar__solo-btn" data-sl-solo="${a.code}" type="button">Solo</button>
@@ -1988,11 +2422,12 @@ function renderSidebar() {
    CALENDAR VIEW (was renderMatrix)
    ================================================================ */
 
-function renderCalendarView() {
-  if (!resultsContainer) return;
+function renderCalendarView(container = resultsContainer) {
+  if (!container) return;
+  captureMatrixScroll(container);
   const cells = state.matrixResponse?.cells;
   if (!cells || cells.length === 0) {
-    resultsContainer.innerHTML = '<div class="empty-state"><p class="empty-state__text">Sin datos de calendario.</p></div>';
+    container.innerHTML = '<div class="empty-state"><p class="empty-state__text">Sin datos de calendario.</p></div>';
     return;
   }
 
@@ -2042,10 +2477,14 @@ function renderCalendarView() {
   }
 
   html += '</div></div>';
-  resultsContainer.innerHTML = html;
+  container.innerHTML = html;
+  const matrixWrap = container.querySelector(".matrix-wrap");
+  syncMatrixScroll(matrixWrap);
+  requestAnimationFrame(() => syncMatrixScroll(matrixWrap));
+  matrixWrap?.addEventListener("scroll", handleMatrixScroll, { passive: true });
 
   // Re-attach matrix click handler on the container
-  resultsContainer.querySelectorAll("[data-mk]").forEach(btn => {
+  container.querySelectorAll("[data-mk]").forEach(btn => {
     btn.addEventListener("click", handleMatrixClick);
   });
 }
@@ -2055,8 +2494,13 @@ function renderCalendarView() {
    ================================================================ */
 
 function renderResultsArea() {
-  if (state.viewMode === "calendar" && state.matrixResponse?.cells?.length > 0) {
-    renderCalendarView();
+  const hasMatrix = state.viewMode === "calendar" && state.matrixResponse?.cells?.length > 0;
+  if (!hasMatrix && state.matrixExpanded) {
+    closeMatrixExpanded({ rerender: false });
+  }
+
+  if (hasMatrix) {
+    renderCalendarView(state.matrixExpanded ? matrixFullscreenBody : resultsContainer);
   } else if (state.searchResponse?.offers) {
     renderResults();
   }
@@ -2097,7 +2541,8 @@ function renderDetailPanel() {
   if (state.detailPendingAction) {
     const copy = detailActionCopy(state.detailPendingAction);
     const amount = formatMoney(offer.price?.total);
-    const summary = `${escapeHtml(offer.origin)} → ${escapeHtml(offer.destination)} · ${escapeHtml(offer.mainCarrier ?? offer.validatingCarrier ?? "—")}`;
+    const carrier = carrierDisplayParts(offer);
+    const summary = `${escapeHtml(offer.origin)} → ${escapeHtml(offer.destination)} · ${escapeHtml(carrier.display)}`;
     if (detailContent) {
       detailContent.innerHTML = `
         <div class="detail-busy" aria-live="polite" aria-busy="true">
@@ -2122,12 +2567,13 @@ function renderDetailPanel() {
   const flights = offer.itineraries?.flatMap((it) => it.segments.map((s) => s.flightNumber)).join(", ") || "—";
   const group = getGroupForOffer(offer.id) ?? [offer];
   const outbound = offer.itineraries?.find(it => it.direction === "outbound") ?? offer.itineraries?.[0];
+  const carrier = carrierDisplayParts(offer);
 
   let h = "";
 
   // Hero price
   h += `<div class="detail-hero">${formatMoney(offer.price?.total)}</div>`;
-  h += `<div class="detail-summary">${escapeHtml(offer.origin)} → ${escapeHtml(offer.destination)} · ${escapeHtml(offer.mainCarrier ?? offer.validatingCarrier ?? "—")} · ${formatDuration(offer.comparisonMetrics?.totalDurationMinutes)} · ${offer.comparisonMetrics?.totalStops ?? 0} esc</div>`;
+  h += `<div class="detail-summary">${escapeHtml(offer.origin)} → ${escapeHtml(offer.destination)} · ${escapeHtml(carrier.display)} · ${formatDuration(offer.comparisonMetrics?.totalDurationMinutes)} · ${offer.comparisonMetrics?.totalStops ?? 0} esc</div>`;
 
   // Confidence badge
   h += `<div><span class="badge badge--${confidenceColor(offer.priceConfidence)}">${offer.priceConfidence === "validated" ? "Precio validado" : "Precio live"}</span></div>`;
@@ -2212,10 +2658,14 @@ function renderDetailPanel() {
    ================================================================ */
 
 function renderAll() {
+  if (state.pollRenderHandle) {
+    clearTimeout(state.pollRenderHandle);
+    state.pollRenderHandle = null;
+  }
+  state.pollRenderPending = false;
   renderToolbar();
   renderSidebar();
   renderResultsArea();
-  renderCompare();
   renderDetailPanel();
   updateResultsToolbar();
 }
@@ -2250,6 +2700,7 @@ sortButtonsEl?.addEventListener("click", (e) => {
   state.sortMode = btn.dataset.sort;
   sortMode.value = btn.dataset.sort; // sync hidden select
   state.resultsPage = 1;
+  state.resultsScroll = { top: 0, left: 0 };
   applyClientOfferControls();
   renderAll();
 });
@@ -2263,6 +2714,27 @@ viewToggle?.addEventListener("click", (e) => {
   updateResultsToolbar();
 });
 
+matrixExpandBtn?.addEventListener("click", () => {
+  if (state.matrixExpanded) closeMatrixExpanded();
+  else openMatrixExpanded();
+});
+
+matrixFullscreenClose?.addEventListener("click", () => {
+  closeMatrixExpanded();
+});
+
+matrixFullscreenBackdrop?.addEventListener("click", () => {
+  closeMatrixExpanded();
+});
+
+copySearchConfigBtn?.addEventListener("click", async () => {
+  await copySearchConfiguration();
+});
+
+pasteSearchConfigBtn?.addEventListener("click", async () => {
+  await pasteSearchConfiguration();
+});
+
 // Detail close
 detailClose?.addEventListener("click", () => {
   state.selectedOfferId = null;
@@ -2274,6 +2746,10 @@ document.addEventListener("keydown", (e) => {
     closeCalendarPopover();
     return;
   }
+  if (e.key === "Escape" && state.matrixExpanded) {
+    closeMatrixExpanded();
+    return;
+  }
   if (e.key === "Escape" && detailPanel?.classList.contains("is-open")) {
     state.selectedOfferId = null;
     closeDetailPanel();
@@ -2281,28 +2757,29 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// Compare clear
-compareClearBtn?.addEventListener("click", () => {
-  state.compareIds.clear();
-  state.compareResponse = null;
-  renderAll();
-});
-
 // Results container click delegation (set up once)
 resultsContainer?.addEventListener("click", handleResultsClick);
-
-// Results container change delegation for checkboxes (set up once)
-resultsContainer?.addEventListener("change", async (e) => {
-  const inp = e.target.closest("[data-cid]");
-  if (!inp) return;
-  const id = inp.dataset.cid;
-  if (inp.checked) {
-    if (state.compareIds.size >= 2) { inp.checked = false; return; }
-    state.compareIds.add(id);
-  } else {
-    state.compareIds.delete(id);
-  }
-  await refreshCompare();
+resultsContainer?.addEventListener("pointerdown", () => {
+  state.pollPointerDown = true;
+  markPollingUiInteraction();
+});
+resultsContainer?.addEventListener("wheel", markPollingUiInteraction, { passive: true });
+matrixFullscreenBody?.addEventListener("pointerdown", () => {
+  state.pollPointerDown = true;
+  markPollingUiInteraction();
+});
+matrixFullscreenBody?.addEventListener("wheel", markPollingUiInteraction, { passive: true });
+document.addEventListener("pointerup", () => {
+  if (!state.pollPointerDown) return;
+  state.pollPointerDown = false;
+  markPollingUiInteraction();
+  if (state.pollRenderPending) scheduleDeferredPollRender();
+});
+document.addEventListener("pointercancel", () => {
+  if (!state.pollPointerDown) return;
+  state.pollPointerDown = false;
+  markPollingUiInteraction();
+  if (state.pollRenderPending) scheduleDeferredPollRender();
 });
 
 ["sortMode", "nonStop", "baggageRequired"].forEach((id) => {
@@ -2310,9 +2787,9 @@ resultsContainer?.addEventListener("change", async (e) => {
     if (!state.searchResponse?.allOffers) return;
     state.sortMode = controlValue("sortMode") || state.sortMode;
     state.resultsPage = 1;
+    state.resultsScroll = { top: 0, left: 0 };
     applyClientOfferControls();
     renderAll();
-    if (state.compareIds.size > 0) await refreshCompare();
   });
 });
 
@@ -2334,18 +2811,19 @@ searchForm.addEventListener("submit", async (e) => {
     stopSearchPolling();
     state.sortMode = translatedPayload.sortMode;
     state.resultsPage = 1;
-    state.compareIds.clear();
-    state.compareResponse = null;
     state.quotationText = "";
     state.selectedMatrixKey = null;
     state.detailPendingAction = null;
     state.airlineFilter.hidden.clear();
     state.airlineFilter.only = null;
+    state.resultsScroll = { top: 0, left: 0 };
 
     if (translatedPayload.request.searchMode === "roundtrip-grid") {
       stopSearchPolling();
       state.searchResponse = null;
       state.selectedOfferId = null;
+      state.matrixExpanded = false;
+      state.matrixScroll = { top: 0, left: 0 };
       state.request = translatedPayload.request;
       state.matrixResponse = buildPendingMatrixResponse(translatedPayload.request);
       state.viewMode = "calendar";
@@ -2360,6 +2838,7 @@ searchForm.addEventListener("submit", async (e) => {
         queueMatrixPoll(state.matrixJobId);
       }
     } else {
+      state.matrixExpanded = false;
       state.matrixResponse = null;
       state.request = translatedPayload.request;
       state.viewMode = "list";
@@ -2392,7 +2871,6 @@ repriceButton.addEventListener("click", async () => {
     applyClientOfferControls();
     state.quotationText = "";
     renderAll();
-    if (state.compareIds.size > 0) await refreshCompare();
   } catch (err) { showToast(err.message); }
   finally {
     state.detailPendingAction = null;
@@ -2414,7 +2892,13 @@ quotationButton.addEventListener("click", async () => {
     applyClientOfferControls();
     state.quotationText = data.plainText;
     renderAll();
-    if (state.compareIds.size > 0) await refreshCompare();
+    const copied = await writeClipboardText(data.plainText);
+    showToast(
+      copied
+        ? "Cotizacion copiada al portapapeles."
+        : "Cotizacion lista. No pude copiarla al portapapeles.",
+      copied ? "success" : "error",
+    );
   } catch (err) { showToast(err.message); }
   finally {
     state.detailPendingAction = null;
@@ -2474,4 +2958,8 @@ updatePaxLabel();
 updateModeFields();
 window.addEventListener("resize", syncVisibleLocationMenus);
 window.addEventListener("scroll", syncVisibleLocationMenus, true);
+window.addEventListener("storage", (event) => {
+  if (event.key === SEARCH_CONFIG_CLIPBOARD_KEY) syncSearchClipboardUI();
+});
+syncSearchClipboardUI();
 renderAll();

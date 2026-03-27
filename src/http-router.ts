@@ -1,4 +1,3 @@
-import { buildCompareResponse } from "./core/comparison";
 import { materializeSearchResponse } from "./core/orchestrator";
 import { buildQuotationText } from "./core/quotation";
 import {
@@ -36,10 +35,6 @@ interface SessionPayload {
 
 interface RepricePayload extends SessionPayload {
   offerId?: string;
-}
-
-interface ComparePayload extends SessionPayload {
-  offerIds?: string[];
 }
 
 interface QuotationPayload extends SessionPayload {
@@ -661,29 +656,6 @@ export async function routeRequest(request: Request): Promise<Response> {
       providerMeta: result.providerMeta,
       warnings: result.warnings,
     });
-  }
-
-  if (request.method === "POST" && url.pathname === "/api/compare") {
-    const payload = await readPayload<ComparePayload>(request);
-
-    if (!payload.searchSessionId || !payload.offerIds || payload.offerIds.length === 0) {
-      return json({ errors: ["searchSessionId and offerIds are required."] }, { status: 400 });
-    }
-
-    const session = runtime.sessions.getSession(payload.searchSessionId);
-    if (!session) {
-      return json({ errors: ["Session not found."] }, { status: 404 });
-    }
-
-    const offers = payload.offerIds
-      .map((offerId) => session.offers.find((offer) => offer.id === offerId))
-      .filter((offer): offer is CanonicalOffer => Boolean(offer));
-
-    if (offers.length === 0) {
-      return json({ errors: ["Offers not found in session."] }, { status: 404 });
-    }
-
-    return json(buildCompareResponse(offers));
   }
 
   if (request.method === "POST" && url.pathname === "/api/quotation") {
