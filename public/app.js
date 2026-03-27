@@ -20,6 +20,8 @@ const state = {
   selectedMatrixKey: null,
   airlineFilter: { hidden: new Set(), only: null },
   resultsPage: 1,
+  viewMode: "list",
+  flexMode: false,
 };
 
 const autocompleteState = {
@@ -27,7 +29,7 @@ const autocompleteState = {
   destination: { items: [], activeIndex: -1, requestId: 0 },
 };
 
-const RESULTS_PAGE_SIZE = 10;
+const RESULTS_PAGE_SIZE = 15;
 const ALLOWED_DATE_YEAR = "2026";
 const ALLOWED_DATE_MIN = `${ALLOWED_DATE_YEAR}-01-01`;
 const ALLOWED_DATE_MAX = `${ALLOWED_DATE_YEAR}-12-31`;
@@ -37,16 +39,29 @@ const $ = (id) => document.getElementById(id);
 const searchForm = $("searchForm");
 const searchMode = $("searchMode");
 const tripType = $("tripType");
-const summaryContent = $("summaryContent");
-const matrixSection = $("matrixSection");
-const matrixInfo = $("matrixInfo");
-const matrixContent = $("matrixContent");
-const resultsSection = $("resultsSection");
-const resultsContent = $("resultsContent");
-const detailSection = $("detailSection");
+const detailPanel = $("detailPanel");
+const detailClose = $("detailClose");
 const detailContent = $("detailContent");
-const compareSection = $("compareSection");
-const compareContent = $("compareContent");
+const resultsToolbar = $("resultsToolbar");
+const resultsContainer = $("resultsContainer");
+const emptyState = $("emptyState");
+const paxTrigger = $("paxTrigger");
+const paxPopover = $("paxPopover");
+const paxLabel = $("paxLabel");
+const paxAdultsDisplay = $("paxAdultsDisplay");
+const paxChildrenDisplay = $("paxChildrenDisplay");
+const paxInfantsDisplay = $("paxInfantsDisplay");
+const sortButtonsEl = $("sortButtons");
+const compareBtnEl = $("compareBtn");
+const compareBtnCount = $("compareBtnCount");
+const compareClearBtn = $("compareClear");
+const viewToggle = $("viewToggle");
+const resultsCountLabel = $("resultsCountLabel");
+const progressBar = $("progressBar");
+const datesExact = $("datesExact");
+const datesFlex = $("datesFlex");
+const stayDaysMinEl = $("stayDaysMin");
+const stayDaysMaxEl = $("stayDaysMax");
 const runtimeBadge = $("runtimeBadge");
 const resultPill = $("resultPill");
 const submitButton = $("submitButton");
@@ -55,8 +70,6 @@ const quotationButton = $("quotationButton");
 const validationBox = $("validationErrors");
 const loadingOverlay = $("loadingOverlay");
 const toastContainer = $("toastContainer");
-const resultsCountBadge = $("resultsCount");
-const matrixCountBadge = $("matrixCount");
 
 const numFmt = new Intl.NumberFormat("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -158,8 +171,27 @@ function hideLocationMenu(id) {
   if (!menu) return;
   menu.classList.add("hidden");
   menu.innerHTML = "";
+  menu.style.top = "";
+  menu.style.left = "";
+  menu.style.width = "";
   autocompleteState[id].items = [];
   autocompleteState[id].activeIndex = -1;
+}
+
+function syncLocationMenuPosition(id) {
+  const input = $(id);
+  const menu = locationMenu(id);
+  if (!input || !menu || menu.classList.contains("hidden")) return;
+
+  const rect = input.getBoundingClientRect();
+  menu.style.top = `${rect.bottom + 6}px`;
+  menu.style.left = `${rect.left}px`;
+  menu.style.width = `${Math.max(rect.width, 280)}px`;
+}
+
+function syncVisibleLocationMenus() {
+  syncLocationMenuPosition("origin");
+  syncLocationMenuPosition("destination");
 }
 
 function selectLocationSuggestion(id, suggestion) {
@@ -181,12 +213,13 @@ function renderLocationMenu(id) {
   }
 
   menu.innerHTML = auto.items.map((item, index) => `
-    <button type="button" class="location-item ${index === auto.activeIndex ? "is-active" : ""}" data-location-id="${id}" data-index="${index}">
+    <button type="button" class="autocomplete-item location-item ${index === auto.activeIndex ? "is-active" : ""}" data-location-id="${id}" data-index="${index}">
       <span class="location-item-code">${escapeHtml(item.code)} · ${escapeHtml(item.city)}</span>
       <span class="location-item-meta">${escapeHtml(item.country)}</span>
     </button>
   `).join("");
   menu.classList.remove("hidden");
+  requestAnimationFrame(() => syncLocationMenuPosition(id));
 
   menu.querySelectorAll(".location-item").forEach((button) => {
     button.addEventListener("mousedown", (event) => {
@@ -290,8 +323,8 @@ function buildAgilSmartUrlFromRequest(request, offer) {
   if (!request) return null;
   const leg = request.legs?.[0];
   if (!leg) return null;
-  const tripType = offer?.tripType || request.tripType;
-  const ow = tripType === "one-way";
+  const tripTypeVal = offer?.tripType || request.tripType;
+  const ow = tripTypeVal === "one-way";
   const outbound = offer?.itineraries?.find((it) => it.direction === "outbound") ?? offer?.itineraries?.[0];
   const inbound = offer?.itineraries?.find((it) => it.direction === "inbound");
   const dep = outbound?.segments?.[0]?.departureAt?.slice(0, 10) || leg.departureDate || leg.departureStart;
@@ -353,13 +386,26 @@ function getGroupForOffer(offerId) {
 }
 
 function countWindowCombinations() {
-  const ds = $("departureStart").value;
-  const de = $("departureEnd").value;
+  const ds = $("departureStart")?.value;
+  const de = $("departureEnd")?.value;
   if (!ds || !de) return 0;
   const departures = enumerateIsoRange(ds, de);
   if (tripType.value === "one-way") return departures.length;
-  const rs = $("returnStart").value;
-  const re = $("returnEnd").value;
+  const minDays = parseInt(stayDaysMinEl?.value, 10) || 7;
+  const maxDays = parseInt(stayDaysMaxEl?.value, 10) || minDays;
+  // In flexible mode, returns are derived from departures + stay days
+  if (state.flexMode) {
+    return departures.reduce((sum, dep) => {
+      let count = 0;
+      for (let d = minDays; d <= maxDays; d++) {
+        const ret = addDaysIso(dep, d);
+        if (ret > dep) count++;
+      }
+      return sum + count;
+    }, 0);
+  }
+  const rs = $("returnStart")?.value;
+  const re = $("returnEnd")?.value;
   if (!rs || !re) return 0;
   const returns = enumerateIsoRange(rs, re);
   return departures.reduce((sum, departureDate) => (
@@ -554,6 +600,97 @@ function sessionId() {
 }
 
 /* ================================================================
+   PAX POPOVER
+   ================================================================ */
+
+function updatePaxLabel() {
+  const a = parseInt($("adults").value, 10) || 1;
+  const c = parseInt($("children").value, 10) || 0;
+  const i = parseInt($("infants").value, 10) || 0;
+  let label = `${a} ADT`;
+  if (c > 0) label += `, ${c} CHD`;
+  if (i > 0) label += `, ${i} INF`;
+  if (paxLabel) paxLabel.textContent = label;
+  if (paxAdultsDisplay) paxAdultsDisplay.textContent = a;
+  if (paxChildrenDisplay) paxChildrenDisplay.textContent = c;
+  if (paxInfantsDisplay) paxInfantsDisplay.textContent = i;
+}
+
+function setupPaxPopover() {
+  if (!paxTrigger || !paxPopover) return;
+  paxTrigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    paxPopover.classList.toggle("hidden");
+  });
+  document.addEventListener("click", (e) => {
+    if (!paxPopover.contains(e.target) && e.target !== paxTrigger && !paxTrigger.contains(e.target)) {
+      paxPopover.classList.add("hidden");
+    }
+  });
+  paxPopover.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-pax-action]");
+    if (!btn) return;
+    e.preventDefault();
+    const action = btn.dataset.paxAction;
+    let a = parseInt($("adults").value, 10) || 1;
+    let c = parseInt($("children").value, 10) || 0;
+    let i = parseInt($("infants").value, 10) || 0;
+    if (action === "adults-inc" && a + c + i < 9) a++;
+    if (action === "adults-dec" && a > 1) { a--; if (i > a) i = a; }
+    if (action === "children-inc" && a + c + i < 9) c++;
+    if (action === "children-dec" && c > 0) c--;
+    if (action === "infants-inc" && i < a && a + c + i < 9) i++;
+    if (action === "infants-dec" && i > 0) i--;
+    $("adults").value = a;
+    $("children").value = c;
+    $("infants").value = i;
+    updatePaxLabel();
+  });
+}
+
+/* ================================================================
+   MODE TOGGLE & FLEXIBLE DATES
+   ================================================================ */
+
+function setupModeToggle() {
+  document.querySelectorAll("[data-mode]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("[data-mode]").forEach(b => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      const isFlexible = btn.dataset.mode === "flexible";
+      state.flexMode = isFlexible;
+      if (datesExact) datesExact.classList.toggle("hidden", isFlexible);
+      if (datesFlex) datesFlex.classList.toggle("hidden", !isFlexible);
+      if (isFlexible) {
+        searchMode.value = tripType.value === "round-trip" ? "roundtrip-grid" : "stay-range";
+      } else {
+        searchMode.value = "exact";
+      }
+    });
+  });
+}
+
+function translateFlexibleDates(payload) {
+  if (!state.flexMode) return payload;
+  const minDays = parseInt(stayDaysMinEl?.value, 10) || 7;
+  const maxDays = parseInt(stayDaysMaxEl?.value, 10) || minDays;
+  const depStart = $("departureStart")?.value;
+  const depEnd = $("departureEnd")?.value;
+  if (!depStart || !depEnd) return payload;
+  const leg = payload.request.legs[0];
+  leg.departureStart = depStart;
+  leg.departureEnd = depEnd;
+  if (payload.request.tripType === "round-trip") {
+    leg.returnStart = addDaysIso(depStart, minDays);
+    leg.returnEnd = addDaysIso(depEnd, maxDays);
+    payload.request.searchMode = "roundtrip-grid";
+  } else {
+    payload.request.searchMode = "stay-range";
+  }
+  return payload;
+}
+
+/* ================================================================
    INPUT ENFORCEMENT — real-time, preventive
    ================================================================ */
 
@@ -600,6 +737,7 @@ function enforceDateBounds() {
 }
 
 function enforceDateYear(input) {
+  if (!input) return;
   const normalize = () => {
     if (!input.value) return;
     const normalized = normalizeToAllowedYear(input.value);
@@ -615,6 +753,7 @@ function enforceDateYear(input) {
 }
 
 function enforceAlphaUpper(input, maxLen) {
+  if (!input) return;
   input.addEventListener("input", () => {
     input.value = input.value.replace(/[^A-Za-z]/g, "").toUpperCase().slice(0, maxLen);
   });
@@ -626,6 +765,7 @@ function enforceAlphaUpper(input, maxLen) {
 }
 
 function enforceIntRange(input, min, max) {
+  if (!input) return;
   input.addEventListener("input", () => {
     let raw = input.value.replace(/[^0-9]/g, "");
     if (raw.length > String(max).length) raw = raw.slice(0, String(max).length);
@@ -641,6 +781,7 @@ function enforceIntRange(input, min, max) {
 }
 
 function enforceDateNotPast(input) {
+  if (!input) return;
   // Only enforce on blur — firing on change is too aggressive while the
   // user is still typing the year digit by digit.
   input.addEventListener("blur", () => {
@@ -662,6 +803,7 @@ function enforceDateNotPast(input) {
 }
 
 function enforceCarrierCodes(input) {
+  if (!input) return;
   input.addEventListener("input", () => {
     input.value = input.value.replace(/[^A-Za-z,]/g, "").toUpperCase();
   });
@@ -673,6 +815,9 @@ function setupInputEnforcement() {
   enforceIntRange($("adults"), 1, 9);
   enforceIntRange($("children"), 0, 8);
   enforceIntRange($("infants"), 0, 4);
+
+  if (stayDaysMinEl) enforceIntRange(stayDaysMinEl, 1, 90);
+  if (stayDaysMaxEl) enforceIntRange(stayDaysMaxEl, 1, 90);
 
   const dateIds = ["departureDate", "returnDate", "departureStart", "departureEnd", "returnStart", "returnEnd"];
   dateIds.forEach((id) => {
@@ -728,7 +873,7 @@ function validateForm() {
   }
 
   const curr = $("currencyCode").value;
-  if (curr.length !== 3) { errs.push("Moneda: código de 3 letras."); $("currencyCode").classList.add("is-invalid"); }
+  if (curr.length !== 3) { errs.push("Moneda: codigo de 3 letras."); $("currencyCode").classList.add("is-invalid"); }
 
   const adults = parseInt($("adults").value, 10);
   const children = parseInt($("children").value, 10);
@@ -744,17 +889,19 @@ function validateForm() {
   }
 
   function checkDate(id, label) {
-    const v = $(id).value;
-    if (!v) { errs.push(`${label} es obligatorio.`); $(id).classList.add("is-invalid"); return false; }
+    const el = $(id);
+    if (!el) return false;
+    const v = el.value;
+    if (!v) { errs.push(`${label} es obligatorio.`); el.classList.add("is-invalid"); return false; }
     if (!v.startsWith(`${ALLOWED_DATE_YEAR}-`)) {
-      errs.push(`${label} debe estar dentro del año ${ALLOWED_DATE_YEAR}.`);
-      $(id).classList.add("is-invalid");
+      errs.push(`${label} debe estar dentro del anio ${ALLOWED_DATE_YEAR}.`);
+      el.classList.add("is-invalid");
       return false;
     }
-    if (v < today) { errs.push(`${label} no puede ser pasada.`); $(id).classList.add("is-invalid"); return false; }
+    if (v < today) { errs.push(`${label} no puede ser pasada.`); el.classList.add("is-invalid"); return false; }
     if (v > ALLOWED_DATE_MAX) {
-      errs.push(`${label} debe estar dentro del año ${ALLOWED_DATE_YEAR}.`);
-      $(id).classList.add("is-invalid");
+      errs.push(`${label} debe estar dentro del anio ${ALLOWED_DATE_YEAR}.`);
+      el.classList.add("is-invalid");
       return false;
     }
     return true;
@@ -771,23 +918,38 @@ function validateForm() {
     }
   }
 
+  // Flexible mode validation
+  if (state.flexMode) {
+    const minDays = parseInt(stayDaysMinEl?.value, 10);
+    const maxDays = parseInt(stayDaysMaxEl?.value, 10);
+    if (isNaN(minDays) || minDays < 1) { errs.push("Duracion minima requerida."); }
+    if (!isNaN(minDays) && !isNaN(maxDays) && maxDays < minDays) { errs.push("Duracion maxima debe ser >= minima."); }
+    checkDate("departureStart", "Ventana inicio");
+    checkDate("departureEnd", "Ventana fin");
+    const ds = $("departureStart")?.value;
+    const de = $("departureEnd")?.value;
+    if (ds && de && de < ds) errs.push("Ventana fin debe ser >= ventana inicio.");
+  }
+
   if (mode === "roundtrip-grid" || mode === "stay-range") {
-    checkDate("departureStart", "Salida inicio");
-    checkDate("departureEnd", "Salida fin");
-    if (trip === "round-trip") {
-      checkDate("returnStart", "Regreso inicio");
-      checkDate("returnEnd", "Regreso fin");
-    }
+    if (!state.flexMode) {
+      checkDate("departureStart", "Salida inicio");
+      checkDate("departureEnd", "Salida fin");
+      if (trip === "round-trip") {
+        checkDate("returnStart", "Regreso inicio");
+        checkDate("returnEnd", "Regreso fin");
+      }
 
-    const ds = $("departureStart").value;
-    const de = $("departureEnd").value;
-    const rs = $("returnStart").value;
-    const re = $("returnEnd").value;
+      const ds = $("departureStart")?.value;
+      const de = $("departureEnd")?.value;
+      const rs = $("returnStart")?.value;
+      const re = $("returnEnd")?.value;
 
-    if (ds && de && de < ds) errs.push("Salida fin debe ser >= salida inicio.");
-    if (trip === "round-trip") {
-      if (rs && re && re < rs) errs.push("Regreso fin debe ser >= regreso inicio.");
-      if (ds && rs && rs < ds) errs.push("Regreso debe empezar despues de la salida.");
+      if (ds && de && de < ds) errs.push("Salida fin debe ser >= salida inicio.");
+      if (trip === "round-trip") {
+        if (rs && re && re < rs) errs.push("Regreso fin debe ser >= regreso inicio.");
+        if (ds && rs && rs < ds) errs.push("Regreso debe empezar despues de la salida.");
+      }
     }
   }
 
@@ -819,16 +981,22 @@ function showErrors(errors) {
    ================================================================ */
 
 function updateModeFields() {
-  const usesRangeFields = searchMode.value === "roundtrip-grid" || searchMode.value === "stay-range";
-  document.querySelectorAll(".grid-field").forEach((el) => el.classList.toggle("hidden", !usesRangeFields));
-  document.querySelectorAll(".exact-field").forEach((el) => el.classList.toggle("hidden", usesRangeFields));
-  document.querySelectorAll(".return-range-field").forEach((el) => {
-    el.classList.toggle("hidden", !usesRangeFields || tripType.value !== "round-trip");
-  });
-  document.querySelectorAll(".roundtrip-only").forEach((el) => {
-    el.classList.toggle("hidden", usesRangeFields || tripType.value !== "round-trip");
-  });
-  tripType.disabled = false;
+  const isFlexible = state.flexMode;
+  if (datesExact) datesExact.classList.toggle("hidden", isFlexible);
+  if (datesFlex) datesFlex.classList.toggle("hidden", !isFlexible);
+
+  // Show/hide return date in exact mode based on trip type
+  const returnDate = $("returnDate");
+  if (returnDate) {
+    returnDate.style.display = (!isFlexible && tripType.value === "round-trip") ? "" : "none";
+  }
+
+  // Update searchMode hidden select for backend compat
+  if (isFlexible) {
+    searchMode.value = tripType.value === "round-trip" ? "roundtrip-grid" : "stay-range";
+  } else {
+    searchMode.value = "exact";
+  }
 }
 
 function toCarrierList(raw) {
@@ -866,11 +1034,11 @@ function getFormPayload() {
         origin: resolvedLocationCode("origin"),
         destination: resolvedLocationCode("destination"),
         departureDate: $("departureDate").value,
-        returnDate: $("returnDate").value,
-        departureStart: $("departureStart").value,
-        departureEnd: $("departureEnd").value,
-        returnStart: $("returnStart").value,
-        returnEnd: $("returnEnd").value,
+        returnDate: $("returnDate")?.value ?? "",
+        departureStart: $("departureStart")?.value ?? "",
+        departureEnd: $("departureEnd")?.value ?? "",
+        returnStart: $("returnStart")?.value ?? "",
+        returnEnd: $("returnEnd")?.value ?? "",
       }],
     },
   };
@@ -1015,104 +1183,130 @@ function queueMatrixPoll(jobId) {
 
 function renderToolbar() {
   const active = state.searchResponse ?? state.matrixResponse;
-  if (!active) { runtimeBadge.textContent = "IDLE"; resultPill.textContent = "0"; return; }
+  if (!active) {
+    if (runtimeBadge) { runtimeBadge.textContent = "IDLE"; runtimeBadge.className = "badge"; }
+    if (resultPill) { resultPill.textContent = "0"; resultPill.className = "badge badge--accent"; }
+    return;
+  }
   const prov = active.providerMeta?.exactProvider ?? "—";
   const st = active.matrixStatus ?? active.searchMeta?.searchState ?? "—";
-  runtimeBadge.textContent = `${prov} | ${st}`;
-  runtimeBadge.className = "tag tag--green";
-  resultPill.textContent = state.searchResponse
-    ? `${state.searchResponse.offers.length}/${state.searchResponse.allOffers?.length ?? state.searchResponse.offers.length} ofertas`
-    : `${state.matrixResponse?.cells?.length ?? 0} celdas`;
-  resultPill.className = "tag tag--accent";
+  if (runtimeBadge) {
+    runtimeBadge.textContent = `${prov} · ${st}`;
+    runtimeBadge.className = "badge badge--success";
+  }
+  if (resultPill) {
+    resultPill.textContent = state.searchResponse
+      ? `${state.searchResponse.filteredOffers?.length ?? 0} ofertas`
+      : `${state.matrixResponse?.cells?.length ?? 0} celdas`;
+    resultPill.className = "badge badge--accent";
+  }
 }
 
-function renderSummary() {
-  const active = state.searchResponse ?? state.matrixResponse;
-  if (!active || !state.request) { summaryContent.innerHTML = ""; return; }
-  const leg = state.request.legs[0];
-  const prov = active.providerMeta ?? {};
-  const warnings = active.warnings ?? [];
-  const sc = selMatrixCell();
+function updateResultsToolbar() {
+  const hasResults = (state.searchResponse?.allOffers?.length > 0) || (state.matrixResponse?.cells?.length > 0);
+  if (resultsToolbar) resultsToolbar.classList.toggle("hidden", !hasResults);
+  if (emptyState) emptyState.classList.toggle("hidden", hasResults);
 
-  let h = `
-    <span class="tag tag--accent">${leg.origin} → ${leg.destination}</span>
-    <span class="tag">${state.request.searchMode}</span>
-    <span class="tag">${prov.exactProvider ?? "—"}</span>
-    <span class="tag">${state.request.currencyCode}</span>
-  `;
-  if (sc) h += `<span class="tag tag--accent">${sc.returnDate ? `${sc.departureDate} → ${sc.returnDate}` : sc.departureDate}</span>`;
-  warnings.forEach((w) => { h += `<span class="tag tag--amber">${w}</span>`; });
-  summaryContent.innerHTML = h;
+  // Update count
+  const total = state.searchResponse?.filteredOffers?.length ?? 0;
+  const page = state.searchResponse?.offers?.length ?? 0;
+  if (resultsCountLabel) {
+    resultsCountLabel.innerHTML = total > 0 ? `<strong>${page}</strong> de ${total} resultados` : "";
+  }
+
+  // Update sort active state
+  if (sortButtonsEl) {
+    sortButtonsEl.querySelectorAll("[data-sort]").forEach(btn => {
+      btn.classList.toggle("is-active", btn.dataset.sort === (state.sortMode || "cheapest"));
+    });
+  }
+
+  // Show view toggle only when matrix data exists (flexible mode results)
+  if (viewToggle) {
+    viewToggle.style.display = state.matrixResponse?.cells?.length > 0 ? "" : "none";
+    viewToggle.querySelectorAll("[data-view]").forEach(btn => {
+      btn.classList.toggle("is-active", btn.dataset.view === state.viewMode);
+    });
+  }
+
+  // Compare button
+  if (compareBtnEl) {
+    compareBtnEl.classList.toggle("hidden", state.compareIds.size === 0);
+    if (compareBtnCount) compareBtnCount.textContent = state.compareIds.size;
+  }
 }
 
 function renderResults() {
+  if (!resultsContainer) return;
   const offers = state.searchResponse?.offers ?? [];
   const total = state.searchResponse?.filteredOffers?.length ?? state.searchResponse?.allOffers?.length ?? offers.length;
   const totalPages = resultsPageCount(total);
   const isRunning = state.searchResponse?.searchStatus === "running";
 
-  // Update count badge
-  if (resultsCountBadge) {
-    resultsCountBadge.textContent = `${offers.length}/${total}`;
-    resultsCountBadge.classList.toggle("hidden", offers.length === 0);
-  }
-
-  if (offers.length === 0) {
-    resultsContent.innerHTML = isRunning
-      ? '<div class="empty-msg">Consultando Agil. Los resultados se iran agregando a medida que lleguen.</div>'
-      : '<div class="empty-msg">Sin ofertas.</div>';
+  if (offers.length === 0 && !isRunning) {
+    resultsContainer.innerHTML = '<div class="empty-state"><div class="empty-state__icon"><svg class="ico" style="width:40px;height:40px;opacity:0.3"><use href="#ico-plane"/></svg></div><p class="empty-state__text">Sin ofertas.</p></div>';
     return;
   }
 
-  resultsContent.innerHTML = `
-    ${isRunning ? '<div class="results-loading">Consultando Agil. El listado sigue cargando y puede crecer.</div>' : ""}
-    <div class="table-wrap"><table>
-      <thead><tr>
-        <th class="col-check">C</th>
-        <th>Carrier</th>
-        <th>Fechas</th>
-        <th>Precio</th>
-        <th>Fuente</th>
-        <th>Duración</th>
-        <th>Esc</th>
-        <th>Equipaje</th>
-        <th>Agil</th>
-      </tr></thead>
-      <tbody>
-        ${buildOfferGroups(offers).map((group) => {
-          const o = group.find(g => g.id === state.selectedOfferId) ?? group[0];
-          const agilPath = o.purchasePaths.find((p) => p.provider === "agil-local" && p.url);
-          const outbound = o.itineraries?.find((it) => it.direction === "outbound") ?? o.itineraries?.[0];
-          const inbound = o.itineraries?.find((it) => it.direction === "inbound");
-          const dep = formatDateCompact(outbound?.segments?.[0]?.departureAt?.slice(0, 10));
-          const ret = inbound ? formatDateCompact(inbound.segments?.[0]?.departureAt?.slice(0, 10)) : null;
-          const datesText = ret ? `${dep} → ${ret}` : dep;
-          const isActive = group.some(g => g.id === state.selectedOfferId);
-          const badge = group.length > 1 ? ` <span class="group-badge" title="${group.length} opciones de regreso">${group.length}</span>` : "";
-          return `
-            <tr data-oid="${o.id}" class="${isActive ? "is-active" : ""}">
-              <td class="col-check"><input type="checkbox" data-cid="${o.id}" ${state.compareIds.has(o.id) ? "checked" : ""} /></td>
-              <td><div class="cell-stack"><span class="cell-main">${o.mainCarrier ?? o.validatingCarrier ?? "—"}</span><span class="cell-sub">${o.origin}→${o.destination}</span></div></td>
-              <td><span class="cell-sub">${datesText}${badge}</span></td>
-              <td><div class="cell-stack"><span class="cell-main">${formatMoney(o.price.total)}</span><span class="cell-sub">score ${o.valueScore}</span></div></td>
-              <td><span class="tag tag--${confidenceColor(o.priceConfidence)}">${o.priceConfidence === "validated" ? "Reprice" : "Live"}</span></td>
-              <td>${formatDuration(o.comparisonMetrics.totalDurationMinutes)}</td>
-              <td>${o.comparisonMetrics.totalStops}</td>
-              <td class="cell-sub">${o.baggage?.description ?? "—"}</td>
-              <td>${agilPath ? `<a href="${agilPath.url}" target="_blank" rel="noreferrer" class="row-link" data-stop-row="1" title="Abre la busqueda equivalente en Agil, no una tarifa exacta bloqueada">Buscar</a>` : '<span class="cell-sub">—</span>'}</td>
-            </tr>`;
-        }).join("")}
-      </tbody>
-    </table></div>
-    <div class="results-pager">
-      <button type="button" class="btn btn--sm" data-results-page="prev" ${state.resultsPage <= 1 ? "disabled" : ""}>Anterior</button>
-      <span class="results-pager-label">Pagina ${state.resultsPage} de ${totalPages}</span>
-      <button type="button" class="btn btn--sm" data-results-page="next" ${state.resultsPage >= totalPages ? "disabled" : ""}>Siguiente</button>
-    </div>
-  `;
+  if (offers.length === 0 && isRunning) {
+    resultsContainer.innerHTML = '<div class="empty-state"><div class="spinner" style="width:32px;height:32px"><svg class="spinner__svg" viewBox="0 0 50 50"><circle class="spinner__track" cx="25" cy="25" r="20"/><circle class="spinner__fill" cx="25" cy="25" r="20"/></svg></div><p class="empty-state__text">Consultando Agil...</p></div>';
+    return;
+  }
 
-  // Event delegation — single listener per container
-  resultsContent.addEventListener("click", handleResultsClick);
+  let html = "";
+  if (isRunning) {
+    html += '<div class="results-loading"><span>Consultando Agil. El listado sigue cargando.</span></div>';
+  }
+
+  html += '<div class="table-wrap"><table class="results-table"><thead><tr>';
+  html += '<th class="col-check">C</th>';
+  html += '<th>Carrier</th>';
+  html += '<th>Fechas</th>';
+  html += '<th>Duracion</th>';
+  html += '<th>Esc</th>';
+  html += '<th>Equipaje</th>';
+  html += '<th class="results-price">Precio</th>';
+  html += '<th>Agil</th>';
+  html += '</tr></thead><tbody>';
+
+  buildOfferGroups(offers).forEach((group) => {
+    const o = group.find(g => g.id === state.selectedOfferId) ?? group[0];
+    const agilPath = o.purchasePaths?.find((p) => p.provider === "agil-local" && p.url);
+    const outbound = o.itineraries?.find((it) => it.direction === "outbound") ?? o.itineraries?.[0];
+    const inbound = o.itineraries?.find((it) => it.direction === "inbound");
+    const dep = formatDateCompact(outbound?.segments?.[0]?.departureAt?.slice(0, 10));
+    const ret = inbound ? formatDateCompact(inbound.segments?.[0]?.departureAt?.slice(0, 10)) : null;
+    const datesText = ret ? `${dep} → ${ret}` : dep;
+    const isActive = group.some(g => g.id === state.selectedOfferId);
+    const badge = group.length > 1 ? ` <span class="badge badge--accent" style="font-size:10px;height:18px;padding:0 5px" title="${group.length} opciones de regreso">${group.length}</span>` : "";
+    const stops = o.comparisonMetrics?.totalStops ?? 0;
+    const stopsClass = stops === 0 ? "badge--success" : stops === 1 ? "badge--warning" : "badge--danger";
+    const stopsLabel = stops === 0 ? "Directo" : `${stops} esc`;
+    const bagCarry = o.baggage?.carryOnIncluded ? "✓" : "—";
+    const bagCheck = o.baggage?.checkedIncluded ? "✓" : "—";
+
+    html += `<tr data-oid="${o.id}" class="${isActive ? "is-active" : ""}">`;
+    html += `<td class="col-check"><input type="checkbox" data-cid="${o.id}" ${state.compareIds.has(o.id) ? "checked" : ""} /></td>`;
+    html += `<td><span class="cell-main">${escapeHtml(o.mainCarrier ?? o.validatingCarrier ?? "—")}</span></td>`;
+    html += `<td><span class="cell-sub">${datesText}${badge}</span></td>`;
+    html += `<td>${formatDuration(o.comparisonMetrics?.totalDurationMinutes)}</td>`;
+    html += `<td><span class="badge ${stopsClass}">${stopsLabel}</span></td>`;
+    html += `<td class="cell-sub">${bagCarry} / ${bagCheck}</td>`;
+    html += `<td class="results-price">${formatMoney(o.price?.total)}</td>`;
+    html += `<td>${agilPath ? `<a href="${agilPath.url}" target="_blank" rel="noreferrer" class="row-link" data-stop-row="1">Agil</a>` : '<span class="cell-sub">—</span>'}</td>`;
+    html += `</tr>`;
+  });
+
+  html += '</tbody></table></div>';
+
+  // Pagination
+  html += `<div class="results-pager">`;
+  html += `<button type="button" class="btn btn--secondary btn--sm" data-results-page="prev" ${state.resultsPage <= 1 ? "disabled" : ""}>← Anterior</button>`;
+  html += `<span class="results-pager__label">Pagina ${state.resultsPage} de ${totalPages}</span>`;
+  html += `<button type="button" class="btn btn--secondary btn--sm" data-results-page="next" ${state.resultsPage >= totalPages ? "disabled" : ""}>Siguiente →</button>`;
+  html += `</div>`;
+
+  resultsContainer.innerHTML = html;
 }
 
 function handleResultsClick(e) {
@@ -1126,8 +1320,8 @@ function handleResultsClick(e) {
       state.resultsPage = Math.min(totalPages, state.resultsPage + 1);
     }
     applyClientOfferControls();
-    renderResults();
-    renderDetail();
+    renderResultsArea();
+    renderDetailPanel();
     return;
   }
 
@@ -1141,22 +1335,33 @@ function handleResultsClick(e) {
   state.selectedOfferId = row.dataset.oid;
   state.showAgilEmbed = false;
   state.agilLaunchStatus = "";
-  renderResults();
-  renderDetail();
+  renderResultsArea();
+  renderDetailPanel();
 }
 
-resultsContent.addEventListener("change", async (e) => {
-  const inp = e.target.closest("[data-cid]");
-  if (!inp) return;
-  const id = inp.dataset.cid;
-  if (inp.checked) {
-    if (state.compareIds.size >= 2) { inp.checked = false; return; }
-    state.compareIds.add(id);
-  } else {
-    state.compareIds.delete(id);
+async function handleMatrixClick(e) {
+  const cells = state.matrixResponse?.cells ?? [];
+  const btn = e.target.closest("[data-mk]");
+  if (!btn) {
+    return;
   }
-  await refreshCompare();
-});
+
+  const cell = cells.find((entry) => entry.key === btn.dataset.mk);
+  if (!cell?.selectable || !cell.derivedRequest) return;
+  submitButton.disabled = true;
+  showLoading();
+  state.selectedMatrixKey = btn.dataset.mk;
+  try {
+    const data = await postJson("/api/search", { request: cell.derivedRequest, sortMode: state.sortMode });
+    state.request = data.request;
+    setSearchResponse(data);
+    state.compareIds.clear();
+    state.compareResponse = null;
+    state.quotationText = "";
+    renderAll();
+  } catch (err) { showToast(err.message); }
+  finally { submitButton.disabled = false; hideLoading(); }
+}
 
 function confidenceColor(c) {
   if (c === "validated") return "green";
@@ -1205,14 +1410,17 @@ async function refreshCompare() {
 }
 
 function renderCompare() {
+  const compSection = $("compareSection");
   if (!state.compareResponse) {
-    compareSection.classList.add("hidden");
+    if (compSection) compSection.classList.add("hidden");
     return;
   }
-  compareSection.classList.remove("hidden");
-  const hdr = state.compareResponse.offers.map((o) => `<th>${o.mainCarrier ?? "—"}</th>`).join("");
-  const rows = state.compareResponse.rows.map((r) => `<tr><th>${r.label}</th>${r.values.map((v) => `<td>${v}</td>`).join("")}</tr>`).join("");
-  compareContent.innerHTML = `<div class="compare-wrap"><div class="table-wrap"><table><thead><tr><th>Campo</th>${hdr}</tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  if (compSection) compSection.classList.remove("hidden");
+  const compareContentEl = $("compareContent");
+  if (!compareContentEl) return;
+  const hdr = state.compareResponse.offers.map(o => `<th>${escapeHtml(o.mainCarrier ?? "—")}</th>`).join("");
+  const rows = state.compareResponse.rows.map(r => `<tr><th>${escapeHtml(r.label)}</th>${r.values.map(v => `<td>${escapeHtml(String(v))}</td>`).join("")}</tr>`).join("");
+  compareContentEl.innerHTML = `<div class="table-wrap"><table class="results-table"><thead><tr><th>Campo</th>${hdr}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 /* ================================================================
@@ -1236,283 +1444,276 @@ function buildAirlineList(allOffers) {
 }
 
 function renderSidebar() {
-  const sidebar = $("sidebar");
-  if (!sidebar) return;
-
+  const sidebarEl = $("sidebar");
+  if (!sidebarEl) return;
   const allOffers = state.searchResponse?.allOffers;
-  if (!allOffers?.length) { sidebar.classList.add("hidden"); return; }
-
+  if (!allOffers?.length) { sidebarEl.classList.remove("is-visible"); return; }
   const airlines = buildAirlineList(allOffers);
-  if (airlines.length <= 1) { sidebar.classList.add("hidden"); return; }
-
-  sidebar.classList.remove("hidden");
-
+  if (airlines.length <= 1) { sidebarEl.classList.remove("is-visible"); return; }
+  sidebarEl.classList.add("is-visible");
   const { hidden, only } = state.airlineFilter;
   const hasFilters = hidden.size > 0 || only !== null;
 
-  sidebar.innerHTML = `
-    <div class="sl-head">
-      <span class="sl-title">Aerolíneas</span>
-      ${hasFilters ? '<button class="sl-reset" id="slReset">Todas</button>' : ""}
-    </div>
-    <div class="sl-list">
-      ${airlines.map((a) => {
+  sidebarEl.innerHTML = `
+    <div class="sidebar__section">
+      <div class="sidebar__title">
+        <span>Aerolíneas</span>
+        ${hasFilters ? '<button class="sidebar__reset" id="slReset">Todas</button>' : ""}
+      </div>
+      ${airlines.map(a => {
         const isOnly = only === a.code;
         const isHidden = !isOnly && (only !== null || hidden.has(a.code));
-        const rowClass = isOnly ? "sl-row--only" : isHidden ? "sl-row--hidden" : "";
-        const priceStr = a.minPrice < Infinity
-          ? `${a.currency} ${numFmt.format(a.minPrice)}`
-          : "";
+        const rowClass = isOnly ? "is-solo" : isHidden ? "is-hidden" : "";
+        const priceStr = a.minPrice < Infinity ? `${a.currency} ${numFmt.format(a.minPrice)}` : "";
         return `
-          <div class="sl-row ${rowClass}" data-sl-toggle="${a.code}">
-            <span class="sl-dot"></span>
-            <div class="sl-info">
-              <span class="sl-code">${a.code}</span>
-              <span class="sl-meta">×${a.count}${priceStr ? ` · ${priceStr}` : ""}</span>
+          <div class="sidebar__airline ${rowClass}" data-sl-toggle="${a.code}">
+            <span class="sidebar__dot"></span>
+            <div style="flex:1;min-width:0">
+              <div class="sidebar__code">${escapeHtml(a.code)}</div>
+              <div class="sidebar__meta">×${a.count}${priceStr ? ` · ${priceStr}` : ""}</div>
             </div>
-            <button class="sl-solo ${isOnly ? "sl-solo--active" : ""}" data-sl-solo="${a.code}" type="button">Solo</button>
+            <button class="sidebar__solo-btn" data-sl-solo="${a.code}" type="button">Solo</button>
           </div>`;
       }).join("")}
-    </div>
-  `;
+    </div>`;
 
-  sidebar.querySelector("#slReset")?.addEventListener("click", () => {
+  // Event handlers (same logic as before)
+  sidebarEl.querySelector("#slReset")?.addEventListener("click", () => {
     state.airlineFilter.hidden.clear();
     state.airlineFilter.only = null;
     applyClientOfferControls();
     renderAll();
   });
-
-  sidebar.querySelectorAll("[data-sl-toggle]").forEach((row) => {
+  sidebarEl.querySelectorAll("[data-sl-toggle]").forEach(row => {
     row.addEventListener("click", (e) => {
       if (e.target.closest("[data-sl-solo]")) return;
       const code = row.dataset.slToggle;
       if (state.airlineFilter.only === code) {
         state.airlineFilter.only = null;
       } else if (state.airlineFilter.only !== null) {
-        // Exit solo mode and hide this one instead
         state.airlineFilter.only = null;
         state.airlineFilter.hidden.add(code);
       } else {
-        if (state.airlineFilter.hidden.has(code)) {
-          state.airlineFilter.hidden.delete(code);
-        } else {
-          state.airlineFilter.hidden.add(code);
-        }
+        if (state.airlineFilter.hidden.has(code)) state.airlineFilter.hidden.delete(code);
+        else state.airlineFilter.hidden.add(code);
       }
       applyClientOfferControls();
       renderAll();
     });
   });
-
-  sidebar.querySelectorAll("[data-sl-solo]").forEach((btn) => {
+  sidebarEl.querySelectorAll("[data-sl-solo]").forEach(btn => {
     btn.addEventListener("click", () => {
       const code = btn.dataset.slSolo;
-      if (state.airlineFilter.only === code) {
-        state.airlineFilter.only = null;
-      } else {
-        state.airlineFilter.only = code;
-        state.airlineFilter.hidden.clear();
-      }
+      if (state.airlineFilter.only === code) state.airlineFilter.only = null;
+      else { state.airlineFilter.only = code; state.airlineFilter.hidden.clear(); }
       applyClientOfferControls();
       renderAll();
     });
   });
 }
 
-function renderMatrix() {
+/* ================================================================
+   CALENDAR VIEW (was renderMatrix)
+   ================================================================ */
+
+function renderCalendarView() {
+  if (!resultsContainer) return;
   const cells = state.matrixResponse?.cells;
   if (!cells || cells.length === 0) {
-    matrixSection.classList.add("hidden");
-    if (matrixCountBadge) matrixCountBadge.classList.add("hidden");
+    resultsContainer.innerHTML = '<div class="empty-state"><p class="empty-state__text">Sin datos de calendario.</p></div>';
     return;
-  }
-  matrixSection.classList.remove("hidden");
-  if (matrixCountBadge) {
-    matrixCountBadge.textContent = cells.length;
-    matrixCountBadge.classList.remove("hidden");
   }
 
   const returns = state.matrixResponse.axes.returnDates;
   const departures = state.matrixResponse.axes.departureDates;
-  const sc = selMatrixCell();
   const isOneWay = state.request?.tripType === "one-way";
   const priceStats = getMatrixPriceStats(cells);
-  const selectedCellAgilUrl = buildMatrixCellAgilUrl(sc);
+  const isRunning = state.matrixResponse?.matrixStatus === "running";
 
-  let info = `<span class="tag tag--accent">${isOneWay ? "Solo ida" : "Filas=ida Cols=vuelta"}</span>`;
-  if (sc) info += `<span class="tag tag--accent">${sc.returnDate ? `${sc.departureDate} → ${sc.returnDate}` : sc.departureDate}</span>`;
-  else info += `<span class="tag">Elige celda para búsqueda exacta</span>`;
-  if (priceStats) {
-    info += '<span class="tag">Rojo = caro</span><span class="tag">Verde = mejor tramo</span><span class="tag tag--accent">Celeste = mejor precio</span>';
+  let html = "";
+  if (isRunning) {
+    html += '<div class="results-loading"><span>Cargando precios del calendario...</span></div>';
   }
-  if (selectedCellAgilUrl) {
-    info += `<a href="${selectedCellAgilUrl}" target="_blank" rel="noreferrer" class="btn btn--go btn--sm">Abrir Agil</a>`;
-    if (isLocal()) {
-      info += '<button id="matrixAgilLocalOpen" class="btn btn--sm" type="button">Chrome local</button>';
-    }
-  }
-  Object.entries(state.matrixResponse.confidenceSummary).forEach(([k, v]) => { info += `<span class="tag">${k}: ${v}</span>`; });
-  matrixInfo.innerHTML = info;
 
-  const rows = [];
+  html += '<div class="matrix-wrap"><div class="matrix-grid cal-grid">';
+
   if (isOneWay) {
-    rows.push(`<div class="matrix-row" style="--cols:${departures.length}"><div class="matrix-corner">IDA</div>${departures.map((d) => `<div class="matrix-header">${d.slice(5)}</div>`).join("")}</div>`);
-    rows.push(`<div class="matrix-row" style="--cols:${departures.length}"><div class="matrix-label">Precio</div>${departures.map((dep) => {
-      const cell = cells.find((c) => c.departureDate === dep);
-      if (!cell) return '<button class="matrix-cell" disabled type="button">—</button>';
+    html += `<div class="matrix-row cal-row" style="--cols:${departures.length}"><div class="matrix-corner cal-corner">IDA</div>${departures.map(d => `<div class="matrix-header cal-header">${d.slice(5)}</div>`).join("")}</div>`;
+    html += `<div class="matrix-row cal-row" style="--cols:${departures.length}"><div class="matrix-label cal-label">Precio</div>`;
+    departures.forEach(dep => {
+      const cell = cells.find(c => c.departureDate === dep);
+      if (!cell) { html += '<button class="matrix-cell cal-cell" disabled type="button">—</button>'; return; }
       const isLoading = cell.confidence === "loading";
       const toneClass = matrixToneClass(cell, priceStats);
-      return `<button class="matrix-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass}" type="button" ${!cell.selectable && !isLoading ? "disabled" : ""} data-mk="${cell.key}" title="${cell.tooltip ?? ""}">`
-        + `<div class="matrix-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? formatMoney(cell.price) : "—"}</div>`
-        + `<div class="matrix-meta">${isLoading ? "cargando" : cell.stateCode}</div></button>`;
-    }).join("")}</div>`);
+      const calTone = toneClass.replace("matrix-cell--", "cal-cell--");
+      html += `<button class="matrix-cell cal-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass} ${calTone}" type="button" ${!cell.selectable && !isLoading ? "disabled" : ""} data-mk="${cell.key}" title="${escapeHtml(cell.tooltip ?? "")}">`;
+      html += `<div class="matrix-price cal-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? formatMoney(cell.price) : "—"}</div>`;
+      html += `<div class="matrix-meta cal-meta">${isLoading ? "cargando" : cell.stateCode ?? ""}</div></button>`;
+    });
+    html += '</div>';
   } else {
-    rows.push(`<div class="matrix-row" style="--cols:${returns.length}"><div class="matrix-corner">S\\R</div>${returns.map((d) => `<div class="matrix-header">${d.slice(5)}</div>`).join("")}</div>`);
-
-    for (const dep of departures) {
-      rows.push(`<div class="matrix-row" style="--cols:${returns.length}"><div class="matrix-label">${dep.slice(5)}</div>${returns.map((ret) => {
-        const cell = cells.find((c) => c.departureDate === dep && c.returnDate === ret);
-        if (!cell) return '<button class="matrix-cell" disabled type="button">—</button>';
+    html += `<div class="matrix-row cal-row" style="--cols:${returns.length}"><div class="matrix-corner cal-corner">S\\R</div>${returns.map(d => `<div class="matrix-header cal-header">${d.slice(5)}</div>`).join("")}</div>`;
+    departures.forEach(dep => {
+      html += `<div class="matrix-row cal-row" style="--cols:${returns.length}"><div class="matrix-label cal-label">${dep.slice(5)}</div>`;
+      returns.forEach(ret => {
+        const cell = cells.find(c => c.departureDate === dep && c.returnDate === ret);
+        if (!cell) { html += '<button class="matrix-cell cal-cell" disabled type="button">—</button>'; return; }
         const isLoading = cell.confidence === "loading";
         const toneClass = matrixToneClass(cell, priceStats);
-        return `<button class="matrix-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass}" type="button" ${!cell.selectable && !isLoading ? "disabled" : ""} data-mk="${cell.key}" title="${cell.tooltip ?? ""}">`
-          + `<div class="matrix-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? formatMoney(cell.price) : "—"}</div>`
-          + `<div class="matrix-meta">${isLoading ? "cargando" : cell.stateCode} ${cell.stayNights ?? ""}n</div></button>`;
-      }).join("")}</div>`);
-    }
+        const calTone = toneClass.replace("matrix-cell--", "cal-cell--");
+        html += `<button class="matrix-cell cal-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass} ${calTone}" type="button" ${!cell.selectable && !isLoading ? "disabled" : ""} data-mk="${cell.key}" title="${escapeHtml(cell.tooltip ?? "")}">`;
+        html += `<div class="matrix-price cal-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? formatMoney(cell.price) : "—"}</div>`;
+        html += `<div class="matrix-meta cal-meta">${isLoading ? "cargando" : cell.stateCode ?? ""} ${cell.stayNights != null ? cell.stayNights + "n" : ""}</div></button>`;
+      });
+      html += '</div>';
+    });
   }
 
-  matrixContent.innerHTML = `<div class="matrix-wrap"><div class="matrix-grid">${rows.join("")}</div></div>`;
+  html += '</div></div>';
+  resultsContainer.innerHTML = html;
 
-  // Single delegated listener (re-assigned on each render — old one is discarded with innerHTML)
-  matrixContent.addEventListener("click", async (e) => {
-    const btn = e.target.closest("[data-mk]");
-    if (!btn) {
-      // Handle matrixAgilLocalOpen
-      if (e.target.id === "matrixAgilLocalOpen" && selectedCellAgilUrl) {
-        try {
-          await postJson("/api/local/open-url", { url: selectedCellAgilUrl, preferredBrowser: "chrome" });
-        } catch (err) { showToast(err.message); }
-      }
-      return;
-    }
-    const cell = cells.find((c) => c.key === btn.dataset.mk);
-    if (!cell?.selectable || !cell.derivedRequest) return;
-    submitButton.disabled = true;
-    showLoading();
-    state.selectedMatrixKey = btn.dataset.mk;
-    try {
-      const data = await postJson("/api/search", { request: cell.derivedRequest, sortMode: state.sortMode });
-      state.request = data.request;
-      setSearchResponse(data);
-      state.compareIds.clear();
-      state.compareResponse = null;
-      state.quotationText = "";
-      renderAll();
-    } catch (err) { showToast(err.message); }
-    finally { submitButton.disabled = false; hideLoading(); }
+  // Re-attach matrix click handler on the container
+  resultsContainer.querySelectorAll("[data-mk]").forEach(btn => {
+    btn.addEventListener("click", handleMatrixClick);
   });
 }
 
-function renderDetail() {
+/* ================================================================
+   RESULTS AREA DISPATCHER
+   ================================================================ */
+
+function renderResultsArea() {
+  if (state.viewMode === "calendar" && state.matrixResponse?.cells?.length > 0) {
+    renderCalendarView();
+  } else if (state.searchResponse?.offers) {
+    renderResults();
+  }
+  // If neither, the empty state from HTML is already showing
+}
+
+/* ================================================================
+   DETAIL PANEL
+   ================================================================ */
+
+function openDetailPanel() {
+  if (detailPanel) detailPanel.classList.add("is-open");
+}
+
+function closeDetailPanel() {
+  if (detailPanel) detailPanel.classList.remove("is-open");
+}
+
+function renderDetailPanel() {
   const offer = selOffer();
-  repriceButton.disabled = !offer;
-  quotationButton.disabled = !offer;
+  if (repriceButton) repriceButton.disabled = !offer;
+  if (quotationButton) quotationButton.disabled = !offer;
 
-  if (!offer) { detailSection.classList.add("hidden"); return; }
-  detailSection.classList.remove("hidden");
+  if (!offer) {
+    closeDetailPanel();
+    if (detailContent) detailContent.innerHTML = "";
+    return;
+  }
+  openDetailPanel();
 
-  const flights = offer.itineraries.flatMap((it) => it.segments.map((s) => s.flightNumber)).join(", ");
+  const flights = offer.itineraries?.flatMap((it) => it.segments.map((s) => s.flightNumber)).join(", ") || "—";
+  const group = getGroupForOffer(offer.id) ?? [offer];
+  const outbound = offer.itineraries?.find(it => it.direction === "outbound") ?? offer.itineraries?.[0];
 
   let h = "";
 
-  // Detail grid
-  h += `<div class="detail-grid">
-    <div class="detail-pair"><span class="detail-key">Ruta</span><span class="detail-val">${offer.origin} → ${offer.destination}</span></div>
-    <div class="detail-pair"><span class="detail-key">Carrier</span><span class="detail-val">${offer.mainCarrier ?? offer.validatingCarrier ?? "—"}</span></div>
-    <div class="detail-pair"><span class="detail-key">Vuelos</span><span class="detail-val">${flights || "—"}</span></div>
-    <div class="detail-pair"><span class="detail-key">Fuente</span><span class="tag tag--${confidenceColor(offer.priceConfidence)}">${offer.priceConfidence === "validated" ? "Reprice Agil" : "Agil live"}</span></div>
-    <div class="detail-pair detail-pair--full"><span class="detail-key">Precio</span><span class="detail-val detail-val--hero">${formatMoney(offer.price.total)}</span></div>
-    <div class="detail-pair"><span class="detail-key">Actualizado</span><span class="detail-val">${offer.priceVerifiedAt ? formatDT(offer.priceVerifiedAt) : "Live"}</span></div>
-    <div class="detail-pair"><span class="detail-key">Duración</span><span class="detail-val">${formatDuration(offer.comparisonMetrics.totalDurationMinutes)} · ${offer.comparisonMetrics.totalStops} esc</span></div>
-  </div>`;
+  // Hero price
+  h += `<div class="detail-hero">${formatMoney(offer.price?.total)}</div>`;
+  h += `<div class="detail-summary">${escapeHtml(offer.origin)} → ${escapeHtml(offer.destination)} · ${escapeHtml(offer.mainCarrier ?? offer.validatingCarrier ?? "—")} · ${formatDuration(offer.comparisonMetrics?.totalDurationMinutes)} · ${offer.comparisonMetrics?.totalStops ?? 0} esc</div>`;
+
+  // Confidence badge
+  h += `<div><span class="badge badge--${confidenceColor(offer.priceConfidence)}">${offer.priceConfidence === "validated" ? "Precio validado" : "Precio live"}</span></div>`;
 
   // Segments
-  const group = getGroupForOffer(offer.id) ?? [offer];
-  const outboundItinerary = offer.itineraries.find(it => it.direction === "outbound") ?? offer.itineraries[0];
-  h += `<div class="segments-grid">`;
-  h += `<div class="segment-block"><div class="segment-dir">outbound — ${formatDuration(outboundItinerary.durationMinutes)}, ${outboundItinerary.stops} esc</div>`;
-  outboundItinerary.segments.forEach((s) => {
-    h += `<div class="segment-leg"><div class="segment-flight">${s.flightNumber}</div><div class="segment-times">${s.origin} ${formatDT(s.departureAt)} → ${s.destination} ${formatDT(s.arrivalAt)}</div></div>`;
-  });
-  h += `</div>`;
+  h += '<div class="detail-section"><div class="detail-section__title">Segmentos</div>';
+
+  if (outbound) {
+    h += `<div class="detail-segment"><div class="detail-segment__dir">Ida — ${formatDuration(outbound.durationMinutes)}, ${outbound.stops} esc</div>`;
+    outbound.segments?.forEach(s => {
+      h += `<div class="detail-segment__leg"><div class="detail-segment__flight">${escapeHtml(s.flightNumber)}</div><div class="detail-segment__times">${escapeHtml(s.origin)} ${formatDT(s.departureAt)} → ${escapeHtml(s.destination)} ${formatDT(s.arrivalAt)}</div></div>`;
+    });
+    h += '</div>';
+  }
 
   if (group.length > 1) {
-    // Show inbound options as selectable cards
-    h += `<div class="segment-block inbound-options"><div class="segment-dir">inbound — ${group.length} opciones</div>`;
-    group.forEach((member) => {
-      const ib = member.itineraries.find(it => it.direction === "inbound");
+    h += `<div class="detail-segment"><div class="detail-segment__dir">Vuelta — ${group.length} opciones</div>`;
+    group.forEach(member => {
+      const ib = member.itineraries?.find(it => it.direction === "inbound");
       if (!ib) return;
       const isSelected = member.id === state.selectedOfferId;
-      const label = ib.segments.map(s => `${s.flightNumber} ${s.origin} ${formatDT(s.departureAt)} → ${s.destination} ${formatDT(s.arrivalAt)}`).join(" / ");
-      h += `<div class="segment-leg inbound-option ${isSelected ? "inbound-option--active" : ""}" data-inbound-id="${member.id}" style="cursor:pointer">${label}</div>`;
+      const label = ib.segments?.map(s => `${s.flightNumber} ${s.origin} ${formatDT(s.departureAt)} → ${s.destination} ${formatDT(s.arrivalAt)}`).join(" / ") || "—";
+      h += `<div class="detail-segment__leg" data-inbound-id="${member.id}" style="cursor:pointer;padding:${isSelected ? "var(--sp-2)" : "var(--sp-1)"} var(--sp-2);border-radius:var(--radius-sm);border:1px solid ${isSelected ? "var(--accent-border)" : "transparent"};background:${isSelected ? "var(--accent-muted)" : "transparent"};transition:all var(--duration-fast)">${label}</div>`;
     });
-    h += `</div>`;
+    h += '</div>';
   } else {
-    offer.itineraries.filter(it => it !== outboundItinerary).forEach((it) => {
-      h += `<div class="segment-block"><div class="segment-dir">${it.direction} — ${formatDuration(it.durationMinutes)}, ${it.stops} esc</div>`;
-      it.segments.forEach((s) => {
-        h += `<div class="segment-leg"><div class="segment-flight">${s.flightNumber}</div><div class="segment-times">${s.origin} ${formatDT(s.departureAt)} → ${s.destination} ${formatDT(s.arrivalAt)}</div></div>`;
+    offer.itineraries?.filter(it => it !== outbound).forEach(it => {
+      h += `<div class="detail-segment"><div class="detail-segment__dir">${escapeHtml(it.direction)} — ${formatDuration(it.durationMinutes)}, ${it.stops} esc</div>`;
+      it.segments?.forEach(s => {
+        h += `<div class="detail-segment__leg"><div class="detail-segment__flight">${escapeHtml(s.flightNumber)}</div><div class="detail-segment__times">${escapeHtml(s.origin)} ${formatDT(s.departureAt)} → ${escapeHtml(s.destination)} ${formatDT(s.arrivalAt)}</div></div>`;
       });
-      h += `</div>`;
+      h += '</div>';
     });
   }
-  h += `</div>`;
+  h += '</div>';
 
-  // Paths
-  const paths = offer.purchasePaths.filter((p) => p.provider !== "agil-local" && p.provider !== "manual-link");
+  // Baggage
+  h += '<div class="detail-section"><div class="detail-section__title">Equipaje</div>';
+  h += `<div class="detail-pair"><span class="detail-pair__key">Carry-on</span><span class="detail-pair__val">${offer.baggage?.carryOnIncluded ? "✓ Incluido" : "— No incluido"}</span></div>`;
+  h += `<div class="detail-pair"><span class="detail-pair__key">Bodega</span><span class="detail-pair__val">${offer.baggage?.checkedIncluded ? `✓ ${offer.baggage.checkedBags ?? 1}x${offer.baggage.description ?? ""}` : "— No incluido"}</span></div>`;
+  h += '</div>';
+
+  // Fare
+  h += '<div class="detail-section"><div class="detail-section__title">Tarifa</div>';
+  if (offer.price?.base) h += `<div class="detail-pair"><span class="detail-pair__key">Base</span><span class="detail-pair__val">${formatMoney(offer.price.base)}</span></div>`;
+  if (offer.price?.taxes) h += `<div class="detail-pair"><span class="detail-pair__key">Tasas</span><span class="detail-pair__val">${formatMoney(offer.price.taxes)}</span></div>`;
+  if (offer.fareMeta?.lastTicketingDate) h += `<div class="detail-pair"><span class="detail-pair__key">Emision limite</span><span class="detail-pair__val">${offer.fareMeta.lastTicketingDate}</span></div>`;
+  h += '</div>';
+
+  // Purchase paths
+  const paths = offer.purchasePaths?.filter(p => p.url) ?? [];
   if (paths.length > 0) {
-    h += `<div class="paths-list">`;
-    paths.forEach((p) => {
-      h += `<div class="path-row"><div><span class="path-label">${p.label}</span> <span class="path-sub">${p.type} · ${p.precision}</span></div>`;
-      if (p.url) h += `<a href="${p.url}" target="${p.requiresNewTab ? "_blank" : "_self"}" rel="noreferrer">Abrir</a>`;
-      h += `</div>`;
+    h += '<div class="detail-section"><div class="detail-section__title">Compra</div>';
+    paths.forEach(p => {
+      h += `<div class="detail-pair"><span class="detail-pair__key">${escapeHtml(p.label)}</span>`;
+      h += `<a href="${p.url}" target="_blank" rel="noreferrer" class="btn btn--ghost btn--sm">${escapeHtml(p.type === "manual-reference" ? "Ref" : "Abrir")}</a></div>`;
     });
-    h += `</div>`;
-  }
-
-  // Manual ref
-  const manual = offer.purchasePaths.find((p) => p.type === "manual-reference");
-  if (manual?.referenceText) {
-    h += `<div class="quote-area"><textarea readonly>${manual.referenceText}</textarea></div>`;
+    h += '</div>';
   }
 
   // Quotation
   if (state.quotationText) {
-    h += `<div class="quote-area"><textarea readonly>${state.quotationText}</textarea></div>`;
+    h += '<div class="detail-section"><div class="detail-section__title">Cotizacion</div>';
+    h += `<textarea class="quote-textarea" readonly>${escapeHtml(state.quotationText)}</textarea>`;
+    h += '</div>';
   }
 
-  detailContent.innerHTML = h;
+  if (detailContent) detailContent.innerHTML = h;
 
-  // Inbound option selection
-  detailContent.querySelectorAll("[data-inbound-id]").forEach((el) => {
+  // Inbound option click
+  detailContent?.querySelectorAll("[data-inbound-id]").forEach(el => {
     el.addEventListener("click", () => {
       state.selectedOfferId = el.dataset.inboundId;
-      renderResults();
-      renderDetail();
+      renderResultsArea();
+      renderDetailPanel();
     });
   });
 }
 
+/* ================================================================
+   RENDER ALL
+   ================================================================ */
+
 function renderAll() {
   renderToolbar();
-  renderSummary();
   renderSidebar();
-  renderResults();
+  renderResultsArea();
   renderCompare();
-  renderMatrix();
-  renderDetail();
+  renderDetailPanel();
+  updateResultsToolbar();
 }
 
 /* ================================================================
@@ -1532,17 +1733,66 @@ searchForm.addEventListener("keydown", (e) => {
   }
 });
 
-// Collapsible sections
-document.querySelectorAll(".section-head[data-target]").forEach((head) => {
-  head.addEventListener("click", (e) => {
-    if (e.target.closest(".section-actions")) return;
-    const section = document.getElementById(head.dataset.target);
-    if (section) section.classList.toggle("section--collapsed");
-  });
-});
-
 searchMode.addEventListener("change", updateModeFields);
 tripType.addEventListener("change", updateModeFields);
+
+// Sort buttons in toolbar
+sortButtonsEl?.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-sort]");
+  if (!btn) return;
+  state.sortMode = btn.dataset.sort;
+  sortMode.value = btn.dataset.sort; // sync hidden select
+  state.resultsPage = 1;
+  applyClientOfferControls();
+  renderAll();
+});
+
+// View toggle
+viewToggle?.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-view]");
+  if (!btn) return;
+  state.viewMode = btn.dataset.view;
+  renderResultsArea();
+  updateResultsToolbar();
+});
+
+// Detail close
+detailClose?.addEventListener("click", () => {
+  state.selectedOfferId = null;
+  closeDetailPanel();
+  renderResultsArea();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && detailPanel?.classList.contains("is-open")) {
+    state.selectedOfferId = null;
+    closeDetailPanel();
+    renderResultsArea();
+  }
+});
+
+// Compare clear
+compareClearBtn?.addEventListener("click", () => {
+  state.compareIds.clear();
+  state.compareResponse = null;
+  renderAll();
+});
+
+// Results container click delegation (set up once)
+resultsContainer?.addEventListener("click", handleResultsClick);
+
+// Results container change delegation for checkboxes (set up once)
+resultsContainer?.addEventListener("change", async (e) => {
+  const inp = e.target.closest("[data-cid]");
+  if (!inp) return;
+  const id = inp.dataset.cid;
+  if (inp.checked) {
+    if (state.compareIds.size >= 2) { inp.checked = false; return; }
+    state.compareIds.add(id);
+  } else {
+    state.compareIds.delete(id);
+  }
+  await refreshCompare();
+});
 
 const debouncedFilterRefresh = debounce(async () => {
   if (!state.searchResponse?.allOffers) return;
@@ -1578,9 +1828,10 @@ searchForm.addEventListener("submit", async (e) => {
   showLoading();
   try {
     const payload = getFormPayload();
+    const translatedPayload = translateFlexibleDates(payload);
     stopMatrixPolling();
     stopSearchPolling();
-    state.sortMode = payload.sortMode;
+    state.sortMode = translatedPayload.sortMode;
     state.resultsPage = 1;
     state.compareIds.clear();
     state.compareResponse = null;
@@ -1591,15 +1842,16 @@ searchForm.addEventListener("submit", async (e) => {
     state.airlineFilter.hidden.clear();
     state.airlineFilter.only = null;
 
-    if (payload.request.searchMode === "roundtrip-grid") {
+    if (translatedPayload.request.searchMode === "roundtrip-grid") {
       stopSearchPolling();
       state.searchResponse = null;
       state.selectedOfferId = null;
-      state.request = payload.request;
-      state.matrixResponse = buildPendingMatrixResponse(payload.request);
+      state.request = translatedPayload.request;
+      state.matrixResponse = buildPendingMatrixResponse(translatedPayload.request);
+      state.viewMode = "calendar";
       renderAll();
 
-      const matrixJob = await postJson("/api/matrix", payload);
+      const matrixJob = await postJson("/api/matrix", translatedPayload);
       state.matrixResponse = matrixJob;
       state.request = matrixJob.request;
       state.searchResponse = null;
@@ -1609,11 +1861,12 @@ searchForm.addEventListener("submit", async (e) => {
       }
     } else {
       state.matrixResponse = null;
-      state.request = payload.request;
-      setSearchResponse(buildPendingSearchResponse(payload.request, payload.sortMode));
+      state.request = translatedPayload.request;
+      state.viewMode = "list";
+      setSearchResponse(buildPendingSearchResponse(translatedPayload.request, translatedPayload.sortMode));
       renderAll();
 
-      const data = await postJson("/api/search", payload);
+      const data = await postJson("/api/search", translatedPayload);
       state.request = data.request;
       setSearchResponse(data);
       state.searchJobId = data.searchJobId ?? null;
@@ -1664,6 +1917,28 @@ quotationButton.addEventListener("click", async () => {
    INIT
    ================================================================ */
 
+// Swap route button
+const swapRouteBtn = $("swapRouteBtn");
+if (swapRouteBtn) {
+  swapRouteBtn.addEventListener("click", () => {
+    const originInput = $("origin");
+    const destInput = $("destination");
+    if (!originInput || !destInput) return;
+
+    const tmpVal = originInput.value;
+    const tmpCode = originInput.dataset.code;
+    const tmpLabel = originInput.dataset.label;
+
+    originInput.value = destInput.value;
+    originInput.dataset.code = destInput.dataset.code || "";
+    originInput.dataset.label = destInput.dataset.label || "";
+
+    destInput.value = tmpVal;
+    destInput.dataset.code = tmpCode || "";
+    destInput.dataset.label = tmpLabel || "";
+  });
+}
+
 function resetSearchFormDefaults() {
   searchForm.reset();
   clearResolvedLocation("origin", false);
@@ -1680,6 +1955,10 @@ function resetSearchFormDefaults() {
 setupInputEnforcement();
 setupLocationAutocomplete("origin");
 setupLocationAutocomplete("destination");
-resetSearchFormDefaults();
+setupPaxPopover();
+setupModeToggle();
+updatePaxLabel();
 updateModeFields();
+window.addEventListener("resize", syncVisibleLocationMenus);
+window.addEventListener("scroll", syncVisibleLocationMenus, true);
 renderAll();
