@@ -76,6 +76,35 @@ Ejemplos:
 - `npm start`
 - `npm run demo`
 
+## Arranque con un clic
+
+Para un usuario no tecnico, los puntos de entrada son estos archivos del root:
+
+- [Abrir Fly Desk.vbs](/D:/Dev/fly-desk/Abrir%20Fly%20Desk.vbs)
+- [Cerrar Fly Desk.vbs](/D:/Dev/fly-desk/Cerrar%20Fly%20Desk.vbs)
+
+Que hacen hoy:
+
+- usan un puerto fijo dedicado `32123` para evitar choques con `3000`, `3001` u otros puertos de desarrollo
+- si Fly Desk ya esta sano en ese puerto, solo reabren la app en el navegador
+- si no existe `node_modules`, instalan dependencias
+- si `dist/` esta desactualizado, ejecutan `npm run build`
+- guardan estado y logs de launcher en `.launcher/`
+
+Requisitos del equipo:
+
+- Node.js 20 o superior
+- npm disponible en PATH
+- sesion local valida de Agil en Chrome o Edge si se quiere usar la integracion real
+
+Notas utiles:
+
+- la primera apertura puede tardar mas porque instala o compila
+- el acceso directo no usa `3000`; la app abre en `http://127.0.0.1:32123/`
+- para validacion automatica o soporte se pueden usar:
+  - `FLY_DESK_SKIP_BROWSER=1`
+  - `FLY_DESK_SILENT=1`
+
 ## Verificacion reciente
 
 Estado validado el 27 de marzo de 2026:
