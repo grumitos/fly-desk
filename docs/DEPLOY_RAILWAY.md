@@ -1,52 +1,46 @@
 # Deploy Railway
 
-## Por que Railway
+## Estado real
 
-El backend actual corre mejor en un proceso Node persistente que en serverless:
+El proceso Node actual se puede construir y arrancar en Railway, pero la funcionalidad completa de busqueda no esta lista para un deploy remoto fiel al entorno local.
 
-- `src/server.ts` sirve UI y API en el mismo proceso
-- `src/session-store.ts` guarda `searchSessionId` en memoria
+Motivo principal:
 
-`Railway` evita esa friccion y permite desplegar sin rehacer el stack.
+- la integracion activa con Agil depende de una sesion local de Chrome o Edge
+- esa sesion se extrae desde el filesystem del usuario y `localStorage`
+- ese mecanismo no existe de forma equivalente dentro de un contenedor remoto
 
-## Configuracion minima del servicio
-
-- Runtime: Node
-- Install command: `npm install`
-- Build command: `npm run build`
-- Start command: `npm start`
-- Healthcheck path: `/api/health`
-
-El repo ya incluye `Procfile`:
-
-```txt
-web: npm start
-```
-
-## Variables de entorno
-
-No se requieren variables de entorno obligatorias. Agil funciona via extraccion de sesion local en modo localhost.
-
-## Rutas publicas
-
-- `/`
-- `/api/health`
-- `/api/search`
-- `/api/reprice`
-- `/api/matrix`
-- `/api/compare`
-- `/api/quotation`
-
-## Estado actual
-
-Listo para Railway:
+## Lo que si funciona en Railway
 
 - build TypeScript
-- start via `node dist/index.js`
+- servidor Node en un solo proceso
+- serving de UI y API
 - lectura de `PORT`
-- health endpoint
+- healthcheck
 
-Pendiente para mayor robustez:
+Comandos:
 
-- persistencia externa de sesiones
-- auth
+- install: `npm install`
+- build: `npm run build`
+- start: `npm start`
+- healthcheck: `/api/health`
+
+## Lo que no debe asumirse
+
+No debe asumirse que un deploy remoto hoy pueda:
+
+- reutilizar la sesion local de Agil
+- hacer busquedas reales contra Agil igual que en localhost
+- mantener el mismo flujo end-to-end sin una estrategia nueva de autenticacion/sesion
+
+## Para que quede listo de verdad
+
+Hace falta resolver al menos:
+
+1. una fuente remota de autenticacion o sesion para Agil, o reemplazar Agil como provider directo
+2. persistencia externa para jobs y redirects si se quiere robustez multi-instancia
+3. estrategia segura para secretos/configuracion
+
+## Conclusión
+
+Railway sigue siendo una opcion natural para el servidor Node, pero hoy sirve mejor como destino de shell/API parcial que como deploy totalmente funcional de la integracion local con Agil.

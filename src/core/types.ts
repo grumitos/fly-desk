@@ -93,6 +93,8 @@ export interface OrderResult {
 export interface SearchLeg {
   origin: string;
   destination: string;
+  originLabel?: string;
+  destinationLabel?: string;
   departureDate?: string;
   departureStart?: string;
   departureEnd?: string;
@@ -110,7 +112,6 @@ export interface SearchFilters {
   maxPrice?: number;
   currencyCode?: string;
   maxResults?: number;
-  maxStops?: number;
   maxTotalDurationMinutes?: number;
   minDepartureMinutes?: number;
   maxDepartureMinutes?: number;

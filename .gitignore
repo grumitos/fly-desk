@@ -7,6 +7,10 @@ dist/
 
 .launcher/
 .claude/
+.codex/
+.playwright-cli/
+.superpowers/
+output/
 
 .server.out.log
 .server.err.log

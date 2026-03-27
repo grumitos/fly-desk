@@ -15,13 +15,12 @@ const state = {
   selectedOfferId: null,
   compareIds: new Set(),
   quotationText: "",
-  showAgilEmbed: false,
-  agilLaunchStatus: "",
   selectedMatrixKey: null,
   airlineFilter: { hidden: new Set(), only: null },
   resultsPage: 1,
   viewMode: "list",
   flexMode: false,
+  detailPendingAction: null,
 };
 
 const autocompleteState = {
@@ -33,10 +32,13 @@ const RESULTS_PAGE_SIZE = 15;
 const ALLOWED_DATE_YEAR = "2026";
 const ALLOWED_DATE_MIN = `${ALLOWED_DATE_YEAR}-01-01`;
 const ALLOWED_DATE_MAX = `${ALLOWED_DATE_YEAR}-12-31`;
+const DEFAULT_CURRENCY_CODE = "USD";
 
 const $ = (id) => document.getElementById(id);
 
+const rootEl = document.documentElement;
 const searchForm = $("searchForm");
+const workspace = document.querySelector(".workspace");
 const searchMode = $("searchMode");
 const tripType = $("tripType");
 const detailPanel = $("detailPanel");
@@ -57,9 +59,18 @@ const compareBtnCount = $("compareBtnCount");
 const compareClearBtn = $("compareClear");
 const viewToggle = $("viewToggle");
 const resultsCountLabel = $("resultsCountLabel");
-const progressBar = $("progressBar");
-const datesExact = $("datesExact");
-const datesFlex = $("datesFlex");
+const dateTrigger = $("dateTrigger");
+const dateTriggerText = $("dateTriggerText");
+const calendarPopover = $("calendarPopover");
+const calendarClose = $("calendarClose");
+const calendarClear = $("calendarClear");
+const calendarDone = $("calendarDone");
+const calendarPrev = $("calendarPrev");
+const calendarNext = $("calendarNext");
+const calendarMonths = $("calendarMonths");
+const calendarTitle = $("calendarTitle");
+const calendarSelectionSummary = $("calendarSelectionSummary");
+const calendarStayConfig = $("calendarStayConfig");
 const stayDaysMinEl = $("stayDaysMin");
 const stayDaysMaxEl = $("stayDaysMax");
 const runtimeBadge = $("runtimeBadge");
@@ -68,17 +79,19 @@ const submitButton = $("submitButton");
 const repriceButton = $("repriceButton");
 const quotationButton = $("quotationButton");
 const validationBox = $("validationErrors");
-const loadingOverlay = $("loadingOverlay");
 const toastContainer = $("toastContainer");
+const themeButtons = [...document.querySelectorAll("[data-theme-value]")];
+
+const calendarState = {
+  selectionStage: "start",
+  viewStartMonth: "",
+};
 
 const numFmt = new Intl.NumberFormat("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /* ================================================================
    UI FEEDBACK — loading, toast, debounce
    ================================================================ */
-
-function showLoading() { loadingOverlay?.classList.remove("hidden"); }
-function hideLoading() { loadingOverlay?.classList.add("hidden"); }
 
 function showToast(message, type = "error") {
   if (!toastContainer) return;
@@ -92,6 +105,66 @@ function showToast(message, type = "error") {
 function debounce(fn, ms) {
   let t;
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+function renderResultsSkeleton(kind = "search") {
+  if (!resultsContainer) return;
+  const copy = kind === "matrix-selection"
+    ? {
+        eyebrow: "Cargando lista exacta",
+        text: "Resolviendo la combinación elegida para traer las ofertas.",
+      }
+    : {
+        eyebrow: "Consultando vuelos",
+        text: "Las ofertas aparecerán aquí a medida que Agil vaya respondiendo.",
+      };
+  const rows = Array.from({ length: 6 }, (_, index) => `
+    <div class="results-skeleton__row" aria-hidden="true">
+      <span class="skeleton-block skeleton-block--check"></span>
+      <span class="skeleton-line skeleton-line--md"></span>
+      <span class="skeleton-line skeleton-line--lg"></span>
+      <span class="skeleton-line skeleton-line--sm"></span>
+      <span class="skeleton-line skeleton-line--sm"></span>
+      <span class="skeleton-line skeleton-line--sm"></span>
+      <span class="skeleton-line skeleton-line--price"></span>
+      <span class="skeleton-line skeleton-line--link"></span>
+    </div>
+  `).join("");
+
+  resultsContainer.innerHTML = `
+    <div class="results-skeleton" aria-live="polite" aria-busy="true">
+      <div class="results-skeleton__header">
+        <p class="results-skeleton__eyebrow">${copy.eyebrow}</p>
+        <p class="results-skeleton__text">${copy.text}</p>
+      </div>
+      <div class="results-skeleton__table">
+        <div class="results-skeleton__head" aria-hidden="true">
+          <span>Sel</span>
+          <span>Aerolínea</span>
+          <span>Fechas</span>
+          <span>Duración</span>
+          <span>Escalas</span>
+          <span>Equipaje</span>
+          <span>Precio</span>
+          <span>Agil</span>
+        </div>
+        ${rows}
+      </div>
+    </div>
+  `;
+}
+
+function detailActionCopy(action) {
+  if (action === "quotation") {
+    return {
+      eyebrow: "Generando cotización",
+      text: "Preparando el texto con la oferta seleccionada.",
+    };
+  }
+  return {
+    eyebrow: "Actualizando tarifa",
+    text: "Revalidando precio y disponibilidad sobre esta oferta.",
+  };
 }
 
 function escapeHtml(value) {
@@ -117,6 +190,55 @@ function formatDateCompact(iso) {
   return `${parts[2]}/${parts[1]}`;
 }
 
+function formatMonthTitle(isoMonth) {
+  const value = new Date(`${isoMonth}T00:00:00Z`);
+  return value.toLocaleDateString("es-PE", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+function formatPassengerSummary(adults, children, infants) {
+  const chunks = [`${adults} adulto${adults === 1 ? "" : "s"}`];
+  if (children > 0) chunks.push(`${children} niño${children === 1 ? "" : "s"}`);
+  if (infants > 0) chunks.push(`${infants} bebé${infants === 1 ? "" : "s"}`);
+  return chunks.join(", ");
+}
+
+function firstDayOfMonth(iso) {
+  return `${iso.slice(0, 7)}-01`;
+}
+
+function addMonthsIso(isoMonth, delta) {
+  const base = new Date(`${isoMonth}T00:00:00Z`);
+  base.setUTCMonth(base.getUTCMonth() + delta);
+  return `${base.getUTCFullYear()}-${String(base.getUTCMonth() + 1).padStart(2, "0")}-01`;
+}
+
+function syncThemeButtons(theme) {
+  themeButtons.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.themeValue === theme);
+  });
+}
+
+function setTheme(theme) {
+  const nextTheme = theme === "dark" ? "dark" : "light";
+  rootEl.dataset.theme = nextTheme;
+  syncThemeButtons(nextTheme);
+  try {
+    window.localStorage.setItem("flydesk-theme", nextTheme);
+  } catch {
+    // Ignore private mode/localStorage restrictions.
+  }
+}
+
+function initialTheme() {
+  try {
+    const saved = window.localStorage.getItem("flydesk-theme");
+    if (saved === "light" || saved === "dark") return saved;
+  } catch {
+    // Ignore localStorage access issues.
+  }
+  return "light";
+}
+
 function field(name) { return searchForm.querySelector(`[name="${name}"]`); }
 function control(name) { return $(name) ?? field(name); }
 function controlValue(name) {
@@ -137,12 +259,6 @@ function formatDT(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString("es-PE", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
-}
-
-function formatAgilDate(v) {
-  if (!v) return "";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) { const [y, m, d] = v.split("-"); return `${d}/${m}/${y}`; }
-  return v;
 }
 
 function locationMenu(id) {
@@ -183,10 +299,11 @@ function syncLocationMenuPosition(id) {
   const menu = locationMenu(id);
   if (!input || !menu || menu.classList.contains("hidden")) return;
 
-  const rect = input.getBoundingClientRect();
-  menu.style.top = `${rect.bottom + 6}px`;
-  menu.style.left = `${rect.left}px`;
-  menu.style.width = `${Math.max(rect.width, 280)}px`;
+  const segment = input.closest(".rail-segment");
+  const width = segment?.getBoundingClientRect().width ?? input.getBoundingClientRect().width;
+  menu.style.top = "";
+  menu.style.left = "";
+  menu.style.width = `${Math.max(width, 320)}px`;
 }
 
 function syncVisibleLocationMenus() {
@@ -204,9 +321,14 @@ function selectLocationSuggestion(id, suggestion) {
 }
 
 function renderLocationMenu(id) {
+  const input = $(id);
   const menu = locationMenu(id);
   const auto = autocompleteState[id];
   if (!menu) return;
+  if (!input || document.activeElement !== input) {
+    hideLocationMenu(id);
+    return;
+  }
   if (!auto.items.length) {
     hideLocationMenu(id);
     return;
@@ -232,6 +354,7 @@ function renderLocationMenu(id) {
 }
 
 async function fetchLocationSuggestions(id, query) {
+  const input = $(id);
   const auto = autocompleteState[id];
   const requestId = auto.requestId + 1;
   auto.requestId = requestId;
@@ -244,6 +367,10 @@ async function fetchLocationSuggestions(id, query) {
   try {
     const data = await getJson(`/api/agil/locations?q=${encodeURIComponent(query.trim())}&limit=8`);
     if (autocompleteState[id].requestId !== requestId) return;
+    if (!input || document.activeElement !== input) {
+      hideLocationMenu(id);
+      return;
+    }
     auto.items = data.suggestions ?? [];
     auto.activeIndex = auto.items.length > 0 ? 0 : -1;
     renderLocationMenu(id);
@@ -310,55 +437,6 @@ function setupLocationAutocomplete(id) {
       hideLocationMenu(id);
     }
   });
-}
-
-function toAgilClass(cabin) {
-  const c = String(cabin || "").toUpperCase();
-  if (c === "BUSINESS") return "1";
-  if (c === "FIRST") return "2";
-  return "0";
-}
-
-function buildAgilSmartUrlFromRequest(request, offer) {
-  if (!request) return null;
-  const leg = request.legs?.[0];
-  if (!leg) return null;
-  const tripTypeVal = offer?.tripType || request.tripType;
-  const ow = tripTypeVal === "one-way";
-  const outbound = offer?.itineraries?.find((it) => it.direction === "outbound") ?? offer?.itineraries?.[0];
-  const inbound = offer?.itineraries?.find((it) => it.direction === "inbound");
-  const dep = outbound?.segments?.[0]?.departureAt?.slice(0, 10) || leg.departureDate || leg.departureStart;
-  const ret = inbound?.segments?.[0]?.departureAt?.slice(0, 10) || leg.returnDate || leg.returnStart;
-  const url = new URL("https://www.agilsmart.com/home-user/flight-result");
-  url.searchParams.set("flightType", ow ? "1" : "0");
-  url.searchParams.set("departureLocation", offer?.origin || leg.origin || "");
-  url.searchParams.set("arrivalLocation", offer?.destination || leg.destination || "");
-  if (dep) url.searchParams.set("departureDate", formatAgilDate(dep));
-  if (!ow && ret) url.searchParams.set("arrivalDate", formatAgilDate(ret));
-  url.searchParams.set("adults", String(request.passengers?.adults ?? 1));
-  url.searchParams.set("children", String(request.passengers?.children ?? 0));
-  url.searchParams.set("infants", String(request.passengers?.infants ?? 0));
-  url.searchParams.set("flightClass", toAgilClass(offer?.cabin ?? request.cabin));
-  return url.toString();
-}
-
-function buildAgilSmartUrl(offer) {
-  if (!offer || !state.request) return null;
-  return buildAgilSmartUrlFromRequest(state.request, offer);
-}
-
-function buildMatrixCellAgilUrl(cell) {
-  if (!cell?.derivedRequest) return null;
-  return buildAgilSmartUrlFromRequest(cell.derivedRequest);
-}
-
-function offerDateRangeText(offer) {
-  if (!offer?.itineraries?.length) return "—";
-  const outbound = offer.itineraries.find((it) => it.direction === "outbound") ?? offer.itineraries[0];
-  const inbound = offer.itineraries.find((it) => it.direction === "inbound");
-  const departure = outbound?.segments?.[0]?.departureAt?.slice(0, 10);
-  const ret = inbound?.segments?.[0]?.departureAt?.slice(0, 10);
-  return ret ? `${departure} → ${ret}` : `${departure}`;
 }
 
 function outboundGroupKey(offer) {
@@ -440,6 +518,341 @@ function enumerateIsoRange(start, end) {
 
 function diffDaysIso(from, to) {
   return Math.round((new Date(`${to}T00:00:00Z`) - new Date(`${from}T00:00:00Z`)) / 86400000);
+}
+
+function calendarSelectionValues() {
+  if (state.flexMode) {
+    return {
+      start: controlValue("departureStart"),
+      end: controlValue("departureEnd"),
+    };
+  }
+
+  return {
+    start: controlValue("departureDate"),
+    end: tripType.value === "round-trip" ? controlValue("returnDate") : "",
+  };
+}
+
+function syncFlexibleDerivedDates() {
+  if (!state.flexMode) return;
+  const start = controlValue("departureStart");
+  const end = controlValue("departureEnd");
+  const minDays = parseInt(stayDaysMinEl?.value, 10) || 7;
+  const maxDays = parseInt(stayDaysMaxEl?.value, 10) || minDays;
+
+  if (!start || !end || tripType.value !== "round-trip") {
+    if ($("returnStart")) $("returnStart").value = "";
+    if ($("returnEnd")) $("returnEnd").value = "";
+    return;
+  }
+
+  $("returnStart").value = addDaysIso(start, minDays);
+  $("returnEnd").value = addDaysIso(end, maxDays);
+}
+
+function syncDateTriggerText() {
+  if (!dateTriggerText) return;
+
+  if (state.flexMode) {
+    const start = controlValue("departureStart");
+    const end = controlValue("departureEnd");
+    const minDays = parseInt(stayDaysMinEl?.value, 10) || 7;
+    const maxDays = parseInt(stayDaysMaxEl?.value, 10) || minDays;
+    const stayText = minDays === maxDays ? `${minDays} noches` : `${minDays}-${maxDays} noches`;
+
+    if (start && end) {
+      dateTriggerText.textContent = `${formatDateCompact(start)} → ${formatDateCompact(end)} · ${stayText}`;
+      return;
+    }
+    if (start) {
+      dateTriggerText.textContent = `Desde ${formatDateCompact(start)} · ${stayText}`;
+      return;
+    }
+    dateTriggerText.textContent = "Ventana de salida";
+    return;
+  }
+
+  const departure = controlValue("departureDate");
+  const ret = controlValue("returnDate");
+  if (tripType.value === "one-way") {
+    dateTriggerText.textContent = departure ? `${formatDateCompact(departure)} · solo ida` : "Fecha de salida";
+    return;
+  }
+
+  if (departure && ret) {
+    dateTriggerText.textContent = `${formatDateCompact(departure)} → ${formatDateCompact(ret)}`;
+    return;
+  }
+  if (departure) {
+    dateTriggerText.textContent = `Salida ${formatDateCompact(departure)}`;
+    return;
+  }
+
+  dateTriggerText.textContent = "Salida y regreso";
+}
+
+function monthGridFor(isoMonth) {
+  const monthStart = new Date(`${isoMonth}T00:00:00Z`);
+  const monthIndex = monthStart.getUTCMonth();
+  const gridStart = new Date(monthStart);
+  const weekday = (monthStart.getUTCDay() + 6) % 7;
+  gridStart.setUTCDate(gridStart.getUTCDate() - weekday);
+  const days = [];
+
+  for (let offset = 0; offset < 42; offset += 1) {
+    const cellDate = new Date(gridStart);
+    cellDate.setUTCDate(gridStart.getUTCDate() + offset);
+    const iso = cellDate.toISOString().slice(0, 10);
+    days.push({
+      iso,
+      day: String(cellDate.getUTCDate()),
+      inMonth: cellDate.getUTCMonth() === monthIndex,
+    });
+  }
+
+  return days;
+}
+
+function calendarMinMonth() {
+  return firstDayOfMonth(minDateISO());
+}
+
+function calendarMaxMonth() {
+  return firstDayOfMonth(ALLOWED_DATE_MAX);
+}
+
+function calendarMaxStartMonth() {
+  const minMonth = calendarMinMonth();
+  const maxMonth = calendarMaxMonth();
+  const previousMonth = addMonthsIso(maxMonth, -1);
+  return previousMonth < minMonth ? minMonth : previousMonth;
+}
+
+function clampCalendarViewMonth(month) {
+  if (!month) return calendarMinMonth();
+  const minMonth = calendarMinMonth();
+  const maxStart = calendarMaxStartMonth();
+  if (month < minMonth) return minMonth;
+  if (month > maxStart) return maxStart;
+  return month;
+}
+
+function resetCalendarViewMonth() {
+  const selection = calendarSelectionValues();
+  const preferred = selection.start || selection.end || minDateISO();
+  calendarState.viewStartMonth = clampCalendarViewMonth(firstDayOfMonth(preferred));
+}
+
+function syncCalendarPopoverPosition() {
+  if (!calendarPopover || !dateTrigger || calendarPopover.classList.contains("hidden")) return;
+
+  const viewportPadding = 16;
+  const triggerRect = dateTrigger.getBoundingClientRect();
+  const width = Math.min(960, window.innerWidth - viewportPadding * 2);
+
+  calendarPopover.style.width = `${width}px`;
+  calendarPopover.style.maxHeight = `${Math.min(window.innerHeight - viewportPadding * 2, 672)}px`;
+
+  const popoverRect = calendarPopover.getBoundingClientRect();
+  let left = triggerRect.left + (triggerRect.width / 2) - (width / 2);
+  left = Math.max(viewportPadding, Math.min(left, window.innerWidth - width - viewportPadding));
+
+  let top = triggerRect.bottom + 10;
+  if (top + popoverRect.height > window.innerHeight - viewportPadding) {
+    top = Math.max(viewportPadding, window.innerHeight - popoverRect.height - viewportPadding);
+  }
+
+  calendarPopover.style.left = `${left}px`;
+  calendarPopover.style.top = `${top}px`;
+}
+
+function syncCalendarSummary(selection) {
+  if (!calendarSelectionSummary || !calendarTitle) return;
+
+  if (state.flexMode) {
+    calendarTitle.textContent = "Ventana de salida";
+    if (selection.start && selection.end) {
+      calendarSelectionSummary.textContent = `Salida flexible del ${formatDateCompact(selection.start)} al ${formatDateCompact(selection.end)}.`;
+    } else if (selection.start) {
+      calendarSelectionSummary.textContent = `Ventana iniciada en ${formatDateCompact(selection.start)}. Selecciona la fecha final.`;
+    } else {
+      calendarSelectionSummary.textContent = "Selecciona la primera fecha de la ventana de salida.";
+    }
+    return;
+  }
+
+  if (tripType.value === "one-way") {
+    calendarTitle.textContent = "Fecha de salida";
+    calendarSelectionSummary.textContent = selection.start
+      ? `Salida elegida para el ${formatDateCompact(selection.start)}.`
+      : "Selecciona la fecha de salida.";
+    return;
+  }
+
+  calendarTitle.textContent = "Salida y regreso";
+  if (selection.start && selection.end) {
+    calendarSelectionSummary.textContent = `Ruta cerrada del ${formatDateCompact(selection.start)} al ${formatDateCompact(selection.end)}.`;
+  } else if (selection.start) {
+    calendarSelectionSummary.textContent = `Salida fijada para el ${formatDateCompact(selection.start)}. Selecciona el regreso.`;
+  } else {
+    calendarSelectionSummary.textContent = "Selecciona la salida y luego el regreso.";
+  }
+}
+
+function renderCalendarPopover() {
+  if (!calendarPopover || !calendarMonths) return;
+
+  const selection = calendarSelectionValues();
+  syncCalendarSummary(selection);
+  calendarStayConfig?.classList.toggle("hidden", !state.flexMode);
+
+  const firstMonth = clampCalendarViewMonth(calendarState.viewStartMonth || calendarMinMonth());
+  const secondMonth = addMonthsIso(firstMonth, 1);
+  const today = minDateISO();
+  const canGoPrev = firstMonth > calendarMinMonth();
+  const canGoNext = firstMonth < calendarMaxStartMonth();
+
+  calendarPrev?.toggleAttribute("disabled", !canGoPrev);
+  calendarNext?.toggleAttribute("disabled", !canGoNext);
+
+  const months = [firstMonth, secondMonth].map((month) => {
+    const days = monthGridFor(month);
+    const dayButtons = days.map((day) => {
+      const disabledByBounds = day.iso < today || day.iso > ALLOWED_DATE_MAX;
+      const disabledByFlow = !state.flexMode
+        && tripType.value === "round-trip"
+        && calendarState.selectionStage === "end"
+        && Boolean(selection.start)
+        && !selection.end
+        && day.iso <= selection.start;
+      const disabled = disabledByBounds || disabledByFlow;
+      const classes = [
+        "calendar-day",
+        day.inMonth ? "" : "calendar-day--outside",
+        day.iso === today ? "calendar-day--today" : "",
+        day.iso === selection.start ? "is-start" : "",
+        day.iso === selection.end && selection.end !== selection.start ? "is-end" : "",
+        selection.start && selection.end && day.iso > selection.start && day.iso < selection.end ? "is-between" : "",
+      ].filter(Boolean).join(" ");
+
+      return `
+        <button
+          type="button"
+          class="${classes}"
+          data-date-value="${day.iso}"
+          ${disabled ? "disabled" : ""}
+        >
+          <span>${day.day}</span>
+        </button>
+      `;
+    }).join("");
+
+    return `
+      <section class="calendar-month">
+        <header class="calendar-month__header">
+          <h3>${escapeHtml(formatMonthTitle(month))}</h3>
+        </header>
+        <div class="calendar-weekdays">
+          <span>Lun</span><span>Mar</span><span>Mié</span><span>Jue</span><span>Vie</span><span>Sáb</span><span>Dom</span>
+        </div>
+        <div class="calendar-grid">
+          ${dayButtons}
+        </div>
+      </section>
+    `;
+  }).join("");
+
+  calendarMonths.innerHTML = months;
+  calendarMonths.querySelectorAll("[data-date-value]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      applyCalendarSelection(button.dataset.dateValue);
+    });
+  });
+  syncCalendarPopoverPosition();
+  requestAnimationFrame(syncCalendarPopoverPosition);
+}
+
+function openCalendarPopover() {
+  if (!calendarPopover) return;
+  resetCalendarViewMonth();
+  calendarPopover.classList.remove("hidden");
+  renderCalendarPopover();
+}
+
+function closeCalendarPopover() {
+  calendarPopover?.classList.add("hidden");
+}
+
+function clearCalendarSelection() {
+  dateTrigger?.classList.remove("is-invalid");
+  if (state.flexMode) {
+    $("departureStart").value = "";
+    $("departureEnd").value = "";
+    $("returnStart").value = "";
+    $("returnEnd").value = "";
+  } else {
+    $("departureDate").value = "";
+    $("returnDate").value = "";
+  }
+  calendarState.selectionStage = "start";
+  syncDateTriggerText();
+  renderCalendarPopover();
+}
+
+function applyCalendarSelection(iso) {
+  if (!iso) return;
+
+  if (state.flexMode) {
+    const start = controlValue("departureStart");
+    const end = controlValue("departureEnd");
+
+    if (calendarState.selectionStage === "start" || !start || (start && end)) {
+      $("departureStart").value = iso;
+      $("departureEnd").value = "";
+      calendarState.selectionStage = "end";
+    } else {
+      const nextStart = iso < start ? iso : start;
+      const nextEnd = iso < start ? start : iso;
+      $("departureStart").value = nextStart;
+      $("departureEnd").value = nextEnd;
+      calendarState.selectionStage = "start";
+    }
+    syncFlexibleDerivedDates();
+    syncDateTriggerText();
+    renderCalendarPopover();
+    return;
+  }
+
+  if (tripType.value === "one-way") {
+    $("departureDate").value = iso;
+    $("returnDate").value = "";
+    calendarState.selectionStage = "start";
+    syncDateTriggerText();
+    closeCalendarPopover();
+    return;
+  }
+
+  const departure = controlValue("departureDate");
+  const ret = controlValue("returnDate");
+
+  if (calendarState.selectionStage === "start" || !departure || (departure && ret)) {
+    $("departureDate").value = iso;
+    $("returnDate").value = "";
+    calendarState.selectionStage = "end";
+  } else if (iso <= departure) {
+    $("departureDate").value = iso;
+    $("returnDate").value = "";
+    calendarState.selectionStage = "end";
+  } else {
+    $("returnDate").value = iso;
+    calendarState.selectionStage = "start";
+    closeCalendarPopover();
+  }
+
+  syncDateTriggerText();
+  renderCalendarPopover();
 }
 
 function summarizeMatrixConfidence(cells) {
@@ -582,11 +995,6 @@ function stopSearchPolling() {
   state.searchJobId = null;
 }
 
-function selMatrixCell() {
-  if (!state.matrixResponse?.cells?.length || !state.selectedMatrixKey) return null;
-  return state.matrixResponse.cells.find((c) => c.key === state.selectedMatrixKey) ?? null;
-}
-
 function selOffer() {
   if (!state.selectedOfferId) return null;
   return state.searchResponse?.offers?.find(o => o.id === state.selectedOfferId)
@@ -607,10 +1015,7 @@ function updatePaxLabel() {
   const a = parseInt($("adults").value, 10) || 1;
   const c = parseInt($("children").value, 10) || 0;
   const i = parseInt($("infants").value, 10) || 0;
-  let label = `${a} ADT`;
-  if (c > 0) label += `, ${c} CHD`;
-  if (i > 0) label += `, ${i} INF`;
-  if (paxLabel) paxLabel.textContent = label;
+  if (paxLabel) paxLabel.textContent = formatPassengerSummary(a, c, i);
   if (paxAdultsDisplay) paxAdultsDisplay.textContent = a;
   if (paxChildrenDisplay) paxChildrenDisplay.textContent = c;
   if (paxInfantsDisplay) paxInfantsDisplay.textContent = i;
@@ -620,6 +1025,7 @@ function setupPaxPopover() {
   if (!paxTrigger || !paxPopover) return;
   paxTrigger.addEventListener("click", (e) => {
     e.stopPropagation();
+    closeCalendarPopover();
     paxPopover.classList.toggle("hidden");
   });
   document.addEventListener("click", (e) => {
@@ -653,20 +1059,90 @@ function setupPaxPopover() {
    ================================================================ */
 
 function setupModeToggle() {
-  document.querySelectorAll("[data-mode]").forEach(btn => {
+  document.querySelectorAll("[data-mode]").forEach((btn) => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll("[data-mode]").forEach(b => b.classList.remove("is-active"));
-      btn.classList.add("is-active");
-      const isFlexible = btn.dataset.mode === "flexible";
-      state.flexMode = isFlexible;
-      if (datesExact) datesExact.classList.toggle("hidden", isFlexible);
-      if (datesFlex) datesFlex.classList.toggle("hidden", !isFlexible);
-      if (isFlexible) {
-        searchMode.value = tripType.value === "round-trip" ? "roundtrip-grid" : "stay-range";
-      } else {
-        searchMode.value = "exact";
+      state.flexMode = btn.dataset.mode === "flexible";
+
+      if (state.flexMode && !$("departureStart").value && $("departureDate").value) {
+        $("departureStart").value = $("departureDate").value;
+        $("departureEnd").value = $("returnDate").value || $("departureDate").value;
       }
+
+      if (!state.flexMode && !$("departureDate").value && $("departureStart").value) {
+        $("departureDate").value = $("departureStart").value;
+        if (tripType.value === "round-trip" && $("departureEnd").value) {
+          $("returnDate").value = $("departureEnd").value;
+        }
+      }
+
+      calendarState.selectionStage = "start";
+      updateModeFields();
     });
+  });
+}
+
+function setupTripTypeToggle() {
+  document.querySelectorAll("[data-trip]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      tripType.value = btn.dataset.trip || "round-trip";
+      if (tripType.value === "one-way") {
+        $("returnDate").value = "";
+        $("returnStart").value = "";
+        $("returnEnd").value = "";
+      }
+      calendarState.selectionStage = "start";
+      updateModeFields();
+    });
+  });
+}
+
+function setupThemeToggle() {
+  setTheme(initialTheme());
+  themeButtons.forEach((button) => {
+    button.addEventListener("click", () => setTheme(button.dataset.themeValue));
+  });
+}
+
+function setupCalendarPopover() {
+  if (!dateTrigger || !calendarPopover) return;
+
+  if (calendarPopover.parentElement !== document.body) {
+    document.body.appendChild(calendarPopover);
+  }
+
+  dateTrigger.addEventListener("click", (event) => {
+    event.stopPropagation();
+    paxPopover?.classList.add("hidden");
+    if (calendarPopover.classList.contains("hidden")) openCalendarPopover();
+    else closeCalendarPopover();
+  });
+
+  calendarClose?.addEventListener("click", closeCalendarPopover);
+  calendarDone?.addEventListener("click", closeCalendarPopover);
+  calendarClear?.addEventListener("click", clearCalendarSelection);
+  calendarPrev?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    calendarState.viewStartMonth = clampCalendarViewMonth(addMonthsIso(calendarState.viewStartMonth || calendarMinMonth(), -1));
+    renderCalendarPopover();
+  });
+  calendarNext?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    calendarState.viewStartMonth = clampCalendarViewMonth(addMonthsIso(calendarState.viewStartMonth || calendarMinMonth(), 1));
+    renderCalendarPopover();
+  });
+
+  [stayDaysMinEl, stayDaysMaxEl].forEach((input) => {
+    input?.addEventListener("change", () => {
+      syncFlexibleDerivedDates();
+      syncDateTriggerText();
+      if (!calendarPopover.classList.contains("hidden")) renderCalendarPopover();
+    });
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!calendarPopover.contains(event.target) && event.target !== dateTrigger && !dateTrigger.contains(event.target)) {
+      closeCalendarPopover();
+    }
   });
 }
 
@@ -752,18 +1228,6 @@ function enforceDateYear(input) {
   input.addEventListener("blur", normalize);
 }
 
-function enforceAlphaUpper(input, maxLen) {
-  if (!input) return;
-  input.addEventListener("input", () => {
-    input.value = input.value.replace(/[^A-Za-z]/g, "").toUpperCase().slice(0, maxLen);
-  });
-  input.addEventListener("paste", (e) => {
-    e.preventDefault();
-    const text = (e.clipboardData || window.clipboardData).getData("text");
-    input.value = text.replace(/[^A-Za-z]/g, "").toUpperCase().slice(0, maxLen);
-  });
-}
-
 function enforceIntRange(input, min, max) {
   if (!input) return;
   input.addEventListener("input", () => {
@@ -802,16 +1266,7 @@ function enforceDateNotPast(input) {
   });
 }
 
-function enforceCarrierCodes(input) {
-  if (!input) return;
-  input.addEventListener("input", () => {
-    input.value = input.value.replace(/[^A-Za-z,]/g, "").toUpperCase();
-  });
-}
-
 function setupInputEnforcement() {
-  enforceAlphaUpper($("currencyCode"), 3);
-
   enforceIntRange($("adults"), 1, 9);
   enforceIntRange($("children"), 0, 8);
   enforceIntRange($("infants"), 0, 4);
@@ -824,24 +1279,11 @@ function setupInputEnforcement() {
     const input = $(id);
     enforceDateYear(input);
     enforceDateNotPast(input);
-  });
-
-  $("maxPrice")?.addEventListener("blur", () => {
-    const el = $("maxPrice");
-    if (el.value === "") return;
-    let v = parseInt(el.value, 10);
-    if (isNaN(v) || v < 0) { el.value = ""; return; }
-    if (v > 999999) v = 999999;
-    el.value = String(v);
-  });
-
-  $("maxStops")?.addEventListener("blur", () => {
-    const el = $("maxStops");
-    if (el.value === "") return;
-    let v = parseInt(el.value, 10);
-    if (isNaN(v) || v < 0) { el.value = ""; return; }
-    if (v > 3) v = 3;
-    el.value = String(v);
+    input?.addEventListener("change", () => {
+      syncFlexibleDerivedDates();
+      syncDateTriggerText();
+      if (!calendarPopover?.classList.contains("hidden")) renderCalendarPopover();
+    });
   });
 
   enforceDateBounds();
@@ -871,9 +1313,6 @@ function validateForm() {
     $("origin").classList.add("is-invalid");
     $("destination").classList.add("is-invalid");
   }
-
-  const curr = $("currencyCode").value;
-  if (curr.length !== 3) { errs.push("Moneda: codigo de 3 letras."); $("currencyCode").classList.add("is-invalid"); }
 
   const adults = parseInt($("adults").value, 10);
   const children = parseInt($("children").value, 10);
@@ -971,8 +1410,12 @@ function validateForm() {
 }
 
 function showErrors(errors) {
+  dateTrigger?.classList.remove("is-invalid");
   if (errors.length === 0) { validationBox.classList.add("hidden"); validationBox.innerHTML = ""; return; }
   validationBox.classList.remove("hidden");
+  if (errors.some((error) => /fecha|ventana|salida|regreso|matriz|rango/i.test(error))) {
+    dateTrigger?.classList.add("is-invalid");
+  }
   validationBox.innerHTML = `<ul>${errors.map((e) => `<li>${e}</li>`).join("")}</ul>`;
 }
 
@@ -982,21 +1425,27 @@ function showErrors(errors) {
 
 function updateModeFields() {
   const isFlexible = state.flexMode;
-  if (datesExact) datesExact.classList.toggle("hidden", isFlexible);
-  if (datesFlex) datesFlex.classList.toggle("hidden", !isFlexible);
+  document.querySelectorAll("[data-mode]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.mode === (isFlexible ? "flexible" : "exact"));
+  });
+  document.querySelectorAll("[data-trip]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.trip === tripType.value);
+  });
 
-  // Show/hide return date in exact mode based on trip type
-  const returnDate = $("returnDate");
-  if (returnDate) {
-    returnDate.style.display = (!isFlexible && tripType.value === "round-trip") ? "" : "none";
-  }
+  searchMode.value = isFlexible
+    ? tripType.value === "round-trip" ? "roundtrip-grid" : "stay-range"
+    : "exact";
 
-  // Update searchMode hidden select for backend compat
-  if (isFlexible) {
-    searchMode.value = tripType.value === "round-trip" ? "roundtrip-grid" : "stay-range";
+  calendarStayConfig?.classList.toggle("hidden", !isFlexible);
+  if (!isFlexible) {
+    $("returnStart").value = "";
+    $("returnEnd").value = "";
   } else {
-    searchMode.value = "exact";
+    syncFlexibleDerivedDates();
   }
+
+  syncDateTriggerText();
+  if (!calendarPopover?.classList.contains("hidden")) renderCalendarPopover();
 }
 
 function toCarrierList(raw) {
@@ -1013,8 +1462,8 @@ function getFormPayload() {
     request: {
       tripType: t,
       searchMode: m,
-      cabin: String(fd.get("cabin") || "ECONOMY"),
-      currencyCode: $("currencyCode").value,
+      cabin: "ECONOMY",
+      currencyCode: DEFAULT_CURRENCY_CODE,
       coverageMode: "core",
       redirectMode: "best-effort",
       passengers: {
@@ -1026,13 +1475,13 @@ function getFormPayload() {
         nonStop: fd.get("nonStop") === "on",
         baggageRequired: fd.get("baggageRequired") === "on",
         maxResults: disableMaxResults ? undefined : 25,
-        maxPrice: $("maxPrice").value ? Number($("maxPrice").value) : undefined,
         includedAirlineCodes: [],
-        maxStops: $("maxStops").value ? Number($("maxStops").value) : undefined,
       },
       legs: [{
         origin: resolvedLocationCode("origin"),
         destination: resolvedLocationCode("destination"),
+        originLabel: $("origin")?.dataset.label ?? $("origin")?.value ?? "",
+        destinationLabel: $("destination")?.dataset.label ?? $("destination")?.value ?? "",
         departureDate: $("departureDate").value,
         returnDate: $("returnDate")?.value ?? "",
         departureStart: $("departureStart")?.value ?? "",
@@ -1078,8 +1527,6 @@ function getActiveClientFilters() {
   return {
     nonStop: controlChecked("nonStop"),
     baggageRequired: controlChecked("baggageRequired"),
-    maxPrice: controlValue("maxPrice") ? Number(controlValue("maxPrice")) : undefined,
-    maxStops: controlValue("maxStops") ? Number(controlValue("maxStops")) : undefined,
   };
 }
 
@@ -1094,8 +1541,6 @@ function applyClientOfferControls() {
     const mainCarrier = offer.mainCarrier || offer.validatingCarrier || "";
     if (filters.nonStop && totalStopsCount(offer) > 0) return false;
     if (filters.baggageRequired && !offer.baggage?.checkedIncluded) return false;
-    if (typeof filters.maxPrice === "number" && offer.price.total.amount > filters.maxPrice) return false;
-    if (typeof filters.maxStops === "number" && totalStopsCount(offer) > filters.maxStops) return false;
     // Sidebar airline filter
     if (only !== null && mainCarrier !== only) return false;
     if (only === null && hidden.size > 0 && hidden.has(mainCarrier)) return false;
@@ -1111,10 +1556,14 @@ function applyClientOfferControls() {
   }
 
   state.searchResponse.filteredOffers = offers;
-  const totalPages = resultsPageCount(offers.length);
+  const groupedOffers = buildOfferGroups(offers);
+  state.searchResponse.filteredOfferGroups = groupedOffers;
+  const totalPages = resultsPageCount(groupedOffers.length);
   state.resultsPage = Math.min(Math.max(1, state.resultsPage), totalPages);
   const start = (state.resultsPage - 1) * RESULTS_PAGE_SIZE;
-  state.searchResponse.offers = offers.slice(start, start + RESULTS_PAGE_SIZE);
+  state.searchResponse.offers = groupedOffers
+    .slice(start, start + RESULTS_PAGE_SIZE)
+    .flat();
 
   if (!state.searchResponse.offers.some((offer) => offer.id === state.selectedOfferId)) {
     state.selectedOfferId = state.searchResponse.offers[0]?.id ?? offers[0]?.id ?? null;
@@ -1196,7 +1645,7 @@ function renderToolbar() {
   }
   if (resultPill) {
     resultPill.textContent = state.searchResponse
-      ? `${state.searchResponse.filteredOffers?.length ?? 0} ofertas`
+      ? `${state.searchResponse.filteredOfferGroups?.length ?? 0} ofertas`
       : `${state.matrixResponse?.cells?.length ?? 0} celdas`;
     resultPill.className = "badge badge--accent";
   }
@@ -1208,10 +1657,10 @@ function updateResultsToolbar() {
   if (emptyState) emptyState.classList.toggle("hidden", hasResults);
 
   // Update count
-  const total = state.searchResponse?.filteredOffers?.length ?? 0;
-  const page = state.searchResponse?.offers?.length ?? 0;
+  const total = state.searchResponse?.filteredOfferGroups?.length ?? 0;
+  const page = buildOfferGroups(state.searchResponse?.offers ?? []).length;
   if (resultsCountLabel) {
-    resultsCountLabel.innerHTML = total > 0 ? `<strong>${page}</strong> de ${total} resultados` : "";
+    resultsCountLabel.innerHTML = total > 0 ? `<strong>${page}</strong> visibles de ${total}` : "";
   }
 
   // Update sort active state
@@ -1239,17 +1688,18 @@ function updateResultsToolbar() {
 function renderResults() {
   if (!resultsContainer) return;
   const offers = state.searchResponse?.offers ?? [];
-  const total = state.searchResponse?.filteredOffers?.length ?? state.searchResponse?.allOffers?.length ?? offers.length;
+  const total = state.searchResponse?.filteredOfferGroups?.length
+    ?? buildOfferGroups(state.searchResponse?.filteredOffers ?? state.searchResponse?.allOffers ?? offers).length;
   const totalPages = resultsPageCount(total);
   const isRunning = state.searchResponse?.searchStatus === "running";
 
   if (offers.length === 0 && !isRunning) {
-    resultsContainer.innerHTML = '<div class="empty-state"><div class="empty-state__icon"><svg class="ico" style="width:40px;height:40px;opacity:0.3"><use href="#ico-plane"/></svg></div><p class="empty-state__text">Sin ofertas.</p></div>';
+    resultsContainer.innerHTML = '<div class="empty-state"><div class="empty-state__icon"><svg class="ico" style="width:40px;height:40px;opacity:0.3"><use href="#ico-plane"/></svg></div><p class="empty-state__eyebrow">Sin resultados</p><p class="empty-state__text">No aparecieron ofertas con los filtros actuales.</p></div>';
     return;
   }
 
   if (offers.length === 0 && isRunning) {
-    resultsContainer.innerHTML = '<div class="empty-state"><div class="spinner" style="width:32px;height:32px"><svg class="spinner__svg" viewBox="0 0 50 50"><circle class="spinner__track" cx="25" cy="25" r="20"/><circle class="spinner__fill" cx="25" cy="25" r="20"/></svg></div><p class="empty-state__text">Consultando Agil...</p></div>';
+    renderResultsSkeleton();
     return;
   }
 
@@ -1259,11 +1709,11 @@ function renderResults() {
   }
 
   html += '<div class="table-wrap"><table class="results-table"><thead><tr>';
-  html += '<th class="col-check">C</th>';
-  html += '<th>Carrier</th>';
+  html += '<th class="col-check">Sel</th>';
+  html += '<th>Aerolínea</th>';
   html += '<th>Fechas</th>';
-  html += '<th>Duracion</th>';
-  html += '<th>Esc</th>';
+  html += '<th>Duración</th>';
+  html += '<th>Escalas</th>';
   html += '<th>Equipaje</th>';
   html += '<th class="results-price">Precio</th>';
   html += '<th>Agil</th>';
@@ -1302,7 +1752,7 @@ function renderResults() {
   // Pagination
   html += `<div class="results-pager">`;
   html += `<button type="button" class="btn btn--secondary btn--sm" data-results-page="prev" ${state.resultsPage <= 1 ? "disabled" : ""}>← Anterior</button>`;
-  html += `<span class="results-pager__label">Pagina ${state.resultsPage} de ${totalPages}</span>`;
+  html += `<span class="results-pager__label">Página ${state.resultsPage} de ${totalPages}</span>`;
   html += `<button type="button" class="btn btn--secondary btn--sm" data-results-page="next" ${state.resultsPage >= totalPages ? "disabled" : ""}>Siguiente →</button>`;
   html += `</div>`;
 
@@ -1312,7 +1762,7 @@ function renderResults() {
 function handleResultsClick(e) {
   const pager = e.target.closest("[data-results-page]");
   if (pager) {
-    const total = state.searchResponse?.filteredOffers?.length ?? 0;
+    const total = state.searchResponse?.filteredOfferGroups?.length ?? 0;
     const totalPages = resultsPageCount(total);
     if (pager.dataset.resultsPage === "prev") {
       state.resultsPage = Math.max(1, state.resultsPage - 1);
@@ -1333,8 +1783,6 @@ function handleResultsClick(e) {
   const row = e.target.closest("tr[data-oid]");
   if (!row) return;
   state.selectedOfferId = row.dataset.oid;
-  state.showAgilEmbed = false;
-  state.agilLaunchStatus = "";
   renderResultsArea();
   renderDetailPanel();
 }
@@ -1349,18 +1797,33 @@ async function handleMatrixClick(e) {
   const cell = cells.find((entry) => entry.key === btn.dataset.mk);
   if (!cell?.selectable || !cell.derivedRequest) return;
   submitButton.disabled = true;
-  showLoading();
   state.selectedMatrixKey = btn.dataset.mk;
   try {
-    const data = await postJson("/api/search", { request: cell.derivedRequest, sortMode: state.sortMode });
-    state.request = data.request;
-    setSearchResponse(data);
+    stopMatrixPolling();
+    stopSearchPolling();
+    state.request = cell.derivedRequest;
+    state.matrixResponse = null;
+    state.viewMode = "list";
     state.compareIds.clear();
     state.compareResponse = null;
     state.quotationText = "";
+    state.airlineFilter.hidden.clear();
+    state.airlineFilter.only = null;
+    state.detailPendingAction = null;
+    setSearchResponse(buildPendingSearchResponse(cell.derivedRequest, state.sortMode));
+    renderAll();
+
+    const data = await postJson("/api/search", { request: cell.derivedRequest, sortMode: state.sortMode });
+    state.request = data.request;
+    state.selectedMatrixKey = null;
+    setSearchResponse(data);
+    state.searchJobId = data.searchJobId ?? null;
+    if (!data.searchComplete && state.searchJobId) {
+      queueSearchPoll(state.searchJobId);
+    }
     renderAll();
   } catch (err) { showToast(err.message); }
-  finally { submitButton.disabled = false; hideLoading(); }
+  finally { submitButton.disabled = false; }
 }
 
 function confidenceColor(c) {
@@ -1447,10 +1910,19 @@ function renderSidebar() {
   const sidebarEl = $("sidebar");
   if (!sidebarEl) return;
   const allOffers = state.searchResponse?.allOffers;
-  if (!allOffers?.length) { sidebarEl.classList.remove("is-visible"); return; }
+  if (!allOffers?.length) {
+    sidebarEl.classList.remove("is-visible");
+    workspace?.classList.remove("workspace--with-sidebar");
+    return;
+  }
   const airlines = buildAirlineList(allOffers);
-  if (airlines.length <= 1) { sidebarEl.classList.remove("is-visible"); return; }
+  if (airlines.length <= 1) {
+    sidebarEl.classList.remove("is-visible");
+    workspace?.classList.remove("workspace--with-sidebar");
+    return;
+  }
   sidebarEl.classList.add("is-visible");
+  workspace?.classList.add("workspace--with-sidebar");
   const { hidden, only } = state.airlineFilter;
   const hasFilters = hidden.size > 0 || only !== null;
 
@@ -1546,7 +2018,7 @@ function renderCalendarView() {
       const isLoading = cell.confidence === "loading";
       const toneClass = matrixToneClass(cell, priceStats);
       const calTone = toneClass.replace("matrix-cell--", "cal-cell--");
-      html += `<button class="matrix-cell cal-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass} ${calTone}" type="button" ${!cell.selectable && !isLoading ? "disabled" : ""} data-mk="${cell.key}" title="${escapeHtml(cell.tooltip ?? "")}">`;
+      html += `<button class="matrix-cell cal-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass} ${calTone}" type="button" ${!cell.selectable ? "disabled" : ""} data-mk="${cell.key}" title="${escapeHtml(cell.tooltip ?? "")}">`;
       html += `<div class="matrix-price cal-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? formatMoney(cell.price) : "—"}</div>`;
       html += `<div class="matrix-meta cal-meta">${isLoading ? "cargando" : cell.stateCode ?? ""}</div></button>`;
     });
@@ -1561,7 +2033,7 @@ function renderCalendarView() {
         const isLoading = cell.confidence === "loading";
         const toneClass = matrixToneClass(cell, priceStats);
         const calTone = toneClass.replace("matrix-cell--", "cal-cell--");
-        html += `<button class="matrix-cell cal-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass} ${calTone}" type="button" ${!cell.selectable && !isLoading ? "disabled" : ""} data-mk="${cell.key}" title="${escapeHtml(cell.tooltip ?? "")}">`;
+        html += `<button class="matrix-cell cal-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass} ${calTone}" type="button" ${!cell.selectable ? "disabled" : ""} data-mk="${cell.key}" title="${escapeHtml(cell.tooltip ?? "")}">`;
         html += `<div class="matrix-price cal-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? formatMoney(cell.price) : "—"}</div>`;
         html += `<div class="matrix-meta cal-meta">${isLoading ? "cargando" : cell.stateCode ?? ""} ${cell.stayNights != null ? cell.stayNights + "n" : ""}</div></button>`;
       });
@@ -1610,10 +2082,42 @@ function renderDetailPanel() {
 
   if (!offer) {
     closeDetailPanel();
-    if (detailContent) detailContent.innerHTML = "";
+    if (detailContent) {
+      detailContent.innerHTML = `
+        <div class="detail-empty">
+          <p class="detail-empty__eyebrow">Sin selección</p>
+          <p class="detail-empty__text">El detalle aparecerá aquí al elegir una oferta o una celda del calendario.</p>
+        </div>
+      `;
+    }
     return;
   }
   openDetailPanel();
+
+  if (state.detailPendingAction) {
+    const copy = detailActionCopy(state.detailPendingAction);
+    const amount = formatMoney(offer.price?.total);
+    const summary = `${escapeHtml(offer.origin)} → ${escapeHtml(offer.destination)} · ${escapeHtml(offer.mainCarrier ?? offer.validatingCarrier ?? "—")}`;
+    if (detailContent) {
+      detailContent.innerHTML = `
+        <div class="detail-busy" aria-live="polite" aria-busy="true">
+          <div class="detail-hero">${amount}</div>
+          <div class="detail-summary">${summary}</div>
+          <div class="detail-section">
+            <div class="detail-section__title">${copy.eyebrow}</div>
+            <p class="detail-busy__text">${copy.text}</p>
+            <div class="detail-busy__stack" aria-hidden="true">
+              <span class="skeleton-line skeleton-line--hero"></span>
+              <span class="skeleton-line skeleton-line--lg"></span>
+              <span class="skeleton-line skeleton-line--md"></span>
+              <span class="skeleton-line skeleton-line--sm"></span>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+    return;
+  }
 
   const flights = offer.itineraries?.flatMap((it) => it.segments.map((s) => s.flightNumber)).join(", ") || "—";
   const group = getGroupForOffer(offer.id) ?? [offer];
@@ -1646,7 +2150,7 @@ function renderDetailPanel() {
       if (!ib) return;
       const isSelected = member.id === state.selectedOfferId;
       const label = ib.segments?.map(s => `${s.flightNumber} ${s.origin} ${formatDT(s.departureAt)} → ${s.destination} ${formatDT(s.arrivalAt)}`).join(" / ") || "—";
-      h += `<div class="detail-segment__leg" data-inbound-id="${member.id}" style="cursor:pointer;padding:${isSelected ? "var(--sp-2)" : "var(--sp-1)"} var(--sp-2);border-radius:var(--radius-sm);border:1px solid ${isSelected ? "var(--accent-border)" : "transparent"};background:${isSelected ? "var(--accent-muted)" : "transparent"};transition:all var(--duration-fast)">${label}</div>`;
+      h += `<div class="detail-segment__leg detail-segment__leg--choice ${isSelected ? "is-selected" : ""}" data-inbound-id="${member.id}">${label}</div>`;
     });
     h += '</div>';
   } else {
@@ -1733,7 +2237,10 @@ searchForm.addEventListener("keydown", (e) => {
   }
 });
 
-searchMode.addEventListener("change", updateModeFields);
+searchMode.addEventListener("change", () => {
+  state.flexMode = searchMode.value !== "exact";
+  updateModeFields();
+});
 tripType.addEventListener("change", updateModeFields);
 
 // Sort buttons in toolbar
@@ -1763,6 +2270,10 @@ detailClose?.addEventListener("click", () => {
   renderResultsArea();
 });
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !calendarPopover?.classList.contains("hidden")) {
+    closeCalendarPopover();
+    return;
+  }
   if (e.key === "Escape" && detailPanel?.classList.contains("is-open")) {
     state.selectedOfferId = null;
     closeDetailPanel();
@@ -1794,16 +2305,7 @@ resultsContainer?.addEventListener("change", async (e) => {
   await refreshCompare();
 });
 
-const debouncedFilterRefresh = debounce(async () => {
-  if (!state.searchResponse?.allOffers) return;
-  state.sortMode = controlValue("sortMode") || state.sortMode;
-  state.resultsPage = 1;
-  applyClientOfferControls();
-  renderAll();
-  if (state.compareIds.size > 0) await refreshCompare();
-}, 300);
-
-["sortMode", "nonStop", "baggageRequired", "maxPrice", "maxStops"].forEach((id) => {
+["sortMode", "nonStop", "baggageRequired"].forEach((id) => {
   control(id)?.addEventListener("change", async () => {
     if (!state.searchResponse?.allOffers) return;
     state.sortMode = controlValue("sortMode") || state.sortMode;
@@ -1812,20 +2314,19 @@ const debouncedFilterRefresh = debounce(async () => {
     renderAll();
     if (state.compareIds.size > 0) await refreshCompare();
   });
-  // Debounce number inputs to avoid re-rendering on every keystroke
-  if (["maxPrice", "maxStops"].includes(id)) {
-    control(id)?.addEventListener("input", debouncedFilterRefresh);
-  }
 });
 
 searchForm.addEventListener("submit", async (e) => {
   e.preventDefault();
+  hideLocationMenu("origin");
+  hideLocationMenu("destination");
+  paxPopover?.classList.add("hidden");
+  closeCalendarPopover();
   const errs = validateForm();
   showErrors(errs);
   if (errs.length > 0) return;
 
   submitButton.disabled = true;
-  showLoading();
   try {
     const payload = getFormPayload();
     const translatedPayload = translateFlexibleDates(payload);
@@ -1836,9 +2337,8 @@ searchForm.addEventListener("submit", async (e) => {
     state.compareIds.clear();
     state.compareResponse = null;
     state.quotationText = "";
-    state.showAgilEmbed = false;
-    state.agilLaunchStatus = "";
     state.selectedMatrixKey = null;
+    state.detailPendingAction = null;
     state.airlineFilter.hidden.clear();
     state.airlineFilter.only = null;
 
@@ -1876,7 +2376,7 @@ searchForm.addEventListener("submit", async (e) => {
     }
     renderAll();
   } catch (err) { showToast(err.message); }
-  finally { submitButton.disabled = false; hideLoading(); }
+  finally { submitButton.disabled = false; }
 });
 
 repriceButton.addEventListener("click", async () => {
@@ -1884,7 +2384,8 @@ repriceButton.addEventListener("click", async () => {
   const sid = sessionId();
   if (!offer || !sid) return;
   repriceButton.disabled = true;
-  showLoading();
+  state.detailPendingAction = "reprice";
+  renderDetailPanel();
   try {
     const data = await postJson("/api/reprice", { searchSessionId: sid, offerId: offer.id });
     state.searchResponse.allOffers = state.searchResponse.allOffers.map((o) => o.id === data.offer.id ? data.offer : o);
@@ -1893,7 +2394,11 @@ repriceButton.addEventListener("click", async () => {
     renderAll();
     if (state.compareIds.size > 0) await refreshCompare();
   } catch (err) { showToast(err.message); }
-  finally { repriceButton.disabled = false; hideLoading(); }
+  finally {
+    state.detailPendingAction = null;
+    repriceButton.disabled = false;
+    renderDetailPanel();
+  }
 });
 
 quotationButton.addEventListener("click", async () => {
@@ -1901,7 +2406,8 @@ quotationButton.addEventListener("click", async () => {
   const sid = sessionId();
   if (!offer || !sid) return;
   quotationButton.disabled = true;
-  showLoading();
+  state.detailPendingAction = "quotation";
+  renderDetailPanel();
   try {
     const data = await postJson("/api/quotation", { searchSessionId: sid, offerId: offer.id });
     state.searchResponse.allOffers = state.searchResponse.allOffers.map((o) => o.id === data.offer.id ? data.offer : o);
@@ -1910,7 +2416,11 @@ quotationButton.addEventListener("click", async () => {
     renderAll();
     if (state.compareIds.size > 0) await refreshCompare();
   } catch (err) { showToast(err.message); }
-  finally { quotationButton.disabled = false; hideLoading(); }
+  finally {
+    state.detailPendingAction = null;
+    quotationButton.disabled = false;
+    renderDetailPanel();
+  }
 });
 
 /* ================================================================
@@ -1956,7 +2466,10 @@ setupInputEnforcement();
 setupLocationAutocomplete("origin");
 setupLocationAutocomplete("destination");
 setupPaxPopover();
+setupThemeToggle();
+setupTripTypeToggle();
 setupModeToggle();
+setupCalendarPopover();
 updatePaxLabel();
 updateModeFields();
 window.addEventListener("resize", syncVisibleLocationMenus);

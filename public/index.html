@@ -4,216 +4,241 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Fly Desk</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%230e7490' d='M4 36l22-4 14 20 6-2-8-22 18-4c4-.9 6-5.1 5.1-9.1-.9-4-5.1-6-9.1-5.1l-18 4-17-16-6 2 11 20-22 4-7-8-4 1.3 4 12.6-4 12.6 4 1.3z'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/app.css" />
 </head>
 <body>
-
-  <!-- ===== HEADER ===== -->
-  <header class="layout-header">
-    <div class="layout-header__brand">
+  <header class="topbar">
+    <div class="topbar__brand">
       <svg class="ico ico--brand"><use href="#ico-plane"/></svg>
-      FLY DESK
+      <div class="topbar__brand-copy">
+        <strong>Fly Desk</strong>
+      </div>
     </div>
-    <div class="layout-header__right">
+
+    <div class="topbar__meta">
+      <div class="theme-switch" role="group" aria-label="Tema">
+        <button type="button" class="theme-switch__button is-active" data-theme-value="light" aria-label="Tema claro" title="Tema claro">
+          <svg class="theme-switch__icon" aria-hidden="true"><use href="#ico-sun"/></svg>
+          <span class="sr-only">Claro</span>
+        </button>
+        <button type="button" class="theme-switch__button" data-theme-value="dark" aria-label="Tema oscuro" title="Tema oscuro">
+          <svg class="theme-switch__icon" aria-hidden="true"><use href="#ico-moon"/></svg>
+          <span class="sr-only">Oscuro</span>
+        </button>
+      </div>
       <span id="runtimeBadge" class="badge">IDLE</span>
       <span id="resultPill" class="badge badge--accent">0</span>
     </div>
   </header>
 
-  <!-- ===== SEARCH BAR ===== -->
-  <form id="searchForm" class="search-bar" novalidate autocomplete="off">
-    <!-- Main row -->
-    <div class="search-bar__main">
-      <select name="tripType" id="tripType" class="input input--compact">
-        <option value="round-trip">Ida/Vta</option>
-        <option value="one-way">Solo ida</option>
-      </select>
-
-      <span class="search-bar__divider"></span>
-
-      <!-- Route group -->
-      <div class="search-bar__route">
-        <div class="location-field">
-          <input name="origin" id="origin" class="input input--location" autocomplete="off" spellcheck="false" placeholder="Origen" required />
-          <div id="originSuggestions" class="autocomplete-menu hidden"></div>
+  <form id="searchForm" class="search-shell" novalidate autocomplete="off">
+    <div class="search-rail">
+      <section class="rail-segment rail-segment--stack" data-search-order="mode">
+        <span class="field-label">Modo</span>
+        <div class="segmented-control">
+          <button type="button" class="segmented-control__button is-active" data-mode="exact">Exacto</button>
+          <button type="button" class="segmented-control__button" data-mode="flexible">Flexible</button>
         </div>
-        <button type="button" id="swapRouteBtn" class="btn--icon" title="Intercambiar">
-          <svg class="ico"><use href="#ico-swap"/></svg>
+        <select name="searchMode" id="searchMode" class="hidden">
+          <option value="exact">Exacto</option>
+          <option value="stay-range">Rango</option>
+          <option value="roundtrip-grid">Matriz</option>
+        </select>
+      </section>
+
+      <section class="rail-segment rail-segment--stack rail-segment--trip" data-search-order="trip">
+        <span class="field-label">Trayecto</span>
+        <div class="segmented-control segmented-control--wide" id="tripTypeControl">
+          <button type="button" class="segmented-control__button is-active" data-trip="round-trip">Ida y vuelta</button>
+          <button type="button" class="segmented-control__button" data-trip="one-way">Solo ida</button>
+        </div>
+        <select name="tripType" id="tripType" class="hidden">
+          <option value="round-trip">Ida y vuelta</option>
+          <option value="one-way">Solo ida</option>
+        </select>
+      </section>
+
+      <label class="rail-segment rail-segment--field rail-segment--location" data-search-order="origin">
+        <span class="field-label">Origen</span>
+        <div class="field-shell">
+          <input name="origin" id="origin" class="field-input field-input--code" autocomplete="off" spellcheck="false" placeholder="Ciudad o IATA" required />
+        </div>
+        <div id="originSuggestions" class="autocomplete-menu hidden"></div>
+      </label>
+
+      <button type="button" id="swapRouteBtn" class="icon-button icon-button--swap" data-search-order="swap" title="Intercambiar origen y destino">
+        <svg class="ico"><use href="#ico-swap"/></svg>
+      </button>
+
+      <label class="rail-segment rail-segment--field rail-segment--location" data-search-order="destination">
+        <span class="field-label">Destino</span>
+        <div class="field-shell">
+          <input name="destination" id="destination" class="field-input field-input--code" autocomplete="off" spellcheck="false" placeholder="Ciudad o IATA" required />
+        </div>
+        <div id="destinationSuggestions" class="autocomplete-menu hidden"></div>
+      </label>
+
+      <section class="rail-segment rail-segment--field rail-segment--dates" data-search-order="dates">
+        <span class="field-label">Fechas</span>
+        <button type="button" id="dateTrigger" class="field-button field-button--dates">
+          <span id="dateTriggerText">Seleccionar fechas</span>
+          <svg class="ico"><use href="#ico-calendar"/></svg>
         </button>
-        <div class="location-field">
-          <input name="destination" id="destination" class="input input--location" autocomplete="off" spellcheck="false" placeholder="Destino" required />
-          <div id="destinationSuggestions" class="autocomplete-menu hidden"></div>
-        </div>
-      </div>
+        <input name="departureDate" id="departureDate" type="hidden" />
+        <input name="returnDate" id="returnDate" type="hidden" />
+        <input name="departureStart" id="departureStart" type="hidden" />
+        <input name="departureEnd" id="departureEnd" type="hidden" />
+        <input name="returnStart" id="returnStart" type="hidden" />
+        <input name="returnEnd" id="returnEnd" type="hidden" />
+      </section>
 
-      <span class="search-bar__divider"></span>
-
-      <!-- Dates: exact mode -->
-      <div class="search-bar__dates" id="datesExact">
-        <input name="departureDate" id="departureDate" type="date" class="input input--date" required />
-        <input name="returnDate" id="returnDate" type="date" class="input input--date roundtrip-only" />
-      </div>
-
-      <!-- Dates: flexible mode (hidden by default) -->
-      <div class="search-bar__flex-dates hidden" id="datesFlex">
-        <div class="flex-duration">
-          <input name="stayDaysMin" id="stayDaysMin" type="number" class="input input--mini" min="1" max="90" placeholder="7" />
-          <span class="flex-duration__sep">-</span>
-          <input name="stayDaysMax" id="stayDaysMax" type="number" class="input input--mini" min="1" max="90" placeholder="14" />
-          <span class="flex-duration__label">dias</span>
-        </div>
-        <span class="search-bar__divider"></span>
-        <div class="flex-window">
-          <input name="departureStart" id="departureStart" type="date" class="input input--date" />
-          <span class="flex-window__sep">~</span>
-          <input name="departureEnd" id="departureEnd" type="date" class="input input--date" />
-        </div>
-      </div>
-
-      <span class="search-bar__divider"></span>
-
-      <!-- Pax trigger + popover wrapper -->
-      <div class="pax-wrapper">
-        <button type="button" id="paxTrigger" class="chip chip--interactive">
+      <section class="rail-segment rail-segment--field pax-wrapper" data-search-order="passengers">
+        <span class="field-label">Pasajeros</span>
+        <button type="button" id="paxTrigger" class="field-button field-button--pax">
           <span id="paxLabel">1 ADT</span>
           <svg class="ico ico--xs"><use href="#ico-chevron-down"/></svg>
         </button>
-
-        <!-- Pax popover -->
         <div id="paxPopover" class="pax-popover hidden">
           <div class="pax-popover__row">
             <span class="pax-popover__label">Adultos</span>
             <div class="pax-popover__controls">
-              <button type="button" class="btn btn--icon" data-pax-action="adults-dec">&minus;</button>
+              <button type="button" class="stepper-button" data-pax-action="adults-dec">&minus;</button>
               <span id="paxAdultsDisplay" class="pax-popover__value">1</span>
-              <button type="button" class="btn btn--icon" data-pax-action="adults-inc">&plus;</button>
+              <button type="button" class="stepper-button" data-pax-action="adults-inc">&plus;</button>
             </div>
           </div>
           <div class="pax-popover__row">
             <span class="pax-popover__label">Niños <span class="text-dim">(2-11)</span></span>
             <div class="pax-popover__controls">
-              <button type="button" class="btn btn--icon" data-pax-action="children-dec">&minus;</button>
+              <button type="button" class="stepper-button" data-pax-action="children-dec">&minus;</button>
               <span id="paxChildrenDisplay" class="pax-popover__value">0</span>
-              <button type="button" class="btn btn--icon" data-pax-action="children-inc">&plus;</button>
+              <button type="button" class="stepper-button" data-pax-action="children-inc">&plus;</button>
             </div>
           </div>
           <div class="pax-popover__row">
             <span class="pax-popover__label">Bebés <span class="text-dim">(&lt;2)</span></span>
             <div class="pax-popover__controls">
-              <button type="button" class="btn btn--icon" data-pax-action="infants-dec">&minus;</button>
+              <button type="button" class="stepper-button" data-pax-action="infants-dec">&minus;</button>
               <span id="paxInfantsDisplay" class="pax-popover__value">0</span>
-              <button type="button" class="btn btn--icon" data-pax-action="infants-inc">&plus;</button>
+              <button type="button" class="stepper-button" data-pax-action="infants-inc">&plus;</button>
             </div>
           </div>
         </div>
+        <input name="adults" id="adults" type="hidden" value="1" />
+        <input name="children" id="children" type="hidden" value="0" />
+        <input name="infants" id="infants" type="hidden" value="0" />
+      </section>
+
+      <div class="rail-segment rail-segment--submit" data-search-order="submit">
+        <button id="submitButton" class="btn btn--primary btn--search" type="submit">
+          <svg class="ico ico--btn"><use href="#ico-search"/></svg>
+          Buscar vuelos
+        </button>
       </div>
-
-      <!-- Hidden pax inputs -->
-      <input name="adults" id="adults" type="hidden" value="1" />
-      <input name="children" id="children" type="hidden" value="0" />
-      <input name="infants" id="infants" type="hidden" value="0" />
-
-      <!-- Search button -->
-      <button id="submitButton" class="btn btn--primary" type="submit">
-        <svg class="ico ico--btn"><use href="#ico-search"/></svg>
-        BUSCAR
-      </button>
     </div>
 
-    <!-- Chips row -->
-    <div class="search-bar__chips">
-      <select name="cabin" id="cabin" class="chip chip--select">
-        <option value="ECONOMY">Economy</option>
-        <option value="PREMIUM_ECONOMY">Prem Eco</option>
-        <option value="BUSINESS">Business</option>
-        <option value="FIRST">First</option>
-      </select>
-
-      <div class="chip chip--input">
-        <input name="currencyCode" id="currencyCode" class="chip__input" maxlength="3" value="USD" />
-      </div>
-
-      <label class="chip chip--toggle">
+    <div class="search-refinements">
+      <label class="refinement refinement--toggle">
         <input name="nonStop" id="nonStop" type="checkbox" />
-        <span>Directos</span>
+        <span>Directo</span>
       </label>
-      <label class="chip chip--toggle">
+
+      <label class="refinement refinement--toggle">
         <input name="baggageRequired" id="baggageRequired" type="checkbox" />
-        <span>Equipaje</span>
+        <span>Con equipaje</span>
       </label>
-
-      <!-- Mode toggle -->
-      <div class="chip-group chip-group--mode">
-        <button type="button" class="chip chip--mode is-active" data-mode="exact">Exacto</button>
-        <button type="button" class="chip chip--mode" data-mode="flexible">Flexible</button>
-      </div>
-
-      <!-- Hidden searchMode for backend compat -->
-      <select name="searchMode" id="searchMode" class="hidden">
-        <option value="exact">Exacto</option>
-        <option value="stay-range">Rango</option>
-        <option value="roundtrip-grid">Matriz</option>
-      </select>
-
-      <div class="chip chip--input">
-        <span class="chip__label">Max $</span>
-        <input name="maxPrice" id="maxPrice" type="number" class="chip__input" min="0" placeholder="—" />
-      </div>
-      <div class="chip chip--input">
-        <span class="chip__label">Esc</span>
-        <input name="maxStops" id="maxStops" type="number" class="chip__input chip__input--narrow" min="0" max="3" placeholder="—" />
-      </div>
-
-      <!-- Hidden sort (controlled by toolbar buttons) -->
-      <select name="sortMode" id="sortMode" class="hidden">
-        <option value="cheapest">Precio</option>
-        <option value="best-value">Valor</option>
-        <option value="fastest">Rapido</option>
-      </select>
     </div>
+
+    <div id="calendarPopover" class="calendar-popover hidden" role="dialog" aria-modal="false" aria-label="Selector de fechas">
+      <div class="calendar-popover__header">
+        <div>
+          <p class="calendar-popover__eyebrow">Calendario</p>
+          <h2 id="calendarTitle" class="calendar-popover__title">Seleccionar fechas</h2>
+        </div>
+        <div class="calendar-popover__actions">
+          <div class="calendar-nav" aria-label="Meses visibles">
+            <button type="button" id="calendarPrev" class="icon-button icon-button--sm" title="Mes anterior">
+              <svg class="ico"><use href="#ico-chevron-left"/></svg>
+            </button>
+            <button type="button" id="calendarNext" class="icon-button icon-button--sm" title="Mes siguiente">
+              <svg class="ico"><use href="#ico-chevron-right"/></svg>
+            </button>
+          </div>
+          <button type="button" id="calendarClose" class="icon-button icon-button--sm" title="Cerrar calendario">
+            <svg class="ico" viewBox="0 0 16 16"><line x1="4" y1="4" x2="12" y2="12" stroke="currentColor" stroke-width="1.5"/><line x1="12" y1="4" x2="4" y2="12" stroke="currentColor" stroke-width="1.5"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="calendar-popover__summary">
+        <p id="calendarSelectionSummary" class="calendar-selection-summary">Selecciona una salida para empezar.</p>
+        <div id="calendarStayConfig" class="calendar-stay hidden">
+          <label class="calendar-stay__field">
+            <span>Estadía mín.</span>
+            <input name="stayDaysMin" id="stayDaysMin" type="number" class="calendar-stay__input" min="1" max="90" value="7" />
+          </label>
+          <label class="calendar-stay__field">
+            <span>Estadía máx.</span>
+            <input name="stayDaysMax" id="stayDaysMax" type="number" class="calendar-stay__input" min="1" max="90" value="14" />
+          </label>
+        </div>
+      </div>
+
+      <div id="calendarMonths" class="calendar-months"></div>
+
+      <div class="calendar-popover__footer">
+        <button type="button" id="calendarClear" class="btn btn--ghost btn--sm">Limpiar</button>
+        <button type="button" id="calendarDone" class="btn btn--secondary btn--sm">Cerrar</button>
+      </div>
+    </div>
+
+    <select name="sortMode" id="sortMode" class="hidden">
+      <option value="cheapest">Precio</option>
+      <option value="best-value">Valor</option>
+      <option value="fastest">Duración</option>
+    </select>
   </form>
 
-  <!-- ===== ERROR BAR ===== -->
   <div id="validationErrors" class="error-bar hidden"></div>
 
-  <!-- ===== MAIN LAYOUT ===== -->
-  <div class="layout-main">
+  <div class="workspace">
+    <aside id="sidebar" class="workspace__sidebar"></aside>
 
-    <!-- Sidebar -->
-    <aside id="sidebar" class="layout-sidebar"></aside>
-
-    <!-- Content -->
-    <main class="layout-content">
-      <!-- Results toolbar -->
+    <main class="workspace__content">
       <div id="resultsToolbar" class="results-toolbar hidden">
-        <div class="results-toolbar__sort" id="sortButtons">
-          <button type="button" class="results-toolbar__sort-btn is-active" data-sort="cheapest">Precio</button>
-          <button type="button" class="results-toolbar__sort-btn" data-sort="fastest">Duracion</button>
-          <button type="button" class="results-toolbar__sort-btn" data-sort="best-value">Mejor valor</button>
+        <div class="results-toolbar__left">
+          <div class="results-toolbar__sort" id="sortButtons">
+            <button type="button" class="results-toolbar__sort-btn is-active" data-sort="cheapest">Más barato</button>
+            <button type="button" class="results-toolbar__sort-btn" data-sort="fastest">Más rápido</button>
+            <button type="button" class="results-toolbar__sort-btn" data-sort="best-value">Mejor valor</button>
+          </div>
+          <span class="results-toolbar__count" id="resultsCountLabel"></span>
         </div>
-        <span class="results-toolbar__count" id="resultsCountLabel"></span>
-        <div class="results-toolbar__view" id="viewToggle">
-          <button type="button" class="btn--icon is-active" data-view="list" title="Vista lista">
-            <svg class="ico" viewBox="0 0 16 16"><path fill="currentColor" d="M2 3h12v1H2zm0 4h12v1H2zm0 4h12v1H2z"/></svg>
-          </button>
-          <button type="button" class="btn--icon" data-view="calendar" title="Vista calendario">
-            <svg class="ico" viewBox="0 0 16 16"><path fill="currentColor" d="M1 3h3v3H1zm5 0h3v3H6zm5 0h3v3h-3zM1 8h3v3H1zm5 0h3v3H6zm5 0h3v3h-3z"/></svg>
-          </button>
+
+        <div class="results-toolbar__right">
+          <div class="results-toolbar__view" id="viewToggle">
+            <button type="button" class="icon-button is-active" data-view="list" title="Vista lista">
+              <svg class="ico" viewBox="0 0 16 16"><path fill="currentColor" d="M2 3h12v1H2zm0 4h12v1H2zm0 4h12v1H2z"/></svg>
+            </button>
+            <button type="button" class="icon-button" data-view="calendar" title="Vista calendario">
+              <svg class="ico" viewBox="0 0 16 16"><path fill="currentColor" d="M1 3h3v3H1zm5 0h3v3H6zm5 0h3v3h-3zM1 8h3v3H1zm5 0h3v3H6zm5 0h3v3h-3z"/></svg>
+            </button>
+          </div>
+          <button type="button" class="btn btn--secondary btn--sm hidden" id="compareBtn">Comparar (<span id="compareBtnCount">0</span>)</button>
         </div>
-        <button type="button" class="btn btn--secondary btn--sm hidden" id="compareBtn">Comparar (<span id="compareBtnCount">0</span>)</button>
       </div>
 
-      <!-- Results container -->
       <div id="resultsContainer" class="results-container">
         <div class="empty-state" id="emptyState">
           <div class="empty-state__icon">
-            <svg class="ico" style="width:48px;height:48px;opacity:0.3"><use href="#ico-plane"/></svg>
+            <svg class="ico" style="width:48px;height:48px"><use href="#ico-plane"/></svg>
           </div>
-          <p class="empty-state__text">Ingresa origen, destino y fechas para comenzar</p>
+          <p class="empty-state__eyebrow">Sin consulta activa</p>
+          <p class="empty-state__text">Completa una búsqueda para ver resultados.</p>
         </div>
       </div>
 
-      <!-- Compare section -->
       <div id="compareSection" class="compare-section hidden">
         <div class="compare-section__header">
           <h3 class="compare-section__title">Comparador</h3>
@@ -223,14 +248,16 @@
       </div>
     </main>
 
-    <!-- Detail Panel -->
-    <aside id="detailPanel" class="layout-detail">
+    <aside id="detailPanel" class="workspace__detail">
       <div class="detail-panel__header">
-        <h3 class="detail-panel__title">Detalle</h3>
+        <div>
+          <p class="detail-panel__eyebrow">Oferta</p>
+          <h3 class="detail-panel__title">Detalle</h3>
+        </div>
         <div class="detail-panel__actions">
           <button id="repriceButton" class="btn btn--secondary btn--sm" type="button" disabled>Reprice</button>
           <button id="quotationButton" class="btn btn--secondary btn--sm" type="button" disabled>Cotizar</button>
-          <button id="detailClose" class="btn--icon" type="button" title="Cerrar">
+          <button id="detailClose" class="icon-button" type="button" title="Cerrar detalle">
             <svg class="ico" viewBox="0 0 16 16"><line x1="4" y1="4" x2="12" y2="12" stroke="currentColor" stroke-width="1.5"/><line x1="12" y1="4" x2="4" y2="12" stroke="currentColor" stroke-width="1.5"/></svg>
           </button>
         </div>
@@ -239,24 +266,8 @@
     </aside>
   </div>
 
-  <!-- Loading overlay -->
-  <div id="loadingOverlay" class="loading-overlay hidden">
-    <div class="spinner">
-      <svg class="spinner__svg" viewBox="0 0 50 50">
-        <circle class="spinner__track" cx="25" cy="25" r="20"/>
-        <circle class="spinner__fill" cx="25" cy="25" r="20"/>
-      </svg>
-    </div>
-    <span class="spinner__text">Consultando vuelos...</span>
-  </div>
+  <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
 
-  <!-- Progress bar -->
-  <div id="progressBar" class="progress-bar hidden"></div>
-
-  <!-- Toast container -->
-  <div id="toastContainer" class="toast-container"></div>
-
-  <!-- SVG sprite -->
   <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
     <symbol id="ico-plane" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>
@@ -281,6 +292,19 @@
     </symbol>
     <symbol id="ico-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="m6 9 6 6 6-6"/>
+    </symbol>
+    <symbol id="ico-chevron-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m15 18-6-6 6-6"/>
+    </symbol>
+    <symbol id="ico-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="m9 18 6-6-6-6"/>
+    </symbol>
+    <symbol id="ico-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="4.25"/>
+      <path d="M12 2.5v2.5"/><path d="M12 19v2.5"/><path d="m4.93 4.93 1.77 1.77"/><path d="m17.3 17.3 1.77 1.77"/><path d="M2.5 12H5"/><path d="M19 12h2.5"/><path d="m4.93 19.07 1.77-1.77"/><path d="m17.3 6.7 1.77-1.77"/>
+    </symbol>
+    <symbol id="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a7.2 7.2 0 0 0 10.7 10.7Z"/>
     </symbol>
   </svg>
 

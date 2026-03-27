@@ -47,13 +47,6 @@ export function applySearchFilters(
     }
 
     if (
-      typeof filters.maxStops === "number" &&
-      totalStops(offer) > filters.maxStops
-    ) {
-      return false;
-    }
-
-    if (
       typeof filters.maxTotalDurationMinutes === "number" &&
       totalDuration(offer) > filters.maxTotalDurationMinutes
     ) {

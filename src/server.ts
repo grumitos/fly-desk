@@ -90,6 +90,12 @@ export function createServer() {
         return;
       }
 
+      if (request.method === "GET" && pathname === "/favicon.ico") {
+        response.writeHead(204);
+        response.end();
+        return;
+      }
+
       await proxyToRouter(request, response);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unexpected server error";

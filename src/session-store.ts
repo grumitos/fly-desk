@@ -56,26 +56,9 @@ export interface SearchJobRecord {
 export class SearchSessionStore {
   private readonly sessions = new Map<string, SearchSessionRecord>();
   private readonly purchasePaths = new Map<string, StoredPurchasePath>();
+  private readonly sessionPurchasePathIds = new Map<string, Set<string>>();
   private readonly matrixJobs = new Map<string, MatrixJobRecord>();
   private readonly searchJobs = new Map<string, SearchJobRecord>();
-
-  createSession(input: Omit<SearchSessionRecord, "id" | "createdAt">): SearchSessionRecord {
-    const id = randomUUID();
-    const createdAt = new Date().toISOString();
-    const record: SearchSessionRecord = {
-      ...input,
-      id,
-      createdAt,
-      searchMeta: {
-        ...input.searchMeta,
-        searchSessionId: id,
-      },
-      offers: input.offers.map((offer) => this.rewriteOfferPaths(id, offer)),
-    };
-
-    this.sessions.set(id, record);
-    return record;
-  }
 
   getSession(sessionId: string): SearchSessionRecord | undefined {
     return this.sessions.get(sessionId);
@@ -88,6 +71,11 @@ export class SearchSessionStore {
   updateOffer(sessionId: string, updatedOffer: CanonicalOffer): CanonicalOffer | undefined {
     const session = this.sessions.get(sessionId);
     if (!session) return undefined;
+
+    const previous = session.offers.find((offer) => offer.id === updatedOffer.id);
+    if (previous) {
+      this.forgetOfferPurchasePaths(sessionId, previous.purchasePaths);
+    }
 
     const rewritten = this.rewriteOfferPaths(sessionId, updatedOffer);
     session.offers = session.offers.map((offer) => offer.id === updatedOffer.id ? rewritten : offer);
@@ -190,6 +178,8 @@ export class SearchSessionStore {
   }
 
   private rewriteOfferPaths(sessionId: string, offer: CanonicalOffer): CanonicalOffer {
+    const trackedIds = this.sessionPurchasePathIds.get(sessionId) ?? new Set<string>();
+    this.sessionPurchasePathIds.set(sessionId, trackedIds);
     const rewrittenPaths = offer.purchasePaths.map((path) => {
       const purchasePathId = randomUUID();
       const createdAt = new Date().toISOString();
@@ -206,6 +196,7 @@ export class SearchSessionStore {
         path,
         createdAt,
       });
+      trackedIds.add(purchasePathId);
 
       return rewritten;
     });
@@ -217,6 +208,7 @@ export class SearchSessionStore {
   }
 
   private syncSessionFromSearchJob(job: SearchJobRecord): void {
+    this.forgetSessionPurchasePaths(job.id);
     const record: SearchSessionRecord = {
       id: job.id,
       request: job.request,
@@ -232,5 +224,33 @@ export class SearchSessionStore {
     };
 
     this.sessions.set(job.id, record);
+  }
+
+  private forgetSessionPurchasePaths(sessionId: string): void {
+    const trackedIds = this.sessionPurchasePathIds.get(sessionId);
+    if (!trackedIds) {
+      return;
+    }
+
+    trackedIds.forEach((purchasePathId) => {
+      this.purchasePaths.delete(purchasePathId);
+    });
+    this.sessionPurchasePathIds.delete(sessionId);
+  }
+
+  private forgetOfferPurchasePaths(sessionId: string, paths: PurchasePath[]): void {
+    const trackedIds = this.sessionPurchasePathIds.get(sessionId);
+    if (!trackedIds) {
+      return;
+    }
+
+    paths.forEach((path) => {
+      this.purchasePaths.delete(path.id);
+      trackedIds.delete(path.id);
+    });
+
+    if (trackedIds.size === 0) {
+      this.sessionPurchasePathIds.delete(sessionId);
+    }
   }
 }
