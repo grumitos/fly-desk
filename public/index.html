@@ -72,11 +72,41 @@
 
       <span class="search-bar__divider"></span>
 
-      <!-- Pax trigger -->
-      <button type="button" id="paxTrigger" class="chip chip--interactive">
-        <span id="paxLabel">1 ADT</span>
-        <svg class="ico ico--xs"><use href="#ico-chevron-down"/></svg>
-      </button>
+      <!-- Pax trigger + popover wrapper -->
+      <div class="pax-wrapper">
+        <button type="button" id="paxTrigger" class="chip chip--interactive">
+          <span id="paxLabel">1 ADT</span>
+          <svg class="ico ico--xs"><use href="#ico-chevron-down"/></svg>
+        </button>
+
+        <!-- Pax popover -->
+        <div id="paxPopover" class="pax-popover hidden">
+          <div class="pax-popover__row">
+            <span class="pax-popover__label">Adultos</span>
+            <div class="pax-popover__controls">
+              <button type="button" class="btn btn--icon" data-pax-action="adults-dec">&minus;</button>
+              <span id="paxAdultsDisplay" class="pax-popover__value">1</span>
+              <button type="button" class="btn btn--icon" data-pax-action="adults-inc">&plus;</button>
+            </div>
+          </div>
+          <div class="pax-popover__row">
+            <span class="pax-popover__label">Niños <span class="text-dim">(2-11)</span></span>
+            <div class="pax-popover__controls">
+              <button type="button" class="btn btn--icon" data-pax-action="children-dec">&minus;</button>
+              <span id="paxChildrenDisplay" class="pax-popover__value">0</span>
+              <button type="button" class="btn btn--icon" data-pax-action="children-inc">&plus;</button>
+            </div>
+          </div>
+          <div class="pax-popover__row">
+            <span class="pax-popover__label">Bebés <span class="text-dim">(&lt;2)</span></span>
+            <div class="pax-popover__controls">
+              <button type="button" class="btn btn--icon" data-pax-action="infants-dec">&minus;</button>
+              <span id="paxInfantsDisplay" class="pax-popover__value">0</span>
+              <button type="button" class="btn btn--icon" data-pax-action="infants-inc">&plus;</button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- Hidden pax inputs -->
       <input name="adults" id="adults" type="hidden" value="1" />
@@ -88,34 +118,6 @@
         <svg class="ico ico--btn"><use href="#ico-search"/></svg>
         BUSCAR
       </button>
-    </div>
-
-    <!-- Pax popover -->
-    <div id="paxPopover" class="pax-popover hidden">
-      <div class="pax-popover__row">
-        <span class="pax-popover__label">Adultos</span>
-        <div class="pax-popover__controls">
-          <button type="button" class="btn--icon" data-pax-action="adults-dec">&minus;</button>
-          <span id="paxAdultsDisplay" class="pax-popover__value">1</span>
-          <button type="button" class="btn--icon" data-pax-action="adults-inc">&plus;</button>
-        </div>
-      </div>
-      <div class="pax-popover__row">
-        <span class="pax-popover__label">Ninos <span class="text-dim">(2-11)</span></span>
-        <div class="pax-popover__controls">
-          <button type="button" class="btn--icon" data-pax-action="children-dec">&minus;</button>
-          <span id="paxChildrenDisplay" class="pax-popover__value">0</span>
-          <button type="button" class="btn--icon" data-pax-action="children-inc">&plus;</button>
-        </div>
-      </div>
-      <div class="pax-popover__row">
-        <span class="pax-popover__label">Bebes <span class="text-dim">(&lt;2)</span></span>
-        <div class="pax-popover__controls">
-          <button type="button" class="btn--icon" data-pax-action="infants-dec">&minus;</button>
-          <span id="paxInfantsDisplay" class="pax-popover__value">0</span>
-          <button type="button" class="btn--icon" data-pax-action="infants-inc">&plus;</button>
-        </div>
-      </div>
     </div>
 
     <!-- Chips row -->

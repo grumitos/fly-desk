@@ -101,6 +101,7 @@ html {
 
 body {
   min-height: 100vh;
+  min-width: 960px;
 }
 
 a {
@@ -941,9 +942,14 @@ table {
    14. COMPONENTS — Pax Popover
    ---------------------------------------------------------------- */
 
+.pax-wrapper {
+  position: relative;
+  flex-shrink: 0;
+}
+
 .pax-popover {
   position: absolute;
-  top: 100%;
+  top: calc(100% + var(--sp-1));
   left: 0;
   z-index: 200;
   width: 220px;
@@ -952,7 +958,6 @@ table {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-lg);
   padding: var(--sp-3);
-  margin-top: var(--sp-1);
 }
 
 .pax-popover__row {
