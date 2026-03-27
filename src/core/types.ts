@@ -107,6 +107,7 @@ export interface SearchLeg {
 
 export interface SearchFilters {
   nonStop?: boolean;
+  maxStops?: number;
   includedAirlineCodes?: string[];
   excludedAirlineCodes?: string[];
   maxPrice?: number;
@@ -144,10 +145,14 @@ export interface Money {
 export interface Segment {
   id: string;
   marketingCarrier: string;
+  marketingCarrierName?: string;
   operatingCarrier?: string;
+  operatingCarrierName?: string;
   flightNumber: string;
   origin: string;
+  originName?: string;
   destination: string;
+  destinationName?: string;
   departureAt: string;
   arrivalAt: string;
   durationMinutes: number;
@@ -280,18 +285,5 @@ export interface MatrixResponse {
   recommendations: string[];
   searchMeta: SearchMeta;
   providerMeta: ProviderMeta;
-  warnings: string[];
-}
-
-export interface CompareRow {
-  key: string;
-  label: string;
-  values: string[];
-  highlight: "lowest" | "highest" | "none";
-}
-
-export interface CompareResponse {
-  offers: CanonicalOffer[];
-  rows: CompareRow[];
   warnings: string[];
 }

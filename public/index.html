@@ -138,16 +138,29 @@
       </div>
     </div>
 
-    <div class="search-refinements">
-      <label class="refinement refinement--toggle">
-        <input name="nonStop" id="nonStop" type="checkbox" />
-        <span>Directo</span>
-      </label>
+    <div class="search-shell__footer">
+      <div class="search-refinements">
+        <label class="refinement refinement--toggle">
+          <input name="nonStop" id="nonStop" type="checkbox" />
+          <span>Directo</span>
+        </label>
 
-      <label class="refinement refinement--toggle">
-        <input name="baggageRequired" id="baggageRequired" type="checkbox" />
-        <span>Con equipaje</span>
-      </label>
+        <label class="refinement refinement--toggle">
+          <input name="baggageRequired" id="baggageRequired" type="checkbox" />
+          <span>Con equipaje</span>
+        </label>
+      </div>
+
+      <div class="search-shell__actions" role="group" aria-label="Configurar busqueda">
+        <button type="button" id="copySearchConfigBtn" class="btn btn--secondary btn--sm search-shell__action" title="Copiar configuracion de busqueda">
+          <svg class="ico ico--xs" aria-hidden="true"><use href="#ico-copy"/></svg>
+          Copiar
+        </button>
+        <button type="button" id="pasteSearchConfigBtn" class="btn btn--secondary btn--sm search-shell__action" title="Pegar configuracion de busqueda">
+          <svg class="ico ico--xs" aria-hidden="true"><use href="#ico-clipboard"/></svg>
+          Pegar
+        </button>
+      </div>
     </div>
 
     <div id="calendarPopover" class="calendar-popover hidden" role="dialog" aria-modal="false" aria-label="Selector de fechas">
@@ -225,7 +238,12 @@
               <svg class="ico" viewBox="0 0 16 16"><path fill="currentColor" d="M1 3h3v3H1zm5 0h3v3H6zm5 0h3v3h-3zM1 8h3v3H1zm5 0h3v3H6zm5 0h3v3h-3z"/></svg>
             </button>
           </div>
-          <button type="button" class="btn btn--secondary btn--sm hidden" id="compareBtn">Comparar (<span id="compareBtnCount">0</span>)</button>
+          <button type="button" class="icon-button hidden" id="matrixExpandBtn" title="Expandir matriz">
+            <svg class="ico" viewBox="0 0 16 16" aria-hidden="true">
+              <path fill="currentColor" d="M2 6V2h4v1H3v3zm8-4h4v4h-1V3h-3zM2 10h1v3h3v1H2zm11 0h1v4h-4v-1h3z"/>
+            </svg>
+            <span class="sr-only">Expandir matriz</span>
+          </button>
         </div>
       </div>
 
@@ -237,14 +255,6 @@
           <p class="empty-state__eyebrow">Sin consulta activa</p>
           <p class="empty-state__text">Completa una búsqueda para ver resultados.</p>
         </div>
-      </div>
-
-      <div id="compareSection" class="compare-section hidden">
-        <div class="compare-section__header">
-          <h3 class="compare-section__title">Comparador</h3>
-          <button type="button" class="btn btn--ghost btn--sm" id="compareClear">Limpiar</button>
-        </div>
-        <div id="compareContent"></div>
       </div>
     </main>
 
@@ -264,6 +274,26 @@
       </div>
       <div id="detailContent" class="detail-panel__body"></div>
     </aside>
+  </div>
+
+  <div id="matrixFullscreen" class="matrix-fullscreen hidden" aria-hidden="true">
+    <button type="button" class="matrix-fullscreen__backdrop" id="matrixFullscreenBackdrop" aria-label="Cerrar matriz expandida"></button>
+    <section class="matrix-fullscreen__panel" role="dialog" aria-modal="true" aria-labelledby="matrixFullscreenTitle">
+      <div class="detail-panel__header matrix-fullscreen__header">
+        <div>
+          <p class="detail-panel__eyebrow">Calendario</p>
+          <h3 id="matrixFullscreenTitle" class="detail-panel__title">Matriz expandida</h3>
+        </div>
+        <div class="detail-panel__actions">
+          <span id="matrixFullscreenMeta" class="badge badge--accent">0 celdas</span>
+          <button type="button" id="matrixFullscreenClose" class="icon-button" title="Cerrar matriz expandida">
+            <svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><line x1="4" y1="4" x2="12" y2="12" stroke="currentColor" stroke-width="1.5"/><line x1="12" y1="4" x2="4" y2="12" stroke="currentColor" stroke-width="1.5"/></svg>
+            <span class="sr-only">Cerrar matriz expandida</span>
+          </button>
+        </div>
+      </div>
+      <div id="matrixFullscreenBody" class="matrix-fullscreen__body"></div>
+    </section>
   </div>
 
   <div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="true"></div>
@@ -305,6 +335,15 @@
     </symbol>
     <symbol id="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a7.2 7.2 0 0 0 10.7 10.7Z"/>
+    </symbol>
+    <symbol id="ico-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="9" width="11" height="11" rx="2"/>
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+    </symbol>
+    <symbol id="ico-clipboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="5" y="4" width="14" height="18" rx="2"/>
+      <path d="M9 4V2h6v2"/>
+      <path d="M9 8h6"/>
     </symbol>
   </svg>
 

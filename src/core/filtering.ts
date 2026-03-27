@@ -21,6 +21,11 @@ export function applySearchFilters(
 ): CanonicalOffer[] {
   return offers.filter((offer) => {
     const mainCarrier = offer.mainCarrier ?? offer.validatingCarrier ?? "";
+    const maxStops = typeof filters.maxStops === "number" ? Math.max(0, filters.maxStops) : 1;
+
+    if (totalStops(offer) > maxStops) {
+      return false;
+    }
 
     if (filters.nonStop && totalStops(offer) > 0) {
       return false;
