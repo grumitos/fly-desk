@@ -343,6 +343,75 @@ function buildLayoverOffer(id: string, amount: number, layoverMinutes: number) {
   });
 }
 
+function buildRoundTripLayoverOffer(id: string, outboundLayoverMinutes: number, inboundLayoverMinutes: number) {
+  const outboundDepartureAt = "2026-04-15T08:00:00Z";
+  const outboundFirstArrival = "2026-04-15T12:00:00Z";
+  const outboundSecondDeparture = new Date(Date.parse(outboundFirstArrival) + outboundLayoverMinutes * 60000).toISOString();
+  const outboundSecondArrival = new Date(Date.parse(outboundSecondDeparture) + 240 * 60000).toISOString();
+  const inboundDepartureAt = "2026-04-22T10:00:00Z";
+  const inboundFirstArrival = "2026-04-22T14:00:00Z";
+  const inboundSecondDeparture = new Date(Date.parse(inboundFirstArrival) + inboundLayoverMinutes * 60000).toISOString();
+  const inboundSecondArrival = new Date(Date.parse(inboundSecondDeparture) + 240 * 60000).toISOString();
+
+  return buildOffer({
+    id,
+    comparisonMetrics: {
+      totalDurationMinutes: 960 + outboundLayoverMinutes + inboundLayoverMinutes,
+      totalStops: 2,
+    },
+    itineraries: [
+      {
+        direction: "outbound",
+        durationMinutes: 480 + outboundLayoverMinutes,
+        stops: 1,
+        layoverMinutes: [outboundLayoverMinutes],
+        segments: [
+          {
+            flightNumber: "LA 201",
+            marketingCarrier: "LA",
+            origin: "LIM",
+            destination: "BOG",
+            departureAt: outboundDepartureAt,
+            arrivalAt: outboundFirstArrival,
+          },
+          {
+            flightNumber: "LA 305",
+            marketingCarrier: "LA",
+            origin: "BOG",
+            destination: "MIA",
+            departureAt: outboundSecondDeparture,
+            arrivalAt: outboundSecondArrival,
+          },
+        ],
+      },
+      {
+        direction: "inbound",
+        durationMinutes: 480 + inboundLayoverMinutes,
+        stops: 1,
+        layoverMinutes: [inboundLayoverMinutes],
+        segments: [
+          {
+            flightNumber: "LA 456",
+            marketingCarrier: "LA",
+            origin: "MIA",
+            destination: "BOG",
+            departureAt: inboundDepartureAt,
+            arrivalAt: inboundFirstArrival,
+          },
+          {
+            flightNumber: "LA 457",
+            marketingCarrier: "LA",
+            origin: "BOG",
+            destination: "LIM",
+            departureAt: inboundSecondDeparture,
+            arrivalAt: inboundSecondArrival,
+          },
+        ],
+      },
+    ],
+  });
+}
+
 async function openDesktop(page: Page, baseUrl: string) {
   await page.goto(baseUrl, { waitUntil: "networkidle" });
   await page.setViewportSize({ width: 1440, height: 960 });
@@ -1501,6 +1570,98 @@ test("max layover filter is sent in the payload and narrows the visible results"
       assert.equal(capturedMaxLayoverMinutes, 240);
       assert.equal(probe.rowCount, 2);
       assert.deepEqual(probe.ids, ["offer-direct", "offer-short-layover"]);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+test("layover summary shows the maximum single layover instead of the combined total", async () => {
+  await withServer(async (baseUrl) => {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      const body = route.request().postDataJSON();
+      const offers = [
+        buildRoundTripLayoverOffer("offer-double-4h", 240, 240),
+      ];
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-layover-summary",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+              maxLayoverMinutes: body?.request?.filters?.maxLayoverMinutes,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers,
+          allOffers: offers,
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    try {
+      await openDesktop(page, baseUrl);
+      await page.evaluate(() => {
+        const origin = document.getElementById("origin") as HTMLInputElement | null;
+        const destination = document.getElementById("destination") as HTMLInputElement | null;
+        if (!origin || !destination) throw new Error("Missing location inputs");
+        origin.value = "LIM - Lima, Peru";
+        origin.dataset.code = "LIM";
+        origin.dataset.label = "LIM - Lima, Peru";
+        destination.value = "MIA - Miami, Usa";
+        destination.dataset.code = "MIA";
+        destination.dataset.label = "MIA - Miami, Usa";
+      });
+      await setDateValue(page, "departureDate", "2026-04-15");
+      await setDateValue(page, "returnDate", "2026-04-22");
+      await page.selectOption("#maxLayoverMinutes", "240");
+      await page.click("#submitButton");
+      await page.waitForSelector('tr[data-oid="offer-double-4h"]');
+
+      const probe = await page.evaluate(() => {
+        const time = document.querySelector(".stops-stack__time")?.textContent?.trim() ?? "";
+        const title = document.querySelector(".stops-stack")?.getAttribute("title") ?? "";
+        return { time, title };
+      });
+
+      assert.match(probe.time, /^4h 0?0?m$/);
+      assert.match(probe.title, /Escala máx\.: 4h 0?0?m/);
+      assert.match(probe.title, /Bog: 4h 0?0?m/);
     } finally {
       await browser.close();
     }
