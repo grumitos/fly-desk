@@ -114,6 +114,7 @@ export interface SearchFilters {
   currencyCode?: string;
   maxResults?: number;
   maxTotalDurationMinutes?: number;
+  maxLayoverMinutes?: number;
   minDepartureMinutes?: number;
   maxDepartureMinutes?: number;
   minArrivalMinutes?: number;

@@ -1,6 +1,6 @@
 # Estado Actual de la Repo
 
-Fecha de corte: 2026-03-27
+Fecha de corte: 2026-03-28
 
 ## Resumen
 
@@ -21,10 +21,12 @@ No hay assets compactados o bundles versionados en la repo actual:
 - calendario propio integrado al layout
 - popover de pasajeros y autocomplete alineados a la misma gramatica visual
 - sidebar por aerolinea y panel lateral de detalle
+- normalizacion de `Consulta` y `Oferta` como paneles hermanos con header persistente
 - soporte explicito de tema claro y oscuro
 - reemplazo del switch textual de tema por iconos
 - radios y formas unificados entre controles
 - retiro de copy sobrante en el buscador
+- eliminacion de reflows del rail al cambiar `Escala`
 
 ### Simplificacion del formulario
 
@@ -43,7 +45,14 @@ Defaults actuales enviados por cliente:
 Filtros visibles actuales:
 
 - `Directo`
-- `Con equipaje`
+- `Equipaje`
+- `Escala`
+
+Semantica actual:
+
+- `Escala` vacia implica sin limite, sin declararlo en el boton
+- ya no existe `maxStops` oculto enviado por frontend
+- `maxLayoverMinutes` solo se envia cuando el usuario elige `2h`, `4h` u `8h`
 
 ### Feedback de carga
 
@@ -67,6 +76,7 @@ Estado actual:
 ### Higiene tecnica
 
 - limpieza de codigo muerto en frontend
+- retiro del limite silencioso de escalas que rompia busquedas round-trip
 - limpieza de `purchasePaths` viejos en memoria
 - launcher estable de un clic con puerto fijo y estado persistido en `.launcher/`
 - ignores para artefactos locales:
@@ -147,6 +157,7 @@ Comportamiento actual:
 ### Suite automatica
 
 - `test/http-router.test.ts`
+- `test/filtering.test.ts`
 - `test/local-agil.test.ts`
 - `test/session-store.test.ts`
 - `test/theme-css.test.ts`
@@ -155,12 +166,15 @@ Comportamiento actual:
 Cobertura importante actual:
 
 - rail de busqueda y orden del formulario
+- smoke de `exacto/flexible` con `ida/ida-vuelta`
 - controles retirados que no deben volver a aparecer
 - `USD` fijo en payload
+- ausencia de `maxStops` oculto en payload
 - tema claro y oscuro
 - calendario custom
 - autocomplete anclado
 - matriz flexible y paso a exacto
+- paneles `Consulta` y `Oferta` con header homogeneo
 - placeholder inline en busqueda
 - carga inline en `reprice`
 
@@ -169,8 +183,8 @@ Cobertura importante actual:
 Comandos:
 
 - `npm test`
-- `npm run build`
 - `npm run typecheck`
+- `npm run build`
 
 Smoke real con Playwright sobre `http://127.0.0.1:3000`:
 

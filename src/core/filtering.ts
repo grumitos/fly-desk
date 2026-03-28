@@ -1,5 +1,5 @@
 import { CanonicalOffer, SearchFilters, Segment } from "./types";
-import { totalDuration, totalStops } from "./ranking";
+import { maxStopsAcrossItineraries, totalDuration } from "./ranking";
 
 function toMinutes(iso: string): number {
   const date = new Date(iso);
@@ -15,19 +15,57 @@ function lastSegment(offer: CanonicalOffer): Segment | undefined {
   return itinerary?.segments[itinerary.segments.length - 1];
 }
 
+function computeLayoverMinutes(itinerary: CanonicalOffer["itineraries"][number], index: number): number | null {
+  const direct = itinerary?.layoverMinutes?.[index];
+  if (typeof direct === "number" && direct > 0) {
+    return direct;
+  }
+
+  const current = itinerary?.segments?.[index];
+  const next = itinerary?.segments?.[index + 1];
+  if (!current?.arrivalAt || !next?.departureAt) {
+    return null;
+  }
+
+  const currentMs = new Date(current.arrivalAt).getTime();
+  const nextMs = new Date(next.departureAt).getTime();
+  if (!Number.isFinite(currentMs) || !Number.isFinite(nextMs) || nextMs <= currentMs) {
+    return null;
+  }
+
+  return Math.round((nextMs - currentMs) / 60000);
+}
+
+function maxLayoverMinutes(offer: CanonicalOffer): number {
+  let max = 0;
+
+  for (const itinerary of offer.itineraries) {
+    const segments = itinerary?.segments ?? [];
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      const minutes = computeLayoverMinutes(itinerary, index);
+      if (typeof minutes === "number" && minutes > max) {
+        max = minutes;
+      }
+    }
+  }
+
+  return max;
+}
+
 export function applySearchFilters(
   offers: CanonicalOffer[],
   filters: SearchFilters,
 ): CanonicalOffer[] {
   return offers.filter((offer) => {
     const mainCarrier = offer.mainCarrier ?? offer.validatingCarrier ?? "";
-    const maxStops = typeof filters.maxStops === "number" ? Math.max(0, filters.maxStops) : 1;
+    const maxStops = typeof filters.maxStops === "number" ? Math.max(0, filters.maxStops) : undefined;
+    const maxOfferStops = maxStopsAcrossItineraries(offer.itineraries);
 
-    if (totalStops(offer) > maxStops) {
+    if (typeof maxStops === "number" && maxOfferStops > maxStops) {
       return false;
     }
 
-    if (filters.nonStop && totalStops(offer) > 0) {
+    if (filters.nonStop && maxOfferStops > 0) {
       return false;
     }
 
@@ -54,6 +92,13 @@ export function applySearchFilters(
     if (
       typeof filters.maxTotalDurationMinutes === "number" &&
       totalDuration(offer) > filters.maxTotalDurationMinutes
+    ) {
+      return false;
+    }
+
+    if (
+      typeof filters.maxLayoverMinutes === "number" &&
+      maxLayoverMinutes(offer) > filters.maxLayoverMinutes
     ) {
       return false;
     }

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { buildOfferSignature } from "./core/offer-signature";
+import { maxStopsAcrossItineraries } from "./core/ranking";
 import {
   ProviderSearchResult,
   RepriceResult,
@@ -1362,9 +1363,10 @@ function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): Canon
   const itineraries = inbound
     ? [outbound.itinerary, inbound.itinerary]
     : [outbound.itinerary];
-  const maxStops = Math.max(0, request.filters.maxStops ?? 1);
-  const totalStops = itineraries.reduce((sum, itinerary) => sum + (itinerary.stops ?? 0), 0);
-  if (totalStops > maxStops) {
+  const maxStops = typeof request.filters.maxStops === "number"
+    ? Math.max(0, request.filters.maxStops)
+    : undefined;
+  if (typeof maxStops === "number" && maxStopsAcrossItineraries(itineraries) > maxStops) {
     return [];
   }
   const baggage = buildBaggageSummary(outbound.baggage, inbound?.baggage);
@@ -1485,7 +1487,9 @@ async function searchCellWithGds(
 
   const json = await response.json() as AgilSearchResponse;
   const groups = Array.isArray(json.groups) ? json.groups : [];
-  const maxStops = Math.max(0, request.filters.maxStops ?? 1);
+  const maxStops = typeof request.filters.maxStops === "number"
+    ? Math.max(0, request.filters.maxStops)
+    : undefined;
   return groups.reduce<AgilCellQuote | undefined>((best, group) => {
     const validatingCarrier = group.pricingInfo?.itinTotalFare?.validatingCarrier
       ?? group.airline?.code
@@ -1506,13 +1510,13 @@ async function searchCellWithGds(
       return best;
     }
 
-    const totalStops = (
+    const itineraries = (
       request.tripType === "round-trip"
         ? [outboundCandidates[0].itinerary, inboundCandidates[0].itinerary]
         : [outboundCandidates[0].itinerary]
-    ).reduce((sum, itinerary) => sum + (itinerary.stops ?? 0), 0);
+    );
 
-    if (totalStops > maxStops) {
+    if (typeof maxStops === "number" && maxStopsAcrossItineraries(itineraries) > maxStops) {
       return best;
     }
 

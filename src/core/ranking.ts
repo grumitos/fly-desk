@@ -24,6 +24,38 @@ export function totalStops(offer: CanonicalOffer): number {
   );
 }
 
+export function maxStopsAcrossItineraries(itineraries: Itinerary[]): number {
+  return itineraries.reduce(
+    (max: number, itinerary: Itinerary) => Math.max(max, itinerary.stops),
+    0,
+  );
+}
+
+function offerTravelDates(offer: CanonicalOffer): { departureDate: string; returnDate: string } {
+  const outbound = offer.itineraries.find((itinerary: Itinerary) => itinerary.direction === "outbound") ?? offer.itineraries[0];
+  const inbound = offer.itineraries.find((itinerary: Itinerary) => itinerary.direction === "inbound");
+
+  return {
+    departureDate: outbound?.segments[0]?.departureAt?.slice(0, 10) ?? "",
+    returnDate: inbound?.segments[0]?.departureAt?.slice(0, 10) ?? "",
+  };
+}
+
+function compareOffersByDate(left: CanonicalOffer, right: CanonicalOffer): number {
+  const leftDates = offerTravelDates(left);
+  const rightDates = offerTravelDates(right);
+
+  if (leftDates.departureDate !== rightDates.departureDate) {
+    return leftDates.departureDate.localeCompare(rightDates.departureDate);
+  }
+
+  if (leftDates.returnDate !== rightDates.returnDate) {
+    return leftDates.returnDate.localeCompare(rightDates.returnDate);
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
 function purchasePathScore(offer: CanonicalOffer): number {
   if (offer.purchasePaths.some((path: PurchasePath) => path.precision === "exact-offer")) {
     return 3;
@@ -118,11 +150,20 @@ export function sortOffers(
 
   switch (mode) {
     case "cheapest":
-      return cloned.sort((a, b) => a.price.total.amount - b.price.total.amount);
+      return cloned.sort((a, b) => {
+        const priceDiff = a.price.total.amount - b.price.total.amount;
+        return priceDiff !== 0 ? priceDiff : compareOffersByDate(a, b);
+      });
     case "fastest":
-      return cloned.sort((a, b) => totalDuration(a) - totalDuration(b));
+      return cloned.sort((a, b) => {
+        const durationDiff = totalDuration(a) - totalDuration(b);
+        return durationDiff !== 0 ? durationDiff : compareOffersByDate(a, b);
+      });
     case "best-value":
     default:
-      return cloned.sort((a, b) => a.valueScore - b.valueScore);
+      return cloned.sort((a, b) => {
+        const valueDiff = a.valueScore - b.valueScore;
+        return valueDiff !== 0 ? valueDiff : compareOffersByDate(a, b);
+      });
   }
 }
