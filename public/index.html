@@ -4,6 +4,40 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Fly Desk</title>
+  <script>
+    (() => {
+      const root = document.documentElement;
+      root.setAttribute("data-theme-booting", "true");
+      let theme = "light";
+      try {
+        const saved = window.localStorage.getItem("flydesk-theme");
+        if (saved === "light" || saved === "dark") theme = saved;
+      } catch {
+        // Ignore localStorage restrictions during bootstrap.
+      }
+      root.dataset.theme = theme;
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+  <style>
+    html[data-theme-booting] *,
+    html[data-theme-booting] *::before,
+    html[data-theme-booting] *::after {
+      transition: none !important;
+      animation: none !important;
+      animation-duration: 0s !important;
+      animation-delay: 0s !important;
+      scroll-behavior: auto !important;
+    }
+
+    html[data-theme-booting] .search-shell,
+    html[data-theme-booting] #validationErrors,
+    html[data-theme-booting] .workspace {
+      visibility: hidden;
+    }
+  </style>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%230e7490' d='M4 36l22-4 14 20 6-2-8-22 18-4c4-.9 6-5.1 5.1-9.1-.9-4-5.1-6-9.1-5.1l-18 4-17-16-6 2 11 20-22 4-7-8-4 1.3 4 12.6-4 12.6 4 1.3z'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/app.css" />
 </head>
@@ -18,7 +52,7 @@
 
     <div class="topbar__meta">
       <div class="theme-switch" role="group" aria-label="Tema">
-        <button type="button" class="theme-switch__button is-active" data-theme-value="light" aria-label="Tema claro" title="Tema claro">
+        <button type="button" class="theme-switch__button" data-theme-value="light" aria-label="Tema claro" title="Tema claro">
           <svg class="theme-switch__icon" aria-hidden="true"><use href="#ico-sun"/></svg>
           <span class="sr-only">Claro</span>
         </button>
@@ -82,7 +116,7 @@
       <section class="rail-segment rail-segment--field rail-segment--dates" data-search-order="dates">
         <span class="field-label">Fechas</span>
         <button type="button" id="dateTrigger" class="field-button field-button--dates">
-          <span id="dateTriggerText">Seleccionar fechas</span>
+          <span id="dateTriggerText">Salida y regreso</span>
           <svg class="ico"><use href="#ico-calendar"/></svg>
         </button>
         <input name="departureDate" id="departureDate" type="hidden" />
@@ -96,7 +130,7 @@
       <section class="rail-segment rail-segment--field pax-wrapper" data-search-order="passengers">
         <span class="field-label">Pasajeros</span>
         <button type="button" id="paxTrigger" class="field-button field-button--pax">
-          <span id="paxLabel">1 ADT</span>
+          <span id="paxLabel">1 adulto</span>
           <svg class="ico ico--xs"><use href="#ico-chevron-down"/></svg>
         </button>
         <div id="paxPopover" class="pax-popover hidden">
@@ -139,28 +173,65 @@
     </div>
 
     <div class="search-shell__footer">
-      <div class="search-refinements">
-        <label class="refinement refinement--toggle">
-          <input name="nonStop" id="nonStop" type="checkbox" />
-          <span>Directo</span>
-        </label>
+      <div class="search-shell__footer-main">
+        <div class="search-refinements">
+          <label class="refinement refinement--toggle">
+            <input name="nonStop" id="nonStop" type="checkbox" />
+            <span class="refinement__text">Directo</span>
+          </label>
 
         <label class="refinement refinement--toggle">
           <input name="baggageRequired" id="baggageRequired" type="checkbox" />
-          <span>Con equipaje</span>
+          <span class="refinement__text">Equipaje</span>
         </label>
+
+        <div id="layoverFilter" class="refinement refinement--select">
+          <button
+            type="button"
+            id="layoverTrigger"
+            class="refinement__trigger"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="layoverPopover"
+          >
+            <span
+              id="layoverTriggerValue"
+              class="refinement__text refinement__text--select"
+              data-empty-label="Escala"
+              data-value-prefix="Escala: "
+            >Escala</span>
+            <svg class="ico ico--xs refinement__icon" aria-hidden="true"><use href="#ico-chevron-down"/></svg>
+          </button>
+
+          <div id="layoverPopover" class="refinement-popover hidden" role="listbox" aria-label="Escala máxima">
+            <button type="button" class="refinement-popover__option is-selected" data-layover-value="" role="option" aria-selected="true">Sin limite</button>
+            <button type="button" class="refinement-popover__option" data-layover-value="120" role="option" aria-selected="false">2h</button>
+            <button type="button" class="refinement-popover__option" data-layover-value="240" role="option" aria-selected="false">4h</button>
+            <button type="button" class="refinement-popover__option" data-layover-value="480" role="option" aria-selected="false">8h</button>
+          </div>
+
+          <select name="maxLayoverMinutes" id="maxLayoverMinutes" class="refinement__native-select" tabindex="-1" aria-hidden="true">
+            <option value="">Sin limite</option>
+            <option value="120">2h</option>
+            <option value="240">4h</option>
+            <option value="480">8h</option>
+          </select>
+        </div>
       </div>
 
-      <div class="search-shell__actions" role="group" aria-label="Configurar busqueda">
-        <button type="button" id="copySearchConfigBtn" class="btn btn--secondary btn--sm search-shell__action" title="Copiar configuracion de busqueda">
-          <svg class="ico ico--xs" aria-hidden="true"><use href="#ico-copy"/></svg>
-          Copiar
-        </button>
-        <button type="button" id="pasteSearchConfigBtn" class="btn btn--secondary btn--sm search-shell__action" title="Pegar configuracion de busqueda">
-          <svg class="ico ico--xs" aria-hidden="true"><use href="#ico-clipboard"/></svg>
-          Pegar
-        </button>
+        <div class="search-shell__actions" role="group" aria-label="Configurar busqueda">
+          <button type="button" id="copySearchConfigBtn" class="btn btn--secondary btn--sm search-shell__action" title="Copiar configuracion de busqueda">
+            <svg class="ico ico--xs" aria-hidden="true"><use href="#ico-copy"/></svg>
+            Copiar
+          </button>
+          <button type="button" id="pasteSearchConfigBtn" class="btn btn--secondary btn--sm search-shell__action" title="Pegar configuracion de busqueda">
+            <svg class="ico ico--xs" aria-hidden="true"><use href="#ico-clipboard"/></svg>
+            Pegar
+          </button>
+        </div>
       </div>
+
+      <div id="airlineBar" class="airline-bar hidden" aria-label="Filtrar por aerolínea"></div>
     </div>
 
     <div id="calendarPopover" class="calendar-popover hidden" role="dialog" aria-modal="false" aria-label="Selector de fechas">
@@ -216,20 +287,22 @@
   <div id="validationErrors" class="error-bar hidden"></div>
 
   <div class="workspace">
-    <aside id="sidebar" class="workspace__sidebar"></aside>
-
     <main class="workspace__content">
-      <div id="resultsToolbar" class="results-toolbar hidden">
-        <div class="results-toolbar__left">
+      <section class="workspace__panel results-panel">
+      <div id="resultsToolbar" class="results-toolbar panel-header">
+        <div class="panel-header__copy">
+          <p class="panel-header__eyebrow">Consulta</p>
+          <h3 id="resultsPanelTitle" class="panel-header__title">Esperando una búsqueda</h3>
+          <p id="resultsPanelMeta" class="panel-header__meta">Completa origen, destino y fechas para poblar la consulta.</p>
+        </div>
+
+        <div class="panel-header__actions panel-header__actions--results">
+          <span id="resultsCountLabel" class="badge results-toolbar__count hidden">0</span>
           <div class="results-toolbar__sort" id="sortButtons">
             <button type="button" class="results-toolbar__sort-btn is-active" data-sort="cheapest">Más barato</button>
             <button type="button" class="results-toolbar__sort-btn" data-sort="fastest">Más rápido</button>
             <button type="button" class="results-toolbar__sort-btn" data-sort="best-value">Mejor valor</button>
           </div>
-          <span class="results-toolbar__count" id="resultsCountLabel"></span>
-        </div>
-
-        <div class="results-toolbar__right">
           <div class="results-toolbar__view" id="viewToggle">
             <button type="button" class="icon-button is-active" data-view="list" title="Vista lista">
               <svg class="ico" viewBox="0 0 16 16"><path fill="currentColor" d="M2 3h12v1H2zm0 4h12v1H2zm0 4h12v1H2z"/></svg>
@@ -249,27 +322,30 @@
 
       <div id="resultsContainer" class="results-container">
         <div class="empty-state" id="emptyState">
-          <div class="empty-state__icon">
-            <svg class="ico" style="width:48px;height:48px"><use href="#ico-plane"/></svg>
+          <div class="empty-panel empty-panel--results">
+            <div class="empty-panel__media" aria-hidden="true">
+              <svg class="empty-panel__icon"><use href="#ico-search"/></svg>
+            </div>
+            <p class="empty-panel__eyebrow">Consulta</p>
+            <h2 class="empty-panel__title">Esperando una búsqueda</h2>
+            <p class="empty-panel__text">Completa origen, destino y fechas para poblar la consulta.</p>
+            <p class="empty-panel__hint">Aquí aparecerán lista, filtros y aerolíneas cuando existan resultados.</p>
           </div>
-          <p class="empty-state__eyebrow">Sin consulta activa</p>
-          <p class="empty-state__text">Completa una búsqueda para ver resultados.</p>
         </div>
       </div>
+      </section>
     </main>
 
-    <aside id="detailPanel" class="workspace__detail">
-      <div class="detail-panel__header">
-        <div>
-          <p class="detail-panel__eyebrow">Oferta</p>
-          <h3 class="detail-panel__title">Detalle</h3>
+    <aside id="detailPanel" class="workspace__panel workspace__detail">
+      <div class="detail-panel__header panel-header">
+        <div class="panel-header__copy">
+          <p class="panel-header__eyebrow">Oferta</p>
+          <h3 class="panel-header__title">Detalle</h3>
+          <p class="panel-header__meta">Tarifa, tramos y accesos de compra.</p>
         </div>
-        <div class="detail-panel__actions">
+        <div class="panel-header__actions detail-panel__actions">
           <button id="repriceButton" class="btn btn--secondary btn--sm" type="button" disabled>Reprice</button>
           <button id="quotationButton" class="btn btn--secondary btn--sm" type="button" disabled>Cotizar</button>
-          <button id="detailClose" class="icon-button" type="button" title="Cerrar detalle">
-            <svg class="ico" viewBox="0 0 16 16"><line x1="4" y1="4" x2="12" y2="12" stroke="currentColor" stroke-width="1.5"/><line x1="12" y1="4" x2="4" y2="12" stroke="currentColor" stroke-width="1.5"/></svg>
-          </button>
         </div>
       </div>
       <div id="detailContent" class="detail-panel__body"></div>
@@ -279,12 +355,12 @@
   <div id="matrixFullscreen" class="matrix-fullscreen hidden" aria-hidden="true">
     <button type="button" class="matrix-fullscreen__backdrop" id="matrixFullscreenBackdrop" aria-label="Cerrar matriz expandida"></button>
     <section class="matrix-fullscreen__panel" role="dialog" aria-modal="true" aria-labelledby="matrixFullscreenTitle">
-      <div class="detail-panel__header matrix-fullscreen__header">
-        <div>
-          <p class="detail-panel__eyebrow">Calendario</p>
-          <h3 id="matrixFullscreenTitle" class="detail-panel__title">Matriz expandida</h3>
+      <div class="detail-panel__header panel-header matrix-fullscreen__header">
+        <div class="panel-header__copy">
+          <p class="panel-header__eyebrow">Calendario</p>
+          <h3 id="matrixFullscreenTitle" class="panel-header__title">Matriz expandida</h3>
         </div>
-        <div class="detail-panel__actions">
+        <div class="panel-header__actions detail-panel__actions">
           <span id="matrixFullscreenMeta" class="badge badge--accent">0 celdas</span>
           <button type="button" id="matrixFullscreenClose" class="icon-button" title="Cerrar matriz expandida">
             <svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><line x1="4" y1="4" x2="12" y2="12" stroke="currentColor" stroke-width="1.5"/><line x1="12" y1="4" x2="4" y2="12" stroke="currentColor" stroke-width="1.5"/></svg>

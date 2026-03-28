@@ -38,11 +38,11 @@ const ALLOWED_DATE_YEAR = "2026";
 const ALLOWED_DATE_MIN = `${ALLOWED_DATE_YEAR}-01-01`;
 const ALLOWED_DATE_MAX = `${ALLOWED_DATE_YEAR}-12-31`;
 const DEFAULT_CURRENCY_CODE = "USD";
-const DEFAULT_MAX_STOPS = 1;
 const SEARCH_CONFIG_CLIPBOARD_KEY = "flydesk.searchClipboard";
 const SEARCH_CONFIG_CLIPBOARD_TYPE = "fly-desk-search-config";
 const SEARCH_CONFIG_CLIPBOARD_VERSION = 1;
 const POLL_RENDER_IDLE_MS = 180;
+const THEME_STORAGE_KEY = "flydesk-theme";
 
 const $ = (id) => document.getElementById(id);
 
@@ -52,8 +52,8 @@ const workspace = document.querySelector(".workspace");
 const searchMode = $("searchMode");
 const sortMode = $("sortMode");
 const tripType = $("tripType");
+const airlineBar = $("airlineBar");
 const detailPanel = $("detailPanel");
-const detailClose = $("detailClose");
 const detailContent = $("detailContent");
 const resultsToolbar = $("resultsToolbar");
 const resultsContainer = $("resultsContainer");
@@ -64,10 +64,16 @@ const paxLabel = $("paxLabel");
 const paxAdultsDisplay = $("paxAdultsDisplay");
 const paxChildrenDisplay = $("paxChildrenDisplay");
 const paxInfantsDisplay = $("paxInfantsDisplay");
+const layoverFilter = $("layoverFilter");
+const layoverTrigger = $("layoverTrigger");
+const layoverTriggerValue = $("layoverTriggerValue");
+const layoverPopover = $("layoverPopover");
 const sortButtonsEl = $("sortButtons");
 const viewToggle = $("viewToggle");
 const matrixExpandBtn = $("matrixExpandBtn");
 const resultsCountLabel = $("resultsCountLabel");
+const resultsPanelTitle = $("resultsPanelTitle");
+const resultsPanelMeta = $("resultsPanelMeta");
 const matrixFullscreen = $("matrixFullscreen");
 const matrixFullscreenBackdrop = $("matrixFullscreenBackdrop");
 const matrixFullscreenClose = $("matrixFullscreenClose");
@@ -164,7 +170,6 @@ function renderResultsSkeleton(kind = "search") {
       };
   const rows = Array.from({ length: 6 }, (_, index) => `
     <div class="results-skeleton__row" aria-hidden="true">
-      <span class="skeleton-block skeleton-block--check"></span>
       <span class="skeleton-line skeleton-line--md"></span>
       <span class="skeleton-line skeleton-line--lg"></span>
       <span class="skeleton-line skeleton-line--sm"></span>
@@ -183,7 +188,6 @@ function renderResultsSkeleton(kind = "search") {
       </div>
       <div class="results-skeleton__table">
         <div class="results-skeleton__head" aria-hidden="true">
-          <span>Sel</span>
           <span>Aerolínea</span>
           <span>Fechas</span>
           <span>Duración</span>
@@ -218,6 +222,32 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function renderEmptyPanel({
+  wrapperClass = "empty-state",
+  panelClass = "",
+  icon = "ico-search",
+  eyebrow,
+  title,
+  text,
+  hint = "",
+}) {
+  const classes = [wrapperClass, panelClass].filter(Boolean).join(" ");
+  const hintMarkup = hint ? `<p class="empty-panel__hint">${escapeHtml(hint)}</p>` : "";
+  return `
+    <div class="${classes}">
+      <div class="empty-panel">
+        <div class="empty-panel__media" aria-hidden="true">
+          <svg class="empty-panel__icon"><use href="#${escapeHtml(icon)}"/></svg>
+        </div>
+        <p class="empty-panel__eyebrow">${escapeHtml(eyebrow)}</p>
+        <h2 class="empty-panel__title">${escapeHtml(title)}</h2>
+        <p class="empty-panel__text">${escapeHtml(text)}</p>
+        ${hintMarkup}
+      </div>
+    </div>
+  `;
 }
 
 function captureMatrixScroll(container = resultsContainer) {
@@ -392,28 +422,62 @@ function addMonthsIso(isoMonth, delta) {
 function syncThemeButtons(theme) {
   themeButtons.forEach((button) => {
     button.classList.toggle("is-active", button.dataset.themeValue === theme);
+    button.setAttribute("aria-pressed", String(button.dataset.themeValue === theme));
   });
 }
 
-function setTheme(theme) {
+function setTheme(theme, { persist = true } = {}) {
   const nextTheme = theme === "dark" ? "dark" : "light";
   rootEl.dataset.theme = nextTheme;
   syncThemeButtons(nextTheme);
-  try {
-    window.localStorage.setItem("flydesk-theme", nextTheme);
-  } catch {
-    // Ignore private mode/localStorage restrictions.
+  if (persist) {
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    } catch {
+      // Ignore private mode/localStorage restrictions.
+    }
   }
 }
 
 function initialTheme() {
+  const datasetTheme = rootEl.dataset.theme;
+  if (datasetTheme === "light" || datasetTheme === "dark") return datasetTheme;
   try {
-    const saved = window.localStorage.getItem("flydesk-theme");
+    const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
     if (saved === "light" || saved === "dark") return saved;
   } catch {
     // Ignore localStorage access issues.
   }
   return "light";
+}
+
+function releaseThemeBootingState() {
+  if (!rootEl.hasAttribute("data-theme-booting")) return;
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
+      rootEl.removeAttribute("data-theme-booting");
+    });
+  });
+}
+
+function settleInitialShellLayout() {
+  syncSearchShellLayoutMetrics();
+  syncWorkspaceViewportHeight();
+  syncVisibleLocationMenus();
+  syncPaxPopoverPosition();
+  syncLayoverPopoverPosition();
+  syncCalendarPopoverPosition();
+}
+
+function releaseInitialUiBootState() {
+  const fontReady = document.fonts?.ready
+    ? document.fonts.ready.catch(() => undefined)
+    : Promise.resolve();
+
+  fontReady.finally(() => {
+    settleInitialShellLayout();
+    releaseThemeBootingState();
+  });
 }
 
 function field(name) { return searchForm.querySelector(`[name="${name}"]`); }
@@ -484,21 +548,81 @@ function hideLocationMenu(id) {
   autocompleteState[id].activeIndex = -1;
 }
 
+function floatingViewportPadding() {
+  const shellMargin = searchForm ? getComputedStyle(searchForm).marginLeft : "";
+  return Math.max(12, Math.round(resolveCssLength(shellMargin || getComputedStyle(rootEl).getPropertyValue("--layout-gutter"))));
+}
+
+function floatingPanelOffset() {
+  return Math.max(8, Math.round(resolveCssLength(getComputedStyle(rootEl).getPropertyValue("--floating-panel-offset"))));
+}
+
+function syncAnchoredPopoverPosition(trigger, popover, {
+  width,
+  minWidth = 0,
+  maxWidth = Number.POSITIVE_INFINITY,
+  matchTriggerWidth = false,
+  offset = floatingPanelOffset(),
+} = {}) {
+  if (!(trigger instanceof Element) || !(popover instanceof HTMLElement) || popover.classList.contains("hidden")) return;
+
+  const viewportPadding = floatingViewportPadding();
+  const triggerRect = trigger.getBoundingClientRect();
+  const maxAllowedWidth = Math.max(minWidth, Math.min(maxWidth, window.innerWidth - (viewportPadding * 2)));
+  let targetWidth = typeof width === "number" ? width : popover.getBoundingClientRect().width;
+
+  if (matchTriggerWidth) {
+    targetWidth = Math.max(targetWidth, triggerRect.width);
+  }
+
+  targetWidth = Math.min(Math.max(targetWidth, minWidth), maxAllowedWidth);
+
+  if (Number.isFinite(targetWidth) && targetWidth > 0) {
+    popover.style.width = `${Math.round(targetWidth)}px`;
+    popover.style.maxWidth = `${Math.round(maxAllowedWidth)}px`;
+  }
+
+  const popoverRect = popover.getBoundingClientRect();
+  let left = triggerRect.left + (triggerRect.width / 2) - (popoverRect.width / 2);
+  left = Math.max(viewportPadding, Math.min(left, window.innerWidth - popoverRect.width - viewportPadding));
+
+  let top = triggerRect.bottom + offset;
+  if (top + popoverRect.height > window.innerHeight - viewportPadding) {
+    const aboveTop = triggerRect.top - popoverRect.height - offset;
+    if (aboveTop >= viewportPadding) top = aboveTop;
+    else top = Math.max(viewportPadding, window.innerHeight - popoverRect.height - viewportPadding);
+  }
+
+  popover.style.left = `${Math.round(left)}px`;
+  popover.style.top = `${Math.round(top)}px`;
+}
+
 function syncLocationMenuPosition(id) {
   const input = $(id);
   const menu = locationMenu(id);
   if (!input || !menu || menu.classList.contains("hidden")) return;
 
-  const segment = input.closest(".rail-segment");
-  const width = segment?.getBoundingClientRect().width ?? input.getBoundingClientRect().width;
-  menu.style.top = "";
-  menu.style.left = "";
-  menu.style.width = `${Math.max(width, 320)}px`;
+  const anchor = input.closest(".field-shell") ?? input.closest(".rail-segment") ?? input;
+  const width = anchor.getBoundingClientRect().width;
+  syncAnchoredPopoverPosition(anchor, menu, {
+    width: Math.max(width, 320),
+    minWidth: Math.max(width, 320),
+    maxWidth: 420,
+  });
 }
 
 function syncVisibleLocationMenus() {
   syncLocationMenuPosition("origin");
   syncLocationMenuPosition("destination");
+}
+
+function syncPaxPopoverPosition() {
+  if (!paxTrigger || !paxPopover) return;
+  syncAnchoredPopoverPosition(paxTrigger, paxPopover, {
+    width: Math.max(paxTrigger.getBoundingClientRect().width, 320),
+    minWidth: 288,
+    maxWidth: 360,
+  });
 }
 
 function selectLocationSuggestion(id, suggestion) {
@@ -534,9 +658,13 @@ function readStoredSearchClipboard() {
   }
 }
 
+function canReadSystemSearchClipboard() {
+  return typeof navigator.clipboard?.readText === "function";
+}
+
 function syncSearchClipboardUI() {
   if (!pasteSearchConfigBtn) return;
-  pasteSearchConfigBtn.disabled = !Boolean(readStoredSearchClipboard());
+  pasteSearchConfigBtn.disabled = !Boolean(readStoredSearchClipboard() || canReadSystemSearchClipboard());
 }
 
 function buildSearchClipboardPayload() {
@@ -577,6 +705,7 @@ function buildSearchClipboardPayload() {
     filters: {
       nonStop: controlChecked("nonStop"),
       baggageRequired: controlChecked("baggageRequired"),
+      maxLayoverMinutes: controlValue("maxLayoverMinutes"),
     },
     sortMode: controlValue("sortMode") || state.sortMode || "cheapest",
   };
@@ -593,11 +722,20 @@ function persistSearchClipboardPayload(payload) {
 }
 
 async function readSystemSearchClipboard() {
-  if (!navigator.clipboard?.readText) return null;
+  if (!canReadSystemSearchClipboard()) {
+    return { payload: null, reason: "unsupported" };
+  }
   try {
-    return parseSearchClipboardPayload(await navigator.clipboard.readText());
-  } catch {
-    return null;
+    const payload = parseSearchClipboardPayload(await navigator.clipboard.readText());
+    return {
+      payload,
+      reason: payload ? "ok" : "invalid",
+    };
+  } catch (error) {
+    const reason = error instanceof DOMException && error.name === "NotAllowedError"
+      ? "permission"
+      : "unavailable";
+    return { payload: null, reason };
   }
 }
 
@@ -649,6 +787,8 @@ function applySearchClipboardPayload(payload) {
   $("infants").value = String(payload.passengers?.infants || "0");
   $("nonStop").checked = payload.filters?.nonStop === true;
   $("baggageRequired").checked = payload.filters?.baggageRequired === true;
+  $("maxLayoverMinutes").value = String(payload.filters?.maxLayoverMinutes || "");
+  syncLayoverFilterUi();
 
   calendarState.selectionStage = "start";
   closeCalendarPopover();
@@ -678,8 +818,14 @@ async function pasteSearchConfiguration() {
   let payload = readStoredSearchClipboard();
 
   if (!payload) {
-    payload = await readSystemSearchClipboard();
+    const clipboardResult = await readSystemSearchClipboard();
+    payload = clipboardResult.payload;
     if (payload) persistSearchClipboardPayload(payload);
+    else if (clipboardResult.reason === "permission") {
+      syncSearchClipboardUI();
+      showToast("Permite acceso al portapapeles para pegar la configuracion.", "error");
+      return;
+    }
   }
 
   if (!payload) {
@@ -812,28 +958,139 @@ function setupLocationAutocomplete(id) {
   });
 }
 
-function outboundGroupKey(offer) {
-  const out = offer.itineraries?.find(it => it.direction === "outbound") ?? offer.itineraries?.[0];
-  const segments = (out?.segments ?? []).map(s => `${s.flightNumber}|${s.departureAt}`).join("~");
-  return `${segments}::${offer.price?.total?.amount?.toFixed(2) ?? "0"}::${offer.price?.total?.currencyCode ?? ""}`;
+function offerPrimaryDates(offer) {
+  const outbound = offer.itineraries?.find((it) => it.direction === "outbound") ?? offer.itineraries?.[0];
+  const inbound = offer.itineraries?.find((it) => it.direction === "inbound");
+  return {
+    departureDate: outbound?.segments?.[0]?.departureAt?.slice(0, 10) ?? "",
+    returnDate: inbound?.segments?.[0]?.departureAt?.slice(0, 10) ?? "",
+  };
+}
+
+function compareOfferTravelDates(left, right) {
+  const leftDates = offerPrimaryDates(left);
+  const rightDates = offerPrimaryDates(right);
+
+  if (leftDates.departureDate !== rightDates.departureDate) {
+    return leftDates.departureDate.localeCompare(rightDates.departureDate);
+  }
+
+  if (leftDates.returnDate !== rightDates.returnDate) {
+    return leftDates.returnDate.localeCompare(rightDates.returnDate);
+  }
+
+  return String(left.id ?? "").localeCompare(String(right.id ?? ""));
+}
+
+function timeOfIso(iso) {
+  return typeof iso === "string" ? iso.slice(11, 16) : "";
+}
+
+function segmentPatternKey(segment) {
+  return [
+    segment.marketingCarrier ?? "",
+    segment.flightNumber ?? "",
+    segment.origin ?? "",
+    segment.destination ?? "",
+    timeOfIso(segment.departureAt),
+    timeOfIso(segment.arrivalAt),
+    String(segment.durationMinutes ?? ""),
+  ].join("|");
+}
+
+function itineraryPatternKey(itinerary) {
+  const segments = (itinerary?.segments ?? []).map((segment) => segmentPatternKey(segment)).join("~");
+  return [
+    itinerary?.direction ?? "",
+    String(itinerary?.durationMinutes ?? ""),
+    String(itinerary?.stops ?? ""),
+    segments,
+  ].join("::");
+}
+
+function offerVariantGroupKey(offer) {
+  const itineraries = (offer.itineraries ?? []).map((itinerary) => itineraryPatternKey(itinerary)).join("||");
+  return [
+    offer.mainCarrier ?? offer.validatingCarrier ?? "",
+    offer.price?.total?.amount?.toFixed(2) ?? "0",
+    offer.price?.total?.currencyCode ?? "",
+    String(offer.comparisonMetrics?.totalDurationMinutes ?? totalDurationMinutes(offer)),
+    String(offer.comparisonMetrics?.totalStops ?? totalStopsCount(offer)),
+    offer.baggage?.carryOnIncluded ? "1" : "0",
+    offer.baggage?.checkedIncluded ? "1" : "0",
+    itineraries,
+  ].join("##");
 }
 
 function buildOfferGroups(offers) {
   const groups = new Map();
   for (const offer of offers) {
-    const key = outboundGroupKey(offer);
+    const key = offerVariantGroupKey(offer);
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(offer);
   }
-  return [...groups.values()];
+  return [...groups.values()].map((group) => [...group].sort(compareOfferTravelDates));
 }
 
 function getGroupForOffer(offerId) {
   const all = state.searchResponse?.filteredOffers ?? state.searchResponse?.allOffers ?? [];
-  const target = all.find(o => o.id === offerId);
+  const target = all.find((offer) => offer.id === offerId);
   if (!target) return null;
-  const key = outboundGroupKey(target);
-  return all.filter(o => outboundGroupKey(o) === key);
+  const key = offerVariantGroupKey(target);
+  return all
+    .filter((offer) => offerVariantGroupKey(offer) === key)
+    .sort(compareOfferTravelDates);
+}
+
+function formatOfferDateLabel(offer) {
+  const { departureDate, returnDate } = offerPrimaryDates(offer);
+  const departureText = formatDateCompact(departureDate);
+  if (!returnDate) {
+    return departureText;
+  }
+  return `${departureText} → ${formatDateCompact(returnDate)}`;
+}
+
+function buildGroupDateSummary(group, selectedOfferId) {
+  const orderedGroup = [...group].sort(compareOfferTravelDates);
+  const current = orderedGroup.find((offer) => offer.id === selectedOfferId) ?? orderedGroup[0];
+  const labels = [...new Set(orderedGroup.map((offer) => formatOfferDateLabel(offer)))];
+  const primary = current ? formatOfferDateLabel(current) : "—";
+  const alternatives = labels.filter((label) => label !== primary);
+  let secondary = "";
+
+  if (alternatives.length === 1) {
+    secondary = `También ${alternatives[0]}`;
+  } else if (alternatives.length > 1) {
+    secondary = `También ${alternatives[0]} y ${alternatives.length - 1} fecha${alternatives.length - 1 === 1 ? "" : "s"} más`;
+  }
+
+  return {
+    primary,
+    secondary,
+    title: labels.join(" | "),
+  };
+}
+
+function itineraryTimeWindow(itinerary) {
+  const segments = itinerary?.segments ?? [];
+  if (segments.length === 0) return "Horario por confirmar";
+  const first = segments[0];
+  const last = segments[segments.length - 1];
+  return `${first.origin} ${timeOfIso(first.departureAt)} → ${last.destination} ${timeOfIso(last.arrivalAt)}`;
+}
+
+function buildOfferVariantSummary(offer) {
+  const outbound = offer.itineraries?.find((it) => it.direction === "outbound") ?? offer.itineraries?.[0];
+  const inbound = offer.itineraries?.find((it) => it.direction === "inbound");
+  const pieces = [formatOfferDateLabel(offer)];
+  if (outbound) {
+    pieces.push(`Ida ${itineraryTimeWindow(outbound)}`);
+  }
+  if (inbound) {
+    pieces.push(`Vuelta ${itineraryTimeWindow(inbound)}`);
+  }
+  return pieces.join(" · ");
 }
 
 function countWindowCombinations() {
@@ -1020,7 +1277,7 @@ function resetCalendarViewMonth() {
 function syncCalendarPopoverPosition() {
   if (!calendarPopover || !dateTrigger || calendarPopover.classList.contains("hidden")) return;
 
-  const viewportPadding = 16;
+  const viewportPadding = floatingViewportPadding();
   const triggerRect = dateTrigger.getBoundingClientRect();
   const width = Math.min(960, window.innerWidth - viewportPadding * 2);
 
@@ -1031,9 +1288,11 @@ function syncCalendarPopoverPosition() {
   let left = triggerRect.left + (triggerRect.width / 2) - (width / 2);
   left = Math.max(viewportPadding, Math.min(left, window.innerWidth - width - viewportPadding));
 
-  let top = triggerRect.bottom + 10;
+  let top = triggerRect.bottom + floatingPanelOffset();
   if (top + popoverRect.height > window.innerHeight - viewportPadding) {
-    top = Math.max(viewportPadding, window.innerHeight - popoverRect.height - viewportPadding);
+    const aboveTop = triggerRect.top - popoverRect.height - floatingPanelOffset();
+    if (aboveTop >= viewportPadding) top = aboveTop;
+    else top = Math.max(viewportPadding, window.innerHeight - popoverRect.height - viewportPadding);
   }
 
   calendarPopover.style.left = `${left}px`;
@@ -1399,7 +1658,11 @@ function setupPaxPopover() {
   paxTrigger.addEventListener("click", (e) => {
     e.stopPropagation();
     closeCalendarPopover();
+    closeLayoverPopover();
     paxPopover.classList.toggle("hidden");
+    if (!paxPopover.classList.contains("hidden")) {
+      syncPaxPopoverPosition();
+    }
   });
   document.addEventListener("click", (e) => {
     if (!paxPopover.contains(e.target) && e.target !== paxTrigger && !paxTrigger.contains(e.target)) {
@@ -1424,7 +1687,274 @@ function setupPaxPopover() {
     $("children").value = c;
     $("infants").value = i;
     updatePaxLabel();
+    syncPaxPopoverPosition();
   });
+}
+
+function readCssPixels(value) {
+  return Number.parseFloat(value || "0") || 0;
+}
+
+function resolveCssLength(value) {
+  const source = String(value || "").trim();
+  if (!source) return 0;
+  if (/^-?\d+(\.\d+)?px$/i.test(source)) return Number.parseFloat(source) || 0;
+
+  const probe = document.createElement("div");
+  probe.style.position = "absolute";
+  probe.style.visibility = "hidden";
+  probe.style.pointerEvents = "none";
+  probe.style.width = source;
+  document.body.appendChild(probe);
+  const resolved = probe.getBoundingClientRect().width;
+  probe.remove();
+  return resolved;
+}
+
+function resolveRootCssLength(variableName, fallback = 0) {
+  const rootStyles = getComputedStyle(document.documentElement);
+  const value = resolveCssLength(rootStyles.getPropertyValue(variableName));
+  return value > 0 ? value : fallback;
+}
+
+function measureIntrinsicWidth(element) {
+  if (!(element instanceof HTMLElement)) return 0;
+
+  const clone = element.cloneNode(true);
+  clone.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
+  clone.querySelectorAll(".autocomplete-menu, .pax-popover, .refinement-popover, .calendar-popover").forEach((node) => {
+    node.classList.add("hidden");
+  });
+
+  clone.style.position = "absolute";
+  clone.style.left = "-99999px";
+  clone.style.top = "0";
+  clone.style.width = "max-content";
+  clone.style.minWidth = "0";
+  clone.style.maxWidth = "none";
+  clone.style.visibility = "hidden";
+  clone.style.pointerEvents = "none";
+  clone.style.contain = "layout style";
+  clone.style.zIndex = "-1";
+
+  document.body.appendChild(clone);
+  const width = Math.ceil(clone.getBoundingClientRect().width);
+  clone.remove();
+  return width;
+}
+
+function measureTriggerWidthForLabels(trigger, selector, labels) {
+  if (!(trigger instanceof HTMLElement) || !Array.isArray(labels) || labels.length === 0) return 0;
+
+  const clone = trigger.cloneNode(true);
+  clone.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
+  const cloneText = clone.querySelector(selector);
+  if (!(cloneText instanceof HTMLElement)) {
+    return measureIntrinsicWidth(trigger);
+  }
+
+  clone.style.position = "absolute";
+  clone.style.left = "-99999px";
+  clone.style.top = "0";
+  clone.style.width = "max-content";
+  clone.style.minWidth = "0";
+  clone.style.maxWidth = "none";
+  clone.style.visibility = "hidden";
+  clone.style.pointerEvents = "none";
+  clone.style.contain = "layout style";
+  clone.style.zIndex = "-1";
+
+  document.body.appendChild(clone);
+  let maxWidth = 0;
+  labels.forEach((label) => {
+    cloneText.textContent = label;
+    maxWidth = Math.max(maxWidth, Math.ceil(clone.getBoundingClientRect().width));
+  });
+  clone.remove();
+  return maxWidth;
+}
+
+function measureTrackWidth(segment) {
+  if (!(segment instanceof HTMLElement)) return 0;
+  const label = segment.querySelector(".field-label");
+  const control = segment.querySelector(".segmented-control, .field-shell, .field-button, .btn");
+  return Math.max(
+    measureIntrinsicWidth(label),
+    measureIntrinsicWidth(control),
+    measureIntrinsicWidth(segment),
+  );
+}
+
+function measureRefinementMinWidth(item) {
+  if (!(item instanceof HTMLElement)) return 0;
+  const text = item.querySelector(".refinement__text");
+  const trigger = item.querySelector(".refinement__trigger");
+  const basis = trigger instanceof HTMLElement ? trigger : item;
+  const style = getComputedStyle(basis);
+  const icon = item.querySelector(".refinement__icon");
+  const textWidth = text instanceof HTMLElement ? Math.ceil(text.scrollWidth) : measureIntrinsicWidth(basis);
+  const paddingWidth = readCssPixels(style.paddingLeft) + readCssPixels(style.paddingRight);
+  const iconWidth = icon && "getBoundingClientRect" in icon ? Math.ceil(icon.getBoundingClientRect().width) : 0;
+  const symmetricReserve = iconWidth > 0 ? iconWidth * 2 : 0;
+  const select = item.querySelector(".refinement__native-select");
+  const intrinsicWidth = Math.ceil(textWidth + paddingWidth + symmetricReserve + 4);
+
+  if (trigger instanceof HTMLElement && text instanceof HTMLElement && select instanceof HTMLSelectElement) {
+    const emptyLabel = text.dataset.emptyLabel?.trim() || text.textContent?.trim() || "";
+    const valuePrefix = text.dataset.valuePrefix ?? `${emptyLabel}: `;
+    const candidateLabels = [
+      emptyLabel,
+      ...[...select.options]
+        .filter((option) => option.value !== "")
+        .map((option) => `${valuePrefix}${option.textContent?.trim() || ""}`),
+    ].filter(Boolean);
+    return Math.max(
+      intrinsicWidth,
+      measureTriggerWidthForLabels(trigger, ".refinement__text", [...new Set(candidateLabels)]),
+    );
+  }
+
+  return intrinsicWidth;
+}
+
+function syncSearchShellLayoutMetrics() {
+  if (!searchForm) return;
+
+  const shellGap = readCssPixels(getComputedStyle(searchForm.querySelector(".search-rail") || searchForm).columnGap);
+  const modeSegment = searchForm.querySelector('[data-search-order="mode"]');
+  const tripSegment = searchForm.querySelector('[data-search-order="trip"]');
+  const refinementItems = [...searchForm.querySelectorAll(".search-refinements > .refinement")];
+  const actionButtons = [...searchForm.querySelectorAll(".search-shell__action")];
+
+  const modeWidth = measureTrackWidth(modeSegment);
+  const tripWidth = measureTrackWidth(tripSegment);
+  const pairBaseWidth = modeWidth + tripWidth + shellGap;
+  const largestRefinement = refinementItems.reduce((maxWidth, item) => {
+    return Math.max(maxWidth, measureRefinementMinWidth(item));
+  }, 0);
+  const refinementGroupWidth = refinementItems.length
+    ? (largestRefinement * refinementItems.length) + (shellGap * Math.max(refinementItems.length - 1, 0))
+    : 0;
+  const pairTargetWidth = Math.max(pairBaseWidth, refinementGroupWidth);
+  const pairContentWidth = modeWidth + tripWidth;
+  const pairExtraWidth = Math.max(0, pairTargetWidth - pairBaseWidth);
+  const modeWeight = pairContentWidth > 0 ? modeWidth / pairContentWidth : 0.5;
+  const modeTrack = Math.ceil(modeWidth + (pairExtraWidth * modeWeight));
+  const tripTrack = Math.ceil(tripWidth + (pairExtraWidth * (1 - modeWeight)));
+
+  if (modeTrack > 0) {
+    searchForm.style.setProperty("--shell-mode-track", `${modeTrack}px`);
+  }
+  if (tripTrack > 0) {
+    searchForm.style.setProperty("--shell-trip-track", `${tripTrack}px`);
+  }
+
+  const submitWidth = measureIntrinsicWidth(submitButton);
+  const actionRailWidth = actionButtons.reduce((totalWidth, button, index) => {
+    return totalWidth + measureIntrinsicWidth(button) + (index > 0 ? shellGap : 0);
+  }, 0);
+  const nextActionWidth = Math.max(submitWidth, actionRailWidth);
+  if (nextActionWidth > 0) {
+    searchForm.style.setProperty("--shell-actions-width", `${Math.ceil(nextActionWidth)}px`);
+  }
+}
+
+function syncLayoverFilterUi() {
+  const select = $("maxLayoverMinutes");
+  if (!(select instanceof HTMLSelectElement)) return;
+
+  const selected = [...select.options].find((option) => option.value === select.value) ?? select.options[0];
+  if (layoverTriggerValue) {
+    const emptyLabel = layoverTriggerValue.dataset.emptyLabel?.trim() || "Escala";
+    const valuePrefix = layoverTriggerValue.dataset.valuePrefix ?? `${emptyLabel}: `;
+    layoverTriggerValue.textContent = select.value === ""
+      ? emptyLabel
+      : `${valuePrefix}${selected?.textContent || emptyLabel}`;
+  }
+
+  layoverPopover?.querySelectorAll("[data-layover-value]").forEach((option) => {
+    const isSelected = option.dataset.layoverValue === select.value;
+    option.classList.toggle("is-selected", isSelected);
+    option.setAttribute("aria-selected", String(isSelected));
+  });
+
+  syncLayoverPopoverPosition();
+}
+
+function openLayoverPopover() {
+  if (!layoverFilter || !layoverTrigger || !layoverPopover) return;
+  syncLayoverFilterUi();
+  layoverFilter.classList.add("is-open");
+  layoverTrigger.setAttribute("aria-expanded", "true");
+  layoverPopover.classList.remove("hidden");
+  syncLayoverPopoverPosition();
+}
+
+function closeLayoverPopover() {
+  if (!layoverFilter || !layoverTrigger || !layoverPopover) return;
+  layoverFilter.classList.remove("is-open");
+  layoverTrigger.setAttribute("aria-expanded", "false");
+  layoverPopover.classList.add("hidden");
+}
+
+function setLayoverFilterValue(value) {
+  const select = $("maxLayoverMinutes");
+  if (!(select instanceof HTMLSelectElement)) return;
+
+  if (select.value !== value) {
+    select.value = value;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  syncLayoverFilterUi();
+  closeLayoverPopover();
+}
+
+function syncLayoverPopoverPosition() {
+  if (!layoverTrigger || !layoverPopover) return;
+  const minWidth = resolveRootCssLength("--layover-popover-min-width", 144);
+  const maxWidth = resolveRootCssLength("--layover-popover-max-width", 220);
+  syncAnchoredPopoverPosition(layoverTrigger, layoverPopover, {
+    width: Math.max(layoverTrigger.getBoundingClientRect().width, minWidth),
+    minWidth,
+    maxWidth,
+  });
+}
+
+function setupLayoverPopover() {
+  const select = $("maxLayoverMinutes");
+  if (!layoverFilter || !layoverTrigger || !layoverPopover || !(select instanceof HTMLSelectElement)) return;
+
+  syncLayoverFilterUi();
+
+  layoverTrigger.addEventListener("click", (event) => {
+    event.stopPropagation();
+    paxPopover?.classList.add("hidden");
+    closeCalendarPopover();
+    if (layoverPopover.classList.contains("hidden")) openLayoverPopover();
+    else closeLayoverPopover();
+  });
+
+  layoverTrigger.addEventListener("keydown", (event) => {
+    if (!["Enter", " ", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    openLayoverPopover();
+  });
+
+  layoverPopover.addEventListener("click", (event) => {
+    const option = event.target.closest("[data-layover-value]");
+    if (!option) return;
+    event.preventDefault();
+    setLayoverFilterValue(option.dataset.layoverValue || "");
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!layoverPopover.contains(event.target) && event.target !== layoverTrigger && !layoverTrigger.contains(event.target)) {
+      closeLayoverPopover();
+    }
+  });
+
+  select.addEventListener("change", syncLayoverFilterUi);
 }
 
 /* ================================================================
@@ -1470,7 +2000,7 @@ function setupTripTypeToggle() {
 }
 
 function setupThemeToggle() {
-  setTheme(initialTheme());
+  setTheme(initialTheme(), { persist: false });
   themeButtons.forEach((button) => {
     button.addEventListener("click", () => setTheme(button.dataset.themeValue));
   });
@@ -1486,6 +2016,7 @@ function setupCalendarPopover() {
   dateTrigger.addEventListener("click", (event) => {
     event.stopPropagation();
     paxPopover?.classList.add("hidden");
+    closeLayoverPopover();
     if (calendarPopover.classList.contains("hidden")) openCalendarPopover();
     else closeCalendarPopover();
   });
@@ -1784,12 +2315,18 @@ function validateForm() {
 
 function showErrors(errors) {
   dateTrigger?.classList.remove("is-invalid");
-  if (errors.length === 0) { validationBox.classList.add("hidden"); validationBox.innerHTML = ""; return; }
+  if (errors.length === 0) {
+    validationBox.classList.add("hidden");
+    validationBox.innerHTML = "";
+    syncWorkspaceViewportHeight();
+    return;
+  }
   validationBox.classList.remove("hidden");
   if (errors.some((error) => /fecha|ventana|salida|regreso|matriz|rango/i.test(error))) {
     dateTrigger?.classList.add("is-invalid");
   }
   validationBox.innerHTML = `<ul>${errors.map((e) => `<li>${e}</li>`).join("")}</ul>`;
+  syncWorkspaceViewportHeight();
 }
 
 /* ================================================================
@@ -1846,8 +2383,8 @@ function getFormPayload() {
       },
       filters: {
         nonStop: fd.get("nonStop") === "on",
-        maxStops: DEFAULT_MAX_STOPS,
         baggageRequired: fd.get("baggageRequired") === "on",
+        maxLayoverMinutes: readMaxLayoverFilter(),
         maxResults: disableMaxResults ? undefined : 25,
         includedAirlineCodes: [],
       },
@@ -1895,6 +2432,25 @@ function totalDurationMinutes(offer) {
 
 function totalStopsCount(offer) {
   return (offer.itineraries || []).reduce((sum, itinerary) => sum + (itinerary.stops || 0), 0);
+}
+
+function maxStopsAcrossItineraries(offer) {
+  return (offer?.itineraries || []).reduce((max, itinerary) => Math.max(max, itinerary?.stops || 0), 0);
+}
+
+function compareOffersForSortMode(left, right, mode) {
+  if (mode === "fastest") {
+    const durationDiff = totalDurationMinutes(left) - totalDurationMinutes(right);
+    if (durationDiff !== 0) return durationDiff;
+  } else if (mode === "best-value") {
+    const valueDiff = (left.valueScore ?? Number.MAX_SAFE_INTEGER) - (right.valueScore ?? Number.MAX_SAFE_INTEGER);
+    if (valueDiff !== 0) return valueDiff;
+  } else {
+    const priceDiff = (left.price?.total?.amount ?? Number.MAX_SAFE_INTEGER) - (right.price?.total?.amount ?? Number.MAX_SAFE_INTEGER);
+    if (priceDiff !== 0) return priceDiff;
+  }
+
+  return compareOfferTravelDates(left, right);
 }
 
 function computeLayoverMinutes(itinerary, index) {
@@ -1950,6 +2506,16 @@ function layoverItemsForOffer(offer) {
   return (offer?.itineraries ?? []).flatMap((itinerary) => layoverItemsForItinerary(itinerary));
 }
 
+function maxLayoverMinutesForOffer(offer) {
+  return layoverItemsForOffer(offer).reduce((max, item) => Math.max(max, item.minutes), 0);
+}
+
+function readMaxLayoverFilter() {
+  const raw = controlValue("maxLayoverMinutes");
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 function renderStopsSummary(offer) {
   const stops = offer?.comparisonMetrics?.totalStops ?? totalStopsCount(offer);
   if (stops === 0) {
@@ -1983,37 +2549,25 @@ function renderStopsSummary(offer) {
 function getActiveClientFilters() {
   return {
     nonStop: controlChecked("nonStop"),
-    maxStops: DEFAULT_MAX_STOPS,
     baggageRequired: controlChecked("baggageRequired"),
+    maxLayoverMinutes: readMaxLayoverFilter(),
   };
 }
 
 function applyClientOfferControls() {
   if (!state.searchResponse?.allOffers) return;
-  const filters = getActiveClientFilters();
   const sortMode = controlValue("sortMode") || state.sortMode || "cheapest";
-  let offers = [...state.searchResponse.allOffers];
+  let offers = getOffersForVisibleFacets(state.searchResponse.allOffers);
 
   const { hidden, only } = state.airlineFilter;
   offers = offers.filter((offer) => {
     const mainCarrier = offer.mainCarrier || offer.validatingCarrier || "";
-    const maxStops = typeof filters.maxStops === "number" ? Math.max(0, filters.maxStops) : DEFAULT_MAX_STOPS;
-    if (totalStopsCount(offer) > maxStops) return false;
-    if (filters.nonStop && totalStopsCount(offer) > 0) return false;
-    if (filters.baggageRequired && !offer.baggage?.checkedIncluded) return false;
-    // Sidebar airline filter
     if (only !== null && mainCarrier !== only) return false;
     if (only === null && hidden.size > 0 && hidden.has(mainCarrier)) return false;
     return true;
   });
 
-  if (sortMode === "fastest") {
-    offers.sort((a, b) => totalDurationMinutes(a) - totalDurationMinutes(b));
-  } else if (sortMode === "best-value") {
-    offers.sort((a, b) => a.valueScore - b.valueScore);
-  } else {
-    offers.sort((a, b) => a.price.total.amount - b.price.total.amount);
-  }
+  offers.sort((left, right) => compareOffersForSortMode(left, right, sortMode));
 
   state.searchResponse.filteredOffers = offers;
   const groupedOffers = buildOfferGroups(offers);
@@ -2028,6 +2582,18 @@ function applyClientOfferControls() {
   if (!state.searchResponse.offers.some((offer) => offer.id === state.selectedOfferId)) {
     state.selectedOfferId = state.searchResponse.offers[0]?.id ?? offers[0]?.id ?? null;
   }
+}
+
+function getOffersForVisibleFacets(allOffers) {
+  const filters = getActiveClientFilters();
+  return [...allOffers].filter((offer) => {
+    const maxOfferStops = maxStopsAcrossItineraries(offer);
+    if (typeof filters.maxStops === "number" && maxOfferStops > Math.max(0, filters.maxStops)) return false;
+    if (filters.nonStop && maxOfferStops > 0) return false;
+    if (filters.baggageRequired && !offer.baggage?.checkedIncluded) return false;
+    if (typeof filters.maxLayoverMinutes === "number" && maxLayoverMinutesForOffer(offer) > filters.maxLayoverMinutes) return false;
+    return true;
+  });
 }
 
 function setSearchResponse(data) {
@@ -2112,27 +2678,58 @@ function renderToolbar() {
 }
 
 function updateResultsToolbar() {
-  const hasResults = (state.searchResponse?.allOffers?.length > 0) || (state.matrixResponse?.cells?.length > 0);
-  if (resultsToolbar) resultsToolbar.classList.toggle("hidden", !hasResults);
-  if (emptyState) emptyState.classList.toggle("hidden", hasResults);
-
-  // Update count
   const total = state.searchResponse?.filteredOfferGroups?.length ?? 0;
-  const page = buildOfferGroups(state.searchResponse?.offers ?? []).length;
-  if (resultsCountLabel) {
-    resultsCountLabel.innerHTML = total > 0 ? `<strong>${page}</strong> visibles de ${total}` : "";
+  const hasListResults = (state.searchResponse?.allOffers?.length ?? 0) > 0;
+  const hasMatrix = (state.matrixResponse?.cells?.length ?? 0) > 0;
+  const matrixCellCount = state.matrixResponse?.cells?.length ?? 0;
+  const isSearchRunning = state.searchResponse?.searchStatus === "running";
+
+  if (resultsPanelTitle && resultsPanelMeta) {
+    if (hasMatrix) {
+      resultsPanelTitle.textContent = "Calendario flexible";
+      resultsPanelMeta.textContent = "Compara fechas y abre una celda para convertirla en consulta exacta.";
+    } else if (state.searchResponse) {
+      if (isSearchRunning) {
+        resultsPanelTitle.textContent = "Consulta en curso";
+        resultsPanelMeta.textContent = "Consultando Agil. La lista se irá completando mientras llegan ofertas.";
+      } else if (total > 0) {
+        resultsPanelTitle.textContent = "Resultados disponibles";
+        resultsPanelMeta.textContent = total === 1
+          ? "1 grupo listo para revisar en consulta."
+          : `${total} grupos listos para revisar en consulta.`;
+      } else {
+        resultsPanelTitle.textContent = "Sin resultados";
+        resultsPanelMeta.textContent = "No aparecieron ofertas con la combinación y filtros actuales.";
+      }
+    } else {
+      resultsPanelTitle.textContent = "Esperando una búsqueda";
+      resultsPanelMeta.textContent = "Completa origen, destino y fechas para poblar la consulta.";
+    }
   }
 
-  // Update sort active state
+  if (resultsCountLabel) {
+    let nextCount = "";
+    if (hasMatrix) {
+      nextCount = `${matrixCellCount} celdas`;
+    } else if (isSearchRunning) {
+      nextCount = "Cargando";
+    } else if (total > 0) {
+      nextCount = `${total} grupos`;
+    }
+    resultsCountLabel.textContent = nextCount;
+    resultsCountLabel.classList.toggle("hidden", !nextCount);
+  }
+
   if (sortButtonsEl) {
     sortButtonsEl.querySelectorAll("[data-sort]").forEach(btn => {
       btn.classList.toggle("is-active", btn.dataset.sort === (state.sortMode || "cheapest"));
+      btn.disabled = !hasListResults;
     });
+    sortButtonsEl.classList.toggle("is-disabled", !hasListResults);
   }
 
-  // Show view toggle only when matrix data exists (flexible mode results)
   if (viewToggle) {
-    viewToggle.style.display = state.matrixResponse?.cells?.length > 0 ? "" : "none";
+    viewToggle.classList.toggle("hidden", !hasMatrix);
     viewToggle.querySelectorAll("[data-view]").forEach(btn => {
       btn.classList.toggle("is-active", btn.dataset.view === state.viewMode);
     });
@@ -2151,7 +2748,13 @@ function renderResults() {
   const isRunning = state.searchResponse?.searchStatus === "running";
 
   if (offers.length === 0 && !isRunning) {
-    resultsContainer.innerHTML = '<div class="empty-state"><div class="empty-state__icon"><svg class="ico" style="width:40px;height:40px;opacity:0.3"><use href="#ico-plane"/></svg></div><p class="empty-state__eyebrow">Sin resultados</p><p class="empty-state__text">No aparecieron ofertas con los filtros actuales.</p></div>';
+    resultsContainer.innerHTML = renderEmptyPanel({
+      eyebrow: "Consulta",
+      title: "Sin resultados con estos filtros",
+      text: "No aparecieron ofertas para la combinación actual.",
+      hint: "Prueba quitando Directo, Equipaje o Escala para ampliar el rango.",
+      icon: "ico-route",
+    });
     return;
   }
 
@@ -2178,20 +2781,18 @@ function renderResults() {
   buildOfferGroups(offers).forEach((group) => {
     const o = group.find(g => g.id === state.selectedOfferId) ?? group[0];
     const agilPath = o.purchasePaths?.find((p) => p.provider === "agil-local" && p.url);
-    const outbound = o.itineraries?.find((it) => it.direction === "outbound") ?? o.itineraries?.[0];
-    const inbound = o.itineraries?.find((it) => it.direction === "inbound");
-    const dep = formatDateCompact(outbound?.segments?.[0]?.departureAt?.slice(0, 10));
-    const ret = inbound ? formatDateCompact(inbound.segments?.[0]?.departureAt?.slice(0, 10)) : null;
-    const datesText = ret ? `${dep} → ${ret}` : dep;
+    const dateSummary = buildGroupDateSummary(group, state.selectedOfferId);
     const isActive = group.some(g => g.id === state.selectedOfferId);
-    const badge = group.length > 1 ? ` <span class="badge badge--accent" style="font-size:10px;height:18px;padding:0 5px" title="${group.length} opciones de regreso">${group.length}</span>` : "";
+    const badge = group.length > 1
+      ? ` <span class="badge badge--accent badge--group-count" title="${group.length} fechas equivalentes">${group.length}</span>`
+      : "";
     const bagCarry = o.baggage?.carryOnIncluded ? "✓" : "—";
     const bagCheck = o.baggage?.checkedIncluded ? "✓" : "—";
     const carrier = carrierDisplayParts(o);
 
     html += `<tr data-oid="${o.id}" class="${isActive ? "is-active" : ""}">`;
     html += `<td><span class="cell-main carrier-label" title="${escapeHtml(carrier.display)}">${escapeHtml(carrier.display)}</span></td>`;
-    html += `<td><span class="cell-sub">${datesText}${badge}</span></td>`;
+    html += `<td title="${escapeHtml(dateSummary.title)}"><div class="results-date-stack"><span class="cell-main">${escapeHtml(dateSummary.primary)}${badge}</span>${dateSummary.secondary ? `<span class="cell-sub">${escapeHtml(dateSummary.secondary)}</span>` : ""}</div></td>`;
     html += `<td>${formatDuration(o.comparisonMetrics?.totalDurationMinutes)}</td>`;
     html += `<td>${renderStopsSummary(o)}</td>`;
     html += `<td class="cell-sub">${bagCarry} / ${bagCheck}</td>`;
@@ -2319,7 +2920,7 @@ function matrixToneClass(cell, stats) {
 }
 
 /* ================================================================
-   SIDEBAR — airline filter
+   AIRLINES BAR
    ================================================================ */
 
 function buildAirlineList(allOffers) {
@@ -2337,81 +2938,78 @@ function buildAirlineList(allOffers) {
       entry.currency = offer.price?.total?.currencyCode ?? "";
     }
   }
-  return [...map.values()].sort((a, b) => b.count - a.count);
+  return [...map.values()].sort((a, b) => {
+    const leftPrice = Number.isFinite(a.minPrice) ? a.minPrice : Number.MAX_SAFE_INTEGER;
+    const rightPrice = Number.isFinite(b.minPrice) ? b.minPrice : Number.MAX_SAFE_INTEGER;
+    if (leftPrice !== rightPrice) return leftPrice - rightPrice;
+    if (b.count !== a.count) return b.count - a.count;
+    return String(a.display || a.code).localeCompare(String(b.display || b.code), "es");
+  });
 }
 
-function renderSidebar() {
-  const sidebarEl = $("sidebar");
-  if (!sidebarEl) return;
+function renderAirlineBar() {
+  if (!airlineBar) return;
   const allOffers = state.searchResponse?.allOffers;
-  if (!allOffers?.length) {
-    sidebarEl.classList.remove("is-visible");
-    workspace?.classList.remove("workspace--with-sidebar");
+  const offersForFacets = allOffers?.length ? getOffersForVisibleFacets(allOffers) : [];
+
+  if (!offersForFacets.length) {
+    airlineBar.classList.add("hidden");
+    airlineBar.innerHTML = "";
     return;
   }
-  const airlines = buildAirlineList(allOffers);
+
+  const airlines = buildAirlineList(offersForFacets);
   if (airlines.length <= 1) {
-    sidebarEl.classList.remove("is-visible");
-    workspace?.classList.remove("workspace--with-sidebar");
+    airlineBar.classList.add("hidden");
+    airlineBar.innerHTML = "";
     return;
   }
-  sidebarEl.classList.add("is-visible");
-  workspace?.classList.add("workspace--with-sidebar");
-  const { hidden, only } = state.airlineFilter;
-  const hasFilters = hidden.size > 0 || only !== null;
 
-  sidebarEl.innerHTML = `
-    <div class="sidebar__section">
-      <div class="sidebar__title">
-        <span>Aerolíneas</span>
-        ${hasFilters ? '<button class="sidebar__reset" id="slReset">Todas</button>' : ""}
-      </div>
-      ${airlines.map(a => {
-        const isOnly = only === a.code;
-        const isHidden = !isOnly && (only !== null || hidden.has(a.code));
-        const rowClass = isOnly ? "is-solo" : isHidden ? "is-hidden" : "";
-        const priceStr = a.minPrice < Infinity ? `${a.currency} ${numFmt.format(a.minPrice)}` : "";
+  const activeCode = state.airlineFilter.only;
+  airlineBar.classList.remove("hidden");
+  airlineBar.innerHTML = `
+    <div class="airline-bar__header">
+      <span class="airline-bar__label">Aerolíneas</span>
+      <span class="airline-bar__hint">Ordenadas por mejor tarifa</span>
+    </div>
+    <div class="airline-bar__scroller" role="group" aria-label="Filtrar por aerolínea">
+      <button type="button" class="airline-chip ${activeCode === null ? "is-active" : ""}" data-airline-all="1">
+        <span class="airline-chip__name">Todas</span>
+        <span class="airline-chip__meta">${offersForFacets.length} opciones</span>
+      </button>
+      ${airlines.map((airline) => {
+        const priceStr = airline.minPrice < Infinity ? `${airline.currency} ${numFmt.format(airline.minPrice)}` : "Precio pendiente";
         return `
-          <div class="sidebar__airline ${rowClass}" data-sl-toggle="${a.code}">
-            <span class="sidebar__dot"></span>
-            <div style="flex:1;min-width:0">
-              <div class="sidebar__code" title="${escapeHtml(a.display)}">${escapeHtml(a.display)}</div>
-              <div class="sidebar__meta">×${a.count}${priceStr ? ` · ${priceStr}` : ""}</div>
-            </div>
-            <button class="sidebar__solo-btn" data-sl-solo="${a.code}" type="button">Solo</button>
-          </div>`;
+          <button
+            type="button"
+            class="airline-chip ${activeCode === airline.code ? "is-active" : ""}"
+            data-airline-code="${airline.code}"
+            title="${escapeHtml(airline.display)}"
+          >
+            <span class="airline-chip__name">${escapeHtml(airline.display)}</span>
+            <span class="airline-chip__meta">${priceStr} · ${airline.count}</span>
+          </button>
+        `;
       }).join("")}
-    </div>`;
+    </div>
+  `;
 
-  // Event handlers (same logic as before)
-  sidebarEl.querySelector("#slReset")?.addEventListener("click", () => {
+  airlineBar.querySelector("[data-airline-all]")?.addEventListener("click", () => {
     state.airlineFilter.hidden.clear();
     state.airlineFilter.only = null;
+    state.resultsPage = 1;
+    state.resultsScroll = { top: 0, left: 0 };
     applyClientOfferControls();
     renderAll();
   });
-  sidebarEl.querySelectorAll("[data-sl-toggle]").forEach(row => {
-    row.addEventListener("click", (e) => {
-      if (e.target.closest("[data-sl-solo]")) return;
-      const code = row.dataset.slToggle;
-      if (state.airlineFilter.only === code) {
-        state.airlineFilter.only = null;
-      } else if (state.airlineFilter.only !== null) {
-        state.airlineFilter.only = null;
-        state.airlineFilter.hidden.add(code);
-      } else {
-        if (state.airlineFilter.hidden.has(code)) state.airlineFilter.hidden.delete(code);
-        else state.airlineFilter.hidden.add(code);
-      }
-      applyClientOfferControls();
-      renderAll();
-    });
-  });
-  sidebarEl.querySelectorAll("[data-sl-solo]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const code = btn.dataset.slSolo;
-      if (state.airlineFilter.only === code) state.airlineFilter.only = null;
-      else { state.airlineFilter.only = code; state.airlineFilter.hidden.clear(); }
+
+  airlineBar.querySelectorAll("[data-airline-code]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const code = button.dataset.airlineCode;
+      state.airlineFilter.hidden.clear();
+      state.airlineFilter.only = state.airlineFilter.only === code ? null : code;
+      state.resultsPage = 1;
+      state.resultsScroll = { top: 0, left: 0 };
       applyClientOfferControls();
       renderAll();
     });
@@ -2427,7 +3025,13 @@ function renderCalendarView(container = resultsContainer) {
   captureMatrixScroll(container);
   const cells = state.matrixResponse?.cells;
   if (!cells || cells.length === 0) {
-    container.innerHTML = '<div class="empty-state"><p class="empty-state__text">Sin datos de calendario.</p></div>';
+    container.innerHTML = renderEmptyPanel({
+      eyebrow: "Calendario",
+      title: "Sin datos disponibles",
+      text: "Esta vista todavía no tiene celdas para mostrar.",
+      hint: "Ajusta las fechas o lanza una búsqueda exacta para seguir.",
+      icon: "ico-calendar",
+    });
     return;
   }
 
@@ -2527,12 +3131,14 @@ function renderDetailPanel() {
   if (!offer) {
     closeDetailPanel();
     if (detailContent) {
-      detailContent.innerHTML = `
-        <div class="detail-empty">
-          <p class="detail-empty__eyebrow">Sin selección</p>
-          <p class="detail-empty__text">El detalle aparecerá aquí al elegir una oferta o una celda del calendario.</p>
-        </div>
-      `;
+      detailContent.innerHTML = renderEmptyPanel({
+        wrapperClass: "detail-empty",
+        eyebrow: "Oferta",
+        title: "Ninguna oferta seleccionada",
+        text: "Aquí verás tarifa, tramos, equipaje y accesos de compra.",
+        hint: "Selecciona una fila o una celda del calendario para poblar el panel.",
+        icon: "ico-clipboard",
+      });
     }
     return;
   }
@@ -2590,13 +3196,11 @@ function renderDetailPanel() {
   }
 
   if (group.length > 1) {
-    h += `<div class="detail-segment"><div class="detail-segment__dir">Vuelta — ${group.length} opciones</div>`;
-    group.forEach(member => {
-      const ib = member.itineraries?.find(it => it.direction === "inbound");
-      if (!ib) return;
+    h += `<div class="detail-segment"><div class="detail-segment__dir">Fechas equivalentes — ${group.length} variantes</div>`;
+    group.forEach((member) => {
       const isSelected = member.id === state.selectedOfferId;
-      const label = ib.segments?.map(s => `${s.flightNumber} ${s.origin} ${formatDT(s.departureAt)} → ${s.destination} ${formatDT(s.arrivalAt)}`).join(" / ") || "—";
-      h += `<div class="detail-segment__leg detail-segment__leg--choice ${isSelected ? "is-selected" : ""}" data-inbound-id="${member.id}">${label}</div>`;
+      const label = buildOfferVariantSummary(member);
+      h += `<div class="detail-segment__leg detail-segment__leg--choice ${isSelected ? "is-selected" : ""}" data-inbound-id="${member.id}" title="${escapeHtml(label)}">${escapeHtml(label)}</div>`;
     });
     h += '</div>';
   } else {
@@ -2664,10 +3268,18 @@ function renderAll() {
   }
   state.pollRenderPending = false;
   renderToolbar();
-  renderSidebar();
+  renderAirlineBar();
   renderResultsArea();
   renderDetailPanel();
   updateResultsToolbar();
+  syncWorkspaceViewportHeight();
+}
+
+function syncWorkspaceViewportHeight() {
+  if (!workspace) return;
+  const top = workspace.getBoundingClientRect().top;
+  const available = Math.max(0, Math.floor(window.innerHeight - top));
+  workspace.style.setProperty("--workspace-height", `${available}px`);
 }
 
 /* ================================================================
@@ -2735,13 +3347,11 @@ pasteSearchConfigBtn?.addEventListener("click", async () => {
   await pasteSearchConfiguration();
 });
 
-// Detail close
-detailClose?.addEventListener("click", () => {
-  state.selectedOfferId = null;
-  closeDetailPanel();
-  renderResultsArea();
-});
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !layoverPopover?.classList.contains("hidden")) {
+    closeLayoverPopover();
+    return;
+  }
   if (e.key === "Escape" && !calendarPopover?.classList.contains("hidden")) {
     closeCalendarPopover();
     return;
@@ -2782,7 +3392,7 @@ document.addEventListener("pointercancel", () => {
   if (state.pollRenderPending) scheduleDeferredPollRender();
 });
 
-["sortMode", "nonStop", "baggageRequired"].forEach((id) => {
+["sortMode", "nonStop", "baggageRequired", "maxLayoverMinutes"].forEach((id) => {
   control(id)?.addEventListener("change", async () => {
     if (!state.searchResponse?.allOffers) return;
     state.sortMode = controlValue("sortMode") || state.sortMode;
@@ -2798,6 +3408,7 @@ searchForm.addEventListener("submit", async (e) => {
   hideLocationMenu("origin");
   hideLocationMenu("destination");
   paxPopover?.classList.add("hidden");
+  closeLayoverPopover();
   closeCalendarPopover();
   const errs = validateForm();
   showErrors(errs);
@@ -2950,16 +3561,31 @@ setupInputEnforcement();
 setupLocationAutocomplete("origin");
 setupLocationAutocomplete("destination");
 setupPaxPopover();
+setupLayoverPopover();
 setupThemeToggle();
 setupTripTypeToggle();
 setupModeToggle();
 setupCalendarPopover();
 updatePaxLabel();
 updateModeFields();
-window.addEventListener("resize", syncVisibleLocationMenus);
-window.addEventListener("scroll", syncVisibleLocationMenus, true);
+window.addEventListener("resize", () => {
+  syncVisibleLocationMenus();
+  syncPaxPopoverPosition();
+  syncLayoverPopoverPosition();
+  syncCalendarPopoverPosition();
+  syncWorkspaceViewportHeight();
+  syncSearchShellLayoutMetrics();
+});
+window.addEventListener("scroll", () => {
+  syncVisibleLocationMenus();
+  syncPaxPopoverPosition();
+  syncLayoverPopoverPosition();
+  syncCalendarPopoverPosition();
+}, true);
 window.addEventListener("storage", (event) => {
   if (event.key === SEARCH_CONFIG_CLIPBOARD_KEY) syncSearchClipboardUI();
 });
 syncSearchClipboardUI();
 renderAll();
+settleInitialShellLayout();
+releaseInitialUiBootState();

@@ -150,6 +150,7 @@ function normalizeRequest(input?: SearchPayload["request"]): SearchRequest {
       maxPrice: numberValue(filters.maxPrice),
       maxResults: numberValue(filters.maxResults, 25),
       maxTotalDurationMinutes: numberValue(filters.maxTotalDurationMinutes),
+      maxLayoverMinutes: numberValue(filters.maxLayoverMinutes),
       minDepartureMinutes: numberValue(filters.minDepartureMinutes),
       maxDepartureMinutes: numberValue(filters.maxDepartureMinutes),
       minArrivalMinutes: numberValue(filters.minArrivalMinutes),
