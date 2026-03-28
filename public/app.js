@@ -228,12 +228,13 @@ function renderEmptyPanel({
   wrapperClass = "empty-state",
   panelClass = "",
   icon = "ico-search",
-  eyebrow,
+  eyebrow = "",
   title,
   text,
   hint = "",
 }) {
   const classes = [wrapperClass, panelClass].filter(Boolean).join(" ");
+  const eyebrowMarkup = eyebrow ? `<p class="empty-panel__eyebrow">${escapeHtml(eyebrow)}</p>` : "";
   const hintMarkup = hint ? `<p class="empty-panel__hint">${escapeHtml(hint)}</p>` : "";
   return `
     <div class="${classes}">
@@ -241,7 +242,7 @@ function renderEmptyPanel({
         <div class="empty-panel__media" aria-hidden="true">
           <svg class="empty-panel__icon"><use href="#${escapeHtml(icon)}"/></svg>
         </div>
-        <p class="empty-panel__eyebrow">${escapeHtml(eyebrow)}</p>
+        ${eyebrowMarkup}
         <h2 class="empty-panel__title">${escapeHtml(title)}</h2>
         <p class="empty-panel__text">${escapeHtml(text)}</p>
         ${hintMarkup}
@@ -2690,20 +2691,20 @@ function updateResultsToolbar() {
       resultsPanelMeta.textContent = "Compara fechas y abre una celda para convertirla en consulta exacta.";
     } else if (state.searchResponse) {
       if (isSearchRunning) {
-        resultsPanelTitle.textContent = "Consulta en curso";
+        resultsPanelTitle.textContent = "Cargando resultados";
         resultsPanelMeta.textContent = "Consultando Agil. La lista se irá completando mientras llegan ofertas.";
       } else if (total > 0) {
         resultsPanelTitle.textContent = "Resultados disponibles";
         resultsPanelMeta.textContent = total === 1
-          ? "1 grupo listo para revisar en consulta."
-          : `${total} grupos listos para revisar en consulta.`;
+          ? "1 grupo listo para revisar."
+          : `${total} grupos listos para revisar.`;
       } else {
         resultsPanelTitle.textContent = "Sin resultados";
         resultsPanelMeta.textContent = "No aparecieron ofertas con la combinación y filtros actuales.";
       }
     } else {
       resultsPanelTitle.textContent = "Esperando una búsqueda";
-      resultsPanelMeta.textContent = "Completa origen, destino y fechas para poblar la consulta.";
+      resultsPanelMeta.textContent = "Completa origen, destino y fechas para empezar.";
     }
   }
 
@@ -2749,7 +2750,6 @@ function renderResults() {
 
   if (offers.length === 0 && !isRunning) {
     resultsContainer.innerHTML = renderEmptyPanel({
-      eyebrow: "Consulta",
       title: "Sin resultados con estos filtros",
       text: "No aparecieron ofertas para la combinación actual.",
       hint: "Prueba quitando Directo, Equipaje o Escala para ampliar el rango.",
