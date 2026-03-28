@@ -159,15 +159,6 @@ async function writeClipboardText(text) {
 
 function renderResultsSkeleton(kind = "search") {
   if (!resultsContainer) return;
-  const copy = kind === "matrix-selection"
-    ? {
-        eyebrow: "Cargando lista exacta",
-        text: "Resolviendo la combinación elegida para traer las ofertas.",
-      }
-    : {
-        eyebrow: "Consultando vuelos",
-        text: "Las ofertas aparecerán aquí a medida que Agil vaya respondiendo.",
-      };
   const rows = Array.from({ length: 6 }, (_, index) => `
     <div class="results-skeleton__row" aria-hidden="true">
       <span class="skeleton-line skeleton-line--md"></span>
@@ -182,10 +173,6 @@ function renderResultsSkeleton(kind = "search") {
 
   resultsContainer.innerHTML = `
     <div class="results-skeleton" aria-live="polite" aria-busy="true">
-      <div class="results-skeleton__header">
-        <p class="results-skeleton__eyebrow">${copy.eyebrow}</p>
-        <p class="results-skeleton__text">${copy.text}</p>
-      </div>
       <div class="results-skeleton__table">
         <div class="results-skeleton__head" aria-hidden="true">
           <span>Aerolínea</span>
@@ -2525,9 +2512,9 @@ function renderStopsSummary(offer) {
 
   const items = layoverItemsForOffer(offer);
   const toneClass = stops === 1 ? "stops-stack--warning" : "stops-stack--danger";
-  const totalLayoverMinutes = items.reduce((sum, item) => sum + item.minutes, 0);
-  const timeText = totalLayoverMinutes > 0
-    ? formatDuration(totalLayoverMinutes)
+  const maxLayoverMinutes = items.reduce((max, item) => Math.max(max, item.minutes), 0);
+  const timeText = maxLayoverMinutes > 0
+    ? formatDuration(maxLayoverMinutes)
     : items.length
       ? formatDuration(items[0].minutes)
       : "Escala";
@@ -2536,7 +2523,7 @@ function renderStopsSummary(offer) {
   const citySummary = items.length > 1 ? `${primaryCity} +${items.length - 1}` : primaryCity;
   const metaText = `${citySummary} · ${label}`;
   const detailTitle = items.length
-    ? `Tiempo total: ${timeText} | ${items.map((item) => `${item.city}: ${formatDuration(item.minutes)}`).join(" | ")}`
+    ? `Escala máx.: ${timeText} | ${items.map((item) => `${item.city}: ${formatDuration(item.minutes)}`).join(" | ")}`
     : metaText;
 
   return `
