@@ -43,6 +43,13 @@ const SEARCH_CONFIG_CLIPBOARD_TYPE = "fly-desk-search-config";
 const SEARCH_CONFIG_CLIPBOARD_VERSION = 1;
 const POLL_RENDER_IDLE_MS = 180;
 const THEME_STORAGE_KEY = "flydesk-theme";
+const LAYOVER_TIME_OPTIONS = [
+  { value: "", label: "Cualquiera", compactLabel: "" },
+  { value: "120", label: "Hasta 2h", compactLabel: "2h" },
+  { value: "240", label: "Hasta 4h", compactLabel: "4h" },
+  { value: "360", label: "Hasta 6h", compactLabel: "6h" },
+  { value: "480", label: "Hasta 8h", compactLabel: "8h" },
+];
 
 const $ = (id) => document.getElementById(id);
 
@@ -163,9 +170,19 @@ function isProviderSessionWarning(providerId, warning) {
 }
 
 function providerLinkFallbackLabel(response, providerId) {
-  return providerSearchWarnings(response).some((warning) => isProviderSessionWarning(providerId, warning))
-    ? "Falta sesión"
-    : "—";
+  if (providerSearchWarnings(response).some((warning) => isProviderSessionWarning(providerId, warning))) {
+    return {
+      label: "Falta sesión",
+    };
+  }
+
+  return {
+    label: "—",
+  };
+}
+
+function pathSupportsEquivalentSearch(path) {
+  return Boolean(path?.url);
 }
 
 function providerIdsForLinkCell() {
@@ -178,16 +195,17 @@ function providerIdsForLinkCell() {
 }
 
 function renderProviderLinkItem(path, providerId) {
-  if (path?.url) {
+  if (pathSupportsEquivalentSearch(path)) {
     return `<a href="${path.url}" target="_blank" rel="noreferrer" class="row-link" data-stop-row="1">${providerLabel(providerId)}</a>`;
   }
 
   const fallback = providerLinkFallbackLabel(state.searchResponse, providerId);
-  if (fallback === "—") {
+  if (fallback.label === "—") {
     return "";
   }
 
-  return `<span class="cell-sub cell-sub--warning">${providerLabel(providerId)}: ${fallback}</span>`;
+  const titleAttr = fallback.title ? ` title="${escapeHtml(fallback.title)}"` : "";
+  return `<span class="cell-sub cell-sub--warning"${titleAttr}>${providerLabel(providerId)}: ${fallback.label}</span>`;
 }
 
 function renderProviderLinksCell(offer, providerLinkIndex) {
@@ -503,6 +521,17 @@ function formatDuration(minutes) {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function normalizeMaxStopsValue(value) {
+  const parsed = Number.isFinite(Number(value)) ? Number.parseInt(String(value), 10) : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? String(parsed) : "";
+}
+
+function compactStopsLabel(value) {
+  if (String(value) === "1") return "1 esc.";
+  if (String(value) === "2") return "2 esc.";
+  return "";
 }
 
 function formatDateCompact(iso) {
@@ -843,6 +872,7 @@ function buildSearchClipboardPayload() {
     filters: {
       nonStop: controlChecked("nonStop"),
       baggageRequired: controlChecked("baggageRequired"),
+      maxStops: controlValue("maxStopsFilter"),
       maxLayoverMinutes: controlValue("maxLayoverMinutes"),
     },
     sortMode: controlValue("sortMode") || state.sortMode || "cheapest",
@@ -897,6 +927,70 @@ function clearRenderedSearchState() {
   closeDetailPanel();
 }
 
+function syncSearchFormWithRequest(request) {
+  if (!request) return;
+
+  const leg = request.legs?.[0] ?? {};
+  const isFlexible = request.searchMode && request.searchMode !== "exact";
+  const departureAnchor = String(leg.departureDate || leg.departureStart || "").trim();
+
+  state.flexMode = Boolean(isFlexible);
+  tripType.value = request.tripType === "one-way" ? "one-way" : "round-trip";
+
+  applyResolvedLocation("origin", {
+    value: leg.originLabel || leg.origin || "",
+    code: leg.origin || "",
+    label: leg.originLabel || leg.origin || "",
+  });
+  applyResolvedLocation("destination", {
+    value: leg.destinationLabel || leg.destination || "",
+    code: leg.destination || "",
+    label: leg.destinationLabel || leg.destination || "",
+  });
+  hideLocationMenu("origin");
+  hideLocationMenu("destination");
+
+  $("adults").value = String(request.passengers?.adults ?? 1);
+  $("children").value = String(request.passengers?.children ?? 0);
+  $("infants").value = String(request.passengers?.infants ?? 0);
+
+  if (typeof leg.minNights === "number" && stayDaysMinEl) {
+    stayDaysMinEl.value = String(leg.minNights);
+  }
+  if (typeof leg.maxNights === "number" && stayDaysMaxEl) {
+    stayDaysMaxEl.value = String(leg.maxNights);
+  }
+
+  if (state.flexMode) {
+    $("departureDate").value = "";
+    $("returnDate").value = "";
+    $("departureStart").value = String(leg.departureStart || "");
+    $("departureEnd").value = String(leg.departureEnd || "");
+    $("returnStart").value = String(leg.returnStart || "");
+    $("returnEnd").value = String(leg.returnEnd || "");
+  } else {
+    $("departureDate").value = String(leg.departureDate || "");
+    $("returnDate").value = tripType.value === "round-trip" ? String(leg.returnDate || "") : "";
+    $("departureStart").value = "";
+    $("departureEnd").value = "";
+    $("returnStart").value = "";
+    $("returnEnd").value = "";
+  }
+
+  calendarState.selectionStage = "start";
+  if (departureAnchor) {
+    calendarState.viewStartMonth = firstDayOfMonth(departureAnchor);
+  }
+
+  paxPopover?.classList.add("hidden");
+  closeLayoverPopover();
+  closeCalendarPopover();
+  searchForm.querySelectorAll(".is-invalid").forEach((el) => el.classList.remove("is-invalid"));
+  showErrors([]);
+  updatePaxLabel();
+  updateModeFields();
+}
+
 function applySearchClipboardPayload(payload) {
   if (!payload) return false;
 
@@ -925,6 +1019,7 @@ function applySearchClipboardPayload(payload) {
   $("infants").value = String(payload.passengers?.infants || "0");
   $("nonStop").checked = payload.filters?.nonStop === true;
   $("baggageRequired").checked = payload.filters?.baggageRequired === true;
+  $("maxStopsFilter").value = normalizeMaxStopsValue(payload.filters?.maxStops);
   $("maxLayoverMinutes").value = String(payload.filters?.maxLayoverMinutes || "");
   syncLayoverFilterUi();
 
@@ -1261,7 +1356,7 @@ function bestProviderPathForOffer(offer, providerId, providerLinkIndex) {
   const candidates = matchedOffersForProviderLink(offer, providerLinkIndex)
     .flatMap((candidateOffer) =>
       (candidateOffer?.purchasePaths ?? [])
-        .filter((path) => path?.provider === providerId && path?.url)
+        .filter((path) => path?.provider === providerId && pathSupportsEquivalentSearch(path))
         .map((path) => ({ offer: candidateOffer, path })),
     )
     .sort(compareProviderPathCandidates);
@@ -1279,7 +1374,7 @@ function resolvedOfferPurchasePaths(offer, providerLinkIndex) {
 
   const seen = new Set(primaryPaths.map((path) => `${path.provider}|${path.url}`));
   const extraPaths = (offer?.purchasePaths ?? []).filter((path) => {
-    if (!path?.url) return false;
+    if (!pathSupportsEquivalentSearch(path)) return false;
     const key = `${path.provider}|${path.url}`;
     if (seen.has(key)) return false;
     seen.add(key);
@@ -2087,6 +2182,29 @@ function measureRefinementMinWidth(item) {
     );
   }
 
+  if (item.id === "layoverFilter" && trigger instanceof HTMLElement && text instanceof HTMLElement) {
+    const emptyLabel = text.dataset.emptyLabel?.trim() || text.textContent?.trim() || "";
+    const stopsSelect = $("maxStopsFilter");
+    const layoverSelect = $("maxLayoverMinutes");
+    if (stopsSelect instanceof HTMLSelectElement && layoverSelect instanceof HTMLSelectElement) {
+      const stopLabels = [...stopsSelect.options]
+        .map((option) => compactStopsLabel(option.value))
+        .filter(Boolean);
+      const timeLabels = [...layoverSelect.options]
+        .map((option) => {
+          const configured = LAYOVER_TIME_OPTIONS.find((entry) => entry.value === option.value);
+          return configured?.compactLabel ?? option.textContent?.trim() ?? "";
+        })
+        .filter(Boolean);
+      const comboLabels = stopLabels.flatMap((stopLabel) => timeLabels.map((timeLabel) => `${stopLabel}/${timeLabel}`));
+      const candidateLabels = [emptyLabel, ...stopLabels, ...timeLabels, ...comboLabels];
+      return Math.max(
+        intrinsicWidth,
+        measureTriggerWidthForLabels(trigger, ".refinement__text", [...new Set(candidateLabels)]),
+      );
+    }
+  }
+
   return intrinsicWidth;
 }
 
@@ -2133,22 +2251,59 @@ function syncSearchShellLayoutMetrics() {
 }
 
 function syncLayoverFilterUi() {
-  const select = $("maxLayoverMinutes");
-  if (!(select instanceof HTMLSelectElement)) return;
+  const stopsSelect = $("maxStopsFilter");
+  const layoverSelect = $("maxLayoverMinutes");
+  if (!(stopsSelect instanceof HTMLSelectElement) || !(layoverSelect instanceof HTMLSelectElement)) return;
 
-  const selected = [...select.options].find((option) => option.value === select.value) ?? select.options[0];
-  if (layoverTriggerValue) {
-    const emptyLabel = layoverTriggerValue.dataset.emptyLabel?.trim() || "Escala";
-    const valuePrefix = layoverTriggerValue.dataset.valuePrefix ?? `${emptyLabel}: `;
-    layoverTriggerValue.textContent = select.value === ""
-      ? emptyLabel
-      : `${valuePrefix}${selected?.textContent || emptyLabel}`;
+  const selectedStops = [...stopsSelect.options].find((option) => option.value === stopsSelect.value) ?? stopsSelect.options[0];
+  const selectedLayover = [...layoverSelect.options].find((option) => option.value === layoverSelect.value) ?? layoverSelect.options[0];
+  const layoverOption = LAYOVER_TIME_OPTIONS.find((option) => option.value === layoverSelect.value);
+  const layoverCompactLabel = layoverOption?.compactLabel ?? selectedLayover?.textContent?.trim().replace("Hasta ", "") ?? "";
+  const stopSummary = compactStopsLabel(stopsSelect.value);
+  const layoverSummary = layoverSelect.value === "" ? "" : layoverCompactLabel;
+
+  const activeStopFilter = stopsSelect.value !== "";
+  const activeLayoverFilter = layoverSelect.value !== "";
+  let activeSummary = "";
+  if (activeStopFilter && activeLayoverFilter) {
+    activeSummary = `${stopSummary}/${layoverSummary}`;
+  } else if (activeStopFilter) {
+    activeSummary = stopSummary;
+  } else if (activeLayoverFilter) {
+    activeSummary = layoverSummary;
   }
 
-  layoverPopover?.querySelectorAll("[data-layover-value]").forEach((option) => {
-    const isSelected = option.dataset.layoverValue === select.value;
+  if (layoverTriggerValue) {
+    const emptyLabel = layoverTriggerValue.dataset.emptyLabel?.trim() || "Escala";
+    layoverTriggerValue.textContent = emptyLabel;
+  }
+
+  const fullStopSummary = stopsSelect.value === "" ? "" : selectedStops?.textContent?.trim() ?? "";
+  const fullLayoverSummary = layoverSelect.value === "" ? "" : layoverCompactLabel;
+  const fullSummary = fullStopSummary && fullLayoverSummary
+    ? `${fullStopSummary} / ${fullLayoverSummary}`
+    : fullStopSummary || fullLayoverSummary;
+
+  if (layoverFilter) {
+    layoverFilter.classList.toggle("is-active", Boolean(activeSummary));
+  }
+  if (layoverTrigger) {
+    layoverTrigger.title = fullSummary || "Escala";
+    layoverTrigger.setAttribute(
+      "aria-label",
+      fullSummary ? `Configurar filtro de escala (${fullSummary})` : "Configurar filtro de escala",
+    );
+  }
+
+  layoverPopover?.querySelectorAll("[data-max-stops-value]").forEach((option) => {
+    const isSelected = option instanceof HTMLElement && option.dataset.maxStopsValue === stopsSelect.value;
     option.classList.toggle("is-selected", isSelected);
-    option.setAttribute("aria-selected", String(isSelected));
+    option.setAttribute("aria-pressed", String(isSelected));
+  });
+  layoverPopover?.querySelectorAll("[data-layover-value]").forEach((option) => {
+    const isSelected = option instanceof HTMLElement && option.dataset.layoverValue === layoverSelect.value;
+    option.classList.toggle("is-selected", isSelected);
+    option.setAttribute("aria-pressed", String(isSelected));
   });
 
   syncLayoverPopoverPosition();
@@ -2170,13 +2325,18 @@ function closeLayoverPopover() {
   layoverPopover.classList.add("hidden");
 }
 
-function setLayoverFilterValue(value) {
-  const select = $("maxLayoverMinutes");
-  if (!(select instanceof HTMLSelectElement)) return;
+function setLayoverFilterValue({ maxStops = "", maxLayoverMinutes = "" } = {}) {
+  const stopsSelect = $("maxStopsFilter");
+  const layoverSelect = $("maxLayoverMinutes");
+  if (!(stopsSelect instanceof HTMLSelectElement) || !(layoverSelect instanceof HTMLSelectElement)) return;
 
-  if (select.value !== value) {
-    select.value = value;
-    select.dispatchEvent(new Event("change", { bubbles: true }));
+  if (stopsSelect.value !== maxStops) {
+    stopsSelect.value = maxStops;
+    stopsSelect.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  if (layoverSelect.value !== maxLayoverMinutes) {
+    layoverSelect.value = maxLayoverMinutes;
+    layoverSelect.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
   syncLayoverFilterUi();
@@ -2195,8 +2355,15 @@ function syncLayoverPopoverPosition() {
 }
 
 function setupLayoverPopover() {
-  const select = $("maxLayoverMinutes");
-  if (!layoverFilter || !layoverTrigger || !layoverPopover || !(select instanceof HTMLSelectElement)) return;
+  const stopsSelect = $("maxStopsFilter");
+  const layoverSelect = $("maxLayoverMinutes");
+  if (
+    !layoverFilter ||
+    !layoverTrigger ||
+    !layoverPopover ||
+    !(stopsSelect instanceof HTMLSelectElement) ||
+    !(layoverSelect instanceof HTMLSelectElement)
+  ) return;
 
   syncLayoverFilterUi();
 
@@ -2215,10 +2382,14 @@ function setupLayoverPopover() {
   });
 
   layoverPopover.addEventListener("click", (event) => {
-    const option = event.target.closest("[data-layover-value]");
+    const option = event.target.closest("[data-layover-value], [data-max-stops-value]");
     if (!option) return;
     event.preventDefault();
-    setLayoverFilterValue(option.dataset.layoverValue || "");
+    if (!(option instanceof HTMLElement)) return;
+    setLayoverFilterValue({
+      maxStops: option.dataset.maxStopsValue ?? stopsSelect.value,
+      maxLayoverMinutes: option.dataset.layoverValue ?? layoverSelect.value,
+    });
   });
 
   document.addEventListener("click", (event) => {
@@ -2227,7 +2398,14 @@ function setupLayoverPopover() {
     }
   });
 
-  select.addEventListener("change", syncLayoverFilterUi);
+  stopsSelect.addEventListener("change", syncLayoverFilterUi);
+  layoverSelect.addEventListener("change", syncLayoverFilterUi);
+}
+
+function readMaxStopsFilter() {
+  const raw = controlValue("maxStopsFilter");
+  const parsed = parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 /* ================================================================
@@ -2657,6 +2835,7 @@ function getFormPayload() {
       filters: {
         nonStop: fd.get("nonStop") === "on",
         baggageRequired: fd.get("baggageRequired") === "on",
+        maxStops: readMaxStopsFilter(),
         maxLayoverMinutes: readMaxLayoverFilter(),
         maxResults: disableMaxResults ? undefined : 25,
         includedAirlineCodes: [],
@@ -2823,6 +3002,7 @@ function getActiveClientFilters() {
   return {
     nonStop: controlChecked("nonStop"),
     baggageRequired: controlChecked("baggageRequired"),
+    maxStops: readMaxStopsFilter(),
     maxLayoverMinutes: readMaxLayoverFilter(),
   };
 }
@@ -3116,6 +3296,7 @@ async function handleMatrixClick(e) {
     stopMatrixPolling();
     stopSearchPolling();
     state.request = cell.derivedRequest;
+    syncSearchFormWithRequest(cell.derivedRequest);
     state.matrixResponse = null;
     state.viewMode = "list";
     state.quotationText = "";
@@ -3128,6 +3309,7 @@ async function handleMatrixClick(e) {
 
     const data = await postJson("/api/search", { request: cell.derivedRequest, sortMode: state.sortMode });
     state.request = data.request;
+    syncSearchFormWithRequest(data.request);
     state.selectedMatrixKey = null;
     setSearchResponse(data);
     state.searchJobId = data.searchJobId ?? null;
@@ -3644,7 +3826,7 @@ document.addEventListener("pointercancel", () => {
   if (state.pollRenderPending) scheduleDeferredPollRender();
 });
 
-["sortMode", "nonStop", "baggageRequired", "maxLayoverMinutes"].forEach((id) => {
+["sortMode", "nonStop", "baggageRequired", "maxLayoverMinutes", "maxStopsFilter"].forEach((id) => {
   control(id)?.addEventListener("change", async () => {
     if (!state.searchResponse?.allOffers) return;
     state.sortMode = controlValue("sortMode") || state.sortMode;
