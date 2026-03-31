@@ -1,128 +1,140 @@
 # Estado Actual de la Repo
 
-Fecha de corte: 2026-03-28
+Fecha de corte: 2026-03-31
 
 ## Resumen
 
-Fly Desk es hoy una aplicacion desktop-first para agentes de viajes, con frontend vanilla y backend Node, conectada a Agil mediante reutilizacion de sesion local del navegador.
+Fly Desk es hoy una aplicacion local-first para agentes de viajes, con frontend vanilla modularizado y backend Node, conectada a Agil mediante reutilizacion de sesion local del navegador y a Costamar mediante contexto controlado por entorno.
 
-No hay assets compactados o bundles versionados en la repo actual:
+El repo no versiona artefactos generados de build:
 
 - `dist/` esta ignorado
 - `output/` esta ignorado
-- no se versionan archivos minificados generados
+- no se versionan bundles minificados ni capturas de smoke locales
 
-## Trabajo entregado
+## Estado funcional vigente
 
-### UI y UX
+### Busqueda y producto
 
-- rediseño completo del shell desktop
-- orden del rail principal priorizando `Exacto/Flexible`
-- calendario propio integrado al layout
-- popover de pasajeros y autocomplete alineados a la misma gramatica visual
-- sidebar por aerolinea y panel lateral de detalle
-- normalizacion de `Consulta` y `Oferta` como paneles hermanos con header persistente
-- soporte explicito de tema claro y oscuro
-- reemplazo del switch textual de tema por iconos
-- radios y formas unificados entre controles
-- retiro de copy sobrante en el buscador
-- eliminacion de reflows del rail al cambiar `Escala`
-
-### Simplificacion del formulario
-
-Se retiraron del frontend visible:
-
-- cabina
-- moneda editable
-- precio maximo
-- maximo de escalas
-
-Defaults actuales enviados por cliente:
-
-- `currencyCode: "USD"`
-- `cabin: "ECONOMY"`
-
-Filtros visibles actuales:
-
-- `Directo`
-- `Equipaje`
-- `Escala`
-
-Semantica actual:
-
-- `Escala` vacia implica sin limite, sin declararlo en el boton
-- ya no existe `maxStops` oculto enviado por frontend
-- `maxLayoverMinutes` solo se envia cuando el usuario elige `2h`, `4h` u `8h`
+- busqueda exacta
+- busqueda flexible por rango y por matriz
+- autocomplete de origen y destino
+- filtros visibles `Directo`, `Equipaje` y `Escala`
+- lista de resultados con paginacion
+- vista calendario
+- barra de aerolineas
+- panel lateral de detalle
+- `reprice`
+- `quotation`
+- purchase paths y apertura local del flujo equivalente cuando aplica
 
 ### Feedback de carga
 
-Se elimino el overlay global que cubria toda la pantalla al buscar.
-
-Estado actual:
-
 - busqueda exacta: placeholder inline en el area de resultados
-- matriz flexible: celdas loading en la propia matriz
-- `reprice` / `quotation`: placeholder dentro del panel de detalle
-- `toastContainer` ahora tiene `aria-live`
+- matriz flexible: celdas `loading` en la propia matriz
+- `reprice` y `quotation`: estado de carga dentro del panel de detalle
 
-### Integracion local con Agil
+## Cambios estructurales ya consolidados
 
-- refresh de token soportando `accessToken`
-- derivacion de sesion desde storage real de Chrome/Edge
-- `start-search` + consultas GDS reales
-- matrix/flexible con concurrencia minima de 10 requests en paralelo
-- redirects a Agil con labels humanos en origen/destino
+### Runtime y seguridad local-first
 
-### Higiene tecnica
+- el servidor escucha en `127.0.0.1` por defecto
+- `HOST` queda como override explicito para despliegues no locales
+- Costamar ya no acepta hosts o base URLs por request
+- `COSTAMAR_API_BASE_URL` y `COSTAMAR_BRAND_BASE_URL` quedan restringidas a hosts aprobados
+- el endpoint de apertura local de browser solo funciona desde loopback
 
-- limpieza de codigo muerto en frontend
-- retiro del limite silencioso de escalas que rompia busquedas round-trip
-- limpieza de `purchasePaths` viejos en memoria
-- launcher estable de un clic con puerto fijo y estado persistido en `.launcher/`
-- ignores para artefactos locales:
-  - `.codex/`
-  - `.playwright-cli/`
-  - `.superpowers/`
-  - `output/`
+### Politica compartida de fechas
+
+- se elimino la validacion fija atada a `2026`
+- la politica actual es movil:
+  - `minSearchDate = hoy`
+  - `maxSearchDate = hoy + 365 dias`
+- `SEARCH_MAX_FUTURE_DAYS` permite ajustar la ventana
+- el backend embebe esa config al frontend en el HTML inicial
+- frontend y backend validan con la misma regla
+
+### Limpieza core y providers
+
+- ya no existe fallback hardcodeado para `AGIL_APIM_SUBSCRIPTION_KEY`
+- la key de Agil solo se resuelve desde entorno y falla en el camino live real
+- helpers compartidos de matriz y concurrencia viven en `src/core/matrix.ts`
+- derivacion de requests flexibles vive en `src/core/flexible-search.ts`
+- router, Agil y Costamar usan esos helpers compartidos
+
+### Frontend
+
+- `public/app.js` sigue siendo el entrypoint, pero ya no concentra toda la infraestructura basica
+- se abrieron seams en `public/app/`:
+  - `runtime.js`
+  - `date.js`
+  - `network.js`
+  - `render.js`
+  - `bootstrap.js`
+- la UI visible se mantuvo sin rediseño
+
+### Launchers
+
+- el acceso directo usa puerto fijo `32123`
+- el launcher persiste estado y logs en `.launcher/`
+- el cierre espera la liberacion real del puerto
+- los `.vbs` esperan a que abrir o cerrar termine para evitar carreras
+- si encuentra una instancia sana, la reutiliza
+- si encuentra una instancia huerfana propia, intenta limpiarla antes de relanzar
 
 ## Estructura funcional vigente
 
 ### Frontend
 
 - `public/index.html`
-  - topbar
-  - search shell
-  - refinements
-  - calendar popover
-  - workspace con sidebar, resultados y detalle
+  - shell desktop
+  - bootstrap de tema
+  - script runtime embebido
 - `public/app.css`
-  - tokens de tema
-  - controles
-  - overlays
-  - resultados
-  - matriz
-  - placeholders
+  - tokens, layout, componentes, overlays y estados visuales
 - `public/app.js`
-  - estado global
-  - validacion
-  - calendario
-  - render
-  - polling
-  - interacciones
+  - entrypoint del frontend
+- `public/app/runtime.js`
+  - estado compartido
+  - refs del DOM
+  - constantes runtime
+- `public/app/date.js`
+  - helpers de fechas
+  - politica de rango en cliente
+- `public/app/network.js`
+  - `getJson`
+  - `postJson`
+  - `scheduleJsonPoll`
+- `public/app/render.js`
+  - render shell global
+- `public/app/bootstrap.js`
+  - wiring de inicializacion
 
 ### Backend
 
+- `src/server.ts`
+  - serving de `public/`
+  - inyeccion de config runtime en `index.html`
 - `src/http-router.ts`
   - `/api/health`
   - `/api/agil/locations`
+  - `/api/costamar/locations`
+  - `/api/locations`
+  - `/api/local/open-url`
   - `/api/search`
   - `/api/search/:jobId`
   - `/api/matrix`
   - `/api/matrix/:jobId`
   - `/api/reprice`
   - `/api/quotation`
-  - `/api/compare`
   - `/r/:id`
+- `src/search-date-policy.ts`
+  - ventana movil de fechas
+  - config publica embebida al frontend
+- `src/provider-context.ts`
+  - normalizacion de contexto de Costamar
+  - allowlist de URLs
+  - recovery de sesion branded desde Chrome
 - `src/local-agil.ts`
   - sesion local
   - refresh token
@@ -131,90 +143,95 @@ Estado actual:
   - matrix
   - reprice
   - deep links
+- `src/local-costamar.ts`
+  - autocomplete
+  - exact
+  - range
+  - matrix
+  - reprice
+  - branded links
+- `src/core/flexible-search.ts`
+  - helpers de derivacion de requests
+- `src/core/matrix.ts`
+  - `buildMatrixConfidenceSummary`
+  - `prioritizeMatrixLoadingCells`
+  - `mapConcurrent`
 - `src/session-store.ts`
   - jobs en memoria
+  - redirects
   - purchase paths
 
 ### Launchers para usuario final
 
-Entradas pensadas para abrir/cerrar la app sin terminal:
-
 - `Abrir Fly Desk.vbs`
 - `Cerrar Fly Desk.vbs`
+- `tools/launch-fly-desk.cmd`
 - `tools/start-fly-desk.ps1`
+- `tools/stop-fly-desk.cmd`
 - `tools/stop-fly-desk.ps1`
-
-Comportamiento actual:
-
-- puerto fijo `32123`
-- deteccion de instancia ya sana antes de intentar arrancar otra
-- build bajo demanda si `dist/` esta ausente o viejo
-- logs y estado en `.launcher/`
-- wrappers `cmd` y `js` apuntando al mismo flujo PowerShell para evitar divergencias
+- `tools/stop-fly-desk.js`
 
 ## Pruebas vigentes
 
 ### Suite automatica
 
+- `test/config.test.ts`
+- `test/provider-context.test.ts`
+- `test/search-date-policy.test.ts`
 - `test/http-router.test.ts`
 - `test/filtering.test.ts`
 - `test/local-agil.test.ts`
+- `test/costamar.test.ts`
+- `test/matrix-core.test.ts`
 - `test/session-store.test.ts`
 - `test/theme-css.test.ts`
 - `test/ui.test.ts`
 
+Helpers y fixtures de test:
+
+- `test/helpers/server.ts`
+- `test/helpers/ui.ts`
+- `test/helpers/ui-fixtures.ts`
+
 Cobertura importante actual:
 
+- bind por defecto a loopback y override por `HOST`
+- validacion compartida de fechas con ventana movil
+- endurecimiento de contexto de Costamar
+- key requerida para Agil live
+- helpers compartidos de matriz
 - rail de busqueda y orden del formulario
 - smoke de `exacto/flexible` con `ida/ida-vuelta`
-- controles retirados que no deben volver a aparecer
-- `USD` fijo en payload
-- ausencia de `maxStops` oculto en payload
 - tema claro y oscuro
 - calendario custom
 - autocomplete anclado
 - matriz flexible y paso a exacto
-- paneles `Consulta` y `Oferta` con header homogeneo
-- placeholder inline en busqueda
-- carga inline en `reprice`
+- provider links y feedback de sesion faltante
+- launcher de abrir/cerrar sobre `32123`
 
-### Verificacion real reciente
+### Verificacion reciente
 
 Comandos:
 
-- `npm test`
 - `npm run typecheck`
-- `npm run build`
+- `npm test`
 
-Smoke real con Playwright sobre `http://127.0.0.1:3000`:
+Resultado al 31 de marzo de 2026:
 
-- exacta real con placeholder inline y 15 filas visibles
-- detalle visible tras seleccionar oferta
-- matriz flexible real con 15 celdas y al menos 1 seleccionable
-- click en celda de matriz llevando a lista exacta con 15 filas
+- `67/67` pruebas en verde
+- launcher verificado con abrir, reabrir, cerrar y reabrir sobre `32123`
 
-Artefactos locales de verificacion:
+## Documentacion historica
 
-- `output/playwright/hygiene-live/exact-inline-loading-1920.png`
-- `output/playwright/hygiene-live/exact-results-1920.png`
-- `output/playwright/hygiene-live/exact-detail-1920.png`
-- `output/playwright/hygiene-live/flex-matrix-1920.png`
-- `output/playwright/hygiene-live/flex-matrix-to-list-1920.png`
+Siguen siendo utiles como referencia historica, no como descripcion del estado presente:
 
-Estos artefactos no forman parte del repositorio versionado.
-
-## Documentacion retirada por obsolescencia
-
-Se consideran obsoletos frente al estado actual del repo:
-
-- planes de implementación viejos
-- notas internas de herramientas auxiliares
-- auditorias funcionales que describen la UI anterior o bugs ya corregidos
-- research notes que describen un stack distinto al codigo real
+- `docs/CODE_AUDIT_2026-03-27.md`
+- `docs/UI_UX_AUDIT_2026-03-27_LIVE.md`
 
 ## Deuda tecnica vigente
 
-- `public/app.js` sigue siendo un archivo grande y multi-responsabilidad
-- `src/local-agil.ts` sigue concentrando demasiada logica
-- no hay linter configurado
-- deploy remoto completo sigue bloqueado por dependencia de sesion local de navegador
+- `public/app.js` sigue siendo un entrypoint grande aunque ya tiene infraestructura extraida
+- `src/local-agil.ts` sigue concentrando mucha logica de sesion, cliente y mapping
+- el store sigue siendo en memoria; no hay persistencia externa para jobs
+- no hay linter real configurado
+- el deploy remoto completo sigue bloqueado por la dependencia de sesion local de navegador para Agil

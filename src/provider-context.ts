@@ -4,16 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CostamarProviderContext,
+  CostamarProviderConfigInput,
   ProviderConfigInput,
   ProviderContext,
   ProviderId,
 } from "./core/types";
 
-const DEFAULT_COSTAMAR_API_BASE_URL = "https://costamar.com.pe/vuelos/api";
-const DEFAULT_COSTAMAR_BRAND_BASE_URL = "https://booking.clickandbook.com/vuelos";
+export const DEFAULT_COSTAMAR_API_BASE_URL = "https://costamar.com.pe/vuelos/api";
+export const DEFAULT_COSTAMAR_BRAND_BASE_URL = "https://booking.clickandbook.com/vuelos";
+export const DEFAULT_COSTAMAR_TERMINAL_ID = "0721808110";
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 const COSTAMAR_SESSION_CACHE_TTL_MS = 30000;
 const COSTAMAR_BRANDED_URL_REGEX = /https:\/\/booking\.clickandbook\.com\/vuelos\/b\/[A-Z]{3}\/[A-Z]{3}(?:\/\d{4}-\d{2}-\d{2}){1,2}\/\d+\/\d+\/\d+\?[^\s\x00]*/gi;
+const COSTAMAR_API_HOSTS = new Set(["costamar.com.pe"]);
+const COSTAMAR_BRAND_HOSTS = new Set(["booking.clickandbook.com"]);
 
 interface CostamarSessionCandidate {
   terminalId: string;
@@ -30,6 +34,33 @@ let cachedCostamarSession:
 function stringOrFallback(value: string | undefined, fallback: string): string {
   const normalized = value?.trim();
   return normalized ? normalized : fallback;
+}
+
+function normalizeAllowedHttpsUrl(
+  value: string | undefined,
+  fallback: string,
+  allowedHosts: Set<string>,
+  label: string,
+): string {
+  const normalized = stringOrFallback(value, fallback);
+  let parsed: URL;
+
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error(`${label} must be a valid HTTPS URL.`);
+  }
+
+  if (parsed.protocol !== "https:" || !allowedHosts.has(parsed.hostname.toLowerCase())) {
+    throw new Error(`${label} must use https and an approved host.`);
+  }
+
+  parsed.username = "";
+  parsed.password = "";
+  parsed.hash = "";
+  parsed.search = "";
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+  return parsed.toString();
 }
 
 function decodeJwtTimes(token: string): { iatMs: number; expMs: number } {
@@ -228,20 +259,24 @@ export function resolveProviderId(providerId?: ProviderId): ProviderId {
 }
 
 export function normalizeCostamarProviderContext(
-  input?: Partial<CostamarProviderContext>,
+  input?: CostamarProviderConfigInput,
 ): CostamarProviderContext {
   return {
-    apiBaseUrl: stringOrFallback(
-      input?.apiBaseUrl ?? process.env.COSTAMAR_API_BASE_URL,
+    apiBaseUrl: normalizeAllowedHttpsUrl(
+      process.env.COSTAMAR_API_BASE_URL,
       DEFAULT_COSTAMAR_API_BASE_URL,
+      COSTAMAR_API_HOSTS,
+      "COSTAMAR_API_BASE_URL",
     ),
-    brandBaseUrl: stringOrFallback(
-      input?.brandBaseUrl ?? process.env.COSTAMAR_BRAND_BASE_URL,
+    brandBaseUrl: normalizeAllowedHttpsUrl(
+      process.env.COSTAMAR_BRAND_BASE_URL,
       DEFAULT_COSTAMAR_BRAND_BASE_URL,
+      COSTAMAR_BRAND_HOSTS,
+      "COSTAMAR_BRAND_BASE_URL",
     ),
     terminalId: stringOrFallback(
       input?.terminalId ?? process.env.COSTAMAR_TERMINAL_ID,
-      "",
+      DEFAULT_COSTAMAR_TERMINAL_ID,
     ),
     token: stringOrFallback(
       input?.token ?? process.env.COSTAMAR_TOKEN,
@@ -255,7 +290,7 @@ export function normalizeCostamarProviderContext(
 }
 
 export function resolveCostamarProviderContext(
-  input?: Partial<CostamarProviderContext>,
+  input?: CostamarProviderConfigInput,
 ): CostamarProviderContext {
   const normalized = normalizeCostamarProviderContext(input);
   if (normalized.token && normalized.terminalId) {

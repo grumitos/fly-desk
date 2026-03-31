@@ -1,122 +1,103 @@
+import { bootstrapAppShell } from "./app/bootstrap.js";
+import {
+  addDaysIso,
+  createSearchDateHelpers,
+  diffDaysIso,
+  enumerateIsoRange,
+} from "./app/date.js";
+import { getJson, postJson, scheduleJsonPoll } from "./app/network.js";
+import { renderAll as renderShell, syncWorkspaceViewportHeight as syncWorkspaceViewportHeightBase } from "./app/render.js";
+import {
+  $,
+  airlineBar,
+  autocompleteState,
+  calendarClose,
+  calendarClear,
+  calendarDone,
+  calendarMonths,
+  calendarNext,
+  calendarPopover,
+  calendarPrev,
+  calendarSelectionSummary,
+  calendarState,
+  calendarStayConfig,
+  calendarTitle,
+  copySearchConfigBtn,
+  dateTrigger,
+  dateTriggerText,
+  DEFAULT_CURRENCY_CODE,
+  detailContent,
+  detailPanel,
+  emptyState,
+  LAYOVER_TIME_OPTIONS,
+  layoverFilter,
+  layoverPopover,
+  layoverTrigger,
+  layoverTriggerValue,
+  matrixExpandBtn,
+  matrixFullscreen,
+  matrixFullscreenBackdrop,
+  matrixFullscreenBody,
+  matrixFullscreenClose,
+  matrixFullscreenMeta,
+  pasteSearchConfigBtn,
+  paxAdultsDisplay,
+  paxChildrenDisplay,
+  paxInfantsDisplay,
+  paxLabel,
+  paxPopover,
+  paxTrigger,
+  POLL_RENDER_IDLE_MS,
+  quotationButton,
+  repriceButton,
+  resultPill,
+  resultsContainer,
+  resultsCountLabel,
+  resultsPanelMeta,
+  resultsPanelTitle,
+  resultsToolbar,
+  RESULTS_PAGE_SIZE,
+  rootEl,
+  runtimeBadge,
+  runtimeSearchDatePolicy,
+  SEARCH_CONFIG_CLIPBOARD_KEY,
+  SEARCH_CONFIG_CLIPBOARD_TYPE,
+  SEARCH_CONFIG_CLIPBOARD_VERSION,
+  SEARCH_DATE_DEFAULT_MAX_FUTURE_DAYS,
+  searchForm,
+  searchMode,
+  sortButtonsEl,
+  sortMode,
+  state,
+  stayDaysMaxEl,
+  stayDaysMinEl,
+  submitButton,
+  swapRouteBtn,
+  themeButtons,
+  THEME_STORAGE_KEY,
+  toastContainer,
+  tripType,
+  validationBox,
+  viewToggle,
+  workspace,
+} from "./app/runtime.js";
+
 /* ================================================================
    Flight Desk — front-end
    ================================================================ */
 
-const state = {
-  request: null,
-  sortMode: "cheapest",
-  searchResponse: null,
-  searchJobId: null,
-  searchPollHandle: null,
-  matrixResponse: null,
-  matrixJobId: null,
-  matrixPollHandle: null,
-  selectedOfferId: null,
-  quotationText: "",
-  selectedMatrixKey: null,
-  airlineFilter: { hidden: new Set(), only: null },
-  resultsPage: 1,
-  viewMode: "list",
-  flexMode: false,
-  detailPendingAction: null,
-  matrixExpanded: false,
-  matrixScroll: { top: 0, left: 0 },
-  resultsScroll: { top: 0, left: 0 },
-  pollRenderHandle: null,
-  pollRenderPending: false,
-  pollInteractionAt: 0,
-  pollPointerDown: false,
-};
-
-const autocompleteState = {
-  origin: { items: [], activeIndex: -1, requestId: 0 },
-  destination: { items: [], activeIndex: -1, requestId: 0 },
-};
-
-const RESULTS_PAGE_SIZE = 15;
-const ALLOWED_DATE_YEAR = "2026";
-const ALLOWED_DATE_MIN = `${ALLOWED_DATE_YEAR}-01-01`;
-const ALLOWED_DATE_MAX = `${ALLOWED_DATE_YEAR}-12-31`;
-const DEFAULT_CURRENCY_CODE = "USD";
-const SEARCH_CONFIG_CLIPBOARD_KEY = "flydesk.searchClipboard";
-const SEARCH_CONFIG_CLIPBOARD_TYPE = "fly-desk-search-config";
-const SEARCH_CONFIG_CLIPBOARD_VERSION = 1;
-const POLL_RENDER_IDLE_MS = 180;
-const THEME_STORAGE_KEY = "flydesk-theme";
-const LAYOVER_TIME_OPTIONS = [
-  { value: "", label: "Cualquiera", compactLabel: "" },
-  { value: "120", label: "Hasta 2h", compactLabel: "2h" },
-  { value: "240", label: "Hasta 4h", compactLabel: "4h" },
-  { value: "360", label: "Hasta 6h", compactLabel: "6h" },
-  { value: "480", label: "Hasta 8h", compactLabel: "8h" },
-];
-
-const $ = (id) => document.getElementById(id);
-
-const rootEl = document.documentElement;
-const searchForm = $("searchForm");
-const workspace = document.querySelector(".workspace");
-const searchMode = $("searchMode");
-const sortMode = $("sortMode");
-const tripType = $("tripType");
-const airlineBar = $("airlineBar");
-const detailPanel = $("detailPanel");
-const detailContent = $("detailContent");
-const resultsToolbar = $("resultsToolbar");
-const resultsContainer = $("resultsContainer");
-const emptyState = $("emptyState");
-const paxTrigger = $("paxTrigger");
-const paxPopover = $("paxPopover");
-const paxLabel = $("paxLabel");
-const paxAdultsDisplay = $("paxAdultsDisplay");
-const paxChildrenDisplay = $("paxChildrenDisplay");
-const paxInfantsDisplay = $("paxInfantsDisplay");
-const layoverFilter = $("layoverFilter");
-const layoverTrigger = $("layoverTrigger");
-const layoverTriggerValue = $("layoverTriggerValue");
-const layoverPopover = $("layoverPopover");
-const sortButtonsEl = $("sortButtons");
-const viewToggle = $("viewToggle");
-const matrixExpandBtn = $("matrixExpandBtn");
-const resultsCountLabel = $("resultsCountLabel");
-const resultsPanelTitle = $("resultsPanelTitle");
-const resultsPanelMeta = $("resultsPanelMeta");
-const matrixFullscreen = $("matrixFullscreen");
-const matrixFullscreenBackdrop = $("matrixFullscreenBackdrop");
-const matrixFullscreenClose = $("matrixFullscreenClose");
-const matrixFullscreenBody = $("matrixFullscreenBody");
-const matrixFullscreenMeta = $("matrixFullscreenMeta");
-const dateTrigger = $("dateTrigger");
-const dateTriggerText = $("dateTriggerText");
-const calendarPopover = $("calendarPopover");
-const calendarClose = $("calendarClose");
-const calendarClear = $("calendarClear");
-const calendarDone = $("calendarDone");
-const calendarPrev = $("calendarPrev");
-const calendarNext = $("calendarNext");
-const calendarMonths = $("calendarMonths");
-const calendarTitle = $("calendarTitle");
-const calendarSelectionSummary = $("calendarSelectionSummary");
-const calendarStayConfig = $("calendarStayConfig");
-const stayDaysMinEl = $("stayDaysMin");
-const stayDaysMaxEl = $("stayDaysMax");
-const runtimeBadge = $("runtimeBadge");
-const resultPill = $("resultPill");
-const submitButton = $("submitButton");
-const repriceButton = $("repriceButton");
-const quotationButton = $("quotationButton");
-const validationBox = $("validationErrors");
-const toastContainer = $("toastContainer");
-const copySearchConfigBtn = $("copySearchConfigBtn");
-const pasteSearchConfigBtn = $("pasteSearchConfigBtn");
-const themeButtons = [...document.querySelectorAll("[data-theme-value]")];
-
-const calendarState = {
-  selectionStage: "start",
-  viewStartMonth: "",
-};
-
 const numFmt = new Intl.NumberFormat("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const {
+  todayISO,
+  minDateISO,
+  maxDateISO,
+  isValidIsoDate,
+  allowedDateWindowText,
+} = createSearchDateHelpers({
+  runtimeSearchDatePolicy,
+  maxFutureDaysDefault: SEARCH_DATE_DEFAULT_MAX_FUTURE_DAYS,
+  formatDateCompact,
+});
 
 function providerIdFromRequest(request) {
   return request?.providerId === "costamar" ? "costamar" : "agil-local";
@@ -145,6 +126,87 @@ function providerSearchWarnings(response) {
   ];
 }
 
+function normalizedWarningMessage(warning) {
+  return String(warning || "").trim().toLowerCase();
+}
+
+function classifyProviderWarning(providerId, warning) {
+  const normalized = normalizedWarningMessage(warning);
+  if (!normalized) return null;
+
+  if (providerId === "costamar") {
+    if (normalized.includes("costamar terminalid is required")) {
+      return {
+        shortLabel: "Falta terminal",
+        detail: "Costamar no tiene un terminal activo o recuperable para esta búsqueda.",
+      };
+    }
+
+    if (normalized.includes("costamar rejected this search")) {
+      return {
+        shortLabel: "Falta sesión",
+        detail: "Costamar rechazó la búsqueda con la sesión actual.",
+      };
+    }
+
+    if (normalized.includes("costamar") && (
+      normalized.includes("token")
+      || normalized.includes("session")
+      || normalized.includes("sesion")
+    )) {
+      return {
+        shortLabel: "Falta sesión",
+        detail: "Costamar no tiene un token o sesión válida para consultar.",
+      };
+    }
+
+    return null;
+  }
+
+  if (normalized.includes("agil_apim_subscription_key")) {
+    return {
+      shortLabel: "Falta key",
+      detail: "Agil no tiene AGIL_APIM_SUBSCRIPTION_KEY cargada en este runtime.",
+    };
+  }
+
+  if (
+    normalized.includes("unable to extract agil session")
+    || normalized.includes("agil_token_expired")
+    || (normalized.includes("agil") && (
+      normalized.includes("token")
+      || normalized.includes("session")
+      || normalized.includes("sesion")
+      || normalized.includes("localstorage")
+      || normalized.includes("chrome")
+    ))
+  ) {
+    return {
+      shortLabel: "Falta sesión",
+      detail: "Agil no tiene una sesión local utilizable para consultar.",
+    };
+  }
+
+  return null;
+}
+
+function providerWarningDetails(response, providerId) {
+  const details = [];
+  const seen = new Set();
+
+  providerSearchWarnings(response).forEach((warning) => {
+    const issue = classifyProviderWarning(providerId, warning);
+    if (!issue) return;
+
+    const key = `${issue.shortLabel}::${issue.detail}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    details.push(issue);
+  });
+
+  return details;
+}
+
 function isProviderSessionWarning(providerId, warning) {
   const normalized = String(warning || "").trim().toLowerCase();
   if (!normalized) return false;
@@ -170,14 +232,57 @@ function isProviderSessionWarning(providerId, warning) {
 }
 
 function providerLinkFallbackLabel(response, providerId) {
-  if (providerSearchWarnings(response).some((warning) => isProviderSessionWarning(providerId, warning))) {
+  const issue = providerWarningDetails(response, providerId)[0];
+  if (issue) {
     return {
-      label: "Falta sesión",
+      label: issue.shortLabel,
+      title: issue.detail,
     };
   }
 
   return {
     label: "—",
+  };
+}
+
+function providerSentence(providerIds) {
+  const labels = (providerIds || []).map(providerLabel).filter(Boolean);
+  if (labels.length === 0) return "los proveedores";
+  if (labels.length === 1) return labels[0];
+  if (labels.length === 2) return `${labels[0]} y ${labels[1]}`;
+  return `${labels.slice(0, -1).join(", ")} y ${labels[labels.length - 1]}`;
+}
+
+function emptySearchPanelModel(response) {
+  const providerIds = Array.isArray(response?.searchMeta?.providersUsed) && response.searchMeta.providersUsed.length > 0
+    ? response.searchMeta.providersUsed
+    : defaultProviderIds(state.request);
+  const providerIssues = providerIds.flatMap((providerId) => {
+    const issue = providerWarningDetails(response, providerId)[0];
+    return issue ? [{ providerId, issue }] : [];
+  });
+  const issueDetails = providerIssues.map(({ providerId, issue }) => `${providerLabel(providerId)}: ${issue.detail}`);
+
+  if (providerIssues.length === providerIds.length && providerIssues.length > 0) {
+    return {
+      eyebrow: "Diagnóstico",
+      title: `No se pudo consultar ${providerSentence(providerIds)}`,
+      text: "La búsqueda terminó sin ofertas porque Fly Desk no logró entrar a los proveedores necesarios.",
+      hint: issueDetails.join(" "),
+      icon: "ico-route",
+    };
+  }
+
+  const hintParts = [
+    ...issueDetails,
+    "Prueba quitando Directo, Equipaje o Escala para ampliar el rango.",
+  ];
+
+  return {
+    title: "Sin resultados con estos filtros",
+    text: "No aparecieron ofertas para la combinación actual.",
+    hint: hintParts.join(" "),
+    icon: "ico-route",
   };
 }
 
@@ -1117,7 +1222,7 @@ async function fetchLocationSuggestions(id, query) {
   }
 
   try {
-    const data = await getJson(`/api/agil/locations?q=${encodeURIComponent(query.trim())}&limit=8`);
+    const data = await getJson(`/api/locations?q=${encodeURIComponent(query.trim())}&limit=8`);
     if (autocompleteState[id].requestId !== requestId) return;
     if (!input || document.activeElement !== input) {
       hideLocationMenu(id);
@@ -1492,26 +1597,6 @@ function isLocal() {
   return h === "localhost" || h === "127.0.0.1";
 }
 
-function addDaysIso(value, days) {
-  const date = new Date(`${value}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-function enumerateIsoRange(start, end) {
-  const values = [];
-  let current = start;
-  while (current <= end) {
-    values.push(current);
-    current = addDaysIso(current, 1);
-  }
-  return values;
-}
-
-function diffDaysIso(from, to) {
-  return Math.round((new Date(`${to}T00:00:00Z`) - new Date(`${from}T00:00:00Z`)) / 86400000);
-}
-
 function calendarSelectionValues() {
   if (state.flexMode) {
     return {
@@ -1611,7 +1696,7 @@ function calendarMinMonth() {
 }
 
 function calendarMaxMonth() {
-  return firstDayOfMonth(ALLOWED_DATE_MAX);
+  return firstDayOfMonth(maxDateISO());
 }
 
 function calendarMaxStartMonth() {
@@ -1713,7 +1798,7 @@ function renderCalendarPopover() {
   const months = [firstMonth, secondMonth].map((month) => {
     const days = monthGridFor(month);
     const dayButtons = days.map((day) => {
-      const disabledByBounds = day.iso < today || day.iso > ALLOWED_DATE_MAX;
+      const disabledByBounds = day.iso < today || day.iso > maxDateISO();
       const disabledByFlow = !state.flexMode
         && tripType.value === "round-trip"
         && calendarState.selectionStage === "end"
@@ -2525,36 +2610,6 @@ function translateFlexibleDates(payload) {
    INPUT ENFORCEMENT — real-time, preventive
    ================================================================ */
 
-function todayISO() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function minDateISO() {
-  const today = todayISO();
-  if (today < ALLOWED_DATE_MIN) return ALLOWED_DATE_MIN;
-  if (today > ALLOWED_DATE_MAX) return ALLOWED_DATE_MAX;
-  return today;
-}
-
-function maxDateISO() {
-  return ALLOWED_DATE_MAX;
-}
-
-function clampDayToMonth(year, month, day) {
-  const maxDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return Math.min(day, maxDay);
-}
-
-function normalizeToAllowedYear(value) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return value;
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const normalizedDay = clampDayToMonth(Number(ALLOWED_DATE_YEAR), month, day);
-  return `${ALLOWED_DATE_YEAR}-${String(month).padStart(2, "0")}-${String(normalizedDay).padStart(2, "0")}`;
-}
-
 function enforceDateBounds() {
   const today = minDateISO();
   const max = maxDateISO();
@@ -2565,22 +2620,6 @@ function enforceDateBounds() {
     el.min = today;
     el.max = max;
   });
-}
-
-function enforceDateYear(input) {
-  if (!input) return;
-  const normalize = () => {
-    if (!input.value) return;
-    const normalized = normalizeToAllowedYear(input.value);
-    if (normalized !== input.value) {
-      input.value = normalized;
-      input.classList.add("is-invalid");
-      setTimeout(() => input.classList.remove("is-invalid"), 800);
-    }
-  };
-
-  input.addEventListener("change", normalize);
-  input.addEventListener("blur", normalize);
 }
 
 function enforceIntRange(input, min, max) {
@@ -2632,7 +2671,6 @@ function setupInputEnforcement() {
   const dateIds = ["departureDate", "returnDate", "departureStart", "departureEnd", "returnStart", "returnEnd"];
   dateIds.forEach((id) => {
     const input = $(id);
-    enforceDateYear(input);
     enforceDateNotPast(input);
     input?.addEventListener("change", () => {
       syncFlexibleDerivedDates();
@@ -2653,6 +2691,7 @@ function validateForm() {
   const mode = searchMode.value;
   const trip = tripType.value;
   const today = minDateISO();
+  const max = maxDateISO();
 
   searchForm.querySelectorAll(".is-invalid").forEach((el) => el.classList.remove("is-invalid"));
 
@@ -2687,14 +2726,14 @@ function validateForm() {
     if (!el) return false;
     const v = el.value;
     if (!v) { errs.push(`${label} es obligatorio.`); el.classList.add("is-invalid"); return false; }
-    if (!v.startsWith(`${ALLOWED_DATE_YEAR}-`)) {
-      errs.push(`${label} debe estar dentro del anio ${ALLOWED_DATE_YEAR}.`);
+    if (!isValidIsoDate(v)) {
+      errs.push(`${label} debe usar una fecha valida en formato AAAA-MM-DD.`);
       el.classList.add("is-invalid");
       return false;
     }
     if (v < today) { errs.push(`${label} no puede ser pasada.`); el.classList.add("is-invalid"); return false; }
-    if (v > ALLOWED_DATE_MAX) {
-      errs.push(`${label} debe estar dentro del anio ${ALLOWED_DATE_YEAR}.`);
+    if (v > max) {
+      errs.push(`${label} debe estar entre ${allowedDateWindowText()}.`);
       el.classList.add("is-invalid");
       return false;
     }
@@ -2859,24 +2898,6 @@ function getFormPayload() {
 /* ================================================================
    API
    ================================================================ */
-
-async function postJson(url, payload) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error((data.errors && data.errors.join(" ")) || data.error || "Error inesperado");
-  return data;
-}
-
-async function getJson(url) {
-  const res = await fetch(url);
-  const data = await res.json();
-  if (!res.ok) throw new Error((data.errors && data.errors.join(" ")) || data.error || "Error inesperado");
-  return data;
-}
 
 function totalDurationMinutes(offer) {
   return (offer.itineraries || []).reduce((sum, itinerary) => sum + (itinerary.durationMinutes || 0), 0);
@@ -3063,46 +3084,52 @@ function queueSearchPoll(jobId) {
   if (!jobId) return;
   state.searchJobId = jobId;
   if (state.searchPollHandle) clearTimeout(state.searchPollHandle);
-  state.searchPollHandle = setTimeout(async () => {
-    try {
-      const data = await getJson(`/api/search/${jobId}`);
-      if (state.searchJobId !== jobId) return;
-      state.request = data.request;
-      setSearchResponse(data);
-      requestPolledRender();
-      if (!data.searchComplete) {
-        queueSearchPoll(jobId);
-      } else {
+  state.searchPollHandle = scheduleJsonPoll({
+    delayMs: 700,
+    run: async () => {
+      try {
+        const data = await getJson(`/api/search/${jobId}`);
+        if (state.searchJobId !== jobId) return;
+        state.request = data.request;
+        setSearchResponse(data);
+        requestPolledRender();
+        if (!data.searchComplete) {
+          queueSearchPoll(jobId);
+        } else {
+          stopSearchPolling();
+        }
+      } catch (err) {
         stopSearchPolling();
+        showToast(err.message);
       }
-    } catch (err) {
-      stopSearchPolling();
-      showToast(err.message);
-    }
-  }, 700);
+    },
+  });
 }
 
 function queueMatrixPoll(jobId) {
   if (!jobId) return;
   state.matrixJobId = jobId;
   if (state.matrixPollHandle) clearTimeout(state.matrixPollHandle);
-  state.matrixPollHandle = setTimeout(async () => {
-    try {
-      const data = await getJson(`/api/matrix/${jobId}`);
-      if (state.matrixJobId !== jobId) return;
-      state.matrixResponse = data;
-      state.request = data.request;
-      requestPolledRender();
-      if (!data.matrixComplete) {
-        queueMatrixPoll(jobId);
-      } else {
+  state.matrixPollHandle = scheduleJsonPoll({
+    delayMs: 700,
+    run: async () => {
+      try {
+        const data = await getJson(`/api/matrix/${jobId}`);
+        if (state.matrixJobId !== jobId) return;
+        state.matrixResponse = data;
+        state.request = data.request;
+        requestPolledRender();
+        if (!data.matrixComplete) {
+          queueMatrixPoll(jobId);
+        } else {
+          stopMatrixPolling();
+        }
+      } catch (err) {
         stopMatrixPolling();
+        showToast(err.message);
       }
-    } catch (err) {
-      stopMatrixPolling();
-      showToast(err.message);
-    }
-  }, 700);
+    },
+  });
 }
 
 /* ================================================================
@@ -3194,12 +3221,7 @@ function renderResults() {
   const isRunning = state.searchResponse?.searchStatus === "running";
 
   if (offers.length === 0 && !isRunning) {
-    resultsContainer.innerHTML = renderEmptyPanel({
-      title: "Sin resultados con estos filtros",
-      text: "No aparecieron ofertas para la combinación actual.",
-      hint: "Prueba quitando Directo, Equipaje o Escala para ampliar el rango.",
-      icon: "ico-route",
-    });
+    resultsContainer.innerHTML = renderEmptyPanel(emptySearchPanelModel(state.searchResponse));
     return;
   }
 
@@ -3696,24 +3718,19 @@ function renderDetailPanel() {
    ================================================================ */
 
 function renderAll() {
-  if (state.pollRenderHandle) {
-    clearTimeout(state.pollRenderHandle);
-    state.pollRenderHandle = null;
-  }
-  state.pollRenderPending = false;
-  renderToolbar();
-  renderAirlineBar();
-  renderResultsArea();
-  renderDetailPanel();
-  updateResultsToolbar();
-  syncWorkspaceViewportHeight();
+  renderShell({
+    state,
+    renderToolbar,
+    renderAirlineBar,
+    renderResultsArea,
+    renderDetailPanel,
+    updateResultsToolbar,
+    workspace,
+  });
 }
 
 function syncWorkspaceViewportHeight() {
-  if (!workspace) return;
-  const top = workspace.getBoundingClientRect().top;
-  const available = Math.max(0, Math.floor(window.innerHeight - top));
-  workspace.style.setProperty("--workspace-height", `${available}px`);
+  syncWorkspaceViewportHeightBase(workspace);
 }
 
 /* ================================================================
@@ -3956,70 +3973,29 @@ quotationButton.addEventListener("click", async () => {
    INIT
    ================================================================ */
 
-// Swap route button
-const swapRouteBtn = $("swapRouteBtn");
-if (swapRouteBtn) {
-  swapRouteBtn.addEventListener("click", () => {
-    const originInput = $("origin");
-    const destInput = $("destination");
-    if (!originInput || !destInput) return;
-
-    const tmpVal = originInput.value;
-    const tmpCode = originInput.dataset.code;
-    const tmpLabel = originInput.dataset.label;
-
-    originInput.value = destInput.value;
-    originInput.dataset.code = destInput.dataset.code || "";
-    originInput.dataset.label = destInput.dataset.label || "";
-
-    destInput.value = tmpVal;
-    destInput.dataset.code = tmpCode || "";
-    destInput.dataset.label = tmpLabel || "";
-  });
-}
-
-function resetSearchFormDefaults() {
-  searchForm.reset();
-  clearResolvedLocation("origin", false);
-  clearResolvedLocation("destination", false);
-  hideLocationMenu("origin");
-  hideLocationMenu("destination");
-  const ids = ["departureDate", "returnDate", "departureStart", "departureEnd", "returnStart", "returnEnd"];
-  ids.forEach((id) => {
-    const el = $(id);
-    if (el) el.value = "";
-  });
-}
-
-setupInputEnforcement();
-setupLocationAutocomplete("origin");
-setupLocationAutocomplete("destination");
-setupPaxPopover();
-setupLayoverPopover();
-setupThemeToggle();
-setupTripTypeToggle();
-setupModeToggle();
-setupCalendarPopover();
-updatePaxLabel();
-updateModeFields();
-window.addEventListener("resize", () => {
-  syncVisibleLocationMenus();
-  syncPaxPopoverPosition();
-  syncLayoverPopoverPosition();
-  syncCalendarPopoverPosition();
-  syncWorkspaceViewportHeight();
-  syncSearchShellLayoutMetrics();
+bootstrapAppShell({
+  SEARCH_CONFIG_CLIPBOARD_KEY,
+  swapRouteBtn,
+  $,
+  hideLocationMenu,
+  setupInputEnforcement,
+  setupLocationAutocomplete,
+  setupPaxPopover,
+  setupLayoverPopover,
+  setupThemeToggle,
+  setupTripTypeToggle,
+  setupModeToggle,
+  setupCalendarPopover,
+  updatePaxLabel,
+  updateModeFields,
+  syncVisibleLocationMenus,
+  syncPaxPopoverPosition,
+  syncLayoverPopoverPosition,
+  syncCalendarPopoverPosition,
+  syncWorkspaceViewportHeight,
+  syncSearchShellLayoutMetrics,
+  syncSearchClipboardUI,
+  renderAll,
+  settleInitialShellLayout,
+  releaseInitialUiBootState,
 });
-window.addEventListener("scroll", () => {
-  syncVisibleLocationMenus();
-  syncPaxPopoverPosition();
-  syncLayoverPopoverPosition();
-  syncCalendarPopoverPosition();
-}, true);
-window.addEventListener("storage", (event) => {
-  if (event.key === SEARCH_CONFIG_CLIPBOARD_KEY) syncSearchClipboardUI();
-});
-syncSearchClipboardUI();
-renderAll();
-settleInitialShellLayout();
-releaseInitialUiBootState();

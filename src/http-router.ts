@@ -1,4 +1,5 @@
 import { materializeSearchResponse } from "./core/orchestrator";
+import { buildMatrixConfidenceSummary } from "./core/matrix";
 import { buildQuotationText } from "./core/quotation";
 import {
   Cabin,
@@ -33,6 +34,7 @@ import {
 import { openUrlLocally } from "./local-browser";
 import { buildProviderContext, resolveProviderId } from "./provider-context";
 import { getRuntime } from "./runtime";
+import { getSearchDatePolicy, validateSearchDateInPolicy } from "./search-date-policy";
 
 type SortMode = "cheapest" | "fastest" | "best-value";
 
@@ -260,7 +262,8 @@ function normalizeRequest(
 function validateRequest(request: SearchRequest): string[] {
   const leg = request.legs[0];
   const errors: string[] = [];
-  const dateFields = [
+  const datePolicy = getSearchDatePolicy();
+  const dateFields: Array<[string, string | undefined]> = [
     ["Departure date", leg.departureDate],
     ["Return date", leg.returnDate],
     ["Departure start", leg.departureStart],
@@ -358,9 +361,7 @@ function validateRequest(request: SearchRequest): string[] {
   }
 
   dateFields.forEach(([label, value]) => {
-    if (value && !value.startsWith("2026-")) {
-      errors.push(`${label} must be within 2026.`);
-    }
+    errors.push(...validateSearchDateInPolicy(label, value, datePolicy));
   });
 
   return errors;
@@ -462,13 +463,6 @@ function materializeAggregatedSearchResponse(
   materialized.warnings = aggregated.warnings;
 
   return materialized;
-}
-
-function buildMatrixConfidenceSummary(cells: MatrixCell[]): Record<string, number> {
-  return cells.reduce<Record<string, number>>((acc, cell) => {
-    acc[cell.confidence] = (acc[cell.confidence] ?? 0) + 1;
-    return acc;
-  }, {});
 }
 
 function uniqueStrings(values: string[]): string[] {

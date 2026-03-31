@@ -5,9 +5,19 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Browser, BrowserContext, Page } from "playwright";
 import {
+  buildDerivedOneWayRequest,
+  buildDerivedRequest,
+  buildExactRequestFromOffer,
+  diffDays,
+  enumerateRange,
   enumerateUsefulFlexibleRequests,
   isUsefulRoundTripCombination,
 } from "./core/flexible-search";
+import {
+  buildMatrixConfidenceSummary,
+  mapConcurrent,
+  prioritizeMatrixLoadingCells,
+} from "./core/matrix";
 import { buildOfferSignature } from "./core/offer-signature";
 import { maxStopsAcrossItineraries } from "./core/ranking";
 import {
@@ -189,7 +199,7 @@ interface ItineraryCandidate {
 
 const AGIL_GDS_LIST = [0, 1, 3, 7, 10, 21, 22];
 const AGIL_BASE_URL = "https://motorvuelos.expertiatravel.com";
-const DEFAULT_AGIL_APIM_SUBSCRIPTION_KEY = "e9c66b5e1b4348ae9de63ff98d66cbbe";
+const AGIL_FRONTEND_URL = "https://www.agilsmart.com/home-user";
 const AGIL_STORAGE_ORIGINS = [
   "https://www.agilsmart.com/home-user",
   "https://motorvuelos.expertiatravel.com/",
@@ -207,8 +217,6 @@ const AGIL_RANGE_SEARCH_CONCURRENCY = Math.max(
   AGIL_MIN_FLEXIBLE_PARALLELISM,
   Number(process.env.AGIL_RANGE_SEARCH_CONCURRENCY ?? AGIL_MIN_FLEXIBLE_PARALLELISM),
 );
-const AGIL_APIM_SUBSCRIPTION_KEY = process.env.AGIL_APIM_SUBSCRIPTION_KEY?.trim()
-  || DEFAULT_AGIL_APIM_SUBSCRIPTION_KEY;
 const AGIL_HTTP_TIMEOUT_MS = Math.max(
   5000,
   Number(process.env.AGIL_HTTP_TIMEOUT_MS ?? 20000),
@@ -224,31 +232,108 @@ export const AGIL_CONCURRENCY = Object.freeze({
 
 let playwrightPromise: Promise<typeof import("playwright")> | undefined;
 let cachedSession: AgilSessionData | undefined;
-
-function addDays(dateIso: string, days: number): string {
-  const date = new Date(`${dateIso}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-function diffDays(fromIso: string, toIso: string): number {
-  const from = new Date(`${fromIso}T00:00:00Z`).getTime();
-  const to = new Date(`${toIso}T00:00:00Z`).getTime();
-  return Math.round((to - from) / 86400000);
-}
-
-function enumerateRange(start: string, end: string): string[] {
-  const dates: string[] = [];
-  let current = start;
-  while (current <= end) {
-    dates.push(current);
-    current = addDays(current, 1);
-  }
-  return dates;
-}
+let cachedAgilApimSubscriptionKey: string | undefined;
+let agilApimSubscriptionKeyPromise: Promise<string> | undefined;
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+function agilBundlePriority(url: string): number {
+  if (/\/main(?:\.[^/]+)?\.js(?:[?#]|$)/i.test(url)) return 0;
+  if (/\/\d+(?:\.[^/]+)?\.js(?:[?#]|$)/i.test(url)) return 1;
+  if (/\/runtime(?:\.[^/]+)?\.js(?:[?#]|$)/i.test(url)) return 2;
+  return 3;
+}
+
+export function parseAgilApimSubscriptionKeyFromFrontendBundle(text: string): string | undefined {
+  const directMatch = text.match(/urlHeaderMotor:"([^"]+)"/i)?.[1]?.trim();
+  if (directMatch) {
+    return directMatch;
+  }
+
+  const quotedHeaderMatch = text.match(/["']Ocp-Apim-Subscription-Key["']\s*[:=]\s*["']([^"']+)["']/i)?.[1]?.trim();
+  if (quotedHeaderMatch) {
+    return quotedHeaderMatch;
+  }
+
+  return undefined;
+}
+
+async function fetchAgilFrontendBundleUrls(frontendUrl: string): Promise<string[]> {
+  const response = await fetch(frontendUrl);
+  if (!response.ok) {
+    throw new Error(`Agil frontend bootstrap failed: ${response.status} ${response.statusText}`);
+  }
+
+  const html = await response.text();
+  const frontendOrigin = new URL(frontendUrl).origin;
+  const bundleUrls = [...html.matchAll(/<script[^>]+src=["']([^"']+\.js[^"']*)["'][^>]*>/gi)]
+    .map((match) => {
+      try {
+        return new URL(match[1], frontendUrl).toString();
+      } catch {
+        return "";
+      }
+    })
+    .filter(Boolean)
+    .filter((url) => {
+      try {
+        return new URL(url).origin === frontendOrigin;
+      } catch {
+        return false;
+      }
+    });
+
+  return uniqueStrings(bundleUrls).sort((left, right) => agilBundlePriority(left) - agilBundlePriority(right));
+}
+
+async function recoverAgilApimSubscriptionKeyFromFrontend(frontendUrl = AGIL_FRONTEND_URL): Promise<string> {
+  const bundleUrls = await fetchAgilFrontendBundleUrls(frontendUrl);
+  for (const bundleUrl of bundleUrls) {
+    const response = await fetch(bundleUrl);
+    if (!response.ok) {
+      continue;
+    }
+
+    const text = await response.text();
+    const key = parseAgilApimSubscriptionKeyFromFrontendBundle(text);
+    if (key) {
+      return key;
+    }
+  }
+
+  throw new Error("AGIL_APIM_SUBSCRIPTION_KEY is required for live Agil requests and could not be recovered from the Agil frontend.");
+}
+
+async function resolveAgilApimSubscriptionKey(): Promise<string> {
+  const key = process.env.AGIL_APIM_SUBSCRIPTION_KEY?.trim();
+  if (key) {
+    cachedAgilApimSubscriptionKey = key;
+    return key;
+  }
+
+  if (cachedAgilApimSubscriptionKey) {
+    return cachedAgilApimSubscriptionKey;
+  }
+
+  if (!agilApimSubscriptionKeyPromise) {
+    agilApimSubscriptionKeyPromise = recoverAgilApimSubscriptionKeyFromFrontend()
+      .then((resolvedKey) => {
+        cachedAgilApimSubscriptionKey = resolvedKey;
+        return resolvedKey;
+      })
+      .finally(() => {
+        agilApimSubscriptionKeyPromise = undefined;
+      });
+  }
+
+  return agilApimSubscriptionKeyPromise;
+}
+
+export function resetAgilApimSubscriptionKeyCacheForTests(): void {
+  cachedAgilApimSubscriptionKey = undefined;
+  agilApimSubscriptionKeyPromise = undefined;
 }
 
 function decodeJwtExpiry(token: string): number {
@@ -473,9 +558,13 @@ async function fetchAgil(
 ): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), AGIL_HTTP_TIMEOUT_MS);
+  const headers = new Headers(init.headers);
+  headers.set("Ocp-Apim-Subscription-Key", await resolveAgilApimSubscriptionKey());
+
   try {
     return await fetch(url, {
       ...init,
+      headers,
       signal: controller.signal,
     });
   } catch (error) {
@@ -693,7 +782,6 @@ async function refreshAgilToken(session: AgilSessionData): Promise<AgilSessionDa
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Ocp-Apim-Subscription-Key": AGIL_APIM_SUBSCRIPTION_KEY,
     },
     body: JSON.stringify({
       trackingCode: randomUUID(),
@@ -790,41 +878,6 @@ function buildAgilStartSearchPayload(
   return {
     ...buildAgilBaseSearchPayload(request),
     searchTrackingCode,
-  };
-}
-
-function buildDerivedRequest(baseRequest: SearchRequest, departureDate: string, returnDate: string): SearchRequest {
-  return {
-    ...baseRequest,
-    tripType: "round-trip",
-    searchMode: "exact",
-    legs: [
-      {
-        origin: baseRequest.legs[0].origin,
-        destination: baseRequest.legs[0].destination,
-        originLabel: baseRequest.legs[0].originLabel,
-        destinationLabel: baseRequest.legs[0].destinationLabel,
-        departureDate,
-        returnDate,
-      },
-    ],
-  };
-}
-
-function buildDerivedOneWayRequest(baseRequest: SearchRequest, departureDate: string): SearchRequest {
-  return {
-    ...baseRequest,
-    tripType: "one-way",
-    searchMode: "exact",
-    legs: [
-      {
-        origin: baseRequest.legs[0].origin,
-        destination: baseRequest.legs[0].destination,
-        originLabel: baseRequest.legs[0].originLabel,
-        destinationLabel: baseRequest.legs[0].destinationLabel,
-        departureDate,
-      },
-    ],
   };
 }
 
@@ -1143,7 +1196,6 @@ export async function suggestLocalAgilLocations(query: string, limit = 8): Promi
       headers: {
         accept: "application/json, text/plain, */*",
         "not-loading": "true",
-        "Ocp-Apim-Subscription-Key": AGIL_APIM_SUBSCRIPTION_KEY,
       },
     },
     "Agil location suggest",
@@ -1476,7 +1528,6 @@ async function searchCellWithGds(
       "Content-Type": "application/json",
       Authorization: `Bearer ${session.token}`,
       "not-loading": "true",
-      "Ocp-Apim-Subscription-Key": AGIL_APIM_SUBSCRIPTION_KEY,
     },
     body: JSON.stringify(buildAgilSearchPayload(request, gds)),
   }, `Agil matrix search GDS ${gds}`);
@@ -1552,7 +1603,6 @@ async function searchGroupsWithGds(
       "Content-Type": "application/json",
       Authorization: `Bearer ${session.token}`,
       "not-loading": "true",
-      "Ocp-Apim-Subscription-Key": AGIL_APIM_SUBSCRIPTION_KEY,
     },
     body: JSON.stringify(buildAgilSearchPayload(request, gds)),
   }, `Agil search GDS ${gds}`);
@@ -1584,7 +1634,6 @@ async function startAgilSearch(
       "Content-Type": "application/json",
       Authorization: `Bearer ${session.token}`,
       "not-loading": "true",
-      "Ocp-Apim-Subscription-Key": AGIL_APIM_SUBSCRIPTION_KEY,
     },
     body: JSON.stringify(buildAgilStartSearchPayload(request, randomUUID())),
   }, "Agil start-search");
@@ -1601,26 +1650,6 @@ async function startAgilSearch(
         : `Agil start-search failed with ${response.status} ${response.statusText}`,
     );
   }
-}
-
-async function mapConcurrent<T, R>(
-  values: T[],
-  concurrency: number,
-  mapper: (value: T) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(values.length);
-  let cursor = 0;
-
-  async function worker(): Promise<void> {
-    while (cursor < values.length) {
-      const index = cursor;
-      cursor += 1;
-      results[index] = await mapper(values[index]);
-    }
-  }
-
-  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, () => worker()));
-  return results;
 }
 
 async function searchGroupsAcrossGds(
@@ -1924,36 +1953,6 @@ export async function resolveLocalAgilRangeProgressive(
   };
 }
 
-function buildExactRequestFromOffer(
-  offer: CanonicalOffer,
-  baseRequest: SearchRequest,
-): SearchRequest {
-  const outbound = offer.itineraries.find((itinerary) => itinerary.direction === "outbound") ?? offer.itineraries[0];
-  const inbound = offer.itineraries.find((itinerary) => itinerary.direction === "inbound");
-  const departureDate = outbound?.segments[0]?.departureAt?.slice(0, 10);
-  const returnDate = inbound?.segments[0]?.departureAt?.slice(0, 10);
-
-  if (!departureDate) {
-    throw new Error("Offer is missing outbound departure date.");
-  }
-
-  return {
-    ...baseRequest,
-    tripType: inbound ? "round-trip" : "one-way",
-    searchMode: "exact",
-    legs: [
-      {
-        origin: offer.origin,
-        destination: offer.destination,
-        originLabel: baseRequest.legs[0]?.originLabel,
-        destinationLabel: baseRequest.legs[0]?.destinationLabel,
-        departureDate,
-        returnDate,
-      },
-    ],
-  };
-}
-
 export async function repriceLocalAgilOffer(
   existingOffer: CanonicalOffer,
   request: SearchRequest,
@@ -1988,44 +1987,6 @@ export async function repriceLocalAgilOffer(
     },
     warnings: search.warnings,
   };
-}
-
-function buildMatrixConfidenceSummary(cells: MatrixCell[]): Record<string, number> {
-  return cells.reduce<Record<string, number>>((acc, cell) => {
-    acc[cell.confidence] = (acc[cell.confidence] ?? 0) + 1;
-    return acc;
-  }, {});
-}
-
-function prioritizeMatrixLoadingCells(
-  cells: MatrixCell[],
-  axes: MatrixResponse["axes"],
-  tripType: SearchRequest["tripType"],
-): Array<MatrixCell & { derivedRequest: SearchRequest; confidence: "loading" }> {
-  const departureOrder = new Map(axes.departureDates.map((date, index) => [date, index]));
-  const returnOrder = new Map(axes.returnDates.map((date, index) => [date, index]));
-
-  return cells
-    .filter((cell): cell is MatrixCell & { derivedRequest: SearchRequest; confidence: "loading" } =>
-      cell.confidence === "loading" && Boolean(cell.derivedRequest),
-    )
-    .sort((left, right) => {
-      const leftDeparture = departureOrder.get(left.departureDate) ?? Number.MAX_SAFE_INTEGER;
-      const rightDeparture = departureOrder.get(right.departureDate) ?? Number.MAX_SAFE_INTEGER;
-
-      if (tripType === "one-way") {
-        return leftDeparture - rightDeparture;
-      }
-
-      const leftReturn = returnOrder.get(left.returnDate ?? "") ?? Number.MAX_SAFE_INTEGER;
-      const rightReturn = returnOrder.get(right.returnDate ?? "") ?? Number.MAX_SAFE_INTEGER;
-      const leftWave = leftDeparture + leftReturn;
-      const rightWave = rightDeparture + rightReturn;
-
-      if (leftWave !== rightWave) return leftWave - rightWave;
-      if (leftDeparture !== rightDeparture) return leftDeparture - rightDeparture;
-      return leftReturn - rightReturn;
-    });
 }
 
 export function createLocalAgilMatrixDraft(

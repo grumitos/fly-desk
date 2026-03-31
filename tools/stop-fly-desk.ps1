@@ -71,6 +71,24 @@ function Stop-ProcessTree {
   }
 }
 
+function Wait-ForPortRelease {
+  param(
+    [int]$Port,
+    [int]$TimeoutSeconds = 10
+  )
+
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  while ((Get-Date) -lt $deadline) {
+    if (@(Get-ListeningProcessIdsForPort -Port $Port).Count -eq 0) {
+      return $true
+    }
+
+    Start-Sleep -Milliseconds 250
+  }
+
+  return @(Get-ListeningProcessIdsForPort -Port $Port).Count -eq 0
+}
+
 $stopped = $false
 
 if (Test-Path -LiteralPath $stateFile) {
@@ -90,9 +108,12 @@ foreach ($processId in (Get-ListeningProcessIdsForPort -Port $launcherPort)) {
 }
 
 Remove-Item -LiteralPath $stateFile -Force -ErrorAction SilentlyContinue
+$portReleased = Wait-ForPortRelease -Port $launcherPort
 
-if ($stopped) {
+if ($stopped -and $portReleased) {
   Show-InfoPopup "Fly Desk fue detenido."
+} elseif ($stopped) {
+  Show-InfoPopup "Fly Desk intento cerrarse, pero el puerto $launcherPort sigue ocupado." 48
 } else {
   Show-InfoPopup "Fly Desk no tenia una instancia activa del acceso directo."
 }

@@ -3,9 +3,12 @@ import assert from "node:assert/strict";
 import {
   AGIL_CONCURRENCY,
   buildLocalAgilSearchRedirectUrl,
+  parseAgilApimSubscriptionKeyFromFrontendBundle,
   parseAgilRefreshTokenPayload,
   parseAgilSessionData,
   readAgilStorageSnapshotFromPage,
+  resetAgilApimSubscriptionKeyCacheForTests,
+  suggestLocalAgilLocations,
 } from "../src/local-agil";
 
 test("reads Agil session storage after DOM content is ready without waiting for network idle", async () => {
@@ -198,4 +201,113 @@ test("keeps flexible Agil searches at a minimum of ten concurrent requests", () 
   assert.equal(AGIL_CONCURRENCY.flexibleMinimum, 10);
   assert.ok(AGIL_CONCURRENCY.rangeSearch >= 10);
   assert.ok(AGIL_CONCURRENCY.matrixCell >= 10);
+});
+
+test("extracts the Agil subscription key from the public frontend bundle", () => {
+  const key = parseAgilApimSubscriptionKeyFromFrontendBundle(
+    'const env={urlHeaderMotor:"e9c66b5e1b4348ae9de63ff98d66cbbe"};',
+  );
+
+  assert.equal(key, "e9c66b5e1b4348ae9de63ff98d66cbbe");
+});
+
+test("recovers AGIL_APIM_SUBSCRIPTION_KEY from the Agil frontend bundle when env is missing", async () => {
+  const previousKey = process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+  const previousFetch = global.fetch;
+  const calls: string[] = [];
+
+  resetAgilApimSubscriptionKeyCacheForTests();
+  delete process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+  global.fetch = (async (input, init) => {
+    const url = String(input);
+    calls.push(url);
+
+    if (url === "https://www.agilsmart.com/home-user") {
+      return new Response(
+        '<html><head><script src="/runtime.js"></script><script src="/main.js"></script></head></html>',
+        { status: 200, headers: { "Content-Type": "text/html" } },
+      );
+    }
+
+    if (url === "https://www.agilsmart.com/main.js") {
+      return new Response(
+        'const env={urlHeaderMotor:"dynamic-subscription-key-123456"};',
+        { status: 200, headers: { "Content-Type": "application/javascript" } },
+      );
+    }
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/ubigeo/geotree/Lima") {
+      const headers = new Headers(init?.headers);
+      assert.equal(headers.get("Ocp-Apim-Subscription-Key"), "dynamic-subscription-key-123456");
+      return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const suggestions = await suggestLocalAgilLocations("Lima");
+    assert.deepEqual(suggestions, []);
+    assert.deepEqual(calls, [
+      "https://www.agilsmart.com/home-user",
+      "https://www.agilsmart.com/main.js",
+      "https://motorvuelos.expertiatravel.com/mv/ubigeo/geotree/Lima",
+    ]);
+  } finally {
+    resetAgilApimSubscriptionKeyCacheForTests();
+    global.fetch = previousFetch;
+    if (previousKey === undefined) {
+      delete process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+    } else {
+      process.env.AGIL_APIM_SUBSCRIPTION_KEY = previousKey;
+    }
+  }
+});
+
+test("fails clearly when neither env nor the Agil frontend expose the subscription key", async () => {
+  const previousKey = process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+  const previousFetch = global.fetch;
+  let apiFetchCalled = false;
+
+  resetAgilApimSubscriptionKeyCacheForTests();
+  delete process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+  global.fetch = (async (input) => {
+    const url = String(input);
+    if (url === "https://www.agilsmart.com/home-user") {
+      return new Response(
+        '<html><head><script src="/main.js"></script></head></html>',
+        { status: 200, headers: { "Content-Type": "text/html" } },
+      );
+    }
+
+    if (url === "https://www.agilsmart.com/main.js") {
+      return new Response(
+        "const env={urlApiMotorVuelos:\"https://motorvuelos.expertiatravel.com\"};",
+        { status: 200, headers: { "Content-Type": "application/javascript" } },
+      );
+    }
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/ubigeo/geotree/Lima") {
+      apiFetchCalled = true;
+      throw new Error("API fetch should not run without a subscription key");
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      () => suggestLocalAgilLocations("Lima"),
+      /AGIL_APIM_SUBSCRIPTION_KEY is required for live Agil requests and could not be recovered from the Agil frontend\./,
+    );
+    assert.equal(apiFetchCalled, false);
+  } finally {
+    resetAgilApimSubscriptionKeyCacheForTests();
+    global.fetch = previousFetch;
+    if (previousKey === undefined) {
+      delete process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+    } else {
+      process.env.AGIL_APIM_SUBSCRIPTION_KEY = previousKey;
+    }
+  }
 });

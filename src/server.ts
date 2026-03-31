@@ -1,21 +1,75 @@
 import { createServer as createHttpServer, IncomingMessage, ServerResponse } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import * as path from "node:path";
 import { routeRequest } from "./http-router";
+import { getPublicRuntimeConfig } from "./search-date-policy";
 
 const publicDir = path.resolve(__dirname, "..", "public");
 
-async function serveStaticFile(response: ServerResponse, fileName: string): Promise<void> {
-  const filePath = path.join(publicDir, fileName);
-  const content = await readFile(filePath);
-  const extension = path.extname(fileName);
-  const contentType = extension === ".css"
-    ? "text/css; charset=utf-8"
-    : extension === ".js"
-      ? "application/javascript; charset=utf-8"
-      : "text/html; charset=utf-8";
+function contentTypeForExtension(extension: string): string {
+  if (extension === ".css") {
+    return "text/css; charset=utf-8";
+  }
 
-  response.writeHead(200, { "Content-Type": contentType });
+  if (extension === ".js") {
+    return "application/javascript; charset=utf-8";
+  }
+
+  if (extension === ".html") {
+    return "text/html; charset=utf-8";
+  }
+
+  return "application/octet-stream";
+}
+
+function noStoreHeaders(contentType: string): Record<string, string> {
+  return {
+    "Content-Type": contentType,
+    "Cache-Control": "no-store",
+  };
+}
+
+async function serveStaticFile(response: ServerResponse, filePath: string): Promise<void> {
+  const content = await readFile(filePath);
+  const contentType = contentTypeForExtension(path.extname(filePath));
+
+  response.writeHead(200, noStoreHeaders(contentType));
+  response.end(content);
+}
+
+async function resolvePublicAsset(pathname: string): Promise<string | undefined> {
+  const normalizedPath = pathname.replace(/^\/+/, "");
+  if (!normalizedPath) {
+    return undefined;
+  }
+
+  const filePath = path.resolve(publicDir, normalizedPath);
+  if (!filePath.startsWith(`${publicDir}${path.sep}`) && filePath !== publicDir) {
+    return undefined;
+  }
+
+  try {
+    const fileStat = await stat(filePath);
+    return fileStat.isFile() ? filePath : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function escapeInlineScriptJson(value: string): string {
+  return value.replace(/</g, "\\u003c");
+}
+
+async function serveIndexHtml(response: ServerResponse): Promise<void> {
+  const filePath = path.join(publicDir, "index.html");
+  const template = await readFile(filePath, "utf8");
+  const runtimeConfig = escapeInlineScriptJson(JSON.stringify(getPublicRuntimeConfig()));
+  const content = template.replace(
+    "<!-- __FLYDESK_RUNTIME_CONFIG__ -->",
+    `<script>window.__FLYDESK_RUNTIME__ = ${runtimeConfig};</script>`,
+  );
+
+  response.writeHead(200, noStoreHeaders("text/html; charset=utf-8"));
   response.end(content);
 }
 
@@ -76,18 +130,16 @@ export function createServer() {
       const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
 
       if (request.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
-        await serveStaticFile(response, "index.html");
+        await serveIndexHtml(response);
         return;
       }
 
-      if (request.method === "GET" && pathname === "/app.css") {
-        await serveStaticFile(response, "app.css");
-        return;
-      }
-
-      if (request.method === "GET" && pathname === "/app.js") {
-        await serveStaticFile(response, "app.js");
-        return;
+      if (request.method === "GET") {
+        const assetPath = await resolvePublicAsset(pathname);
+        if (assetPath) {
+          await serveStaticFile(response, assetPath);
+          return;
+        }
       }
 
       if (request.method === "GET" && pathname === "/favicon.ico") {
