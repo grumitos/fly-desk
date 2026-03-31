@@ -1,8 +1,11 @@
 import {
   CreateOrderInput,
   CanonicalOffer,
+  LocationSuggestion,
   MatrixCell,
   OrderResult,
+  ProviderContext,
+  ProviderId,
   PurchasePath,
   SearchRequest,
 } from "./types";
@@ -40,15 +43,40 @@ export interface PurchasePathResult {
   warnings: string[];
 }
 
+export interface ProviderExecutionContext {
+  providerContext?: ProviderContext;
+}
+
 export interface SearchProvider {
-  id: string;
+  id: ProviderId;
   capabilities: ProviderCapabilities;
-  searchExact(request: SearchRequest): Promise<ProviderSearchResult>;
-  searchFlexible?(request: SearchRequest): Promise<ProviderMatrixResult>;
-  reprice?(offer: CanonicalOffer, request: SearchRequest): Promise<RepriceResult>;
-  createOrder?(offer: CanonicalOffer, request: SearchRequest, input: CreateOrderInput): Promise<OrderResult>;
+  searchExact(
+    request: SearchRequest,
+    context?: ProviderExecutionContext,
+  ): Promise<ProviderSearchResult>;
+  searchFlexible?(
+    request: SearchRequest,
+    context?: ProviderExecutionContext,
+  ): Promise<ProviderMatrixResult>;
+  reprice?(
+    offer: CanonicalOffer,
+    request: SearchRequest,
+    context?: ProviderExecutionContext,
+  ): Promise<RepriceResult>;
+  createOrder?(
+    offer: CanonicalOffer,
+    request: SearchRequest,
+    input: CreateOrderInput,
+    context?: ProviderExecutionContext,
+  ): Promise<OrderResult>;
   resolvePurchasePaths?(
     offer: CanonicalOffer,
     request: SearchRequest,
+    context?: ProviderExecutionContext,
   ): Promise<PurchasePathResult>;
+  suggestLocations?(
+    query: string,
+    limit?: number,
+    context?: ProviderExecutionContext,
+  ): Promise<LocationSuggestion[]>;
 }

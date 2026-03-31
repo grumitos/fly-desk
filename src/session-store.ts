@@ -1,5 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { CanonicalOffer, MatrixCell, ProviderMeta, PurchasePath, SearchMeta, SearchRequest } from "./core/types";
+import {
+  CanonicalOffer,
+  MatrixCell,
+  ProviderContext,
+  ProviderMeta,
+  PurchasePath,
+  SearchMeta,
+  SearchRequest,
+} from "./core/types";
 
 interface StoredPurchasePath {
   sessionId: string;
@@ -11,6 +19,7 @@ interface StoredPurchasePath {
 export interface SearchSessionRecord {
   id: string;
   request: SearchRequest;
+  providerContext?: ProviderContext;
   offers: CanonicalOffer[];
   matrix?: MatrixCell[];
   searchMeta: SearchMeta;
@@ -22,6 +31,7 @@ export interface SearchSessionRecord {
 export interface MatrixJobRecord {
   id: string;
   request: SearchRequest;
+  providerContext?: ProviderContext;
   cells: MatrixCell[];
   axes: {
     departureDates: string[];
@@ -41,6 +51,7 @@ export interface MatrixJobRecord {
 export interface SearchJobRecord {
   id: string;
   request: SearchRequest;
+  providerContext?: ProviderContext;
   offers: CanonicalOffer[];
   allOffers: CanonicalOffer[];
   searchMeta: SearchMeta;
@@ -212,6 +223,7 @@ export class SearchSessionStore {
     const record: SearchSessionRecord = {
       id: job.id,
       request: job.request,
+      providerContext: job.providerContext,
       offers: job.allOffers.map((offer) => this.rewriteOfferPaths(job.id, offer)),
       matrix: undefined,
       searchMeta: {

@@ -3,8 +3,13 @@ import { buildQuotationText } from "./core/quotation";
 import {
   Cabin,
   CanonicalOffer,
+  MatrixResponse,
+  ProviderConfigInput,
+  ProviderContext,
+  ProviderId,
   SearchMode,
   SearchRequest,
+  SearchResponse,
   TripType,
 } from "./core/types";
 import {
@@ -15,12 +20,23 @@ import {
   resolveLocalAgilRangeProgressive,
   suggestLocalAgilLocations,
 } from "./local-agil";
+import {
+  createLocalCostamarMatrixDraft,
+  createLocalCostamarSearchDraft,
+  resolveLocalCostamarExactProgressive,
+  resolveLocalCostamarMatrixProgressive,
+  resolveLocalCostamarRangeProgressive,
+  suggestLocalCostamarLocations,
+} from "./local-costamar";
 import { openUrlLocally } from "./local-browser";
+import { buildProviderContext, resolveProviderId } from "./provider-context";
 import { getRuntime } from "./runtime";
 
 type SortMode = "cheapest" | "fastest" | "best-value";
 
 interface SearchPayload {
+  providerId?: ProviderId;
+  providerConfig?: ProviderConfigInput;
   request?: Partial<SearchRequest> & {
     legs?: Array<Record<string, unknown>>;
     passengers?: Record<string, unknown>;
@@ -44,6 +60,66 @@ interface QuotationPayload extends SessionPayload {
 interface LocalOpenPayload {
   url?: string;
   preferredBrowser?: "chrome" | "default";
+}
+
+interface ProgressiveSearchAdapter {
+  createSearchDraft(request: SearchRequest, providerMeta: { exactProvider: ProviderId; coverageMode: SearchRequest["coverageMode"] }): SearchResponse;
+  resolveExactProgressive(
+    request: SearchRequest,
+    providerContext: ProviderContext | undefined,
+    onUpdate?: (result: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => void,
+  ): Promise<{ offers: CanonicalOffer[]; warnings: string[]; partial: boolean }>;
+  resolveRangeProgressive(
+    request: SearchRequest,
+    providerContext: ProviderContext | undefined,
+    onUpdate?: (result: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => void,
+  ): Promise<{ offers: CanonicalOffer[]; warnings: string[]; partial: boolean }>;
+  createMatrixDraft(
+    request: SearchRequest,
+    providerMeta: { exactProvider: ProviderId; coverageMode: SearchRequest["coverageMode"] },
+  ): MatrixResponse;
+  resolveMatrixProgressive(
+    request: SearchRequest,
+    providerContext: ProviderContext | undefined,
+    draft: MatrixResponse,
+    onCellResolved?: (cell: MatrixResponse["cells"][number]) => void,
+  ): Promise<MatrixResponse>;
+}
+
+interface ProviderSearchState {
+  offers: CanonicalOffer[];
+  warnings: string[];
+  partial: boolean;
+  completed: boolean;
+}
+
+const PROGRESSIVE_ADAPTERS: Record<ProviderId, ProgressiveSearchAdapter> = {
+  "agil-local": {
+    createSearchDraft: createLocalAgilSearchDraft,
+    resolveExactProgressive: (request, _providerContext, onUpdate) =>
+      resolveLocalAgilExactProgressive(request, onUpdate),
+    resolveRangeProgressive: (request, _providerContext, onUpdate) =>
+      resolveLocalAgilRangeProgressive(request, onUpdate),
+    createMatrixDraft: createLocalAgilMatrixDraft,
+    resolveMatrixProgressive: (request, _providerContext, draft, onCellResolved) =>
+      resolveLocalAgilMatrixProgressive(request, draft, onCellResolved),
+  },
+  costamar: {
+    createSearchDraft: createLocalCostamarSearchDraft,
+    resolveExactProgressive: (request, providerContext, onUpdate) =>
+      resolveLocalCostamarExactProgressive(request, providerContext, onUpdate),
+    resolveRangeProgressive: (request, providerContext, onUpdate) =>
+      resolveLocalCostamarRangeProgressive(request, providerContext, onUpdate),
+    createMatrixDraft: createLocalCostamarMatrixDraft,
+    resolveMatrixProgressive: (request, providerContext, draft, onCellResolved) =>
+      resolveLocalCostamarMatrixProgressive(request, providerContext, draft, onCellResolved),
+  },
+};
+
+function parseExplicitProviderId(value: unknown): ProviderId | undefined {
+  return value === "costamar" || value === "agil-local"
+    ? value
+    : undefined;
 }
 
 function json(body: unknown, init?: ResponseInit): Response {
@@ -114,11 +190,15 @@ function normalizeCabin(input: unknown): Cabin {
     : "ECONOMY";
 }
 
-function normalizeRequest(input?: SearchPayload["request"]): SearchRequest {
+function normalizeRequest(
+  input: SearchPayload["request"] | undefined,
+  providerId?: ProviderId,
+): SearchRequest {
   const leg: Record<string, unknown> = input?.legs?.[0] ?? {};
   const filters = input?.filters ?? {};
 
   return {
+    providerId,
     tripType: normalizeTripType(input?.tripType),
     searchMode: normalizeSearchMode(input?.searchMode),
     legs: [
@@ -278,6 +358,127 @@ function validateRequest(request: SearchRequest): string[] {
   return errors;
 }
 
+function validateProviderContext(
+  providerId: ProviderId,
+  providerContext: ProviderContext | undefined,
+): string[] {
+  if (providerId !== "costamar") {
+    return [];
+  }
+
+  const errors: string[] = [];
+  const context = providerContext?.costamar;
+  if (!context?.terminalId) {
+    errors.push("Costamar terminalId is required.");
+  }
+  if (!context?.token) {
+    errors.push("Costamar token is required.");
+  }
+
+  return errors;
+}
+
+function resolveSearchProviderIds(
+  explicitProviderId: ProviderId | undefined,
+): ProviderId[] {
+  if (explicitProviderId) {
+    return [explicitProviderId];
+  }
+
+  return ["agil-local", "costamar"];
+}
+
+function createSearchDraftResponse(
+  request: SearchRequest,
+  providerIds: ProviderId[],
+): SearchResponse {
+  const requestedAt = new Date().toISOString();
+  const warning = providerIds.length > 1
+    ? "Consultando Agil y Costamar. Los resultados se iran agregando."
+    : providerIds[0] === "costamar"
+      ? "Consultando Costamar. Los resultados se iran agregando."
+      : "Consultando Agil. Los resultados se iran agregando.";
+
+  return {
+    offers: [],
+    allOffers: [],
+    searchMeta: {
+      requestedAt,
+      completedAt: requestedAt,
+      providersUsed: providerIds,
+      warnings: [warning],
+      partial: true,
+      searchState: "search_partial",
+    },
+    providerMeta: {
+      exactProvider: providerIds[0],
+      coverageMode: request.coverageMode,
+    },
+    warnings: [warning],
+  };
+}
+
+function aggregateProviderSearchStates(
+  providerIds: ProviderId[],
+  states: Map<ProviderId, ProviderSearchState>,
+): { offers: CanonicalOffer[]; warnings: string[]; partial: boolean } {
+  return {
+    offers: providerIds.flatMap((providerId) => states.get(providerId)?.offers ?? []),
+    warnings: [...new Set(providerIds.flatMap((providerId) => states.get(providerId)?.warnings ?? []))],
+    partial: providerIds.some((providerId) => {
+      const state = states.get(providerId);
+      return !state?.completed || state.partial;
+    }),
+  };
+}
+
+function materializeAggregatedSearchResponse(
+  request: SearchRequest,
+  sortMode: SortMode,
+  providerIds: ProviderId[],
+  states: Map<ProviderId, ProviderSearchState>,
+): SearchResponse {
+  const aggregated = aggregateProviderSearchStates(providerIds, states);
+  const materialized = materializeSearchResponse(
+    request,
+    sortMode,
+    providerIds[0],
+    aggregated,
+  );
+
+  materialized.searchMeta.providersUsed = providerIds;
+  materialized.searchMeta.warnings = aggregated.warnings;
+  materialized.searchMeta.partial = aggregated.partial;
+  materialized.searchMeta.searchState = aggregated.partial ? "search_partial" : "search_live";
+  materialized.providerMeta = {
+    exactProvider: providerIds[0],
+    coverageMode: request.coverageMode,
+  };
+  materialized.warnings = aggregated.warnings;
+
+  return materialized;
+}
+
+function getProgressiveAdapter(providerId: ProviderId): ProgressiveSearchAdapter {
+  return PROGRESSIVE_ADAPTERS[providerId];
+}
+
+async function suggestLocationsForProvider(
+  runtime: ReturnType<typeof getRuntime>,
+  providerId: ProviderId,
+  query: string,
+  limit: number,
+): Promise<Awaited<ReturnType<typeof suggestLocalAgilLocations>>> {
+  const provider = runtime.orchestrator.getProvider(providerId);
+  if (provider?.suggestLocations) {
+    return provider.suggestLocations(query, limit);
+  }
+
+  return providerId === "costamar"
+    ? suggestLocalCostamarLocations(query, limit)
+    : suggestLocalAgilLocations(query, limit);
+}
+
 function isLoopbackHost(hostname: string): boolean {
   const normalized = hostname.trim().toLowerCase();
   return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "[::1]";
@@ -358,8 +559,33 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     const limit = integerParam(url.searchParams.get("limit"), 8, 1, 20);
-    const suggestions = await suggestLocalAgilLocations(query, limit);
-    return json({ query, suggestions });
+    const suggestions = await suggestLocationsForProvider(runtime, "agil-local", query, limit);
+    return json({ query, providerId: "agil-local", suggestions });
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/costamar/locations") {
+    const query = stringValue(url.searchParams.get("q"));
+    if (query.length < 2) {
+      return json({ query, suggestions: [] });
+    }
+
+    const limit = integerParam(url.searchParams.get("limit"), 8, 1, 20);
+    const suggestions = await suggestLocationsForProvider(runtime, "costamar", query, limit);
+    return json({ query, providerId: "costamar", suggestions });
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/locations") {
+    const query = stringValue(url.searchParams.get("q"));
+    if (query.length < 2) {
+      return json({ query, suggestions: [] });
+    }
+
+    const limit = integerParam(url.searchParams.get("limit"), 8, 1, 20);
+    const providerId = resolveProviderId(
+      stringValue(url.searchParams.get("providerId")) as ProviderId | undefined,
+    );
+    const suggestions = await suggestLocationsForProvider(runtime, providerId, query, limit);
+    return json({ query, providerId, suggestions });
   }
 
   if (request.method === "POST" && url.pathname === "/api/local/open-url") {
@@ -388,8 +614,14 @@ export async function routeRequest(request: Request): Promise<Response> {
 
   if (request.method === "POST" && url.pathname === "/api/search") {
     const payload = await readPayload<SearchPayload>(request);
-    const normalizedRequest = normalizeRequest(payload.request);
-    const errors = validateRequest(normalizedRequest);
+    const explicitProviderId = parseExplicitProviderId(payload.providerId ?? payload.request?.providerId);
+    const providerContext = buildProviderContext("costamar", payload.providerConfig);
+    const providerIds = resolveSearchProviderIds(explicitProviderId);
+    const normalizedRequest = normalizeRequest(payload.request, explicitProviderId);
+    const errors = [
+      ...validateRequest(normalizedRequest),
+      ...(explicitProviderId === "costamar" ? validateProviderContext("costamar", providerContext) : []),
+    ];
 
     if (errors.length > 0) {
       return json({ errors }, { status: 400 });
@@ -398,13 +630,10 @@ export async function routeRequest(request: Request): Promise<Response> {
     const sortMode: SortMode = payload.sortMode === "cheapest" || payload.sortMode === "fastest"
       ? payload.sortMode
       : "cheapest";
-
-    const draft = createLocalAgilSearchDraft(normalizedRequest, {
-      exactProvider: "agil-local",
-      coverageMode: normalizedRequest.coverageMode,
-    });
+    const draft = createSearchDraftResponse(normalizedRequest, providerIds);
     const job = runtime.sessions.createSearchJob({
       request: normalizedRequest,
+      providerContext,
       offers: draft.offers,
       allOffers: draft.allOffers ?? draft.offers,
       searchMeta: draft.searchMeta,
@@ -413,13 +642,21 @@ export async function routeRequest(request: Request): Promise<Response> {
       sortMode,
       status: "running",
     });
+    const providerStates = new Map<ProviderId, ProviderSearchState>(
+      providerIds.map((providerId) => [providerId, {
+        offers: [],
+        warnings: [],
+        partial: true,
+        completed: false,
+      }]),
+    );
 
-    const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
-      const materialized = materializeSearchResponse(
+    const syncSearchJob = (status: "running" | "completed") => {
+      const materialized = materializeAggregatedSearchResponse(
         normalizedRequest,
         sortMode,
-        "agil-local",
-        partialResult,
+        providerIds,
+        providerStates,
       );
 
       runtime.sessions.updateSearchJob(job.id, (current) => ({
@@ -429,61 +666,50 @@ export async function routeRequest(request: Request): Promise<Response> {
         searchMeta: {
           ...materialized.searchMeta,
           requestedAt: current.searchMeta.requestedAt,
-          partial: true,
-          searchState: "search_partial",
         },
         providerMeta: materialized.providerMeta,
         warnings: materialized.warnings,
-        status: "running",
+        status,
         error: undefined,
       }));
     };
 
-    const resolver = normalizedRequest.searchMode === "stay-range"
-      ? resolveLocalAgilRangeProgressive(normalizedRequest, onProgress)
-      : resolveLocalAgilExactProgressive(normalizedRequest, onProgress);
-
-    void resolver.then((result) => {
-      const materialized = materializeSearchResponse(
-        normalizedRequest,
-        sortMode,
-        "agil-local",
-        result,
-      );
-
-      runtime.sessions.updateSearchJob(job.id, (current) => ({
-        ...current,
-        offers: materialized.offers,
-        allOffers: materialized.allOffers ?? materialized.offers,
-        searchMeta: {
-          ...materialized.searchMeta,
-          requestedAt: current.searchMeta.requestedAt,
-        },
-        providerMeta: materialized.providerMeta,
-        warnings: materialized.warnings,
-        status: "completed",
-        error: undefined,
-      }));
-    }).catch((error) => {
-      runtime.sessions.updateSearchJob(job.id, (current) => ({
-        ...current,
-        status: "failed",
-        error: error instanceof Error ? error.message : "Search job failed.",
-        warnings: [
-          ...current.warnings,
-          error instanceof Error ? error.message : "Search job failed.",
-        ],
-        searchMeta: {
-          ...current.searchMeta,
-          completedAt: new Date().toISOString(),
+    const resolvers = providerIds.map(async (providerId) => {
+      const adapter = getProgressiveAdapter(providerId);
+      const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
+        providerStates.set(providerId, {
+          offers: partialResult.offers,
+          warnings: partialResult.warnings,
           partial: true,
-          searchState: "search_failed",
+          completed: false,
+        });
+        syncSearchJob("running");
+      };
+
+      try {
+        const result = normalizedRequest.searchMode === "stay-range"
+          ? await adapter.resolveRangeProgressive(normalizedRequest, providerContext, onProgress)
+          : await adapter.resolveExactProgressive(normalizedRequest, providerContext, onProgress);
+        providerStates.set(providerId, {
+          offers: result.offers,
+          warnings: result.warnings,
+          partial: result.partial,
+          completed: true,
+        });
+      } catch (error) {
+        providerStates.set(providerId, {
+          offers: [],
           warnings: [
-            ...current.searchMeta.warnings,
             error instanceof Error ? error.message : "Search job failed.",
           ],
-        },
-      }));
+          partial: true,
+          completed: true,
+        });
+      }
+    });
+
+    void Promise.allSettled(resolvers).then(() => {
+      syncSearchJob("completed");
     });
 
     return json(searchJobResponse(job));
@@ -502,20 +728,27 @@ export async function routeRequest(request: Request): Promise<Response> {
 
   if (request.method === "POST" && url.pathname === "/api/matrix") {
     const payload = await readPayload<SearchPayload>(request);
-    const normalizedRequest = normalizeRequest(payload.request);
+    const providerId = resolveProviderId(payload.providerId ?? payload.request?.providerId);
+    const normalizedRequest = normalizeRequest(payload.request, providerId);
     normalizedRequest.searchMode = "roundtrip-grid";
+    const providerContext = buildProviderContext(providerId, payload.providerConfig);
 
-    const errors = validateRequest(normalizedRequest);
+    const errors = [
+      ...validateRequest(normalizedRequest),
+      ...validateProviderContext(providerId, providerContext),
+    ];
     if (errors.length > 0) {
       return json({ errors }, { status: 400 });
     }
 
-    const draft = createLocalAgilMatrixDraft(normalizedRequest, {
-      exactProvider: "agil-local",
+    const adapter = getProgressiveAdapter(providerId);
+    const draft = adapter.createMatrixDraft(normalizedRequest, {
+      exactProvider: providerId,
       coverageMode: normalizedRequest.coverageMode,
     });
     const job = runtime.sessions.createMatrixJob({
       request: normalizedRequest,
+      providerContext,
       cells: draft.cells,
       axes: draft.axes,
       confidenceSummary: draft.confidenceSummary,
@@ -526,7 +759,7 @@ export async function routeRequest(request: Request): Promise<Response> {
       status: "running",
     });
 
-    void resolveLocalAgilMatrixProgressive(normalizedRequest, {
+    void adapter.resolveMatrixProgressive(normalizedRequest, providerContext, {
       ...draft,
       searchMeta: {
         ...draft.searchMeta,
@@ -641,7 +874,15 @@ export async function routeRequest(request: Request): Promise<Response> {
       return json({ errors: ["Session or offer not found."] }, { status: 404 });
     }
 
-    const result = await runtime.orchestrator.reprice(session.request, payload.offerId, offer);
+    const result = await runtime.orchestrator.reprice(
+      session.request,
+      payload.offerId,
+      offer,
+      {
+        providerId: offer.providerSource,
+        providerContext: session.providerContext,
+      },
+    );
     const repriced = result.offers[0];
 
     if (!repriced) {
@@ -677,7 +918,15 @@ export async function routeRequest(request: Request): Promise<Response> {
       ? offer
       : runtime.sessions.updateOffer(
           payload.searchSessionId,
-          (await runtime.orchestrator.reprice(session.request, payload.offerId, offer)).offers[0] ?? offer,
+          (await runtime.orchestrator.reprice(
+            session.request,
+            payload.offerId,
+            offer,
+            {
+              providerId: offer.providerSource,
+              providerContext: session.providerContext,
+            },
+          )).offers[0] ?? offer,
         ) ?? offer;
 
     return json({

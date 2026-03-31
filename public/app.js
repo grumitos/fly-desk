@@ -111,6 +111,142 @@ const calendarState = {
 
 const numFmt = new Intl.NumberFormat("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+function providerIdFromRequest(request) {
+  return request?.providerId === "costamar" ? "costamar" : "agil-local";
+}
+
+function providerLabel(providerId) {
+  return providerId === "costamar" ? "Costamar" : "Agil";
+}
+
+function defaultProviderIds(request) {
+  return request?.providerId ? [providerIdFromRequest(request)] : ["agil-local", "costamar"];
+}
+
+function providerLabelList(providerIds) {
+  return (providerIds || []).map(providerLabel).join(" + ");
+}
+
+function providerLoadingCopy(providerIds) {
+  return `Consultando ${providerLabelList(providerIds)}...`;
+}
+
+function providerSearchWarnings(response) {
+  return [
+    ...(response?.warnings ?? []),
+    ...(response?.searchMeta?.warnings ?? []),
+  ];
+}
+
+function isProviderSessionWarning(providerId, warning) {
+  const normalized = String(warning || "").trim().toLowerCase();
+  if (!normalized) return false;
+
+  if (providerId === "costamar") {
+    return normalized.includes("costamar rejected this search")
+      || (normalized.includes("costamar") && (
+        normalized.includes("token")
+        || normalized.includes("session")
+        || normalized.includes("sesion")
+      ));
+  }
+
+  return normalized.includes("unable to extract agil session")
+    || normalized.includes("agil_token_expired")
+    || (normalized.includes("agil") && (
+      normalized.includes("token")
+      || normalized.includes("session")
+      || normalized.includes("sesion")
+      || normalized.includes("localstorage")
+      || normalized.includes("chrome")
+    ));
+}
+
+function providerLinkFallbackLabel(response, providerId) {
+  return providerSearchWarnings(response).some((warning) => isProviderSessionWarning(providerId, warning))
+    ? "Falta sesión"
+    : "—";
+}
+
+function providerIdsForLinkCell() {
+  const providerIds = state.searchResponse?.searchMeta?.providersUsed;
+  if (Array.isArray(providerIds) && providerIds.length > 0) {
+    return providerIds;
+  }
+
+  return defaultProviderIds(state.request);
+}
+
+function renderProviderLinkItem(path, providerId) {
+  if (path?.url) {
+    return `<a href="${path.url}" target="_blank" rel="noreferrer" class="row-link" data-stop-row="1">${providerLabel(providerId)}</a>`;
+  }
+
+  const fallback = providerLinkFallbackLabel(state.searchResponse, providerId);
+  if (fallback === "—") {
+    return "";
+  }
+
+  return `<span class="cell-sub cell-sub--warning">${providerLabel(providerId)}: ${fallback}</span>`;
+}
+
+function renderProviderLinksCell(offer, providerLinkIndex) {
+  const items = providerIdsForLinkCell()
+    .map((providerId) => renderProviderLinkItem(bestProviderPathForOffer(offer, providerId, providerLinkIndex), providerId))
+    .filter(Boolean);
+
+  if (items.length === 0) {
+    return '<span class="cell-sub">—</span>';
+  }
+
+  return `<div class="provider-links-cell">${items.join("")}</div>`;
+}
+
+function runtimeBadgeCopy(active) {
+  const providerIds = active?.searchMeta?.providersUsed?.length
+    ? active.searchMeta.providersUsed
+    : [active?.providerMeta?.exactProvider].filter(Boolean);
+  const providerName = providerLabelList(providerIds);
+  const status = active?.matrixStatus ?? active?.searchStatus ?? active?.searchMeta?.searchState;
+
+  if (status === "running" || status === "search_partial") {
+    return `${providerName} cargando`;
+  }
+
+  if (status === "search_failed" || status === "failed") {
+    return `${providerName} error`;
+  }
+
+  if (active?.matrixResponse || active?.cells) {
+    return `${providerName} flexible`;
+  }
+
+  return `${providerName} listo`;
+}
+
+function isUsefulFlexibleCell(request, departureDate, returnDate) {
+  if (!returnDate || returnDate <= departureDate) return false;
+  const leg = request?.legs?.[0] || {};
+  const minNights = Math.max(1, parseInt(leg.minNights, 10) || 1);
+  const rawMax = Math.max(minNights, parseInt(leg.maxNights, 10) || minNights);
+  const stayNights = diffDaysIso(departureDate, returnDate);
+  return stayNights >= minNights && stayNights <= rawMax;
+}
+
+function buildResultsTableHeaderHtml() {
+  return `
+    <thead><tr>
+      <th>Aerolínea</th>
+      <th>Fechas</th>
+      <th>Duración</th>
+      <th>Escalas</th>
+      <th>Equipaje</th>
+      <th class="results-price">Precio</th>
+      <th>Enlace</th>
+    </tr></thead>
+  `;
+}
+
 /* ================================================================
    UI FEEDBACK — loading, toast, debounce
    ================================================================ */
@@ -157,36 +293,50 @@ async function writeClipboardText(text) {
   }
 }
 
-function renderResultsSkeleton(kind = "search") {
+function renderResultsSkeleton(kind = "search", providerId = "agil-local") {
   if (!resultsContainer) return;
-  const rows = Array.from({ length: 6 }, (_, index) => `
-    <div class="results-skeleton__row" aria-hidden="true">
-      <span class="skeleton-line skeleton-line--md"></span>
-      <span class="skeleton-line skeleton-line--lg"></span>
-      <span class="skeleton-line skeleton-line--sm"></span>
-      <span class="skeleton-line skeleton-line--sm"></span>
-      <span class="skeleton-line skeleton-line--sm"></span>
-      <span class="skeleton-line skeleton-line--price"></span>
-      <span class="skeleton-line skeleton-line--link"></span>
-    </div>
+  const rows = Array.from({ length: 6 }, () => `
+    <tr class="results-row--placeholder" aria-hidden="true">
+      <td><span class="skeleton-line skeleton-line--md"></span></td>
+      <td>
+        <div class="results-date-stack">
+          <span class="skeleton-line skeleton-line--lg"></span>
+          <span class="skeleton-line skeleton-line--sm"></span>
+        </div>
+      </td>
+      <td><span class="skeleton-line skeleton-line--sm"></span></td>
+      <td><span class="skeleton-line skeleton-line--sm"></span></td>
+      <td><span class="skeleton-line skeleton-line--sm"></span></td>
+      <td class="results-price"><span class="skeleton-line skeleton-line--price"></span></td>
+      <td><span class="skeleton-line skeleton-line--link"></span></td>
+    </tr>
   `).join("");
 
   resultsContainer.innerHTML = `
     <div class="results-skeleton" aria-live="polite" aria-busy="true">
-      <div class="results-skeleton__table">
-        <div class="results-skeleton__head" aria-hidden="true">
-          <span>Aerolínea</span>
-          <span>Fechas</span>
-          <span>Duración</span>
-          <span>Escalas</span>
-          <span>Equipaje</span>
-          <span>Precio</span>
-          <span>Agil</span>
-        </div>
-        ${rows}
+      <div class="table-wrap">
+        <table class="results-table results-table--pending">
+          ${buildResultsTableHeaderHtml()}
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <div class="results-pager">
+        <button type="button" class="btn btn--secondary btn--sm" disabled>← Anterior</button>
+        <span class="results-pager__label">Cargando</span>
+        <button type="button" class="btn btn--secondary btn--sm" disabled>Siguiente →</button>
       </div>
     </div>
   `;
+
+  const resultsWrap = resultsContainer.querySelector(".table-wrap");
+  syncResultsScroll(resultsWrap);
+  requestAnimationFrame(() => syncResultsScroll(resultsWrap));
+  resultsWrap?.addEventListener("scroll", handleResultsScroll, { passive: true });
+  resultsWrap?.addEventListener("wheel", markPollingUiInteraction, { passive: true });
+  resultsWrap?.addEventListener("pointerdown", () => {
+    state.pollPointerDown = true;
+    markPollingUiInteraction();
+  });
 }
 
 function detailActionCopy(action) {
@@ -1010,6 +1160,135 @@ function offerVariantGroupKey(offer) {
   ].join("##");
 }
 
+function normalizeProviderMatchTime(iso) {
+  if (typeof iso !== "string") return "";
+  return iso
+    .replace(/\.\d+(?=(?:[+-]\d{2}:?\d{2}|Z)$)/i, "")
+    .replace(/(?:[+-]\d{2}:?\d{2}|Z)$/i, "")
+    .slice(0, 19);
+}
+
+function normalizeProviderMatchFlightNumber(segment) {
+  const rawFlightNumber = typeof segment?.flightNumber === "string"
+    ? segment.flightNumber.toUpperCase().replace(/\s+/g, "")
+    : "";
+  const marketingCarrier = typeof segment?.marketingCarrier === "string"
+    ? segment.marketingCarrier.toUpperCase().trim()
+    : "";
+
+  if (!rawFlightNumber) return "";
+  if (marketingCarrier && rawFlightNumber.startsWith(marketingCarrier)) {
+    return rawFlightNumber.slice(marketingCarrier.length) || rawFlightNumber;
+  }
+
+  return rawFlightNumber;
+}
+
+function providerLinkSegmentKey(segment) {
+  return [
+    segment?.marketingCarrier ?? "",
+    normalizeProviderMatchFlightNumber(segment),
+    segment?.origin ?? "",
+    segment?.destination ?? "",
+    normalizeProviderMatchTime(segment?.departureAt),
+    normalizeProviderMatchTime(segment?.arrivalAt),
+  ].join("|");
+}
+
+function providerLinkMatchKey(offer) {
+  const itineraries = (offer?.itineraries ?? []).map((itinerary) => [
+    itinerary?.direction ?? "",
+    (itinerary?.segments ?? []).map((segment) => providerLinkSegmentKey(segment)).join("~"),
+  ].join("::")).join("||");
+
+  return [
+    offer?.tripType ?? state.request?.tripType ?? "",
+    offer?.origin ?? "",
+    offer?.destination ?? "",
+    itineraries,
+  ].join("##");
+}
+
+function buildProviderLinkIndex(offers) {
+  const index = new Map();
+
+  (offers ?? []).forEach((offer) => {
+    const key = providerLinkMatchKey(offer);
+    if (!key) return;
+    if (!index.has(key)) index.set(key, []);
+    index.get(key).push(offer);
+  });
+
+  return index;
+}
+
+function providerPathPrecisionRank(path) {
+  switch (path?.precision) {
+    case "exact-offer":
+      return 0;
+    case "exact-search":
+      return 1;
+    case "broad-search":
+      return 2;
+    case "manual":
+      return 3;
+    default:
+      return 4;
+  }
+}
+
+function compareProviderPathCandidates(left, right) {
+  const precisionDiff = providerPathPrecisionRank(left?.path) - providerPathPrecisionRank(right?.path);
+  if (precisionDiff !== 0) return precisionDiff;
+
+  const leftScore = Number(left?.path?.score ?? 0);
+  const rightScore = Number(right?.path?.score ?? 0);
+  if (rightScore !== leftScore) return rightScore - leftScore;
+
+  const leftAmount = Number(left?.offer?.price?.total?.amount ?? Number.POSITIVE_INFINITY);
+  const rightAmount = Number(right?.offer?.price?.total?.amount ?? Number.POSITIVE_INFINITY);
+  if (leftAmount !== rightAmount) return leftAmount - rightAmount;
+
+  return String(left?.offer?.id ?? "").localeCompare(String(right?.offer?.id ?? ""));
+}
+
+function matchedOffersForProviderLink(offer, providerLinkIndex) {
+  const key = providerLinkMatchKey(offer);
+  return providerLinkIndex?.get(key) ?? [offer];
+}
+
+function bestProviderPathForOffer(offer, providerId, providerLinkIndex) {
+  const candidates = matchedOffersForProviderLink(offer, providerLinkIndex)
+    .flatMap((candidateOffer) =>
+      (candidateOffer?.purchasePaths ?? [])
+        .filter((path) => path?.provider === providerId && path?.url)
+        .map((path) => ({ offer: candidateOffer, path })),
+    )
+    .sort(compareProviderPathCandidates);
+
+  return candidates[0]?.path;
+}
+
+function resolvedOfferPurchasePaths(offer, providerLinkIndex) {
+  const primaryPaths = [];
+  const agilPath = bestProviderPathForOffer(offer, "agil-local", providerLinkIndex);
+  const costamarPath = bestProviderPathForOffer(offer, "costamar", providerLinkIndex);
+
+  if (agilPath?.url) primaryPaths.push(agilPath);
+  if (costamarPath?.url) primaryPaths.push(costamarPath);
+
+  const seen = new Set(primaryPaths.map((path) => `${path.provider}|${path.url}`));
+  const extraPaths = (offer?.purchasePaths ?? []).filter((path) => {
+    if (!path?.url) return false;
+    const key = `${path.provider}|${path.url}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return [...primaryPaths, ...extraPaths];
+}
+
 function buildOfferGroups(offers) {
   const groups = new Map();
   for (const offer of offers) {
@@ -1483,6 +1762,9 @@ function summarizeMatrixConfidence(cells) {
 }
 
 function buildPendingMatrixResponse(request) {
+  const providerIds = defaultProviderIds(request);
+  const providerId = providerIds[0];
+  const providerName = providerLabelList(providerIds);
   const leg = request.legs?.[0];
   const departures = enumerateIsoRange(leg.departureStart, leg.departureEnd);
   const returns = request.tripType === "round-trip"
@@ -1494,11 +1776,11 @@ function buildPendingMatrixResponse(request) {
         key: departureDate,
         departureDate,
         confidence: "loading",
-        providerSource: "agil-local",
+        providerSource: providerId,
         selectable: false,
         requiresRequery: true,
         stateCode: "ind",
-        tooltip: "Consultando Agil...",
+        tooltip: providerLoadingCopy(providerIds),
         derivedRequest: {
           ...request,
           tripType: "one-way",
@@ -1507,17 +1789,17 @@ function buildPendingMatrixResponse(request) {
         },
       }))
     : departures.flatMap((departureDate) => returns.map((returnDate) => {
-        if (returnDate <= departureDate) {
+        if (!isUsefulFlexibleCell(request, departureDate, returnDate)) {
           return {
             key: `${departureDate}_${returnDate}`,
             departureDate,
             returnDate,
             confidence: "empty",
-            providerSource: "agil-local",
+            providerSource: providerId,
             selectable: false,
-            requiresRequery: true,
+            requiresRequery: false,
             stateCode: "emp",
-            tooltip: "Return date must be after departure date.",
+            tooltip: "Esta combinación queda fuera del rango de noches solicitado.",
           };
         }
 
@@ -1527,11 +1809,11 @@ function buildPendingMatrixResponse(request) {
           returnDate,
           stayNights: diffDaysIso(departureDate, returnDate),
           confidence: "loading",
-          providerSource: "agil-local",
+          providerSource: providerId,
           selectable: false,
           requiresRequery: true,
           stateCode: "ind",
-          tooltip: "Consultando Agil...",
+          tooltip: providerLoadingCopy(providerIds),
           derivedRequest: {
             ...request,
             tripType: "round-trip",
@@ -1553,26 +1835,29 @@ function buildPendingMatrixResponse(request) {
     },
     confidenceSummary: summarizeMatrixConfidence(cells),
     recommendations: [
-      "Matrix loading from Agil in parallel.",
-      "Prices appear as each date combination resolves.",
+      `Matrix loading from ${providerName} with useful date combinations only.`,
+      "Prices appear as each useful date combination resolves.",
     ],
     searchMeta: {
       requestedAt,
       completedAt: requestedAt,
-      providersUsed: ["agil-local"],
-      warnings: ["Matrix loading from Agil in parallel."],
+      providersUsed: providerIds,
+      warnings: [`Matrix loading from ${providerName} with useful date combinations only.`],
       partial: true,
       searchState: "search_partial",
     },
     providerMeta: {
-      exactProvider: "agil-local",
+      exactProvider: providerId,
       coverageMode: request.coverageMode,
     },
-    warnings: ["Matrix loading from Agil in parallel."],
+    warnings: [`Matrix loading from ${providerName} with useful date combinations only.`],
   };
 }
 
 function buildPendingSearchResponse(request, sortMode) {
+  const providerIds = defaultProviderIds(request);
+  const providerId = providerIds[0];
+  const providerName = providerLabelList(providerIds);
   const requestedAt = new Date().toISOString();
   return {
     searchJobId: null,
@@ -1586,16 +1871,16 @@ function buildPendingSearchResponse(request, sortMode) {
     searchMeta: {
       requestedAt,
       completedAt: requestedAt,
-      providersUsed: ["agil-local"],
-      warnings: ["Consultando Agil. Los resultados se iran agregando."],
+      providersUsed: providerIds,
+      warnings: [`Consultando ${providerName}. Los resultados se iran agregando.`],
       partial: true,
       searchState: "search_partial",
     },
     providerMeta: {
-      exactProvider: "agil-local",
+      exactProvider: providerId,
       coverageMode: request.coverageMode,
     },
-    warnings: ["Consultando Agil. Los resultados se iran agregando."],
+    warnings: [`Consultando ${providerName}. Los resultados se iran agregando.`],
   };
 }
 
@@ -2198,8 +2483,8 @@ function validateForm() {
   const originCode = resolvedLocationCode("origin");
   const destinationCode = resolvedLocationCode("destination");
 
-  if (!originCode) { errs.push("Origen: selecciona una sugerencia de Agil o escribe un IATA valido."); $("origin").classList.add("is-invalid"); }
-  if (!destinationCode) { errs.push("Destino: selecciona una sugerencia de Agil o escribe un IATA valido."); $("destination").classList.add("is-invalid"); }
+  if (!originCode) { errs.push("Origen: selecciona una sugerencia válida o escribe un IATA valido."); $("origin").classList.add("is-invalid"); }
+  if (!destinationCode) { errs.push("Destino: selecciona una sugerencia válida o escribe un IATA valido."); $("destination").classList.add("is-invalid"); }
   if (originCode && destinationCode && originCode === destinationCode) {
     errs.push("Origen y destino no pueden ser iguales.");
     $("origin").classList.add("is-invalid");
@@ -2647,15 +2932,19 @@ function queueMatrixPoll(jobId) {
 function renderToolbar() {
   const active = state.searchResponse ?? state.matrixResponse;
   if (!active) {
-    if (runtimeBadge) { runtimeBadge.textContent = "IDLE"; runtimeBadge.className = "badge"; }
+    if (runtimeBadge) { runtimeBadge.textContent = "Listo"; runtimeBadge.className = "badge"; }
     if (resultPill) { resultPill.textContent = "0"; resultPill.className = "badge badge--accent"; }
     return;
   }
-  const prov = active.providerMeta?.exactProvider ?? "—";
-  const st = active.matrixStatus ?? active.searchMeta?.searchState ?? "—";
+  const runtimeCopy = runtimeBadgeCopy(active);
+  const status = active.matrixStatus ?? active.searchStatus ?? active.searchMeta?.searchState ?? "";
   if (runtimeBadge) {
-    runtimeBadge.textContent = `${prov} · ${st}`;
-    runtimeBadge.className = "badge badge--success";
+    runtimeBadge.textContent = runtimeCopy;
+    runtimeBadge.className = status === "running" || status === "search_partial"
+      ? "badge badge--accent"
+      : status === "search_failed" || status === "failed"
+        ? "badge badge--danger"
+        : "badge badge--success";
   }
   if (resultPill) {
     resultPill.textContent = state.searchResponse
@@ -2671,41 +2960,30 @@ function updateResultsToolbar() {
   const hasMatrix = (state.matrixResponse?.cells?.length ?? 0) > 0;
   const matrixCellCount = state.matrixResponse?.cells?.length ?? 0;
   const isSearchRunning = state.searchResponse?.searchStatus === "running";
+  let panelMeta = "";
 
   if (resultsPanelTitle && resultsPanelMeta) {
     if (hasMatrix) {
-      resultsPanelTitle.textContent = "Calendario flexible";
-      resultsPanelMeta.textContent = "Compara fechas y abre una celda para convertirla en consulta exacta.";
+      resultsPanelTitle.textContent = "Flexible";
     } else if (state.searchResponse) {
       if (isSearchRunning) {
-        resultsPanelTitle.textContent = "Cargando resultados";
-        resultsPanelMeta.textContent = "Consultando Agil. La lista se irá completando mientras llegan ofertas.";
+        resultsPanelTitle.textContent = "Buscando";
       } else if (total > 0) {
-        resultsPanelTitle.textContent = "Resultados disponibles";
-        resultsPanelMeta.textContent = total === 1
-          ? "1 grupo listo para revisar."
-          : `${total} grupos listos para revisar.`;
+        resultsPanelTitle.textContent = "Resultados";
       } else {
         resultsPanelTitle.textContent = "Sin resultados";
-        resultsPanelMeta.textContent = "No aparecieron ofertas con la combinación y filtros actuales.";
       }
     } else {
-      resultsPanelTitle.textContent = "Esperando una búsqueda";
-      resultsPanelMeta.textContent = "Completa origen, destino y fechas para empezar.";
+      resultsPanelTitle.textContent = "Consulta";
     }
+
+    resultsPanelMeta.textContent = panelMeta;
+    resultsPanelMeta.classList.toggle("hidden", !panelMeta);
   }
 
   if (resultsCountLabel) {
-    let nextCount = "";
-    if (hasMatrix) {
-      nextCount = `${matrixCellCount} celdas`;
-    } else if (isSearchRunning) {
-      nextCount = "Cargando";
-    } else if (total > 0) {
-      nextCount = `${total} grupos`;
-    }
-    resultsCountLabel.textContent = nextCount;
-    resultsCountLabel.classList.toggle("hidden", !nextCount);
+    resultsCountLabel.textContent = "";
+    resultsCountLabel.classList.add("hidden");
   }
 
   if (sortButtonsEl) {
@@ -2751,23 +3029,11 @@ function renderResults() {
   }
 
   let html = "";
-  if (isRunning) {
-    html += '<div class="results-loading"><span>Consultando Agil. El listado sigue cargando.</span></div>';
-  }
-
-  html += '<div class="table-wrap"><table class="results-table"><thead><tr>';
-  html += '<th>Aerolínea</th>';
-  html += '<th>Fechas</th>';
-  html += '<th>Duración</th>';
-  html += '<th>Escalas</th>';
-  html += '<th>Equipaje</th>';
-  html += '<th class="results-price">Precio</th>';
-  html += '<th>Agil</th>';
-  html += '</tr></thead><tbody>';
+  html += `<div class="table-wrap"><table class="results-table">${buildResultsTableHeaderHtml()}<tbody>`;
+  const providerLinkIndex = buildProviderLinkIndex(state.searchResponse?.allOffers ?? offers);
 
   buildOfferGroups(offers).forEach((group) => {
     const o = group.find(g => g.id === state.selectedOfferId) ?? group[0];
-    const agilPath = o.purchasePaths?.find((p) => p.provider === "agil-local" && p.url);
     const dateSummary = buildGroupDateSummary(group, state.selectedOfferId);
     const isActive = group.some(g => g.id === state.selectedOfferId);
     const badge = group.length > 1
@@ -2784,7 +3050,7 @@ function renderResults() {
     html += `<td>${renderStopsSummary(o)}</td>`;
     html += `<td class="cell-sub">${bagCarry} / ${bagCheck}</td>`;
     html += `<td class="results-price">${formatMoney(o.price?.total)}</td>`;
-    html += `<td>${agilPath ? `<a href="${agilPath.url}" target="_blank" rel="noreferrer" class="row-link" data-stop-row="1">Agil</a>` : '<span class="cell-sub">—</span>'}</td>`;
+    html += `<td>${renderProviderLinksCell(o, providerLinkIndex)}</td>`;
     html += `</tr>`;
   });
 
@@ -3120,10 +3386,8 @@ function renderDetailPanel() {
     if (detailContent) {
       detailContent.innerHTML = renderEmptyPanel({
         wrapperClass: "detail-empty",
-        eyebrow: "Oferta",
-        title: "Ninguna oferta seleccionada",
-        text: "Aquí verás tarifa, tramos, equipaje y accesos de compra.",
-        hint: "Selecciona una fila o una celda del calendario para poblar el panel.",
+        title: "Sin oferta seleccionada",
+        text: "Selecciona una opción para ver el detalle.",
         icon: "ico-clipboard",
       });
     }
@@ -3161,6 +3425,7 @@ function renderDetailPanel() {
   const group = getGroupForOffer(offer.id) ?? [offer];
   const outbound = offer.itineraries?.find(it => it.direction === "outbound") ?? offer.itineraries?.[0];
   const carrier = carrierDisplayParts(offer);
+  const providerLinkIndex = buildProviderLinkIndex(state.searchResponse?.allOffers ?? []);
 
   let h = "";
 
@@ -3215,7 +3480,7 @@ function renderDetailPanel() {
   h += '</div>';
 
   // Purchase paths
-  const paths = offer.purchasePaths?.filter(p => p.url) ?? [];
+  const paths = resolvedOfferPurchasePaths(offer, providerLinkIndex);
   if (paths.length > 0) {
     h += '<div class="detail-section"><div class="detail-section__title">Compra</div>';
     paths.forEach(p => {

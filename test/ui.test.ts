@@ -512,11 +512,11 @@ test("query and offer panels expose homogeneous headers from first paint", async
         };
       });
 
-      assert.equal(probe.resultsTitle, "Esperando una búsqueda");
-      assert.equal(probe.detailTitle, "Detalle");
+      assert.equal(probe.resultsTitle, "Consulta");
+      assert.equal(probe.detailTitle, "Oferta");
       assert.equal(probe.countHidden, true);
-      assert.match(probe.resultsMeta, /Completa origen, destino y fechas/i);
-      assert.match(probe.detailMeta, /Tarifa, tramos y accesos de compra/i);
+      assert.equal(probe.resultsMeta, "");
+      assert.equal(probe.detailMeta, "");
       assert.equal(probe.resultsPanelDisplay, "flex");
       assert.equal(probe.detailPanelDisplay, "flex");
       assert.equal(probe.paddingLeftMatches, true);
@@ -1790,6 +1790,287 @@ test("submitting a search shows inline placeholders instead of a fullscreen over
 
       await page.waitForSelector('tr[data-oid="offer-1"]');
       assert.equal(await page.locator(".results-skeleton").count(), 0);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+test("provider link column shows both the provider link and missing-session feedback when needed", async () => {
+  await withServer(async (baseUrl) => {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-missing-session",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MAD",
+                departureDate: "2026-06-01",
+                returnDate: "2026-06-08",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 1,
+              infants: 1,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [buildOffer()],
+          allOffers: [buildOffer()],
+          searchMeta: {
+            ...buildSearchMeta("search_live"),
+            providersUsed: ["agil-local", "costamar"],
+            warnings: [
+              "Costamar rejected this search: the branded token is invalid, expired, or no longer belongs to this agency.",
+            ],
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [
+            "Costamar rejected this search: the branded token is invalid, expired, or no longer belongs to this agency.",
+          ],
+        }),
+      });
+    });
+
+    try {
+      await openDesktop(page, baseUrl);
+      await page.evaluate(() => {
+        const origin = document.getElementById("origin") as HTMLInputElement | null;
+        const destination = document.getElementById("destination") as HTMLInputElement | null;
+        if (!origin || !destination) throw new Error("Missing location inputs");
+        origin.value = "LIM - Lima, Peru";
+        origin.dataset.code = "LIM";
+        origin.dataset.label = "LIM - Lima, Peru";
+        destination.value = "MAD - Madrid, España";
+        destination.dataset.code = "MAD";
+        destination.dataset.label = "MAD - Madrid, España";
+      });
+      await setDateValue(page, "departureDate", "2026-06-01");
+      await setDateValue(page, "returnDate", "2026-06-08");
+
+      await page.click("#submitButton");
+      await page.waitForSelector('tr[data-oid="offer-1"]');
+
+      const linkCellText = await page.locator('tr[data-oid="offer-1"] td:nth-child(7)').innerText();
+      assert.match(linkCellText, /Agil/);
+      assert.match(linkCellText, /Costamar:\s*Falta sesión/);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+test("provider link column reuses the matched Costamar link for the same flight", async () => {
+  await withServer(async (baseUrl) => {
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      const agilOffer = buildOffer({
+        id: "offer-agil",
+        providerSource: "agil-local",
+        mainCarrier: "IB",
+        validatingCarrier: "IB",
+        price: {
+          total: {
+            amount: 512,
+            currencyCode: "USD",
+          },
+        },
+        purchasePaths: [
+          {
+            provider: "agil-local",
+            type: "deep-link",
+            label: "Agil",
+            url: "https://example.test/agil",
+            precision: "exact-search",
+            score: 0.9,
+          },
+        ],
+        itineraries: [
+          {
+            direction: "outbound",
+            durationMinutes: 480,
+            stops: 0,
+            segments: [
+              {
+                marketingCarrier: "IB",
+                flightNumber: "IB124",
+                origin: "LIM",
+                destination: "MAD",
+                departureAt: "2026-06-01T11:00:00",
+                arrivalAt: "2026-06-02T05:40:00",
+              },
+            ],
+          },
+          {
+            direction: "inbound",
+            durationMinutes: 470,
+            stops: 0,
+            segments: [
+              {
+                marketingCarrier: "IB",
+                flightNumber: "IB121",
+                origin: "MAD",
+                destination: "LIM",
+                departureAt: "2026-06-08T00:05:00",
+                arrivalAt: "2026-06-08T05:30:00",
+              },
+            ],
+          },
+        ],
+      });
+
+      const costamarOffer = buildOffer({
+        id: "offer-costamar",
+        providerSource: "costamar",
+        mainCarrier: "IB",
+        validatingCarrier: "IB",
+        price: {
+          total: {
+            amount: 498,
+            currencyCode: "USD",
+          },
+        },
+        purchasePaths: [
+          {
+            provider: "costamar",
+            type: "deep-link",
+            label: "Costamar",
+            url: "https://example.test/costamar",
+            precision: "exact-search",
+            score: 0.9,
+          },
+        ],
+        itineraries: [
+          {
+            direction: "outbound",
+            durationMinutes: 480,
+            stops: 0,
+            segments: [
+              {
+                marketingCarrier: "IB",
+                flightNumber: "IB124",
+                origin: "LIM",
+                destination: "MAD",
+                departureAt: "2026-06-01T11:00:00.000-0500",
+                arrivalAt: "2026-06-02T05:40:00.000-0500",
+              },
+            ],
+          },
+          {
+            direction: "inbound",
+            durationMinutes: 470,
+            stops: 0,
+            segments: [
+              {
+                marketingCarrier: "IB",
+                flightNumber: "IB121",
+                origin: "MAD",
+                destination: "LIM",
+                departureAt: "2026-06-08T00:05:00.000-0500",
+                arrivalAt: "2026-06-08T05:30:00.000-0500",
+              },
+            ],
+          },
+        ],
+      });
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-match-links",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MAD",
+                departureDate: "2026-06-01",
+                returnDate: "2026-06-08",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 1,
+              infants: 1,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [agilOffer, costamarOffer],
+          allOffers: [agilOffer, costamarOffer],
+          searchMeta: {
+            ...buildSearchMeta("search_live"),
+            providersUsed: ["agil-local", "costamar"],
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    try {
+      await openDesktop(page, baseUrl);
+      await page.evaluate(() => {
+        const origin = document.getElementById("origin") as HTMLInputElement | null;
+        const destination = document.getElementById("destination") as HTMLInputElement | null;
+        if (!origin || !destination) throw new Error("Missing location inputs");
+        origin.value = "LIM - Lima, Peru";
+        origin.dataset.code = "LIM";
+        origin.dataset.label = "LIM - Lima, Peru";
+        destination.value = "MAD - Madrid, España";
+        destination.dataset.code = "MAD";
+        destination.dataset.label = "MAD - Madrid, España";
+      });
+      await setDateValue(page, "departureDate", "2026-06-01");
+      await setDateValue(page, "returnDate", "2026-06-08");
+
+      await page.click("#submitButton");
+      await page.waitForSelector('tr[data-oid="offer-agil"]');
+
+      const linkCellText = await page.locator('tr[data-oid="offer-agil"] td:nth-child(7)').innerText();
+      assert.match(linkCellText, /Agil/);
+      assert.match(linkCellText, /Costamar/);
     } finally {
       await browser.close();
     }

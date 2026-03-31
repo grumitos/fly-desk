@@ -6,7 +6,7 @@ export type Cabin =
   | "BUSINESS"
   | "FIRST";
 
-export type ProviderId = "agil-local";
+export type ProviderId = "agil-local" | "costamar";
 
 export type SearchState =
   | "search_live"
@@ -124,7 +124,42 @@ export interface SearchFilters {
   exactPurchasePathOnly?: boolean;
 }
 
+export interface CostamarProviderConfigInput {
+  apiBaseUrl?: string;
+  brandBaseUrl?: string;
+  terminalId?: string;
+  token?: string;
+  lang?: string;
+}
+
+export interface ProviderConfigInput {
+  costamar?: CostamarProviderConfigInput;
+}
+
+export interface CostamarProviderContext {
+  apiBaseUrl: string;
+  brandBaseUrl: string;
+  terminalId: string;
+  token: string;
+  lang: string;
+}
+
+export interface ProviderContext {
+  costamar?: CostamarProviderContext;
+}
+
+export interface LocationSuggestion {
+  code: string;
+  city: string;
+  country: string;
+  countryCode?: string;
+  cityCode?: string;
+  searchType?: string;
+  label: string;
+}
+
 export interface SearchRequest {
+  providerId?: ProviderId;
   tripType: TripType;
   searchMode: SearchMode;
   legs: SearchLeg[];
