@@ -1,5 +1,5 @@
 import { applySearchFilters } from "./filtering";
-import { SearchProvider } from "./provider";
+import { ProviderExecutionContext, SearchProvider } from "./provider";
 import { computeValueScores, enrichComparisonMetrics, sortOffers } from "./ranking";
 import {
   CanonicalOffer,
@@ -11,16 +11,15 @@ import {
   SearchResponse,
 } from "./types";
 
-function buildProviderMeta(
-  request: SearchRequest,
-  exactProvider: SearchProvider,
-  secondaryRedirectProvider?: SearchProvider,
-): ProviderMeta {
+function buildProviderMeta(request: SearchRequest, exactProviderId: ProviderId): ProviderMeta {
   return {
-    exactProvider: exactProvider.id as ProviderId,
-    redirectProvider: secondaryRedirectProvider?.id as ProviderId | undefined,
+    exactProvider: exactProviderId,
     coverageMode: request.coverageMode,
   };
+}
+
+function providerDisplayName(providerId: ProviderId): string {
+  return providerId === "costamar" ? "Costamar" : "Agil";
 }
 
 export function buildSearchMeta(
@@ -74,32 +73,58 @@ export function materializeSearchResponse(
   };
 }
 
+export interface SearchExecutionOptions extends ProviderExecutionContext {
+  providerId?: ProviderId;
+}
+
 export class SearchOrchestrator {
-  constructor(
-    private readonly exactProvider: SearchProvider,
-    private readonly secondaryRedirectProvider?: SearchProvider,
-  ) {}
+  private readonly providers: Map<ProviderId, SearchProvider>;
+
+  constructor(providers: SearchProvider[]) {
+    this.providers = new Map(providers.map((provider) => [provider.id, provider]));
+  }
+
+  getProvider(providerId: ProviderId): SearchProvider | undefined {
+    return this.providers.get(providerId);
+  }
+
+  private resolveProvider(providerId?: ProviderId): SearchProvider {
+    const resolvedId = providerId ?? "agil-local";
+    const provider = this.providers.get(resolvedId);
+
+    if (!provider) {
+      throw new Error(`Search provider is not configured: ${resolvedId}`);
+    }
+
+    return provider;
+  }
 
   async search(
     request: SearchRequest,
     sortMode: "cheapest" | "fastest" | "best-value" = "cheapest",
+    options?: SearchExecutionOptions,
   ): Promise<SearchResponse> {
-    const exactResult = await this.exactProvider.searchExact(request);
+    const provider = this.resolveProvider(options?.providerId ?? request.providerId);
+    const exactResult = await provider.searchExact(request, options);
     return materializeSearchResponse(
       request,
       sortMode,
-      this.exactProvider.id as ProviderId,
+      provider.id,
       exactResult,
     );
   }
 
-  async buildMatrix(request: SearchRequest): Promise<MatrixResponse> {
+  async buildMatrix(
+    request: SearchRequest,
+    options?: SearchExecutionOptions,
+  ): Promise<MatrixResponse> {
     const startedAt = new Date().toISOString();
-    if (!this.exactProvider.searchFlexible) {
+    const provider = this.resolveProvider(options?.providerId ?? request.providerId);
+    if (!provider.searchFlexible) {
       throw new Error("Exact provider does not support matrix search");
     }
 
-    const flexibleResult = await this.exactProvider.searchFlexible(request);
+    const flexibleResult = await provider.searchFlexible(request, options);
     const cells = flexibleResult.cells;
 
     const departureDates = [...new Set(cells.map((cell) => cell.departureDate))];
@@ -117,16 +142,16 @@ export class SearchOrchestrator {
       },
       confidenceSummary,
       recommendations: [
-        "Matrix cells come from live Agil searches.",
+        `Matrix cells come from live ${providerDisplayName(provider.id)} searches.`,
         "Validated pricing still comes from reprice on a selected offer.",
       ],
       searchMeta: buildSearchMeta(
         startedAt,
-        [this.exactProvider.id as ProviderId],
+        [provider.id],
         flexibleResult.warnings,
         flexibleResult.partial,
       ),
-      providerMeta: buildProviderMeta(request, this.exactProvider, this.secondaryRedirectProvider),
+      providerMeta: buildProviderMeta(request, provider.id),
       warnings: flexibleResult.warnings,
     };
   }
@@ -135,18 +160,20 @@ export class SearchOrchestrator {
     request: SearchRequest,
     offerId: string,
     existingOffer?: CanonicalOffer,
+    options?: SearchExecutionOptions,
   ): Promise<SearchResponse> {
-    const target = existingOffer ?? await this.findOffer(request, offerId);
+    const provider = this.resolveProvider(options?.providerId ?? request.providerId);
+    const target = existingOffer ?? await this.findOffer(provider, request, offerId, options);
 
     if (!target) {
       throw new Error(`Offer not found: ${offerId}`);
     }
 
-    if (!this.exactProvider.reprice) {
+    if (!provider.reprice) {
       throw new Error("Exact provider does not support repricing");
     }
 
-    const result = await this.exactProvider.reprice(target, request);
+    const result = await provider.reprice(target, request, options);
     const offers = result.offer ? enrichComparisonMetrics(computeValueScores([result.offer])) : [];
 
     return {
@@ -154,21 +181,23 @@ export class SearchOrchestrator {
       searchMeta: {
         requestedAt: new Date().toISOString(),
         completedAt: new Date().toISOString(),
-        providersUsed: [this.exactProvider.id as ProviderId],
+        providersUsed: [provider.id],
         warnings: result.warnings,
         partial: result.status !== "verified",
         searchState: result.status === "verified" ? "search_live" : "search_partial",
       },
-      providerMeta: buildProviderMeta(request, this.exactProvider, this.secondaryRedirectProvider),
+      providerMeta: buildProviderMeta(request, provider.id),
       warnings: result.warnings,
     };
   }
 
   private async findOffer(
+    provider: SearchProvider,
     request: SearchRequest,
     offerId: string,
+    options?: SearchExecutionOptions,
   ): Promise<CanonicalOffer | undefined> {
-    const search = await this.exactProvider.searchExact(request);
+    const search = await provider.searchExact(request, options);
     return search.offers.find((offer: CanonicalOffer) => offer.id === offerId);
   }
 }

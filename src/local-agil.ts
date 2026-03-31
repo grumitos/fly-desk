@@ -4,6 +4,10 @@ import { readFileSync, rmSync, mkdirSync, cpSync, existsSync, readdirSync } from
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Browser, BrowserContext, Page } from "playwright";
+import {
+  enumerateUsefulFlexibleRequests,
+  isUsefulRoundTripCombination,
+} from "./core/flexible-search";
 import { buildOfferSignature } from "./core/offer-signature";
 import { maxStopsAcrossItineraries } from "./core/ranking";
 import {
@@ -1839,24 +1843,7 @@ export async function resolveLocalAgilExactProgressive(
 }
 
 function enumerateStayRangeRequests(request: SearchRequest): SearchRequest[] {
-  const leg = request.legs[0];
-  if (!leg.departureStart || !leg.departureEnd) {
-    throw new Error("Agil range search requires departureStart and departureEnd.");
-  }
-
-  const departures = enumerateRange(leg.departureStart, leg.departureEnd);
-  if (request.tripType === "one-way") {
-    return departures.map((departureDate) => buildDerivedOneWayRequest(request, departureDate));
-  }
-
-  if (!leg.returnStart || !leg.returnEnd) {
-    throw new Error("Agil round-trip range search requires returnStart and returnEnd.");
-  }
-
-  const returns = enumerateRange(leg.returnStart, leg.returnEnd);
-  return departures.flatMap((departureDate) => returns
-    .filter((returnDate) => returnDate > departureDate)
-    .map((returnDate) => buildDerivedRequest(request, departureDate, returnDate)));
+  return enumerateUsefulFlexibleRequests(request);
 }
 
 export async function searchLocalAgilRange(request: SearchRequest): Promise<ProviderSearchResult> {
@@ -2073,7 +2060,7 @@ export function createLocalAgilMatrixDraft(
         derivedRequest: buildDerivedOneWayRequest(request, departureDate),
       } satisfies MatrixCell))
     : departures.flatMap((departureDate) => returns.map((returnDate) => {
-        if (returnDate <= departureDate) {
+        if (!isUsefulRoundTripCombination(leg, departureDate, returnDate)) {
           return {
             key: `${departureDate}_${returnDate}`,
             departureDate,
@@ -2081,9 +2068,9 @@ export function createLocalAgilMatrixDraft(
             confidence: "empty" as const,
             providerSource: "agil-local" as const,
             selectable: false,
-            requiresRequery: true,
+            requiresRequery: false,
             stateCode: "emp" as const,
-            tooltip: "Return date must be after departure date.",
+            tooltip: "Esta combinacion queda fuera del rango de noches solicitado.",
           } satisfies MatrixCell;
         }
 

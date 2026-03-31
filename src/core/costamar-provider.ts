@@ -8,14 +8,14 @@ import {
 } from "./provider";
 import { CanonicalOffer, SearchRequest } from "./types";
 import {
-  buildLocalAgilMatrix,
-  repriceLocalAgilOffer,
-  searchLocalAgilExact,
-  searchLocalAgilRange,
-} from "../local-agil";
+  buildLocalCostamarMatrix,
+  repriceLocalCostamarOffer,
+  searchLocalCostamarExact,
+  suggestLocalCostamarLocations,
+} from "../local-costamar";
 
-export class LocalAgilProvider implements SearchProvider {
-  id = "agil-local" as const;
+export class LocalCostamarProvider implements SearchProvider {
+  id = "costamar" as const;
 
   capabilities: ProviderCapabilities = {
     exactSearch: true,
@@ -29,21 +29,17 @@ export class LocalAgilProvider implements SearchProvider {
 
   async searchExact(
     request: SearchRequest,
-    _context?: ProviderExecutionContext,
+    context?: ProviderExecutionContext,
   ): Promise<ProviderSearchResult> {
-    if (request.searchMode === "stay-range") {
-      return searchLocalAgilRange(request);
-    }
-
-    return searchLocalAgilExact(request);
+    return searchLocalCostamarExact(request, context?.providerContext);
   }
 
   async searchFlexible(
     request: SearchRequest,
-    _context?: ProviderExecutionContext,
+    context?: ProviderExecutionContext,
   ): Promise<ProviderMatrixResult> {
-    const result = await buildLocalAgilMatrix(request, {
-      exactProvider: "agil-local",
+    const result = await buildLocalCostamarMatrix(request, context?.providerContext, {
+      exactProvider: "costamar",
       coverageMode: request.coverageMode,
     });
 
@@ -57,8 +53,12 @@ export class LocalAgilProvider implements SearchProvider {
   async reprice(
     offer: CanonicalOffer,
     request: SearchRequest,
-    _context?: ProviderExecutionContext,
+    context?: ProviderExecutionContext,
   ): Promise<RepriceResult> {
-    return repriceLocalAgilOffer(offer, request);
+    return repriceLocalCostamarOffer(offer, request, context?.providerContext);
+  }
+
+  async suggestLocations(query: string, limit = 8) {
+    return suggestLocalCostamarLocations(query, limit);
   }
 }

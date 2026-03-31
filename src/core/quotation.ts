@@ -72,11 +72,12 @@ function titleCase(value?: string): string {
 }
 
 function describePriceSource(offer: CanonicalOffer): string {
+  const providerLabel = offer.providerSource === "costamar" ? "Costamar" : "Agil";
   if (offer.priceConfidence === "validated") {
-    return "Reprice Agil";
+    return `Reprice ${providerLabel}`;
   }
 
-  return "Agil live";
+  return `${providerLabel} live`;
 }
 
 function segmentLine(segment: Segment): string[] {

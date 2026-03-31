@@ -5,7 +5,7 @@ import { SearchRequest } from "./core/types";
 
 async function main() {
   const provider = new LocalAgilProvider();
-  const orchestrator = new SearchOrchestrator(provider);
+  const orchestrator = new SearchOrchestrator([provider]);
 
   const request: SearchRequest = {
     tripType: "round-trip",

@@ -1,5 +1,6 @@
 import { loadRuntimeConfig } from "./config";
 import { LocalAgilProvider } from "./core/agil-provider";
+import { LocalCostamarProvider } from "./core/costamar-provider";
 import { SearchOrchestrator } from "./core/orchestrator";
 import { SearchSessionStore } from "./session-store";
 
@@ -16,9 +17,11 @@ export function getRuntime(): RuntimeServices {
   }
 
   loadRuntimeConfig();
-  const provider = new LocalAgilProvider();
   runtime = {
-    orchestrator: new SearchOrchestrator(provider),
+    orchestrator: new SearchOrchestrator([
+      new LocalAgilProvider(),
+      new LocalCostamarProvider(),
+    ]),
     sessions: new SearchSessionStore(),
   };
 
