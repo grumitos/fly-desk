@@ -1,520 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chromium, type Page, type Route } from "playwright";
-import { withServer } from "./helpers/server";
-
-function buildSearchMeta(searchState: "search_partial" | "search_live" | "search_failed" = "search_partial") {
-  const timestamp = "2026-03-26T00:00:00.000Z";
-  return {
-    requestedAt: timestamp,
-    completedAt: timestamp,
-    providersUsed: ["agil-local"],
-    warnings: [],
-    partial: searchState !== "search_live",
-    searchState,
-    searchSessionId: "job-search-1",
-  };
-}
-
-function buildMatrixResponse(overrides: Record<string, unknown> = {}) {
-  return {
-    matrixJobId: "matrix-job-1",
-    matrixComplete: false,
-    matrixStatus: "running",
-    request: {
-      tripType: "round-trip",
-      searchMode: "roundtrip-grid",
-      legs: [
-        {
-          origin: "LIM",
-          destination: "MIA",
-          departureStart: "2026-04-15",
-          departureEnd: "2026-04-15",
-          returnStart: "2026-04-19",
-          returnEnd: "2026-04-19",
-        },
-      ],
-      passengers: {
-        adults: 1,
-        children: 0,
-        infants: 0,
-      },
-      cabin: "ECONOMY",
-      filters: {
-        maxResults: 25,
-      },
-      coverageMode: "core",
-      redirectMode: "best-effort",
-      currencyCode: "USD",
-      locale: "es-PE",
-      market: "PE",
-    },
-    cells: [
-      {
-        key: "2026-04-15_2026-04-19",
-        departureDate: "2026-04-15",
-        returnDate: "2026-04-19",
-        stayNights: 4,
-        confidence: "loading",
-        providerSource: "agil-local",
-        selectable: false,
-        requiresRequery: true,
-        stateCode: "ind",
-        tooltip: "Consultando Agil...",
-        derivedRequest: {
-          tripType: "round-trip",
-          searchMode: "exact",
-          legs: [
-            {
-              origin: "LIM",
-              destination: "MIA",
-              departureDate: "2026-04-15",
-              returnDate: "2026-04-19",
-            },
-          ],
-          passengers: {
-            adults: 1,
-            children: 0,
-            infants: 0,
-          },
-          cabin: "ECONOMY",
-          filters: {
-            maxResults: 25,
-          },
-          coverageMode: "core",
-          redirectMode: "best-effort",
-          currencyCode: "USD",
-          locale: "es-PE",
-          market: "PE",
-        },
-      },
-    ],
-    axes: {
-      departureDates: ["2026-04-15"],
-      returnDates: ["2026-04-19"],
-    },
-    confidenceSummary: {
-      loading: 1,
-    },
-    recommendations: [],
-    searchMeta: buildSearchMeta(),
-    providerMeta: {
-      exactProvider: "agil-local",
-      coverageMode: "core",
-    },
-    warnings: [],
-    ...overrides,
-  };
-}
-
-function buildOffer(overrides: Record<string, unknown> = {}) {
-  return {
-    id: "offer-1",
-    origin: "LIM",
-    destination: "MIA",
-    mainCarrier: "LA",
-    validatingCarrier: "LA",
-    priceConfidence: "live",
-    comparisonMetrics: {
-      totalDurationMinutes: 480,
-      totalStops: 0,
-    },
-    baggage: {
-      carryOnIncluded: true,
-      checkedIncluded: true,
-      checkedBags: 1,
-      description: "23kg",
-    },
-    price: {
-      total: {
-        amount: 512,
-        currencyCode: "USD",
-      },
-      base: {
-        amount: 420,
-        currencyCode: "USD",
-      },
-      taxes: {
-        amount: 92,
-        currencyCode: "USD",
-      },
-    },
-    itineraries: [
-      {
-        direction: "outbound",
-        durationMinutes: 480,
-        stops: 0,
-        segments: [
-          {
-            flightNumber: "LA 123",
-            origin: "LIM",
-            destination: "MIA",
-            departureAt: "2026-04-15T14:00:00Z",
-            arrivalAt: "2026-04-15T22:00:00Z",
-          },
-        ],
-      },
-      {
-        direction: "inbound",
-        durationMinutes: 470,
-        stops: 0,
-        segments: [
-          {
-            flightNumber: "LA 456",
-            origin: "MIA",
-            destination: "LIM",
-            departureAt: "2026-04-22T15:00:00Z",
-            arrivalAt: "2026-04-22T22:50:00Z",
-          },
-        ],
-      },
-    ],
-    purchasePaths: [
-      {
-        provider: "agil-local",
-        type: "deep-link",
-        label: "Agil",
-        url: "https://example.test/agil",
-      },
-    ],
-    ...overrides,
-  };
-}
-
-function buildOfferWithDates(id: string, departureDate: string, returnDate: string) {
-  return buildOffer({
-    id,
-    itineraries: [
-      {
-        direction: "outbound",
-        durationMinutes: 480,
-        stops: 0,
-        segments: [
-          {
-            flightNumber: "LA 123",
-            origin: "LIM",
-            destination: "MIA",
-            departureAt: `${departureDate}T14:00:00Z`,
-            arrivalAt: `${departureDate}T22:00:00Z`,
-          },
-        ],
-      },
-      {
-        direction: "inbound",
-        durationMinutes: 470,
-        stops: 0,
-        segments: [
-          {
-            flightNumber: "LA 456",
-            origin: "MIA",
-            destination: "LIM",
-            departureAt: `${returnDate}T15:00:00Z`,
-            arrivalAt: `${returnDate}T22:50:00Z`,
-          },
-        ],
-      },
-    ],
-  });
-}
-
-function buildCarrierOffer(id: string, carrierCode: string, amount: number) {
-  return buildOffer({
-    id,
-    mainCarrier: carrierCode,
-    validatingCarrier: carrierCode,
-    price: {
-      total: {
-        amount,
-        currencyCode: "USD",
-      },
-      base: {
-        amount: Math.max(0, amount - 90),
-        currencyCode: "USD",
-      },
-      taxes: {
-        amount: 90,
-        currencyCode: "USD",
-      },
-    },
-    itineraries: [
-      {
-        direction: "outbound",
-        durationMinutes: 480,
-        stops: 0,
-        segments: [
-          {
-            flightNumber: `${carrierCode} 123`,
-            marketingCarrier: carrierCode,
-            origin: "LIM",
-            destination: "MIA",
-            departureAt: "2026-04-15T14:00:00Z",
-            arrivalAt: "2026-04-15T22:00:00Z",
-          },
-        ],
-      },
-      {
-        direction: "inbound",
-        durationMinutes: 470,
-        stops: 0,
-        segments: [
-          {
-            flightNumber: `${carrierCode} 456`,
-            marketingCarrier: carrierCode,
-            origin: "MIA",
-            destination: "LIM",
-            departureAt: "2026-04-22T15:00:00Z",
-            arrivalAt: "2026-04-22T22:50:00Z",
-          },
-        ],
-      },
-    ],
-  });
-}
-
-function buildLayoverOffer(id: string, amount: number, layoverMinutes: number) {
-  const departureAt = "2026-04-15T08:00:00Z";
-  const firstArrival = "2026-04-15T12:00:00Z";
-  const secondDepartureDate = new Date(Date.parse(firstArrival) + layoverMinutes * 60000).toISOString();
-  const secondArrivalDate = new Date(Date.parse(secondDepartureDate) + 240 * 60000).toISOString();
-
-  return buildOffer({
-    id,
-    mainCarrier: "LA",
-    validatingCarrier: "LA",
-    comparisonMetrics: {
-      totalDurationMinutes: 710 + layoverMinutes,
-      totalStops: 1,
-    },
-    price: {
-      total: {
-        amount,
-        currencyCode: "USD",
-      },
-      base: {
-        amount: Math.max(0, amount - 90),
-        currencyCode: "USD",
-      },
-      taxes: {
-        amount: 90,
-        currencyCode: "USD",
-      },
-    },
-    itineraries: [
-      {
-        direction: "outbound",
-        durationMinutes: 470 + layoverMinutes,
-        stops: 1,
-        layoverMinutes: [layoverMinutes],
-        segments: [
-          {
-            flightNumber: "LA 201",
-            marketingCarrier: "LA",
-            origin: "LIM",
-            destination: "BOG",
-            departureAt,
-            arrivalAt: firstArrival,
-          },
-          {
-            flightNumber: "LA 305",
-            marketingCarrier: "LA",
-            origin: "BOG",
-            destination: "MIA",
-            departureAt: secondDepartureDate,
-            arrivalAt: secondArrivalDate,
-          },
-        ],
-      },
-      {
-        direction: "inbound",
-        durationMinutes: 470,
-        stops: 0,
-        segments: [
-          {
-            flightNumber: "LA 456",
-            marketingCarrier: "LA",
-            origin: "MIA",
-            destination: "LIM",
-            departureAt: "2026-04-22T15:00:00Z",
-            arrivalAt: "2026-04-22T22:50:00Z",
-          },
-        ],
-      },
-    ],
-  });
-}
-
-function buildTwoStopOffer(id: string, amount: number, firstLayoverMinutes: number, secondLayoverMinutes: number) {
-  const departureAt = "2026-04-15T08:00:00Z";
-  const firstArrival = "2026-04-15T12:00:00Z";
-  const secondDepartureDate = new Date(Date.parse(firstArrival) + firstLayoverMinutes * 60000).toISOString();
-  const secondArrivalDate = new Date(Date.parse(secondDepartureDate) + 180 * 60000).toISOString();
-  const thirdDepartureDate = new Date(Date.parse(secondArrivalDate) + secondLayoverMinutes * 60000).toISOString();
-  const thirdArrivalDate = new Date(Date.parse(thirdDepartureDate) + 180 * 60000).toISOString();
-
-  return buildOffer({
-    id,
-    mainCarrier: "AA",
-    validatingCarrier: "AA",
-    comparisonMetrics: {
-      totalDurationMinutes: 820 + firstLayoverMinutes + secondLayoverMinutes,
-      totalStops: 2,
-    },
-    price: {
-      total: {
-        amount,
-        currencyCode: "USD",
-      },
-      base: {
-        amount: Math.max(0, amount - 90),
-        currencyCode: "USD",
-      },
-      taxes: {
-        amount: 90,
-        currencyCode: "USD",
-      },
-    },
-    itineraries: [
-      {
-        direction: "outbound",
-        durationMinutes: 300 + firstLayoverMinutes + 180 + secondLayoverMinutes + 180,
-        stops: 2,
-        layoverMinutes: [firstLayoverMinutes, secondLayoverMinutes],
-        segments: [
-          {
-            flightNumber: "AA 201",
-            marketingCarrier: "AA",
-            origin: "LIM",
-            destination: "BOG",
-            departureAt,
-            arrivalAt: firstArrival,
-          },
-          {
-            flightNumber: "AA 305",
-            marketingCarrier: "AA",
-            origin: "BOG",
-            destination: "MVD",
-            departureAt: secondDepartureDate,
-            arrivalAt: secondArrivalDate,
-          },
-          {
-            flightNumber: "AA 307",
-            marketingCarrier: "AA",
-            origin: "MVD",
-            destination: "MIA",
-            departureAt: thirdDepartureDate,
-            arrivalAt: thirdArrivalDate,
-          },
-        ],
-      },
-      {
-        direction: "inbound",
-        durationMinutes: 470,
-        stops: 0,
-        segments: [
-          {
-            flightNumber: "AA 456",
-            marketingCarrier: "AA",
-            origin: "MIA",
-            destination: "LIM",
-            departureAt: "2026-04-22T15:00:00Z",
-            arrivalAt: "2026-04-22T22:50:00Z",
-          },
-        ],
-      },
-    ],
-  });
-}
-
-function buildRoundTripLayoverOffer(id: string, outboundLayoverMinutes: number, inboundLayoverMinutes: number) {
-  const outboundDepartureAt = "2026-04-15T08:00:00Z";
-  const outboundFirstArrival = "2026-04-15T12:00:00Z";
-  const outboundSecondDeparture = new Date(Date.parse(outboundFirstArrival) + outboundLayoverMinutes * 60000).toISOString();
-  const outboundSecondArrival = new Date(Date.parse(outboundSecondDeparture) + 240 * 60000).toISOString();
-  const inboundDepartureAt = "2026-04-22T10:00:00Z";
-  const inboundFirstArrival = "2026-04-22T14:00:00Z";
-  const inboundSecondDeparture = new Date(Date.parse(inboundFirstArrival) + inboundLayoverMinutes * 60000).toISOString();
-  const inboundSecondArrival = new Date(Date.parse(inboundSecondDeparture) + 240 * 60000).toISOString();
-
-  return buildOffer({
-    id,
-    comparisonMetrics: {
-      totalDurationMinutes: 960 + outboundLayoverMinutes + inboundLayoverMinutes,
-      totalStops: 2,
-    },
-    itineraries: [
-      {
-        direction: "outbound",
-        durationMinutes: 480 + outboundLayoverMinutes,
-        stops: 1,
-        layoverMinutes: [outboundLayoverMinutes],
-        segments: [
-          {
-            flightNumber: "LA 201",
-            marketingCarrier: "LA",
-            origin: "LIM",
-            destination: "BOG",
-            departureAt: outboundDepartureAt,
-            arrivalAt: outboundFirstArrival,
-          },
-          {
-            flightNumber: "LA 305",
-            marketingCarrier: "LA",
-            origin: "BOG",
-            destination: "MIA",
-            departureAt: outboundSecondDeparture,
-            arrivalAt: outboundSecondArrival,
-          },
-        ],
-      },
-      {
-        direction: "inbound",
-        durationMinutes: 480 + inboundLayoverMinutes,
-        stops: 1,
-        layoverMinutes: [inboundLayoverMinutes],
-        segments: [
-          {
-            flightNumber: "LA 456",
-            marketingCarrier: "LA",
-            origin: "MIA",
-            destination: "BOG",
-            departureAt: inboundDepartureAt,
-            arrivalAt: inboundFirstArrival,
-          },
-          {
-            flightNumber: "LA 457",
-            marketingCarrier: "LA",
-            origin: "BOG",
-            destination: "LIM",
-            departureAt: inboundSecondDeparture,
-            arrivalAt: inboundSecondArrival,
-          },
-        ],
-      },
-    ],
-  });
-}
-
-async function openDesktop(page: Page, baseUrl: string) {
-  await page.goto(baseUrl, { waitUntil: "networkidle" });
-  await page.setViewportSize({ width: 1440, height: 960 });
-}
-
-async function setDateValue(page: Page, id: string, value: string) {
-  await page.evaluate(([targetId, targetValue]) => {
-    const input = document.getElementById(targetId) as HTMLInputElement | null;
-    if (!input) throw new Error(`Missing input ${targetId}`);
-    input.value = targetValue;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  }, [id, value]);
-}
+import { type Route } from "playwright";
+import {
+  buildCarrierOffer,
+  buildLayoverOffer,
+  buildMatrixResponse,
+  buildOffer,
+  buildOfferWithDates,
+  buildRoundTripLayoverOffer,
+  buildSearchMeta,
+  buildTwoStopOffer,
+} from "./helpers/ui-fixtures";
+import { openDesktop, setDateValue, withDesktopPage } from "./helpers/ui";
 
 test("desktop search rail keeps mode first and the rest of the flow in travel order", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-
-    try {
+  await withDesktopPage(async ({ baseUrl, page }) => {
       await openDesktop(page, baseUrl);
       const order = await page.locator("[data-search-order]").evaluateAll((elements) =>
         elements.map((element) => element.getAttribute("data-search-order")),
@@ -530,18 +30,11 @@ test("desktop search rail keeps mode first and the rest of the flow in travel or
         "passengers",
         "submit",
       ]);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("desktop refinements no longer render removed max stops, currency, max price, or cabin controls", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-
-    try {
+  await withDesktopPage(async ({ baseUrl, page }) => {
       await openDesktop(page, baseUrl);
       const maxStopsCount = await page.locator("#maxStops").count();
       const currencyControlCount = await page.locator("#currencyCode").count();
@@ -555,18 +48,11 @@ test("desktop refinements no longer render removed max stops, currency, max pric
       assert.equal(cabinCount, 0);
       assert.equal(loadingOverlayCount, 0);
       assert.equal(progressBarCount, 0);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("query and offer panels expose homogeneous headers from first paint", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-
-    try {
+  await withDesktopPage(async ({ baseUrl, page }) => {
       await openDesktop(page, baseUrl);
       const probe = await page.evaluate(() => {
         const resultsHeader = document.getElementById("resultsToolbar");
@@ -604,16 +90,11 @@ test("query and offer panels expose homogeneous headers from first paint", async
       assert.equal(probe.paddingLeftMatches, true);
       assert.equal(probe.paddingRightMatches, true);
       assert.equal(probe.borderBottomMatches, true);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("search payload keeps USD fixed without hidden max stops or a currency control", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
     let capturedCurrencyCode = "";
     let capturedCabin = "";
     let capturedOriginLabel = "";
@@ -672,8 +153,6 @@ test("search payload keeps USD fixed without hidden max stops or a currency cont
         }),
       });
     });
-
-    try {
       await openDesktop(page, baseUrl);
       await page.evaluate(() => {
         const origin = document.getElementById("origin") as HTMLInputElement | null;
@@ -705,18 +184,11 @@ test("search payload keeps USD fixed without hidden max stops or a currency cont
       assert.equal(capturedDestinationLabel, "MIA - Miami, Usa");
       assert.equal(capturedMaxStops, undefined);
       assert.equal(await page.locator("#currencyCode").count(), 0);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("theme switch applies light and dark styles to the shell and overlays", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-
-    try {
+  await withDesktopPage(async ({ baseUrl, page }) => {
       await openDesktop(page, baseUrl);
 
       await page.click('[data-theme-value="light"]');
@@ -780,18 +252,11 @@ test("theme switch applies light and dark styles to the shell and overlays", asy
       assert.notEqual(lightCalendar.calendarBg, darkCalendar.calendarBg);
       assert.notEqual(lightPax.popoverBorder, darkPax.popoverBorder);
       assert.notEqual(lightCalendar.calendarBorder, darkCalendar.calendarBorder);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("page boots directly into the stored theme without leaving bootstrap state behind", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-
-    try {
+  await withDesktopPage(async ({ baseUrl, page }) => {
       await page.addInitScript(() => {
         window.localStorage.setItem("flydesk-theme", "dark");
       });
@@ -827,15 +292,11 @@ test("page boots directly into the stored theme without leaving bootstrap state 
       assert.equal(themeState.lightActiveClass, false);
       assert.equal(themeState.dateTriggerText, "Salida y regreso");
       assert.equal(themeState.paxLabel, "1 adulto");
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("paste can restore a copied search in a fresh view from system clipboard", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
+  await withDesktopPage(async ({ baseUrl, page }) => {
     const clipboardPayload = JSON.stringify({
       type: "fly-desk-search-config",
       version: 1,
@@ -877,73 +338,68 @@ test("paste can restore a copied search in a fresh view from system clipboard", 
       sortMode: "fastest",
     });
 
-    const context = await browser.newContext();
-    await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseUrl });
-    const page = await context.newPage();
+    await openDesktop(page, baseUrl);
+    await page.evaluate(() => {
+      window.localStorage.removeItem("flydesk.searchClipboard");
+    });
+    await page.evaluate((rawPayload) => navigator.clipboard.writeText(rawPayload), clipboardPayload);
 
-    try {
-      await openDesktop(page, baseUrl);
-      await page.evaluate(() => {
-        window.localStorage.removeItem("flydesk.searchClipboard");
-      });
-      await page.evaluate((rawPayload) => navigator.clipboard.writeText(rawPayload), clipboardPayload);
+    const initiallyEnabled = await page.evaluate(() => {
+      const button = document.getElementById("pasteSearchConfigBtn") as HTMLButtonElement | null;
+      return button ? !button.disabled : false;
+    });
 
-      const initiallyEnabled = await page.evaluate(() => {
-        const button = document.getElementById("pasteSearchConfigBtn") as HTMLButtonElement | null;
-        return button ? !button.disabled : false;
-      });
+    assert.equal(initiallyEnabled, true);
 
-      assert.equal(initiallyEnabled, true);
+    await page.click("#pasteSearchConfigBtn");
+    await page.waitForFunction(() => {
+      const origin = document.getElementById("origin") as HTMLInputElement | null;
+      return origin?.value === "Lima";
+    });
 
-      await page.click("#pasteSearchConfigBtn");
-      await page.waitForFunction(() => {
-        const origin = document.getElementById("origin") as HTMLInputElement | null;
-        return origin?.value === "Lima";
-      });
+    const restored = await page.evaluate(() => ({
+      origin: (document.getElementById("origin") as HTMLInputElement | null)?.value ?? "",
+      destination: (document.getElementById("destination") as HTMLInputElement | null)?.value ?? "",
+      departureDate: (document.getElementById("departureDate") as HTMLInputElement | null)?.value ?? "",
+      returnDate: (document.getElementById("returnDate") as HTMLInputElement | null)?.value ?? "",
+      adults: (document.getElementById("adults") as HTMLInputElement | null)?.value ?? "",
+      children: (document.getElementById("children") as HTMLInputElement | null)?.value ?? "",
+      nonStop: (document.getElementById("nonStop") as HTMLInputElement | null)?.checked ?? false,
+      baggageRequired: (document.getElementById("baggageRequired") as HTMLInputElement | null)?.checked ?? false,
+      maxLayoverMinutes: (document.getElementById("maxLayoverMinutes") as HTMLSelectElement | null)?.value ?? "",
+      sortMode: (document.getElementById("sortMode") as HTMLSelectElement | null)?.value ?? "",
+      paxLabel: document.getElementById("paxLabel")?.textContent?.trim() ?? "",
+      dateTriggerText: document.getElementById("dateTriggerText")?.textContent?.trim() ?? "",
+      layoverLabel: document.getElementById("layoverTriggerValue")?.textContent?.trim() ?? "",
+      layoverActive: document.getElementById("layoverFilter")?.classList.contains("is-active") ?? false,
+    }));
 
-      const restored = await page.evaluate(() => ({
-        origin: (document.getElementById("origin") as HTMLInputElement | null)?.value ?? "",
-        destination: (document.getElementById("destination") as HTMLInputElement | null)?.value ?? "",
-        departureDate: (document.getElementById("departureDate") as HTMLInputElement | null)?.value ?? "",
-        returnDate: (document.getElementById("returnDate") as HTMLInputElement | null)?.value ?? "",
-        adults: (document.getElementById("adults") as HTMLInputElement | null)?.value ?? "",
-        children: (document.getElementById("children") as HTMLInputElement | null)?.value ?? "",
-        nonStop: (document.getElementById("nonStop") as HTMLInputElement | null)?.checked ?? false,
-        baggageRequired: (document.getElementById("baggageRequired") as HTMLInputElement | null)?.checked ?? false,
-        maxLayoverMinutes: (document.getElementById("maxLayoverMinutes") as HTMLSelectElement | null)?.value ?? "",
-        sortMode: (document.getElementById("sortMode") as HTMLSelectElement | null)?.value ?? "",
-        paxLabel: document.getElementById("paxLabel")?.textContent?.trim() ?? "",
-        dateTriggerText: document.getElementById("dateTriggerText")?.textContent?.trim() ?? "",
-        layoverLabel: document.getElementById("layoverTriggerValue")?.textContent?.trim() ?? "",
-        layoverActive: document.getElementById("layoverFilter")?.classList.contains("is-active") ?? false,
-      }));
-
-      assert.equal(restored.origin, "Lima");
-      assert.equal(restored.destination, "Miami");
-      assert.equal(restored.departureDate, "2026-04-15");
-      assert.equal(restored.returnDate, "2026-04-22");
-      assert.equal(restored.adults, "2");
-      assert.equal(restored.children, "1");
-      assert.equal(restored.nonStop, true);
-      assert.equal(restored.baggageRequired, true);
-      assert.equal(restored.maxLayoverMinutes, "240");
-      assert.equal(restored.sortMode, "fastest");
-      assert.equal(restored.paxLabel, "2 adultos, 1 niño");
-      assert.equal(restored.dateTriggerText, "15/04 → 22/04");
-      assert.equal(restored.layoverLabel, "Escala");
-      assert.equal(restored.layoverActive, true);
-    } finally {
-      await browser.close();
-    }
+    assert.equal(restored.origin, "Lima");
+    assert.equal(restored.destination, "Miami");
+    assert.equal(restored.departureDate, "2026-04-15");
+    assert.equal(restored.returnDate, "2026-04-22");
+    assert.equal(restored.adults, "2");
+    assert.equal(restored.children, "1");
+    assert.equal(restored.nonStop, true);
+    assert.equal(restored.baggageRequired, true);
+    assert.equal(restored.maxLayoverMinutes, "240");
+    assert.equal(restored.sortMode, "fastest");
+    assert.equal(restored.paxLabel, "2 adultos, 1 niño");
+    assert.equal(restored.dateTriggerText, "15/04 → 22/04");
+    assert.equal(restored.layoverLabel, "Escala");
+    assert.equal(restored.layoverActive, true);
+  }, {
+    autoOpen: false,
+    createPage: async ({ baseUrl, browser }) => {
+      const context = await browser.newContext();
+      await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseUrl });
+      return context.newPage();
+    },
   });
 });
 
 test("custom calendar writes exact and flexible dates back into the hidden form fields", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-
-    try {
+  await withDesktopPage(async ({ baseUrl, page }) => {
       await openDesktop(page, baseUrl);
 
       await page.click("#dateTrigger");
@@ -976,16 +432,11 @@ test("custom calendar writes exact and flexible dates back into the hidden form 
       assert.equal(flexibleValues.searchMode, "roundtrip-grid");
       assert.match(flexibleValues.summary, /18\/04/i);
       assert.match(flexibleValues.summary, /24\/04/i);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("search form routes exact and flexible one-way or round-trip requests through the expected endpoints", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
     const calls: Array<{ endpoint: string; tripType: string; searchMode: string }> = [];
 
     await page.route(`${baseUrl}/api/search`, async (route: Route) => {
@@ -1040,8 +491,6 @@ test("search form routes exact and flexible one-way or round-trip requests throu
         })),
       });
     });
-
-    try {
       await openDesktop(page, baseUrl);
       await page.evaluate(() => {
         const origin = document.getElementById("origin") as HTMLInputElement | null;
@@ -1080,16 +529,11 @@ test("search form routes exact and flexible one-way or round-trip requests throu
         { endpoint: "/api/search", tripType: "one-way", searchMode: "stay-range" },
         { endpoint: "/api/matrix", tripType: "round-trip", searchMode: "roundtrip-grid" },
       ]);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("location suggestions stay anchored to the origin field", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
 
     await page.route(`${baseUrl}/api/locations?q=LIM&limit=8`, async (route: Route) => {
       await route.fulfill({
@@ -1114,8 +558,6 @@ test("location suggestions stay anchored to the origin field", async () => {
         }),
       });
     });
-
-    try {
       await openDesktop(page, baseUrl);
       await page.fill("#origin", "LIM");
       await page.waitForSelector("#originSuggestions .location-item");
@@ -1152,18 +594,11 @@ test("location suggestions stay anchored to the origin field", async () => {
       assert.ok(probe.centerDelta <= 4, JSON.stringify(probe));
       assert.ok(probe.menuTop <= probe.shellBottom, JSON.stringify(probe));
       assert.equal(probe.hitInMenu, true, JSON.stringify(probe));
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("calendar stays anchored to the trigger, stays compact, and can navigate months", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-
-    try {
+  await withDesktopPage(async ({ baseUrl, page }) => {
       await openDesktop(page, baseUrl);
 
       await page.click("#dateTrigger");
@@ -1191,16 +626,11 @@ test("calendar stays anchored to the trigger, stays compact, and can navigate mo
       assert.ok(calendarProbe.gap >= 0 && calendarProbe.gap <= 20, JSON.stringify(calendarProbe));
       assert.equal(calendarProbe.titles.length, 2);
       assert.notDeepEqual(navigatedTitles, calendarProbe.titles);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("clicking a flexible matrix cell still triggers a single exact search", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
     let matrixPollCount = 0;
     let searchRequestCount = 0;
     let lastSearchRequest: Record<string, unknown> | null = null;
@@ -1269,8 +699,6 @@ test("clicking a flexible matrix cell still triggers a single exact search", asy
         }),
       });
     });
-
-    try {
       await openDesktop(page, baseUrl);
       await page.click('[data-mode="flexible"]');
       await page.fill("#origin", "LIM");
@@ -1311,18 +739,11 @@ test("clicking a flexible matrix cell still triggers a single exact search", asy
       assert.equal(formState.departureStart, "");
       assert.equal(formState.departureEnd, "");
       assert.equal(formState.dateTriggerText, "15/04 → 19/04");
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("passengers and layover popovers stay centered on their triggers", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-
-    try {
+  await withDesktopPage(async ({ baseUrl, page }) => {
       await openDesktop(page, baseUrl);
 
       await page.click("#paxTrigger");
@@ -1364,16 +785,11 @@ test("passengers and layover popovers stay centered on their triggers", async ()
       assert.equal(layoverProbe.position, "fixed");
       assert.ok(layoverProbe.gap >= 0 && layoverProbe.gap <= 14, JSON.stringify(layoverProbe));
       assert.ok(layoverProbe.centerDelta <= 4, JSON.stringify(layoverProbe));
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("date-equivalent offers collapse into one row and keep the date variants in detail", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
 
     await page.route(`${baseUrl}/api/search`, async (route: Route) => {
       await route.fulfill({
@@ -1429,8 +845,6 @@ test("date-equivalent offers collapse into one row and keep the date variants in
         }),
       });
     });
-
-    try {
       await openDesktop(page, baseUrl);
       await page.evaluate(() => {
         const origin = document.getElementById("origin") as HTMLInputElement | null;
@@ -1473,16 +887,11 @@ test("date-equivalent offers collapse into one row and keep the date variants in
       assert.match(probe.variants[0] ?? "", /15\/04 → 22\/04/);
       assert.match(probe.variants[1] ?? "", /16\/04 → 23\/04/);
       assert.match(probe.variants[2] ?? "", /17\/04 → 24\/04/);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("airlines move into the search bar ordered by cheapest fare and filter horizontally", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
 
     await page.route(`${baseUrl}/api/search`, async (route: Route) => {
       const offers = [
@@ -1536,8 +945,6 @@ test("airlines move into the search bar ordered by cheapest fare and filter hori
         }),
       });
     });
-
-    try {
       await openDesktop(page, baseUrl);
       await page.evaluate(() => {
         const origin = document.getElementById("origin") as HTMLInputElement | null;
@@ -1578,18 +985,11 @@ test("airlines move into the search bar ordered by cheapest fare and filter hori
       assert.equal(afterFilter.activeCode, "CM");
       assert.equal(afterFilter.rowCount, 1);
       assert.equal(afterFilter.visibleCarrier, "CM");
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("layover popover keeps a compact utility layout", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-
-    try {
+  await withDesktopPage(async ({ baseUrl, page }) => {
       await openDesktop(page, baseUrl);
       await page.click("#layoverTrigger");
 
@@ -1605,16 +1005,11 @@ test("layover popover keeps a compact utility layout", async () => {
       assert.doesNotMatch(probe.text, /Combina número de escalas/i);
       assert.doesNotMatch(probe.text, /Directo anula este filtro/i);
       assert.doesNotMatch(probe.text, /Sin filtro/i);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("max layover filter is sent in the payload and narrows the visible results", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
     let capturedMaxLayoverMinutes: number | undefined;
 
     await page.route(`${baseUrl}/api/search`, async (route: Route) => {
@@ -1672,8 +1067,6 @@ test("max layover filter is sent in the payload and narrows the visible results"
         }),
       });
     });
-
-    try {
       await openDesktop(page, baseUrl);
       await page.evaluate(() => {
         const origin = document.getElementById("origin") as HTMLInputElement | null;
@@ -1700,16 +1093,11 @@ test("max layover filter is sent in the payload and narrows the visible results"
       assert.equal(capturedMaxLayoverMinutes, 240);
       assert.equal(probe.rowCount, 2);
       assert.deepEqual(probe.ids, ["offer-direct", "offer-short-layover"]);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("combined max stops and max layover filters are sent and applied together", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
     let capturedMaxStops: number | undefined;
     let capturedMaxLayoverMinutes: number | undefined;
 
@@ -1770,8 +1158,6 @@ test("combined max stops and max layover filters are sent and applied together",
         }),
       });
     });
-
-    try {
       await openDesktop(page, baseUrl);
       await page.evaluate(() => {
         const origin = document.getElementById("origin") as HTMLInputElement | null;
@@ -1810,16 +1196,11 @@ test("combined max stops and max layover filters are sent and applied together",
       assert.equal(probe.layoverLabel, "Escala");
       assert.equal(probe.layoverActive, true);
       assert.equal(probe.layoverTitle, "1 escala / 4h");
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("layover summary shows the maximum single layover instead of the combined total", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
 
     await page.route(`${baseUrl}/api/search`, async (route: Route) => {
       const body = route.request().postDataJSON();
@@ -1873,8 +1254,6 @@ test("layover summary shows the maximum single layover instead of the combined t
         }),
       });
     });
-
-    try {
       await openDesktop(page, baseUrl);
       await page.evaluate(() => {
         const origin = document.getElementById("origin") as HTMLInputElement | null;
@@ -1902,18 +1281,11 @@ test("layover summary shows the maximum single layover instead of the combined t
       assert.match(probe.time, /^4h 0?0?m$/);
       assert.match(probe.title, /Escala máx\.: 4h 0?0?m/);
       assert.match(probe.title, /Bog: 4h 0?0?m/);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("changing layover selection does not shift the search rail layout", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
-
-    try {
+  await withDesktopPage(async ({ baseUrl, page }) => {
       await openDesktop(page, baseUrl);
 
       const before = await page.evaluate(() => {
@@ -1952,16 +1324,11 @@ test("changing layover selection does not shift the search rail layout", async (
       assert.ok(Math.abs(after.railWidth - before.railWidth) < 1);
       assert.ok(Math.abs(after.originLeft - before.originLeft) < 1);
       assert.ok(Math.abs(after.submitRight - before.submitRight) < 1);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("submitting a search shows inline placeholders instead of a fullscreen overlay", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
 
     await page.route(`${baseUrl}/api/search`, async (route: Route) => {
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -2010,8 +1377,6 @@ test("submitting a search shows inline placeholders instead of a fullscreen over
         }),
       });
     });
-
-    try {
       await openDesktop(page, baseUrl);
       await page.evaluate(() => {
         const origin = document.getElementById("origin") as HTMLInputElement | null;
@@ -2035,16 +1400,11 @@ test("submitting a search shows inline placeholders instead of a fullscreen over
 
       await page.waitForSelector('tr[data-oid="offer-1"]');
       assert.equal(await page.locator(".results-skeleton").count(), 0);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("provider link column shows both the provider link and missing-session feedback when needed", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
 
     await page.route(`${baseUrl}/api/search`, async (route: Route) => {
       await route.fulfill({
@@ -2100,8 +1460,6 @@ test("provider link column shows both the provider link and missing-session feed
         }),
       });
     });
-
-    try {
       await openDesktop(page, baseUrl);
       await page.evaluate(() => {
         const origin = document.getElementById("origin") as HTMLInputElement | null;
@@ -2123,16 +1481,102 @@ test("provider link column shows both the provider link and missing-session feed
       const linkCellText = await page.locator('tr[data-oid="offer-1"] td:nth-child(7)').innerText();
       assert.match(linkCellText, /Agil/);
       assert.match(linkCellText, /Costamar:\s*Falta sesión/);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
+});
+
+test("empty results explain when Agil and Costamar could not be queried at all", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-provider-blocked",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "one-way",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "IQT",
+                destination: "LIM",
+                departureDate: "2026-04-18",
+              },
+            ],
+            passengers: {
+              adults: 2,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [],
+          allOffers: [],
+          searchMeta: {
+            ...buildSearchMeta("search_live"),
+            providersUsed: ["agil-local", "costamar"],
+            warnings: [
+              "AGIL_APIM_SUBSCRIPTION_KEY is required for live Agil requests.",
+              "Costamar terminalId is required.",
+            ],
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [
+            "AGIL_APIM_SUBSCRIPTION_KEY is required for live Agil requests.",
+            "Costamar terminalId is required.",
+          ],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.click('[data-trip="one-way"]');
+    await page.evaluate(() => {
+      const origin = document.getElementById("origin") as HTMLInputElement | null;
+      const destination = document.getElementById("destination") as HTMLInputElement | null;
+      const adults = document.getElementById("adults") as HTMLInputElement | null;
+      if (!origin || !destination) throw new Error("Missing location inputs");
+      if (!adults) throw new Error("Missing adults input");
+      origin.value = "Aeropuerto C.F. Secada, Iquitos, Perú (IQT)";
+      origin.dataset.code = "IQT";
+      origin.dataset.label = "Aeropuerto C.F. Secada, Iquitos, Perú (IQT)";
+      destination.value = "Aeropuerto Internacional Jorge Chavez, Lima, Perú (LIM)";
+      destination.dataset.code = "LIM";
+      destination.dataset.label = "Aeropuerto Internacional Jorge Chavez, Lima, Perú (LIM)";
+      adults.value = "2";
+    });
+    await setDateValue(page, "departureDate", "2026-04-18");
+
+    await page.click("#submitButton");
+    await page.waitForSelector(".results-panel .empty-panel");
+
+    const emptyTitle = await page.locator(".results-panel .empty-panel__title").innerText();
+    const emptyText = await page.locator(".results-panel .empty-panel__text").innerText();
+    const emptyHint = await page.locator(".results-panel .empty-panel__hint").innerText();
+
+    assert.match(emptyTitle, /No se pudo consultar Agil y Costamar/);
+    assert.match(emptyText, /no logró entrar a los proveedores necesarios/i);
+    assert.match(emptyHint, /Agil no tiene AGIL_APIM_SUBSCRIPTION_KEY cargada/i);
+    assert.match(emptyHint, /Costamar no tiene un terminal activo o recuperable/i);
+    assert.doesNotMatch(emptyHint, /Prueba quitando Directo/i);
+  }, { autoOpen: false });
 });
 
 test("provider link column keeps external redirects available when nonstop is only enforced in Fly Desk", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
 
     await page.route(`${baseUrl}/api/search`, async (route: Route) => {
       const body = route.request().postDataJSON();
@@ -2185,8 +1629,6 @@ test("provider link column keeps external redirects available when nonstop is on
         }),
       });
     });
-
-    try {
       await openDesktop(page, baseUrl);
       await page.evaluate(() => {
         const origin = document.getElementById("origin") as HTMLInputElement | null;
@@ -2213,16 +1655,11 @@ test("provider link column keeps external redirects available when nonstop is on
       assert.equal(await linkCell.locator("a.row-link").count(), 1);
       assert.equal(await linkCell.locator('a.row-link').first().getAttribute("href"), "https://example.test/agil");
       assert.equal(await page.locator("#detailContent a.btn--ghost").count(), 1);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("provider link column reuses the matched Costamar link for the same flight", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
 
     await page.route(`${baseUrl}/api/search`, async (route: Route) => {
       const agilOffer = buildOffer({
@@ -2383,8 +1820,6 @@ test("provider link column reuses the matched Costamar link for the same flight"
         }),
       });
     });
-
-    try {
       await openDesktop(page, baseUrl);
       await page.evaluate(() => {
         const origin = document.getElementById("origin") as HTMLInputElement | null;
@@ -2406,16 +1841,11 @@ test("provider link column reuses the matched Costamar link for the same flight"
       const linkCellText = await page.locator('tr[data-oid="offer-agil"] td:nth-child(7)').innerText();
       assert.match(linkCellText, /Agil/);
       assert.match(linkCellText, /Costamar/);
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
 
 test("reprice keeps the loading feedback inside the detail panel", async () => {
-  await withServer(async (baseUrl) => {
-    const browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
 
     await page.route(`${baseUrl}/api/search`, async (route: Route) => {
       await route.fulfill({
@@ -2490,8 +1920,6 @@ test("reprice keeps the loading feedback inside the detail panel", async () => {
         }),
       });
     });
-
-    try {
       await openDesktop(page, baseUrl);
       await page.evaluate(() => {
         const origin = document.getElementById("origin") as HTMLInputElement | null;
@@ -2519,8 +1947,8 @@ test("reprice keeps the loading feedback inside the detail panel", async () => {
         const hero = document.querySelector(".detail-hero");
         return hero?.textContent?.includes("499.00");
       });
-    } finally {
-      await browser.close();
-    }
-  });
+  }, { autoOpen: false });
 });
+
+
+

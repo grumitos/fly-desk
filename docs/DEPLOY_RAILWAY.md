@@ -16,6 +16,7 @@ Motivo principal:
 - servidor Node en un solo proceso
 - serving de UI y API
 - lectura de `PORT`
+- override explicito de `HOST`
 - healthcheck
 
 Comandos:
@@ -24,6 +25,16 @@ Comandos:
 - build: `npm run build`
 - start: `npm start`
 - healthcheck: `/api/health`
+
+Variables minimas para un deploy remoto:
+
+- `HOST=0.0.0.0`
+- `PORT` provisto por Railway
+
+Importante:
+
+- localmente Fly Desk escucha en `127.0.0.1` por defecto
+- en Railway hay que forzar `HOST=0.0.0.0` o el contenedor no quedara expuesto
 
 ## Lo que no debe asumirse
 

@@ -31,6 +31,74 @@ test("rejects exact searches when origin and destination are omitted", async () 
   });
 });
 
+test("accepts exact searches inside the rolling date window", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sortMode: "cheapest",
+        request: {
+          tripType: "round-trip",
+          searchMode: "exact",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MIA",
+              departureDate: "2027-01-01",
+              returnDate: "2027-01-08",
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+  });
+});
+
+test("rejects exact searches outside the rolling date window", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sortMode: "cheapest",
+        request: {
+          tripType: "round-trip",
+          searchMode: "exact",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MIA",
+              departureDate: "2027-04-01",
+              returnDate: "2027-04-08",
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { errors?: string[] };
+    assert.ok(payload.errors?.some((message) => message.includes("Departure date must be on or before 2027-03-31.")));
+  });
+});
+
 test("costamar search keeps provider token out of the public job response", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/search`, {
@@ -99,6 +167,46 @@ test("explicit costamar search accepts a terminal without token", async () => {
             lang: "es",
           },
         },
+        request: {
+          tripType: "round-trip",
+          searchMode: "exact",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MAD",
+              departureDate: "2026-06-01",
+              returnDate: "2026-06-08",
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      request?: { providerId?: string };
+      providerMeta?: { exactProvider?: string };
+    };
+
+    assert.equal(payload.request?.providerId, "costamar");
+    assert.equal(payload.providerMeta?.exactProvider, "costamar");
+  });
+});
+
+test("explicit costamar search falls back to the default terminal when none is provided", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        providerId: "costamar",
         request: {
           tripType: "round-trip",
           searchMode: "exact",

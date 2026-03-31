@@ -59,8 +59,6 @@ function buildJwt(payload: Record<string, unknown>): string {
 test("buildProviderContext normalizes Costamar defaults and overrides", () => {
   const context = buildProviderContext("costamar", {
     costamar: {
-      apiBaseUrl: "https://api.example/vuelos/api",
-      brandBaseUrl: "https://booking.example/vuelos",
       terminalId: "0721808110",
       token: "secret-token",
       lang: "es",
@@ -69,8 +67,8 @@ test("buildProviderContext normalizes Costamar defaults and overrides", () => {
 
   assert.deepEqual(context, {
     costamar: {
-      apiBaseUrl: "https://api.example/vuelos/api",
-      brandBaseUrl: "https://booking.example/vuelos",
+      apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
       terminalId: "0721808110",
       token: "secret-token",
       lang: "es",

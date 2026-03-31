@@ -330,6 +330,27 @@ function Test-ProcessListeningOnPort {
   return @((Get-ListeningProcessIdsForPort -Port $Port)) -contains $ProcessId
 }
 
+function Test-FlyDeskServerProcess {
+  param([int]$ProcessId)
+
+  if ($ProcessId -le 0) {
+    return $false
+  }
+
+  try {
+    $distEntry = Join-Path $script:ProjectRoot "dist\\index.js"
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId"
+    if (-not $process) {
+      return $false
+    }
+
+    $commandLine = [string]$process.CommandLine
+    return $commandLine -like "*$distEntry*"
+  } catch {
+    return $false
+  }
+}
+
 function Get-ChromePath {
   @(
     "${env:LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe",
@@ -378,7 +399,7 @@ function Wait-ForServer {
   while ((Get-Date) -lt $deadline) {
     if ($script:ServerOutLog -and (Test-Path -LiteralPath $script:ServerOutLog)) {
       $stdout = Get-Content -LiteralPath $script:ServerOutLog -Raw -ErrorAction SilentlyContinue
-      if ($stdout -match "Fly Desk running at http://localhost:$Port") {
+      if ($stdout -match "Fly Desk running at http://(?:localhost|127\.0\.0\.1):$Port\b") {
         return $true
       }
     }
@@ -469,6 +490,15 @@ try {
   if ($occupyingPids.Count -gt 0) {
     $knownStatePid = if ($state -and $state.pid) { [int]$state.pid } else { 0 }
     $foreignPids = @($occupyingPids | Where-Object { $_ -ne $knownStatePid })
+
+    foreach ($processId in @($foreignPids | Where-Object { Test-FlyDeskServerProcess -ProcessId $_ })) {
+      Write-LauncherLog "Se encontro un Fly Desk huerfano en PID $processId y sera detenido antes de relanzar."
+      Stop-ProcessTree -ProcessId $processId
+      Start-Sleep -Milliseconds 800
+    }
+
+    $occupyingPids = @(Get-ListeningProcessIdsForPort -Port $script:LauncherPort)
+    $foreignPids = @($occupyingPids | Where-Object { $_ -ne $knownStatePid })
     if ($foreignPids.Count -gt 0) {
       Fail-Launcher "Fly Desk usa el puerto fijo $script:LauncherPort para el acceso directo, pero esta ocupado por otra aplicacion. Cierra esa aplicacion o libera el puerto y vuelve a intentar."
     }
@@ -482,7 +512,10 @@ try {
   Clear-State
 
   $serverProcessId = Start-ServerProcess -NodePath $nodePath -Port $script:LauncherPort
+  Save-State -Port $script:LauncherPort -ProcessId $serverProcessId -StdOutLog $script:ServerOutLog -StdErrLog $script:ServerErrLog
   if (-not (Wait-ForServer -Port $script:LauncherPort -ProcessId $serverProcessId)) {
+    Stop-ProcessTree -ProcessId $serverProcessId
+    Clear-State
     Fail-Launcher "Fly Desk no respondio correctamente en http://127.0.0.1:$script:LauncherPort/. Revisa:`n$script:ServerOutLog`n$script:ServerErrLog"
   }
 

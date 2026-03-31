@@ -3,6 +3,8 @@ import type { AddressInfo } from "node:net";
 import { createServer } from "../../src/server";
 
 export async function withServer<T>(run: (baseUrl: string) => Promise<T>): Promise<T> {
+  const previousSearchTodayOverride = process.env.SEARCH_TODAY_OVERRIDE;
+  process.env.SEARCH_TODAY_OVERRIDE = previousSearchTodayOverride ?? "2026-03-31";
   const server = createServer();
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -13,15 +15,23 @@ export async function withServer<T>(run: (baseUrl: string) => Promise<T>): Promi
   try {
     return await run(baseUrl);
   } finally {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
 
-        resolve();
+          resolve();
+        });
       });
-    });
+    } finally {
+      if (previousSearchTodayOverride === undefined) {
+        delete process.env.SEARCH_TODAY_OVERRIDE;
+      } else {
+        process.env.SEARCH_TODAY_OVERRIDE = previousSearchTodayOverride;
+      }
+    }
   }
 }

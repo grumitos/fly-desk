@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 
+export const DEFAULT_SERVER_HOST = "127.0.0.1";
+
 function applyEnvFile(filePath: string): void {
   if (!existsSync(filePath)) {
     return;
@@ -30,4 +32,9 @@ function applyEnvFile(filePath: string): void {
 export function loadRuntimeConfig(): void {
   const rootDir = path.resolve(__dirname, "..");
   applyEnvFile(path.join(rootDir, ".env"));
+}
+
+export function resolveServerHost(): string {
+  const configured = process.env.HOST?.trim();
+  return configured || DEFAULT_SERVER_HOST;
 }

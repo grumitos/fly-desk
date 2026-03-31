@@ -125,8 +125,6 @@ export interface SearchFilters {
 }
 
 export interface CostamarProviderConfigInput {
-  apiBaseUrl?: string;
-  brandBaseUrl?: string;
   terminalId?: string;
   token?: string;
   lang?: string;

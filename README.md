@@ -2,134 +2,174 @@
 
 Workspace local para busqueda y cotizacion aerea orientado a agentes de viajes.
 
-El repositorio hoy combina:
+Fly Desk hoy es una app local-first con:
 
 - servidor Node que sirve UI y API en el mismo proceso
-- frontend desktop en `public/` con HTML/CSS/JS vanilla
-- integracion local con Agil reutilizando la sesion del navegador real
+- frontend desktop en `public/` con HTML/CSS y JavaScript vanilla en modulos ES
+- integracion local con Agil reutilizando sesion real de navegador
+- integracion con Costamar usando contexto controlado por entorno
 - store en memoria para jobs, redirects y resultados
 
 ## Alcance actual
 
 - busqueda exacta
-- busqueda flexible con matriz de fechas
-- autocomplete de origen/destino
-- filtro rapido `Directo` y `Con equipaje`
+- busqueda flexible por rango y matriz
+- autocomplete de origen y destino
+- filtros visibles `Directo`, `Equipaje` y `Escala`
 - lista de resultados con paginacion
 - vista calendario/matriz
-- sidebar por aerolinea
-- panel de detalle
+- barra de aerolineas
+- panel lateral de detalle
 - `reprice`
 - `quotation`
-- comparador
-- links de compra / apertura equivalente en Agil
+- links de compra y apertura local del flujo equivalente cuando aplica
 
-Controles retirados del frontend actual:
+Controles ya retirados del frontend visible:
 
 - cabina visible
 - moneda editable
 - precio maximo
-- maximo de escalas
+- maximo de escalas como control independiente
 - overlay global de carga
 
-El feedback de carga ahora es inline:
+El feedback de carga vigente es inline:
 
 - placeholder en resultados durante busqueda exacta
-- celdas loading en matriz
+- celdas `loading` dentro de la matriz
 - estado de carga dentro del panel de detalle para `reprice` y `quotation`
+
+## Guardrails de runtime
+
+- el servidor escucha en `127.0.0.1` por defecto
+- `HOST` solo se usa como override explicito para despliegues no locales
+- la ventana de fechas es movil: `minSearchDate = hoy`, `maxSearchDate = hoy + 365 dias`
+- `SEARCH_MAX_FUTURE_DAYS` permite ajustar esa ventana
+- Costamar ya no acepta `apiBaseUrl` ni `brandBaseUrl` por request
+- las base URLs de Costamar solo salen de entorno y quedan limitadas a hosts aprobados
+- Agil requiere sesion local de navegador y `AGIL_APIM_SUBSCRIPTION_KEY` para requests HTTP reales
 
 ## Estructura
 
-- [public/index.html](/D:/Dev/fly-desk/public/index.html): shell desktop y markup del producto
-- [public/app.css](/D:/Dev/fly-desk/public/app.css): tokens, layout, componentes, overlays y estados visuales
-- [public/app.js](/D:/Dev/fly-desk/public/app.js): estado global, calendario, formulario, render, polling y eventos
-- [src/http-router.ts](/D:/Dev/fly-desk/src/http-router.ts): BFF HTTP
-- [src/local-agil.ts](/D:/Dev/fly-desk/src/local-agil.ts): sesion local, refresh de token, requests a Agil, mapeo y matriz
-- [src/session-store.ts](/D:/Dev/fly-desk/src/session-store.ts): store en memoria para jobs y purchase paths
-- [test/ui.test.ts](/D:/Dev/fly-desk/test/ui.test.ts): regresiones de interfaz desktop
+### Frontend
 
-## Sesion local de Agil
+- `public/index.html`: shell desktop y bootstrap inicial
+- `public/app.css`: tokens, layout, componentes y estados visuales
+- `public/app.js`: entrypoint del frontend
+- `public/app/runtime.js`: estado compartido, refs DOM y constantes runtime
+- `public/app/date.js`: helpers de fechas y politica de rango en cliente
+- `public/app/network.js`: helpers de fetch y polling
+- `public/app/render.js`: shell de render global
+- `public/app/bootstrap.js`: wiring de inicializacion del frontend
 
-La integracion actual depende de una sesion real en Chrome o Edge. El flujo local intenta leer `localStorage` de:
+### Backend
 
-- `https://www.agilsmart.com/home-user`
-- `https://motorvuelos.expertiatravel.com/`
+- `src/server.ts`: servidor HTTP y serving de assets de `public/`
+- `src/http-router.ts`: BFF HTTP
+- `src/search-date-policy.ts`: politica compartida de fechas y config publica embebida
+- `src/provider-context.ts`: normalizacion y recovery de contexto de providers
+- `src/local-agil.ts`: sesion local, cliente Agil, exact/range/matrix y reprice
+- `src/local-costamar.ts`: cliente Costamar, exact/range/matrix y reprice
+- `src/core/flexible-search.ts`: helpers compartidos de derivacion de requests
+- `src/core/matrix.ts`: helpers compartidos de matriz y concurrencia
+- `src/session-store.ts`: jobs en memoria, redirects y purchase paths
 
-Variables utiles:
+### Tests
 
-- `AGIL_BROWSER_URL`
-- `AGIL_BROWSER_WS_ENDPOINT`
-- `AGIL_CHROME_PROFILE`
-- `AGIL_CHROME_USER_DATA_DIR`
-- `AGIL_CHROME_EXECUTABLE`
-- `AGILSMART_HOST_IP`
-- `AGIL_HTTP_TIMEOUT_MS`
+- `test/http-router.test.ts`
+- `test/search-date-policy.test.ts`
+- `test/provider-context.test.ts`
+- `test/local-agil.test.ts`
+- `test/costamar.test.ts`
+- `test/matrix-core.test.ts`
+- `test/ui.test.ts`
+- `test/helpers/ui.ts`
+- `test/helpers/ui-fixtures.ts`
 
-Ejemplos:
+## Variables utiles
 
-- Chrome con DevTools remoto: `AGIL_BROWSER_URL=http://127.0.0.1:9222`
-- Timeout HTTP de Agil: `AGIL_HTTP_TIMEOUT_MS=20000`
-- Chrome perfil por defecto: sin variables adicionales
-- Chrome perfil secundario: `AGIL_CHROME_PROFILE=Profile 1`
-- Edge: `AGIL_CHROME_USER_DATA_DIR=%LOCALAPPDATA%\\Microsoft\\Edge\\User Data`
-- Forzar IP de Agil si tu red lo necesita: `AGILSMART_HOST_IP=1.2.3.4`
-- Timeout HTTP a Agil: `AGIL_HTTP_TIMEOUT_MS=20000`
+Runtime general:
+
+- `HOST=0.0.0.0` para exponer la app fuera de loopback
+- `PORT=32123` o el puerto que se quiera usar fuera del launcher
+- `SEARCH_MAX_FUTURE_DAYS=365`
+
+Agil:
+
+- `AGIL_APIM_SUBSCRIPTION_KEY=<subscription key>`
+- `AGIL_BROWSER_URL=http://127.0.0.1:9222`
+- `AGIL_BROWSER_WS_ENDPOINT=ws://127.0.0.1:9222/devtools/browser/<id>`
+- `AGIL_CHROME_PROFILE=Profile 1`
+- `AGIL_CHROME_USER_DATA_DIR=...`
+- `AGIL_CHROME_EXECUTABLE=...`
+- `AGILSMART_HOST_IP=1.2.3.4`
+- `AGIL_HTTP_TIMEOUT_MS=20000`
+
+Costamar:
+
+- `COSTAMAR_API_BASE_URL=https://costamar.com.pe/vuelos/api`
+- `COSTAMAR_BRAND_BASE_URL=https://booking.clickandbook.com/vuelos`
+- `COSTAMAR_TERMINAL_ID=...`
+  Si no se define, Fly Desk usa el terminal publico `0721808110`.
+- `COSTAMAR_TOKEN=...`
+- `COSTAMAR_LANG=es`
+- `COSTAMAR_HTTP_TIMEOUT_MS=20000`
 
 ## Scripts
 
 - `npm run dev`
-- `npm test`
 - `npm run build`
-- `npm run typecheck`
 - `npm start`
+- `npm run typecheck`
+- `npm test`
 - `npm run demo`
 
 ## Arranque con un clic
 
-Para un usuario no tecnico, los puntos de entrada son estos archivos del root:
+Entradas para abrir y cerrar la app sin terminal:
 
-- [Abrir Fly Desk.vbs](/D:/Dev/fly-desk/Abrir%20Fly%20Desk.vbs)
-- [Cerrar Fly Desk.vbs](/D:/Dev/fly-desk/Cerrar%20Fly%20Desk.vbs)
+- [`Abrir Fly Desk.vbs`](./Abrir%20Fly%20Desk.vbs)
+- [`Cerrar Fly Desk.vbs`](./Cerrar%20Fly%20Desk.vbs)
+- `tools/launch-fly-desk.cmd`
+- `tools/start-fly-desk.ps1`
+- `tools/stop-fly-desk.cmd`
+- `tools/stop-fly-desk.ps1`
 
-Que hacen hoy:
+Comportamiento actual del launcher:
 
-- usan un puerto fijo dedicado `32123` para evitar choques con `3000`, `3001` u otros puertos de desarrollo
-- si Fly Desk ya esta sano en ese puerto, solo reabren la app en el navegador
-- si no existe `node_modules`, instalan dependencias
-- si `dist/` esta desactualizado, ejecutan `npm run build`
-- guardan estado y logs de launcher en `.launcher/`
+- usa el puerto fijo `32123`
+- si Fly Desk ya esta sano en ese puerto, reutiliza la instancia
+- si `node_modules/` no existe, instala dependencias
+- si `dist/` esta ausente o vieja, ejecuta `npm run build`
+- persiste estado y logs en `.launcher/`
+- los `.vbs` esperan a que abrir o cerrar termine, evitando carreras entre doble click de abrir/cerrar
+- el cierre espera a que `32123` deje de estar en `LISTENING`
 
-Requisitos del equipo:
+Variables utiles del launcher:
 
-- Node.js 20 o superior
-- npm disponible en PATH
-- sesion local valida de Agil en Chrome o Edge si se quiere usar la integracion real
-
-Notas utiles:
-
-- la primera apertura puede tardar mas porque instala o compila
-- el acceso directo no usa `3000`; la app abre en `http://127.0.0.1:32123/`
-- para validacion automatica o soporte se pueden usar:
-  - `FLY_DESK_SKIP_BROWSER=1`
-  - `FLY_DESK_SILENT=1`
+- `FLY_DESK_SKIP_BROWSER=1`
+- `FLY_DESK_SILENT=1`
+- `FLY_DESK_LAUNCHER_PORT=32123`
 
 ## Verificacion reciente
 
-Estado validado el 27 de marzo de 2026:
+Estado validado el 31 de marzo de 2026:
 
-- `npm test`
-- `npm run build`
 - `npm run typecheck`
-- smoke real en navegador a `1920x1080`
-- busqueda exacta real con placeholder inline y resultados
-- matriz flexible real con celdas resolviendo y paso a lista exacta
+- `npm test` con `67/67` pruebas en verde
+- verificacion del launcher de abrir/cerrar sobre `32123`
 
 ## Documentacion vigente
 
-- [Estado actual de la repo](/D:/Dev/fly-desk/docs/REPO_CURRENT_STATE.md)
-- [Auditoria tecnica de codigo](/D:/Dev/fly-desk/docs/CODE_AUDIT_2026-03-27.md)
-- [Deploy en Railway](/D:/Dev/fly-desk/docs/DEPLOY_RAILWAY.md)
+- [`docs/REPO_CURRENT_STATE.md`](./docs/REPO_CURRENT_STATE.md): estado funcional y tecnico actual
+- [`docs/DEPLOY_RAILWAY.md`](./docs/DEPLOY_RAILWAY.md): notas de deploy remoto y limites actuales
+- [`docs/CODE_AUDIT_2026-03-27.md`](./docs/CODE_AUDIT_2026-03-27.md): auditoria historica previa al saneamiento repo-wide
 
 ## Nota de deploy
 
-La UI y el servidor se pueden levantar en cualquier host Node, pero la integracion completa con Agil todavia depende de una sesion local de navegador. Eso hace que un deploy remoto sea parcial hasta rediseñar la estrategia de autenticacion/sesion.
+La app se puede construir y arrancar en cualquier host Node, pero el comportamiento local completo sigue siendo local-first:
+
+- el bind por defecto es loopback
+- Agil depende de sesion local de navegador
+- Costamar esta mas cerca de un provider remoto estable, pero el proyecto sigue pensado para uso local
+
+Para un deploy remoto real hay que definir al menos `HOST=0.0.0.0` y asumir que la integracion completa con Agil no es equivalente al entorno local.
