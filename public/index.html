@@ -175,49 +175,72 @@
     <div class="search-shell__footer">
       <div class="search-shell__footer-main">
         <div class="search-refinements">
-          <label class="refinement refinement--toggle">
+          <label class="refinement refinement--toggle refinement--direct">
             <input name="nonStop" id="nonStop" type="checkbox" />
             <span class="refinement__text">Directo</span>
           </label>
 
-        <label class="refinement refinement--toggle">
-          <input name="baggageRequired" id="baggageRequired" type="checkbox" />
-          <span class="refinement__text">Equipaje</span>
-        </label>
+          <div id="layoverFilter" class="refinement refinement--select refinement--stops">
+            <button
+              type="button"
+              id="layoverTrigger"
+              class="refinement__trigger"
+              aria-haspopup="dialog"
+              aria-expanded="false"
+              aria-controls="layoverPopover"
+              aria-label="Configurar filtro de escala"
+            >
+              <span
+                id="layoverTriggerValue"
+                class="refinement__text refinement__text--select"
+                data-disabled-label="Sin escalas"
+                data-empty-label="Escala"
+              >Escala</span>
+              <svg class="ico ico--xs refinement__icon" aria-hidden="true"><use href="#ico-chevron-down"/></svg>
+            </button>
 
-        <div id="layoverFilter" class="refinement refinement--select">
-          <button
-            type="button"
-            id="layoverTrigger"
-            class="refinement__trigger"
-            aria-haspopup="listbox"
-            aria-expanded="false"
-            aria-controls="layoverPopover"
-          >
-            <span
-              id="layoverTriggerValue"
-              class="refinement__text refinement__text--select"
-              data-empty-label="Escala"
-              data-value-prefix="Escala: "
-            >Escala</span>
-            <svg class="ico ico--xs refinement__icon" aria-hidden="true"><use href="#ico-chevron-down"/></svg>
-          </button>
+            <div id="layoverPopover" class="refinement-popover refinement-popover--layover hidden" role="dialog" aria-label="Configurar escala">
+              <section class="refinement-popover__section" aria-label="Número máximo de escalas">
+                <span class="refinement-popover__section-label">Escalas</span>
+                <div class="refinement-choice-grid refinement-choice-grid--stops" role="group" aria-label="Máximo de escalas por trayecto">
+                  <button type="button" class="refinement-popover__option" data-max-stops-value="" aria-pressed="true">Cualq.</button>
+                  <button type="button" class="refinement-popover__option" data-max-stops-value="1" aria-pressed="false">1 esc.</button>
+                  <button type="button" class="refinement-popover__option" data-max-stops-value="2" aria-pressed="false">2 esc.</button>
+                </div>
+              </section>
 
-          <div id="layoverPopover" class="refinement-popover hidden" role="listbox" aria-label="Escala máxima">
-            <button type="button" class="refinement-popover__option is-selected" data-layover-value="" role="option" aria-selected="true">Sin limite</button>
-            <button type="button" class="refinement-popover__option" data-layover-value="120" role="option" aria-selected="false">2h</button>
-            <button type="button" class="refinement-popover__option" data-layover-value="240" role="option" aria-selected="false">4h</button>
-            <button type="button" class="refinement-popover__option" data-layover-value="480" role="option" aria-selected="false">8h</button>
+              <section class="refinement-popover__section" aria-label="Tiempo máximo de escala">
+                <span class="refinement-popover__section-label">Tiempo</span>
+                <div class="refinement-choice-grid refinement-choice-grid--times" role="group" aria-label="Tiempo máximo por escala">
+                  <button type="button" class="refinement-popover__option" data-layover-value="" aria-pressed="true">Cualq.</button>
+                  <button type="button" class="refinement-popover__option" data-layover-value="120" aria-pressed="false">2h</button>
+                  <button type="button" class="refinement-popover__option" data-layover-value="240" aria-pressed="false">4h</button>
+                  <button type="button" class="refinement-popover__option" data-layover-value="360" aria-pressed="false">6h</button>
+                  <button type="button" class="refinement-popover__option" data-layover-value="480" aria-pressed="false">8h</button>
+                </div>
+              </section>
+            </div>
+
+            <select name="maxStopsFilter" id="maxStopsFilter" class="sr-only" tabindex="-1" aria-hidden="true">
+              <option value="" selected>Cualquiera</option>
+              <option value="1">1 escala</option>
+              <option value="2">2 escalas</option>
+            </select>
+
+            <select name="maxLayoverMinutes" id="maxLayoverMinutes" class="sr-only" tabindex="-1" aria-hidden="true">
+              <option value="" selected>Cualquiera</option>
+              <option value="120">2h</option>
+              <option value="240">4h</option>
+              <option value="360">6h</option>
+              <option value="480">8h</option>
+            </select>
           </div>
 
-          <select name="maxLayoverMinutes" id="maxLayoverMinutes" class="refinement__native-select" tabindex="-1" aria-hidden="true">
-            <option value="">Sin limite</option>
-            <option value="120">2h</option>
-            <option value="240">4h</option>
-            <option value="480">8h</option>
-          </select>
+          <label class="refinement refinement--toggle refinement--baggage">
+            <input name="baggageRequired" id="baggageRequired" type="checkbox" />
+            <span class="refinement__text">Equipaje</span>
+          </label>
         </div>
-      </div>
 
         <div class="search-shell__actions" role="group" aria-label="Configurar busqueda">
           <button type="button" id="copySearchConfigBtn" class="btn btn--secondary btn--sm search-shell__action" title="Copiar configuracion de busqueda">

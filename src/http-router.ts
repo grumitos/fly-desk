@@ -3,6 +3,8 @@ import { buildQuotationText } from "./core/quotation";
 import {
   Cabin,
   CanonicalOffer,
+  LocationSuggestion,
+  MatrixCell,
   MatrixResponse,
   ProviderConfigInput,
   ProviderContext,
@@ -90,6 +92,11 @@ interface ProviderSearchState {
   offers: CanonicalOffer[];
   warnings: string[];
   partial: boolean;
+  completed: boolean;
+}
+
+interface ProviderMatrixState {
+  response: MatrixResponse;
   completed: boolean;
 }
 
@@ -231,6 +238,7 @@ function normalizeRequest(
       maxResults: numberValue(filters.maxResults, 25),
       maxTotalDurationMinutes: numberValue(filters.maxTotalDurationMinutes),
       maxLayoverMinutes: numberValue(filters.maxLayoverMinutes),
+      maxStops: numberValue(filters.maxStops),
       minDepartureMinutes: numberValue(filters.minDepartureMinutes),
       maxDepartureMinutes: numberValue(filters.maxDepartureMinutes),
       minArrivalMinutes: numberValue(filters.minArrivalMinutes),
@@ -371,9 +379,6 @@ function validateProviderContext(
   if (!context?.terminalId) {
     errors.push("Costamar terminalId is required.");
   }
-  if (!context?.token) {
-    errors.push("Costamar token is required.");
-  }
 
   return errors;
 }
@@ -459,6 +464,215 @@ function materializeAggregatedSearchResponse(
   return materialized;
 }
 
+function buildMatrixConfidenceSummary(cells: MatrixCell[]): Record<string, number> {
+  return cells.reduce<Record<string, number>>((acc, cell) => {
+    acc[cell.confidence] = (acc[cell.confidence] ?? 0) + 1;
+    return acc;
+  }, {});
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function matrixCellStateRank(cell?: MatrixCell): number {
+  switch (cell?.confidence) {
+    case "validated":
+      return 0;
+    case "live":
+      return 1;
+    case "indicative":
+      return 2;
+    case "loading":
+      return 3;
+    case "unavailable":
+      return 4;
+    case "empty":
+      return 5;
+    default:
+      return 6;
+  }
+}
+
+function compareAggregatedMatrixCells(
+  left: MatrixCell,
+  right: MatrixCell,
+  providerIds: ProviderId[],
+): number {
+  const leftHasPrice = typeof left.price?.amount === "number";
+  const rightHasPrice = typeof right.price?.amount === "number";
+
+  if (leftHasPrice && rightHasPrice) {
+    const priceDiff = (left.price?.amount ?? Number.POSITIVE_INFINITY)
+      - (right.price?.amount ?? Number.POSITIVE_INFINITY);
+    if (priceDiff !== 0) {
+      return priceDiff;
+    }
+  } else if (leftHasPrice !== rightHasPrice) {
+    return leftHasPrice ? -1 : 1;
+  }
+
+  const stateDiff = matrixCellStateRank(left) - matrixCellStateRank(right);
+  if (stateDiff !== 0) {
+    return stateDiff;
+  }
+
+  return providerIds.indexOf(left.providerSource) - providerIds.indexOf(right.providerSource);
+}
+
+function pickAggregatedMatrixCell(
+  cells: MatrixCell[],
+  providerIds: ProviderId[],
+): MatrixCell | undefined {
+  if (cells.length === 0) {
+    return undefined;
+  }
+
+  return [...cells].sort((left, right) => compareAggregatedMatrixCells(left, right, providerIds))[0];
+}
+
+function materializeAggregatedMatrixResponse(
+  request: SearchRequest,
+  providerIds: ProviderId[],
+  states: Map<ProviderId, ProviderMatrixState>,
+): MatrixResponse {
+  const orderedKeys: string[] = [];
+  const seenKeys = new Set<string>();
+
+  providerIds.forEach((providerId) => {
+    const response = states.get(providerId)?.response;
+    response?.cells.forEach((cell) => {
+      if (!seenKeys.has(cell.key)) {
+        seenKeys.add(cell.key);
+        orderedKeys.push(cell.key);
+      }
+    });
+  });
+
+  const cells = orderedKeys.flatMap((key) => {
+    const candidates = providerIds
+      .map((providerId) => states.get(providerId)?.response.cells.find((cell) => cell.key === key))
+      .filter((cell): cell is MatrixCell => Boolean(cell));
+    const selected = pickAggregatedMatrixCell(candidates, providerIds);
+    return selected ? [selected] : [];
+  });
+
+  const departureDates: string[] = [];
+  const seenDepartureDates = new Set<string>();
+  const returnDates: string[] = [];
+  const seenReturnDates = new Set<string>();
+
+  providerIds.forEach((providerId) => {
+    const response = states.get(providerId)?.response;
+    response?.axes.departureDates.forEach((date) => {
+      if (!seenDepartureDates.has(date)) {
+        seenDepartureDates.add(date);
+        departureDates.push(date);
+      }
+    });
+    response?.axes.returnDates.forEach((date) => {
+      if (!seenReturnDates.has(date)) {
+        seenReturnDates.add(date);
+        returnDates.push(date);
+      }
+    });
+  });
+
+  const warnings = uniqueStrings(providerIds.flatMap((providerId) => {
+    const response = states.get(providerId)?.response;
+    return [
+      ...(response?.warnings ?? []),
+      ...(response?.searchMeta.warnings ?? []),
+    ];
+  }));
+  const recommendations = uniqueStrings(providerIds.flatMap((providerId) =>
+    states.get(providerId)?.response.recommendations ?? [],
+  ));
+  const partial = providerIds.some((providerId) => {
+    const state = states.get(providerId);
+    return !state?.completed || state.response.searchMeta.partial;
+  });
+
+  return {
+    cells,
+    axes: {
+      departureDates,
+      returnDates,
+    },
+    confidenceSummary: buildMatrixConfidenceSummary(cells),
+    recommendations,
+    searchMeta: {
+      requestedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      providersUsed: providerIds,
+      warnings,
+      partial,
+      searchState: partial ? "search_partial" : "search_live",
+    },
+    providerMeta: {
+      exactProvider: providerIds[0],
+      coverageMode: request.coverageMode,
+    },
+    warnings,
+  };
+}
+
+function updateMatrixDraftCell(response: MatrixResponse, cell: MatrixCell): MatrixResponse {
+  const cells = response.cells.map((entry) => entry.key === cell.key ? cell : entry);
+  return {
+    ...response,
+    cells,
+    confidenceSummary: buildMatrixConfidenceSummary(cells),
+  };
+}
+
+function materializeFailedMatrixResponse(
+  response: MatrixResponse,
+  message: string,
+): MatrixResponse {
+  const cells = response.cells.map((cell) => {
+    if (cell.confidence !== "loading") {
+      return cell;
+    }
+
+    return {
+      ...cell,
+      confidence: "unavailable" as const,
+      selectable: false,
+      stateCode: "chg" as const,
+      tooltip: message,
+    };
+  });
+  const warnings = uniqueStrings([
+    ...response.warnings,
+    message,
+  ]);
+
+  return {
+    ...response,
+    cells,
+    confidenceSummary: buildMatrixConfidenceSummary(cells),
+    searchMeta: {
+      ...response.searchMeta,
+      completedAt: new Date().toISOString(),
+      warnings,
+      partial: true,
+      searchState: "search_partial",
+    },
+    warnings,
+  };
+}
+
+function scopedProviderRequest(
+  request: SearchRequest,
+  providerId: ProviderId,
+): SearchRequest {
+  return {
+    ...request,
+    providerId,
+  };
+}
+
 function getProgressiveAdapter(providerId: ProviderId): ProgressiveSearchAdapter {
   return PROGRESSIVE_ADAPTERS[providerId];
 }
@@ -477,6 +691,30 @@ async function suggestLocationsForProvider(
   return providerId === "costamar"
     ? suggestLocalCostamarLocations(query, limit)
     : suggestLocalAgilLocations(query, limit);
+}
+
+function mergeLocationSuggestions(
+  groups: ReadonlyArray<ReadonlyArray<LocationSuggestion>>,
+  limit: number,
+): LocationSuggestion[] {
+  const deduped = new Map<string, LocationSuggestion>();
+
+  for (const group of groups) {
+    for (const suggestion of group) {
+      const key = String(suggestion.code || suggestion.label || "")
+        .trim()
+        .toUpperCase();
+      if (!key || deduped.has(key)) {
+        continue;
+      }
+      deduped.set(key, suggestion);
+      if (deduped.size >= limit) {
+        return [...deduped.values()];
+      }
+    }
+  }
+
+  return [...deduped.values()];
 }
 
 function isLoopbackHost(hostname: string): boolean {
@@ -581,11 +819,37 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     const limit = integerParam(url.searchParams.get("limit"), 8, 1, 20);
-    const providerId = resolveProviderId(
-      stringValue(url.searchParams.get("providerId")) as ProviderId | undefined,
+    const rawProviderId = stringValue(url.searchParams.get("providerId"));
+    const providerIds = rawProviderId
+      ? [resolveProviderId(rawProviderId as ProviderId | undefined)]
+      : resolveSearchProviderIds(undefined);
+
+    if (providerIds.length === 1) {
+      const providerId = providerIds[0];
+      const suggestions = await suggestLocationsForProvider(runtime, providerId, query, limit);
+      return json({ query, providerId, suggestions });
+    }
+
+    const settled = await Promise.allSettled(
+      providerIds.map(async (providerId) => ({
+        providerId,
+        suggestions: await suggestLocationsForProvider(runtime, providerId, query, limit) as LocationSuggestion[],
+      })),
     );
-    const suggestions = await suggestLocationsForProvider(runtime, providerId, query, limit);
-    return json({ query, providerId, suggestions });
+
+    const fulfilled = settled
+      .filter((result): result is PromiseFulfilledResult<{ providerId: ProviderId; suggestions: LocationSuggestion[] }> => result.status === "fulfilled")
+      .map((result) => result.value.suggestions);
+
+    if (fulfilled.length === 0) {
+      const failure = settled.find((result) => result.status === "rejected");
+      throw failure?.status === "rejected" && failure.reason instanceof Error
+        ? failure.reason
+        : new Error("Location suggest failed.");
+    }
+
+    const suggestions = mergeLocationSuggestions(fulfilled, limit);
+    return json({ query, providerIds, suggestions });
   }
 
   if (request.method === "POST" && url.pathname === "/api/local/open-url") {
@@ -728,24 +992,39 @@ export async function routeRequest(request: Request): Promise<Response> {
 
   if (request.method === "POST" && url.pathname === "/api/matrix") {
     const payload = await readPayload<SearchPayload>(request);
-    const providerId = resolveProviderId(payload.providerId ?? payload.request?.providerId);
-    const normalizedRequest = normalizeRequest(payload.request, providerId);
+    const explicitProviderId = parseExplicitProviderId(payload.providerId ?? payload.request?.providerId);
+    const providerIds = resolveSearchProviderIds(explicitProviderId);
+    const normalizedRequest = normalizeRequest(payload.request, explicitProviderId);
     normalizedRequest.searchMode = "roundtrip-grid";
-    const providerContext = buildProviderContext(providerId, payload.providerConfig);
+    const providerContext = buildProviderContext("costamar", payload.providerConfig);
 
     const errors = [
       ...validateRequest(normalizedRequest),
-      ...validateProviderContext(providerId, providerContext),
+      ...(explicitProviderId === "costamar" ? validateProviderContext("costamar", providerContext) : []),
     ];
     if (errors.length > 0) {
       return json({ errors }, { status: 400 });
     }
 
-    const adapter = getProgressiveAdapter(providerId);
-    const draft = adapter.createMatrixDraft(normalizedRequest, {
-      exactProvider: providerId,
-      coverageMode: normalizedRequest.coverageMode,
-    });
+    const providerStates = new Map<ProviderId, ProviderMatrixState>(
+      providerIds.map((providerId) => {
+        const providerRequest = scopedProviderRequest(normalizedRequest, providerId);
+        const adapter = getProgressiveAdapter(providerId);
+        const response = adapter.createMatrixDraft(providerRequest, {
+          exactProvider: providerId,
+          coverageMode: normalizedRequest.coverageMode,
+        });
+        return [providerId, {
+          response,
+          completed: false,
+        }];
+      }),
+    );
+    const draft = materializeAggregatedMatrixResponse(
+      normalizedRequest,
+      providerIds,
+      providerStates,
+    );
     const job = runtime.sessions.createMatrixJob({
       request: normalizedRequest,
       providerContext,
@@ -759,62 +1038,78 @@ export async function routeRequest(request: Request): Promise<Response> {
       status: "running",
     });
 
-    void adapter.resolveMatrixProgressive(normalizedRequest, providerContext, {
-      ...draft,
-      searchMeta: {
-        ...draft.searchMeta,
-        searchSessionId: job.id,
-      },
-    }, (cell) => {
-      runtime.sessions.updateMatrixJob(job.id, (current) => {
-        const cells = current.cells.map((entry) => entry.key === cell.key ? cell : entry);
-        const confidenceSummary = cells.reduce<Record<string, number>>((acc, entry) => {
-          acc[entry.confidence] = (acc[entry.confidence] ?? 0) + 1;
-          return acc;
-        }, {});
+    const syncMatrixJob = (status: "running" | "completed") => {
+      const materialized = materializeAggregatedMatrixResponse(
+        normalizedRequest,
+        providerIds,
+        providerStates,
+      );
 
-        return {
-          ...current,
-          cells,
-          confidenceSummary,
-        };
-      });
-    }).then((result) => {
       runtime.sessions.updateMatrixJob(job.id, (current) => ({
         ...current,
-        cells: result.cells,
-        axes: result.axes,
-        confidenceSummary: result.confidenceSummary,
-        recommendations: result.recommendations,
+        cells: materialized.cells,
+        axes: materialized.axes,
+        confidenceSummary: materialized.confidenceSummary,
+        recommendations: materialized.recommendations,
         searchMeta: {
-          ...result.searchMeta,
+          ...materialized.searchMeta,
+          requestedAt: current.searchMeta.requestedAt,
           searchSessionId: current.id,
         },
-        providerMeta: result.providerMeta,
-        warnings: result.warnings,
-        status: "completed",
+        providerMeta: materialized.providerMeta,
+        warnings: materialized.warnings,
+        status,
         error: undefined,
       }));
-    }).catch((error) => {
-      runtime.sessions.updateMatrixJob(job.id, (current) => ({
-        ...current,
-        status: "failed",
-        error: error instanceof Error ? error.message : "Matrix job failed.",
-        warnings: [
-          ...current.warnings,
-          error instanceof Error ? error.message : "Matrix job failed.",
-        ],
-        searchMeta: {
-          ...current.searchMeta,
-          completedAt: new Date().toISOString(),
-          partial: true,
-          searchState: "search_failed",
-          warnings: [
-            ...current.searchMeta.warnings,
+    };
+
+    const resolvers = providerIds.map(async (providerId) => {
+      const providerRequest = scopedProviderRequest(normalizedRequest, providerId);
+      const adapter = getProgressiveAdapter(providerId);
+      const currentState = providerStates.get(providerId);
+      const draftResponse = currentState?.response ?? adapter.createMatrixDraft(providerRequest, {
+        exactProvider: providerId,
+        coverageMode: normalizedRequest.coverageMode,
+      });
+
+      try {
+        const result = await adapter.resolveMatrixProgressive(
+          providerRequest,
+          providerContext,
+          draftResponse,
+          (cell) => {
+            const providerState = providerStates.get(providerId);
+            if (!providerState) {
+              return;
+            }
+
+            providerStates.set(providerId, {
+              response: updateMatrixDraftCell(providerState.response, cell),
+              completed: false,
+            });
+            syncMatrixJob("running");
+          },
+        );
+
+        providerStates.set(providerId, {
+          response: result,
+          completed: true,
+        });
+      } catch (error) {
+        providerStates.set(providerId, {
+          response: materializeFailedMatrixResponse(
+            draftResponse,
             error instanceof Error ? error.message : "Matrix job failed.",
-          ],
-        },
-      }));
+          ),
+          completed: true,
+        });
+      }
+
+      syncMatrixJob("running");
+    });
+
+    void Promise.allSettled(resolvers).then(() => {
+      syncMatrixJob("completed");
     });
 
     return json(matrixJobResponse(job));

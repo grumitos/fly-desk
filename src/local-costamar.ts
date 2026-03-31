@@ -378,10 +378,35 @@ function ensureCostamarCredentials(context: CostamarProviderContext): void {
   if (!context.terminalId) {
     throw new Error("Costamar terminalId is required.");
   }
+}
 
-  if (!context.token) {
-    throw new Error("Costamar token is required.");
+function resolveCostamarValidationToken(token: string | undefined): string | undefined {
+  const normalized = token?.trim();
+  if (!normalized) {
+    return undefined;
   }
+
+  try {
+    const payload = JSON.parse(
+      Buffer.from(
+        normalized.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/") ?? "",
+        "base64",
+      ).toString("utf8"),
+    ) as { exp?: number };
+    const expiresAtMs = typeof payload.exp === "number" ? payload.exp * 1000 : 0;
+    if (expiresAtMs > 0 && expiresAtMs <= Date.now()) {
+      return undefined;
+    }
+  } catch {
+    // Non-JWT tokens are still accepted as explicit validation tokens.
+  }
+
+  return normalized;
+}
+
+function resolveCostamarRedirectToken(token: string | undefined): string | undefined {
+  const normalized = token?.trim();
+  return normalized || undefined;
 }
 
 async function fetchCostamar(
@@ -491,6 +516,8 @@ export function buildCostamarSearchBody(
     });
   }
 
+  const validationToken = resolveCostamarValidationToken(context.token);
+
   return {
     flightType: request.tripType === "one-way" ? "OW" : "RT",
     terminalId: context.terminalId,
@@ -502,8 +529,8 @@ export function buildCostamarSearchBody(
     },
     startDate: toCostamarDayStart(leg.departureDate),
     endDate: toCostamarDayStart(request.tripType === "round-trip" ? leg.returnDate : leg.departureDate),
-    token: context.token,
-    hasValidationToken: true,
+    ...(validationToken ? { token: validationToken } : {}),
+    hasValidationToken: Boolean(validationToken),
     flexible,
   };
 }
@@ -521,6 +548,10 @@ export function buildCostamarSearchWarning(payload: CostamarSearchResponse): str
 
   if (status === 401) {
     return "Costamar rejected this search: the branded token is invalid, expired, or no longer belongs to this agency.";
+  }
+
+  if (status === 402) {
+    return "Costamar rejected this search: the validation token is missing for this branded flow.";
   }
 
   return `Costamar rejected this search with status ${status}.`;
@@ -651,7 +682,10 @@ export function buildCostamarBrandedSearchUrl(
   base.pathname = `${base.pathname.replace(/\/+$/, "")}/${pathParts.join("/")}`;
   base.searchParams.set("terminalId", context.terminalId);
   base.searchParams.set("lang", context.lang);
-  base.searchParams.set("token", context.token);
+  const redirectToken = resolveCostamarRedirectToken(context.token);
+  if (redirectToken) {
+    base.searchParams.set("token", redirectToken);
+  }
 
   return base.toString();
 }
@@ -879,15 +913,29 @@ async function searchRecommendations(
   ensureCostamarCredentials(context);
 
   const engine = await getEngineMetadata(context);
-  const payload = await fetchCostamarJson<CostamarSearchResponse>(
-    context,
+  const search = (searchContext: CostamarProviderContext) => fetchCostamarJson<CostamarSearchResponse>(
+    searchContext,
     "/flights/search",
     {
       method: "POST",
-      body: JSON.stringify(buildCostamarSearchBody(request, context, flexible)),
+      body: JSON.stringify(buildCostamarSearchBody(request, searchContext, flexible)),
     },
     "Costamar flight search",
   );
+
+  let payload = await search(context);
+  if (
+    context.token
+    && (payload.status === 401 || payload.status === 402)
+  ) {
+    const fallbackPayload = await search({
+      ...context,
+      token: "",
+    });
+    if (typeof fallbackPayload.status !== "number" || fallbackPayload.status < 400) {
+      payload = fallbackPayload;
+    }
+  }
 
   const responseWarning = buildCostamarSearchWarning(payload);
   const recommendations = responseWarning ? [] : asArray(payload.data);

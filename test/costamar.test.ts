@@ -180,6 +180,29 @@ test("buildCostamarBrandedSearchUrl keeps the branded round-trip path shape", ()
   assert.equal(parsed.searchParams.get("token"), "secret-token");
 });
 
+test("buildCostamarBrandedSearchUrl keeps the token in the external link even if it is expired", () => {
+  const request = buildRequest();
+  request.searchMode = "exact";
+  request.legs[0].departureDate = "2026-06-01";
+  request.legs[0].returnDate = "2026-06-08";
+
+  const expiredToken = buildJwt({
+    id: "0721808110",
+    iat: 1700000000,
+    exp: 1700003600,
+  });
+  const url = buildCostamarBrandedSearchUrl(request, {
+    apiBaseUrl: "https://costamar.example/api",
+    brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+    terminalId: "0721808110",
+    token: expiredToken,
+    lang: "es",
+  });
+
+  const parsed = new URL(url);
+  assert.equal(parsed.searchParams.get("token"), expiredToken);
+});
+
 test("buildCostamarSearchBody matches the live booking frontend payload shape", () => {
   const request = buildRequest();
   request.searchMode = "exact";
@@ -222,10 +245,59 @@ test("buildCostamarSearchBody matches the live booking frontend payload shape", 
   });
 });
 
+test("buildCostamarSearchBody skips expired branded validation tokens", () => {
+  const request = buildRequest();
+  request.searchMode = "exact";
+  request.legs[0].departureDate = "2026-06-01";
+  request.legs[0].returnDate = "2026-06-08";
+
+  const payload = buildCostamarSearchBody(request, {
+    apiBaseUrl: "https://costamar.example/api",
+    brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+    terminalId: "0721808110",
+    token: buildJwt({
+      id: "0721808110",
+      iat: 1700000000,
+      exp: 1700003600,
+    }),
+    lang: "es",
+  });
+
+  assert.deepEqual(payload, {
+    flightType: "RT",
+    terminalId: "0721808110",
+    itinerary: [
+      {
+        origin: "LIM",
+        destination: "MAD",
+        date: "20260601",
+      },
+      {
+        origin: "MAD",
+        destination: "LIM",
+        date: "20260608",
+      },
+    ],
+    passengers: {
+      adults: 1,
+      children: 1,
+      infants: 1,
+    },
+    startDate: "2026-06-01T05:00:00.000Z",
+    endDate: "2026-06-08T05:00:00.000Z",
+    hasValidationToken: false,
+    flexible: false,
+  });
+});
+
 test("buildCostamarSearchWarning exposes token failures clearly", () => {
   assert.equal(
     buildCostamarSearchWarning({ status: 401, data: [] }),
     "Costamar rejected this search: the branded token is invalid, expired, or no longer belongs to this agency.",
+  );
+  assert.equal(
+    buildCostamarSearchWarning({ status: 402, data: [] }),
+    "Costamar rejected this search: the validation token is missing for this branded flow.",
   );
   assert.equal(
     buildCostamarSearchWarning({ status: 403, data: [], message: "Agency mismatch" }),
