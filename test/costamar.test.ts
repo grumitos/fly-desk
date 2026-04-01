@@ -207,6 +207,56 @@ test("resolveLatestCostamarProviderContext refreshes a cached token from Chrome 
   }
 });
 
+test("resolveLatestCostamarProviderContext can recover the freshest token from Chrome history", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-history-"));
+  const profileName = "Profile 40";
+  const profileDir = join(tempRoot, profileName);
+  mkdirSync(profileDir, { recursive: true });
+
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  writeFileSync(
+    join(profileDir, "History"),
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${token}`,
+    "utf8",
+  );
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const context = resolveLatestCostamarProviderContext({
+      terminalId: "0721808110",
+      lang: "es",
+    });
+
+    assert.equal(context.terminalId, "0721808110");
+    assert.equal(context.token, token);
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("buildCostamarBrandedSearchUrl keeps the branded round-trip path shape", () => {
   const request = buildRequest();
   request.searchMode = "exact";
@@ -231,7 +281,7 @@ test("buildCostamarBrandedSearchUrl keeps the branded round-trip path shape", ()
   assert.equal(parsed.searchParams.get("token"), "secret-token");
 });
 
-test("buildCostamarBrandedSearchUrl skips expired tokens in the external link", () => {
+test("buildCostamarBrandedSearchUrl keeps the token in the external link even if it is expired", () => {
   const request = buildRequest();
   request.searchMode = "exact";
   request.legs[0].departureDate = "2026-06-01";
@@ -251,7 +301,7 @@ test("buildCostamarBrandedSearchUrl skips expired tokens in the external link", 
   });
 
   const parsed = new URL(url);
-  assert.equal(parsed.searchParams.get("token"), null);
+  assert.equal(parsed.searchParams.get("token"), expiredToken);
 });
 
 test("applyCostamarContextToBrandedSearchUrl refreshes terminal and token query params", () => {
