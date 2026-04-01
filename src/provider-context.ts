@@ -16,6 +16,8 @@ export const DEFAULT_COSTAMAR_TERMINAL_ID = "0721808110";
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 const COSTAMAR_SESSION_CACHE_TTL_MS = 30000;
 const COSTAMAR_BRANDED_URL_REGEX = /https:\/\/booking\.clickandbook\.com\/vuelos\/b\/[A-Z]{3}\/[A-Z]{3}(?:\/\d{4}-\d{2}-\d{2}){1,2}\/\d+\/\d+\/\d+\?[^\s\x00]*/gi;
+const COSTAMAR_JWT_PREFIX_REGEX = /^([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/;
+const COSTAMAR_TOKEN_SAFE_PREFIX_REGEX = /^[A-Za-z0-9._-]+/;
 const COSTAMAR_API_HOSTS = new Set(["costamar.com.pe"]);
 const COSTAMAR_BRAND_HOSTS = new Set(["booking.clickandbook.com"]);
 
@@ -79,6 +81,20 @@ function decodeJwtTimes(token: string): { iatMs: number; expMs: number } {
       expMs: 0,
     };
   }
+}
+
+function sanitizeExtractedCostamarToken(token: string): string {
+  const normalized = token.trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const jwtMatch = normalized.match(COSTAMAR_JWT_PREFIX_REGEX);
+  if (jwtMatch?.[1]) {
+    return jwtMatch[1];
+  }
+
+  return normalized.match(COSTAMAR_TOKEN_SAFE_PREFIX_REGEX)?.[0] ?? normalized;
 }
 
 function resolveChromeUserDataDir(): string {
@@ -146,7 +162,7 @@ export function extractCostamarSessionCandidates(
 
     try {
       const parsed = new URL(sanitized);
-      const token = parsed.searchParams.get("token")?.trim() ?? "";
+      const token = sanitizeExtractedCostamarToken(parsed.searchParams.get("token")?.trim() ?? "");
       const terminalId = parsed.searchParams.get("terminalId")?.trim() ?? "";
       if (!token || !terminalId) {
         continue;

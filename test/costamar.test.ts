@@ -105,6 +105,22 @@ test("extractCostamarSessionCandidates reads branded urls from Chrome session te
   assert.equal(best?.token, newer);
 });
 
+test("extractCostamarSessionCandidates trims trailing noise from Chrome artifacts", () => {
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1775071689,
+    exp: 1775075289,
+  });
+  const text =
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-04-22/3/1/0?terminalId=0721808110&lang=es&token=${token}{`
+    + "\"visit_count\":1}";
+
+  const candidates = extractCostamarSessionCandidates(text, "History");
+
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0]?.token, token);
+});
+
 test("resolveCostamarProviderContext can recover the freshest token from Chrome sessions", () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-session-"));
   const profileName = "Profile 40";
@@ -220,7 +236,8 @@ test("resolveLatestCostamarProviderContext can recover the freshest token from C
   });
   writeFileSync(
     join(profileDir, "History"),
-    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${token}`,
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${token}{`
+      + "\"visit_count\":1}",
     "utf8",
   );
 
