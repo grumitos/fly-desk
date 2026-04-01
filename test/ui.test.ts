@@ -1199,6 +1199,98 @@ test("combined max stops and max layover filters are sent and applied together",
   }, { autoOpen: false });
 });
 
+test("active scale filter reorders results before the selected cheapest sort", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      const body = route.request().postDataJSON();
+      const offers = [
+        buildTwoStopOffer("offer-two-stop-cheapest", 300, 60, 60),
+        buildLayoverOffer("offer-one-stop-longer", 340, 180),
+        buildLayoverOffer("offer-one-stop-shorter", 520, 60),
+      ];
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-scale-priority",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+              maxLayoverMinutes: body?.request?.filters?.maxLayoverMinutes,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers,
+          allOffers: offers,
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+    await openDesktop(page, baseUrl);
+    await page.evaluate(() => {
+      const origin = document.getElementById("origin") as HTMLInputElement | null;
+      const destination = document.getElementById("destination") as HTMLInputElement | null;
+      if (!origin || !destination) throw new Error("Missing location inputs");
+      origin.value = "LIM - Lima, Peru";
+      origin.dataset.code = "LIM";
+      origin.dataset.label = "LIM - Lima, Peru";
+      destination.value = "MIA - Miami, Usa";
+      destination.dataset.code = "MIA";
+      destination.dataset.label = "MIA - Miami, Usa";
+    });
+    await setDateValue(page, "departureDate", "2026-04-15");
+    await setDateValue(page, "returnDate", "2026-04-22");
+    await page.selectOption("#maxLayoverMinutes", "240");
+    await page.click("#submitButton");
+    await page.waitForSelector('tr[data-oid="offer-one-stop-shorter"]');
+
+    const probe = await page.evaluate(() => ({
+      ids: [...document.querySelectorAll('tr[data-oid]')].map((row) => row.getAttribute("data-oid")),
+      sortMode: (document.getElementById("sortMode") as HTMLSelectElement | null)?.value ?? "",
+      activeSort: [...document.querySelectorAll("#sortButtons [data-sort]")]
+        .find((button) => button.classList.contains("is-active"))
+        ?.getAttribute("data-sort") ?? "",
+    }));
+
+    assert.deepEqual(probe.ids, [
+      "offer-one-stop-shorter",
+      "offer-one-stop-longer",
+      "offer-two-stop-cheapest",
+    ]);
+    assert.equal(probe.sortMode, "cheapest");
+    assert.equal(probe.activeSort, "cheapest");
+  }, { autoOpen: false });
+});
+
 test("layover summary shows the maximum single layover instead of the combined total", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
 

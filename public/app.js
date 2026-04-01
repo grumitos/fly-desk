@@ -2911,7 +2911,30 @@ function maxStopsAcrossItineraries(offer) {
   return (offer?.itineraries || []).reduce((max, itinerary) => Math.max(max, itinerary?.stops || 0), 0);
 }
 
-function compareOffersForSortMode(left, right, mode) {
+function compareOffersForScaleFilters(left, right, filters = {}) {
+  const hasStopsPriority = typeof filters.maxStops === "number" || typeof filters.maxLayoverMinutes === "number";
+  const hasLayoverPriority = typeof filters.maxLayoverMinutes === "number";
+
+  if (hasStopsPriority) {
+    const maxStopsDiff = maxStopsAcrossItineraries(left) - maxStopsAcrossItineraries(right);
+    if (maxStopsDiff !== 0) return maxStopsDiff;
+
+    const totalStopsDiff = totalStopsCount(left) - totalStopsCount(right);
+    if (totalStopsDiff !== 0) return totalStopsDiff;
+  }
+
+  if (hasLayoverPriority) {
+    const layoverDiff = maxLayoverMinutesForOffer(left) - maxLayoverMinutesForOffer(right);
+    if (layoverDiff !== 0) return layoverDiff;
+  }
+
+  return 0;
+}
+
+function compareOffersForSortMode(left, right, mode, filters = {}) {
+  const scaleDiff = compareOffersForScaleFilters(left, right, filters);
+  if (scaleDiff !== 0) return scaleDiff;
+
   if (mode === "fastest") {
     const durationDiff = totalDurationMinutes(left) - totalDurationMinutes(right);
     if (durationDiff !== 0) return durationDiff;
@@ -3031,7 +3054,8 @@ function getActiveClientFilters() {
 function applyClientOfferControls() {
   if (!state.searchResponse?.allOffers) return;
   const sortMode = controlValue("sortMode") || state.sortMode || "cheapest";
-  let offers = getOffersForVisibleFacets(state.searchResponse.allOffers);
+  const filters = getActiveClientFilters();
+  let offers = getOffersForVisibleFacets(state.searchResponse.allOffers, filters);
 
   const { hidden, only } = state.airlineFilter;
   offers = offers.filter((offer) => {
@@ -3041,7 +3065,7 @@ function applyClientOfferControls() {
     return true;
   });
 
-  offers.sort((left, right) => compareOffersForSortMode(left, right, sortMode));
+  offers.sort((left, right) => compareOffersForSortMode(left, right, sortMode, filters));
 
   state.searchResponse.filteredOffers = offers;
   const groupedOffers = buildOfferGroups(offers);
@@ -3058,8 +3082,7 @@ function applyClientOfferControls() {
   }
 }
 
-function getOffersForVisibleFacets(allOffers) {
-  const filters = getActiveClientFilters();
+function getOffersForVisibleFacets(allOffers, filters = getActiveClientFilters()) {
   return [...allOffers].filter((offer) => {
     const maxOfferStops = maxStopsAcrossItineraries(offer);
     if (typeof filters.maxStops === "number" && maxOfferStops > Math.max(0, filters.maxStops)) return false;
