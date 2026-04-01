@@ -305,6 +305,22 @@ export function resolveCostamarProviderContext(
   });
 }
 
+export function resolveLatestCostamarProviderContext(
+  input?: CostamarProviderConfigInput,
+): CostamarProviderContext {
+  const normalized = normalizeCostamarProviderContext(input);
+  const sessionCandidate = readCostamarSessionCandidateFromChrome();
+  if (!sessionCandidate) {
+    return normalized;
+  }
+
+  return normalizeCostamarProviderContext({
+    ...normalized,
+    terminalId: sessionCandidate.terminalId || normalized.terminalId,
+    token: sessionCandidate.token || normalized.token,
+  });
+}
+
 export function buildProviderContext(
   providerId: ProviderId,
   providerConfig?: ProviderConfigInput,

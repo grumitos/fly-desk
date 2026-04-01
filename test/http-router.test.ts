@@ -1,6 +1,155 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type {
+  CanonicalOffer,
+  ProviderMeta,
+  SearchMeta,
+  SearchRequest,
+} from "../src/core/types";
+import { resetCostamarSessionCacheForTests } from "../src/provider-context";
+import { getRuntime } from "../src/runtime";
 import { withServer } from "./helpers/server";
+
+function buildJwt(payload: Record<string, unknown>): string {
+  const encode = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value))
+    .toString("base64url");
+  return `${encode({ alg: "HS256", typ: "JWT" })}.${encode(payload)}.signature`;
+}
+
+function buildCostamarRequest(): SearchRequest {
+  return {
+    providerId: "costamar",
+    tripType: "round-trip",
+    searchMode: "exact",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "MAD",
+        departureDate: "2026-06-01",
+        returnDate: "2026-06-08",
+      },
+    ],
+    passengers: {
+      adults: 1,
+      children: 0,
+      infants: 0,
+    },
+    cabin: "ECONOMY",
+    filters: {},
+    coverageMode: "core",
+    redirectMode: "best-effort",
+    currencyCode: "USD",
+    locale: "es-PE",
+    market: "PE",
+  };
+}
+
+function buildSearchMeta(): SearchMeta {
+  const now = "2026-03-31T00:00:00.000Z";
+  return {
+    requestedAt: now,
+    completedAt: now,
+    providersUsed: ["costamar"],
+    warnings: [],
+    partial: false,
+    searchState: "search_live",
+  };
+}
+
+function buildProviderMeta(): ProviderMeta {
+  return {
+    exactProvider: "costamar",
+    coverageMode: "core",
+  };
+}
+
+function buildCostamarOffer(url: string): CanonicalOffer {
+  return {
+    id: "offer-costamar-1",
+    signature: "offer-costamar-1-sig",
+    providerSource: "costamar",
+    providerOfferRef: "offer-costamar-1-ref",
+    tripType: "round-trip",
+    validatingCarrier: "IB",
+    mainCarrier: "IB",
+    origin: "LIM",
+    destination: "MAD",
+    itineraries: [
+      {
+        id: "offer-costamar-1-out",
+        direction: "outbound",
+        durationMinutes: 720,
+        stops: 0,
+        layoverMinutes: [],
+        segments: [
+          {
+            id: "offer-costamar-1-out-seg",
+            marketingCarrier: "IB",
+            flightNumber: "6650",
+            origin: "LIM",
+            destination: "MAD",
+            departureAt: "2026-06-01T10:00:00Z",
+            arrivalAt: "2026-06-01T22:00:00Z",
+            durationMinutes: 720,
+          },
+        ],
+      },
+      {
+        id: "offer-costamar-1-in",
+        direction: "inbound",
+        durationMinutes: 720,
+        stops: 0,
+        layoverMinutes: [],
+        segments: [
+          {
+            id: "offer-costamar-1-in-seg",
+            marketingCarrier: "IB",
+            flightNumber: "6651",
+            origin: "MAD",
+            destination: "LIM",
+            departureAt: "2026-06-08T10:00:00Z",
+            arrivalAt: "2026-06-08T22:00:00Z",
+            durationMinutes: 720,
+          },
+        ],
+      },
+    ],
+    price: {
+      total: {
+        amount: 1234,
+        currencyCode: "USD",
+      },
+    },
+    priceConfidence: "live",
+    priceStatus: "unverified",
+    purchasePaths: [
+      {
+        id: "offer-costamar-1-path",
+        type: "search-redirect",
+        provider: "costamar",
+        label: "Buscar en Costamar",
+        url,
+        precision: "exact-search",
+        score: 0.9,
+        requiresNewTab: true,
+        commercialMode: "provider",
+        state: "search_redirect",
+      },
+    ],
+    comparisonMetrics: {
+      totalDurationMinutes: 1440,
+      totalStops: 0,
+      baggageScore: 0,
+      purchasePathScore: 0,
+    },
+    tags: [],
+    warnings: [],
+    valueScore: 1,
+  };
+}
 
 test("rejects exact searches when origin and destination are omitted", async () => {
   await withServer(async (baseUrl) => {
@@ -29,6 +178,94 @@ test("rejects exact searches when origin and destination are omitted", async () 
     assert.ok(payload.errors?.some((message) => message.includes("Origin is required")));
     assert.ok(payload.errors?.some((message) => message.includes("Destination is required")));
   });
+});
+
+test("costamar redirect refreshes the stored token with the latest Chrome session", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-redirect-"));
+  const profileName = "Profile 40";
+  const sessionsDir = join(tempRoot, profileName, "Sessions");
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const staleToken = buildJwt({
+    id: "0721808110",
+    iat: 1700000000,
+    exp: 1700003600,
+  });
+  const freshToken = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  writeFileSync(
+    join(sessionsDir, "Tabs_1"),
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&token=${freshToken}`,
+    "utf8",
+  );
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const runtime = getRuntime();
+    const job = runtime.sessions.createSearchJob({
+      request: buildCostamarRequest(),
+      providerContext: {
+        costamar: {
+          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+          terminalId: "0721808110",
+          token: staleToken,
+          lang: "es",
+        },
+      },
+      offers: [buildCostamarOffer(
+        `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${staleToken}`,
+      )],
+      allOffers: [buildCostamarOffer(
+        `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${staleToken}`,
+      )],
+      searchMeta: buildSearchMeta(),
+      providerMeta: buildProviderMeta(),
+      warnings: [],
+      sortMode: "cheapest",
+      status: "completed",
+    });
+
+    const session = runtime.sessions.getSession(job.id);
+    const redirectPath = session?.offers[0]?.purchasePaths[0]?.url;
+    assert.ok(redirectPath);
+
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}${redirectPath}`, { redirect: "manual" });
+
+      assert.equal(response.status, 302);
+      const location = response.headers.get("location");
+      assert.ok(location);
+
+      const parsed = new URL(location);
+      assert.equal(parsed.searchParams.get("terminalId"), "0721808110");
+      assert.equal(parsed.searchParams.get("lang"), "es");
+      assert.equal(parsed.searchParams.get("token"), freshToken);
+    });
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("accepts exact searches inside the rolling date window", async () => {

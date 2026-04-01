@@ -410,8 +410,7 @@ function resolveCostamarValidationToken(token: string | undefined): string | und
 }
 
 function resolveCostamarRedirectToken(token: string | undefined): string | undefined {
-  const normalized = token?.trim();
-  return normalized || undefined;
+  return resolveCostamarValidationToken(token);
 }
 
 async function fetchCostamar(
@@ -685,14 +684,24 @@ export function buildCostamarBrandedSearchUrl(
   );
 
   base.pathname = `${base.pathname.replace(/\/+$/, "")}/${pathParts.join("/")}`;
-  base.searchParams.set("terminalId", context.terminalId);
-  base.searchParams.set("lang", context.lang);
+  return applyCostamarContextToBrandedSearchUrl(base.toString(), context);
+}
+
+export function applyCostamarContextToBrandedSearchUrl(
+  input: string,
+  context: CostamarProviderContext,
+): string {
+  const branded = new URL(input);
+  branded.searchParams.set("terminalId", context.terminalId);
+  branded.searchParams.set("lang", context.lang);
   const redirectToken = resolveCostamarRedirectToken(context.token);
   if (redirectToken) {
-    base.searchParams.set("token", redirectToken);
+    branded.searchParams.set("token", redirectToken);
+  } else {
+    branded.searchParams.delete("token");
   }
 
-  return base.toString();
+  return branded.toString();
 }
 
 function buildLocationsPayload(

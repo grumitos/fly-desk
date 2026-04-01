@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  applyCostamarContextToBrandedSearchUrl,
   buildCostamarBrandedSearchUrl,
   buildCostamarSearchBody,
   buildCostamarSearchWarning,
@@ -11,6 +12,7 @@ import {
   extractCostamarSessionCandidates,
   pickLatestCostamarSessionCandidate,
   resetCostamarSessionCacheForTests,
+  resolveLatestCostamarProviderContext,
   resolveCostamarProviderContext,
 } from "../src/provider-context";
 import type { SearchRequest } from "../src/core/types";
@@ -111,8 +113,8 @@ test("resolveCostamarProviderContext can recover the freshest token from Chrome 
 
   const token = buildJwt({
     id: "0721808110",
-    iat: 1774723284,
-    exp: 1774726884,
+    iat: 1893456000,
+    exp: 1893459600,
   });
   writeFileSync(
     join(sessionsDir, "Tabs_1"),
@@ -136,6 +138,57 @@ test("resolveCostamarProviderContext can recover the freshest token from Chrome 
 
     assert.equal(context.terminalId, "0721808110");
     assert.equal(context.token, token);
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveLatestCostamarProviderContext refreshes a cached token from Chrome sessions", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-refresh-"));
+  const profileName = "Profile 40";
+  const sessionsDir = join(tempRoot, profileName, "Sessions");
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const freshToken = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  writeFileSync(
+    join(sessionsDir, "Tabs_1"),
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&token=${freshToken}`,
+    "utf8",
+  );
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const context = resolveLatestCostamarProviderContext({
+      terminalId: "0721808110",
+      token: "stale-token",
+      lang: "es",
+    });
+
+    assert.equal(context.terminalId, "0721808110");
+    assert.equal(context.token, freshToken);
   } finally {
     resetCostamarSessionCacheForTests();
     if (previousUserDataDir === undefined) {
@@ -178,7 +231,7 @@ test("buildCostamarBrandedSearchUrl keeps the branded round-trip path shape", ()
   assert.equal(parsed.searchParams.get("token"), "secret-token");
 });
 
-test("buildCostamarBrandedSearchUrl keeps the token in the external link even if it is expired", () => {
+test("buildCostamarBrandedSearchUrl skips expired tokens in the external link", () => {
   const request = buildRequest();
   request.searchMode = "exact";
   request.legs[0].departureDate = "2026-06-01";
@@ -198,7 +251,36 @@ test("buildCostamarBrandedSearchUrl keeps the token in the external link even if
   });
 
   const parsed = new URL(url);
-  assert.equal(parsed.searchParams.get("token"), expiredToken);
+  assert.equal(parsed.searchParams.get("token"), null);
+});
+
+test("applyCostamarContextToBrandedSearchUrl refreshes terminal and token query params", () => {
+  const staleToken = buildJwt({
+    id: "0721808110",
+    iat: 1700000000,
+    exp: 1700003600,
+  });
+  const freshToken = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+
+  const refreshed = applyCostamarContextToBrandedSearchUrl(
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=OLD&lang=en&token=${staleToken}`,
+    {
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: freshToken,
+      lang: "es",
+    },
+  );
+
+  const parsed = new URL(refreshed);
+  assert.equal(parsed.searchParams.get("terminalId"), "0721808110");
+  assert.equal(parsed.searchParams.get("lang"), "es");
+  assert.equal(parsed.searchParams.get("token"), freshToken);
 });
 
 test("buildCostamarSearchBody matches the live booking frontend payload shape", () => {

@@ -24,6 +24,7 @@ import {
   suggestLocalAgilLocations,
 } from "./local-agil";
 import {
+  applyCostamarContextToBrandedSearchUrl,
   createLocalCostamarMatrixDraft,
   createLocalCostamarSearchDraft,
   resolveLocalCostamarExactProgressive,
@@ -32,7 +33,11 @@ import {
   suggestLocalCostamarLocations,
 } from "./local-costamar";
 import { openUrlLocally } from "./local-browser";
-import { buildProviderContext, resolveProviderId } from "./provider-context";
+import {
+  buildProviderContext,
+  resolveLatestCostamarProviderContext,
+  resolveProviderId,
+} from "./provider-context";
 import { getRuntime } from "./runtime";
 import { getSearchDatePolicy, validateSearchDateInPolicy } from "./search-date-policy";
 
@@ -1129,10 +1134,20 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     if (resolved.path.url) {
+      let location = resolved.path.url;
+
+      if (resolved.path.provider === "costamar" && resolved.path.type === "search-redirect") {
+        const session = runtime.sessions.getSession(resolved.sessionId);
+        if (session?.providerContext?.costamar) {
+          const refreshedContext = resolveLatestCostamarProviderContext(session.providerContext.costamar);
+          location = applyCostamarContextToBrandedSearchUrl(location, refreshedContext);
+        }
+      }
+
       return new Response(null, {
         status: 302,
         headers: {
-          Location: resolved.path.url,
+          Location: location,
         },
       });
     }
