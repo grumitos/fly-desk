@@ -410,7 +410,8 @@ function resolveCostamarValidationToken(token: string | undefined): string | und
 }
 
 function resolveCostamarRedirectToken(token: string | undefined): string | undefined {
-  return resolveCostamarValidationToken(token);
+  const normalized = token?.trim();
+  return normalized || undefined;
 }
 
 async function fetchCostamar(

@@ -204,6 +204,72 @@ function copyCostamarSessionsToTemp(profileName: string): string | undefined {
   return destination;
 }
 
+function readCostamarSessionCandidatesFromCopiedDir(
+  directory: string,
+  profileName: string,
+): CostamarSessionCandidate[] {
+  const files = readdirSync(directory)
+    .filter((name) => /^(Session|Tabs)_/.test(name))
+    .map((name) => ({
+      name,
+      fullPath: join(directory, name),
+      mtimeMs: statSync(join(directory, name)).mtimeMs,
+    }))
+    .sort((left, right) => right.mtimeMs - left.mtimeMs);
+
+  const candidates: CostamarSessionCandidate[] = [];
+  for (const file of files) {
+    try {
+      const text = readFileSync(file.fullPath, "latin1");
+      candidates.push(
+        ...extractCostamarSessionCandidates(text, `${profileName}/${file.name}`),
+      );
+    } catch {
+      // Ignore individual session files.
+    }
+  }
+
+  return candidates;
+}
+
+function copyChromeArtifactToTemp(profileName: string, relativePath: string): string | undefined {
+  const source = join(resolveChromeUserDataDir(), profileName, relativePath);
+  if (!existsSync(source)) {
+    return undefined;
+  }
+
+  const destination = join(
+    tmpdir(),
+    `travel_quote_foundation_costamar_${relativePath.replace(/[\\\/:\s]+/g, "_")}_${randomUUID()}`,
+  );
+
+  try {
+    copyFileSync(source, destination);
+    return destination;
+  } catch {
+    return undefined;
+  }
+}
+
+function readCostamarCandidatesFromChromeArtifact(
+  profileName: string,
+  relativePath: string,
+): CostamarSessionCandidate[] {
+  const tempFile = copyChromeArtifactToTemp(profileName, relativePath);
+  if (!tempFile) {
+    return [];
+  }
+
+  try {
+    const text = readFileSync(tempFile, "latin1");
+    return extractCostamarSessionCandidates(text, `${profileName}/${relativePath}`);
+  } catch {
+    return [];
+  } finally {
+    rmSync(tempFile, { force: true });
+  }
+}
+
 function readCostamarSessionCandidateFromChrome(): CostamarSessionCandidate | undefined {
   if (cachedCostamarSession && (Date.now() - cachedCostamarSession.readAtMs) < COSTAMAR_SESSION_CACHE_TTL_MS) {
     return cachedCostamarSession.candidate;
@@ -214,32 +280,23 @@ function readCostamarSessionCandidateFromChrome(): CostamarSessionCandidate | un
   for (const profileName of readChromeProfileCandidates()) {
     const tempSessionsDir = copyCostamarSessionsToTemp(profileName);
     if (!tempSessionsDir) {
+      candidates.push(
+        ...readCostamarCandidatesFromChromeArtifact(profileName, "History"),
+        ...readCostamarCandidatesFromChromeArtifact(profileName, "Favicons"),
+      );
       continue;
     }
 
     try {
-      const files = readdirSync(tempSessionsDir)
-        .filter((name) => /^(Session|Tabs)_/.test(name))
-        .map((name) => ({
-          name,
-          fullPath: join(tempSessionsDir, name),
-          mtimeMs: statSync(join(tempSessionsDir, name)).mtimeMs,
-        }))
-        .sort((left, right) => right.mtimeMs - left.mtimeMs);
-
-      for (const file of files) {
-        try {
-          const text = readFileSync(file.fullPath, "latin1");
-          candidates.push(
-            ...extractCostamarSessionCandidates(text, `${profileName}/${file.name}`),
-          );
-        } catch {
-          // Ignore individual session files.
-        }
-      }
+      candidates.push(...readCostamarSessionCandidatesFromCopiedDir(tempSessionsDir, profileName));
     } finally {
       rmSync(tempSessionsDir, { recursive: true, force: true });
     }
+
+    candidates.push(
+      ...readCostamarCandidatesFromChromeArtifact(profileName, "History"),
+      ...readCostamarCandidatesFromChromeArtifact(profileName, "Favicons"),
+    );
   }
 
   const candidate = pickLatestCostamarSessionCandidate(candidates);
