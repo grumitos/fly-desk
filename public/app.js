@@ -52,7 +52,6 @@ import {
   repriceButton,
   resultPill,
   resultsContainer,
-  resultsCountLabel,
   resultsPanelMeta,
   resultsPanelTitle,
   resultsToolbar,
@@ -644,6 +643,88 @@ function formatDateCompact(iso) {
   // "2026-04-15" → "15/04"
   const parts = iso.slice(0, 10).split("-");
   return `${parts[2]}/${parts[1]}`;
+}
+
+function activeResultsRequest() {
+  return state.request ?? state.searchResponse?.request ?? state.matrixResponse?.request ?? null;
+}
+
+function toolbarRouteSummary(request = activeResultsRequest()) {
+  const leg = request?.legs?.[0];
+  if (!leg?.origin || !leg?.destination) {
+    return "";
+  }
+
+  return `${leg.origin} → ${leg.destination}`;
+}
+
+function toolbarDateSummary(request = activeResultsRequest()) {
+  const leg = request?.legs?.[0];
+  if (!leg) {
+    return "";
+  }
+
+  const departureStart = leg.departureDate ?? leg.departureStart ?? "";
+  const departureEnd = leg.departureEnd ?? departureStart;
+  const returnStart = leg.returnDate ?? leg.returnStart ?? "";
+  const returnEnd = leg.returnEnd ?? returnStart;
+
+  if (request?.tripType === "one-way") {
+    if (departureStart && departureEnd && departureStart !== departureEnd) {
+      return `${formatDateCompact(departureStart)} → ${formatDateCompact(departureEnd)}`;
+    }
+
+    return departureStart ? formatDateCompact(departureStart) : "";
+  }
+
+  if (departureStart && returnStart) {
+    return `${formatDateCompact(departureStart)} → ${formatDateCompact(returnStart)}`;
+  }
+
+  if (departureStart && departureEnd && departureStart !== departureEnd) {
+    return `${formatDateCompact(departureStart)} → ${formatDateCompact(departureEnd)}`;
+  }
+
+  if (returnStart && returnEnd && returnStart !== returnEnd) {
+    return `${formatDateCompact(returnStart)} → ${formatDateCompact(returnEnd)}`;
+  }
+
+  return departureStart ? formatDateCompact(departureStart) : "";
+}
+
+function activeResultsProviderIds(active = state.searchResponse ?? state.matrixResponse) {
+  const providerIds = active?.searchMeta?.providersUsed;
+  if (Array.isArray(providerIds) && providerIds.length > 0) {
+    return providerIds;
+  }
+
+  return defaultProviderIds(active?.request ?? state.request);
+}
+
+function buildResultsPanelMeta({ hasMatrix, matrixCellCount, isSearchRunning }) {
+  const active = state.searchResponse ?? state.matrixResponse;
+  if (!active) {
+    return "";
+  }
+
+  const request = active.request ?? activeResultsRequest();
+  const parts = [
+    toolbarRouteSummary(request),
+    toolbarDateSummary(request),
+  ].filter(Boolean);
+
+  const providerIds = activeResultsProviderIds(active);
+  if (providerIds.length > 0) {
+    parts.push(providerLabelList(providerIds));
+  }
+
+  if (hasMatrix && matrixCellCount > 0) {
+    parts.push(`${matrixCellCount} celdas`);
+  } else if (isSearchRunning) {
+    parts.push("Actualizando resultados");
+  }
+
+  return parts.join(" · ");
 }
 
 function formatMonthTitle(isoMonth) {
@@ -3103,6 +3184,12 @@ function setSearchResponse(data) {
   applyClientOfferControls();
 }
 
+function selectOffer(offerId) {
+  state.selectedOfferId = offerId ?? null;
+  renderResultsArea();
+  renderDetailPanel();
+}
+
 function queueSearchPoll(jobId) {
   if (!jobId) return;
   state.searchJobId = jobId;
@@ -3190,7 +3277,11 @@ function updateResultsToolbar() {
   const hasMatrix = (state.matrixResponse?.cells?.length ?? 0) > 0;
   const matrixCellCount = state.matrixResponse?.cells?.length ?? 0;
   const isSearchRunning = state.searchResponse?.searchStatus === "running";
-  let panelMeta = "";
+  const panelMeta = buildResultsPanelMeta({
+    hasMatrix,
+    matrixCellCount,
+    isSearchRunning,
+  });
 
   if (resultsPanelTitle && resultsPanelMeta) {
     if (hasMatrix) {
@@ -3209,11 +3300,6 @@ function updateResultsToolbar() {
 
     resultsPanelMeta.textContent = panelMeta;
     resultsPanelMeta.classList.toggle("hidden", !panelMeta);
-  }
-
-  if (resultsCountLabel) {
-    resultsCountLabel.textContent = "";
-    resultsCountLabel.classList.add("hidden");
   }
 
   if (sortButtonsEl) {
@@ -3267,8 +3353,15 @@ function renderResults() {
     const bagCarry = o.baggage?.carryOnIncluded ? "✓" : "—";
     const bagCheck = o.baggage?.checkedIncluded ? "✓" : "—";
     const carrier = carrierDisplayParts(o);
+    const rowLabel = [
+      isActive ? "Oferta seleccionada" : "Seleccionar oferta",
+      carrier.display,
+      dateSummary.primary,
+      formatDuration(o.comparisonMetrics?.totalDurationMinutes),
+      formatMoney(o.price?.total),
+    ].filter(Boolean).join(" · ");
 
-    html += `<tr data-oid="${o.id}" class="${isActive ? "is-active" : ""}">`;
+    html += `<tr data-oid="${o.id}" class="${isActive ? "is-active" : ""}" tabindex="0" role="button" aria-label="${escapeHtml(rowLabel)}">`;
     html += `<td><span class="cell-main carrier-label" title="${escapeHtml(carrier.display)}">${escapeHtml(carrier.display)}</span></td>`;
     html += `<td title="${escapeHtml(dateSummary.title)}"><div class="results-date-stack"><span class="cell-main">${escapeHtml(dateSummary.primary)}${badge}</span>${dateSummary.secondary ? `<span class="cell-sub">${escapeHtml(dateSummary.secondary)}</span>` : ""}</div></td>`;
     html += `<td>${formatDuration(o.comparisonMetrics?.totalDurationMinutes)}</td>`;
@@ -3320,9 +3413,40 @@ function handleResultsClick(e) {
   if (e.target.closest("[data-stop-row]")) return;
   const row = e.target.closest("tr[data-oid]");
   if (!row) return;
-  state.selectedOfferId = row.dataset.oid;
-  renderResultsArea();
-  renderDetailPanel();
+  selectOffer(row.dataset.oid);
+}
+
+function focusAdjacentResultsRow(currentRow, step) {
+  const rows = [...resultsContainer?.querySelectorAll("tr[data-oid]") ?? []];
+  const currentIndex = rows.indexOf(currentRow);
+  if (currentIndex < 0) {
+    return;
+  }
+
+  rows[currentIndex + step]?.focus();
+}
+
+function handleResultsKeydown(e) {
+  if (e.target.closest("[data-stop-row]")) return;
+  const row = e.target.closest("tr[data-oid]");
+  if (!row) return;
+
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    selectOffer(row.dataset.oid);
+    return;
+  }
+
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    focusAdjacentResultsRow(row, 1);
+    return;
+  }
+
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    focusAdjacentResultsRow(row, -1);
+  }
 }
 
 async function handleMatrixClick(e) {
@@ -3679,7 +3803,7 @@ function renderDetailPanel() {
     group.forEach((member) => {
       const isSelected = member.id === state.selectedOfferId;
       const label = buildOfferVariantSummary(member);
-      h += `<div class="detail-segment__leg detail-segment__leg--choice ${isSelected ? "is-selected" : ""}" data-inbound-id="${member.id}" title="${escapeHtml(label)}">${escapeHtml(label)}</div>`;
+      h += `<button type="button" class="detail-segment__leg detail-segment__leg--choice ${isSelected ? "is-selected" : ""}" data-inbound-id="${member.id}" aria-pressed="${isSelected ? "true" : "false"}" title="${escapeHtml(label)}">${escapeHtml(label)}</button>`;
     });
     h += '</div>';
   } else {
@@ -3729,9 +3853,7 @@ function renderDetailPanel() {
   // Inbound option click
   detailContent?.querySelectorAll("[data-inbound-id]").forEach(el => {
     el.addEventListener("click", () => {
-      state.selectedOfferId = el.dataset.inboundId;
-      renderResultsArea();
-      renderDetailPanel();
+      selectOffer(el.dataset.inboundId);
     });
   });
 }
@@ -3834,15 +3956,14 @@ document.addEventListener("keydown", (e) => {
     closeMatrixExpanded();
     return;
   }
-  if (e.key === "Escape" && detailPanel?.classList.contains("is-open")) {
-    state.selectedOfferId = null;
-    closeDetailPanel();
-    renderResultsArea();
+  if (e.key === "Escape" && state.selectedOfferId) {
+    selectOffer(null);
   }
 });
 
 // Results container click delegation (set up once)
 resultsContainer?.addEventListener("click", handleResultsClick);
+resultsContainer?.addEventListener("keydown", handleResultsKeydown);
 resultsContainer?.addEventListener("pointerdown", () => {
   state.pollPointerDown = true;
   markPollingUiInteraction();

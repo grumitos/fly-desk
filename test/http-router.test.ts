@@ -554,3 +554,52 @@ test("default matrix keeps both providers enabled when no providerId is specifie
     assert.equal(payload.matrixStatus, "running");
   });
 });
+
+test("one-way stay-range preserves omitted maxResults and night bounds", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        providerId: "costamar",
+        request: {
+          tripType: "one-way",
+          searchMode: "stay-range",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MAD",
+              departureStart: "2026-05-01",
+              departureEnd: "2026-05-31",
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+          filters: {
+            nonStop: false,
+            baggageRequired: false,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      request?: {
+        filters?: { maxResults?: number };
+        legs?: Array<{ minNights?: number; maxNights?: number }>;
+      };
+      searchStatus?: string;
+    };
+
+    assert.equal(payload.searchStatus, "running");
+    assert.equal(payload.request?.filters?.maxResults, undefined);
+    assert.equal(payload.request?.legs?.[0]?.minNights, undefined);
+    assert.equal(payload.request?.legs?.[0]?.maxNights, undefined);
+  });
+});

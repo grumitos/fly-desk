@@ -5,6 +5,7 @@ import {
   buildCostamarBrandedSearchUrl,
   buildCostamarSearchBody,
   buildCostamarSearchWarning,
+  COSTAMAR_CONCURRENCY,
   createLocalCostamarMatrixDraft,
 } from "../src/local-costamar";
 import {
@@ -119,6 +120,14 @@ test("extractCostamarSessionCandidates trims trailing noise from Chrome artifact
 
   assert.equal(candidates.length, 1);
   assert.equal(candidates[0]?.token, token);
+});
+
+test("keeps Costamar range searches lighter than matrix fan-out by default", () => {
+  assert.equal(COSTAMAR_CONCURRENCY.matrixMinimum, 10);
+  assert.equal(COSTAMAR_CONCURRENCY.rangeMinimum, 2);
+  assert.ok(COSTAMAR_CONCURRENCY.matrixCell >= COSTAMAR_CONCURRENCY.matrixMinimum);
+  assert.ok(COSTAMAR_CONCURRENCY.rangeSearch >= COSTAMAR_CONCURRENCY.rangeMinimum);
+  assert.ok(COSTAMAR_CONCURRENCY.rangeSearch < COSTAMAR_CONCURRENCY.matrixCell);
 });
 
 test("resolveCostamarProviderContext can recover the freshest token from Chrome sessions", () => {
