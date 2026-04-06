@@ -71,7 +71,7 @@ test("query and offer panels expose homogeneous headers from first paint", async
           resultsMeta: document.getElementById("resultsPanelMeta")?.textContent?.trim() ?? "",
           detailTitle: detailHeader.querySelector(".panel-header__title")?.textContent?.trim() ?? "",
           detailMeta: detailHeader.querySelector(".panel-header__meta")?.textContent?.trim() ?? "",
-          countHidden: document.getElementById("resultsCountLabel")?.classList.contains("hidden") ?? false,
+          resultsCountPresent: Boolean(document.getElementById("resultsCountLabel")),
           resultsPanelDisplay: getComputedStyle(resultsPanel).display,
           detailPanelDisplay: getComputedStyle(detailPanel).display,
           paddingLeftMatches: resultsStyle.paddingLeft === detailStyle.paddingLeft,
@@ -82,7 +82,7 @@ test("query and offer panels expose homogeneous headers from first paint", async
 
       assert.equal(probe.resultsTitle, "Consulta");
       assert.equal(probe.detailTitle, "Oferta");
-      assert.equal(probe.countHidden, true);
+      assert.equal(probe.resultsCountPresent, false);
       assert.equal(probe.resultsMeta, "");
       assert.equal(probe.detailMeta, "");
       assert.equal(probe.resultsPanelDisplay, "flex");
@@ -887,6 +887,145 @@ test("date-equivalent offers collapse into one row and keep the date variants in
       assert.match(probe.variants[0] ?? "", /15\/04 → 22\/04/);
       assert.match(probe.variants[1] ?? "", /16\/04 → 23\/04/);
       assert.match(probe.variants[2] ?? "", /17\/04 → 24\/04/);
+      assert.deepEqual(
+        await page.locator("[data-inbound-id]").evaluateAll((nodes) =>
+          nodes.map((node) => ({
+            tag: node.tagName,
+            type: node.getAttribute("type"),
+            pressed: node.getAttribute("aria-pressed"),
+          })),
+        ),
+        [
+          { tag: "BUTTON", type: "button", pressed: "true" },
+          { tag: "BUTTON", type: "button", pressed: "false" },
+          { tag: "BUTTON", type: "button", pressed: "false" },
+        ],
+      );
+
+      await page.locator('[data-inbound-id="offer-2"]').focus();
+      await page.keyboard.press("Enter");
+
+      const afterKeyboardSelection = await page.evaluate(() => ({
+        activeVariant: document.querySelector('[data-inbound-id][aria-pressed="true"]')?.getAttribute("data-inbound-id") ?? "",
+        dateText: document.querySelector('tr[data-oid] td:nth-child(2)')?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      }));
+
+      assert.equal(afterKeyboardSelection.activeVariant, "offer-2");
+      assert.match(afterKeyboardSelection.dateText, /16\/04 → 23\/04/);
+  }, { autoOpen: false });
+});
+
+test("results header exposes route context, rows support keyboard selection, and Escape clears the offer panel", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      const offers = [
+        buildCarrierOffer("offer-aa", "AA", 505),
+        buildCarrierOffer("offer-cm", "CM", 540),
+      ];
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-keyboard-results",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers,
+          allOffers: offers,
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.evaluate(() => {
+      const origin = document.getElementById("origin") as HTMLInputElement | null;
+      const destination = document.getElementById("destination") as HTMLInputElement | null;
+      if (!origin || !destination) throw new Error("Missing location inputs");
+      origin.value = "LIM - Lima, Peru";
+      origin.dataset.code = "LIM";
+      origin.dataset.label = "LIM - Lima, Peru";
+      destination.value = "MIA - Miami, Usa";
+      destination.dataset.code = "MIA";
+      destination.dataset.label = "MIA - Miami, Usa";
+    });
+    await setDateValue(page, "departureDate", "2026-04-15");
+    await setDateValue(page, "returnDate", "2026-04-22");
+    await page.click("#submitButton");
+    await page.waitForSelector('tr[data-oid="offer-aa"]');
+
+    const beforeKeyboard = await page.evaluate(() => ({
+      resultsMeta: document.getElementById("resultsPanelMeta")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      countPresent: Boolean(document.getElementById("resultsCountLabel")),
+      secondRowRole: document.querySelector('tr[data-oid="offer-cm"]')?.getAttribute("role") ?? "",
+      secondRowTabIndex: document.querySelector('tr[data-oid="offer-cm"]')?.getAttribute("tabindex") ?? "",
+      selectedId: document.querySelector("tr[data-oid].is-active")?.getAttribute("data-oid") ?? "",
+    }));
+
+    assert.match(beforeKeyboard.resultsMeta, /LIM → MIA/);
+    assert.match(beforeKeyboard.resultsMeta, /15\/04 → 22\/04/);
+    assert.match(beforeKeyboard.resultsMeta, /Agil/);
+    assert.equal(beforeKeyboard.countPresent, false);
+    assert.equal(beforeKeyboard.secondRowRole, "button");
+    assert.equal(beforeKeyboard.secondRowTabIndex, "0");
+    assert.equal(beforeKeyboard.selectedId, "offer-aa");
+
+    await page.locator('tr[data-oid="offer-cm"]').focus();
+    await page.keyboard.press("Enter");
+
+    const afterKeyboard = await page.evaluate(() => ({
+      selectedId: document.querySelector("tr[data-oid].is-active")?.getAttribute("data-oid") ?? "",
+      detailSummary: document.querySelector(".detail-summary")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    }));
+
+    assert.equal(afterKeyboard.selectedId, "offer-cm");
+    assert.match(afterKeyboard.detailSummary, /CM/);
+
+    await page.keyboard.press("Escape");
+    await page.waitForSelector(".detail-empty .empty-panel__title");
+
+    const afterEscape = await page.evaluate(() => ({
+      selectedRowCount: document.querySelectorAll("tr[data-oid].is-active").length,
+      emptyTitle: document.querySelector(".detail-empty .empty-panel__title")?.textContent?.trim() ?? "",
+      emptyText: document.querySelector(".detail-empty .empty-panel__text")?.textContent?.trim() ?? "",
+    }));
+
+    assert.equal(afterEscape.selectedRowCount, 0);
+    assert.equal(afterEscape.emptyTitle, "Sin oferta seleccionada");
+    assert.match(afterEscape.emptyText, /Selecciona una opción para ver el detalle/);
   }, { autoOpen: false });
 });
 

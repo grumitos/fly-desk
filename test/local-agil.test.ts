@@ -197,10 +197,12 @@ test("builds Agil redirect URLs with human-readable origin and destination label
   assert.equal(parsed.searchParams.get("arrivalDate"), "22/04/2026");
 });
 
-test("keeps flexible Agil searches at a minimum of ten concurrent requests", () => {
-  assert.equal(AGIL_CONCURRENCY.flexibleMinimum, 10);
-  assert.ok(AGIL_CONCURRENCY.rangeSearch >= 10);
-  assert.ok(AGIL_CONCURRENCY.matrixCell >= 10);
+test("keeps Agil range searches lighter than matrix fan-out by default", () => {
+  assert.equal(AGIL_CONCURRENCY.matrixMinimum, 10);
+  assert.equal(AGIL_CONCURRENCY.rangeMinimum, 2);
+  assert.ok(AGIL_CONCURRENCY.matrixCell >= AGIL_CONCURRENCY.matrixMinimum);
+  assert.ok(AGIL_CONCURRENCY.rangeSearch >= AGIL_CONCURRENCY.rangeMinimum);
+  assert.ok(AGIL_CONCURRENCY.rangeSearch < AGIL_CONCURRENCY.matrixCell);
 });
 
 test("extracts the Agil subscription key from the public frontend bundle", () => {

@@ -73,7 +73,6 @@ export const layoverPopover = $("layoverPopover");
 export const sortButtonsEl = $("sortButtons");
 export const viewToggle = $("viewToggle");
 export const matrixExpandBtn = $("matrixExpandBtn");
-export const resultsCountLabel = $("resultsCountLabel");
 export const resultsPanelTitle = $("resultsPanelTitle");
 export const resultsPanelMeta = $("resultsPanelMeta");
 export const matrixFullscreen = $("matrixFullscreen");

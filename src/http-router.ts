@@ -204,17 +204,27 @@ function normalizeCabin(input: unknown): Cabin {
     : "ECONOMY";
 }
 
+function shouldPreserveOneWayStayRangeInputs(
+  tripType: TripType,
+  searchMode: SearchMode,
+): boolean {
+  return tripType === "one-way" && searchMode === "stay-range";
+}
+
 function normalizeRequest(
   input: SearchPayload["request"] | undefined,
   providerId?: ProviderId,
 ): SearchRequest {
+  const tripType = normalizeTripType(input?.tripType);
+  const searchMode = normalizeSearchMode(input?.searchMode);
   const leg: Record<string, unknown> = input?.legs?.[0] ?? {};
   const filters = input?.filters ?? {};
+  const preserveOneWayStayRangeInputs = shouldPreserveOneWayStayRangeInputs(tripType, searchMode);
 
   return {
     providerId,
-    tripType: normalizeTripType(input?.tripType),
-    searchMode: normalizeSearchMode(input?.searchMode),
+    tripType,
+    searchMode,
     legs: [
       {
         origin: stringValue(leg.origin).toUpperCase(),
@@ -227,8 +237,8 @@ function normalizeRequest(
         returnDate: stringValue(leg.returnDate),
         returnStart: stringValue(leg.returnStart),
         returnEnd: stringValue(leg.returnEnd),
-        minNights: numberValue(leg.minNights, 3),
-        maxNights: numberValue(leg.maxNights, 7),
+        minNights: preserveOneWayStayRangeInputs ? numberValue(leg.minNights) : numberValue(leg.minNights, 3),
+        maxNights: preserveOneWayStayRangeInputs ? numberValue(leg.maxNights) : numberValue(leg.maxNights, 7),
       },
     ],
     passengers: {
@@ -242,7 +252,7 @@ function normalizeRequest(
       includedAirlineCodes: stringList(filters.includedAirlineCodes),
       excludedAirlineCodes: stringList(filters.excludedAirlineCodes),
       maxPrice: numberValue(filters.maxPrice),
-      maxResults: numberValue(filters.maxResults, 25),
+      maxResults: preserveOneWayStayRangeInputs ? numberValue(filters.maxResults) : numberValue(filters.maxResults, 25),
       maxTotalDurationMinutes: numberValue(filters.maxTotalDurationMinutes),
       maxLayoverMinutes: numberValue(filters.maxLayoverMinutes),
       maxStops: numberValue(filters.maxStops),
