@@ -475,6 +475,93 @@ test("paste can restore a copied search in a fresh view from system clipboard", 
   });
 });
 
+test("paste can import a Costamar branded URL and submit its provider session", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const officialUrl = "https://booking.clickandbook.com/vuelos/b/CCS/MAD/2026-05-12/2026-05-22/1/0/0?terminalId=0721808110&lang=es&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjA3MjE4MDgxMTAiLCJpYXQiOjE3NzU1OTg4NTAsImV4cCI6MTc3NTYwMjQ1MH0.Bn6HcF2E6mPBi1c5xoBqaVm1f7DPvMAAmKNBumDwhuI";
+    let postedBody: Record<string, unknown> | null = null;
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      postedBody = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-costamar-url",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: postedBody?.request ?? {},
+          offers: [],
+          allOffers: [],
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.evaluate(() => {
+      window.localStorage.removeItem("flydesk.searchClipboard");
+    });
+    await page.evaluate((rawPayload) => navigator.clipboard.writeText(rawPayload), officialUrl);
+
+    await page.click("#pasteSearchConfigBtn");
+    await page.waitForFunction(() => {
+      const origin = document.getElementById("origin") as HTMLInputElement | null;
+      return origin?.value === "CCS";
+    });
+
+    const restored = await page.evaluate(() => ({
+      origin: (document.getElementById("origin") as HTMLInputElement | null)?.value ?? "",
+      destination: (document.getElementById("destination") as HTMLInputElement | null)?.value ?? "",
+      departureDate: (document.getElementById("departureDate") as HTMLInputElement | null)?.value ?? "",
+      returnDate: (document.getElementById("returnDate") as HTMLInputElement | null)?.value ?? "",
+      adults: (document.getElementById("adults") as HTMLInputElement | null)?.value ?? "",
+      children: (document.getElementById("children") as HTMLInputElement | null)?.value ?? "",
+      infants: (document.getElementById("infants") as HTMLInputElement | null)?.value ?? "",
+      storedProviderConfig: JSON.parse(window.localStorage.getItem("flydesk.searchClipboard") || "null")?.providerConfig ?? null,
+    }));
+
+    assert.equal(restored.origin, "CCS");
+    assert.equal(restored.destination, "MAD");
+    assert.equal(restored.departureDate, "2026-05-12");
+    assert.equal(restored.returnDate, "2026-05-22");
+    assert.equal(restored.adults, "1");
+    assert.equal(restored.children, "0");
+    assert.equal(restored.infants, "0");
+    assert.deepEqual(restored.storedProviderConfig, {
+      costamar: {
+        terminalId: "0721808110",
+        token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjA3MjE4MDgxMTAiLCJpYXQiOjE3NzU1OTg4NTAsImV4cCI6MTc3NTYwMjQ1MH0.Bn6HcF2E6mPBi1c5xoBqaVm1f7DPvMAAmKNBumDwhuI",
+        lang: "es",
+      },
+    });
+
+    await submitAndWaitForRequest(page, baseUrl, "/api/search");
+
+    assert.deepEqual(postedBody?.providerConfig, {
+      costamar: {
+        terminalId: "0721808110",
+        token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjA3MjE4MDgxMTAiLCJpYXQiOjE3NzU1OTg4NTAsImV4cCI6MTc3NTYwMjQ1MH0.Bn6HcF2E6mPBi1c5xoBqaVm1f7DPvMAAmKNBumDwhuI",
+        lang: "es",
+      },
+    });
+    assert.equal((postedBody?.request as { legs?: Array<{ origin?: string; destination?: string }> })?.legs?.[0]?.origin, "CCS");
+    assert.equal((postedBody?.request as { legs?: Array<{ origin?: string; destination?: string }> })?.legs?.[0]?.destination, "MAD");
+  }, {
+    autoOpen: false,
+    createPage: async ({ baseUrl, browser }) => {
+      const context = await browser.newContext();
+      await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseUrl });
+      return context.newPage();
+    },
+  });
+});
+
 test("custom calendar writes exact and flexible dates back into the hidden form fields", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
       await openDesktop(page, baseUrl);
