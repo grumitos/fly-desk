@@ -18,6 +18,8 @@ const COSTAMAR_SESSION_CACHE_TTL_MS = 30000;
 const COSTAMAR_BRANDED_URL_REGEX = /https:\/\/booking\.clickandbook\.com\/vuelos\/b\/[A-Z]{3}\/[A-Z]{3}(?:\/\d{4}-\d{2}-\d{2}){1,2}\/\d+\/\d+\/\d+\?[^\s\x00]*/gi;
 const COSTAMAR_JWT_PREFIX_REGEX = /^([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/;
 const COSTAMAR_TOKEN_SAFE_PREFIX_REGEX = /^[A-Za-z0-9._-]+/;
+const COSTAMAR_STORAGE_ARTIFACT_REGEX = /\.(?:ldb|log)$/i;
+const COSTAMAR_STORAGE_ARTIFACT_LIMIT = 12;
 const COSTAMAR_API_HOSTS = new Set(["costamar.com.pe"]);
 const COSTAMAR_BRAND_HOSTS = new Set(["booking.clickandbook.com"]);
 
@@ -185,6 +187,23 @@ export function extractCostamarSessionCandidates(
   return [...deduped.values()];
 }
 
+function extractCostamarSessionCandidatesFromBuffer(
+  buffer: Buffer,
+  source: string,
+): CostamarSessionCandidate[] {
+  const deduped = new Map<string, CostamarSessionCandidate>();
+  const variants = [
+    extractCostamarSessionCandidates(buffer.toString("latin1"), source),
+    extractCostamarSessionCandidates(buffer.toString("utf16le"), `${source}:utf16le`),
+  ];
+
+  variants.flat().forEach((candidate) => {
+    deduped.set(`${candidate.terminalId}::${candidate.token}`, candidate);
+  });
+
+  return [...deduped.values()];
+}
+
 export function pickLatestCostamarSessionCandidate(
   candidates: CostamarSessionCandidate[],
   nowMs = Date.now(),
@@ -236,9 +255,9 @@ function readCostamarSessionCandidatesFromCopiedDir(
   const candidates: CostamarSessionCandidate[] = [];
   for (const file of files) {
     try {
-      const text = readFileSync(file.fullPath, "latin1");
+      const buffer = readFileSync(file.fullPath);
       candidates.push(
-        ...extractCostamarSessionCandidates(text, `${profileName}/${file.name}`),
+        ...extractCostamarSessionCandidatesFromBuffer(buffer, `${profileName}/${file.name}`),
       );
     } catch {
       // Ignore individual session files.
@@ -277,13 +296,55 @@ function readCostamarCandidatesFromChromeArtifact(
   }
 
   try {
-    const text = readFileSync(tempFile, "latin1");
-    return extractCostamarSessionCandidates(text, `${profileName}/${relativePath}`);
+    const buffer = readFileSync(tempFile);
+    return extractCostamarSessionCandidatesFromBuffer(buffer, `${profileName}/${relativePath}`);
   } catch {
     return [];
   } finally {
     rmSync(tempFile, { force: true });
   }
+}
+
+function readCostamarCandidatesFromChromeArtifactDirectory(
+  profileName: string,
+  relativePath: string,
+): CostamarSessionCandidate[] {
+  const directory = join(resolveChromeUserDataDir(), profileName, relativePath);
+  if (!existsSync(directory)) {
+    return [];
+  }
+
+  const files = readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && COSTAMAR_STORAGE_ARTIFACT_REGEX.test(entry.name))
+    .map((entry) => ({
+      name: entry.name,
+      fullPath: join(directory, entry.name),
+      mtimeMs: statSync(join(directory, entry.name)).mtimeMs,
+    }))
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)
+    .slice(0, COSTAMAR_STORAGE_ARTIFACT_LIMIT);
+
+  const candidates: CostamarSessionCandidate[] = [];
+  for (const file of files) {
+    const tempFile = join(
+      tmpdir(),
+      `travel_quote_foundation_costamar_${relativePath.replace(/[\\\/:\s]+/g, "_")}_${randomUUID()}_${file.name}`,
+    );
+
+    try {
+      copyFileSync(file.fullPath, tempFile);
+      const buffer = readFileSync(tempFile);
+      candidates.push(
+        ...extractCostamarSessionCandidatesFromBuffer(buffer, `${profileName}/${relativePath}/${file.name}`),
+      );
+    } catch {
+      // Ignore locked or malformed storage artifacts.
+    } finally {
+      rmSync(tempFile, { force: true });
+    }
+  }
+
+  return candidates;
 }
 
 function readCostamarSessionCandidateFromChrome(): CostamarSessionCandidate | undefined {
@@ -295,23 +356,19 @@ function readCostamarSessionCandidateFromChrome(): CostamarSessionCandidate | un
 
   for (const profileName of readChromeProfileCandidates()) {
     const tempSessionsDir = copyCostamarSessionsToTemp(profileName);
-    if (!tempSessionsDir) {
-      candidates.push(
-        ...readCostamarCandidatesFromChromeArtifact(profileName, "History"),
-        ...readCostamarCandidatesFromChromeArtifact(profileName, "Favicons"),
-      );
-      continue;
-    }
-
-    try {
-      candidates.push(...readCostamarSessionCandidatesFromCopiedDir(tempSessionsDir, profileName));
-    } finally {
-      rmSync(tempSessionsDir, { recursive: true, force: true });
+    if (tempSessionsDir) {
+      try {
+        candidates.push(...readCostamarSessionCandidatesFromCopiedDir(tempSessionsDir, profileName));
+      } finally {
+        rmSync(tempSessionsDir, { recursive: true, force: true });
+      }
     }
 
     candidates.push(
       ...readCostamarCandidatesFromChromeArtifact(profileName, "History"),
       ...readCostamarCandidatesFromChromeArtifact(profileName, "Favicons"),
+      ...readCostamarCandidatesFromChromeArtifactDirectory(profileName, "Session Storage"),
+      ...readCostamarCandidatesFromChromeArtifactDirectory(profileName, join("Local Storage", "leveldb")),
     );
   }
 

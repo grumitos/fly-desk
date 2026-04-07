@@ -70,6 +70,7 @@ export class SearchSessionStore {
   private readonly sessionPurchasePathIds = new Map<string, Set<string>>();
   private readonly matrixJobs = new Map<string, MatrixJobRecord>();
   private readonly searchJobs = new Map<string, SearchJobRecord>();
+  private readonly offerValidationTasks = new Map<string, Promise<CanonicalOffer | undefined>>();
 
   getSession(sessionId: string): SearchSessionRecord | undefined {
     return this.sessions.get(sessionId);
@@ -91,6 +92,58 @@ export class SearchSessionStore {
     const rewritten = this.rewriteOfferPaths(sessionId, updatedOffer);
     session.offers = session.offers.map((offer) => offer.id === updatedOffer.id ? rewritten : offer);
     return rewritten;
+  }
+
+  ensureValidatedOffer(
+    sessionId: string,
+    offerId: string,
+    resolver: (offer: CanonicalOffer, session: SearchSessionRecord) => Promise<CanonicalOffer | undefined>,
+  ): Promise<CanonicalOffer | undefined> {
+    const session = this.sessions.get(sessionId);
+    const offer = session?.offers.find((current) => current.id === offerId);
+
+    if (!session || !offer) {
+      return Promise.resolve(undefined);
+    }
+
+    if (offer.priceConfidence === "validated") {
+      return Promise.resolve(offer);
+    }
+
+    const taskKey = this.offerValidationTaskKey(sessionId, offerId);
+    const existingTask = this.offerValidationTasks.get(taskKey);
+    if (existingTask) {
+      return existingTask;
+    }
+
+    const task = (async () => {
+      try {
+        const latestSession = this.sessions.get(sessionId);
+        const latestOffer = latestSession?.offers.find((current) => current.id === offerId);
+
+        if (!latestSession || !latestOffer) {
+          return undefined;
+        }
+
+        if (latestOffer.priceConfidence === "validated") {
+          return latestOffer;
+        }
+
+        const validatedOffer = await resolver(latestOffer, latestSession);
+        if (!validatedOffer) {
+          return this.getOffer(sessionId, offerId);
+        }
+
+        return this.updateOffer(sessionId, validatedOffer)
+          ?? this.getOffer(sessionId, offerId)
+          ?? validatedOffer;
+      } finally {
+        this.offerValidationTasks.delete(taskKey);
+      }
+    })();
+
+    this.offerValidationTasks.set(taskKey, task);
+    return task;
   }
 
   createSearchJob(input: Omit<SearchJobRecord, "id" | "createdAt" | "updatedAt">): SearchJobRecord {
@@ -220,11 +273,16 @@ export class SearchSessionStore {
 
   private syncSessionFromSearchJob(job: SearchJobRecord): void {
     this.forgetSessionPurchasePaths(job.id);
+    const previousOffersById = new Map(
+      (this.sessions.get(job.id)?.offers ?? []).map((offer) => [offer.id, offer] as const),
+    );
     const record: SearchSessionRecord = {
       id: job.id,
       request: job.request,
       providerContext: job.providerContext,
-      offers: job.allOffers.map((offer) => this.rewriteOfferPaths(job.id, offer)),
+      offers: job.allOffers.map((offer) =>
+        this.rewriteOfferPaths(job.id, this.preferSessionOffer(previousOffersById.get(offer.id), offer))
+      ),
       matrix: undefined,
       searchMeta: {
         ...job.searchMeta,
@@ -264,5 +322,24 @@ export class SearchSessionStore {
     if (trackedIds.size === 0) {
       this.sessionPurchasePathIds.delete(sessionId);
     }
+  }
+
+  private offerValidationTaskKey(sessionId: string, offerId: string): string {
+    return `${sessionId}:${offerId}`;
+  }
+
+  private preferSessionOffer(
+    previousOffer: CanonicalOffer | undefined,
+    nextOffer: CanonicalOffer,
+  ): CanonicalOffer {
+    if (!previousOffer || previousOffer.priceConfidence !== "validated" || nextOffer.priceConfidence === "validated") {
+      return nextOffer;
+    }
+
+    return {
+      ...nextOffer,
+      ...previousOffer,
+      purchasePaths: nextOffer.purchasePaths,
+    };
   }
 }

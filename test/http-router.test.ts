@@ -603,3 +603,39 @@ test("one-way stay-range preserves omitted maxResults and night bounds", async (
     assert.equal(payload.request?.legs?.[0]?.maxNights, undefined);
   });
 });
+
+test("search job responses expose the validated session snapshot instead of the stale job offer", async () => {
+  const runtime = getRuntime();
+  const job = runtime.sessions.createSearchJob({
+    request: buildCostamarRequest(),
+    offers: [buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/live-offer")],
+    allOffers: [buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/live-offer")],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+
+  runtime.sessions.updateOffer(job.id, {
+    ...buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/validated-offer"),
+    priceConfidence: "validated",
+    priceStatus: "verified",
+    priceVerifiedAt: "2026-03-31T12:00:00.000Z",
+  });
+
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search/${job.id}`);
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      offers?: CanonicalOffer[];
+      allOffers?: CanonicalOffer[];
+    };
+
+    assert.equal(payload.offers?.[0]?.priceConfidence, "validated");
+    assert.equal(payload.allOffers?.[0]?.priceConfidence, "validated");
+    assert.match(payload.offers?.[0]?.purchasePaths?.[0]?.url ?? "", /^\/r\//);
+    assert.match(payload.allOffers?.[0]?.purchasePaths?.[0]?.url ?? "", /^\/r\//);
+  });
+});
