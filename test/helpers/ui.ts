@@ -1,4 +1,5 @@
 import { chromium, type Browser, type Page } from "playwright";
+import { cleanupPrefixedTempArtifacts } from "../../src/temp-artifacts";
 import { withServer } from "./server";
 
 export async function openDesktop(page: Page, baseUrl: string): Promise<void> {
@@ -29,6 +30,7 @@ export async function withDesktopPage<T>(
   const autoOpen = options?.autoOpen ?? true;
 
   return withServer(async (baseUrl) => {
+    await cleanupPrefixedTempArtifacts();
     const browser = await chromium.launch({ headless: true });
     const page = options?.createPage
       ? await options.createPage({ baseUrl, browser })
@@ -42,6 +44,7 @@ export async function withDesktopPage<T>(
       return await run({ baseUrl, browser, page });
     } finally {
       await browser.close();
+      await cleanupPrefixedTempArtifacts();
     }
   });
 }

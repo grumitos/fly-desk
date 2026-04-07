@@ -775,15 +775,44 @@ function matrixJobResponse(job: ReturnType<typeof getRuntime>["sessions"] extend
   };
 }
 
-function searchJobResponse(job: ReturnType<typeof getRuntime>["sessions"] extends { getSearchJob(jobId: string): infer T } ? NonNullable<T> : never) {
+async function ensureValidatedSessionOffer(
+  runtime: ReturnType<typeof getRuntime>,
+  searchSessionId: string,
+  offerId: string,
+): Promise<CanonicalOffer | undefined> {
+  return runtime.sessions.ensureValidatedOffer(
+    searchSessionId,
+    offerId,
+    async (offer, session) => (
+      await runtime.orchestrator.reprice(
+        session.request,
+        offerId,
+        offer,
+        {
+          providerId: offer.providerSource,
+          providerContext: session.providerContext,
+        },
+      )
+    ).offers[0] ?? offer,
+  );
+}
+
+function searchJobResponse(
+  runtime: ReturnType<typeof getRuntime>,
+  job: ReturnType<typeof getRuntime>["sessions"] extends { getSearchJob(jobId: string): infer T } ? NonNullable<T> : never,
+) {
+  const sessionOffersById = new Map(
+    (runtime.sessions.getSession(job.id)?.offers ?? []).map((offer) => [offer.id, offer] as const),
+  );
+
   return {
     searchJobId: job.id,
     searchComplete: job.status === "completed" || job.status === "failed",
     searchStatus: job.status,
     sortMode: job.sortMode,
     request: job.request,
-    offers: job.offers,
-    allOffers: job.allOffers,
+    offers: job.offers.map((offer) => sessionOffersById.get(offer.id) ?? offer),
+    allOffers: job.allOffers.map((offer) => sessionOffersById.get(offer.id) ?? offer),
     searchMeta: job.searchMeta,
     providerMeta: job.providerMeta,
     warnings: job.warnings,
@@ -985,7 +1014,7 @@ export async function routeRequest(request: Request): Promise<Response> {
       syncSearchJob("completed");
     });
 
-    return json(searchJobResponse(job));
+    return json(searchJobResponse(runtime, job));
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/search/")) {
@@ -996,7 +1025,7 @@ export async function routeRequest(request: Request): Promise<Response> {
       return json({ error: "Search job not found." }, { status: 404 });
     }
 
-    return json(searchJobResponse(job));
+    return json(searchJobResponse(runtime, job));
   }
 
   if (request.method === "POST" && url.pathname === "/api/matrix") {
@@ -1214,6 +1243,30 @@ export async function routeRequest(request: Request): Promise<Response> {
     });
   }
 
+  if (request.method === "POST" && url.pathname === "/api/offers/prefetch") {
+    const payload = await readPayload<RepricePayload>(request);
+
+    if (!payload.searchSessionId || !payload.offerId) {
+      return json({ errors: ["searchSessionId and offerId are required."] }, { status: 400 });
+    }
+
+    const session = runtime.sessions.getSession(payload.searchSessionId);
+    const offer = session ? runtime.sessions.getOffer(payload.searchSessionId, payload.offerId) : undefined;
+
+    if (!session || !offer) {
+      return json({ errors: ["Session or offer not found."] }, { status: 404 });
+    }
+
+    const prefetchedOffer = offer.priceConfidence === "validated"
+      ? offer
+      : await ensureValidatedSessionOffer(runtime, payload.searchSessionId, payload.offerId) ?? offer;
+
+    return json({
+      searchSessionId: payload.searchSessionId,
+      offer: prefetchedOffer,
+    });
+  }
+
   if (request.method === "POST" && url.pathname === "/api/quotation") {
     const payload = await readPayload<QuotationPayload>(request);
 
@@ -1230,18 +1283,7 @@ export async function routeRequest(request: Request): Promise<Response> {
 
     const quotationOffer = offer.priceConfidence === "validated"
       ? offer
-      : runtime.sessions.updateOffer(
-          payload.searchSessionId,
-          (await runtime.orchestrator.reprice(
-            session.request,
-            payload.offerId,
-            offer,
-            {
-              providerId: offer.providerSource,
-              providerContext: session.providerContext,
-            },
-          )).offers[0] ?? offer,
-        ) ?? offer;
+      : await ensureValidatedSessionOffer(runtime, payload.searchSessionId, payload.offerId) ?? offer;
 
     return json({
       searchSessionId: payload.searchSessionId,

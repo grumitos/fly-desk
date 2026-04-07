@@ -125,6 +125,14 @@ function providerSearchWarnings(response) {
   ];
 }
 
+const backgroundOfferValidationRequests = new Map();
+const backgroundOfferValidationQueue = [];
+const queuedBackgroundOfferValidationKeys = new Set();
+const BACKGROUND_VALIDATION_PREFETCH_LIMIT = 4;
+const BACKGROUND_VALIDATION_CONCURRENCY = 2;
+let backgroundOfferValidationActiveCount = 0;
+let backgroundOfferValidationSessionId = null;
+
 function normalizedWarningMessage(warning) {
   return String(warning || "").trim().toLowerCase();
 }
@@ -2173,6 +2181,165 @@ function sessionId() {
   return state.searchResponse?.searchMeta?.searchSessionId ?? null;
 }
 
+function updateOfferInSearchState(updatedOffer) {
+  if (!state.searchResponse?.allOffers || !updatedOffer?.id) {
+    return false;
+  }
+
+  let changed = false;
+  state.searchResponse.allOffers = state.searchResponse.allOffers.map((offer) => {
+    if (offer.id !== updatedOffer.id) {
+      return offer;
+    }
+
+    changed = true;
+    return updatedOffer;
+  });
+
+  if (changed) {
+    applyClientOfferControls();
+  }
+
+  return changed;
+}
+
+function latestOfferForBackgroundValidation(offerId) {
+  return state.searchResponse?.allOffers?.find((offer) => offer.id === offerId)
+    ?? state.searchResponse?.filteredOffers?.find((offer) => offer.id === offerId)
+    ?? state.searchResponse?.offers?.find((offer) => offer.id === offerId)
+    ?? null;
+}
+
+function syncBackgroundOfferValidationSession(nextSessionId) {
+  if (backgroundOfferValidationSessionId === nextSessionId) {
+    return;
+  }
+
+  backgroundOfferValidationSessionId = nextSessionId;
+  backgroundOfferValidationQueue.length = 0;
+  queuedBackgroundOfferValidationKeys.clear();
+}
+
+function prioritizeQueuedBackgroundValidation(requestKey) {
+  const taskIndex = backgroundOfferValidationQueue.findIndex((task) => task.requestKey === requestKey);
+  if (taskIndex <= 0) {
+    return;
+  }
+
+  const [task] = backgroundOfferValidationQueue.splice(taskIndex, 1);
+  backgroundOfferValidationQueue.unshift(task);
+}
+
+function pumpBackgroundOfferValidationQueue() {
+  while (backgroundOfferValidationActiveCount < BACKGROUND_VALIDATION_CONCURRENCY) {
+    const nextTask = backgroundOfferValidationQueue.shift();
+    if (!nextTask) {
+      return;
+    }
+
+    queuedBackgroundOfferValidationKeys.delete(nextTask.requestKey);
+
+    if (sessionId() !== nextTask.searchSessionId) {
+      continue;
+    }
+
+    const latestOffer = latestOfferForBackgroundValidation(nextTask.offerId);
+    if (!latestOffer || latestOffer.priceConfidence === "validated") {
+      continue;
+    }
+
+    backgroundOfferValidationActiveCount += 1;
+    const requestPromise = postJson("/api/offers/prefetch", {
+      searchSessionId: nextTask.searchSessionId,
+      offerId: nextTask.offerId,
+    })
+      .then((data) => {
+        if (state.searchResponse?.searchMeta?.searchSessionId !== nextTask.searchSessionId || !data?.offer) {
+          return data?.offer ?? null;
+        }
+
+        if (updateOfferInSearchState(data.offer)) {
+          renderAll();
+        }
+
+        return data.offer;
+      })
+      .catch(() => null)
+      .finally(() => {
+        backgroundOfferValidationActiveCount = Math.max(0, backgroundOfferValidationActiveCount - 1);
+        backgroundOfferValidationRequests.delete(nextTask.requestKey);
+        pumpBackgroundOfferValidationQueue();
+      });
+
+    backgroundOfferValidationRequests.set(nextTask.requestKey, requestPromise);
+  }
+}
+
+function queueOfferBackgroundValidation(searchSessionId, offerId, { priority = false } = {}) {
+  const offer = latestOfferForBackgroundValidation(offerId);
+  if (!searchSessionId || !offer || offer.priceConfidence === "validated") {
+    return Promise.resolve(null);
+  }
+
+  const requestKey = `${searchSessionId}:${offer.id}`;
+  const existingRequest = backgroundOfferValidationRequests.get(requestKey);
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  if (queuedBackgroundOfferValidationKeys.has(requestKey)) {
+    if (priority) {
+      prioritizeQueuedBackgroundValidation(requestKey);
+    }
+    return Promise.resolve(null);
+  }
+
+  const task = {
+    requestKey,
+    searchSessionId,
+    offerId: offer.id,
+  };
+
+  if (priority) {
+    backgroundOfferValidationQueue.unshift(task);
+  } else {
+    backgroundOfferValidationQueue.push(task);
+  }
+  queuedBackgroundOfferValidationKeys.add(requestKey);
+  pumpBackgroundOfferValidationQueue();
+  return Promise.resolve(null);
+}
+
+function queueRankedOfferValidations() {
+  const sid = sessionId();
+  const visibleOffers = state.searchResponse?.offers ?? [];
+
+  syncBackgroundOfferValidationSession(sid);
+  if (!sid || visibleOffers.length === 0) {
+    return;
+  }
+
+  const targetOfferIds = [];
+  const selectedOfferId = selOffer()?.id;
+  if (selectedOfferId) {
+    targetOfferIds.push(selectedOfferId);
+  }
+
+  visibleOffers
+    .slice(0, BACKGROUND_VALIDATION_PREFETCH_LIMIT)
+    .forEach((offer) => {
+      if (offer?.id && !targetOfferIds.includes(offer.id)) {
+        targetOfferIds.push(offer.id);
+      }
+    });
+
+  targetOfferIds.forEach((offerId, index) => {
+    void queueOfferBackgroundValidation(sid, offerId, {
+      priority: index === 0 && offerId === selectedOfferId,
+    });
+  });
+}
+
 /* ================================================================
    PAX POPOVER
    ================================================================ */
@@ -3161,6 +3328,8 @@ function applyClientOfferControls() {
   if (!state.searchResponse.offers.some((offer) => offer.id === state.selectedOfferId)) {
     state.selectedOfferId = state.searchResponse.offers[0]?.id ?? offers[0]?.id ?? null;
   }
+
+  queueRankedOfferValidations();
 }
 
 function getOffersForVisibleFacets(allOffers, filters = getActiveClientFilters()) {
@@ -3186,6 +3355,7 @@ function setSearchResponse(data) {
 
 function selectOffer(offerId) {
   state.selectedOfferId = offerId ?? null;
+  queueRankedOfferValidations();
   renderResultsArea();
   renderDetailPanel();
 }

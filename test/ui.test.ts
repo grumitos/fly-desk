@@ -2181,5 +2181,279 @@ test("reprice keeps the loading feedback inside the detail panel", async () => {
   }, { autoOpen: false });
 });
 
+test("search results start validating the selected offer in the background", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let prefetchCalls = 0;
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-prefetch",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [buildOffer()],
+          allOffers: [buildOffer()],
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.route(`${baseUrl}/api/offers/prefetch`, async (route: Route) => {
+      prefetchCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchSessionId: "job-search-1",
+          offer: buildOffer({
+            priceConfidence: "validated",
+            priceStatus: "verified",
+            priceVerifiedAt: "2026-03-27T12:00:00.000Z",
+          }),
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.evaluate(() => {
+      const origin = document.getElementById("origin") as HTMLInputElement | null;
+      const destination = document.getElementById("destination") as HTMLInputElement | null;
+      if (!origin || !destination) throw new Error("Missing location inputs");
+      origin.value = "LIM - Lima, Peru";
+      origin.dataset.code = "LIM";
+      origin.dataset.label = "LIM - Lima, Peru";
+      destination.value = "MIA - Miami, Usa";
+      destination.dataset.code = "MIA";
+      destination.dataset.label = "MIA - Miami, Usa";
+    });
+    await setDateValue(page, "departureDate", "2026-04-15");
+    await setDateValue(page, "returnDate", "2026-04-22");
+    await page.click("#submitButton");
+    await page.waitForSelector('tr[data-oid="offer-1"]');
+    await page.waitForFunction(() => {
+      const badge = document.querySelector("#detailPanel .badge");
+      return badge?.textContent?.includes("Precio validado");
+    });
+
+    assert.equal(prefetchCalls, 1);
+  }, { autoOpen: false });
+});
+
+test("background validation warms the first ranked offers and promotes a newly selected row", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const rankedOffers = [
+      buildOffer({
+        id: "offer-1",
+        price: {
+          total: { amount: 501, currencyCode: "USD" },
+          base: { amount: 420, currencyCode: "USD" },
+          taxes: { amount: 81, currencyCode: "USD" },
+        },
+      }),
+      buildOffer({
+        id: "offer-2",
+        price: {
+          total: { amount: 502, currencyCode: "USD" },
+          base: { amount: 420, currencyCode: "USD" },
+          taxes: { amount: 82, currencyCode: "USD" },
+        },
+      }),
+      buildOffer({
+        id: "offer-3",
+        price: {
+          total: { amount: 503, currencyCode: "USD" },
+          base: { amount: 420, currencyCode: "USD" },
+          taxes: { amount: 83, currencyCode: "USD" },
+        },
+      }),
+      buildOffer({
+        id: "offer-4",
+        price: {
+          total: { amount: 504, currencyCode: "USD" },
+          base: { amount: 420, currencyCode: "USD" },
+          taxes: { amount: 84, currencyCode: "USD" },
+        },
+      }),
+      buildOffer({
+        id: "offer-5",
+        price: {
+          total: { amount: 505, currencyCode: "USD" },
+          base: { amount: 420, currencyCode: "USD" },
+          taxes: { amount: 85, currencyCode: "USD" },
+        },
+      }),
+    ];
+    const offersById = new Map(rankedOffers.map((offer) => [offer.id, offer] as const));
+    const prefetchOrder: string[] = [];
+    const pendingPrefetches = new Map<string, { route: Route; release: () => void }>();
+
+    const waitForPrefetchCount = async (count: number) => {
+      const deadline = Date.now() + 3000;
+      while (prefetchOrder.length < count) {
+        if (Date.now() > deadline) {
+          throw new Error(`Timed out waiting for ${count} prefetch calls.`);
+        }
+
+        await page.waitForTimeout(25);
+      }
+    };
+
+    const fulfillPrefetch = async (offerId: string) => {
+      const pending = pendingPrefetches.get(offerId);
+      const baseOffer = offersById.get(offerId);
+      assert.ok(pending, `Missing pending prefetch for ${offerId}`);
+      assert.ok(baseOffer, `Missing offer fixture for ${offerId}`);
+      pendingPrefetches.delete(offerId);
+      await pending.route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchSessionId: "job-search-1",
+          offer: {
+            ...baseOffer,
+            priceConfidence: "validated",
+            priceStatus: "verified",
+            priceVerifiedAt: "2026-03-27T12:00:00.000Z",
+          },
+        }),
+      });
+      pending.release();
+    };
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-prefetch-priority",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: rankedOffers,
+          allOffers: rankedOffers,
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.route(`${baseUrl}/api/offers/prefetch`, async (route: Route) => {
+      const body = route.request().postDataJSON();
+      const offerId = String(body?.offerId ?? "");
+      prefetchOrder.push(offerId);
+
+      await new Promise<void>((resolve) => {
+        pendingPrefetches.set(offerId, {
+          route,
+          release: resolve,
+        });
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.evaluate(() => {
+      const origin = document.getElementById("origin") as HTMLInputElement | null;
+      const destination = document.getElementById("destination") as HTMLInputElement | null;
+      if (!origin || !destination) throw new Error("Missing location inputs");
+      origin.value = "LIM - Lima, Peru";
+      origin.dataset.code = "LIM";
+      origin.dataset.label = "LIM - Lima, Peru";
+      destination.value = "MIA - Miami, Usa";
+      destination.dataset.code = "MIA";
+      destination.dataset.label = "MIA - Miami, Usa";
+    });
+    await setDateValue(page, "departureDate", "2026-04-15");
+    await setDateValue(page, "returnDate", "2026-04-22");
+    await page.click("#submitButton");
+    await page.waitForSelector('tr[data-oid="offer-5"]');
+
+    await waitForPrefetchCount(2);
+    assert.deepEqual(prefetchOrder.slice(0, 2), ["offer-1", "offer-2"]);
+
+    await page.click('tr[data-oid="offer-4"]');
+
+    await fulfillPrefetch("offer-1");
+    await waitForPrefetchCount(3);
+    assert.equal(prefetchOrder[2], "offer-4");
+
+    await fulfillPrefetch("offer-2");
+    await waitForPrefetchCount(4);
+    assert.equal(prefetchOrder[3], "offer-3");
+    assert.equal(prefetchOrder.includes("offer-5"), false);
+
+    await fulfillPrefetch("offer-4");
+    await fulfillPrefetch("offer-3");
+    await page.waitForFunction(() => {
+      const badge = document.querySelector("#detailPanel .badge");
+      return badge?.textContent?.includes("Precio validado");
+    });
+  }, { autoOpen: false });
+});
+
 
 

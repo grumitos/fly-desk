@@ -181,6 +181,59 @@ test("resolveCostamarProviderContext can recover the freshest token from Chrome 
   }
 });
 
+test("resolveCostamarProviderContext can recover the freshest token from utf16 Chrome sessions", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-session-utf16-"));
+  const profileName = "Profile 41";
+  const sessionsDir = join(tempRoot, profileName, "Sessions");
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  writeFileSync(
+    join(sessionsDir, "Session_1"),
+    Buffer.from(
+      `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&token=${token}`,
+      "utf16le",
+    ),
+  );
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const context = resolveCostamarProviderContext({
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      lang: "es",
+    });
+
+    assert.equal(context.terminalId, "0721808110");
+    assert.equal(context.token, token);
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("resolveLatestCostamarProviderContext refreshes a cached token from Chrome sessions", () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-refresh-"));
   const profileName = "Profile 40";
@@ -248,6 +301,58 @@ test("resolveLatestCostamarProviderContext can recover the freshest token from C
     `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${token}{`
       + "\"visit_count\":1}",
     "utf8",
+  );
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const context = resolveLatestCostamarProviderContext({
+      terminalId: "0721808110",
+      lang: "es",
+    });
+
+    assert.equal(context.terminalId, "0721808110");
+    assert.equal(context.token, token);
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveLatestCostamarProviderContext can recover the freshest token from Chrome session storage", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-storage-"));
+  const profileName = "Profile 42";
+  const storageDir = join(tempRoot, profileName, "Session Storage");
+  mkdirSync(storageDir, { recursive: true });
+
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893459600,
+    exp: 1893463200,
+  });
+  writeFileSync(
+    join(storageDir, "001217.log"),
+    Buffer.from(
+      `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&token=${token}`,
+      "utf16le",
+    ),
   );
 
   const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;

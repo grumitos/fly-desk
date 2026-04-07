@@ -4,6 +4,7 @@ import { readFileSync, rmSync, mkdirSync, cpSync, existsSync, readdirSync } from
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Browser, BrowserContext, Page } from "playwright";
+import { removePathWithRetries } from "./temp-artifacts";
 import {
   buildDerivedOneWayRequest,
   buildDerivedRequest,
@@ -725,11 +726,8 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
       }
 
       chrome.kill("SIGTERM");
-      try {
-        rmSync(userDataDir, { recursive: true, force: true });
-      } catch {
-        // Chrome can keep transient locks on the copied profile for a moment.
-      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await removePathWithRetries(userDataDir, 6, 250);
     }
   }
 
