@@ -3,7 +3,9 @@ import {
   buildDerivedOneWayRequest,
   buildDerivedRequest,
   diffDays,
+  enumerateRoundTripFlexibleAxes,
   enumerateRange,
+  enumerateUsefulRoundTripPairs,
   enumerateUsefulFlexibleRequests,
   isUsefulRoundTripCombination,
 } from "./core/flexible-search";
@@ -31,9 +33,9 @@ import {
   Segment,
 } from "./core/types";
 import {
-  costamarTokenMatchesTerminal,
   getCostamarProviderContext,
-  sanitizeCostamarToken,
+  resolveLatestCostamarProviderContext,
+  resolveUsableCostamarBrandedToken,
 } from "./provider-context";
 
 interface CostamarEngineMetadata {
@@ -159,6 +161,8 @@ const COSTAMAR_MARKUP_CONCURRENCY = Math.max(
 );
 const COSTAMAR_AIR_API_BASE_URL = process.env.COSTAMAR_AIR_API_BASE_URL?.trim()
   || "https://api-zneith.zdev.tech/api-air-0.1";
+const COSTAMAR_REDIRECT_SESSION_WARNING =
+  "Costamar redirect token is missing, expired, or incompatible with this terminal.";
 
 export const COSTAMAR_CONCURRENCY = Object.freeze({
   matrixMinimum: COSTAMAR_MIN_MATRIX_CELL_CONCURRENCY,
@@ -399,45 +403,6 @@ function ensureCostamarCredentials(context: CostamarProviderContext): void {
   }
 }
 
-function resolveCostamarValidationToken(
-  token: string | undefined,
-  terminalId: string | undefined,
-): string | undefined {
-  const normalized = sanitizeCostamarToken(token);
-  if (!normalized || !costamarTokenMatchesTerminal(normalized, terminalId)) {
-    return undefined;
-  }
-
-  try {
-    const payload = JSON.parse(
-      Buffer.from(
-        normalized.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/") ?? "",
-        "base64",
-      ).toString("utf8"),
-    ) as { exp?: number };
-    const expiresAtMs = typeof payload.exp === "number" ? payload.exp * 1000 : 0;
-    if (expiresAtMs > 0 && expiresAtMs <= Date.now()) {
-      return undefined;
-    }
-  } catch {
-    // Non-JWT tokens are still accepted as explicit validation tokens.
-  }
-
-  return normalized;
-}
-
-function resolveCostamarRedirectToken(
-  token: string | undefined,
-  terminalId: string | undefined,
-): string | undefined {
-  const normalized = sanitizeCostamarToken(token);
-  if (!normalized || !costamarTokenMatchesTerminal(normalized, terminalId)) {
-    return undefined;
-  }
-
-  return normalized;
-}
-
 async function fetchCostamar(
   context: CostamarProviderContext,
   path: string,
@@ -545,7 +510,7 @@ export function buildCostamarSearchBody(
     });
   }
 
-  const validationToken = resolveCostamarValidationToken(context.token, context.terminalId);
+  const validationToken = resolveUsableCostamarBrandedToken(context.token, context.terminalId);
 
   return {
     flightType: request.tripType === "one-way" ? "OW" : "RT",
@@ -669,6 +634,10 @@ function buildPurchasePaths(
   request: SearchRequest,
   context: CostamarProviderContext,
 ): CanonicalOffer["purchasePaths"] {
+  if (!resolveUsableCostamarBrandedToken(context.token, context.terminalId)) {
+    return [];
+  }
+
   return [
     {
       id: "costamar-search",
@@ -719,7 +688,7 @@ export function applyCostamarContextToBrandedSearchUrl(
   const branded = new URL(input);
   branded.searchParams.set("terminalId", context.terminalId);
   branded.searchParams.set("lang", context.lang);
-  const redirectToken = resolveCostamarRedirectToken(context.token, context.terminalId);
+  const redirectToken = resolveUsableCostamarBrandedToken(context.token, context.terminalId);
   if (redirectToken) {
     branded.searchParams.set("token", redirectToken);
   } else {
@@ -948,6 +917,7 @@ async function searchRecommendations(
   flexible = false,
 ): Promise<CostamarSearchOutcome> {
   const context = getCostamarProviderContext(providerContext);
+  const redirectContext = resolveLatestCostamarProviderContext(context);
   ensureCostamarCredentials(context);
 
   const engine = await getEngineMetadata(context);
@@ -978,7 +948,7 @@ async function searchRecommendations(
   const responseWarning = buildCostamarSearchWarning(payload);
   const recommendations = responseWarning ? [] : asArray(payload.data);
   const mapped = await mapConcurrent(recommendations, COSTAMAR_MARKUP_CONCURRENCY, async (recommendation) => {
-    const normalized = mapCostamarRecommendationToOffer(recommendation, request, context, engine);
+    const normalized = mapCostamarRecommendationToOffer(recommendation, request, redirectContext, engine);
     if (!normalized.offer) {
       return undefined;
     }
@@ -994,8 +964,12 @@ async function searchRecommendations(
   });
 
   const offers = dedupeCostamarOffers(mapped.filter((offer): offer is CanonicalOffer => Boolean(offer)));
+  const hasUsableRedirectToken = Boolean(
+    resolveUsableCostamarBrandedToken(redirectContext.token, redirectContext.terminalId),
+  );
   const warnings = uniqueStrings([
     ...(responseWarning ? [responseWarning] : []),
+    ...(offers.length > 0 && !hasUsableRedirectToken ? [COSTAMAR_REDIRECT_SESSION_WARNING] : []),
     ...offers.flatMap((offer) => offer.warnings),
   ]);
 
@@ -1161,16 +1135,16 @@ export function createLocalCostamarMatrixDraft(
   }
 
   const departures = enumerateRange(leg.departureStart, leg.departureEnd);
-  const returns = request.tripType === "round-trip"
-    ? (() => {
-        if (!leg.returnStart || !leg.returnEnd) {
-          throw new Error("Costamar round-trip matrix requires returnStart and returnEnd.");
-        }
-
-        return enumerateRange(leg.returnStart, leg.returnEnd);
-      })()
-    : [];
   const requestedAt = new Date().toISOString();
+  const pairs = request.tripType === "round-trip"
+    ? enumerateUsefulRoundTripPairs(request)
+    : [];
+  const axes = request.tripType === "round-trip"
+    ? enumerateRoundTripFlexibleAxes(request, pairs)
+    : {
+        departureDates: departures,
+        returnDates: [] as string[],
+      };
   const cells = request.tripType === "one-way"
     ? departures.map((departureDate) => ({
         key: departureDate,
@@ -1183,46 +1157,27 @@ export function createLocalCostamarMatrixDraft(
         tooltip: "Consultando Costamar...",
         derivedRequest: buildDerivedOneWayRequest(request, departureDate),
       } satisfies MatrixCell))
-    : departures.flatMap((departureDate) => returns.map((returnDate) => {
-        if (!isUsefulRoundTripCombination(leg, departureDate, returnDate)) {
-          return {
-            key: `${departureDate}_${returnDate}`,
-            departureDate,
-            returnDate,
-            confidence: "empty" as const,
-            providerSource: "costamar" as const,
-            selectable: false,
-            requiresRequery: false,
-            stateCode: "emp" as const,
-            tooltip: "Esta combinacion queda fuera del rango de noches solicitado.",
-          } satisfies MatrixCell;
-        }
-
-        return {
-          key: `${departureDate}_${returnDate}`,
-          departureDate,
-          returnDate,
-          stayNights: diffDays(departureDate, returnDate),
-          confidence: "loading" as const,
-          providerSource: "costamar" as const,
-          selectable: false,
-          requiresRequery: true,
-          stateCode: "ind" as const,
-          tooltip: "Consultando Costamar...",
-          derivedRequest: buildDerivedRequest(request, departureDate, returnDate),
-        } satisfies MatrixCell;
-      }));
+    : pairs.map(({ departureDate, returnDate }) => ({
+        key: `${departureDate}_${returnDate}`,
+        departureDate,
+        returnDate,
+        stayNights: diffDays(departureDate, returnDate),
+        confidence: "loading" as const,
+        providerSource: "costamar" as const,
+        selectable: false,
+        requiresRequery: true,
+        stateCode: "ind" as const,
+        tooltip: "Consultando Costamar...",
+        derivedRequest: buildDerivedRequest(request, departureDate, returnDate),
+      } satisfies MatrixCell));
 
   return {
     cells,
-    axes: {
-      departureDates: departures,
-      returnDates: returns,
-    },
+    axes,
     confidenceSummary: buildMatrixConfidenceSummary(cells),
     recommendations: [
       "Matrix loading from Costamar with useful date combinations only.",
-      "Cells outside the requested stay window remain disabled.",
+      "Only valid flexible combinations are materialized for Costamar.",
     ],
     searchMeta: {
       requestedAt,
@@ -1284,7 +1239,7 @@ async function seedMatrixWithFlexibleSearch(
       continue;
     }
 
-    if (!isUsefulRoundTripCombination(request.legs[0], departureDate, returnDate)) {
+    if (!isUsefulRoundTripCombination(request, departureDate, returnDate)) {
       continue;
     }
 

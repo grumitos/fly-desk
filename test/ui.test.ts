@@ -13,6 +13,48 @@ import {
 } from "./helpers/ui-fixtures";
 import { openDesktop, setDateValue, withDesktopPage } from "./helpers/ui";
 
+async function setRouteInputs(page: import("playwright").Page, originCode: string, destinationCode: string): Promise<void> {
+  await page.evaluate(([origin, destination]) => {
+    const originInput = document.getElementById("origin") as HTMLInputElement | null;
+    const destinationInput = document.getElementById("destination") as HTMLInputElement | null;
+    if (!originInput || !destinationInput) {
+      throw new Error("Missing location inputs");
+    }
+
+    originInput.value = String(origin);
+    originInput.dataset.code = String(origin);
+    originInput.dataset.label = String(origin);
+    destinationInput.value = String(destination);
+    destinationInput.dataset.code = String(destination);
+    destinationInput.dataset.label = String(destination);
+  }, [originCode, destinationCode]);
+}
+
+async function submitAndWaitForRequest(
+  page: import("playwright").Page,
+  baseUrl: string,
+  endpoint: "/api/search" | "/api/matrix",
+): Promise<void> {
+  const requestPromise = page.waitForRequest((request) =>
+    request.method() === "POST" && request.url() === `${baseUrl}${endpoint}`);
+  await page.click("#submitButton");
+  await requestPromise;
+  await page.waitForFunction(() => {
+    const submit = document.getElementById("submitButton") as HTMLButtonElement | null;
+    return submit ? submit.disabled === false : false;
+  });
+}
+
+async function chooseFlexibleSubmode(
+  page: import("playwright").Page,
+  mode: "exact-stay" | "fixed-ranges",
+): Promise<void> {
+  await page.click("#dateTrigger");
+  await page.waitForSelector(`#calendarFlexModeControl:not(.hidden) [data-flex-submode="${mode}"]`);
+  await page.click(`[data-flex-submode="${mode}"]`);
+  await page.click("#calendarDone");
+}
+
 test("desktop search rail keeps mode first and the rest of the flow in travel order", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
       await openDesktop(page, baseUrl);
@@ -449,30 +491,53 @@ test("custom calendar writes exact and flexible dates back into the hidden form 
 
       await page.click('[data-mode="flexible"]');
       await page.click("#dateTrigger");
+      await page.click("#calendarClear");
+      await page.evaluate(() => {
+        const stayNights = document.getElementById("stayNights") as HTMLInputElement | null;
+        if (!stayNights) throw new Error("Missing stayNights input");
+        stayNights.value = "6";
+        stayNights.dispatchEvent(new Event("change", { bubbles: true }));
+      });
       await page.click('[data-date-value="2026-04-18"]');
       await page.click('[data-date-value="2026-04-24"]');
 
       const flexibleValues = await page.evaluate(() => ({
         departureStart: (document.getElementById("departureStart") as HTMLInputElement | null)?.value ?? "",
         departureEnd: (document.getElementById("departureEnd") as HTMLInputElement | null)?.value ?? "",
+        returnStart: (document.getElementById("returnStart") as HTMLInputElement | null)?.value ?? "",
+        returnEnd: (document.getElementById("returnEnd") as HTMLInputElement | null)?.value ?? "",
         searchMode: (document.getElementById("searchMode") as HTMLSelectElement | null)?.value ?? "",
+        stayNights: (document.getElementById("stayNights") as HTMLInputElement | null)?.value ?? "",
         summary: document.getElementById("dateTrigger")?.textContent ?? "",
       }));
 
       assert.equal(exactValues.departureDate, "2026-04-15");
       assert.equal(exactValues.returnDate, "2026-04-22");
       assert.match(exactValues.summary, /15\/04/i);
+      assert.equal(await page.locator("#stayDaysMin").count(), 0);
+      assert.equal(await page.locator("#stayDaysMax").count(), 0);
       assert.equal(flexibleValues.departureStart, "2026-04-18");
       assert.equal(flexibleValues.departureEnd, "2026-04-24");
+      assert.equal(flexibleValues.returnStart, "");
+      assert.equal(flexibleValues.returnEnd, "");
       assert.equal(flexibleValues.searchMode, "roundtrip-grid");
+      assert.equal(flexibleValues.stayNights, "6");
       assert.match(flexibleValues.summary, /18\/04/i);
       assert.match(flexibleValues.summary, /24\/04/i);
+      assert.match(flexibleValues.summary, /6 noches/i);
   }, { autoOpen: false });
 });
 
 test("search form routes exact and flexible one-way or round-trip requests through the expected endpoints", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
-    const calls: Array<{ endpoint: string; tripType: string; searchMode: string }> = [];
+    const calls: Array<{
+      endpoint: string;
+      tripType: string;
+      searchMode: string;
+      flexibleMode?: string;
+      stayNights?: number;
+      hasReturnRange: boolean;
+    }> = [];
 
     await page.route(`${baseUrl}/api/search`, async (route: Route) => {
       const body = route.request().postDataJSON();
@@ -480,6 +545,9 @@ test("search form routes exact and flexible one-way or round-trip requests throu
         endpoint: "/api/search",
         tripType: body?.request?.tripType ?? "",
         searchMode: body?.request?.searchMode ?? "",
+        flexibleMode: body?.request?.flexibleMode,
+        stayNights: body?.request?.legs?.[0]?.stayNights,
+        hasReturnRange: Boolean(body?.request?.legs?.[0]?.returnStart && body?.request?.legs?.[0]?.returnEnd),
       });
       await route.fulfill({
         status: 200,
@@ -508,6 +576,9 @@ test("search form routes exact and flexible one-way or round-trip requests throu
         endpoint: "/api/matrix",
         tripType: body?.request?.tripType ?? "",
         searchMode: body?.request?.searchMode ?? "",
+        flexibleMode: body?.request?.flexibleMode,
+        stayNights: body?.request?.legs?.[0]?.stayNights,
+        hasReturnRange: Boolean(body?.request?.legs?.[0]?.returnStart && body?.request?.legs?.[0]?.returnEnd),
       });
       await route.fulfill({
         status: 200,
@@ -527,43 +598,208 @@ test("search form routes exact and flexible one-way or round-trip requests throu
       });
     });
       await openDesktop(page, baseUrl);
-      await page.evaluate(() => {
-        const origin = document.getElementById("origin") as HTMLInputElement | null;
-        const destination = document.getElementById("destination") as HTMLInputElement | null;
-        if (!origin || !destination) throw new Error("Missing location inputs");
-        origin.value = "LIM";
-        origin.dataset.code = "LIM";
-        origin.dataset.label = "LIM";
-        destination.value = "MIA";
-        destination.dataset.code = "MIA";
-        destination.dataset.label = "MIA";
-      });
+      await setRouteInputs(page, "LIM", "MIA");
 
       await setDateValue(page, "departureDate", "2026-04-15");
       await setDateValue(page, "returnDate", "2026-04-22");
-      await page.click("#submitButton");
-      await page.waitForTimeout(150);
+      await submitAndWaitForRequest(page, baseUrl, "/api/search");
 
       await page.click('[data-trip="one-way"]');
-      await page.click("#submitButton");
-      await page.waitForTimeout(150);
+      await submitAndWaitForRequest(page, baseUrl, "/api/search");
 
       await page.click('[data-mode="flexible"]');
       await setDateValue(page, "departureStart", "2026-04-18");
       await setDateValue(page, "departureEnd", "2026-04-24");
-      await page.click("#submitButton");
-      await page.waitForTimeout(150);
+      await submitAndWaitForRequest(page, baseUrl, "/api/search");
 
       await page.click('[data-trip="round-trip"]');
-      await page.click("#submitButton");
-      await page.waitForTimeout(150);
+      await page.evaluate(() => {
+        const stayNights = document.getElementById("stayNights") as HTMLInputElement | null;
+        if (!stayNights) throw new Error("Missing stayNights input");
+        stayNights.value = "4";
+        stayNights.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await submitAndWaitForRequest(page, baseUrl, "/api/matrix");
+
+      await chooseFlexibleSubmode(page, "fixed-ranges");
+      await setDateValue(page, "departureStart", "2026-05-01");
+      await setDateValue(page, "departureEnd", "2026-05-03");
+      await setDateValue(page, "returnStart", "2026-07-01");
+      await setDateValue(page, "returnEnd", "2026-07-03");
+      await submitAndWaitForRequest(page, baseUrl, "/api/matrix");
 
       assert.deepEqual(calls, [
-        { endpoint: "/api/search", tripType: "round-trip", searchMode: "exact" },
-        { endpoint: "/api/search", tripType: "one-way", searchMode: "exact" },
-        { endpoint: "/api/search", tripType: "one-way", searchMode: "stay-range" },
-        { endpoint: "/api/matrix", tripType: "round-trip", searchMode: "roundtrip-grid" },
+        {
+          endpoint: "/api/search",
+          tripType: "round-trip",
+          searchMode: "exact",
+          flexibleMode: undefined,
+          stayNights: undefined,
+          hasReturnRange: false,
+        },
+        {
+          endpoint: "/api/search",
+          tripType: "one-way",
+          searchMode: "exact",
+          flexibleMode: undefined,
+          stayNights: undefined,
+          hasReturnRange: false,
+        },
+        {
+          endpoint: "/api/search",
+          tripType: "one-way",
+          searchMode: "stay-range",
+          flexibleMode: undefined,
+          stayNights: undefined,
+          hasReturnRange: false,
+        },
+        {
+          endpoint: "/api/matrix",
+          tripType: "round-trip",
+          searchMode: "roundtrip-grid",
+          flexibleMode: "exact-stay",
+          stayNights: 4,
+          hasReturnRange: false,
+        },
+        {
+          endpoint: "/api/matrix",
+          tripType: "round-trip",
+          searchMode: "roundtrip-grid",
+          flexibleMode: "fixed-ranges",
+          stayNights: undefined,
+          hasReturnRange: true,
+        },
       ]);
+  }, { autoOpen: false });
+});
+
+test("exact-stay matrix results open in the compact list and keep calendar hidden", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const baseMatrix = buildMatrixResponse();
+    const derivedRequestFor = (departureDate: string, returnDate: string) => ({
+      ...baseMatrix.cells[0].derivedRequest,
+      legs: [
+        {
+          origin: "LIM",
+          destination: "MIA",
+          departureDate,
+          returnDate,
+        },
+      ],
+    });
+    const completedMatrix = buildMatrixResponse({
+      matrixComplete: true,
+      matrixStatus: "completed",
+      request: {
+        ...baseMatrix.request,
+        flexibleMode: "exact-stay",
+        legs: [
+          {
+            ...baseMatrix.request.legs[0],
+            departureStart: "2026-04-15",
+            departureEnd: "2026-04-21",
+            returnStart: "2026-04-15",
+            returnEnd: "2026-04-21",
+            stayNights: 4,
+          },
+        ],
+      },
+      cells: [
+        {
+          ...baseMatrix.cells[0],
+          confidence: "live",
+          selectable: true,
+          stateCode: "live",
+          tooltip: "Agil exact search.",
+          price: {
+            amount: 280,
+            currencyCode: "USD",
+          },
+          derivedRequest: derivedRequestFor("2026-04-16", "2026-04-20"),
+          key: "2026-04-16_2026-04-20",
+          departureDate: "2026-04-16",
+          returnDate: "2026-04-20",
+        },
+        {
+          ...baseMatrix.cells[0],
+          key: "2026-04-15_2026-04-19",
+          departureDate: "2026-04-15",
+          returnDate: "2026-04-19",
+          confidence: "loading",
+          selectable: false,
+          stateCode: "ind",
+          tooltip: "Consultando Agil...",
+          derivedRequest: derivedRequestFor("2026-04-15", "2026-04-19"),
+          price: undefined,
+        },
+        {
+          ...baseMatrix.cells[0],
+          key: "2026-04-17_2026-04-21",
+          departureDate: "2026-04-17",
+          returnDate: "2026-04-21",
+          confidence: "unavailable",
+          selectable: false,
+          stateCode: "unavailable",
+          tooltip: "Sin resultado.",
+          derivedRequest: derivedRequestFor("2026-04-17", "2026-04-21"),
+          price: undefined,
+        },
+      ],
+      axes: {
+        departureDates: ["2026-04-15", "2026-04-16", "2026-04-17"],
+        returnDates: ["2026-04-19", "2026-04-20", "2026-04-21"],
+      },
+      confidenceSummary: {
+        live: 1,
+        loading: 1,
+        unavailable: 1,
+      },
+      searchMeta: buildSearchMeta("search_live"),
+    });
+
+    await page.route(`${baseUrl}/api/matrix`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(completedMatrix),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await setRouteInputs(page, "LIM", "MIA");
+    await page.evaluate(() => {
+      const stayNights = document.getElementById("stayNights") as HTMLInputElement | null;
+      if (!stayNights) throw new Error("Missing stayNights input");
+      stayNights.value = "4";
+      stayNights.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    await page.click('[data-mode="flexible"]');
+    await setDateValue(page, "departureStart", "2026-04-15");
+    await setDateValue(page, "departureEnd", "2026-04-21");
+    await page.click("#submitButton");
+    await page.waitForSelector(".results-table--flexible tbody tr");
+
+    const probe = await page.evaluate(() => ({
+      hasFlexibleTable: Boolean(document.querySelector(".results-table--flexible")),
+      hasCalendarGrid: Boolean(document.querySelector(".cal-grid")),
+      viewToggleHidden: document.getElementById("viewToggle")?.classList.contains("hidden") ?? false,
+      rowKeys: [...document.querySelectorAll(".results-table--flexible tbody tr")]
+        .map((row) => row.getAttribute("data-mk")),
+      firstRowText: document.querySelector(".results-table--flexible tbody tr")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    }));
+
+    assert.equal(probe.hasFlexibleTable, true);
+    assert.equal(probe.hasCalendarGrid, false);
+    assert.equal(probe.viewToggleHidden, true);
+    assert.deepEqual(probe.rowKeys, [
+      "2026-04-16_2026-04-20",
+      "2026-04-15_2026-04-19",
+      "2026-04-17_2026-04-21",
+    ]);
+    assert.match(probe.firstRowText, /16\/04/);
+    assert.match(probe.firstRowText, /20\/04/);
+    assert.match(probe.firstRowText, /4 noches/i);
   }, { autoOpen: false });
 });
 
@@ -664,6 +900,142 @@ test("calendar stays anchored to the trigger, stays compact, and can navigate mo
   }, { autoOpen: false });
 });
 
+test("fixed-ranges calendar keeps the return header row and departure column sticky while scrolling", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const baseMatrix = buildMatrixResponse();
+    const departureDates = Array.from({ length: 15 }, (_, index) => `2026-05-${String(index + 1).padStart(2, "0")}`);
+    const returnDates = Array.from({ length: 15 }, (_, index) => `2026-07-${String(index + 1).padStart(2, "0")}`);
+    const diffDays = (fromIso: string, toIso: string) => {
+      const from = Date.parse(`${fromIso}T00:00:00Z`);
+      const to = Date.parse(`${toIso}T00:00:00Z`);
+      return Math.round((to - from) / 86400000);
+    };
+    const matrixResponse = buildMatrixResponse({
+      matrixComplete: true,
+      matrixStatus: "completed",
+      request: {
+        ...baseMatrix.request,
+        flexibleMode: "fixed-ranges",
+        legs: [
+          {
+            ...baseMatrix.request.legs[0],
+            departureStart: departureDates[0],
+            departureEnd: departureDates.at(-1),
+            returnStart: returnDates[0],
+            returnEnd: returnDates.at(-1),
+            stayNights: undefined,
+          },
+        ],
+      },
+      cells: departureDates.flatMap((departureDate, departureIndex) =>
+        returnDates.map((returnDate, returnIndex) => ({
+          ...baseMatrix.cells[0],
+          key: `${departureDate}_${returnDate}`,
+          departureDate,
+          returnDate,
+          stayNights: diffDays(departureDate, returnDate),
+          confidence: "live",
+          selectable: true,
+          stateCode: "live",
+          tooltip: "Agil exact search.",
+          price: {
+            amount: 280 + departureIndex + returnIndex,
+            currencyCode: "USD",
+          },
+          derivedRequest: {
+            ...baseMatrix.cells[0].derivedRequest,
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate,
+                returnDate,
+              },
+            ],
+          },
+        })),
+      ),
+      axes: {
+        departureDates,
+        returnDates,
+      },
+      confidenceSummary: {
+        live: departureDates.length * returnDates.length,
+      },
+      searchMeta: buildSearchMeta("search_live"),
+    });
+
+    await page.route(`${baseUrl}/api/matrix`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(matrixResponse),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await setRouteInputs(page, "LIM", "MIA");
+    await page.click('[data-mode="flexible"]');
+    await chooseFlexibleSubmode(page, "fixed-ranges");
+    await setDateValue(page, "departureStart", departureDates[0]);
+    await setDateValue(page, "departureEnd", departureDates.at(-1) ?? "");
+    await setDateValue(page, "returnStart", returnDates[0]);
+    await setDateValue(page, "returnEnd", returnDates.at(-1) ?? "");
+    await page.click("#submitButton");
+    await page.waitForSelector('[data-view="calendar"]');
+    await page.click('[data-view="calendar"]');
+    await page.waitForSelector(".matrix-wrap");
+
+    const stickyProbe = await page.evaluate(() => {
+      const wrap = document.querySelector(".matrix-wrap") as HTMLElement | null;
+      const header = document.querySelector(".cal-header") as HTMLElement | null;
+      const label = document.querySelector(".cal-label") as HTMLElement | null;
+      const corner = document.querySelector(".cal-corner") as HTMLElement | null;
+      const viewToggle = document.getElementById("viewToggle");
+      if (!wrap || !header || !label || !corner || !viewToggle) return null;
+
+      const before = {
+        headerTop: header.getBoundingClientRect().top,
+        labelLeft: label.getBoundingClientRect().left,
+      };
+
+      wrap.scrollTop = 280;
+      wrap.scrollLeft = 280;
+      wrap.dispatchEvent(new Event("scroll"));
+
+      const after = {
+        headerTop: header.getBoundingClientRect().top,
+        labelLeft: label.getBoundingClientRect().left,
+        wrapTop: wrap.getBoundingClientRect().top,
+        wrapLeft: wrap.getBoundingClientRect().left,
+        wrapPaddingTop: parseFloat(getComputedStyle(wrap).paddingTop) || 0,
+        wrapPaddingLeft: parseFloat(getComputedStyle(wrap).paddingLeft) || 0,
+      };
+
+      return {
+        scrolledTop: wrap.scrollTop,
+        scrolledLeft: wrap.scrollLeft,
+        headerPosition: getComputedStyle(header).position,
+        labelPosition: getComputedStyle(label).position,
+        cornerPosition: getComputedStyle(corner).position,
+        viewToggleHidden: viewToggle.classList.contains("hidden"),
+        headerDeltaFromWrap: Math.abs(after.headerTop - (after.wrapTop + after.wrapPaddingTop)),
+        labelDeltaFromWrap: Math.abs(after.labelLeft - (after.wrapLeft + after.wrapPaddingLeft)),
+      };
+    });
+
+    assert.ok(stickyProbe);
+    assert.equal(stickyProbe.viewToggleHidden, false);
+    assert.equal(stickyProbe.headerPosition, "sticky");
+    assert.equal(stickyProbe.labelPosition, "sticky");
+    assert.equal(stickyProbe.cornerPosition, "sticky");
+    assert.equal(stickyProbe.scrolledTop > 0, true);
+    assert.equal(stickyProbe.scrolledLeft > 0, true);
+    assert.equal(stickyProbe.headerDeltaFromWrap < 2, true, JSON.stringify(stickyProbe));
+    assert.equal(stickyProbe.labelDeltaFromWrap < 2, true, JSON.stringify(stickyProbe));
+  }, { autoOpen: false });
+});
+
 test("clicking a flexible matrix cell relaunches a single exact search without pinning a provider", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let matrixPollCount = 0;
@@ -736,25 +1108,38 @@ test("clicking a flexible matrix cell relaunches a single exact search without p
     });
       await openDesktop(page, baseUrl);
       await page.click('[data-mode="flexible"]');
-      await page.fill("#origin", "LIM");
-      await page.fill("#destination", "MIA");
+      await setRouteInputs(page, "LIM", "MIA");
       await setDateValue(page, "departureStart", "2026-04-15");
-      await setDateValue(page, "departureEnd", "2026-04-15");
+      await setDateValue(page, "departureEnd", "2026-04-19");
       await page.evaluate(() => {
-        const min = document.getElementById("stayDaysMin") as HTMLInputElement | null;
-        const max = document.getElementById("stayDaysMax") as HTMLInputElement | null;
-        if (!min || !max) throw new Error("Missing stay duration inputs");
-        min.value = "4";
-        max.value = "4";
-        min.dispatchEvent(new Event("change", { bubbles: true }));
-        max.dispatchEvent(new Event("change", { bubbles: true }));
+        const stayNights = document.getElementById("stayNights") as HTMLInputElement | null;
+        if (!stayNights) throw new Error("Missing stay duration input");
+        stayNights.value = "4";
+        stayNights.dispatchEvent(new Event("change", { bubbles: true }));
       });
 
-      await page.click("#submitButton");
-      await page.waitForSelector('[data-mk="2026-04-15_2026-04-19"]');
-      await page.waitForTimeout(1800);
-      await page.click('[data-mk="2026-04-15_2026-04-19"]');
-      await page.waitForTimeout(250);
+      await submitAndWaitForRequest(page, baseUrl, "/api/matrix");
+      await page.waitForSelector('.results-table--flexible [data-mk="2026-04-15_2026-04-19"]');
+      await page.waitForSelector('.results-table--flexible [data-mk="2026-04-15_2026-04-19"][aria-disabled="false"]');
+
+      const listProbe = await page.evaluate(() => ({
+        hasFlexibleTable: Boolean(document.querySelector(".results-table--flexible")),
+        hasCalendarGrid: Boolean(document.querySelector(".cal-grid")),
+        viewToggleHidden: document.getElementById("viewToggle")?.classList.contains("hidden") ?? false,
+      }));
+
+      assert.equal(listProbe.hasFlexibleTable, true);
+      assert.equal(listProbe.hasCalendarGrid, false);
+      assert.equal(listProbe.viewToggleHidden, true);
+
+      const searchRequestPromise = page.waitForRequest((request) =>
+        request.method() === "POST" && request.url() === `${baseUrl}/api/search`);
+      await page.click('.results-table--flexible [data-mk="2026-04-15_2026-04-19"]');
+      await searchRequestPromise;
+      await page.waitForFunction(() => {
+        const searchMode = document.getElementById("searchMode") as HTMLInputElement | null;
+        return searchMode?.value === "exact";
+      });
 
       assert.equal(searchRequestCount, 1);
       assert.equal((lastSearchRequest?.request as Record<string, unknown> | undefined)?.searchMode, "exact");
@@ -1842,7 +2227,7 @@ test("provider link column shows both the provider link and missing-session feed
             ...buildSearchMeta("search_live"),
             providersUsed: ["agil-local", "costamar"],
             warnings: [
-              "Costamar rejected this search: the branded token is invalid, expired, or no longer belongs to this agency.",
+              "Costamar redirect token is missing, expired, or incompatible with this terminal.",
             ],
           },
           providerMeta: {
@@ -1850,7 +2235,7 @@ test("provider link column shows both the provider link and missing-session feed
             coverageMode: "core",
           },
           warnings: [
-            "Costamar rejected this search: the branded token is invalid, expired, or no longer belongs to this agency.",
+            "Costamar redirect token is missing, expired, or incompatible with this terminal.",
           ],
         }),
       });
@@ -1876,6 +2261,10 @@ test("provider link column shows both the provider link and missing-session feed
       const linkCellText = await page.locator('tr[data-oid="offer-1"] td:nth-child(7)').innerText();
       assert.match(linkCellText, /Agil/);
       assert.match(linkCellText, /Costamar:\s*Falta sesión/);
+      await page.click('tr[data-oid="offer-1"]');
+      await page.waitForSelector("#detailContent");
+      assert.equal(await page.locator("#detailContent a.btn--ghost").count(), 1);
+      assert.doesNotMatch(await page.locator("#detailContent").innerText(), /Buscar en Costamar/);
   }, { autoOpen: false });
 });
 

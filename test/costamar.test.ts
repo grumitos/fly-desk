@@ -7,6 +7,7 @@ import {
   buildCostamarSearchWarning,
   COSTAMAR_CONCURRENCY,
   createLocalCostamarMatrixDraft,
+  mapCostamarRecommendationToOffer,
 } from "../src/local-costamar";
 import {
   buildProviderContext,
@@ -15,6 +16,7 @@ import {
   resetCostamarSessionCacheForTests,
   resolveLatestCostamarProviderContext,
   resolveCostamarProviderContext,
+  resolveUsableCostamarBrandedToken,
 } from "../src/provider-context";
 import type { SearchRequest } from "../src/core/types";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
@@ -26,6 +28,7 @@ function buildRequest(): SearchRequest {
     providerId: "costamar",
     tripType: "round-trip",
     searchMode: "roundtrip-grid",
+    flexibleMode: "exact-stay",
     legs: [
       {
         origin: "LIM",
@@ -34,8 +37,7 @@ function buildRequest(): SearchRequest {
         departureEnd: "2026-04-03",
         returnStart: "2026-04-10",
         returnEnd: "2026-04-13",
-        minNights: 10,
-        maxNights: 10,
+        stayNights: 10,
       },
     ],
     passengers: {
@@ -59,6 +61,76 @@ function buildJwt(payload: Record<string, unknown>): string {
   return `${encode({ alg: "HS256", typ: "JWT" })}.${encode(payload)}.signature`;
 }
 
+function buildExactRequest(): SearchRequest {
+  return {
+    providerId: "costamar",
+    tripType: "one-way",
+    searchMode: "exact",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "MAD",
+        departureDate: "2026-06-01",
+      },
+    ],
+    passengers: {
+      adults: 1,
+      children: 0,
+      infants: 0,
+    },
+    cabin: "ECONOMY",
+    filters: {},
+    coverageMode: "core",
+    redirectMode: "best-effort",
+    currencyCode: "USD",
+    locale: "es-PE",
+    market: "PE",
+  };
+}
+
+function buildRecommendation() {
+  return {
+    id: "rec-1",
+    itinerary: [
+      {
+        flights: [
+          {
+            departureAirport: {
+              code: "LIM",
+              cityName: "Lima",
+            },
+            arrivalAirport: {
+              code: "MAD",
+              cityName: "Madrid",
+            },
+            departureDateTime: "2026-06-01T10:00:00-05:00",
+            arrivalDateTime: "2026-06-01T22:00:00+02:00",
+            marketingAirline: {
+              code: "UX",
+              name: "Air Europa",
+            },
+            flightNumber: "75",
+          },
+        ],
+      },
+    ],
+    pricing: {
+      total: 950,
+      base: 700,
+      taxes: 250,
+      validatingAirline: "UX",
+    },
+  };
+}
+
+function buildEngine() {
+  return {
+    profile: {
+      currencyCode: "USD",
+    },
+  };
+}
+
 test("buildProviderContext normalizes Costamar defaults and overrides", () => {
   const context = buildProviderContext("costamar", {
     costamar: {
@@ -77,6 +149,29 @@ test("buildProviderContext normalizes Costamar defaults and overrides", () => {
       lang: "es",
     },
   });
+});
+
+test("resolveUsableCostamarBrandedToken enforces terminal match and JWT freshness", () => {
+  const validToken = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  const expiredToken = buildJwt({
+    id: "0721808110",
+    iat: 1700000000,
+    exp: 1700003600,
+  });
+  const wrongTerminalToken = buildJwt({
+    id: "9999999999",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+
+  assert.equal(resolveUsableCostamarBrandedToken(validToken, "0721808110", 1893457000000), validToken);
+  assert.equal(resolveUsableCostamarBrandedToken(expiredToken, "0721808110", 1893457000000), undefined);
+  assert.equal(resolveUsableCostamarBrandedToken(wrongTerminalToken, "0721808110", 1893457000000), undefined);
+  assert.equal(resolveUsableCostamarBrandedToken("opaque-token", "0721808110", 1893457000000), "opaque-token");
 });
 
 test("extractCostamarSessionCandidates reads branded urls from Chrome session text", () => {
@@ -601,7 +696,7 @@ test("buildCostamarBrandedSearchUrl keeps the branded round-trip path shape", ()
   assert.equal(parsed.searchParams.get("token"), "secret-token");
 });
 
-test("buildCostamarBrandedSearchUrl keeps the token in the external link even if it is expired", () => {
+test("buildCostamarBrandedSearchUrl drops expired JWTs from the external link", () => {
   const request = buildRequest();
   request.searchMode = "exact";
   request.legs[0].departureDate = "2026-06-01";
@@ -621,7 +716,7 @@ test("buildCostamarBrandedSearchUrl keeps the token in the external link even if
   });
 
   const parsed = new URL(url);
-  assert.equal(parsed.searchParams.get("token"), expiredToken);
+  assert.equal(parsed.searchParams.get("token"), null);
 });
 
 test("buildCostamarBrandedSearchUrl trims trailing token noise from direct context", () => {
@@ -700,6 +795,95 @@ test("applyCostamarContextToBrandedSearchUrl refreshes terminal and token query 
   assert.equal(parsed.searchParams.get("terminalId"), "0721808110");
   assert.equal(parsed.searchParams.get("lang"), "es");
   assert.equal(parsed.searchParams.get("token"), freshToken);
+});
+
+test("mapCostamarRecommendationToOffer omits the Costamar redirect when the branded token is expired", () => {
+  const normalized = mapCostamarRecommendationToOffer(
+    buildRecommendation(),
+    buildExactRequest(),
+    {
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: buildJwt({
+        id: "0721808110",
+        iat: 1700000000,
+        exp: 1700003600,
+      }),
+      lang: "es",
+    },
+    buildEngine(),
+  );
+
+  assert.ok(normalized.offer);
+  assert.deepEqual(normalized.offer?.purchasePaths, []);
+});
+
+test("mapCostamarRecommendationToOffer keeps the Costamar redirect when a fresh token is recovered", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-purchase-path-"));
+  const profileName = "Profile 45";
+  const sessionsDir = join(tempRoot, profileName, "Sessions");
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const staleToken = buildJwt({
+    id: "0721808110",
+    iat: 1700000000,
+    exp: 1700003600,
+  });
+  const freshToken = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  writeFileSync(
+    join(sessionsDir, "Tabs_1"),
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/1/0/0?terminalId=0721808110&token=${freshToken}`,
+    "utf8",
+  );
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const refreshedContext = resolveLatestCostamarProviderContext({
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: staleToken,
+      lang: "es",
+    });
+    const normalized = mapCostamarRecommendationToOffer(
+      buildRecommendation(),
+      buildExactRequest(),
+      refreshedContext,
+      buildEngine(),
+    );
+
+    assert.ok(normalized.offer);
+    assert.equal(normalized.offer?.purchasePaths.length, 1);
+    assert.equal(
+      new URL(normalized.offer?.purchasePaths[0]?.url ?? "").searchParams.get("token"),
+      freshToken,
+    );
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("buildCostamarSearchBody matches the live booking frontend payload shape", () => {
@@ -860,17 +1044,11 @@ test("createLocalCostamarMatrixDraft leaves only useful stay combinations active
     .filter((cell) => cell.confidence === "loading")
     .map((cell) => cell.key)
     .sort();
-  const emptyKeys = draft.cells
-    .filter((cell) => cell.confidence === "empty")
-    .map((cell) => cell.key)
-    .sort();
 
   assert.deepEqual(loadingKeys, [
     "2026-04-01_2026-04-11",
     "2026-04-02_2026-04-12",
     "2026-04-03_2026-04-13",
   ]);
-  assert.ok(emptyKeys.includes("2026-04-01_2026-04-10"));
-  assert.ok(emptyKeys.includes("2026-04-02_2026-04-11"));
-  assert.ok(emptyKeys.includes("2026-04-03_2026-04-12"));
+  assert.equal(draft.cells.some((cell) => cell.confidence === "empty"), false);
 });

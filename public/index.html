@@ -281,14 +281,21 @@
 
       <div class="calendar-popover__summary">
         <p id="calendarSelectionSummary" class="calendar-selection-summary">Selecciona una salida para empezar.</p>
+        <div id="calendarFlexModeControl" class="calendar-flex-mode hidden" aria-label="Submodo flexible">
+          <span class="field-label">Submodo</span>
+          <div class="segmented-control segmented-control--wide">
+            <button type="button" class="segmented-control__button is-active" data-flex-submode="exact-stay">Estadía exacta</button>
+            <button type="button" class="segmented-control__button" data-flex-submode="fixed-ranges">Rangos fijos</button>
+          </div>
+          <select name="flexibleMode" id="flexibleMode" class="hidden">
+            <option value="exact-stay">Estadía exacta</option>
+            <option value="fixed-ranges">Rangos fijos</option>
+          </select>
+        </div>
         <div id="calendarStayConfig" class="calendar-stay hidden">
           <label class="calendar-stay__field">
-            <span>Estadía mín.</span>
-            <input name="stayDaysMin" id="stayDaysMin" type="number" class="calendar-stay__input" min="1" max="90" value="7" />
-          </label>
-          <label class="calendar-stay__field">
-            <span>Estadía máx.</span>
-            <input name="stayDaysMax" id="stayDaysMax" type="number" class="calendar-stay__input" min="1" max="90" value="14" />
+            <span>Estadía (noches)</span>
+            <input name="stayNights" id="stayNights" type="number" class="calendar-stay__input" min="1" max="90" value="7" />
           </label>
         </div>
       </div>

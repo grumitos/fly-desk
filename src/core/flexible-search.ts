@@ -1,4 +1,9 @@
-import { CanonicalOffer, SearchLeg, SearchRequest } from "./types";
+import {
+  CanonicalOffer,
+  FlexibleRoundTripMode,
+  SearchLeg,
+  SearchRequest,
+} from "./types";
 
 export interface NightBounds {
   minNights: number;
@@ -11,12 +16,38 @@ export interface UsefulRoundTripPair {
   stayNights: number;
 }
 
-function normalizeNightValue(value: number | undefined, fallback: number): number {
-  if (!Number.isFinite(value)) {
+export type FlexibleRoundTripResolutionMode =
+  | FlexibleRoundTripMode
+  | "legacy-night-range";
+
+export interface FlexibleRoundTripAxes {
+  departureDates: string[];
+  returnDates: string[];
+}
+
+interface ResolvedRoundTripFlexibleSpec {
+  mode: FlexibleRoundTripResolutionMode;
+  departureStart: string;
+  departureEnd: string;
+  returnStart: string;
+  returnEnd: string;
+  stayNights?: number;
+  nightBounds?: NightBounds;
+}
+
+function hasFiniteNumber(value: number | undefined): value is number {
+  return Number.isFinite(value);
+}
+
+export function normalizeNightValue(
+  value: number | undefined,
+  fallback?: number,
+): number | undefined {
+  if (!hasFiniteNumber(value)) {
     return fallback;
   }
 
-  return Math.max(1, Math.trunc(value as number));
+  return Math.max(1, Math.trunc(value));
 }
 
 export function addDays(dateIso: string, days: number): string {
@@ -44,8 +75,8 @@ export function enumerateRange(start: string, end: string): string[] {
 }
 
 export function resolveNightBounds(leg: SearchLeg): NightBounds {
-  const minNights = normalizeNightValue(leg.minNights, 1);
-  const rawMaxNights = normalizeNightValue(leg.maxNights, minNights);
+  const minNights = normalizeNightValue(leg.minNights, 1) ?? 1;
+  const rawMaxNights = normalizeNightValue(leg.maxNights, minNights) ?? minNights;
 
   return {
     minNights,
@@ -53,8 +84,185 @@ export function resolveNightBounds(leg: SearchLeg): NightBounds {
   };
 }
 
+export function resolveExactStayNights(leg: SearchLeg): number | undefined {
+  if (hasFiniteNumber(leg.stayNights)) {
+    return normalizeNightValue(leg.stayNights);
+  }
+
+  if (
+    hasFiniteNumber(leg.minNights)
+    && hasFiniteNumber(leg.maxNights)
+    && Math.trunc(leg.minNights) === Math.trunc(leg.maxNights)
+  ) {
+    return normalizeNightValue(leg.minNights);
+  }
+
+  return undefined;
+}
+
+function hasLegacyNightRangeConstraints(leg: SearchLeg): boolean {
+  if (!hasFiniteNumber(leg.minNights) && !hasFiniteNumber(leg.maxNights)) {
+    return false;
+  }
+
+  const exactStayNights = resolveExactStayNights(leg);
+  if (exactStayNights === undefined) {
+    return true;
+  }
+
+  return normalizeNightValue(leg.minNights) !== exactStayNights
+    || normalizeNightValue(leg.maxNights) !== exactStayNights;
+}
+
+export function resolveFlexibleRoundTripMode(
+  request: Pick<SearchRequest, "tripType" | "searchMode" | "flexibleMode" | "legs">,
+): FlexibleRoundTripResolutionMode | undefined {
+  if (request.tripType !== "round-trip" || request.searchMode !== "roundtrip-grid") {
+    return undefined;
+  }
+
+  const leg = request.legs[0];
+  const hasDepartureWindow = Boolean(leg?.departureStart && leg?.departureEnd);
+  const hasReturnWindow = Boolean(leg?.returnStart && leg?.returnEnd);
+
+  if (request.flexibleMode === "exact-stay" || request.flexibleMode === "fixed-ranges") {
+    return request.flexibleMode;
+  }
+
+  if (resolveExactStayNights(leg) !== undefined) {
+    return "exact-stay";
+  }
+
+  if (hasDepartureWindow && hasReturnWindow && !hasLegacyNightRangeConstraints(leg)) {
+    return "fixed-ranges";
+  }
+
+  if (hasLegacyNightRangeConstraints(leg)) {
+    return "legacy-night-range";
+  }
+
+  return hasDepartureWindow && hasReturnWindow
+    ? "fixed-ranges"
+    : undefined;
+}
+
+export function normalizeFlexibleRoundTripRequest(request: SearchRequest): SearchRequest {
+  const resolvedMode = resolveFlexibleRoundTripMode(request);
+  if (request.tripType !== "round-trip" || request.searchMode !== "roundtrip-grid") {
+    return request;
+  }
+
+  const leg = request.legs[0];
+  if (!resolvedMode) {
+    return request;
+  }
+
+  if (resolvedMode === "exact-stay") {
+    return {
+      ...request,
+      flexibleMode: "exact-stay",
+      legs: [
+        {
+          ...leg,
+          returnStart: leg.returnStart || leg.departureStart,
+          returnEnd: leg.returnEnd || leg.departureEnd,
+          stayNights: resolveExactStayNights(leg),
+          minNights: undefined,
+          maxNights: undefined,
+        },
+      ],
+    };
+  }
+
+  if (resolvedMode === "fixed-ranges") {
+    return {
+      ...request,
+      flexibleMode: "fixed-ranges",
+      legs: [
+        {
+          ...leg,
+          stayNights: undefined,
+          minNights: undefined,
+          maxNights: undefined,
+        },
+      ],
+    };
+  }
+
+  return {
+    ...request,
+    flexibleMode: undefined,
+    legs: [
+      {
+        ...leg,
+        stayNights: undefined,
+      },
+    ],
+  };
+}
+
+function resolveRoundTripFlexibleSpec(request: SearchRequest): ResolvedRoundTripFlexibleSpec {
+  const leg = request.legs[0];
+  if (!leg.departureStart || !leg.departureEnd) {
+    throw new Error("Round-trip flexible search requires departureStart and departureEnd.");
+  }
+
+  const mode = resolveFlexibleRoundTripMode(request);
+  if (mode === "exact-stay") {
+    return {
+      mode,
+      departureStart: leg.departureStart,
+      departureEnd: leg.departureEnd,
+      returnStart: leg.returnStart || leg.departureStart,
+      returnEnd: leg.returnEnd || leg.departureEnd,
+      stayNights: resolveExactStayNights(leg),
+    };
+  }
+
+  if (!leg.returnStart || !leg.returnEnd) {
+    throw new Error("Round-trip flexible search requires returnStart and returnEnd.");
+  }
+
+  if (mode === "fixed-ranges") {
+    return {
+      mode,
+      departureStart: leg.departureStart,
+      departureEnd: leg.departureEnd,
+      returnStart: leg.returnStart,
+      returnEnd: leg.returnEnd,
+    };
+  }
+
+  return {
+    mode: "legacy-night-range",
+    departureStart: leg.departureStart,
+    departureEnd: leg.departureEnd,
+    returnStart: leg.returnStart,
+    returnEnd: leg.returnEnd,
+    nightBounds: resolveNightBounds(leg),
+  };
+}
+
+export function enumerateRoundTripFlexibleAxes(
+  request: SearchRequest,
+  pairs = enumerateUsefulRoundTripPairs(request),
+): FlexibleRoundTripAxes {
+  const spec = resolveRoundTripFlexibleSpec(request);
+  if (spec.mode === "exact-stay") {
+    return {
+      departureDates: [...new Set(pairs.map((pair) => pair.departureDate))],
+      returnDates: [...new Set(pairs.map((pair) => pair.returnDate))],
+    };
+  }
+
+  return {
+    departureDates: enumerateRange(spec.departureStart, spec.departureEnd),
+    returnDates: enumerateRange(spec.returnStart, spec.returnEnd),
+  };
+}
+
 export function isUsefulRoundTripCombination(
-  leg: SearchLeg,
+  request: SearchRequest,
   departureDate: string,
   returnDate: string,
 ): boolean {
@@ -62,23 +270,61 @@ export function isUsefulRoundTripCombination(
     return false;
   }
 
-  const stayNights = diffDays(departureDate, returnDate);
-  const bounds = resolveNightBounds(leg);
-  return stayNights >= bounds.minNights && stayNights <= bounds.maxNights;
+  try {
+    const spec = resolveRoundTripFlexibleSpec(request);
+    if (
+      departureDate < spec.departureStart
+      || departureDate > spec.departureEnd
+      || returnDate < spec.returnStart
+      || returnDate > spec.returnEnd
+    ) {
+      return false;
+    }
+
+    const stayNights = diffDays(departureDate, returnDate);
+    if (spec.mode === "exact-stay") {
+      return stayNights === spec.stayNights;
+    }
+
+    if (spec.mode === "fixed-ranges") {
+      return true;
+    }
+
+    return stayNights >= (spec.nightBounds?.minNights ?? 1)
+      && stayNights <= (spec.nightBounds?.maxNights ?? stayNights);
+  } catch {
+    return false;
+  }
 }
 
 export function enumerateUsefulRoundTripPairs(request: SearchRequest): UsefulRoundTripPair[] {
-  const leg = request.legs[0];
-  if (!leg.departureStart || !leg.departureEnd || !leg.returnStart || !leg.returnEnd) {
-    throw new Error("Round-trip flexible search requires departure and return ranges.");
+  const spec = resolveRoundTripFlexibleSpec(request);
+  const departures = enumerateRange(spec.departureStart, spec.departureEnd);
+
+  if (spec.mode === "exact-stay") {
+    const stayNights = spec.stayNights;
+    if (!hasFiniteNumber(stayNights)) {
+      throw new Error("Round-trip exact-stay flexible search requires stayNights.");
+    }
+
+    return departures.flatMap((departureDate) => {
+      const returnDate = addDays(departureDate, stayNights);
+      return returnDate >= spec.returnStart
+        && returnDate <= spec.returnEnd
+        && returnDate > departureDate
+        ? [{
+            departureDate,
+            returnDate,
+            stayNights,
+          }]
+        : [];
+    });
   }
 
-  const departures = enumerateRange(leg.departureStart, leg.departureEnd);
-  const returns = enumerateRange(leg.returnStart, leg.returnEnd);
-
+  const returns = enumerateRange(spec.returnStart, spec.returnEnd);
   return departures.flatMap((departureDate) =>
     returns.flatMap((returnDate) =>
-      isUsefulRoundTripCombination(leg, departureDate, returnDate)
+      isUsefulRoundTripCombination(request, departureDate, returnDate)
         ? [{
             departureDate,
             returnDate,
@@ -87,6 +333,21 @@ export function enumerateUsefulRoundTripPairs(request: SearchRequest): UsefulRou
         : [],
     ),
   );
+}
+
+function buildExactLeg(
+  leg: SearchLeg,
+  departureDate: string,
+  returnDate?: string,
+): SearchLeg {
+  return {
+    origin: leg.origin,
+    destination: leg.destination,
+    originLabel: leg.originLabel,
+    destinationLabel: leg.destinationLabel,
+    departureDate,
+    returnDate,
+  };
 }
 
 export function buildDerivedRequest(
@@ -98,12 +359,9 @@ export function buildDerivedRequest(
   return {
     ...baseRequest,
     searchMode: "exact",
+    flexibleMode: undefined,
     legs: [
-      {
-        ...leg,
-        departureDate,
-        returnDate,
-      },
+      buildExactLeg(leg, departureDate, returnDate),
     ],
   };
 }
@@ -117,12 +375,9 @@ export function buildDerivedOneWayRequest(
     ...baseRequest,
     tripType: "one-way",
     searchMode: "exact",
+    flexibleMode: undefined,
     legs: [
-      {
-        ...leg,
-        departureDate,
-        returnDate: undefined,
-      },
+      buildExactLeg(leg, departureDate),
     ],
   };
 }
@@ -160,15 +415,9 @@ export function buildExactRequestFromOffer(
     ...baseRequest,
     tripType: inbound ? "round-trip" : "one-way",
     searchMode: "exact",
+    flexibleMode: undefined,
     legs: [
-      {
-        origin: offer.origin,
-        destination: offer.destination,
-        originLabel: baseRequest.legs[0]?.originLabel,
-        destinationLabel: baseRequest.legs[0]?.destinationLabel,
-        departureDate,
-        returnDate,
-      },
+      buildExactLeg(baseRequest.legs[0], departureDate, returnDate),
     ],
   };
 }

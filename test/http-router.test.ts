@@ -268,6 +268,76 @@ test("costamar redirect refreshes the stored token with the latest Chrome sessio
   }
 });
 
+test("costamar redirect blocks locally when no fresh token is available", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-redirect-blocked-"));
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = "Profile 99";
+  resetCostamarSessionCacheForTests();
+
+  const staleToken = buildJwt({
+    id: "0721808110",
+    iat: 1700000000,
+    exp: 1700003600,
+  });
+  try {
+    const runtime = getRuntime();
+    const job = runtime.sessions.createSearchJob({
+      request: buildCostamarRequest(),
+      providerContext: {
+        costamar: {
+          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+          terminalId: "0721808110",
+          token: staleToken,
+          lang: "es",
+        },
+      },
+      offers: [buildCostamarOffer(
+        `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${staleToken}`,
+      )],
+      allOffers: [buildCostamarOffer(
+        `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${staleToken}`,
+      )],
+      searchMeta: buildSearchMeta(),
+      providerMeta: buildProviderMeta(),
+      warnings: [],
+      sortMode: "cheapest",
+      status: "completed",
+    });
+
+    const session = runtime.sessions.getSession(job.id);
+    const redirectPath = session?.offers[0]?.purchasePaths[0]?.url;
+    assert.ok(redirectPath);
+
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}${redirectPath}`, { redirect: "manual" });
+
+      assert.equal(response.status, 409);
+      assert.match(response.headers.get("content-type") ?? "", /text\/html/i);
+      const body = await response.text();
+      assert.match(body, /Renueva la sesion de Costamar/i);
+      assert.match(body, /token vigente/i);
+    });
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("accepts exact searches inside the rolling date window", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/search`, {

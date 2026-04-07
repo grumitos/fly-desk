@@ -866,6 +866,17 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   font-size: 0.9rem;
 }
 
+.calendar-flex-mode {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.calendar-flex-mode .segmented-control__button {
+  min-height: 2.2rem;
+  padding-inline: 0.68rem;
+  font-size: 0.82rem;
+}
+
 .calendar-stay {
   display: inline-flex;
   align-items: end;
@@ -1827,6 +1838,10 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   cursor: pointer;
 }
 
+.results-table tbody tr[data-mk] {
+  cursor: pointer;
+}
+
 .results-table tbody tr:hover {
   background: var(--surface-hover);
 }
@@ -1835,7 +1850,21 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   background: var(--accent-soft);
 }
 
+.results-table tbody tr.results-row--disabled {
+  cursor: default;
+  opacity: 0.74;
+}
+
+.results-table tbody tr.results-row--disabled:hover {
+  background: transparent;
+}
+
 .results-table tbody tr[data-oid]:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 42%, var(--line));
+  outline-offset: -2px;
+}
+
+.results-table tbody tr[data-mk]:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 42%, var(--line));
   outline-offset: -2px;
 }
@@ -2254,6 +2283,12 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   gap: 0.4rem;
 }
 
+.cal-grid > .cal-row:first-child {
+  position: sticky;
+  top: 0;
+  z-index: calc(var(--z-sticky-cell) + 1);
+}
+
 .matrix-corner,
 .matrix-header,
 .matrix-label {
@@ -2269,6 +2304,26 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.cal-header,
+.cal-corner {
+  position: sticky;
+  top: 0;
+  z-index: calc(var(--z-sticky-cell) + 1);
+  background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
+}
+
+.cal-label,
+.cal-corner {
+  position: sticky;
+  left: 0;
+  z-index: calc(var(--z-sticky-cell) + 1);
+  background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
+}
+
+.cal-corner {
+  z-index: calc(var(--z-sticky-cell) + 2);
 }
 
 .matrix-cell,

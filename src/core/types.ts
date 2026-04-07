@@ -1,5 +1,6 @@
 export type TripType = "one-way" | "round-trip" | "multi-city";
 export type SearchMode = "exact" | "stay-range" | "roundtrip-grid" | "month-view";
+export type FlexibleRoundTripMode = "exact-stay" | "fixed-ranges";
 export type Cabin =
   | "ECONOMY"
   | "PREMIUM_ECONOMY"
@@ -99,6 +100,7 @@ export interface SearchLeg {
   returnDate?: string;
   returnStart?: string;
   returnEnd?: string;
+  stayNights?: number;
   minNights?: number;
   maxNights?: number;
 }
@@ -158,6 +160,7 @@ export interface SearchRequest {
   providerId?: ProviderId;
   tripType: TripType;
   searchMode: SearchMode;
+  flexibleMode?: FlexibleRoundTripMode;
   legs: SearchLeg[];
   passengers: PassengerMix;
   cabin: Cabin;
