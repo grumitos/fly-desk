@@ -2,8 +2,13 @@ import { materializeSearchResponse } from "./core/orchestrator";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
 import { buildCommercialQuotation, buildQuotationText, buildTechnicalQuotation } from "./core/quotation";
 import {
+  normalizeFlexibleRoundTripRequest,
+  resolveFlexibleRoundTripMode,
+} from "./core/flexible-search";
+import {
   Cabin,
   CanonicalOffer,
+  FlexibleRoundTripMode,
   LocationSuggestion,
   MatrixCell,
   MatrixResponse,
@@ -37,6 +42,7 @@ import {
   buildProviderContext,
   resolveLatestCostamarProviderContext,
   resolveProviderId,
+  resolveUsableCostamarBrandedToken,
 } from "./provider-context";
 import { resolveQuotationUsdToPenRate } from "./quotation-exchange-rate";
 import { hasFilledSearchResultLimit, limitSearchResponseForPagination } from "./search-limits";
@@ -144,6 +150,78 @@ function json(body: unknown, init?: ResponseInit): Response {
   });
 }
 
+function html(body: string, init?: ResponseInit): Response {
+  return new Response(body, {
+    status: init?.status ?? 200,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      ...(init?.headers ?? {}),
+    },
+  });
+}
+
+function costamarRedirectBlockedResponse(): Response {
+  return html(`<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Renueva la sesion de Costamar</title>
+    <style>
+      :root { color-scheme: light; }
+      body {
+        margin: 0;
+        font-family: "Segoe UI", Arial, sans-serif;
+        background: linear-gradient(160deg, #f8f0e2, #fffaf1);
+        color: #2d2a26;
+      }
+      main {
+        max-width: 560px;
+        margin: 0 auto;
+        min-height: 100vh;
+        display: grid;
+        align-content: center;
+        gap: 16px;
+        padding: 32px 20px;
+      }
+      section {
+        background: rgba(255, 255, 255, 0.92);
+        border: 1px solid rgba(112, 77, 31, 0.12);
+        border-radius: 20px;
+        padding: 24px;
+        box-shadow: 0 20px 45px rgba(88, 59, 24, 0.08);
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 28px;
+        line-height: 1.15;
+      }
+      p {
+        margin: 0 0 12px;
+        line-height: 1.55;
+      }
+      p:last-child {
+        margin-bottom: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <h1>Renueva la sesion de Costamar</h1>
+        <p>Fly Desk no encontro un token vigente para abrir esta busqueda en Costamar.</p>
+        <p>Abre Costamar en Chrome, confirma que la sesion este activa y vuelve a intentar desde Fly Desk.</p>
+      </section>
+    </main>
+  </body>
+</html>`, {
+    status: 409,
+    headers: {
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
 function stringValue(input: unknown, fallback = ""): string {
   return typeof input === "string" ? input.trim() : fallback;
 }
@@ -196,6 +274,12 @@ function normalizeSearchMode(input: unknown): SearchMode {
   return "exact";
 }
 
+function normalizeFlexibleMode(input: unknown): FlexibleRoundTripMode | undefined {
+  return input === "fixed-ranges" || input === "exact-stay"
+    ? input
+    : undefined;
+}
+
 function normalizeCabin(input: unknown): Cabin {
   return input === "PREMIUM_ECONOMY" || input === "BUSINESS" || input === "FIRST"
     ? input
@@ -215,14 +299,16 @@ function normalizeRequest(
 ): SearchRequest {
   const tripType = normalizeTripType(input?.tripType);
   const searchMode = normalizeSearchMode(input?.searchMode);
+  const flexibleMode = normalizeFlexibleMode(input?.flexibleMode);
   const leg: Record<string, unknown> = input?.legs?.[0] ?? {};
   const filters = input?.filters ?? {};
   const preserveOneWayStayRangeInputs = shouldPreserveOneWayStayRangeInputs(tripType, searchMode);
 
-  return {
+  const request: SearchRequest = {
     providerId,
     tripType,
     searchMode,
+    flexibleMode,
     legs: [
       {
         origin: stringValue(leg.origin).toUpperCase(),
@@ -235,8 +321,9 @@ function normalizeRequest(
         returnDate: stringValue(leg.returnDate),
         returnStart: stringValue(leg.returnStart),
         returnEnd: stringValue(leg.returnEnd),
-        minNights: preserveOneWayStayRangeInputs ? numberValue(leg.minNights) : numberValue(leg.minNights, 3),
-        maxNights: preserveOneWayStayRangeInputs ? numberValue(leg.maxNights) : numberValue(leg.maxNights, 7),
+        stayNights: numberValue(leg.stayNights),
+        minNights: preserveOneWayStayRangeInputs ? numberValue(leg.minNights) : numberValue(leg.minNights),
+        maxNights: preserveOneWayStayRangeInputs ? numberValue(leg.maxNights) : numberValue(leg.maxNights),
       },
     ],
     passengers: {
@@ -270,12 +357,15 @@ function normalizeRequest(
     locale: stringValue(input?.locale, "es-PE"),
     market: stringValue(input?.market, "PE"),
   };
+
+  return normalizeFlexibleRoundTripRequest(request);
 }
 
 function validateRequest(request: SearchRequest): string[] {
   const leg = request.legs[0];
   const errors: string[] = [];
   const datePolicy = getSearchDatePolicy();
+  const flexibleRoundTripMode = resolveFlexibleRoundTripMode(request);
   const dateFields: Array<[string, string | undefined]> = [
     ["Departure date", leg.departureDate],
     ["Return date", leg.returnDate],
@@ -337,9 +427,18 @@ function validateRequest(request: SearchRequest): string[] {
 
     if (
       request.tripType === "round-trip" &&
+      flexibleRoundTripMode !== "exact-stay" &&
       (!leg.returnStart || !leg.returnEnd)
     ) {
       errors.push("Return range is required for round-trip matrix search.");
+    }
+
+    if (
+      request.tripType === "round-trip"
+      && flexibleRoundTripMode === "exact-stay"
+      && !Number.isFinite(leg.stayNights)
+    ) {
+      errors.push("Stay nights is required for exact-stay matrix search.");
     }
   }
 
@@ -362,15 +461,6 @@ function validateRequest(request: SearchRequest): string[] {
 
   if (leg.returnStart && leg.returnEnd && leg.returnEnd < leg.returnStart) {
     errors.push("Return range end must be on or after return range start.");
-  }
-
-  if (
-    request.tripType === "round-trip" &&
-    leg.departureStart &&
-    leg.returnStart &&
-    leg.returnStart < leg.departureStart
-  ) {
-    errors.push("Return range must start after the departure range.");
   }
 
   dateFields.forEach(([label, value]) => {
@@ -1029,8 +1119,10 @@ export async function routeRequest(request: Request): Promise<Response> {
     const payload = await readPayload<SearchPayload>(request);
     const explicitProviderId = parseExplicitProviderId(payload.providerId);
     const providerIds = resolveSearchProviderIds(explicitProviderId);
-    const normalizedRequest = normalizeRequest(payload.request, explicitProviderId);
-    normalizedRequest.searchMode = "roundtrip-grid";
+    const normalizedRequest = normalizeFlexibleRoundTripRequest({
+      ...normalizeRequest(payload.request, explicitProviderId),
+      searchMode: "roundtrip-grid",
+    });
     const providerContext = buildProviderContext("costamar", payload.providerConfig);
 
     const errors = [
@@ -1172,9 +1264,28 @@ export async function routeRequest(request: Request): Promise<Response> {
 
       if (resolved.path.provider === "costamar" && resolved.path.type === "search-redirect") {
         const session = runtime.sessions.getSession(resolved.sessionId);
+        let canRedirect = Boolean((() => {
+          try {
+            const parsed = new URL(location);
+            return resolveUsableCostamarBrandedToken(
+              parsed.searchParams.get("token") ?? undefined,
+              parsed.searchParams.get("terminalId") ?? undefined,
+            );
+          } catch {
+            return undefined;
+          }
+        })());
+
         if (session?.providerContext?.costamar) {
           const refreshedContext = resolveLatestCostamarProviderContext(session.providerContext.costamar);
-          location = applyCostamarContextToBrandedSearchUrl(location, refreshedContext);
+          if (resolveUsableCostamarBrandedToken(refreshedContext.token, refreshedContext.terminalId)) {
+            location = applyCostamarContextToBrandedSearchUrl(location, refreshedContext);
+            canRedirect = true;
+          }
+        }
+
+        if (!canRedirect) {
+          return costamarRedirectBlockedResponse();
         }
       }
 

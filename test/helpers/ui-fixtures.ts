@@ -19,14 +19,16 @@ export function buildMatrixResponse(overrides: Record<string, unknown> = {}) {
     request: {
       tripType: "round-trip",
       searchMode: "roundtrip-grid",
+      flexibleMode: "exact-stay",
       legs: [
         {
           origin: "LIM",
           destination: "MIA",
           departureStart: "2026-04-15",
-          departureEnd: "2026-04-15",
-          returnStart: "2026-04-19",
+          departureEnd: "2026-04-19",
+          returnStart: "2026-04-15",
           returnEnd: "2026-04-19",
+          stayNights: 4,
         },
       ],
       passengers: {

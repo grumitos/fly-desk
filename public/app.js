@@ -3,7 +3,11 @@ import {
   addDaysIso,
   createSearchDateHelpers,
   diffDaysIso,
+  enumerateRoundTripFlexibleAxes,
   enumerateIsoRange,
+  enumerateUsefulRoundTripPairs,
+  resolveExactStayNights,
+  resolveRoundTripFlexibleMode,
 } from "./app/date.js";
 import { getJson, postJson, scheduleJsonPoll } from "./app/network.js";
 import { renderAll as renderShell, syncWorkspaceViewportHeight as syncWorkspaceViewportHeightBase } from "./app/render.js";
@@ -14,6 +18,7 @@ import {
   calendarClose,
   calendarClear,
   calendarDone,
+  calendarFlexModeControl,
   calendarMonths,
   calendarNext,
   calendarPopover,
@@ -29,6 +34,7 @@ import {
   detailContent,
   detailPanel,
   emptyState,
+  flexibleMode,
   LAYOVER_TIME_OPTIONS,
   layoverFilter,
   layoverPopover,
@@ -69,8 +75,7 @@ import {
   sortButtonsEl,
   sortMode,
   state,
-  stayDaysMaxEl,
-  stayDaysMinEl,
+  stayNightsEl,
   submitButton,
   swapRouteBtn,
   themeButtons,
@@ -363,13 +368,40 @@ function runtimeBadgeCopy(active) {
   return `${providerName} listo`;
 }
 
-function isUsefulFlexibleCell(request, departureDate, returnDate) {
-  if (!returnDate || returnDate <= departureDate) return false;
-  const leg = request?.legs?.[0] || {};
-  const minNights = Math.max(1, parseInt(leg.minNights, 10) || 1);
-  const rawMax = Math.max(minNights, parseInt(leg.maxNights, 10) || minNights);
-  const stayNights = diffDaysIso(departureDate, returnDate);
-  return stayNights >= minNights && stayNights <= rawMax;
+function activeFlexibleRoundTripMode() {
+  return flexibleMode?.value === "fixed-ranges"
+    ? "fixed-ranges"
+    : "exact-stay";
+}
+
+function isFlexibleRoundTripMode() {
+  return state.flexMode && tripType.value === "round-trip";
+}
+
+function isExactStayFlexibleMode() {
+  return isFlexibleRoundTripMode() && activeFlexibleRoundTripMode() === "exact-stay";
+}
+
+function isFixedRangesFlexibleMode() {
+  return isFlexibleRoundTripMode() && activeFlexibleRoundTripMode() === "fixed-ranges";
+}
+
+function currentStayNights() {
+  return Math.max(1, parseInt(stayNightsEl?.value, 10) || 1);
+}
+
+function activeMatrixFlexibleMode(request = state.matrixResponse?.request ?? state.request) {
+  return resolveRoundTripFlexibleMode(request) === "fixed-ranges"
+    ? "fixed-ranges"
+    : "exact-stay";
+}
+
+function canRenderMatrixCalendar(request = state.matrixResponse?.request ?? state.request) {
+  return resolveRoundTripFlexibleMode(request) === "fixed-ranges";
+}
+
+function flexibleCombinationLabel(count) {
+  return `${count} combinación${count === 1 ? "" : "es"}`;
 }
 
 function buildResultsTableHeaderHtml() {
@@ -668,7 +700,7 @@ function syncMatrixExpandedUI() {
   matrixFullscreen?.setAttribute("aria-hidden", String(!isExpanded));
   document.body.classList.toggle("matrix-expanded-open", isExpanded);
   if (matrixFullscreenMeta) {
-    matrixFullscreenMeta.textContent = `${state.matrixResponse?.cells?.length ?? 0} celdas`;
+    matrixFullscreenMeta.textContent = flexibleCombinationLabel(state.matrixResponse?.cells?.length ?? 0);
   }
   if (!isExpanded && matrixFullscreenBody) {
     matrixFullscreenBody.innerHTML = "";
@@ -734,6 +766,22 @@ function toolbarDateSummary(request = activeResultsRequest()) {
     return "";
   }
 
+  const flexibleRoundTripMode = resolveRoundTripFlexibleMode(request);
+  if (request?.tripType === "round-trip" && request?.searchMode === "roundtrip-grid") {
+    if (flexibleRoundTripMode === "exact-stay") {
+      const stayNights = leg.stayNights ?? resolveExactStayNights(leg);
+      if (leg.departureStart && leg.departureEnd && typeof stayNights === "number") {
+        return `${formatDateCompact(leg.departureStart)} → ${formatDateCompact(leg.departureEnd)} · ${stayNights} noches`;
+      }
+    }
+
+    if (flexibleRoundTripMode === "fixed-ranges") {
+      if (leg.departureStart && leg.departureEnd && leg.returnStart && leg.returnEnd) {
+        return `I ${formatDateCompact(leg.departureStart)} → ${formatDateCompact(leg.departureEnd)} · V ${formatDateCompact(leg.returnStart)} → ${formatDateCompact(leg.returnEnd)}`;
+      }
+    }
+  }
+
   const departureStart = leg.departureDate ?? leg.departureStart ?? "";
   const departureEnd = leg.departureEnd ?? departureStart;
   const returnStart = leg.returnDate ?? leg.returnStart ?? "";
@@ -775,7 +823,7 @@ function buildResultsPanelMeta({ hasMatrix, matrixCellCount }) {
   ].filter(Boolean);
 
   if (hasMatrix && matrixCellCount > 0) {
-    parts.push(`${matrixCellCount} celdas`);
+    parts.push(flexibleCombinationLabel(matrixCellCount));
   }
 
   return parts.join(" · ");
@@ -1106,6 +1154,7 @@ function buildSearchClipboardPayload() {
     version: SEARCH_CONFIG_CLIPBOARD_VERSION,
     copiedAt: new Date().toISOString(),
     mode: state.flexMode ? "flexible" : "exact",
+    flexibleMode: isFlexibleRoundTripMode() ? activeFlexibleRoundTripMode() : undefined,
     tripType: tripType.value === "one-way" ? "one-way" : "round-trip",
     origin: readLocation("origin"),
     destination: readLocation("destination"),
@@ -1118,8 +1167,9 @@ function buildSearchClipboardPayload() {
       returnEnd: controlValue("returnEnd"),
     },
     stay: {
-      min: controlValue("stayDaysMin"),
-      max: controlValue("stayDaysMax"),
+      nights: controlValue("stayNights"),
+      min: controlValue("stayNights"),
+      max: controlValue("stayNights"),
     },
     passengers: {
       adults: controlValue("adults"),
@@ -1190,10 +1240,14 @@ function syncSearchFormWithRequest(request) {
 
   const leg = request.legs?.[0] ?? {};
   const isFlexible = request.searchMode && request.searchMode !== "exact";
+  const roundTripFlexibleMode = resolveRoundTripFlexibleMode(request);
   const departureAnchor = String(leg.departureDate || leg.departureStart || "").trim();
 
   state.flexMode = Boolean(isFlexible);
   tripType.value = request.tripType === "one-way" ? "one-way" : "round-trip";
+  if (flexibleMode) {
+    flexibleMode.value = roundTripFlexibleMode === "fixed-ranges" ? "fixed-ranges" : "exact-stay";
+  }
 
   applyResolvedLocation("origin", {
     value: leg.originLabel || leg.origin || "",
@@ -1212,11 +1266,9 @@ function syncSearchFormWithRequest(request) {
   $("children").value = String(request.passengers?.children ?? 0);
   $("infants").value = String(request.passengers?.infants ?? 0);
 
-  if (typeof leg.minNights === "number" && stayDaysMinEl) {
-    stayDaysMinEl.value = String(leg.minNights);
-  }
-  if (typeof leg.maxNights === "number" && stayDaysMaxEl) {
-    stayDaysMaxEl.value = String(leg.maxNights);
+  const stayNights = leg.stayNights ?? resolveExactStayNights(leg);
+  if (typeof stayNights === "number" && stayNightsEl) {
+    stayNightsEl.value = String(stayNights);
   }
 
   if (state.flexMode) {
@@ -1224,8 +1276,12 @@ function syncSearchFormWithRequest(request) {
     $("returnDate").value = "";
     $("departureStart").value = String(leg.departureStart || "");
     $("departureEnd").value = String(leg.departureEnd || "");
-    $("returnStart").value = String(leg.returnStart || "");
-    $("returnEnd").value = String(leg.returnEnd || "");
+    $("returnStart").value = roundTripFlexibleMode === "fixed-ranges"
+      ? String(leg.returnStart || "")
+      : "";
+    $("returnEnd").value = roundTripFlexibleMode === "fixed-ranges"
+      ? String(leg.returnEnd || "")
+      : "";
   } else {
     $("departureDate").value = String(leg.departureDate || "");
     $("returnDate").value = tripType.value === "round-trip" ? String(leg.returnDate || "") : "";
@@ -1254,6 +1310,13 @@ function applySearchClipboardPayload(payload) {
 
   state.flexMode = payload.mode === "flexible";
   tripType.value = payload.tripType === "one-way" ? "one-way" : "round-trip";
+  if (flexibleMode) {
+    const inferredFlexibleMode = payload.flexibleMode === "fixed-ranges"
+      || (payload.mode === "flexible" && payload.dates?.returnStart && payload.dates?.returnEnd)
+      ? "fixed-ranges"
+      : "exact-stay";
+    flexibleMode.value = inferredFlexibleMode;
+  }
   state.sortMode = String(payload.sortMode || "cheapest");
   sortMode.value = state.sortMode;
 
@@ -1269,8 +1332,14 @@ function applySearchClipboardPayload(payload) {
   $("returnStart").value = String(payload.dates?.returnStart || "");
   $("returnEnd").value = String(payload.dates?.returnEnd || "");
 
-  stayDaysMinEl.value = String(payload.stay?.min || stayDaysMinEl.value || "7");
-  stayDaysMaxEl.value = String(payload.stay?.max || stayDaysMaxEl.value || stayDaysMinEl.value || "14");
+  if (stayNightsEl) {
+    stayNightsEl.value = String(
+      payload.stay?.nights
+      || payload.stay?.min
+      || stayNightsEl.value
+      || "7",
+    );
+  }
 
   $("adults").value = String(payload.passengers?.adults || "1");
   $("children").value = String(payload.passengers?.children || "0");
@@ -1766,26 +1835,25 @@ function countWindowCombinations() {
   if (!ds || !de) return 0;
   const departures = enumerateIsoRange(ds, de);
   if (tripType.value === "one-way") return departures.length;
-  const minDays = parseInt(stayDaysMinEl?.value, 10) || 7;
-  const maxDays = parseInt(stayDaysMaxEl?.value, 10) || minDays;
-  // In flexible mode, returns are derived from departures + stay days
-  if (state.flexMode) {
-    return departures.reduce((sum, dep) => {
-      let count = 0;
-      for (let d = minDays; d <= maxDays; d++) {
-        const ret = addDaysIso(dep, d);
-        if (ret > dep) count++;
-      }
-      return sum + count;
-    }, 0);
+
+  try {
+    return enumerateUsefulRoundTripPairs({
+      tripType: "round-trip",
+      searchMode: "roundtrip-grid",
+      flexibleMode: activeFlexibleRoundTripMode(),
+      legs: [
+        {
+          departureStart: ds,
+          departureEnd: de,
+          returnStart: isFixedRangesFlexibleMode() ? $("returnStart")?.value ?? "" : "",
+          returnEnd: isFixedRangesFlexibleMode() ? $("returnEnd")?.value ?? "" : "",
+          stayNights: isExactStayFlexibleMode() ? currentStayNights() : undefined,
+        },
+      ],
+    }).length;
+  } catch {
+    return 0;
   }
-  const rs = $("returnStart")?.value;
-  const re = $("returnEnd")?.value;
-  if (!rs || !re) return 0;
-  const returns = enumerateIsoRange(rs, re);
-  return departures.reduce((sum, departureDate) => (
-    sum + returns.filter((returnDate) => returnDate > departureDate).length
-  ), 0);
 }
 
 function resultsPageCount(total) {
@@ -1829,6 +1897,15 @@ function isLocal() {
 }
 
 function calendarSelectionValues() {
+  if (isFixedRangesFlexibleMode()) {
+    return {
+      departureStart: controlValue("departureStart"),
+      departureEnd: controlValue("departureEnd"),
+      returnStart: controlValue("returnStart"),
+      returnEnd: controlValue("returnEnd"),
+    };
+  }
+
   if (state.flexMode) {
     return {
       start: controlValue("departureStart"),
@@ -1842,32 +1919,67 @@ function calendarSelectionValues() {
   };
 }
 
-function syncFlexibleDerivedDates() {
-  if (!state.flexMode) return;
-  const start = controlValue("departureStart");
-  const end = controlValue("departureEnd");
-  const minDays = parseInt(stayDaysMinEl?.value, 10) || 7;
-  const maxDays = parseInt(stayDaysMaxEl?.value, 10) || minDays;
+function resetCalendarSelectionStage() {
+  if (isFixedRangesFlexibleMode()) {
+    const departureStart = controlValue("departureStart");
+    const departureEnd = controlValue("departureEnd");
+    const returnStart = controlValue("returnStart");
+    const returnEnd = controlValue("returnEnd");
 
-  if (!start || !end || tripType.value !== "round-trip") {
-    if ($("returnStart")) $("returnStart").value = "";
-    if ($("returnEnd")) $("returnEnd").value = "";
+    if (!departureStart || (departureStart && departureEnd && returnStart && returnEnd)) {
+      calendarState.selectionStage = "departure-start";
+      return;
+    }
+
+    if (!departureEnd) {
+      calendarState.selectionStage = "departure-end";
+      return;
+    }
+
+    if (!returnStart) {
+      calendarState.selectionStage = "return-start";
+      return;
+    }
+
+    calendarState.selectionStage = "return-end";
     return;
   }
 
-  $("returnStart").value = addDaysIso(start, minDays);
-  $("returnEnd").value = addDaysIso(end, maxDays);
+  calendarState.selectionStage = "start";
 }
 
 function syncDateTriggerText() {
   if (!dateTriggerText) return;
 
   if (state.flexMode) {
+    if (isFixedRangesFlexibleMode()) {
+      const departureStart = controlValue("departureStart");
+      const departureEnd = controlValue("departureEnd");
+      const returnStart = controlValue("returnStart");
+      const returnEnd = controlValue("returnEnd");
+
+      if (departureStart && departureEnd && returnStart && returnEnd) {
+        dateTriggerText.textContent = `Ida ${formatDateCompact(departureStart)} → ${formatDateCompact(departureEnd)} · Vuelta ${formatDateCompact(returnStart)} → ${formatDateCompact(returnEnd)}`;
+        return;
+      }
+
+      if (departureStart && departureEnd) {
+        dateTriggerText.textContent = `Ida ${formatDateCompact(departureStart)} → ${formatDateCompact(departureEnd)} · define vuelta`;
+        return;
+      }
+
+      if (departureStart) {
+        dateTriggerText.textContent = `Ida desde ${formatDateCompact(departureStart)}`;
+        return;
+      }
+
+      dateTriggerText.textContent = "Ventanas de ida y vuelta";
+      return;
+    }
+
     const start = controlValue("departureStart");
     const end = controlValue("departureEnd");
-    const minDays = parseInt(stayDaysMinEl?.value, 10) || 7;
-    const maxDays = parseInt(stayDaysMaxEl?.value, 10) || minDays;
-    const stayText = minDays === maxDays ? `${minDays} noches` : `${minDays}-${maxDays} noches`;
+    const stayText = `${currentStayNights()} noches`;
 
     if (start && end) {
       dateTriggerText.textContent = `${formatDateCompact(start)} → ${formatDateCompact(end)} · ${stayText}`;
@@ -1948,7 +2060,13 @@ function clampCalendarViewMonth(month) {
 
 function resetCalendarViewMonth() {
   const selection = calendarSelectionValues();
-  const preferred = selection.start || selection.end || minDateISO();
+  const preferred = selection.start
+    || selection.departureStart
+    || selection.returnStart
+    || selection.end
+    || selection.departureEnd
+    || selection.returnEnd
+    || minDateISO();
   calendarState.viewStartMonth = clampCalendarViewMonth(firstDayOfMonth(preferred));
 }
 
@@ -1980,10 +2098,26 @@ function syncCalendarPopoverPosition() {
 function syncCalendarSummary(selection) {
   if (!calendarSelectionSummary || !calendarTitle) return;
 
+  if (isFixedRangesFlexibleMode()) {
+    calendarTitle.textContent = "Ventanas de ida y vuelta";
+    if (selection.departureStart && selection.departureEnd && selection.returnStart && selection.returnEnd) {
+      calendarSelectionSummary.textContent = `Ida del ${formatDateCompact(selection.departureStart)} al ${formatDateCompact(selection.departureEnd)} y vuelta del ${formatDateCompact(selection.returnStart)} al ${formatDateCompact(selection.returnEnd)}.`;
+    } else if (selection.departureStart && selection.departureEnd && selection.returnStart) {
+      calendarSelectionSummary.textContent = `Ida del ${formatDateCompact(selection.departureStart)} al ${formatDateCompact(selection.departureEnd)}. Cierra la ventana de vuelta.`;
+    } else if (selection.departureStart && selection.departureEnd) {
+      calendarSelectionSummary.textContent = `Ida del ${formatDateCompact(selection.departureStart)} al ${formatDateCompact(selection.departureEnd)}. Selecciona la ventana de vuelta.`;
+    } else if (selection.departureStart) {
+      calendarSelectionSummary.textContent = `Ventana de ida iniciada en ${formatDateCompact(selection.departureStart)}. Selecciona la fecha final.`;
+    } else {
+      calendarSelectionSummary.textContent = "Selecciona primero la ventana de ida y luego la de vuelta.";
+    }
+    return;
+  }
+
   if (state.flexMode) {
     calendarTitle.textContent = "Ventana de salida";
     if (selection.start && selection.end) {
-      calendarSelectionSummary.textContent = `Salida flexible del ${formatDateCompact(selection.start)} al ${formatDateCompact(selection.end)}.`;
+      calendarSelectionSummary.textContent = `Salida flexible del ${formatDateCompact(selection.start)} al ${formatDateCompact(selection.end)} con ${currentStayNights()} noches de estadía.`;
     } else if (selection.start) {
       calendarSelectionSummary.textContent = `Ventana iniciada en ${formatDateCompact(selection.start)}. Selecciona la fecha final.`;
     } else {
@@ -2015,7 +2149,8 @@ function renderCalendarPopover() {
 
   const selection = calendarSelectionValues();
   syncCalendarSummary(selection);
-  calendarStayConfig?.classList.toggle("hidden", !state.flexMode);
+  calendarFlexModeControl?.classList.toggle("hidden", !isFlexibleRoundTripMode());
+  calendarStayConfig?.classList.toggle("hidden", !isExactStayFlexibleMode());
 
   const firstMonth = clampCalendarViewMonth(calendarState.viewStartMonth || calendarMinMonth());
   const secondMonth = addMonthsIso(firstMonth, 1);
@@ -2037,13 +2172,37 @@ function renderCalendarPopover() {
         && !selection.end
         && day.iso <= selection.start;
       const disabled = disabledByBounds || disabledByFlow;
+      const isStart = day.iso === selection.start
+        || day.iso === selection.departureStart
+        || day.iso === selection.returnStart;
+      const isEnd = (
+        (day.iso === selection.end && selection.end !== selection.start)
+        || (day.iso === selection.departureEnd && selection.departureEnd !== selection.departureStart)
+        || (day.iso === selection.returnEnd && selection.returnEnd !== selection.returnStart)
+      );
+      const isBetween = (
+        selection.start
+        && selection.end
+        && day.iso > selection.start
+        && day.iso < selection.end
+      ) || (
+        selection.departureStart
+        && selection.departureEnd
+        && day.iso > selection.departureStart
+        && day.iso < selection.departureEnd
+      ) || (
+        selection.returnStart
+        && selection.returnEnd
+        && day.iso > selection.returnStart
+        && day.iso < selection.returnEnd
+      );
       const classes = [
         "calendar-day",
         day.inMonth ? "" : "calendar-day--outside",
         day.iso === today ? "calendar-day--today" : "",
-        day.iso === selection.start ? "is-start" : "",
-        day.iso === selection.end && selection.end !== selection.start ? "is-end" : "",
-        selection.start && selection.end && day.iso > selection.start && day.iso < selection.end ? "is-between" : "",
+        isStart ? "is-start" : "",
+        isEnd ? "is-end" : "",
+        isBetween ? "is-between" : "",
       ].filter(Boolean).join(" ");
 
       return `
@@ -2086,6 +2245,7 @@ function renderCalendarPopover() {
 
 function openCalendarPopover() {
   if (!calendarPopover) return;
+  resetCalendarSelectionStage();
   resetCalendarViewMonth();
   calendarPopover.classList.remove("hidden");
   renderCalendarPopover();
@@ -2097,7 +2257,12 @@ function closeCalendarPopover() {
 
 function clearCalendarSelection() {
   dateTrigger?.classList.remove("is-invalid");
-  if (state.flexMode) {
+  if (isFixedRangesFlexibleMode()) {
+    $("departureStart").value = "";
+    $("departureEnd").value = "";
+    $("returnStart").value = "";
+    $("returnEnd").value = "";
+  } else if (state.flexMode) {
     $("departureStart").value = "";
     $("departureEnd").value = "";
     $("returnStart").value = "";
@@ -2106,13 +2271,51 @@ function clearCalendarSelection() {
     $("departureDate").value = "";
     $("returnDate").value = "";
   }
-  calendarState.selectionStage = "start";
+  resetCalendarSelectionStage();
   syncDateTriggerText();
   renderCalendarPopover();
 }
 
 function applyCalendarSelection(iso) {
   if (!iso) return;
+
+  if (isFixedRangesFlexibleMode()) {
+    const departureStart = controlValue("departureStart");
+    const departureEnd = controlValue("departureEnd");
+    const returnStart = controlValue("returnStart");
+    const stage = calendarState.selectionStage;
+
+    if (stage === "departure-start" || !departureStart || (departureStart && departureEnd && returnStart && controlValue("returnEnd"))) {
+      $("departureStart").value = iso;
+      $("departureEnd").value = "";
+      $("returnStart").value = "";
+      $("returnEnd").value = "";
+      calendarState.selectionStage = "departure-end";
+    } else if (stage === "departure-end") {
+      const nextStart = iso < departureStart ? iso : departureStart;
+      const nextEnd = iso < departureStart ? departureStart : iso;
+      $("departureStart").value = nextStart;
+      $("departureEnd").value = nextEnd;
+      $("returnStart").value = "";
+      $("returnEnd").value = "";
+      calendarState.selectionStage = "return-start";
+    } else if (stage === "return-start" || !returnStart) {
+      $("returnStart").value = iso;
+      $("returnEnd").value = "";
+      calendarState.selectionStage = "return-end";
+    } else {
+      const nextStart = iso < returnStart ? iso : returnStart;
+      const nextEnd = iso < returnStart ? returnStart : iso;
+      $("returnStart").value = nextStart;
+      $("returnEnd").value = nextEnd;
+      calendarState.selectionStage = "departure-start";
+      closeCalendarPopover();
+    }
+
+    syncDateTriggerText();
+    renderCalendarPopover();
+    return;
+  }
 
   if (state.flexMode) {
     const start = controlValue("departureStart");
@@ -2129,7 +2332,6 @@ function applyCalendarSelection(iso) {
       $("departureEnd").value = nextEnd;
       calendarState.selectionStage = "start";
     }
-    syncFlexibleDerivedDates();
     syncDateTriggerText();
     renderCalendarPopover();
     return;
@@ -2178,10 +2380,16 @@ function buildPendingMatrixResponse(request) {
   const providerName = providerLabelList(providerIds);
   const leg = request.legs?.[0];
   const departures = enumerateIsoRange(leg.departureStart, leg.departureEnd);
-  const returns = request.tripType === "round-trip"
-    ? enumerateIsoRange(leg.returnStart, leg.returnEnd)
-    : [];
   const requestedAt = new Date().toISOString();
+  const pairs = request.tripType === "round-trip"
+    ? enumerateUsefulRoundTripPairs(request)
+    : [];
+  const axes = request.tripType === "round-trip"
+    ? enumerateRoundTripFlexibleAxes(request, pairs)
+    : {
+        departureDates: departures,
+        returnDates: [],
+      };
   const cells = request.tripType === "one-way"
     ? departures.map((departureDate) => ({
         key: departureDate,
@@ -2196,42 +2404,28 @@ function buildPendingMatrixResponse(request) {
           ...request,
           tripType: "one-way",
           searchMode: "exact",
+          flexibleMode: undefined,
           legs: [{ origin: leg.origin, destination: leg.destination, departureDate }],
         },
       }))
-    : departures.flatMap((departureDate) => returns.map((returnDate) => {
-        if (!isUsefulFlexibleCell(request, departureDate, returnDate)) {
-          return {
-            key: `${departureDate}_${returnDate}`,
-            departureDate,
-            returnDate,
-            confidence: "empty",
-            providerSource: providerId,
-            selectable: false,
-            requiresRequery: false,
-            stateCode: "emp",
-            tooltip: "Esta combinación queda fuera del rango de noches solicitado.",
-          };
-        }
-
-        return {
-          key: `${departureDate}_${returnDate}`,
-          departureDate,
-          returnDate,
-          stayNights: diffDaysIso(departureDate, returnDate),
-          confidence: "loading",
-          providerSource: providerId,
-          selectable: false,
-          requiresRequery: true,
-          stateCode: "ind",
-          tooltip: providerLoadingCopy(providerIds),
-          derivedRequest: {
-            ...request,
-            tripType: "round-trip",
-            searchMode: "exact",
-            legs: [{ origin: leg.origin, destination: leg.destination, departureDate, returnDate }],
-          },
-        };
+    : pairs.map(({ departureDate, returnDate, stayNights }) => ({
+        key: `${departureDate}_${returnDate}`,
+        departureDate,
+        returnDate,
+        stayNights,
+        confidence: "loading",
+        providerSource: providerId,
+        selectable: false,
+        requiresRequery: true,
+        stateCode: "ind",
+        tooltip: providerLoadingCopy(providerIds),
+        derivedRequest: {
+          ...request,
+          tripType: "round-trip",
+          searchMode: "exact",
+          flexibleMode: undefined,
+          legs: [{ origin: leg.origin, destination: leg.destination, departureDate, returnDate }],
+        },
       }));
 
   return {
@@ -2240,10 +2434,7 @@ function buildPendingMatrixResponse(request) {
     matrixStatus: "running",
     request,
     cells,
-    axes: {
-      departureDates: departures,
-      returnDates: returns,
-    },
+    axes,
     confidenceSummary: summarizeMatrixConfidence(cells),
     recommendations: [
       `Matrix loading from ${providerName} with useful date combinations only.`,
@@ -2740,12 +2931,16 @@ function setupModeToggle() {
 
       if (!state.flexMode && !$("departureDate").value && $("departureStart").value) {
         $("departureDate").value = $("departureStart").value;
-        if (tripType.value === "round-trip" && $("departureEnd").value) {
-          $("returnDate").value = $("departureEnd").value;
+        if (tripType.value === "round-trip") {
+          if (isFixedRangesFlexibleMode()) {
+            $("returnDate").value = $("returnStart").value || $("returnEnd").value || "";
+          } else if ($("departureStart").value) {
+            $("returnDate").value = addDaysIso($("departureStart").value, currentStayNights());
+          }
         }
       }
 
-      calendarState.selectionStage = "start";
+      resetCalendarSelectionStage();
       updateModeFields();
     });
   });
@@ -2760,7 +2955,7 @@ function setupTripTypeToggle() {
         $("returnStart").value = "";
         $("returnEnd").value = "";
       }
-      calendarState.selectionStage = "start";
+      resetCalendarSelectionStage();
       updateModeFields();
     });
   });
@@ -2802,11 +2997,19 @@ function setupCalendarPopover() {
     renderCalendarPopover();
   });
 
-  [stayDaysMinEl, stayDaysMaxEl].forEach((input) => {
-    input?.addEventListener("change", () => {
-      syncFlexibleDerivedDates();
-      syncDateTriggerText();
-      if (!calendarPopover.classList.contains("hidden")) renderCalendarPopover();
+  stayNightsEl?.addEventListener("change", () => {
+    syncDateTriggerText();
+    if (!calendarPopover.classList.contains("hidden")) renderCalendarPopover();
+  });
+
+  document.querySelectorAll("[data-flex-submode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!flexibleMode) return;
+      flexibleMode.value = button.dataset.flexSubmode === "fixed-ranges"
+        ? "fixed-ranges"
+        : "exact-stay";
+      resetCalendarSelectionStage();
+      updateModeFields();
     });
   });
 
@@ -2819,8 +3022,6 @@ function setupCalendarPopover() {
 
 function translateFlexibleDates(payload) {
   if (!state.flexMode) return payload;
-  const minDays = parseInt(stayDaysMinEl?.value, 10) || 7;
-  const maxDays = parseInt(stayDaysMaxEl?.value, 10) || minDays;
   const depStart = $("departureStart")?.value;
   const depEnd = $("departureEnd")?.value;
   if (!depStart || !depEnd) return payload;
@@ -2828,11 +3029,24 @@ function translateFlexibleDates(payload) {
   leg.departureStart = depStart;
   leg.departureEnd = depEnd;
   if (payload.request.tripType === "round-trip") {
-    leg.returnStart = addDaysIso(depStart, minDays);
-    leg.returnEnd = addDaysIso(depEnd, maxDays);
     payload.request.searchMode = "roundtrip-grid";
+    payload.request.flexibleMode = activeFlexibleRoundTripMode();
+    leg.stayNights = isExactStayFlexibleMode() ? currentStayNights() : undefined;
+    leg.minNights = undefined;
+    leg.maxNights = undefined;
+    if (isFixedRangesFlexibleMode()) {
+      leg.returnStart = $("returnStart")?.value ?? "";
+      leg.returnEnd = $("returnEnd")?.value ?? "";
+    } else {
+      leg.returnStart = "";
+      leg.returnEnd = "";
+    }
   } else {
     payload.request.searchMode = "stay-range";
+    payload.request.flexibleMode = undefined;
+    leg.stayNights = undefined;
+    leg.minNights = undefined;
+    leg.maxNights = undefined;
   }
   return payload;
 }
@@ -2896,15 +3110,13 @@ function setupInputEnforcement() {
   enforceIntRange($("children"), 0, 8);
   enforceIntRange($("infants"), 0, 4);
 
-  if (stayDaysMinEl) enforceIntRange(stayDaysMinEl, 1, 90);
-  if (stayDaysMaxEl) enforceIntRange(stayDaysMaxEl, 1, 90);
+  if (stayNightsEl) enforceIntRange(stayNightsEl, 1, 90);
 
   const dateIds = ["departureDate", "returnDate", "departureStart", "departureEnd", "returnStart", "returnEnd"];
   dateIds.forEach((id) => {
     const input = $(id);
     enforceDateNotPast(input);
     input?.addEventListener("change", () => {
-      syncFlexibleDerivedDates();
       syncDateTriggerText();
       if (!calendarPopover?.classList.contains("hidden")) renderCalendarPopover();
     });
@@ -2984,15 +3196,26 @@ function validateForm() {
 
   // Flexible mode validation
   if (state.flexMode) {
-    const minDays = parseInt(stayDaysMinEl?.value, 10);
-    const maxDays = parseInt(stayDaysMaxEl?.value, 10);
-    if (isNaN(minDays) || minDays < 1) { errs.push("Duracion minima requerida."); }
-    if (!isNaN(minDays) && !isNaN(maxDays) && maxDays < minDays) { errs.push("Duracion maxima debe ser >= minima."); }
     checkDate("departureStart", "Ventana inicio");
     checkDate("departureEnd", "Ventana fin");
     const ds = $("departureStart")?.value;
     const de = $("departureEnd")?.value;
     if (ds && de && de < ds) errs.push("Ventana fin debe ser >= ventana inicio.");
+
+    if (trip === "round-trip") {
+      if (isExactStayFlexibleMode()) {
+        const stayNights = parseInt(stayNightsEl?.value, 10);
+        if (isNaN(stayNights) || stayNights < 1) {
+          errs.push("Estadía requerida.");
+        }
+      } else {
+        checkDate("returnStart", "Vuelta inicio");
+        checkDate("returnEnd", "Vuelta fin");
+        const rs = $("returnStart")?.value;
+        const re = $("returnEnd")?.value;
+        if (rs && re && re < rs) errs.push("Vuelta fin debe ser >= vuelta inicio.");
+      }
+    }
   }
 
   if (mode === "roundtrip-grid" || mode === "stay-range") {
@@ -3056,23 +3279,31 @@ function showErrors(errors) {
 
 function updateModeFields() {
   const isFlexible = state.flexMode;
+  const showFlexibleSubmode = isFlexible && tripType.value === "round-trip";
   document.querySelectorAll("[data-mode]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.mode === (isFlexible ? "flexible" : "exact"));
   });
   document.querySelectorAll("[data-trip]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.trip === tripType.value);
   });
+  document.querySelectorAll("[data-flex-submode]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.flexSubmode === activeFlexibleRoundTripMode());
+  });
 
   searchMode.value = isFlexible
     ? tripType.value === "round-trip" ? "roundtrip-grid" : "stay-range"
     : "exact";
 
-  calendarStayConfig?.classList.toggle("hidden", !isFlexible);
-  if (!isFlexible) {
+  if (!showFlexibleSubmode && flexibleMode) {
+    flexibleMode.value = "exact-stay";
+  }
+
+  calendarFlexModeControl?.classList.toggle("hidden", !showFlexibleSubmode);
+  calendarStayConfig?.classList.toggle("hidden", !isExactStayFlexibleMode());
+
+  if (!isFlexible || tripType.value === "one-way" || isExactStayFlexibleMode()) {
     $("returnStart").value = "";
     $("returnEnd").value = "";
-  } else {
-    syncFlexibleDerivedDates();
   }
 
   syncDateTriggerText();
@@ -3087,6 +3318,7 @@ function getFormPayload() {
   const fd = new FormData(searchForm);
   const m = String(fd.get("searchMode") || "exact");
   const t = String(fd.get("tripType") || "round-trip");
+  const roundTripFlexibleMode = isFlexibleRoundTripMode() ? activeFlexibleRoundTripMode() : undefined;
   syncResultsPageSize();
   const shouldCapVisiblePages = m !== "roundtrip-grid";
   const maxResults = shouldCapVisiblePages
@@ -3097,6 +3329,7 @@ function getFormPayload() {
     request: {
       tripType: t,
       searchMode: m,
+      flexibleMode: roundTripFlexibleMode,
       cabin: "ECONOMY",
       currencyCode: DEFAULT_CURRENCY_CODE,
       coverageMode: "core",
@@ -3125,6 +3358,7 @@ function getFormPayload() {
         departureEnd: $("departureEnd")?.value ?? "",
         returnStart: $("returnStart")?.value ?? "",
         returnEnd: $("returnEnd")?.value ?? "",
+        stayNights: roundTripFlexibleMode === "exact-stay" ? currentStayNights() : undefined,
       }],
     },
   };
@@ -3422,7 +3656,7 @@ function renderToolbar() {
   if (resultPill) {
     resultPill.textContent = state.searchResponse
       ? `${state.searchResponse.filteredOfferGroups?.length ?? 0} ofertas`
-      : `${state.matrixResponse?.cells?.length ?? 0} celdas`;
+      : flexibleCombinationLabel(state.matrixResponse?.cells?.length ?? 0);
     resultPill.className = "badge badge--accent";
   }
 }
@@ -3431,6 +3665,7 @@ function updateResultsToolbar() {
   const total = state.searchResponse?.filteredOfferGroups?.length ?? 0;
   const hasListResults = (state.searchResponse?.allOffers?.length ?? 0) > 0;
   const hasMatrix = (state.matrixResponse?.cells?.length ?? 0) > 0;
+  const hasMatrixCalendar = hasMatrix && canRenderMatrixCalendar();
   const matrixCellCount = state.matrixResponse?.cells?.length ?? 0;
   const isSearchRunning = state.searchResponse?.searchStatus === "running";
   const panelMeta = buildResultsPanelMeta({
@@ -3466,7 +3701,10 @@ function updateResultsToolbar() {
   }
 
   if (viewToggle) {
-    viewToggle.classList.toggle("hidden", !hasMatrix);
+    if (!hasMatrixCalendar && state.viewMode === "calendar") {
+      state.viewMode = "list";
+    }
+    viewToggle.classList.toggle("hidden", !hasMatrixCalendar);
     viewToggle.querySelectorAll("[data-view]").forEach(btn => {
       btn.classList.toggle("is-active", btn.dataset.view === state.viewMode);
     });
@@ -3589,6 +3827,12 @@ function handleResultsClick(e) {
     return;
   }
 
+  const matrixRow = e.target.closest("[data-mk]");
+  if (matrixRow) {
+    void handleMatrixClick({ target: matrixRow });
+    return;
+  }
+
   if (e.target.closest("[data-stop-row]")) return;
   const row = e.target.closest("tr[data-oid]");
   if (!row) return;
@@ -3606,6 +3850,15 @@ function focusAdjacentResultsRow(currentRow, step) {
 }
 
 function handleResultsKeydown(e) {
+  const matrixRow = e.target.closest("tr[data-mk]");
+  if (matrixRow) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      void handleMatrixClick({ target: matrixRow });
+    }
+    return;
+  }
+
   if (e.target.closest("[data-stop-row]")) return;
   const row = e.target.closest("tr[data-oid]");
   if (!row) return;
@@ -3626,6 +3879,144 @@ function handleResultsKeydown(e) {
     e.preventDefault();
     focusAdjacentResultsRow(row, -1);
   }
+}
+
+function flexibleCellStateLabel(cell) {
+  switch (cell?.confidence) {
+    case "validated":
+      return "Confirmado";
+    case "live":
+      return "Disponible";
+    case "indicative":
+      return "Indicativo";
+    case "loading":
+      return "Cargando";
+    case "unavailable":
+      return "Sin resultado";
+    case "empty":
+      return "No consultable";
+    default:
+      return "Pendiente";
+  }
+}
+
+function flexibleCellSortRank(cell) {
+  if (typeof cell?.price?.amount === "number") return 0;
+  if (cell?.confidence === "loading") return 1;
+  if (cell?.confidence === "unavailable") return 2;
+  return 3;
+}
+
+function compareFlexibleListCells(left, right) {
+  const leftHasPrice = typeof left?.price?.amount === "number";
+  const rightHasPrice = typeof right?.price?.amount === "number";
+
+  if (leftHasPrice && rightHasPrice) {
+    const priceDiff = left.price.amount - right.price.amount;
+    if (priceDiff !== 0) return priceDiff;
+  } else if (leftHasPrice !== rightHasPrice) {
+    return leftHasPrice ? -1 : 1;
+  }
+
+  const rankDiff = flexibleCellSortRank(left) - flexibleCellSortRank(right);
+  if (rankDiff !== 0) return rankDiff;
+
+  const departureDiff = String(left?.departureDate || "").localeCompare(String(right?.departureDate || ""));
+  if (departureDiff !== 0) return departureDiff;
+
+  return String(left?.returnDate || "").localeCompare(String(right?.returnDate || ""));
+}
+
+function renderFlexibleList(container = resultsContainer) {
+  if (!container) return;
+  captureResultsScroll(container);
+  const cells = state.matrixResponse?.cells ?? [];
+  if (cells.length === 0) {
+    container.innerHTML = renderEmptyPanel({
+      eyebrow: "Flexible",
+      title: "Sin combinaciones válidas",
+      text: "La búsqueda flexible todavía no generó combinaciones consultables.",
+      hint: "Ajusta la ventana, la estadía o la vuelta para abrir más opciones.",
+      icon: "ico-calendar",
+    });
+    return;
+  }
+
+  const orderedCells = [...cells].sort(compareFlexibleListCells);
+  const isRunning = state.matrixResponse?.matrixStatus === "running";
+  let html = "";
+
+  if (isRunning) {
+    html += '<div class="results-loading"><span>Cargando combinaciones flexibles...</span></div>';
+  }
+
+  html += `
+    <div class="table-wrap" aria-live="polite" aria-busy="${isRunning ? "true" : "false"}">
+      <table class="results-table results-table--flexible">
+        <thead>
+          <tr>
+            <th>Ida</th>
+            <th>Vuelta</th>
+            <th>Estadía</th>
+            <th>Precio</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+  `;
+
+  orderedCells.forEach((cell) => {
+    const isActive = cell.key === state.selectedMatrixKey;
+    const stayLabel = cell.stayNights != null ? `${cell.stayNights} noches` : "—";
+    const priceLabel = cell.confidence === "loading"
+      ? "..."
+      : cell.price
+        ? formatMoney(cell.price)
+        : "—";
+    const stateLabel = flexibleCellStateLabel(cell);
+    const rowLabel = [
+      formatDateCompact(cell.departureDate),
+      cell.returnDate ? formatDateCompact(cell.returnDate) : "",
+      stayLabel,
+      priceLabel,
+      stateLabel,
+    ].filter(Boolean).join(" · ");
+
+    html += `
+      <tr
+        data-mk="${cell.key}"
+        class="${isActive ? "is-active" : ""} ${!cell.selectable ? "results-row--disabled" : ""}"
+        tabindex="${cell.selectable ? "0" : "-1"}"
+        role="button"
+        aria-label="${escapeHtml(rowLabel)}"
+        aria-disabled="${cell.selectable ? "false" : "true"}"
+        title="${escapeHtml(cell.tooltip ?? "")}"
+      >
+        <td><span class="cell-main">${escapeHtml(formatDateCompact(cell.departureDate))}</span></td>
+        <td><span class="cell-main">${escapeHtml(cell.returnDate ? formatDateCompact(cell.returnDate) : "—")}</span></td>
+        <td><span class="cell-sub">${escapeHtml(stayLabel)}</span></td>
+        <td class="results-price">${escapeHtml(priceLabel)}</td>
+        <td><span class="cell-sub">${escapeHtml(stateLabel)}</span></td>
+      </tr>
+    `;
+  });
+
+  html += `
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  container.innerHTML = html;
+  const resultsWrap = container.querySelector(".table-wrap");
+  syncResultsScroll(resultsWrap);
+  requestAnimationFrame(() => syncResultsScroll(resultsWrap));
+  resultsWrap?.addEventListener("scroll", handleResultsScroll, { passive: true });
+  resultsWrap?.addEventListener("wheel", markPollingUiInteraction, { passive: true });
+  resultsWrap?.addEventListener("pointerdown", () => {
+    state.pollPointerDown = true;
+    markPollingUiInteraction();
+  });
 }
 
 async function handleMatrixClick(e) {
@@ -3877,13 +4268,16 @@ function renderCalendarView(container = resultsContainer) {
    ================================================================ */
 
 function renderResultsArea() {
-  const hasMatrix = state.viewMode === "calendar" && state.matrixResponse?.cells?.length > 0;
-  if (!hasMatrix && state.matrixExpanded) {
+  const hasMatrix = (state.matrixResponse?.cells?.length ?? 0) > 0;
+  const showCalendar = hasMatrix && state.viewMode === "calendar" && canRenderMatrixCalendar();
+  if (!showCalendar && state.matrixExpanded) {
     closeMatrixExpanded({ rerender: false });
   }
 
-  if (hasMatrix) {
+  if (showCalendar) {
     renderCalendarView(state.matrixExpanded ? matrixFullscreenBody : resultsContainer);
+  } else if (hasMatrix) {
+    renderFlexibleList();
   } else {
     renderResults();
   }
@@ -4115,6 +4509,7 @@ sortButtonsEl?.addEventListener("click", (e) => {
 viewToggle?.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-view]");
   if (!btn) return;
+  if (btn.dataset.view === "calendar" && !canRenderMatrixCalendar()) return;
   state.viewMode = btn.dataset.view;
   renderResultsArea();
   updateResultsToolbar();
@@ -4244,7 +4639,7 @@ searchForm.addEventListener("submit", async (e) => {
       state.matrixScroll = { top: 0, left: 0 };
       state.request = translatedPayload.request;
       state.matrixResponse = buildPendingMatrixResponse(translatedPayload.request);
-      state.viewMode = "calendar";
+      state.viewMode = "list";
       renderAll();
 
       const matrixJob = await postJson("/api/matrix", translatedPayload);

@@ -9,9 +9,10 @@ import {
   buildDerivedOneWayRequest,
   buildDerivedRequest,
   diffDays,
+  enumerateRoundTripFlexibleAxes,
   enumerateRange,
+  enumerateUsefulRoundTripPairs,
   enumerateUsefulFlexibleRequests,
-  isUsefulRoundTripCombination,
 } from "./core/flexible-search";
 import {
   buildMatrixConfidenceSummary,
@@ -2014,15 +2015,16 @@ export function createLocalAgilMatrixDraft(
   }
 
   const departures = enumerateRange(leg.departureStart, leg.departureEnd);
-  const returns = request.tripType === "round-trip"
-    ? (() => {
-        if (!leg.returnStart || !leg.returnEnd) {
-          throw new Error("Local Agil round-trip matrix requires returnStart and returnEnd.");
-        }
-        return enumerateRange(leg.returnStart, leg.returnEnd);
-      })()
-    : [];
   const requestedAt = new Date().toISOString();
+  const pairs = request.tripType === "round-trip"
+    ? enumerateUsefulRoundTripPairs(request)
+    : [];
+  const axes = request.tripType === "round-trip"
+    ? enumerateRoundTripFlexibleAxes(request, pairs)
+    : {
+        departureDates: departures,
+        returnDates: [] as string[],
+      };
   const cells = request.tripType === "one-way"
     ? departures.map((departureDate) => ({
         key: departureDate,
@@ -2035,46 +2037,27 @@ export function createLocalAgilMatrixDraft(
         tooltip: "Consultando Agil...",
         derivedRequest: buildDerivedOneWayRequest(request, departureDate),
       } satisfies MatrixCell))
-    : departures.flatMap((departureDate) => returns.map((returnDate) => {
-        if (!isUsefulRoundTripCombination(leg, departureDate, returnDate)) {
-          return {
-            key: `${departureDate}_${returnDate}`,
-            departureDate,
-            returnDate,
-            confidence: "empty" as const,
-            providerSource: "agil-local" as const,
-            selectable: false,
-            requiresRequery: false,
-            stateCode: "emp" as const,
-            tooltip: "Esta combinacion queda fuera del rango de noches solicitado.",
-          } satisfies MatrixCell;
-        }
-
-        return {
-          key: `${departureDate}_${returnDate}`,
-          departureDate,
-          returnDate,
-          stayNights: diffDays(departureDate, returnDate),
-          confidence: "loading" as const,
-          providerSource: "agil-local" as const,
-          selectable: false,
-          requiresRequery: true,
-          stateCode: "ind" as const,
-          tooltip: "Consultando Agil...",
-          derivedRequest: buildDerivedRequest(request, departureDate, returnDate),
-        } satisfies MatrixCell;
-      }));
+    : pairs.map(({ departureDate, returnDate }) => ({
+        key: `${departureDate}_${returnDate}`,
+        departureDate,
+        returnDate,
+        stayNights: diffDays(departureDate, returnDate),
+        confidence: "loading" as const,
+        providerSource: "agil-local" as const,
+        selectable: false,
+        requiresRequery: true,
+        stateCode: "ind" as const,
+        tooltip: "Consultando Agil...",
+        derivedRequest: buildDerivedRequest(request, departureDate, returnDate),
+      } satisfies MatrixCell));
 
   return {
     cells,
-    axes: {
-      departureDates: departures,
-      returnDates: returns,
-    },
+    axes,
     confidenceSummary: buildMatrixConfidenceSummary(cells),
     recommendations: [
       "Matrix loading from Agil in parallel.",
-      "Prices appear as each date combination resolves.",
+      "Prices appear as each valid date combination resolves.",
     ],
     searchMeta: {
       requestedAt,

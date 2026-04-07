@@ -172,6 +172,24 @@ export function costamarTokenMatchesTerminal(
   return !tokenTerminalId || tokenTerminalId === normalizedTerminalId;
 }
 
+export function resolveUsableCostamarBrandedToken(
+  token: string | undefined,
+  terminalId: string | undefined,
+  nowMs = Date.now(),
+): string | undefined {
+  const normalized = sanitizeCostamarToken(token);
+  if (!normalized || !costamarTokenMatchesTerminal(normalized, terminalId)) {
+    return undefined;
+  }
+
+  const { expMs } = decodeJwtTimes(normalized);
+  if (expMs > 0 && expMs <= nowMs) {
+    return undefined;
+  }
+
+  return normalized;
+}
+
 function resolveChromeUserDataDir(): string {
   return stringOrFallback(
     process.env.COSTAMAR_CHROME_USER_DATA_DIR?.trim()
