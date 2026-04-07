@@ -51,23 +51,34 @@ export async function mapConcurrent<T, R>(
   values: T[],
   concurrency: number,
   mapper: (value: T) => Promise<R>,
+  options?: {
+    canContinue?: () => boolean;
+  },
 ): Promise<R[]> {
   if (values.length === 0) {
     return [];
   }
 
-  const results: R[] = new Array(values.length);
+  const results: Array<R | undefined> = new Array(values.length);
   const workerCount = Math.min(values.length, Math.max(1, Math.trunc(concurrency) || 1));
   let cursor = 0;
 
   async function worker(): Promise<void> {
     while (cursor < values.length) {
+      if (options?.canContinue && !options.canContinue()) {
+        return;
+      }
+
       const index = cursor;
       cursor += 1;
+      if (options?.canContinue && !options.canContinue()) {
+        return;
+      }
+
       results[index] = await mapper(values[index]);
     }
   }
 
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  return results;
+  return results.filter((result): result is R => result !== undefined);
 }

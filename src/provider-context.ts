@@ -31,8 +31,8 @@ interface CostamarSessionCandidate {
   source: string;
 }
 
-let cachedCostamarSession:
-  | { readAtMs: number; candidate?: CostamarSessionCandidate }
+let cachedCostamarSessions:
+  | { readAtMs: number; candidates: CostamarSessionCandidate[] }
   | undefined;
 
 function stringOrFallback(value: string | undefined, fallback: string): string {
@@ -67,36 +67,109 @@ function normalizeAllowedHttpsUrl(
   return parsed.toString();
 }
 
-function decodeJwtTimes(token: string): { iatMs: number; expMs: number } {
+function decodeCostamarJwtPayload(
+  token: string,
+): { iat?: number; exp?: number; id?: string; terminalId?: string } {
   try {
-    const payload = JSON.parse(
+    return JSON.parse(
       Buffer.from(token.split(".")[1]?.replace(/-/g, "+").replace(/_/g, "/") ?? "", "base64").toString("utf8"),
-    ) as { iat?: number; exp?: number };
-
-    return {
-      iatMs: typeof payload.iat === "number" ? payload.iat * 1000 : 0,
-      expMs: typeof payload.exp === "number" ? payload.exp * 1000 : 0,
-    };
+    ) as { iat?: number; exp?: number; id?: string; terminalId?: string };
   } catch {
-    return {
-      iatMs: 0,
-      expMs: 0,
-    };
+    return {};
   }
 }
 
-function sanitizeExtractedCostamarToken(token: string): string {
-  const normalized = token.trim();
+function decodeJwtHeader(token: string): { alg?: string; typ?: string } {
+  try {
+    return JSON.parse(
+      Buffer.from(token.split(".")[0]?.replace(/-/g, "+").replace(/_/g, "/") ?? "", "base64").toString("utf8"),
+    ) as { alg?: string; typ?: string };
+  } catch {
+    return {};
+  }
+}
+
+function expectedJwtSignatureLength(token: string): number | undefined {
+  const algorithm = decodeJwtHeader(token).alg;
+  if (algorithm === "HS256") {
+    return 43;
+  }
+
+  if (algorithm === "HS384") {
+    return 64;
+  }
+
+  if (algorithm === "HS512") {
+    return 86;
+  }
+
+  return undefined;
+}
+
+function decodeJwtTimes(token: string): { iatMs: number; expMs: number } {
+  const payload = decodeCostamarJwtPayload(token);
+  return {
+    iatMs: typeof payload.iat === "number" ? payload.iat * 1000 : 0,
+    expMs: typeof payload.exp === "number" ? payload.exp * 1000 : 0,
+  };
+}
+
+function decodeCostamarTokenTerminalId(token: string): string | undefined {
+  const payload = decodeCostamarJwtPayload(token);
+  const terminalId = typeof payload.id === "string"
+    ? payload.id
+    : typeof payload.terminalId === "string"
+      ? payload.terminalId
+      : undefined;
+  return terminalId?.trim() || undefined;
+}
+
+export function sanitizeCostamarToken(token: string | undefined): string {
+  const normalized = token?.trim() ?? "";
   if (!normalized) {
     return "";
   }
 
   const jwtMatch = normalized.match(COSTAMAR_JWT_PREFIX_REGEX);
   if (jwtMatch?.[1]) {
-    return jwtMatch[1];
+    const jwtToken = jwtMatch[1];
+    const expectedSignatureLength = expectedJwtSignatureLength(jwtToken);
+    if (!expectedSignatureLength) {
+      return jwtToken;
+    }
+
+    const segments = jwtToken.split(".");
+    if (segments.length !== 3) {
+      return jwtToken;
+    }
+
+    const [header, payload, signature] = segments;
+    if (signature.length <= expectedSignatureLength) {
+      return jwtToken;
+    }
+
+    return `${header}.${payload}.${signature.slice(0, expectedSignatureLength)}`;
   }
 
   return normalized.match(COSTAMAR_TOKEN_SAFE_PREFIX_REGEX)?.[0] ?? normalized;
+}
+
+export function costamarTokenMatchesTerminal(
+  token: string | undefined,
+  terminalId: string | undefined,
+): boolean {
+  const normalizedTerminalId = terminalId?.trim();
+  if (!normalizedTerminalId) {
+    return true;
+  }
+
+  const normalizedToken = sanitizeCostamarToken(token);
+  if (!normalizedToken) {
+    return true;
+  }
+
+  const tokenTerminalId = decodeCostamarTokenTerminalId(normalizedToken);
+  return !tokenTerminalId || tokenTerminalId === normalizedTerminalId;
 }
 
 function resolveChromeUserDataDir(): string {
@@ -164,9 +237,9 @@ export function extractCostamarSessionCandidates(
 
     try {
       const parsed = new URL(sanitized);
-      const token = sanitizeExtractedCostamarToken(parsed.searchParams.get("token")?.trim() ?? "");
+      const token = sanitizeCostamarToken(parsed.searchParams.get("token")?.trim() ?? "");
       const terminalId = parsed.searchParams.get("terminalId")?.trim() ?? "";
-      if (!token || !terminalId) {
+      if (!token || !terminalId || !costamarTokenMatchesTerminal(token, terminalId)) {
         continue;
       }
 
@@ -217,6 +290,65 @@ export function pickLatestCostamarSessionCandidate(
     });
 
   return ranked[0];
+}
+
+function pickLatestCostamarSessionCandidateForTerminal(
+  candidates: CostamarSessionCandidate[],
+  terminalId: string | undefined,
+  nowMs = Date.now(),
+): CostamarSessionCandidate | undefined {
+  const normalizedTerminalId = terminalId?.trim();
+  const scoped = normalizedTerminalId
+    ? candidates.filter((candidate) => candidate.terminalId === normalizedTerminalId)
+    : candidates;
+  return pickLatestCostamarSessionCandidate(scoped, nowMs);
+}
+
+function shouldRefreshCostamarToken(
+  currentToken: string | undefined,
+  candidate: CostamarSessionCandidate | undefined,
+  nowMs = Date.now(),
+  preferCandidateForOpaqueToken = false,
+): boolean {
+  const normalized = currentToken?.trim();
+  if (!candidate) {
+    return false;
+  }
+
+  if (!normalized) {
+    return true;
+  }
+
+  if (!costamarTokenMatchesTerminal(normalized, candidate.terminalId)) {
+    return true;
+  }
+
+  if (candidate.token === normalized) {
+    return false;
+  }
+
+  const currentTimes = decodeJwtTimes(normalized);
+  if (currentTimes.expMs > 0 && currentTimes.expMs <= nowMs) {
+    return true;
+  }
+
+  if (candidate.expMs > 0 && candidate.expMs <= nowMs) {
+    return false;
+  }
+
+  if (currentTimes.iatMs === 0 && currentTimes.expMs === 0) {
+    return preferCandidateForOpaqueToken;
+  }
+
+  if (candidate.iatMs > currentTimes.iatMs) {
+    return true;
+  }
+
+  if (candidate.expMs > currentTimes.expMs) {
+    return true;
+  }
+
+  return false;
 }
 
 function copyCostamarSessionsToTemp(profileName: string): string | undefined {
@@ -347,9 +479,9 @@ function readCostamarCandidatesFromChromeArtifactDirectory(
   return candidates;
 }
 
-function readCostamarSessionCandidateFromChrome(): CostamarSessionCandidate | undefined {
-  if (cachedCostamarSession && (Date.now() - cachedCostamarSession.readAtMs) < COSTAMAR_SESSION_CACHE_TTL_MS) {
-    return cachedCostamarSession.candidate;
+function readCostamarSessionCandidateFromChrome(terminalId?: string): CostamarSessionCandidate | undefined {
+  if (cachedCostamarSessions && (Date.now() - cachedCostamarSessions.readAtMs) < COSTAMAR_SESSION_CACHE_TTL_MS) {
+    return pickLatestCostamarSessionCandidateForTerminal(cachedCostamarSessions.candidates, terminalId);
   }
 
   const candidates: CostamarSessionCandidate[] = [];
@@ -372,16 +504,15 @@ function readCostamarSessionCandidateFromChrome(): CostamarSessionCandidate | un
     );
   }
 
-  const candidate = pickLatestCostamarSessionCandidate(candidates);
-  cachedCostamarSession = {
+  cachedCostamarSessions = {
     readAtMs: Date.now(),
-    candidate,
+    candidates,
   };
-  return candidate;
+  return pickLatestCostamarSessionCandidateForTerminal(candidates, terminalId);
 }
 
 export function resetCostamarSessionCacheForTests(): void {
-  cachedCostamarSession = undefined;
+  cachedCostamarSessions = undefined;
 }
 
 export function resolveProviderId(providerId?: ProviderId): ProviderId {
@@ -391,6 +522,7 @@ export function resolveProviderId(providerId?: ProviderId): ProviderId {
 export function normalizeCostamarProviderContext(
   input?: CostamarProviderConfigInput,
 ): CostamarProviderContext {
+  const normalizedToken = sanitizeCostamarToken(input?.token ?? process.env.COSTAMAR_TOKEN ?? "");
   return {
     apiBaseUrl: normalizeAllowedHttpsUrl(
       process.env.COSTAMAR_API_BASE_URL,
@@ -408,10 +540,7 @@ export function normalizeCostamarProviderContext(
       input?.terminalId ?? process.env.COSTAMAR_TERMINAL_ID,
       DEFAULT_COSTAMAR_TERMINAL_ID,
     ),
-    token: stringOrFallback(
-      input?.token ?? process.env.COSTAMAR_TOKEN,
-      "",
-    ),
+    token: normalizedToken,
     lang: stringOrFallback(
       input?.lang ?? process.env.COSTAMAR_LANG,
       "es",
@@ -423,15 +552,24 @@ export function resolveCostamarProviderContext(
   input?: CostamarProviderConfigInput,
 ): CostamarProviderContext {
   const normalized = normalizeCostamarProviderContext(input);
-  if (normalized.token && normalized.terminalId) {
-    return normalized;
+  const compatibleToken = costamarTokenMatchesTerminal(normalized.token, normalized.terminalId)
+    ? normalized.token
+    : "";
+  const sessionCandidate = readCostamarSessionCandidateFromChrome(normalized.terminalId);
+  const shouldRefresh = shouldRefreshCostamarToken(compatibleToken, sessionCandidate);
+  if (compatibleToken && normalized.terminalId && !shouldRefresh) {
+    return {
+      ...normalized,
+      token: compatibleToken,
+    };
   }
 
-  const sessionCandidate = readCostamarSessionCandidateFromChrome();
   return normalizeCostamarProviderContext({
     ...normalized,
     terminalId: normalized.terminalId || sessionCandidate?.terminalId,
-    token: normalized.token || sessionCandidate?.token,
+    token: shouldRefresh
+      ? sessionCandidate?.token || compatibleToken
+      : compatibleToken || sessionCandidate?.token,
   });
 }
 
@@ -439,15 +577,24 @@ export function resolveLatestCostamarProviderContext(
   input?: CostamarProviderConfigInput,
 ): CostamarProviderContext {
   const normalized = normalizeCostamarProviderContext(input);
-  const sessionCandidate = readCostamarSessionCandidateFromChrome();
+  const compatibleToken = costamarTokenMatchesTerminal(normalized.token, normalized.terminalId)
+    ? normalized.token
+    : "";
+  const sessionCandidate = readCostamarSessionCandidateFromChrome(normalized.terminalId);
+  const shouldRefresh = shouldRefreshCostamarToken(compatibleToken, sessionCandidate, Date.now(), true);
   if (!sessionCandidate) {
-    return normalized;
+    return {
+      ...normalized,
+      token: compatibleToken,
+    };
   }
 
   return normalizeCostamarProviderContext({
     ...normalized,
-    terminalId: sessionCandidate.terminalId || normalized.terminalId,
-    token: sessionCandidate.token || normalized.token,
+    terminalId: normalized.terminalId || sessionCandidate.terminalId,
+    token: shouldRefresh
+      ? sessionCandidate.token || compatibleToken
+      : compatibleToken || sessionCandidate.token,
   });
 }
 

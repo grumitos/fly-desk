@@ -319,6 +319,8 @@
               <p id="resultsPanelMeta" class="panel-header__meta hidden"></p>
         </div>
 
+        <div id="resultsPager" class="results-toolbar__pager hidden" aria-label="Paginación de resultados"></div>
+
         <div class="panel-header__actions panel-header__actions--results">
           <div class="results-toolbar__sort" id="sortButtons">
             <button type="button" class="results-toolbar__sort-btn is-active" data-sort="cheapest">Más barato</button>
@@ -363,7 +365,6 @@
             <p class="panel-header__meta hidden"></p>
         </div>
         <div class="panel-header__actions detail-panel__actions">
-          <button id="repriceButton" class="btn btn--secondary btn--sm" type="button" disabled>Reprice</button>
           <button id="quotationButton" class="btn btn--secondary btn--sm" type="button" disabled>Cotizar</button>
         </div>
       </div>
@@ -439,6 +440,11 @@
       <rect x="5" y="4" width="14" height="18" rx="2"/>
       <path d="M9 4V2h6v2"/>
       <path d="M9 8h6"/>
+    </symbol>
+    <symbol id="ico-carry-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="7" y="8" width="10" height="13" rx="2"/>
+      <path d="M9 8V6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>
+      <path d="M12 12v4"/>
     </symbol>
   </svg>
 

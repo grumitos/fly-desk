@@ -9,9 +9,11 @@ export const state = {
   matrixPollHandle: null,
   selectedOfferId: null,
   quotationText: "",
+  quotationTechnicalText: "",
   selectedMatrixKey: null,
   airlineFilter: { hidden: new Set(), only: null },
   resultsPage: 1,
+  resultsPageSize: 15,
   viewMode: "list",
   flexMode: false,
   detailPendingAction: null,
@@ -30,6 +32,7 @@ export const autocompleteState = {
 };
 
 export const RESULTS_PAGE_SIZE = 15;
+export const RESULTS_MAX_PAGES = 25;
 export const SEARCH_DATE_DEFAULT_MAX_FUTURE_DAYS = 365;
 export const runtimeSearchDatePolicy = window.__FLYDESK_RUNTIME__?.searchDatePolicy ?? null;
 export const DEFAULT_CURRENCY_CODE = "USD";
@@ -97,8 +100,8 @@ export const stayDaysMaxEl = $("stayDaysMax");
 export const runtimeBadge = $("runtimeBadge");
 export const resultPill = $("resultPill");
 export const submitButton = $("submitButton");
-export const repriceButton = $("repriceButton");
 export const quotationButton = $("quotationButton");
+export const resultsPagerEl = $("resultsPager");
 export const validationBox = $("validationErrors");
 export const toastContainer = $("toastContainer");
 export const copySearchConfigBtn = $("copySearchConfigBtn");

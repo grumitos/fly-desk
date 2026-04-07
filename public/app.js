@@ -49,12 +49,13 @@ import {
   paxTrigger,
   POLL_RENDER_IDLE_MS,
   quotationButton,
-  repriceButton,
   resultPill,
   resultsContainer,
   resultsPanelMeta,
   resultsPanelTitle,
+  resultsPagerEl,
   resultsToolbar,
+  RESULTS_MAX_PAGES,
   RESULTS_PAGE_SIZE,
   rootEl,
   runtimeBadge,
@@ -365,6 +366,15 @@ function isUsefulFlexibleCell(request, departureDate, returnDate) {
 
 function buildResultsTableHeaderHtml() {
   return `
+    <colgroup>
+      <col style="width:15%">
+      <col style="width:19%">
+      <col style="width:11%">
+      <col style="width:10%">
+      <col style="width:11%">
+      <col style="width:14%">
+      <col style="width:10%">
+    </colgroup>
     <thead><tr>
       <th>Aerolínea</th>
       <th>Fechas</th>
@@ -375,6 +385,28 @@ function buildResultsTableHeaderHtml() {
       <th>Enlace</th>
     </tr></thead>
   `;
+}
+
+const RESULTS_SKELETON_ROW_COUNT = 6;
+const RESULTS_PROGRESS_PLACEHOLDER_COUNT = 2;
+
+function buildResultsPlaceholderRows(count = RESULTS_SKELETON_ROW_COUNT) {
+  return Array.from({ length: count }, () => `
+    <tr class="results-row--placeholder" aria-hidden="true">
+      <td><span class="skeleton-line skeleton-line--md"></span></td>
+      <td>
+        <div class="results-date-stack">
+          <span class="skeleton-line skeleton-line--lg"></span>
+          <span class="skeleton-line skeleton-line--sm"></span>
+        </div>
+      </td>
+      <td><span class="skeleton-line skeleton-line--sm"></span></td>
+      <td><span class="skeleton-line skeleton-line--sm"></span></td>
+      <td><span class="skeleton-line skeleton-line--sm"></span></td>
+      <td class="results-price"><span class="skeleton-line skeleton-line--price"></span></td>
+      <td><span class="skeleton-line skeleton-line--link"></span></td>
+    </tr>
+  `).join("");
 }
 
 /* ================================================================
@@ -423,42 +455,70 @@ async function writeClipboardText(text) {
   }
 }
 
-function renderResultsSkeleton(kind = "search", providerId = "agil-local") {
+async function copyTechnicalQuotation() {
+  if (!state.quotationTechnicalText) return;
+  const copied = await writeClipboardText(state.quotationTechnicalText);
+  showToast(
+    copied
+      ? "Detalle tecnico copiado al portapapeles."
+      : "No pude copiar el detalle tecnico al portapapeles.",
+    copied ? "success" : "error",
+  );
+}
+
+function normalizePlainTextLineEndings(text) {
+  return typeof text === "string" ? text.replace(/\r\n/g, "\n") : "";
+}
+
+function splitLegacyQuotationText(text) {
+  const normalized = normalizePlainTextLineEndings(text);
+  const markerMatch = normalized.match(
+    /\n(?:={10,}\n)?DETALLE T(?:E|É)CNICO\n(?:={10,}\n)?\n/,
+  );
+  if (!markerMatch || typeof markerMatch.index !== "number") {
+    return {
+      commercialText: normalized.trim(),
+      technicalText: "",
+    };
+  }
+
+  return {
+    commercialText: normalized.slice(0, markerMatch.index).trim(),
+    technicalText: normalized.slice(markerMatch.index + markerMatch[0].length).trim(),
+  };
+}
+
+function resolveQuotationPayload(data) {
+  const commercialText = typeof data?.commercialText === "string" ? normalizePlainTextLineEndings(data.commercialText).trim() : "";
+  const technicalText = typeof data?.technicalText === "string" ? normalizePlainTextLineEndings(data.technicalText).trim() : "";
+
+  if (commercialText || technicalText) {
+    return { commercialText, technicalText };
+  }
+
+  return splitLegacyQuotationText(data?.plainText);
+}
+
+function renderResultsSkeleton({
+  busy = true,
+  rowCount = RESULTS_SKELETON_ROW_COUNT,
+} = {}) {
   if (!resultsContainer) return;
-  const rows = Array.from({ length: 6 }, () => `
-    <tr class="results-row--placeholder" aria-hidden="true">
-      <td><span class="skeleton-line skeleton-line--md"></span></td>
-      <td>
-        <div class="results-date-stack">
-          <span class="skeleton-line skeleton-line--lg"></span>
-          <span class="skeleton-line skeleton-line--sm"></span>
-        </div>
-      </td>
-      <td><span class="skeleton-line skeleton-line--sm"></span></td>
-      <td><span class="skeleton-line skeleton-line--sm"></span></td>
-      <td><span class="skeleton-line skeleton-line--sm"></span></td>
-      <td class="results-price"><span class="skeleton-line skeleton-line--price"></span></td>
-      <td><span class="skeleton-line skeleton-line--link"></span></td>
-    </tr>
-  `).join("");
+  const rows = buildResultsPlaceholderRows(rowCount);
 
   resultsContainer.innerHTML = `
-    <div class="results-skeleton" aria-live="polite" aria-busy="true">
+    <div class="results-skeleton" aria-live="polite" aria-busy="${busy ? "true" : "false"}">
       <div class="table-wrap">
         <table class="results-table results-table--pending">
           ${buildResultsTableHeaderHtml()}
           <tbody>${rows}</tbody>
         </table>
       </div>
-      <div class="results-pager">
-        <button type="button" class="btn btn--secondary btn--sm" disabled>← Anterior</button>
-        <span class="results-pager__label">Cargando</span>
-        <button type="button" class="btn btn--secondary btn--sm" disabled>Siguiente →</button>
-      </div>
     </div>
   `;
 
   const resultsWrap = resultsContainer.querySelector(".table-wrap");
+  syncResultsPageSize();
   syncResultsScroll(resultsWrap);
   requestAnimationFrame(() => syncResultsScroll(resultsWrap));
   resultsWrap?.addEventListener("scroll", handleResultsScroll, { passive: true });
@@ -469,16 +529,10 @@ function renderResultsSkeleton(kind = "search", providerId = "agil-local") {
   });
 }
 
-function detailActionCopy(action) {
-  if (action === "quotation") {
-    return {
-      eyebrow: "Generando cotización",
-      text: "Preparando el texto con la oferta seleccionada.",
-    };
-  }
+function detailActionCopy() {
   return {
-    eyebrow: "Actualizando tarifa",
-    text: "Revalidando precio y disponibilidad sobre esta oferta.",
+    eyebrow: "Generando cotización",
+    text: "Preparando el texto con la oferta seleccionada.",
   };
 }
 
@@ -709,7 +763,7 @@ function activeResultsProviderIds(active = state.searchResponse ?? state.matrixR
   return defaultProviderIds(active?.request ?? state.request);
 }
 
-function buildResultsPanelMeta({ hasMatrix, matrixCellCount, isSearchRunning }) {
+function buildResultsPanelMeta({ hasMatrix, matrixCellCount }) {
   const active = state.searchResponse ?? state.matrixResponse;
   if (!active) {
     return "";
@@ -728,8 +782,6 @@ function buildResultsPanelMeta({ hasMatrix, matrixCellCount, isSearchRunning }) 
 
   if (hasMatrix && matrixCellCount > 0) {
     parts.push(`${matrixCellCount} celdas`);
-  } else if (isSearchRunning) {
-    parts.push("Actualizando resultados");
   }
 
   return parts.join(" · ");
@@ -1111,6 +1163,7 @@ function clearRenderedSearchState() {
   state.selectedOfferId = null;
   state.selectedMatrixKey = null;
   state.quotationText = "";
+  state.quotationTechnicalText = "";
   state.detailPendingAction = null;
   state.airlineFilter.hidden.clear();
   state.airlineFilter.only = null;
@@ -1678,7 +1731,38 @@ function countWindowCombinations() {
 }
 
 function resultsPageCount(total) {
-  return Math.max(1, Math.ceil(total / RESULTS_PAGE_SIZE));
+  const pageSize = Math.max(1, Math.trunc(state.resultsPageSize) || RESULTS_PAGE_SIZE);
+  return Math.max(1, Math.ceil(total / pageSize));
+}
+
+function resolveVisibleResultsPageSize() {
+  const viewport = resultsContainer?.querySelector(".table-wrap") ?? resultsContainer;
+  if (!(viewport instanceof HTMLElement)) {
+    return Math.max(1, Math.trunc(state.resultsPageSize) || RESULTS_PAGE_SIZE);
+  }
+
+  const tableHeader = viewport.querySelector("thead");
+  const firstRow = viewport.querySelector("tbody tr[data-oid], tbody tr.results-row--placeholder");
+  const viewportHeight = viewport.clientHeight;
+  const headerHeight = tableHeader instanceof HTMLElement ? tableHeader.getBoundingClientRect().height : 0;
+  const rowHeight = firstRow instanceof HTMLElement ? firstRow.getBoundingClientRect().height : 0;
+
+  if (viewportHeight <= 0 || rowHeight <= 0) {
+    return Math.max(1, Math.trunc(state.resultsPageSize) || RESULTS_PAGE_SIZE);
+  }
+
+  const availableHeight = Math.max(rowHeight, viewportHeight - headerHeight);
+  return Math.max(1, Math.floor((availableHeight + 1) / rowHeight));
+}
+
+function syncResultsPageSize() {
+  const nextPageSize = resolveVisibleResultsPageSize();
+  if (nextPageSize === state.resultsPageSize) {
+    return false;
+  }
+
+  state.resultsPageSize = nextPageSize;
+  return true;
 }
 
 function isLocal() {
@@ -3104,7 +3188,11 @@ function getFormPayload() {
   const fd = new FormData(searchForm);
   const m = String(fd.get("searchMode") || "exact");
   const t = String(fd.get("tripType") || "round-trip");
-  const disableMaxResults = m === "stay-range" && t === "one-way";
+  syncResultsPageSize();
+  const shouldCapVisiblePages = m !== "roundtrip-grid";
+  const maxResults = shouldCapVisiblePages
+    ? Math.max(1, state.resultsPageSize || RESULTS_PAGE_SIZE) * RESULTS_MAX_PAGES
+    : undefined;
   return {
     sortMode: String(fd.get("sortMode") || "cheapest"),
     request: {
@@ -3124,7 +3212,7 @@ function getFormPayload() {
         baggageRequired: fd.get("baggageRequired") === "on",
         maxStops: readMaxStopsFilter(),
         maxLayoverMinutes: readMaxLayoverFilter(),
-        maxResults: disableMaxResults ? undefined : 25,
+        maxResults,
         includedAirlineCodes: [],
       },
       legs: [{
@@ -3320,9 +3408,10 @@ function applyClientOfferControls() {
   state.searchResponse.filteredOfferGroups = groupedOffers;
   const totalPages = resultsPageCount(groupedOffers.length);
   state.resultsPage = Math.min(Math.max(1, state.resultsPage), totalPages);
-  const start = (state.resultsPage - 1) * RESULTS_PAGE_SIZE;
+  const pageSize = Math.max(1, Math.trunc(state.resultsPageSize) || RESULTS_PAGE_SIZE);
+  const start = (state.resultsPage - 1) * pageSize;
   state.searchResponse.offers = groupedOffers
-    .slice(start, start + RESULTS_PAGE_SIZE)
+    .slice(start, start + pageSize)
     .flat();
 
   if (!state.searchResponse.offers.some((offer) => offer.id === state.selectedOfferId)) {
@@ -3450,7 +3539,6 @@ function updateResultsToolbar() {
   const panelMeta = buildResultsPanelMeta({
     hasMatrix,
     matrixCellCount,
-    isSearchRunning,
   });
 
   if (resultsPanelTitle && resultsPanelMeta) {
@@ -3487,12 +3575,34 @@ function updateResultsToolbar() {
     });
   }
 
+  if (resultsPagerEl) {
+    const totalPages = resultsPageCount(total);
+    const showPager = hasListResults && totalPages > 1;
+    resultsPagerEl.classList.toggle("hidden", !showPager);
+    if (showPager) {
+      resultsPagerEl.innerHTML = `
+        <button type="button" class="pager-arrow" data-results-page="prev" ${state.resultsPage <= 1 ? "disabled" : ""} aria-label="Página anterior">
+          <svg viewBox="0 0 10 14" width="10" height="14" aria-hidden="true"><polygon points="10,0 0,7 10,14" fill="currentColor"/></svg>
+        </button>
+        <span class="pager-label">${state.resultsPage} / ${totalPages}</span>
+        <button type="button" class="pager-arrow" data-results-page="next" ${state.resultsPage >= totalPages ? "disabled" : ""} aria-label="Página siguiente">
+          <svg viewBox="0 0 10 14" width="10" height="14" aria-hidden="true"><polygon points="0,0 10,7 0,14" fill="currentColor"/></svg>
+        </button>
+      `;
+    }
+  }
+
   syncMatrixExpandedUI();
 }
 
 function renderResults() {
   if (!resultsContainer) return;
   captureResultsScroll(resultsContainer);
+  if (!state.searchResponse) {
+    renderResultsSkeleton({ busy: false });
+    return;
+  }
+
   const offers = state.searchResponse?.offers ?? [];
   const total = state.searchResponse?.filteredOfferGroups?.length
     ?? buildOfferGroups(state.searchResponse?.filteredOffers ?? state.searchResponse?.allOffers ?? offers).length;
@@ -3505,12 +3615,13 @@ function renderResults() {
   }
 
   if (offers.length === 0 && isRunning) {
-    renderResultsSkeleton();
+    renderResultsSkeleton({ busy: true });
     return;
   }
 
   let html = "";
-  html += `<div class="table-wrap"><table class="results-table">${buildResultsTableHeaderHtml()}<tbody>`;
+
+  html += `<div class="table-wrap" aria-live="polite" aria-busy="${isRunning ? "true" : "false"}"><table class="results-table">${buildResultsTableHeaderHtml()}<tbody>`;
   const providerLinkIndex = buildProviderLinkIndex(state.searchResponse?.allOffers ?? offers);
 
   buildOfferGroups(offers).forEach((group) => {
@@ -3520,8 +3631,8 @@ function renderResults() {
     const badge = group.length > 1
       ? ` <span class="badge badge--accent badge--group-count" title="${group.length} fechas equivalentes">${group.length}</span>`
       : "";
-    const bagCarry = o.baggage?.carryOnIncluded ? "✓" : "—";
-    const bagCheck = o.baggage?.checkedIncluded ? "✓" : "—";
+    const bagCarry = `<svg class="ico ico--xs ${o.baggage?.carryOnIncluded ? "ico--bag-yes" : "ico--bag-no"}"><use href="#ico-carry-on"/></svg>`;
+    const bagCheck = `<svg class="ico ico--xs ${o.baggage?.checkedIncluded ? "ico--bag-yes" : "ico--bag-no"}"><use href="#ico-luggage"/></svg>`;
     const carrier = carrierDisplayParts(o);
     const rowLabel = [
       isActive ? "Oferta seleccionada" : "Seleccionar oferta",
@@ -3536,23 +3647,28 @@ function renderResults() {
     html += `<td title="${escapeHtml(dateSummary.title)}"><div class="results-date-stack"><span class="cell-main">${escapeHtml(dateSummary.primary)}${badge}</span>${dateSummary.secondary ? `<span class="cell-sub">${escapeHtml(dateSummary.secondary)}</span>` : ""}</div></td>`;
     html += `<td>${formatDuration(o.comparisonMetrics?.totalDurationMinutes)}</td>`;
     html += `<td>${renderStopsSummary(o)}</td>`;
-    html += `<td class="cell-sub">${bagCarry} / ${bagCheck}</td>`;
+    html += `<td><span class="baggage-icons">${bagCarry}${bagCheck}</span></td>`;
     html += `<td class="results-price">${formatMoney(o.price?.total)}</td>`;
     html += `<td>${renderProviderLinksCell(o, providerLinkIndex)}</td>`;
     html += `</tr>`;
   });
 
-  html += '</tbody></table></div>';
+  if (isRunning) {
+    html += buildResultsPlaceholderRows(RESULTS_PROGRESS_PLACEHOLDER_COUNT);
+  }
 
-  // Pagination
-  html += `<div class="results-pager">`;
-  html += `<button type="button" class="btn btn--secondary btn--sm" data-results-page="prev" ${state.resultsPage <= 1 ? "disabled" : ""}>← Anterior</button>`;
-  html += `<span class="results-pager__label">Página ${state.resultsPage} de ${totalPages}</span>`;
-  html += `<button type="button" class="btn btn--secondary btn--sm" data-results-page="next" ${state.resultsPage >= totalPages ? "disabled" : ""}>Siguiente →</button>`;
-  html += `</div>`;
+  html += '</tbody></table></div>';
 
   resultsContainer.innerHTML = html;
   const resultsWrap = resultsContainer.querySelector(".table-wrap");
+  const pageSizeChanged = syncResultsPageSize();
+  if (pageSizeChanged && state.searchResponse?.allOffers?.length) {
+    applyClientOfferControls();
+    renderResultsArea();
+    renderDetailPanel();
+    updateResultsToolbar();
+    return;
+  }
   syncResultsScroll(resultsWrap);
   requestAnimationFrame(() => syncResultsScroll(resultsWrap));
   resultsWrap?.addEventListener("scroll", handleResultsScroll, { passive: true });
@@ -3639,6 +3755,7 @@ async function handleMatrixClick(e) {
     state.matrixResponse = null;
     state.viewMode = "list";
     state.quotationText = "";
+    state.quotationTechnicalText = "";
     state.airlineFilter.hidden.clear();
     state.airlineFilter.only = null;
     state.detailPendingAction = null;
@@ -3879,10 +3996,9 @@ function renderResultsArea() {
 
   if (hasMatrix) {
     renderCalendarView(state.matrixExpanded ? matrixFullscreenBody : resultsContainer);
-  } else if (state.searchResponse?.offers) {
+  } else {
     renderResults();
   }
-  // If neither, the empty state from HTML is already showing
 }
 
 /* ================================================================
@@ -3899,7 +4015,6 @@ function closeDetailPanel() {
 
 function renderDetailPanel() {
   const offer = selOffer();
-  if (repriceButton) repriceButton.disabled = !offer;
   if (quotationButton) quotationButton.disabled = !offer;
 
   if (!offer) {
@@ -3917,7 +4032,7 @@ function renderDetailPanel() {
   openDetailPanel();
 
   if (state.detailPendingAction) {
-    const copy = detailActionCopy(state.detailPendingAction);
+    const copy = detailActionCopy();
     const amount = formatMoney(offer.price?.total);
     const carrier = carrierDisplayParts(offer);
     const summary = `${escapeHtml(offer.origin)} → ${escapeHtml(offer.destination)} · ${escapeHtml(carrier.display)}`;
@@ -3951,8 +4066,10 @@ function renderDetailPanel() {
   let h = "";
 
   // Hero price
+  const totalStops = offer.comparisonMetrics?.totalStops ?? 0;
+  const stopsLabel = totalStops === 0 ? "Directo" : totalStops === 1 ? "1 escala" : `${totalStops} escalas`;
   h += `<div class="detail-hero">${formatMoney(offer.price?.total)}</div>`;
-  h += `<div class="detail-summary">${escapeHtml(offer.origin)} → ${escapeHtml(offer.destination)} · ${escapeHtml(carrier.display)} · ${formatDuration(offer.comparisonMetrics?.totalDurationMinutes)} · ${offer.comparisonMetrics?.totalStops ?? 0} esc</div>`;
+  h += `<div class="detail-summary">${escapeHtml(offer.origin)} → ${escapeHtml(offer.destination)} · ${escapeHtml(carrier.display)} · ${formatDuration(offer.comparisonMetrics?.totalDurationMinutes)} · ${stopsLabel}</div>`;
 
   // Confidence badge
   h += `<div><span class="badge badge--${confidenceColor(offer.priceConfidence)}">${offer.priceConfidence === "validated" ? "Precio validado" : "Precio live"}</span></div>`;
@@ -3962,8 +4079,14 @@ function renderDetailPanel() {
 
   if (outbound) {
     h += `<div class="detail-segment"><div class="detail-segment__dir">Ida — ${formatDuration(outbound.durationMinutes)}, ${outbound.stops} esc</div>`;
-    outbound.segments?.forEach(s => {
+    outbound.segments?.forEach((s, idx) => {
       h += `<div class="detail-segment__leg"><div class="detail-segment__flight">${escapeHtml(s.flightNumber)}</div><div class="detail-segment__times">${escapeHtml(s.origin)} ${formatDT(s.departureAt)} → ${escapeHtml(s.destination)} ${formatDT(s.arrivalAt)}</div></div>`;
+      if (outbound.segments?.[idx + 1]) {
+        const layoverMin = computeLayoverMinutes(outbound, idx);
+        if (layoverMin > 0) {
+          h += `<div class="detail-layover"><span class="detail-layover__line"></span><span class="detail-layover__label">Escala en ${escapeHtml(s.destinationName || s.destination)} · ${formatDuration(layoverMin)}</span><span class="detail-layover__line"></span></div>`;
+        }
+      }
     });
     h += '</div>';
   }
@@ -3979,8 +4102,14 @@ function renderDetailPanel() {
   } else {
     offer.itineraries?.filter(it => it !== outbound).forEach(it => {
       h += `<div class="detail-segment"><div class="detail-segment__dir">${escapeHtml(it.direction)} — ${formatDuration(it.durationMinutes)}, ${it.stops} esc</div>`;
-      it.segments?.forEach(s => {
+      it.segments?.forEach((s, idx) => {
         h += `<div class="detail-segment__leg"><div class="detail-segment__flight">${escapeHtml(s.flightNumber)}</div><div class="detail-segment__times">${escapeHtml(s.origin)} ${formatDT(s.departureAt)} → ${escapeHtml(s.destination)} ${formatDT(s.arrivalAt)}</div></div>`;
+        if (it.segments?.[idx + 1]) {
+          const layoverMin = computeLayoverMinutes(it, idx);
+          if (layoverMin > 0) {
+            h += `<div class="detail-layover"><span class="detail-layover__line"></span><span class="detail-layover__label">Escala en ${escapeHtml(s.destinationName || s.destination)} · ${formatDuration(layoverMin)}</span><span class="detail-layover__line"></span></div>`;
+          }
+        }
       });
       h += '</div>';
     });
@@ -3989,8 +4118,10 @@ function renderDetailPanel() {
 
   // Baggage
   h += '<div class="detail-section"><div class="detail-section__title">Equipaje</div>';
-  h += `<div class="detail-pair"><span class="detail-pair__key">Carry-on</span><span class="detail-pair__val">${offer.baggage?.carryOnIncluded ? "✓ Incluido" : "— No incluido"}</span></div>`;
-  h += `<div class="detail-pair"><span class="detail-pair__key">Bodega</span><span class="detail-pair__val">${offer.baggage?.checkedIncluded ? `✓ ${offer.baggage.checkedBags ?? 1}x${offer.baggage.description ?? ""}` : "— No incluido"}</span></div>`;
+  const carryIcon = `<svg class="ico ico--xs ${offer.baggage?.carryOnIncluded ? "ico--bag-yes" : "ico--bag-no"}"><use href="#ico-carry-on"/></svg>`;
+  const checkIcon = `<svg class="ico ico--xs ${offer.baggage?.checkedIncluded ? "ico--bag-yes" : "ico--bag-no"}"><use href="#ico-luggage"/></svg>`;
+  h += `<div class="detail-pair"><span class="detail-pair__key">${carryIcon} Carry-on</span><span class="detail-pair__val">${offer.baggage?.carryOnIncluded ? "Incluido" : "No incluido"}</span></div>`;
+  h += `<div class="detail-pair"><span class="detail-pair__key">${checkIcon} Bodega</span><span class="detail-pair__val">${offer.baggage?.checkedIncluded ? `${offer.baggage.checkedBags ?? 1}x ${offer.baggage.description ?? ""}`.trim() : "No incluido"}</span></div>`;
   h += '</div>';
 
   // Fare
@@ -4013,8 +4144,19 @@ function renderDetailPanel() {
 
   // Quotation
   if (state.quotationText) {
-    h += '<div class="detail-section"><div class="detail-section__title">Cotizacion</div>';
+    h += '<div class="detail-section">';
+    h += '<div class="detail-section__title">Cotizacion comercial</div>';
     h += `<textarea class="quote-textarea" readonly>${escapeHtml(state.quotationText)}</textarea>`;
+    h += '</div>';
+  }
+
+  if (state.quotationTechnicalText) {
+    h += '<div class="detail-section">';
+    h += '<div class="detail-section__header">';
+    h += '<div class="detail-section__title">Detalle tecnico</div>';
+    h += '<button type="button" class="btn btn--ghost btn--sm" data-copy-technical-quotation>Copiar tecnico</button>';
+    h += "</div>";
+    h += `<textarea class="quote-textarea quote-textarea--technical" readonly>${escapeHtml(state.quotationTechnicalText)}</textarea>`;
     h += '</div>';
   }
 
@@ -4025,6 +4167,9 @@ function renderDetailPanel() {
     el.addEventListener("click", () => {
       selectOffer(el.dataset.inboundId);
     });
+  });
+  detailContent?.querySelector("[data-copy-technical-quotation]")?.addEventListener("click", async () => {
+    await copyTechnicalQuotation();
   });
 }
 
@@ -4131,6 +4276,9 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// Toolbar pager click delegation (set up once)
+resultsToolbar?.addEventListener("click", handleResultsClick);
+
 // Results container click delegation (set up once)
 resultsContainer?.addEventListener("click", handleResultsClick);
 resultsContainer?.addEventListener("keydown", handleResultsKeydown);
@@ -4156,6 +4304,16 @@ document.addEventListener("pointercancel", () => {
   markPollingUiInteraction();
   if (state.pollRenderPending) scheduleDeferredPollRender();
 });
+
+window.addEventListener("resize", debounce(() => {
+  const pageSizeChanged = syncResultsPageSize();
+  if (!pageSizeChanged || !state.searchResponse?.allOffers?.length) {
+    return;
+  }
+
+  applyClientOfferControls();
+  renderAll();
+}, 120));
 
 ["sortMode", "nonStop", "baggageRequired", "maxLayoverMinutes", "maxStopsFilter"].forEach((id) => {
   control(id)?.addEventListener("change", async () => {
@@ -4188,6 +4346,7 @@ searchForm.addEventListener("submit", async (e) => {
     state.sortMode = translatedPayload.sortMode;
     state.resultsPage = 1;
     state.quotationText = "";
+    state.quotationTechnicalText = "";
     state.selectedMatrixKey = null;
     state.detailPendingAction = null;
     state.airlineFilter.hidden.clear();
@@ -4234,27 +4393,6 @@ searchForm.addEventListener("submit", async (e) => {
   finally { submitButton.disabled = false; }
 });
 
-repriceButton.addEventListener("click", async () => {
-  const offer = selOffer();
-  const sid = sessionId();
-  if (!offer || !sid) return;
-  repriceButton.disabled = true;
-  state.detailPendingAction = "reprice";
-  renderDetailPanel();
-  try {
-    const data = await postJson("/api/reprice", { searchSessionId: sid, offerId: offer.id });
-    state.searchResponse.allOffers = state.searchResponse.allOffers.map((o) => o.id === data.offer.id ? data.offer : o);
-    applyClientOfferControls();
-    state.quotationText = "";
-    renderAll();
-  } catch (err) { showToast(err.message); }
-  finally {
-    state.detailPendingAction = null;
-    repriceButton.disabled = false;
-    renderDetailPanel();
-  }
-});
-
 quotationButton.addEventListener("click", async () => {
   const offer = selOffer();
   const sid = sessionId();
@@ -4264,15 +4402,17 @@ quotationButton.addEventListener("click", async () => {
   renderDetailPanel();
   try {
     const data = await postJson("/api/quotation", { searchSessionId: sid, offerId: offer.id });
+    const quotation = resolveQuotationPayload(data);
     state.searchResponse.allOffers = state.searchResponse.allOffers.map((o) => o.id === data.offer.id ? data.offer : o);
     applyClientOfferControls();
-    state.quotationText = data.plainText;
+    state.quotationText = quotation.commercialText;
+    state.quotationTechnicalText = quotation.technicalText;
     renderAll();
-    const copied = await writeClipboardText(data.plainText);
+    const copied = await writeClipboardText(quotation.commercialText);
     showToast(
       copied
-        ? "Cotizacion copiada al portapapeles."
-        : "Cotizacion lista. No pude copiarla al portapapeles.",
+        ? "Cotizacion comercial copiada al portapapeles."
+        : "Cotizacion lista. No pude copiar la version comercial al portapapeles.",
       copied ? "success" : "error",
     );
   } catch (err) { showToast(err.message); }

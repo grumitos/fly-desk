@@ -1801,12 +1801,13 @@ export function createLocalAgilSearchDraft(
 
 export async function resolveLocalAgilExactProgressive(
   request: SearchRequest,
-  onUpdate?: (result: ProviderSearchResult) => void,
+  onUpdate?: (result: ProviderSearchResult) => boolean | void,
 ): Promise<ProviderSearchResult> {
   let session = await getAgilSession();
   const groups: AgilSearchGroup[] = [];
   const warnings: string[] = [];
   let partial = false;
+  let stopRequested = false;
 
   const searchAll = async (): Promise<void> => {
     await startAgilSearch(session, request);
@@ -1819,11 +1820,13 @@ export async function resolveLocalAgilExactProgressive(
           groups.flatMap((group) => mapGroupToOffers(group, request)),
         );
 
-        onUpdate?.({
+        if (onUpdate?.({
           offers,
           warnings: uniqueStrings([...warnings]),
           partial: true,
-        });
+        }) === false) {
+          stopRequested = true;
+        }
       } catch (error) {
         partial = true;
         const warning = error instanceof Error
@@ -1835,12 +1838,16 @@ export async function resolveLocalAgilExactProgressive(
           groups.flatMap((group) => mapGroupToOffers(group, request)),
         );
 
-        onUpdate?.({
+        if (onUpdate?.({
           offers,
           warnings: uniqueStrings([...warnings]),
           partial: true,
-        });
+        }) === false) {
+          stopRequested = true;
+        }
       }
+    }, {
+      canContinue: () => !stopRequested,
     });
   };
 
@@ -1868,7 +1875,7 @@ export async function resolveLocalAgilExactProgressive(
   return {
     offers,
     warnings: finalWarnings,
-    partial,
+    partial: partial || stopRequested,
   };
 }
 
@@ -1914,12 +1921,13 @@ export async function searchLocalAgilRange(request: SearchRequest): Promise<Prov
 
 export async function resolveLocalAgilRangeProgressive(
   request: SearchRequest,
-  onUpdate?: (result: ProviderSearchResult) => void,
+  onUpdate?: (result: ProviderSearchResult) => boolean | void,
 ): Promise<ProviderSearchResult> {
   const candidates = enumerateStayRangeRequests(request);
   const aggregatedOffers: CanonicalOffer[] = [];
   const warnings: string[] = [];
   let partial = false;
+  let stopRequested = false;
 
   await mapConcurrent(candidates, AGIL_RANGE_SEARCH_CONCURRENCY, async (derivedRequest) => {
     try {
@@ -1934,11 +1942,15 @@ export async function resolveLocalAgilRangeProgressive(
       warnings.push(error instanceof Error ? error.message : "Agil range search failed.");
     }
 
-    onUpdate?.({
+    if (onUpdate?.({
       offers: dedupeAgilOffers(aggregatedOffers),
       warnings: uniqueStrings([...warnings]),
       partial: true,
-    });
+    }) === false) {
+      stopRequested = true;
+    }
+  }, {
+    canContinue: () => !stopRequested,
   });
 
   const offers = dedupeAgilOffers(aggregatedOffers);
@@ -1950,7 +1962,7 @@ export async function resolveLocalAgilRangeProgressive(
   return {
     offers,
     warnings: finalWarnings,
-    partial,
+    partial: partial || stopRequested,
   };
 }
 

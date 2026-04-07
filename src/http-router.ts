@@ -1,6 +1,6 @@
 import { materializeSearchResponse } from "./core/orchestrator";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
-import { buildQuotationText } from "./core/quotation";
+import { buildCommercialQuotation, buildQuotationText, buildTechnicalQuotation } from "./core/quotation";
 import {
   Cabin,
   CanonicalOffer,
@@ -38,6 +38,7 @@ import {
   resolveLatestCostamarProviderContext,
   resolveProviderId,
 } from "./provider-context";
+import { hasFilledSearchResultLimit, limitSearchResponseForPagination } from "./search-limits";
 import { getRuntime } from "./runtime";
 import { getSearchDatePolicy, validateSearchDateInPolicy } from "./search-date-policy";
 
@@ -76,12 +77,12 @@ interface ProgressiveSearchAdapter {
   resolveExactProgressive(
     request: SearchRequest,
     providerContext: ProviderContext | undefined,
-    onUpdate?: (result: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => void,
+    onUpdate?: (result: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => boolean | void,
   ): Promise<{ offers: CanonicalOffer[]; warnings: string[]; partial: boolean }>;
   resolveRangeProgressive(
     request: SearchRequest,
     providerContext: ProviderContext | undefined,
-    onUpdate?: (result: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => void,
+    onUpdate?: (result: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => boolean | void,
   ): Promise<{ offers: CanonicalOffer[]; warnings: string[]; partial: boolean }>;
   createMatrixDraft(
     request: SearchRequest,
@@ -252,7 +253,7 @@ function normalizeRequest(
       includedAirlineCodes: stringList(filters.includedAirlineCodes),
       excludedAirlineCodes: stringList(filters.excludedAirlineCodes),
       maxPrice: numberValue(filters.maxPrice),
-      maxResults: preserveOneWayStayRangeInputs ? numberValue(filters.maxResults) : numberValue(filters.maxResults, 25),
+      maxResults: numberValue(filters.maxResults),
       maxTotalDurationMinutes: numberValue(filters.maxTotalDurationMinutes),
       maxLayoverMinutes: numberValue(filters.maxLayoverMinutes),
       maxStops: numberValue(filters.maxStops),
@@ -952,40 +953,62 @@ export async function routeRequest(request: Request): Promise<Response> {
         completed: false,
       }]),
     );
+    let stoppedEarly = false;
 
     const syncSearchJob = (status: "running" | "completed") => {
+      if (stoppedEarly && status === "running") {
+        return undefined;
+      }
+
       const materialized = materializeAggregatedSearchResponse(
         normalizedRequest,
         sortMode,
         providerIds,
         providerStates,
       );
+      const limited = limitSearchResponseForPagination(normalizedRequest, materialized);
+      const nextStatus = stoppedEarly ? "completed" : status;
 
       runtime.sessions.updateSearchJob(job.id, (current) => ({
         ...current,
-        offers: materialized.offers,
-        allOffers: materialized.allOffers ?? materialized.offers,
+        offers: limited.offers,
+        allOffers: limited.allOffers ?? limited.offers,
         searchMeta: {
-          ...materialized.searchMeta,
+          ...limited.searchMeta,
           requestedAt: current.searchMeta.requestedAt,
+          partial: stoppedEarly ? false : limited.searchMeta.partial,
+          searchState: stoppedEarly ? "search_live" : limited.searchMeta.searchState,
         },
-        providerMeta: materialized.providerMeta,
-        warnings: materialized.warnings,
-        status,
+        providerMeta: limited.providerMeta,
+        warnings: limited.warnings,
+        status: nextStatus,
         error: undefined,
       }));
+
+      return materialized;
     };
 
     const resolvers = providerIds.map(async (providerId) => {
       const adapter = getProgressiveAdapter(providerId);
       const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
+        if (stoppedEarly) {
+          return false;
+        }
+
         providerStates.set(providerId, {
           offers: partialResult.offers,
           warnings: partialResult.warnings,
           partial: true,
           completed: false,
         });
-        syncSearchJob("running");
+        const materialized = syncSearchJob("running");
+        if (materialized && hasFilledSearchResultLimit(normalizedRequest, materialized)) {
+          stoppedEarly = true;
+          syncSearchJob("completed");
+          return false;
+        }
+
+        return true;
       };
 
       try {
@@ -998,6 +1021,13 @@ export async function routeRequest(request: Request): Promise<Response> {
           partial: result.partial,
           completed: true,
         });
+        if (!stoppedEarly) {
+          const materialized = syncSearchJob("running");
+          if (materialized && hasFilledSearchResultLimit(normalizedRequest, materialized)) {
+            stoppedEarly = true;
+            syncSearchJob("completed");
+          }
+        }
       } catch (error) {
         providerStates.set(providerId, {
           offers: [],
@@ -1011,7 +1041,9 @@ export async function routeRequest(request: Request): Promise<Response> {
     });
 
     void Promise.allSettled(resolvers).then(() => {
-      syncSearchJob("completed");
+      if (!stoppedEarly) {
+        syncSearchJob("completed");
+      }
     });
 
     return json(searchJobResponse(runtime, job));
@@ -1288,6 +1320,8 @@ export async function routeRequest(request: Request): Promise<Response> {
     return json({
       searchSessionId: payload.searchSessionId,
       offer: quotationOffer,
+      commercialText: buildCommercialQuotation(quotationOffer, session.request),
+      technicalText: buildTechnicalQuotation(quotationOffer, session.request),
       plainText: buildQuotationText(quotationOffer, session.request),
     });
   }

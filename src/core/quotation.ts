@@ -17,12 +17,12 @@ const SPANISH_MONTHS = [
 
 const CARRIER_NAME_FALLBACKS: Record<string, string> = {
   AC: "Air Canada",
-  AR: "Aerolineas Argentinas",
+  AR: "Aerolíneas Argentinas",
   AV: "Avianca",
   IB: "Iberia",
-  LA: "Latam",
-  LP: "Latam Peru",
-  OB: "Boliviana de Aviacion",
+  LA: "LATAM",
+  LP: "LATAM Perú",
+  OB: "Boliviana de Aviación",
   PU: "Plus Ultra",
   UX: "Air Europa",
 };
@@ -71,6 +71,28 @@ function titleCase(value?: string): string {
     .join(" ");
 }
 
+function sentenceCase(value?: string): string {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  if (!/^[\p{L}\s]+$/u.test(normalized)) {
+    return normalized;
+  }
+
+  const lower = normalized.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+function normalizedComparisonText(value?: string): string {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .trim();
+}
+
 function describePriceSource(offer: CanonicalOffer): string {
   const providerLabel = offer.providerSource === "costamar" ? "Costamar" : "Agil";
   if (offer.priceConfidence === "validated") {
@@ -99,13 +121,14 @@ function buildTechnicalQuotationText(
 ): string {
   const lines: string[] = [];
   const mainPath = offer.purchasePaths[0];
+  const carrierCodes = collectCarrierCodes(offer);
 
   lines.push("COTIZACION DE VUELO");
   lines.push("========================================");
   lines.push("");
   lines.push(`RUTA:  ${offer.origin} -> ${offer.destination}`);
   lines.push(`TIPO:  ${offer.tripType}`);
-  lines.push(`AEROLINEA: ${offer.mainCarrier ?? offer.validatingCarrier ?? "N/D"}`);
+  lines.push(`${carrierCodes.length > 1 ? "AEROLINEAS" : "AEROLINEA"}: ${carrierCodes.join(" / ") || "N/D"}`);
   lines.push("");
 
   for (const itinerary of offer.itineraries as Itinerary[]) {
@@ -196,51 +219,160 @@ function lastSegment(itinerary?: Itinerary): Segment | undefined {
   return segments.length ? segments[segments.length - 1] : undefined;
 }
 
-function carrierDisplayName(offer: CanonicalOffer): string {
-  const outbound = offer.itineraries.find((itinerary) => itinerary.direction === "outbound") ?? offer.itineraries[0];
-  const first = firstSegment(outbound);
-  const rawName = first?.marketingCarrierName || first?.operatingCarrierName;
+function carrierDisplayNameFromSegment(segment?: Segment): string {
+  const carrierCode = segment?.marketingCarrier ?? segment?.operatingCarrier ?? "";
+  const fallback = CARRIER_NAME_FALLBACKS[carrierCode] ?? (carrierCode || "Aerolínea por confirmar");
+  const rawName = segment?.marketingCarrierName || segment?.operatingCarrierName;
   if (rawName) {
-    return titleCase(rawName);
+    const titled = titleCase(rawName);
+    if (fallback && normalizedComparisonText(titled) === normalizedComparisonText(fallback)) {
+      return fallback;
+    }
+
+    return titled;
   }
 
-  const carrierCode = offer.mainCarrier ?? offer.validatingCarrier ?? "";
-  return CARRIER_NAME_FALLBACKS[carrierCode] ?? (carrierCode || "Aerolínea por confirmar");
+  return fallback;
 }
 
-function cityFromCodeOrName(name?: string, code?: string): string {
-  return titleCase(name) || code || "Ciudad por confirmar";
+function collectCarrierDisplayNames(offer: CanonicalOffer): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+
+  offer.itineraries.forEach((itinerary) => {
+    itinerary.segments.forEach((segment) => {
+      const display = carrierDisplayNameFromSegment(segment);
+      if (display && !seen.has(display)) {
+        seen.add(display);
+        names.push(display);
+      }
+    });
+  });
+
+  const fallbackCode = offer.mainCarrier ?? offer.validatingCarrier ?? "";
+  const fallbackName = CARRIER_NAME_FALLBACKS[fallbackCode] ?? (fallbackCode || "Aerolínea por confirmar");
+  if (names.length === 0 && fallbackName && !seen.has(fallbackName)) {
+    names.push(fallbackName);
+  }
+
+  return names;
+}
+
+function collectCarrierCodes(offer: CanonicalOffer): string[] {
+  const codes: string[] = [];
+  const seen = new Set<string>();
+
+  offer.itineraries.forEach((itinerary) => {
+    itinerary.segments.forEach((segment) => {
+      const code = (segment.marketingCarrier || segment.operatingCarrier || "").trim().toUpperCase();
+      if (code && !seen.has(code)) {
+        seen.add(code);
+        codes.push(code);
+      }
+    });
+  });
+
+  const fallbackCode = (offer.mainCarrier ?? offer.validatingCarrier ?? "").trim().toUpperCase();
+  if (codes.length === 0 && fallbackCode && !seen.has(fallbackCode)) {
+    codes.push(fallbackCode);
+  }
+
+  return codes;
+}
+
+function carrierDisplayName(offer: CanonicalOffer): string {
+  return collectCarrierDisplayNames(offer).join(" + ");
+}
+
+function normalizeIataCode(code?: string): string {
+  return String(code ?? "").trim().toUpperCase();
+}
+
+function locationLabel(value?: string): string {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const withoutCode = normalized.replace(/^[A-Z]{3}\s*-\s*/, "").trim();
+  const firstChunk = withoutCode.split(",")[0]?.trim() ?? "";
+  const base = firstChunk || withoutCode;
+  if (/^[A-Z]{3}$/.test(base)) {
+    return base;
+  }
+
+  return titleCase(base);
+}
+
+function cityFromRequestOrName(requestLabel?: string, name?: string, code?: string): string {
+  return locationLabel(requestLabel) || locationLabel(name) || code || "Ciudad por confirmar";
+}
+
+function locationDisplay(requestLabel?: string, name?: string, code?: string): string {
+  const city = cityFromRequestOrName(requestLabel, name, normalizeIataCode(code));
+  const iata = normalizeIataCode(code);
+  return iata ? `${city} (${iata})` : city;
 }
 
 function routeSummary(offer: CanonicalOffer, request: SearchRequest): string {
   const outbound = offer.itineraries.find((itinerary) => itinerary.direction === "outbound") ?? offer.itineraries[0];
-  const inbound = offer.itineraries.find((itinerary) => itinerary.direction === "inbound");
-  const originCity = cityFromCodeOrName(firstSegment(outbound)?.originName, request.legs[0]?.origin);
-  const destinationCity = cityFromCodeOrName(lastSegment(outbound)?.destinationName, request.legs[0]?.destination);
+  const leg = request.legs[0];
+  const originCity = locationDisplay(leg?.originLabel, firstSegment(outbound)?.originName, leg?.origin);
+  const destinationCity = locationDisplay(
+    leg?.destinationLabel,
+    lastSegment(outbound)?.destinationName,
+    leg?.destination,
+  );
 
-  if (offer.tripType === "round-trip") {
-    const returnCity = cityFromCodeOrName(
-      lastSegment(inbound)?.destinationName || firstSegment(outbound)?.originName,
-      request.legs[0]?.origin,
-    );
+  if (request.tripType === "round-trip") {
+    const returnCity = locationDisplay(leg?.originLabel, firstSegment(outbound)?.originName, leg?.origin);
     return `${originCity} - ${destinationCity} - ${returnCity}`;
   }
 
   return `${originCity} - ${destinationCity}`;
 }
 
-function includesSummary(offer: CanonicalOffer, request: SearchRequest): string {
-  const tripLabel = request.tripType === "round-trip"
-    ? "Boleto de ida y vuelta"
-    : "Boleto de solo ida";
-  const baggage = offer.baggage?.description
-    ? titleCase(offer.baggage.description)
-    : "Equipaje segun tarifa";
-  return `${tripLabel}, ${baggage}, check in online, asiento segun disponibilidad.`;
+function buildCommercialInclusions(offer: CanonicalOffer, request: SearchRequest): string[] {
+  const items = [
+    request.tripType === "round-trip"
+      ? "Boleto de ida y vuelta"
+      : "Boleto de solo ida",
+  ];
+
+  if (offer.baggage?.checkedIncluded) {
+    items.push(
+      offer.baggage.description
+        ? `Equipaje facturado: ${sentenceCase(offer.baggage.description)}`
+        : "Equipaje facturado incluido",
+    );
+  } else if (offer.baggage?.carryOnIncluded) {
+    items.push("Equipaje de mano");
+  }
+
+  items.push("Check in online");
+  items.push("Asiento según disponibilidad");
+  return items;
 }
 
-function restrictionsSummary(): string {
-  return "cambios de nombre no permitidos. Cambios de fecha, ruta y reembolsos sujetos a condiciones de la tarifa.";
+function buildCommercialExclusions(offer: CanonicalOffer): string[] {
+  const items: string[] = [];
+
+  if (offer.baggage?.checkedIncluded === false) {
+    items.push("Maleta facturada");
+  }
+
+  if (offer.baggage?.carryOnIncluded === false) {
+    items.push("Equipaje de mano");
+  }
+
+  return items;
+}
+
+function buildRestrictionsSummary(): string[] {
+  return [
+    "Cambios de nombre no permitidos.",
+    "Cambios de fecha, ruta y reembolsos sujetos a condiciones de la tarifa.",
+  ];
 }
 
 function buildCommercialQuotationText(
@@ -251,12 +383,16 @@ function buildCommercialQuotationText(
   const inbound = offer.itineraries.find((itinerary) => itinerary.direction === "inbound");
   const outboundDeparture = firstSegment(outbound)?.departureAt;
   const inboundDeparture = firstSegment(inbound)?.departureAt;
+  const carrierNames = collectCarrierDisplayNames(offer);
+  const inclusions = buildCommercialInclusions(offer, request);
+  const exclusions = buildCommercialExclusions(offer);
+  const restrictions = buildRestrictionsSummary();
 
   const lines = [
     "COTIZACIÓN BOLETO AÉREO ✈️",
     "",
-    `✈️Aerolínea: ${carrierDisplayName(offer)}`,
-    `🛫 Ruta: ${routeSummary(offer, request)}`,
+    `✈️ Ruta: ${routeSummary(offer, request)}`,
+    `✈️ ${carrierNames.length > 1 ? "Aerolíneas" : "Aerolínea"}: ${carrierDisplayName(offer)}`,
     `📆 Ida: ${formatCommercialDateTime(outboundDeparture)}`,
   ];
 
@@ -265,14 +401,39 @@ function buildCommercialQuotationText(
   }
 
   lines.push("");
-  lines.push(`✅ Incluye: ${includesSummary(offer, request)}`);
+  lines.push("✅ INCLUYE");
+  inclusions.forEach((item) => lines.push(`* ${item}`));
+
+  if (exclusions.length > 0) {
+    lines.push("");
+    lines.push("🚫 NO INCLUYE");
+    exclusions.forEach((item) => lines.push(`* ${item}`));
+  }
+
   lines.push("");
-  lines.push(`🙅🏻‍♀️ No permite: ${restrictionsSummary()}`);
+  lines.push("📋 CONDICIONES");
+  restrictions.forEach((item) => lines.push(`* ${item}`));
   lines.push("");
-  lines.push("PRECIO:");
-  lines.push("[Aquí no se coloca nada de momento, el agente decide]");
+  lines.push("💵 PRECIO:");
+  lines.push("");
+  lines.push("$ ______ dólares por adulto");
+  lines.push("S/. ______ soles por adulto");
 
   return lines.join("\n");
+}
+
+export function buildCommercialQuotation(
+  offer: CanonicalOffer,
+  request: SearchRequest,
+): string {
+  return buildCommercialQuotationText(offer, request);
+}
+
+export function buildTechnicalQuotation(
+  offer: CanonicalOffer,
+  request: SearchRequest,
+): string {
+  return buildTechnicalQuotationText(offer, request);
 }
 
 export function buildQuotationText(
@@ -280,12 +441,12 @@ export function buildQuotationText(
   request: SearchRequest,
 ): string {
   return [
-    buildCommercialQuotationText(offer, request),
+    buildCommercialQuotation(offer, request),
     "",
     "========================================",
     "DETALLE TECNICO",
     "========================================",
     "",
-    buildTechnicalQuotationText(offer, request),
+    buildTechnicalQuotation(offer, request),
   ].join("\n");
 }
