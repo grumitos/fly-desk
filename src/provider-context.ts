@@ -497,8 +497,15 @@ function readCostamarCandidatesFromChromeArtifactDirectory(
   return candidates;
 }
 
-function readCostamarSessionCandidateFromChrome(terminalId?: string): CostamarSessionCandidate | undefined {
-  if (cachedCostamarSessions && (Date.now() - cachedCostamarSessions.readAtMs) < COSTAMAR_SESSION_CACHE_TTL_MS) {
+function readCostamarSessionCandidateFromChrome(
+  terminalId?: string,
+  options?: { bypassCache?: boolean },
+): CostamarSessionCandidate | undefined {
+  if (
+    !options?.bypassCache
+    && cachedCostamarSessions
+    && (Date.now() - cachedCostamarSessions.readAtMs) < COSTAMAR_SESSION_CACHE_TTL_MS
+  ) {
     return pickLatestCostamarSessionCandidateForTerminal(cachedCostamarSessions.candidates, terminalId);
   }
 
@@ -527,6 +534,23 @@ function readCostamarSessionCandidateFromChrome(terminalId?: string): CostamarSe
     candidates,
   };
   return pickLatestCostamarSessionCandidateForTerminal(candidates, terminalId);
+}
+
+function maybeRefreshCostamarSessionCandidate(
+  currentToken: string | undefined,
+  terminalId: string | undefined,
+  candidate: CostamarSessionCandidate | undefined,
+  nowMs = Date.now(),
+): CostamarSessionCandidate | undefined {
+  const currentTokenIsUsable = Boolean(resolveUsableCostamarBrandedToken(currentToken, terminalId, nowMs));
+  const candidateIsUsable = Boolean(
+    candidate && resolveUsableCostamarBrandedToken(candidate.token, candidate.terminalId, nowMs),
+  );
+  if (currentTokenIsUsable || candidateIsUsable) {
+    return candidate;
+  }
+
+  return readCostamarSessionCandidateFromChrome(terminalId, { bypassCache: true }) ?? candidate;
 }
 
 export function resetCostamarSessionCacheForTests(): void {
@@ -573,8 +597,14 @@ export function resolveCostamarProviderContext(
   const compatibleToken = costamarTokenMatchesTerminal(normalized.token, normalized.terminalId)
     ? normalized.token
     : "";
-  const sessionCandidate = readCostamarSessionCandidateFromChrome(normalized.terminalId);
-  const shouldRefresh = shouldRefreshCostamarToken(compatibleToken, sessionCandidate);
+  const nowMs = Date.now();
+  const sessionCandidate = maybeRefreshCostamarSessionCandidate(
+    compatibleToken,
+    normalized.terminalId,
+    readCostamarSessionCandidateFromChrome(normalized.terminalId),
+    nowMs,
+  );
+  const shouldRefresh = shouldRefreshCostamarToken(compatibleToken, sessionCandidate, nowMs);
   if (compatibleToken && normalized.terminalId && !shouldRefresh) {
     return {
       ...normalized,
@@ -598,8 +628,14 @@ export function resolveLatestCostamarProviderContext(
   const compatibleToken = costamarTokenMatchesTerminal(normalized.token, normalized.terminalId)
     ? normalized.token
     : "";
-  const sessionCandidate = readCostamarSessionCandidateFromChrome(normalized.terminalId);
-  const shouldRefresh = shouldRefreshCostamarToken(compatibleToken, sessionCandidate, Date.now(), true);
+  const nowMs = Date.now();
+  const sessionCandidate = maybeRefreshCostamarSessionCandidate(
+    compatibleToken,
+    normalized.terminalId,
+    readCostamarSessionCandidateFromChrome(normalized.terminalId),
+    nowMs,
+  );
+  const shouldRefresh = shouldRefreshCostamarToken(compatibleToken, sessionCandidate, nowMs, true);
   if (!sessionCandidate) {
     return {
       ...normalized,

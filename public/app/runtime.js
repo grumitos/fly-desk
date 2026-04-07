@@ -1,5 +1,6 @@
 export const state = {
   request: null,
+  providerConfig: null,
   sortMode: "cheapest",
   searchResponse: null,
   searchJobId: null,

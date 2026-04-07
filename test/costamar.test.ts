@@ -672,6 +672,62 @@ test("resolveLatestCostamarProviderContext can recover the freshest token from C
   }
 });
 
+test("resolveLatestCostamarProviderContext rescans Chrome after an empty cached lookup", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-cache-refresh-"));
+  const profileName = "Profile 43";
+  const profileDir = join(tempRoot, profileName);
+  mkdirSync(profileDir, { recursive: true });
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const first = resolveLatestCostamarProviderContext({
+      terminalId: "0721808110",
+      lang: "es",
+    });
+    assert.equal(first.token, "");
+
+    const sessionsDir = join(profileDir, "Sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    const freshToken = buildJwt({
+      id: "0721808110",
+      iat: 1893463200,
+      exp: 1893466800,
+    });
+    writeFileSync(
+      join(sessionsDir, "Tabs_1"),
+      `https://booking.clickandbook.com/vuelos/b/CCS/MAD/2026-05-12/2026-05-22/1/0/0?terminalId=0721808110&lang=es&token=${freshToken}`,
+      "utf8",
+    );
+
+    const refreshed = resolveLatestCostamarProviderContext({
+      terminalId: "0721808110",
+      lang: "es",
+    });
+    assert.equal(refreshed.terminalId, "0721808110");
+    assert.equal(refreshed.token, freshToken);
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("buildCostamarBrandedSearchUrl keeps the branded round-trip path shape", () => {
   const request = buildRequest();
   request.searchMode = "exact";

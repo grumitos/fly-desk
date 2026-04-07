@@ -177,7 +177,9 @@ function classifyProviderWarning(providerId, warning) {
     )) {
       return {
         shortLabel: "Falta sesión",
-        detail: "Costamar no tiene un token o sesión válida para consultar.",
+        detail: normalized.includes("redirect token")
+          ? "Costamar no tiene un token branded válido para abrir esta búsqueda en su web."
+          : "Costamar no tiene un token o sesión válida para consultar.",
       };
     }
 
@@ -1106,6 +1108,129 @@ function selectLocationSuggestion(id, suggestion) {
   hideLocationMenu(id);
 }
 
+function isIsoDatePathSegment(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || "").trim());
+}
+
+function normalizeClipboardProviderConfig(rawProviderConfig) {
+  const costamar = rawProviderConfig?.costamar;
+  if (!costamar || typeof costamar !== "object") {
+    return null;
+  }
+
+  const terminalId = String(costamar.terminalId || "").trim();
+  const token = String(costamar.token || "").trim();
+  const lang = String(costamar.lang || "").trim();
+  if (!terminalId && !token && !lang) {
+    return null;
+  }
+
+  return {
+    costamar: {
+      ...(terminalId ? { terminalId } : {}),
+      ...(token ? { token } : {}),
+      ...(lang ? { lang } : {}),
+    },
+  };
+}
+
+function buildCostamarClipboardPayloadFromUrl(raw) {
+  const source = String(raw || "").trim();
+  if (!source) return null;
+
+  let parsed;
+  try {
+    parsed = new URL(source);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== "https:" || parsed.hostname.toLowerCase() !== "booking.clickandbook.com") {
+    return null;
+  }
+
+  const path = parsed.pathname.replace(/\/+$/, "").split("/").filter(Boolean);
+  if (path.length < 7 || path[0] !== "vuelos" || path[1] !== "b") {
+    return null;
+  }
+
+  const origin = String(path[2] || "").trim().toUpperCase();
+  const destination = String(path[3] || "").trim().toUpperCase();
+  const departureDate = String(path[4] || "").trim();
+  if (!origin || !destination || !isIsoDatePathSegment(departureDate)) {
+    return null;
+  }
+
+  let returnDate = "";
+  let passengerOffset = 5;
+  if (isIsoDatePathSegment(path[5])) {
+    returnDate = String(path[5] || "").trim();
+    passengerOffset = 6;
+  }
+
+  const adults = String(path[passengerOffset] || "").trim();
+  const children = String(path[passengerOffset + 1] || "").trim();
+  const infants = String(path[passengerOffset + 2] || "").trim();
+  if (!/^\d+$/.test(adults) || !/^\d+$/.test(children) || !/^\d+$/.test(infants)) {
+    return null;
+  }
+
+  const terminalId = String(parsed.searchParams.get("terminalId") || "").trim();
+  const token = String(parsed.searchParams.get("token") || "").trim();
+  const lang = String(parsed.searchParams.get("lang") || "es").trim() || "es";
+  const stayNights = returnDate ? Math.max(0, diffDaysIso(departureDate, returnDate)) : undefined;
+
+  return {
+    type: SEARCH_CONFIG_CLIPBOARD_TYPE,
+    version: SEARCH_CONFIG_CLIPBOARD_VERSION,
+    copiedAt: new Date().toISOString(),
+    mode: "exact",
+    tripType: returnDate ? "round-trip" : "one-way",
+    origin: {
+      value: origin,
+      code: origin,
+      label: origin,
+    },
+    destination: {
+      value: destination,
+      code: destination,
+      label: destination,
+    },
+    dates: {
+      departureDate,
+      returnDate,
+      departureStart: "",
+      departureEnd: "",
+      returnStart: "",
+      returnEnd: "",
+    },
+    stay: {
+      nights: typeof stayNights === "number" ? String(stayNights) : "",
+      min: typeof stayNights === "number" ? String(stayNights) : "",
+      max: typeof stayNights === "number" ? String(stayNights) : "",
+    },
+    passengers: {
+      adults,
+      children,
+      infants,
+    },
+    filters: {
+      nonStop: false,
+      baggageRequired: false,
+      maxStops: "",
+      maxLayoverMinutes: "",
+    },
+    sortMode: state.sortMode || "cheapest",
+    providerConfig: normalizeClipboardProviderConfig({
+      costamar: {
+        terminalId,
+        token,
+        lang,
+      },
+    }),
+  };
+}
+
 function parseSearchClipboardPayload(raw) {
   if (!raw) return null;
   try {
@@ -1113,9 +1238,12 @@ function parseSearchClipboardPayload(raw) {
     if (!parsed || parsed.type !== SEARCH_CONFIG_CLIPBOARD_TYPE || parsed.version !== SEARCH_CONFIG_CLIPBOARD_VERSION) {
       return null;
     }
-    return parsed;
+    return {
+      ...parsed,
+      providerConfig: normalizeClipboardProviderConfig(parsed.providerConfig),
+    };
   } catch {
-    return null;
+    return buildCostamarClipboardPayloadFromUrl(raw);
   }
 }
 
@@ -1183,6 +1311,7 @@ function buildSearchClipboardPayload() {
       maxLayoverMinutes: controlValue("maxLayoverMinutes"),
     },
     sortMode: controlValue("sortMode") || state.sortMode || "cheapest",
+    providerConfig: normalizeClipboardProviderConfig(state.providerConfig),
   };
 }
 
@@ -1308,6 +1437,7 @@ function syncSearchFormWithRequest(request) {
 function applySearchClipboardPayload(payload) {
   if (!payload) return false;
 
+  state.providerConfig = normalizeClipboardProviderConfig(payload.providerConfig);
   state.flexMode = payload.mode === "flexible";
   tripType.value = payload.tripType === "one-way" ? "one-way" : "round-trip";
   if (flexibleMode) {
@@ -3326,6 +3456,7 @@ function getFormPayload() {
     : undefined;
   return {
     sortMode: String(fd.get("sortMode") || "cheapest"),
+    providerConfig: normalizeClipboardProviderConfig(state.providerConfig) || undefined,
     request: {
       tripType: t,
       searchMode: m,
