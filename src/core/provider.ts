@@ -12,7 +12,6 @@ import {
 
 export interface ProviderCapabilities {
   exactSearch: boolean;
-  reprice: boolean;
   flexibleDates: boolean;
   deeplinks: boolean;
   searchRedirects: boolean;
@@ -30,12 +29,6 @@ export interface ProviderMatrixResult {
   cells: MatrixCell[];
   warnings: string[];
   partial: boolean;
-}
-
-export interface RepriceResult {
-  status: "verified" | "changed" | "unavailable";
-  offer?: CanonicalOffer;
-  warnings: string[];
 }
 
 export interface PurchasePathResult {
@@ -58,11 +51,6 @@ export interface SearchProvider {
     request: SearchRequest,
     context?: ProviderExecutionContext,
   ): Promise<ProviderMatrixResult>;
-  reprice?(
-    offer: CanonicalOffer,
-    request: SearchRequest,
-    context?: ProviderExecutionContext,
-  ): Promise<RepriceResult>;
   createOrder?(
     offer: CanonicalOffer,
     request: SearchRequest,

@@ -8,7 +8,6 @@ import { removePathWithRetries } from "./temp-artifacts";
 import {
   buildDerivedOneWayRequest,
   buildDerivedRequest,
-  buildExactRequestFromOffer,
   diffDays,
   enumerateRange,
   enumerateUsefulFlexibleRequests,
@@ -23,7 +22,6 @@ import { buildOfferSignature } from "./core/offer-signature";
 import { maxStopsAcrossItineraries } from "./core/ranking";
 import {
   ProviderSearchResult,
-  RepriceResult,
 } from "./core/provider";
 import {
   BaggageSummary,
@@ -1365,12 +1363,31 @@ function computeAgilTotalAmount(pricingInfo: AgilPricingInfo | undefined): numbe
   return undefined;
 }
 
+export function extractAgilUsdToPenRate(
+  pricingInfo: AgilPricingInfo | undefined,
+  fallbackCurrencyCode?: string,
+): number | undefined {
+  const currencyCode = String(
+    pricingInfo?.tipoCambio?.code
+      ?? fallbackCurrencyCode
+      ?? "",
+  ).trim().toUpperCase();
+  const rate = pricingInfo?.tipoCambio?.rate;
+
+  if (currencyCode !== "USD" || typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0) {
+    return undefined;
+  }
+
+  return Number(rate.toFixed(4));
+}
+
 function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): CanonicalOffer[] {
   if (group.display === false) {
     return [];
   }
 
   const currencyCode = group.pricingInfo?.tipoCambio?.code || request.currencyCode;
+  const usdToPenRate = extractAgilUsdToPenRate(group.pricingInfo, currencyCode);
   const totalAmount = computeAgilTotalAmount(group.pricingInfo);
   if (typeof totalAmount !== "number") {
     return [];
@@ -1453,6 +1470,7 @@ function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): Canon
     destination: leg.destination,
     itineraries,
     price,
+    usdToPenRate,
     baggage,
     fareMeta: {
       lastTicketingDate: parseLimitDate(group.pricingInfo?.itinTotalFare?.limitDate),
@@ -1774,6 +1792,26 @@ export async function searchLocalAgilExact(request: SearchRequest): Promise<Prov
   };
 }
 
+export async function resolveLocalAgilUsdToPenRate(request: SearchRequest): Promise<number | undefined> {
+  const session = await getAgilSession();
+  const outcome = await searchGroupsAcrossGds(session, request);
+  const rates = outcome.groups
+    .map((group) => extractAgilUsdToPenRate(group.pricingInfo, request.currencyCode))
+    .filter((rate): rate is number => typeof rate === "number" && Number.isFinite(rate) && rate > 0);
+
+  if (rates.length === 0) {
+    return undefined;
+  }
+
+  const counts = new Map<number, number>();
+  rates.forEach((rate) => {
+    counts.set(rate, (counts.get(rate) ?? 0) + 1);
+  });
+
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0] - right[0])[0]?.[0];
+}
+
 export function createLocalAgilSearchDraft(
   request: SearchRequest,
   providerMeta: ProviderMeta,
@@ -1963,42 +2001,6 @@ export async function resolveLocalAgilRangeProgressive(
     offers,
     warnings: finalWarnings,
     partial: partial || stopRequested,
-  };
-}
-
-export async function repriceLocalAgilOffer(
-  existingOffer: CanonicalOffer,
-  request: SearchRequest,
-): Promise<RepriceResult> {
-  const exactRequest = request.searchMode === "exact"
-    ? request
-    : buildExactRequestFromOffer(existingOffer, request);
-  const search = await searchLocalAgilExact(exactRequest);
-  const sameSignature = search.offers.filter((offer) => offer.signature === existingOffer.signature);
-  const matched = sameSignature.find(
-    (offer) => offer.price.total.amount === existingOffer.price.total.amount,
-  ) ?? sameSignature[0];
-
-  if (!matched) {
-    return {
-      status: "unavailable",
-      warnings: [...search.warnings, "Agil no longer returned this itinerary during reprice."],
-    };
-  }
-
-  const priceChanged = matched.price.total.amount !== existingOffer.price.total.amount;
-  return {
-    status: priceChanged ? "changed" : "verified",
-    offer: {
-      ...matched,
-      priceConfidence: "validated",
-      priceStatus: priceChanged ? "repriced_changed" : "verified",
-      priceVerifiedAt: new Date().toISOString(),
-      warnings: priceChanged
-        ? [...matched.warnings, "Price changed during reprice."]
-        : matched.warnings,
-    },
-    warnings: search.warnings,
   };
 }
 

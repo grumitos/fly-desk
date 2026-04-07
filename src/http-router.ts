@@ -38,6 +38,7 @@ import {
   resolveLatestCostamarProviderContext,
   resolveProviderId,
 } from "./provider-context";
+import { resolveQuotationUsdToPenRate } from "./quotation-exchange-rate";
 import { hasFilledSearchResultLimit, limitSearchResponseForPagination } from "./search-limits";
 import { getRuntime } from "./runtime";
 import { getSearchDatePolicy, validateSearchDateInPolicy } from "./search-date-policy";
@@ -57,10 +58,6 @@ interface SearchPayload {
 
 interface SessionPayload {
   searchSessionId?: string;
-}
-
-interface RepricePayload extends SessionPayload {
-  offerId?: string;
 }
 
 interface QuotationPayload extends SessionPayload {
@@ -673,16 +670,6 @@ function materializeFailedMatrixResponse(
   };
 }
 
-function scopedProviderRequest(
-  request: SearchRequest,
-  providerId: ProviderId,
-): SearchRequest {
-  return {
-    ...request,
-    providerId,
-  };
-}
-
 function getProgressiveAdapter(providerId: ProviderId): ProgressiveSearchAdapter {
   return PROGRESSIVE_ADAPTERS[providerId];
 }
@@ -774,28 +761,6 @@ function matrixJobResponse(job: ReturnType<typeof getRuntime>["sessions"] extend
     warnings: job.warnings,
     error: job.error,
   };
-}
-
-async function ensureValidatedSessionOffer(
-  runtime: ReturnType<typeof getRuntime>,
-  searchSessionId: string,
-  offerId: string,
-): Promise<CanonicalOffer | undefined> {
-  return runtime.sessions.ensureValidatedOffer(
-    searchSessionId,
-    offerId,
-    async (offer, session) => (
-      await runtime.orchestrator.reprice(
-        session.request,
-        offerId,
-        offer,
-        {
-          providerId: offer.providerSource,
-          providerContext: session.providerContext,
-        },
-      )
-    ).offers[0] ?? offer,
-  );
 }
 
 function searchJobResponse(
@@ -917,7 +882,7 @@ export async function routeRequest(request: Request): Promise<Response> {
 
   if (request.method === "POST" && url.pathname === "/api/search") {
     const payload = await readPayload<SearchPayload>(request);
-    const explicitProviderId = parseExplicitProviderId(payload.providerId ?? payload.request?.providerId);
+    const explicitProviderId = parseExplicitProviderId(payload.providerId);
     const providerContext = buildProviderContext("costamar", payload.providerConfig);
     const providerIds = resolveSearchProviderIds(explicitProviderId);
     const normalizedRequest = normalizeRequest(payload.request, explicitProviderId);
@@ -1062,7 +1027,7 @@ export async function routeRequest(request: Request): Promise<Response> {
 
   if (request.method === "POST" && url.pathname === "/api/matrix") {
     const payload = await readPayload<SearchPayload>(request);
-    const explicitProviderId = parseExplicitProviderId(payload.providerId ?? payload.request?.providerId);
+    const explicitProviderId = parseExplicitProviderId(payload.providerId);
     const providerIds = resolveSearchProviderIds(explicitProviderId);
     const normalizedRequest = normalizeRequest(payload.request, explicitProviderId);
     normalizedRequest.searchMode = "roundtrip-grid";
@@ -1078,9 +1043,8 @@ export async function routeRequest(request: Request): Promise<Response> {
 
     const providerStates = new Map<ProviderId, ProviderMatrixState>(
       providerIds.map((providerId) => {
-        const providerRequest = scopedProviderRequest(normalizedRequest, providerId);
         const adapter = getProgressiveAdapter(providerId);
-        const response = adapter.createMatrixDraft(providerRequest, {
+        const response = adapter.createMatrixDraft(normalizedRequest, {
           exactProvider: providerId,
           coverageMode: normalizedRequest.coverageMode,
         });
@@ -1134,17 +1098,16 @@ export async function routeRequest(request: Request): Promise<Response> {
     };
 
     const resolvers = providerIds.map(async (providerId) => {
-      const providerRequest = scopedProviderRequest(normalizedRequest, providerId);
       const adapter = getProgressiveAdapter(providerId);
       const currentState = providerStates.get(providerId);
-      const draftResponse = currentState?.response ?? adapter.createMatrixDraft(providerRequest, {
+      const draftResponse = currentState?.response ?? adapter.createMatrixDraft(normalizedRequest, {
         exactProvider: providerId,
         coverageMode: normalizedRequest.coverageMode,
       });
 
       try {
         const result = await adapter.resolveMatrixProgressive(
-          providerRequest,
+          normalizedRequest,
           providerContext,
           draftResponse,
           (cell) => {
@@ -1235,70 +1198,6 @@ export async function routeRequest(request: Request): Promise<Response> {
     return json({ error: "Purchase path is unavailable." }, { status: 410 });
   }
 
-  if (request.method === "POST" && url.pathname === "/api/reprice") {
-    const payload = await readPayload<RepricePayload>(request);
-
-    if (!payload.searchSessionId || !payload.offerId) {
-      return json({ errors: ["searchSessionId and offerId are required."] }, { status: 400 });
-    }
-
-    const session = runtime.sessions.getSession(payload.searchSessionId);
-    const offer = session ? runtime.sessions.getOffer(payload.searchSessionId, payload.offerId) : undefined;
-
-    if (!session || !offer) {
-      return json({ errors: ["Session or offer not found."] }, { status: 404 });
-    }
-
-    const result = await runtime.orchestrator.reprice(
-      session.request,
-      payload.offerId,
-      offer,
-      {
-        providerId: offer.providerSource,
-        providerContext: session.providerContext,
-      },
-    );
-    const repriced = result.offers[0];
-
-    if (!repriced) {
-      return json({ errors: ["Offer not found after repricing."] }, { status: 404 });
-    }
-
-    const updated = runtime.sessions.updateOffer(payload.searchSessionId, repriced);
-
-    return json({
-      searchSessionId: payload.searchSessionId,
-      offer: updated,
-      searchMeta: result.searchMeta,
-      providerMeta: result.providerMeta,
-      warnings: result.warnings,
-    });
-  }
-
-  if (request.method === "POST" && url.pathname === "/api/offers/prefetch") {
-    const payload = await readPayload<RepricePayload>(request);
-
-    if (!payload.searchSessionId || !payload.offerId) {
-      return json({ errors: ["searchSessionId and offerId are required."] }, { status: 400 });
-    }
-
-    const session = runtime.sessions.getSession(payload.searchSessionId);
-    const offer = session ? runtime.sessions.getOffer(payload.searchSessionId, payload.offerId) : undefined;
-
-    if (!session || !offer) {
-      return json({ errors: ["Session or offer not found."] }, { status: 404 });
-    }
-
-    const prefetchedOffer = offer.priceConfidence === "validated"
-      ? offer
-      : await ensureValidatedSessionOffer(runtime, payload.searchSessionId, payload.offerId) ?? offer;
-
-    return json({
-      searchSessionId: payload.searchSessionId,
-      offer: prefetchedOffer,
-    });
-  }
-
   if (request.method === "POST" && url.pathname === "/api/quotation") {
     const payload = await readPayload<QuotationPayload>(request);
 
@@ -1313,16 +1212,14 @@ export async function routeRequest(request: Request): Promise<Response> {
       return json({ errors: ["Session or offer not found."] }, { status: 404 });
     }
 
-    const quotationOffer = offer.priceConfidence === "validated"
-      ? offer
-      : await ensureValidatedSessionOffer(runtime, payload.searchSessionId, payload.offerId) ?? offer;
+    const usdToPenRate = await resolveQuotationUsdToPenRate(session, offer);
 
     return json({
       searchSessionId: payload.searchSessionId,
-      offer: quotationOffer,
-      commercialText: buildCommercialQuotation(quotationOffer, session.request),
-      technicalText: buildTechnicalQuotation(quotationOffer, session.request),
-      plainText: buildQuotationText(quotationOffer, session.request),
+      offer,
+      commercialText: buildCommercialQuotation(offer, session.request, { usdToPenRate }),
+      technicalText: buildTechnicalQuotation(offer, session.request),
+      plainText: buildQuotationText(offer, session.request, { usdToPenRate }),
     });
   }
 

@@ -111,6 +111,22 @@ function defaultProviderIds(request) {
   return request?.providerId ? [providerIdFromRequest(request)] : ["agil-local", "costamar"];
 }
 
+function matrixDerivedSearchRequest(request) {
+  if (!request) {
+    return request;
+  }
+
+  const providerIds = state.matrixResponse?.searchMeta?.providersUsed;
+  if (Array.isArray(providerIds) && providerIds.length > 1 && request?.providerId) {
+    return {
+      ...request,
+      providerId: undefined,
+    };
+  }
+
+  return request;
+}
+
 function providerLabelList(providerIds) {
   return (providerIds || []).map(providerLabel).join(" + ");
 }
@@ -125,14 +141,6 @@ function providerSearchWarnings(response) {
     ...(response?.searchMeta?.warnings ?? []),
   ];
 }
-
-const backgroundOfferValidationRequests = new Map();
-const backgroundOfferValidationQueue = [];
-const queuedBackgroundOfferValidationKeys = new Set();
-const BACKGROUND_VALIDATION_PREFETCH_LIMIT = 4;
-const BACKGROUND_VALIDATION_CONCURRENCY = 2;
-let backgroundOfferValidationActiveCount = 0;
-let backgroundOfferValidationSessionId = null;
 
 function normalizedWarningMessage(warning) {
   return String(warning || "").trim().toLowerCase();
@@ -381,7 +389,7 @@ function buildResultsTableHeaderHtml() {
       <th>Duración</th>
       <th>Escalas</th>
       <th>Equipaje</th>
-      <th class="results-price">Precio</th>
+      <th>Precio</th>
       <th>Enlace</th>
     </tr></thead>
   `;
@@ -460,8 +468,8 @@ async function copyTechnicalQuotation() {
   const copied = await writeClipboardText(state.quotationTechnicalText);
   showToast(
     copied
-      ? "Detalle tecnico copiado al portapapeles."
-      : "No pude copiar el detalle tecnico al portapapeles.",
+      ? "Detalle técnico copiado al portapapeles."
+      : "No pude copiar el detalle técnico al portapapeles.",
     copied ? "success" : "error",
   );
 }
@@ -754,15 +762,6 @@ function toolbarDateSummary(request = activeResultsRequest()) {
   return departureStart ? formatDateCompact(departureStart) : "";
 }
 
-function activeResultsProviderIds(active = state.searchResponse ?? state.matrixResponse) {
-  const providerIds = active?.searchMeta?.providersUsed;
-  if (Array.isArray(providerIds) && providerIds.length > 0) {
-    return providerIds;
-  }
-
-  return defaultProviderIds(active?.request ?? state.request);
-}
-
 function buildResultsPanelMeta({ hasMatrix, matrixCellCount }) {
   const active = state.searchResponse ?? state.matrixResponse;
   if (!active) {
@@ -775,16 +774,28 @@ function buildResultsPanelMeta({ hasMatrix, matrixCellCount }) {
     toolbarDateSummary(request),
   ].filter(Boolean);
 
-  const providerIds = activeResultsProviderIds(active);
-  if (providerIds.length > 0) {
-    parts.push(providerLabelList(providerIds));
-  }
-
   if (hasMatrix && matrixCellCount > 0) {
     parts.push(`${matrixCellCount} celdas`);
   }
 
   return parts.join(" · ");
+}
+
+function buildResultsPagerHtml(currentPage, totalPages, { placeholder = false } = {}) {
+  const label = placeholder ? "— / —" : `${currentPage} / ${totalPages}`;
+  const prevDisabled = placeholder || currentPage <= 1;
+  const nextDisabled = placeholder || currentPage >= totalPages;
+  const labelClass = placeholder ? "pager-label pager-label--placeholder" : "pager-label";
+
+  return `
+    <button type="button" class="pager-arrow" data-results-page="prev" ${prevDisabled ? "disabled" : ""} aria-label="Página anterior">
+      <svg viewBox="0 0 10 14" width="10" height="14" aria-hidden="true"><polygon points="10,0 0,7 10,14" fill="currentColor"/></svg>
+    </button>
+    <span class="${labelClass}">${label}</span>
+    <button type="button" class="pager-arrow" data-results-page="next" ${nextDisabled ? "disabled" : ""} aria-label="Página siguiente">
+      <svg viewBox="0 0 10 14" width="10" height="14" aria-hidden="true"><polygon points="0,0 10,7 0,14" fill="currentColor"/></svg>
+    </button>
+  `;
 }
 
 function formatMonthTitle(isoMonth) {
@@ -1702,6 +1713,53 @@ function buildOfferVariantSummary(offer) {
   return pieces.join(" · ");
 }
 
+function stopsCountLabel(stops) {
+  const total = Number.isFinite(Number(stops)) ? Number(stops) : 0;
+  if (total <= 0) {
+    return "Directo";
+  }
+
+  return total === 1 ? "1 escala" : `${total} escalas`;
+}
+
+function itineraryDirectionLabel(direction, index = 0) {
+  if (direction === "outbound") {
+    return "Ida";
+  }
+
+  if (direction === "inbound") {
+    return "Vuelta";
+  }
+
+  return index > 0 ? `Tramo ${index + 1}` : "Tramo";
+}
+
+function itineraryHeadingHtml(itinerary, index = 0) {
+  const title = itineraryDirectionLabel(itinerary?.direction, index);
+  const meta = `${formatDuration(itinerary?.durationMinutes)} · ${stopsCountLabel(itinerary?.stops)}`;
+  return `
+    <div class="detail-segment__dir">
+      <span class="detail-segment__title">${escapeHtml(title)}</span>
+      <span class="detail-segment__meta">${escapeHtml(meta)}</span>
+    </div>
+  `;
+}
+
+function segmentRouteLabel(segment) {
+  const originCode = String(segment?.origin ?? "").trim();
+  const destinationCode = String(segment?.destination ?? "").trim();
+  const originName = typeof segment?.originName === "string" ? segment.originName.trim() : "";
+  const destinationName = typeof segment?.destinationName === "string" ? segment.destinationName.trim() : "";
+  const showOriginName = originName && originName.toUpperCase() !== originCode.toUpperCase();
+  const showDestinationName = destinationName && destinationName.toUpperCase() !== destinationCode.toUpperCase();
+
+  if (!showOriginName && !showDestinationName) {
+    return "";
+  }
+
+  return `${showOriginName ? originName : originCode} → ${showDestinationName ? destinationName : destinationCode}`;
+}
+
 function countWindowCombinations() {
   const ds = $("departureStart")?.value;
   const de = $("departureEnd")?.value;
@@ -2263,165 +2321,6 @@ function selOffer() {
 
 function sessionId() {
   return state.searchResponse?.searchMeta?.searchSessionId ?? null;
-}
-
-function updateOfferInSearchState(updatedOffer) {
-  if (!state.searchResponse?.allOffers || !updatedOffer?.id) {
-    return false;
-  }
-
-  let changed = false;
-  state.searchResponse.allOffers = state.searchResponse.allOffers.map((offer) => {
-    if (offer.id !== updatedOffer.id) {
-      return offer;
-    }
-
-    changed = true;
-    return updatedOffer;
-  });
-
-  if (changed) {
-    applyClientOfferControls();
-  }
-
-  return changed;
-}
-
-function latestOfferForBackgroundValidation(offerId) {
-  return state.searchResponse?.allOffers?.find((offer) => offer.id === offerId)
-    ?? state.searchResponse?.filteredOffers?.find((offer) => offer.id === offerId)
-    ?? state.searchResponse?.offers?.find((offer) => offer.id === offerId)
-    ?? null;
-}
-
-function syncBackgroundOfferValidationSession(nextSessionId) {
-  if (backgroundOfferValidationSessionId === nextSessionId) {
-    return;
-  }
-
-  backgroundOfferValidationSessionId = nextSessionId;
-  backgroundOfferValidationQueue.length = 0;
-  queuedBackgroundOfferValidationKeys.clear();
-}
-
-function prioritizeQueuedBackgroundValidation(requestKey) {
-  const taskIndex = backgroundOfferValidationQueue.findIndex((task) => task.requestKey === requestKey);
-  if (taskIndex <= 0) {
-    return;
-  }
-
-  const [task] = backgroundOfferValidationQueue.splice(taskIndex, 1);
-  backgroundOfferValidationQueue.unshift(task);
-}
-
-function pumpBackgroundOfferValidationQueue() {
-  while (backgroundOfferValidationActiveCount < BACKGROUND_VALIDATION_CONCURRENCY) {
-    const nextTask = backgroundOfferValidationQueue.shift();
-    if (!nextTask) {
-      return;
-    }
-
-    queuedBackgroundOfferValidationKeys.delete(nextTask.requestKey);
-
-    if (sessionId() !== nextTask.searchSessionId) {
-      continue;
-    }
-
-    const latestOffer = latestOfferForBackgroundValidation(nextTask.offerId);
-    if (!latestOffer || latestOffer.priceConfidence === "validated") {
-      continue;
-    }
-
-    backgroundOfferValidationActiveCount += 1;
-    const requestPromise = postJson("/api/offers/prefetch", {
-      searchSessionId: nextTask.searchSessionId,
-      offerId: nextTask.offerId,
-    })
-      .then((data) => {
-        if (state.searchResponse?.searchMeta?.searchSessionId !== nextTask.searchSessionId || !data?.offer) {
-          return data?.offer ?? null;
-        }
-
-        if (updateOfferInSearchState(data.offer)) {
-          renderAll();
-        }
-
-        return data.offer;
-      })
-      .catch(() => null)
-      .finally(() => {
-        backgroundOfferValidationActiveCount = Math.max(0, backgroundOfferValidationActiveCount - 1);
-        backgroundOfferValidationRequests.delete(nextTask.requestKey);
-        pumpBackgroundOfferValidationQueue();
-      });
-
-    backgroundOfferValidationRequests.set(nextTask.requestKey, requestPromise);
-  }
-}
-
-function queueOfferBackgroundValidation(searchSessionId, offerId, { priority = false } = {}) {
-  const offer = latestOfferForBackgroundValidation(offerId);
-  if (!searchSessionId || !offer || offer.priceConfidence === "validated") {
-    return Promise.resolve(null);
-  }
-
-  const requestKey = `${searchSessionId}:${offer.id}`;
-  const existingRequest = backgroundOfferValidationRequests.get(requestKey);
-  if (existingRequest) {
-    return existingRequest;
-  }
-
-  if (queuedBackgroundOfferValidationKeys.has(requestKey)) {
-    if (priority) {
-      prioritizeQueuedBackgroundValidation(requestKey);
-    }
-    return Promise.resolve(null);
-  }
-
-  const task = {
-    requestKey,
-    searchSessionId,
-    offerId: offer.id,
-  };
-
-  if (priority) {
-    backgroundOfferValidationQueue.unshift(task);
-  } else {
-    backgroundOfferValidationQueue.push(task);
-  }
-  queuedBackgroundOfferValidationKeys.add(requestKey);
-  pumpBackgroundOfferValidationQueue();
-  return Promise.resolve(null);
-}
-
-function queueRankedOfferValidations() {
-  const sid = sessionId();
-  const visibleOffers = state.searchResponse?.offers ?? [];
-
-  syncBackgroundOfferValidationSession(sid);
-  if (!sid || visibleOffers.length === 0) {
-    return;
-  }
-
-  const targetOfferIds = [];
-  const selectedOfferId = selOffer()?.id;
-  if (selectedOfferId) {
-    targetOfferIds.push(selectedOfferId);
-  }
-
-  visibleOffers
-    .slice(0, BACKGROUND_VALIDATION_PREFETCH_LIMIT)
-    .forEach((offer) => {
-      if (offer?.id && !targetOfferIds.includes(offer.id)) {
-        targetOfferIds.push(offer.id);
-      }
-    });
-
-  targetOfferIds.forEach((offerId, index) => {
-    void queueOfferBackgroundValidation(sid, offerId, {
-      priority: index === 0 && offerId === selectedOfferId,
-    });
-  });
 }
 
 /* ================================================================
@@ -3418,7 +3317,6 @@ function applyClientOfferControls() {
     state.selectedOfferId = state.searchResponse.offers[0]?.id ?? offers[0]?.id ?? null;
   }
 
-  queueRankedOfferValidations();
 }
 
 function getOffersForVisibleFacets(allOffers, filters = getActiveClientFilters()) {
@@ -3444,7 +3342,6 @@ function setSearchResponse(data) {
 
 function selectOffer(offerId) {
   state.selectedOfferId = offerId ?? null;
-  queueRankedOfferValidations();
   renderResultsArea();
   renderDetailPanel();
 }
@@ -3578,18 +3475,13 @@ function updateResultsToolbar() {
   if (resultsPagerEl) {
     const totalPages = resultsPageCount(total);
     const showPager = hasListResults && totalPages > 1;
-    resultsPagerEl.classList.toggle("hidden", !showPager);
-    if (showPager) {
-      resultsPagerEl.innerHTML = `
-        <button type="button" class="pager-arrow" data-results-page="prev" ${state.resultsPage <= 1 ? "disabled" : ""} aria-label="Página anterior">
-          <svg viewBox="0 0 10 14" width="10" height="14" aria-hidden="true"><polygon points="10,0 0,7 10,14" fill="currentColor"/></svg>
-        </button>
-        <span class="pager-label">${state.resultsPage} / ${totalPages}</span>
-        <button type="button" class="pager-arrow" data-results-page="next" ${state.resultsPage >= totalPages ? "disabled" : ""} aria-label="Página siguiente">
-          <svg viewBox="0 0 10 14" width="10" height="14" aria-hidden="true"><polygon points="0,0 10,7 0,14" fill="currentColor"/></svg>
-        </button>
-      `;
-    }
+    const showPagerPlaceholder = Boolean(state.searchResponse) && isSearchRunning && !showPager;
+    resultsPagerEl.classList.toggle("hidden", !showPager && !showPagerPlaceholder);
+    resultsPagerEl.innerHTML = showPager
+      ? buildResultsPagerHtml(state.resultsPage, totalPages)
+      : showPagerPlaceholder
+        ? buildResultsPagerHtml(1, 1, { placeholder: true })
+        : "";
   }
 
   syncMatrixExpandedUI();
@@ -3692,6 +3584,7 @@ function handleResultsClick(e) {
     }
     applyClientOfferControls();
     renderResultsArea();
+    updateResultsToolbar();
     renderDetailPanel();
     return;
   }
@@ -3744,14 +3637,15 @@ async function handleMatrixClick(e) {
 
   const cell = cells.find((entry) => entry.key === btn.dataset.mk);
   if (!cell?.selectable || !cell.derivedRequest) return;
+  const derivedRequest = matrixDerivedSearchRequest(cell.derivedRequest);
   submitButton.disabled = true;
   state.selectedMatrixKey = btn.dataset.mk;
   state.matrixExpanded = false;
   try {
     stopMatrixPolling();
     stopSearchPolling();
-    state.request = cell.derivedRequest;
-    syncSearchFormWithRequest(cell.derivedRequest);
+    state.request = derivedRequest;
+    syncSearchFormWithRequest(derivedRequest);
     state.matrixResponse = null;
     state.viewMode = "list";
     state.quotationText = "";
@@ -3760,10 +3654,10 @@ async function handleMatrixClick(e) {
     state.airlineFilter.only = null;
     state.detailPendingAction = null;
     state.resultsScroll = { top: 0, left: 0 };
-    setSearchResponse(buildPendingSearchResponse(cell.derivedRequest, state.sortMode));
+    setSearchResponse(buildPendingSearchResponse(derivedRequest, state.sortMode));
     renderAll();
 
-    const data = await postJson("/api/search", { request: cell.derivedRequest, sortMode: state.sortMode });
+    const data = await postJson("/api/search", { request: derivedRequest, sortMode: state.sortMode });
     state.request = data.request;
     syncSearchFormWithRequest(data.request);
     state.selectedMatrixKey = null;
@@ -3775,12 +3669,6 @@ async function handleMatrixClick(e) {
     renderAll();
   } catch (err) { showToast(err.message); }
   finally { submitButton.disabled = false; }
-}
-
-function confidenceColor(c) {
-  if (c === "validated") return "green";
-  if (c === "live" || c === "indicative") return "amber";
-  return "red";
 }
 
 function getMatrixPriceStats(cells) {
@@ -4057,9 +3945,7 @@ function renderDetailPanel() {
     return;
   }
 
-  const flights = offer.itineraries?.flatMap((it) => it.segments.map((s) => s.flightNumber)).join(", ") || "—";
   const group = getGroupForOffer(offer.id) ?? [offer];
-  const outbound = offer.itineraries?.find(it => it.direction === "outbound") ?? offer.itineraries?.[0];
   const carrier = carrierDisplayParts(offer);
   const providerLinkIndex = buildProviderLinkIndex(state.searchResponse?.allOffers ?? []);
 
@@ -4067,52 +3953,48 @@ function renderDetailPanel() {
 
   // Hero price
   const totalStops = offer.comparisonMetrics?.totalStops ?? 0;
-  const stopsLabel = totalStops === 0 ? "Directo" : totalStops === 1 ? "1 escala" : `${totalStops} escalas`;
+  const stopsLabel = stopsCountLabel(totalStops);
   h += `<div class="detail-hero">${formatMoney(offer.price?.total)}</div>`;
   h += `<div class="detail-summary">${escapeHtml(offer.origin)} → ${escapeHtml(offer.destination)} · ${escapeHtml(carrier.display)} · ${formatDuration(offer.comparisonMetrics?.totalDurationMinutes)} · ${stopsLabel}</div>`;
-
-  // Confidence badge
-  h += `<div><span class="badge badge--${confidenceColor(offer.priceConfidence)}">${offer.priceConfidence === "validated" ? "Precio validado" : "Precio live"}</span></div>`;
 
   // Segments
   h += '<div class="detail-section"><div class="detail-section__title">Segmentos</div>';
 
-  if (outbound) {
-    h += `<div class="detail-segment"><div class="detail-segment__dir">Ida — ${formatDuration(outbound.durationMinutes)}, ${outbound.stops} esc</div>`;
-    outbound.segments?.forEach((s, idx) => {
-      h += `<div class="detail-segment__leg"><div class="detail-segment__flight">${escapeHtml(s.flightNumber)}</div><div class="detail-segment__times">${escapeHtml(s.origin)} ${formatDT(s.departureAt)} → ${escapeHtml(s.destination)} ${formatDT(s.arrivalAt)}</div></div>`;
-      if (outbound.segments?.[idx + 1]) {
-        const layoverMin = computeLayoverMinutes(outbound, idx);
+  (offer.itineraries ?? []).forEach((itinerary, index) => {
+    h += `<div class="detail-segment">${itineraryHeadingHtml(itinerary, index)}`;
+    itinerary.segments?.forEach((segment, segmentIndex) => {
+      const routeLabel = segmentRouteLabel(segment);
+      h += '<div class="detail-segment__leg">';
+      h += `<div class="detail-segment__flight">${escapeHtml(segment.flightNumber)}</div>`;
+      h += `<div class="detail-segment__times">${escapeHtml(segment.origin)} ${formatDT(segment.departureAt)} → ${escapeHtml(segment.destination)} ${formatDT(segment.arrivalAt)}</div>`;
+      if (routeLabel) {
+        h += `<div class="detail-segment__route">${escapeHtml(routeLabel)}</div>`;
+      }
+      h += "</div>";
+      if (itinerary.segments?.[segmentIndex + 1]) {
+        const layoverMin = computeLayoverMinutes(itinerary, segmentIndex);
         if (layoverMin > 0) {
-          h += `<div class="detail-layover"><span class="detail-layover__line"></span><span class="detail-layover__label">Escala en ${escapeHtml(s.destinationName || s.destination)} · ${formatDuration(layoverMin)}</span><span class="detail-layover__line"></span></div>`;
+          h += `<div class="detail-layover"><span class="detail-layover__line"></span><span class="detail-layover__label">Escala en ${escapeHtml(segment.destinationName || segment.destination)} · ${formatDuration(layoverMin)}</span><span class="detail-layover__line"></span></div>`;
         }
       }
     });
-    h += '</div>';
-  }
+    h += "</div>";
+  });
 
   if (group.length > 1) {
-    h += `<div class="detail-segment"><div class="detail-segment__dir">Fechas equivalentes — ${group.length} variantes</div>`;
+    h += `
+      <div class="detail-segment">
+        <div class="detail-segment__dir">
+          <span class="detail-segment__title">Fechas equivalentes</span>
+          <span class="detail-segment__meta">${group.length} variantes</span>
+        </div>
+    `;
     group.forEach((member) => {
       const isSelected = member.id === state.selectedOfferId;
       const label = buildOfferVariantSummary(member);
       h += `<button type="button" class="detail-segment__leg detail-segment__leg--choice ${isSelected ? "is-selected" : ""}" data-inbound-id="${member.id}" aria-pressed="${isSelected ? "true" : "false"}" title="${escapeHtml(label)}">${escapeHtml(label)}</button>`;
     });
     h += '</div>';
-  } else {
-    offer.itineraries?.filter(it => it !== outbound).forEach(it => {
-      h += `<div class="detail-segment"><div class="detail-segment__dir">${escapeHtml(it.direction)} — ${formatDuration(it.durationMinutes)}, ${it.stops} esc</div>`;
-      it.segments?.forEach((s, idx) => {
-        h += `<div class="detail-segment__leg"><div class="detail-segment__flight">${escapeHtml(s.flightNumber)}</div><div class="detail-segment__times">${escapeHtml(s.origin)} ${formatDT(s.departureAt)} → ${escapeHtml(s.destination)} ${formatDT(s.arrivalAt)}</div></div>`;
-        if (it.segments?.[idx + 1]) {
-          const layoverMin = computeLayoverMinutes(it, idx);
-          if (layoverMin > 0) {
-            h += `<div class="detail-layover"><span class="detail-layover__line"></span><span class="detail-layover__label">Escala en ${escapeHtml(s.destinationName || s.destination)} · ${formatDuration(layoverMin)}</span><span class="detail-layover__line"></span></div>`;
-          }
-        }
-      });
-      h += '</div>';
-    });
   }
   h += '</div>';
 
@@ -4120,15 +4002,16 @@ function renderDetailPanel() {
   h += '<div class="detail-section"><div class="detail-section__title">Equipaje</div>';
   const carryIcon = `<svg class="ico ico--xs ${offer.baggage?.carryOnIncluded ? "ico--bag-yes" : "ico--bag-no"}"><use href="#ico-carry-on"/></svg>`;
   const checkIcon = `<svg class="ico ico--xs ${offer.baggage?.checkedIncluded ? "ico--bag-yes" : "ico--bag-no"}"><use href="#ico-luggage"/></svg>`;
-  h += `<div class="detail-pair"><span class="detail-pair__key">${carryIcon} Carry-on</span><span class="detail-pair__val">${offer.baggage?.carryOnIncluded ? "Incluido" : "No incluido"}</span></div>`;
+  h += `<div class="detail-pair"><span class="detail-pair__key">${carryIcon} Cabina</span><span class="detail-pair__val">${offer.baggage?.carryOnIncluded ? "Incluido" : "No incluido"}</span></div>`;
   h += `<div class="detail-pair"><span class="detail-pair__key">${checkIcon} Bodega</span><span class="detail-pair__val">${offer.baggage?.checkedIncluded ? `${offer.baggage.checkedBags ?? 1}x ${offer.baggage.description ?? ""}`.trim() : "No incluido"}</span></div>`;
   h += '</div>';
 
   // Fare
   h += '<div class="detail-section"><div class="detail-section__title">Tarifa</div>';
+  h += `<div class="detail-pair detail-pair--strong"><span class="detail-pair__key">Total</span><span class="detail-pair__val">${formatMoney(offer.price?.total)}</span></div>`;
   if (offer.price?.base) h += `<div class="detail-pair"><span class="detail-pair__key">Base</span><span class="detail-pair__val">${formatMoney(offer.price.base)}</span></div>`;
   if (offer.price?.taxes) h += `<div class="detail-pair"><span class="detail-pair__key">Tasas</span><span class="detail-pair__val">${formatMoney(offer.price.taxes)}</span></div>`;
-  if (offer.fareMeta?.lastTicketingDate) h += `<div class="detail-pair"><span class="detail-pair__key">Emision limite</span><span class="detail-pair__val">${offer.fareMeta.lastTicketingDate}</span></div>`;
+  if (offer.fareMeta?.lastTicketingDate) h += `<div class="detail-pair"><span class="detail-pair__key">Emisión límite</span><span class="detail-pair__val">${offer.fareMeta.lastTicketingDate}</span></div>`;
   h += '</div>';
 
   // Purchase paths
@@ -4145,7 +4028,7 @@ function renderDetailPanel() {
   // Quotation
   if (state.quotationText) {
     h += '<div class="detail-section">';
-    h += '<div class="detail-section__title">Cotizacion comercial</div>';
+    h += '<div class="detail-section__title">Cotización comercial</div>';
     h += `<textarea class="quote-textarea" readonly>${escapeHtml(state.quotationText)}</textarea>`;
     h += '</div>';
   }
@@ -4153,8 +4036,8 @@ function renderDetailPanel() {
   if (state.quotationTechnicalText) {
     h += '<div class="detail-section">';
     h += '<div class="detail-section__header">';
-    h += '<div class="detail-section__title">Detalle tecnico</div>';
-    h += '<button type="button" class="btn btn--ghost btn--sm" data-copy-technical-quotation>Copiar tecnico</button>';
+    h += '<div class="detail-section__title">Detalle técnico</div>';
+    h += '<button type="button" class="btn btn--ghost btn--sm" data-copy-technical-quotation>Copiar técnico</button>';
     h += "</div>";
     h += `<textarea class="quote-textarea quote-textarea--technical" readonly>${escapeHtml(state.quotationTechnicalText)}</textarea>`;
     h += '</div>';
@@ -4411,8 +4294,8 @@ quotationButton.addEventListener("click", async () => {
     const copied = await writeClipboardText(quotation.commercialText);
     showToast(
       copied
-        ? "Cotizacion comercial copiada al portapapeles."
-        : "Cotizacion lista. No pude copiar la version comercial al portapapeles.",
+        ? "Cotización comercial copiada al portapapeles."
+        : "Cotización lista. No pude copiar la versión comercial al portapapeles.",
       copied ? "success" : "error",
     );
   } catch (err) { showToast(err.message); }

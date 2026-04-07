@@ -664,7 +664,7 @@ test("calendar stays anchored to the trigger, stays compact, and can navigate mo
   }, { autoOpen: false });
 });
 
-test("clicking a flexible matrix cell still triggers a single exact search", async () => {
+test("clicking a flexible matrix cell relaunches a single exact search without pinning a provider", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let matrixPollCount = 0;
     let searchRequestCount = 0;
@@ -758,6 +758,7 @@ test("clicking a flexible matrix cell still triggers a single exact search", asy
 
       assert.equal(searchRequestCount, 1);
       assert.equal((lastSearchRequest?.request as Record<string, unknown> | undefined)?.searchMode, "exact");
+      assert.equal((lastSearchRequest?.request as Record<string, unknown> | undefined)?.providerId, undefined);
 
       const formState = await page.evaluate(() => ({
         searchMode: (document.getElementById("searchMode") as HTMLInputElement | null)?.value,
@@ -900,15 +901,16 @@ test("date-equivalent offers collapse into one row and keep the date variants in
       const probe = await page.evaluate(() => {
         const rows = [...document.querySelectorAll('tr[data-oid]')];
         const firstDateCell = rows[0]?.children[1];
-        const variantTitle = [...document.querySelectorAll(".detail-segment__dir")]
-          .map((node) => node.textContent?.trim() ?? "")
-          .find((text) => text.includes("Fechas equivalentes")) ?? "";
+        const segmentHeaders = [...document.querySelectorAll(".detail-segment__dir")]
+          .map((node) => node.textContent?.replace(/\s+/g, " ").trim() ?? "");
+        const variantTitle = segmentHeaders.find((text) => text.includes("Fechas equivalentes")) ?? "";
         const variants = [...document.querySelectorAll("[data-inbound-id]")]
           .map((node) => node.textContent?.replace(/\s+/g, " ").trim() ?? "");
 
         return {
           rowCount: rows.length,
           dateText: firstDateCell?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+          segmentHeaders,
           variantTitle,
           variants,
         };
@@ -917,7 +919,10 @@ test("date-equivalent offers collapse into one row and keep the date variants in
       assert.equal(probe.rowCount, 1);
       assert.match(probe.dateText, /15\/04/);
       assert.match(probe.dateText, /También 16\/04 → 23\/04 y 1 fecha más/);
-      assert.match(probe.variantTitle, /Fechas equivalentes — 3 variantes/);
+      assert.match(probe.variantTitle, /Fechas equivalentes/);
+      assert.equal(probe.segmentHeaders.some((text) => text.includes("Ida")), true);
+      assert.equal(probe.segmentHeaders.some((text) => text.includes("Vuelta")), true);
+      assert.equal(probe.segmentHeaders.some((text) => /inbound|outbound/i.test(text)), false);
       assert.equal(probe.variants.length, 3);
       assert.match(probe.variants[0] ?? "", /15\/04 → 22\/04/);
       assert.match(probe.variants[1] ?? "", /16\/04 → 23\/04/);
@@ -1032,7 +1037,7 @@ test("results header exposes route context, rows support keyboard selection, and
 
     assert.match(beforeKeyboard.resultsMeta, /LIM → MIA/);
     assert.match(beforeKeyboard.resultsMeta, /15\/04 → 22\/04/);
-    assert.match(beforeKeyboard.resultsMeta, /Agil/);
+    assert.doesNotMatch(beforeKeyboard.resultsMeta, /Agil|Costamar/);
     assert.equal(beforeKeyboard.countPresent, false);
     assert.equal(beforeKeyboard.secondRowRole, "button");
     assert.equal(beforeKeyboard.secondRowTabIndex, "0");
@@ -1061,6 +1066,99 @@ test("results header exposes route context, rows support keyboard selection, and
     assert.equal(afterEscape.selectedRowCount, 0);
     assert.equal(afterEscape.emptyTitle, "Sin oferta seleccionada");
     assert.match(afterEscape.emptyText, /Selecciona una opción para ver el detalle/);
+  }, { autoOpen: false });
+});
+
+test("price column header keeps the shared table header typography", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-price-header",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [buildOffer()],
+          allOffers: [buildOffer()],
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.evaluate(() => {
+      const origin = document.getElementById("origin") as HTMLInputElement | null;
+      const destination = document.getElementById("destination") as HTMLInputElement | null;
+      if (!origin || !destination) throw new Error("Missing location inputs");
+      origin.value = "LIM - Lima, Peru";
+      origin.dataset.code = "LIM";
+      origin.dataset.label = "LIM - Lima, Peru";
+      destination.value = "MIA - Miami, Usa";
+      destination.dataset.code = "MIA";
+      destination.dataset.label = "MIA - Miami, Usa";
+    });
+    await setDateValue(page, "departureDate", "2026-04-15");
+    await setDateValue(page, "returnDate", "2026-04-22");
+    await page.click("#submitButton");
+    await page.waitForSelector(".results-table thead th");
+
+    const headerTypography = await page.evaluate(() => {
+      const headers = [...document.querySelectorAll(".results-table thead th")] as HTMLElement[];
+      const airline = headers[0];
+      const price = headers[5];
+      if (!airline || !price) {
+        throw new Error("Missing results table headers");
+      }
+
+      const airlineStyle = getComputedStyle(airline);
+      const priceStyle = getComputedStyle(price);
+
+      return {
+        airlineFontFamily: airlineStyle.fontFamily,
+        airlineFontSize: airlineStyle.fontSize,
+        airlineFontWeight: airlineStyle.fontWeight,
+        priceFontFamily: priceStyle.fontFamily,
+        priceFontSize: priceStyle.fontSize,
+        priceFontWeight: priceStyle.fontWeight,
+      };
+    });
+
+    assert.equal(headerTypography.priceFontFamily, headerTypography.airlineFontFamily);
+    assert.equal(headerTypography.priceFontSize, headerTypography.airlineFontSize);
+    assert.equal(headerTypography.priceFontWeight, headerTypography.airlineFontWeight);
   }, { autoOpen: false });
 });
 
@@ -1678,6 +1776,11 @@ test("submitting a search shows inline placeholders instead of a fullscreen over
         await page.locator("#resultsPanelMeta").textContent() ?? "",
         /Actualizando resultados/i,
       );
+      assert.equal(await page.locator("#resultsPager").count(), 1);
+      assert.equal(await page.locator("#resultsPager").isVisible(), true);
+      assert.equal((await page.locator("#resultsPager .pager-label").textContent())?.trim(), "— / —");
+      assert.equal(await page.locator('#resultsPager [data-results-page="prev"]').isDisabled(), true);
+      assert.equal(await page.locator('#resultsPager [data-results-page="next"]').isDisabled(), true);
 
       const runningToolbarOffset = await page.evaluate(() => {
         const toolbar = document.getElementById("resultsToolbar");
@@ -2136,112 +2239,6 @@ test("provider link column reuses the matched Costamar link for the same flight"
   }, { autoOpen: false });
 });
 
-test("reprice keeps the loading feedback inside the detail panel", async () => {
-  await withDesktopPage(async ({ baseUrl, page }) => {
-
-    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          searchJobId: "search-job-detail",
-          searchComplete: true,
-          searchStatus: "completed",
-          sortMode: "cheapest",
-          request: {
-            tripType: "round-trip",
-            searchMode: "exact",
-            legs: [
-              {
-                origin: "LIM",
-                destination: "MIA",
-                departureDate: "2026-04-15",
-                returnDate: "2026-04-22",
-              },
-            ],
-            passengers: {
-              adults: 1,
-              children: 0,
-              infants: 0,
-            },
-            cabin: "ECONOMY",
-            filters: {
-              maxResults: 25,
-            },
-            coverageMode: "core",
-            redirectMode: "best-effort",
-            currencyCode: "USD",
-            locale: "es-PE",
-            market: "PE",
-          },
-          offers: [buildOffer()],
-          allOffers: [buildOffer()],
-          searchMeta: buildSearchMeta("search_live"),
-          providerMeta: {
-            exactProvider: "agil-local",
-            coverageMode: "core",
-          },
-          warnings: [],
-        }),
-      });
-    });
-
-    await page.route(`${baseUrl}/api/reprice`, async (route: Route) => {
-      await new Promise((resolve) => setTimeout(resolve, 450));
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          offer: buildOffer({
-            price: {
-              total: {
-                amount: 499,
-                currencyCode: "USD",
-              },
-              base: {
-                amount: 415,
-                currencyCode: "USD",
-              },
-              taxes: {
-                amount: 84,
-                currencyCode: "USD",
-              },
-            },
-            priceConfidence: "validated",
-          }),
-        }),
-      });
-    });
-      await openDesktop(page, baseUrl);
-      await page.evaluate(() => {
-        const origin = document.getElementById("origin") as HTMLInputElement | null;
-        const destination = document.getElementById("destination") as HTMLInputElement | null;
-        if (!origin || !destination) throw new Error("Missing location inputs");
-        origin.value = "LIM - Lima, Peru";
-        origin.dataset.code = "LIM";
-        origin.dataset.label = "LIM - Lima, Peru";
-        destination.value = "MIA - Miami, Usa";
-        destination.dataset.code = "MIA";
-        destination.dataset.label = "MIA - Miami, Usa";
-      });
-      await setDateValue(page, "departureDate", "2026-04-15");
-      await setDateValue(page, "returnDate", "2026-04-22");
-      await page.click("#submitButton");
-      await page.waitForSelector('tr[data-oid="offer-1"]');
-
-      await page.click("#repriceButton");
-      await page.waitForSelector(".detail-busy");
-
-      assert.equal(await page.locator("#loadingOverlay").count(), 0);
-      assert.equal(await page.locator(".detail-busy").getAttribute("aria-busy"), "true");
-
-      await page.waitForFunction(() => {
-        const hero = document.querySelector(".detail-hero");
-        return hero?.textContent?.includes("499.00");
-      });
-  }, { autoOpen: false });
-});
-
 test("progressive list searches keep placeholder rows while results are still streaming", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let pollCount = 0;
@@ -2372,6 +2369,119 @@ test("progressive list searches keep placeholder rows while results are still st
   }, { autoOpen: false });
 });
 
+test("results pager updates the page label and arrow states when navigating", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const pagedOffers = Array.from({ length: 40 }, (_, index) => buildOffer({
+      id: `offer-${index + 1}`,
+      price: {
+        total: {
+          amount: 400 + index,
+          currencyCode: "USD",
+        },
+        base: {
+          amount: 320 + index,
+          currencyCode: "USD",
+        },
+        taxes: {
+          amount: 80,
+          currencyCode: "USD",
+        },
+      },
+    }));
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-pager",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 40,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: pagedOffers,
+          allOffers: pagedOffers,
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.evaluate(() => {
+      const origin = document.getElementById("origin") as HTMLInputElement | null;
+      const destination = document.getElementById("destination") as HTMLInputElement | null;
+      if (!origin || !destination) throw new Error("Missing location inputs");
+      origin.value = "LIM - Lima, Peru";
+      origin.dataset.code = "LIM";
+      origin.dataset.label = "LIM - Lima, Peru";
+      destination.value = "MIA - Miami, Usa";
+      destination.dataset.code = "MIA";
+      destination.dataset.label = "MIA - Miami, Usa";
+    });
+    await setDateValue(page, "departureDate", "2026-04-15");
+    await setDateValue(page, "returnDate", "2026-04-22");
+    await page.click("#submitButton");
+    await page.waitForSelector("#resultsPager .pager-label");
+
+    const initialPager = await page.evaluate(() => ({
+      label: document.querySelector("#resultsPager .pager-label")?.textContent?.trim() ?? "",
+      prevDisabled: (document.querySelector('#resultsPager [data-results-page=\"prev\"]') as HTMLButtonElement | null)?.disabled ?? null,
+      nextDisabled: (document.querySelector('#resultsPager [data-results-page=\"next\"]') as HTMLButtonElement | null)?.disabled ?? null,
+      width: document.getElementById("resultsPager")?.getBoundingClientRect().width ?? 0,
+      left: document.getElementById("resultsPager")?.getBoundingClientRect().left ?? 0,
+      sortRight: document.getElementById("sortButtons")?.getBoundingClientRect().right ?? 0,
+    }));
+
+    await page.click('#resultsPager [data-results-page="next"]');
+
+    const nextPager = await page.evaluate(() => ({
+      label: document.querySelector("#resultsPager .pager-label")?.textContent?.trim() ?? "",
+      prevDisabled: (document.querySelector('#resultsPager [data-results-page=\"prev\"]') as HTMLButtonElement | null)?.disabled ?? null,
+      nextDisabled: (document.querySelector('#resultsPager [data-results-page=\"next\"]') as HTMLButtonElement | null)?.disabled ?? null,
+      width: document.getElementById("resultsPager")?.getBoundingClientRect().width ?? 0,
+      left: document.getElementById("resultsPager")?.getBoundingClientRect().left ?? 0,
+    }));
+
+    assert.equal(initialPager.label.startsWith("1 /"), true);
+    assert.equal(initialPager.prevDisabled, true);
+    assert.equal(initialPager.nextDisabled, false);
+    assert.equal(initialPager.left > initialPager.sortRight, true);
+    assert.equal(nextPager.label.startsWith("2 /"), true);
+    assert.equal(nextPager.prevDisabled, false);
+    assert.equal(Math.abs(nextPager.width - initialPager.width) < 0.5, true);
+  }, { autoOpen: false });
+});
+
 test("quotation separates commercial and technical text and only auto-copies the commercial version", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     const normalizeClipboardText = (value: string) => value.replace(/\r\n/g, "\n");
@@ -2482,8 +2592,8 @@ test("quotation separates commercial and technical text and only auto-copies the
       };
     });
 
-    assert.ok(quotationState.sectionTitles.includes("Cotizacion comercial"));
-    assert.ok(quotationState.sectionTitles.includes("Detalle tecnico"));
+    assert.ok(quotationState.sectionTitles.includes("Cotización comercial"));
+    assert.ok(quotationState.sectionTitles.includes("Detalle técnico"));
     assert.deepEqual(quotationState.textareaValues, [commercialText, technicalText]);
     assert.equal(normalizeClipboardText(quotationState.clipboard), commercialText);
 
@@ -2500,280 +2610,6 @@ test("quotation separates commercial and technical text and only auto-copies the
       return context.newPage();
     },
   });
-});
-
-test("search results start validating the selected offer in the background", async () => {
-  await withDesktopPage(async ({ baseUrl, page }) => {
-    let prefetchCalls = 0;
-
-    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          searchJobId: "search-job-prefetch",
-          searchComplete: true,
-          searchStatus: "completed",
-          sortMode: "cheapest",
-          request: {
-            tripType: "round-trip",
-            searchMode: "exact",
-            legs: [
-              {
-                origin: "LIM",
-                destination: "MIA",
-                departureDate: "2026-04-15",
-                returnDate: "2026-04-22",
-              },
-            ],
-            passengers: {
-              adults: 1,
-              children: 0,
-              infants: 0,
-            },
-            cabin: "ECONOMY",
-            filters: {
-              maxResults: 25,
-            },
-            coverageMode: "core",
-            redirectMode: "best-effort",
-            currencyCode: "USD",
-            locale: "es-PE",
-            market: "PE",
-          },
-          offers: [buildOffer()],
-          allOffers: [buildOffer()],
-          searchMeta: buildSearchMeta("search_live"),
-          providerMeta: {
-            exactProvider: "agil-local",
-            coverageMode: "core",
-          },
-          warnings: [],
-        }),
-      });
-    });
-
-    await page.route(`${baseUrl}/api/offers/prefetch`, async (route: Route) => {
-      prefetchCalls += 1;
-      await new Promise((resolve) => setTimeout(resolve, 120));
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          searchSessionId: "job-search-1",
-          offer: buildOffer({
-            priceConfidence: "validated",
-            priceStatus: "verified",
-            priceVerifiedAt: "2026-03-27T12:00:00.000Z",
-          }),
-        }),
-      });
-    });
-
-    await openDesktop(page, baseUrl);
-    await page.evaluate(() => {
-      const origin = document.getElementById("origin") as HTMLInputElement | null;
-      const destination = document.getElementById("destination") as HTMLInputElement | null;
-      if (!origin || !destination) throw new Error("Missing location inputs");
-      origin.value = "LIM - Lima, Peru";
-      origin.dataset.code = "LIM";
-      origin.dataset.label = "LIM - Lima, Peru";
-      destination.value = "MIA - Miami, Usa";
-      destination.dataset.code = "MIA";
-      destination.dataset.label = "MIA - Miami, Usa";
-    });
-    await setDateValue(page, "departureDate", "2026-04-15");
-    await setDateValue(page, "returnDate", "2026-04-22");
-    await page.click("#submitButton");
-    await page.waitForSelector('tr[data-oid="offer-1"]');
-    await page.waitForFunction(() => {
-      const badge = document.querySelector("#detailPanel .badge");
-      return badge?.textContent?.includes("Precio validado");
-    });
-
-    assert.equal(prefetchCalls, 1);
-  }, { autoOpen: false });
-});
-
-test("background validation warms the first ranked offers and promotes a newly selected row", async () => {
-  await withDesktopPage(async ({ baseUrl, page }) => {
-    const rankedOffers = [
-      buildOffer({
-        id: "offer-1",
-        price: {
-          total: { amount: 501, currencyCode: "USD" },
-          base: { amount: 420, currencyCode: "USD" },
-          taxes: { amount: 81, currencyCode: "USD" },
-        },
-      }),
-      buildOffer({
-        id: "offer-2",
-        price: {
-          total: { amount: 502, currencyCode: "USD" },
-          base: { amount: 420, currencyCode: "USD" },
-          taxes: { amount: 82, currencyCode: "USD" },
-        },
-      }),
-      buildOffer({
-        id: "offer-3",
-        price: {
-          total: { amount: 503, currencyCode: "USD" },
-          base: { amount: 420, currencyCode: "USD" },
-          taxes: { amount: 83, currencyCode: "USD" },
-        },
-      }),
-      buildOffer({
-        id: "offer-4",
-        price: {
-          total: { amount: 504, currencyCode: "USD" },
-          base: { amount: 420, currencyCode: "USD" },
-          taxes: { amount: 84, currencyCode: "USD" },
-        },
-      }),
-      buildOffer({
-        id: "offer-5",
-        price: {
-          total: { amount: 505, currencyCode: "USD" },
-          base: { amount: 420, currencyCode: "USD" },
-          taxes: { amount: 85, currencyCode: "USD" },
-        },
-      }),
-    ];
-    const offersById = new Map(rankedOffers.map((offer) => [offer.id, offer] as const));
-    const prefetchOrder: string[] = [];
-    const pendingPrefetches = new Map<string, { route: Route; release: () => void }>();
-
-    const waitForPrefetchCount = async (count: number) => {
-      const deadline = Date.now() + 3000;
-      while (prefetchOrder.length < count) {
-        if (Date.now() > deadline) {
-          throw new Error(`Timed out waiting for ${count} prefetch calls.`);
-        }
-
-        await page.waitForTimeout(25);
-      }
-    };
-
-    const fulfillPrefetch = async (offerId: string) => {
-      const pending = pendingPrefetches.get(offerId);
-      const baseOffer = offersById.get(offerId);
-      assert.ok(pending, `Missing pending prefetch for ${offerId}`);
-      assert.ok(baseOffer, `Missing offer fixture for ${offerId}`);
-      pendingPrefetches.delete(offerId);
-      await pending.route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          searchSessionId: "job-search-1",
-          offer: {
-            ...baseOffer,
-            priceConfidence: "validated",
-            priceStatus: "verified",
-            priceVerifiedAt: "2026-03-27T12:00:00.000Z",
-          },
-        }),
-      });
-      pending.release();
-    };
-
-    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          searchJobId: "search-job-prefetch-priority",
-          searchComplete: true,
-          searchStatus: "completed",
-          sortMode: "cheapest",
-          request: {
-            tripType: "round-trip",
-            searchMode: "exact",
-            legs: [
-              {
-                origin: "LIM",
-                destination: "MIA",
-                departureDate: "2026-04-15",
-                returnDate: "2026-04-22",
-              },
-            ],
-            passengers: {
-              adults: 1,
-              children: 0,
-              infants: 0,
-            },
-            cabin: "ECONOMY",
-            filters: {
-              maxResults: 25,
-            },
-            coverageMode: "core",
-            redirectMode: "best-effort",
-            currencyCode: "USD",
-            locale: "es-PE",
-            market: "PE",
-          },
-          offers: rankedOffers,
-          allOffers: rankedOffers,
-          searchMeta: buildSearchMeta("search_live"),
-          providerMeta: {
-            exactProvider: "agil-local",
-            coverageMode: "core",
-          },
-          warnings: [],
-        }),
-      });
-    });
-
-    await page.route(`${baseUrl}/api/offers/prefetch`, async (route: Route) => {
-      const body = route.request().postDataJSON();
-      const offerId = String(body?.offerId ?? "");
-      prefetchOrder.push(offerId);
-
-      await new Promise<void>((resolve) => {
-        pendingPrefetches.set(offerId, {
-          route,
-          release: resolve,
-        });
-      });
-    });
-
-    await openDesktop(page, baseUrl);
-    await page.evaluate(() => {
-      const origin = document.getElementById("origin") as HTMLInputElement | null;
-      const destination = document.getElementById("destination") as HTMLInputElement | null;
-      if (!origin || !destination) throw new Error("Missing location inputs");
-      origin.value = "LIM - Lima, Peru";
-      origin.dataset.code = "LIM";
-      origin.dataset.label = "LIM - Lima, Peru";
-      destination.value = "MIA - Miami, Usa";
-      destination.dataset.code = "MIA";
-      destination.dataset.label = "MIA - Miami, Usa";
-    });
-    await setDateValue(page, "departureDate", "2026-04-15");
-    await setDateValue(page, "returnDate", "2026-04-22");
-    await page.click("#submitButton");
-    await page.waitForSelector('tr[data-oid="offer-5"]');
-
-    await waitForPrefetchCount(2);
-    assert.deepEqual(prefetchOrder.slice(0, 2), ["offer-1", "offer-2"]);
-
-    await page.click('tr[data-oid="offer-4"]');
-
-    await fulfillPrefetch("offer-1");
-    await waitForPrefetchCount(3);
-    assert.equal(prefetchOrder[2], "offer-4");
-
-    await fulfillPrefetch("offer-2");
-    await waitForPrefetchCount(4);
-    assert.equal(prefetchOrder[3], "offer-3");
-    assert.equal(prefetchOrder.includes("offer-5"), false);
-
-    await fulfillPrefetch("offer-4");
-    await fulfillPrefetch("offer-3");
-    await page.waitForFunction(() => {
-      const badge = document.querySelector("#detailPanel .badge");
-      return badge?.textContent?.includes("Precio validado");
-    });
-  }, { autoOpen: false });
 });
 
 

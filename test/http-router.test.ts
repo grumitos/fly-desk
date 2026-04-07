@@ -512,6 +512,46 @@ test("default search keeps Costamar enabled even when its token is missing", asy
   });
 });
 
+test("default search ignores providerId nested inside the request payload", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        request: {
+          providerId: "costamar",
+          tripType: "round-trip",
+          searchMode: "exact",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MAD",
+              departureDate: "2026-06-01",
+              returnDate: "2026-06-08",
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      request?: { providerId?: string };
+      searchMeta?: { providersUsed?: string[] };
+    };
+
+    assert.equal(payload.request?.providerId, undefined);
+    assert.deepEqual(payload.searchMeta?.providersUsed, ["agil-local", "costamar"]);
+  });
+});
+
 test("default matrix keeps both providers enabled when no providerId is specified", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/matrix`, {
@@ -546,12 +586,113 @@ test("default matrix keeps both providers enabled when no providerId is specifie
 
     assert.equal(response.status, 200);
     const payload = await response.json() as {
+      request?: { providerId?: string };
+      cells?: Array<{ derivedRequest?: { providerId?: string } }>;
       searchMeta?: { providersUsed?: string[] };
       matrixStatus?: string;
     };
 
+    assert.equal(payload.request?.providerId, undefined);
+    assert.equal(payload.cells?.[0]?.derivedRequest?.providerId, undefined);
     assert.deepEqual(payload.searchMeta?.providersUsed, ["agil-local", "costamar"]);
     assert.equal(payload.matrixStatus, "running");
+  });
+});
+
+test("default matrix ignores providerId nested inside the request payload", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/matrix`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        request: {
+          providerId: "costamar",
+          tripType: "round-trip",
+          searchMode: "roundtrip-grid",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MAD",
+              departureStart: "2026-06-01",
+              departureEnd: "2026-06-03",
+              returnStart: "2026-06-08",
+              returnEnd: "2026-06-10",
+              minNights: 7,
+              maxNights: 7,
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      request?: { providerId?: string };
+      cells?: Array<{ derivedRequest?: { providerId?: string } }>;
+      searchMeta?: { providersUsed?: string[] };
+    };
+
+    assert.equal(payload.request?.providerId, undefined);
+    assert.equal(payload.cells?.[0]?.derivedRequest?.providerId, undefined);
+    assert.deepEqual(payload.searchMeta?.providersUsed, ["agil-local", "costamar"]);
+  });
+});
+
+test("explicit costamar matrix keeps the provider override in derived requests", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/matrix`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        providerId: "costamar",
+        providerConfig: {
+          costamar: {
+            terminalId: "0721808110",
+          },
+        },
+        request: {
+          tripType: "round-trip",
+          searchMode: "roundtrip-grid",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MAD",
+              departureStart: "2026-06-01",
+              departureEnd: "2026-06-03",
+              returnStart: "2026-06-08",
+              returnEnd: "2026-06-10",
+              minNights: 7,
+              maxNights: 7,
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      request?: { providerId?: string };
+      cells?: Array<{ derivedRequest?: { providerId?: string } }>;
+      searchMeta?: { providersUsed?: string[] };
+    };
+
+    assert.equal(payload.request?.providerId, "costamar");
+    assert.equal(payload.cells?.[0]?.derivedRequest?.providerId, "costamar");
+    assert.deepEqual(payload.searchMeta?.providersUsed, ["costamar"]);
   });
 });
 
@@ -646,41 +787,5 @@ test("exact searches preserve omitted maxResults so page-based caps can be suppl
 
     assert.equal(payload.searchStatus, "running");
     assert.equal(payload.request?.filters?.maxResults, undefined);
-  });
-});
-
-test("search job responses expose the validated session snapshot instead of the stale job offer", async () => {
-  const runtime = getRuntime();
-  const job = runtime.sessions.createSearchJob({
-    request: buildCostamarRequest(),
-    offers: [buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/live-offer")],
-    allOffers: [buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/live-offer")],
-    searchMeta: buildSearchMeta(),
-    providerMeta: buildProviderMeta(),
-    warnings: [],
-    sortMode: "cheapest",
-    status: "completed",
-  });
-
-  runtime.sessions.updateOffer(job.id, {
-    ...buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/validated-offer"),
-    priceConfidence: "validated",
-    priceStatus: "verified",
-    priceVerifiedAt: "2026-03-31T12:00:00.000Z",
-  });
-
-  await withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/search/${job.id}`);
-
-    assert.equal(response.status, 200);
-    const payload = await response.json() as {
-      offers?: CanonicalOffer[];
-      allOffers?: CanonicalOffer[];
-    };
-
-    assert.equal(payload.offers?.[0]?.priceConfidence, "validated");
-    assert.equal(payload.allOffers?.[0]?.priceConfidence, "validated");
-    assert.match(payload.offers?.[0]?.purchasePaths?.[0]?.url ?? "", /^\/r\//);
-    assert.match(payload.allOffers?.[0]?.purchasePaths?.[0]?.url ?? "", /^\/r\//);
   });
 });

@@ -1413,13 +1413,14 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
 
 #resultsToolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto max-content;
+  grid-template-columns: minmax(0, 1fr) max-content var(--results-pager-width, 7.5rem);
   align-items: center;
 }
 
 #resultsToolbar .panel-header__actions--results {
   margin-left: 0;
   min-width: max-content;
+  grid-column: 2;
   justify-self: end;
 }
 
@@ -1982,8 +1983,12 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
 .results-toolbar__pager {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   gap: 0.65rem;
+  width: var(--results-pager-width, 7.5rem);
+  min-width: var(--results-pager-width, 7.5rem);
+  justify-self: end;
+  grid-column: 3;
 }
 
 .pager-arrow {
@@ -2016,9 +2021,15 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--text-muted);
-  min-width: 2.8rem;
+  flex: 1 1 auto;
+  min-width: 0;
   text-align: center;
   letter-spacing: 0.04em;
+}
+
+.pager-label--placeholder {
+  color: var(--text-faint);
+  letter-spacing: 0.12em;
 }
 
 .detail-panel__body {
@@ -2078,7 +2089,23 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
 }
 
 .detail-segment__dir {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.detail-segment__title {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.detail-segment__meta {
+  color: var(--text-muted);
+  font-size: 0.8rem;
   font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .detail-segment__leg {
@@ -2126,6 +2153,12 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   color: var(--text-muted);
 }
 
+.detail-segment__route {
+  color: var(--text-faint);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
 .detail-layover {
   display: flex;
   align-items: center;
@@ -2153,6 +2186,12 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   justify-content: space-between;
   gap: 0.75rem;
   font-size: 0.88rem;
+}
+
+.detail-pair--strong .detail-pair__key,
+.detail-pair--strong .detail-pair__val {
+  color: var(--text);
+  font-weight: 700;
 }
 
 .detail-pair__val {

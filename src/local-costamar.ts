@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import {
   buildDerivedOneWayRequest,
   buildDerivedRequest,
-  buildExactRequestFromOffer,
   diffDays,
   enumerateRange,
   enumerateUsefulFlexibleRequests,
@@ -14,7 +13,7 @@ import {
   prioritizeMatrixLoadingCells,
 } from "./core/matrix";
 import { buildOfferSignature } from "./core/offer-signature";
-import { ProviderSearchResult, RepriceResult } from "./core/provider";
+import { ProviderSearchResult } from "./core/provider";
 import { maxStopsAcrossItineraries } from "./core/ranking";
 import {
   BaggageSummary,
@@ -99,7 +98,6 @@ interface CostamarPricing {
   discounts?: unknown;
   source?: string;
   fareQualifier?: string;
-  repriceRequired?: boolean;
   commission?: number;
   validatingAirline?: string;
   totalAmount?: number;
@@ -921,7 +919,6 @@ export function mapCostamarRecommendationToOffer(
       purchasePathScore: 0,
     },
     tags: uniqueStrings([
-      pricing.repriceRequired ? "reprice-required" : "",
       pricing.fareQualifier ? String(pricing.fareQualifier).toLowerCase() : "",
       pricing.source ? String(pricing.source).toLowerCase() : "",
     ]),
@@ -1429,43 +1426,6 @@ export async function buildLocalCostamarMatrix(
 ): Promise<MatrixResponse> {
   const draft = createLocalCostamarMatrixDraft(request, providerMeta);
   return resolveLocalCostamarMatrixProgressive(request, providerContext, draft);
-}
-
-export async function repriceLocalCostamarOffer(
-  existingOffer: CanonicalOffer,
-  request: SearchRequest,
-  providerContext?: ProviderContext,
-): Promise<RepriceResult> {
-  const exactRequest = request.searchMode === "exact"
-    ? request
-    : buildExactRequestFromOffer(existingOffer, request);
-  const search = await searchLocalCostamarExact(exactRequest, providerContext);
-  const sameSignature = search.offers.filter((offer) => offer.signature === existingOffer.signature);
-  const matched = sameSignature.find(
-    (offer) => offer.price.total.amount === existingOffer.price.total.amount,
-  ) ?? sameSignature[0];
-
-  if (!matched) {
-    return {
-      status: "unavailable",
-      warnings: [...search.warnings, "Costamar no longer returned this itinerary during reprice."],
-    };
-  }
-
-  const priceChanged = matched.price.total.amount !== existingOffer.price.total.amount;
-  return {
-    status: priceChanged ? "changed" : "verified",
-    offer: {
-      ...matched,
-      priceConfidence: "validated",
-      priceStatus: priceChanged ? "repriced_changed" : "verified",
-      priceVerifiedAt: new Date().toISOString(),
-      warnings: priceChanged
-        ? [...matched.warnings, "Price changed during reprice."]
-        : matched.warnings,
-    },
-    warnings: search.warnings,
-  };
 }
 
 function mapLocationSuggestion(
