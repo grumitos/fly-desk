@@ -119,7 +119,6 @@ export function computeValueScores(offers: CanonicalOffer[]): CanonicalOffer[] {
         : (duration - minDuration) / (maxDuration - minDuration);
 
     const stopPenalty = stops * 0.12;
-    const verifiedBonus = offer.priceConfidence === "validated" ? -0.1 : 0;
     const exactPathBonus = offer.purchasePaths.some(
       (path: PurchasePath) => path.precision === "exact-offer",
     )
@@ -132,7 +131,6 @@ export function computeValueScores(offers: CanonicalOffer[]): CanonicalOffer[] {
         priceNorm * 0.55 +
         durationNorm * 0.25 +
         stopPenalty +
-        verifiedBonus +
         exactPathBonus +
         baggageBonus
       ).toFixed(4),

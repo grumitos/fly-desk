@@ -143,7 +143,7 @@ export class SearchOrchestrator {
       confidenceSummary,
       recommendations: [
         `Matrix cells come from live ${providerDisplayName(provider.id)} searches.`,
-        "Validated pricing still comes from reprice on a selected offer.",
+        "Abre una celda para relanzar una busqueda exacta con esas fechas.",
       ],
       searchMeta: buildSearchMeta(
         startedAt,
@@ -154,50 +154,5 @@ export class SearchOrchestrator {
       providerMeta: buildProviderMeta(request, provider.id),
       warnings: flexibleResult.warnings,
     };
-  }
-
-  async reprice(
-    request: SearchRequest,
-    offerId: string,
-    existingOffer?: CanonicalOffer,
-    options?: SearchExecutionOptions,
-  ): Promise<SearchResponse> {
-    const provider = this.resolveProvider(options?.providerId ?? request.providerId);
-    const target = existingOffer ?? await this.findOffer(provider, request, offerId, options);
-
-    if (!target) {
-      throw new Error(`Offer not found: ${offerId}`);
-    }
-
-    if (!provider.reprice) {
-      throw new Error("Exact provider does not support repricing");
-    }
-
-    const result = await provider.reprice(target, request, options);
-    const offers = result.offer ? enrichComparisonMetrics(computeValueScores([result.offer])) : [];
-
-    return {
-      offers,
-      searchMeta: {
-        requestedAt: new Date().toISOString(),
-        completedAt: new Date().toISOString(),
-        providersUsed: [provider.id],
-        warnings: result.warnings,
-        partial: result.status !== "verified",
-        searchState: result.status === "verified" ? "search_live" : "search_partial",
-      },
-      providerMeta: buildProviderMeta(request, provider.id),
-      warnings: result.warnings,
-    };
-  }
-
-  private async findOffer(
-    provider: SearchProvider,
-    request: SearchRequest,
-    offerId: string,
-    options?: SearchExecutionOptions,
-  ): Promise<CanonicalOffer | undefined> {
-    const search = await provider.searchExact(request, options);
-    return search.offers.find((offer: CanonicalOffer) => offer.id === offerId);
   }
 }

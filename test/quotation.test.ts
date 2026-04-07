@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildCommercialQuotation, buildTechnicalQuotation } from "../src/core/quotation";
+import { buildCommercialQuotation, buildQuotationText, buildTechnicalQuotation } from "../src/core/quotation";
 import type { SearchRequest } from "../src/core/types";
 import { buildOffer } from "./helpers/ui-fixtures";
 
@@ -39,6 +39,20 @@ test("commercial quotation lists multiple airlines and moves missing baggage to 
     destination: "BUE",
     mainCarrier: "AR",
     validatingCarrier: "AR",
+    price: {
+      total: {
+        amount: 1799,
+        currencyCode: "USD",
+      },
+      base: {
+        amount: 1600,
+        currencyCode: "USD",
+      },
+      taxes: {
+        amount: 199,
+        currencyCode: "USD",
+      },
+    },
     baggage: {
       carryOnIncluded: true,
       checkedIncluded: false,
@@ -87,18 +101,32 @@ test("commercial quotation lists multiple airlines and moves missing baggage to 
     ],
   });
 
-  const text = buildCommercialQuotation(offer, buildRequest());
+  const text = buildCommercialQuotation(offer, buildRequest(), {
+    timeZone: "UTC",
+    usdToPenRate: 6329 / 1799,
+  });
 
   assert.match(text, /COTIZACIÓN BOLETO AÉREO ✈️/);
   assert.match(text, /✈️ Ruta: Lima \(LIM\) - Buenos Aires \(BUE\) - Lima \(LIM\)/);
   assert.match(text, /✈️ Aerolíneas: Aerolíneas Argentinas \+ LATAM/);
+  assert.match(text, /🛫 Horario ida: LIM · 11 abril a las 02:45 am/);
+  assert.match(text, /🛬 Horario retorno: AEP · 10 mayo a las 10:35 pm/);
   assert.match(text, /✅ INCLUYE\n\* Boleto de ida y vuelta\n\* Equipaje de mano/);
   assert.match(text, /🚫 NO INCLUYE\n\* Maleta facturada/);
   assert.match(text, /📋 CONDICIONES\n\* Cambios de nombre no permitidos\./);
-  assert.match(text, /💵 PRECIO:\n\n\$ ______ dólares por adulto\nS\/\. ______ soles por adulto/);
+  assert.match(text, /💵 PRECIO:\n\nUS\$ 1,799 por adulto\nS\/ 6,329 por adulto/);
   assert.doesNotMatch(text, /Sin Maleta Facturada/);
   assert.doesNotMatch(text, /DETALLE TECNICO/);
   assert.doesNotMatch(text, /\[Aquí no se coloca nada de momento, el agente decide\]/);
+});
+
+test("commercial quotation leaves the soles line blank when the exchange rate is unavailable", () => {
+  const text = buildCommercialQuotation(buildOffer(), buildRequest(), {
+    timeZone: "UTC",
+  });
+
+  assert.match(text, /US\$ 512 por adulto/);
+  assert.match(text, /S\/  por adulto/);
 });
 
 test("technical quotation reflects mixed carrier codes", () => {
@@ -144,5 +172,19 @@ test("technical quotation reflects mixed carrier codes", () => {
   });
 
   const text = buildTechnicalQuotation(offer, buildRequest());
-  assert.match(text, /AEROLINEAS: AR \/ LA/);
+  assert.match(text, /Tipo: Ida y vuelta/);
+  assert.match(text, /Aerolineas: AR \/ LA/);
+  assert.match(text, /Ida\nVuelo: AR 1365/);
+  assert.match(text, /Vuelta\nVuelo: LA 2381/);
+  assert.match(text, /Precio\nTotal: USD \d+\.\d{2}/);
+  assert.doesNotMatch(text, /={10,}/);
+  assert.doesNotMatch(text, /-{10,}/);
+  assert.doesNotMatch(text, /\.{10,}/);
+});
+
+test("legacy plain quotation keeps the technical marker without decorative separators", () => {
+  const text = buildQuotationText(buildOffer(), buildRequest());
+
+  assert.match(text, /\nDETALLE TECNICO\n/);
+  assert.doesNotMatch(text, /={10,}/);
 });

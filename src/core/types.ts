@@ -24,8 +24,6 @@ export type PriceConfidence =
 export type OfferPriceStatus =
   | "unverified"
   | "verified"
-  | "repriced_changed"
-  | "repriced_unavailable"
   | "stale";
 
 export type PurchasePathType =
@@ -256,6 +254,7 @@ export interface CanonicalOffer {
     base?: Money;
     taxes?: Money;
   };
+  usdToPenRate?: number;
   baggage?: BaggageSummary;
   fareMeta?: FareMeta;
   priceConfidence: PriceConfidence;

@@ -3,13 +3,11 @@ import {
   ProviderCapabilities,
   ProviderMatrixResult,
   ProviderSearchResult,
-  RepriceResult,
   SearchProvider,
 } from "./provider";
-import { CanonicalOffer, SearchRequest } from "./types";
+import { SearchRequest } from "./types";
 import {
   buildLocalAgilMatrix,
-  repriceLocalAgilOffer,
   searchLocalAgilExact,
   searchLocalAgilRange,
 } from "../local-agil";
@@ -19,7 +17,6 @@ export class LocalAgilProvider implements SearchProvider {
 
   capabilities: ProviderCapabilities = {
     exactSearch: true,
-    reprice: true,
     flexibleDates: true,
     deeplinks: false,
     searchRedirects: true,
@@ -52,13 +49,5 @@ export class LocalAgilProvider implements SearchProvider {
       warnings: result.warnings,
       partial: result.searchMeta.partial,
     };
-  }
-
-  async reprice(
-    offer: CanonicalOffer,
-    request: SearchRequest,
-    _context?: ProviderExecutionContext,
-  ): Promise<RepriceResult> {
-    return repriceLocalAgilOffer(offer, request);
   }
 }

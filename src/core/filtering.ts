@@ -107,10 +107,6 @@ export function applySearchFilters(
       return false;
     }
 
-    if (filters.verifiedOnly && offer.priceConfidence !== "validated") {
-      return false;
-    }
-
     if (
       filters.exactPurchasePathOnly &&
       !offer.purchasePaths.some((path) => path.precision === "exact-offer")

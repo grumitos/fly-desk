@@ -41,10 +41,7 @@ async function main() {
     return;
   }
 
-  const repriced = await orchestrator.reprice(request, best.id);
-  const repricedOffer = repriced.offers[0] ?? best;
-
-  console.log(buildQuotationText(repricedOffer, request));
+  console.log(buildQuotationText(best, request));
 }
 
 void main();

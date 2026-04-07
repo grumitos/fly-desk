@@ -3,13 +3,11 @@ import {
   ProviderCapabilities,
   ProviderMatrixResult,
   ProviderSearchResult,
-  RepriceResult,
   SearchProvider,
 } from "./provider";
-import { CanonicalOffer, SearchRequest } from "./types";
+import { SearchRequest } from "./types";
 import {
   buildLocalCostamarMatrix,
-  repriceLocalCostamarOffer,
   searchLocalCostamarExact,
   suggestLocalCostamarLocations,
 } from "../local-costamar";
@@ -19,7 +17,6 @@ export class LocalCostamarProvider implements SearchProvider {
 
   capabilities: ProviderCapabilities = {
     exactSearch: true,
-    reprice: true,
     flexibleDates: true,
     deeplinks: false,
     searchRedirects: true,
@@ -48,14 +45,6 @@ export class LocalCostamarProvider implements SearchProvider {
       warnings: result.warnings,
       partial: result.searchMeta.partial,
     };
-  }
-
-  async reprice(
-    offer: CanonicalOffer,
-    request: SearchRequest,
-    context?: ProviderExecutionContext,
-  ): Promise<RepriceResult> {
-    return repriceLocalCostamarOffer(offer, request, context?.providerContext);
   }
 
   async suggestLocations(query: string, limit = 8) {

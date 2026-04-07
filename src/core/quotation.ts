@@ -1,20 +1,5 @@
 import { CanonicalOffer, Itinerary, SearchRequest, Segment } from "./types";
 
-const SPANISH_MONTHS = [
-  "enero",
-  "febrero",
-  "marzo",
-  "abril",
-  "mayo",
-  "junio",
-  "julio",
-  "agosto",
-  "septiembre",
-  "octubre",
-  "noviembre",
-  "diciembre",
-];
-
 const CARRIER_NAME_FALLBACKS: Record<string, string> = {
   AC: "Air Canada",
   AR: "Aerolíneas Argentinas",
@@ -27,6 +12,11 @@ const CARRIER_NAME_FALLBACKS: Record<string, string> = {
   UX: "Air Europa",
 };
 
+export interface QuotationRenderOptions {
+  timeZone?: string;
+  usdToPenRate?: number;
+}
+
 function formatMoney(amount: number, currency: string): string {
   return `${currency} ${amount.toFixed(2)}`;
 }
@@ -38,7 +28,7 @@ function formatDateTime(iso: string): string {
   return `${datePart} ${timePart}`;
 }
 
-function formatCommercialDateTime(iso?: string): string {
+function formatCommercialDate(iso?: string, timeZone?: string): string {
   if (!iso) {
     return "Fecha por confirmar";
   }
@@ -48,14 +38,71 @@ function formatCommercialDateTime(iso?: string): string {
     return iso;
   }
 
-  const day = String(date.getDate()).padStart(2, "0");
-  const month = SPANISH_MONTHS[date.getMonth()] ?? "";
-  const rawHours = date.getHours();
-  const hours12 = rawHours % 12 || 12;
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  const meridiem = rawHours >= 12 ? "pm" : "am";
+  const formatter = new Intl.DateTimeFormat("es-PE", {
+    day: "2-digit",
+    month: "long",
+    ...(timeZone ? { timeZone } : {}),
+  });
+  const parts = formatter.formatToParts(date);
+  const day = parts.find((part) => part.type === "day")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
 
-  return `${day} ${month} (${String(hours12).padStart(2, "0")}:${minutes} ${meridiem})`;
+  return day && month ? `${day} ${month}` : formatter.format(date).replace("-", " ");
+}
+
+function formatCommercialTime(iso?: string, timeZone?: string): string {
+  if (!iso) {
+    return "Hora por confirmar";
+  }
+
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+
+  const parts = new Intl.DateTimeFormat("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+    ...(timeZone ? { timeZone } : {}),
+  }).formatToParts(date);
+  const hour = parts.find((part) => part.type === "hour")?.value;
+  const minute = parts.find((part) => part.type === "minute")?.value;
+  const dayPeriod = parts.find((part) => part.type === "dayPeriod")?.value?.toLowerCase();
+
+  return hour && minute && dayPeriod ? `${hour}:${minute} ${dayPeriod}` : iso;
+}
+
+function formatCommercialSchedule(iso?: string, timeZone?: string): string {
+  if (!iso) {
+    return "Fecha por confirmar";
+  }
+
+  return `${formatCommercialDate(iso, timeZone)} a las ${formatCommercialTime(iso, timeZone)}`;
+}
+
+function formatQuotationAmount(amount: number): string {
+  const normalized = Math.abs(amount - Math.round(amount)) < 0.005
+    ? Math.round(amount)
+    : Number(amount.toFixed(2));
+  const hasDecimals = Math.abs(normalized - Math.round(normalized)) >= 0.005;
+
+  return new Intl.NumberFormat("es-PE", {
+    minimumFractionDigits: hasDecimals ? 2 : 0,
+    maximumFractionDigits: 2,
+  }).format(normalized);
+}
+
+function formatCommercialPriceLine(prefix: string, amount: number | undefined, suffix: string): string {
+  return amount === undefined
+    ? `${prefix}  ${suffix}`.trimEnd()
+    : `${prefix} ${formatQuotationAmount(amount)} ${suffix}`.trimEnd();
+}
+
+function formatCommercialTotalLine(label: string, prefix: string, amount: number | undefined): string {
+  return amount === undefined
+    ? `${label}: ${prefix} `
+    : `${label}: ${prefix} ${formatQuotationAmount(amount)}`;
 }
 
 function titleCase(value?: string): string {
@@ -94,24 +141,47 @@ function normalizedComparisonText(value?: string): string {
 }
 
 function describePriceSource(offer: CanonicalOffer): string {
-  const providerLabel = offer.providerSource === "costamar" ? "Costamar" : "Agil";
-  if (offer.priceConfidence === "validated") {
-    return `Reprice ${providerLabel}`;
+  return offer.providerSource === "costamar" ? "Costamar" : "Agil";
+}
+
+function formatTripType(tripType: SearchRequest["tripType"]): string {
+  if (tripType === "one-way") {
+    return "Solo ida";
+  }
+  if (tripType === "multi-city") {
+    return "Multidestino";
+  }
+  return "Ida y vuelta";
+}
+
+function pushTechnicalSection(lines: string[], title: string): void {
+  if (lines.length > 0 && lines[lines.length - 1] !== "") {
+    lines.push("");
   }
 
-  return `${providerLabel} live`;
+  lines.push(title);
+}
+
+function pushTechnicalField(lines: string[], label: string, value?: string | number | null): void {
+  if (value === undefined || value === null || value === "") {
+    return;
+  }
+
+  lines.push(`${label}: ${value}`);
 }
 
 function segmentLine(segment: Segment): string[] {
+  const carrierCode = (segment.marketingCarrier || segment.operatingCarrier || "").trim();
+  const flightNumber = String(segment.flightNumber || "").trim();
+  const flightLabel = [carrierCode, flightNumber].filter(Boolean).join(" ") || "Por confirmar";
+  const originLabel = `${segment.origin}${segment.originTerminal ? ` T${segment.originTerminal}` : ""}`;
+  const destinationLabel = `${segment.destination}${segment.destinationTerminal ? ` T${segment.destinationTerminal}` : ""}`;
+
   return [
-    `  Vuelo ${segment.flightNumber} · ${segment.marketingCarrier}`,
-    `  Salida:   ${formatDateTime(segment.departureAt)}  ${segment.origin}${
-      segment.originTerminal ? ` T${segment.originTerminal}` : ""
-    }`,
-    `  Llegada:  ${formatDateTime(segment.arrivalAt)}  ${segment.destination}${
-      segment.destinationTerminal ? ` T${segment.destinationTerminal}` : ""
-    }`,
-    `  Duracion: ${segment.durationMinutes} min`,
+    `Vuelo: ${flightLabel}`,
+    `Salida: ${formatDateTime(segment.departureAt)} · ${originLabel}`,
+    `Llegada: ${formatDateTime(segment.arrivalAt)} · ${destinationLabel}`,
+    `Duracion: ${segment.durationMinutes} min`,
   ];
 }
 
@@ -124,26 +194,29 @@ function buildTechnicalQuotationText(
   const carrierCodes = collectCarrierCodes(offer);
 
   lines.push("COTIZACION DE VUELO");
-  lines.push("========================================");
   lines.push("");
-  lines.push(`RUTA:  ${offer.origin} -> ${offer.destination}`);
-  lines.push(`TIPO:  ${offer.tripType}`);
-  lines.push(`${carrierCodes.length > 1 ? "AEROLINEAS" : "AEROLINEA"}: ${carrierCodes.join(" / ") || "N/D"}`);
-  lines.push("");
+  pushTechnicalField(lines, "Ruta", `${offer.origin} -> ${offer.destination}`);
+  pushTechnicalField(lines, "Tipo", formatTripType(request.tripType));
+  pushTechnicalField(
+    lines,
+    carrierCodes.length > 1 ? "Aerolineas" : "Aerolinea",
+    carrierCodes.join(" / ") || "N/D",
+  );
 
   for (const itinerary of offer.itineraries as Itinerary[]) {
-    lines.push("----------------------------------------");
-    lines.push(
+    pushTechnicalSection(
+      lines,
       itinerary.direction === "inbound"
-        ? "  VUELTA"
+        ? "Vuelta"
         : itinerary.direction === "outbound"
-          ? "  IDA"
-          : "  TRAMO",
+          ? "Ida"
+          : "Tramo",
     );
-    lines.push("----------------------------------------");
-    lines.push("");
 
     itinerary.segments.forEach((segment: Segment, index: number) => {
+      if (itinerary.segments.length > 1) {
+        lines.push(`Segmento ${index + 1}`);
+      }
       lines.push(...segmentLine(segment));
       if (index < itinerary.segments.length - 1) {
         const next = itinerary.segments[index + 1];
@@ -151,60 +224,52 @@ function buildTechnicalQuotationText(
           (new Date(next.departureAt).getTime() - new Date(segment.arrivalAt).getTime()) / 60000,
         );
         lines.push("");
-        lines.push(`     Escala en ${segment.destination} · ${connectionMinutes} min`);
+        lines.push(`Escala: ${segment.destination} · ${connectionMinutes} min`);
       }
-      lines.push("");
+
+      if (index < itinerary.segments.length - 1) {
+        lines.push("");
+      }
     });
   }
 
-  lines.push("PRECIO");
-  lines.push("----------------------------------------");
-  lines.push(
-    `  TOTAL ..................... ${formatMoney(
-      offer.price.total.amount,
-      offer.price.total.currencyCode,
-    )}`,
-  );
-  lines.push("");
+  pushTechnicalSection(lines, "Precio");
+  pushTechnicalField(lines, "Total", formatMoney(
+    offer.price.total.amount,
+    offer.price.total.currencyCode,
+  ));
 
   if (offer.fareMeta?.lastTicketingDate) {
-    lines.push(`  Limite de emision ......... ${offer.fareMeta.lastTicketingDate}`);
+    pushTechnicalField(lines, "Limite de emision", offer.fareMeta.lastTicketingDate);
   }
   if (typeof offer.fareMeta?.seatsRemaining === "number") {
-    lines.push(`  Asientos visibles ......... ${offer.fareMeta.seatsRemaining}`);
+    pushTechnicalField(lines, "Asientos visibles", offer.fareMeta.seatsRemaining);
   }
   if (offer.baggage?.description) {
-    lines.push(`  Equipaje .................. ${offer.baggage.description}`);
+    pushTechnicalField(lines, "Equipaje", offer.baggage.description);
   }
 
-  lines.push("");
-  lines.push("FUENTE DEL PRECIO");
-  lines.push("----------------------------------------");
-  lines.push(`  Fuente .................... ${describePriceSource(offer)}`);
-  if (offer.priceVerifiedAt) {
-    lines.push(`  Actualizado en ............ ${offer.priceVerifiedAt}`);
-  }
+  pushTechnicalSection(lines, "Fuente del precio");
+  pushTechnicalField(lines, "Fuente", describePriceSource(offer));
 
-  lines.push("");
-  lines.push("SALIDA ACCIONABLE");
-  lines.push("----------------------------------------");
+  pushTechnicalSection(lines, "Salida accionable");
   if (mainPath) {
-    lines.push(`  Tipo ...................... ${mainPath.type}`);
-    lines.push(`  Label ..................... ${mainPath.label}`);
-    lines.push(`  Precision ................. ${mainPath.precision}`);
+    pushTechnicalField(lines, "Tipo", mainPath.type);
+    pushTechnicalField(lines, "Label", mainPath.label);
+    pushTechnicalField(lines, "Precision", mainPath.precision);
   } else {
-    lines.push("  Tipo ...................... manual-reference");
+    pushTechnicalField(lines, "Tipo", "manual-reference");
   }
 
+  pushTechnicalSection(lines, "Notas");
+  lines.push("- Precio sujeto a disponibilidad al emitir.");
+  lines.push("- Si el flujo termina en proveedor externo, el landing puede variar.");
+  lines.push("- Reprice recomendado antes de emitir.");
   lines.push("");
-  lines.push("NOTAS");
-  lines.push("----------------------------------------");
-  lines.push("  - Precio sujeto a disponibilidad al emitir.");
-  lines.push("  - Si el flujo termina en proveedor externo, el landing puede variar.");
-  lines.push("  - Reprice recomendado antes de emitir.");
-  lines.push("");
-  lines.push(
-    `PAX: ${request.passengers.adults} ADT / ${request.passengers.children} CHD / ${request.passengers.infants} INF`,
+  pushTechnicalField(
+    lines,
+    "PAX",
+    `${request.passengers.adults} ADT / ${request.passengers.children} CHD / ${request.passengers.infants} INF`,
   );
 
   return lines.join("\n");
@@ -375,29 +440,93 @@ function buildRestrictionsSummary(): string[] {
   ];
 }
 
+function buildCommercialScheduleLine(
+  label: string,
+  itinerary: Itinerary | undefined,
+  options: QuotationRenderOptions,
+): string {
+  const departureSegment = firstSegment(itinerary);
+  const originCode = normalizeIataCode(departureSegment?.origin);
+  const schedule = formatCommercialSchedule(departureSegment?.departureAt, options.timeZone);
+
+  return `${label}: ${originCode ? `${originCode} · ` : ""}${schedule}`;
+}
+
+function buildCommercialPriceLines(
+  offer: CanonicalOffer,
+  request: SearchRequest,
+  options: QuotationRenderOptions,
+): string[] {
+  const currencyCode = String(offer.price.total.currencyCode ?? "").trim().toUpperCase();
+  const totalAmount = offer.price.total.amount;
+  const adults = request.passengers.adults;
+  const children = request.passengers.children;
+  const infants = request.passengers.infants;
+  const usdToPenRate = typeof options.usdToPenRate === "number" && options.usdToPenRate > 0
+    ? options.usdToPenRate
+    : undefined;
+
+  if (currencyCode !== "USD") {
+    return [
+      formatCommercialTotalLine("Total", currencyCode || "USD", totalAmount),
+    ];
+  }
+
+  if (adults > 0 && children === 0 && infants === 0) {
+    const perAdultUsd = totalAmount / adults;
+    const perAdultPen = usdToPenRate === undefined ? undefined : perAdultUsd * usdToPenRate;
+    const lines = [
+      formatCommercialPriceLine("US$", perAdultUsd, "por adulto"),
+      formatCommercialPriceLine("S/", perAdultPen, "por adulto"),
+    ];
+
+    if (adults > 1) {
+      lines.push(formatCommercialTotalLine("Total", "US$", totalAmount));
+      lines.push(
+        formatCommercialTotalLine(
+          "Total en soles",
+          "S/",
+          usdToPenRate === undefined ? undefined : totalAmount * usdToPenRate,
+        ),
+      );
+    }
+
+    return lines;
+  }
+
+  return [
+    formatCommercialTotalLine("Total", "US$", totalAmount),
+    formatCommercialTotalLine(
+      "Total en soles",
+      "S/",
+      usdToPenRate === undefined ? undefined : totalAmount * usdToPenRate,
+    ),
+  ];
+}
+
 function buildCommercialQuotationText(
   offer: CanonicalOffer,
   request: SearchRequest,
+  options: QuotationRenderOptions = {},
 ): string {
   const outbound = offer.itineraries.find((itinerary) => itinerary.direction === "outbound") ?? offer.itineraries[0];
   const inbound = offer.itineraries.find((itinerary) => itinerary.direction === "inbound");
-  const outboundDeparture = firstSegment(outbound)?.departureAt;
-  const inboundDeparture = firstSegment(inbound)?.departureAt;
   const carrierNames = collectCarrierDisplayNames(offer);
   const inclusions = buildCommercialInclusions(offer, request);
   const exclusions = buildCommercialExclusions(offer);
   const restrictions = buildRestrictionsSummary();
+  const priceLines = buildCommercialPriceLines(offer, request, options);
 
   const lines = [
     "COTIZACIÓN BOLETO AÉREO ✈️",
     "",
     `✈️ Ruta: ${routeSummary(offer, request)}`,
     `✈️ ${carrierNames.length > 1 ? "Aerolíneas" : "Aerolínea"}: ${carrierDisplayName(offer)}`,
-    `📆 Ida: ${formatCommercialDateTime(outboundDeparture)}`,
+    buildCommercialScheduleLine("🛫 Horario ida", outbound, options),
   ];
 
-  if (inboundDeparture) {
-    lines.push(`📆 Retorno: ${formatCommercialDateTime(inboundDeparture)}`);
+  if (inbound) {
+    lines.push(buildCommercialScheduleLine("🛬 Horario retorno", inbound, options));
   }
 
   lines.push("");
@@ -416,8 +545,7 @@ function buildCommercialQuotationText(
   lines.push("");
   lines.push("💵 PRECIO:");
   lines.push("");
-  lines.push("$ ______ dólares por adulto");
-  lines.push("S/. ______ soles por adulto");
+  priceLines.forEach((line) => lines.push(line));
 
   return lines.join("\n");
 }
@@ -425,8 +553,9 @@ function buildCommercialQuotationText(
 export function buildCommercialQuotation(
   offer: CanonicalOffer,
   request: SearchRequest,
+  options?: QuotationRenderOptions,
 ): string {
-  return buildCommercialQuotationText(offer, request);
+  return buildCommercialQuotationText(offer, request, options);
 }
 
 export function buildTechnicalQuotation(
@@ -439,13 +568,12 @@ export function buildTechnicalQuotation(
 export function buildQuotationText(
   offer: CanonicalOffer,
   request: SearchRequest,
+  options?: QuotationRenderOptions,
 ): string {
   return [
-    buildCommercialQuotation(offer, request),
+    buildCommercialQuotation(offer, request, options),
     "",
-    "========================================",
     "DETALLE TECNICO",
-    "========================================",
     "",
     buildTechnicalQuotation(offer, request),
   ].join("\n");
