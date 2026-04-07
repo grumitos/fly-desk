@@ -31,7 +31,11 @@ import {
   SearchResponse,
   Segment,
 } from "./core/types";
-import { getCostamarProviderContext } from "./provider-context";
+import {
+  costamarTokenMatchesTerminal,
+  getCostamarProviderContext,
+  sanitizeCostamarToken,
+} from "./provider-context";
 
 interface CostamarEngineMetadata {
   code?: string;
@@ -397,9 +401,12 @@ function ensureCostamarCredentials(context: CostamarProviderContext): void {
   }
 }
 
-function resolveCostamarValidationToken(token: string | undefined): string | undefined {
-  const normalized = token?.trim();
-  if (!normalized) {
+function resolveCostamarValidationToken(
+  token: string | undefined,
+  terminalId: string | undefined,
+): string | undefined {
+  const normalized = sanitizeCostamarToken(token);
+  if (!normalized || !costamarTokenMatchesTerminal(normalized, terminalId)) {
     return undefined;
   }
 
@@ -421,9 +428,16 @@ function resolveCostamarValidationToken(token: string | undefined): string | und
   return normalized;
 }
 
-function resolveCostamarRedirectToken(token: string | undefined): string | undefined {
-  const normalized = token?.trim();
-  return normalized || undefined;
+function resolveCostamarRedirectToken(
+  token: string | undefined,
+  terminalId: string | undefined,
+): string | undefined {
+  const normalized = sanitizeCostamarToken(token);
+  if (!normalized || !costamarTokenMatchesTerminal(normalized, terminalId)) {
+    return undefined;
+  }
+
+  return normalized;
 }
 
 async function fetchCostamar(
@@ -533,7 +547,7 @@ export function buildCostamarSearchBody(
     });
   }
 
-  const validationToken = resolveCostamarValidationToken(context.token);
+  const validationToken = resolveCostamarValidationToken(context.token, context.terminalId);
 
   return {
     flightType: request.tripType === "one-way" ? "OW" : "RT",
@@ -707,7 +721,7 @@ export function applyCostamarContextToBrandedSearchUrl(
   const branded = new URL(input);
   branded.searchParams.set("terminalId", context.terminalId);
   branded.searchParams.set("lang", context.lang);
-  const redirectToken = resolveCostamarRedirectToken(context.token);
+  const redirectToken = resolveCostamarRedirectToken(context.token, context.terminalId);
   if (redirectToken) {
     branded.searchParams.set("token", redirectToken);
   } else {
@@ -1042,7 +1056,7 @@ export function createLocalCostamarSearchDraft(
 export async function resolveLocalCostamarExactProgressive(
   request: SearchRequest,
   providerContext?: ProviderContext,
-  onUpdate?: (result: ProviderSearchResult) => void,
+  onUpdate?: (result: ProviderSearchResult) => boolean | void,
 ): Promise<ProviderSearchResult> {
   const result = await searchLocalCostamarExact({
     ...request,
@@ -1098,12 +1112,13 @@ export async function searchLocalCostamarRange(
 export async function resolveLocalCostamarRangeProgressive(
   request: SearchRequest,
   providerContext?: ProviderContext,
-  onUpdate?: (result: ProviderSearchResult) => void,
+  onUpdate?: (result: ProviderSearchResult) => boolean | void,
 ): Promise<ProviderSearchResult> {
   const candidates = enumerateRangeRequests(request);
   const aggregatedOffers: CanonicalOffer[] = [];
   const warnings: string[] = [];
   let partial = false;
+  let stopRequested = false;
 
   await mapConcurrent(candidates, COSTAMAR_RANGE_SEARCH_CONCURRENCY, async (derivedRequest) => {
     try {
@@ -1115,11 +1130,15 @@ export async function resolveLocalCostamarRangeProgressive(
       warnings.push(error instanceof Error ? error.message : "Costamar range search failed.");
     }
 
-    onUpdate?.({
+    if (onUpdate?.({
       offers: dedupeCostamarOffers(aggregatedOffers),
       warnings: uniqueStrings(warnings),
       partial: true,
-    });
+    }) === false) {
+      stopRequested = true;
+    }
+  }, {
+    canContinue: () => !stopRequested,
   });
 
   const offers = dedupeCostamarOffers(aggregatedOffers);
@@ -1131,7 +1150,7 @@ export async function resolveLocalCostamarRangeProgressive(
   return {
     offers,
     warnings: finalWarnings,
-    partial,
+    partial: partial || stopRequested,
   };
 }
 

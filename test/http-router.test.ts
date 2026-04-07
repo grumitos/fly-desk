@@ -604,6 +604,51 @@ test("one-way stay-range preserves omitted maxResults and night bounds", async (
   });
 });
 
+test("exact searches preserve omitted maxResults so page-based caps can be supplied by the client", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        request: {
+          tripType: "round-trip",
+          searchMode: "exact",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MAD",
+              departureDate: "2026-05-01",
+              returnDate: "2026-05-31",
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+          filters: {
+            nonStop: false,
+            baggageRequired: false,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      request?: {
+        filters?: { maxResults?: number };
+      };
+      searchStatus?: string;
+    };
+
+    assert.equal(payload.searchStatus, "running");
+    assert.equal(payload.request?.filters?.maxResults, undefined);
+  });
+});
+
 test("search job responses expose the validated session snapshot instead of the stale job offer", async () => {
   const runtime = getRuntime();
   const job = runtime.sessions.createSearchJob({

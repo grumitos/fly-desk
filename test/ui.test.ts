@@ -93,6 +93,23 @@ test("query and offer panels expose homogeneous headers from first paint", async
   }, { autoOpen: false });
 });
 
+test("results panel boots with the shared skeleton before any search", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+      await openDesktop(page, baseUrl);
+      const probe = await page.evaluate(() => ({
+        skeletonCount: document.querySelectorAll("#resultsContainer .results-skeleton").length,
+        emptyStateCount: document.querySelectorAll("#resultsContainer .empty-state").length,
+        busy: document.querySelector("#resultsContainer .results-skeleton")?.getAttribute("aria-busy") ?? "",
+        skeletonHeaderCount: document.querySelectorAll("#resultsContainer .results-skeleton__header").length,
+      }));
+
+      assert.equal(probe.skeletonCount, 1);
+      assert.equal(probe.emptyStateCount, 0);
+      assert.equal(probe.busy, "false");
+      assert.equal(probe.skeletonHeaderCount, 0);
+  }, { autoOpen: false });
+});
+
 test("search payload keeps USD fixed without hidden max stops or a currency control", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let capturedCurrencyCode = "";
@@ -100,6 +117,7 @@ test("search payload keeps USD fixed without hidden max stops or a currency cont
     let capturedOriginLabel = "";
     let capturedDestinationLabel = "";
     let capturedMaxStops: unknown = "sent";
+    let capturedMaxResults: unknown = undefined;
 
     await page.route(`${baseUrl}/api/search`, async (route: Route) => {
       const body = route.request().postDataJSON();
@@ -108,6 +126,7 @@ test("search payload keeps USD fixed without hidden max stops or a currency cont
       capturedOriginLabel = body?.request?.legs?.[0]?.originLabel ?? "";
       capturedDestinationLabel = body?.request?.legs?.[0]?.destinationLabel ?? "";
       capturedMaxStops = body?.request?.filters?.maxStops;
+      capturedMaxResults = body?.request?.filters?.maxResults;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -154,6 +173,21 @@ test("search payload keeps USD fixed without hidden max stops or a currency cont
       });
     });
       await openDesktop(page, baseUrl);
+      const expectedMaxResults = await page.evaluate(() => {
+        const viewport = document.querySelector("#resultsContainer .table-wrap") ?? document.getElementById("resultsContainer");
+        const header = viewport?.querySelector("thead");
+        const row = viewport?.querySelector("tbody tr.results-row--placeholder");
+        if (!(viewport instanceof HTMLElement) || !(header instanceof HTMLElement) || !(row instanceof HTMLElement)) {
+          throw new Error("Missing results viewport measurements");
+        }
+
+        const availableHeight = Math.max(
+          row.getBoundingClientRect().height,
+          viewport.clientHeight - header.getBoundingClientRect().height,
+        );
+        const visibleRows = Math.max(1, Math.floor((availableHeight + 1) / row.getBoundingClientRect().height));
+        return visibleRows * 25;
+      });
       await page.evaluate(() => {
         const origin = document.getElementById("origin") as HTMLInputElement | null;
         const destination = document.getElementById("destination") as HTMLInputElement | null;
@@ -183,6 +217,7 @@ test("search payload keeps USD fixed without hidden max stops or a currency cont
       assert.equal(capturedOriginLabel, "LIM - Lima, Peru");
       assert.equal(capturedDestinationLabel, "MIA - Miami, Usa");
       assert.equal(capturedMaxStops, undefined);
+      assert.equal(capturedMaxResults, expectedMaxResults);
       assert.equal(await page.locator("#currencyCode").count(), 0);
   }, { autoOpen: false });
 });
@@ -1609,6 +1644,16 @@ test("submitting a search shows inline placeholders instead of a fullscreen over
       });
     });
       await openDesktop(page, baseUrl);
+      const initialToolbarOffset = await page.evaluate(() => {
+        const toolbar = document.getElementById("resultsToolbar");
+        const actions = toolbar?.querySelector(".panel-header__actions--results");
+        if (!toolbar || !actions) {
+          throw new Error("Missing results toolbar actions");
+        }
+
+        return Math.round(toolbar.getBoundingClientRect().right - actions.getBoundingClientRect().right);
+      });
+
       await page.evaluate(() => {
         const origin = document.getElementById("origin") as HTMLInputElement | null;
         const destination = document.getElementById("destination") as HTMLInputElement | null;
@@ -1628,6 +1673,22 @@ test("submitting a search shows inline placeholders instead of a fullscreen over
 
       assert.equal(await page.locator("#loadingOverlay").count(), 0);
       assert.equal(await page.locator(".results-skeleton").getAttribute("aria-busy"), "true");
+      assert.equal(await page.locator(".results-skeleton__header").count(), 0);
+      assert.doesNotMatch(
+        await page.locator("#resultsPanelMeta").textContent() ?? "",
+        /Actualizando resultados/i,
+      );
+
+      const runningToolbarOffset = await page.evaluate(() => {
+        const toolbar = document.getElementById("resultsToolbar");
+        const actions = toolbar?.querySelector(".panel-header__actions--results");
+        if (!toolbar || !actions) {
+          throw new Error("Missing results toolbar actions");
+        }
+
+        return Math.round(toolbar.getBoundingClientRect().right - actions.getBoundingClientRect().right);
+      });
+      assert.ok(Math.abs(runningToolbarOffset - initialToolbarOffset) <= 1);
 
       await page.waitForSelector('tr[data-oid="offer-1"]');
       assert.equal(await page.locator(".results-skeleton").count(), 0);
@@ -2179,6 +2240,266 @@ test("reprice keeps the loading feedback inside the detail panel", async () => {
         return hero?.textContent?.includes("499.00");
       });
   }, { autoOpen: false });
+});
+
+test("progressive list searches keep placeholder rows while results are still streaming", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let pollCount = 0;
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-streaming",
+          searchComplete: false,
+          searchStatus: "running",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [buildOffer()],
+          allOffers: [buildOffer()],
+          searchMeta: buildSearchMeta(),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.route(`${baseUrl}/api/search/search-job-streaming`, async (route: Route) => {
+      pollCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-streaming",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [buildOffer()],
+          allOffers: [buildOffer()],
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+      await openDesktop(page, baseUrl);
+      await page.evaluate(() => {
+        const origin = document.getElementById("origin") as HTMLInputElement | null;
+        const destination = document.getElementById("destination") as HTMLInputElement | null;
+        if (!origin || !destination) throw new Error("Missing location inputs");
+        origin.value = "LIM - Lima, Peru";
+        origin.dataset.code = "LIM";
+        origin.dataset.label = "LIM - Lima, Peru";
+        destination.value = "MIA - Miami, Usa";
+        destination.dataset.code = "MIA";
+        destination.dataset.label = "MIA - Miami, Usa";
+      });
+      await setDateValue(page, "departureDate", "2026-04-15");
+      await setDateValue(page, "returnDate", "2026-04-22");
+
+      await page.click("#submitButton");
+      await page.waitForSelector('tr[data-oid="offer-1"]');
+
+      const placeholderCountWhileRunning = await page.locator(".results-row--placeholder").count();
+      assert.equal(await page.locator("#resultsContainer .table-wrap").getAttribute("aria-busy"), "true");
+      assert.equal(placeholderCountWhileRunning > 0, true);
+
+      await page.waitForFunction(() => (
+        document.querySelectorAll("#resultsContainer .results-row--placeholder").length === 0
+        && document.querySelector("#resultsContainer .table-wrap")?.getAttribute("aria-busy") === "false"
+      ));
+
+      assert.equal(pollCount > 0, true);
+  }, { autoOpen: false });
+});
+
+test("quotation separates commercial and technical text and only auto-copies the commercial version", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const normalizeClipboardText = (value: string) => value.replace(/\r\n/g, "\n");
+    const commercialText = [
+      "COTIZACION BOLETO AEREO",
+      "",
+      "Ruta comercial para cliente",
+    ].join("\n");
+    const technicalText = [
+      "COTIZACION DE VUELO",
+      "",
+      "Detalle tecnico interno",
+    ].join("\n");
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-quotation",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [buildOffer()],
+          allOffers: [buildOffer()],
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.route(`${baseUrl}/api/quotation`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchSessionId: "search-job-quotation",
+          offer: buildOffer({
+            priceConfidence: "validated",
+          }),
+          plainText: `${commercialText}\n\nDETALLE TECNICO\n\n${technicalText}`,
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.evaluate(() => navigator.clipboard.writeText("clipboard inicial"));
+    await page.evaluate(() => {
+      const origin = document.getElementById("origin") as HTMLInputElement | null;
+      const destination = document.getElementById("destination") as HTMLInputElement | null;
+      if (!origin || !destination) throw new Error("Missing location inputs");
+      origin.value = "LIM - Lima, Peru";
+      origin.dataset.code = "LIM";
+      origin.dataset.label = "LIM - Lima, Peru";
+      destination.value = "MIA - Miami, Usa";
+      destination.dataset.code = "MIA";
+      destination.dataset.label = "MIA - Miami, Usa";
+    });
+    await setDateValue(page, "departureDate", "2026-04-15");
+    await setDateValue(page, "returnDate", "2026-04-22");
+    await page.click("#submitButton");
+    await page.waitForSelector('tr[data-oid="offer-1"]');
+
+    await page.click("#quotationButton");
+    await page.waitForFunction(() => {
+      const textareas = [...document.querySelectorAll(".quote-textarea")] as HTMLTextAreaElement[];
+      return textareas.length === 2;
+    });
+
+    const quotationState = await page.evaluate(async () => {
+      const textareas = [...document.querySelectorAll(".quote-textarea")] as HTMLTextAreaElement[];
+      const sectionTitles = [...document.querySelectorAll(".detail-section__title")]
+        .map((node) => node.textContent?.trim() ?? "");
+      return {
+        textareaValues: textareas.map((node) => node.value),
+        sectionTitles,
+        clipboard: await navigator.clipboard.readText(),
+      };
+    });
+
+    assert.ok(quotationState.sectionTitles.includes("Cotizacion comercial"));
+    assert.ok(quotationState.sectionTitles.includes("Detalle tecnico"));
+    assert.deepEqual(quotationState.textareaValues, [commercialText, technicalText]);
+    assert.equal(normalizeClipboardText(quotationState.clipboard), commercialText);
+
+    await page.click("[data-copy-technical-quotation]");
+    await page.waitForFunction(async () => (await navigator.clipboard.readText()) === "COTIZACION DE VUELO\n\nDetalle tecnico interno");
+
+    const technicalClipboard = await page.evaluate(() => navigator.clipboard.readText());
+    assert.equal(normalizeClipboardText(technicalClipboard), technicalText);
+  }, {
+    autoOpen: false,
+    createPage: async ({ baseUrl, browser }) => {
+      const context = await browser.newContext();
+      await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseUrl });
+      return context.newPage();
+    },
+  });
 });
 
 test("search results start validating the selected offer in the background", async () => {
