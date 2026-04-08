@@ -2640,6 +2640,11 @@ function selOffer() {
     ?? null;
 }
 
+function selMatrixCell() {
+  if (!state.selectedMatrixKey) return null;
+  return state.matrixResponse?.cells?.find((cell) => cell.key === state.selectedMatrixKey) ?? null;
+}
+
 function sessionId() {
   return state.searchResponse?.searchMeta?.searchSessionId ?? null;
 }
@@ -3678,8 +3683,12 @@ function applyClientOfferControls() {
     .slice(start, start + pageSize)
     .flat();
 
+  const previousSelectedOfferId = state.selectedOfferId;
   if (!state.searchResponse.offers.some((offer) => offer.id === state.selectedOfferId)) {
     state.selectedOfferId = state.searchResponse.offers[0]?.id ?? offers[0]?.id ?? null;
+  }
+  if (previousSelectedOfferId !== state.selectedOfferId) {
+    clearQuotationState();
   }
 
 }
@@ -3705,8 +3714,21 @@ function setSearchResponse(data) {
   applyClientOfferControls();
 }
 
+function clearQuotationState() {
+  state.quotationText = "";
+  state.quotationTechnicalText = "";
+  if (state.detailPendingAction === "quotation") {
+    state.detailPendingAction = null;
+  }
+}
+
 function selectOffer(offerId) {
-  state.selectedOfferId = offerId ?? null;
+  const nextOfferId = offerId ?? null;
+  if (state.selectedOfferId !== nextOfferId) {
+    clearQuotationState();
+  }
+  state.selectedMatrixKey = null;
+  state.selectedOfferId = nextOfferId;
   renderResultsArea();
   renderDetailPanel();
 }
@@ -3958,6 +3980,12 @@ function handleResultsClick(e) {
     return;
   }
 
+  const flexibleRow = e.target.closest("tr[data-flex-cell-key]");
+  if (flexibleRow) {
+    selectMatrixCell(flexibleRow.dataset.flexCellKey);
+    return;
+  }
+
   const matrixRow = e.target.closest("[data-mk]");
   if (matrixRow) {
     void handleMatrixClick({ target: matrixRow });
@@ -3970,8 +3998,8 @@ function handleResultsClick(e) {
   selectOffer(row.dataset.oid);
 }
 
-function focusAdjacentResultsRow(currentRow, step) {
-  const rows = [...resultsContainer?.querySelectorAll("tr[data-oid]") ?? []];
+function focusAdjacentResultsRow(currentRow, step, selector = "tr[data-oid]") {
+  const rows = [...resultsContainer?.querySelectorAll(selector) ?? []];
   const currentIndex = rows.indexOf(currentRow);
   if (currentIndex < 0) {
     return;
@@ -3981,6 +4009,27 @@ function focusAdjacentResultsRow(currentRow, step) {
 }
 
 function handleResultsKeydown(e) {
+  const flexibleRow = e.target.closest("tr[data-flex-cell-key]");
+  if (flexibleRow) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      selectMatrixCell(flexibleRow.dataset.flexCellKey);
+      return;
+    }
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      focusAdjacentResultsRow(flexibleRow, 1, "tr[data-flex-cell-key]");
+      return;
+    }
+
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      focusAdjacentResultsRow(flexibleRow, -1, "tr[data-flex-cell-key]");
+    }
+    return;
+  }
+
   const matrixRow = e.target.closest("tr[data-mk]");
   if (matrixRow) {
     if (e.key === "Enter" || e.key === " ") {
@@ -4012,6 +4061,14 @@ function handleResultsKeydown(e) {
   }
 }
 
+function selectMatrixCell(cellKey) {
+  if (!cellKey) return;
+  state.selectedOfferId = null;
+  state.selectedMatrixKey = cellKey;
+  renderResultsArea();
+  renderDetailPanel();
+}
+
 function flexibleCellStateLabel(cell) {
   switch (cell?.confidence) {
     case "validated":
@@ -4029,6 +4086,39 @@ function flexibleCellStateLabel(cell) {
     default:
       return "Pendiente";
   }
+}
+
+function flexibleCellHeroLabel(cell) {
+  if (cell?.price) {
+    return formatMoney(cell.price);
+  }
+
+  return flexibleCellStateLabel(cell);
+}
+
+function flexibleCellRequest(cell) {
+  return matrixDerivedSearchRequest(cell?.derivedRequest) ?? state.matrixResponse?.request ?? null;
+}
+
+function flexibleCellFilterSummary(filters = {}) {
+  const items = [];
+  if (filters.nonStop) items.push("Directo");
+  if (filters.baggageRequired) items.push("Con equipaje");
+  if (typeof filters.maxStops === "number") {
+    items.push(`Max. ${filters.maxStops} escala${filters.maxStops === 1 ? "" : "s"}`);
+  }
+  if (typeof filters.maxLayoverMinutes === "number" && filters.maxLayoverMinutes > 0) {
+    items.push(`Escala max. ${formatDuration(filters.maxLayoverMinutes)}`);
+  }
+  return items.join(" · ") || "Sin filtros adicionales";
+}
+
+function flexibleCellSelectionCopy(cell) {
+  if (cell?.selectable && cell?.derivedRequest) {
+    return "Esta combinacion resume precio, fechas y contexto. Abre la consulta exacta para ver segmentos y enlaces de compra.";
+  }
+
+  return cell?.tooltip || "Esta combinacion todavia no tiene una oferta exacta consultable.";
 }
 
 function flexibleCellSortRank(cell) {
@@ -4106,6 +4196,7 @@ function renderFlexibleList(container = resultsContainer) {
         : "—";
     const stateLabel = flexibleCellStateLabel(cell);
     const rowLabel = [
+      isActive ? "Combinacion seleccionada" : "Ver combinacion flexible",
       formatDateCompact(cell.departureDate),
       cell.returnDate ? formatDateCompact(cell.returnDate) : "",
       stayLabel,
@@ -4115,12 +4206,13 @@ function renderFlexibleList(container = resultsContainer) {
 
     html += `
       <tr
+        data-flex-cell-key="${cell.key}"
         data-mk="${cell.key}"
         class="${isActive ? "is-active" : ""} ${!cell.selectable ? "results-row--disabled" : ""}"
-        tabindex="${cell.selectable ? "0" : "-1"}"
+        tabindex="0"
         role="button"
         aria-label="${escapeHtml(rowLabel)}"
-        aria-disabled="${cell.selectable ? "false" : "true"}"
+        aria-pressed="${isActive ? "true" : "false"}"
         title="${escapeHtml(cell.tooltip ?? "")}"
       >
         <td><span class="cell-main">${escapeHtml(formatDateCompact(cell.departureDate))}</span></td>
@@ -4150,18 +4242,13 @@ function renderFlexibleList(container = resultsContainer) {
   });
 }
 
-async function handleMatrixClick(e) {
+async function launchMatrixCellSearch(cellKey) {
   const cells = state.matrixResponse?.cells ?? [];
-  const btn = e.target.closest("[data-mk]");
-  if (!btn) {
-    return;
-  }
-
-  const cell = cells.find((entry) => entry.key === btn.dataset.mk);
+  const cell = cells.find((entry) => entry.key === cellKey);
   if (!cell?.selectable || !cell.derivedRequest) return;
   const derivedRequest = matrixDerivedSearchRequest(cell.derivedRequest);
   submitButton.disabled = true;
-  state.selectedMatrixKey = btn.dataset.mk;
+  state.selectedMatrixKey = cellKey;
   state.matrixExpanded = false;
   try {
     stopMatrixPolling();
@@ -4191,6 +4278,15 @@ async function handleMatrixClick(e) {
     renderAll();
   } catch (err) { showToast(err.message); }
   finally { submitButton.disabled = false; }
+}
+
+async function handleMatrixClick(e) {
+  const btn = e.target.closest("[data-mk]");
+  if (!btn) {
+    return;
+  }
+
+  await launchMatrixCellSearch(btn.dataset.mk);
 }
 
 function getMatrixPriceStats(cells) {
@@ -4389,9 +4485,11 @@ function renderCalendarView(container = resultsContainer) {
   matrixWrap?.addEventListener("scroll", handleMatrixScroll, { passive: true });
 
   // Re-attach matrix click handler on the container
-  container.querySelectorAll("[data-mk]").forEach(btn => {
-    btn.addEventListener("click", handleMatrixClick);
-  });
+  if (container !== resultsContainer) {
+    container.querySelectorAll("[data-mk]").forEach(btn => {
+      btn.addEventListener("click", handleMatrixClick);
+    });
+  }
 }
 
 /* ================================================================
@@ -4426,11 +4524,72 @@ function closeDetailPanel() {
   if (detailPanel) detailPanel.classList.remove("is-open");
 }
 
+function detailPairHtml(label, value, options = {}) {
+  if (value == null || value === "") return "";
+  const valueClass = options.strong ? "detail-pair detail-pair--strong" : "detail-pair";
+  return `<div class="${valueClass}"><span class="detail-pair__key">${escapeHtml(label)}</span><span class="detail-pair__val">${escapeHtml(String(value))}</span></div>`;
+}
+
+function renderMatrixCellDetail(cell) {
+  const request = flexibleCellRequest(cell);
+  const fallbackRequest = state.matrixResponse?.request ?? request ?? {};
+  const leg = request?.legs?.[0] ?? fallbackRequest?.legs?.[0] ?? {};
+  const passengers = request?.passengers ?? fallbackRequest?.passengers ?? {};
+  const adults = Number.parseInt(String(passengers.adults ?? 1), 10) || 1;
+  const children = Number.parseInt(String(passengers.children ?? 0), 10) || 0;
+  const infants = Number.parseInt(String(passengers.infants ?? 0), 10) || 0;
+  const routeSummary = [leg.origin, leg.destination].filter(Boolean).join(" → ") || toolbarRouteSummary(fallbackRequest);
+  const passengerSummary = formatPassengerSummary(adults, children, infants);
+  const exactProviderLabel = request?.providerId
+    ? providerLabel(request.providerId)
+    : providerLabelList(state.matrixResponse?.searchMeta?.providersUsed ?? [cell.providerSource]);
+  const stayLabel = cell.stayNights != null ? `${cell.stayNights} noches` : "—";
+  const summaryParts = [routeSummary, providerLabel(cell.providerSource), passengerSummary].filter(Boolean);
+  let h = "";
+
+  h += `<div class="detail-hero">${escapeHtml(flexibleCellHeroLabel(cell))}</div>`;
+  h += `<div class="detail-summary">${escapeHtml(summaryParts.join(" · "))}</div>`;
+
+  h += '<div class="detail-section"><div class="detail-section__title">Combinacion flexible</div>';
+  h += detailPairHtml("Salida", formatDateCompact(cell.departureDate));
+  h += detailPairHtml("Vuelta", cell.returnDate ? formatDateCompact(cell.returnDate) : "—");
+  h += detailPairHtml("Estadia", stayLabel);
+  h += detailPairHtml("Estado", flexibleCellStateLabel(cell));
+  h += detailPairHtml("Proveedor", providerLabel(cell.providerSource));
+  if (cell.tooltip) {
+    h += detailPairHtml("Detalle", cell.tooltip);
+  }
+  h += '</div>';
+
+  h += '<div class="detail-section"><div class="detail-section__title">Contexto de busqueda</div>';
+  h += detailPairHtml("Pasajeros", passengerSummary);
+  h += detailPairHtml("Filtros", flexibleCellFilterSummary(request?.filters ?? fallbackRequest?.filters));
+  h += detailPairHtml("Consulta exacta", exactProviderLabel);
+  h += detailPairHtml("Cabina", request?.cabin ?? fallbackRequest?.cabin ?? "ECONOMY");
+  h += '</div>';
+
+  h += '<div class="detail-section">';
+  h += '<div class="detail-section__header">';
+  h += '<div class="detail-section__title">Oferta</div>';
+  if (cell.selectable && cell.derivedRequest) {
+    h += `<button type="button" class="btn btn--primary btn--sm" data-matrix-detail-search="${escapeHtml(cell.key)}">Abrir exacta</button>`;
+  }
+  h += '</div>';
+  h += `<p class="detail-busy__text">${escapeHtml(flexibleCellSelectionCopy(cell))}</p>`;
+  h += '</div>';
+
+  if (detailContent) detailContent.innerHTML = h;
+  detailContent?.querySelector("[data-matrix-detail-search]")?.addEventListener("click", () => {
+    void launchMatrixCellSearch(cell.key);
+  });
+}
+
 function renderDetailPanel() {
   const offer = selOffer();
+  const matrixCell = offer ? null : selMatrixCell();
   if (quotationButton) quotationButton.disabled = !offer;
 
-  if (!offer) {
+  if (!offer && !matrixCell) {
     closeDetailPanel();
     if (detailContent) {
       detailContent.innerHTML = renderEmptyPanel({
@@ -4442,6 +4601,13 @@ function renderDetailPanel() {
     }
     return;
   }
+
+  if (!offer && matrixCell) {
+    openDetailPanel();
+    renderMatrixCellDetail(matrixCell);
+    return;
+  }
+
   openDetailPanel();
 
   if (state.detailPendingAction) {
@@ -4806,11 +4972,16 @@ quotationButton.addEventListener("click", async () => {
   const offer = selOffer();
   const sid = sessionId();
   if (!offer || !sid) return;
+  const requestedOfferId = offer.id;
+  const requestedSessionId = sid;
   quotationButton.disabled = true;
   state.detailPendingAction = "quotation";
   renderDetailPanel();
   try {
-    const data = await postJson("/api/quotation", { searchSessionId: sid, offerId: offer.id });
+    const data = await postJson("/api/quotation", { searchSessionId: requestedSessionId, offerId: requestedOfferId });
+    if (sessionId() !== requestedSessionId || state.selectedOfferId !== requestedOfferId || !state.searchResponse) {
+      return;
+    }
     const quotation = resolveQuotationPayload(data);
     state.searchResponse.allOffers = state.searchResponse.allOffers.map((o) => o.id === data.offer.id ? data.offer : o);
     applyClientOfferControls();

@@ -5,6 +5,7 @@ import {
   buildQuotationRateLookupRequest,
   resolveQuotationUsdToPenRate,
   resetQuotationUsdToPenRateCacheForTests,
+  warmQuotationUsdToPenRate,
 } from "../src/quotation-exchange-rate";
 import type { SearchSessionRecord } from "../src/session-store";
 import { buildOffer, buildSearchMeta } from "./helpers/ui-fixtures";
@@ -208,4 +209,70 @@ test("resolveQuotationUsdToPenRate refreshes the cache on a new Lima day", async
   assert.equal(secondRate, 3.5);
   assert.equal(thirdRate, 3.7);
   assert.equal(lookupCalls, 2);
+});
+
+test("resolveQuotationUsdToPenRate shares the same in-flight lookup on the current Lima day", async () => {
+  resetQuotationUsdToPenRateCacheForTests();
+
+  const offer = buildOffer({
+    providerSource: "costamar",
+    tripType: "round-trip",
+  });
+  const session = buildSession({
+    offers: [offer],
+  });
+  let lookupCalls = 0;
+  const searchRate = async () => {
+    lookupCalls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    return 3.66;
+  };
+
+  const [firstRate, secondRate] = await Promise.all([
+    resolveQuotationUsdToPenRate(session, offer, {
+      now: new Date("2026-04-07T15:00:00.000Z"),
+      searchRate,
+    }),
+    resolveQuotationUsdToPenRate(session, offer, {
+      now: new Date("2026-04-07T15:00:00.000Z"),
+      searchRate,
+    }),
+  ]);
+
+  assert.equal(firstRate, 3.66);
+  assert.equal(secondRate, 3.66);
+  assert.equal(lookupCalls, 1);
+});
+
+test("warmQuotationUsdToPenRate primes the daily cache before the quotation endpoint needs it", async () => {
+  resetQuotationUsdToPenRateCacheForTests();
+
+  const offer = buildOffer({
+    providerSource: "costamar",
+    tripType: "round-trip",
+  });
+  let lookupCalls = 0;
+
+  await warmQuotationUsdToPenRate(buildSession({
+    offers: [offer],
+  }), {
+    now: new Date("2026-04-07T15:00:00.000Z"),
+    searchRate: async () => {
+      lookupCalls += 1;
+      return 3.58;
+    },
+  });
+
+  const rate = await resolveQuotationUsdToPenRate(buildSession({
+    offers: [offer],
+  }), offer, {
+    now: new Date("2026-04-07T18:00:00.000Z"),
+    searchRate: async () => {
+      lookupCalls += 1;
+      return 3.7;
+    },
+  });
+
+  assert.equal(rate, 3.58);
+  assert.equal(lookupCalls, 1);
 });

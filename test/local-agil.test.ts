@@ -7,7 +7,9 @@ import {
   parseAgilRefreshTokenPayload,
   parseAgilSessionData,
   readAgilStorageSnapshotFromPage,
+  sameAgilSessionIdentity,
   resetAgilApimSubscriptionKeyCacheForTests,
+  shouldReuseAgilSession,
   suggestLocalAgilLocations,
 } from "../src/local-agil";
 
@@ -76,6 +78,43 @@ test("can derive a refreshable Agil session without tokenSearchFlight", () => {
   assert.equal(session.userCode, 1234);
   assert.equal(session.internalCode, "ABCD");
   assert.equal(session.ip, "1.2.3.4");
+  assert.equal(typeof session.capturedAtMs, "number");
+});
+
+test("Agil session cache forces a browser revalidation after a short interval", () => {
+  const now = 1_710_000_000_000;
+
+  assert.equal(shouldReuseAgilSession({
+    expiresAtMs: now + (10 * 60 * 1000),
+    capturedAtMs: now - 30_000,
+  }, now), true);
+
+  assert.equal(shouldReuseAgilSession({
+    expiresAtMs: now + (10 * 60 * 1000),
+    capturedAtMs: now - 120_000,
+  }, now), false);
+});
+
+test("Agil session identity changes when the browser switches account or seller", () => {
+  assert.equal(sameAgilSessionIdentity({
+    userCode: 1234,
+    internalCode: "ABCD",
+    ip: "1.2.3.4",
+  }, {
+    userCode: 1234,
+    internalCode: "ABCD",
+    ip: "1.2.3.4",
+  }), true);
+
+  assert.equal(sameAgilSessionIdentity({
+    userCode: 1234,
+    internalCode: "ABCD",
+    ip: "1.2.3.4",
+  }, {
+    userCode: 5678,
+    internalCode: "WXYZ",
+    ip: "1.2.3.4",
+  }), false);
 });
 
 test("falls back to the motorvuelos origin when tokenSearchFlight is missing on agilsmart", async () => {

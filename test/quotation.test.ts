@@ -111,22 +111,37 @@ test("commercial quotation lists multiple airlines and moves missing baggage to 
   assert.match(text, /✈️ Aerolíneas: Aerolíneas Argentinas \+ LATAM/);
   assert.match(text, /🛫 Horario ida: LIM · 11 abril a las 02:45 am/);
   assert.match(text, /🛬 Horario retorno: AEP · 10 mayo a las 10:35 pm/);
-  assert.match(text, /✅ INCLUYE\n\* Boleto de ida y vuelta\n\* Equipaje de mano/);
-  assert.match(text, /🚫 NO INCLUYE\n\* Maleta facturada/);
-  assert.match(text, /📋 CONDICIONES\n\* Cambios de nombre no permitidos\./);
-  assert.match(text, /💵 PRECIO:\n\nUS\$ 1,799 por adulto\nS\/ 6,329 por adulto/);
+  assert.match(text, /✅ INCLUYE\n\* Boleto de ida y vuelta\n\* Equipaje incluido: mochila o artículo personal y maleta de mano/);
+  assert.match(text, /🚫 NO INCLUYE\n\* Maleta de bodega/);
+  assert.match(text, /📋 CONDICIONES\n- Reembolsos no permitidos después de emitir\.\n\* Cambios de nombre no permitidos\.\n\* Cambios de fecha y ruta sujetos a condiciones de la tarifa\./);
+  assert.match(text, /💵 PRECIO:\n\nUS\$ 1,799 o S\/ 6,329 soles por adulto/);
   assert.doesNotMatch(text, /Sin Maleta Facturada/);
   assert.doesNotMatch(text, /DETALLE TECNICO/);
   assert.doesNotMatch(text, /\[Aquí no se coloca nada de momento, el agente decide\]/);
 });
 
-test("commercial quotation leaves the soles line blank when the exchange rate is unavailable", () => {
+test("commercial quotation lists both hand and checked baggage as exclusions when neither is included", () => {
+  const text = buildCommercialQuotation(buildOffer({
+    baggage: {
+      carryOnIncluded: false,
+      checkedIncluded: false,
+      description: "Sin equipaje incluido",
+    },
+  }), buildRequest(), {
+    timeZone: "UTC",
+  });
+
+  assert.doesNotMatch(text, /Equipaje incluido:/);
+  assert.match(text, /🚫 NO INCLUYE\n\* Maleta de mano\n\* Maleta de bodega/);
+});
+
+test("commercial quotation keeps only the dollars line when the exchange rate is unavailable", () => {
   const text = buildCommercialQuotation(buildOffer(), buildRequest(), {
     timeZone: "UTC",
   });
 
   assert.match(text, /US\$ 512 por adulto/);
-  assert.match(text, /S\/  por adulto/);
+  assert.doesNotMatch(text, / o S\//);
 });
 
 test("technical quotation reflects mixed carrier codes", () => {

@@ -13,6 +13,12 @@ let cachedUsdToPenRate:
     rate: number;
   }
   | undefined;
+let pendingUsdToPenRateLookup:
+  | {
+    day: string;
+    promise: Promise<number | undefined>;
+  }
+  | undefined;
 
 function resolveLimaDay(now = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -59,6 +65,10 @@ function pickMostCommonUsdToPenRate(offers: CanonicalOffer[]): number | undefine
 function sessionMatchesCurrentLimaDay(session: SearchSessionRecord, currentDay: string): boolean {
   const observedAt = session.searchMeta.requestedAt || session.createdAt;
   return resolveLimaDay(new Date(observedAt)) === currentDay;
+}
+
+function isUsdOffer(offer: CanonicalOffer): boolean {
+  return String(offer.price.total.currencyCode ?? "").trim().toUpperCase() === "USD";
 }
 
 export function buildQuotationRateLookupRequest(
@@ -134,15 +144,46 @@ export async function resolveQuotationUsdToPenRate(
     return undefined;
   }
 
-  try {
-    const searchRate = options.searchRate ?? resolveLocalAgilUsdToPenRate;
-    const resolvedRate = normalizePositiveRate(await searchRate(lookupRequest));
-    return resolvedRate === undefined ? undefined : rememberUsdToPenRate(resolvedRate, now);
-  } catch {
+  if (pendingUsdToPenRateLookup?.day === currentDay) {
+    return pendingUsdToPenRateLookup.promise;
+  }
+
+  const promise = (async () => {
+    try {
+      const searchRate = options.searchRate ?? resolveLocalAgilUsdToPenRate;
+      const resolvedRate = normalizePositiveRate(await searchRate(lookupRequest));
+      return resolvedRate === undefined ? undefined : rememberUsdToPenRate(resolvedRate, now);
+    } catch {
+      return undefined;
+    }
+  })();
+
+  pendingUsdToPenRateLookup = {
+    day: currentDay,
+    promise,
+  };
+  void promise.finally(() => {
+    if (pendingUsdToPenRateLookup?.promise === promise) {
+      pendingUsdToPenRateLookup = undefined;
+    }
+  });
+
+  return promise;
+}
+
+export function warmQuotationUsdToPenRate(
+  session: SearchSessionRecord,
+  options: ResolveQuotationUsdToPenRateOptions = {},
+): Promise<number | undefined> | undefined {
+  const offer = session.offers.find(isUsdOffer);
+  if (!offer) {
     return undefined;
   }
+
+  return resolveQuotationUsdToPenRate(session, offer, options);
 }
 
 export function resetQuotationUsdToPenRateCacheForTests(): void {
   cachedUsdToPenRate = undefined;
+  pendingUsdToPenRateLookup = undefined;
 }

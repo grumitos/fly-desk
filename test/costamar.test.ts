@@ -235,6 +235,24 @@ test("extractCostamarSessionCandidates trims trailing jwt-safe noise from Chrome
   assert.equal(candidates[0]?.token, token);
 });
 
+test("extractCostamarSessionCandidates reads percent-encoded branded urls from Chrome storage", () => {
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1775657759,
+    exp: 1775661359,
+  });
+  const encodedUrl = encodeURIComponent(
+    `https://booking.clickandbook.com/vuelos/b/LIM/TPP/2026-04-21/2026-04-25/2/0/0?terminalId=0721808110&lang=es&token=${token}`,
+  );
+  const text = `adroll_dqs=arrfrr=${encodedUrl}&_s=tracking`;
+
+  const candidates = extractCostamarSessionCandidates(text, "Session Storage");
+
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0]?.terminalId, "0721808110");
+  assert.equal(candidates[0]?.token, token);
+});
+
 test("keeps Costamar range searches lighter than matrix fan-out by default", () => {
   assert.equal(COSTAMAR_CONCURRENCY.matrixMinimum, 10);
   assert.equal(COSTAMAR_CONCURRENCY.rangeMinimum, 2);
@@ -257,6 +275,60 @@ test("resolveCostamarProviderContext can recover the freshest token from Chrome 
   writeFileSync(
     join(sessionsDir, "Tabs_1"),
     `https://booking.clickandbook.com/vuelos/b/LIM/PEM/2026-03-31/1/0/0?terminalId=0721808110&token=${token}`,
+    "utf8",
+  );
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const context = resolveCostamarProviderContext({
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      lang: "es",
+    });
+
+    assert.equal(context.terminalId, "0721808110");
+    assert.equal(context.token, token);
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveCostamarProviderContext can recover a token from encoded Chrome session storage", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-session-storage-"));
+  const profileName = "Profile 41";
+  const sessionStorageDir = join(tempRoot, profileName, "Session Storage");
+  mkdirSync(sessionStorageDir, { recursive: true });
+
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  const encodedUrl = encodeURIComponent(
+    `https://booking.clickandbook.com/vuelos/b/LIM/TPP/2026-04-21/2026-04-25/2/0/0?terminalId=0721808110&lang=es&token=${token}`,
+  );
+  writeFileSync(
+    join(sessionStorageDir, "000001.log"),
+    `namespace-booking=adroll_dqs=arrfrr=${encodedUrl}&_s=tracking`,
     "utf8",
   );
 
