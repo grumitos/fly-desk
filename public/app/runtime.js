@@ -10,7 +10,6 @@ export const state = {
   matrixPollHandle: null,
   selectedOfferId: null,
   quotationText: "",
-  quotationTechnicalText: "",
   selectedMatrixKey: null,
   airlineFilter: { hidden: new Set(), only: null },
   resultsPage: 1,

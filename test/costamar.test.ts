@@ -131,6 +131,14 @@ function buildEngine() {
   };
 }
 
+function buildEngineWithCurrency(currencyCode: string) {
+  return {
+    profile: {
+      currencyCode,
+    },
+  };
+}
+
 test("buildProviderContext normalizes Costamar defaults and overrides", () => {
   const context = buildProviderContext("costamar", {
     costamar: {
@@ -1160,6 +1168,26 @@ test("buildCostamarSearchWarning exposes token failures clearly", () => {
     "Costamar rejected this search (403): Agency mismatch",
   );
   assert.equal(buildCostamarSearchWarning({ status: 200, data: [] }), undefined);
+});
+
+test("mapCostamarRecommendationToOffer keeps USD as the offer currency for quotation math", () => {
+  const normalized = mapCostamarRecommendationToOffer(
+    buildRecommendation(),
+    buildExactRequest(),
+    {
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: "secret-token",
+      lang: "es",
+    },
+    buildEngineWithCurrency("PEN"),
+  );
+
+  assert.ok(normalized.offer);
+  assert.equal(normalized.offer?.price.total.currencyCode, "USD");
+  assert.equal(normalized.offer?.price.base?.currencyCode, "USD");
+  assert.equal(normalized.offer?.price.taxes?.currencyCode, "USD");
 });
 
 test("createLocalCostamarMatrixDraft leaves only useful stay combinations active", () => {

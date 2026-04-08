@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { SearchSessionStore } from "../src/session-store";
 import type {
   CanonicalOffer,
+  MatrixCell,
   ProviderMeta,
   SearchMeta,
   SearchRequest,
@@ -119,6 +120,51 @@ function buildOffer(id: string, url: string): CanonicalOffer {
   };
 }
 
+function buildMatrixCell(key: string, url: string): MatrixCell {
+  return {
+    key,
+    departureDate: "2026-04-15",
+    returnDate: "2026-04-22",
+    stayNights: 7,
+    price: {
+      amount: 123,
+      currencyCode: "USD",
+    },
+    confidence: "live",
+    providerSource: "agil-local",
+    selectable: true,
+    requiresRequery: true,
+    stateCode: "live",
+    tooltip: "Agil exact search.",
+    derivedRequest: {
+      ...buildRequest(),
+      tripType: "round-trip",
+      legs: [
+        {
+          origin: "LIM",
+          destination: "MIA",
+          departureDate: "2026-04-15",
+          returnDate: "2026-04-22",
+        },
+      ],
+    },
+    purchasePaths: [
+      {
+        id: `${key}-path`,
+        type: "search-redirect",
+        provider: "agil-local",
+        label: "Buscar en Agil",
+        url,
+        precision: "exact-search",
+        score: 0.9,
+        requiresNewTab: true,
+        commercialMode: "provider",
+        state: "search_redirect",
+      },
+    ],
+  };
+}
+
 test("search job refresh replaces stale purchase path ids instead of leaking them", () => {
   const store = new SearchSessionStore();
   const request = buildRequest();
@@ -193,5 +239,58 @@ test("offer updates prune the previous purchase path ids for that offer", () => 
   const resolved = store.resolvePurchasePath(newPathId);
   assert.ok(resolved);
   assert.equal(resolved.path.url, "https://new.example/search");
+});
+
+test("matrix jobs rewrite and refresh purchase path ids for flexible cells", () => {
+  const store = new SearchSessionStore();
+  const request: SearchRequest = {
+    ...buildRequest(),
+    tripType: "round-trip",
+    searchMode: "roundtrip-grid",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "MIA",
+        departureStart: "2026-04-15",
+        departureEnd: "2026-04-19",
+        stayNights: 4,
+      },
+    ],
+  };
+  const meta = buildSearchMeta();
+  const providerMeta = buildProviderMeta();
+
+  const job = store.createMatrixJob({
+    request,
+    cells: [buildMatrixCell("2026-04-15_2026-04-22", "https://old.example/flexible")],
+    axes: {
+      departureDates: ["2026-04-15"],
+      returnDates: ["2026-04-22"],
+    },
+    confidenceSummary: {
+      live: 1,
+    },
+    recommendations: [],
+    providerMeta,
+    searchMeta: meta,
+    warnings: [],
+    status: "running",
+  });
+
+  const firstPathId = job.cells[0]?.purchasePaths?.[0]?.id;
+  assert.ok(firstPathId);
+  assert.equal(job.cells[0]?.purchasePaths?.[0]?.url, `/r/${firstPathId}`);
+  assert.ok(store.resolvePurchasePath(firstPathId));
+
+  const updated = store.updateMatrixJob(job.id, (current) => ({
+    ...current,
+    cells: [buildMatrixCell("2026-04-15_2026-04-22", "https://new.example/flexible")],
+  }));
+
+  const refreshedPathId = updated?.cells[0]?.purchasePaths?.[0]?.id;
+  assert.ok(refreshedPathId);
+  assert.notEqual(refreshedPathId, firstPathId);
+  assert.equal(store.resolvePurchasePath(firstPathId), undefined);
+  assert.equal(store.resolvePurchasePath(refreshedPathId)?.path.url, "https://new.example/flexible");
 });
 

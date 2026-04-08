@@ -1,6 +1,6 @@
 import { LocalAgilProvider } from "./core/agil-provider";
 import { SearchOrchestrator } from "./core/orchestrator";
-import { buildQuotationText } from "./core/quotation";
+import { buildCommercialQuotation } from "./core/quotation";
 import { SearchRequest } from "./core/types";
 
 async function main() {
@@ -41,7 +41,7 @@ async function main() {
     return;
   }
 
-  console.log(buildQuotationText(best, request));
+  console.log(buildCommercialQuotation(best, request));
 }
 
 void main();

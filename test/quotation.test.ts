@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildCommercialQuotation, buildQuotationText, buildTechnicalQuotation } from "../src/core/quotation";
+import { buildCommercialQuotation } from "../src/core/quotation";
 import type { SearchRequest } from "../src/core/types";
 import { buildOffer } from "./helpers/ui-fixtures";
 
@@ -142,64 +142,4 @@ test("commercial quotation keeps only the dollars line when the exchange rate is
 
   assert.match(text, /US\$ 512 por adulto/);
   assert.doesNotMatch(text, / o S\//);
-});
-
-test("technical quotation reflects mixed carrier codes", () => {
-  const offer = buildOffer({
-    mainCarrier: "AR",
-    validatingCarrier: "AR",
-    itineraries: [
-      {
-        direction: "outbound",
-        durationMinutes: 260,
-        stops: 0,
-        segments: [
-          {
-            id: "seg-1",
-            marketingCarrier: "AR",
-            flightNumber: "1365",
-            origin: "LIM",
-            destination: "AEP",
-            departureAt: "2026-04-11T02:45:00Z",
-            arrivalAt: "2026-04-11T09:05:00Z",
-            durationMinutes: 260,
-          },
-        ],
-      },
-      {
-        direction: "inbound",
-        durationMinutes: 295,
-        stops: 0,
-        segments: [
-          {
-            id: "seg-2",
-            marketingCarrier: "LA",
-            flightNumber: "2381",
-            origin: "AEP",
-            destination: "LIM",
-            departureAt: "2026-05-10T22:35:00Z",
-            arrivalAt: "2026-05-11T01:30:00Z",
-            durationMinutes: 295,
-          },
-        ],
-      },
-    ],
-  });
-
-  const text = buildTechnicalQuotation(offer, buildRequest());
-  assert.match(text, /Tipo: Ida y vuelta/);
-  assert.match(text, /Aerolineas: AR \/ LA/);
-  assert.match(text, /Ida\nVuelo: AR 1365/);
-  assert.match(text, /Vuelta\nVuelo: LA 2381/);
-  assert.match(text, /Precio\nTotal: USD \d+\.\d{2}/);
-  assert.doesNotMatch(text, /={10,}/);
-  assert.doesNotMatch(text, /-{10,}/);
-  assert.doesNotMatch(text, /\.{10,}/);
-});
-
-test("legacy plain quotation keeps the technical marker without decorative separators", () => {
-  const text = buildQuotationText(buildOffer(), buildRequest());
-
-  assert.match(text, /\nDETALLE TECNICO\n/);
-  assert.doesNotMatch(text, /={10,}/);
 });

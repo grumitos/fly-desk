@@ -397,6 +397,24 @@ function money(amount: number | undefined, currencyCode: string) {
   };
 }
 
+function resolveCostamarOfferCurrencyCode(
+  request: SearchRequest,
+  engine: CostamarEngineMetadata,
+): string {
+  const requestedCurrencyCode = String(request.currencyCode ?? "").trim().toUpperCase();
+  if (requestedCurrencyCode) {
+    return requestedCurrencyCode;
+  }
+
+  const engineCurrencyCode = String(
+    engine.profile?.currencyCode
+      ?? engine.profile?.currency?.code
+      ?? "USD",
+  ).trim().toUpperCase();
+
+  return engineCurrencyCode || "USD";
+}
+
 function ensureCostamarCredentials(context: CostamarProviderContext): void {
   if (!context.terminalId) {
     throw new Error("Costamar terminalId is required.");
@@ -839,9 +857,7 @@ export function mapCostamarRecommendationToOffer(
   }
 
   const pricing = recommendation.pricing ?? {};
-  const currencyCode = engine.profile?.currencyCode
-    || engine.profile?.currency?.code
-    || request.currencyCode;
+  const currencyCode = resolveCostamarOfferCurrencyCode(request, engine);
   const totalAmount = numberValue(pricing.total) ?? numberValue(pricing.totalAmount);
   if (typeof totalAmount !== "number") {
     return { rawSegments: [] };
@@ -1256,6 +1272,7 @@ async function seedMatrixWithFlexibleSearch(
 function buildMatrixCellFromOffer(
   cell: MatrixCell & { derivedRequest: SearchRequest; confidence: "loading" },
   offer: CanonicalOffer,
+  providerContext?: ProviderContext,
 ): MatrixCell {
   return {
     ...cell,
@@ -1263,6 +1280,9 @@ function buildMatrixCellFromOffer(
       amount: offer.price.total.amount,
       currencyCode: offer.price.total.currencyCode,
     },
+    purchasePaths: providerContext?.costamar
+      ? buildPurchasePaths(cell.derivedRequest, providerContext.costamar)
+      : [],
     confidence: "live",
     selectable: true,
     stateCode: "live",
@@ -1307,6 +1327,7 @@ export async function resolveLocalCostamarMatrixProgressive(
     const nextCell = buildMatrixCellFromOffer(
       cell as MatrixCell & { derivedRequest: SearchRequest; confidence: "loading" },
       seededOffer,
+      providerContext,
     );
     onCellResolved?.(nextCell);
     return nextCell;
@@ -1318,7 +1339,7 @@ export async function resolveLocalCostamarMatrixProgressive(
     try {
       const offer = await resolveCellPrice(cell.derivedRequest, providerContext);
       const nextCell = offer
-        ? buildMatrixCellFromOffer(cell, offer)
+        ? buildMatrixCellFromOffer(cell, offer, providerContext)
         : {
             ...cell,
             confidence: "unavailable" as const,

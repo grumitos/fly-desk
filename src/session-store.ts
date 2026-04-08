@@ -11,7 +11,7 @@ import {
 
 interface StoredPurchasePath {
   sessionId: string;
-  offerId: string;
+  ownerId: string;
   path: PurchasePath;
   createdAt: string;
 }
@@ -151,6 +151,7 @@ export class SearchSessionStore {
     const timestamp = new Date().toISOString();
     const record: MatrixJobRecord = {
       ...input,
+      cells: input.cells.map((cell) => this.rewriteMatrixCellPaths(id, cell)),
       id,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -177,8 +178,11 @@ export class SearchSessionStore {
       return undefined;
     }
 
+    const updated = updater(current);
+    this.forgetSessionPurchasePaths(jobId);
     const next = {
-      ...updater(current),
+      ...updated,
+      cells: updated.cells.map((cell) => this.rewriteMatrixCellPaths(jobId, cell)),
       id: current.id,
       createdAt: current.createdAt,
       updatedAt: new Date().toISOString(),
@@ -189,9 +193,23 @@ export class SearchSessionStore {
   }
 
   private rewriteOfferPaths(sessionId: string, offer: CanonicalOffer): CanonicalOffer {
+    return {
+      ...offer,
+      purchasePaths: this.rewritePurchasePaths(sessionId, offer.id, offer.purchasePaths),
+    };
+  }
+
+  private rewriteMatrixCellPaths(sessionId: string, cell: MatrixCell): MatrixCell {
+    return {
+      ...cell,
+      purchasePaths: this.rewritePurchasePaths(sessionId, cell.key, cell.purchasePaths ?? []),
+    };
+  }
+
+  private rewritePurchasePaths(sessionId: string, ownerId: string, paths: PurchasePath[]): PurchasePath[] {
     const trackedIds = this.sessionPurchasePathIds.get(sessionId) ?? new Set<string>();
     this.sessionPurchasePathIds.set(sessionId, trackedIds);
-    const rewrittenPaths = offer.purchasePaths.map((path) => {
+    return paths.map((path) => {
       const purchasePathId = randomUUID();
       const createdAt = new Date().toISOString();
 
@@ -203,7 +221,7 @@ export class SearchSessionStore {
 
       this.purchasePaths.set(purchasePathId, {
         sessionId,
-        offerId: offer.id,
+        ownerId,
         path,
         createdAt,
       });
@@ -211,11 +229,6 @@ export class SearchSessionStore {
 
       return rewritten;
     });
-
-    return {
-      ...offer,
-      purchasePaths: rewrittenPaths,
-    };
   }
 
   private syncSessionFromSearchJob(job: SearchJobRecord): void {

@@ -497,48 +497,14 @@ async function writeClipboardText(text) {
   }
 }
 
-async function copyTechnicalQuotation() {
-  if (!state.quotationTechnicalText) return;
-  const copied = await writeClipboardText(state.quotationTechnicalText);
-  showToast(
-    copied
-      ? "Detalle técnico copiado al portapapeles."
-      : "No pude copiar el detalle técnico al portapapeles.",
-    copied ? "success" : "error",
-  );
-}
-
 function normalizePlainTextLineEndings(text) {
   return typeof text === "string" ? text.replace(/\r\n/g, "\n") : "";
 }
 
-function splitLegacyQuotationText(text) {
-  const normalized = normalizePlainTextLineEndings(text);
-  const markerMatch = normalized.match(
-    /\n(?:={10,}\n)?DETALLE T(?:E|É)CNICO\n(?:={10,}\n)?\n/,
-  );
-  if (!markerMatch || typeof markerMatch.index !== "number") {
-    return {
-      commercialText: normalized.trim(),
-      technicalText: "",
-    };
-  }
-
-  return {
-    commercialText: normalized.slice(0, markerMatch.index).trim(),
-    technicalText: normalized.slice(markerMatch.index + markerMatch[0].length).trim(),
-  };
-}
-
 function resolveQuotationPayload(data) {
-  const commercialText = typeof data?.commercialText === "string" ? normalizePlainTextLineEndings(data.commercialText).trim() : "";
-  const technicalText = typeof data?.technicalText === "string" ? normalizePlainTextLineEndings(data.technicalText).trim() : "";
-
-  if (commercialText || technicalText) {
-    return { commercialText, technicalText };
-  }
-
-  return splitLegacyQuotationText(data?.plainText);
+  return typeof data?.commercialText === "string"
+    ? normalizePlainTextLineEndings(data.commercialText).trim()
+    : normalizePlainTextLineEndings(data?.plainText).trim();
 }
 
 function renderResultsSkeleton({
@@ -736,6 +702,17 @@ function normalizeMaxStopsValue(value) {
   return Number.isFinite(parsed) && parsed > 0 ? String(parsed) : "";
 }
 
+function parseOptionalInteger(value) {
+  const parsed = Number.isFinite(Number(value)) ? Number.parseInt(String(value), 10) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function sortModeLabel(value) {
+  if (value === "fastest") return "Más rápido";
+  if (value === "best-value") return "Mejor valor";
+  return "Más barato";
+}
+
 function compactStopsLabel(value) {
   if (String(value) === "1") return "1 esc.";
   if (String(value) === "2") return "2 esc.";
@@ -810,6 +787,20 @@ function toolbarDateSummary(request = activeResultsRequest()) {
   }
 
   return departureStart ? formatDateCompact(departureStart) : "";
+}
+
+function clipboardModeLabel(request) {
+  if (request?.searchMode === "roundtrip-grid") {
+    return resolveRoundTripFlexibleMode(request) === "fixed-ranges"
+      ? "Flexible ida y vuelta · rangos fijos"
+      : "Flexible ida y vuelta · estadía exacta";
+  }
+
+  if (request?.searchMode === "stay-range") {
+    return "Flexible";
+  }
+
+  return "Exacta";
 }
 
 function buildResultsPanelMeta({ hasMatrix, matrixCellCount }) {
@@ -1134,6 +1125,120 @@ function normalizeClipboardProviderConfig(rawProviderConfig) {
   };
 }
 
+function buildClipboardRequestFromPayload(payload) {
+  const baseRequest = payload?.request ?? {};
+  const baseLeg = baseRequest?.legs?.[0] ?? {};
+  const inferredTripType = baseRequest?.tripType === "one-way" || payload?.tripType === "one-way"
+    ? "one-way"
+    : "round-trip";
+  const inferredFlexibleMode = baseRequest?.flexibleMode === "fixed-ranges"
+    || payload?.flexibleMode === "fixed-ranges"
+    || (payload?.mode === "flexible" && payload?.dates?.returnStart && payload?.dates?.returnEnd)
+    ? "fixed-ranges"
+    : "exact-stay";
+  const inferredSearchMode = baseRequest?.searchMode
+    || (payload?.mode === "flexible"
+      ? inferredTripType === "round-trip" ? "roundtrip-grid" : "stay-range"
+      : "exact");
+  const passengers = {
+    ...baseRequest?.passengers,
+    adults: parseOptionalInteger(payload?.passengers?.adults ?? baseRequest?.passengers?.adults) ?? 1,
+    children: parseOptionalInteger(payload?.passengers?.children ?? baseRequest?.passengers?.children) ?? 0,
+    infants: parseOptionalInteger(payload?.passengers?.infants ?? baseRequest?.passengers?.infants) ?? 0,
+  };
+  const maxStops = parseOptionalInteger(payload?.filters?.maxStops ?? baseRequest?.filters?.maxStops);
+  const maxLayoverMinutes = parseOptionalInteger(
+    payload?.filters?.maxLayoverMinutes ?? baseRequest?.filters?.maxLayoverMinutes,
+  );
+  const filters = {
+    ...(baseRequest?.filters ?? {}),
+    nonStop: payload?.filters?.nonStop ?? baseRequest?.filters?.nonStop === true,
+    baggageRequired: payload?.filters?.baggageRequired ?? baseRequest?.filters?.baggageRequired === true,
+    ...(typeof maxStops === "number" ? { maxStops } : {}),
+    ...(typeof maxLayoverMinutes === "number" ? { maxLayoverMinutes } : {}),
+  };
+  const stayNights = parseOptionalInteger(
+    payload?.stay?.nights
+    ?? payload?.stay?.min
+    ?? payload?.stay?.max
+    ?? baseLeg?.stayNights,
+  );
+
+  return {
+    ...baseRequest,
+    tripType: inferredTripType,
+    searchMode: inferredSearchMode,
+    flexibleMode: inferredSearchMode === "roundtrip-grid" ? inferredFlexibleMode : undefined,
+    cabin: baseRequest?.cabin ?? "ECONOMY",
+    coverageMode: baseRequest?.coverageMode ?? "core",
+    redirectMode: baseRequest?.redirectMode ?? "best-effort",
+    currencyCode: baseRequest?.currencyCode ?? DEFAULT_CURRENCY_CODE,
+    locale: baseRequest?.locale ?? state.request?.locale ?? "es-PE",
+    market: baseRequest?.market ?? state.request?.market ?? "PE",
+    passengers,
+    filters,
+    legs: [
+      {
+        ...baseLeg,
+        origin: baseLeg?.origin || payload?.origin?.code || payload?.origin?.value || "",
+        destination: baseLeg?.destination || payload?.destination?.code || payload?.destination?.value || "",
+        originLabel: baseLeg?.originLabel || payload?.origin?.label || payload?.origin?.value || "",
+        destinationLabel: baseLeg?.destinationLabel || payload?.destination?.label || payload?.destination?.value || "",
+        departureDate: inferredSearchMode === "exact" ? String(payload?.dates?.departureDate || baseLeg?.departureDate || "") : undefined,
+        returnDate: inferredSearchMode === "exact" && inferredTripType === "round-trip"
+          ? String(payload?.dates?.returnDate || baseLeg?.returnDate || "")
+          : undefined,
+        departureStart: inferredSearchMode !== "exact"
+          ? String(payload?.dates?.departureStart || baseLeg?.departureStart || "")
+          : undefined,
+        departureEnd: inferredSearchMode !== "exact"
+          ? String(payload?.dates?.departureEnd || baseLeg?.departureEnd || "")
+          : undefined,
+        returnStart: inferredSearchMode === "roundtrip-grid" && inferredFlexibleMode === "fixed-ranges"
+          ? String(payload?.dates?.returnStart || baseLeg?.returnStart || "")
+          : undefined,
+        returnEnd: inferredSearchMode === "roundtrip-grid" && inferredFlexibleMode === "fixed-ranges"
+          ? String(payload?.dates?.returnEnd || baseLeg?.returnEnd || "")
+          : undefined,
+        stayNights: inferredSearchMode === "roundtrip-grid" && inferredFlexibleMode === "exact-stay"
+          ? stayNights
+          : undefined,
+      },
+    ],
+  };
+}
+
+function buildClipboardSummary(request, sortModeValue) {
+  const passengers = request?.passengers ?? {};
+  const leg = request?.legs?.[0] ?? {};
+  const stayNights = leg?.stayNights ?? resolveExactStayNights(leg);
+
+  return {
+    route: toolbarRouteSummary(request),
+    dates: toolbarDateSummary(request),
+    tripType: request?.tripType === "one-way" ? "Solo ida" : "Ida y vuelta",
+    mode: clipboardModeLabel(request),
+    stay: typeof stayNights === "number" ? `${stayNights} noches` : "",
+    passengers: formatPassengerSummary(
+      Number.parseInt(String(passengers.adults ?? 1), 10) || 1,
+      Number.parseInt(String(passengers.children ?? 0), 10) || 0,
+      Number.parseInt(String(passengers.infants ?? 0), 10) || 0,
+    ),
+    filters: flexibleCellFilterSummary(request?.filters ?? {}),
+    cabin: request?.cabin ?? "ECONOMY",
+    sort: sortModeLabel(sortModeValue),
+  };
+}
+
+function withClipboardMetadata(payload) {
+  const request = buildClipboardRequestFromPayload(payload);
+  return {
+    ...payload,
+    request,
+    summary: buildClipboardSummary(request, payload?.sortMode || "cheapest"),
+  };
+}
+
 function buildCostamarClipboardPayloadFromUrl(raw) {
   const source = String(raw || "").trim();
   if (!source) return null;
@@ -1180,7 +1285,7 @@ function buildCostamarClipboardPayloadFromUrl(raw) {
   const lang = String(parsed.searchParams.get("lang") || "es").trim() || "es";
   const stayNights = returnDate ? Math.max(0, diffDaysIso(departureDate, returnDate)) : undefined;
 
-  return {
+  return withClipboardMetadata({
     type: SEARCH_CONFIG_CLIPBOARD_TYPE,
     version: SEARCH_CONFIG_CLIPBOARD_VERSION,
     copiedAt: new Date().toISOString(),
@@ -1228,7 +1333,7 @@ function buildCostamarClipboardPayloadFromUrl(raw) {
         lang,
       },
     }),
-  };
+  });
 }
 
 function parseSearchClipboardPayload(raw) {
@@ -1277,7 +1382,8 @@ function buildSearchClipboardPayload() {
     };
   };
 
-  return {
+  const formPayload = getFormPayload();
+  const payload = {
     type: SEARCH_CONFIG_CLIPBOARD_TYPE,
     version: SEARCH_CONFIG_CLIPBOARD_VERSION,
     copiedAt: new Date().toISOString(),
@@ -1312,7 +1418,14 @@ function buildSearchClipboardPayload() {
     },
     sortMode: controlValue("sortMode") || state.sortMode || "cheapest",
     providerConfig: normalizeClipboardProviderConfig(state.providerConfig),
+    request: {
+      ...formPayload.request,
+      locale: formPayload.request.locale ?? state.request?.locale ?? "es-PE",
+      market: formPayload.request.market ?? state.request?.market ?? "PE",
+    },
   };
+
+  return withClipboardMetadata(payload);
 }
 
 function persistSearchClipboardPayload(payload) {
@@ -1353,7 +1466,6 @@ function clearRenderedSearchState() {
   state.selectedOfferId = null;
   state.selectedMatrixKey = null;
   state.quotationText = "";
-  state.quotationTechnicalText = "";
   state.detailPendingAction = null;
   state.airlineFilter.hidden.clear();
   state.airlineFilter.only = null;
@@ -1394,6 +1506,11 @@ function syncSearchFormWithRequest(request) {
   $("adults").value = String(request.passengers?.adults ?? 1);
   $("children").value = String(request.passengers?.children ?? 0);
   $("infants").value = String(request.passengers?.infants ?? 0);
+  $("nonStop").checked = request.filters?.nonStop === true;
+  $("baggageRequired").checked = request.filters?.baggageRequired === true;
+  $("maxStopsFilter").value = normalizeMaxStopsValue(request.filters?.maxStops);
+  $("maxLayoverMinutes").value = String(request.filters?.maxLayoverMinutes || "");
+  syncLayoverFilterUi();
 
   const stayNights = leg.stayNights ?? resolveExactStayNights(leg);
   if (typeof stayNights === "number" && stayNightsEl) {
@@ -1437,48 +1554,11 @@ function syncSearchFormWithRequest(request) {
 function applySearchClipboardPayload(payload) {
   if (!payload) return false;
 
+  const request = buildClipboardRequestFromPayload(payload);
   state.providerConfig = normalizeClipboardProviderConfig(payload.providerConfig);
-  state.flexMode = payload.mode === "flexible";
-  tripType.value = payload.tripType === "one-way" ? "one-way" : "round-trip";
-  if (flexibleMode) {
-    const inferredFlexibleMode = payload.flexibleMode === "fixed-ranges"
-      || (payload.mode === "flexible" && payload.dates?.returnStart && payload.dates?.returnEnd)
-      ? "fixed-ranges"
-      : "exact-stay";
-    flexibleMode.value = inferredFlexibleMode;
-  }
   state.sortMode = String(payload.sortMode || "cheapest");
   sortMode.value = state.sortMode;
-
-  applyResolvedLocation("origin", payload.origin);
-  applyResolvedLocation("destination", payload.destination);
-  hideLocationMenu("origin");
-  hideLocationMenu("destination");
-
-  $("departureDate").value = String(payload.dates?.departureDate || "");
-  $("returnDate").value = String(payload.dates?.returnDate || "");
-  $("departureStart").value = String(payload.dates?.departureStart || "");
-  $("departureEnd").value = String(payload.dates?.departureEnd || "");
-  $("returnStart").value = String(payload.dates?.returnStart || "");
-  $("returnEnd").value = String(payload.dates?.returnEnd || "");
-
-  if (stayNightsEl) {
-    stayNightsEl.value = String(
-      payload.stay?.nights
-      || payload.stay?.min
-      || stayNightsEl.value
-      || "7",
-    );
-  }
-
-  $("adults").value = String(payload.passengers?.adults || "1");
-  $("children").value = String(payload.passengers?.children || "0");
-  $("infants").value = String(payload.passengers?.infants || "0");
-  $("nonStop").checked = payload.filters?.nonStop === true;
-  $("baggageRequired").checked = payload.filters?.baggageRequired === true;
-  $("maxStopsFilter").value = normalizeMaxStopsValue(payload.filters?.maxStops);
-  $("maxLayoverMinutes").value = String(payload.filters?.maxLayoverMinutes || "");
-  syncLayoverFilterUi();
+  syncSearchFormWithRequest(request);
 
   calendarState.selectionStage = "start";
   closeCalendarPopover();
@@ -3716,7 +3796,6 @@ function setSearchResponse(data) {
 
 function clearQuotationState() {
   state.quotationText = "";
-  state.quotationTechnicalText = "";
   if (state.detailPendingAction === "quotation") {
     state.detailPendingAction = null;
   }
@@ -4100,6 +4179,32 @@ function flexibleCellRequest(cell) {
   return matrixDerivedSearchRequest(cell?.derivedRequest) ?? state.matrixResponse?.request ?? null;
 }
 
+function matrixCellPurchasePaths(cell) {
+  return (cell?.purchasePaths ?? []).filter((path) => pathSupportsEquivalentSearch(path));
+}
+
+function matrixCellExternalActionLabel(path) {
+  return path?.provider === "costamar" ? "Abrir en Costamar" : "Abrir en Agil";
+}
+
+function matrixCellExactRouteSummary(cell) {
+  return toolbarRouteSummary(flexibleCellRequest(cell)) || [cell?.departureDate, cell?.returnDate].filter(Boolean).join(" · ");
+}
+
+function matrixCellExactDateSummary(cell) {
+  const request = flexibleCellRequest(cell);
+  const summary = toolbarDateSummary(request);
+  if (summary) {
+    return summary;
+  }
+
+  if (cell?.departureDate && cell?.returnDate) {
+    return `${formatDateCompact(cell.departureDate)} → ${formatDateCompact(cell.returnDate)}`;
+  }
+
+  return cell?.departureDate ? formatDateCompact(cell.departureDate) : "—";
+}
+
 function flexibleCellFilterSummary(filters = {}) {
   const items = [];
   if (filters.nonStop) items.push("Directo");
@@ -4115,7 +4220,9 @@ function flexibleCellFilterSummary(filters = {}) {
 
 function flexibleCellSelectionCopy(cell) {
   if (cell?.selectable && cell?.derivedRequest) {
-    return "Esta combinacion resume precio, fechas y contexto. Abre la consulta exacta para ver segmentos y enlaces de compra.";
+    return matrixCellPurchasePaths(cell).length > 0
+      ? "Abrir exacta carga el detalle interno. El enlace externo abre la búsqueda equivalente en el proveedor."
+      : "Esta combinación ya tiene consulta exacta interna, pero no hay un enlace externo utilizable para este proveedor.";
   }
 
   return cell?.tooltip || "Esta combinacion todavia no tiene una oferta exacta consultable.";
@@ -4258,7 +4365,6 @@ async function launchMatrixCellSearch(cellKey) {
     state.matrixResponse = null;
     state.viewMode = "list";
     state.quotationText = "";
-    state.quotationTechnicalText = "";
     state.airlineFilter.hidden.clear();
     state.airlineFilter.only = null;
     state.detailPendingAction = null;
@@ -4542,7 +4648,8 @@ function renderMatrixCellDetail(cell) {
   const passengerSummary = formatPassengerSummary(adults, children, infants);
   const exactProviderLabel = request?.providerId
     ? providerLabel(request.providerId)
-    : providerLabelList(state.matrixResponse?.searchMeta?.providersUsed ?? [cell.providerSource]);
+    : providerLabel(cell.providerSource);
+  const externalPaths = matrixCellPurchasePaths(cell);
   const stayLabel = cell.stayNights != null ? `${cell.stayNights} noches` : "—";
   const summaryParts = [routeSummary, providerLabel(cell.providerSource), passengerSummary].filter(Boolean);
   let h = "";
@@ -4564,7 +4671,6 @@ function renderMatrixCellDetail(cell) {
   h += '<div class="detail-section"><div class="detail-section__title">Contexto de busqueda</div>';
   h += detailPairHtml("Pasajeros", passengerSummary);
   h += detailPairHtml("Filtros", flexibleCellFilterSummary(request?.filters ?? fallbackRequest?.filters));
-  h += detailPairHtml("Consulta exacta", exactProviderLabel);
   h += detailPairHtml("Cabina", request?.cabin ?? fallbackRequest?.cabin ?? "ECONOMY");
   h += '</div>';
 
@@ -4574,7 +4680,13 @@ function renderMatrixCellDetail(cell) {
   if (cell.selectable && cell.derivedRequest) {
     h += `<button type="button" class="btn btn--primary btn--sm" data-matrix-detail-search="${escapeHtml(cell.key)}">Abrir exacta</button>`;
   }
+  externalPaths.forEach((path) => {
+    h += `<a href="${escapeHtml(path.url)}" target="_blank" rel="noreferrer" class="btn btn--ghost btn--sm">${escapeHtml(matrixCellExternalActionLabel(path))}</a>`;
+  });
   h += '</div>';
+  h += detailPairHtml("Ruta exacta", matrixCellExactRouteSummary(cell));
+  h += detailPairHtml("Fechas", matrixCellExactDateSummary(cell));
+  h += detailPairHtml("Proveedor", exactProviderLabel);
   h += `<p class="detail-busy__text">${escapeHtml(flexibleCellSelectionCopy(cell))}</p>`;
   h += '</div>';
 
@@ -4724,16 +4836,6 @@ function renderDetailPanel() {
     h += '</div>';
   }
 
-  if (state.quotationTechnicalText) {
-    h += '<div class="detail-section">';
-    h += '<div class="detail-section__header">';
-    h += '<div class="detail-section__title">Detalle técnico</div>';
-    h += '<button type="button" class="btn btn--ghost btn--sm" data-copy-technical-quotation>Copiar técnico</button>';
-    h += "</div>";
-    h += `<textarea class="quote-textarea quote-textarea--technical" readonly>${escapeHtml(state.quotationTechnicalText)}</textarea>`;
-    h += '</div>';
-  }
-
   if (detailContent) detailContent.innerHTML = h;
 
   // Inbound option click
@@ -4741,9 +4843,6 @@ function renderDetailPanel() {
     el.addEventListener("click", () => {
       selectOffer(el.dataset.inboundId);
     });
-  });
-  detailContent?.querySelector("[data-copy-technical-quotation]")?.addEventListener("click", async () => {
-    await copyTechnicalQuotation();
   });
 }
 
@@ -4921,7 +5020,6 @@ searchForm.addEventListener("submit", async (e) => {
     state.sortMode = translatedPayload.sortMode;
     state.resultsPage = 1;
     state.quotationText = "";
-    state.quotationTechnicalText = "";
     state.selectedMatrixKey = null;
     state.detailPendingAction = null;
     state.airlineFilter.hidden.clear();
@@ -4985,10 +5083,9 @@ quotationButton.addEventListener("click", async () => {
     const quotation = resolveQuotationPayload(data);
     state.searchResponse.allOffers = state.searchResponse.allOffers.map((o) => o.id === data.offer.id ? data.offer : o);
     applyClientOfferControls();
-    state.quotationText = quotation.commercialText;
-    state.quotationTechnicalText = quotation.technicalText;
+    state.quotationText = quotation;
     renderAll();
-    const copied = await writeClipboardText(quotation.commercialText);
+    const copied = await writeClipboardText(quotation);
     showToast(
       copied
         ? "Cotización comercial copiada al portapapeles."

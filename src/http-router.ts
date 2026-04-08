@@ -1,6 +1,6 @@
 import { materializeSearchResponse } from "./core/orchestrator";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
-import { buildCommercialQuotation, buildQuotationText, buildTechnicalQuotation } from "./core/quotation";
+import { buildCommercialQuotation } from "./core/quotation";
 import {
   normalizeFlexibleRoundTripRequest,
   resolveFlexibleRoundTripMode,
@@ -1286,7 +1286,8 @@ export async function routeRequest(request: Request): Promise<Response> {
       let location = resolved.path.url;
 
       if (resolved.path.provider === "costamar" && resolved.path.type === "search-redirect") {
-        const session = runtime.sessions.getSession(resolved.sessionId);
+        const providerContext = runtime.sessions.getSession(resolved.sessionId)?.providerContext
+          ?? runtime.sessions.getMatrixJob(resolved.sessionId)?.providerContext;
         let canRedirect = Boolean((() => {
           try {
             const parsed = new URL(location);
@@ -1299,8 +1300,8 @@ export async function routeRequest(request: Request): Promise<Response> {
           }
         })());
 
-        if (session?.providerContext?.costamar) {
-          const refreshedContext = resolveLatestCostamarProviderContext(session.providerContext.costamar);
+        if (providerContext?.costamar) {
+          const refreshedContext = resolveLatestCostamarProviderContext(providerContext.costamar);
           if (resolveUsableCostamarBrandedToken(refreshedContext.token, refreshedContext.terminalId)) {
             location = applyCostamarContextToBrandedSearchUrl(location, refreshedContext);
             canRedirect = true;
@@ -1352,8 +1353,6 @@ export async function routeRequest(request: Request): Promise<Response> {
       searchSessionId: payload.searchSessionId,
       offer,
       commercialText: buildCommercialQuotation(offer, session.request, { usdToPenRate }),
-      technicalText: buildTechnicalQuotation(offer, session.request),
-      plainText: buildQuotationText(offer, session.request, { usdToPenRate }),
     });
   }
 

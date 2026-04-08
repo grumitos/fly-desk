@@ -15,6 +15,7 @@ export const DEFAULT_COSTAMAR_BRAND_BASE_URL = "https://booking.clickandbook.com
 export const DEFAULT_COSTAMAR_TERMINAL_ID = "0721808110";
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 const COSTAMAR_SESSION_CACHE_TTL_MS = 30000;
+const COSTAMAR_TOKEN_REFRESH_WINDOW_MS = 2 * 60 * 1000;
 const COSTAMAR_BRANDED_URL_REGEX = /https:\/\/booking\.clickandbook\.com\/vuelos\/b\/[A-Z]{3}\/[A-Z]{3}(?:\/\d{4}-\d{2}-\d{2}){1,2}\/\d+\/\d+\/\d+\?[^\s\x00]*/gi;
 const COSTAMAR_BRANDED_URL_ENCODED_REGEX =
   /https%(?:25)?3A%(?:25)?2F%(?:25)?2Fbooking\.clickandbook\.com%(?:25)?2Fvuelos%(?:25)?2Fb%(?:25)?2F[A-Za-z0-9%._~!$'()*+,;=:@/?&-]*/gi;
@@ -22,6 +23,7 @@ const COSTAMAR_BRANDED_URL_ESCAPED_REGEX =
   /https:\\\/\\\/booking\.clickandbook\.com\\\/vuelos\\\/b\\\/[A-Za-z0-9%._~!$'()*+,;=:@/?&=-]*/gi;
 const COSTAMAR_JWT_PREFIX_REGEX = /^([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/;
 const COSTAMAR_TOKEN_SAFE_PREFIX_REGEX = /^[A-Za-z0-9._-]+/;
+const COSTAMAR_SESSION_FILE_REGEX = /^(?:(?:Session|Tabs)_\d+|(?:Current|Last) (?:Session|Tabs))$/;
 const COSTAMAR_STORAGE_ARTIFACT_REGEX = /\.(?:ldb|log)$/i;
 const COSTAMAR_STORAGE_ARTIFACT_LIMIT = 12;
 const COSTAMAR_API_HOSTS = new Set(["costamar.com.pe"]);
@@ -202,11 +204,18 @@ function resolveChromeUserDataDir(): string {
   );
 }
 
-function readChromeProfileCandidates(): string[] {
+function resolveConfiguredChromeProfile(): string | undefined {
   const configured = process.env.COSTAMAR_CHROME_PROFILE?.trim()
     ?? process.env.AGIL_CHROME_PROFILE?.trim();
+  return configured || undefined;
+}
+
+function readChromeProfileCandidates(includeConfiguredOnly = false): string[] {
+  const configured = resolveConfiguredChromeProfile();
   if (configured) {
-    return [configured];
+    if (includeConfiguredOnly) {
+      return [configured];
+    }
   }
 
   const candidates: string[] = [];
@@ -220,6 +229,8 @@ function readChromeProfileCandidates(): string[] {
     seen.add(normalized);
     candidates.push(normalized);
   };
+
+  pushUnique(configured);
 
   try {
     const localStatePath = join(resolveChromeUserDataDir(), "Local State");
@@ -245,6 +256,21 @@ function readChromeProfileCandidates(): string[] {
 
   pushUnique("Default");
   return candidates;
+}
+
+function isCostamarTokenNearExpiry(
+  token: string | undefined,
+  terminalId: string | undefined,
+  nowMs = Date.now(),
+  refreshWindowMs = COSTAMAR_TOKEN_REFRESH_WINDOW_MS,
+): boolean {
+  const usableToken = resolveUsableCostamarBrandedToken(token, terminalId, nowMs);
+  if (!usableToken) {
+    return false;
+  }
+
+  const { expMs } = decodeJwtTimes(usableToken);
+  return expMs > 0 && expMs <= (nowMs + refreshWindowMs);
 }
 
 function decodeEmbeddedUrl(raw: string): string {
@@ -420,7 +446,7 @@ function readCostamarSessionCandidatesFromCopiedDir(
   profileName: string,
 ): CostamarSessionCandidate[] {
   const files = readdirSync(directory)
-    .filter((name) => /^(Session|Tabs)_/.test(name))
+    .filter((name) => COSTAMAR_SESSION_FILE_REGEX.test(name))
     .map((name) => ({
       name,
       fullPath: join(directory, name),
@@ -523,21 +549,10 @@ function readCostamarCandidatesFromChromeArtifactDirectory(
   return candidates;
 }
 
-function readCostamarSessionCandidateFromChrome(
-  terminalId?: string,
-  options?: { bypassCache?: boolean },
-): CostamarSessionCandidate | undefined {
-  if (
-    !options?.bypassCache
-    && cachedCostamarSessions
-    && (Date.now() - cachedCostamarSessions.readAtMs) < COSTAMAR_SESSION_CACHE_TTL_MS
-  ) {
-    return pickLatestCostamarSessionCandidateForTerminal(cachedCostamarSessions.candidates, terminalId);
-  }
-
+function collectCostamarSessionCandidatesFromChromeProfiles(profileNames: string[]): CostamarSessionCandidate[] {
   const candidates: CostamarSessionCandidate[] = [];
 
-  for (const profileName of readChromeProfileCandidates()) {
+  for (const profileName of profileNames) {
     const tempSessionsDir = copyCostamarSessionsToTemp(profileName);
     if (tempSessionsDir) {
       try {
@@ -553,6 +568,36 @@ function readCostamarSessionCandidateFromChrome(
       ...readCostamarCandidatesFromChromeArtifactDirectory(profileName, "Session Storage"),
       ...readCostamarCandidatesFromChromeArtifactDirectory(profileName, join("Local Storage", "leveldb")),
     );
+  }
+
+  return candidates;
+}
+
+function readCostamarSessionCandidateFromChrome(
+  terminalId?: string,
+  options?: { bypassCache?: boolean },
+): CostamarSessionCandidate | undefined {
+  if (
+    !options?.bypassCache
+    && cachedCostamarSessions
+    && (Date.now() - cachedCostamarSessions.readAtMs) < COSTAMAR_SESSION_CACHE_TTL_MS
+  ) {
+    return pickLatestCostamarSessionCandidateForTerminal(cachedCostamarSessions.candidates, terminalId);
+  }
+
+  const configuredProfiles = readChromeProfileCandidates(true);
+  const allProfiles = readChromeProfileCandidates();
+  let candidates = collectCostamarSessionCandidatesFromChromeProfiles(configuredProfiles);
+  const preferredCandidate = pickLatestCostamarSessionCandidateForTerminal(candidates, terminalId);
+  const preferredCandidateIsUsable = Boolean(
+    preferredCandidate && resolveUsableCostamarBrandedToken(preferredCandidate.token, preferredCandidate.terminalId),
+  );
+
+  if (!preferredCandidateIsUsable) {
+    const fallbackProfiles = allProfiles.filter((profileName) => !configuredProfiles.includes(profileName));
+    if (fallbackProfiles.length > 0) {
+      candidates = candidates.concat(collectCostamarSessionCandidatesFromChromeProfiles(fallbackProfiles));
+    }
   }
 
   cachedCostamarSessions = {
@@ -572,7 +617,16 @@ function maybeRefreshCostamarSessionCandidate(
   const candidateIsUsable = Boolean(
     candidate && resolveUsableCostamarBrandedToken(candidate.token, candidate.terminalId, nowMs),
   );
-  if (currentTokenIsUsable || candidateIsUsable) {
+  if (
+    currentTokenIsUsable || candidateIsUsable
+  ) {
+    if (
+      isCostamarTokenNearExpiry(currentToken, terminalId, nowMs)
+      || (candidate && isCostamarTokenNearExpiry(candidate.token, candidate.terminalId, nowMs))
+    ) {
+      return readCostamarSessionCandidateFromChrome(terminalId, { bypassCache: true }) ?? candidate;
+    }
+
     return candidate;
   }
 

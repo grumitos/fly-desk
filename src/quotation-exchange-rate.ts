@@ -1,3 +1,6 @@
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import type { CanonicalOffer, SearchRequest } from "./core/types";
 import { resolveLocalAgilUsdToPenRate } from "./local-agil";
 import type { SearchSessionRecord } from "./session-store";
@@ -19,6 +22,12 @@ let pendingUsdToPenRateLookup:
     promise: Promise<number | undefined>;
   }
   | undefined;
+let persistedUsdToPenRateLoaded = false;
+
+function resolveQuotationUsdToPenRateCachePath(): string {
+  const explicitPath = process.env.FLY_DESK_QUOTATION_RATE_CACHE_PATH?.trim();
+  return explicitPath || join(tmpdir(), "flydesk-quotation-usd-pen-rate.json");
+}
 
 function resolveLimaDay(now = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -37,11 +46,55 @@ function normalizePositiveRate(value: unknown): number | undefined {
   return Number(value.toFixed(4));
 }
 
+function loadPersistedUsdToPenRate(): void {
+  if (persistedUsdToPenRateLoaded) {
+    return;
+  }
+  persistedUsdToPenRateLoaded = true;
+
+  try {
+    const cachePath = resolveQuotationUsdToPenRateCachePath();
+    if (!existsSync(cachePath)) {
+      return;
+    }
+
+    const parsed = JSON.parse(readFileSync(cachePath, "utf8")) as {
+      day?: unknown;
+      rate?: unknown;
+    };
+    const day = String(parsed.day ?? "").trim();
+    const rate = normalizePositiveRate(parsed.rate);
+
+    if (!day || rate === undefined) {
+      return;
+    }
+
+    cachedUsdToPenRate = { day, rate };
+  } catch {
+    cachedUsdToPenRate = undefined;
+  }
+}
+
+function persistUsdToPenRateCache(): void {
+  if (!cachedUsdToPenRate) {
+    return;
+  }
+
+  try {
+    const cachePath = resolveQuotationUsdToPenRateCachePath();
+    mkdirSync(dirname(cachePath), { recursive: true });
+    writeFileSync(cachePath, JSON.stringify(cachedUsdToPenRate), "utf8");
+  } catch {
+    // Ignore persistence failures and keep the in-memory cache usable.
+  }
+}
+
 function rememberUsdToPenRate(rate: number, now: Date): number {
   cachedUsdToPenRate = {
     day: resolveLimaDay(now),
     rate,
   };
+  persistUsdToPenRateCache();
 
   return rate;
 }
@@ -116,6 +169,8 @@ export async function resolveQuotationUsdToPenRate(
   offer: CanonicalOffer,
   options: ResolveQuotationUsdToPenRateOptions = {},
 ): Promise<number | undefined> {
+  loadPersistedUsdToPenRate();
+
   const now = options.now ?? new Date();
   const currentDay = resolveLimaDay(now);
 
@@ -183,7 +238,18 @@ export function warmQuotationUsdToPenRate(
   return resolveQuotationUsdToPenRate(session, offer, options);
 }
 
-export function resetQuotationUsdToPenRateCacheForTests(): void {
+export function resetQuotationUsdToPenRateCacheForTests(
+  options: { preservePersisted?: boolean } = {},
+): void {
   cachedUsdToPenRate = undefined;
   pendingUsdToPenRateLookup = undefined;
+  persistedUsdToPenRateLoaded = false;
+
+  if (!options.preservePersisted) {
+    try {
+      rmSync(resolveQuotationUsdToPenRateCachePath(), { force: true });
+    } catch {
+      // Ignore cleanup failures in tests.
+    }
+  }
 }

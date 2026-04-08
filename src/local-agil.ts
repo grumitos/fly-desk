@@ -2145,6 +2145,7 @@ export async function resolveLocalAgilMatrixProgressive(
               amount: quote.amount,
               currencyCode: quote.currencyCode || request.currencyCode,
             },
+            purchasePaths: buildPurchasePaths(cell.derivedRequest),
             confidence: "live" as const,
             selectable: true,
             stateCode: "live" as const,
