@@ -16,6 +16,10 @@ export const DEFAULT_COSTAMAR_TERMINAL_ID = "0721808110";
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 const COSTAMAR_SESSION_CACHE_TTL_MS = 30000;
 const COSTAMAR_BRANDED_URL_REGEX = /https:\/\/booking\.clickandbook\.com\/vuelos\/b\/[A-Z]{3}\/[A-Z]{3}(?:\/\d{4}-\d{2}-\d{2}){1,2}\/\d+\/\d+\/\d+\?[^\s\x00]*/gi;
+const COSTAMAR_BRANDED_URL_ENCODED_REGEX =
+  /https%(?:25)?3A%(?:25)?2F%(?:25)?2Fbooking\.clickandbook\.com%(?:25)?2Fvuelos%(?:25)?2Fb%(?:25)?2F[A-Za-z0-9%._~!$'()*+,;=:@/?&-]*/gi;
+const COSTAMAR_BRANDED_URL_ESCAPED_REGEX =
+  /https:\\\/\\\/booking\.clickandbook\.com\\\/vuelos\\\/b\\\/[A-Za-z0-9%._~!$'()*+,;=:@/?&=-]*/gi;
 const COSTAMAR_JWT_PREFIX_REGEX = /^([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/;
 const COSTAMAR_TOKEN_SAFE_PREFIX_REGEX = /^[A-Za-z0-9._-]+/;
 const COSTAMAR_STORAGE_ARTIFACT_REGEX = /\.(?:ldb|log)$/i;
@@ -243,11 +247,33 @@ function readChromeProfileCandidates(): string[] {
   return candidates;
 }
 
+function decodeEmbeddedUrl(raw: string): string {
+  let current = raw;
+
+  for (let iteration = 0; iteration < 3; iteration += 1) {
+    try {
+      const decoded = decodeURIComponent(current);
+      if (!decoded || decoded === current) {
+        break;
+      }
+      current = decoded;
+    } catch {
+      break;
+    }
+  }
+
+  return current;
+}
+
 export function extractCostamarSessionCandidates(
   text: string,
   source = "session",
 ): CostamarSessionCandidate[] {
-  const matches = text.match(COSTAMAR_BRANDED_URL_REGEX) ?? [];
+  const matches = [
+    ...(text.match(COSTAMAR_BRANDED_URL_REGEX) ?? []),
+    ...(text.match(COSTAMAR_BRANDED_URL_ENCODED_REGEX) ?? []).map((match) => decodeEmbeddedUrl(match.split("&")[0] ?? match)),
+    ...(text.match(COSTAMAR_BRANDED_URL_ESCAPED_REGEX) ?? []).map((match) => match.replace(/\\\//g, "/")),
+  ];
   const deduped = new Map<string, CostamarSessionCandidate>();
 
   for (const rawMatch of matches) {

@@ -44,7 +44,7 @@ import {
   resolveProviderId,
   resolveUsableCostamarBrandedToken,
 } from "./provider-context";
-import { resolveQuotationUsdToPenRate } from "./quotation-exchange-rate";
+import { resolveQuotationUsdToPenRate, warmQuotationUsdToPenRate } from "./quotation-exchange-rate";
 import { hasFilledSearchResultLimit, limitSearchResponseForPagination } from "./search-limits";
 import { getRuntime } from "./runtime";
 import { getSearchDatePolicy, validateSearchDateInPolicy } from "./search-date-policy";
@@ -876,6 +876,28 @@ function searchJobResponse(
   };
 }
 
+function warmSearchSessionQuotationRate(
+  runtime: ReturnType<typeof getRuntime>,
+  sessionId: string,
+  providerIds: ProviderId[],
+  status: "running" | "completed",
+): void {
+  const session = runtime.sessions.getSession(sessionId);
+  if (!session) {
+    return;
+  }
+
+  const hasUsdOffer = session.offers.some((offer) => String(offer.price.total.currencyCode ?? "").trim().toUpperCase() === "USD");
+  const hasSessionRate = session.offers.some((offer) => typeof offer.usdToPenRate === "number" && offer.usdToPenRate > 0);
+  const shouldWarmEarly = providerIds.length === 1 && providerIds[0] === "costamar";
+
+  if (!hasUsdOffer || hasSessionRate || (!shouldWarmEarly && status !== "completed")) {
+    return;
+  }
+
+  void warmQuotationUsdToPenRate(session);
+}
+
 export async function routeRequest(request: Request): Promise<Response> {
   const runtime = getRuntime();
   const url = new URL(request.url);
@@ -1039,6 +1061,7 @@ export async function routeRequest(request: Request): Promise<Response> {
         status: nextStatus,
         error: undefined,
       }));
+      warmSearchSessionQuotationRate(runtime, job.id, providerIds, nextStatus);
 
       return materialized;
     };

@@ -1123,14 +1123,63 @@ test("fixed-ranges calendar keeps the return header row and departure column sti
   }, { autoOpen: false });
 });
 
-test("clicking a flexible matrix cell relaunches a single exact search without pinning a provider", async () => {
+test("clicking a flexible round-trip list row opens detail first and preserves passengers and filters for exact search", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
-    let matrixPollCount = 0;
+    let lastMatrixRequest: Record<string, unknown> | null = null;
     let searchRequestCount = 0;
     let lastSearchRequest: Record<string, unknown> | null = null;
 
-    const initialMatrix = buildMatrixResponse();
+    const matrixRequest = {
+      tripType: "round-trip",
+      searchMode: "roundtrip-grid",
+      flexibleMode: "exact-stay",
+      legs: [
+        {
+          origin: "LIM",
+          destination: "MIA",
+          departureStart: "2026-04-15",
+          departureEnd: "2026-04-19",
+          returnStart: "",
+          returnEnd: "",
+          stayNights: 4,
+        },
+      ],
+      passengers: {
+        adults: 2,
+        children: 1,
+        infants: 1,
+      },
+      cabin: "ECONOMY",
+      filters: {
+        maxResults: 25,
+        nonStop: true,
+        baggageRequired: true,
+        maxStops: 1,
+        maxLayoverMinutes: 240,
+      },
+      coverageMode: "core",
+      redirectMode: "best-effort",
+      currencyCode: "USD",
+      locale: "es-PE",
+      market: "PE",
+    };
+
+    const exactRequest = {
+      ...matrixRequest,
+      searchMode: "exact",
+      flexibleMode: undefined,
+      legs: [
+        {
+          origin: "LIM",
+          destination: "MIA",
+          departureDate: "2026-04-15",
+          returnDate: "2026-04-19",
+        },
+      ],
+    };
+
     const completedMatrix = buildMatrixResponse({
+      request: matrixRequest,
       matrixComplete: true,
       matrixStatus: "completed",
       confidenceSummary: {
@@ -1147,26 +1196,18 @@ test("clicking a flexible matrix cell relaunches a single exact search without p
             amount: 123,
             currencyCode: "USD",
           },
+          derivedRequest: exactRequest,
         },
       ],
       searchMeta: buildSearchMeta("search_live"),
     });
 
     await page.route(`${baseUrl}/api/matrix`, async (route: Route) => {
+      lastMatrixRequest = route.request().postDataJSON() as Record<string, unknown>;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(initialMatrix),
-      });
-    });
-
-    await page.route(`${baseUrl}/api/matrix/matrix-job-1`, async (route: Route) => {
-      matrixPollCount += 1;
-      const body = matrixPollCount >= 2 ? completedMatrix : initialMatrix;
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(body),
+        body: JSON.stringify(completedMatrix),
       });
     });
 
@@ -1181,7 +1222,7 @@ test("clicking a flexible matrix cell relaunches a single exact search without p
           searchComplete: true,
           searchStatus: "completed",
           sortMode: "cheapest",
-          request: lastSearchRequest?.request ?? initialMatrix.request,
+          request: lastSearchRequest?.request ?? exactRequest,
           offers: [],
           allOffers: [],
           searchMeta: buildSearchMeta("search_live"),
@@ -1193,60 +1234,119 @@ test("clicking a flexible matrix cell relaunches a single exact search without p
         }),
       });
     });
-      await openDesktop(page, baseUrl);
-      await page.click('[data-mode="flexible"]');
-      await setRouteInputs(page, "LIM", "MIA");
-      await setDateValue(page, "departureStart", "2026-04-15");
-      await setDateValue(page, "departureEnd", "2026-04-19");
-      await page.evaluate(() => {
-        const stayNights = document.getElementById("stayNights") as HTMLInputElement | null;
-        if (!stayNights) throw new Error("Missing stay duration input");
-        stayNights.value = "4";
-        stayNights.dispatchEvent(new Event("change", { bubbles: true }));
+    await openDesktop(page, baseUrl);
+    await page.click('[data-mode="flexible"]');
+    await setRouteInputs(page, "LIM", "MIA");
+    await setDateValue(page, "departureStart", "2026-04-15");
+    await setDateValue(page, "departureEnd", "2026-04-19");
+    await page.evaluate(() => {
+      const adults = document.getElementById("adults") as HTMLInputElement | null;
+      const children = document.getElementById("children") as HTMLInputElement | null;
+      const infants = document.getElementById("infants") as HTMLInputElement | null;
+      const stayNights = document.getElementById("stayNights") as HTMLInputElement | null;
+      const nonStop = document.getElementById("nonStop") as HTMLInputElement | null;
+      const baggageRequired = document.getElementById("baggageRequired") as HTMLInputElement | null;
+      const maxStops = document.getElementById("maxStopsFilter") as HTMLSelectElement | null;
+      const maxLayoverMinutes = document.getElementById("maxLayoverMinutes") as HTMLSelectElement | null;
+      if (!adults || !children || !infants || !stayNights || !nonStop || !baggageRequired || !maxStops || !maxLayoverMinutes) {
+        throw new Error("Missing passenger, stay, or filter inputs");
+      }
+      adults.value = "2";
+      children.value = "1";
+      infants.value = "1";
+      stayNights.value = "4";
+      nonStop.checked = true;
+      baggageRequired.checked = true;
+      maxStops.value = "1";
+      maxLayoverMinutes.value = "240";
+      [adults, children, infants, stayNights, nonStop, baggageRequired, maxStops, maxLayoverMinutes].forEach((input) => {
+        input.dispatchEvent(new Event("change", { bubbles: true }));
       });
+    });
 
-      await submitAndWaitForRequest(page, baseUrl, "/api/matrix");
-      await page.waitForSelector('.results-table--flexible [data-mk="2026-04-15_2026-04-19"]');
-      await page.waitForSelector('.results-table--flexible [data-mk="2026-04-15_2026-04-19"][aria-disabled="false"]');
+    await submitAndWaitForRequest(page, baseUrl, "/api/matrix");
+    await page.waitForSelector('.results-table--flexible [data-flex-cell-key="2026-04-15_2026-04-19"]');
 
-      const listProbe = await page.evaluate(() => ({
-        hasFlexibleTable: Boolean(document.querySelector(".results-table--flexible")),
-        hasCalendarGrid: Boolean(document.querySelector(".cal-grid")),
-        viewToggleHidden: document.getElementById("viewToggle")?.classList.contains("hidden") ?? false,
-      }));
+    assert.deepEqual((lastMatrixRequest?.request as Record<string, unknown> | undefined)?.passengers, {
+      adults: 2,
+      children: 1,
+      infants: 1,
+    });
+    assert.deepEqual((lastMatrixRequest?.request as Record<string, unknown> | undefined)?.filters, {
+      nonStop: true,
+      baggageRequired: true,
+      maxStops: 1,
+      maxLayoverMinutes: 240,
+      includedAirlineCodes: [],
+    });
 
-      assert.equal(listProbe.hasFlexibleTable, true);
-      assert.equal(listProbe.hasCalendarGrid, false);
-      assert.equal(listProbe.viewToggleHidden, true);
+    await page.click('.results-table--flexible [data-flex-cell-key="2026-04-15_2026-04-19"]');
+    await page.waitForSelector('[data-matrix-detail-search="2026-04-15_2026-04-19"]');
+    await page.waitForTimeout(200);
 
-      const searchRequestPromise = page.waitForRequest((request) =>
-        request.method() === "POST" && request.url() === `${baseUrl}/api/search`);
-      await page.click('.results-table--flexible [data-mk="2026-04-15_2026-04-19"]');
-      await searchRequestPromise;
-      await page.waitForFunction(() => {
-        const searchMode = document.getElementById("searchMode") as HTMLInputElement | null;
-        return searchMode?.value === "exact";
-      });
+    assert.equal(searchRequestCount, 0);
 
-      assert.equal(searchRequestCount, 1);
-      assert.equal((lastSearchRequest?.request as Record<string, unknown> | undefined)?.searchMode, "exact");
-      assert.equal((lastSearchRequest?.request as Record<string, unknown> | undefined)?.providerId, undefined);
+    const detailProbe = await page.evaluate(() => ({
+      detailOpen: document.getElementById("detailPanel")?.classList.contains("is-open") ?? false,
+      detailText: document.getElementById("detailContent")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      activeRow: document.querySelector('.results-table--flexible tr.is-active')?.getAttribute("data-flex-cell-key") ?? "",
+    }));
 
-      const formState = await page.evaluate(() => ({
-        searchMode: (document.getElementById("searchMode") as HTMLInputElement | null)?.value,
-        departureDate: (document.getElementById("departureDate") as HTMLInputElement | null)?.value,
-        returnDate: (document.getElementById("returnDate") as HTMLInputElement | null)?.value,
-        departureStart: (document.getElementById("departureStart") as HTMLInputElement | null)?.value,
-        departureEnd: (document.getElementById("departureEnd") as HTMLInputElement | null)?.value,
-        dateTriggerText: document.getElementById("dateTriggerText")?.textContent?.trim(),
-      }));
+    assert.equal(detailProbe.detailOpen, true);
+    assert.equal(detailProbe.activeRow, "2026-04-15_2026-04-19");
+    assert.match(detailProbe.detailText, /LIM → MIA/);
+    assert.match(detailProbe.detailText, /2 adultos, 1 niño, 1 bebé/i);
+    assert.match(detailProbe.detailText, /Directo/i);
+    assert.match(detailProbe.detailText, /Con equipaje/i);
+    assert.match(detailProbe.detailText, /15\/04/);
+    assert.match(detailProbe.detailText, /19\/04/);
 
-      assert.equal(formState.searchMode, "exact");
-      assert.equal(formState.departureDate, "2026-04-15");
-      assert.equal(formState.returnDate, "2026-04-19");
-      assert.equal(formState.departureStart, "");
-      assert.equal(formState.departureEnd, "");
-      assert.equal(formState.dateTriggerText, "15/04 → 19/04");
+    const searchRequestPromise = page.waitForRequest((request) =>
+      request.method() === "POST" && request.url() === `${baseUrl}/api/search`);
+    await page.click('[data-matrix-detail-search="2026-04-15_2026-04-19"]');
+    await searchRequestPromise;
+    await page.waitForFunction(() => {
+      const searchMode = document.getElementById("searchMode") as HTMLInputElement | null;
+      return searchMode?.value === "exact";
+    });
+
+    assert.equal(searchRequestCount, 1);
+    assert.equal((lastSearchRequest?.request as Record<string, unknown> | undefined)?.searchMode, "exact");
+    assert.equal((lastSearchRequest?.request as Record<string, unknown> | undefined)?.providerId, undefined);
+    assert.deepEqual((lastSearchRequest?.request as Record<string, unknown> | undefined)?.passengers, {
+      adults: 2,
+      children: 1,
+      infants: 1,
+    });
+    assert.deepEqual((lastSearchRequest?.request as Record<string, unknown> | undefined)?.filters, {
+      maxResults: 25,
+      nonStop: true,
+      baggageRequired: true,
+      maxStops: 1,
+      maxLayoverMinutes: 240,
+    });
+
+    const formState = await page.evaluate(() => ({
+      searchMode: (document.getElementById("searchMode") as HTMLInputElement | null)?.value,
+      departureDate: (document.getElementById("departureDate") as HTMLInputElement | null)?.value,
+      returnDate: (document.getElementById("returnDate") as HTMLInputElement | null)?.value,
+      departureStart: (document.getElementById("departureStart") as HTMLInputElement | null)?.value,
+      departureEnd: (document.getElementById("departureEnd") as HTMLInputElement | null)?.value,
+      adults: (document.getElementById("adults") as HTMLInputElement | null)?.value,
+      children: (document.getElementById("children") as HTMLInputElement | null)?.value,
+      infants: (document.getElementById("infants") as HTMLInputElement | null)?.value,
+      dateTriggerText: document.getElementById("dateTriggerText")?.textContent?.trim(),
+    }));
+
+    assert.equal(formState.searchMode, "exact");
+    assert.equal(formState.departureDate, "2026-04-15");
+    assert.equal(formState.returnDate, "2026-04-19");
+    assert.equal(formState.departureStart, "");
+    assert.equal(formState.departureEnd, "");
+    assert.equal(formState.adults, "2");
+    assert.equal(formState.children, "1");
+    assert.equal(formState.infants, "1");
+    assert.equal(formState.dateTriggerText, "15/04 → 19/04");
   }, { autoOpen: false });
 });
 
@@ -3086,6 +3186,149 @@ test("quotation separates commercial and technical text and only auto-copies the
       return context.newPage();
     },
   });
+});
+
+test("quotation state clears when selecting another offer and ignores late responses for a stale selection", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const offerOne = buildOffer({
+      id: "offer-1",
+      mainCarrier: "LA",
+      validatingCarrier: "LA",
+      price: {
+        total: {
+          amount: 512,
+          currencyCode: "USD",
+        },
+      },
+    });
+    const offerTwo = buildOffer({
+      id: "offer-2",
+      mainCarrier: "AA",
+      validatingCarrier: "AA",
+      price: {
+        total: {
+          amount: 640,
+          currencyCode: "USD",
+        },
+      },
+      purchasePaths: [
+        {
+          provider: "agil-local",
+          type: "deep-link",
+          label: "Agil",
+          url: "https://example.test/agil-2",
+        },
+      ],
+    });
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-quotation-stale",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [offerOne, offerTwo],
+          allOffers: [offerOne, offerTwo],
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.route(`${baseUrl}/api/quotation`, async (route: Route) => {
+      const payload = route.request().postDataJSON() as { offerId?: string };
+      if (payload.offerId === "offer-2") {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+
+      const label = payload.offerId === "offer-2" ? "Oferta 2" : "Oferta 1";
+      const offer = payload.offerId === "offer-2" ? offerTwo : offerOne;
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchSessionId: "search-job-quotation-stale",
+          offer,
+          plainText: `COTIZACION BOLETO AEREO\n\n${label}\n\nDETALLE TECNICO\n\n${label} tecnico`,
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.evaluate(() => {
+      const origin = document.getElementById("origin") as HTMLInputElement | null;
+      const destination = document.getElementById("destination") as HTMLInputElement | null;
+      if (!origin || !destination) throw new Error("Missing location inputs");
+      origin.value = "LIM - Lima, Peru";
+      origin.dataset.code = "LIM";
+      origin.dataset.label = "LIM - Lima, Peru";
+      destination.value = "MIA - Miami, Usa";
+      destination.dataset.code = "MIA";
+      destination.dataset.label = "MIA - Miami, Usa";
+    });
+    await setDateValue(page, "departureDate", "2026-04-15");
+    await setDateValue(page, "returnDate", "2026-04-22");
+    await page.click("#submitButton");
+    await page.waitForSelector('tr[data-oid="offer-1"]');
+    await page.waitForSelector('tr[data-oid="offer-2"]');
+
+    await page.click("#quotationButton");
+    await page.waitForFunction(() => {
+      return [...document.querySelectorAll(".quote-textarea")].some((node) => (
+        (node as HTMLTextAreaElement).value.includes("Oferta 1")
+      ));
+    });
+
+    await page.click('tr[data-oid="offer-2"]');
+    await page.waitForFunction(() => document.querySelectorAll(".quote-textarea").length === 0);
+
+    await page.click("#quotationButton");
+    await page.click('tr[data-oid="offer-1"]');
+    await page.waitForTimeout(400);
+
+    const quotationProbe = await page.evaluate(() => ({
+      selectedOfferId: document.querySelector('tr.is-active[data-oid]')?.getAttribute("data-oid") ?? "",
+      textareaValues: [...document.querySelectorAll(".quote-textarea")]
+        .map((node) => (node as HTMLTextAreaElement).value),
+    }));
+
+    assert.equal(quotationProbe.selectedOfferId, "offer-1");
+    assert.equal(quotationProbe.textareaValues.length, 0);
+  }, { autoOpen: false });
 });
 
 

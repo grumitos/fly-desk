@@ -99,6 +99,18 @@ function formatCommercialPriceLine(prefix: string, amount: number | undefined, s
     : `${prefix} ${formatQuotationAmount(amount)} ${suffix}`.trimEnd();
 }
 
+function formatCommercialDualPriceLine(
+  usdAmount: number,
+  penAmount: number | undefined,
+  suffix: string,
+): string {
+  if (penAmount === undefined) {
+    return formatCommercialPriceLine("US$", usdAmount, suffix);
+  }
+
+  return `US$ ${formatQuotationAmount(usdAmount)} o S/ ${formatQuotationAmount(penAmount)} soles ${suffix}`.trimEnd();
+}
+
 function formatCommercialTotalLine(label: string, prefix: string, amount: number | undefined): string {
   return amount === undefined
     ? `${label}: ${prefix} `
@@ -397,6 +409,46 @@ function routeSummary(offer: CanonicalOffer, request: SearchRequest): string {
   return `${originCity} - ${destinationCity}`;
 }
 
+function joinSpanishList(items: string[]): string {
+  if (items.length <= 1) {
+    return items[0] ?? "";
+  }
+
+  if (items.length === 2) {
+    return `${items[0]} y ${items[1]}`;
+  }
+
+  return `${items.slice(0, -1).join(", ")} y ${items[items.length - 1]}`;
+}
+
+function formatCheckedBaggageLabel(checkedBags?: number): string {
+  if (typeof checkedBags === "number" && checkedBags > 0) {
+    return checkedBags === 1 ? "1 maleta de bodega" : `${checkedBags} maletas de bodega`;
+  }
+
+  return "maleta de bodega";
+}
+
+function buildCommercialBaggageInclusion(baggage?: CanonicalOffer["baggage"]): string | undefined {
+  if (!baggage) {
+    return undefined;
+  }
+
+  const items: string[] = [];
+  if (baggage.carryOnIncluded) {
+    items.push("mochila o artículo personal", "maleta de mano");
+  }
+  if (baggage.checkedIncluded) {
+    items.push(formatCheckedBaggageLabel(baggage.checkedBags));
+  }
+
+  if (items.length === 0) {
+    return undefined;
+  }
+
+  return `Equipaje incluido: ${joinSpanishList(items)}`;
+}
+
 function buildCommercialInclusions(offer: CanonicalOffer, request: SearchRequest): string[] {
   const items = [
     request.tripType === "round-trip"
@@ -404,14 +456,9 @@ function buildCommercialInclusions(offer: CanonicalOffer, request: SearchRequest
       : "Boleto de solo ida",
   ];
 
-  if (offer.baggage?.checkedIncluded) {
-    items.push(
-      offer.baggage.description
-        ? `Equipaje facturado: ${sentenceCase(offer.baggage.description)}`
-        : "Equipaje facturado incluido",
-    );
-  } else if (offer.baggage?.carryOnIncluded) {
-    items.push("Equipaje de mano");
+  const baggageInclusion = buildCommercialBaggageInclusion(offer.baggage);
+  if (baggageInclusion) {
+    items.push(baggageInclusion);
   }
 
   items.push("Check in online");
@@ -422,12 +469,12 @@ function buildCommercialInclusions(offer: CanonicalOffer, request: SearchRequest
 function buildCommercialExclusions(offer: CanonicalOffer): string[] {
   const items: string[] = [];
 
-  if (offer.baggage?.checkedIncluded === false) {
-    items.push("Maleta facturada");
+  if (offer.baggage?.carryOnIncluded === false) {
+    items.push("Maleta de mano");
   }
 
-  if (offer.baggage?.carryOnIncluded === false) {
-    items.push("Equipaje de mano");
+  if (offer.baggage?.checkedIncluded === false) {
+    items.push("Maleta de bodega");
   }
 
   return items;
@@ -435,8 +482,9 @@ function buildCommercialExclusions(offer: CanonicalOffer): string[] {
 
 function buildRestrictionsSummary(): string[] {
   return [
+    "Reembolsos no permitidos después de emitir.",
     "Cambios de nombre no permitidos.",
-    "Cambios de fecha, ruta y reembolsos sujetos a condiciones de la tarifa.",
+    "Cambios de fecha y ruta sujetos a condiciones de la tarifa.",
   ];
 }
 
@@ -476,8 +524,7 @@ function buildCommercialPriceLines(
     const perAdultUsd = totalAmount / adults;
     const perAdultPen = usdToPenRate === undefined ? undefined : perAdultUsd * usdToPenRate;
     const lines = [
-      formatCommercialPriceLine("US$", perAdultUsd, "por adulto"),
-      formatCommercialPriceLine("S/", perAdultPen, "por adulto"),
+      formatCommercialDualPriceLine(perAdultUsd, perAdultPen, "por adulto"),
     ];
 
     if (adults > 1) {
@@ -541,7 +588,7 @@ function buildCommercialQuotationText(
 
   lines.push("");
   lines.push("📋 CONDICIONES");
-  restrictions.forEach((item) => lines.push(`* ${item}`));
+  restrictions.forEach((item, index) => lines.push(`${index === 0 ? "-" : "*"} ${item}`));
   lines.push("");
   lines.push("💵 PRECIO:");
   lines.push("");

@@ -51,6 +51,7 @@ interface AgilSessionData {
   userCode: number;
   internalCode: string;
   ip: string;
+  capturedAtMs: number;
 }
 
 interface AgilCityLike {
@@ -223,6 +224,11 @@ const AGIL_HTTP_TIMEOUT_MS = Math.max(
   5000,
   Number(process.env.AGIL_HTTP_TIMEOUT_MS ?? 20000),
 );
+const AGIL_SESSION_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
+const AGIL_SESSION_REVALIDATE_MS = Math.max(
+  15000,
+  Number(process.env.AGIL_SESSION_REVALIDATE_MS ?? 60000),
+);
 
 export const AGIL_CONCURRENCY = Object.freeze({
   matrixMinimum: AGIL_MIN_MATRIX_CELL_CONCURRENCY,
@@ -235,6 +241,7 @@ export const AGIL_CONCURRENCY = Object.freeze({
 
 let playwrightPromise: Promise<typeof import("playwright")> | undefined;
 let cachedSession: AgilSessionData | undefined;
+let pendingSessionPromise: Promise<AgilSessionData> | undefined;
 let cachedAgilApimSubscriptionKey: string | undefined;
 let agilApimSubscriptionKeyPromise: Promise<string> | undefined;
 
@@ -734,6 +741,7 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
 }
 
 export function parseAgilSessionData(snapshot: BrowserStorageSnapshot): AgilSessionData {
+  const capturedAtMs = Date.now();
   const expiresAtMs = snapshot.tokenSearchFlight
     ? decodeJwtExpiry(snapshot.tokenSearchFlight)
     : 0;
@@ -762,6 +770,7 @@ export function parseAgilSessionData(snapshot: BrowserStorageSnapshot): AgilSess
     userCode,
     internalCode,
     ip,
+    capturedAtMs,
   };
 }
 
@@ -815,18 +824,63 @@ async function refreshAgilToken(session: AgilSessionData): Promise<AgilSessionDa
     ...session,
     token,
     expiresAtMs: decodeJwtExpiry(token),
+    capturedAtMs: Date.now(),
   };
+}
+
+export function sameAgilSessionIdentity(
+  left: Pick<AgilSessionData, "userCode" | "internalCode" | "ip">,
+  right: Pick<AgilSessionData, "userCode" | "internalCode" | "ip">,
+): boolean {
+  return left.userCode === right.userCode
+    && left.internalCode === right.internalCode
+    && left.ip === right.ip;
+}
+
+export function shouldReuseAgilSession(
+  session: Pick<AgilSessionData, "expiresAtMs" | "capturedAtMs">,
+  now = Date.now(),
+): boolean {
+  return session.expiresAtMs - now > AGIL_SESSION_EXPIRY_BUFFER_MS
+    && now - session.capturedAtMs < AGIL_SESSION_REVALIDATE_MS;
+}
+
+async function loadAgilSession(now: number): Promise<AgilSessionData> {
+  const extracted = parseAgilSessionData(await extractBrowserStorageSnapshot());
+
+  if (cachedSession && sameAgilSessionIdentity(cachedSession, extracted)) {
+    if (cachedSession.expiresAtMs - now > AGIL_SESSION_EXPIRY_BUFFER_MS) {
+      cachedSession = {
+        ...cachedSession,
+        capturedAtMs: now,
+      };
+      return cachedSession;
+    }
+  }
+
+  cachedSession = await refreshAgilToken(extracted);
+  return cachedSession;
 }
 
 async function getAgilSession(): Promise<AgilSessionData> {
   const now = Date.now();
-  if (cachedSession && cachedSession.expiresAtMs - now > 5 * 60 * 1000) {
+  if (cachedSession && shouldReuseAgilSession(cachedSession, now)) {
     return cachedSession;
   }
 
-  const extracted = parseAgilSessionData(await extractBrowserStorageSnapshot());
-  cachedSession = await refreshAgilToken(extracted);
-  return cachedSession;
+  if (!pendingSessionPromise) {
+    pendingSessionPromise = loadAgilSession(now)
+      .finally(() => {
+        pendingSessionPromise = undefined;
+      });
+  }
+
+  return pendingSessionPromise;
+}
+
+export function resetAgilSessionCacheForTests(): void {
+  cachedSession = undefined;
+  pendingSessionPromise = undefined;
 }
 
 function cabinToAgilClass(cabin: SearchRequest["cabin"]): number {
