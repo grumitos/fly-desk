@@ -17,17 +17,6 @@ export interface QuotationRenderOptions {
   usdToPenRate?: number;
 }
 
-function formatMoney(amount: number, currency: string): string {
-  return `${currency} ${amount.toFixed(2)}`;
-}
-
-function formatDateTime(iso: string): string {
-  const date = new Date(iso);
-  const datePart = date.toISOString().slice(0, 10);
-  const timePart = date.toISOString().slice(11, 16);
-  return `${datePart} ${timePart}`;
-}
-
 function formatCommercialDate(iso?: string, timeZone?: string): string {
   if (!iso) {
     return "Fecha por confirmar";
@@ -130,161 +119,12 @@ function titleCase(value?: string): string {
     .join(" ");
 }
 
-function sentenceCase(value?: string): string {
-  const normalized = String(value ?? "").trim();
-  if (!normalized) {
-    return "";
-  }
-
-  if (!/^[\p{L}\s]+$/u.test(normalized)) {
-    return normalized;
-  }
-
-  const lower = normalized.toLowerCase();
-  return lower.charAt(0).toUpperCase() + lower.slice(1);
-}
-
 function normalizedComparisonText(value?: string): string {
   return String(value ?? "")
     .normalize("NFD")
     .replace(/\p{Diacritic}/gu, "")
     .toLowerCase()
     .trim();
-}
-
-function describePriceSource(offer: CanonicalOffer): string {
-  return offer.providerSource === "costamar" ? "Costamar" : "Agil";
-}
-
-function formatTripType(tripType: SearchRequest["tripType"]): string {
-  if (tripType === "one-way") {
-    return "Solo ida";
-  }
-  if (tripType === "multi-city") {
-    return "Multidestino";
-  }
-  return "Ida y vuelta";
-}
-
-function pushTechnicalSection(lines: string[], title: string): void {
-  if (lines.length > 0 && lines[lines.length - 1] !== "") {
-    lines.push("");
-  }
-
-  lines.push(title);
-}
-
-function pushTechnicalField(lines: string[], label: string, value?: string | number | null): void {
-  if (value === undefined || value === null || value === "") {
-    return;
-  }
-
-  lines.push(`${label}: ${value}`);
-}
-
-function segmentLine(segment: Segment): string[] {
-  const carrierCode = (segment.marketingCarrier || segment.operatingCarrier || "").trim();
-  const flightNumber = String(segment.flightNumber || "").trim();
-  const flightLabel = [carrierCode, flightNumber].filter(Boolean).join(" ") || "Por confirmar";
-  const originLabel = `${segment.origin}${segment.originTerminal ? ` T${segment.originTerminal}` : ""}`;
-  const destinationLabel = `${segment.destination}${segment.destinationTerminal ? ` T${segment.destinationTerminal}` : ""}`;
-
-  return [
-    `Vuelo: ${flightLabel}`,
-    `Salida: ${formatDateTime(segment.departureAt)} · ${originLabel}`,
-    `Llegada: ${formatDateTime(segment.arrivalAt)} · ${destinationLabel}`,
-    `Duracion: ${segment.durationMinutes} min`,
-  ];
-}
-
-function buildTechnicalQuotationText(
-  offer: CanonicalOffer,
-  request: SearchRequest,
-): string {
-  const lines: string[] = [];
-  const mainPath = offer.purchasePaths[0];
-  const carrierCodes = collectCarrierCodes(offer);
-
-  lines.push("COTIZACION DE VUELO");
-  lines.push("");
-  pushTechnicalField(lines, "Ruta", `${offer.origin} -> ${offer.destination}`);
-  pushTechnicalField(lines, "Tipo", formatTripType(request.tripType));
-  pushTechnicalField(
-    lines,
-    carrierCodes.length > 1 ? "Aerolineas" : "Aerolinea",
-    carrierCodes.join(" / ") || "N/D",
-  );
-
-  for (const itinerary of offer.itineraries as Itinerary[]) {
-    pushTechnicalSection(
-      lines,
-      itinerary.direction === "inbound"
-        ? "Vuelta"
-        : itinerary.direction === "outbound"
-          ? "Ida"
-          : "Tramo",
-    );
-
-    itinerary.segments.forEach((segment: Segment, index: number) => {
-      if (itinerary.segments.length > 1) {
-        lines.push(`Segmento ${index + 1}`);
-      }
-      lines.push(...segmentLine(segment));
-      if (index < itinerary.segments.length - 1) {
-        const next = itinerary.segments[index + 1];
-        const connectionMinutes = Math.round(
-          (new Date(next.departureAt).getTime() - new Date(segment.arrivalAt).getTime()) / 60000,
-        );
-        lines.push("");
-        lines.push(`Escala: ${segment.destination} · ${connectionMinutes} min`);
-      }
-
-      if (index < itinerary.segments.length - 1) {
-        lines.push("");
-      }
-    });
-  }
-
-  pushTechnicalSection(lines, "Precio");
-  pushTechnicalField(lines, "Total", formatMoney(
-    offer.price.total.amount,
-    offer.price.total.currencyCode,
-  ));
-
-  if (offer.fareMeta?.lastTicketingDate) {
-    pushTechnicalField(lines, "Limite de emision", offer.fareMeta.lastTicketingDate);
-  }
-  if (typeof offer.fareMeta?.seatsRemaining === "number") {
-    pushTechnicalField(lines, "Asientos visibles", offer.fareMeta.seatsRemaining);
-  }
-  if (offer.baggage?.description) {
-    pushTechnicalField(lines, "Equipaje", offer.baggage.description);
-  }
-
-  pushTechnicalSection(lines, "Fuente del precio");
-  pushTechnicalField(lines, "Fuente", describePriceSource(offer));
-
-  pushTechnicalSection(lines, "Salida accionable");
-  if (mainPath) {
-    pushTechnicalField(lines, "Tipo", mainPath.type);
-    pushTechnicalField(lines, "Label", mainPath.label);
-    pushTechnicalField(lines, "Precision", mainPath.precision);
-  } else {
-    pushTechnicalField(lines, "Tipo", "manual-reference");
-  }
-
-  pushTechnicalSection(lines, "Notas");
-  lines.push("- Precio sujeto a disponibilidad al emitir.");
-  lines.push("- Si el flujo termina en proveedor externo, el landing puede variar.");
-  lines.push("- Reprice recomendado antes de emitir.");
-  lines.push("");
-  pushTechnicalField(
-    lines,
-    "PAX",
-    `${request.passengers.adults} ADT / ${request.passengers.children} CHD / ${request.passengers.infants} INF`,
-  );
-
-  return lines.join("\n");
 }
 
 function firstSegment(itinerary?: Itinerary): Segment | undefined {
@@ -333,28 +173,6 @@ function collectCarrierDisplayNames(offer: CanonicalOffer): string[] {
   }
 
   return names;
-}
-
-function collectCarrierCodes(offer: CanonicalOffer): string[] {
-  const codes: string[] = [];
-  const seen = new Set<string>();
-
-  offer.itineraries.forEach((itinerary) => {
-    itinerary.segments.forEach((segment) => {
-      const code = (segment.marketingCarrier || segment.operatingCarrier || "").trim().toUpperCase();
-      if (code && !seen.has(code)) {
-        seen.add(code);
-        codes.push(code);
-      }
-    });
-  });
-
-  const fallbackCode = (offer.mainCarrier ?? offer.validatingCarrier ?? "").trim().toUpperCase();
-  if (codes.length === 0 && fallbackCode && !seen.has(fallbackCode)) {
-    codes.push(fallbackCode);
-  }
-
-  return codes;
 }
 
 function carrierDisplayName(offer: CanonicalOffer): string {
@@ -603,25 +421,4 @@ export function buildCommercialQuotation(
   options?: QuotationRenderOptions,
 ): string {
   return buildCommercialQuotationText(offer, request, options);
-}
-
-export function buildTechnicalQuotation(
-  offer: CanonicalOffer,
-  request: SearchRequest,
-): string {
-  return buildTechnicalQuotationText(offer, request);
-}
-
-export function buildQuotationText(
-  offer: CanonicalOffer,
-  request: SearchRequest,
-  options?: QuotationRenderOptions,
-): string {
-  return [
-    buildCommercialQuotation(offer, request, options),
-    "",
-    "DETALLE TECNICO",
-    "",
-    buildTechnicalQuotation(offer, request),
-  ].join("\n");
 }

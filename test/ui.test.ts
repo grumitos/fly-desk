@@ -475,6 +475,69 @@ test("paste can restore a copied search in a fresh view from system clipboard", 
   });
 });
 
+test("copying a flexible exact-stay search includes reusable request metadata and summary", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await openDesktop(page, baseUrl);
+    await setRouteInputs(page, "CCS", "MAD");
+    await page.click('[data-mode="flexible"]');
+    await setDateValue(page, "departureStart", "2026-05-01");
+    await setDateValue(page, "departureEnd", "2026-05-31");
+    await page.evaluate(() => {
+      const stayNights = document.getElementById("stayNights") as HTMLInputElement | null;
+      const baggageRequired = document.getElementById("baggageRequired") as HTMLInputElement | null;
+      const maxLayoverMinutes = document.getElementById("maxLayoverMinutes") as HTMLSelectElement | null;
+      const sortMode = document.getElementById("sortMode") as HTMLSelectElement | null;
+      if (!stayNights || !baggageRequired || !maxLayoverMinutes || !sortMode) {
+        throw new Error("Missing flexible clipboard controls");
+      }
+
+      stayNights.value = "10";
+      baggageRequired.checked = true;
+      maxLayoverMinutes.value = "240";
+      sortMode.value = "fastest";
+      [stayNights, baggageRequired, maxLayoverMinutes, sortMode].forEach((input) => {
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    });
+
+    await page.click("#copySearchConfigBtn");
+
+    const clipboardState = await page.evaluate(async () => ({
+      clipboard: await navigator.clipboard.readText(),
+      stored: window.localStorage.getItem("flydesk.searchClipboard") ?? "",
+    }));
+    const payload = JSON.parse(clipboardState.clipboard);
+    const storedPayload = JSON.parse(clipboardState.stored);
+
+    assert.equal(payload.mode, "flexible");
+    assert.equal(payload.flexibleMode, "exact-stay");
+    assert.equal(payload.tripType, "round-trip");
+    assert.equal(payload.request.searchMode, "roundtrip-grid");
+    assert.equal(payload.request.flexibleMode, "exact-stay");
+    assert.equal(payload.request.locale, "es-PE");
+    assert.equal(payload.request.market, "PE");
+    assert.equal(payload.request.legs[0].departureStart, "2026-05-01");
+    assert.equal(payload.request.legs[0].departureEnd, "2026-05-31");
+    assert.equal(payload.request.legs[0].stayNights, 10);
+    assert.equal(payload.request.filters.baggageRequired, true);
+    assert.equal(payload.request.filters.maxLayoverMinutes, 240);
+    assert.equal(payload.summary.route, "CCS → MAD");
+    assert.match(payload.summary.dates, /01\/05/);
+    assert.match(payload.summary.dates, /31\/05/);
+    assert.match(payload.summary.dates, /10 noches/i);
+    assert.equal(payload.summary.sort, "Más rápido");
+    assert.deepEqual(storedPayload.request, payload.request);
+    assert.deepEqual(storedPayload.summary, payload.summary);
+  }, {
+    autoOpen: false,
+    createPage: async ({ baseUrl, browser }) => {
+      const context = await browser.newContext();
+      await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseUrl });
+      return context.newPage();
+    },
+  });
+});
+
 test("paste can import a Costamar branded URL and submit its provider session", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     const officialUrl = "https://booking.clickandbook.com/vuelos/b/CCS/MAD/2026-05-12/2026-05-22/1/0/0?terminalId=0721808110&lang=es&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjA3MjE4MDgxMTAiLCJpYXQiOjE3NzU1OTg4NTAsImV4cCI6MTc3NTYwMjQ1MH0.Bn6HcF2E6mPBi1c5xoBqaVm1f7DPvMAAmKNBumDwhuI";
@@ -523,7 +586,7 @@ test("paste can import a Costamar branded URL and submit its provider session", 
       adults: (document.getElementById("adults") as HTMLInputElement | null)?.value ?? "",
       children: (document.getElementById("children") as HTMLInputElement | null)?.value ?? "",
       infants: (document.getElementById("infants") as HTMLInputElement | null)?.value ?? "",
-      storedProviderConfig: JSON.parse(window.localStorage.getItem("flydesk.searchClipboard") || "null")?.providerConfig ?? null,
+      storedClipboard: JSON.parse(window.localStorage.getItem("flydesk.searchClipboard") || "null"),
     }));
 
     assert.equal(restored.origin, "CCS");
@@ -533,13 +596,18 @@ test("paste can import a Costamar branded URL and submit its provider session", 
     assert.equal(restored.adults, "1");
     assert.equal(restored.children, "0");
     assert.equal(restored.infants, "0");
-    assert.deepEqual(restored.storedProviderConfig, {
+    assert.deepEqual(restored.storedClipboard?.providerConfig, {
       costamar: {
         terminalId: "0721808110",
         token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjA3MjE4MDgxMTAiLCJpYXQiOjE3NzU1OTg4NTAsImV4cCI6MTc3NTYwMjQ1MH0.Bn6HcF2E6mPBi1c5xoBqaVm1f7DPvMAAmKNBumDwhuI",
         lang: "es",
       },
     });
+    assert.equal(restored.storedClipboard?.request?.searchMode, "exact");
+    assert.equal(restored.storedClipboard?.request?.tripType, "round-trip");
+    assert.equal(restored.storedClipboard?.request?.legs?.[0]?.departureDate, "2026-05-12");
+    assert.equal(restored.storedClipboard?.request?.legs?.[0]?.returnDate, "2026-05-22");
+    assert.equal(restored.storedClipboard?.summary?.route, "CCS → MAD");
 
     await submitAndWaitForRequest(page, baseUrl, "/api/search");
 
@@ -1197,6 +1265,20 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
             currencyCode: "USD",
           },
           derivedRequest: exactRequest,
+          purchasePaths: [
+            {
+              id: "matrix-agil-path",
+              provider: "agil-local",
+              type: "search-redirect",
+              label: "Buscar en Agil",
+              url: "/r/matrix-agil-path",
+              precision: "exact-search",
+              score: 0.9,
+              requiresNewTab: true,
+              commercialMode: "provider",
+              state: "search_redirect",
+            },
+          ],
         },
       ],
       searchMeta: buildSearchMeta("search_live"),
@@ -1290,6 +1372,8 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
       detailOpen: document.getElementById("detailPanel")?.classList.contains("is-open") ?? false,
       detailText: document.getElementById("detailContent")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
       activeRow: document.querySelector('.results-table--flexible tr.is-active')?.getAttribute("data-flex-cell-key") ?? "",
+      externalLinkText: document.querySelector('#detailContent a.btn--ghost')?.textContent?.trim() ?? "",
+      externalLinkHref: document.querySelector('#detailContent a.btn--ghost')?.getAttribute("href") ?? "",
     }));
 
     assert.equal(detailProbe.detailOpen, true);
@@ -1300,6 +1384,10 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
     assert.match(detailProbe.detailText, /Con equipaje/i);
     assert.match(detailProbe.detailText, /15\/04/);
     assert.match(detailProbe.detailText, /19\/04/);
+    assert.match(detailProbe.detailText, /Ruta exacta/i);
+    assert.match(detailProbe.detailText, /Proveedor/i);
+    assert.equal(detailProbe.externalLinkText, "Abrir en Agil");
+    assert.equal(detailProbe.externalLinkHref, "/r/matrix-agil-path");
 
     const searchRequestPromise = page.waitForRequest((request) =>
       request.method() === "POST" && request.url() === `${baseUrl}/api/search`);
@@ -1347,6 +1435,67 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
     assert.equal(formState.children, "1");
     assert.equal(formState.infants, "1");
     assert.equal(formState.dateTriggerText, "15/04 → 19/04");
+  }, { autoOpen: false });
+});
+
+test("flexible matrix detail hides the external provider action when no redirect is available", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const matrixResponse = buildMatrixResponse({
+      matrixComplete: true,
+      matrixStatus: "completed",
+      cells: [
+        {
+          ...buildMatrixResponse().cells[0],
+          confidence: "live",
+          selectable: true,
+          stateCode: "live",
+          tooltip: "Agil exact search.",
+          price: {
+            amount: 150,
+            currencyCode: "USD",
+          },
+          purchasePaths: [],
+        },
+      ],
+      confidenceSummary: {
+        live: 1,
+      },
+      searchMeta: buildSearchMeta("search_live"),
+    });
+
+    await page.route(`${baseUrl}/api/matrix`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(matrixResponse),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.click('[data-mode="flexible"]');
+    await setRouteInputs(page, "LIM", "MIA");
+    await setDateValue(page, "departureStart", "2026-04-15");
+    await setDateValue(page, "departureEnd", "2026-04-19");
+    await page.evaluate(() => {
+      const stayNights = document.getElementById("stayNights") as HTMLInputElement | null;
+      if (!stayNights) throw new Error("Missing stayNights input");
+      stayNights.value = "4";
+      stayNights.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    await page.click("#submitButton");
+    await page.waitForSelector('.results-table--flexible [data-flex-cell-key="2026-04-15_2026-04-19"]');
+    await page.click('.results-table--flexible [data-flex-cell-key="2026-04-15_2026-04-19"]');
+    await page.waitForSelector('[data-matrix-detail-search="2026-04-15_2026-04-19"]');
+
+    const detailProbe = await page.evaluate(() => ({
+      detailText: document.getElementById("detailContent")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      externalActions: [...document.querySelectorAll('#detailContent a.btn--ghost')]
+        .map((node) => node.textContent?.trim() ?? ""),
+    }));
+
+    assert.equal(detailProbe.externalActions.length, 0);
+    assert.match(detailProbe.detailText, /no hay un enlace externo utilizable/i);
   }, { autoOpen: false });
 });
 
@@ -3058,18 +3207,13 @@ test("results pager updates the page label and arrow states when navigating", as
   }, { autoOpen: false });
 });
 
-test("quotation separates commercial and technical text and only auto-copies the commercial version", async () => {
+test("quotation renders a single commercial text area and auto-copies it", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     const normalizeClipboardText = (value: string) => value.replace(/\r\n/g, "\n");
     const commercialText = [
       "COTIZACION BOLETO AEREO",
       "",
       "Ruta comercial para cliente",
-    ].join("\n");
-    const technicalText = [
-      "COTIZACION DE VUELO",
-      "",
-      "Detalle tecnico interno",
     ].join("\n");
 
     await page.route(`${baseUrl}/api/search`, async (route: Route) => {
@@ -3128,7 +3272,7 @@ test("quotation separates commercial and technical text and only auto-copies the
           offer: buildOffer({
             priceConfidence: "validated",
           }),
-          plainText: `${commercialText}\n\nDETALLE TECNICO\n\n${technicalText}`,
+          commercialText,
         }),
       });
     });
@@ -3154,7 +3298,7 @@ test("quotation separates commercial and technical text and only auto-copies the
     await page.click("#quotationButton");
     await page.waitForFunction(() => {
       const textareas = [...document.querySelectorAll(".quote-textarea")] as HTMLTextAreaElement[];
-      return textareas.length === 2;
+      return textareas.length === 1;
     });
 
     const quotationState = await page.evaluate(async () => {
@@ -3169,15 +3313,9 @@ test("quotation separates commercial and technical text and only auto-copies the
     });
 
     assert.ok(quotationState.sectionTitles.includes("Cotización comercial"));
-    assert.ok(quotationState.sectionTitles.includes("Detalle técnico"));
-    assert.deepEqual(quotationState.textareaValues, [commercialText, technicalText]);
+    assert.ok(!quotationState.sectionTitles.includes("Detalle técnico"));
+    assert.deepEqual(quotationState.textareaValues, [commercialText]);
     assert.equal(normalizeClipboardText(quotationState.clipboard), commercialText);
-
-    await page.click("[data-copy-technical-quotation]");
-    await page.waitForFunction(async () => (await navigator.clipboard.readText()) === "COTIZACION DE VUELO\n\nDetalle tecnico interno");
-
-    const technicalClipboard = await page.evaluate(() => navigator.clipboard.readText());
-    assert.equal(normalizeClipboardText(technicalClipboard), technicalText);
   }, {
     autoOpen: false,
     createPage: async ({ baseUrl, browser }) => {
@@ -3283,7 +3421,7 @@ test("quotation state clears when selecting another offer and ignores late respo
         body: JSON.stringify({
           searchSessionId: "search-job-quotation-stale",
           offer,
-          plainText: `COTIZACION BOLETO AEREO\n\n${label}\n\nDETALLE TECNICO\n\n${label} tecnico`,
+          commercialText: `COTIZACION BOLETO AEREO\n\n${label}`,
         }),
       });
     });
@@ -3328,6 +3466,154 @@ test("quotation state clears when selecting another offer and ignores late respo
 
     assert.equal(quotationProbe.selectedOfferId, "offer-1");
     assert.equal(quotationProbe.textareaValues.length, 0);
+  }, { autoOpen: false });
+});
+
+test("detail panel wraps long segment and baggage content without horizontal scroll", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const offer = buildOffer({
+      id: "offer-long-detail",
+      mainCarrier: "UA",
+      validatingCarrier: "UA",
+      comparisonMetrics: {
+        totalDurationMinutes: 2890,
+        totalStops: 2,
+      },
+      price: {
+        total: {
+          amount: 1764.34,
+          currencyCode: "USD",
+        },
+      },
+      baggage: {
+        carryOnIncluded: true,
+        checkedIncluded: true,
+        checkedBags: 1,
+        description: "1 pieza de 23 kg con condiciones operativas del proveedor",
+      },
+      itineraries: [
+        {
+          direction: "outbound",
+          durationMinutes: 2890,
+          stops: 2,
+          segments: [
+            {
+              id: "seg-ua-1",
+              marketingCarrier: "UA",
+              marketingCarrierName: "United Airlines",
+              flightNumber: "855",
+              origin: "LIM",
+              originName: "LIMA",
+              destination: "IAH",
+              destinationName: "HOUSTON - GEORGE BUSH INTERCONTINENTAL",
+              departureAt: "2026-04-25T00:55:00Z",
+              arrivalAt: "2026-04-25T07:05:00Z",
+              durationMinutes: 370,
+            },
+            {
+              id: "seg-ua-2",
+              marketingCarrier: "UA",
+              marketingCarrierName: "United Airlines",
+              flightNumber: "512",
+              origin: "IAH",
+              originName: "HOUSTON - GEORGE BUSH INTERCONTINENTAL",
+              destination: "DCA",
+              destinationName: "WASHINGTON - RONALD REAGAN WASHINGTON NATIONAL",
+              departureAt: "2026-04-26T07:55:00Z",
+              arrivalAt: "2026-04-26T11:05:00Z",
+              durationMinutes: 190,
+            },
+            {
+              id: "seg-ua-3",
+              marketingCarrier: "UA",
+              marketingCarrierName: "United Airlines",
+              flightNumber: "260",
+              origin: "IAD",
+              originName: "WASHINGTON - WASHINGTON DULLES",
+              destination: "MAD",
+              destinationName: "MADRID",
+              departureAt: "2026-04-26T18:55:00Z",
+              arrivalAt: "2026-04-27T08:05:00Z",
+              durationMinutes: 430,
+            },
+          ],
+        },
+      ],
+    });
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-long-detail",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "one-way",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MAD",
+                departureDate: "2026-04-25",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [offer],
+          allOffers: [offer],
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.click('[data-trip="one-way"]');
+    await setRouteInputs(page, "LIM", "MAD");
+    await setDateValue(page, "departureDate", "2026-04-25");
+
+    await submitAndWaitForRequest(page, baseUrl, "/api/search");
+    await page.waitForSelector('tr[data-oid="offer-long-detail"]');
+    await page.click('tr[data-oid="offer-long-detail"]');
+    await page.waitForSelector("#detailContent .detail-layover__label");
+
+    const overflowProbe = await page.evaluate(() => {
+      const body = document.querySelector(".detail-panel__body") as HTMLElement | null;
+      const content = document.getElementById("detailContent") as HTMLElement | null;
+      const layoverLabels = Array.from(document.querySelectorAll(".detail-layover__label")) as HTMLElement[];
+
+      return {
+        bodyClientWidth: body?.clientWidth ?? 0,
+        bodyScrollWidth: body?.scrollWidth ?? 0,
+        contentClientWidth: content?.clientWidth ?? 0,
+        contentScrollWidth: content?.scrollWidth ?? 0,
+        layoverWraps: layoverLabels.every((label) => label.scrollWidth <= label.clientWidth + 1),
+      };
+    });
+
+    assert.equal(overflowProbe.bodyScrollWidth <= overflowProbe.bodyClientWidth + 1, true, JSON.stringify(overflowProbe));
+    assert.equal(overflowProbe.contentScrollWidth <= overflowProbe.contentClientWidth + 1, true, JSON.stringify(overflowProbe));
+    assert.equal(overflowProbe.layoverWraps, true, JSON.stringify(overflowProbe));
   }, { autoOpen: false });
 });
 

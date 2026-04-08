@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { SearchRequest } from "../src/core/types";
 import {
   buildQuotationRateLookupRequest,
@@ -275,4 +278,54 @@ test("warmQuotationUsdToPenRate primes the daily cache before the quotation endp
 
   assert.equal(rate, 3.58);
   assert.equal(lookupCalls, 1);
+});
+
+test("resolveQuotationUsdToPenRate restores the same-day cache after a process-like reset", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-quotation-rate-cache-"));
+  const previousCachePath = process.env.FLY_DESK_QUOTATION_RATE_CACHE_PATH;
+  process.env.FLY_DESK_QUOTATION_RATE_CACHE_PATH = join(tempRoot, "usd-pen-rate.json");
+
+  try {
+    resetQuotationUsdToPenRateCacheForTests();
+
+    const offer = buildOffer({
+      providerSource: "costamar",
+      tripType: "round-trip",
+    });
+    const session = buildSession({
+      offers: [offer],
+    });
+    let lookupCalls = 0;
+
+    const firstRate = await resolveQuotationUsdToPenRate(session, offer, {
+      now: new Date("2026-04-07T15:00:00.000Z"),
+      searchRate: async () => {
+        lookupCalls += 1;
+        return 3.64;
+      },
+    });
+
+    resetQuotationUsdToPenRateCacheForTests({ preservePersisted: true });
+
+    const secondRate = await resolveQuotationUsdToPenRate(session, offer, {
+      now: new Date("2026-04-07T18:00:00.000Z"),
+      searchRate: async () => {
+        lookupCalls += 1;
+        return 3.7;
+      },
+    });
+
+    assert.equal(firstRate, 3.64);
+    assert.equal(secondRate, 3.64);
+    assert.equal(lookupCalls, 1);
+  } finally {
+    resetQuotationUsdToPenRateCacheForTests();
+    if (previousCachePath === undefined) {
+      delete process.env.FLY_DESK_QUOTATION_RATE_CACHE_PATH;
+    } else {
+      process.env.FLY_DESK_QUOTATION_RATE_CACHE_PATH = previousCachePath;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });

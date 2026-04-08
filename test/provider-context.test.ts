@@ -1,13 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildProviderContext,
   DEFAULT_COSTAMAR_API_BASE_URL,
   DEFAULT_COSTAMAR_BRAND_BASE_URL,
   DEFAULT_COSTAMAR_TERMINAL_ID,
   normalizeCostamarProviderContext,
+  resetCostamarSessionCacheForTests,
+  resolveLatestCostamarProviderContext,
+  resolveCostamarProviderContext,
 } from "../src/provider-context";
 import type { ProviderConfigInput } from "../src/core/types";
+
+function buildJwt(payload: Record<string, unknown>): string {
+  const encode = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "HS256", typ: "JWT" })}.${encode(payload)}.signature`;
+}
 
 test("buildProviderContext ignores request-scoped Costamar base urls", () => {
   const context = buildProviderContext("costamar", {
@@ -42,6 +53,177 @@ test("normalizeCostamarProviderContext rejects unapproved api hosts from env", (
     } else {
       process.env.COSTAMAR_API_BASE_URL = previous;
     }
+  }
+});
+
+test("resolveCostamarProviderContext reads Current Session files from Chrome sessions", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-current-session-"));
+  const profileName = "Profile 60";
+  const sessionsDir = join(tempRoot, profileName, "Sessions");
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  writeFileSync(
+    join(sessionsDir, "Current Session"),
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${token}`,
+    "utf8",
+  );
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const context = resolveCostamarProviderContext({ lang: "es" });
+    assert.equal(context.terminalId, "0721808110");
+    assert.equal(context.token, token);
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveCostamarProviderContext falls back to other Chrome profiles when the configured one has no usable token", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-profile-fallback-"));
+  const configuredProfileName = "Profile 61";
+  const fallbackProfileName = "Profile 62";
+  const configuredSessionsDir = join(tempRoot, configuredProfileName, "Sessions");
+  const fallbackSessionsDir = join(tempRoot, fallbackProfileName, "Sessions");
+  mkdirSync(configuredSessionsDir, { recursive: true });
+  mkdirSync(fallbackSessionsDir, { recursive: true });
+
+  const expiredToken = buildJwt({
+    id: "0721808110",
+    iat: 1700000000,
+    exp: 1700003600,
+  });
+  const freshToken = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  writeFileSync(
+    join(configuredSessionsDir, "Tabs_1"),
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${expiredToken}`,
+    "utf8",
+  );
+  writeFileSync(
+    join(fallbackSessionsDir, "Tabs_1"),
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-15/2026-06-22/1/0/0?terminalId=0721808110&lang=es&token=${freshToken}`,
+    "utf8",
+  );
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = configuredProfileName;
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const context = resolveCostamarProviderContext({ lang: "es" });
+    assert.equal(context.terminalId, "0721808110");
+    assert.equal(context.token, freshToken);
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveLatestCostamarProviderContext bypasses the cached token when it is close to expiring", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-refresh-window-"));
+  const profileName = "Profile 63";
+  const sessionsDir = join(tempRoot, profileName, "Sessions");
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const nearExpiryToken = buildJwt({
+    id: "0721808110",
+    iat: nowSeconds - 60,
+    exp: nowSeconds + 60,
+  });
+  const freshToken = buildJwt({
+    id: "0721808110",
+    iat: nowSeconds + 10,
+    exp: nowSeconds + 3600,
+  });
+  const sessionFile = join(sessionsDir, "Tabs_1");
+  writeFileSync(
+    sessionFile,
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${nearExpiryToken}`,
+    "utf8",
+  );
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const cached = resolveLatestCostamarProviderContext({
+      terminalId: "0721808110",
+      token: nearExpiryToken,
+      lang: "es",
+    });
+    assert.equal(cached.token, nearExpiryToken);
+
+    writeFileSync(
+      sessionFile,
+      `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-15/2026-06-22/1/0/0?terminalId=0721808110&lang=es&token=${freshToken}`,
+      "utf8",
+    );
+
+    const refreshed = resolveLatestCostamarProviderContext({
+      terminalId: "0721808110",
+      token: nearExpiryToken,
+      lang: "es",
+    });
+    assert.equal(refreshed.token, freshToken);
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
   }
 });
 

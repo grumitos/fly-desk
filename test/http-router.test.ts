@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   CanonicalOffer,
+  MatrixCell,
   ProviderMeta,
   SearchMeta,
   SearchRequest,
@@ -151,6 +152,40 @@ function buildCostamarOffer(url: string): CanonicalOffer {
   };
 }
 
+function buildCostamarMatrixCell(url: string): MatrixCell {
+  return {
+    key: "2026-06-01_2026-06-08",
+    departureDate: "2026-06-01",
+    returnDate: "2026-06-08",
+    stayNights: 7,
+    price: {
+      amount: 498,
+      currencyCode: "USD",
+    },
+    confidence: "live",
+    providerSource: "costamar",
+    selectable: true,
+    requiresRequery: true,
+    stateCode: "live",
+    tooltip: "Costamar live search.",
+    derivedRequest: buildCostamarRequest(),
+    purchasePaths: [
+      {
+        id: "matrix-costamar-path",
+        type: "search-redirect",
+        provider: "costamar",
+        label: "Buscar en Costamar",
+        url,
+        precision: "exact-search",
+        score: 0.9,
+        requiresNewTab: true,
+        commercialMode: "provider",
+        state: "search_redirect",
+      },
+    ],
+  };
+}
+
 test("rejects exact searches when origin and destination are omitted", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/search`, {
@@ -236,6 +271,110 @@ test("costamar redirect refreshes the stored token with the latest Chrome sessio
 
     const session = runtime.sessions.getSession(job.id);
     const redirectPath = session?.offers[0]?.purchasePaths[0]?.url;
+    assert.ok(redirectPath);
+
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}${redirectPath}`, { redirect: "manual" });
+
+      assert.equal(response.status, 302);
+      const location = response.headers.get("location");
+      assert.ok(location);
+
+      const parsed = new URL(location);
+      assert.equal(parsed.searchParams.get("terminalId"), "0721808110");
+      assert.equal(parsed.searchParams.get("lang"), "es");
+      assert.equal(parsed.searchParams.get("token"), freshToken);
+    });
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("costamar matrix redirects refresh the stored token with the matrix job provider context", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-matrix-redirect-"));
+  const profileName = "Profile 42";
+  const sessionsDir = join(tempRoot, profileName, "Sessions");
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const staleToken = buildJwt({
+    id: "0721808110",
+    iat: 1700000000,
+    exp: 1700003600,
+  });
+  const freshToken = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  writeFileSync(
+    join(sessionsDir, "Tabs_1"),
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&token=${freshToken}`,
+    "utf8",
+  );
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const runtime = getRuntime();
+    const job = runtime.sessions.createMatrixJob({
+      request: {
+        ...buildCostamarRequest(),
+        searchMode: "roundtrip-grid",
+        flexibleMode: "exact-stay",
+        legs: [
+          {
+            origin: "LIM",
+            destination: "MAD",
+            departureStart: "2026-06-01",
+            departureEnd: "2026-06-03",
+            stayNights: 7,
+          },
+        ],
+      },
+      providerContext: {
+        costamar: {
+          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+          terminalId: "0721808110",
+          token: staleToken,
+          lang: "es",
+        },
+      },
+      cells: [buildCostamarMatrixCell(
+        `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${staleToken}`,
+      )],
+      axes: {
+        departureDates: ["2026-06-01"],
+        returnDates: ["2026-06-08"],
+      },
+      confidenceSummary: {
+        live: 1,
+      },
+      recommendations: [],
+      providerMeta: buildProviderMeta(),
+      searchMeta: buildSearchMeta(),
+      warnings: [],
+      status: "completed",
+    });
+
+    const redirectPath = job.cells[0]?.purchasePaths?.[0]?.url;
     assert.ok(redirectPath);
 
     await withServer(async (baseUrl) => {

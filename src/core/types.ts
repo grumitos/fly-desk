@@ -284,6 +284,7 @@ export interface MatrixCell {
   stateCode: "ind" | "live" | "ok" | "chg" | "emp";
   tooltip?: string;
   derivedRequest?: SearchRequest;
+  purchasePaths?: PurchasePath[];
 }
 
 export interface SearchMeta {
