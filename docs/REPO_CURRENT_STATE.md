@@ -1,6 +1,6 @@
 # Estado Actual de la Repo
 
-Fecha de corte: 2026-03-31
+Fecha de corte: 2026-04-09
 
 ## Resumen
 
@@ -18,6 +18,7 @@ El repo no versiona artefactos generados de build:
 
 - busqueda exacta
 - busqueda flexible por rango y por matriz
+- busqueda migratoria mensual (solo ida, 8 meses)
 - autocomplete de origen y destino
 - filtros visibles `Directo`, `Equipaje` y `Escala`
 - lista de resultados con paginacion
@@ -32,6 +33,7 @@ El repo no versiona artefactos generados de build:
 
 - busqueda exacta: placeholder inline en el area de resultados
 - matriz flexible: celdas `loading` en la propia matriz
+- busqueda migratoria: tarjetas con estado de carga por mes
 - `reprice` y `quotation`: estado de carga dentro del panel de detalle
 
 ## Cambios estructurales ya consolidados
@@ -117,6 +119,7 @@ El repo no versiona artefactos generados de build:
   - inyeccion de config runtime en `index.html`
 - `src/http-router.ts`
   - `/api/health`
+  - `/api/costamar/token-status`
   - `/api/agil/locations`
   - `/api/costamar/locations`
   - `/api/locations`
@@ -135,6 +138,9 @@ El repo no versiona artefactos generados de build:
   - normalizacion de contexto de Costamar
   - allowlist de URLs
   - recovery de sesion branded desde Chrome
+  - extraccion via Chrome DevTools Protocol (CDP)
+  - verificacion live de token (`verifyCostamarTokenLive`)
+  - endpoint de estado de token (`getCostamarTokenStatus`)
 - `src/local-agil.ts`
   - sesion local
   - refresh token
@@ -216,9 +222,9 @@ Comandos:
 - `npm run typecheck`
 - `npm test`
 
-Resultado al 31 de marzo de 2026:
+Resultado al 9 de abril de 2026:
 
-- `67/67` pruebas en verde
+- `106/106` pruebas en verde
 - launcher verificado con abrir, reabrir, cerrar y reabrir sobre `32123`
 
 ## Documentacion historica
@@ -235,3 +241,33 @@ Siguen siendo utiles como referencia historica, no como descripcion del estado p
 - el store sigue siendo en memoria; no hay persistencia externa para jobs
 - no hay linter real configurado
 - el deploy remoto completo sigue bloqueado por la dependencia de sesion local de navegador para Agil
+- la extraccion de token Costamar por CDP requiere que Chrome se lance con `--remote-debugging-port`; sin ese flag, se depende de archivos de sesion que Chrome puede no tener desbloqueados
+- la busqueda migratoria lanza 8 jobs de rango concurrentes, lo cual puede generar alta carga en providers
+
+## Cambios del 9 de abril de 2026
+
+### Extraccion de token Costamar via CDP
+
+- nueva funcion `readCostamarCandidatesViaCDP()` en `provider-context.ts`
+- lee `DevToolsActivePort` del directorio de usuario de Chrome
+- conecta al protocolo CDP para listar pestanas abiertas
+- extrae tokens de URLs de Costamar visibles en pestanas
+- se integra al pipeline existente: file-based -> CDP -> fallback profiles
+- requiere Chrome con `--remote-debugging-port` habilitado
+
+### Verificacion y estado de token
+
+- `getCostamarTokenStatus()`: devuelve estado completo del token (terminal, usable, expiracion, minutos restantes)
+- `verifyCostamarTokenLive()`: verificacion async via API de Costamar (`GET /engines/:terminalId`)
+- nuevo endpoint `GET /api/costamar/token-status` con parametro opcional `?verify=true`
+
+### Modo de busqueda migratoria
+
+- boton "Migratorio" en la topbar del frontend
+- solo ida, 8 meses siguientes
+- toma origen y destino del formulario existente
+- lanza 8 busquedas de rango concurrentes (una por mes)
+- muestra grid de tarjetas con precio mas bajo por mes
+- cada tarjeta muestra: mes, precio, fecha de salida, aerolinea, escalas
+- estados de carga progresivos por mes
+- salir del modo migratorio al hacer una busqueda normal

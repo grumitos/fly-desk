@@ -3184,7 +3184,10 @@ test("results pager updates the page label and arrow states when navigating", as
       nextDisabled: (document.querySelector('#resultsPager [data-results-page=\"next\"]') as HTMLButtonElement | null)?.disabled ?? null,
       width: document.getElementById("resultsPager")?.getBoundingClientRect().width ?? 0,
       left: document.getElementById("resultsPager")?.getBoundingClientRect().left ?? 0,
-      sortRight: document.getElementById("sortButtons")?.getBoundingClientRect().right ?? 0,
+      toolbarCenter: (() => {
+        const bounds = document.getElementById("resultsToolbar")?.getBoundingClientRect();
+        return bounds ? bounds.left + (bounds.width / 2) : 0;
+      })(),
     }));
 
     await page.click('#resultsPager [data-results-page="next"]');
@@ -3195,15 +3198,20 @@ test("results pager updates the page label and arrow states when navigating", as
       nextDisabled: (document.querySelector('#resultsPager [data-results-page=\"next\"]') as HTMLButtonElement | null)?.disabled ?? null,
       width: document.getElementById("resultsPager")?.getBoundingClientRect().width ?? 0,
       left: document.getElementById("resultsPager")?.getBoundingClientRect().left ?? 0,
+      toolbarCenter: (() => {
+        const bounds = document.getElementById("resultsToolbar")?.getBoundingClientRect();
+        return bounds ? bounds.left + (bounds.width / 2) : 0;
+      })(),
     }));
 
     assert.equal(initialPager.label.startsWith("1 /"), true);
     assert.equal(initialPager.prevDisabled, true);
     assert.equal(initialPager.nextDisabled, false);
-    assert.equal(initialPager.left > initialPager.sortRight, true);
+    assert.equal(Math.abs((initialPager.left + (initialPager.width / 2)) - initialPager.toolbarCenter) < 1, true);
     assert.equal(nextPager.label.startsWith("2 /"), true);
     assert.equal(nextPager.prevDisabled, false);
-    assert.equal(Math.abs(nextPager.width - initialPager.width) < 0.5, true);
+    assert.equal(Math.abs((nextPager.left + (nextPager.width / 2)) - nextPager.toolbarCenter) < 1, true);
+    assert.equal(Math.abs(nextPager.width - initialPager.width) < 1.5, true);
   }, { autoOpen: false });
 });
 
