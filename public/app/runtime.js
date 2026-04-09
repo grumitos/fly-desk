@@ -24,6 +24,9 @@ export const state = {
   pollRenderPending: false,
   pollInteractionAt: 0,
   pollPointerDown: false,
+  migrationActive: false,
+  migrationMonths: [],
+  migrationPollHandles: [],
 };
 
 export const autocompleteState = {
@@ -108,6 +111,7 @@ export const toastContainer = $("toastContainer");
 export const copySearchConfigBtn = $("copySearchConfigBtn");
 export const pasteSearchConfigBtn = $("pasteSearchConfigBtn");
 export const swapRouteBtn = $("swapRouteBtn");
+export const migrationBtn = $("migrationBtn");
 export const themeButtons = [...document.querySelectorAll("[data-theme-value]")];
 
 export const calendarState = {

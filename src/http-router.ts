@@ -40,9 +40,11 @@ import {
 import { openUrlLocally } from "./local-browser";
 import {
   buildProviderContext,
+  getCostamarTokenStatus,
   resolveLatestCostamarProviderContext,
   resolveProviderId,
   resolveUsableCostamarBrandedToken,
+  verifyCostamarTokenLive,
 } from "./provider-context";
 import { resolveQuotationUsdToPenRate, warmQuotationUsdToPenRate } from "./quotation-exchange-rate";
 import { hasFilledSearchResultLimit, limitSearchResponseForPagination } from "./search-limits";
@@ -906,6 +908,13 @@ export async function routeRequest(request: Request): Promise<Response> {
     return json({ ok: true });
   }
 
+  if (request.method === "GET" && url.pathname === "/api/costamar/token-status") {
+    const status = getCostamarTokenStatus();
+    const verify = url.searchParams.get("verify") === "true";
+    const verification = verify ? await verifyCostamarTokenLive() : undefined;
+    return json({ ...status, verification });
+  }
+
   if (request.method === "GET" && url.pathname === "/api/agil/locations") {
     const query = stringValue(url.searchParams.get("q"));
     if (query.length < 2) {
@@ -1288,24 +1297,27 @@ export async function routeRequest(request: Request): Promise<Response> {
       if (resolved.path.provider === "costamar" && resolved.path.type === "search-redirect") {
         const providerContext = runtime.sessions.getSession(resolved.sessionId)?.providerContext
           ?? runtime.sessions.getMatrixJob(resolved.sessionId)?.providerContext;
-        let canRedirect = Boolean((() => {
-          try {
-            const parsed = new URL(location);
-            return resolveUsableCostamarBrandedToken(
-              parsed.searchParams.get("token") ?? undefined,
-              parsed.searchParams.get("terminalId") ?? undefined,
-            );
-          } catch {
-            return undefined;
-          }
-        })());
+        let canRedirect = false;
 
-        if (providerContext?.costamar) {
-          const refreshedContext = resolveLatestCostamarProviderContext(providerContext.costamar);
+        try {
+          const parsed = new URL(location);
+          const sessionContext = providerContext?.costamar;
+          const parsedTerminalId = parsed.searchParams.get("terminalId")?.trim() || undefined;
+          const parsedLang = parsed.searchParams.get("lang")?.trim() || undefined;
+          const parsedToken = parsed.searchParams.get("token")?.trim() || undefined;
+          const refreshContext = {
+            ...(sessionContext ?? {}),
+            ...(parsedTerminalId ? { terminalId: parsedTerminalId } : {}),
+            ...(parsedLang ? { lang: parsedLang } : {}),
+            ...(parsedToken ? { token: parsedToken } : {}),
+          };
+          const refreshedContext = resolveLatestCostamarProviderContext(refreshContext);
           if (resolveUsableCostamarBrandedToken(refreshedContext.token, refreshedContext.terminalId)) {
             location = applyCostamarContextToBrandedSearchUrl(location, refreshedContext);
             canRedirect = true;
           }
+        } catch {
+          canRedirect = false;
         }
 
         if (!canRedirect) {

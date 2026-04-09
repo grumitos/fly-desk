@@ -147,7 +147,7 @@ test("minNights equal to maxNights stays compatible with exact-stay semantics", 
   );
 });
 
-test("normalizeFlexibleRoundTripRequest derives exact-stay from stayNights and reuses the departure window as return bounds", () => {
+test("normalizeFlexibleRoundTripRequest derives exact-stay from stayNights and offsets the return window by the stay length", () => {
   const normalized = normalizeFlexibleRoundTripRequest({
     ...buildBaseRequest(),
     legs: [
@@ -164,8 +164,8 @@ test("normalizeFlexibleRoundTripRequest derives exact-stay from stayNights and r
   assert.equal(normalized.legs[0]?.stayNights, 10);
   assert.equal(normalized.legs[0]?.minNights, undefined);
   assert.equal(normalized.legs[0]?.maxNights, undefined);
-  assert.equal(normalized.legs[0]?.returnStart, "2026-05-01");
-  assert.equal(normalized.legs[0]?.returnEnd, "2026-05-31");
+  assert.equal(normalized.legs[0]?.returnStart, "2026-05-11");
+  assert.equal(normalized.legs[0]?.returnEnd, "2026-06-10");
 });
 
 test("normalizeFlexibleRoundTripRequest derives exact-stay from legacy min/max equality", () => {

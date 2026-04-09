@@ -46,6 +46,7 @@ import {
   matrixFullscreenBody,
   matrixFullscreenClose,
   matrixFullscreenMeta,
+  migrationBtn,
   pasteSearchConfigBtn,
   paxAdultsDisplay,
   paxChildrenDisplay,
@@ -4603,6 +4604,10 @@ function renderCalendarView(container = resultsContainer) {
    ================================================================ */
 
 function renderResultsArea() {
+  if (state.migrationActive) {
+    renderMigrationResults();
+    return;
+  }
   const hasMatrix = (state.matrixResponse?.cells?.length ?? 0) > 0;
   const showCalendar = hasMatrix && state.viewMode === "calendar" && canRenderMatrixCalendar();
   if (!showCalendar && state.matrixExpanded) {
@@ -5017,6 +5022,7 @@ searchForm.addEventListener("submit", async (e) => {
     const translatedPayload = translateFlexibleDates(payload);
     stopMatrixPolling();
     stopSearchPolling();
+    exitMigrationMode();
     state.sortMode = translatedPayload.sortMode;
     state.resultsPage = 1;
     state.quotationText = "";
@@ -5098,6 +5104,231 @@ quotationButton.addEventListener("click", async () => {
     quotationButton.disabled = false;
     renderDetailPanel();
   }
+});
+
+/* ================================================================
+   MIGRATION MODE
+   ================================================================ */
+
+const MIGRATION_MONTH_COUNT = 8;
+const MIGRATION_MONTH_NAMES = [
+  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+];
+
+function migrationMonthRanges(startISO, count) {
+  const months = [];
+  const start = new Date(startISO + "T00:00:00");
+  let year = start.getFullYear();
+  let month = start.getMonth();
+  for (let i = 0; i < count; i++) {
+    const first = new Date(year, month, 1);
+    const last = new Date(year, month + 1, 0);
+    const departureStart = first.toISOString().slice(0, 10);
+    const departureEnd = last.toISOString().slice(0, 10);
+    const clampedStart = departureStart < startISO ? startISO : departureStart;
+    months.push({
+      key: `${year}-${String(month + 1).padStart(2, "0")}`,
+      label: `${MIGRATION_MONTH_NAMES[month]} ${year}`,
+      departureStart: clampedStart,
+      departureEnd,
+    });
+    month++;
+    if (month > 11) { month = 0; year++; }
+  }
+  return months;
+}
+
+function stopMigrationPolling() {
+  for (const handle of state.migrationPollHandles) {
+    clearTimeout(handle);
+  }
+  state.migrationPollHandles = [];
+}
+
+function exitMigrationMode() {
+  stopMigrationPolling();
+  state.migrationActive = false;
+  state.migrationMonths = [];
+}
+
+function renderMigrationResults() {
+  if (!resultsContainer) return;
+  const months = state.migrationMonths;
+  if (!months || months.length === 0) {
+    resultsContainer.innerHTML = "";
+    return;
+  }
+
+  const origin = months[0]?.origin ?? "";
+  const destination = months[0]?.destination ?? "";
+  const route = [origin, destination].filter(Boolean).join(" → ");
+
+  let h = `<div class="migration-panel">`;
+  h += `<div class="migration-panel__header">`;
+  h += `<h2 class="migration-panel__title">Vuelo migratorio &mdash; ${escapeHtml(route)}</h2>`;
+  h += `<p class="migration-panel__subtitle">Solo ida &middot; Precio más bajo por mes</p>`;
+  h += `</div>`;
+  h += `<div class="migration-grid">`;
+
+  for (const m of months) {
+    const statusClass = m.complete
+      ? (m.cheapest ? "migration-card--ok" : "migration-card--empty")
+      : "migration-card--loading";
+    h += `<div class="migration-card ${statusClass}">`;
+    h += `<div class="migration-card__month">${escapeHtml(m.label)}</div>`;
+    if (!m.complete) {
+      h += `<div class="migration-card__price migration-card__price--loading">Buscando&hellip;</div>`;
+    } else if (m.cheapest) {
+      const offer = m.cheapest;
+      const price = numFmt.format(offer.totalPrice ?? 0);
+      const currency = offer.currencyCode || "USD";
+      const airline = offer.itineraries?.[0]?.segments?.[0]?.airlineName
+        || offer.itineraries?.[0]?.segments?.[0]?.airlineCode
+        || "";
+      const date = offer.itineraries?.[0]?.segments?.[0]?.departureDate
+        || offer.departureDate || "";
+      h += `<div class="migration-card__price">${escapeHtml(currency)} ${price}</div>`;
+      h += `<div class="migration-card__detail">${escapeHtml(formatDateCompact(date))}</div>`;
+      if (airline) {
+        h += `<div class="migration-card__detail">${escapeHtml(airline)}</div>`;
+      }
+      if (offer.itineraries?.[0]?.stops != null) {
+        const stops = offer.itineraries[0].stops;
+        h += `<div class="migration-card__detail">${stops === 0 ? "Directo" : stops + " escala" + (stops > 1 ? "s" : "")}</div>`;
+      }
+    } else {
+      h += `<div class="migration-card__price migration-card__price--empty">Sin resultados</div>`;
+      if (m.error) {
+        h += `<div class="migration-card__detail migration-card__detail--error">${escapeHtml(m.error)}</div>`;
+      }
+    }
+    h += `</div>`;
+  }
+
+  h += `</div></div>`;
+  resultsContainer.innerHTML = h;
+}
+
+async function startMigrationSearch() {
+  const origin = resolvedLocationCode("origin");
+  const destination = resolvedLocationCode("destination");
+  if (!origin || !destination) {
+    showToast("Completa origen y destino antes de buscar vuelo migratorio.");
+    return;
+  }
+
+  stopSearchPolling();
+  stopMatrixPolling();
+  exitMigrationMode();
+
+  state.migrationActive = true;
+  state.searchResponse = null;
+  state.matrixResponse = null;
+  state.selectedOfferId = null;
+
+  const monthRanges = migrationMonthRanges(todayISO, MIGRATION_MONTH_COUNT);
+  const adults = parseInt($("adults")?.value, 10) || 1;
+  const children = parseInt($("children")?.value, 10) || 0;
+  const infants = parseInt($("infants")?.value, 10) || 0;
+  const originLabel = $("origin")?.dataset.label ?? $("origin")?.value ?? "";
+  const destinationLabel = $("destination")?.dataset.label ?? $("destination")?.value ?? "";
+
+  state.migrationMonths = monthRanges.map((m) => ({
+    ...m,
+    origin,
+    destination,
+    jobId: null,
+    offers: [],
+    cheapest: null,
+    complete: false,
+    error: null,
+  }));
+
+  if (resultsToolbar) resultsToolbar.classList.add("hidden");
+  if (emptyState) emptyState.classList.add("hidden");
+  renderMigrationResults();
+
+  for (let i = 0; i < state.migrationMonths.length; i++) {
+    const m = state.migrationMonths[i];
+    const payload = {
+      sortMode: "cheapest",
+      request: {
+        tripType: "one-way",
+        searchMode: "stay-range",
+        cabin: "ECONOMY",
+        currencyCode: DEFAULT_CURRENCY_CODE,
+        coverageMode: "core",
+        redirectMode: "best-effort",
+        passengers: { adults, children, infants },
+        filters: { nonStop: false, maxResults: 300 },
+        legs: [{
+          origin,
+          destination,
+          originLabel,
+          destinationLabel,
+          departureDate: "",
+          returnDate: "",
+          departureStart: m.departureStart,
+          departureEnd: m.departureEnd,
+          returnStart: "",
+          returnEnd: "",
+        }],
+      },
+    };
+
+    try {
+      const data = await postJson("/api/search", payload);
+      m.jobId = data.searchJobId ?? null;
+      updateMigrationMonth(i, data);
+      if (!data.searchComplete && m.jobId) {
+        queueMigrationPoll(i, m.jobId);
+      }
+    } catch (err) {
+      m.complete = true;
+      m.error = err.message;
+    }
+    renderMigrationResults();
+  }
+}
+
+function updateMigrationMonth(index, data) {
+  const m = state.migrationMonths[index];
+  if (!m) return;
+  const offers = data.allOffers ?? data.offers ?? [];
+  m.offers = offers;
+  m.complete = Boolean(data.searchComplete);
+  if (offers.length > 0) {
+    m.cheapest = offers.reduce((best, o) =>
+      (o.totalPrice ?? Infinity) < (best.totalPrice ?? Infinity) ? o : best, offers[0]);
+  }
+}
+
+function queueMigrationPoll(index, jobId) {
+  const handle = scheduleJsonPoll({
+    delayMs: 900,
+    run: async () => {
+      try {
+        const data = await getJson(`/api/search/${jobId}`);
+        const m = state.migrationMonths[index];
+        if (!m || m.jobId !== jobId) return;
+        updateMigrationMonth(index, data);
+        renderMigrationResults();
+        if (!data.searchComplete) {
+          queueMigrationPoll(index, jobId);
+        }
+      } catch {
+        const m = state.migrationMonths[index];
+        if (m) { m.complete = true; m.error = "Error de conexión"; }
+        renderMigrationResults();
+      }
+    },
+  });
+  state.migrationPollHandles.push(handle);
+}
+
+migrationBtn?.addEventListener("click", () => {
+  startMigrationSearch();
 });
 
 /* ================================================================

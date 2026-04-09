@@ -159,6 +159,168 @@ test("resolveCostamarProviderContext falls back to other Chrome profiles when th
   }
 });
 
+test("resolveLatestCostamarProviderContext prefers the repo-local Costamar agent profile when present", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-agent-profile-"));
+  const sessionsDir = join(tempRoot, "profiles", "costamar-agent", "Profile 70", "Sessions");
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  writeFileSync(
+    join(sessionsDir, "Tabs_1"),
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${token}`,
+    "utf8",
+  );
+
+  const previousCwd = process.cwd();
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousAgentUserDataDir = process.env.COSTAMAR_AGENT_CHROME_USER_DATA_DIR;
+  const previousAgilUserDataDir = process.env.AGIL_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  const previousAgilProfile = process.env.AGIL_CHROME_PROFILE;
+  delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  delete process.env.COSTAMAR_AGENT_CHROME_USER_DATA_DIR;
+  delete process.env.AGIL_CHROME_USER_DATA_DIR;
+  delete process.env.COSTAMAR_CHROME_PROFILE;
+  delete process.env.AGIL_CHROME_PROFILE;
+  process.chdir(tempRoot);
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const context = resolveLatestCostamarProviderContext({
+      terminalId: "0721808110",
+      lang: "es",
+    });
+
+    assert.equal(context.terminalId, "0721808110");
+    assert.equal(context.token, token);
+  } finally {
+    process.chdir(previousCwd);
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousAgentUserDataDir === undefined) {
+      delete process.env.COSTAMAR_AGENT_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_AGENT_CHROME_USER_DATA_DIR = previousAgentUserDataDir;
+    }
+
+    if (previousAgilUserDataDir === undefined) {
+      delete process.env.AGIL_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.AGIL_CHROME_USER_DATA_DIR = previousAgilUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    if (previousAgilProfile === undefined) {
+      delete process.env.AGIL_CHROME_PROFILE;
+    } else {
+      process.env.AGIL_CHROME_PROFILE = previousAgilProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("resolveLatestCostamarProviderContext falls back across Chrome user-data roots when the agent profile has no usable token", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-agent-root-fallback-"));
+  const dedicatedSessionsDir = join(tempRoot, "profiles", "costamar-agent", "Profile 71", "Sessions");
+  const fallbackSessionsDir = join(tempRoot, "agil-user-data", "Profile 72", "Sessions");
+  mkdirSync(dedicatedSessionsDir, { recursive: true });
+  mkdirSync(fallbackSessionsDir, { recursive: true });
+
+  const expiredToken = buildJwt({
+    id: "0721808110",
+    iat: 1700000000,
+    exp: 1700003600,
+  });
+  const freshToken = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  writeFileSync(
+    join(dedicatedSessionsDir, "Tabs_1"),
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${expiredToken}`,
+    "utf8",
+  );
+  writeFileSync(
+    join(fallbackSessionsDir, "Tabs_1"),
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-15/2026-06-22/1/0/0?terminalId=0721808110&lang=es&token=${freshToken}`,
+    "utf8",
+  );
+
+  const previousCwd = process.cwd();
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousAgentUserDataDir = process.env.COSTAMAR_AGENT_CHROME_USER_DATA_DIR;
+  const previousAgilUserDataDir = process.env.AGIL_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  const previousAgilProfile = process.env.AGIL_CHROME_PROFILE;
+  delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  delete process.env.COSTAMAR_AGENT_CHROME_USER_DATA_DIR;
+  process.env.AGIL_CHROME_USER_DATA_DIR = join(tempRoot, "agil-user-data");
+  delete process.env.COSTAMAR_CHROME_PROFILE;
+  delete process.env.AGIL_CHROME_PROFILE;
+  process.chdir(tempRoot);
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const context = resolveLatestCostamarProviderContext({
+      terminalId: "0721808110",
+      lang: "es",
+    });
+
+    assert.equal(context.terminalId, "0721808110");
+    assert.equal(context.token, freshToken);
+  } finally {
+    process.chdir(previousCwd);
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousAgentUserDataDir === undefined) {
+      delete process.env.COSTAMAR_AGENT_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_AGENT_CHROME_USER_DATA_DIR = previousAgentUserDataDir;
+    }
+
+    if (previousAgilUserDataDir === undefined) {
+      delete process.env.AGIL_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.AGIL_CHROME_USER_DATA_DIR = previousAgilUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    if (previousAgilProfile === undefined) {
+      delete process.env.AGIL_CHROME_PROFILE;
+    } else {
+      process.env.AGIL_CHROME_PROFILE = previousAgilProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("resolveLatestCostamarProviderContext bypasses the cached token when it is close to expiring", () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-refresh-window-"));
   const profileName = "Profile 63";

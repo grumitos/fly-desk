@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -16,7 +17,7 @@ export const DEFAULT_COSTAMAR_TERMINAL_ID = "0721808110";
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 const COSTAMAR_SESSION_CACHE_TTL_MS = 30000;
 const COSTAMAR_TOKEN_REFRESH_WINDOW_MS = 2 * 60 * 1000;
-const COSTAMAR_BRANDED_URL_REGEX = /https:\/\/booking\.clickandbook\.com\/vuelos\/b\/[A-Z]{3}\/[A-Z]{3}(?:\/\d{4}-\d{2}-\d{2}){1,2}\/\d+\/\d+\/\d+\?[^\s\x00]*/gi;
+const COSTAMAR_BRANDED_URL_REGEX = /https:\/\/booking\.clickandbook\.com\/vuelos\/b\/[^\s\x00?]+\?[^\s\x00]*/gi;
 const COSTAMAR_BRANDED_URL_ENCODED_REGEX =
   /https%(?:25)?3A%(?:25)?2F%(?:25)?2Fbooking\.clickandbook\.com%(?:25)?2Fvuelos%(?:25)?2Fb%(?:25)?2F[A-Za-z0-9%._~!$'()*+,;=:@/?&-]*/gi;
 const COSTAMAR_BRANDED_URL_ESCAPED_REGEX =
@@ -196,12 +197,45 @@ export function resolveUsableCostamarBrandedToken(
   return normalized;
 }
 
-function resolveChromeUserDataDir(): string {
-  return stringOrFallback(
-    process.env.COSTAMAR_CHROME_USER_DATA_DIR?.trim()
-      ?? process.env.AGIL_CHROME_USER_DATA_DIR?.trim(),
-    DEFAULT_CHROME_USER_DATA_DIR,
-  );
+function readRepoCostamarUserDataDirCandidates(): string[] {
+  return [
+    join(process.cwd(), "profiles", "costamar-agent"),
+    join(process.cwd(), "output", "chrome-costamar-manual"),
+  ].filter((candidate) => existsSync(candidate));
+}
+
+function readChromeUserDataDirCandidates(includeConfiguredOnly = false): string[] {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const explicitCostamarUserDataDirs = [
+    process.env.COSTAMAR_CHROME_USER_DATA_DIR?.trim(),
+    process.env.COSTAMAR_AGENT_CHROME_USER_DATA_DIR?.trim(),
+  ].filter((value): value is string => Boolean(value));
+  const pushUnique = (value?: string) => {
+    const normalized = value?.trim();
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
+
+  explicitCostamarUserDataDirs.forEach((candidate) => pushUnique(candidate));
+  if (explicitCostamarUserDataDirs.length > 0) {
+    return candidates;
+  }
+
+  if (explicitCostamarUserDataDirs.length === 0) {
+    readRepoCostamarUserDataDirCandidates().forEach((candidate) => pushUnique(candidate));
+  }
+
+  if (!includeConfiguredOnly) {
+    pushUnique(process.env.AGIL_CHROME_USER_DATA_DIR?.trim());
+    pushUnique(DEFAULT_CHROME_USER_DATA_DIR);
+  }
+
+  return candidates;
 }
 
 function resolveConfiguredChromeProfile(): string | undefined {
@@ -210,7 +244,7 @@ function resolveConfiguredChromeProfile(): string | undefined {
   return configured || undefined;
 }
 
-function readChromeProfileCandidates(includeConfiguredOnly = false): string[] {
+function readChromeProfileCandidates(userDataDir: string, includeConfiguredOnly = false): string[] {
   const configured = resolveConfiguredChromeProfile();
   if (configured) {
     if (includeConfiguredOnly) {
@@ -233,7 +267,7 @@ function readChromeProfileCandidates(includeConfiguredOnly = false): string[] {
   pushUnique(configured);
 
   try {
-    const localStatePath = join(resolveChromeUserDataDir(), "Local State");
+    const localStatePath = join(userDataDir, "Local State");
     const raw = readFileSync(localStatePath, "utf8");
     const parsed = JSON.parse(raw) as {
       profile?: { last_used?: string; info_cache?: Record<string, unknown> };
@@ -245,7 +279,7 @@ function readChromeProfileCandidates(includeConfiguredOnly = false): string[] {
   }
 
   try {
-    readdirSync(resolveChromeUserDataDir(), { withFileTypes: true })
+    readdirSync(userDataDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && (entry.name === "Default" || /^Profile \d+$/.test(entry.name)))
       .map((entry) => entry.name)
       .sort((left, right) => left.localeCompare(right))
@@ -421,8 +455,8 @@ function shouldRefreshCostamarToken(
   return false;
 }
 
-function copyCostamarSessionsToTemp(profileName: string): string | undefined {
-  const source = join(resolveChromeUserDataDir(), profileName, "Sessions");
+function copyCostamarSessionsToTemp(userDataDir: string, profileName: string): string | undefined {
+  const source = join(userDataDir, profileName, "Sessions");
   if (!existsSync(source)) {
     return undefined;
   }
@@ -469,8 +503,8 @@ function readCostamarSessionCandidatesFromCopiedDir(
   return candidates;
 }
 
-function copyChromeArtifactToTemp(profileName: string, relativePath: string): string | undefined {
-  const source = join(resolveChromeUserDataDir(), profileName, relativePath);
+function copyChromeArtifactToTemp(userDataDir: string, profileName: string, relativePath: string): string | undefined {
+  const source = join(userDataDir, profileName, relativePath);
   if (!existsSync(source)) {
     return undefined;
   }
@@ -489,10 +523,11 @@ function copyChromeArtifactToTemp(profileName: string, relativePath: string): st
 }
 
 function readCostamarCandidatesFromChromeArtifact(
+  userDataDir: string,
   profileName: string,
   relativePath: string,
 ): CostamarSessionCandidate[] {
-  const tempFile = copyChromeArtifactToTemp(profileName, relativePath);
+  const tempFile = copyChromeArtifactToTemp(userDataDir, profileName, relativePath);
   if (!tempFile) {
     return [];
   }
@@ -508,10 +543,11 @@ function readCostamarCandidatesFromChromeArtifact(
 }
 
 function readCostamarCandidatesFromChromeArtifactDirectory(
+  userDataDir: string,
   profileName: string,
   relativePath: string,
 ): CostamarSessionCandidate[] {
-  const directory = join(resolveChromeUserDataDir(), profileName, relativePath);
+  const directory = join(userDataDir, profileName, relativePath);
   if (!existsSync(directory)) {
     return [];
   }
@@ -549,11 +585,14 @@ function readCostamarCandidatesFromChromeArtifactDirectory(
   return candidates;
 }
 
-function collectCostamarSessionCandidatesFromChromeProfiles(profileNames: string[]): CostamarSessionCandidate[] {
+function collectCostamarSessionCandidatesFromChromeProfiles(
+  userDataDir: string,
+  profileNames: string[],
+): CostamarSessionCandidate[] {
   const candidates: CostamarSessionCandidate[] = [];
 
   for (const profileName of profileNames) {
-    const tempSessionsDir = copyCostamarSessionsToTemp(profileName);
+    const tempSessionsDir = copyCostamarSessionsToTemp(userDataDir, profileName);
     if (tempSessionsDir) {
       try {
         candidates.push(...readCostamarSessionCandidatesFromCopiedDir(tempSessionsDir, profileName));
@@ -563,14 +602,71 @@ function collectCostamarSessionCandidatesFromChromeProfiles(profileNames: string
     }
 
     candidates.push(
-      ...readCostamarCandidatesFromChromeArtifact(profileName, "History"),
-      ...readCostamarCandidatesFromChromeArtifact(profileName, "Favicons"),
-      ...readCostamarCandidatesFromChromeArtifactDirectory(profileName, "Session Storage"),
-      ...readCostamarCandidatesFromChromeArtifactDirectory(profileName, join("Local Storage", "leveldb")),
+      ...readCostamarCandidatesFromChromeArtifact(userDataDir, profileName, "History"),
+      ...readCostamarCandidatesFromChromeArtifact(userDataDir, profileName, "Favicons"),
+      ...readCostamarCandidatesFromChromeArtifactDirectory(userDataDir, profileName, "Session Storage"),
+      ...readCostamarCandidatesFromChromeArtifactDirectory(userDataDir, profileName, join("Local Storage", "leveldb")),
     );
   }
 
   return candidates;
+}
+
+function readCostamarCandidatesViaCDP(userDataDir: string): CostamarSessionCandidate[] {
+  const devToolsPath = join(userDataDir, "DevToolsActivePort");
+  if (!existsSync(devToolsPath)) return [];
+
+  let content: string;
+  try {
+    content = readFileSync(devToolsPath, "utf8").trim();
+  } catch {
+    return [];
+  }
+
+  const lines = content.split(/\r?\n/);
+  const port = Number(lines[0]);
+  if (!Number.isFinite(port) || port <= 0 || port > 65535) return [];
+
+  const script = [
+    'const h=require("http");',
+    `h.get("http://127.0.0.1:${port}/json/list",{timeout:3000},r=>{`,
+    'let b="";r.on("data",d=>b+=d);r.on("end",()=>process.stdout.write(b))}).on("error",()=>{});',
+  ].join("");
+
+  const result = spawnSync(process.execPath, ["-e", script], {
+    timeout: 5000,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+
+  if (result.status !== 0 || !result.stdout) return [];
+
+  try {
+    const tabs = JSON.parse(result.stdout);
+    if (!Array.isArray(tabs)) return [];
+
+    const candidates: CostamarSessionCandidate[] = [];
+    for (const tab of tabs) {
+      const url = typeof tab?.url === "string" ? tab.url : "";
+      if (url) {
+        candidates.push(...extractCostamarSessionCandidates(url, "cdp"));
+      }
+    }
+    return candidates;
+  } catch {
+    return [];
+  }
+}
+
+function collectCostamarSessionCandidatesFromChromeUserDataDir(
+  userDataDir: string,
+  includeConfiguredProfilesOnly = false,
+): CostamarSessionCandidate[] {
+  const profileNames = readChromeProfileCandidates(userDataDir, includeConfiguredProfilesOnly);
+  return [
+    ...collectCostamarSessionCandidatesFromChromeProfiles(userDataDir, profileNames),
+    ...readCostamarCandidatesViaCDP(userDataDir),
+  ];
 }
 
 function readCostamarSessionCandidateFromChrome(
@@ -585,19 +681,36 @@ function readCostamarSessionCandidateFromChrome(
     return pickLatestCostamarSessionCandidateForTerminal(cachedCostamarSessions.candidates, terminalId);
   }
 
-  const configuredProfiles = readChromeProfileCandidates(true);
-  const allProfiles = readChromeProfileCandidates();
-  let candidates = collectCostamarSessionCandidatesFromChromeProfiles(configuredProfiles);
-  const preferredCandidate = pickLatestCostamarSessionCandidateForTerminal(candidates, terminalId);
-  const preferredCandidateIsUsable = Boolean(
+  const configuredUserDataDirs = readChromeUserDataDirCandidates(true);
+  const allUserDataDirs = readChromeUserDataDirCandidates();
+  const configuredProfile = resolveConfiguredChromeProfile();
+  let candidates = configuredUserDataDirs.flatMap((userDataDir) =>
+    collectCostamarSessionCandidatesFromChromeUserDataDir(userDataDir, true)
+  );
+  let preferredCandidate = pickLatestCostamarSessionCandidateForTerminal(candidates, terminalId);
+  let preferredCandidateIsUsable = Boolean(
     preferredCandidate && resolveUsableCostamarBrandedToken(preferredCandidate.token, preferredCandidate.terminalId),
   );
 
+  if (!preferredCandidateIsUsable && configuredProfile) {
+    candidates = candidates.concat(
+      configuredUserDataDirs.flatMap((userDataDir) =>
+        collectCostamarSessionCandidatesFromChromeUserDataDir(userDataDir)
+      ),
+    );
+    preferredCandidate = pickLatestCostamarSessionCandidateForTerminal(candidates, terminalId);
+    preferredCandidateIsUsable = Boolean(
+      preferredCandidate && resolveUsableCostamarBrandedToken(preferredCandidate.token, preferredCandidate.terminalId),
+    );
+  }
+
   if (!preferredCandidateIsUsable) {
-    const fallbackProfiles = allProfiles.filter((profileName) => !configuredProfiles.includes(profileName));
-    if (fallbackProfiles.length > 0) {
-      candidates = candidates.concat(collectCostamarSessionCandidatesFromChromeProfiles(fallbackProfiles));
-    }
+    const fallbackUserDataDirs = allUserDataDirs.filter((userDataDir) => !configuredUserDataDirs.includes(userDataDir));
+    candidates = candidates.concat(
+      fallbackUserDataDirs.flatMap((userDataDir) =>
+        collectCostamarSessionCandidatesFromChromeUserDataDir(userDataDir)
+      ),
+    );
   }
 
   cachedCostamarSessions = {
@@ -747,4 +860,52 @@ export function buildProviderContext(
 
 export function getCostamarProviderContext(providerContext?: ProviderContext): CostamarProviderContext {
   return resolveCostamarProviderContext(providerContext?.costamar);
+}
+
+export interface CostamarTokenStatus {
+  terminalId: string;
+  hasToken: boolean;
+  tokenUsable: boolean;
+  tokenExpiresAt?: string;
+  minutesRemaining?: number;
+}
+
+export function getCostamarTokenStatus(): CostamarTokenStatus {
+  const context = resolveLatestCostamarProviderContext();
+  const usableToken = resolveUsableCostamarBrandedToken(context.token, context.terminalId);
+  const times = usableToken ? decodeJwtTimes(usableToken) : { iatMs: 0, expMs: 0 };
+
+  return {
+    terminalId: context.terminalId,
+    hasToken: Boolean(context.token),
+    tokenUsable: Boolean(usableToken),
+    tokenExpiresAt: times.expMs > 0 ? new Date(times.expMs).toISOString() : undefined,
+    minutesRemaining: times.expMs > 0 ? Math.max(0, Math.round((times.expMs - Date.now()) / 60000)) : undefined,
+  };
+}
+
+export async function verifyCostamarTokenLive(
+  context?: CostamarProviderContext,
+): Promise<{ valid: boolean; reason?: string }> {
+  const ctx = context ?? resolveLatestCostamarProviderContext();
+  const usableToken = resolveUsableCostamarBrandedToken(ctx.token, ctx.terminalId);
+  if (!usableToken) {
+    return { valid: false, reason: "Token expirado o incompatible" };
+  }
+
+  try {
+    const response = await fetch(
+      `${ctx.apiBaseUrl}/engines/${encodeURIComponent(ctx.terminalId)}`,
+      {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(5000),
+      },
+    );
+    if (response.ok) {
+      return { valid: true };
+    }
+    return { valid: false, reason: `API respondió ${response.status}` };
+  } catch (error) {
+    return { valid: false, reason: error instanceof Error ? error.message : "Error desconocido" };
+  }
 }

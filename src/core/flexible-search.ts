@@ -39,6 +39,28 @@ function hasFiniteNumber(value: number | undefined): value is number {
   return Number.isFinite(value);
 }
 
+function resolveExactStayReturnBounds(leg: SearchLeg): Pick<ResolvedRoundTripFlexibleSpec, "returnStart" | "returnEnd"> {
+  const stayNights = resolveExactStayNights(leg);
+  if (leg.returnStart && leg.returnEnd) {
+    return {
+      returnStart: leg.returnStart,
+      returnEnd: leg.returnEnd,
+    };
+  }
+
+  if (stayNights !== undefined && leg.departureStart && leg.departureEnd) {
+    return {
+      returnStart: addDays(leg.departureStart, stayNights),
+      returnEnd: addDays(leg.departureEnd, stayNights),
+    };
+  }
+
+  return {
+    returnStart: leg.returnStart || leg.departureStart || "",
+    returnEnd: leg.returnEnd || leg.departureEnd || "",
+  };
+}
+
 export function normalizeNightValue(
   value: number | undefined,
   fallback?: number,
@@ -158,14 +180,15 @@ export function normalizeFlexibleRoundTripRequest(request: SearchRequest): Searc
   }
 
   if (resolvedMode === "exact-stay") {
+    const { returnStart, returnEnd } = resolveExactStayReturnBounds(leg);
     return {
       ...request,
       flexibleMode: "exact-stay",
       legs: [
         {
           ...leg,
-          returnStart: leg.returnStart || leg.departureStart,
-          returnEnd: leg.returnEnd || leg.departureEnd,
+          returnStart,
+          returnEnd,
           stayNights: resolveExactStayNights(leg),
           minNights: undefined,
           maxNights: undefined,
@@ -209,12 +232,13 @@ function resolveRoundTripFlexibleSpec(request: SearchRequest): ResolvedRoundTrip
 
   const mode = resolveFlexibleRoundTripMode(request);
   if (mode === "exact-stay") {
+    const { returnStart, returnEnd } = resolveExactStayReturnBounds(leg);
     return {
       mode,
       departureStart: leg.departureStart,
       departureEnd: leg.departureEnd,
-      returnStart: leg.returnStart || leg.departureStart,
-      returnEnd: leg.returnEnd || leg.departureEnd,
+      returnStart,
+      returnEnd,
       stayNights: resolveExactStayNights(leg),
     };
   }

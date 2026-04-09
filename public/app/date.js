@@ -22,6 +22,28 @@ function hasFiniteNightValue(value) {
   return Number.isFinite(typeof value === "number" ? value : Number(value));
 }
 
+function resolveExactStayReturnBounds(leg = {}) {
+  const stayNights = resolveExactStayNights(leg);
+  if (leg.returnStart && leg.returnEnd) {
+    return {
+      returnStart: leg.returnStart,
+      returnEnd: leg.returnEnd,
+    };
+  }
+
+  if (stayNights != null && leg.departureStart && leg.departureEnd) {
+    return {
+      returnStart: addDaysIso(leg.departureStart, stayNights),
+      returnEnd: addDaysIso(leg.departureEnd, stayNights),
+    };
+  }
+
+  return {
+    returnStart: leg.returnStart || leg.departureStart || "",
+    returnEnd: leg.returnEnd || leg.departureEnd || "",
+  };
+}
+
 export function normalizeFlexibleNightValue(value, fallback) {
   if (!hasFiniteNightValue(value)) {
     return fallback;
@@ -98,12 +120,13 @@ function resolveRoundTripFlexibleSpec(request = {}) {
 
   const mode = resolveRoundTripFlexibleMode(request);
   if (mode === "exact-stay") {
+    const { returnStart, returnEnd } = resolveExactStayReturnBounds(leg);
     return {
       mode,
       departureStart: leg.departureStart,
       departureEnd: leg.departureEnd,
-      returnStart: leg.returnStart || leg.departureStart,
-      returnEnd: leg.returnEnd || leg.departureEnd,
+      returnStart,
+      returnEnd,
       stayNights: resolveExactStayNights(leg),
     };
   }
