@@ -237,11 +237,12 @@ test("builds Agil redirect URLs with human-readable origin and destination label
 });
 
 test("keeps Agil range searches lighter than matrix fan-out by default", () => {
-  assert.equal(AGIL_CONCURRENCY.matrixMinimum, 10);
+  assert.equal(AGIL_CONCURRENCY.matrixMinimum, 4);
   assert.equal(AGIL_CONCURRENCY.rangeMinimum, 2);
   assert.ok(AGIL_CONCURRENCY.matrixCell >= AGIL_CONCURRENCY.matrixMinimum);
   assert.ok(AGIL_CONCURRENCY.rangeSearch >= AGIL_CONCURRENCY.rangeMinimum);
   assert.ok(AGIL_CONCURRENCY.rangeSearch < AGIL_CONCURRENCY.matrixCell);
+  assert.ok(AGIL_CONCURRENCY.gdsSearch >= 1);
 });
 
 test("extracts the Agil subscription key from the public frontend bundle", () => {

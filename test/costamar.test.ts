@@ -262,11 +262,12 @@ test("extractCostamarSessionCandidates reads percent-encoded branded urls from C
 });
 
 test("keeps Costamar range searches lighter than matrix fan-out by default", () => {
-  assert.equal(COSTAMAR_CONCURRENCY.matrixMinimum, 10);
+  assert.equal(COSTAMAR_CONCURRENCY.matrixMinimum, 4);
   assert.equal(COSTAMAR_CONCURRENCY.rangeMinimum, 2);
   assert.ok(COSTAMAR_CONCURRENCY.matrixCell >= COSTAMAR_CONCURRENCY.matrixMinimum);
   assert.ok(COSTAMAR_CONCURRENCY.rangeSearch >= COSTAMAR_CONCURRENCY.rangeMinimum);
   assert.ok(COSTAMAR_CONCURRENCY.rangeSearch < COSTAMAR_CONCURRENCY.matrixCell);
+  assert.ok(COSTAMAR_CONCURRENCY.markup >= 2);
 });
 
 test("resolveCostamarProviderContext can recover the freshest token from Chrome sessions", () => {

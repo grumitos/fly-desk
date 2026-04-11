@@ -6,6 +6,12 @@ import { tmpdir } from "node:os";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { removePathWithRetries } from "./temp-artifacts";
 import {
+  resolveMatrixCellConcurrency,
+  resolveProviderSubrequestConcurrency,
+  resolveRangeSearchConcurrency,
+  SHARED_SEARCH_CONCURRENCY,
+} from "./search-concurrency";
+import {
   buildDerivedOneWayRequest,
   buildDerivedRequest,
   diffDays,
@@ -205,21 +211,6 @@ const AGIL_STORAGE_ORIGINS = [
   "https://www.agilsmart.com/home-user",
   "https://motorvuelos.expertiatravel.com/",
 ] as const;
-const AGIL_MIN_MATRIX_CELL_CONCURRENCY = 10;
-const AGIL_MIN_RANGE_SEARCH_CONCURRENCY = 2;
-const AGIL_DEFAULT_RANGE_SEARCH_CONCURRENCY = 4;
-const AGIL_GDS_SEARCH_CONCURRENCY = Math.max(
-  1,
-  Number(process.env.AGIL_GDS_SEARCH_CONCURRENCY ?? 2),
-);
-const AGIL_MATRIX_CELL_CONCURRENCY = Math.max(
-  AGIL_MIN_MATRIX_CELL_CONCURRENCY,
-  Number(process.env.AGIL_MATRIX_CELL_CONCURRENCY ?? AGIL_MIN_MATRIX_CELL_CONCURRENCY),
-);
-const AGIL_RANGE_SEARCH_CONCURRENCY = Math.max(
-  AGIL_MIN_RANGE_SEARCH_CONCURRENCY,
-  Number(process.env.AGIL_RANGE_SEARCH_CONCURRENCY ?? AGIL_DEFAULT_RANGE_SEARCH_CONCURRENCY),
-);
 const AGIL_HTTP_TIMEOUT_MS = Math.max(
   5000,
   Number(process.env.AGIL_HTTP_TIMEOUT_MS ?? 20000),
@@ -231,11 +222,21 @@ const AGIL_SESSION_REVALIDATE_MS = Math.max(
 );
 
 export const AGIL_CONCURRENCY = Object.freeze({
-  matrixMinimum: AGIL_MIN_MATRIX_CELL_CONCURRENCY,
-  rangeMinimum: AGIL_MIN_RANGE_SEARCH_CONCURRENCY,
-  gdsSearch: AGIL_GDS_SEARCH_CONCURRENCY,
-  matrixCell: AGIL_MATRIX_CELL_CONCURRENCY,
-  rangeSearch: AGIL_RANGE_SEARCH_CONCURRENCY,
+  get matrixMinimum() {
+    return SHARED_SEARCH_CONCURRENCY.matrixMinimum;
+  },
+  get rangeMinimum() {
+    return SHARED_SEARCH_CONCURRENCY.rangeMinimum;
+  },
+  get gdsSearch() {
+    return resolveProviderSubrequestConcurrency("AGIL_GDS_SEARCH_CONCURRENCY", 4);
+  },
+  get matrixCell() {
+    return resolveMatrixCellConcurrency("AGIL_MATRIX_CELL_CONCURRENCY");
+  },
+  get rangeSearch() {
+    return resolveRangeSearchConcurrency("AGIL_RANGE_SEARCH_CONCURRENCY");
+  },
   httpTimeoutMs: AGIL_HTTP_TIMEOUT_MS,
 });
 
@@ -1735,7 +1736,7 @@ async function searchGroupsAcrossGds(
   const searchAll = async (): Promise<AgilExactSearchOutcome> => {
     await startAgilSearch(session, request);
 
-    const outcomes = await mapConcurrent(AGIL_GDS_LIST, AGIL_GDS_SEARCH_CONCURRENCY, async (gds) => {
+    const outcomes = await mapConcurrent(AGIL_GDS_LIST, AGIL_CONCURRENCY.gdsSearch, async (gds) => {
       try {
         return {
           gds,
@@ -1799,7 +1800,7 @@ async function searchCellPrice(baseSession: AgilSessionData, request: SearchRequ
 
     const results = await mapConcurrent(
       AGIL_GDS_LIST,
-      AGIL_GDS_SEARCH_CONCURRENCY,
+      AGIL_CONCURRENCY.gdsSearch,
       async (gds) => searchCellWithGds(session, request, gds),
     );
     return results.reduce<AgilCellQuote | undefined>((best, current) => {
@@ -1905,7 +1906,7 @@ export async function resolveLocalAgilExactProgressive(
   const searchAll = async (): Promise<void> => {
     await startAgilSearch(session, request);
 
-    await mapConcurrent(AGIL_GDS_LIST, AGIL_GDS_SEARCH_CONCURRENCY, async (gds) => {
+    await mapConcurrent(AGIL_GDS_LIST, AGIL_CONCURRENCY.gdsSearch, async (gds) => {
       try {
         const resolvedGroups = await searchGroupsWithGds(session, request, gds);
         groups.push(...resolvedGroups);
@@ -1979,7 +1980,7 @@ function enumerateStayRangeRequests(request: SearchRequest): SearchRequest[] {
 export async function searchLocalAgilRange(request: SearchRequest): Promise<ProviderSearchResult> {
   const candidates = enumerateStayRangeRequests(request);
 
-  const outcomes = await mapConcurrent(candidates, AGIL_RANGE_SEARCH_CONCURRENCY, async (derivedRequest) => {
+  const outcomes = await mapConcurrent(candidates, AGIL_CONCURRENCY.rangeSearch, async (derivedRequest) => {
     try {
       return {
         result: await searchLocalAgilExact(derivedRequest),
@@ -2022,7 +2023,7 @@ export async function resolveLocalAgilRangeProgressive(
   let partial = false;
   let stopRequested = false;
 
-  await mapConcurrent(candidates, AGIL_RANGE_SEARCH_CONCURRENCY, async (derivedRequest) => {
+  await mapConcurrent(candidates, AGIL_CONCURRENCY.rangeSearch, async (derivedRequest) => {
     try {
       const result = await searchLocalAgilExact(derivedRequest);
       aggregatedOffers.push(...result.offers);
@@ -2135,7 +2136,7 @@ export async function resolveLocalAgilMatrixProgressive(
   let partial = false;
   const prioritizedCells = prioritizeMatrixLoadingCells(draft.cells, draft.axes, request.tripType);
 
-  const resolvedLoadingCells = await mapConcurrent(prioritizedCells, AGIL_MATRIX_CELL_CONCURRENCY, async (cell) => {
+  const resolvedLoadingCells = await mapConcurrent(prioritizedCells, AGIL_CONCURRENCY.matrixCell, async (cell) => {
     try {
       const quote = await searchCellPrice(session, cell.derivedRequest);
       const nextCell = quote

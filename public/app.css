@@ -2634,6 +2634,132 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   }
 }
 
+@media (max-width: 1120px) {
+  .topbar {
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .topbar__meta {
+    margin-left: auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .search-shell {
+    padding-inline: clamp(0.82rem, 1.8vw, 1rem);
+  }
+
+  .search-rail {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+
+  .search-rail > [data-search-order="mode"] {
+    grid-column: 1 / span 2;
+  }
+
+  .search-rail > [data-search-order="trip"] {
+    grid-column: 3 / span 3;
+  }
+
+  .search-rail > [data-search-order="origin"] {
+    grid-column: 6 / span 3;
+  }
+
+  .search-rail > [data-search-order="swap"] {
+    grid-column: 9 / span 1;
+    justify-self: stretch;
+  }
+
+  .search-rail > [data-search-order="destination"] {
+    grid-column: 10 / span 3;
+  }
+
+  .search-rail > [data-search-order="dates"] {
+    grid-column: 1 / span 4;
+  }
+
+  .search-rail > [data-search-order="passengers"] {
+    grid-column: 5 / span 4;
+  }
+
+  .search-rail > [data-search-order="submit"] {
+    grid-column: 9 / span 4;
+  }
+
+  .btn--search {
+    min-width: 0;
+  }
+
+  .search-shell__footer-main {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+
+  .search-shell__footer-main .search-refinements {
+    grid-column: 1 / span 8;
+  }
+
+  .search-shell__actions {
+    grid-column: 9 / span 4;
+    width: 100%;
+    justify-self: stretch;
+  }
+}
+
+@media (max-width: 1000px) {
+  :root {
+    --sidebar-width: clamp(17rem, 34vw, 20rem);
+  }
+
+  body {
+    height: auto;
+    min-height: 100vh;
+    overflow-x: hidden;
+    overflow-y: auto;
+    grid-template-rows: auto auto min-content auto;
+  }
+
+  .workspace {
+    height: auto;
+    overflow: visible;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(24rem, auto) minmax(18rem, auto);
+    align-content: start;
+  }
+
+  .workspace__detail {
+    min-height: clamp(18rem, 31vh, 24rem);
+  }
+
+  #resultsToolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 0.75rem;
+    align-items: start;
+  }
+
+  #resultsToolbar .panel-header__copy {
+    grid-column: 1 / -1;
+  }
+
+  #resultsToolbar .results-toolbar__pager {
+    grid-column: 1;
+    justify-self: start;
+  }
+
+  #resultsToolbar .panel-header__actions--results {
+    grid-column: 2;
+    justify-self: end;
+  }
+
+  .results-container {
+    min-height: clamp(20rem, 44vh, 32rem);
+  }
+
+  .detail-panel__body {
+    min-height: 14rem;
+  }
+}
+
 @media (max-width: 840px) {
   .search-refinements {
     width: 100%;

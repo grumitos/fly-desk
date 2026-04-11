@@ -37,6 +37,12 @@ import {
   resolveLatestCostamarProviderContext,
   resolveUsableCostamarBrandedToken,
 } from "./provider-context";
+import {
+  resolveMatrixCellConcurrency,
+  resolveProviderSubrequestConcurrency,
+  resolveRangeSearchConcurrency,
+  SHARED_SEARCH_CONCURRENCY,
+} from "./search-concurrency";
 
 interface CostamarEngineMetadata {
   code?: string;
@@ -144,32 +150,27 @@ const COSTAMAR_HTTP_TIMEOUT_MS = Math.max(
   5000,
   Number(process.env.COSTAMAR_HTTP_TIMEOUT_MS ?? 20000),
 );
-const COSTAMAR_MIN_MATRIX_CELL_CONCURRENCY = 10;
-const COSTAMAR_MIN_RANGE_SEARCH_CONCURRENCY = 2;
-const COSTAMAR_DEFAULT_RANGE_SEARCH_CONCURRENCY = 4;
-const COSTAMAR_MATRIX_CELL_CONCURRENCY = Math.max(
-  COSTAMAR_MIN_MATRIX_CELL_CONCURRENCY,
-  Number(process.env.COSTAMAR_MATRIX_CELL_CONCURRENCY ?? COSTAMAR_MIN_MATRIX_CELL_CONCURRENCY),
-);
-const COSTAMAR_RANGE_SEARCH_CONCURRENCY = Math.max(
-  COSTAMAR_MIN_RANGE_SEARCH_CONCURRENCY,
-  Number(process.env.COSTAMAR_RANGE_SEARCH_CONCURRENCY ?? COSTAMAR_DEFAULT_RANGE_SEARCH_CONCURRENCY),
-);
-const COSTAMAR_MARKUP_CONCURRENCY = Math.max(
-  2,
-  Number(process.env.COSTAMAR_MARKUP_CONCURRENCY ?? 4),
-);
 const COSTAMAR_AIR_API_BASE_URL = process.env.COSTAMAR_AIR_API_BASE_URL?.trim()
   || "https://api-zneith.zdev.tech/api-air-0.1";
 const COSTAMAR_REDIRECT_SESSION_WARNING =
   "Costamar redirect token is missing, expired, or incompatible with this terminal.";
 
 export const COSTAMAR_CONCURRENCY = Object.freeze({
-  matrixMinimum: COSTAMAR_MIN_MATRIX_CELL_CONCURRENCY,
-  rangeMinimum: COSTAMAR_MIN_RANGE_SEARCH_CONCURRENCY,
-  matrixCell: COSTAMAR_MATRIX_CELL_CONCURRENCY,
-  rangeSearch: COSTAMAR_RANGE_SEARCH_CONCURRENCY,
-  markup: COSTAMAR_MARKUP_CONCURRENCY,
+  get matrixMinimum() {
+    return SHARED_SEARCH_CONCURRENCY.matrixMinimum;
+  },
+  get rangeMinimum() {
+    return SHARED_SEARCH_CONCURRENCY.rangeMinimum;
+  },
+  get matrixCell() {
+    return resolveMatrixCellConcurrency("COSTAMAR_MATRIX_CELL_CONCURRENCY");
+  },
+  get rangeSearch() {
+    return resolveRangeSearchConcurrency("COSTAMAR_RANGE_SEARCH_CONCURRENCY");
+  },
+  get markup() {
+    return resolveProviderSubrequestConcurrency("COSTAMAR_MARKUP_CONCURRENCY", 4, 2);
+  },
   httpTimeoutMs: COSTAMAR_HTTP_TIMEOUT_MS,
 });
 
@@ -963,7 +964,7 @@ async function searchRecommendations(
 
   const responseWarning = buildCostamarSearchWarning(payload);
   const recommendations = responseWarning ? [] : asArray(payload.data);
-  const mapped = await mapConcurrent(recommendations, COSTAMAR_MARKUP_CONCURRENCY, async (recommendation) => {
+  const mapped = await mapConcurrent(recommendations, COSTAMAR_CONCURRENCY.markup, async (recommendation) => {
     const normalized = mapCostamarRecommendationToOffer(recommendation, request, redirectContext, engine);
     if (!normalized.offer) {
       return undefined;
@@ -1065,7 +1066,7 @@ export async function searchLocalCostamarRange(
   providerContext?: ProviderContext,
 ): Promise<ProviderSearchResult> {
   const candidates = enumerateRangeRequests(request);
-  const outcomes = await mapConcurrent(candidates, COSTAMAR_RANGE_SEARCH_CONCURRENCY, async (derivedRequest) => {
+  const outcomes = await mapConcurrent(candidates, COSTAMAR_CONCURRENCY.rangeSearch, async (derivedRequest) => {
     try {
       return {
         result: await searchLocalCostamarExact(derivedRequest, providerContext),
@@ -1107,7 +1108,7 @@ export async function resolveLocalCostamarRangeProgressive(
   let partial = false;
   let stopRequested = false;
 
-  await mapConcurrent(candidates, COSTAMAR_RANGE_SEARCH_CONCURRENCY, async (derivedRequest) => {
+  await mapConcurrent(candidates, COSTAMAR_CONCURRENCY.rangeSearch, async (derivedRequest) => {
     try {
       const result = await searchLocalCostamarExact(derivedRequest, providerContext);
       aggregatedOffers.push(...result.offers);
@@ -1335,7 +1336,7 @@ export async function resolveLocalCostamarMatrixProgressive(
 
   const prioritizedCells = prioritizeMatrixLoadingCells(seededCells, draft.axes, request.tripType)
     .filter((cell) => !seededKeys.has(cell.key));
-  const resolvedLoadingCells = await mapConcurrent(prioritizedCells, COSTAMAR_MATRIX_CELL_CONCURRENCY, async (cell) => {
+  const resolvedLoadingCells = await mapConcurrent(prioritizedCells, COSTAMAR_CONCURRENCY.matrixCell, async (cell) => {
     try {
       const offer = await resolveCellPrice(cell.derivedRequest, providerContext);
       const nextCell = offer

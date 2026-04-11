@@ -47,7 +47,7 @@ import {
   verifyCostamarTokenLive,
 } from "./provider-context";
 import { resolveQuotationUsdToPenRate, warmQuotationUsdToPenRate } from "./quotation-exchange-rate";
-import { hasFilledSearchResultLimit, limitSearchResponseForPagination } from "./search-limits";
+import { limitSearchResponseForPagination } from "./search-limits";
 import { getRuntime } from "./runtime";
 import { getSearchDatePolicy, validateSearchDateInPolicy } from "./search-date-policy";
 
@@ -1039,13 +1039,8 @@ export async function routeRequest(request: Request): Promise<Response> {
         completed: false,
       }]),
     );
-    let stoppedEarly = false;
 
     const syncSearchJob = (status: "running" | "completed") => {
-      if (stoppedEarly && status === "running") {
-        return undefined;
-      }
-
       const materialized = materializeAggregatedSearchResponse(
         normalizedRequest,
         sortMode,
@@ -1053,7 +1048,6 @@ export async function routeRequest(request: Request): Promise<Response> {
         providerStates,
       );
       const limited = limitSearchResponseForPagination(normalizedRequest, materialized);
-      const nextStatus = stoppedEarly ? "completed" : status;
 
       runtime.sessions.updateSearchJob(job.id, (current) => ({
         ...current,
@@ -1062,15 +1056,15 @@ export async function routeRequest(request: Request): Promise<Response> {
         searchMeta: {
           ...limited.searchMeta,
           requestedAt: current.searchMeta.requestedAt,
-          partial: stoppedEarly ? false : limited.searchMeta.partial,
-          searchState: stoppedEarly ? "search_live" : limited.searchMeta.searchState,
+          partial: limited.searchMeta.partial,
+          searchState: limited.searchMeta.searchState,
         },
         providerMeta: limited.providerMeta,
         warnings: limited.warnings,
-        status: nextStatus,
+        status,
         error: undefined,
       }));
-      warmSearchSessionQuotationRate(runtime, job.id, providerIds, nextStatus);
+      warmSearchSessionQuotationRate(runtime, job.id, providerIds, status);
 
       return materialized;
     };
@@ -1078,23 +1072,13 @@ export async function routeRequest(request: Request): Promise<Response> {
     const resolvers = providerIds.map(async (providerId) => {
       const adapter = getProgressiveAdapter(providerId);
       const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
-        if (stoppedEarly) {
-          return false;
-        }
-
         providerStates.set(providerId, {
           offers: partialResult.offers,
           warnings: partialResult.warnings,
           partial: true,
           completed: false,
         });
-        const materialized = syncSearchJob("running");
-        if (materialized && hasFilledSearchResultLimit(normalizedRequest, materialized)) {
-          stoppedEarly = true;
-          syncSearchJob("completed");
-          return false;
-        }
-
+        syncSearchJob("running");
         return true;
       };
 
@@ -1108,13 +1092,7 @@ export async function routeRequest(request: Request): Promise<Response> {
           partial: result.partial,
           completed: true,
         });
-        if (!stoppedEarly) {
-          const materialized = syncSearchJob("running");
-          if (materialized && hasFilledSearchResultLimit(normalizedRequest, materialized)) {
-            stoppedEarly = true;
-            syncSearchJob("completed");
-          }
-        }
+        syncSearchJob("running");
       } catch (error) {
         providerStates.set(providerId, {
           offers: [],
@@ -1128,9 +1106,7 @@ export async function routeRequest(request: Request): Promise<Response> {
     });
 
     void Promise.allSettled(resolvers).then(() => {
-      if (!stoppedEarly) {
-        syncSearchJob("completed");
-      }
+      syncSearchJob("completed");
     });
 
     return json(searchJobResponse(runtime, job));
