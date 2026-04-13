@@ -1947,6 +1947,40 @@ function buildProviderLinkIndex(offers) {
   return index;
 }
 
+const PROVIDER_LINK_PRICE_TOLERANCE = 0.01;
+
+function providerLinkCandidateMatchesOffer(referenceOffer, candidateOffer) {
+  if (!referenceOffer || !candidateOffer) {
+    return false;
+  }
+
+  if (candidateOffer.id === referenceOffer.id) {
+    return true;
+  }
+
+  const referenceTotal = referenceOffer.price?.total;
+  const candidateTotal = candidateOffer.price?.total;
+  const referenceCurrency = String(referenceTotal?.currencyCode ?? "").trim().toUpperCase();
+  const candidateCurrency = String(candidateTotal?.currencyCode ?? "").trim().toUpperCase();
+  const referenceAmount = Number(referenceTotal?.amount);
+  const candidateAmount = Number(candidateTotal?.amount);
+
+  if (!referenceCurrency || referenceCurrency !== candidateCurrency) {
+    return false;
+  }
+
+  if (!Number.isFinite(referenceAmount) || !Number.isFinite(candidateAmount)) {
+    return false;
+  }
+
+  if (Math.abs(referenceAmount - candidateAmount) > PROVIDER_LINK_PRICE_TOLERANCE) {
+    return false;
+  }
+
+  return Boolean(referenceOffer.baggage?.carryOnIncluded) === Boolean(candidateOffer.baggage?.carryOnIncluded)
+    && Boolean(referenceOffer.baggage?.checkedIncluded) === Boolean(candidateOffer.baggage?.checkedIncluded);
+}
+
 function providerPathPrecisionRank(path) {
   switch (path?.precision) {
     case "exact-offer":
@@ -1984,6 +2018,7 @@ function matchedOffersForProviderLink(offer, providerLinkIndex) {
 
 function bestProviderPathForOffer(offer, providerId, providerLinkIndex) {
   const candidates = matchedOffersForProviderLink(offer, providerLinkIndex)
+    .filter((candidateOffer) => providerLinkCandidateMatchesOffer(offer, candidateOffer))
     .flatMap((candidateOffer) =>
       (candidateOffer?.purchasePaths ?? [])
         .filter((path) => path?.provider === providerId && pathSupportsEquivalentSearch(path))
