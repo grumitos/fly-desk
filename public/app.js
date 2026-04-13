@@ -410,13 +410,13 @@ function flexibleCombinationLabel(count) {
 function buildResultsTableHeaderHtml() {
   return `
     <colgroup>
-      <col style="width:15%">
-      <col style="width:19%">
       <col style="width:11%">
-      <col style="width:10%">
-      <col style="width:11%">
+      <col style="width:13%">
       <col style="width:14%">
-      <col style="width:10%">
+      <col style="width:13%">
+      <col style="width:8%">
+      <col style="width:26%">
+      <col style="width:15%">
     </colgroup>
     <thead><tr>
       <th>Aerolínea</th>
@@ -517,7 +517,7 @@ function renderResultsSkeleton({
   resultsContainer.innerHTML = `
     <div class="results-skeleton" aria-live="polite" aria-busy="${busy ? "true" : "false"}">
       <div class="table-wrap">
-        <table class="results-table results-table--pending">
+        <table class="results-table results-table--search results-table--pending">
           ${buildResultsTableHeaderHtml()}
           <tbody>${rows}</tbody>
         </table>
@@ -4136,7 +4136,7 @@ function renderResults() {
 
   let html = "";
 
-  html += `<div class="table-wrap" aria-live="polite" aria-busy="${isRunning ? "true" : "false"}"><table class="results-table">${buildResultsTableHeaderHtml()}<tbody>`;
+  html += `<div class="table-wrap" aria-live="polite" aria-busy="${isRunning ? "true" : "false"}"><table class="results-table results-table--search">${buildResultsTableHeaderHtml()}<tbody>`;
   const providerLinkIndex = buildProviderLinkIndex(state.searchResponse?.allOffers ?? offers);
   const passengerCount = passengerCountForRequest(state.searchResponse?.request ?? state.request);
 
