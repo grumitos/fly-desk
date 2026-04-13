@@ -29,6 +29,6 @@ export function limitSearchResponseForPagination(
   return {
     ...response,
     offers: response.offers.slice(0, limit),
-    allOffers: allOffers.slice(0, limit),
+    allOffers,
   };
 }

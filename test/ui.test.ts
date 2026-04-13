@@ -1883,6 +1883,226 @@ test("price column header keeps the shared table header typography", async () =>
   }, { autoOpen: false });
 });
 
+test("exact results show total and per-person pricing from the searched passengers", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchComplete: true,
+          searchStatus: "completed",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "CTG",
+                departureDate: "2026-09-07",
+                returnDate: "2026-09-10",
+              },
+            ],
+            passengers: {
+              adults: 3,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [
+            buildOffer({
+              price: {
+                total: {
+                  amount: 1036.56,
+                  currencyCode: "USD",
+                },
+                base: {
+                  amount: 552,
+                  currencyCode: "USD",
+                },
+                taxes: {
+                  amount: 484.56,
+                  currencyCode: "USD",
+                },
+              },
+            }),
+          ],
+          allOffers: [
+            buildOffer({
+              price: {
+                total: {
+                  amount: 1036.56,
+                  currencyCode: "USD",
+                },
+                base: {
+                  amount: 552,
+                  currencyCode: "USD",
+                },
+                taxes: {
+                  amount: 484.56,
+                  currencyCode: "USD",
+                },
+              },
+            }),
+          ],
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await setRouteInputs(page, "LIM", "CTG");
+    await page.evaluate(() => {
+      const adults = document.getElementById("adults") as HTMLInputElement | null;
+      const children = document.getElementById("children") as HTMLInputElement | null;
+      const infants = document.getElementById("infants") as HTMLInputElement | null;
+      if (!adults || !children || !infants) throw new Error("Missing passenger inputs");
+      adults.value = "3";
+      children.value = "0";
+      infants.value = "0";
+    });
+    await setDateValue(page, "departureDate", "2026-09-07");
+    await setDateValue(page, "returnDate", "2026-09-10");
+    await page.click("#submitButton");
+    await page.waitForSelector('tr[data-oid="offer-1"]');
+    await page.click('tr[data-oid="offer-1"]');
+
+    const probe = await page.evaluate(() => ({
+      rowPrice: document.querySelector('tr[data-oid="offer-1"] td.results-price')?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      detailText: document.getElementById("detailContent")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      heroMeta: document.querySelector("#detailContent .detail-hero__meta")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    }));
+
+    assert.match(probe.rowPrice, /USD 1,036\.56 total/i);
+    assert.match(probe.rowPrice, /USD 345\.52 por persona/i);
+    assert.match(probe.detailText, /Total\s*USD 1,036\.56/i);
+    assert.match(probe.detailText, /Por persona\s*USD 345\.52/i);
+    assert.match(probe.heroMeta, /USD 345\.52 por persona/i);
+  }, { autoOpen: false });
+});
+
+test("flexible exact-stay results show total and per-person pricing in list and detail", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const completedMatrix = buildMatrixResponse({
+      request: {
+        ...buildMatrixResponse().request,
+        flexibleMode: "exact-stay",
+        passengers: {
+          adults: 3,
+          children: 0,
+          infants: 0,
+        },
+        legs: [
+          {
+            ...buildMatrixResponse().request.legs[0],
+            origin: "LIM",
+            destination: "CTG",
+            departureStart: "2026-09-07",
+            departureEnd: "2026-09-10",
+            returnStart: "",
+            returnEnd: "",
+            stayNights: 3,
+          },
+        ],
+      },
+      matrixComplete: true,
+      matrixStatus: "completed",
+      cells: [
+        {
+          ...buildMatrixResponse().cells[0],
+          key: "2026-09-07_2026-09-10",
+          departureDate: "2026-09-07",
+          returnDate: "2026-09-10",
+          stayNights: 3,
+          confidence: "live",
+          selectable: true,
+          stateCode: "live",
+          tooltip: "Costamar exact search.",
+          providerSource: "costamar",
+          price: {
+            amount: 1036.56,
+            currencyCode: "USD",
+          },
+          derivedRequest: {
+            ...buildMatrixResponse().cells[0].derivedRequest,
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "CTG",
+                departureDate: "2026-09-07",
+                returnDate: "2026-09-10",
+              },
+            ],
+            passengers: {
+              adults: 3,
+              children: 0,
+              infants: 0,
+            },
+          },
+        },
+      ],
+      searchMeta: buildSearchMeta("search_live"),
+    });
+
+    await page.route(`${baseUrl}/api/matrix`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(completedMatrix),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await setRouteInputs(page, "LIM", "CTG");
+    await page.evaluate(() => {
+      const adults = document.getElementById("adults") as HTMLInputElement | null;
+      const children = document.getElementById("children") as HTMLInputElement | null;
+      const infants = document.getElementById("infants") as HTMLInputElement | null;
+      const stayNights = document.getElementById("stayNights") as HTMLInputElement | null;
+      if (!adults || !children || !infants || !stayNights) throw new Error("Missing flexible inputs");
+      adults.value = "3";
+      children.value = "0";
+      infants.value = "0";
+      stayNights.value = "3";
+      stayNights.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await page.click('[data-mode="flexible"]');
+    await setDateValue(page, "departureStart", "2026-09-07");
+    await setDateValue(page, "departureEnd", "2026-09-10");
+    await page.click("#submitButton");
+    await page.waitForSelector('.results-table--flexible tbody tr[data-flex-cell-key="2026-09-07_2026-09-10"]');
+    await page.click('.results-table--flexible tbody tr[data-flex-cell-key="2026-09-07_2026-09-10"]');
+
+    const probe = await page.evaluate(() => ({
+      rowPrice: document.querySelector('.results-table--flexible td.results-price')?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      detailText: document.getElementById("detailContent")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      heroMeta: document.querySelector("#detailContent .detail-hero__meta")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+    }));
+
+    assert.match(probe.rowPrice, /USD 1,036\.56 total/i);
+    assert.match(probe.rowPrice, /USD 345\.52 por persona/i);
+    assert.match(probe.detailText, /Total\s*USD 1,036\.56/i);
+    assert.match(probe.detailText, /Por persona\s*USD 345\.52/i);
+    assert.match(probe.heroMeta, /USD 345\.52 por persona/i);
+  }, { autoOpen: false });
+});
+
 test("airlines move into the search bar ordered by cheapest fare and filter horizontally", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
 
@@ -2964,7 +3184,7 @@ test("provider link column reuses the matched Costamar link for the same flight"
   }, { autoOpen: false });
 });
 
-test("progressive list searches keep placeholder rows while results are still streaming", async () => {
+test("progressive list searches keep the visible list compact while results are still streaming", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let pollCount = 0;
 
@@ -3083,14 +3303,368 @@ test("progressive list searches keep placeholder rows while results are still st
 
       const placeholderCountWhileRunning = await page.locator(".results-row--placeholder").count();
       assert.equal(await page.locator("#resultsContainer .table-wrap").getAttribute("aria-busy"), "true");
-      assert.equal(placeholderCountWhileRunning > 0, true);
+      assert.equal(placeholderCountWhileRunning, 0);
 
       await page.waitForFunction(() => (
-        document.querySelectorAll("#resultsContainer .results-row--placeholder").length === 0
-        && document.querySelector("#resultsContainer .table-wrap")?.getAttribute("aria-busy") === "false"
+        document.querySelector("#resultsContainer .table-wrap")?.getAttribute("aria-busy") === "false"
       ));
 
       assert.equal(pollCount > 0, true);
+  }, { autoOpen: false });
+});
+
+test("progressive nonstop searches keep visible results stable after polling finishes", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let pollCount = 0;
+
+    const directOne = buildOffer({
+      id: "offer-direct-1",
+      price: {
+        total: {
+          amount: 710,
+          currencyCode: "USD",
+        },
+        base: {
+          amount: 620,
+          currencyCode: "USD",
+        },
+        taxes: {
+          amount: 90,
+          currencyCode: "USD",
+        },
+      },
+    });
+    const directTwo = buildOffer({
+      id: "offer-direct-2",
+      price: {
+        total: {
+          amount: 740,
+          currencyCode: "USD",
+        },
+        base: {
+          amount: 650,
+          currencyCode: "USD",
+        },
+        taxes: {
+          amount: 90,
+          currencyCode: "USD",
+        },
+      },
+    });
+    const layoverOne = buildLayoverOffer("offer-layover-1", 320, 120);
+    const layoverTwo = buildLayoverOffer("offer-layover-2", 340, 180);
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-nonstop-streaming",
+          searchComplete: false,
+          searchStatus: "running",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 2,
+              nonStop: true,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [directOne, directTwo],
+          allOffers: [directOne, directTwo],
+          searchMeta: buildSearchMeta(),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.route(`${baseUrl}/api/search/search-job-nonstop-streaming`, async (route: Route) => {
+      pollCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-nonstop-streaming",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 2,
+              nonStop: true,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [directOne, directTwo],
+          allOffers: [layoverOne, layoverTwo],
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.evaluate(() => {
+      const origin = document.getElementById("origin") as HTMLInputElement | null;
+      const destination = document.getElementById("destination") as HTMLInputElement | null;
+      if (!origin || !destination) throw new Error("Missing location inputs");
+      origin.value = "LIM - Lima, Peru";
+      origin.dataset.code = "LIM";
+      origin.dataset.label = "LIM - Lima, Peru";
+      destination.value = "MIA - Miami, Usa";
+      destination.dataset.code = "MIA";
+      destination.dataset.label = "MIA - Miami, Usa";
+    });
+    await setDateValue(page, "departureDate", "2026-04-15");
+    await setDateValue(page, "returnDate", "2026-04-22");
+    await page.check("#nonStop");
+
+    await page.click("#submitButton");
+    await page.waitForSelector('tr[data-oid="offer-direct-1"]');
+
+    const initialIds = await page.locator("#resultsContainer tr[data-oid]").evaluateAll((rows) =>
+      rows.map((row) => row.getAttribute("data-oid")),
+    );
+    assert.deepEqual(initialIds, ["offer-direct-1", "offer-direct-2"]);
+
+    await page.waitForFunction(() => (
+      document.querySelector("#resultsContainer .table-wrap")?.getAttribute("aria-busy") === "false"
+    ));
+
+    const finalProbe = await page.evaluate(() => ({
+      ids: [...document.querySelectorAll("#resultsContainer tr[data-oid]")]
+        .map((row) => row.getAttribute("data-oid")),
+      resultPill: document.getElementById("resultPill")?.textContent?.trim() ?? "",
+      hasEmptyPanel: Boolean(document.querySelector(".results-panel .empty-panel")),
+    }));
+
+    assert.equal(pollCount > 0, true);
+    assert.deepEqual(finalProbe.ids, ["offer-direct-1", "offer-direct-2"]);
+    assert.equal(finalProbe.resultPill, "2 ofertas");
+    assert.equal(finalProbe.hasEmptyPanel, false);
+  }, { autoOpen: false });
+});
+
+test("changing sort reorders mixed-height result rows without breaking the visible list", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const groupedPrimary = buildOfferWithDates("offer-primary", "2026-04-15", "2026-04-22");
+    const groupedAlt = buildOfferWithDates("offer-alt", "2026-04-16", "2026-04-23");
+    const groupedOffers = [groupedPrimary, groupedAlt].map((offer) => ({
+      ...offer,
+      comparisonMetrics: {
+        ...offer.comparisonMetrics,
+        totalDurationMinutes: 900,
+      },
+      price: {
+        ...offer.price,
+        total: {
+          amount: 350,
+          currencyCode: "USD",
+        },
+        base: {
+          amount: 270,
+          currencyCode: "USD",
+        },
+        taxes: {
+          amount: 80,
+          currencyCode: "USD",
+        },
+      },
+      itineraries: (offer.itineraries ?? []).map((itinerary) => ({
+        ...itinerary,
+        durationMinutes: itinerary.direction === "outbound" ? 470 : 430,
+      })),
+    }));
+
+    const fastSingles = Array.from({ length: 24 }, (_, index) => buildOffer({
+      id: `offer-single-${index + 1}`,
+      comparisonMetrics: {
+        totalDurationMinutes: 540 + index,
+        totalStops: 0,
+      },
+      price: {
+        total: {
+          amount: 500 + index,
+          currencyCode: "USD",
+        },
+        base: {
+          amount: 420 + index,
+          currencyCode: "USD",
+        },
+        taxes: {
+          amount: 80,
+          currencyCode: "USD",
+        },
+      },
+      itineraries: [
+        {
+          direction: "outbound",
+          durationMinutes: 270 + index,
+          stops: 0,
+          segments: [
+            {
+              flightNumber: "LA 123",
+              origin: "LIM",
+              destination: "MIA",
+              departureAt: "2026-04-15T14:00:00Z",
+              arrivalAt: "2026-04-15T22:00:00Z",
+            },
+          ],
+        },
+        {
+          direction: "inbound",
+          durationMinutes: 270,
+          stops: 0,
+          segments: [
+            {
+              flightNumber: "LA 456",
+              origin: "MIA",
+              destination: "LIM",
+              departureAt: "2026-04-22T15:00:00Z",
+              arrivalAt: "2026-04-22T22:50:00Z",
+            },
+          ],
+        },
+      ],
+    }));
+
+    const offers = [...groupedOffers, ...fastSingles];
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-row-heights",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers,
+          allOffers: offers,
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.evaluate(() => {
+      const origin = document.getElementById("origin") as HTMLInputElement | null;
+      const destination = document.getElementById("destination") as HTMLInputElement | null;
+      if (!origin || !destination) throw new Error("Missing location inputs");
+      origin.value = "LIM - Lima, Peru";
+      origin.dataset.code = "LIM";
+      origin.dataset.label = "LIM - Lima, Peru";
+      destination.value = "MIA - Miami, Usa";
+      destination.dataset.code = "MIA";
+      destination.dataset.label = "MIA - Miami, Usa";
+    });
+    await setDateValue(page, "departureDate", "2026-04-15");
+    await setDateValue(page, "returnDate", "2026-04-22");
+    await page.click("#submitButton");
+    await page.waitForSelector('tr[data-oid="offer-primary"]');
+
+    const cheapestView = await page.evaluate(() => ({
+      rowCount: document.querySelectorAll("#resultsContainer tr[data-oid]").length,
+      firstId: document.querySelector("#resultsContainer tr[data-oid]")?.getAttribute("data-oid") ?? "",
+      pagerLabel: document.querySelector("#resultsPager .pager-label")?.textContent?.trim() ?? "",
+    }));
+
+    await page.click('[data-sort="fastest"]');
+    await page.waitForFunction(() => (
+      document.querySelector("#resultsContainer tr[data-oid]")?.getAttribute("data-oid") === "offer-single-1"
+    ));
+
+    const fastestView = await page.evaluate(() => ({
+      rowCount: document.querySelectorAll("#resultsContainer tr[data-oid]").length,
+      firstId: document.querySelector("#resultsContainer tr[data-oid]")?.getAttribute("data-oid") ?? "",
+      pagerLabel: document.querySelector("#resultsPager .pager-label")?.textContent?.trim() ?? "",
+    }));
+
+    assert.equal(cheapestView.firstId, "offer-primary");
+    assert.equal(cheapestView.rowCount > 0, true);
+    assert.equal(cheapestView.pagerLabel.startsWith("1 /"), true);
+    assert.equal(fastestView.firstId, "offer-single-1");
+    assert.equal(fastestView.rowCount > 0, true);
+    assert.equal(fastestView.pagerLabel.startsWith("1 /"), true);
   }, { autoOpen: false });
 });
 

@@ -20,6 +20,7 @@ export const state = {
   matrixExpanded: false,
   matrixScroll: { top: 0, left: 0 },
   resultsScroll: { top: 0, left: 0 },
+  resultsViewportSize: { width: 0, height: 0 },
   pollRenderHandle: null,
   pollRenderPending: false,
   pollInteractionAt: 0,

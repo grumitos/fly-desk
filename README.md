@@ -112,6 +112,9 @@ Costamar:
   Si no se define, Fly Desk usa el terminal publico `0721808110`.
 - `COSTAMAR_TOKEN=...`
 - `COSTAMAR_LANG=es`
+- `COSTAMAR_SESSION_WARMUP_ENABLED=1`
+  Activo por defecto. Abre una busqueda seeded de Costamar en Chrome cuando falta el token branded e intenta recuperarlo desde la sesion local. Usa `0` para desactivarlo.
+- `COSTAMAR_SESSION_WARMUP_TIMEOUT_MS=8000`
 - `COSTAMAR_HTTP_TIMEOUT_MS=20000`
 
 ## Scripts

@@ -86,7 +86,7 @@ test("default list searches cap pagination work at 25 pages", () => {
 
   const limited = limitSearchResponseForPagination(buildRequest(), buildResponse(390));
   assert.equal(limited.offers.length, 375);
-  assert.equal(limited.allOffers?.length, 375);
+  assert.equal(limited.allOffers?.length, 390);
   assert.equal(limited.offers[374]?.id, "offer-375");
 });
 
@@ -95,6 +95,6 @@ test("explicit lower maxResults still wins over the default early-stop limit", (
 
   const limited = limitSearchResponseForPagination(buildRequest(5), buildResponse(14));
   assert.equal(limited.offers.length, 5);
-  assert.equal(limited.allOffers?.length, 5);
+  assert.equal(limited.allOffers?.length, 14);
   assert.equal(limited.offers[4]?.id, "offer-5");
 });

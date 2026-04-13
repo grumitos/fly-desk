@@ -4,6 +4,11 @@ import { spawn } from "node:child_process";
 
 export type LocalBrowserPreference = "chrome" | "default";
 
+export interface ChromeLaunchOptions {
+  userDataDir?: string;
+  profileDirectory?: string;
+}
+
 interface OpenUrlResult {
   launcher: "chrome" | "default";
 }
@@ -55,14 +60,32 @@ async function openWithDefaultBrowser(targetUrl: string): Promise<void> {
   }
 }
 
+function buildChromeLaunchArgs(targetUrl: string, options?: ChromeLaunchOptions): string[] {
+  const args: string[] = [];
+  const userDataDir = options?.userDataDir?.trim();
+  const profileDirectory = options?.profileDirectory?.trim();
+
+  if (userDataDir) {
+    args.push(`--user-data-dir=${userDataDir}`);
+  }
+
+  if (profileDirectory) {
+    args.push(`--profile-directory=${profileDirectory}`);
+  }
+
+  args.push("--new-tab", targetUrl);
+  return args;
+}
+
 export async function openUrlLocally(
   targetUrl: string,
   preferredBrowser: LocalBrowserPreference,
+  chromeOptions?: ChromeLaunchOptions,
 ): Promise<OpenUrlResult> {
   if (preferredBrowser === "chrome") {
     const chromeExecutable = await findChromeExecutable();
     if (chromeExecutable) {
-      spawnDetached(chromeExecutable, ["--new-tab", targetUrl]);
+      spawnDetached(chromeExecutable, buildChromeLaunchArgs(targetUrl, chromeOptions));
       return { launcher: "chrome" };
     }
   }
