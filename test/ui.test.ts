@@ -2998,7 +2998,7 @@ test("provider link column keeps external redirects available when nonstop is on
   }, { autoOpen: false });
 });
 
-test("provider link column reuses the matched Costamar link for the same flight", async () => {
+test("provider link column reuses the matched Costamar link for the same flight when the total matches", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
 
     await page.route(`${baseUrl}/api/search`, async (route: Route) => {
@@ -3064,7 +3064,7 @@ test("provider link column reuses the matched Costamar link for the same flight"
         validatingCarrier: "IB",
         price: {
           total: {
-            amount: 498,
+            amount: 512,
             currencyCode: "USD",
           },
         },
@@ -3181,6 +3181,193 @@ test("provider link column reuses the matched Costamar link for the same flight"
       const linkCellText = await page.locator('tr[data-oid="offer-agil"] td:nth-child(7)').innerText();
       assert.match(linkCellText, /Agil/);
       assert.match(linkCellText, /Costamar/);
+  }, { autoOpen: false });
+});
+
+test("provider link column keeps each provider on its own fare when matched flights have different totals", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      const agilOffer = buildOffer({
+        id: "offer-agil",
+        providerSource: "agil-local",
+        mainCarrier: "LA",
+        validatingCarrier: "LA",
+        price: {
+          total: {
+            amount: 391.74,
+            currencyCode: "USD",
+          },
+        },
+        purchasePaths: [
+          {
+            provider: "agil-local",
+            type: "deep-link",
+            label: "Agil",
+            url: "https://example.test/agil",
+            precision: "exact-search",
+            score: 0.9,
+          },
+        ],
+        itineraries: [
+          {
+            direction: "outbound",
+            durationMinutes: 95,
+            stops: 0,
+            segments: [
+              {
+                marketingCarrier: "LA",
+                flightNumber: "LA2041",
+                origin: "PIU",
+                destination: "LIM",
+                departureAt: "2026-10-06T08:10:00",
+                arrivalAt: "2026-10-06T09:45:00",
+              },
+            ],
+          },
+          {
+            direction: "inbound",
+            durationMinutes: 95,
+            stops: 0,
+            segments: [
+              {
+                marketingCarrier: "LA",
+                flightNumber: "LA2040",
+                origin: "LIM",
+                destination: "PIU",
+                departureAt: "2026-10-08T18:00:00",
+                arrivalAt: "2026-10-08T19:35:00",
+              },
+            ],
+          },
+        ],
+      });
+
+      const costamarOffer = buildOffer({
+        id: "offer-costamar",
+        providerSource: "costamar",
+        mainCarrier: "LA",
+        validatingCarrier: "LA",
+        price: {
+          total: {
+            amount: 427.2,
+            currencyCode: "USD",
+          },
+        },
+        purchasePaths: [
+          {
+            provider: "costamar",
+            type: "deep-link",
+            label: "Costamar",
+            url: "https://example.test/costamar",
+            precision: "exact-search",
+            score: 0.9,
+          },
+        ],
+        itineraries: [
+          {
+            direction: "outbound",
+            durationMinutes: 95,
+            stops: 0,
+            segments: [
+              {
+                marketingCarrier: "LA",
+                flightNumber: "LA2041",
+                origin: "PIU",
+                destination: "LIM",
+                departureAt: "2026-10-06T08:10:00.000-0500",
+                arrivalAt: "2026-10-06T09:45:00.000-0500",
+              },
+            ],
+          },
+          {
+            direction: "inbound",
+            durationMinutes: 95,
+            stops: 0,
+            segments: [
+              {
+                marketingCarrier: "LA",
+                flightNumber: "LA2040",
+                origin: "LIM",
+                destination: "PIU",
+                departureAt: "2026-10-08T18:00:00.000-0500",
+                arrivalAt: "2026-10-08T19:35:00.000-0500",
+              },
+            ],
+          },
+        ],
+      });
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-link-price-guard",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "PIU",
+                destination: "LIM",
+                departureDate: "2026-10-06",
+                returnDate: "2026-10-08",
+              },
+            ],
+            passengers: {
+              adults: 3,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [agilOffer, costamarOffer],
+          allOffers: [agilOffer, costamarOffer],
+          searchMeta: {
+            ...buildSearchMeta("search_live"),
+            providersUsed: ["agil-local", "costamar"],
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+      await openDesktop(page, baseUrl);
+      await page.evaluate(() => {
+        const origin = document.getElementById("origin") as HTMLInputElement | null;
+        const destination = document.getElementById("destination") as HTMLInputElement | null;
+        if (!origin || !destination) throw new Error("Missing location inputs");
+        origin.value = "PIU - Piura, Peru";
+        origin.dataset.code = "PIU";
+        origin.dataset.label = "PIU - Piura, Peru";
+        destination.value = "LIM - Lima, Peru";
+        destination.dataset.code = "LIM";
+        destination.dataset.label = "LIM - Lima, Peru";
+      });
+      await setDateValue(page, "departureDate", "2026-10-06");
+      await setDateValue(page, "returnDate", "2026-10-08");
+      await page.click("#submitButton");
+      await page.waitForSelector('tr[data-oid="offer-agil"]');
+      await page.click('tr[data-oid="offer-agil"]');
+
+      const linkCellText = await page.locator('tr[data-oid="offer-agil"] td:nth-child(7)').innerText();
+      assert.match(linkCellText, /Agil/);
+      assert.doesNotMatch(linkCellText, /Costamar/);
+      assert.doesNotMatch(await page.locator("#detailContent").innerText(), /Costamar/);
   }, { autoOpen: false });
 });
 
