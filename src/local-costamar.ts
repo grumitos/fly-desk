@@ -37,6 +37,7 @@ import {
   resolveLatestCostamarProviderContext,
   resolveUsableCostamarBrandedToken,
 } from "./provider-context";
+import { openUrlLocally } from "./local-browser";
 import {
   resolveMatrixCellConcurrency,
   resolveProviderSubrequestConcurrency,
@@ -81,7 +82,9 @@ interface CostamarSegmentLike {
   marketingAirline?: CostamarAirline;
   operatingAirline?: CostamarAirline;
   flightNumber?: string | number;
-  bookingClass?: string;
+  bookingClass?: string | {
+    code?: string;
+  };
   fareBasisCode?: string;
   cabinType?: string;
   baggage?: unknown;
@@ -104,6 +107,23 @@ interface CostamarPricing {
   total?: number;
   fees?: unknown;
   discounts?: unknown;
+  passengers?: {
+    adults?: {
+      base?: number | string;
+      total?: number | string;
+      contextCode?: string;
+    };
+    children?: {
+      base?: number | string;
+      total?: number | string;
+      contextCode?: string;
+    };
+    infants?: {
+      base?: number | string;
+      total?: number | string;
+      contextCode?: string;
+    };
+  };
   source?: string;
   fareQualifier?: string;
   commission?: number;
@@ -146,6 +166,26 @@ interface CostamarSearchOutcome {
   warnings: string[];
 }
 
+interface CostamarMarkupApplied {
+  amount?: {
+    value?: number | string;
+    percentage?: boolean;
+    appliesToBase?: boolean;
+    perPassenger?: boolean;
+    perBooking?: boolean;
+    passengersType?: string[];
+  };
+}
+
+interface CostamarMarkupResponse {
+  apply?: boolean;
+  error?: {
+    message?: string;
+  } | string;
+  markupsApplied?: CostamarMarkupApplied[];
+  customMarkupApplied?: CostamarMarkupApplied[];
+}
+
 const COSTAMAR_HTTP_TIMEOUT_MS = Math.max(
   5000,
   Number(process.env.COSTAMAR_HTTP_TIMEOUT_MS ?? 20000),
@@ -154,6 +194,11 @@ const COSTAMAR_AIR_API_BASE_URL = process.env.COSTAMAR_AIR_API_BASE_URL?.trim()
   || "https://api-zneith.zdev.tech/api-air-0.1";
 const COSTAMAR_REDIRECT_SESSION_WARNING =
   "Costamar redirect token is missing, expired, or incompatible with this terminal.";
+const COSTAMAR_SESSION_WARMUP_POLL_MS = 500;
+
+const pendingCostamarSessionWarmups = new Map<string, Promise<CostamarProviderContext>>();
+const recentCostamarSessionWarmups = new Map<string, number>();
+let costamarWarmupOpener: typeof openUrlLocally = openUrlLocally;
 
 export const COSTAMAR_CONCURRENCY = Object.freeze({
   get matrixMinimum() {
@@ -176,6 +221,127 @@ export const COSTAMAR_CONCURRENCY = Object.freeze({
 
 const engineCache = new Map<string, Promise<CostamarEngineMetadata>>();
 
+function costamarSessionWarmupEnabled(): boolean {
+  return String(process.env.COSTAMAR_SESSION_WARMUP_ENABLED ?? "1").trim() !== "0";
+}
+
+function costamarSessionWarmupTimeoutMs(): number {
+  return Math.max(0, Number(process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS ?? 8000));
+}
+
+function costamarSessionWarmupCooldownMs(): number {
+  return Math.max(
+    costamarSessionWarmupTimeoutMs(),
+    Number(process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS ?? 30000),
+  );
+}
+
+function canWarmCostamarSession(request: SearchRequest): boolean {
+  return request.redirectMode !== "none" && costamarSessionWarmupEnabled();
+}
+
+function resolveCostamarChromeLaunchOptions(): { userDataDir?: string; profileDirectory?: string } {
+  const userDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR?.trim()
+    || process.env.COSTAMAR_AGENT_CHROME_USER_DATA_DIR?.trim()
+    || undefined;
+  const profileDirectory = process.env.COSTAMAR_CHROME_PROFILE?.trim()
+    || process.env.AGIL_CHROME_PROFILE?.trim()
+    || undefined;
+
+  return {
+    ...(userDataDir ? { userDataDir } : {}),
+    ...(profileDirectory ? { profileDirectory } : {}),
+  };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function warmCostamarRedirectContext(
+  request: SearchRequest,
+  context: CostamarProviderContext,
+): Promise<CostamarProviderContext> {
+  if (!canWarmCostamarSession(request)) {
+    return context;
+  }
+
+  if (resolveUsableCostamarBrandedToken(context.token, context.terminalId)) {
+    return context;
+  }
+
+  const timeoutMs = costamarSessionWarmupTimeoutMs();
+  if (timeoutMs <= 0) {
+    return context;
+  }
+
+  const warmupKey = context.terminalId || "default";
+  const pending = pendingCostamarSessionWarmups.get(warmupKey);
+  if (pending) {
+    return pending;
+  }
+
+  const nowMs = Date.now();
+  const lastAttemptAt = recentCostamarSessionWarmups.get(warmupKey) ?? 0;
+  if ((nowMs - lastAttemptAt) < costamarSessionWarmupCooldownMs()) {
+    return resolveLatestCostamarProviderContext({
+      ...context,
+      token: "",
+    });
+  }
+
+  const promise = (async () => {
+    recentCostamarSessionWarmups.set(warmupKey, Date.now());
+    const seedContext = {
+      ...context,
+      token: "",
+    };
+
+    try {
+      await costamarWarmupOpener(
+        buildCostamarBrandedSearchUrl(request, seedContext),
+        "chrome",
+        resolveCostamarChromeLaunchOptions(),
+      );
+    } catch {
+      // Ignore launcher failures and still re-check any ambient session changes.
+    }
+
+    const deadline = Date.now() + timeoutMs;
+    let latest = resolveLatestCostamarProviderContext(seedContext);
+    while (Date.now() < deadline) {
+      if (resolveUsableCostamarBrandedToken(latest.token, latest.terminalId)) {
+        return latest;
+      }
+
+      await sleep(COSTAMAR_SESSION_WARMUP_POLL_MS);
+      latest = resolveLatestCostamarProviderContext(seedContext);
+    }
+
+    return latest;
+  })();
+
+  pendingCostamarSessionWarmups.set(warmupKey, promise);
+  try {
+    return await promise;
+  } finally {
+    pendingCostamarSessionWarmups.delete(warmupKey);
+  }
+}
+
+export function setCostamarWarmupOpenerForTests(
+  opener?: typeof openUrlLocally,
+): void {
+  costamarWarmupOpener = opener ?? openUrlLocally;
+}
+
+export function resetCostamarWarmupStateForTests(): void {
+  engineCache.clear();
+  pendingCostamarSessionWarmups.clear();
+  recentCostamarSessionWarmups.clear();
+  costamarWarmupOpener = openUrlLocally;
+}
+
 function asArray<T>(value: T | T[] | undefined | null): T[] {
   if (value === undefined || value === null) {
     return [];
@@ -194,6 +360,16 @@ function toCostamarDayStart(dateIso?: string): string | undefined {
   }
 
   return new Date(`${dateIso}T00:00:00-05:00`).toISOString();
+}
+
+function toCostamarDayStartMs(dateIso?: string): number | undefined {
+  const normalized = toCostamarDayStart(dateIso);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const timestamp = new Date(normalized).getTime();
+  return Number.isFinite(timestamp) ? timestamp : undefined;
 }
 
 function toCompactDate(dateIso?: string): string | undefined {
@@ -396,6 +572,10 @@ function money(amount: number | undefined, currencyCode: string) {
     amount: Number(amount.toFixed(2)),
     currencyCode,
   };
+}
+
+function roundMoneyAmount(amount: number): number {
+  return Number(amount.toFixed(2));
 }
 
 function resolveCostamarOfferCurrencyCode(
@@ -719,25 +899,63 @@ export function applyCostamarContextToBrandedSearchUrl(
 
 function buildLocationsPayload(
   itineraries: Itinerary[],
-): Array<{ cityCode?: string; countryCode?: string; date?: string }> {
+): Array<{ cityCode?: string; countryCode?: string; date?: number }> {
   return itineraries.map((itinerary) => ({
-    cityCode: itinerary.segments[0]?.origin,
-    countryCode: undefined,
-    date: itinerary.segments[0]?.departureAt?.slice(0, 10),
+    cityCode: itinerary.segments[0]?.origin ?? "",
+    countryCode: "",
+    date: toCostamarDayStartMs(itinerary.segments[0]?.departureAt?.slice(0, 10)),
   }));
 }
 
 function buildMarkupFlightsPayload(
-  rawSegments: CostamarSegmentLike[],
+  recommendation: CostamarRecommendation,
 ): Array<Record<string, unknown>> {
-  return rawSegments.map((segment) => ({
-    bookingClass: segment.bookingClass,
-    fareBasisCode: segment.fareBasisCode,
-    marketingAirline: segment.marketingAirline?.code,
-    operatingAirline: segment.operatingAirline?.code ?? segment.marketingAirline?.code,
-    flightNumber: segment.flightNumber,
-    cabinType: segment.cabinType,
-  }));
+  return asArray(recommendation.itinerary).flatMap((journey, index) => {
+    const selectedFlight = asArray(journey.flights)[0];
+    if (!selectedFlight) {
+      return [];
+    }
+
+    const segments: CostamarSegmentLike[] = asArray(selectedFlight.segments).length > 0
+      ? asArray(selectedFlight.segments)
+      : [selectedFlight];
+    const normalizedSegments = segments.map((segment) => ({
+      bookingClass: typeof segment.bookingClass === "string"
+        ? segment.bookingClass
+        : segment.bookingClass?.code,
+      fareBasisCode: segment.fareBasisCode,
+      marketingAirline: {
+        code: segment.marketingAirline?.code,
+      },
+      operatingAirline: {
+        code: segment.operatingAirline?.code ?? segment.marketingAirline?.code,
+      },
+      flightNumber: segment.flightNumber,
+      cabinType: segment.cabinType,
+    }));
+
+    return [{
+      segments: normalizedSegments,
+      duration: parseDurationMinutes(selectedFlight.elapsedTime),
+      refNumber: index,
+    }];
+  });
+}
+
+function shouldApplyCostamarBaggageMarkup(
+  recommendation: CostamarRecommendation,
+): boolean {
+  const firstFlight = asArray(asArray(recommendation.itinerary)[0]?.flights)[0];
+  if (!firstFlight || firstFlight.marketingAirline?.code === "VV") {
+    return false;
+  }
+
+  const baggage = firstFlight.baggage as Record<string, unknown> | undefined;
+  if (!baggage) {
+    return false;
+  }
+
+  return String(baggage.pieces ?? "") !== "0";
 }
 
 function buildMarkupRequest(
@@ -745,18 +963,14 @@ function buildMarkupRequest(
   request: SearchRequest,
   recommendation: CostamarRecommendation,
   itineraries: Itinerary[],
-  rawSegments: CostamarSegmentLike[],
 ): Record<string, unknown> {
-  const passengerTypes: Array<Record<string, unknown>> = [];
+  const passengerTypes: string[] = ["ADT"];
 
-  if (request.passengers.adults > 0) {
-    passengerTypes.push({ code: "ADT", quantity: request.passengers.adults });
-  }
   if (request.passengers.children > 0) {
-    passengerTypes.push({ code: "CNN", quantity: request.passengers.children });
+    passengerTypes.push("CHD");
   }
   if (request.passengers.infants > 0) {
-    passengerTypes.push({ code: "INF", quantity: request.passengers.infants });
+    passengerTypes.push("INF");
   }
 
   return {
@@ -765,14 +979,121 @@ function buildMarkupRequest(
     locations: buildLocationsPayload(itineraries),
     passengersQuantity: request.passengers.adults + request.passengers.children + request.passengers.infants,
     passengersType: passengerTypes,
-    flights: buildMarkupFlightsPayload(rawSegments),
-    applyBaggage: true,
+    flights: buildMarkupFlightsPayload(recommendation),
+    applyBaggage: shouldApplyCostamarBaggageMarkup(recommendation),
     tripType: request.tripType === "one-way" ? "OW" : "RT",
-    routeType: request.tripType === "one-way" ? "oneway" : "roundtrip",
-    fareType: recommendation.pricing?.fareQualifier,
+    routeType: recommendation.pricing?.fareQualifier,
+    fareType: recommendation.pricing?.source === "PRIVATE"
+      ? "PRIVATED"
+      : recommendation.pricing?.source,
     validatingAirline: recommendation.pricing?.validatingAirline,
-    validatingGds: recommendation.pos?.systemProviderCode ?? recommendation.pricing?.source,
+    validatingGds: recommendation.pos?.systemProviderCode,
   };
+}
+
+function buildCostamarPassengerFareBreakdowns(
+  recommendation: CostamarRecommendation,
+  request: SearchRequest,
+): Array<{
+  code: "ADT" | "CHD" | "INF";
+  passengerFare: {
+    base: number;
+    total: number;
+  };
+  quantity: number;
+}> {
+  const passengers = recommendation.pricing?.passengers;
+  return [
+    {
+      code: "ADT" as const,
+      passengerFare: {
+        base: numberValue(passengers?.adults?.base) ?? 0,
+        total: numberValue(passengers?.adults?.total) ?? 0,
+      },
+      quantity: request.passengers.adults,
+    },
+    {
+      code: "CHD" as const,
+      passengerFare: {
+        base: numberValue(passengers?.children?.base) ?? 0,
+        total: numberValue(passengers?.children?.total) ?? 0,
+      },
+      quantity: request.passengers.children,
+    },
+    {
+      code: "INF" as const,
+      passengerFare: {
+        base: numberValue(passengers?.infants?.base) ?? 0,
+        total: numberValue(passengers?.infants?.total) ?? 0,
+      },
+      quantity: request.passengers.infants,
+    },
+  ].filter((entry) => entry.quantity > 0);
+}
+
+function computeCostamarMarkupValue(
+  markup: CostamarMarkupApplied,
+  recommendation: CostamarRecommendation,
+  request: SearchRequest,
+): number {
+  const markupAmount = numberValue(markup.amount?.value);
+  if (typeof markupAmount !== "number") {
+    return 0;
+  }
+
+  const pricing = recommendation.pricing ?? {};
+  const totalAmount = numberValue(pricing.total) ?? numberValue(pricing.totalAmount) ?? 0;
+  if (markup.amount?.perBooking) {
+    if (markup.amount?.percentage) {
+      return roundMoneyAmount((roundMoneyAmount(totalAmount) * markupAmount) / 100);
+    }
+
+    return roundMoneyAmount(markupAmount);
+  }
+
+  const passengerTypes = asArray(markup.amount?.passengersType).map((value) => String(value));
+  let computed = 0;
+
+  buildCostamarPassengerFareBreakdowns(recommendation, request).forEach((breakdown) => {
+    if (passengerTypes.length > 0 && !passengerTypes.includes(breakdown.code)) {
+      return;
+    }
+
+    if (markup.amount?.percentage) {
+      const baseValue = markup.amount?.appliesToBase
+        ? breakdown.passengerFare.base
+        : breakdown.passengerFare.total;
+      computed += roundMoneyAmount((roundMoneyAmount(baseValue) * markupAmount) / 100) * breakdown.quantity;
+      return;
+    }
+
+    computed += markupAmount * breakdown.quantity;
+  });
+
+  return roundMoneyAmount(computed);
+}
+
+function resolveCostamarMarkupError(markupResponse: CostamarMarkupResponse): string | undefined {
+  if (typeof markupResponse.error === "string") {
+    return markupResponse.error.trim() || undefined;
+  }
+
+  if (typeof markupResponse.error?.message === "string") {
+    return markupResponse.error.message.trim() || undefined;
+  }
+
+  return undefined;
+}
+
+function sumCostamarMarkupTotals(
+  markupResponse: CostamarMarkupResponse,
+  recommendation: CostamarRecommendation,
+  request: SearchRequest,
+): number {
+  return [
+    ...asArray(markupResponse.markupsApplied),
+    ...asArray(markupResponse.customMarkupApplied),
+  ].reduce((sum, markup) => sum + computeCostamarMarkupValue(markup, recommendation, request), 0);
 }
 
 async function applyMarkupToOffer(
@@ -788,25 +1109,35 @@ async function applyMarkupToOffer(
   }
 
   try {
-    const markupResponse = await fetchCostamarJson<unknown>(
+    const markupResponse = await fetchCostamarJson<CostamarMarkupResponse>(
       context,
       "/flights/markups/apply",
       {
         method: "POST",
-        body: JSON.stringify(buildMarkupRequest(engine, request, recommendation, offer.itineraries, rawSegments)),
+        body: JSON.stringify(buildMarkupRequest(engine, request, recommendation, offer.itineraries)),
       },
       "Costamar markup apply",
     );
 
-    const markups = sumMoneyLike(markupResponse);
+    const markups = sumCostamarMarkupTotals(markupResponse, recommendation, request);
     const discounts = sumMoneyLike(recommendation.pricing?.discounts);
+    const markupError = resolveCostamarMarkupError(markupResponse);
     if (markups <= 0 && discounts <= 0) {
-      return offer;
+      return markupError
+        ? {
+            ...offer,
+            warnings: [
+              ...offer.warnings,
+              `Costamar markup omitted: ${markupError}`,
+            ],
+          }
+        : offer;
     }
 
-    const total = Number((offer.price.total.amount + markups - discounts).toFixed(2));
+    const total = roundMoneyAmount(offer.price.total.amount + markups - discounts);
     return {
       ...offer,
+      id: buildCostamarOfferId(offer.signature, total, offer.price.total.currencyCode),
       price: {
         ...offer.price,
         total: {
@@ -933,8 +1264,21 @@ async function searchRecommendations(
   providerContext?: ProviderContext,
   flexible = false,
 ): Promise<CostamarSearchOutcome> {
-  const context = getCostamarProviderContext(providerContext);
-  const redirectContext = resolveLatestCostamarProviderContext(context);
+  const baseContext = getCostamarProviderContext(providerContext);
+  let redirectContext = resolveLatestCostamarProviderContext(baseContext);
+  if (!resolveUsableCostamarBrandedToken(redirectContext.token, redirectContext.terminalId)) {
+    redirectContext = await warmCostamarRedirectContext(request, redirectContext);
+  }
+
+  const context = resolveUsableCostamarBrandedToken(redirectContext.token, redirectContext.terminalId)
+    ? {
+        ...baseContext,
+        terminalId: redirectContext.terminalId,
+        token: redirectContext.token,
+        lang: redirectContext.lang,
+      }
+    : baseContext;
+
   ensureCostamarCredentials(context);
 
   const engine = await getEngineMetadata(context);
@@ -1281,9 +1625,11 @@ function buildMatrixCellFromOffer(
       amount: offer.price.total.amount,
       currencyCode: offer.price.total.currencyCode,
     },
-    purchasePaths: providerContext?.costamar
-      ? buildPurchasePaths(cell.derivedRequest, providerContext.costamar)
-      : [],
+    purchasePaths: offer.purchasePaths.length > 0
+      ? offer.purchasePaths
+      : providerContext?.costamar
+        ? buildPurchasePaths(cell.derivedRequest, providerContext.costamar)
+        : [],
     confidence: "live",
     selectable: true,
     stateCode: "live",

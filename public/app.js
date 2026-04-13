@@ -431,7 +431,6 @@ function buildResultsTableHeaderHtml() {
 }
 
 const RESULTS_SKELETON_ROW_COUNT = 6;
-const RESULTS_PROGRESS_PLACEHOLDER_COUNT = 2;
 
 function buildResultsPlaceholderRows(count = RESULTS_SKELETON_ROW_COUNT) {
   return Array.from({ length: count }, () => `
@@ -658,6 +657,14 @@ function requestPolledRender() {
     return;
   }
   renderAll();
+}
+
+function cancelPendingPollRender() {
+  if (state.pollRenderHandle) {
+    clearTimeout(state.pollRenderHandle);
+    state.pollRenderHandle = null;
+  }
+  state.pollRenderPending = false;
 }
 
 function syncMatrixExpandedUI() {
@@ -960,6 +967,91 @@ function controlChecked(name) {
 }
 
 function formatMoney(m) { return m ? `${m.currencyCode} ${numFmt.format(m.amount)}` : "—"; }
+
+function normalizePassengerCounts(passengers = {}) {
+  const adults = Number.parseInt(String(passengers.adults ?? 1), 10) || 1;
+  const children = Number.parseInt(String(passengers.children ?? 0), 10) || 0;
+  const infants = Number.parseInt(String(passengers.infants ?? 0), 10) || 0;
+  return {
+    adults,
+    children,
+    infants,
+    total: Math.max(1, adults + children + infants),
+  };
+}
+
+function passengerCountForRequest(request) {
+  return normalizePassengerCounts(request?.passengers ?? {}).total;
+}
+
+function moneyPerPassenger(m, passengerCount) {
+  if (!m || typeof m.amount !== "number" || !m.currencyCode || !Number.isFinite(passengerCount) || passengerCount <= 0) {
+    return null;
+  }
+
+  return {
+    amount: Number((m.amount / passengerCount).toFixed(2)),
+    currencyCode: m.currencyCode,
+  };
+}
+
+function priceLabels(m, passengerCount) {
+  if (!m) {
+    return {
+      totalLabel: "—",
+      perPersonLabel: "",
+      combinedLabel: "—",
+    };
+  }
+
+  const totalLabel = formatMoney(m);
+  const perPerson = moneyPerPassenger(m, passengerCount);
+  const perPersonLabel = perPerson ? `${formatMoney(perPerson)} por persona` : "";
+  return {
+    totalLabel,
+    perPersonLabel,
+    combinedLabel: perPersonLabel ? `${totalLabel} total · ${perPersonLabel}` : totalLabel,
+  };
+}
+
+function renderPriceBreakdownHtml(
+  m,
+  passengerCount,
+  {
+    emptyLabel = "—",
+    totalSuffix = "",
+    perPersonSuffix = " por persona",
+    className = "price-stack",
+    totalClassName = "price-stack__total",
+    metaClassName = "price-stack__meta",
+  } = {},
+) {
+  if (!m) {
+    return escapeHtml(emptyLabel);
+  }
+
+  const totalLabel = formatMoney(m);
+  const perPerson = moneyPerPassenger(m, passengerCount);
+  const totalText = `${totalLabel}${totalSuffix}`;
+  const perPersonText = perPerson ? `${formatMoney(perPerson)}${perPersonSuffix}` : "";
+
+  return `
+    <span class="${escapeHtml(className)}">
+      <span class="${escapeHtml(totalClassName)}">${escapeHtml(totalText)}</span>
+      ${perPersonText ? `<span class="${escapeHtml(metaClassName)}">${escapeHtml(perPersonText)}</span>` : ""}
+    </span>
+  `.trim();
+}
+
+function renderDetailHeroPriceHtml(m, passengerCount) {
+  const labels = priceLabels(m, passengerCount);
+  return `
+    <div class="detail-hero">
+      <span class="detail-hero__total">${escapeHtml(labels.totalLabel)}</span>
+      ${labels.perPersonLabel ? `<span class="detail-hero__meta">${escapeHtml(labels.perPersonLabel)}</span>` : ""}
+    </div>
+  `.trim();
+}
 
 function formatDT(iso) {
   if (!iso) return "—";
@@ -2072,17 +2164,20 @@ function resultsPageCount(total) {
   return Math.max(1, Math.ceil(total / pageSize));
 }
 
-function resolveVisibleResultsPageSize() {
-  const viewport = resultsContainer?.querySelector(".table-wrap") ?? resultsContainer;
+function resolveVisibleResultsPageSize(viewport = resultsContainer?.querySelector(".table-wrap") ?? resultsContainer) {
   if (!(viewport instanceof HTMLElement)) {
     return Math.max(1, Math.trunc(state.resultsPageSize) || RESULTS_PAGE_SIZE);
   }
 
   const tableHeader = viewport.querySelector("thead");
-  const firstRow = viewport.querySelector("tbody tr[data-oid], tbody tr.results-row--placeholder");
+  const sampleRows = [...viewport.querySelectorAll("tbody tr[data-oid], tbody tr.results-row--placeholder")]
+    .slice(0, 6)
+    .filter((row) => row instanceof HTMLElement);
   const viewportHeight = viewport.clientHeight;
   const headerHeight = tableHeader instanceof HTMLElement ? tableHeader.getBoundingClientRect().height : 0;
-  const rowHeight = firstRow instanceof HTMLElement ? firstRow.getBoundingClientRect().height : 0;
+  const rowHeight = sampleRows.length > 0
+    ? sampleRows.reduce((total, row) => total + row.getBoundingClientRect().height, 0) / sampleRows.length
+    : 0;
 
   if (viewportHeight <= 0 || rowHeight <= 0) {
     return Math.max(1, Math.trunc(state.resultsPageSize) || RESULTS_PAGE_SIZE);
@@ -2093,7 +2188,28 @@ function resolveVisibleResultsPageSize() {
 }
 
 function syncResultsPageSize() {
-  const nextPageSize = resolveVisibleResultsPageSize();
+  const viewport = resultsContainer?.querySelector(".table-wrap") ?? resultsContainer;
+  if (!(viewport instanceof HTMLElement)) {
+    return false;
+  }
+
+  const viewportBounds = viewport.getBoundingClientRect();
+  const nextViewportSize = {
+    width: Math.round(viewportBounds.width),
+    height: Math.round(viewportBounds.height),
+  };
+  const previousViewportSize = state.resultsViewportSize ?? { width: 0, height: 0 };
+  if (
+    nextViewportSize.width > 0
+    && nextViewportSize.height > 0
+    && nextViewportSize.width === previousViewportSize.width
+    && nextViewportSize.height === previousViewportSize.height
+  ) {
+    return false;
+  }
+
+  const nextPageSize = resolveVisibleResultsPageSize(viewport);
+  state.resultsViewportSize = nextViewportSize;
   if (nextPageSize === state.resultsPageSize) {
     return false;
   }
@@ -2678,6 +2794,7 @@ function buildPendingSearchResponse(request, sortMode) {
     searchStatus: "running",
     request,
     sortMode,
+    serverOffers: [],
     offers: [],
     allOffers: [],
     filteredOffers: [],
@@ -3737,11 +3854,44 @@ function getActiveClientFilters() {
   };
 }
 
+function comparableClientFilters(filters = {}) {
+  return {
+    nonStop: filters?.nonStop === true,
+    baggageRequired: filters?.baggageRequired === true,
+    maxStops: typeof filters?.maxStops === "number" ? Math.max(0, filters.maxStops) : null,
+    maxLayoverMinutes: typeof filters?.maxLayoverMinutes === "number" ? filters.maxLayoverMinutes : null,
+  };
+}
+
+function activeClientFiltersMatchRequestFilters(
+  filters = getActiveClientFilters(),
+  requestFilters = state.searchResponse?.request?.filters ?? state.request?.filters ?? {},
+) {
+  const left = comparableClientFilters(filters);
+  const right = comparableClientFilters(requestFilters);
+  return left.nonStop === right.nonStop
+    && left.baggageRequired === right.baggageRequired
+    && left.maxStops === right.maxStops
+    && left.maxLayoverMinutes === right.maxLayoverMinutes;
+}
+
+function offersForClientControls(filters = getActiveClientFilters()) {
+  if (!state.searchResponse) {
+    return [];
+  }
+
+  if (activeClientFiltersMatchRequestFilters(filters, state.searchResponse.request?.filters)) {
+    return state.searchResponse.serverOffers ?? state.searchResponse.offers ?? [];
+  }
+
+  return state.searchResponse.allOffers ?? state.searchResponse.offers ?? [];
+}
+
 function applyClientOfferControls() {
-  if (!state.searchResponse?.allOffers) return;
+  if (!state.searchResponse) return;
   const sortMode = controlValue("sortMode") || state.sortMode || "cheapest";
   const filters = getActiveClientFilters();
-  let offers = getOffersForVisibleFacets(state.searchResponse.allOffers, filters);
+  let offers = getOffersForVisibleFacets(offersForClientControls(filters), filters);
 
   const { hidden, only } = state.airlineFilter;
   offers = offers.filter((offer) => {
@@ -3760,9 +3910,9 @@ function applyClientOfferControls() {
   state.resultsPage = Math.min(Math.max(1, state.resultsPage), totalPages);
   const pageSize = Math.max(1, Math.trunc(state.resultsPageSize) || RESULTS_PAGE_SIZE);
   const start = (state.resultsPage - 1) * pageSize;
-  state.searchResponse.offers = groupedOffers
-    .slice(start, start + pageSize)
-    .flat();
+  const visibleOfferGroups = groupedOffers.slice(start, start + pageSize);
+  state.searchResponse.visibleOfferGroups = visibleOfferGroups;
+  state.searchResponse.offers = visibleOfferGroups.flat();
 
   const previousSelectedOfferId = state.selectedOfferId;
   if (!state.searchResponse.offers.some((offer) => offer.id === state.selectedOfferId)) {
@@ -3788,9 +3938,11 @@ function getOffersForVisibleFacets(allOffers, filters = getActiveClientFilters()
 function setSearchResponse(data) {
   state.searchResponse = {
     ...data,
+    serverOffers: data.offers ?? [],
     allOffers: data.allOffers ?? data.offers ?? [],
     offers: data.offers ?? [],
     filteredOffers: data.allOffers ?? data.offers ?? [],
+    visibleOfferGroups: data.visibleOfferGroups ?? [],
   };
   applyClientOfferControls();
 }
@@ -3967,9 +4119,9 @@ function renderResults() {
   }
 
   const offers = state.searchResponse?.offers ?? [];
+  const visibleOfferGroups = state.searchResponse?.visibleOfferGroups ?? buildOfferGroups(offers);
   const total = state.searchResponse?.filteredOfferGroups?.length
     ?? buildOfferGroups(state.searchResponse?.filteredOffers ?? state.searchResponse?.allOffers ?? offers).length;
-  const totalPages = resultsPageCount(total);
   const isRunning = state.searchResponse?.searchStatus === "running";
 
   if (offers.length === 0 && !isRunning) {
@@ -3986,8 +4138,9 @@ function renderResults() {
 
   html += `<div class="table-wrap" aria-live="polite" aria-busy="${isRunning ? "true" : "false"}"><table class="results-table">${buildResultsTableHeaderHtml()}<tbody>`;
   const providerLinkIndex = buildProviderLinkIndex(state.searchResponse?.allOffers ?? offers);
+  const passengerCount = passengerCountForRequest(state.searchResponse?.request ?? state.request);
 
-  buildOfferGroups(offers).forEach((group) => {
+  visibleOfferGroups.forEach((group) => {
     const o = group.find(g => g.id === state.selectedOfferId) ?? group[0];
     const dateSummary = buildGroupDateSummary(group, state.selectedOfferId);
     const isActive = group.some(g => g.id === state.selectedOfferId);
@@ -4002,23 +4155,19 @@ function renderResults() {
       carrier.display,
       dateSummary.primary,
       formatDuration(o.comparisonMetrics?.totalDurationMinutes),
-      formatMoney(o.price?.total),
+      priceLabels(o.price?.total, passengerCount).combinedLabel,
     ].filter(Boolean).join(" · ");
 
     html += `<tr data-oid="${o.id}" class="${isActive ? "is-active" : ""}" tabindex="0" role="button" aria-label="${escapeHtml(rowLabel)}">`;
     html += `<td><span class="cell-main carrier-label" title="${escapeHtml(carrier.display)}">${escapeHtml(carrier.display)}</span></td>`;
-    html += `<td title="${escapeHtml(dateSummary.title)}"><div class="results-date-stack"><span class="cell-main">${escapeHtml(dateSummary.primary)}${badge}</span>${dateSummary.secondary ? `<span class="cell-sub">${escapeHtml(dateSummary.secondary)}</span>` : ""}</div></td>`;
+    html += `<td title="${escapeHtml(dateSummary.title)}"><div class="results-date-stack"><span class="cell-main">${escapeHtml(dateSummary.primary)}${badge}</span>${dateSummary.secondary ? `<span class="cell-sub">${escapeHtml(dateSummary.secondary)}</span>` : '<span class="cell-sub cell-sub--ghost" aria-hidden="true">&nbsp;</span>'}</div></td>`;
     html += `<td>${formatDuration(o.comparisonMetrics?.totalDurationMinutes)}</td>`;
     html += `<td>${renderStopsSummary(o)}</td>`;
     html += `<td><span class="baggage-icons">${bagCarry}${bagCheck}</span></td>`;
-    html += `<td class="results-price">${formatMoney(o.price?.total)}</td>`;
+    html += `<td class="results-price">${renderPriceBreakdownHtml(o.price?.total, passengerCount, { totalSuffix: " total" })}</td>`;
     html += `<td>${renderProviderLinksCell(o, providerLinkIndex)}</td>`;
     html += `</tr>`;
   });
-
-  if (isRunning) {
-    html += buildResultsPlaceholderRows(RESULTS_PROGRESS_PLACEHOLDER_COUNT);
-  }
 
   html += '</tbody></table></div>';
 
@@ -4042,11 +4191,24 @@ function renderResults() {
   });
 }
 
+function renderSearchResultsViewport({ includeAirlineBar = false } = {}) {
+  cancelPendingPollRender();
+  renderToolbar();
+  if (includeAirlineBar) {
+    renderAirlineBar();
+  }
+  renderResultsArea();
+  renderDetailPanel();
+  updateResultsToolbar();
+  syncWorkspaceViewportHeight();
+}
+
 function handleResultsClick(e) {
   const pager = e.target.closest("[data-results-page]");
   if (pager) {
     const total = state.searchResponse?.filteredOfferGroups?.length ?? 0;
     const totalPages = resultsPageCount(total);
+    markPollingUiInteraction();
     state.resultsScroll = { top: 0, left: 0 };
     if (pager.dataset.resultsPage === "prev") {
       state.resultsPage = Math.max(1, state.resultsPage - 1);
@@ -4054,9 +4216,7 @@ function handleResultsClick(e) {
       state.resultsPage = Math.min(totalPages, state.resultsPage + 1);
     }
     applyClientOfferControls();
-    renderResultsArea();
-    updateResultsToolbar();
-    renderDetailPanel();
+    renderSearchResultsViewport();
     return;
   }
 
@@ -4297,10 +4457,14 @@ function renderFlexibleList(container = resultsContainer) {
   orderedCells.forEach((cell) => {
     const isActive = cell.key === state.selectedMatrixKey;
     const stayLabel = cell.stayNights != null ? `${cell.stayNights} noches` : "—";
+    const passengerCount = passengerCountForRequest(flexibleCellRequest(cell) ?? state.matrixResponse?.request ?? state.request);
     const priceLabel = cell.confidence === "loading"
       ? "..."
+      : priceLabels(cell.price, passengerCount).combinedLabel;
+    const priceHtml = cell.confidence === "loading"
+      ? "..."
       : cell.price
-        ? formatMoney(cell.price)
+        ? renderPriceBreakdownHtml(cell.price, passengerCount, { totalSuffix: " total" })
         : "—";
     const stateLabel = flexibleCellStateLabel(cell);
     const rowLabel = [
@@ -4326,7 +4490,7 @@ function renderFlexibleList(container = resultsContainer) {
         <td><span class="cell-main">${escapeHtml(formatDateCompact(cell.departureDate))}</span></td>
         <td><span class="cell-main">${escapeHtml(cell.returnDate ? formatDateCompact(cell.returnDate) : "—")}</span></td>
         <td><span class="cell-sub">${escapeHtml(stayLabel)}</span></td>
-        <td class="results-price">${escapeHtml(priceLabel)}</td>
+        <td class="results-price">${priceHtml}</td>
         <td><span class="cell-sub">${escapeHtml(stateLabel)}</span></td>
       </tr>
     `;
@@ -4453,8 +4617,8 @@ function buildAirlineList(allOffers) {
 
 function renderAirlineBar() {
   if (!airlineBar) return;
-  const allOffers = state.searchResponse?.allOffers;
-  const offersForFacets = allOffers?.length ? getOffersForVisibleFacets(allOffers) : [];
+  const baseOffers = offersForClientControls();
+  const offersForFacets = baseOffers.length ? getOffersForVisibleFacets(baseOffers) : [];
 
   if (!offersForFacets.length) {
     airlineBar.classList.add("hidden");
@@ -4559,10 +4723,11 @@ function renderCalendarView(container = resultsContainer) {
       const cell = cells.find(c => c.departureDate === dep);
       if (!cell) { html += '<button class="matrix-cell cal-cell" disabled type="button">—</button>'; return; }
       const isLoading = cell.confidence === "loading";
+      const passengerCount = passengerCountForRequest(flexibleCellRequest(cell) ?? state.matrixResponse?.request ?? state.request);
       const toneClass = matrixToneClass(cell, priceStats);
       const calTone = toneClass.replace("matrix-cell--", "cal-cell--");
       html += `<button class="matrix-cell cal-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass} ${calTone}" type="button" ${!cell.selectable ? "disabled" : ""} data-mk="${cell.key}" title="${escapeHtml(cell.tooltip ?? "")}">`;
-      html += `<div class="matrix-price cal-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? formatMoney(cell.price) : "—"}</div>`;
+      html += `<div class="matrix-price cal-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? renderPriceBreakdownHtml(cell.price, passengerCount, { className: "price-stack price-stack--matrix", perPersonSuffix: " p/p" }) : "—"}</div>`;
       html += `<div class="matrix-meta cal-meta">${isLoading ? "cargando" : cell.stateCode ?? ""}</div></button>`;
     });
     html += '</div>';
@@ -4574,10 +4739,11 @@ function renderCalendarView(container = resultsContainer) {
         const cell = cells.find(c => c.departureDate === dep && c.returnDate === ret);
         if (!cell) { html += '<button class="matrix-cell cal-cell" disabled type="button">—</button>'; return; }
         const isLoading = cell.confidence === "loading";
+        const passengerCount = passengerCountForRequest(flexibleCellRequest(cell) ?? state.matrixResponse?.request ?? state.request);
         const toneClass = matrixToneClass(cell, priceStats);
         const calTone = toneClass.replace("matrix-cell--", "cal-cell--");
         html += `<button class="matrix-cell cal-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass} ${calTone}" type="button" ${!cell.selectable ? "disabled" : ""} data-mk="${cell.key}" title="${escapeHtml(cell.tooltip ?? "")}">`;
-        html += `<div class="matrix-price cal-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? formatMoney(cell.price) : "—"}</div>`;
+        html += `<div class="matrix-price cal-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? renderPriceBreakdownHtml(cell.price, passengerCount, { className: "price-stack price-stack--matrix", perPersonSuffix: " p/p" }) : "—"}</div>`;
         html += `<div class="matrix-meta cal-meta">${isLoading ? "cargando" : cell.stateCode ?? ""} ${cell.stayNights != null ? cell.stayNights + "n" : ""}</div></button>`;
       });
       html += '</div>';
@@ -4645,12 +4811,10 @@ function renderMatrixCellDetail(cell) {
   const request = flexibleCellRequest(cell);
   const fallbackRequest = state.matrixResponse?.request ?? request ?? {};
   const leg = request?.legs?.[0] ?? fallbackRequest?.legs?.[0] ?? {};
-  const passengers = request?.passengers ?? fallbackRequest?.passengers ?? {};
-  const adults = Number.parseInt(String(passengers.adults ?? 1), 10) || 1;
-  const children = Number.parseInt(String(passengers.children ?? 0), 10) || 0;
-  const infants = Number.parseInt(String(passengers.infants ?? 0), 10) || 0;
+  const passengers = normalizePassengerCounts(request?.passengers ?? fallbackRequest?.passengers ?? {});
+  const passengerCount = passengers.total;
   const routeSummary = [leg.origin, leg.destination].filter(Boolean).join(" → ") || toolbarRouteSummary(fallbackRequest);
-  const passengerSummary = formatPassengerSummary(adults, children, infants);
+  const passengerSummary = formatPassengerSummary(passengers.adults, passengers.children, passengers.infants);
   const exactProviderLabel = request?.providerId
     ? providerLabel(request.providerId)
     : providerLabel(cell.providerSource);
@@ -4659,7 +4823,9 @@ function renderMatrixCellDetail(cell) {
   const summaryParts = [routeSummary, providerLabel(cell.providerSource), passengerSummary].filter(Boolean);
   let h = "";
 
-  h += `<div class="detail-hero">${escapeHtml(flexibleCellHeroLabel(cell))}</div>`;
+  h += cell?.price
+    ? renderDetailHeroPriceHtml(cell.price, passengerCount)
+    : `<div class="detail-hero"><span class="detail-hero__total">${escapeHtml(flexibleCellHeroLabel(cell))}</span></div>`;
   h += `<div class="detail-summary">${escapeHtml(summaryParts.join(" · "))}</div>`;
 
   h += '<div class="detail-section"><div class="detail-section__title">Combinacion flexible</div>';
@@ -4675,6 +4841,10 @@ function renderMatrixCellDetail(cell) {
 
   h += '<div class="detail-section"><div class="detail-section__title">Contexto de busqueda</div>';
   h += detailPairHtml("Pasajeros", passengerSummary);
+  if (cell.price) {
+    h += detailPairHtml("Total", priceLabels(cell.price, passengerCount).totalLabel, { strong: true });
+    h += detailPairHtml("Por persona", priceLabels(cell.price, passengerCount).perPersonLabel.replace(/ por persona$/, ""));
+  }
   h += detailPairHtml("Filtros", flexibleCellFilterSummary(request?.filters ?? fallbackRequest?.filters));
   h += detailPairHtml("Cabina", request?.cabin ?? fallbackRequest?.cabin ?? "ECONOMY");
   h += '</div>';
@@ -4729,13 +4899,13 @@ function renderDetailPanel() {
 
   if (state.detailPendingAction) {
     const copy = detailActionCopy();
-    const amount = formatMoney(offer.price?.total);
+    const passengerCount = passengerCountForRequest(state.searchResponse?.request ?? state.request);
     const carrier = carrierDisplayParts(offer);
     const summary = `${escapeHtml(offer.origin)} → ${escapeHtml(offer.destination)} · ${escapeHtml(carrier.display)}`;
     if (detailContent) {
       detailContent.innerHTML = `
         <div class="detail-busy" aria-live="polite" aria-busy="true">
-          <div class="detail-hero">${amount}</div>
+          ${renderDetailHeroPriceHtml(offer.price?.total, passengerCount)}
           <div class="detail-summary">${summary}</div>
           <div class="detail-section">
             <div class="detail-section__title">${copy.eyebrow}</div>
@@ -4756,13 +4926,15 @@ function renderDetailPanel() {
   const group = getGroupForOffer(offer.id) ?? [offer];
   const carrier = carrierDisplayParts(offer);
   const providerLinkIndex = buildProviderLinkIndex(state.searchResponse?.allOffers ?? []);
+  const passengerCount = passengerCountForRequest(state.searchResponse?.request ?? state.request);
+  const offerPriceLabels = priceLabels(offer.price?.total, passengerCount);
 
   let h = "";
 
   // Hero price
   const totalStops = offer.comparisonMetrics?.totalStops ?? 0;
   const stopsLabel = stopsCountLabel(totalStops);
-  h += `<div class="detail-hero">${formatMoney(offer.price?.total)}</div>`;
+  h += renderDetailHeroPriceHtml(offer.price?.total, passengerCount);
   h += `<div class="detail-summary">${escapeHtml(offer.origin)} → ${escapeHtml(offer.destination)} · ${escapeHtml(carrier.display)} · ${formatDuration(offer.comparisonMetrics?.totalDurationMinutes)} · ${stopsLabel}</div>`;
 
   // Segments
@@ -4816,7 +4988,8 @@ function renderDetailPanel() {
 
   // Fare
   h += '<div class="detail-section"><div class="detail-section__title">Tarifa</div>';
-  h += `<div class="detail-pair detail-pair--strong"><span class="detail-pair__key">Total</span><span class="detail-pair__val">${formatMoney(offer.price?.total)}</span></div>`;
+  h += `<div class="detail-pair detail-pair--strong"><span class="detail-pair__key">Total</span><span class="detail-pair__val">${offerPriceLabels.totalLabel}</span></div>`;
+  h += `<div class="detail-pair"><span class="detail-pair__key">Por persona</span><span class="detail-pair__val">${offerPriceLabels.perPersonLabel.replace(/ por persona$/, "")}</span></div>`;
   if (offer.price?.base) h += `<div class="detail-pair"><span class="detail-pair__key">Base</span><span class="detail-pair__val">${formatMoney(offer.price.base)}</span></div>`;
   if (offer.price?.taxes) h += `<div class="detail-pair"><span class="detail-pair__key">Tasas</span><span class="detail-pair__val">${formatMoney(offer.price.taxes)}</span></div>`;
   if (offer.fareMeta?.lastTicketingDate) h += `<div class="detail-pair"><span class="detail-pair__key">Emisión límite</span><span class="detail-pair__val">${offer.fareMeta.lastTicketingDate}</span></div>`;
@@ -4898,12 +5071,13 @@ tripType.addEventListener("change", updateModeFields);
 sortButtonsEl?.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-sort]");
   if (!btn) return;
+  markPollingUiInteraction();
   state.sortMode = btn.dataset.sort;
   sortMode.value = btn.dataset.sort; // sync hidden select
   state.resultsPage = 1;
   state.resultsScroll = { top: 0, left: 0 };
   applyClientOfferControls();
-  renderAll();
+  renderSearchResultsViewport();
 });
 
 // View toggle
@@ -4997,11 +5171,12 @@ window.addEventListener("resize", debounce(() => {
 ["sortMode", "nonStop", "baggageRequired", "maxLayoverMinutes", "maxStopsFilter"].forEach((id) => {
   control(id)?.addEventListener("change", async () => {
     if (!state.searchResponse?.allOffers) return;
+    markPollingUiInteraction();
     state.sortMode = controlValue("sortMode") || state.sortMode;
     state.resultsPage = 1;
     state.resultsScroll = { top: 0, left: 0 };
     applyClientOfferControls();
-    renderAll();
+    renderSearchResultsViewport({ includeAirlineBar: true });
   });
 });
 
@@ -5087,6 +5262,7 @@ quotationButton.addEventListener("click", async () => {
       return;
     }
     const quotation = resolveQuotationPayload(data);
+    state.searchResponse.serverOffers = state.searchResponse.serverOffers.map((o) => o.id === data.offer.id ? data.offer : o);
     state.searchResponse.allOffers = state.searchResponse.allOffers.map((o) => o.id === data.offer.id ? data.offer : o);
     applyClientOfferControls();
     state.quotationText = quotation;
@@ -5163,6 +5339,11 @@ function renderMigrationResults() {
   const origin = months[0]?.origin ?? "";
   const destination = months[0]?.destination ?? "";
   const route = [origin, destination].filter(Boolean).join(" → ");
+  const passengerCount = normalizePassengerCounts({
+    adults: $("adults")?.value ?? 1,
+    children: $("children")?.value ?? 0,
+    infants: $("infants")?.value ?? 0,
+  }).total;
 
   let h = `<div class="migration-panel">`;
   h += `<div class="migration-panel__header">`;
@@ -5181,14 +5362,18 @@ function renderMigrationResults() {
       h += `<div class="migration-card__price migration-card__price--loading">Buscando&hellip;</div>`;
     } else if (m.cheapest) {
       const offer = m.cheapest;
-      const price = numFmt.format(offer.totalPrice ?? 0);
-      const currency = offer.currencyCode || "USD";
+      const totalMoney = offer.price?.total
+        ? offer.price.total
+        : {
+            amount: offer.totalPrice ?? 0,
+            currencyCode: offer.currencyCode || "USD",
+          };
       const airline = offer.itineraries?.[0]?.segments?.[0]?.airlineName
         || offer.itineraries?.[0]?.segments?.[0]?.airlineCode
         || "";
       const date = offer.itineraries?.[0]?.segments?.[0]?.departureDate
         || offer.departureDate || "";
-      h += `<div class="migration-card__price">${escapeHtml(currency)} ${price}</div>`;
+      h += `<div class="migration-card__price">${renderPriceBreakdownHtml(totalMoney, passengerCount, { totalSuffix: " total" })}</div>`;
       h += `<div class="migration-card__detail">${escapeHtml(formatDateCompact(date))}</div>`;
       if (airline) {
         h += `<div class="migration-card__detail">${escapeHtml(airline)}</div>`;
@@ -5300,7 +5485,7 @@ function updateMigrationMonth(index, data) {
   m.complete = Boolean(data.searchComplete);
   if (offers.length > 0) {
     m.cheapest = offers.reduce((best, o) =>
-      (o.totalPrice ?? Infinity) < (best.totalPrice ?? Infinity) ? o : best, offers[0]);
+      ((o.price?.total?.amount ?? o.totalPrice ?? Infinity) < (best.price?.total?.amount ?? best.totalPrice ?? Infinity) ? o : best), offers[0]);
   }
 }
 

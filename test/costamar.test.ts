@@ -8,6 +8,9 @@ import {
   COSTAMAR_CONCURRENCY,
   createLocalCostamarMatrixDraft,
   mapCostamarRecommendationToOffer,
+  resetCostamarWarmupStateForTests,
+  searchLocalCostamarExact,
+  setCostamarWarmupOpenerForTests,
 } from "../src/local-costamar";
 import {
   buildProviderContext,
@@ -1189,6 +1192,433 @@ test("mapCostamarRecommendationToOffer keeps USD as the offer currency for quota
   assert.equal(normalized.offer?.price.total.currencyCode, "USD");
   assert.equal(normalized.offer?.price.base?.currencyCode, "USD");
   assert.equal(normalized.offer?.price.taxes?.currencyCode, "USD");
+});
+
+test("searchLocalCostamarExact can warm a missing branded token from a seeded Chrome session", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-warmup-"));
+  const profileName = "Profile 40";
+  const sessionsDir = join(tempRoot, profileName, "Sessions");
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const freshToken = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+
+  const previousFetch = global.fetch;
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  const previousWarmupEnabled = process.env.COSTAMAR_SESSION_WARMUP_ENABLED;
+  const previousWarmupTimeout = process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS;
+  const previousWarmupCooldown = process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS;
+
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  process.env.COSTAMAR_SESSION_WARMUP_ENABLED = "1";
+  process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS = "2000";
+  process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS = "0";
+
+  resetCostamarSessionCacheForTests();
+  resetCostamarWarmupStateForTests();
+
+  let openedUrl = "";
+  setCostamarWarmupOpenerForTests(async (targetUrl, preferredBrowser, chromeOptions) => {
+    openedUrl = targetUrl;
+    assert.equal(preferredBrowser, "chrome");
+    assert.equal(chromeOptions?.userDataDir, tempRoot);
+    assert.equal(chromeOptions?.profileDirectory, profileName);
+
+    writeFileSync(
+      join(sessionsDir, "Tabs_1"),
+      `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/1/0/0?terminalId=0721808110&lang=es&token=${freshToken}`,
+      "utf8",
+    );
+
+    return { launcher: "chrome" };
+  });
+
+  global.fetch = (async (input, init) => {
+    const url = String(input);
+
+    if (url === "https://costamar.com.pe/vuelos/api/engines/0721808110") {
+      return new Response(
+        JSON.stringify(buildEngine()),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (url === "https://costamar.com.pe/vuelos/api/flights/search") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { token?: string };
+      assert.equal(body.token, freshToken);
+
+      return new Response(
+        JSON.stringify({
+          status: 200,
+          data: [buildRecommendation()],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (url === "https://costamar.com.pe/vuelos/api/flights/markups/apply") {
+      return new Response(
+        JSON.stringify({
+          apply: false,
+          markupsApplied: [],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await searchLocalCostamarExact(
+      buildExactRequest(),
+      {
+        costamar: {
+          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+          terminalId: "0721808110",
+          token: "",
+          lang: "es",
+        },
+      },
+    );
+
+    assert.equal(new URL(openedUrl).searchParams.get("token"), null);
+    assert.equal(result.offers.length, 1);
+    assert.equal(result.offers[0]?.purchasePaths.length, 1);
+    assert.equal(
+      new URL(result.offers[0]?.purchasePaths[0]?.url ?? "").searchParams.get("token"),
+      freshToken,
+    );
+  } finally {
+    global.fetch = previousFetch;
+    resetCostamarWarmupStateForTests();
+    resetCostamarSessionCacheForTests();
+    rmSync(tempRoot, { recursive: true, force: true });
+
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    if (previousWarmupEnabled === undefined) {
+      delete process.env.COSTAMAR_SESSION_WARMUP_ENABLED;
+    } else {
+      process.env.COSTAMAR_SESSION_WARMUP_ENABLED = previousWarmupEnabled;
+    }
+
+    if (previousWarmupTimeout === undefined) {
+      delete process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS;
+    } else {
+      process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS = previousWarmupTimeout;
+    }
+
+    if (previousWarmupCooldown === undefined) {
+      delete process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS;
+    } else {
+      process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS = previousWarmupCooldown;
+    }
+  }
+});
+
+test("searchLocalCostamarExact prefers a fresher manual Costamar token on every search", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-fresh-manual-"));
+  const profileName = "Profile 40";
+  const sessionsDir = join(tempRoot, profileName, "Sessions");
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const olderToken = buildJwt({
+    id: "0721808110",
+    iat: 1893452400,
+    exp: 1893456000,
+  });
+  const freshToken = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+
+  writeFileSync(
+    join(sessionsDir, "Tabs_1"),
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/1/0/0?terminalId=0721808110&lang=es&token=${freshToken}`,
+    "utf8",
+  );
+
+  const previousFetch = global.fetch;
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+
+  resetCostamarSessionCacheForTests();
+  resetCostamarWarmupStateForTests();
+
+  setCostamarWarmupOpenerForTests(async () => {
+    throw new Error("Warm-up opener should not run when a fresher manual token already exists.");
+  });
+
+  global.fetch = (async (input, init) => {
+    const url = String(input);
+
+    if (url === "https://costamar.com.pe/vuelos/api/engines/0721808110") {
+      return new Response(
+        JSON.stringify(buildEngine()),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (url === "https://costamar.com.pe/vuelos/api/flights/search") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { token?: string };
+      assert.equal(body.token, freshToken);
+
+      return new Response(
+        JSON.stringify({
+          status: 200,
+          data: [buildRecommendation()],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (url === "https://costamar.com.pe/vuelos/api/flights/markups/apply") {
+      return new Response(
+        JSON.stringify({
+          apply: false,
+          markupsApplied: [],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await searchLocalCostamarExact(
+      buildExactRequest(),
+      {
+        costamar: {
+          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+          terminalId: "0721808110",
+          token: olderToken,
+          lang: "es",
+        },
+      },
+    );
+
+    assert.equal(result.offers.length, 1);
+    assert.equal(
+      new URL(result.offers[0]?.purchasePaths[0]?.url ?? "").searchParams.get("token"),
+      freshToken,
+    );
+  } finally {
+    global.fetch = previousFetch;
+    resetCostamarWarmupStateForTests();
+    resetCostamarSessionCacheForTests();
+    rmSync(tempRoot, { recursive: true, force: true });
+
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+  }
+});
+
+test("searchLocalCostamarExact applies Costamar markups using the provider payload shape", async () => {
+  const previousFetch = global.fetch;
+  const request = {
+    providerId: "costamar",
+    tripType: "round-trip",
+    searchMode: "exact",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "CTG",
+        departureDate: "2026-09-07",
+        returnDate: "2026-09-10",
+      },
+    ],
+    passengers: {
+      adults: 3,
+      children: 0,
+      infants: 0,
+    },
+    cabin: "ECONOMY",
+    filters: {},
+    coverageMode: "core",
+    redirectMode: "best-effort",
+    currencyCode: "USD",
+    locale: "es-PE",
+    market: "PE",
+  } satisfies SearchRequest;
+
+  global.fetch = (async (input, init) => {
+    const url = String(input);
+
+    if (url === "https://costamar.com.pe/vuelos/api/engines/0721808110") {
+      return new Response(
+        JSON.stringify({
+          code: "0721808110",
+          profile: {
+            id: "profile-1",
+            currencyCode: "USD",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (url === "https://costamar.com.pe/vuelos/api/flights/search") {
+      return new Response(
+        JSON.stringify({
+          status: 200,
+          data: [
+            {
+              id: "rec-markup",
+              itinerary: [
+                {
+                  flights: [
+                    {
+                      departureAirport: { code: "LIM" },
+                      arrivalAirport: { code: "CTG" },
+                      departureDateTime: "2026-09-07T09:45:00.000-0500",
+                      arrivalDateTime: "2026-09-07T13:31:00.000-0500",
+                      elapsedTime: "0346",
+                      flightNumber: "7780",
+                      operatingAirline: { code: "JA", name: "JetSmart Airlines" },
+                      marketingAirline: { code: "JA", name: "JetSmart Airlines" },
+                      fareBasisCode: "SLRDCL",
+                      bookingClass: { code: "S" },
+                      cabinType: "Y",
+                    },
+                  ],
+                },
+                {
+                  flights: [
+                    {
+                      departureAirport: { code: "CTG" },
+                      arrivalAirport: { code: "LIM" },
+                      departureDateTime: "2026-09-10T14:26:00.000-0500",
+                      arrivalDateTime: "2026-09-10T18:05:00.000-0500",
+                      elapsedTime: "0339",
+                      flightNumber: "7781",
+                      operatingAirline: { code: "JA", name: "JetSmart Airlines" },
+                      marketingAirline: { code: "JA", name: "JetSmart Airlines" },
+                      fareBasisCode: "SLRDCL",
+                      bookingClass: { code: "S" },
+                      cabinType: "Y",
+                    },
+                  ],
+                },
+              ],
+              pricing: {
+                base: "552.00",
+                taxes: "449.16",
+                total: "1001.16",
+                fees: [],
+                discounts: [],
+                passengers: {
+                  adults: {
+                    base: "184.00",
+                    total: "333.72",
+                    contextCode: "ADT",
+                  },
+                },
+                source: "PUBLISHED",
+                fareQualifier: "INTERNATIONAL",
+                validatingAirline: "JZ",
+                totalAmount: 1001.16,
+              },
+              pos: {
+                systemProviderCode: "112",
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (url === "https://costamar.com.pe/vuelos/api/flights/markups/apply") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      assert.equal(body.routeType, "INTERNATIONAL");
+      assert.equal(body.fareType, "PUBLISHED");
+      assert.deepEqual(body.passengersType, ["ADT"]);
+      assert.equal(Array.isArray(body.locations), true);
+      assert.equal(Array.isArray(body.flights), true);
+
+      const flights = body.flights as Array<Record<string, unknown>>;
+      assert.equal(flights.length, 2);
+      assert.deepEqual(flights.map((flight) => flight.refNumber), [0, 1]);
+      assert.deepEqual(
+        flights.map((flight) => (flight.segments as Array<Record<string, unknown>>)[0]?.bookingClass),
+        ["S", "S"],
+      );
+
+      return new Response(
+        JSON.stringify({
+          apply: true,
+          markupsApplied: [
+            {
+              amount: {
+                value: "11.80",
+                percentage: false,
+                appliesToBase: true,
+                perPassenger: false,
+                perBooking: false,
+                passengersType: ["ADT", "CHD", "INF"],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await searchLocalCostamarExact(
+      request,
+      {
+        costamar: {
+          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+          terminalId: "0721808110",
+          token: "secret-token",
+          lang: "es",
+        },
+      },
+    );
+
+    assert.equal(result.offers.length, 1);
+    assert.equal(result.offers[0]?.price.total.amount, 1036.56);
+    assert.equal(result.warnings.length, 0);
+  } finally {
+    global.fetch = previousFetch;
+  }
 });
 
 test("createLocalCostamarMatrixDraft leaves only useful stay combinations active", () => {

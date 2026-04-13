@@ -1895,6 +1895,11 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   font-size: 0.83rem;
 }
 
+.cell-sub--ghost {
+  visibility: hidden;
+  user-select: none;
+}
+
 .cell-sub--warning {
   color: var(--warning);
   font-weight: 600;
@@ -1981,9 +1986,33 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
 }
 
 .results-price {
+  white-space: normal;
+  text-align: right;
+}
+
+.price-stack {
+  display: inline-grid;
+  gap: 0.16rem;
+  justify-items: end;
+  line-height: 1.1;
+}
+
+.price-stack__total {
   font-family: var(--font-mono);
   font-weight: 700;
   white-space: nowrap;
+}
+
+.price-stack__meta {
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.price-stack--matrix {
+  justify-items: center;
 }
 
 .row-link {
@@ -2050,12 +2079,16 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
 }
 
 .pager-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-family: var(--font-mono);
   font-size: 0.78rem;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
   color: var(--text-muted);
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 0 0 7ch;
+  min-width: 7ch;
   text-align: center;
   letter-spacing: 0.04em;
   white-space: nowrap;
@@ -2099,11 +2132,23 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
 }
 
 .detail-hero {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.detail-hero__total {
   font-size: 1.65rem;
   font-weight: 700;
   letter-spacing: -0.05em;
-  min-width: 0;
-  overflow-wrap: anywhere;
+}
+
+.detail-hero__meta {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 .detail-summary {
@@ -2408,9 +2453,17 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
 
 .matrix-price,
 .cal-price {
-  font-family: var(--font-mono);
   font-size: 0.88rem;
-  font-weight: 700;
+}
+
+.matrix-price .price-stack__total,
+.cal-price .price-stack__total {
+  font-size: 0.88rem;
+}
+
+.matrix-price .price-stack__meta,
+.cal-price .price-stack__meta {
+  font-size: 0.66rem;
 }
 
 .matrix-meta,
@@ -2887,6 +2940,10 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   font-size: 1.2rem;
   font-weight: 700;
   color: var(--text);
+}
+
+.migration-card__price .price-stack {
+  justify-items: start;
 }
 
 .migration-card__price--loading {
