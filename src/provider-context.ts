@@ -41,6 +41,11 @@ interface CostamarSessionCandidate {
 let cachedCostamarSessions:
   | { readAtMs: number; candidates: CostamarSessionCandidate[] }
   | undefined;
+const runtimeCostamarSessionCandidates = new Map<string, CostamarSessionCandidate>();
+
+function costamarCdpTabScanEnabled(): boolean {
+  return String(process.env.COSTAMAR_CDP_TAB_SCAN_ENABLED ?? "0").trim() !== "0";
+}
 
 function stringOrFallback(value: string | undefined, fallback: string): string {
   const normalized = value?.trim();
@@ -197,6 +202,41 @@ export function resolveUsableCostamarBrandedToken(
   return normalized;
 }
 
+function runtimeCostamarCandidates(): CostamarSessionCandidate[] {
+  return [...runtimeCostamarSessionCandidates.values()];
+}
+
+export function rememberCostamarSessionCandidate(
+  input: { terminalId?: string; token?: string; source?: string },
+): void {
+  const token = sanitizeCostamarToken(input.token);
+  const terminalId = input.terminalId?.trim() || decodeCostamarTokenTerminalId(token);
+  if (!token || !terminalId || !costamarTokenMatchesTerminal(token, terminalId)) {
+    return;
+  }
+
+  const { iatMs, expMs } = decodeJwtTimes(token);
+  if (expMs > 0 && expMs <= Date.now()) {
+    return;
+  }
+
+  const nextCandidate: CostamarSessionCandidate = {
+    terminalId,
+    token,
+    iatMs,
+    expMs,
+    source: input.source?.trim() || "runtime",
+  };
+  const previous = runtimeCostamarSessionCandidates.get(terminalId);
+  if (!previous) {
+    runtimeCostamarSessionCandidates.set(terminalId, nextCandidate);
+    return;
+  }
+
+  const preferred = pickLatestCostamarSessionCandidate([previous, nextCandidate]);
+  runtimeCostamarSessionCandidates.set(terminalId, preferred ?? nextCandidate);
+}
+
 function readRepoCostamarUserDataDirCandidates(): string[] {
   return [
     join(process.cwd(), "profiles", "costamar-agent"),
@@ -242,6 +282,32 @@ function resolveConfiguredChromeProfile(): string | undefined {
   const configured = process.env.COSTAMAR_CHROME_PROFILE?.trim()
     ?? process.env.AGIL_CHROME_PROFILE?.trim();
   return configured || undefined;
+}
+
+export function resolveChromeDevToolsBrowserWsEndpoint(userDataDir: string): string | undefined {
+  const devToolsPath = join(userDataDir, "DevToolsActivePort");
+  if (!existsSync(devToolsPath)) {
+    return undefined;
+  }
+
+  try {
+    const [portLine = "", browserPath = ""] = readFileSync(devToolsPath, "utf8")
+      .trim()
+      .split(/\r?\n/);
+    const port = Number(portLine);
+    const normalizedPath = browserPath.trim();
+    if (!Number.isFinite(port) || port <= 0 || port > 65535) {
+      return undefined;
+    }
+
+    if (!normalizedPath.startsWith("/")) {
+      return undefined;
+    }
+
+    return `ws://127.0.0.1:${port}${normalizedPath}`;
+  } catch {
+    return undefined;
+  }
 }
 
 function readChromeProfileCandidates(userDataDir: string, includeConfiguredOnly = false): string[] {
@@ -613,27 +679,39 @@ function collectCostamarSessionCandidatesFromChromeProfiles(
 }
 
 function readCostamarCandidatesViaCDP(userDataDir: string): CostamarSessionCandidate[] {
-  const devToolsPath = join(userDataDir, "DevToolsActivePort");
-  if (!existsSync(devToolsPath)) return [];
-
-  let content: string;
-  try {
-    content = readFileSync(devToolsPath, "utf8").trim();
-  } catch {
+  if (!costamarCdpTabScanEnabled()) {
     return [];
   }
 
-  const lines = content.split(/\r?\n/);
-  const port = Number(lines[0]);
-  if (!Number.isFinite(port) || port <= 0 || port > 65535) return [];
+  const browserWsEndpoint = resolveChromeDevToolsBrowserWsEndpoint(userDataDir);
+  if (!browserWsEndpoint) {
+    return [];
+  }
 
   const script = [
-    'const h=require("http");',
-    `h.get("http://127.0.0.1:${port}/json/list",{timeout:3000},r=>{`,
-    'let b="";r.on("data",d=>b+=d);r.on("end",()=>process.stdout.write(b))}).on("error",()=>{});',
+    "const endpoint = process.argv[1];",
+    "const finish = (value = '') => { try { process.stdout.write(value); } catch {} process.exit(0); };",
+    "const fail = () => finish('');",
+    "const socket = new WebSocket(endpoint);",
+    "const timer = setTimeout(fail, 4000);",
+    "socket.addEventListener('open', () => {",
+    "  socket.send(JSON.stringify({ id: 1, method: 'Target.getTargets' }));",
+    "});",
+    "socket.addEventListener('message', (event) => {",
+    "  try {",
+    "    const payload = JSON.parse(String(event.data));",
+    "    if (payload?.id !== 1) return;",
+    "    clearTimeout(timer);",
+    "    finish(JSON.stringify(payload?.result?.targetInfos ?? []));",
+    "  } catch {",
+    "    fail();",
+    "  }",
+    "});",
+    "socket.addEventListener('error', fail);",
+    "socket.addEventListener('close', () => clearTimeout(timer));",
   ].join("");
 
-  const result = spawnSync(process.execPath, ["-e", script], {
+  const result = spawnSync(process.execPath, ["-e", script, browserWsEndpoint], {
     timeout: 5000,
     encoding: "utf8",
     windowsHide: true,
@@ -678,7 +756,10 @@ function readCostamarSessionCandidateFromChrome(
     && cachedCostamarSessions
     && (Date.now() - cachedCostamarSessions.readAtMs) < COSTAMAR_SESSION_CACHE_TTL_MS
   ) {
-    return pickLatestCostamarSessionCandidateForTerminal(cachedCostamarSessions.candidates, terminalId);
+    return pickLatestCostamarSessionCandidateForTerminal(
+      [...runtimeCostamarCandidates(), ...cachedCostamarSessions.candidates],
+      terminalId,
+    );
   }
 
   const configuredUserDataDirs = readChromeUserDataDirCandidates(true);
@@ -717,7 +798,10 @@ function readCostamarSessionCandidateFromChrome(
     readAtMs: Date.now(),
     candidates,
   };
-  return pickLatestCostamarSessionCandidateForTerminal(candidates, terminalId);
+  return pickLatestCostamarSessionCandidateForTerminal(
+    [...runtimeCostamarCandidates(), ...candidates],
+    terminalId,
+  );
 }
 
 function maybeRefreshCostamarSessionCandidate(
@@ -748,6 +832,7 @@ function maybeRefreshCostamarSessionCandidate(
 
 export function resetCostamarSessionCacheForTests(): void {
   cachedCostamarSessions = undefined;
+  runtimeCostamarSessionCandidates.clear();
 }
 
 export function resolveProviderId(providerId?: ProviderId): ProviderId {

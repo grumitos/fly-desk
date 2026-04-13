@@ -114,7 +114,7 @@ test("commercial quotation lists multiple airlines and moves missing baggage to 
   assert.match(text, /✅ INCLUYE\n\* Boleto de ida y vuelta\n\* Equipaje incluido: mochila o artículo personal y maleta de mano/);
   assert.match(text, /🚫 NO INCLUYE\n\* Maleta de bodega/);
   assert.match(text, /📋 CONDICIONES\n- Reembolsos no permitidos después de emitir\.\n\* Cambios de nombre no permitidos\.\n\* Cambios de fecha y ruta sujetos a condiciones de la tarifa\./);
-  assert.match(text, /💵 PRECIO:\n\nUS\$ 1,799 o S\/ 6,329 soles por adulto/);
+  assert.match(text, /💵 PRECIO:\n\nUS\$ 1,799 por adulto\./);
   assert.doesNotMatch(text, /Sin Maleta Facturada/);
   assert.doesNotMatch(text, /DETALLE TECNICO/);
   assert.doesNotMatch(text, /\[Aquí no se coloca nada de momento, el agente decide\]/);
@@ -135,11 +135,65 @@ test("commercial quotation lists both hand and checked baggage as exclusions whe
   assert.match(text, /🚫 NO INCLUYE\n\* Maleta de mano\n\* Maleta de bodega/);
 });
 
-test("commercial quotation keeps only the dollars line when the exchange rate is unavailable", () => {
+test("commercial quotation keeps only the dollars line even when an exchange rate exists", () => {
   const text = buildCommercialQuotation(buildOffer(), buildRequest(), {
+    timeZone: "UTC",
+    usdToPenRate: 3.61,
+  });
+
+  assert.match(text, /US\$ 512 por adulto\./);
+  assert.doesNotMatch(text, / o S\/|soles|Total en soles/);
+});
+
+test("commercial quotation omits all-airports labels from the route summary", () => {
+  const request = buildRequest();
+  request.legs[0] = {
+    ...request.legs[0],
+    origin: "MAD",
+    destination: "LIM",
+    originLabel: "MAD - Madrid (Todos Los Aeropuertos), España",
+    destinationLabel: "LIM - Lima, Peru",
+  };
+
+  const text = buildCommercialQuotation(buildOffer({
+    origin: "MAD",
+    destination: "LIM",
+    itineraries: [
+      {
+        direction: "outbound",
+        durationMinutes: 660,
+        stops: 0,
+        segments: [
+          {
+            flightNumber: "PU 101",
+            marketingCarrier: "PU",
+            origin: "MAD",
+            destination: "LIM",
+            departureAt: "2026-05-11T11:00:00Z",
+            arrivalAt: "2026-05-11T19:00:00Z",
+          },
+        ],
+      },
+      {
+        direction: "inbound",
+        durationMinutes: 650,
+        stops: 0,
+        segments: [
+          {
+            flightNumber: "PU 102",
+            marketingCarrier: "PU",
+            origin: "LIM",
+            destination: "MAD",
+            departureAt: "2026-06-10T18:10:00Z",
+            arrivalAt: "2026-06-11T05:00:00Z",
+          },
+        ],
+      },
+    ],
+  }), request, {
     timeZone: "UTC",
   });
 
-  assert.match(text, /US\$ 512 por adulto/);
-  assert.doesNotMatch(text, / o S\//);
+  assert.match(text, /✈️ Ruta: Madrid \(MAD\) - Lima \(LIM\) - Madrid \(MAD\)/);
+  assert.doesNotMatch(text, /Todos Los Aeropuertos|Todos los aeropuertos|todos los aeropuertos/);
 });

@@ -112,8 +112,19 @@ Costamar:
   Si no se define, Fly Desk usa el terminal publico `0721808110`.
 - `COSTAMAR_TOKEN=...`
 - `COSTAMAR_LANG=es`
+- `COSTAMAR_B2B_EMAIL=...`
+- `COSTAMAR_B2B_PASSWORD=...`
+- `COSTAMAR_B2B_AUTOMATION_ALLOW_SESSION_ONLY=1`
+  Está activo por defecto. Permite intentar la generación del token usando una sesión B2B ya viva en el perfil de Chrome, aun sin credenciales explícitas.
+- `COSTAMAR_B2B_USE_LIVE_BROWSER=0`
+  Si configuras `COSTAMAR_B2B_EMAIL` y `COSTAMAR_B2B_PASSWORD`, conviene dejarlo en `0` para que Costamar genere el token con un navegador aislado y no use tu Chrome vivo ni dispare prompts de depuración.
+- `COSTAMAR_CDP_TAB_SCAN_ENABLED=0`
+  Queda apagado por defecto para que Chrome no vuelva a pedir permisos de depuración en cada búsqueda solo por escanear pestañas abiertas.
+- `COSTAMAR_BROWSER_HEADLESS=1`
 - `COSTAMAR_SESSION_WARMUP_ENABLED=1`
-  Activo por defecto. Abre una busqueda seeded de Costamar en Chrome cuando falta el token branded e intenta recuperarlo desde la sesion local. Usa `0` para desactivarlo.
+  Activo por defecto. Primero intenta generar el token desde la sesión B2B viva de Costamar usando la misma llamada interna que dispara el formulario de vuelos y, si eso falla, cae al flujo aislado. Usa `0` para desactivarlo.
+- `COSTAMAR_SESSION_WARMUP_OPEN_BROWSER_FALLBACK=1`
+  Opcional. Reabre la pestaña B2B y una branded search visible como último recurso. Por defecto queda apagado para evitar pestañas innecesarias.
 - `COSTAMAR_SESSION_WARMUP_TIMEOUT_MS=8000`
 - `COSTAMAR_HTTP_TIMEOUT_MS=20000`
 

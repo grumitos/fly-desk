@@ -88,18 +88,6 @@ function formatCommercialPriceLine(prefix: string, amount: number | undefined, s
     : `${prefix} ${formatQuotationAmount(amount)} ${suffix}`.trimEnd();
 }
 
-function formatCommercialDualPriceLine(
-  usdAmount: number,
-  penAmount: number | undefined,
-  suffix: string,
-): string {
-  if (penAmount === undefined) {
-    return formatCommercialPriceLine("US$", usdAmount, suffix);
-  }
-
-  return `US$ ${formatQuotationAmount(usdAmount)} o S/ ${formatQuotationAmount(penAmount)} soles ${suffix}`.trimEnd();
-}
-
 function formatCommercialTotalLine(label: string, prefix: string, amount: number | undefined): string {
   return amount === undefined
     ? `${label}: ${prefix} `
@@ -183,13 +171,20 @@ function normalizeIataCode(code?: string): string {
   return String(code ?? "").trim().toUpperCase();
 }
 
+function stripAllAirportsLabel(value: string): string {
+  return value
+    .replace(/\s*\((?:todos\s+los\s+aeropuertos|all\s+airports)\)\s*/gi, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 function locationLabel(value?: string): string {
   const normalized = String(value ?? "").trim();
   if (!normalized) {
     return "";
   }
 
-  const withoutCode = normalized.replace(/^[A-Z]{3}\s*-\s*/, "").trim();
+  const withoutCode = stripAllAirportsLabel(normalized.replace(/^[A-Z]{3}\s*-\s*/, "").trim());
   const firstChunk = withoutCode.split(",")[0]?.trim() ?? "";
   const base = firstChunk || withoutCode;
   if (/^[A-Z]{3}$/.test(base)) {
@@ -321,16 +316,13 @@ function buildCommercialScheduleLine(
 function buildCommercialPriceLines(
   offer: CanonicalOffer,
   request: SearchRequest,
-  options: QuotationRenderOptions,
+  _options: QuotationRenderOptions,
 ): string[] {
   const currencyCode = String(offer.price.total.currencyCode ?? "").trim().toUpperCase();
   const totalAmount = offer.price.total.amount;
   const adults = request.passengers.adults;
   const children = request.passengers.children;
   const infants = request.passengers.infants;
-  const usdToPenRate = typeof options.usdToPenRate === "number" && options.usdToPenRate > 0
-    ? options.usdToPenRate
-    : undefined;
 
   if (currencyCode !== "USD") {
     return [
@@ -340,20 +332,12 @@ function buildCommercialPriceLines(
 
   if (adults > 0 && children === 0 && infants === 0) {
     const perAdultUsd = totalAmount / adults;
-    const perAdultPen = usdToPenRate === undefined ? undefined : perAdultUsd * usdToPenRate;
     const lines = [
-      formatCommercialDualPriceLine(perAdultUsd, perAdultPen, "por adulto"),
+      formatCommercialPriceLine("US$", perAdultUsd, "por adulto."),
     ];
 
     if (adults > 1) {
       lines.push(formatCommercialTotalLine("Total", "US$", totalAmount));
-      lines.push(
-        formatCommercialTotalLine(
-          "Total en soles",
-          "S/",
-          usdToPenRate === undefined ? undefined : totalAmount * usdToPenRate,
-        ),
-      );
     }
 
     return lines;
@@ -361,11 +345,6 @@ function buildCommercialPriceLines(
 
   return [
     formatCommercialTotalLine("Total", "US$", totalAmount),
-    formatCommercialTotalLine(
-      "Total en soles",
-      "S/",
-      usdToPenRate === undefined ? undefined : totalAmount * usdToPenRate,
-    ),
   ];
 }
 
