@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser, BrowserContext, Page } from "playwright";
 import {
+  registerActiveTempArtifact,
+  unregisterActiveTempArtifact,
+} from "./temp-artifacts";
+import {
   buildDerivedOneWayRequest,
   buildDerivedRequest,
   diffDays,
@@ -52,6 +56,12 @@ import {
   resolveRangeSearchConcurrency,
   SHARED_SEARCH_CONCURRENCY,
 } from "./search-concurrency";
+import {
+  promptTerminalSecret,
+  promptTerminalText,
+  terminalPromptAvailable,
+} from "./terminal-secret-prompt";
+import { generateTotpCode } from "./totp";
 
 interface CostamarEngineMetadata {
   code?: string;
@@ -174,6 +184,45 @@ interface CostamarSearchOutcome {
   warnings: string[];
 }
 
+interface CostamarB2bPromptRequest {
+  email?: boolean;
+  password?: boolean;
+  authCode?: boolean;
+  challengeLabel?: string;
+}
+
+interface CostamarB2bPromptResponse {
+  email?: string;
+  password?: string;
+  authCode?: string;
+}
+
+interface CostamarB2bAuthInputDescriptor {
+  index: number;
+  id: string;
+  name: string;
+  type: string;
+  autocomplete: string;
+  maxLength: number;
+  visible: boolean;
+}
+
+interface CostamarB2bAuthSnapshot {
+  text: string;
+  inputs: CostamarB2bAuthInputDescriptor[];
+}
+
+interface CostamarKeyboardInputTarget {
+  click(): Promise<unknown>;
+  press(key: string): Promise<unknown>;
+  type(text: string, options?: { delay?: number }): Promise<unknown>;
+}
+
+export interface CostamarB2bAuthChallenge {
+  kind: "single" | "split";
+  inputIndexes: number[];
+}
+
 interface CostamarMarkupApplied {
   amount?: {
     value?: number | string;
@@ -203,6 +252,7 @@ const COSTAMAR_AIR_API_BASE_URL = process.env.COSTAMAR_AIR_API_BASE_URL?.trim()
 const COSTAMAR_REDIRECT_SESSION_WARNING =
   "Costamar redirect token is missing, expired, or incompatible with this terminal.";
 const COSTAMAR_SESSION_WARMUP_POLL_MS = 500;
+const COSTAMAR_B2B_KEYSTROKE_DELAY_MS = 35;
 const DEFAULT_COSTAMAR_B2B_BASE_URL = "https://b2b.clickandbook.com/lang/es/b2b";
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 
@@ -223,7 +273,17 @@ type CostamarWarmupGenerator = (
   context: CostamarProviderContext,
 ) => Promise<CostamarProviderContext | undefined>;
 
+type CostamarB2bPromptProvider = (
+  request: CostamarB2bPromptRequest,
+) => Promise<CostamarB2bPromptResponse | undefined>;
+
 let costamarWarmupGenerator: CostamarWarmupGenerator = generateCostamarRedirectContextViaB2B;
+let costamarB2bPromptProvider: CostamarB2bPromptProvider = promptCostamarB2bViaTerminal;
+let cachedInteractiveCostamarB2bCredentials: { email?: string; password?: string } = {};
+let pendingCostamarB2bCredentialPrompt:
+  | Promise<{ email?: string; password?: string }>
+  | undefined;
+let pendingCostamarB2bAuthPrompt: Promise<string | undefined> | undefined;
 
 export const COSTAMAR_CONCURRENCY = Object.freeze({
   get matrixMinimum() {
@@ -245,6 +305,10 @@ export const COSTAMAR_CONCURRENCY = Object.freeze({
 });
 
 const engineCache = new Map<string, Promise<CostamarEngineMetadata>>();
+const COSTAMAR_B2B_AUTH_HINT_PATTERN =
+  /otp|authenticator|verification|verificaci[oó]n|token|one.?time|two.?factor|2fa|mfa|c[oó]digo|code|pin/i;
+const COSTAMAR_B2B_AUTH_FIELD_PATTERN =
+  /otp|auth|token|verification|verify|code|pin|2fa|mfa/i;
 
 function costamarSessionWarmupEnabled(): boolean {
   return String(process.env.COSTAMAR_SESSION_WARMUP_ENABLED ?? "1").trim() !== "0";
@@ -319,13 +383,147 @@ function resolveCostamarB2bBaseUrl(): string {
 function resolveCostamarB2bCredentials(): { email?: string; password?: string } {
   const email = process.env.COSTAMAR_B2B_EMAIL?.trim()
     || process.env.COSTAMAR_B2B_USERNAME?.trim()
+    || cachedInteractiveCostamarB2bCredentials.email?.trim()
     || undefined;
   const password = process.env.COSTAMAR_B2B_PASSWORD?.trim()
+    || cachedInteractiveCostamarB2bCredentials.password?.trim()
     || undefined;
   return {
     ...(email ? { email } : {}),
     ...(password ? { password } : {}),
   };
+}
+
+function costamarB2bPromptEnabled(): boolean {
+  return String(process.env.COSTAMAR_B2B_PROMPT_ENABLED ?? "1").trim() !== "0";
+}
+
+function resolveCostamarB2bTotpSecret(): string | undefined {
+  const secret = process.env.COSTAMAR_B2B_TOTP_SECRET?.trim()
+    || process.env.COSTAMAR_B2B_TOTP_URI?.trim()
+    || undefined;
+  return secret || undefined;
+}
+
+function costamarB2bInteractivePromptAvailable(): boolean {
+  return costamarB2bPromptEnabled() && terminalPromptAvailable();
+}
+
+export async function applyCostamarB2bKeyboardInput(
+  target: CostamarKeyboardInputTarget,
+  value: string,
+  options?: { clear?: boolean; typingDelayMs?: number },
+): Promise<void> {
+  const shouldClear = options?.clear !== false;
+  const text = value ?? "";
+
+  await target.click();
+  if (shouldClear) {
+    const selectAllKey = process.platform === "darwin" ? "Meta+A" : "Control+A";
+    await target.press(selectAllKey).catch(() => undefined);
+    await target.press("Backspace").catch(() => undefined);
+  }
+
+  if (text) {
+    await target.type(text, {
+      delay: options?.typingDelayMs ?? COSTAMAR_B2B_KEYSTROKE_DELAY_MS,
+    });
+  }
+}
+
+function rememberInteractiveCostamarB2bCredentials(credentials: { email?: string; password?: string }): void {
+  cachedInteractiveCostamarB2bCredentials = {
+    ...cachedInteractiveCostamarB2bCredentials,
+    ...(credentials.email?.trim() ? { email: credentials.email.trim() } : {}),
+    ...(credentials.password?.trim() ? { password: credentials.password.trim() } : {}),
+  };
+}
+
+function clearInteractiveCostamarB2bCredentials(): void {
+  cachedInteractiveCostamarB2bCredentials = {};
+}
+
+async function promptCostamarB2bViaTerminal(
+  request: CostamarB2bPromptRequest,
+): Promise<CostamarB2bPromptResponse | undefined> {
+  if (!costamarB2bInteractivePromptAvailable()) {
+    return undefined;
+  }
+
+  const response: CostamarB2bPromptResponse = {};
+  if (request.email || request.password) {
+    console.log("\nCostamar B2B necesita credenciales para continuar.");
+  }
+  if (request.authCode) {
+    console.log(`\nCostamar B2B necesita ${request.challengeLabel ?? "un código Auth / OTP"} para continuar.`);
+  }
+
+  if (request.email) {
+    response.email = await promptTerminalText("Email Costamar B2B: ");
+  }
+  if (request.password) {
+    response.password = await promptTerminalSecret("Password Costamar B2B: ");
+  }
+  if (request.authCode) {
+    response.authCode = await promptTerminalSecret(`${request.challengeLabel ?? "Código Auth / OTP de Costamar"}: `);
+  }
+
+  return Object.keys(response).length > 0 ? response : undefined;
+}
+
+async function resolveCostamarB2bCredentialsForAutomation(): Promise<{ email?: string; password?: string }> {
+  const current = resolveCostamarB2bCredentials();
+  if (current.email && current.password) {
+    return current;
+  }
+
+  if (!costamarB2bInteractivePromptAvailable()) {
+    return current;
+  }
+
+  if (!pendingCostamarB2bCredentialPrompt) {
+    pendingCostamarB2bCredentialPrompt = (async () => {
+      const prompted = await costamarB2bPromptProvider({
+        email: !current.email,
+        password: !current.password,
+      });
+      rememberInteractiveCostamarB2bCredentials(prompted ?? {});
+      return resolveCostamarB2bCredentials();
+    })().finally(() => {
+      pendingCostamarB2bCredentialPrompt = undefined;
+    });
+  }
+
+  return pendingCostamarB2bCredentialPrompt;
+}
+
+async function promptCostamarB2bAuthCode(challengeLabel?: string): Promise<string | undefined> {
+  const configuredSecret = resolveCostamarB2bTotpSecret();
+  if (configuredSecret) {
+    try {
+      return generateTotpCode(configuredSecret);
+    } catch {
+      // Fall through to the interactive prompt below when the stored secret is invalid.
+    }
+  }
+
+  if (!costamarB2bInteractivePromptAvailable()) {
+    return undefined;
+  }
+
+  if (!pendingCostamarB2bAuthPrompt) {
+    pendingCostamarB2bAuthPrompt = (async () => {
+      const prompted = await costamarB2bPromptProvider({
+        authCode: true,
+        challengeLabel,
+      });
+      return prompted?.authCode?.trim() || undefined;
+    })().finally(() => {
+      pendingCostamarB2bAuthPrompt = undefined;
+    });
+  }
+
+  return pendingCostamarB2bAuthPrompt;
 }
 
 function costamarB2bAutomationEnabled(): boolean {
@@ -344,6 +542,7 @@ function canGenerateCostamarTokenViaB2B(): boolean {
   const credentials = resolveCostamarB2bCredentials();
   return Boolean(
     (credentials.email && credentials.password)
+    || costamarB2bInteractivePromptAvailable()
     || costamarB2bAutomationAllowsSessionOnly(),
   );
 }
@@ -540,6 +739,7 @@ function prepareTemporaryCostamarChromeProfile(profileName: string): string {
   const sourceRoot = resolveCostamarChromeLaunchOptions().userDataDir || DEFAULT_CHROME_USER_DATA_DIR;
   const tempRoot = join(tmpdir(), `travel_quote_foundation_costamar_browser_${randomUUID()}`);
   mkdirSync(join(tempRoot, profileName), { recursive: true });
+  registerActiveTempArtifact(tempRoot);
 
   [
     "Local State",
@@ -635,14 +835,228 @@ async function collectCostamarCandidatesFromPage(
   }
 }
 
-async function pageShowsCostamarB2bLogin(page: Page): Promise<boolean> {
-  if (page.url().includes("/login")) {
+function costamarB2bAuthInputPriority(input: CostamarB2bAuthInputDescriptor): number {
+  const metadata = `${input.id} ${input.name} ${input.autocomplete}`.trim().toLowerCase();
+  let score = 0;
+
+  if (input.autocomplete.toLowerCase().includes("one-time-code")) {
+    score -= 40;
+  }
+  if (COSTAMAR_B2B_AUTH_FIELD_PATTERN.test(metadata)) {
+    score -= 20;
+  }
+  if (input.type === "tel" || input.type === "number") {
+    score -= 6;
+  }
+  if (input.maxLength > 0 && input.maxLength <= 8) {
+    score -= 4;
+  }
+
+  return score + input.index;
+}
+
+export function detectCostamarB2bAuthChallenge(
+  snapshot: Partial<CostamarB2bAuthSnapshot> | undefined,
+): CostamarB2bAuthChallenge | undefined {
+  const text = String(snapshot?.text ?? "");
+  const visibleInputs = (snapshot?.inputs ?? []).filter((input) => {
+    const type = input.type.toLowerCase();
+    if (!input.visible) {
+      return false;
+    }
+
+    return !["hidden", "submit", "button", "checkbox", "radio"].includes(type);
+  });
+
+  const directMatches = visibleInputs.filter((input) =>
+    COSTAMAR_B2B_AUTH_FIELD_PATTERN.test(`${input.id} ${input.name} ${input.autocomplete}`.trim().toLowerCase())
+    || input.autocomplete.toLowerCase().includes("one-time-code"));
+
+  const textSuggestsAuth = COSTAMAR_B2B_AUTH_HINT_PATTERN.test(text.toLowerCase());
+  const fallbackMatches = textSuggestsAuth
+    ? visibleInputs.filter((input) => {
+      const metadata = `${input.id} ${input.name}`.trim().toLowerCase();
+      if (/(email|password|user|account|terminal)/i.test(metadata)) {
+        return false;
+      }
+
+      const type = input.type.toLowerCase();
+      if (!["", "text", "tel", "number", "password"].includes(type)) {
+        return false;
+      }
+
+      return input.maxLength === 1
+        || (input.maxLength >= 4 && input.maxLength <= 8)
+        || input.autocomplete.toLowerCase().includes("one-time-code");
+    })
+    : [];
+
+  const matches = (directMatches.length > 0 ? directMatches : fallbackMatches)
+    .sort((left, right) => costamarB2bAuthInputPriority(left) - costamarB2bAuthInputPriority(right));
+
+  if (matches.length === 0) {
+    return undefined;
+  }
+
+  const splitMatches = matches.filter((input) => input.maxLength === 1);
+  if (splitMatches.length >= 4 && splitMatches.length <= 8 && splitMatches.length === matches.length) {
+    return {
+      kind: "split",
+      inputIndexes: splitMatches.map((input) => input.index),
+    };
+  }
+
+  return {
+    kind: "single",
+    inputIndexes: [matches[0].index],
+  };
+}
+
+async function readCostamarB2bAuthSnapshot(page: Page): Promise<CostamarB2bAuthSnapshot | undefined> {
+  try {
+    return await page.evaluate(() => {
+      const inputs = Array.from(document.querySelectorAll("input"))
+        .map((input, index) => ({
+          index,
+          id: input.id ?? "",
+          name: input.getAttribute("name") ?? "",
+          type: input.getAttribute("type") ?? "text",
+          autocomplete: input.getAttribute("autocomplete") ?? "",
+          maxLength: typeof input.maxLength === "number" ? input.maxLength : 0,
+          visible: Boolean(
+            input instanceof HTMLElement
+            && (input.offsetParent !== null || input.getClientRects().length > 0)
+          ),
+        }));
+
+      return {
+        text: document.body?.innerText ?? "",
+        inputs,
+      };
+    }) as CostamarB2bAuthSnapshot;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveCostamarB2bAuthChallengeLabel(text: string): string {
+  if (/google\s+authenticator/i.test(text)) {
+    return "Código de Google Authenticator";
+  }
+  if (/authenticator/i.test(text)) {
+    return "Código del autenticador";
+  }
+  if (/otp/i.test(text)) {
+    return "Código OTP de Costamar";
+  }
+  if (/token/i.test(text)) {
+    return "Token de Costamar";
+  }
+
+  return "Código Auth / OTP de Costamar";
+}
+
+async function detectCostamarB2bAuthPrompt(page: Page): Promise<{
+  challenge: CostamarB2bAuthChallenge;
+  label: string;
+} | undefined> {
+  const snapshot = await readCostamarB2bAuthSnapshot(page);
+  const challenge = detectCostamarB2bAuthChallenge(snapshot);
+  if (!challenge) {
+    return undefined;
+  }
+
+  return {
+    challenge,
+    label: resolveCostamarB2bAuthChallengeLabel(snapshot?.text ?? ""),
+  };
+}
+
+async function submitCostamarB2bAuthPrompt(
+  page: Page,
+  challenge: CostamarB2bAuthChallenge,
+  authCode: string,
+): Promise<void> {
+  const inputLocator = page.locator("input");
+  const normalizedCode = authCode.trim();
+
+  if (challenge.kind === "split") {
+    const characters = [...normalizedCode];
+    for (let index = 0; index < challenge.inputIndexes.length; index += 1) {
+      await applyCostamarB2bKeyboardInput(
+        inputLocator.nth(challenge.inputIndexes[index]),
+        characters[index] ?? "",
+      );
+    }
+  } else {
+    await applyCostamarB2bKeyboardInput(
+      inputLocator.nth(challenge.inputIndexes[0]),
+      normalizedCode,
+    );
+  }
+
+  const submitSelectors = [
+    "#btnsubmit",
+    "button[type='submit']",
+    "input[type='submit']",
+    "button[id*='verify' i]",
+    "button[name*='verify' i]",
+    "button[id*='submit' i]",
+    "button[name*='submit' i]",
+  ];
+
+  let submitted = false;
+  for (const selector of submitSelectors) {
+    const control = page.locator(selector).first();
+    if (await control.count() === 0) {
+      continue;
+    }
+
+    const visible = await control.isVisible().catch(() => false);
+    if (!visible) {
+      continue;
+    }
+
+    await control.click().catch(() => undefined);
+    submitted = true;
+    break;
+  }
+
+  if (!submitted) {
+    const lastInput = inputLocator.nth(challenge.inputIndexes[challenge.inputIndexes.length - 1]);
+    await lastInput.press("Enter").catch(() => undefined);
+  }
+
+  await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => undefined);
+  await page.waitForTimeout(1500);
+}
+
+async function completeCostamarB2bAuthPrompt(page: Page): Promise<boolean> {
+  const prompt = await detectCostamarB2bAuthPrompt(page);
+  if (!prompt) {
     return true;
   }
 
+  const authCode = await promptCostamarB2bAuthCode(prompt.label);
+  if (!authCode) {
+    return false;
+  }
+
+  await submitCostamarB2bAuthPrompt(page, prompt.challenge, authCode);
+  return !(await pageShowsCostamarB2bLogin(page))
+    && !(await detectCostamarB2bAuthPrompt(page));
+}
+
+async function pageShowsCostamarB2bLogin(page: Page): Promise<boolean> {
   try {
-    return await page.locator("#email").count() > 0
-      && await page.locator("#password").count() > 0;
+    const email = page.locator("#email").first();
+    const password = page.locator("#password").first();
+    if (await email.count() === 0 || await password.count() === 0) {
+      return false;
+    }
+
+    return await email.isVisible().catch(() => false)
+      && await password.isVisible().catch(() => false);
   } catch {
     return false;
   }
@@ -661,21 +1075,26 @@ async function ensureCostamarB2bSession(page: Page): Promise<boolean> {
   }
 
   if (!(await pageShowsCostamarB2bLogin(page))) {
-    return true;
+    return completeCostamarB2bAuthPrompt(page);
   }
 
-  const credentials = resolveCostamarB2bCredentials();
+  const credentials = await resolveCostamarB2bCredentialsForAutomation();
   if (!credentials.email || !credentials.password) {
     return false;
   }
 
-  await page.locator("#email").fill(credentials.email);
-  await page.locator("#password").fill(credentials.password);
+  await applyCostamarB2bKeyboardInput(page.locator("#email"), credentials.email);
+  await applyCostamarB2bKeyboardInput(page.locator("#password"), credentials.password);
   await page.locator("#btnsubmit").click();
   await page.waitForLoadState("domcontentloaded", { timeout: 45000 }).catch(() => undefined);
   await page.waitForTimeout(3000);
 
-  return !(await pageShowsCostamarB2bLogin(page));
+  if (!(await pageShowsCostamarB2bLogin(page))) {
+    return completeCostamarB2bAuthPrompt(page);
+  }
+
+  clearInteractiveCostamarB2bCredentials();
+  return false;
 }
 
 async function launchCostamarBrowserContext(): Promise<{
@@ -833,6 +1252,7 @@ async function generateCostamarRedirectContextViaB2B(
     }
     if (tempRoot) {
       rmSync(tempRoot, { recursive: true, force: true });
+      unregisterActiveTempArtifact(tempRoot);
     }
   }
 
@@ -944,12 +1364,22 @@ export function setCostamarWarmupGeneratorForTests(
   costamarWarmupGenerator = generator ?? generateCostamarRedirectContextViaB2B;
 }
 
+export function setCostamarB2bPromptProviderForTests(
+  provider?: CostamarB2bPromptProvider,
+): void {
+  costamarB2bPromptProvider = provider ?? promptCostamarB2bViaTerminal;
+}
+
 export function resetCostamarWarmupStateForTests(): void {
   engineCache.clear();
   pendingCostamarSessionWarmups.clear();
   recentCostamarSessionWarmups.clear();
   costamarWarmupOpener = openUrlLocally;
   costamarWarmupGenerator = generateCostamarRedirectContextViaB2B;
+  costamarB2bPromptProvider = promptCostamarB2bViaTerminal;
+  cachedInteractiveCostamarB2bCredentials = {};
+  pendingCostamarB2bCredentialPrompt = undefined;
+  pendingCostamarB2bAuthPrompt = undefined;
   void closeLiveCostamarBrowserConnection();
   liveCostamarBrowserRetryAfterMs = 0;
   playwrightPromise = undefined;

@@ -15,8 +15,10 @@ export async function postJson(url, payload) {
   return data;
 }
 
-export async function getJson(url) {
-  const response = await fetch(url);
+export async function getJson(url, options = {}) {
+  const response = await fetch(url, {
+    signal: options.signal,
+  });
   const data = await response.json();
   if (!response.ok) {
     throw new Error(errorFromJsonResponse(data));

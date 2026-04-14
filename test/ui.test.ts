@@ -75,6 +75,22 @@ test("desktop search rail keeps mode first and the rest of the flow in travel or
   }, { autoOpen: false });
 });
 
+test("tab from origin skips the swap button and lands on destination", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+      await openDesktop(page, baseUrl);
+      await page.focus("#origin");
+      await page.keyboard.press("Tab");
+
+      const activeElement = await page.evaluate(() => ({
+        activeId: document.activeElement?.id ?? "",
+        swapTabIndex: document.getElementById("swapRouteBtn")?.getAttribute("tabindex") ?? "",
+      }));
+
+      assert.equal(activeElement.activeId, "destination");
+      assert.equal(activeElement.swapTabIndex, "-1");
+  }, { autoOpen: false });
+});
+
 test("desktop refinements no longer render removed max stops, currency, max price, or cabin controls", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
       await openDesktop(page, baseUrl);
@@ -122,7 +138,7 @@ test("query and offer panels expose homogeneous headers from first paint", async
         };
       });
 
-      assert.equal(probe.resultsTitle, "Consulta");
+      assert.equal(probe.resultsTitle, "Maqueta");
       assert.equal(probe.detailTitle, "Oferta");
       assert.equal(probe.resultsCountPresent, false);
       assert.equal(probe.resultsMeta, "");
@@ -135,20 +151,27 @@ test("query and offer panels expose homogeneous headers from first paint", async
   }, { autoOpen: false });
 });
 
-test("results panel boots with the shared skeleton before any search", async () => {
+test("results panel boots with an editable demo table before any search", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
       await openDesktop(page, baseUrl);
       const probe = await page.evaluate(() => ({
-        skeletonCount: document.querySelectorAll("#resultsContainer .results-skeleton").length,
-        emptyStateCount: document.querySelectorAll("#resultsContainer .empty-state").length,
-        busy: document.querySelector("#resultsContainer .results-skeleton")?.getAttribute("aria-busy") ?? "",
-        skeletonHeaderCount: document.querySelectorAll("#resultsContainer .results-skeleton__header").length,
+        editorCount: document.querySelectorAll("#resultsContainer .results-layout-editor").length,
+        prototypeRowCount: document.querySelectorAll("#resultsContainer .results-table--prototype tbody tr").length,
+        inputCount: document.querySelectorAll("#resultsContainer [data-results-layout-input]").length,
+        title: document.getElementById("resultsPanelTitle")?.textContent?.trim() ?? "",
+        firstCarrier: document.querySelector("#resultsContainer .results-table--prototype tbody tr:first-child .carrier-label")?.textContent?.trim() ?? "",
+        firstDateCell: document.querySelector("#resultsContainer .results-table--prototype tbody tr:first-child .results-date-stack")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+        statusText: document.querySelector("#resultsContainer .results-layout-editor__status")?.textContent?.trim() ?? "",
       }));
 
-      assert.equal(probe.skeletonCount, 1);
-      assert.equal(probe.emptyStateCount, 0);
-      assert.equal(probe.busy, "false");
-      assert.equal(probe.skeletonHeaderCount, 0);
+      assert.equal(probe.editorCount, 1);
+      assert.equal(probe.prototypeRowCount, 5);
+      assert.equal(probe.inputCount, 7);
+      assert.equal(probe.title, "Maqueta");
+      assert.equal(probe.firstCarrier, "Delta Air Lines");
+      assert.match(probe.firstDateCell, /Ida 20\/05/i);
+      assert.match(probe.firstDateCell, /Vuelta 27\/05/i);
+      assert.match(probe.statusText, /layout/i);
   }, { autoOpen: false });
 });
 
@@ -215,21 +238,6 @@ test("search payload keeps USD fixed without hidden max stops or a currency cont
       });
     });
       await openDesktop(page, baseUrl);
-      const expectedMaxResults = await page.evaluate(() => {
-        const viewport = document.querySelector("#resultsContainer .table-wrap") ?? document.getElementById("resultsContainer");
-        const header = viewport?.querySelector("thead");
-        const row = viewport?.querySelector("tbody tr.results-row--placeholder");
-        if (!(viewport instanceof HTMLElement) || !(header instanceof HTMLElement) || !(row instanceof HTMLElement)) {
-          throw new Error("Missing results viewport measurements");
-        }
-
-        const availableHeight = Math.max(
-          row.getBoundingClientRect().height,
-          viewport.clientHeight - header.getBoundingClientRect().height,
-        );
-        const visibleRows = Math.max(1, Math.floor((availableHeight + 1) / row.getBoundingClientRect().height));
-        return visibleRows * 25;
-      });
       await page.evaluate(() => {
         const origin = document.getElementById("origin") as HTMLInputElement | null;
         const destination = document.getElementById("destination") as HTMLInputElement | null;
@@ -259,8 +267,588 @@ test("search payload keeps USD fixed without hidden max stops or a currency cont
       assert.equal(capturedOriginLabel, "LIM - Lima, Peru");
       assert.equal(capturedDestinationLabel, "MIA - Miami, Usa");
       assert.equal(capturedMaxStops, undefined);
-      assert.equal(capturedMaxResults, expectedMaxResults);
+      assert.equal(capturedMaxResults, undefined);
       assert.equal(await page.locator("#currencyCode").count(), 0);
+  }, { autoOpen: false });
+});
+
+test("migration cards show exact date, provider links, and can open an exact search", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let migrationRequestCount = 0;
+    let firstRequestBody: any = null;
+    let firstMigrationDate = "";
+    let exactRequestBody: any = null;
+    const pageErrors: string[] = [];
+    const allRequestsCompleted = new Promise<void>((resolve) => {
+      page.on("pageerror", (error) => {
+        pageErrors.push(error.message);
+      });
+
+      page.route(`${baseUrl}/api/search`, async (route: Route) => {
+        const body = route.request().postDataJSON();
+        if (body?.request?.searchMode === "stay-range") {
+          migrationRequestCount += 1;
+          const departureDate = body?.request?.legs?.[0]?.departureStart ?? "2026-04-15";
+          if (!firstRequestBody) {
+            firstRequestBody = body;
+            firstMigrationDate = departureDate;
+          }
+          if (migrationRequestCount === 8) {
+            resolve();
+          }
+
+          const migrationOffer = buildOffer({
+            id: `migration-offer-${migrationRequestCount}`,
+            origin: "LIM",
+            destination: "MIA",
+            itineraries: [{
+              direction: "outbound",
+              durationMinutes: 480,
+              stops: 0,
+              segments: [{
+                flightNumber: "LA 123",
+                origin: "LIM",
+                destination: "MIA",
+                departureAt: `${departureDate}T14:00:00Z`,
+                departureDate,
+                arrivalAt: `${departureDate}T22:00:00Z`,
+                airlineName: "LATAM",
+              }],
+            }],
+            purchasePaths: [
+              {
+                provider: "agil-local",
+                type: "search-redirect",
+                label: "Buscar en Agil",
+                precision: "exact-search",
+                url: `https://example.test/agil/${migrationRequestCount}`,
+              },
+              {
+                provider: "costamar",
+                type: "search-redirect",
+                label: "Buscar en Costamar",
+                precision: "exact-search",
+                url: `https://example.test/costamar/${migrationRequestCount}`,
+              },
+            ],
+          });
+
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+              searchJobId: `migration-job-${migrationRequestCount}`,
+              searchComplete: true,
+              searchStatus: "completed",
+              sortMode: "cheapest",
+              request: body.request,
+              offers: [migrationOffer],
+              allOffers: [migrationOffer],
+              searchMeta: {
+                ...buildSearchMeta("search_live"),
+                providersUsed: ["agil-local", "costamar"],
+              },
+              providerMeta: {
+                exactProvider: "agil-local",
+                coverageMode: "core",
+              },
+              warnings: [],
+            }),
+          });
+          return;
+        }
+
+        exactRequestBody = body;
+        const exactOffer = buildOffer({
+          id: "exact-offer-1",
+          origin: "LIM",
+          destination: "MIA",
+          itineraries: [{
+            direction: "outbound",
+            durationMinutes: 480,
+            stops: 0,
+            segments: [{
+              flightNumber: "LA 123",
+              origin: "LIM",
+              destination: "MIA",
+              departureAt: `${body?.request?.legs?.[0]?.departureDate ?? firstMigrationDate}T14:00:00Z`,
+              arrivalAt: `${body?.request?.legs?.[0]?.departureDate ?? firstMigrationDate}T22:00:00Z`,
+              airlineName: "LATAM",
+            }],
+          }],
+          purchasePaths: [
+            {
+              provider: "agil-local",
+              type: "search-redirect",
+              label: "Buscar en Agil",
+              precision: "exact-search",
+              url: "https://example.test/agil/exact",
+            },
+            {
+              provider: "costamar",
+              type: "search-redirect",
+              label: "Buscar en Costamar",
+              precision: "exact-search",
+              url: "https://example.test/costamar/exact",
+            },
+          ],
+        });
+
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            searchJobId: "exact-job-1",
+            searchComplete: true,
+            searchStatus: "completed",
+            sortMode: "cheapest",
+            request: body.request,
+            offers: [exactOffer],
+            allOffers: [exactOffer],
+            searchMeta: {
+              ...buildSearchMeta("search_live"),
+              providersUsed: ["agil-local", "costamar"],
+            },
+            providerMeta: {
+              exactProvider: "agil-local",
+              coverageMode: "core",
+            },
+            warnings: [],
+          }),
+        });
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await setRouteInputs(page, "LIM", "MIA");
+
+    await page.click("#migrationBtn");
+    await allRequestsCompleted;
+    await page.waitForFunction(() => {
+      return document.querySelectorAll("#resultsContainer .migration-card--ok").length === 8;
+    });
+    const firstCard = page.locator("#resultsContainer .migration-card").first();
+    const exactRequestPromise = page.waitForRequest((request) => {
+      if (request.method() !== "POST" || request.url() !== `${baseUrl}/api/search`) {
+        return false;
+      }
+      const body = request.postDataJSON() as { request?: { searchMode?: string } };
+      return body?.request?.searchMode === "exact";
+    });
+
+    const migrationProbe = await page.evaluate(() => ({
+      title: document.querySelector(".migration-panel__title")?.textContent?.trim() ?? "",
+      subtitle: document.querySelector(".migration-panel__subtitle")?.textContent?.trim() ?? "",
+      cardCount: document.querySelectorAll("#resultsContainer .migration-card").length,
+      loadingCount: document.querySelectorAll("#resultsContainer .migration-card--loading").length,
+      firstCardText: document.querySelector("#resultsContainer .migration-card")?.textContent?.trim() ?? "",
+      layout: (() => {
+        const scroller = document.querySelector(".migration-grid-wrap");
+        const grid = document.querySelector(".migration-grid");
+        const action = document.querySelector("[data-migration-exact-index]");
+        const card = action?.closest(".migration-card");
+        if (!(scroller instanceof HTMLElement) || !(grid instanceof HTMLElement)) {
+          return null;
+        }
+
+        return {
+          overflowX: getComputedStyle(scroller).overflowX,
+          overflowY: getComputedStyle(scroller).overflowY,
+          hasHorizontalOverflow: scroller.scrollWidth > (scroller.clientWidth + 1),
+          cardsPerFirstRow: (() => {
+            const cards = [...document.querySelectorAll("#resultsContainer .migration-card")];
+            if (cards.length === 0) return 0;
+            const firstTop = Math.round(cards[0].getBoundingClientRect().top);
+            return cards.filter((item) => Math.abs(Math.round(item.getBoundingClientRect().top) - firstTop) <= 1).length;
+          })(),
+          rowCount: (() => {
+            const tops = [...document.querySelectorAll("#resultsContainer .migration-card")]
+              .map((item) => Math.round(item.getBoundingClientRect().top));
+            return new Set(tops).size;
+          })(),
+          actionWidth: action instanceof HTMLElement ? Math.round(action.getBoundingClientRect().width) : 0,
+          cardWidth: card instanceof HTMLElement ? Math.round(card.getBoundingClientRect().width) : 0,
+        };
+      })(),
+    }));
+
+    assert.equal(await firstCard.getByRole("button", { name: "Abrir busqueda" }).count(), 1);
+    assert.equal(await firstCard.getByRole("link", { name: "Agil" }).count(), 1);
+    assert.equal(await firstCard.getByRole("link", { name: "Costamar" }).count(), 1);
+    assert.deepEqual(pageErrors, []);
+    assert.equal(migrationRequestCount, 8);
+    assert.equal(firstRequestBody?.request?.tripType, "one-way");
+    assert.equal(firstRequestBody?.request?.searchMode, "stay-range");
+    assert.equal(firstRequestBody?.request?.filters?.maxResults, undefined);
+    assert.match(firstRequestBody?.request?.legs?.[0]?.departureStart ?? "", /^\d{4}-\d{2}-\d{2}$/);
+    assert.match(firstRequestBody?.request?.legs?.[0]?.departureEnd ?? "", /^\d{4}-\d{2}-\d{2}$/);
+    assert.equal(migrationProbe.title, "Vuelo migratorio — LIM → MIA");
+    assert.equal(migrationProbe.subtitle, "Solo ida · Precio más bajo por mes");
+    assert.equal(migrationProbe.cardCount, 8);
+    assert.equal(migrationProbe.loadingCount, 0);
+    assert.match(migrationProbe.firstCardText, /Fecha exacta:/);
+    assert.ok(migrationProbe.layout);
+    assert.equal(migrationProbe.layout?.overflowX, "hidden");
+    assert.equal(migrationProbe.layout?.overflowY, "auto");
+    assert.equal(migrationProbe.layout?.hasHorizontalOverflow, false);
+    assert.equal(migrationProbe.layout?.cardsPerFirstRow, 4);
+    assert.ok((migrationProbe.layout?.rowCount ?? 0) >= 2);
+    assert.ok((migrationProbe.layout?.actionWidth ?? 0) < (migrationProbe.layout?.cardWidth ?? 0));
+
+    await firstCard.getByRole("button", { name: "Abrir busqueda" }).click();
+    await exactRequestPromise;
+    await page.waitForSelector("#resultsContainer .results-table--search");
+
+    const exactProbe = await page.evaluate(() => ({
+      toolbarHidden: document.getElementById("resultsToolbar")?.classList.contains("hidden") ?? true,
+      departureDate: (document.getElementById("departureDate") as HTMLInputElement | null)?.value ?? "",
+      tripType: (document.getElementById("tripType") as HTMLSelectElement | null)?.value ?? "",
+      hasMigrationPanel: Boolean(document.querySelector(".migration-panel")),
+      providerLinksText: document.querySelector("#resultsContainer .provider-links-cell")?.textContent?.trim() ?? "",
+    }));
+
+    assert.equal(exactRequestBody?.request?.searchMode, "exact");
+    assert.equal(exactRequestBody?.request?.tripType, "one-way");
+    assert.equal(exactRequestBody?.request?.legs?.[0]?.departureDate, firstMigrationDate);
+    assert.equal(exactProbe.toolbarHidden, false);
+    assert.equal(exactProbe.departureDate, firstMigrationDate);
+    assert.equal(exactProbe.tripType, "one-way");
+    assert.equal(exactProbe.hasMigrationPanel, false);
+    assert.match(exactProbe.providerLinksText, /Agil/);
+    assert.match(exactProbe.providerLinksText, /Costamar/);
+  }, { autoOpen: false });
+});
+
+test("migration cards surface the current cheapest fare while a month is still loading", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let postCount = 0;
+    let allPostsResolved!: () => void;
+    const allPostsCompleted = new Promise<void>((resolve) => {
+      allPostsResolved = resolve;
+    });
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      postCount += 1;
+      const body = route.request().postDataJSON();
+      const departureDate = body?.request?.legs?.[0]?.departureStart ?? "2026-03-31";
+
+      if (postCount === 1) {
+        const partialOffer = buildOffer({
+          id: "migration-partial-offer-1",
+          origin: "LIM",
+          destination: "MIA",
+          itineraries: [{
+            direction: "outbound",
+            durationMinutes: 480,
+            stops: 0,
+            segments: [{
+              flightNumber: "LA 123",
+              origin: "LIM",
+              destination: "MIA",
+              departureAt: `${departureDate}T14:00:00Z`,
+              departureDate,
+              arrivalAt: `${departureDate}T22:00:00Z`,
+              airlineName: "LATAM",
+            }],
+          }],
+          purchasePaths: [
+            {
+              provider: "agil-local",
+              type: "search-redirect",
+              label: "Buscar en Agil",
+              precision: "exact-search",
+              url: "https://example.test/agil/partial",
+            },
+          ],
+          price: {
+            total: {
+              amount: 543,
+              currencyCode: "USD",
+            },
+            base: {
+              amount: 451,
+              currencyCode: "USD",
+            },
+            taxes: {
+              amount: 92,
+              currencyCode: "USD",
+            },
+          },
+        });
+
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            searchJobId: "migration-partial-job-1",
+            searchComplete: false,
+            searchStatus: "running",
+            sortMode: "cheapest",
+            request: body.request,
+            offers: [partialOffer],
+            allOffers: [partialOffer],
+            searchMeta: {
+              ...buildSearchMeta("search_partial"),
+              providersUsed: ["agil-local"],
+            },
+            providerMeta: {
+              exactProvider: "agil-local",
+              coverageMode: "core",
+            },
+            warnings: [],
+          }),
+        });
+        return;
+      }
+
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            searchJobId: `migration-complete-job-${postCount}`,
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: body.request,
+          offers: [],
+          allOffers: [],
+          searchMeta: {
+            ...buildSearchMeta("search_live"),
+            providersUsed: ["agil-local"],
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+            warnings: [],
+          }),
+        });
+        if (postCount === 8) {
+          allPostsResolved();
+        }
+        return;
+      });
+
+    await page.route(`${baseUrl}/api/search/*`, async (route: Route) => {
+      const partialOffer = buildOffer({
+        id: "migration-partial-offer-1",
+        origin: "LIM",
+        destination: "MIA",
+        itineraries: [{
+          direction: "outbound",
+          durationMinutes: 480,
+          stops: 0,
+          segments: [{
+            flightNumber: "LA 123",
+            origin: "LIM",
+            destination: "MIA",
+            departureAt: "2026-03-31T14:00:00Z",
+            departureDate: "2026-03-31",
+            arrivalAt: "2026-03-31T22:00:00Z",
+            airlineName: "LATAM",
+          }],
+        }],
+        purchasePaths: [
+          {
+            provider: "agil-local",
+            type: "search-redirect",
+            label: "Buscar en Agil",
+            precision: "exact-search",
+            url: "https://example.test/agil/partial",
+          },
+        ],
+        price: {
+          total: {
+            amount: 543,
+            currencyCode: "USD",
+          },
+          base: {
+            amount: 451,
+            currencyCode: "USD",
+          },
+          taxes: {
+            amount: 92,
+            currencyCode: "USD",
+          },
+        },
+      });
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "migration-partial-job-1",
+          searchComplete: false,
+          searchStatus: "running",
+          sortMode: "cheapest",
+          request: {
+            tripType: "one-way",
+            searchMode: "stay-range",
+            legs: [{
+              origin: "LIM",
+              destination: "MIA",
+              departureStart: "2026-03-31",
+              departureEnd: "2026-03-31",
+            }],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 300,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [partialOffer],
+          allOffers: [partialOffer],
+          searchMeta: {
+            ...buildSearchMeta("search_partial"),
+            providersUsed: ["agil-local"],
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await setRouteInputs(page, "LIM", "MIA");
+
+    await page.click("#migrationBtn");
+    await allPostsCompleted;
+    await page.waitForFunction(() => {
+      const card = document.querySelector("#resultsContainer .migration-card");
+      return Boolean(card && /LATAM/.test(card.textContent || "") && /Fecha exacta:/.test(card.textContent || ""));
+    });
+
+    const partialProbe = await page.evaluate(() => {
+      const firstCard = document.querySelector("#resultsContainer .migration-card");
+      return {
+        className: firstCard?.className ?? "",
+        text: firstCard?.textContent?.trim() ?? "",
+      };
+    });
+
+    assert.equal(postCount, 8);
+    assert.match(partialProbe.className, /migration-card--loading/);
+    assert.match(partialProbe.text, /543\.00/);
+    assert.match(partialProbe.text, /Fecha exacta:/);
+    assert.match(partialProbe.text, /LATAM/);
+    assert.match(partialProbe.text, /Actualizando mejor tarifa/);
+    assert.match(partialProbe.text, /Agil/);
+  }, { autoOpen: false });
+});
+
+test("migration keeps only a 2-month concurrent window while loading all 8 months", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let requestCount = 0;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let releaseFirstWindow!: () => void;
+    const releaseFirstWindowPromise = new Promise<void>((resolve) => {
+      releaseFirstWindow = resolve;
+    });
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      const body = route.request().postDataJSON();
+      if (body?.request?.searchMode !== "stay-range") {
+        throw new Error(`Unexpected migration search mode: ${body?.request?.searchMode ?? "unknown"}`);
+      }
+
+      requestCount += 1;
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      if (requestCount <= 2) {
+        await releaseFirstWindowPromise;
+      }
+
+      const departureDate = body?.request?.legs?.[0]?.departureStart ?? "2026-03-31";
+      const offerNumber = requestCount;
+      const offer = buildOffer({
+        id: `migration-window-offer-${offerNumber}`,
+        origin: "LIM",
+        destination: "MIA",
+        itineraries: [{
+          direction: "outbound",
+          durationMinutes: 480,
+          stops: 0,
+          segments: [{
+            flightNumber: "LA 123",
+            origin: "LIM",
+            destination: "MIA",
+            departureAt: `${departureDate}T14:00:00Z`,
+            departureDate,
+            arrivalAt: `${departureDate}T22:00:00Z`,
+            airlineName: "LATAM",
+          }],
+        }],
+      });
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: `migration-window-job-${offerNumber}`,
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: body.request,
+          offers: [offer],
+          allOffers: [offer],
+          searchMeta: {
+            ...buildSearchMeta("search_live"),
+            providersUsed: ["agil-local"],
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+      inFlight -= 1;
+    });
+
+    await openDesktop(page, baseUrl);
+    await setRouteInputs(page, "LIM", "MIA");
+
+    await page.click("#migrationBtn");
+
+    await page.waitForTimeout(250);
+    assert.equal(requestCount, 2);
+    assert.equal(maxInFlight, 2);
+
+    releaseFirstWindow();
+
+    await page.waitForFunction(() => {
+      return document.querySelectorAll("#resultsContainer .migration-card").length === 8;
+    });
+    await new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + 2500;
+      const tick = () => {
+        if (requestCount === 8) {
+          resolve();
+          return;
+        }
+        if (Date.now() > deadline) {
+          reject(new Error(`Expected 8 migration requests, got ${requestCount}`));
+          return;
+        }
+        setTimeout(tick, 25);
+      };
+      tick();
+    });
+    assert.equal(requestCount, 8);
+    assert.equal(maxInFlight, 2);
   }, { autoOpen: false });
 });
 
@@ -961,7 +1549,11 @@ test("exact-stay matrix results open in the compact list and keep calendar hidde
 test("location suggestions stay anchored to the origin field", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
 
-    await page.route(`${baseUrl}/api/locations?q=LIM&limit=8`, async (route: Route) => {
+    await page.route("**/api/locations?*", async (route: Route) => {
+      if (!route.request().url().includes(`${baseUrl}/api/locations?q=LIM&limit=8`)) {
+        await route.continue();
+        return;
+      }
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -1020,6 +1612,115 @@ test("location suggestions stay anchored to the origin field", async () => {
       assert.ok(probe.centerDelta <= 4, JSON.stringify(probe));
       assert.ok(probe.menuTop <= probe.shellBottom, JSON.stringify(probe));
       assert.equal(probe.hitInMenu, true, JSON.stringify(probe));
+  }, { autoOpen: false });
+});
+
+test("location suggestions reuse the session cache on refocus", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let requestCount = 0;
+
+    await page.route("**/api/locations?*", async (route: Route) => {
+      if (!route.request().url().includes(`${baseUrl}/api/locations?q=LIM&limit=8`)) {
+        await route.continue();
+        return;
+      }
+
+      requestCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          query: "LIM",
+          suggestions: [
+            {
+              code: "LIM",
+              city: "Lima",
+              country: "Peru",
+              label: "LIM - Lima, Peru",
+            },
+          ],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.fill("#origin", "LIM");
+    await page.waitForSelector("#originSuggestions .location-item");
+    await page.locator("body").click({ position: { x: 16, y: 16 } });
+    await page.focus("#origin");
+    await page.waitForTimeout(260);
+
+    const probe = await page.evaluate(() => ({
+      menuHidden: document.getElementById("originSuggestions")?.classList.contains("hidden") ?? true,
+      itemCount: document.querySelectorAll("#originSuggestions .location-item").length,
+    }));
+
+    assert.equal(requestCount, 1);
+    assert.equal(probe.menuHidden, false);
+    assert.equal(probe.itemCount, 1);
+  }, { autoOpen: false });
+});
+
+test("stale autocomplete failures no longer hide the latest valid suggestions", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let liRequests = 0;
+
+    await page.route("**/api/locations?*", async (route: Route) => {
+      const requestUrl = route.request().url();
+      if (requestUrl.includes(`${baseUrl}/api/locations?q=LI&limit=8`)) {
+        liRequests += 1;
+        await new Promise((resolve) => setTimeout(resolve, 420));
+        try {
+          await route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "Lookup failed" }),
+          });
+        } catch {
+          // The browser can abort this stale request once the new query takes over.
+        }
+        return;
+      }
+
+      if (!requestUrl.includes(`${baseUrl}/api/locations?q=LIM&limit=8`)) {
+        await route.continue();
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          query: "LIM",
+          suggestions: [
+            {
+              code: "LIM",
+              city: "Lima",
+              country: "Peru",
+              label: "LIM - Lima, Peru",
+            },
+          ],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.fill("#origin", "LI");
+    await page.waitForTimeout(220);
+    await page.fill("#origin", "LIM");
+    await page.waitForSelector("#originSuggestions .location-item");
+    await page.waitForTimeout(450);
+
+    const probe = await page.evaluate(() => ({
+      menuHidden: document.getElementById("originSuggestions")?.classList.contains("hidden") ?? true,
+      itemCount: document.querySelectorAll("#originSuggestions .location-item").length,
+      toastCount: document.querySelectorAll(".toast--error").length,
+    }));
+
+    assert.equal(liRequests > 0, true);
+    assert.equal(probe.menuHidden, false);
+    assert.equal(probe.itemCount, 1);
+    assert.equal(probe.toastCount, 0);
   }, { autoOpen: false });
 });
 
@@ -1219,7 +1920,6 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
       },
       cabin: "ECONOMY",
       filters: {
-        maxResults: 25,
         nonStop: true,
         baggageRequired: true,
         maxStops: 1,
@@ -1407,7 +2107,6 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
       infants: 1,
     });
     assert.deepEqual((lastSearchRequest?.request as Record<string, unknown> | undefined)?.filters, {
-      maxResults: 25,
       nonStop: true,
       baggageRequired: true,
       maxStops: 1,
@@ -3085,10 +3784,10 @@ test("provider link column reuses the matched Costamar link for the same flight 
             stops: 0,
             segments: [
               {
-                marketingCarrier: "IB",
+                marketingCarrier: "ib",
                 flightNumber: "IB124",
-                origin: "LIM",
-                destination: "MAD",
+                origin: "lim",
+                destination: "mad",
                 departureAt: "2026-06-01T11:00:00.000-0500",
                 arrivalAt: "2026-06-02T05:40:00.000-0500",
               },
@@ -3100,10 +3799,10 @@ test("provider link column reuses the matched Costamar link for the same flight 
             stops: 0,
             segments: [
               {
-                marketingCarrier: "IB",
+                marketingCarrier: "ib",
                 flightNumber: "IB121",
-                origin: "MAD",
-                destination: "LIM",
+                origin: "mad",
+                destination: "lim",
                 departureAt: "2026-06-08T00:05:00.000-0500",
                 arrivalAt: "2026-06-08T05:30:00.000-0500",
               },
@@ -3368,6 +4067,201 @@ test("provider link column keeps each provider on its own fare when matched flig
       assert.match(linkCellText, /Agil/);
       assert.doesNotMatch(linkCellText, /Costamar/);
       assert.doesNotMatch(await page.locator("#detailContent").innerText(), /Costamar/);
+  }, { autoOpen: false });
+});
+
+test("provider link column keeps baggage-unknown fares from borrowing a different provider link", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      const agilOffer = buildOffer({
+        id: "offer-agil",
+        providerSource: "agil-local",
+        origin: "LIM",
+        destination: "MAD",
+        mainCarrier: "LA",
+        validatingCarrier: "LA",
+        baggage: {
+          carryOnIncluded: false,
+          checkedIncluded: false,
+        },
+        price: {
+          total: {
+            amount: 512,
+            currencyCode: "USD",
+          },
+        },
+        purchasePaths: [
+          {
+            provider: "agil-local",
+            type: "deep-link",
+            label: "Agil",
+            url: "https://example.test/agil",
+            precision: "exact-search",
+            score: 0.9,
+          },
+        ],
+        itineraries: [
+          {
+            direction: "outbound",
+            durationMinutes: 95,
+            stops: 0,
+            segments: [
+              {
+                marketingCarrier: "LA",
+                flightNumber: "LA2041",
+                origin: "LIM",
+                destination: "MAD",
+                departureAt: "2026-10-06T08:10:00",
+                arrivalAt: "2026-10-06T09:45:00",
+              },
+            ],
+          },
+          {
+            direction: "inbound",
+            durationMinutes: 95,
+            stops: 0,
+            segments: [
+              {
+                marketingCarrier: "LA",
+                flightNumber: "LA2040",
+                origin: "MAD",
+                destination: "LIM",
+                departureAt: "2026-10-08T18:00:00",
+                arrivalAt: "2026-10-08T19:35:00",
+              },
+            ],
+          },
+        ],
+      });
+
+      const costamarOffer = buildOffer({
+        id: "offer-costamar",
+        providerSource: "costamar",
+        origin: "lim",
+        destination: "mad",
+        mainCarrier: "LA",
+        validatingCarrier: "LA",
+        baggage: {},
+        price: {
+          total: {
+            amount: 512,
+            currencyCode: "USD",
+          },
+        },
+        purchasePaths: [
+          {
+            provider: "costamar",
+            type: "deep-link",
+            label: "Costamar",
+            url: "https://example.test/costamar",
+            precision: "exact-search",
+            score: 0.9,
+          },
+        ],
+        itineraries: [
+          {
+            direction: "outbound",
+            durationMinutes: 95,
+            stops: 0,
+            segments: [
+              {
+                marketingCarrier: "la",
+                flightNumber: "LA2041",
+                origin: "lim",
+                destination: "mad",
+                departureAt: "2026-10-06T08:10:00.000-0500",
+                arrivalAt: "2026-10-06T09:45:00.000-0500",
+              },
+            ],
+          },
+          {
+            direction: "inbound",
+            durationMinutes: 95,
+            stops: 0,
+            segments: [
+              {
+                marketingCarrier: "la",
+                flightNumber: "LA2040",
+                origin: "mad",
+                destination: "lim",
+                departureAt: "2026-10-08T18:00:00.000-0500",
+                arrivalAt: "2026-10-08T19:35:00.000-0500",
+              },
+            ],
+          },
+        ],
+      });
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-baggage-guard",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MAD",
+                departureDate: "2026-10-06",
+                returnDate: "2026-10-08",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: [agilOffer, costamarOffer],
+          allOffers: [agilOffer, costamarOffer],
+          searchMeta: {
+            ...buildSearchMeta("search_live"),
+            providersUsed: ["agil-local", "costamar"],
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.evaluate(() => {
+      const origin = document.getElementById("origin") as HTMLInputElement | null;
+      const destination = document.getElementById("destination") as HTMLInputElement | null;
+      if (!origin || !destination) throw new Error("Missing location inputs");
+      origin.value = "LIM - Lima, Peru";
+      origin.dataset.code = "LIM";
+      origin.dataset.label = "LIM - Lima, Peru";
+      destination.value = "MAD - Madrid, España";
+      destination.dataset.code = "MAD";
+      destination.dataset.label = "MAD - Madrid, España";
+    });
+    await setDateValue(page, "departureDate", "2026-10-06");
+    await setDateValue(page, "returnDate", "2026-10-08");
+
+    await page.click("#submitButton");
+    await page.waitForSelector('tr[data-oid="offer-agil"]');
+
+    const linkCellText = await page.locator('tr[data-oid="offer-agil"] td:nth-child(7)').innerText();
+    assert.match(linkCellText, /Agil/);
+    assert.doesNotMatch(linkCellText, /Costamar/);
   }, { autoOpen: false });
 });
 

@@ -114,6 +114,10 @@ Costamar:
 - `COSTAMAR_LANG=es`
 - `COSTAMAR_B2B_EMAIL=...`
 - `COSTAMAR_B2B_PASSWORD=...`
+- `COSTAMAR_B2B_TOTP_SECRET=...`
+  Acepta la clave Base32 del autenticador, un `otpauth://...`, un `otpauth-migration://...` de Google Authenticator o un JSON que incluya `totpUri` como el de Proton Pass. Fly Desk genera el OTP automáticamente; no guardes un código temporal.
+- `COSTAMAR_B2B_PROMPT_ENABLED=1`
+  Activo por defecto. Si Fly Desk está corriendo en una terminal interactiva, puede pedir ahí mismo el email, la contraseña y el código Auth/OTP de Costamar cuando falten o cuando el login exija segundo factor.
 - `COSTAMAR_B2B_AUTOMATION_ALLOW_SESSION_ONLY=1`
   Está activo por defecto. Permite intentar la generación del token usando una sesión B2B ya viva en el perfil de Chrome, aun sin credenciales explícitas.
 - `COSTAMAR_B2B_USE_LIVE_BROWSER=0`

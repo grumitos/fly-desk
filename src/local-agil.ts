@@ -4,7 +4,11 @@ import { readFileSync, rmSync, mkdirSync, cpSync, existsSync, readdirSync } from
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Browser, BrowserContext, Page } from "playwright";
-import { removePathWithRetries } from "./temp-artifacts";
+import {
+  registerActiveTempArtifact,
+  removePathWithRetries,
+  unregisterActiveTempArtifact,
+} from "./temp-artifacts";
 import {
   resolveMatrixCellConcurrency,
   resolveProviderSubrequestConcurrency,
@@ -481,6 +485,7 @@ function prepareTemporaryChromeProfile(profileName: string): string {
   const tempRoot = join(tmpdir(), `travel_quote_foundation_agil_${randomUUID()}`);
   const profileRoot = join(tempRoot, profileName);
   mkdirSync(profileRoot, { recursive: true });
+  registerActiveTempArtifact(tempRoot);
 
   const items = [
     "Local State",
@@ -735,6 +740,7 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
       chrome.kill("SIGTERM");
       await new Promise((resolve) => setTimeout(resolve, 250));
       await removePathWithRetries(userDataDir, 6, 250);
+      unregisterActiveTempArtifact(userDataDir);
     }
   }
 

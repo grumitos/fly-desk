@@ -14,6 +14,10 @@ export const state = {
   airlineFilter: { hidden: new Set(), only: null },
   resultsPage: 1,
   resultsPageSize: 15,
+  resultsColumnLayout: null,
+  resultsLayoutLoaded: false,
+  resultsLayoutSaving: false,
+  resultsLayoutSavedAt: "",
   viewMode: "list",
   flexMode: false,
   detailPendingAction: null,
@@ -26,13 +30,14 @@ export const state = {
   pollInteractionAt: 0,
   pollPointerDown: false,
   migrationActive: false,
+  migrationRunId: 0,
   migrationMonths: [],
-  migrationPollHandles: [],
+  migrationPollHandles: new Set(),
 };
 
 export const autocompleteState = {
-  origin: { items: [], activeIndex: -1, requestId: 0 },
-  destination: { items: [], activeIndex: -1, requestId: 0 },
+  origin: { items: [], activeIndex: -1, requestId: 0, abortController: null },
+  destination: { items: [], activeIndex: -1, requestId: 0, abortController: null },
 };
 
 export const RESULTS_PAGE_SIZE = 15;

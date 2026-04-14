@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SearchSessionStore } from "../src/session-store";
+import { COMPLETED_SEARCH_SESSION_TTL_MS, SearchSessionStore } from "../src/session-store";
 import type {
   CanonicalOffer,
   MatrixCell,
@@ -165,7 +165,7 @@ function buildMatrixCell(key: string, url: string): MatrixCell {
   };
 }
 
-test("search job refresh replaces stale purchase path ids instead of leaking them", () => {
+test("search job refresh preserves stable purchase path ids when the underlying path did not change", () => {
   const store = new SearchSessionStore();
   const request = buildRequest();
   const meta = buildSearchMeta();
@@ -198,9 +198,8 @@ test("search job refresh replaces stale purchase path ids instead of leaking the
   assert.ok(refreshedSession);
   const refreshedPathId = refreshedSession.offers[0]?.purchasePaths[0]?.id;
   assert.ok(refreshedPathId);
-  assert.notEqual(refreshedPathId, firstPathId);
-  assert.equal(store.resolvePurchasePath(firstPathId), undefined);
-  assert.ok(store.resolvePurchasePath(refreshedPathId));
+  assert.equal(refreshedPathId, firstPathId);
+  assert.ok(store.resolvePurchasePath(firstPathId));
 });
 
 test("offer updates prune the previous purchase path ids for that offer", () => {
@@ -292,5 +291,71 @@ test("matrix jobs rewrite and refresh purchase path ids for flexible cells", () 
   assert.notEqual(refreshedPathId, firstPathId);
   assert.equal(store.resolvePurchasePath(firstPathId), undefined);
   assert.equal(store.resolvePurchasePath(refreshedPathId)?.path.url, "https://new.example/flexible");
+});
+
+test("completed jobs and their purchase paths expire after the idle ttl, while running jobs stay alive", () => {
+  const store = new SearchSessionStore();
+  const request = buildRequest();
+  const meta = buildSearchMeta();
+  const providerMeta = buildProviderMeta();
+  const completedOffer = buildOffer("offer-completed", "https://completed.example/search");
+  const runningOffer = buildOffer("offer-running", "https://running.example/search");
+
+  const completedJob = store.createSearchJob({
+    request,
+    offers: [completedOffer],
+    allOffers: [completedOffer],
+    searchMeta: meta,
+    providerMeta,
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  const runningJob = store.createSearchJob({
+    request,
+    offers: [runningOffer],
+    allOffers: [runningOffer],
+    searchMeta: meta,
+    providerMeta,
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+  const matrixJob = store.createMatrixJob({
+    request: {
+      ...request,
+      tripType: "round-trip",
+      searchMode: "roundtrip-grid",
+    },
+    cells: [buildMatrixCell("2026-04-15_2026-04-22", "https://matrix.example/flexible")],
+    axes: {
+      departureDates: ["2026-04-15"],
+      returnDates: ["2026-04-22"],
+    },
+    confidenceSummary: { live: 1 },
+    recommendations: [],
+    providerMeta,
+    searchMeta: meta,
+    warnings: [],
+    status: "completed",
+  });
+
+  const completedPathId = store.getSession(completedJob.id)?.offers[0]?.purchasePaths[0]?.id;
+  const runningPathId = store.getSession(runningJob.id)?.offers[0]?.purchasePaths[0]?.id;
+  const matrixPathId = store.getMatrixJob(matrixJob.id)?.cells[0]?.purchasePaths?.[0]?.id;
+  assert.ok(completedPathId);
+  assert.ok(runningPathId);
+  assert.ok(matrixPathId);
+
+  const purgeSummary = store.purgeExpired(Date.now() + COMPLETED_SEARCH_SESSION_TTL_MS + 1000);
+
+  assert.equal(purgeSummary.searchJobs, 1);
+  assert.equal(purgeSummary.matrixJobs, 1);
+  assert.equal(store.getSearchJob(completedJob.id), undefined);
+  assert.equal(store.getMatrixJob(matrixJob.id), undefined);
+  assert.equal(store.resolvePurchasePath(completedPathId!), undefined);
+  assert.equal(store.resolvePurchasePath(matrixPathId!), undefined);
+  assert.ok(store.getSearchJob(runningJob.id));
+  assert.ok(store.resolvePurchasePath(runningPathId!));
 });
 
