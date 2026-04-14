@@ -2051,6 +2051,8 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   display: grid;
   gap: 0.16rem;
   min-width: 0;
+  min-height: 2.35rem;
+  align-content: center;
 }
 
 .badge--group-count {
@@ -2183,34 +2185,38 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
 }
 
 .provider-links-cell {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem 0.65rem;
-  align-items: center;
+  display: grid;
+  gap: 0.28rem;
+  align-content: center;
+  min-width: 0;
 }
 
 .results-table--search .provider-links-cell {
-  display: inline-flex;
+  display: grid;
+  width: 100%;
   max-width: 100%;
-  flex-wrap: nowrap;
-  gap: 0.18rem;
-  align-items: center;
-  white-space: nowrap;
-  overflow: hidden;
+  gap: 0.28rem;
   font-size: 0.84rem;
+}
+
+.provider-links-cell__item {
+  display: block;
+  min-width: 0;
+  line-height: 1.15;
 }
 
 .results-table--search .provider-links-cell > * {
   min-width: 0;
   max-width: 100%;
+}
+
+.results-table--search .provider-links-cell .row-link,
+.results-table--search .provider-links-cell .cell-sub--warning {
+  display: block;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.results-table--search .provider-links-cell > * + *::before {
-  content: " - ";
-  color: var(--text-faint);
 }
 
 .results-toolbar__pager {

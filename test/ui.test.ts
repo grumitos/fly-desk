@@ -2370,6 +2370,99 @@ test("date-equivalent offers collapse into one row and keep the date variants in
   }, { autoOpen: false });
 });
 
+test("grouped results keep the best-value variant as the visible row lead", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      const groupedOffers = [
+        buildOffer({
+          ...buildOfferWithDates("offer-1", "2026-04-15", "2026-04-22"),
+          valueScore: 0.8,
+        }),
+        buildOffer({
+          ...buildOfferWithDates("offer-2", "2026-04-16", "2026-04-23"),
+          valueScore: 0.2,
+        }),
+        buildOffer({
+          ...buildOfferWithDates("offer-3", "2026-04-17", "2026-04-24"),
+          valueScore: 0.4,
+        }),
+      ];
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "search-job-grouped-best-value",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "best-value",
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MIA",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+            cabin: "ECONOMY",
+            filters: {
+              maxResults: 25,
+            },
+            coverageMode: "core",
+            redirectMode: "best-effort",
+            currencyCode: "USD",
+            locale: "es-PE",
+            market: "PE",
+          },
+          offers: groupedOffers,
+          allOffers: groupedOffers,
+          searchMeta: buildSearchMeta("search_live"),
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+      await openDesktop(page, baseUrl);
+      await page.evaluate(() => {
+        const origin = document.getElementById("origin") as HTMLInputElement | null;
+        const destination = document.getElementById("destination") as HTMLInputElement | null;
+        const sort = document.getElementById("sortMode") as HTMLSelectElement | null;
+        if (!origin || !destination || !sort) throw new Error("Missing form controls");
+        origin.value = "LIM - Lima, Peru";
+        origin.dataset.code = "LIM";
+        origin.dataset.label = "LIM - Lima, Peru";
+        destination.value = "MIA - Miami, Usa";
+        destination.dataset.code = "MIA";
+        destination.dataset.label = "MIA - Miami, Usa";
+        sort.value = "best-value";
+      });
+      await setDateValue(page, "departureDate", "2026-04-15");
+      await setDateValue(page, "returnDate", "2026-04-22");
+      await page.click("#submitButton");
+      await page.waitForSelector('tr[data-oid="offer-2"]');
+
+      const groupedProbe = await page.evaluate(() => ({
+        rowId: document.querySelector("tr[data-oid]")?.getAttribute("data-oid") ?? "",
+        dateText: document.querySelector("tr[data-oid] td:nth-child(2) .cell-main")?.textContent?.trim() ?? "",
+      }));
+
+      assert.equal(groupedProbe.rowId, "offer-2");
+      assert.match(groupedProbe.dateText, /16\/04/i);
+  }, { autoOpen: false });
+});
+
 test("results header exposes route context, rows support keyboard selection, and Escape clears the offer panel", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
 
@@ -3509,8 +3602,33 @@ test("provider link column shows both the provider link and missing-session feed
       await page.waitForSelector('tr[data-oid="offer-1"]');
 
       const linkCellText = await page.locator('tr[data-oid="offer-1"] td:nth-child(7)').innerText();
+      const layoutProbe = await page.locator('tr[data-oid="offer-1"]').evaluate((row) => {
+        const linkStack = row.querySelector("td:nth-child(7) .provider-links-cell") as HTMLElement | null;
+        const dateCell = row.querySelector("td:nth-child(2)") as HTMLElement | null;
+        const dateStack = row.querySelector("td:nth-child(2) .results-date-stack") as HTMLElement | null;
+        const stackChildren = linkStack ? Array.from(linkStack.children) as HTMLElement[] : [];
+        const tops = stackChildren.map((item) => Math.round(item.getBoundingClientRect().top));
+        const dateBounds = dateCell?.getBoundingClientRect();
+        const dateStackBounds = dateStack?.getBoundingClientRect();
+
+        return {
+          linkDisplay: linkStack ? getComputedStyle(linkStack).display : "",
+          stacked: tops.length > 1 ? tops[1] > tops[0] : false,
+          itemCount: stackChildren.length,
+          dateCenterDelta: dateBounds && dateStackBounds
+            ? Math.abs(
+              (dateBounds.top + (dateBounds.height / 2))
+              - (dateStackBounds.top + (dateStackBounds.height / 2)),
+            )
+            : null,
+        };
+      });
       assert.match(linkCellText, /Agil/);
       assert.match(linkCellText, /Costamar:\s*Falta sesión/);
+      assert.equal(layoutProbe.linkDisplay, "grid");
+      assert.equal(layoutProbe.itemCount, 2);
+      assert.equal(layoutProbe.stacked, true);
+      assert.ok((layoutProbe.dateCenterDelta ?? 99) <= 6, JSON.stringify(layoutProbe));
       await page.click('tr[data-oid="offer-1"]');
       await page.waitForSelector("#detailContent");
       assert.equal(await page.locator("#detailContent a.btn--ghost").count(), 1);
