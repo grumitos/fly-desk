@@ -259,7 +259,6 @@
         </div>
       </div>
 
-      <div id="airlineBar" class="airline-bar hidden" aria-label="Filtrar por aerolínea"></div>
     </div>
 
     <div id="calendarPopover" class="calendar-popover hidden" role="dialog" aria-modal="false" aria-label="Selector de fechas">
@@ -355,14 +354,20 @@
         </div>
       </div>
 
-      <div id="resultsContainer" class="results-container">
-        <div class="empty-state" id="emptyState">
-          <div class="empty-panel empty-panel--results">
-            <div class="empty-panel__media" aria-hidden="true">
-              <svg class="empty-panel__icon"><use href="#ico-search"/></svg>
+      <div id="resultsPanelBody" class="results-panel__body">
+        <aside id="resultsSidebar" class="results-sidebar hidden" aria-label="Filtros de resultados">
+          <div id="airlineBar" class="airline-bar hidden" aria-label="Filtrar por aerolínea"></div>
+        </aside>
+
+        <div id="resultsContainer" class="results-container">
+          <div class="empty-state" id="emptyState">
+            <div class="empty-panel empty-panel--results">
+              <div class="empty-panel__media" aria-hidden="true">
+                <svg class="empty-panel__icon"><use href="#ico-search"/></svg>
+              </div>
+              <h2 class="empty-panel__title">Sin búsqueda</h2>
+              <p class="empty-panel__text">Completa origen, destino y fechas para ver resultados.</p>
             </div>
-            <h2 class="empty-panel__title">Sin búsqueda</h2>
-            <p class="empty-panel__text">Completa origen, destino y fechas para ver resultados.</p>
           </div>
         </div>
       </div>
@@ -456,6 +461,12 @@
       <rect x="7" y="8" width="10" height="13" rx="2"/>
       <path d="M9 8V6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>
       <path d="M12 12v4"/>
+    </symbol>
+    <symbol id="ico-personal-item" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 8.5a3.5 3.5 0 0 1 7 0V10"/>
+      <rect x="5.5" y="10" width="13" height="10" rx="2.5"/>
+      <path d="M9 14h6"/>
+      <path d="M12 10v10"/>
     </symbol>
   </svg>
 

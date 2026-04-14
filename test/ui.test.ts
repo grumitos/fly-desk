@@ -492,7 +492,7 @@ test("migration cards show exact date, provider links, and can open an exact sea
 
     await firstCard.getByRole("button", { name: "Abrir busqueda" }).click();
     await exactRequestPromise;
-    await page.waitForSelector("#resultsContainer .results-table--search");
+    await page.waitForSelector('#resultsContainer article[data-oid]');
 
     const exactProbe = await page.evaluate(() => ({
       toolbarHidden: document.getElementById("resultsToolbar")?.classList.contains("hidden") ?? true,
@@ -1516,15 +1516,15 @@ test("exact-stay matrix results open in the compact list and keep calendar hidde
     await setDateValue(page, "departureStart", "2026-04-15");
     await setDateValue(page, "departureEnd", "2026-04-21");
     await page.click("#submitButton");
-    await page.waitForSelector(".results-table--flexible tbody tr");
+    await page.waitForSelector(".results-list--flexible article");
 
     const probe = await page.evaluate(() => ({
-      hasFlexibleTable: Boolean(document.querySelector(".results-table--flexible")),
+      hasFlexibleTable: Boolean(document.querySelector(".results-list--flexible")),
       hasCalendarGrid: Boolean(document.querySelector(".cal-grid")),
       viewToggleHidden: document.getElementById("viewToggle")?.classList.contains("hidden") ?? false,
-      rowKeys: [...document.querySelectorAll(".results-table--flexible tbody tr")]
+      rowKeys: [...document.querySelectorAll(".results-list--flexible article")]
         .map((row) => row.getAttribute("data-mk")),
-      firstRowText: document.querySelector(".results-table--flexible tbody tr")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      firstRowText: document.querySelector(".results-list--flexible article")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
     }));
 
     assert.equal(probe.hasFlexibleTable, true);
@@ -2042,7 +2042,7 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
     });
 
     await submitAndWaitForRequest(page, baseUrl, "/api/matrix");
-    await page.waitForSelector('.results-table--flexible [data-flex-cell-key="2026-04-15_2026-04-19"]');
+    await page.waitForSelector('.results-list--flexible [data-flex-cell-key="2026-04-15_2026-04-19"]');
 
     assert.deepEqual((lastMatrixRequest?.request as Record<string, unknown> | undefined)?.passengers, {
       adults: 2,
@@ -2057,7 +2057,7 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
       includedAirlineCodes: [],
     });
 
-    await page.click('.results-table--flexible [data-flex-cell-key="2026-04-15_2026-04-19"]');
+    await page.click('.results-list--flexible [data-flex-cell-key="2026-04-15_2026-04-19"]');
     await page.waitForSelector('[data-matrix-detail-search="2026-04-15_2026-04-19"]');
     await page.waitForTimeout(200);
 
@@ -2066,7 +2066,7 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
     const detailProbe = await page.evaluate(() => ({
       detailOpen: document.getElementById("detailPanel")?.classList.contains("is-open") ?? false,
       detailText: document.getElementById("detailContent")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
-      activeRow: document.querySelector('.results-table--flexible tr.is-active')?.getAttribute("data-flex-cell-key") ?? "",
+      activeRow: document.querySelector('.results-list--flexible article.is-active')?.getAttribute("data-flex-cell-key") ?? "",
       externalLinkText: document.querySelector('#detailContent a.btn--ghost')?.textContent?.trim() ?? "",
       externalLinkHref: document.querySelector('#detailContent a.btn--ghost')?.getAttribute("href") ?? "",
     }));
@@ -2178,8 +2178,8 @@ test("flexible matrix detail hides the external provider action when no redirect
     });
 
     await page.click("#submitButton");
-    await page.waitForSelector('.results-table--flexible [data-flex-cell-key="2026-04-15_2026-04-19"]');
-    await page.click('.results-table--flexible [data-flex-cell-key="2026-04-15_2026-04-19"]');
+    await page.waitForSelector('.results-list--flexible [data-flex-cell-key="2026-04-15_2026-04-19"]');
+    await page.click('.results-list--flexible [data-flex-cell-key="2026-04-15_2026-04-19"]');
     await page.waitForSelector('[data-matrix-detail-search="2026-04-15_2026-04-19"]');
 
     const detailProbe = await page.evaluate(() => ({
@@ -2311,11 +2311,11 @@ test("date-equivalent offers collapse into one row and keep the date variants in
       await setDateValue(page, "departureDate", "2026-04-15");
       await setDateValue(page, "returnDate", "2026-04-22");
       await page.click("#submitButton");
-      await page.waitForSelector('tr[data-oid="offer-1"]');
+      await page.waitForSelector('article[data-oid="offer-1"]');
 
       const probe = await page.evaluate(() => {
-        const rows = [...document.querySelectorAll('tr[data-oid]')];
-        const firstDateCell = rows[0]?.children[1];
+        const rows = [...document.querySelectorAll('article[data-oid]')];
+        const firstDateCell = rows[0]?.querySelector('[data-result-dates]');
         const segmentHeaders = [...document.querySelectorAll(".detail-segment__dir")]
           .map((node) => node.textContent?.replace(/\s+/g, " ").trim() ?? "");
         const variantTitle = segmentHeaders.find((text) => text.includes("Fechas equivalentes")) ?? "";
@@ -2362,7 +2362,7 @@ test("date-equivalent offers collapse into one row and keep the date variants in
 
       const afterKeyboardSelection = await page.evaluate(() => ({
         activeVariant: document.querySelector('[data-inbound-id][aria-pressed="true"]')?.getAttribute("data-inbound-id") ?? "",
-        dateText: document.querySelector('tr[data-oid] td:nth-child(2)')?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+        dateText: document.querySelector('article[data-oid] [data-result-dates]')?.textContent?.replace(/\s+/g, " ").trim() ?? "",
       }));
 
       assert.equal(afterKeyboardSelection.activeVariant, "offer-2");
@@ -2451,11 +2451,11 @@ test("grouped results keep the best-value variant as the visible row lead", asyn
       await setDateValue(page, "departureDate", "2026-04-15");
       await setDateValue(page, "returnDate", "2026-04-22");
       await page.click("#submitButton");
-      await page.waitForSelector('tr[data-oid="offer-2"]');
+      await page.waitForSelector('article[data-oid="offer-2"]');
 
       const groupedProbe = await page.evaluate(() => ({
-        rowId: document.querySelector("tr[data-oid]")?.getAttribute("data-oid") ?? "",
-        dateText: document.querySelector("tr[data-oid] td:nth-child(2) .cell-main")?.textContent?.trim() ?? "",
+        rowId: document.querySelector("article[data-oid]")?.getAttribute("data-oid") ?? "",
+        dateText: document.querySelector("article[data-oid] [data-result-dates] .cell-main")?.textContent?.trim() ?? "",
       }));
 
       assert.equal(groupedProbe.rowId, "offer-2");
@@ -2533,14 +2533,14 @@ test("results header exposes route context, rows support keyboard selection, and
     await setDateValue(page, "departureDate", "2026-04-15");
     await setDateValue(page, "returnDate", "2026-04-22");
     await page.click("#submitButton");
-    await page.waitForSelector('tr[data-oid="offer-aa"]');
+    await page.waitForSelector('article[data-oid="offer-aa"]');
 
     const beforeKeyboard = await page.evaluate(() => ({
       resultsMeta: document.getElementById("resultsPanelMeta")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
       countPresent: Boolean(document.getElementById("resultsCountLabel")),
-      secondRowRole: document.querySelector('tr[data-oid="offer-cm"]')?.getAttribute("role") ?? "",
-      secondRowTabIndex: document.querySelector('tr[data-oid="offer-cm"]')?.getAttribute("tabindex") ?? "",
-      selectedId: document.querySelector("tr[data-oid].is-active")?.getAttribute("data-oid") ?? "",
+      secondRowRole: document.querySelector('article[data-oid="offer-cm"]')?.getAttribute("role") ?? "",
+      secondRowTabIndex: document.querySelector('article[data-oid="offer-cm"]')?.getAttribute("tabindex") ?? "",
+      selectedId: document.querySelector("article[data-oid].is-active")?.getAttribute("data-oid") ?? "",
     }));
 
     assert.match(beforeKeyboard.resultsMeta, /LIM → MIA/);
@@ -2551,11 +2551,11 @@ test("results header exposes route context, rows support keyboard selection, and
     assert.equal(beforeKeyboard.secondRowTabIndex, "0");
     assert.equal(beforeKeyboard.selectedId, "offer-aa");
 
-    await page.locator('tr[data-oid="offer-cm"]').focus();
+    await page.locator('article[data-oid="offer-cm"]').focus();
     await page.keyboard.press("Enter");
 
     const afterKeyboard = await page.evaluate(() => ({
-      selectedId: document.querySelector("tr[data-oid].is-active")?.getAttribute("data-oid") ?? "",
+      selectedId: document.querySelector("article[data-oid].is-active")?.getAttribute("data-oid") ?? "",
       detailSummary: document.querySelector(".detail-summary")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
     }));
 
@@ -2566,7 +2566,7 @@ test("results header exposes route context, rows support keyboard selection, and
     await page.waitForSelector(".detail-empty .empty-panel__title");
 
     const afterEscape = await page.evaluate(() => ({
-      selectedRowCount: document.querySelectorAll("tr[data-oid].is-active").length,
+      selectedRowCount: document.querySelectorAll("article[data-oid].is-active").length,
       emptyTitle: document.querySelector(".detail-empty .empty-panel__title")?.textContent?.trim() ?? "",
       emptyText: document.querySelector(".detail-empty .empty-panel__text")?.textContent?.trim() ?? "",
     }));
@@ -2641,32 +2641,31 @@ test("price column header keeps the shared table header typography", async () =>
     await setDateValue(page, "departureDate", "2026-04-15");
     await setDateValue(page, "returnDate", "2026-04-22");
     await page.click("#submitButton");
-    await page.waitForSelector(".results-table thead th");
+    await page.waitForSelector('article[data-oid="offer-1"]');
 
     const headerTypography = await page.evaluate(() => {
-      const headers = [...document.querySelectorAll(".results-table thead th")] as HTMLElement[];
-      const airline = headers[0];
-      const price = headers[5];
-      if (!airline || !price) {
-        throw new Error("Missing results table headers");
+      const airline = document.querySelector('article[data-oid] [data-result-airline]') as HTMLElement | null;
+      const route = document.querySelector('article[data-oid] [data-result-route]') as HTMLElement | null;
+      if (!airline || !route) {
+        throw new Error("Missing result card headings");
       }
 
       const airlineStyle = getComputedStyle(airline);
-      const priceStyle = getComputedStyle(price);
+      const routeStyle = getComputedStyle(route);
 
       return {
         airlineFontFamily: airlineStyle.fontFamily,
         airlineFontSize: airlineStyle.fontSize,
         airlineFontWeight: airlineStyle.fontWeight,
-        priceFontFamily: priceStyle.fontFamily,
-        priceFontSize: priceStyle.fontSize,
-        priceFontWeight: priceStyle.fontWeight,
+        routeFontFamily: routeStyle.fontFamily,
+        routeFontSize: routeStyle.fontSize,
+        routeFontWeight: routeStyle.fontWeight,
       };
     });
 
-    assert.equal(headerTypography.priceFontFamily, headerTypography.airlineFontFamily);
-    assert.equal(headerTypography.priceFontSize, headerTypography.airlineFontSize);
-    assert.equal(headerTypography.priceFontWeight, headerTypography.airlineFontWeight);
+    assert.equal(headerTypography.routeFontFamily, headerTypography.airlineFontFamily);
+    assert.equal(headerTypography.routeFontSize, headerTypography.airlineFontSize);
+    assert.equal(headerTypography.routeFontWeight, headerTypography.airlineFontWeight);
   }, { autoOpen: false });
 });
 
@@ -2765,11 +2764,11 @@ test("exact results show total and per-person pricing from the searched passenge
     await setDateValue(page, "departureDate", "2026-09-07");
     await setDateValue(page, "returnDate", "2026-09-10");
     await page.click("#submitButton");
-    await page.waitForSelector('tr[data-oid="offer-1"]');
-    await page.click('tr[data-oid="offer-1"]');
+    await page.waitForSelector('article[data-oid="offer-1"]');
+    await page.click('article[data-oid="offer-1"]');
 
     const probe = await page.evaluate(() => ({
-      rowPrice: document.querySelector('tr[data-oid="offer-1"] td.results-price')?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      rowPrice: document.querySelector('article[data-oid="offer-1"] [data-result-price]')?.textContent?.replace(/\s+/g, " ").trim() ?? "",
       detailText: document.getElementById("detailContent")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
       heroMeta: document.querySelector("#detailContent .detail-hero__meta")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
     }));
@@ -2873,11 +2872,11 @@ test("flexible exact-stay results show total and per-person pricing in list and 
     await setDateValue(page, "departureStart", "2026-09-07");
     await setDateValue(page, "departureEnd", "2026-09-10");
     await page.click("#submitButton");
-    await page.waitForSelector('.results-table--flexible tbody tr[data-flex-cell-key="2026-09-07_2026-09-10"]');
-    await page.click('.results-table--flexible tbody tr[data-flex-cell-key="2026-09-07_2026-09-10"]');
+    await page.waitForSelector('.results-list--flexible article[data-flex-cell-key="2026-09-07_2026-09-10"]');
+    await page.click('.results-list--flexible article[data-flex-cell-key="2026-09-07_2026-09-10"]');
 
     const probe = await page.evaluate(() => ({
-      rowPrice: document.querySelector('.results-table--flexible td.results-price')?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      rowPrice: document.querySelector('.results-list--flexible .results-card__price')?.textContent?.replace(/\s+/g, " ").trim() ?? "",
       detailText: document.getElementById("detailContent")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
       heroMeta: document.querySelector("#detailContent .detail-hero__meta")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
     }));
@@ -2968,15 +2967,15 @@ test("airlines move into the search bar ordered by cheapest fare and filter hori
           code: node.getAttribute("data-airline-code"),
           text: node.textContent?.replace(/\s+/g, " ").trim() ?? "",
         })),
-        rowCount: document.querySelectorAll('tr[data-oid]').length,
+        rowCount: document.querySelectorAll('article[data-oid]').length,
       }));
 
       await page.click('[data-airline-code="CM"]');
 
       const afterFilter = await page.evaluate(() => ({
         activeCode: document.querySelector(".airline-chip.is-active[data-airline-code]")?.getAttribute("data-airline-code") ?? "",
-        rowCount: document.querySelectorAll('tr[data-oid]').length,
-        visibleCarrier: document.querySelector('tr[data-oid] td .carrier-label')?.textContent?.trim() ?? "",
+        rowCount: document.querySelectorAll('article[data-oid]').length,
+        visibleCarrier: document.querySelector('article[data-oid] [data-result-airline]')?.textContent?.trim() ?? "",
       }));
 
       assert.equal(beforeFilter.sidebarCount, 0);
@@ -3083,11 +3082,11 @@ test("max layover filter is sent in the payload and narrows the visible results"
       await setDateValue(page, "returnDate", "2026-04-22");
       await page.selectOption("#maxLayoverMinutes", "240");
       await page.click("#submitButton");
-      await page.waitForSelector('tr[data-oid]');
+      await page.waitForSelector('article[data-oid]');
 
       const probe = await page.evaluate(() => ({
-        rowCount: document.querySelectorAll('tr[data-oid]').length,
-        ids: [...document.querySelectorAll('tr[data-oid]')].map((row) => row.getAttribute("data-oid")),
+        rowCount: document.querySelectorAll('article[data-oid]').length,
+        ids: [...document.querySelectorAll('article[data-oid]')].map((row) => row.getAttribute("data-oid")),
       }));
 
       assert.equal(capturedMaxLayoverMinutes, 240);
@@ -3181,10 +3180,10 @@ test("combined max stops and max layover filters are sent and applied together",
       await page.click("#layoverTrigger");
       await page.click('[data-layover-value="240"]');
       await page.click("#submitButton");
-      await page.waitForSelector('tr[data-oid]');
+      await page.waitForSelector('article[data-oid]');
 
       const probe = await page.evaluate(() => ({
-        ids: [...document.querySelectorAll('tr[data-oid]')].map((row) => row.getAttribute("data-oid")),
+        ids: [...document.querySelectorAll('article[data-oid]')].map((row) => row.getAttribute("data-oid")),
         layoverLabel: document.getElementById("layoverTriggerValue")?.textContent?.trim() ?? "",
         layoverActive: document.getElementById("layoverFilter")?.classList.contains("is-active") ?? false,
         layoverTitle: document.getElementById("layoverTrigger")?.getAttribute("title") ?? "",
@@ -3271,10 +3270,10 @@ test("active scale filter reorders results before the selected cheapest sort", a
     await setDateValue(page, "returnDate", "2026-04-22");
     await page.selectOption("#maxLayoverMinutes", "240");
     await page.click("#submitButton");
-    await page.waitForSelector('tr[data-oid="offer-one-stop-shorter"]');
+    await page.waitForSelector('article[data-oid="offer-one-stop-shorter"]');
 
     const probe = await page.evaluate(() => ({
-      ids: [...document.querySelectorAll('tr[data-oid]')].map((row) => row.getAttribute("data-oid")),
+      ids: [...document.querySelectorAll('article[data-oid]')].map((row) => row.getAttribute("data-oid")),
       sortMode: (document.getElementById("sortMode") as HTMLSelectElement | null)?.value ?? "",
       activeSort: [...document.querySelectorAll("#sortButtons [data-sort]")]
         .find((button) => button.classList.contains("is-active"))
@@ -3362,7 +3361,7 @@ test("layover summary shows the maximum single layover instead of the combined t
       await setDateValue(page, "returnDate", "2026-04-22");
       await page.selectOption("#maxLayoverMinutes", "240");
       await page.click("#submitButton");
-      await page.waitForSelector('tr[data-oid="offer-double-4h"]');
+      await page.waitForSelector('article[data-oid="offer-double-4h"]');
 
       const probe = await page.evaluate(() => {
         const time = document.querySelector(".stops-stack__time")?.textContent?.trim() ?? "";
@@ -3521,7 +3520,7 @@ test("submitting a search shows inline placeholders instead of a fullscreen over
       });
       assert.ok(Math.abs(runningToolbarOffset - initialToolbarOffset) <= 1);
 
-      await page.waitForSelector('tr[data-oid="offer-1"]');
+      await page.waitForSelector('article[data-oid="offer-1"]');
       assert.equal(await page.locator(".results-skeleton").count(), 0);
   }, { autoOpen: false });
 });
@@ -3599,13 +3598,13 @@ test("provider link column shows both the provider link and missing-session feed
       await setDateValue(page, "returnDate", "2026-06-08");
 
       await page.click("#submitButton");
-      await page.waitForSelector('tr[data-oid="offer-1"]');
+      await page.waitForSelector('article[data-oid="offer-1"]');
 
-      const linkCellText = await page.locator('tr[data-oid="offer-1"] td:nth-child(7)').innerText();
-      const layoutProbe = await page.locator('tr[data-oid="offer-1"]').evaluate((row) => {
-        const linkStack = row.querySelector("td:nth-child(7) .provider-links-cell") as HTMLElement | null;
-        const dateCell = row.querySelector("td:nth-child(2)") as HTMLElement | null;
-        const dateStack = row.querySelector("td:nth-child(2) .results-date-stack") as HTMLElement | null;
+      const linkCellText = await page.locator('article[data-oid="offer-1"] [data-result-links]').innerText();
+      const layoutProbe = await page.locator('article[data-oid="offer-1"]').evaluate((row) => {
+        const linkStack = row.querySelector("[data-result-links] .provider-links-cell") as HTMLElement | null;
+        const dateCell = row.querySelector("[data-result-dates]") as HTMLElement | null;
+        const dateStack = row.querySelector("[data-result-dates]") as HTMLElement | null;
         const stackChildren = linkStack ? Array.from(linkStack.children) as HTMLElement[] : [];
         const tops = stackChildren.map((item) => Math.round(item.getBoundingClientRect().top));
         const dateBounds = dateCell?.getBoundingClientRect();
@@ -3629,7 +3628,7 @@ test("provider link column shows both the provider link and missing-session feed
       assert.equal(layoutProbe.itemCount, 2);
       assert.equal(layoutProbe.stacked, true);
       assert.ok((layoutProbe.dateCenterDelta ?? 99) <= 6, JSON.stringify(layoutProbe));
-      await page.click('tr[data-oid="offer-1"]');
+      await page.click('article[data-oid="offer-1"]');
       await page.waitForSelector("#detailContent");
       assert.equal(await page.locator("#detailContent a.btn--ghost").count(), 1);
       assert.doesNotMatch(await page.locator("#detailContent").innerText(), /Buscar en Costamar/);
@@ -3798,9 +3797,9 @@ test("provider link column keeps external redirects available when nonstop is on
       await page.check("#nonStop");
 
       await page.click("#submitButton");
-      await page.waitForSelector('tr[data-oid="offer-1"]');
+      await page.waitForSelector('article[data-oid="offer-1"]');
 
-      const linkCell = page.locator('tr[data-oid="offer-1"] td:nth-child(7)');
+      const linkCell = page.locator('article[data-oid="offer-1"] [data-result-links]');
       const linkCellText = await linkCell.innerText();
       assert.match(linkCellText, /Agil/);
       assert.doesNotMatch(linkCellText, /Filtro local/);
@@ -3988,9 +3987,9 @@ test("provider link column reuses the matched Costamar link for the same flight 
       await setDateValue(page, "returnDate", "2026-06-08");
 
       await page.click("#submitButton");
-      await page.waitForSelector('tr[data-oid="offer-agil"]');
+      await page.waitForSelector('article[data-oid="offer-agil"]');
 
-      const linkCellText = await page.locator('tr[data-oid="offer-agil"] td:nth-child(7)').innerText();
+      const linkCellText = await page.locator('article[data-oid="offer-agil"] [data-result-links]').innerText();
       assert.match(linkCellText, /Agil/);
       assert.match(linkCellText, /Costamar/);
   }, { autoOpen: false });
@@ -4173,10 +4172,10 @@ test("provider link column keeps each provider on its own fare when matched flig
       await setDateValue(page, "departureDate", "2026-10-06");
       await setDateValue(page, "returnDate", "2026-10-08");
       await page.click("#submitButton");
-      await page.waitForSelector('tr[data-oid="offer-agil"]');
-      await page.click('tr[data-oid="offer-agil"]');
+      await page.waitForSelector('article[data-oid="offer-agil"]');
+      await page.click('article[data-oid="offer-agil"]');
 
-      const linkCellText = await page.locator('tr[data-oid="offer-agil"] td:nth-child(7)').innerText();
+      const linkCellText = await page.locator('article[data-oid="offer-agil"] [data-result-links]').innerText();
       assert.match(linkCellText, /Agil/);
       assert.doesNotMatch(linkCellText, /Costamar/);
       assert.doesNotMatch(await page.locator("#detailContent").innerText(), /Costamar/);
@@ -4370,9 +4369,9 @@ test("provider link column keeps baggage-unknown fares from borrowing a differen
     await setDateValue(page, "returnDate", "2026-10-08");
 
     await page.click("#submitButton");
-    await page.waitForSelector('tr[data-oid="offer-agil"]');
+    await page.waitForSelector('article[data-oid="offer-agil"]');
 
-    const linkCellText = await page.locator('tr[data-oid="offer-agil"] td:nth-child(7)').innerText();
+    const linkCellText = await page.locator('article[data-oid="offer-agil"] [data-result-links]').innerText();
     assert.match(linkCellText, /Agil/);
     assert.doesNotMatch(linkCellText, /Costamar/);
   }, { autoOpen: false });
@@ -4493,14 +4492,14 @@ test("progressive list searches keep the visible list compact while results are 
       await setDateValue(page, "returnDate", "2026-04-22");
 
       await page.click("#submitButton");
-      await page.waitForSelector('tr[data-oid="offer-1"]');
+      await page.waitForSelector('article[data-oid="offer-1"]');
 
-      const placeholderCountWhileRunning = await page.locator(".results-row--placeholder").count();
-      assert.equal(await page.locator("#resultsContainer .table-wrap").getAttribute("aria-busy"), "true");
+      const placeholderCountWhileRunning = await page.locator(".results-card--placeholder").count();
+      assert.equal(await page.locator('#resultsContainer [data-results-scroll]').getAttribute("aria-busy"), "true");
       assert.equal(placeholderCountWhileRunning, 0);
 
       await page.waitForFunction(() => (
-        document.querySelector("#resultsContainer .table-wrap")?.getAttribute("aria-busy") === "false"
+        document.querySelector('#resultsContainer [data-results-scroll]')?.getAttribute("aria-busy") === "false"
       ));
 
       assert.equal(pollCount > 0, true);
@@ -4662,19 +4661,19 @@ test("progressive nonstop searches keep visible results stable after polling fin
     await page.check("#nonStop");
 
     await page.click("#submitButton");
-    await page.waitForSelector('tr[data-oid="offer-direct-1"]');
+    await page.waitForSelector('article[data-oid="offer-direct-1"]');
 
-    const initialIds = await page.locator("#resultsContainer tr[data-oid]").evaluateAll((rows) =>
+    const initialIds = await page.locator("#resultsContainer article[data-oid]").evaluateAll((rows) =>
       rows.map((row) => row.getAttribute("data-oid")),
     );
     assert.deepEqual(initialIds, ["offer-direct-1", "offer-direct-2"]);
 
     await page.waitForFunction(() => (
-      document.querySelector("#resultsContainer .table-wrap")?.getAttribute("aria-busy") === "false"
+      document.querySelector('#resultsContainer [data-results-scroll]')?.getAttribute("aria-busy") === "false"
     ));
 
     const finalProbe = await page.evaluate(() => ({
-      ids: [...document.querySelectorAll("#resultsContainer tr[data-oid]")]
+      ids: [...document.querySelectorAll("#resultsContainer article[data-oid]")]
         .map((row) => row.getAttribute("data-oid")),
       resultPill: document.getElementById("resultPill")?.textContent?.trim() ?? "",
       hasEmptyPanel: Boolean(document.querySelector(".results-panel .empty-panel")),
@@ -4834,22 +4833,22 @@ test("changing sort reorders mixed-height result rows without breaking the visib
     await setDateValue(page, "departureDate", "2026-04-15");
     await setDateValue(page, "returnDate", "2026-04-22");
     await page.click("#submitButton");
-    await page.waitForSelector('tr[data-oid="offer-primary"]');
+    await page.waitForSelector('article[data-oid="offer-primary"]');
 
     const cheapestView = await page.evaluate(() => ({
-      rowCount: document.querySelectorAll("#resultsContainer tr[data-oid]").length,
-      firstId: document.querySelector("#resultsContainer tr[data-oid]")?.getAttribute("data-oid") ?? "",
+      rowCount: document.querySelectorAll("#resultsContainer article[data-oid]").length,
+      firstId: document.querySelector("#resultsContainer article[data-oid]")?.getAttribute("data-oid") ?? "",
       pagerLabel: document.querySelector("#resultsPager .pager-label")?.textContent?.trim() ?? "",
     }));
 
     await page.click('[data-sort="fastest"]');
     await page.waitForFunction(() => (
-      document.querySelector("#resultsContainer tr[data-oid]")?.getAttribute("data-oid") === "offer-single-1"
+      document.querySelector("#resultsContainer article[data-oid]")?.getAttribute("data-oid") === "offer-single-1"
     ));
 
     const fastestView = await page.evaluate(() => ({
-      rowCount: document.querySelectorAll("#resultsContainer tr[data-oid]").length,
-      firstId: document.querySelector("#resultsContainer tr[data-oid]")?.getAttribute("data-oid") ?? "",
+      rowCount: document.querySelectorAll("#resultsContainer article[data-oid]").length,
+      firstId: document.querySelector("#resultsContainer article[data-oid]")?.getAttribute("data-oid") ?? "",
       pagerLabel: document.querySelector("#resultsPager .pager-label")?.textContent?.trim() ?? "",
     }));
 
@@ -5069,7 +5068,7 @@ test("quotation renders a single commercial text area and auto-copies it", async
     await setDateValue(page, "departureDate", "2026-04-15");
     await setDateValue(page, "returnDate", "2026-04-22");
     await page.click("#submitButton");
-    await page.waitForSelector('tr[data-oid="offer-1"]');
+    await page.waitForSelector('article[data-oid="offer-1"]');
 
     await page.click("#quotationButton");
     await page.waitForFunction(() => {
@@ -5217,8 +5216,8 @@ test("quotation state clears when selecting another offer and ignores late respo
     await setDateValue(page, "departureDate", "2026-04-15");
     await setDateValue(page, "returnDate", "2026-04-22");
     await page.click("#submitButton");
-    await page.waitForSelector('tr[data-oid="offer-1"]');
-    await page.waitForSelector('tr[data-oid="offer-2"]');
+    await page.waitForSelector('article[data-oid="offer-1"]');
+    await page.waitForSelector('article[data-oid="offer-2"]');
 
     await page.click("#quotationButton");
     await page.waitForFunction(() => {
@@ -5227,15 +5226,15 @@ test("quotation state clears when selecting another offer and ignores late respo
       ));
     });
 
-    await page.click('tr[data-oid="offer-2"]');
+    await page.click('article[data-oid="offer-2"]');
     await page.waitForFunction(() => document.querySelectorAll(".quote-textarea").length === 0);
 
     await page.click("#quotationButton");
-    await page.click('tr[data-oid="offer-1"]');
+    await page.click('article[data-oid="offer-1"]');
     await page.waitForTimeout(400);
 
     const quotationProbe = await page.evaluate(() => ({
-      selectedOfferId: document.querySelector('tr.is-active[data-oid]')?.getAttribute("data-oid") ?? "",
+      selectedOfferId: document.querySelector('article.is-active[data-oid]')?.getAttribute("data-oid") ?? "",
       textareaValues: [...document.querySelectorAll(".quote-textarea")]
         .map((node) => (node as HTMLTextAreaElement).value),
     }));
@@ -5369,8 +5368,8 @@ test("detail panel wraps long segment and baggage content without horizontal scr
     await setDateValue(page, "departureDate", "2026-04-25");
 
     await submitAndWaitForRequest(page, baseUrl, "/api/search");
-    await page.waitForSelector('tr[data-oid="offer-long-detail"]');
-    await page.click('tr[data-oid="offer-long-detail"]');
+    await page.waitForSelector('article[data-oid="offer-long-detail"]');
+    await page.click('article[data-oid="offer-long-detail"]');
     await page.waitForSelector("#detailContent .detail-layover__label");
 
     const overflowProbe = await page.evaluate(() => {
@@ -5392,6 +5391,8 @@ test("detail panel wraps long segment and baggage content without horizontal scr
     assert.equal(overflowProbe.layoverWraps, true, JSON.stringify(overflowProbe));
   }, { autoOpen: false });
 });
+
+
 
 
 

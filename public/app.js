@@ -58,9 +58,11 @@ import {
   quotationButton,
   resultPill,
   resultsContainer,
+  resultsPanelBody,
   resultsPanelMeta,
   resultsPanelTitle,
   resultsPagerEl,
+  resultsSidebar,
   resultsToolbar,
   RESULTS_MAX_PAGES,
   RESULTS_PAGE_SIZE,
@@ -826,20 +828,45 @@ function renderResultsSkeleton({
   rowCount = RESULTS_SKELETON_ROW_COUNT,
 } = {}) {
   if (!resultsContainer) return;
-  const rows = buildResultsPlaceholderRows(rowCount);
+  const cards = Array.from({ length: rowCount }, () => `
+    <article class="results-card results-card--placeholder" aria-hidden="true">
+      <div class="results-card__airline">
+        <span class="skeleton-line skeleton-line--md"></span>
+        <span class="skeleton-line skeleton-line--sm"></span>
+      </div>
+      <div class="results-card__schedule">
+        <span class="skeleton-line skeleton-line--hero"></span>
+        <span class="skeleton-line skeleton-line--sm"></span>
+      </div>
+      <div class="results-card__route">
+        <span class="skeleton-line skeleton-line--lg"></span>
+        <span class="skeleton-line skeleton-line--sm"></span>
+      </div>
+      <div class="results-card__journey">
+        <span class="skeleton-line skeleton-line--md"></span>
+        <span class="skeleton-line skeleton-line--sm"></span>
+      </div>
+      <div class="results-card__baggage">
+        <span class="skeleton-line skeleton-line--sm"></span>
+      </div>
+      <div class="results-card__price">
+        <span class="skeleton-line skeleton-line--price"></span>
+      </div>
+      <div class="results-card__links">
+        <span class="skeleton-line skeleton-line--link"></span>
+      </div>
+    </article>
+  `).join("");
 
   resultsContainer.innerHTML = `
     <div class="results-skeleton" aria-live="polite" aria-busy="${busy ? "true" : "false"}">
-      <div class="table-wrap">
-        <table class="results-table results-table--search results-table--pending">
-          ${buildResultsTableHeaderHtml()}
-          <tbody>${rows}</tbody>
-        </table>
+      <div class="results-list-wrap" data-results-scroll="1">
+        <div class="results-list results-list--exact">${cards}</div>
       </div>
     </div>
   `;
 
-  const resultsWrap = resultsContainer.querySelector(".table-wrap");
+  const resultsWrap = resultsScrollViewport(resultsContainer);
   syncResultsPageSize();
   syncResultsScroll(resultsWrap);
   requestAnimationFrame(() => syncResultsScroll(resultsWrap));
@@ -919,8 +946,14 @@ function handleMatrixScroll(event) {
   };
 }
 
+function resultsScrollViewport(container = resultsContainer) {
+  return container?.querySelector("[data-results-scroll]")
+    ?? container?.querySelector(".table-wrap")
+    ?? null;
+}
+
 function captureResultsScroll(container = resultsContainer) {
-  const wrap = container?.querySelector(".table-wrap");
+  const wrap = resultsScrollViewport(container);
   if (!wrap) return;
   state.resultsScroll = {
     top: wrap.scrollTop,
@@ -2459,6 +2492,155 @@ function buildGroupDateSummary(group, selectedOfferId) {
   };
 }
 
+function itineraryWindowSummary(itinerary) {
+  const segments = itinerary?.segments ?? [];
+  if (segments.length === 0) {
+    return {
+      origin: "",
+      destination: "",
+      departureDate: "",
+      arrivalDate: "",
+      departureTime: "—",
+      arrivalTime: "—",
+      arrivalDayOffset: 0,
+    };
+  }
+
+  const first = segments[0];
+  const last = segments[segments.length - 1];
+  const departureDate = typeof first?.departureAt === "string" ? first.departureAt.slice(0, 10) : "";
+  const arrivalDate = typeof last?.arrivalAt === "string" ? last.arrivalAt.slice(0, 10) : "";
+  let arrivalDayOffset = 0;
+
+  try {
+    arrivalDayOffset = departureDate && arrivalDate ? Math.max(0, diffDaysIso(departureDate, arrivalDate)) : 0;
+  } catch {
+    arrivalDayOffset = 0;
+  }
+
+  return {
+    origin: String(first?.origin ?? "").trim().toUpperCase(),
+    destination: String(last?.destination ?? "").trim().toUpperCase(),
+    departureDate,
+    arrivalDate,
+    departureTime: timeOfIso(first?.departureAt) || "—",
+    arrivalTime: timeOfIso(last?.arrivalAt) || "—",
+    arrivalDayOffset,
+  };
+}
+
+function primaryItineraryForOffer(offer) {
+  return offer?.itineraries?.find((itinerary) => itinerary.direction === "outbound")
+    ?? offer?.itineraries?.[0]
+    ?? null;
+}
+
+function formatJourneyDurationLabel(minutes) {
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    return "—";
+  }
+
+  const total = Math.round(minutes);
+  const days = Math.floor(total / (24 * 60));
+  const hours = Math.floor((total % (24 * 60)) / 60);
+  const mins = total % 60;
+  const parts = [];
+
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0 || days > 0) parts.push(`${hours}h`);
+  parts.push(`${mins}m`);
+
+  return parts.join(" ");
+}
+
+function flightCodeLabel(segment) {
+  const marketingCarrier = String(segment?.marketingCarrier ?? "").trim().toUpperCase();
+  const rawFlightNumber = typeof segment?.flightNumber === "string"
+    ? segment.flightNumber.trim().toUpperCase().replace(/\s+/g, "")
+    : "";
+
+  if (!rawFlightNumber) {
+    return "";
+  }
+
+  if (marketingCarrier && !rawFlightNumber.startsWith(marketingCarrier)) {
+    return `${marketingCarrier}${rawFlightNumber}`;
+  }
+
+  return rawFlightNumber;
+}
+
+function offerFlightCodesLabel(offer) {
+  const tokens = (offer?.itineraries ?? [])
+    .flatMap((itinerary) => itinerary?.segments ?? [])
+    .map((segment) => flightCodeLabel(segment))
+    .filter(Boolean);
+
+  return [...new Set(tokens)].join(" · ");
+}
+
+function offerOperatingCopy(offer) {
+  const primaryCarrier = carrierDisplayParts(offer);
+  const primaryTokens = new Set(
+    [primaryCarrier.code, primaryCarrier.name, primaryCarrier.display]
+      .map((value) => String(value ?? "").trim().toUpperCase())
+      .filter(Boolean),
+  );
+  const operators = new Set();
+
+  (offer?.itineraries ?? []).forEach((itinerary) => {
+    (itinerary?.segments ?? []).forEach((segment) => {
+      const marketingCarrier = String(segment?.marketingCarrier ?? "").trim().toUpperCase();
+      const operatingCarrier = String(segment?.operatingCarrier ?? "").trim().toUpperCase();
+      const operatingName = typeof segment?.operatingCarrierName === "string" ? segment.operatingCarrierName.trim() : "";
+      const label = operatingName || operatingCarrier;
+      const normalizedLabel = label.toUpperCase();
+
+      if (!label) return;
+      if (operatingCarrier && marketingCarrier && operatingCarrier === marketingCarrier) return;
+      if (primaryTokens.has(normalizedLabel) || primaryTokens.has(operatingCarrier)) return;
+      operators.add(label);
+    });
+  });
+
+  if (operators.size === 0) {
+    return "";
+  }
+
+  return `Opera parcialmente ${[...operators].join(" / ")}`;
+}
+
+function renderBaggageIconsHtml(offer) {
+  const baggage = offer?.baggage ?? {};
+  const items = [
+    {
+      icon: "ico-personal-item",
+      label: "Artículo personal",
+      included: baggage.carryOnIncluded === true,
+    },
+    {
+      icon: "ico-carry-on",
+      label: "Cabina",
+      included: baggage.carryOnIncluded === true,
+    },
+    {
+      icon: "ico-luggage",
+      label: "Bodega",
+      included: baggage.checkedIncluded === true,
+    },
+  ];
+
+  return `
+    <span class="baggage-icons" aria-label="Disponibilidad de equipaje">
+      ${items.map((item) => `
+        <span class="baggage-icons__item ${item.included ? "is-included" : "is-missing"}" title="${escapeHtml(item.label)}">
+          <svg class="ico ico--sm ${item.included ? "ico--bag-yes" : "ico--bag-no"}" aria-hidden="true"><use href="#${item.icon}"/></svg>
+        </span>
+      `).join("")}
+    </span>
+  `;
+}
+
 function itineraryTimeWindow(itinerary) {
   const segments = itinerary?.segments ?? [];
   if (segments.length === 0) return "Horario por confirmar";
@@ -2559,13 +2741,15 @@ function resultsPageCount(total) {
   return Math.max(1, Math.ceil(total / pageSize));
 }
 
-function resolveVisibleResultsPageSize(viewport = resultsContainer?.querySelector(".table-wrap") ?? resultsContainer) {
+function resolveVisibleResultsPageSize(viewport = resultsScrollViewport(resultsContainer) ?? resultsContainer) {
   if (!(viewport instanceof HTMLElement)) {
     return Math.max(1, Math.trunc(state.resultsPageSize) || RESULTS_PAGE_SIZE);
   }
 
   const tableHeader = viewport.querySelector("thead");
-  const sampleRows = [...viewport.querySelectorAll("tbody tr[data-oid], tbody tr.results-row--placeholder")]
+  const sampleRows = [
+    ...viewport.querySelectorAll("[data-oid], .results-card--placeholder, [data-flex-cell-key]"),
+  ]
     .slice(0, 6)
     .filter((row) => row instanceof HTMLElement);
   const viewportHeight = viewport.clientHeight;
@@ -2583,7 +2767,7 @@ function resolveVisibleResultsPageSize(viewport = resultsContainer?.querySelecto
 }
 
 function syncResultsPageSize() {
-  const viewport = resultsContainer?.querySelector(".table-wrap") ?? resultsContainer;
+  const viewport = resultsScrollViewport(resultsContainer) ?? resultsContainer;
   if (!(viewport instanceof HTMLElement)) {
     return false;
   }
@@ -4237,143 +4421,151 @@ function renderStopsSummary(offer) {
   `;
 }
 
-function applyResultsColumnLayoutToVisibleTables(scope = resultsContainer) {
-  if (!(scope instanceof HTMLElement)) {
-    return;
-  }
+function buildResultCardLabel({ isActive, carrier, dateSummary, durationLabel, priceLabel }) {
+  return [
+    isActive ? "Oferta seleccionada" : "Seleccionar oferta",
+    carrier,
+    dateSummary,
+    durationLabel,
+    priceLabel,
+  ].filter(Boolean).join(" · ");
+}
 
-  const layout = currentResultsColumnLayout();
-
-  RESULTS_COLUMN_DEFINITIONS.forEach((column) => {
-    scope.querySelectorAll(`[data-results-col="${column.key}"]`).forEach((col) => {
-      col.style.width = `${layout[column.key]}px`;
-    });
-
-    scope.querySelectorAll(`[data-results-layout-input="${column.key}"]`).forEach((input) => {
-      if (document.activeElement !== input) {
-        input.value = String(layout[column.key]);
-      }
-    });
+function renderExactResultsCardHtml(group, selectedOfferId, providerLinkIndex, passengerCount) {
+  const offer = group.find((entry) => entry.id === selectedOfferId) ?? group[0];
+  const isActive = group.some((entry) => entry.id === selectedOfferId);
+  const carrier = carrierDisplayParts(offer);
+  const dateSummary = buildGroupDateSummary(group, selectedOfferId);
+  const itinerary = primaryItineraryForOffer(offer);
+  const windowSummary = itineraryWindowSummary(itinerary);
+  const price = priceLabels(offer.price?.total, passengerCount);
+  const durationLabel = formatJourneyDurationLabel(
+    offer.comparisonMetrics?.totalDurationMinutes ?? totalDurationMinutes(offer),
+  );
+  const flightCodes = offerFlightCodesLabel(offer);
+  const operatingCopy = offerOperatingCopy(offer);
+  const badge = group.length > 1
+    ? `<span class="badge badge--accent badge--group-count" title="${group.length} fechas equivalentes">${group.length}</span>`
+    : "";
+  const rowLabel = buildResultCardLabel({
+    isActive,
+    carrier: carrier.display,
+    dateSummary: dateSummary.primary,
+    durationLabel,
+    priceLabel: price.combinedLabel,
   });
-}
+  const arrivalOffset = windowSummary.arrivalDayOffset > 0
+    ? `<span class="results-card__schedule-offset">+${windowSummary.arrivalDayOffset}</span>`
+    : "";
+  const routeLabel = [windowSummary.origin, windowSummary.destination].filter(Boolean).join(" - ") || "Ruta por confirmar";
+  const dateSecondary = dateSummary.secondary
+    ? `<span class="cell-sub">${escapeHtml(dateSummary.secondary)}</span>`
+    : '<span class="cell-sub cell-sub--ghost" aria-hidden="true">&nbsp;</span>';
 
-function setResultsColumnWidth(columnKey, nextValue) {
-  const definition = RESULTS_COLUMN_DEFINITIONS.find((column) => column.key === columnKey);
-  if (!definition) {
-    return;
-  }
-
-  if (nextValue === "") {
-    return;
-  }
-
-  const parsed = Number(nextValue);
-  if (!Number.isFinite(parsed)) {
-    return;
-  }
-
-  const layout = currentResultsColumnLayout();
-  state.resultsColumnLayout = {
-    ...layout,
-    [columnKey]: Math.max(
-      definition.minWidth,
-      Math.min(definition.maxWidth, Math.round(parsed)),
-    ),
-  };
-  applyResultsColumnLayoutToVisibleTables(resultsContainer);
-}
-
-function resetResultsColumnLayout() {
-  state.resultsColumnLayout = createDefaultResultsColumnLayout();
-  renderResultsArea();
-}
-
-async function loadResultsColumnLayout() {
-  try {
-    const data = await getJson(RESULTS_LAYOUT_ENDPOINT);
-    const layout = normalizedResultsColumnLayout(data?.layout?.columns);
-    state.resultsColumnLayout = layout ?? createDefaultResultsColumnLayout();
-    state.resultsLayoutSavedAt = typeof data?.layout?.savedAt === "string" ? data.layout.savedAt : "";
-  } catch {
-    state.resultsColumnLayout = createDefaultResultsColumnLayout();
-    state.resultsLayoutSavedAt = "";
-  } finally {
-    state.resultsLayoutLoaded = true;
-    renderResultsArea();
-  }
-}
-
-async function saveResultsColumnLayout() {
-  state.resultsLayoutSaving = true;
-  renderResultsArea();
-  try {
-    const payload = {
-      columns: currentResultsColumnLayout(),
-    };
-    const data = await postJson(RESULTS_LAYOUT_ENDPOINT, payload);
-    state.resultsColumnLayout = normalizedResultsColumnLayout(data?.layout?.columns) ?? payload.columns;
-    state.resultsLayoutSavedAt = typeof data?.layout?.savedAt === "string" ? data.layout.savedAt : "";
-    showToast(`Layout guardado en ${RESULTS_LAYOUT_FILE_HINT}.`, "success");
-  } catch (error) {
-    showToast(error instanceof Error ? error.message : "No pude guardar el layout local.");
-  } finally {
-    state.resultsLayoutSaving = false;
-    state.resultsLayoutLoaded = true;
-    renderResultsArea();
-  }
-}
-
-function renderPrototypeStopsHtml(row) {
-  const toneClass = row.stopTone === "danger" ? "stops-stack--danger" : "stops-stack--warning";
   return `
-    <div class="stops-stack ${toneClass}" title="${escapeHtml(`${row.stopMeta} · escala máx. ${row.stopTime}`)}">
-      <span class="stops-stack__time">${escapeHtml(row.stopTime)}</span>
-      <span class="stops-stack__meta">${escapeHtml(row.stopMeta)}</span>
-    </div>
+    <article
+      class="results-card ${isActive ? "is-active" : ""}"
+      data-oid="${offer.id}"
+      tabindex="0"
+      role="button"
+      aria-label="${escapeHtml(rowLabel)}"
+      aria-pressed="${isActive ? "true" : "false"}"
+    >
+      <div class="results-card__airline">
+        <span class="results-card__airline-name carrier-label" data-result-airline title="${escapeHtml(carrier.display)}">${escapeHtml(carrier.display)}</span>
+        ${flightCodes ? `<span class="results-card__airline-meta" data-result-flight-numbers>${escapeHtml(flightCodes)}</span>` : ""}
+        ${operatingCopy ? `<span class="results-card__airline-meta results-card__airline-meta--muted">${escapeHtml(operatingCopy)}</span>` : ""}
+      </div>
+
+      <div class="results-card__schedule">
+        <div class="results-card__schedule-main" data-result-schedule>
+          <span>${escapeHtml(windowSummary.departureTime)}</span>
+          <span class="results-card__schedule-separator">-</span>
+          <span>${escapeHtml(windowSummary.arrivalTime)}</span>
+          ${arrivalOffset}
+        </div>
+        <span class="results-card__schedule-sub">${windowSummary.departureDate ? `Ida ${escapeHtml(formatDateCompact(windowSummary.departureDate))}` : "Horario por confirmar"}</span>
+      </div>
+
+      <div class="results-card__route">
+        <span class="results-card__route-main" data-result-route>${escapeHtml(routeLabel)}</span>
+        <div class="results-date-stack" data-result-dates title="${escapeHtml(dateSummary.title)}">
+          <span class="cell-main">${escapeHtml(dateSummary.primary)}${badge}</span>
+          ${dateSecondary}
+        </div>
+      </div>
+
+      <div class="results-card__journey">
+        <span class="results-card__journey-main" data-result-duration>${escapeHtml(durationLabel)}</span>
+        <div class="results-card__journey-sub" data-result-stops>${renderStopsSummary(offer)}</div>
+      </div>
+
+      <div class="results-card__baggage" data-result-baggage>
+        <span class="results-card__micro-label">Equipaje</span>
+        ${renderBaggageIconsHtml(offer)}
+      </div>
+
+      <div class="results-card__price results-price" data-result-price>${renderPriceBreakdownHtml(offer.price?.total, passengerCount, { totalSuffix: " total" })}</div>
+      <div class="results-card__links results-links-cell" data-result-links>${renderProviderLinksCell(offer, providerLinkIndex)}</div>
+    </article>
   `;
 }
 
-function renderResultsPrototype() {
-  if (!resultsContainer) return;
-  const rows = RESULTS_PROTOTYPE_ROWS.map((row) => {
-    const bagCarry = `<svg class="ico ico--xs ${row.carryOnIncluded ? "ico--bag-yes" : "ico--bag-no"}"><use href="#ico-carry-on"/></svg>`;
-    const bagCheck = `<svg class="ico ico--xs ${row.checkedIncluded ? "ico--bag-yes" : "ico--bag-no"}"><use href="#ico-luggage"/></svg>`;
+function flexibleRouteSummary(cell) {
+  const request = flexibleCellRequest(cell) ?? state.matrixResponse?.request ?? state.request ?? {};
+  const leg = request?.legs?.[0] ?? {};
+  return [leg.origin, leg.destination].filter(Boolean).join(" - ") || toolbarRouteSummary(request) || "Ruta por confirmar";
+}
 
-    return `
-      <tr>
-        <td><span class="cell-main carrier-label" title="${escapeHtml(row.airline)}">${escapeHtml(row.airline)}</span></td>
-        <td class="results-date-cell" title="${escapeHtml(`${row.routeLabel} · Ida ${row.departureDate} · Vuelta ${row.returnDate}`)}">
-          <div class="results-date-stack">
-            <span class="cell-main">${escapeHtml(`Ida ${row.departureDate}`)}</span>
-            <span class="cell-sub">${escapeHtml(`Vuelta ${row.returnDate}`)}</span>
-          </div>
-        </td>
-        <td>${escapeHtml(row.duration)}</td>
-        <td>${renderPrototypeStopsHtml(row)}</td>
-        <td><span class="baggage-icons">${bagCarry}${bagCheck}</span></td>
-        <td class="results-price">${renderPriceBreakdownHtml({ amount: row.priceAmount, currencyCode: "USD" }, 1, { totalSuffix: " total" })}</td>
-        <td class="results-links-cell"><div class="provider-links-cell"><div class="provider-links-cell__item provider-links-cell__item--link"><span class="row-link row-link--static">${escapeHtml(row.linkLabel)}</span></div></div></td>
-      </tr>
-    `;
-  }).join("");
+function renderFlexibleResultsCardHtml(cell) {
+  const isActive = cell.key === state.selectedMatrixKey;
+  const stayLabel = cell.stayNights != null ? `${cell.stayNights} noches` : "—";
+  const passengerCount = passengerCountForRequest(flexibleCellRequest(cell) ?? state.matrixResponse?.request ?? state.request);
+  const priceHtml = cell.confidence === "loading"
+    ? '<span class="results-card__status">Cargando...</span>'
+    : cell.price
+      ? renderPriceBreakdownHtml(cell.price, passengerCount, { totalSuffix: " total" })
+      : `<span class="results-card__status">${escapeHtml(flexibleCellStateLabel(cell))}</span>`;
+  const rowLabel = [
+    isActive ? "Combinación seleccionada" : "Ver combinación flexible",
+    formatDateCompact(cell.departureDate),
+    cell.returnDate ? formatDateCompact(cell.returnDate) : "",
+    stayLabel,
+    cell.price ? priceLabels(cell.price, passengerCount).combinedLabel : flexibleCellStateLabel(cell),
+  ].filter(Boolean).join(" · ");
 
-  resultsContainer.innerHTML = `
-    <div class="results-layout-shell results-layout-shell--prototype">
-      ${buildResultsLayoutEditorHtml()}
-      <div class="table-wrap" aria-live="polite" aria-busy="false">
-        <table class="results-table results-table--search results-table--prototype">
-          ${buildResultsTableHeaderHtml()}
-          <tbody>${rows}</tbody>
-        </table>
+  return `
+    <article
+      class="results-card results-card--flexible ${isActive ? "is-active" : ""} ${!cell.selectable ? "results-card--disabled" : ""}"
+      data-flex-cell-key="${cell.key}"
+      data-mk="${cell.key}"
+      tabindex="0"
+      role="button"
+      aria-label="${escapeHtml(rowLabel)}"
+      aria-pressed="${isActive ? "true" : "false"}"
+      title="${escapeHtml(cell.tooltip ?? "")}"
+    >
+      <div class="results-card__schedule">
+        <div class="results-card__schedule-main">${escapeHtml(formatDateCompact(cell.departureDate))}</div>
+        <span class="results-card__schedule-sub">${escapeHtml(cell.returnDate ? formatDateCompact(cell.returnDate) : "—")}</span>
       </div>
-    </div>
-  `;
 
-  const resultsWrap = resultsContainer.querySelector(".table-wrap");
-  syncResultsScroll(resultsWrap);
-  requestAnimationFrame(() => syncResultsScroll(resultsWrap));
-  resultsWrap?.addEventListener("scroll", handleResultsScroll, { passive: true });
-  resultsWrap?.addEventListener("wheel", markPollingUiInteraction, { passive: true });
+      <div class="results-card__route">
+        <span class="results-card__route-main">${escapeHtml(flexibleRouteSummary(cell))}</span>
+        <div class="results-date-stack">
+          <span class="cell-main">${escapeHtml(stayLabel)}</span>
+          <span class="cell-sub">${escapeHtml(providerLabel(cell.providerSource))}</span>
+        </div>
+      </div>
+
+      <div class="results-card__journey results-card__journey--flex">
+        <span class="results-card__journey-main">${escapeHtml(flexibleCellStateLabel(cell))}</span>
+        <span class="cell-sub">${escapeHtml(cell.selectable ? "Consulta exacta disponible" : "Sin reconsulta disponible")}</span>
+      </div>
+
+      <div class="results-card__price results-price">${priceHtml}</div>
+    </article>
+  `;
 }
 
 function getActiveClientFilters() {
@@ -4720,45 +4912,23 @@ function renderResults() {
     return;
   }
 
-  let html = "";
-
-  html += `<div class="table-wrap" aria-live="polite" aria-busy="${isRunning ? "true" : "false"}"><table class="results-table results-table--search">${buildResultsTableHeaderHtml()}<tbody>`;
   const providerLinkIndex = buildProviderLinkIndex(state.searchResponse?.allOffers ?? offers);
   const passengerCount = passengerCountForRequest(state.searchResponse?.request ?? state.request);
-
-  visibleOfferGroups.forEach((group) => {
-    const o = group.find(g => g.id === state.selectedOfferId) ?? group[0];
-    const dateSummary = buildGroupDateSummary(group, state.selectedOfferId);
-    const isActive = group.some(g => g.id === state.selectedOfferId);
-    const badge = group.length > 1
-      ? ` <span class="badge badge--accent badge--group-count" title="${group.length} fechas equivalentes">${group.length}</span>`
-      : "";
-    const bagCarry = `<svg class="ico ico--xs ${o.baggage?.carryOnIncluded ? "ico--bag-yes" : "ico--bag-no"}"><use href="#ico-carry-on"/></svg>`;
-    const bagCheck = `<svg class="ico ico--xs ${o.baggage?.checkedIncluded ? "ico--bag-yes" : "ico--bag-no"}"><use href="#ico-luggage"/></svg>`;
-    const carrier = carrierDisplayParts(o);
-    const rowLabel = [
-      isActive ? "Oferta seleccionada" : "Seleccionar oferta",
-      carrier.display,
-      dateSummary.primary,
-      formatDuration(o.comparisonMetrics?.totalDurationMinutes),
-      priceLabels(o.price?.total, passengerCount).combinedLabel,
-    ].filter(Boolean).join(" · ");
-
-    html += `<tr data-oid="${o.id}" class="${isActive ? "is-active" : ""}" tabindex="0" role="button" aria-label="${escapeHtml(rowLabel)}">`;
-    html += `<td><span class="cell-main carrier-label" title="${escapeHtml(carrier.display)}">${escapeHtml(carrier.display)}</span></td>`;
-    html += `<td class="results-date-cell" title="${escapeHtml(dateSummary.title)}"><div class="results-date-stack"><span class="cell-main">${escapeHtml(dateSummary.primary)}${badge}</span>${dateSummary.secondary ? `<span class="cell-sub">${escapeHtml(dateSummary.secondary)}</span>` : '<span class="cell-sub cell-sub--ghost" aria-hidden="true">&nbsp;</span>'}</div></td>`;
-    html += `<td>${formatDuration(o.comparisonMetrics?.totalDurationMinutes)}</td>`;
-    html += `<td>${renderStopsSummary(o)}</td>`;
-    html += `<td><span class="baggage-icons">${bagCarry}${bagCheck}</span></td>`;
-    html += `<td class="results-price">${renderPriceBreakdownHtml(o.price?.total, passengerCount, { totalSuffix: " total" })}</td>`;
-    html += `<td class="results-links-cell">${renderProviderLinksCell(o, providerLinkIndex)}</td>`;
-    html += `</tr>`;
-  });
-
-  html += '</tbody></table></div>';
+  const cards = visibleOfferGroups
+    .map((group) => renderExactResultsCardHtml(group, state.selectedOfferId, providerLinkIndex, passengerCount))
+    .join("");
+  const loadingHtml = isRunning
+    ? '<div class="results-loading results-loading--inline"><span>Los resultados se seguirán agregando.</span></div>'
+    : "";
+  const html = `
+    ${loadingHtml}
+    <div class="results-list-wrap" data-results-scroll="1" aria-live="polite" aria-busy="${isRunning ? "true" : "false"}">
+      <div class="results-list results-list--exact">${cards}</div>
+    </div>
+  `;
 
   resultsContainer.innerHTML = html;
-  const resultsWrap = resultsContainer.querySelector(".table-wrap");
+  const resultsWrap = resultsScrollViewport(resultsContainer);
   const pageSizeChanged = syncResultsPageSize();
   if (pageSizeChanged && state.searchResponse?.allOffers?.length) {
     applyClientOfferControls();
@@ -4806,7 +4976,7 @@ function handleResultsClick(e) {
     return;
   }
 
-  const flexibleRow = e.target.closest("tr[data-flex-cell-key]");
+  const flexibleRow = e.target.closest("[data-flex-cell-key]");
   if (flexibleRow) {
     selectMatrixCell(flexibleRow.dataset.flexCellKey);
     return;
@@ -4819,12 +4989,12 @@ function handleResultsClick(e) {
   }
 
   if (e.target.closest("[data-stop-row]")) return;
-  const row = e.target.closest("tr[data-oid]");
+  const row = e.target.closest("[data-oid]");
   if (!row) return;
   selectOffer(row.dataset.oid);
 }
 
-function focusAdjacentResultsRow(currentRow, step, selector = "tr[data-oid]") {
+function focusAdjacentResultsRow(currentRow, step, selector = "[data-oid]") {
   const rows = [...resultsContainer?.querySelectorAll(selector) ?? []];
   const currentIndex = rows.indexOf(currentRow);
   if (currentIndex < 0) {
@@ -4835,7 +5005,7 @@ function focusAdjacentResultsRow(currentRow, step, selector = "tr[data-oid]") {
 }
 
 function handleResultsKeydown(e) {
-  const flexibleRow = e.target.closest("tr[data-flex-cell-key]");
+  const flexibleRow = e.target.closest("[data-flex-cell-key]");
   if (flexibleRow) {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -4845,18 +5015,18 @@ function handleResultsKeydown(e) {
 
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      focusAdjacentResultsRow(flexibleRow, 1, "tr[data-flex-cell-key]");
+      focusAdjacentResultsRow(flexibleRow, 1, "[data-flex-cell-key]");
       return;
     }
 
     if (e.key === "ArrowUp") {
       e.preventDefault();
-      focusAdjacentResultsRow(flexibleRow, -1, "tr[data-flex-cell-key]");
+      focusAdjacentResultsRow(flexibleRow, -1, "[data-flex-cell-key]");
     }
     return;
   }
 
-  const matrixRow = e.target.closest("tr[data-mk]");
+  const matrixRow = e.target.closest("[data-mk]");
   if (matrixRow) {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -4866,7 +5036,7 @@ function handleResultsKeydown(e) {
   }
 
   if (e.target.closest("[data-stop-row]")) return;
-  const row = e.target.closest("tr[data-oid]");
+  const row = e.target.closest("[data-oid]");
   if (!row) return;
 
   if (e.key === "Enter" || e.key === " ") {
@@ -5026,70 +5196,21 @@ function renderFlexibleList(container = resultsContainer) {
   }
 
   html += `
-    <div class="table-wrap" aria-live="polite" aria-busy="${isRunning ? "true" : "false"}">
-      <table class="results-table results-table--flexible">
-        <thead>
-          <tr>
-            <th>Ida</th>
-            <th>Vuelta</th>
-            <th>Estadía</th>
-            <th>Precio</th>
-            <th>Estado</th>
-          </tr>
-        </thead>
-        <tbody>
+    <div class="results-list-wrap" data-results-scroll="1" aria-live="polite" aria-busy="${isRunning ? "true" : "false"}">
+      <div class="results-list results-list--flexible">
   `;
 
   orderedCells.forEach((cell) => {
-    const isActive = cell.key === state.selectedMatrixKey;
-    const stayLabel = cell.stayNights != null ? `${cell.stayNights} noches` : "—";
-    const passengerCount = passengerCountForRequest(flexibleCellRequest(cell) ?? state.matrixResponse?.request ?? state.request);
-    const priceLabel = cell.confidence === "loading"
-      ? "..."
-      : priceLabels(cell.price, passengerCount).combinedLabel;
-    const priceHtml = cell.confidence === "loading"
-      ? "..."
-      : cell.price
-        ? renderPriceBreakdownHtml(cell.price, passengerCount, { totalSuffix: " total" })
-        : "—";
-    const stateLabel = flexibleCellStateLabel(cell);
-    const rowLabel = [
-      isActive ? "Combinacion seleccionada" : "Ver combinacion flexible",
-      formatDateCompact(cell.departureDate),
-      cell.returnDate ? formatDateCompact(cell.returnDate) : "",
-      stayLabel,
-      priceLabel,
-      stateLabel,
-    ].filter(Boolean).join(" · ");
-
-    html += `
-      <tr
-        data-flex-cell-key="${cell.key}"
-        data-mk="${cell.key}"
-        class="${isActive ? "is-active" : ""} ${!cell.selectable ? "results-row--disabled" : ""}"
-        tabindex="0"
-        role="button"
-        aria-label="${escapeHtml(rowLabel)}"
-        aria-pressed="${isActive ? "true" : "false"}"
-        title="${escapeHtml(cell.tooltip ?? "")}"
-      >
-        <td><span class="cell-main">${escapeHtml(formatDateCompact(cell.departureDate))}</span></td>
-        <td><span class="cell-main">${escapeHtml(cell.returnDate ? formatDateCompact(cell.returnDate) : "—")}</span></td>
-        <td><span class="cell-sub">${escapeHtml(stayLabel)}</span></td>
-        <td class="results-price">${priceHtml}</td>
-        <td><span class="cell-sub">${escapeHtml(stateLabel)}</span></td>
-      </tr>
-    `;
+    html += renderFlexibleResultsCardHtml(cell);
   });
 
   html += `
-        </tbody>
-      </table>
+      </div>
     </div>
   `;
 
   container.innerHTML = html;
-  const resultsWrap = container.querySelector(".table-wrap");
+  const resultsWrap = resultsScrollViewport(container);
   syncResultsScroll(resultsWrap);
   requestAnimationFrame(() => syncResultsScroll(resultsWrap));
   resultsWrap?.addEventListener("scroll", handleResultsScroll, { passive: true });
@@ -5205,22 +5326,28 @@ function renderAirlineBar() {
   if (!airlineBar) return;
   const baseOffers = offersForClientControls();
   const offersForFacets = baseOffers.length ? getOffersForVisibleFacets(baseOffers) : [];
-
-  if (!offersForFacets.length) {
+  const hideSidebar = () => {
     airlineBar.classList.add("hidden");
     airlineBar.innerHTML = "";
+    resultsSidebar?.classList.add("hidden");
+    resultsPanelBody?.classList.remove("has-sidebar");
+  };
+
+  if (!offersForFacets.length) {
+    hideSidebar();
     return;
   }
 
   const airlines = buildAirlineList(offersForFacets);
   if (airlines.length <= 1) {
-    airlineBar.classList.add("hidden");
-    airlineBar.innerHTML = "";
+    hideSidebar();
     return;
   }
 
   const activeCode = state.airlineFilter.only;
   airlineBar.classList.remove("hidden");
+  resultsSidebar?.classList.remove("hidden");
+  resultsPanelBody?.classList.add("has-sidebar");
   airlineBar.innerHTML = `
     <div class="airline-bar__header">
       <span class="airline-bar__label">Aerolíneas</span>
@@ -5241,7 +5368,8 @@ function renderAirlineBar() {
             title="${escapeHtml(airline.display)}"
           >
             <span class="airline-chip__name">${escapeHtml(airline.display)}</span>
-            <span class="airline-chip__meta">${priceStr} · ${airline.count}</span>
+            <span class="airline-chip__meta">${priceStr}</span>
+            <span class="airline-chip__meta">${airline.count} opción${airline.count === 1 ? "" : "es"}</span>
           </button>
         `;
       }).join("")}
@@ -5720,35 +5848,6 @@ resultsToolbar?.addEventListener("click", handleResultsClick);
 
 // Results container click delegation (set up once)
 resultsContainer?.addEventListener("click", handleResultsClick);
-resultsContainer?.addEventListener("click", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLElement)) {
-    return;
-  }
-
-  const action = target.closest("[data-results-layout-action]")?.dataset.resultsLayoutAction;
-  if (action === "reset") {
-    resetResultsColumnLayout();
-    return;
-  }
-
-  if (action === "save") {
-    void saveResultsColumnLayout();
-  }
-});
-resultsContainer?.addEventListener("input", (event) => {
-  const target = event.target;
-  if (!(target instanceof HTMLInputElement)) {
-    return;
-  }
-
-  const columnKey = target.dataset.resultsLayoutInput;
-  if (!columnKey) {
-    return;
-  }
-
-  setResultsColumnWidth(columnKey, target.value);
-});
 resultsContainer?.addEventListener("keydown", handleResultsKeydown);
 resultsContainer?.addEventListener("pointerdown", () => {
   state.pollPointerDown = true;
@@ -6405,5 +6504,3 @@ bootstrapAppShell({
   settleInitialShellLayout,
   releaseInitialUiBootState,
 });
-
-void loadResultsColumnLayout();
