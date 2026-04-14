@@ -462,7 +462,11 @@ function providerIdsForLinkCell() {
 
 function renderProviderLinkItem(path, providerId) {
   if (pathSupportsEquivalentSearch(path)) {
-    return `<a href="${path.url}" target="_blank" rel="noreferrer" class="row-link" data-stop-row="1">${providerLabel(providerId)}</a>`;
+    return `
+      <div class="provider-links-cell__item provider-links-cell__item--link">
+        <a href="${path.url}" target="_blank" rel="noreferrer" class="row-link" data-stop-row="1">${providerLabel(providerId)}</a>
+      </div>
+    `.trim();
   }
 
   const fallback = providerLinkFallbackLabel(state.searchResponse, providerId);
@@ -471,7 +475,11 @@ function renderProviderLinkItem(path, providerId) {
   }
 
   const titleAttr = fallback.title ? ` title="${escapeHtml(fallback.title)}"` : "";
-  return `<span class="cell-sub cell-sub--warning"${titleAttr}>${providerLabel(providerId)}: ${fallback.label}</span>`;
+  return `
+    <div class="provider-links-cell__item provider-links-cell__item--warning">
+      <span class="cell-sub cell-sub--warning"${titleAttr}>${providerLabel(providerId)}: ${fallback.label}</span>
+    </div>
+  `.trim();
 }
 
 function renderProviderLinksCell(offer, providerLinkIndex) {
@@ -548,7 +556,7 @@ const RESULTS_LAYOUT_ENDPOINT = "/api/results-layout";
 const RESULTS_LAYOUT_FILE_HINT = "output/results-layout.json";
 const RESULTS_COLUMN_DEFINITIONS = [
   { key: "carrier", label: "Aerolínea", defaultWidth: 144, minWidth: 144, maxWidth: 320 },
-  { key: "dates", label: "Fechas", defaultWidth: 112, minWidth: 112, maxWidth: 240 },
+  { key: "dates", label: "Fechas", defaultWidth: 117, minWidth: 112, maxWidth: 240 },
   { key: "duration", label: "Duración", defaultWidth: 124, minWidth: 124, maxWidth: 240 },
   { key: "stops", label: "Escalas", defaultWidth: 300, minWidth: 156, maxWidth: 300 },
   { key: "baggage", label: "Equipaje", defaultWidth: 96, minWidth: 96, maxWidth: 180 },
@@ -2408,7 +2416,7 @@ function buildOfferGroups(offers) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(offer);
   }
-  return [...groups.values()].map((group) => [...group].sort(compareOfferTravelDates));
+  return [...groups.values()].map((group) => [...group]);
 }
 
 function getGroupForOffer(offerId) {
@@ -4334,7 +4342,7 @@ function renderResultsPrototype() {
     return `
       <tr>
         <td><span class="cell-main carrier-label" title="${escapeHtml(row.airline)}">${escapeHtml(row.airline)}</span></td>
-        <td title="${escapeHtml(`${row.routeLabel} · Ida ${row.departureDate} · Vuelta ${row.returnDate}`)}">
+        <td class="results-date-cell" title="${escapeHtml(`${row.routeLabel} · Ida ${row.departureDate} · Vuelta ${row.returnDate}`)}">
           <div class="results-date-stack">
             <span class="cell-main">${escapeHtml(`Ida ${row.departureDate}`)}</span>
             <span class="cell-sub">${escapeHtml(`Vuelta ${row.returnDate}`)}</span>
@@ -4344,7 +4352,7 @@ function renderResultsPrototype() {
         <td>${renderPrototypeStopsHtml(row)}</td>
         <td><span class="baggage-icons">${bagCarry}${bagCheck}</span></td>
         <td class="results-price">${renderPriceBreakdownHtml({ amount: row.priceAmount, currencyCode: "USD" }, 1, { totalSuffix: " total" })}</td>
-        <td><div class="provider-links-cell"><span class="row-link row-link--static">${escapeHtml(row.linkLabel)}</span></div></td>
+        <td class="results-links-cell"><div class="provider-links-cell"><div class="provider-links-cell__item provider-links-cell__item--link"><span class="row-link row-link--static">${escapeHtml(row.linkLabel)}</span></div></div></td>
       </tr>
     `;
   }).join("");
@@ -4738,12 +4746,12 @@ function renderResults() {
 
     html += `<tr data-oid="${o.id}" class="${isActive ? "is-active" : ""}" tabindex="0" role="button" aria-label="${escapeHtml(rowLabel)}">`;
     html += `<td><span class="cell-main carrier-label" title="${escapeHtml(carrier.display)}">${escapeHtml(carrier.display)}</span></td>`;
-    html += `<td title="${escapeHtml(dateSummary.title)}"><div class="results-date-stack"><span class="cell-main">${escapeHtml(dateSummary.primary)}${badge}</span>${dateSummary.secondary ? `<span class="cell-sub">${escapeHtml(dateSummary.secondary)}</span>` : '<span class="cell-sub cell-sub--ghost" aria-hidden="true">&nbsp;</span>'}</div></td>`;
+    html += `<td class="results-date-cell" title="${escapeHtml(dateSummary.title)}"><div class="results-date-stack"><span class="cell-main">${escapeHtml(dateSummary.primary)}${badge}</span>${dateSummary.secondary ? `<span class="cell-sub">${escapeHtml(dateSummary.secondary)}</span>` : '<span class="cell-sub cell-sub--ghost" aria-hidden="true">&nbsp;</span>'}</div></td>`;
     html += `<td>${formatDuration(o.comparisonMetrics?.totalDurationMinutes)}</td>`;
     html += `<td>${renderStopsSummary(o)}</td>`;
     html += `<td><span class="baggage-icons">${bagCarry}${bagCheck}</span></td>`;
     html += `<td class="results-price">${renderPriceBreakdownHtml(o.price?.total, passengerCount, { totalSuffix: " total" })}</td>`;
-    html += `<td>${renderProviderLinksCell(o, providerLinkIndex)}</td>`;
+    html += `<td class="results-links-cell">${renderProviderLinksCell(o, providerLinkIndex)}</td>`;
     html += `</tr>`;
   });
 

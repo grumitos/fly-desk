@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   applyCostamarB2bKeyboardInput,
+  buildCostamarB2bWarmupPayload,
   applyCostamarContextToBrandedSearchUrl,
   buildCostamarBrandedSearchUrl,
   buildCostamarSearchBody,
@@ -1303,6 +1304,97 @@ test("buildCostamarSearchBody skips expired branded validation tokens", () => {
     hasValidationToken: false,
     flexible: false,
   });
+});
+
+test("buildCostamarB2bWarmupPayload matches the real flights form contract", () => {
+  const payload = buildCostamarB2bWarmupPayload(buildExactRequest(), {
+    apiBaseUrl: "https://costamar.example/api",
+    brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+    terminalId: "0721808110",
+    token: "",
+    lang: "es",
+  });
+
+  assert.deepEqual(payload, {
+    tripType: "one-way",
+    terminalId: "0721808110",
+    origin: "LIM",
+    destination: "MAD",
+    departureDate: "2026-06-01",
+    departureDisplayDate: "01/06/2026",
+    adults: 1,
+    children: 0,
+    infants: 0,
+  });
+});
+
+test("buildCostamarB2bWarmupPayload keeps round-trip dates and rejects unsupported requests", () => {
+  const roundTripRequest: SearchRequest = {
+    ...buildExactRequest(),
+    tripType: "round-trip",
+    legs: [
+      {
+        origin: "PIU",
+        destination: "LIM",
+        departureDate: "2026-10-06",
+        returnDate: "2026-10-08",
+      },
+    ],
+    passengers: {
+      adults: 3,
+      children: 0,
+      infants: 0,
+    },
+  };
+
+  assert.deepEqual(buildCostamarB2bWarmupPayload(roundTripRequest, {
+    apiBaseUrl: "https://costamar.example/api",
+    brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+    terminalId: "0721808110",
+    token: "",
+    lang: "es",
+  }), {
+    tripType: "round-trip",
+    terminalId: "0721808110",
+    origin: "PIU",
+    destination: "LIM",
+    departureDate: "2026-10-06",
+    departureDisplayDate: "06/10/2026",
+    returnDate: "2026-10-08",
+    returnDisplayDate: "08/10/2026",
+    adults: 3,
+    children: 0,
+    infants: 0,
+  });
+
+  assert.equal(buildCostamarB2bWarmupPayload({
+    ...buildExactRequest(),
+    tripType: "multi-city",
+  }, {
+    apiBaseUrl: "https://costamar.example/api",
+    brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+    terminalId: "0721808110",
+    token: "",
+    lang: "es",
+  }), undefined);
+
+  assert.equal(buildCostamarB2bWarmupPayload({
+    ...buildExactRequest(),
+    tripType: "round-trip",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "MAD",
+        departureDate: "2026-06-01",
+      },
+    ],
+  }, {
+    apiBaseUrl: "https://costamar.example/api",
+    brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+    terminalId: "0721808110",
+    token: "",
+    lang: "es",
+  }), undefined);
 });
 
 test("buildCostamarSearchBody skips tokens that belong to another terminal", () => {
