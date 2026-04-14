@@ -1,12 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  applyCostamarB2bKeyboardInput,
   applyCostamarContextToBrandedSearchUrl,
   buildCostamarBrandedSearchUrl,
   buildCostamarSearchBody,
   buildCostamarSearchWarning,
   COSTAMAR_CONCURRENCY,
   createLocalCostamarMatrixDraft,
+  detectCostamarB2bAuthChallenge,
   mapCostamarRecommendationToOffer,
   resetCostamarWarmupStateForTests,
   searchLocalCostamarExact,
@@ -23,6 +25,7 @@ import {
   resolveUsableCostamarBrandedToken,
 } from "../src/provider-context";
 import type { SearchRequest } from "../src/core/types";
+import { generateTotpCode } from "../src/totp";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -63,6 +66,77 @@ function buildJwt(payload: Record<string, unknown>): string {
   const encode = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value))
     .toString("base64url");
   return `${encode({ alg: "HS256", typ: "JWT" })}.${encode(payload)}.signature`;
+}
+
+function encodeProtoVarint(value: number): number[] {
+  const bytes: number[] = [];
+  let current = BigInt(value);
+
+  while (current >= 0x80n) {
+    bytes.push(Number((current & 0x7fn) | 0x80n));
+    current >>= 7n;
+  }
+
+  bytes.push(Number(current));
+  return bytes;
+}
+
+function encodeProtoBytesField(fieldNumber: number, value: Buffer | string): Buffer {
+  const payload = typeof value === "string" ? Buffer.from(value, "utf8") : value;
+  return Buffer.from([
+    ...encodeProtoVarint((fieldNumber << 3) | 2),
+    ...encodeProtoVarint(payload.length),
+    ...payload,
+  ]);
+}
+
+function encodeProtoVarintField(fieldNumber: number, value: number): Buffer {
+  return Buffer.from([
+    ...encodeProtoVarint(fieldNumber << 3),
+    ...encodeProtoVarint(value),
+  ]);
+}
+
+function decodeBase32Secret(secret: string): Buffer {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const normalized = secret.replace(/=+$/g, "").toUpperCase();
+  let bits = "";
+
+  for (const char of normalized) {
+    const index = alphabet.indexOf(char);
+    if (index < 0) {
+      throw new Error(`Invalid Base32 test secret: ${secret}`);
+    }
+    bits += index.toString(2).padStart(5, "0");
+  }
+
+  const bytes: number[] = [];
+  for (let offset = 0; offset + 8 <= bits.length; offset += 8) {
+    bytes.push(Number.parseInt(bits.slice(offset, offset + 8), 2));
+  }
+
+  return Buffer.from(bytes);
+}
+
+function buildOtpauthMigrationUri(entries: Array<{
+  secret: string;
+  name: string;
+  issuer: string;
+}>): string {
+  const payload = Buffer.concat(entries.map((entry) => {
+    const otpParameters = Buffer.concat([
+      encodeProtoBytesField(1, decodeBase32Secret(entry.secret)),
+      encodeProtoBytesField(2, entry.name),
+      encodeProtoBytesField(3, entry.issuer),
+      encodeProtoVarintField(4, 1),
+      encodeProtoVarintField(5, 1),
+      encodeProtoVarintField(6, 2),
+    ]);
+
+    return encodeProtoBytesField(1, otpParameters);
+  }));
+
+  return `otpauth-migration://offline?data=${payload.toString("base64url")}`;
 }
 
 function buildExactRequest(): SearchRequest {
@@ -263,6 +337,123 @@ test("extractCostamarSessionCandidates reads percent-encoded branded urls from C
   assert.equal(candidates.length, 1);
   assert.equal(candidates[0]?.terminalId, "0721808110");
   assert.equal(candidates[0]?.token, token);
+});
+
+test("detectCostamarB2bAuthChallenge recognizes a single authenticator input", () => {
+  const challenge = detectCostamarB2bAuthChallenge({
+    text: "Enter your Google Authenticator code to continue.",
+    inputs: [
+      {
+        index: 0,
+        id: "email",
+        name: "email",
+        type: "text",
+        autocomplete: "",
+        maxLength: 0,
+        visible: true,
+      },
+      {
+        index: 1,
+        id: "authcode",
+        name: "authcode",
+        type: "text",
+        autocomplete: "one-time-code",
+        maxLength: 6,
+        visible: true,
+      },
+    ],
+  });
+
+  assert.deepEqual(challenge, {
+    kind: "single",
+    inputIndexes: [1],
+  });
+});
+
+test("detectCostamarB2bAuthChallenge recognizes split OTP inputs from the challenge text", () => {
+  const challenge = detectCostamarB2bAuthChallenge({
+    text: "Ingresa tu codigo de verificacion para continuar.",
+    inputs: Array.from({ length: 6 }, (_, index) => ({
+      index,
+      id: `digit-${index + 1}`,
+      name: `digit-${index + 1}`,
+      type: "tel",
+      autocomplete: "one-time-code",
+      maxLength: 1,
+      visible: true,
+    })),
+  });
+
+  assert.deepEqual(challenge, {
+    kind: "split",
+    inputIndexes: [0, 1, 2, 3, 4, 5],
+  });
+});
+
+test("applyCostamarB2bKeyboardInput clears the field and types like a user", async () => {
+  const calls: string[] = [];
+  await applyCostamarB2bKeyboardInput(
+    {
+      async click() {
+        calls.push("click");
+      },
+      async press(key: string) {
+        calls.push(`press:${key}`);
+      },
+      async type(text: string, options?: { delay?: number }) {
+        calls.push(`type:${text}:${options?.delay ?? 0}`);
+      },
+    },
+    "secret",
+  );
+
+  assert.deepEqual(calls, [
+    "click",
+    `press:${process.platform === "darwin" ? "Meta+A" : "Control+A"}`,
+    "press:Backspace",
+    "type:secret:35",
+  ]);
+});
+
+test("generateTotpCode supports Base32 secrets and otpauth URIs", () => {
+  const base32Secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+  assert.equal(generateTotpCode(base32Secret, 59000), "287082");
+  assert.equal(
+    generateTotpCode(`otpauth://totp/Costamar?secret=${base32Secret}&digits=6&period=30&algorithm=SHA1`, 59000),
+    "287082",
+  );
+});
+
+test("generateTotpCode supports otpauth-migration exports and prefers the Costamar entry", () => {
+  const costamarSecret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+  const migrationUri = buildOtpauthMigrationUri([
+    {
+      secret: "JBSWY3DPEHPK3PXP",
+      name: "Correo personal",
+      issuer: "Otro",
+    },
+    {
+      secret: costamarSecret,
+      name: "Click & Book",
+      issuer: "Costamar",
+    },
+  ]);
+
+  assert.equal(generateTotpCode(migrationUri, 59000), "287082");
+});
+
+test("generateTotpCode can extract a Proton Pass style totpUri from JSON", () => {
+  const base32Secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+  const protonPassJson = JSON.stringify({
+    metadata: {
+      name: "Costamar",
+    },
+    content: {
+      totpUri: `otpauth://totp/Costamar?secret=${base32Secret}&issuer=Costamar`,
+    },
+  });
+
+  assert.equal(generateTotpCode(protonPassJson, 59000), "287082");
 });
 
 test("keeps Costamar range searches lighter than matrix fan-out by default", () => {

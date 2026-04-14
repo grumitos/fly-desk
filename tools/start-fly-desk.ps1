@@ -238,6 +238,78 @@ function Test-HealthEndpoint {
   }
 }
 
+function Test-NodeProcess {
+  param([int]$ProcessId)
+
+  if ($ProcessId -le 0) {
+    return $false
+  }
+
+  try {
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId"
+    if (-not $process) {
+      return $false
+    }
+
+    $processName = [string]$process.Name
+    return $processName -eq "node.exe" -or $processName -eq "node"
+  } catch {
+    return $false
+  }
+}
+
+function Test-FlyDeskUiEndpoint {
+  param([int]$Port)
+
+  $client = $null
+  try {
+    $handler = [System.Net.Http.HttpClientHandler]::new()
+    $client = [System.Net.Http.HttpClient]::new($handler)
+    $client.Timeout = [TimeSpan]::FromSeconds(2)
+    $response = $client.GetAsync("http://127.0.0.1:$Port/").GetAwaiter().GetResult()
+    if ([int]$response.StatusCode -ne 200) {
+      return $false
+    }
+
+    $content = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+    return $content -like "*<title>Fly Desk</title>*"
+  } catch {
+    return $false
+  } finally {
+    if ($client) {
+      $client.Dispose()
+    }
+  }
+}
+
+function Get-ListeningTcpRecords {
+  $lines = & netstat -ano -p tcp 2>$null
+  $records = @()
+
+  foreach ($line in $lines) {
+    $parts = @($line -split "\s+" | Where-Object { $_ })
+    if ($parts.Length -lt 5) {
+      continue
+    }
+
+    if ($parts[0] -ne "TCP" -or $parts[3] -ne "LISTENING") {
+      continue
+    }
+
+    $portMatch = [regex]::Match($parts[1], ":(?<port>\d+)$")
+    if (-not $portMatch.Success) {
+      continue
+    }
+
+    $records += [pscustomobject]@{
+      Port = [int]$portMatch.Groups["port"].Value
+      ProcessId = [int]$parts[4]
+    }
+  }
+
+  return $records
+}
+
 function Get-ListeningProcessIdsForPort {
   param([int]$Port)
 
@@ -252,6 +324,22 @@ function Get-ListeningProcessIdsForPort {
   }
 
   return $processIds | Sort-Object -Unique
+}
+
+function Test-ProcessHostsFlyDeskUi {
+  param([int]$ProcessId)
+
+  if ($ProcessId -le 0) {
+    return $false
+  }
+
+  foreach ($record in @(Get-ListeningTcpRecords | Where-Object { [int]$_.ProcessId -eq $ProcessId })) {
+    if (Test-FlyDeskUiEndpoint -Port ([int]$record.Port)) {
+      return $true
+    }
+  }
+
+  return $false
 }
 
 function Stop-ProcessTree {
@@ -339,15 +427,81 @@ function Test-FlyDeskServerProcess {
 
   try {
     $distEntry = Join-Path $script:ProjectRoot "dist\\index.js"
+    $srcEntry = Join-Path $script:ProjectRoot "src\\index.ts"
     $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId"
     if (-not $process) {
       return $false
     }
 
+    if (-not (Test-NodeProcess -ProcessId $ProcessId)) {
+      return $false
+    }
+
     $commandLine = [string]$process.CommandLine
-    return $commandLine -like "*$distEntry*"
+    if (($commandLine -like "*$distEntry*") `
+      -or ($commandLine -like "*$srcEntry*") `
+      -or (
+        $commandLine -like "*$script:ProjectRoot*" `
+          -and (
+            $commandLine -like "*src\\index.ts*" `
+              -or $commandLine -like "*src/index.ts*"
+          )
+      )) {
+      return $true
+    }
+
+    if (($commandLine -like "*dist\\index.js*") -or ($commandLine -like "*dist/index.js*")) {
+      return Test-ProcessHostsFlyDeskUi -ProcessId $ProcessId
+    }
+
+    return $false
   } catch {
     return $false
+  }
+}
+
+function Get-FlyDeskServerProcessIds {
+  $processes = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue
+  if (-not $processes) {
+    return @()
+  }
+
+  return @(
+    $processes |
+      Where-Object { Test-FlyDeskServerProcess -ProcessId ([int]$_.ProcessId) } |
+      ForEach-Object { [int]$_.ProcessId } |
+      Sort-Object -Unique
+  )
+}
+
+function Get-FlyDeskEndpointProcessIds {
+  $records = @(Get-ListeningTcpRecords)
+  if ($records.Count -eq 0) {
+    return @()
+  }
+
+  return @(
+    $records |
+      Where-Object { Test-NodeProcess -ProcessId ([int]$_.ProcessId) } |
+      Where-Object { Test-FlyDeskUiEndpoint -Port ([int]$_.Port) } |
+      ForEach-Object { [int]$_.ProcessId } |
+      Sort-Object -Unique
+  )
+}
+
+function Stop-AllFlyDeskInstances {
+  $processesToStop = @(
+    @((Get-FlyDeskServerProcessIds) + (Get-FlyDeskEndpointProcessIds)) |
+      Sort-Object -Unique
+  )
+
+  foreach ($processId in $processesToStop) {
+    Write-LauncherLog "Se encontro una instancia previa de Fly Desk (PID $processId) y sera detenida antes de relanzar."
+    Stop-ProcessTree -ProcessId $processId
+  }
+
+  if ($processesToStop.Count -gt 0) {
+    Start-Sleep -Milliseconds 800
   }
 }
 
@@ -458,47 +612,39 @@ try {
   Write-LauncherLog "Inicio del launcher en puerto fijo $script:LauncherPort."
 
   $state = Get-State
-  if ($state) {
-    $statePort = if ($state.port) { [int]$state.port } else { $script:LauncherPort }
-    $statePid = if ($state.pid) { [int]$state.pid } else { 0 }
-    $stateHealthy = Test-HealthEndpoint -Port $statePort
-    $stateListening = Test-ProcessListeningOnPort -ProcessId $statePid -Port $statePort
+  $statePid = if ($state -and $state.pid) { [int]$state.pid } else { 0 }
+  $occupyingPids = @(Get-ListeningProcessIdsForPort -Port $script:LauncherPort)
+  $flyDeskPidsOnLauncherPort = @($occupyingPids | Where-Object { Test-FlyDeskServerProcess -ProcessId $_ })
+  $hasReusableInstance = $false
 
-    if ($stateHealthy -or $stateListening) {
-      Write-LauncherLog "Instancia existente reutilizada en puerto $statePort (health=$stateHealthy, listening=$stateListening, pid=$statePid)."
-      if ($statePid -gt 0) {
-        Save-State -Port $statePort -ProcessId $statePid -StdOutLog ([string]$state.stdoutLog) -StdErrLog ([string]$state.stderrLog)
-      }
-      Open-AppInBrowser -Port $statePort
-      exit 0
+  if ($flyDeskPidsOnLauncherPort.Count -gt 0 -and (Test-HealthEndpoint -Port $script:LauncherPort)) {
+    $hasReusableInstance = $true
+    if ($statePid -le 0 -or -not ($flyDeskPidsOnLauncherPort -contains $statePid)) {
+      $statePid = [int]$flyDeskPidsOnLauncherPort[0]
+      Save-State -Port $script:LauncherPort -ProcessId $statePid
     }
   }
 
-  if (Test-HealthEndpoint -Port $script:LauncherPort) {
-    Write-LauncherLog "Se detecto una instancia saludable en el puerto del launcher."
-    Save-State -Port $script:LauncherPort -ProcessId 0
+  if ($hasReusableInstance -and -not (Test-BuildNeeded)) {
+    Write-LauncherLog "Se reutiliza la instancia activa de Fly Desk en puerto $script:LauncherPort (PID $statePid)."
     Open-AppInBrowser -Port $script:LauncherPort
-    exit 0
+    return
   }
 
-  if ($state -and $state.pid -and (Test-ProcessAlive -ProcessId ([int]$state.pid))) {
-    Stop-ProcessTree -ProcessId ([int]$state.pid)
+  foreach ($processId in $flyDeskPidsOnLauncherPort) {
+    Write-LauncherLog "Se detendra la instancia activa de Fly Desk en PID $processId para aplicar un relanzamiento limpio."
+    Stop-ProcessTree -ProcessId $processId
+  }
+
+  if ($flyDeskPidsOnLauncherPort.Count -gt 0) {
     Start-Sleep -Milliseconds 800
   }
 
+  Clear-State
   $occupyingPids = @(Get-ListeningProcessIdsForPort -Port $script:LauncherPort)
   if ($occupyingPids.Count -gt 0) {
-    $knownStatePid = if ($state -and $state.pid) { [int]$state.pid } else { 0 }
-    $foreignPids = @($occupyingPids | Where-Object { $_ -ne $knownStatePid })
+    $foreignPids = @($occupyingPids | Where-Object { -not (Test-FlyDeskServerProcess -ProcessId $_) })
 
-    foreach ($processId in @($foreignPids | Where-Object { Test-FlyDeskServerProcess -ProcessId $_ })) {
-      Write-LauncherLog "Se encontro un Fly Desk huerfano en PID $processId y sera detenido antes de relanzar."
-      Stop-ProcessTree -ProcessId $processId
-      Start-Sleep -Milliseconds 800
-    }
-
-    $occupyingPids = @(Get-ListeningProcessIdsForPort -Port $script:LauncherPort)
-    $foreignPids = @($occupyingPids | Where-Object { $_ -ne $knownStatePid })
     if ($foreignPids.Count -gt 0) {
       Fail-Launcher "Fly Desk usa el puerto fijo $script:LauncherPort para el acceso directo, pero esta ocupado por otra aplicacion. Cierra esa aplicacion o libera el puerto y vuelve a intentar."
     }

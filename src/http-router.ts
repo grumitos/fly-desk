@@ -1,6 +1,8 @@
 import { materializeSearchResponse } from "./core/orchestrator";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
 import { buildCommercialQuotation } from "./core/quotation";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import * as path from "node:path";
 import {
   normalizeFlexibleRoundTripRequest,
   resolveFlexibleRoundTripMode,
@@ -48,6 +50,7 @@ import {
 } from "./provider-context";
 import { resolveQuotationUsdToPenRate, warmQuotationUsdToPenRate } from "./quotation-exchange-rate";
 import { limitSearchResponseForPagination } from "./search-limits";
+import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
 import { getSearchDatePolicy, validateSearchDateInPolicy } from "./search-date-policy";
 
@@ -72,9 +75,22 @@ interface QuotationPayload extends SessionPayload {
   offerId?: string;
 }
 
+type ResultsLayoutColumnKey =
+  | "carrier"
+  | "dates"
+  | "duration"
+  | "stops"
+  | "baggage"
+  | "price"
+  | "links";
+
 interface LocalOpenPayload {
   url?: string;
   preferredBrowser?: "chrome" | "default";
+}
+
+interface ResultsLayoutPayload {
+  columns?: Partial<Record<ResultsLayoutColumnKey, unknown>>;
 }
 
 interface ProgressiveSearchAdapter {
@@ -135,6 +151,93 @@ const PROGRESSIVE_ADAPTERS: Record<ProviderId, ProgressiveSearchAdapter> = {
       resolveLocalCostamarMatrixProgressive(request, providerContext, draft, onCellResolved),
   },
 };
+
+const RESULTS_LAYOUT_COLUMNS = [
+  "carrier",
+  "dates",
+  "duration",
+  "stops",
+  "baggage",
+  "price",
+  "links",
+] as const satisfies readonly ResultsLayoutColumnKey[];
+
+const RESULTS_LAYOUT_FILE = path.resolve(__dirname, "..", "output", "results-layout.json");
+const RESULTS_LAYOUT_VERSION = 1;
+const RESULTS_LAYOUT_WIDTH_MIN = 96;
+const RESULTS_LAYOUT_WIDTH_MAX = 640;
+
+function normalizeResultsLayoutColumns(
+  input: Partial<Record<ResultsLayoutColumnKey, unknown>> | undefined,
+): Record<ResultsLayoutColumnKey, number> | undefined {
+  if (!input || typeof input !== "object") {
+    return undefined;
+  }
+
+  const columns = {} as Record<ResultsLayoutColumnKey, number>;
+
+  for (const key of RESULTS_LAYOUT_COLUMNS) {
+    const raw = input[key];
+    const numeric = typeof raw === "number" ? raw : Number(raw);
+    if (!Number.isFinite(numeric)) {
+      continue;
+    }
+
+    columns[key] = Math.max(
+      RESULTS_LAYOUT_WIDTH_MIN,
+      Math.min(RESULTS_LAYOUT_WIDTH_MAX, Math.round(numeric)),
+    );
+  }
+
+  return Object.keys(columns).length === RESULTS_LAYOUT_COLUMNS.length
+    ? columns
+    : undefined;
+}
+
+async function readResultsLayoutFile(): Promise<{
+  version: number;
+  savedAt: string;
+  columns: Record<ResultsLayoutColumnKey, number>;
+} | null> {
+  try {
+    const raw = await readFile(RESULTS_LAYOUT_FILE, "utf8");
+    const parsed = JSON.parse(raw) as {
+      version?: unknown;
+      savedAt?: unknown;
+      columns?: Partial<Record<ResultsLayoutColumnKey, unknown>>;
+    };
+    const columns = normalizeResultsLayoutColumns(parsed?.columns);
+    if (!columns) {
+      return null;
+    }
+
+    return {
+      version: RESULTS_LAYOUT_VERSION,
+      savedAt: typeof parsed?.savedAt === "string" ? parsed.savedAt : "",
+      columns,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function writeResultsLayoutFile(
+  columns: Record<ResultsLayoutColumnKey, number>,
+): Promise<{
+  version: number;
+  savedAt: string;
+  columns: Record<ResultsLayoutColumnKey, number>;
+}> {
+  const payload = {
+    version: RESULTS_LAYOUT_VERSION,
+    savedAt: new Date().toISOString(),
+    columns,
+  };
+
+  await mkdir(path.dirname(RESULTS_LAYOUT_FILE), { recursive: true });
+  await writeFile(RESULTS_LAYOUT_FILE, JSON.stringify(payload, null, 2), "utf8");
+  return payload;
+}
 
 function parseExplicitProviderId(value: unknown): ProviderId | undefined {
   return value === "costamar" || value === "agil-local"
@@ -768,18 +871,21 @@ function getProgressiveAdapter(providerId: ProviderId): ProgressiveSearchAdapter
 
 async function suggestLocationsForProvider(
   runtime: ReturnType<typeof getRuntime>,
+  sessionId: string | undefined,
   providerId: ProviderId,
   query: string,
   limit: number,
 ): Promise<Awaited<ReturnType<typeof suggestLocalAgilLocations>>> {
-  const provider = runtime.orchestrator.getProvider(providerId);
-  if (provider?.suggestLocations) {
-    return provider.suggestLocations(query, limit);
-  }
+  return runtime.locationSuggestions.getOrLoad(sessionId, providerId, query, limit, async () => {
+    const provider = runtime.orchestrator.getProvider(providerId);
+    if (provider?.suggestLocations) {
+      return provider.suggestLocations(query, limit);
+    }
 
-  return providerId === "costamar"
-    ? suggestLocalCostamarLocations(query, limit)
-    : suggestLocalAgilLocations(query, limit);
+    return providerId === "costamar"
+      ? suggestLocalCostamarLocations(query, limit)
+      : suggestLocalAgilLocations(query, limit);
+  });
 }
 
 function mergeLocationSuggestions(
@@ -838,43 +944,78 @@ async function readPayload<T>(request: Request): Promise<T> {
   return request.json() as Promise<T>;
 }
 
-function matrixJobResponse(job: ReturnType<typeof getRuntime>["sessions"] extends { getMatrixJob(jobId: string): infer T } ? NonNullable<T> : never) {
-  return {
+function parseSinceRevision(value: string | null): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function resolveLocationSuggestionSessionId(value: string | null): string | undefined {
+  const normalized = stringValue(value).slice(0, 96);
+  return normalized || undefined;
+}
+
+function matrixJobResponse(
+  job: ReturnType<typeof getRuntime>["sessions"] extends { getMatrixJob(jobId: string): infer T } ? NonNullable<T> : never,
+  sinceRevision?: number,
+) {
+  const unchanged = typeof sinceRevision === "number" && sinceRevision >= job.revision;
+  const base = {
     matrixJobId: job.id,
     matrixComplete: job.status === "completed" || job.status === "failed",
     matrixStatus: job.status,
+    revision: job.revision,
     request: job.request,
+    searchMeta: job.searchMeta,
+    providerMeta: job.providerMeta,
+    warnings: job.warnings,
+    error: job.error,
+    unchanged,
+  };
+
+  if (unchanged) {
+    return base;
+  }
+
+  return {
+    ...base,
     cells: job.cells,
     axes: job.axes,
     confidenceSummary: job.confidenceSummary,
     recommendations: job.recommendations,
-    searchMeta: job.searchMeta,
-    providerMeta: job.providerMeta,
-    warnings: job.warnings,
-    error: job.error,
   };
 }
 
 function searchJobResponse(
-  runtime: ReturnType<typeof getRuntime>,
   job: ReturnType<typeof getRuntime>["sessions"] extends { getSearchJob(jobId: string): infer T } ? NonNullable<T> : never,
+  sinceRevision?: number,
 ) {
-  const sessionOffersById = new Map(
-    (runtime.sessions.getSession(job.id)?.offers ?? []).map((offer) => [offer.id, offer] as const),
-  );
-
-  return {
+  const unchanged = typeof sinceRevision === "number" && sinceRevision >= job.revision;
+  const base = {
     searchJobId: job.id,
     searchComplete: job.status === "completed" || job.status === "failed",
     searchStatus: job.status,
+    revision: job.revision,
     sortMode: job.sortMode,
     request: job.request,
-    offers: job.offers.map((offer) => sessionOffersById.get(offer.id) ?? offer),
-    allOffers: job.allOffers.map((offer) => sessionOffersById.get(offer.id) ?? offer),
     searchMeta: job.searchMeta,
     providerMeta: job.providerMeta,
     warnings: job.warnings,
     error: job.error,
+    unchanged,
+  };
+
+  if (unchanged) {
+    return base;
+  }
+
+  return {
+    ...base,
+    offers: job.offers,
+    allOffers: job.allOffers,
   };
 }
 
@@ -908,6 +1049,45 @@ export async function routeRequest(request: Request): Promise<Response> {
     return json({ ok: true });
   }
 
+  if (request.method === "GET" && url.pathname === "/api/diagnostics") {
+    if (!isLoopbackHost(url.hostname)) {
+      return json({ error: "This diagnostic endpoint is only available on localhost." }, { status: 403 });
+    }
+
+    return json({
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      memoryUsage: process.memoryUsage(),
+      locationSuggestions: runtime.locationSuggestions.getDiagnostics(),
+      sessions: runtime.sessions.getDiagnostics(),
+      tempArtifacts: collectTempArtifactDiagnostics(),
+    });
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/results-layout") {
+    if (!isLoopbackHost(url.hostname)) {
+      return json({ error: "This layout endpoint is only available on localhost." }, { status: 403 });
+    }
+
+    const layout = await readResultsLayoutFile();
+    return json({ layout });
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/results-layout") {
+    if (!isLoopbackHost(url.hostname)) {
+      return json({ error: "This layout endpoint is only available on localhost." }, { status: 403 });
+    }
+
+    const payload = await readPayload<ResultsLayoutPayload>(request);
+    const columns = normalizeResultsLayoutColumns(payload?.columns);
+    if (!columns) {
+      return json({ errors: ["A full results column layout is required."] }, { status: 400 });
+    }
+
+    const layout = await writeResultsLayoutFile(columns);
+    return json({ ok: true, layout });
+  }
+
   if (request.method === "GET" && url.pathname === "/api/costamar/token-status") {
     const status = getCostamarTokenStatus();
     const verify = url.searchParams.get("verify") === "true";
@@ -922,7 +1102,8 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     const limit = integerParam(url.searchParams.get("limit"), 8, 1, 20);
-    const suggestions = await suggestLocationsForProvider(runtime, "agil-local", query, limit);
+    const clientSessionId = resolveLocationSuggestionSessionId(url.searchParams.get("clientSessionId"));
+    const suggestions = await suggestLocationsForProvider(runtime, clientSessionId, "agil-local", query, limit);
     return json({ query, providerId: "agil-local", suggestions });
   }
 
@@ -933,7 +1114,8 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     const limit = integerParam(url.searchParams.get("limit"), 8, 1, 20);
-    const suggestions = await suggestLocationsForProvider(runtime, "costamar", query, limit);
+    const clientSessionId = resolveLocationSuggestionSessionId(url.searchParams.get("clientSessionId"));
+    const suggestions = await suggestLocationsForProvider(runtime, clientSessionId, "costamar", query, limit);
     return json({ query, providerId: "costamar", suggestions });
   }
 
@@ -944,6 +1126,7 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     const limit = integerParam(url.searchParams.get("limit"), 8, 1, 20);
+    const clientSessionId = resolveLocationSuggestionSessionId(url.searchParams.get("clientSessionId"));
     const rawProviderId = stringValue(url.searchParams.get("providerId"));
     const providerIds = rawProviderId
       ? [resolveProviderId(rawProviderId as ProviderId | undefined)]
@@ -951,14 +1134,14 @@ export async function routeRequest(request: Request): Promise<Response> {
 
     if (providerIds.length === 1) {
       const providerId = providerIds[0];
-      const suggestions = await suggestLocationsForProvider(runtime, providerId, query, limit);
+      const suggestions = await suggestLocationsForProvider(runtime, clientSessionId, providerId, query, limit);
       return json({ query, providerId, suggestions });
     }
 
     const settled = await Promise.allSettled(
       providerIds.map(async (providerId) => ({
         providerId,
-        suggestions: await suggestLocationsForProvider(runtime, providerId, query, limit) as LocationSuggestion[],
+        suggestions: await suggestLocationsForProvider(runtime, clientSessionId, providerId, query, limit) as LocationSuggestion[],
       })),
     );
 
@@ -1109,7 +1292,7 @@ export async function routeRequest(request: Request): Promise<Response> {
       syncSearchJob("completed");
     });
 
-    return json(searchJobResponse(runtime, job));
+    return json(searchJobResponse(job));
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/search/")) {
@@ -1120,7 +1303,7 @@ export async function routeRequest(request: Request): Promise<Response> {
       return json({ error: "Search job not found." }, { status: 404 });
     }
 
-    return json(searchJobResponse(runtime, job));
+    return json(searchJobResponse(job, parseSinceRevision(url.searchParams.get("sinceRevision"))));
   }
 
   if (request.method === "POST" && url.pathname === "/api/matrix") {
@@ -1256,7 +1439,7 @@ export async function routeRequest(request: Request): Promise<Response> {
       return json({ error: "Matrix job not found." }, { status: 404 });
     }
 
-    return json(matrixJobResponse(job));
+    return json(matrixJobResponse(job, parseSinceRevision(url.searchParams.get("sinceRevision"))));
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/r/")) {

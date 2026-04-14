@@ -104,6 +104,131 @@ const {
   maxFutureDaysDefault: SEARCH_DATE_DEFAULT_MAX_FUTURE_DAYS,
   formatDateCompact,
 });
+const AUTOCOMPLETE_SESSION_STORAGE_KEY = "flydesk.autocompleteCache.v1";
+const AUTOCOMPLETE_CLIENT_SESSION_STORAGE_KEY = "flydesk.clientSessionId";
+const AUTOCOMPLETE_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
+const AUTOCOMPLETE_CACHE_MAX_ENTRIES = 80;
+const autocompleteSessionCache = loadAutocompleteSessionCache();
+
+function createClientSessionId() {
+  if (window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+
+  return `flydesk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getClientSessionId() {
+  try {
+    const stored = window.sessionStorage.getItem(AUTOCOMPLETE_CLIENT_SESSION_STORAGE_KEY);
+    if (stored) {
+      return stored;
+    }
+
+    const created = createClientSessionId();
+    window.sessionStorage.setItem(AUTOCOMPLETE_CLIENT_SESSION_STORAGE_KEY, created);
+    return created;
+  } catch {
+    return "flydesk-anonymous";
+  }
+}
+
+function loadAutocompleteSessionCache() {
+  try {
+    const raw = window.sessionStorage.getItem(AUTOCOMPLETE_SESSION_STORAGE_KEY);
+    if (!raw) {
+      return new Map();
+    }
+
+    const parsed = JSON.parse(raw);
+    const nowMs = Date.now();
+    const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+    const cache = new Map();
+
+    entries.forEach((entry) => {
+      const key = typeof entry?.key === "string" ? entry.key : "";
+      const touchedAtMs = Number(entry?.touchedAtMs);
+      const suggestions = Array.isArray(entry?.suggestions) ? entry.suggestions : [];
+      if (!key || !Number.isFinite(touchedAtMs) || nowMs - touchedAtMs > AUTOCOMPLETE_CACHE_TTL_MS) {
+        return;
+      }
+
+      cache.set(key, {
+        touchedAtMs,
+        suggestions: suggestions.map((suggestion) => ({ ...suggestion })),
+      });
+    });
+
+    return cache;
+  } catch {
+    return new Map();
+  }
+}
+
+function persistAutocompleteSessionCache() {
+  try {
+    const entries = [...autocompleteSessionCache.entries()]
+      .sort((left, right) => right[1].touchedAtMs - left[1].touchedAtMs)
+      .slice(0, AUTOCOMPLETE_CACHE_MAX_ENTRIES)
+      .map(([key, value]) => ({
+        key,
+        touchedAtMs: value.touchedAtMs,
+        suggestions: value.suggestions.map((suggestion) => ({ ...suggestion })),
+      }));
+    window.sessionStorage.setItem(AUTOCOMPLETE_SESSION_STORAGE_KEY, JSON.stringify({ entries }));
+  } catch {
+    // sessionStorage can be unavailable in privacy-restricted contexts.
+  }
+}
+
+function normalizeAutocompleteQuery(query) {
+  return String(query || "").trim().toUpperCase();
+}
+
+function autocompleteCacheKey(query, limit) {
+  return [
+    "all",
+    String(limit),
+    normalizeAutocompleteQuery(query),
+  ].join("::");
+}
+
+function readAutocompleteCache(query, limit) {
+  const key = autocompleteCacheKey(query, limit);
+  const entry = autocompleteSessionCache.get(key);
+  if (!entry) {
+    return [];
+  }
+
+  if (Date.now() - entry.touchedAtMs > AUTOCOMPLETE_CACHE_TTL_MS) {
+    autocompleteSessionCache.delete(key);
+    persistAutocompleteSessionCache();
+    return [];
+  }
+
+  entry.touchedAtMs = Date.now();
+  persistAutocompleteSessionCache();
+  return entry.suggestions.map((suggestion) => ({ ...suggestion }));
+}
+
+function writeAutocompleteCache(query, limit, suggestions) {
+  const key = autocompleteCacheKey(query, limit);
+  autocompleteSessionCache.set(key, {
+    touchedAtMs: Date.now(),
+    suggestions: (suggestions ?? []).map((suggestion) => ({ ...suggestion })),
+  });
+
+  while (autocompleteSessionCache.size > AUTOCOMPLETE_CACHE_MAX_ENTRIES) {
+    const oldest = [...autocompleteSessionCache.entries()]
+      .sort((left, right) => left[1].touchedAtMs - right[1].touchedAtMs)[0];
+    if (!oldest) {
+      break;
+    }
+    autocompleteSessionCache.delete(oldest[0]);
+  }
+
+  persistAutocompleteSessionCache();
+}
 
 function providerIdFromRequest(request) {
   return request?.providerId === "costamar" ? "costamar" : "agil-local";
@@ -311,7 +436,19 @@ function emptySearchPanelModel(response) {
 }
 
 function pathSupportsEquivalentSearch(path) {
-  return Boolean(path?.url);
+  if (!path?.url) {
+    return false;
+  }
+
+  if (path?.precision === "broad-search" || path?.precision === "manual") {
+    return false;
+  }
+
+  if (path?.commercialMode === "manual" || path?.state === "manual" || path?.type === "manual-reference") {
+    return false;
+  }
+
+  return true;
 }
 
 function providerIdsForLinkCell() {
@@ -407,26 +544,195 @@ function flexibleCombinationLabel(count) {
   return `${count} combinación${count === 1 ? "" : "es"}`;
 }
 
+const RESULTS_LAYOUT_ENDPOINT = "/api/results-layout";
+const RESULTS_LAYOUT_FILE_HINT = "output/results-layout.json";
+const RESULTS_COLUMN_DEFINITIONS = [
+  { key: "carrier", label: "Aerolínea", defaultWidth: 144, minWidth: 144, maxWidth: 320 },
+  { key: "dates", label: "Fechas", defaultWidth: 112, minWidth: 112, maxWidth: 240 },
+  { key: "duration", label: "Duración", defaultWidth: 124, minWidth: 124, maxWidth: 240 },
+  { key: "stops", label: "Escalas", defaultWidth: 300, minWidth: 156, maxWidth: 300 },
+  { key: "baggage", label: "Equipaje", defaultWidth: 96, minWidth: 96, maxWidth: 180 },
+  { key: "price", label: "Precio", defaultWidth: 196, minWidth: 180, maxWidth: 360 },
+  { key: "links", label: "Enlace", defaultWidth: 120, minWidth: 120, maxWidth: 240 },
+];
+const RESULTS_PROTOTYPE_ROWS = [
+  {
+    airline: "Delta Air Lines",
+    departureDate: "20/05",
+    returnDate: "27/05",
+    routeLabel: "LIM → MXP",
+    duration: "69h 35m",
+    stopTone: "danger",
+    stopTime: "10h 0m",
+    stopMeta: "ATL +1 escala",
+    carryOnIncluded: false,
+    checkedIncluded: false,
+    priceAmount: 1416.83,
+    linkLabel: "Costamar",
+  },
+  {
+    airline: "Delta Air Lines",
+    departureDate: "20/05",
+    returnDate: "27/05",
+    routeLabel: "LIM → MXP",
+    duration: "70h 35m",
+    stopTone: "danger",
+    stopTime: "10h 0m",
+    stopMeta: "ATL +1 escala",
+    carryOnIncluded: false,
+    checkedIncluded: false,
+    priceAmount: 1420.58,
+    linkLabel: "Costamar",
+  },
+  {
+    airline: "Air France",
+    departureDate: "20/05",
+    returnDate: "27/05",
+    routeLabel: "LIM → MXP",
+    duration: "62h 40m",
+    stopTone: "warning",
+    stopTime: "8h 5m",
+    stopMeta: "CDG +1 escala",
+    carryOnIncluded: false,
+    checkedIncluded: false,
+    priceAmount: 1459.84,
+    linkLabel: "Costamar",
+  },
+  {
+    airline: "Air France",
+    departureDate: "20/05",
+    returnDate: "28/05",
+    routeLabel: "LIM → MXP",
+    duration: "77h 0m",
+    stopTone: "danger",
+    stopTime: "10h 0m",
+    stopMeta: "CDG +1 escala",
+    carryOnIncluded: false,
+    checkedIncluded: false,
+    priceAmount: 1463.54,
+    linkLabel: "Costamar",
+  },
+  {
+    airline: "Air France",
+    departureDate: "20/05",
+    returnDate: "27/05",
+    routeLabel: "LIM → MXP",
+    duration: "63h 40m",
+    stopTone: "warning",
+    stopTime: "8h 5m",
+    stopMeta: "CDG +1 escala",
+    carryOnIncluded: false,
+    checkedIncluded: false,
+    priceAmount: 1463.64,
+    linkLabel: "Costamar",
+  },
+];
+
+function createDefaultResultsColumnLayout() {
+  return Object.fromEntries(
+    RESULTS_COLUMN_DEFINITIONS.map((column) => [column.key, column.defaultWidth]),
+  );
+}
+
+function normalizedResultsColumnLayout(input) {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const columns = {};
+  let validCount = 0;
+
+  RESULTS_COLUMN_DEFINITIONS.forEach((column) => {
+    const numeric = Number(input?.[column.key]);
+    if (!Number.isFinite(numeric)) {
+      return;
+    }
+
+    columns[column.key] = Math.max(
+      column.minWidth,
+      Math.min(column.maxWidth, Math.round(numeric)),
+    );
+    validCount += 1;
+  });
+
+  return validCount === RESULTS_COLUMN_DEFINITIONS.length
+    ? columns
+    : null;
+}
+
+function currentResultsColumnLayout() {
+  return normalizedResultsColumnLayout(state.resultsColumnLayout)
+    ?? createDefaultResultsColumnLayout();
+}
+
+function resultsLayoutStatusText() {
+  if (state.resultsLayoutSaving) {
+    return "Guardando layout local...";
+  }
+
+  if (!state.resultsLayoutLoaded) {
+    return "Cargando layout local...";
+  }
+
+  if (state.resultsLayoutSavedAt) {
+    return `Guardado ${formatDT(state.resultsLayoutSavedAt)} en ${RESULTS_LAYOUT_FILE_HINT}`;
+  }
+
+  return `Aún no hay un layout guardado. Cuando lo guardes quedará en ${RESULTS_LAYOUT_FILE_HINT}`;
+}
+
+function buildResultsLayoutEditorHtml({
+  eyebrow = "Maqueta editable",
+  title = "Ajusta las columnas a mano",
+  description = "Prueba anchos sobre esta tabla demo y guarda el layout para reutilizarlo luego en resultados reales.",
+} = {}) {
+  const layout = currentResultsColumnLayout();
+  const fields = RESULTS_COLUMN_DEFINITIONS.map((column) => `
+    <label class="results-layout-field">
+      <span class="results-layout-field__label">${escapeHtml(column.label)}</span>
+      <div class="results-layout-field__control">
+        <input
+          type="number"
+          min="${column.minWidth}"
+          max="${column.maxWidth}"
+          step="4"
+          value="${layout[column.key]}"
+          data-results-layout-input="${column.key}"
+          aria-label="Ancho de ${escapeHtml(column.label)} en píxeles"
+        />
+        <span class="results-layout-field__unit">px</span>
+      </div>
+    </label>
+  `).join("");
+
+  return `
+    <section class="results-layout-editor" aria-label="Editor de columnas">
+      <div class="results-layout-editor__header">
+        <div class="results-layout-editor__copy">
+          <p class="results-layout-editor__eyebrow">${escapeHtml(eyebrow)}</p>
+          <h2 class="results-layout-editor__title">${escapeHtml(title)}</h2>
+          <p class="results-layout-editor__text">${escapeHtml(description)}</p>
+        </div>
+        <div class="results-layout-editor__actions">
+          <button type="button" class="btn btn--secondary btn--sm" data-results-layout-action="reset">Restaurar</button>
+          <button type="button" class="btn btn--primary btn--sm" data-results-layout-action="save" ${state.resultsLayoutSaving ? "disabled" : ""}>Guardar layout</button>
+        </div>
+      </div>
+      <div class="results-layout-editor__grid">${fields}</div>
+      <p class="results-layout-editor__status">${escapeHtml(resultsLayoutStatusText())}</p>
+    </section>
+  `;
+}
+
 function buildResultsTableHeaderHtml() {
+  const layout = currentResultsColumnLayout();
   return `
     <colgroup>
-      <col style="width:11%">
-      <col style="width:13%">
-      <col style="width:14%">
-      <col style="width:13%">
-      <col style="width:8%">
-      <col style="width:26%">
-      <col style="width:15%">
+      ${RESULTS_COLUMN_DEFINITIONS.map((column) => `
+        <col data-results-col="${column.key}" style="width:${layout[column.key]}px">
+      `).join("")}
     </colgroup>
-    <thead><tr>
-      <th>Aerolínea</th>
-      <th>Fechas</th>
-      <th>Duración</th>
-      <th>Escalas</th>
-      <th>Equipaje</th>
-      <th>Precio</th>
-      <th>Enlace</th>
-    </tr></thead>
+    <thead><tr>${RESULTS_COLUMN_DEFINITIONS.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead>
   `;
 }
 
@@ -1740,23 +2046,63 @@ async function fetchLocationSuggestions(id, query) {
   const auto = autocompleteState[id];
   const requestId = auto.requestId + 1;
   auto.requestId = requestId;
+  const normalizedQuery = query.trim();
+  const limit = 8;
 
-  if (query.trim().length < 2) {
+  if (auto.abortController) {
+    auto.abortController.abort();
+    auto.abortController = null;
+  }
+
+  if (normalizedQuery.length < 2) {
     hideLocationMenu(id);
     return;
   }
 
+  const cachedSuggestions = readAutocompleteCache(normalizedQuery, limit);
+  if (cachedSuggestions.length > 0) {
+    if (!input || document.activeElement !== input) {
+      hideLocationMenu(id);
+      return;
+    }
+
+    auto.items = cachedSuggestions;
+    auto.activeIndex = auto.items.length > 0 ? 0 : -1;
+    renderLocationMenu(id);
+    return;
+  }
+
+  const controller = new AbortController();
+  auto.abortController = controller;
+
   try {
-    const data = await getJson(`/api/locations?q=${encodeURIComponent(query.trim())}&limit=8`);
+    const data = await getJson(
+      `/api/locations?q=${encodeURIComponent(normalizedQuery)}&limit=${limit}&clientSessionId=${encodeURIComponent(getClientSessionId())}`,
+      { signal: controller.signal },
+    );
     if (autocompleteState[id].requestId !== requestId) return;
+    if (auto.abortController === controller) {
+      auto.abortController = null;
+    }
     if (!input || document.activeElement !== input) {
       hideLocationMenu(id);
       return;
     }
     auto.items = data.suggestions ?? [];
     auto.activeIndex = auto.items.length > 0 ? 0 : -1;
+    writeAutocompleteCache(normalizedQuery, limit, auto.items);
     renderLocationMenu(id);
   } catch (err) {
+    if (autocompleteState[id].requestId !== requestId) return;
+    if (auto.abortController === controller) {
+      auto.abortController = null;
+    }
+    if (err?.name === "AbortError") {
+      return;
+    }
+    if (!input || document.activeElement !== input) {
+      return;
+    }
     hideLocationMenu(id);
     showToast(err.message);
   }
@@ -1911,10 +2257,10 @@ function normalizeProviderMatchFlightNumber(segment) {
 
 function providerLinkSegmentKey(segment) {
   return [
-    segment?.marketingCarrier ?? "",
+    String(segment?.marketingCarrier ?? "").trim().toUpperCase(),
     normalizeProviderMatchFlightNumber(segment),
-    segment?.origin ?? "",
-    segment?.destination ?? "",
+    String(segment?.origin ?? "").trim().toUpperCase(),
+    String(segment?.destination ?? "").trim().toUpperCase(),
     normalizeProviderMatchTime(segment?.departureAt),
     normalizeProviderMatchTime(segment?.arrivalAt),
   ].join("|");
@@ -1922,14 +2268,14 @@ function providerLinkSegmentKey(segment) {
 
 function providerLinkMatchKey(offer) {
   const itineraries = (offer?.itineraries ?? []).map((itinerary) => [
-    itinerary?.direction ?? "",
+    String(itinerary?.direction ?? "").trim().toLowerCase(),
     (itinerary?.segments ?? []).map((segment) => providerLinkSegmentKey(segment)).join("~"),
   ].join("::")).join("||");
 
   return [
-    offer?.tripType ?? state.request?.tripType ?? "",
-    offer?.origin ?? "",
-    offer?.destination ?? "",
+    String(offer?.tripType ?? state.request?.tripType ?? "").trim().toLowerCase(),
+    String(offer?.origin ?? "").trim().toUpperCase(),
+    String(offer?.destination ?? "").trim().toUpperCase(),
     itineraries,
   ].join("##");
 }
@@ -1948,6 +2294,12 @@ function buildProviderLinkIndex(offers) {
 }
 
 const PROVIDER_LINK_PRICE_TOLERANCE = 0.01;
+
+function baggageMatchFlag(value) {
+  if (value === true) return "included";
+  if (value === false) return "excluded";
+  return "unknown";
+}
 
 function providerLinkCandidateMatchesOffer(referenceOffer, candidateOffer) {
   if (!referenceOffer || !candidateOffer) {
@@ -1977,8 +2329,8 @@ function providerLinkCandidateMatchesOffer(referenceOffer, candidateOffer) {
     return false;
   }
 
-  return Boolean(referenceOffer.baggage?.carryOnIncluded) === Boolean(candidateOffer.baggage?.carryOnIncluded)
-    && Boolean(referenceOffer.baggage?.checkedIncluded) === Boolean(candidateOffer.baggage?.checkedIncluded);
+  return baggageMatchFlag(referenceOffer.baggage?.carryOnIncluded) === baggageMatchFlag(candidateOffer.baggage?.carryOnIncluded)
+    && baggageMatchFlag(referenceOffer.baggage?.checkedIncluded) === baggageMatchFlag(candidateOffer.baggage?.checkedIncluded);
 }
 
 function providerPathPrecisionRank(path) {
@@ -2827,6 +3179,8 @@ function buildPendingSearchResponse(request, sortMode) {
     searchJobId: null,
     searchComplete: false,
     searchStatus: "running",
+    revision: 0,
+    unchanged: false,
     request,
     sortMode,
     serverOffers: [],
@@ -3688,10 +4042,6 @@ function getFormPayload() {
   const t = String(fd.get("tripType") || "round-trip");
   const roundTripFlexibleMode = isFlexibleRoundTripMode() ? activeFlexibleRoundTripMode() : undefined;
   syncResultsPageSize();
-  const shouldCapVisiblePages = m !== "roundtrip-grid";
-  const maxResults = shouldCapVisiblePages
-    ? Math.max(1, state.resultsPageSize || RESULTS_PAGE_SIZE) * RESULTS_MAX_PAGES
-    : undefined;
   return {
     sortMode: String(fd.get("sortMode") || "cheapest"),
     providerConfig: normalizeClipboardProviderConfig(state.providerConfig) || undefined,
@@ -3713,7 +4063,6 @@ function getFormPayload() {
         baggageRequired: fd.get("baggageRequired") === "on",
         maxStops: readMaxStopsFilter(),
         maxLayoverMinutes: readMaxLayoverFilter(),
-        maxResults,
         includedAirlineCodes: [],
       },
       legs: [{
@@ -3880,6 +4229,145 @@ function renderStopsSummary(offer) {
   `;
 }
 
+function applyResultsColumnLayoutToVisibleTables(scope = resultsContainer) {
+  if (!(scope instanceof HTMLElement)) {
+    return;
+  }
+
+  const layout = currentResultsColumnLayout();
+
+  RESULTS_COLUMN_DEFINITIONS.forEach((column) => {
+    scope.querySelectorAll(`[data-results-col="${column.key}"]`).forEach((col) => {
+      col.style.width = `${layout[column.key]}px`;
+    });
+
+    scope.querySelectorAll(`[data-results-layout-input="${column.key}"]`).forEach((input) => {
+      if (document.activeElement !== input) {
+        input.value = String(layout[column.key]);
+      }
+    });
+  });
+}
+
+function setResultsColumnWidth(columnKey, nextValue) {
+  const definition = RESULTS_COLUMN_DEFINITIONS.find((column) => column.key === columnKey);
+  if (!definition) {
+    return;
+  }
+
+  if (nextValue === "") {
+    return;
+  }
+
+  const parsed = Number(nextValue);
+  if (!Number.isFinite(parsed)) {
+    return;
+  }
+
+  const layout = currentResultsColumnLayout();
+  state.resultsColumnLayout = {
+    ...layout,
+    [columnKey]: Math.max(
+      definition.minWidth,
+      Math.min(definition.maxWidth, Math.round(parsed)),
+    ),
+  };
+  applyResultsColumnLayoutToVisibleTables(resultsContainer);
+}
+
+function resetResultsColumnLayout() {
+  state.resultsColumnLayout = createDefaultResultsColumnLayout();
+  renderResultsArea();
+}
+
+async function loadResultsColumnLayout() {
+  try {
+    const data = await getJson(RESULTS_LAYOUT_ENDPOINT);
+    const layout = normalizedResultsColumnLayout(data?.layout?.columns);
+    state.resultsColumnLayout = layout ?? createDefaultResultsColumnLayout();
+    state.resultsLayoutSavedAt = typeof data?.layout?.savedAt === "string" ? data.layout.savedAt : "";
+  } catch {
+    state.resultsColumnLayout = createDefaultResultsColumnLayout();
+    state.resultsLayoutSavedAt = "";
+  } finally {
+    state.resultsLayoutLoaded = true;
+    renderResultsArea();
+  }
+}
+
+async function saveResultsColumnLayout() {
+  state.resultsLayoutSaving = true;
+  renderResultsArea();
+  try {
+    const payload = {
+      columns: currentResultsColumnLayout(),
+    };
+    const data = await postJson(RESULTS_LAYOUT_ENDPOINT, payload);
+    state.resultsColumnLayout = normalizedResultsColumnLayout(data?.layout?.columns) ?? payload.columns;
+    state.resultsLayoutSavedAt = typeof data?.layout?.savedAt === "string" ? data.layout.savedAt : "";
+    showToast(`Layout guardado en ${RESULTS_LAYOUT_FILE_HINT}.`, "success");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "No pude guardar el layout local.");
+  } finally {
+    state.resultsLayoutSaving = false;
+    state.resultsLayoutLoaded = true;
+    renderResultsArea();
+  }
+}
+
+function renderPrototypeStopsHtml(row) {
+  const toneClass = row.stopTone === "danger" ? "stops-stack--danger" : "stops-stack--warning";
+  return `
+    <div class="stops-stack ${toneClass}" title="${escapeHtml(`${row.stopMeta} · escala máx. ${row.stopTime}`)}">
+      <span class="stops-stack__time">${escapeHtml(row.stopTime)}</span>
+      <span class="stops-stack__meta">${escapeHtml(row.stopMeta)}</span>
+    </div>
+  `;
+}
+
+function renderResultsPrototype() {
+  if (!resultsContainer) return;
+  const rows = RESULTS_PROTOTYPE_ROWS.map((row) => {
+    const bagCarry = `<svg class="ico ico--xs ${row.carryOnIncluded ? "ico--bag-yes" : "ico--bag-no"}"><use href="#ico-carry-on"/></svg>`;
+    const bagCheck = `<svg class="ico ico--xs ${row.checkedIncluded ? "ico--bag-yes" : "ico--bag-no"}"><use href="#ico-luggage"/></svg>`;
+
+    return `
+      <tr>
+        <td><span class="cell-main carrier-label" title="${escapeHtml(row.airline)}">${escapeHtml(row.airline)}</span></td>
+        <td title="${escapeHtml(`${row.routeLabel} · Ida ${row.departureDate} · Vuelta ${row.returnDate}`)}">
+          <div class="results-date-stack">
+            <span class="cell-main">${escapeHtml(`Ida ${row.departureDate}`)}</span>
+            <span class="cell-sub">${escapeHtml(`Vuelta ${row.returnDate}`)}</span>
+          </div>
+        </td>
+        <td>${escapeHtml(row.duration)}</td>
+        <td>${renderPrototypeStopsHtml(row)}</td>
+        <td><span class="baggage-icons">${bagCarry}${bagCheck}</span></td>
+        <td class="results-price">${renderPriceBreakdownHtml({ amount: row.priceAmount, currencyCode: "USD" }, 1, { totalSuffix: " total" })}</td>
+        <td><div class="provider-links-cell"><span class="row-link row-link--static">${escapeHtml(row.linkLabel)}</span></div></td>
+      </tr>
+    `;
+  }).join("");
+
+  resultsContainer.innerHTML = `
+    <div class="results-layout-shell results-layout-shell--prototype">
+      ${buildResultsLayoutEditorHtml()}
+      <div class="table-wrap" aria-live="polite" aria-busy="false">
+        <table class="results-table results-table--search results-table--prototype">
+          ${buildResultsTableHeaderHtml()}
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  const resultsWrap = resultsContainer.querySelector(".table-wrap");
+  syncResultsScroll(resultsWrap);
+  requestAnimationFrame(() => syncResultsScroll(resultsWrap));
+  resultsWrap?.addEventListener("scroll", handleResultsScroll, { passive: true });
+  resultsWrap?.addEventListener("wheel", markPollingUiInteraction, { passive: true });
+}
+
 function getActiveClientFilters() {
   return {
     nonStop: controlChecked("nonStop"),
@@ -3973,6 +4461,8 @@ function getOffersForVisibleFacets(allOffers, filters = getActiveClientFilters()
 function setSearchResponse(data) {
   state.searchResponse = {
     ...data,
+    revision: Number.isFinite(data?.revision) ? data.revision : 0,
+    unchanged: false,
     serverOffers: data.offers ?? [],
     allOffers: data.allOffers ?? data.offers ?? [],
     offers: data.offers ?? [],
@@ -3980,6 +4470,39 @@ function setSearchResponse(data) {
     visibleOfferGroups: data.visibleOfferGroups ?? [],
   };
   applyClientOfferControls();
+}
+
+function applySearchResponseMeta(data) {
+  if (!state.searchResponse) return;
+  state.searchResponse.searchJobId = data.searchJobId ?? state.searchResponse.searchJobId;
+  state.searchResponse.searchComplete = Boolean(data.searchComplete);
+  state.searchResponse.searchStatus = data.searchStatus ?? state.searchResponse.searchStatus;
+  state.searchResponse.revision = Number.isFinite(data?.revision)
+    ? data.revision
+    : (state.searchResponse.revision ?? 0);
+  state.searchResponse.request = data.request ?? state.searchResponse.request;
+  state.searchResponse.sortMode = data.sortMode ?? state.searchResponse.sortMode;
+  state.searchResponse.searchMeta = data.searchMeta ?? state.searchResponse.searchMeta;
+  state.searchResponse.providerMeta = data.providerMeta ?? state.searchResponse.providerMeta;
+  state.searchResponse.warnings = data.warnings ?? state.searchResponse.warnings;
+  state.searchResponse.error = data.error ?? state.searchResponse.error;
+  state.searchResponse.unchanged = Boolean(data.unchanged);
+}
+
+function applyMatrixResponseMeta(data) {
+  if (!state.matrixResponse) return;
+  state.matrixResponse.matrixJobId = data.matrixJobId ?? state.matrixResponse.matrixJobId;
+  state.matrixResponse.matrixComplete = Boolean(data.matrixComplete);
+  state.matrixResponse.matrixStatus = data.matrixStatus ?? state.matrixResponse.matrixStatus;
+  state.matrixResponse.revision = Number.isFinite(data?.revision)
+    ? data.revision
+    : (state.matrixResponse.revision ?? 0);
+  state.matrixResponse.request = data.request ?? state.matrixResponse.request;
+  state.matrixResponse.searchMeta = data.searchMeta ?? state.matrixResponse.searchMeta;
+  state.matrixResponse.providerMeta = data.providerMeta ?? state.matrixResponse.providerMeta;
+  state.matrixResponse.warnings = data.warnings ?? state.matrixResponse.warnings;
+  state.matrixResponse.error = data.error ?? state.matrixResponse.error;
+  state.matrixResponse.unchanged = Boolean(data.unchanged);
 }
 
 function clearQuotationState() {
@@ -4008,10 +4531,18 @@ function queueSearchPoll(jobId) {
     delayMs: 700,
     run: async () => {
       try {
-        const data = await getJson(`/api/search/${jobId}`);
+        const sinceRevision = Number.isFinite(state.searchResponse?.revision) ? state.searchResponse.revision : 0;
+        const pollUrl = sinceRevision > 0
+          ? `/api/search/${jobId}?sinceRevision=${encodeURIComponent(String(sinceRevision))}`
+          : `/api/search/${jobId}`;
+        const data = await getJson(pollUrl);
         if (state.searchJobId !== jobId) return;
-        state.request = data.request;
-        setSearchResponse(data);
+        state.request = data.request ?? state.request;
+        if (data.unchanged) {
+          applySearchResponseMeta(data);
+        } else {
+          setSearchResponse(data);
+        }
         requestPolledRender();
         if (!data.searchComplete) {
           queueSearchPoll(jobId);
@@ -4034,10 +4565,22 @@ function queueMatrixPoll(jobId) {
     delayMs: 700,
     run: async () => {
       try {
-        const data = await getJson(`/api/matrix/${jobId}`);
+        const sinceRevision = Number.isFinite(state.matrixResponse?.revision) ? state.matrixResponse.revision : 0;
+        const pollUrl = sinceRevision > 0
+          ? `/api/matrix/${jobId}?sinceRevision=${encodeURIComponent(String(sinceRevision))}`
+          : `/api/matrix/${jobId}`;
+        const data = await getJson(pollUrl);
         if (state.matrixJobId !== jobId) return;
-        state.matrixResponse = data;
-        state.request = data.request;
+        if (data.unchanged) {
+          applyMatrixResponseMeta(data);
+        } else {
+          state.matrixResponse = {
+            ...data,
+            revision: Number.isFinite(data?.revision) ? data.revision : 0,
+            unchanged: false,
+          };
+        }
+        state.request = data.request ?? state.request;
         requestPolledRender();
         if (!data.matrixComplete) {
           queueMatrixPoll(jobId);
@@ -4105,7 +4648,7 @@ function updateResultsToolbar() {
         resultsPanelTitle.textContent = "Sin resultados";
       }
     } else {
-      resultsPanelTitle.textContent = "Consulta";
+      resultsPanelTitle.textContent = "Maqueta";
     }
 
     resultsPanelMeta.textContent = panelMeta;
@@ -4149,7 +4692,7 @@ function renderResults() {
   if (!resultsContainer) return;
   captureResultsScroll(resultsContainer);
   if (!state.searchResponse) {
-    renderResultsSkeleton({ busy: false });
+    renderResultsPrototype();
     return;
   }
 
@@ -4171,6 +4714,12 @@ function renderResults() {
 
   let html = "";
 
+  html += `<div class="results-layout-shell">`;
+  html += buildResultsLayoutEditorHtml({
+    eyebrow: "Layout activo",
+    title: "Anchos aplicados a resultados reales",
+    description: "Los cambios se reflejan aquí mismo y puedes guardarlos para reutilizarlos después.",
+  });
   html += `<div class="table-wrap" aria-live="polite" aria-busy="${isRunning ? "true" : "false"}"><table class="results-table results-table--search">${buildResultsTableHeaderHtml()}<tbody>`;
   const providerLinkIndex = buildProviderLinkIndex(state.searchResponse?.allOffers ?? offers);
   const passengerCount = passengerCountForRequest(state.searchResponse?.request ?? state.request);
@@ -4204,7 +4753,7 @@ function renderResults() {
     html += `</tr>`;
   });
 
-  html += '</tbody></table></div>';
+  html += '</tbody></table></div></div>';
 
   resultsContainer.innerHTML = html;
   const resultsWrap = resultsContainer.querySelector(".table-wrap");
@@ -4417,7 +4966,7 @@ function flexibleCellFilterSummary(filters = {}) {
 function flexibleCellSelectionCopy(cell) {
   if (cell?.selectable && cell?.derivedRequest) {
     return matrixCellPurchasePaths(cell).length > 0
-      ? "Abrir exacta carga el detalle interno. El enlace externo abre la búsqueda equivalente en el proveedor."
+      ? "Abrir busqueda carga el detalle interno. El enlace externo abre la búsqueda equivalente en el proveedor."
       : "Esta combinación ya tiene consulta exacta interna, pero no hay un enlace externo utilizable para este proveedor.";
   }
 
@@ -4888,7 +5437,7 @@ function renderMatrixCellDetail(cell) {
   h += '<div class="detail-section__header">';
   h += '<div class="detail-section__title">Oferta</div>';
   if (cell.selectable && cell.derivedRequest) {
-    h += `<button type="button" class="btn btn--primary btn--sm" data-matrix-detail-search="${escapeHtml(cell.key)}">Abrir exacta</button>`;
+    h += `<button type="button" class="btn btn--primary btn--sm" data-matrix-detail-search="${escapeHtml(cell.key)}">Abrir busqueda</button>`;
   }
   externalPaths.forEach((path) => {
     h += `<a href="${escapeHtml(path.url)}" target="_blank" rel="noreferrer" class="btn btn--ghost btn--sm">${escapeHtml(matrixCellExternalActionLabel(path))}</a>`;
@@ -5169,6 +5718,35 @@ resultsToolbar?.addEventListener("click", handleResultsClick);
 
 // Results container click delegation (set up once)
 resultsContainer?.addEventListener("click", handleResultsClick);
+resultsContainer?.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  const action = target.closest("[data-results-layout-action]")?.dataset.resultsLayoutAction;
+  if (action === "reset") {
+    resetResultsColumnLayout();
+    return;
+  }
+
+  if (action === "save") {
+    void saveResultsColumnLayout();
+  }
+});
+resultsContainer?.addEventListener("input", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) {
+    return;
+  }
+
+  const columnKey = target.dataset.resultsLayoutInput;
+  if (!columnKey) {
+    return;
+  }
+
+  setResultsColumnWidth(columnKey, target.value);
+});
 resultsContainer?.addEventListener("keydown", handleResultsKeydown);
 resultsContainer?.addEventListener("pointerdown", () => {
   state.pollPointerDown = true;
@@ -5322,6 +5900,7 @@ quotationButton.addEventListener("click", async () => {
    ================================================================ */
 
 const MIGRATION_MONTH_COUNT = 8;
+const MIGRATION_CONCURRENT_REQUESTS = 2;
 const MIGRATION_MONTH_NAMES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
   "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
@@ -5354,17 +5933,164 @@ function stopMigrationPolling() {
   for (const handle of state.migrationPollHandles) {
     clearTimeout(handle);
   }
-  state.migrationPollHandles = [];
+  state.migrationPollHandles.clear();
+}
+
+function isCurrentMigrationRun(runId) {
+  return state.migrationActive && state.migrationRunId === runId;
 }
 
 function exitMigrationMode() {
   stopMigrationPolling();
+  state.migrationRunId += 1;
   state.migrationActive = false;
   state.migrationMonths = [];
+  resultsToolbar?.classList.remove("hidden");
+}
+
+function migrationMonthProviderIds(month) {
+  const providerIds = month?.providerIds;
+  if (Array.isArray(providerIds) && providerIds.length > 0) {
+    return providerIds;
+  }
+
+  return defaultProviderIds(month?.request ?? state.request);
+}
+
+function migrationOfferDepartureDate(offer) {
+  const primaryDate = offerPrimaryDates(offer).departureDate;
+  return primaryDate
+    || offer?.itineraries?.[0]?.segments?.[0]?.departureDate
+    || offer?.departureDate
+    || "";
+}
+
+function renderMigrationProviderAction(path, providerId, responseMeta) {
+  if (pathSupportsEquivalentSearch(path)) {
+    return `<a href="${escapeHtml(path.url)}" target="_blank" rel="noreferrer" class="btn btn--ghost btn--sm migration-card__action">${escapeHtml(providerLabel(providerId))}</a>`;
+  }
+
+  const fallback = providerLinkFallbackLabel(responseMeta, providerId);
+  if (fallback.label === "—") {
+    return "";
+  }
+
+  const titleAttr = fallback.title ? ` title="${escapeHtml(fallback.title)}"` : "";
+  return `<span class="migration-card__action migration-card__action--warning"${titleAttr}>${escapeHtml(providerLabel(providerId))}: ${escapeHtml(fallback.label)}</span>`;
+}
+
+function renderMigrationCardActions(month, index) {
+  const offer = month?.cheapest;
+  if (!offer) {
+    return "";
+  }
+
+  const departureDate = migrationOfferDepartureDate(offer);
+  const responseMeta = month?.responseMeta ?? null;
+  const providerPaths = month?.providerPaths ?? {};
+  const providerItems = migrationMonthProviderIds(month)
+    .map((providerId) => renderMigrationProviderAction(providerPaths?.[providerId], providerId, responseMeta))
+    .filter(Boolean);
+
+  let html = `<div class="migration-card__actions">`;
+  if (departureDate) {
+    html += `<button type="button" class="btn btn--primary btn--sm migration-card__action" data-migration-exact-index="${index}">Abrir busqueda</button>`;
+  }
+  if (providerItems.length > 0) {
+    html += `<div class="migration-card__links">${providerItems.join("")}</div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+function buildMigrationExactSearchPayload(month, offer) {
+  const departureDate = migrationOfferDepartureDate(offer);
+  if (!departureDate) {
+    return null;
+  }
+
+  const basePayload = getFormPayload();
+  const baseRequest = basePayload.request ?? {};
+  const baseLeg = baseRequest.legs?.[0] ?? {};
+  const originLabel = month?.originLabel ?? $("origin")?.dataset.label ?? $("origin")?.value ?? month?.origin ?? "";
+  const destinationLabel = month?.destinationLabel ?? $("destination")?.dataset.label ?? $("destination")?.value ?? month?.destination ?? "";
+
+  return {
+    ...basePayload,
+    request: {
+      ...baseRequest,
+      tripType: "one-way",
+      searchMode: "exact",
+      flexibleMode: undefined,
+      legs: [{
+        ...baseLeg,
+        origin: month?.origin ?? baseLeg.origin ?? "",
+        destination: month?.destination ?? baseLeg.destination ?? "",
+        originLabel,
+        destinationLabel,
+        departureDate,
+        returnDate: "",
+        departureStart: "",
+        departureEnd: "",
+        returnStart: "",
+        returnEnd: "",
+        stayNights: undefined,
+      }],
+    },
+  };
+}
+
+async function launchMigrationExactSearch(index) {
+  const month = state.migrationMonths[index];
+  const offer = month?.cheapest;
+  if (!month || !offer) return;
+
+  const payload = buildMigrationExactSearchPayload(month, offer);
+  if (!payload) {
+    showToast("No pude derivar una fecha exacta desde este resultado migratorio.");
+    return;
+  }
+
+  submitButton.disabled = true;
+  try {
+    stopMigrationPolling();
+    stopMatrixPolling();
+    stopSearchPolling();
+    exitMigrationMode();
+    state.request = payload.request;
+    syncSearchFormWithRequest(payload.request);
+    state.matrixExpanded = false;
+    state.matrixResponse = null;
+    state.selectedOfferId = null;
+    state.selectedMatrixKey = null;
+    state.viewMode = "list";
+    state.quotationText = "";
+    state.airlineFilter.hidden.clear();
+    state.airlineFilter.only = null;
+    state.detailPendingAction = null;
+    state.resultsScroll = { top: 0, left: 0 };
+    setSearchResponse(buildPendingSearchResponse(payload.request, payload.sortMode));
+    renderAll();
+
+    const data = await postJson("/api/search", payload);
+    state.request = data.request;
+    syncSearchFormWithRequest(data.request);
+    setSearchResponse(data);
+    state.searchJobId = data.searchJobId ?? null;
+    if (!data.searchComplete && state.searchJobId) {
+      queueSearchPoll(state.searchJobId);
+    }
+    renderAll();
+  } catch (err) {
+    showToast(err.message);
+  } finally {
+    submitButton.disabled = false;
+  }
 }
 
 function renderMigrationResults() {
   if (!resultsContainer) return;
+  if (!state.migrationActive) return;
   const months = state.migrationMonths;
   if (!months || months.length === 0) {
     resultsContainer.innerHTML = "";
@@ -5385,15 +6111,17 @@ function renderMigrationResults() {
   h += `<h2 class="migration-panel__title">Vuelo migratorio &mdash; ${escapeHtml(route)}</h2>`;
   h += `<p class="migration-panel__subtitle">Solo ida &middot; Precio más bajo por mes</p>`;
   h += `</div>`;
+  h += `<div class="migration-grid-wrap" role="region" aria-label="Resultados migratorios por mes" tabindex="0">`;
   h += `<div class="migration-grid">`;
 
-  for (const m of months) {
+  for (let index = 0; index < months.length; index++) {
+    const m = months[index];
     const statusClass = m.complete
       ? (m.cheapest ? "migration-card--ok" : "migration-card--empty")
       : "migration-card--loading";
     h += `<div class="migration-card ${statusClass}">`;
     h += `<div class="migration-card__month">${escapeHtml(m.label)}</div>`;
-    if (!m.complete) {
+    if (!m.complete && !m.cheapest) {
       h += `<div class="migration-card__price migration-card__price--loading">Buscando&hellip;</div>`;
     } else if (m.cheapest) {
       const offer = m.cheapest;
@@ -5406,10 +6134,11 @@ function renderMigrationResults() {
       const airline = offer.itineraries?.[0]?.segments?.[0]?.airlineName
         || offer.itineraries?.[0]?.segments?.[0]?.airlineCode
         || "";
-      const date = offer.itineraries?.[0]?.segments?.[0]?.departureDate
-        || offer.departureDate || "";
+      const date = migrationOfferDepartureDate(offer);
       h += `<div class="migration-card__price">${renderPriceBreakdownHtml(totalMoney, passengerCount, { totalSuffix: " total" })}</div>`;
-      h += `<div class="migration-card__detail">${escapeHtml(formatDateCompact(date))}</div>`;
+      if (date) {
+        h += `<div class="migration-card__detail">Fecha exacta: ${escapeHtml(formatDateCompact(date))}</div>`;
+      }
       if (airline) {
         h += `<div class="migration-card__detail">${escapeHtml(airline)}</div>`;
       }
@@ -5417,6 +6146,10 @@ function renderMigrationResults() {
         const stops = offer.itineraries[0].stops;
         h += `<div class="migration-card__detail">${stops === 0 ? "Directo" : stops + " escala" + (stops > 1 ? "s" : "")}</div>`;
       }
+      if (!m.complete) {
+        h += `<div class="migration-card__detail">Actualizando mejor tarifa&hellip;</div>`;
+      }
+      h += renderMigrationCardActions(m, index);
     } else {
       h += `<div class="migration-card__price migration-card__price--empty">Sin resultados</div>`;
       if (m.error) {
@@ -5426,8 +6159,16 @@ function renderMigrationResults() {
     h += `</div>`;
   }
 
-  h += `</div></div>`;
+  h += `</div></div></div>`;
   resultsContainer.innerHTML = h;
+  resultsContainer.querySelectorAll("[data-migration-exact-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const index = Number.parseInt(button.dataset.migrationExactIndex ?? "", 10);
+      if (Number.isFinite(index)) {
+        void launchMigrationExactSearch(index);
+      }
+    });
+  });
 }
 
 async function startMigrationSearch() {
@@ -5442,12 +6183,13 @@ async function startMigrationSearch() {
   stopMatrixPolling();
   exitMigrationMode();
 
+  const runId = state.migrationRunId;
   state.migrationActive = true;
   state.searchResponse = null;
   state.matrixResponse = null;
   state.selectedOfferId = null;
 
-  const monthRanges = migrationMonthRanges(todayISO, MIGRATION_MONTH_COUNT);
+  const monthRanges = migrationMonthRanges(todayISO(), MIGRATION_MONTH_COUNT);
   const adults = parseInt($("adults")?.value, 10) || 1;
   const children = parseInt($("children")?.value, 10) || 0;
   const infants = parseInt($("infants")?.value, 10) || 0;
@@ -5458,21 +6200,35 @@ async function startMigrationSearch() {
     ...m,
     origin,
     destination,
+    originLabel,
+    destinationLabel,
     jobId: null,
-    offers: [],
     cheapest: null,
+    providerPaths: {},
     complete: false,
     error: null,
+    request: null,
+    revision: 0,
+    providerIds: defaultProviderIds(state.request),
+    responseMeta: {
+      warnings: [],
+      searchMeta: {
+        providersUsed: defaultProviderIds(state.request),
+      },
+    },
   }));
 
   if (resultsToolbar) resultsToolbar.classList.add("hidden");
   if (emptyState) emptyState.classList.add("hidden");
   renderMigrationResults();
 
-  for (let i = 0; i < state.migrationMonths.length; i++) {
-    const m = state.migrationMonths[i];
+  const launchMonthSearch = async (index) => {
+    const month = state.migrationMonths[index];
+    if (!month) return;
+
     const payload = {
       sortMode: "cheapest",
+      providerConfig: normalizeClipboardProviderConfig(state.providerConfig) || undefined,
       request: {
         tripType: "one-way",
         searchMode: "stay-range",
@@ -5481,7 +6237,7 @@ async function startMigrationSearch() {
         coverageMode: "core",
         redirectMode: "best-effort",
         passengers: { adults, children, infants },
-        filters: { nonStop: false, maxResults: 300 },
+        filters: { nonStop: false },
         legs: [{
           origin,
           destination,
@@ -5489,8 +6245,8 @@ async function startMigrationSearch() {
           destinationLabel,
           departureDate: "",
           returnDate: "",
-          departureStart: m.departureStart,
-          departureEnd: m.departureEnd,
+          departureStart: month.departureStart,
+          departureEnd: month.departureEnd,
           returnStart: "",
           returnEnd: "",
         }],
@@ -5499,52 +6255,118 @@ async function startMigrationSearch() {
 
     try {
       const data = await postJson("/api/search", payload);
-      m.jobId = data.searchJobId ?? null;
-      updateMigrationMonth(i, data);
-      if (!data.searchComplete && m.jobId) {
-        queueMigrationPoll(i, m.jobId);
+      if (!isCurrentMigrationRun(runId)) return;
+      const currentMonth = state.migrationMonths[index];
+      if (!currentMonth) return;
+      currentMonth.jobId = data.searchJobId ?? null;
+      updateMigrationMonth(index, data, runId);
+      if (!data.searchComplete && currentMonth.jobId) {
+        queueMigrationPoll(index, currentMonth.jobId, runId);
       }
     } catch (err) {
-      m.complete = true;
-      m.error = err.message;
+      if (!isCurrentMigrationRun(runId)) return;
+      const currentMonth = state.migrationMonths[index];
+      if (currentMonth) {
+        currentMonth.complete = true;
+        currentMonth.error = err.message;
+      }
     }
     renderMigrationResults();
-  }
+  };
+
+  void (async () => {
+    let nextIndex = 0;
+    const workers = Array.from(
+      { length: Math.min(MIGRATION_CONCURRENT_REQUESTS, state.migrationMonths.length) },
+      () => (async () => {
+        while (isCurrentMigrationRun(runId)) {
+          const index = nextIndex;
+          nextIndex += 1;
+          if (index >= state.migrationMonths.length) {
+            return;
+          }
+          await launchMonthSearch(index);
+        }
+      })(),
+    );
+    await Promise.allSettled(workers);
+  })();
 }
 
-function updateMigrationMonth(index, data) {
+function updateMigrationMonth(index, data, runId = state.migrationRunId) {
+  if (!isCurrentMigrationRun(runId)) return;
   const m = state.migrationMonths[index];
   if (!m) return;
-  const offers = data.allOffers ?? data.offers ?? [];
-  m.offers = offers;
   m.complete = Boolean(data.searchComplete);
-  if (offers.length > 0) {
-    m.cheapest = offers.reduce((best, o) =>
-      ((o.price?.total?.amount ?? o.totalPrice ?? Infinity) < (best.price?.total?.amount ?? best.totalPrice ?? Infinity) ? o : best), offers[0]);
+  m.request = data.request ?? m.request;
+  m.revision = Number.isFinite(data?.revision) ? data.revision : (m.revision ?? 0);
+  m.providerIds = Array.isArray(data?.searchMeta?.providersUsed) && data.searchMeta.providersUsed.length > 0
+    ? [...data.searchMeta.providersUsed]
+    : m.providerIds;
+  m.responseMeta = {
+    warnings: [...(data?.warnings ?? [])],
+    searchMeta: {
+      ...(data?.searchMeta ?? {}),
+      providersUsed: migrationMonthProviderIds(m),
+    },
+  };
+
+  if (data.unchanged) {
+    return;
   }
+
+  const offers = data.allOffers ?? data.offers ?? [];
+  if (offers.length === 0) {
+    m.cheapest = null;
+    m.providerPaths = {};
+    return;
+  }
+
+  m.cheapest = offers.reduce((best, offer) =>
+    ((offer.price?.total?.amount ?? offer.totalPrice ?? Infinity) < (best.price?.total?.amount ?? best.totalPrice ?? Infinity) ? offer : best), offers[0]);
+  const providerLinkIndex = buildProviderLinkIndex(offers);
+  const providerPaths = {};
+  migrationMonthProviderIds(m).forEach((providerId) => {
+    const path = bestProviderPathForOffer(m.cheapest, providerId, providerLinkIndex);
+    if (path) {
+      providerPaths[providerId] = path;
+    }
+  });
+  m.providerPaths = providerPaths;
 }
 
-function queueMigrationPoll(index, jobId) {
-  const handle = scheduleJsonPoll({
+function queueMigrationPoll(index, jobId, runId = state.migrationRunId) {
+  let handle = null;
+  handle = scheduleJsonPoll({
     delayMs: 900,
     run: async () => {
+      if (handle) {
+        state.migrationPollHandles.delete(handle);
+      }
       try {
-        const data = await getJson(`/api/search/${jobId}`);
+        const month = state.migrationMonths[index];
+        const sinceRevision = Number.isFinite(month?.revision) ? month.revision : 0;
+        const pollUrl = sinceRevision > 0
+          ? `/api/search/${jobId}?sinceRevision=${encodeURIComponent(String(sinceRevision))}`
+          : `/api/search/${jobId}`;
+        const data = await getJson(pollUrl);
+        if (!isCurrentMigrationRun(runId)) return;
         const m = state.migrationMonths[index];
         if (!m || m.jobId !== jobId) return;
-        updateMigrationMonth(index, data);
+        updateMigrationMonth(index, data, runId);
         renderMigrationResults();
         if (!data.searchComplete) {
-          queueMigrationPoll(index, jobId);
+          queueMigrationPoll(index, jobId, runId);
         }
       } catch {
+        if (!isCurrentMigrationRun(runId)) return;
         const m = state.migrationMonths[index];
         if (m) { m.complete = true; m.error = "Error de conexión"; }
         renderMigrationResults();
       }
     },
   });
-  state.migrationPollHandles.push(handle);
+  state.migrationPollHandles.add(handle);
 }
 
 migrationBtn?.addEventListener("click", () => {
@@ -5581,3 +6403,5 @@ bootstrapAppShell({
   settleInitialShellLayout,
   releaseInitialUiBootState,
 });
+
+void loadResultsColumnLayout();

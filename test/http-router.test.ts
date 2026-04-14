@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -996,5 +996,178 @@ test("exact searches preserve omitted maxResults so page-based caps can be suppl
 
     assert.equal(payload.searchStatus, "running");
     assert.equal(payload.request?.filters?.maxResults, undefined);
+  });
+});
+
+test("search job polling returns a lightweight unchanged payload when revision has not moved", async () => {
+  const runtime = getRuntime();
+  const offer = buildCostamarOffer(
+    "https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=test",
+  );
+  const job = runtime.sessions.createSearchJob({
+    request: buildCostamarRequest(),
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search/${job.id}?sinceRevision=${job.revision}`);
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      unchanged?: boolean;
+      revision?: number;
+      offers?: unknown[];
+      allOffers?: unknown[];
+      searchStatus?: string;
+      searchComplete?: boolean;
+    };
+
+    assert.equal(payload.unchanged, true);
+    assert.equal(payload.revision, job.revision);
+    assert.equal(payload.searchStatus, "running");
+    assert.equal(payload.searchComplete, false);
+    assert.equal(payload.offers, undefined);
+    assert.equal(payload.allOffers, undefined);
+  });
+});
+
+test("matrix job polling returns a lightweight unchanged payload when revision has not moved", async () => {
+  const runtime = getRuntime();
+  const job = runtime.sessions.createMatrixJob({
+    request: {
+      ...buildCostamarRequest(),
+      searchMode: "roundtrip-grid",
+      flexibleMode: "exact-stay",
+      tripType: "round-trip",
+      legs: [
+        {
+          origin: "LIM",
+          destination: "MAD",
+          departureStart: "2026-06-01",
+          departureEnd: "2026-06-03",
+          stayNights: 7,
+        },
+      ],
+    },
+    cells: [buildCostamarMatrixCell(
+      "https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=test",
+    )],
+    axes: {
+      departureDates: ["2026-06-01"],
+      returnDates: ["2026-06-08"],
+    },
+    confidenceSummary: { live: 1 },
+    recommendations: [],
+    providerMeta: buildProviderMeta(),
+    searchMeta: buildSearchMeta(),
+    warnings: [],
+    status: "running",
+  });
+
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/matrix/${job.id}?sinceRevision=${job.revision}`);
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      unchanged?: boolean;
+      revision?: number;
+      cells?: unknown[];
+      matrixStatus?: string;
+      matrixComplete?: boolean;
+    };
+
+    assert.equal(payload.unchanged, true);
+    assert.equal(payload.revision, job.revision);
+    assert.equal(payload.matrixStatus, "running");
+    assert.equal(payload.matrixComplete, false);
+    assert.equal(payload.cells, undefined);
+  });
+});
+
+test("results layout endpoints persist and read back the saved column widths locally", async () => {
+  const layoutFile = join(process.cwd(), "output", "results-layout.json");
+  const previousLayout = existsSync(layoutFile) ? readFileSync(layoutFile, "utf8") : null;
+  const columns = {
+    carrier: 208,
+    dates: 136,
+    duration: 148,
+    stops: 192,
+    baggage: 108,
+    price: 236,
+    links: 160,
+  };
+
+  try {
+    rmSync(layoutFile, { force: true });
+
+    await withServer(async (baseUrl) => {
+      const initialResponse = await fetch(`${baseUrl}/api/results-layout`);
+      assert.equal(initialResponse.status, 200);
+      const initialPayload = await initialResponse.json() as {
+        layout?: null | { columns?: typeof columns };
+      };
+      assert.equal(initialPayload.layout, null);
+
+      const saveResponse = await fetch(`${baseUrl}/api/results-layout`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ columns }),
+      });
+      assert.equal(saveResponse.status, 200);
+      const savePayload = await saveResponse.json() as {
+        ok?: boolean;
+        layout?: {
+          version?: number;
+          savedAt?: string;
+          columns?: typeof columns;
+        };
+      };
+
+      assert.equal(savePayload.ok, true);
+      assert.equal(savePayload.layout?.version, 1);
+      assert.deepEqual(savePayload.layout?.columns, columns);
+      assert.match(savePayload.layout?.savedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+
+      const readBackResponse = await fetch(`${baseUrl}/api/results-layout`);
+      assert.equal(readBackResponse.status, 200);
+      const readBackPayload = await readBackResponse.json() as {
+        layout?: {
+          columns?: typeof columns;
+        } | null;
+      };
+      assert.deepEqual(readBackPayload.layout?.columns, columns);
+    });
+  } finally {
+    if (previousLayout === null) {
+      rmSync(layoutFile, { force: true });
+    } else {
+      mkdirSync(join(process.cwd(), "output"), { recursive: true });
+      writeFileSync(layoutFile, previousLayout, "utf8");
+    }
+  }
+});
+
+test("diagnostics endpoint exposes loopback-only runtime counters", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/diagnostics`);
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      ok?: boolean;
+      memoryUsage?: { rss?: number };
+      sessions?: { counts?: { searchJobs?: number; purchasePaths?: number } };
+      tempArtifacts?: { totals?: { count?: number } };
+    };
+
+    assert.equal(payload.ok, true);
+    assert.equal(typeof payload.memoryUsage?.rss, "number");
+    assert.equal(typeof payload.sessions?.counts?.searchJobs, "number");
+    assert.equal(typeof payload.sessions?.counts?.purchasePaths, "number");
+    assert.equal(typeof payload.tempArtifacts?.totals?.count, "number");
   });
 });
