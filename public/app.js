@@ -4648,7 +4648,7 @@ function updateResultsToolbar() {
         resultsPanelTitle.textContent = "Sin resultados";
       }
     } else {
-      resultsPanelTitle.textContent = "Maqueta";
+      resultsPanelTitle.textContent = "Consulta";
     }
 
     resultsPanelMeta.textContent = panelMeta;
@@ -4692,7 +4692,7 @@ function renderResults() {
   if (!resultsContainer) return;
   captureResultsScroll(resultsContainer);
   if (!state.searchResponse) {
-    renderResultsPrototype();
+    renderResultsSkeleton({ busy: false });
     return;
   }
 
@@ -4714,12 +4714,6 @@ function renderResults() {
 
   let html = "";
 
-  html += `<div class="results-layout-shell">`;
-  html += buildResultsLayoutEditorHtml({
-    eyebrow: "Layout activo",
-    title: "Anchos aplicados a resultados reales",
-    description: "Los cambios se reflejan aquí mismo y puedes guardarlos para reutilizarlos después.",
-  });
   html += `<div class="table-wrap" aria-live="polite" aria-busy="${isRunning ? "true" : "false"}"><table class="results-table results-table--search">${buildResultsTableHeaderHtml()}<tbody>`;
   const providerLinkIndex = buildProviderLinkIndex(state.searchResponse?.allOffers ?? offers);
   const passengerCount = passengerCountForRequest(state.searchResponse?.request ?? state.request);
@@ -4753,7 +4747,7 @@ function renderResults() {
     html += `</tr>`;
   });
 
-  html += '</tbody></table></div></div>';
+  html += '</tbody></table></div>';
 
   resultsContainer.innerHTML = html;
   const resultsWrap = resultsContainer.querySelector(".table-wrap");

@@ -138,7 +138,7 @@ test("query and offer panels expose homogeneous headers from first paint", async
         };
       });
 
-      assert.equal(probe.resultsTitle, "Maqueta");
+      assert.equal(probe.resultsTitle, "Consulta");
       assert.equal(probe.detailTitle, "Oferta");
       assert.equal(probe.resultsCountPresent, false);
       assert.equal(probe.resultsMeta, "");
@@ -151,27 +151,22 @@ test("query and offer panels expose homogeneous headers from first paint", async
   }, { autoOpen: false });
 });
 
-test("results panel boots with an editable demo table before any search", async () => {
+test("results panel boots with the shared skeleton before any search", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
       await openDesktop(page, baseUrl);
       const probe = await page.evaluate(() => ({
-        editorCount: document.querySelectorAll("#resultsContainer .results-layout-editor").length,
-        prototypeRowCount: document.querySelectorAll("#resultsContainer .results-table--prototype tbody tr").length,
-        inputCount: document.querySelectorAll("#resultsContainer [data-results-layout-input]").length,
+        skeletonCount: document.querySelectorAll("#resultsContainer .results-skeleton").length,
+        emptyStateCount: document.querySelectorAll("#resultsContainer .empty-state").length,
+        busy: document.querySelector("#resultsContainer .results-skeleton")?.getAttribute("aria-busy") ?? "",
         title: document.getElementById("resultsPanelTitle")?.textContent?.trim() ?? "",
-        firstCarrier: document.querySelector("#resultsContainer .results-table--prototype tbody tr:first-child .carrier-label")?.textContent?.trim() ?? "",
-        firstDateCell: document.querySelector("#resultsContainer .results-table--prototype tbody tr:first-child .results-date-stack")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
-        statusText: document.querySelector("#resultsContainer .results-layout-editor__status")?.textContent?.trim() ?? "",
+        skeletonHeaderCount: document.querySelectorAll("#resultsContainer .results-skeleton__header").length,
       }));
 
-      assert.equal(probe.editorCount, 1);
-      assert.equal(probe.prototypeRowCount, 5);
-      assert.equal(probe.inputCount, 7);
-      assert.equal(probe.title, "Maqueta");
-      assert.equal(probe.firstCarrier, "Delta Air Lines");
-      assert.match(probe.firstDateCell, /Ida 20\/05/i);
-      assert.match(probe.firstDateCell, /Vuelta 27\/05/i);
-      assert.match(probe.statusText, /layout/i);
+      assert.equal(probe.skeletonCount, 1);
+      assert.equal(probe.emptyStateCount, 0);
+      assert.equal(probe.busy, "false");
+      assert.equal(probe.title, "Consulta");
+      assert.equal(probe.skeletonHeaderCount, 0);
   }, { autoOpen: false });
 });
 
