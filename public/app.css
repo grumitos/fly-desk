@@ -1018,8 +1018,11 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
 
 .airline-bar {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 0.75rem;
+  flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
 }
 
 .airline-bar__header {
@@ -1048,17 +1051,19 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   display: grid;
   gap: 0.5rem;
   align-content: start;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding-right: 0.15rem;
   scrollbar-width: thin;
 }
 
 .airline-chip {
   display: grid;
-  gap: 0.22rem;
+  gap: 0.18rem;
   width: 100%;
   min-width: 0;
-  padding: 0.72rem 0.82rem;
+  padding: 0.58rem 0.68rem;
   border: var(--surface-control-border);
   border-radius: calc(var(--radius-control) + 0.18rem);
   background:
@@ -1085,7 +1090,7 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
 }
 
 .airline-chip__name {
-  font-size: 0.82rem;
+  font-size: 0.79rem;
   font-weight: 700;
   line-height: 1.15;
   min-width: 0;
@@ -1093,7 +1098,7 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
 
 .airline-chip__meta {
   color: var(--text-muted);
-  font-size: 0.73rem;
+  font-size: 0.69rem;
   line-height: 1.25;
 }
 
@@ -1583,7 +1588,7 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
 }
 
 .results-panel__body.has-sidebar {
-  grid-template-columns: minmax(14.5rem, 17.5rem) minmax(0, 1fr);
+  grid-template-columns: clamp(11.25rem, 14vw, 12.75rem) minmax(0, 1fr);
 }
 
 .results-sidebar {
@@ -1591,10 +1596,11 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  padding: 1rem 0.9rem 1rem 1rem;
+  padding: 0.82rem 0.55rem 0.82rem 0.82rem;
   border-right: var(--surface-panel-border);
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 82%, transparent), color-mix(in srgb, var(--surface) 94%, transparent));
+  overflow: hidden;
 }
 
 .results-sidebar.hidden {
