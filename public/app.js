@@ -110,7 +110,15 @@ const AUTOCOMPLETE_SESSION_STORAGE_KEY = "flydesk.autocompleteCache.v1";
 const AUTOCOMPLETE_CLIENT_SESSION_STORAGE_KEY = "flydesk.clientSessionId";
 const AUTOCOMPLETE_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
 const AUTOCOMPLETE_CACHE_MAX_ENTRIES = 80;
+const SEARCH_RESULT_CACHE_STORAGE_KEY = "flydesk.searchResultCache.v1";
+const SEARCH_RESULT_CACHE_TTL_MS = 4 * 60 * 60 * 1000;
+const SEARCH_RESULT_CACHE_MAX_ENTRIES = 16;
+const SEARCH_LAUNCH_STORAGE_KEY_PREFIX = "flydesk.searchLaunch.v1";
+const SEARCH_LAUNCH_TTL_MS = 15 * 60 * 1000;
+const SEARCH_LAUNCH_QUERY_PARAM = "launchSearch";
+const SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM = "launchPayload";
 const autocompleteSessionCache = loadAutocompleteSessionCache();
+const searchResultCache = loadSearchResultCache();
 
 function createClientSessionId() {
   if (window.crypto?.randomUUID) {
@@ -232,12 +240,364 @@ function writeAutocompleteCache(query, limit, suggestions) {
   persistAutocompleteSessionCache();
 }
 
+function cloneSerializable(value) {
+  if (value == null) return value;
+  try {
+    if (typeof window.structuredClone === "function") {
+      return window.structuredClone(value);
+    }
+  } catch {
+    // Fallback to JSON clone for plain data payloads.
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return null;
+  }
+}
+
+function stableSerializeJson(value) {
+  if (value == null) return "null";
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerializeJson(item == null ? null : item)).join(",")}]`;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value)
+      .filter(([, itemValue]) => itemValue !== undefined)
+      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+    return `{${entries.map(([key, itemValue]) => `${JSON.stringify(key)}:${stableSerializeJson(itemValue)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function searchResultCacheKey(request, sortModeValue) {
+  return stableSerializeJson({
+    request: request ?? null,
+    sortMode: String(sortModeValue || "cheapest"),
+  });
+}
+
+function loadSearchResultCache() {
+  try {
+    const raw = window.localStorage.getItem(SEARCH_RESULT_CACHE_STORAGE_KEY);
+    if (!raw) {
+      return new Map();
+    }
+
+    const parsed = JSON.parse(raw);
+    const nowMs = Date.now();
+    const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+    const cache = new Map();
+
+    entries.forEach((entry) => {
+      const key = typeof entry?.key === "string" ? entry.key : "";
+      const touchedAtMs = Number(entry?.touchedAtMs);
+      const response = entry?.response;
+      if (!key || !Number.isFinite(touchedAtMs) || nowMs - touchedAtMs > SEARCH_RESULT_CACHE_TTL_MS) {
+        return;
+      }
+      if (!response || typeof response !== "object") {
+        return;
+      }
+      cache.set(key, {
+        touchedAtMs,
+        response: cloneSerializable(response),
+      });
+    });
+
+    return cache;
+  } catch {
+    return new Map();
+  }
+}
+
+function persistSearchResultCache() {
+  try {
+    const entries = [...searchResultCache.entries()]
+      .sort((left, right) => right[1].touchedAtMs - left[1].touchedAtMs)
+      .slice(0, SEARCH_RESULT_CACHE_MAX_ENTRIES)
+      .map(([key, value]) => ({
+        key,
+        touchedAtMs: value.touchedAtMs,
+        response: cloneSerializable(value.response),
+      }));
+    window.localStorage.setItem(SEARCH_RESULT_CACHE_STORAGE_KEY, JSON.stringify({ entries }));
+  } catch {
+    // localStorage can be unavailable in privacy-restricted contexts.
+  }
+}
+
+function readSearchResultCache(request, sortModeValue) {
+  const key = searchResultCacheKey(request, sortModeValue);
+  const entry = searchResultCache.get(key);
+  if (!entry) {
+    return null;
+  }
+
+  if (Date.now() - entry.touchedAtMs > SEARCH_RESULT_CACHE_TTL_MS) {
+    searchResultCache.delete(key);
+    persistSearchResultCache();
+    return null;
+  }
+
+  entry.touchedAtMs = Date.now();
+  persistSearchResultCache();
+  return cloneSerializable(entry.response);
+}
+
+function writeSearchResultCache(request, sortModeValue, response) {
+  if (!request || !response || typeof response !== "object") {
+    return;
+  }
+  const key = searchResultCacheKey(request, sortModeValue);
+  const responseCopy = cloneSerializable(response);
+  if (!responseCopy || typeof responseCopy !== "object") {
+    return;
+  }
+  searchResultCache.set(key, {
+    touchedAtMs: Date.now(),
+    response: responseCopy,
+  });
+
+  while (searchResultCache.size > SEARCH_RESULT_CACHE_MAX_ENTRIES) {
+    const oldest = [...searchResultCache.entries()]
+      .sort((left, right) => left[1].touchedAtMs - right[1].touchedAtMs)[0];
+    if (!oldest) {
+      break;
+    }
+    searchResultCache.delete(oldest[0]);
+  }
+
+  persistSearchResultCache();
+}
+
+function createSearchLaunchToken() {
+  if (window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+  return `launch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function searchLaunchStorageKey(token) {
+  return `${SEARCH_LAUNCH_STORAGE_KEY_PREFIX}.${token}`;
+}
+
+function cleanupSearchLaunchStorage(nowMs = Date.now()) {
+  try {
+    const staleKeys = [];
+    for (let index = 0; index < window.localStorage.length; index++) {
+      const key = window.localStorage.key(index);
+      if (!key || !key.startsWith(`${SEARCH_LAUNCH_STORAGE_KEY_PREFIX}.`)) {
+        continue;
+      }
+      const raw = window.localStorage.getItem(key);
+      if (!raw) {
+        staleKeys.push(key);
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        const createdAtMs = Number(parsed?.createdAtMs);
+        if (!Number.isFinite(createdAtMs) || nowMs - createdAtMs > SEARCH_LAUNCH_TTL_MS) {
+          staleKeys.push(key);
+        }
+      } catch {
+        staleKeys.push(key);
+      }
+    }
+
+    staleKeys.forEach((key) => window.localStorage.removeItem(key));
+  } catch {
+    // localStorage can be unavailable in privacy-restricted contexts.
+  }
+}
+
+function persistSearchLaunchPayload(payload) {
+  if (!payload?.request) {
+    return null;
+  }
+  try {
+    cleanupSearchLaunchStorage();
+    const token = createSearchLaunchToken();
+    const key = searchLaunchStorageKey(token);
+    window.localStorage.setItem(key, JSON.stringify({
+      createdAtMs: Date.now(),
+      payload: cloneSerializable(payload),
+    }));
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+function encodeSearchLaunchPayload(payload) {
+  if (!payload?.request) {
+    return "";
+  }
+  try {
+    const json = JSON.stringify(cloneSerializable(payload));
+    const utf8Bytes = new TextEncoder().encode(json);
+    let binary = "";
+    utf8Bytes.forEach((byte) => {
+      binary += String.fromCharCode(byte);
+    });
+    return btoa(binary)
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/g, "");
+  } catch {
+    return "";
+  }
+}
+
+function decodeSearchLaunchPayload(encoded) {
+  const source = String(encoded || "").trim();
+  if (!source) {
+    return null;
+  }
+  try {
+    const base64 = source
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+    const paddingLength = (4 - (base64.length % 4)) % 4;
+    const normalized = `${base64}${"=".repeat(paddingLength)}`;
+    const binary = atob(normalized);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    const json = new TextDecoder().decode(bytes);
+    const parsed = JSON.parse(json);
+    return parsed?.request ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function stripLaunchSearchParamFromUrl() {
+  try {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(SEARCH_LAUNCH_QUERY_PARAM) && !url.searchParams.has(SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM)) {
+      return;
+    }
+    url.searchParams.delete(SEARCH_LAUNCH_QUERY_PARAM);
+    url.searchParams.delete(SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  } catch {
+    // Ignore URL parsing issues.
+  }
+}
+
+function consumeSearchLaunchPayloadFromUrl() {
+  let launchToken = "";
+  let encodedPayload = "";
+  try {
+    const url = new URL(window.location.href);
+    launchToken = String(url.searchParams.get(SEARCH_LAUNCH_QUERY_PARAM) || "").trim();
+    encodedPayload = String(url.searchParams.get(SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM) || "").trim();
+    if (!launchToken && !encodedPayload) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  let payload = null;
+  try {
+    if (launchToken) {
+      const raw = window.localStorage.getItem(searchLaunchStorageKey(launchToken));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const createdAtMs = Number(parsed?.createdAtMs);
+        if (Number.isFinite(createdAtMs) && Date.now() - createdAtMs <= SEARCH_LAUNCH_TTL_MS) {
+          payload = cloneSerializable(parsed?.payload);
+        }
+      }
+    }
+    if (!payload && encodedPayload) {
+      payload = decodeSearchLaunchPayload(encodedPayload);
+    }
+  } catch {
+    payload = null;
+  } finally {
+    try {
+      if (launchToken) {
+        window.localStorage.removeItem(searchLaunchStorageKey(launchToken));
+      }
+    } catch {
+      // Ignore localStorage issues.
+    }
+    cleanupSearchLaunchStorage();
+    stripLaunchSearchParamFromUrl();
+  }
+
+  return payload?.request ? payload : null;
+}
+
+function openSearchPayloadInNewTab(payload) {
+  const token = persistSearchLaunchPayload(payload);
+  const encodedPayload = encodeSearchLaunchPayload(payload);
+  if (!token && !encodedPayload) {
+    showToast("No pude preparar la busqueda para otra pestana.");
+    return false;
+  }
+
+  let openedTab = null;
+  try {
+    const url = new URL(window.location.href);
+    if (token) {
+      url.searchParams.set(SEARCH_LAUNCH_QUERY_PARAM, token);
+    }
+    if (encodedPayload) {
+      url.searchParams.set(SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM, encodedPayload);
+    }
+    openedTab = window.open(url.toString(), "_blank", "noopener");
+  } catch {
+    openedTab = null;
+  }
+
+  if (openedTab) {
+    return true;
+  }
+
+  try {
+    if (token) {
+      window.localStorage.removeItem(searchLaunchStorageKey(token));
+    }
+  } catch {
+    // Ignore localStorage issues.
+  }
+  showToast("No pude abrir otra pestana. Habilita pop-ups para Fly Desk.");
+  return false;
+}
+
+const startupSearchLaunchPayload = consumeSearchLaunchPayloadFromUrl();
+
 function providerIdFromRequest(request) {
   return request?.providerId === "costamar" ? "costamar" : "agil-local";
 }
 
 function providerLabel(providerId) {
   return providerId === "costamar" ? "Costamar" : "Agil";
+}
+
+function providerFaviconPath(providerId) {
+  return providerId === "costamar"
+    ? "/assets/provider-icons/costamar-128.png"
+    : "/assets/provider-icons/agilsmart-128.png";
+}
+
+function renderProviderFaviconIcon(providerId) {
+  return `
+    <img
+      src="${escapeHtml(providerFaviconPath(providerId))}"
+      alt=""
+      aria-hidden="true"
+      width="40"
+      height="40"
+      class="provider-link-icon__img"
+      loading="lazy"
+      decoding="async"
+    />
+  `.trim();
 }
 
 function defaultProviderIds(request) {
@@ -463,10 +823,24 @@ function providerIdsForLinkCell() {
 }
 
 function renderProviderLinkItem(path, providerId) {
+  const label = providerLabel(providerId);
+  const icon = renderProviderFaviconIcon(providerId);
+
   if (pathSupportsEquivalentSearch(path)) {
     return `
       <div class="provider-links-cell__item provider-links-cell__item--link">
-        <a href="${path.url}" target="_blank" rel="noreferrer" class="row-link" data-stop-row="1">${providerLabel(providerId)}</a>
+        <a
+          href="${path.url}"
+          target="_blank"
+          rel="noreferrer"
+          class="row-link row-link--provider"
+          data-stop-row="1"
+          aria-label="${escapeHtml(label)}"
+          title="${escapeHtml(label)}"
+        >
+          ${icon}
+          <span class="sr-only">${escapeHtml(label)}</span>
+        </a>
       </div>
     `.trim();
   }
@@ -476,10 +850,14 @@ function renderProviderLinkItem(path, providerId) {
     return "";
   }
 
-  const titleAttr = fallback.title ? ` title="${escapeHtml(fallback.title)}"` : "";
+  const warningTitle = fallback.title || `${label}: ${fallback.label}`;
   return `
     <div class="provider-links-cell__item provider-links-cell__item--warning">
-      <span class="cell-sub cell-sub--warning"${titleAttr}>${providerLabel(providerId)}: ${fallback.label}</span>
+      <span class="cell-sub cell-sub--warning provider-link-warning" title="${escapeHtml(warningTitle)}">
+        ${icon}
+        <span class="sr-only">${escapeHtml(label)}</span>
+        <span class="provider-link-warning__text">${escapeHtml(fallback.label)}</span>
+      </span>
     </div>
   `.trim();
 }
@@ -556,14 +934,27 @@ function flexibleCombinationLabel(count) {
 
 const RESULTS_LAYOUT_ENDPOINT = "/api/results-layout";
 const RESULTS_LAYOUT_FILE_HINT = "output/results-layout.json";
+const RESULTS_LAYOUT_EDITOR_MODE = (() => {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const raw = String(
+      params.get("layoutEditor")
+      || params.get("layout")
+      || "",
+    ).trim().toLowerCase();
+    return raw === "1" || raw === "true" || raw === "editor";
+  } catch {
+    return false;
+  }
+})();
 const RESULTS_COLUMN_DEFINITIONS = [
-  { key: "carrier", label: "Aerolínea", defaultWidth: 144, minWidth: 144, maxWidth: 320 },
-  { key: "dates", label: "Fechas", defaultWidth: 117, minWidth: 112, maxWidth: 240 },
-  { key: "duration", label: "Duración", defaultWidth: 124, minWidth: 124, maxWidth: 240 },
-  { key: "stops", label: "Escalas", defaultWidth: 300, minWidth: 156, maxWidth: 300 },
-  { key: "baggage", label: "Equipaje", defaultWidth: 96, minWidth: 96, maxWidth: 180 },
-  { key: "price", label: "Precio", defaultWidth: 196, minWidth: 180, maxWidth: 360 },
-  { key: "links", label: "Enlace", defaultWidth: 120, minWidth: 120, maxWidth: 240 },
+  { key: "carrier", label: "Aerolínea", defaultWidth: 132, minWidth: 88, maxWidth: 320 },
+  { key: "dates", label: "Fechas", defaultWidth: 154, minWidth: 96, maxWidth: 240 },
+  { key: "duration", label: "Duración", defaultWidth: 126, minWidth: 92, maxWidth: 240 },
+  { key: "stops", label: "Escalas", defaultWidth: 138, minWidth: 96, maxWidth: 300 },
+  { key: "baggage", label: "Equipaje", defaultWidth: 96, minWidth: 64, maxWidth: 180 },
+  { key: "price", label: "Precio", defaultWidth: 128, minWidth: 112, maxWidth: 360 },
+  { key: "links", label: "Enlace", defaultWidth: 102, minWidth: 72, maxWidth: 240 },
 ];
 const RESULTS_PROTOTYPE_ROWS = [
   {
@@ -692,9 +1083,9 @@ function resultsLayoutStatusText() {
 }
 
 function buildResultsLayoutEditorHtml({
-  eyebrow = "Maqueta editable",
-  title = "Ajusta las columnas a mano",
-  description = "Prueba anchos sobre esta tabla demo y guarda el layout para reutilizarlo luego en resultados reales.",
+  eyebrow = "Edición temporal",
+  title = "Ajusta columnas en esta misma vista",
+  description = "Estás viendo la instancia normal con resultados reales. Ajusta anchos y guarda para reutilizar luego.",
 } = {}) {
   const layout = currentResultsColumnLayout();
   const fields = RESULTS_COLUMN_DEFINITIONS.map((column) => `
@@ -744,6 +1135,124 @@ function buildResultsTableHeaderHtml() {
     </colgroup>
     <thead><tr>${RESULTS_COLUMN_DEFINITIONS.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead>
   `;
+}
+
+function resultsLayoutEditorEnabled() {
+  return RESULTS_LAYOUT_EDITOR_MODE;
+}
+
+function readResultsLayoutColumnDefinition(key) {
+  return RESULTS_COLUMN_DEFINITIONS.find((column) => column.key === key) ?? null;
+}
+
+function clampResultsLayoutWidth(column, value) {
+  const numeric = Number(value);
+  if (!column || !Number.isFinite(numeric)) {
+    return null;
+  }
+
+  return Math.max(
+    column.minWidth,
+    Math.min(column.maxWidth, Math.round(numeric)),
+  );
+}
+
+function buildResultsLayoutStyleVars(layout = currentResultsColumnLayout()) {
+  return RESULTS_COLUMN_DEFINITIONS
+    .map((column) => `--results-col-${column.key}:${Math.round(layout[column.key])}px`)
+    .join(";");
+}
+
+function resultsLayoutEditorMarkup() {
+  if (!resultsLayoutEditorEnabled()) {
+    return "";
+  }
+
+  return buildResultsLayoutEditorHtml();
+}
+
+function resultsLayoutInlineStyleAttr() {
+  return ` style="${escapeHtml(buildResultsLayoutStyleVars())}"`;
+}
+
+function resultsListExactClassName() {
+  return resultsLayoutEditorEnabled()
+    ? "results-list results-list--exact results-list--layout-edit"
+    : "results-list results-list--exact";
+}
+
+async function loadResultsLayout({ rerender = true, showErrorToast = true } = {}) {
+  try {
+    const data = await getJson(RESULTS_LAYOUT_ENDPOINT);
+    const layout = normalizedResultsColumnLayout(data?.layout?.columns);
+    state.resultsColumnLayout = layout ?? createDefaultResultsColumnLayout();
+    state.resultsLayoutSavedAt = typeof data?.layout?.savedAt === "string"
+      ? data.layout.savedAt
+      : "";
+  } catch (err) {
+    state.resultsColumnLayout = createDefaultResultsColumnLayout();
+    state.resultsLayoutSavedAt = "";
+    if (showErrorToast) {
+      showToast(`No pude cargar layout local (${err.message}).`);
+    }
+  } finally {
+    state.resultsLayoutLoaded = true;
+    if (rerender) {
+      renderResultsArea();
+      updateResultsToolbar();
+    }
+  }
+}
+
+function resetResultsLayoutDraft() {
+  state.resultsColumnLayout = createDefaultResultsColumnLayout();
+  state.resultsLayoutSavedAt = "";
+  renderResultsArea();
+}
+
+function updateResultsLayoutDraftColumn(key, rawValue) {
+  const column = readResultsLayoutColumnDefinition(key);
+  if (!column) {
+    return;
+  }
+
+  const clamped = clampResultsLayoutWidth(column, rawValue);
+  if (clamped == null) {
+    return;
+  }
+
+  state.resultsColumnLayout = {
+    ...currentResultsColumnLayout(),
+    [column.key]: clamped,
+  };
+  state.resultsLayoutSavedAt = "";
+  renderResultsArea();
+}
+
+async function saveResultsLayoutDraft() {
+  if (state.resultsLayoutSaving) {
+    return;
+  }
+
+  state.resultsLayoutSaving = true;
+  renderResultsArea();
+  try {
+    const payload = { columns: currentResultsColumnLayout() };
+    const data = await postJson(RESULTS_LAYOUT_ENDPOINT, payload);
+    const layout = normalizedResultsColumnLayout(data?.layout?.columns);
+    state.resultsColumnLayout = layout ?? payload.columns;
+    state.resultsLayoutSavedAt = typeof data?.layout?.savedAt === "string"
+      ? data.layout.savedAt
+      : new Date().toISOString();
+    state.resultsLayoutLoaded = true;
+    showToast(`Layout guardado en ${RESULTS_LAYOUT_FILE_HINT}`, "success");
+  } catch (err) {
+    showToast(`No pude guardar layout (${err.message}).`);
+  } finally {
+    state.resultsLayoutSaving = false;
+    renderResultsArea();
+    updateResultsToolbar();
+  }
 }
 
 const RESULTS_SKELETON_ROW_COUNT = 6;
@@ -860,8 +1369,9 @@ function renderResultsSkeleton({
 
   resultsContainer.innerHTML = `
     <div class="results-skeleton" aria-live="polite" aria-busy="${busy ? "true" : "false"}">
+      ${resultsLayoutEditorMarkup()}
       <div class="results-list-wrap" data-results-scroll="1">
-        <div class="results-list results-list--exact">${cards}</div>
+        <div class="${resultsListExactClassName()}"${resultsLayoutInlineStyleAttr()}>${cards}</div>
       </div>
     </div>
   `;
@@ -1352,12 +1862,13 @@ function priceLabels(m, passengerCount) {
   }
 
   const totalLabel = formatMoney(m);
-  const perPerson = moneyPerPassenger(m, passengerCount);
-  const perPersonLabel = perPerson ? `${formatMoney(perPerson)} por persona` : "";
+  const showPerPerson = Number.isFinite(passengerCount) && passengerCount > 1;
+  const perPerson = showPerPerson ? moneyPerPassenger(m, passengerCount) : null;
+  const perPersonLabel = perPerson ? formatMoney(perPerson) : "";
   return {
     totalLabel,
     perPersonLabel,
-    combinedLabel: perPersonLabel ? `${totalLabel} total · ${perPersonLabel}` : totalLabel,
+    combinedLabel: perPersonLabel ? `${totalLabel} · ${perPersonLabel}` : totalLabel,
   };
 }
 
@@ -1367,7 +1878,7 @@ function renderPriceBreakdownHtml(
   {
     emptyLabel = "—",
     totalSuffix = "",
-    perPersonSuffix = " por persona",
+    perPersonSuffix = "",
     className = "price-stack",
     totalClassName = "price-stack__total",
     metaClassName = "price-stack__meta",
@@ -1378,7 +1889,8 @@ function renderPriceBreakdownHtml(
   }
 
   const totalLabel = formatMoney(m);
-  const perPerson = moneyPerPassenger(m, passengerCount);
+  const showPerPerson = Number.isFinite(passengerCount) && passengerCount > 1;
+  const perPerson = showPerPerson ? moneyPerPassenger(m, passengerCount) : null;
   const totalText = `${totalLabel}${totalSuffix}`;
   const perPersonText = perPerson ? `${formatMoney(perPerson)}${perPersonSuffix}` : "";
 
@@ -2607,7 +3119,7 @@ function offerOperatingCopy(offer) {
     return "";
   }
 
-  return `Opera parcialmente ${[...operators].join(" / ")}`;
+  return `Opera con ${[...operators].join(" / ")}`;
 }
 
 function renderBaggageIconsHtml(offer) {
@@ -3393,6 +3905,93 @@ function buildPendingSearchResponse(request, sortMode) {
     },
     warnings: [`Consultando ${providerName}. Los resultados se iran agregando.`],
   };
+}
+
+function resetExactSearchUiState(request, sortModeValue, { syncForm = false } = {}) {
+  stopMatrixPolling();
+  stopSearchPolling();
+  exitMigrationMode();
+  state.sortMode = sortModeValue || state.sortMode || "cheapest";
+  state.resultsPage = 1;
+  state.quotationText = "";
+  state.selectedOfferId = null;
+  state.selectedMatrixKey = null;
+  state.detailPendingAction = null;
+  state.airlineFilter.hidden.clear();
+  state.airlineFilter.only = null;
+  state.resultsScroll = { top: 0, left: 0 };
+  state.matrixExpanded = false;
+  state.matrixResponse = null;
+  state.viewMode = "list";
+  state.request = request;
+  if (syncForm) {
+    syncSearchFormWithRequest(request);
+  }
+}
+
+function seedExactSearchResponse(request, sortModeValue) {
+  const cached = readSearchResultCache(request, sortModeValue);
+  state.searchJobId = null;
+  if (cached) {
+    setSearchResponse({
+      ...cached,
+      searchJobId: null,
+    }, { cache: false });
+    return true;
+  }
+
+  setSearchResponse(buildPendingSearchResponse(request, sortModeValue), { cache: false });
+  return false;
+}
+
+async function fetchExactSearchData(request, sortModeValue, { syncForm = false } = {}) {
+  const data = await postJson("/api/search", { request, sortMode: sortModeValue });
+  state.request = data.request ?? request;
+  if (syncForm) {
+    syncSearchFormWithRequest(state.request);
+  }
+  setSearchResponse(data);
+  state.searchJobId = data.searchJobId ?? null;
+  if (!data.searchComplete && state.searchJobId) {
+    queueSearchPoll(state.searchJobId);
+  }
+  return data;
+}
+
+async function launchExactSearchInCurrentTab(payload, { syncForm = false } = {}) {
+  if (!payload?.request) {
+    return false;
+  }
+  const sortModeValue = payload.sortMode || state.sortMode || "cheapest";
+  resetExactSearchUiState(payload.request, sortModeValue, { syncForm });
+  seedExactSearchResponse(payload.request, sortModeValue);
+  renderAll();
+  await fetchExactSearchData(payload.request, sortModeValue, { syncForm });
+  renderAll();
+  return true;
+}
+
+function applyStartupLaunchPayload(payload) {
+  if (!payload?.request) {
+    return false;
+  }
+  const sortModeValue = payload.sortMode || state.sortMode || "cheapest";
+  resetExactSearchUiState(payload.request, sortModeValue, { syncForm: true });
+  seedExactSearchResponse(payload.request, sortModeValue);
+  return true;
+}
+
+async function refreshStartupLaunchPayload(payload) {
+  if (!payload?.request) {
+    return;
+  }
+  const sortModeValue = payload.sortMode || state.sortMode || "cheapest";
+  try {
+    await fetchExactSearchData(payload.request, sortModeValue, { syncForm: true });
+    renderAll();
+  } catch (err) {
+    showToast(err.message);
+  }
 }
 
 function stopMatrixPolling() {
@@ -4394,30 +4993,23 @@ function readMaxLayoverFilter() {
 function renderStopsSummary(offer) {
   const stops = offer?.comparisonMetrics?.totalStops ?? totalStopsCount(offer);
   if (stops === 0) {
-    return '<span class="badge badge--success">Directo</span>';
+    return '<span class="results-card__stops-summary results-card__stops-summary--direct" title="Vuelo directo">Directo</span>';
   }
 
   const items = layoverItemsForOffer(offer);
-  const toneClass = stops === 1 ? "stops-stack--warning" : "stops-stack--danger";
-  const maxLayoverMinutes = items.reduce((max, item) => Math.max(max, item.minutes), 0);
-  const timeText = maxLayoverMinutes > 0
-    ? formatDuration(maxLayoverMinutes)
-    : items.length
-      ? formatDuration(items[0].minutes)
-      : "Escala";
+  const toneClass = stops === 1
+    ? "results-card__stops-summary--warning"
+    : "results-card__stops-summary--danger";
   const label = stops === 1 ? "1 escala" : `${stops} escalas`;
   const primaryCity = items[0]?.city || "Ciudad por confirmar";
   const citySummary = items.length > 1 ? `${primaryCity} +${items.length - 1}` : primaryCity;
-  const metaText = `${citySummary} · ${label}`;
+  const summaryText = `${label} · ${citySummary}`;
   const detailTitle = items.length
-    ? `Escala máx.: ${timeText} | ${items.map((item) => `${item.city}: ${formatDuration(item.minutes)}`).join(" | ")}`
-    : metaText;
+    ? `${label}: ${items.map((item) => item.city).join(" | ")}`
+    : summaryText;
 
   return `
-    <div class="stops-stack ${toneClass}" title="${escapeHtml(detailTitle)}">
-      <span class="stops-stack__time">${escapeHtml(timeText)}</span>
-      <span class="stops-stack__meta">${escapeHtml(metaText)}</span>
-    </div>
+    <span class="results-card__stops-summary ${toneClass}" title="${escapeHtml(detailTitle)}">${escapeHtml(summaryText)}</span>
   `;
 }
 
@@ -4505,7 +5097,7 @@ function renderExactResultsCardHtml(group, selectedOfferId, providerLinkIndex, p
         ${renderBaggageIconsHtml(offer)}
       </div>
 
-      <div class="results-card__price results-price" data-result-price>${renderPriceBreakdownHtml(offer.price?.total, passengerCount, { totalSuffix: " total" })}</div>
+      <div class="results-card__price results-price" data-result-price>${renderPriceBreakdownHtml(offer.price?.total, passengerCount)}</div>
       <div class="results-card__links results-links-cell" data-result-links>${renderProviderLinksCell(offer, providerLinkIndex)}</div>
     </article>
   `;
@@ -4524,7 +5116,7 @@ function renderFlexibleResultsCardHtml(cell) {
   const priceHtml = cell.confidence === "loading"
     ? '<span class="results-card__status">Cargando...</span>'
     : cell.price
-      ? renderPriceBreakdownHtml(cell.price, passengerCount, { totalSuffix: " total" })
+      ? renderPriceBreakdownHtml(cell.price, passengerCount)
       : `<span class="results-card__status">${escapeHtml(flexibleCellStateLabel(cell))}</span>`;
   const rowLabel = [
     isActive ? "Combinación seleccionada" : "Ver combinación flexible",
@@ -4658,7 +5250,7 @@ function getOffersForVisibleFacets(allOffers, filters = getActiveClientFilters()
   });
 }
 
-function setSearchResponse(data) {
+function setSearchResponse(data, { cache = true } = {}) {
   state.searchResponse = {
     ...data,
     revision: Number.isFinite(data?.revision) ? data.revision : 0,
@@ -4670,6 +5262,9 @@ function setSearchResponse(data) {
     visibleOfferGroups: data.visibleOfferGroups ?? [],
   };
   applyClientOfferControls();
+  if (cache) {
+    writeSearchResultCache(state.searchResponse.request, state.searchResponse.sortMode, state.searchResponse);
+  }
 }
 
 function applySearchResponseMeta(data) {
@@ -4687,6 +5282,7 @@ function applySearchResponseMeta(data) {
   state.searchResponse.warnings = data.warnings ?? state.searchResponse.warnings;
   state.searchResponse.error = data.error ?? state.searchResponse.error;
   state.searchResponse.unchanged = Boolean(data.unchanged);
+  writeSearchResultCache(state.searchResponse.request, state.searchResponse.sortMode, state.searchResponse);
 }
 
 function applyMatrixResponseMeta(data) {
@@ -4903,7 +5499,10 @@ function renderResults() {
   const isRunning = state.searchResponse?.searchStatus === "running";
 
   if (offers.length === 0 && !isRunning) {
-    resultsContainer.innerHTML = renderEmptyPanel(emptySearchPanelModel(state.searchResponse));
+    const emptyPanelHtml = renderEmptyPanel(emptySearchPanelModel(state.searchResponse));
+    resultsContainer.innerHTML = resultsLayoutEditorEnabled()
+      ? `${resultsLayoutEditorMarkup()}${emptyPanelHtml}`
+      : emptyPanelHtml;
     return;
   }
 
@@ -4921,9 +5520,10 @@ function renderResults() {
     ? '<div class="results-loading results-loading--inline"><span>Los resultados se seguirán agregando.</span></div>'
     : "";
   const html = `
+    ${resultsLayoutEditorMarkup()}
     ${loadingHtml}
     <div class="results-list-wrap" data-results-scroll="1" aria-live="polite" aria-busy="${isRunning ? "true" : "false"}">
-      <div class="results-list results-list--exact">${cards}</div>
+      <div class="${resultsListExactClassName()}"${resultsLayoutInlineStyleAttr()}>${cards}</div>
     </div>
   `;
 
@@ -4960,6 +5560,18 @@ function renderSearchResultsViewport({ includeAirlineBar = false } = {}) {
 }
 
 function handleResultsClick(e) {
+  if (resultsLayoutEditorEnabled()) {
+    const actionButton = e.target.closest("[data-results-layout-action]");
+    if (actionButton) {
+      if (actionButton.dataset.resultsLayoutAction === "save") {
+        void saveResultsLayoutDraft();
+      } else if (actionButton.dataset.resultsLayoutAction === "reset") {
+        resetResultsLayoutDraft();
+      }
+      return;
+    }
+  }
+
   const pager = e.target.closest("[data-results-page]");
   if (pager) {
     const total = state.searchResponse?.filteredOfferGroups?.length ?? 0;
@@ -5055,6 +5667,19 @@ function handleResultsKeydown(e) {
     e.preventDefault();
     focusAdjacentResultsRow(row, -1);
   }
+}
+
+function handleResultsInput(e) {
+  if (!resultsLayoutEditorEnabled()) {
+    return;
+  }
+
+  const input = e.target.closest("[data-results-layout-input]");
+  if (!input) {
+    return;
+  }
+
+  updateResultsLayoutDraftColumn(input.dataset.resultsLayoutInput, input.value);
 }
 
 function selectMatrixCell(cellKey) {
@@ -5226,36 +5851,8 @@ async function launchMatrixCellSearch(cellKey) {
   const cell = cells.find((entry) => entry.key === cellKey);
   if (!cell?.selectable || !cell.derivedRequest) return;
   const derivedRequest = matrixDerivedSearchRequest(cell.derivedRequest);
-  submitButton.disabled = true;
-  state.selectedMatrixKey = cellKey;
-  state.matrixExpanded = false;
-  try {
-    stopMatrixPolling();
-    stopSearchPolling();
-    state.request = derivedRequest;
-    syncSearchFormWithRequest(derivedRequest);
-    state.matrixResponse = null;
-    state.viewMode = "list";
-    state.quotationText = "";
-    state.airlineFilter.hidden.clear();
-    state.airlineFilter.only = null;
-    state.detailPendingAction = null;
-    state.resultsScroll = { top: 0, left: 0 };
-    setSearchResponse(buildPendingSearchResponse(derivedRequest, state.sortMode));
-    renderAll();
-
-    const data = await postJson("/api/search", { request: derivedRequest, sortMode: state.sortMode });
-    state.request = data.request;
-    syncSearchFormWithRequest(data.request);
-    state.selectedMatrixKey = null;
-    setSearchResponse(data);
-    state.searchJobId = data.searchJobId ?? null;
-    if (!data.searchComplete && state.searchJobId) {
-      queueSearchPoll(state.searchJobId);
-    }
-    renderAll();
-  } catch (err) { showToast(err.message); }
-  finally { submitButton.disabled = false; }
+  const payload = { request: derivedRequest, sortMode: state.sortMode };
+  openSearchPayloadInNewTab(payload);
 }
 
 async function handleMatrixClick(e) {
@@ -5441,7 +6038,7 @@ function renderCalendarView(container = resultsContainer) {
       const toneClass = matrixToneClass(cell, priceStats);
       const calTone = toneClass.replace("matrix-cell--", "cal-cell--");
       html += `<button class="matrix-cell cal-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass} ${calTone}" type="button" ${!cell.selectable ? "disabled" : ""} data-mk="${cell.key}" title="${escapeHtml(cell.tooltip ?? "")}">`;
-      html += `<div class="matrix-price cal-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? renderPriceBreakdownHtml(cell.price, passengerCount, { className: "price-stack price-stack--matrix", perPersonSuffix: " p/p" }) : "—"}</div>`;
+      html += `<div class="matrix-price cal-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? renderPriceBreakdownHtml(cell.price, passengerCount, { className: "price-stack price-stack--matrix" }) : "—"}</div>`;
       html += `<div class="matrix-meta cal-meta">${isLoading ? "cargando" : cell.stateCode ?? ""}</div></button>`;
     });
     html += '</div>';
@@ -5457,7 +6054,7 @@ function renderCalendarView(container = resultsContainer) {
         const toneClass = matrixToneClass(cell, priceStats);
         const calTone = toneClass.replace("matrix-cell--", "cal-cell--");
         html += `<button class="matrix-cell cal-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass} ${calTone}" type="button" ${!cell.selectable ? "disabled" : ""} data-mk="${cell.key}" title="${escapeHtml(cell.tooltip ?? "")}">`;
-        html += `<div class="matrix-price cal-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? renderPriceBreakdownHtml(cell.price, passengerCount, { className: "price-stack price-stack--matrix", perPersonSuffix: " p/p" }) : "—"}</div>`;
+        html += `<div class="matrix-price cal-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? renderPriceBreakdownHtml(cell.price, passengerCount, { className: "price-stack price-stack--matrix" }) : "—"}</div>`;
         html += `<div class="matrix-meta cal-meta">${isLoading ? "cargando" : cell.stateCode ?? ""} ${cell.stayNights != null ? cell.stayNights + "n" : ""}</div></button>`;
       });
       html += '</div>';
@@ -5557,7 +6154,7 @@ function renderMatrixCellDetail(cell) {
   h += detailPairHtml("Pasajeros", passengerSummary);
   if (cell.price) {
     h += detailPairHtml("Total", priceLabels(cell.price, passengerCount).totalLabel, { strong: true });
-    h += detailPairHtml("Por persona", priceLabels(cell.price, passengerCount).perPersonLabel.replace(/ por persona$/, ""));
+    h += detailPairHtml("Por pax", priceLabels(cell.price, passengerCount).perPersonLabel);
   }
   h += detailPairHtml("Filtros", flexibleCellFilterSummary(request?.filters ?? fallbackRequest?.filters));
   h += detailPairHtml("Cabina", request?.cabin ?? fallbackRequest?.cabin ?? "ECONOMY");
@@ -5703,7 +6300,7 @@ function renderDetailPanel() {
   // Fare
   h += '<div class="detail-section"><div class="detail-section__title">Tarifa</div>';
   h += `<div class="detail-pair detail-pair--strong"><span class="detail-pair__key">Total</span><span class="detail-pair__val">${offerPriceLabels.totalLabel}</span></div>`;
-  h += `<div class="detail-pair"><span class="detail-pair__key">Por persona</span><span class="detail-pair__val">${offerPriceLabels.perPersonLabel.replace(/ por persona$/, "")}</span></div>`;
+  h += `<div class="detail-pair"><span class="detail-pair__key">Por pax</span><span class="detail-pair__val">${offerPriceLabels.perPersonLabel}</span></div>`;
   if (offer.price?.base) h += `<div class="detail-pair"><span class="detail-pair__key">Base</span><span class="detail-pair__val">${formatMoney(offer.price.base)}</span></div>`;
   if (offer.price?.taxes) h += `<div class="detail-pair"><span class="detail-pair__key">Tasas</span><span class="detail-pair__val">${formatMoney(offer.price.taxes)}</span></div>`;
   if (offer.fareMeta?.lastTicketingDate) h += `<div class="detail-pair"><span class="detail-pair__key">Emisión límite</span><span class="detail-pair__val">${offer.fareMeta.lastTicketingDate}</span></div>`;
@@ -5848,6 +6445,7 @@ resultsToolbar?.addEventListener("click", handleResultsClick);
 
 // Results container click delegation (set up once)
 resultsContainer?.addEventListener("click", handleResultsClick);
+resultsContainer?.addEventListener("input", handleResultsInput);
 resultsContainer?.addEventListener("keydown", handleResultsKeydown);
 resultsContainer?.addEventListener("pointerdown", () => {
   state.pollPointerDown = true;
@@ -5884,9 +6482,14 @@ window.addEventListener("resize", debounce(() => {
 
 ["sortMode", "nonStop", "baggageRequired", "maxLayoverMinutes", "maxStopsFilter"].forEach((id) => {
   control(id)?.addEventListener("change", async () => {
-    if (!state.searchResponse?.allOffers) return;
     markPollingUiInteraction();
     state.sortMode = controlValue("sortMode") || state.sortMode;
+    if (state.migrationActive) {
+      applyMigrationClientOfferControls();
+      renderMigrationResults();
+      return;
+    }
+    if (!state.searchResponse?.allOffers) return;
     state.resultsPage = 1;
     state.resultsScroll = { top: 0, left: 0 };
     applyClientOfferControls();
@@ -5909,20 +6512,19 @@ searchForm.addEventListener("submit", async (e) => {
   try {
     const payload = getFormPayload();
     const translatedPayload = translateFlexibleDates(payload);
-    stopMatrixPolling();
-    stopSearchPolling();
-    exitMigrationMode();
-    state.sortMode = translatedPayload.sortMode;
-    state.resultsPage = 1;
-    state.quotationText = "";
-    state.selectedMatrixKey = null;
-    state.detailPendingAction = null;
-    state.airlineFilter.hidden.clear();
-    state.airlineFilter.only = null;
-    state.resultsScroll = { top: 0, left: 0 };
 
     if (translatedPayload.request.searchMode === "roundtrip-grid") {
+      stopMatrixPolling();
       stopSearchPolling();
+      exitMigrationMode();
+      state.sortMode = translatedPayload.sortMode;
+      state.resultsPage = 1;
+      state.quotationText = "";
+      state.selectedMatrixKey = null;
+      state.detailPendingAction = null;
+      state.airlineFilter.hidden.clear();
+      state.airlineFilter.only = null;
+      state.resultsScroll = { top: 0, left: 0 };
       state.searchResponse = null;
       state.selectedOfferId = null;
       state.matrixExpanded = false;
@@ -5941,20 +6543,7 @@ searchForm.addEventListener("submit", async (e) => {
         queueMatrixPoll(state.matrixJobId);
       }
     } else {
-      state.matrixExpanded = false;
-      state.matrixResponse = null;
-      state.request = translatedPayload.request;
-      state.viewMode = "list";
-      setSearchResponse(buildPendingSearchResponse(translatedPayload.request, translatedPayload.sortMode));
-      renderAll();
-
-      const data = await postJson("/api/search", translatedPayload);
-      state.request = data.request;
-      setSearchResponse(data);
-      state.searchJobId = data.searchJobId ?? null;
-      if (!data.searchComplete && state.searchJobId) {
-        queueSearchPoll(state.searchJobId);
-      }
+      await launchExactSearchInCurrentTab(translatedPayload, { syncForm: false });
     }
     renderAll();
   } catch (err) { showToast(err.message); }
@@ -6058,6 +6647,44 @@ function migrationMonthProviderIds(month) {
   return defaultProviderIds(month?.request ?? state.request);
 }
 
+function migrationMonthOffers(month) {
+  return Array.isArray(month?.offers) ? month.offers : [];
+}
+
+function migrationMonthSelection(month, filters = getActiveClientFilters()) {
+  const allOffers = migrationMonthOffers(month);
+  const offers = getOffersForVisibleFacets(allOffers, filters);
+  if (offers.length === 0) {
+    return { cheapest: null, providerPaths: {} };
+  }
+
+  const cheapest = offers.reduce((best, offer) =>
+    ((offer.price?.total?.amount ?? offer.totalPrice ?? Infinity) < (best.price?.total?.amount ?? best.totalPrice ?? Infinity) ? offer : best), offers[0]);
+  const providerLinkIndex = buildProviderLinkIndex(allOffers);
+  const providerPaths = {};
+  migrationMonthProviderIds(month).forEach((providerId) => {
+    const path = bestProviderPathForOffer(cheapest, providerId, providerLinkIndex);
+    if (path) {
+      providerPaths[providerId] = path;
+    }
+  });
+  return { cheapest, providerPaths };
+}
+
+function applyMigrationMonthSelection(month, filters = getActiveClientFilters()) {
+  if (!month) return;
+  const selection = migrationMonthSelection(month, filters);
+  month.cheapest = selection.cheapest;
+  month.providerPaths = selection.providerPaths;
+}
+
+function applyMigrationClientOfferControls(filters = getActiveClientFilters()) {
+  if (!state.migrationActive) return;
+  state.migrationMonths.forEach((month) => {
+    applyMigrationMonthSelection(month, filters);
+  });
+}
+
 function migrationOfferDepartureDate(offer) {
   const primaryDate = offerPrimaryDates(offer).departureDate;
   return primaryDate
@@ -6143,50 +6770,17 @@ function buildMigrationExactSearchPayload(month, offer) {
 
 async function launchMigrationExactSearch(index) {
   const month = state.migrationMonths[index];
-  const offer = month?.cheapest;
-  if (!month || !offer) return;
+  if (!month) return;
+  applyMigrationMonthSelection(month);
+  const offer = month.cheapest;
+  if (!offer) return;
 
   const payload = buildMigrationExactSearchPayload(month, offer);
   if (!payload) {
     showToast("No pude derivar una fecha exacta desde este resultado migratorio.");
     return;
   }
-
-  submitButton.disabled = true;
-  try {
-    stopMigrationPolling();
-    stopMatrixPolling();
-    stopSearchPolling();
-    exitMigrationMode();
-    state.request = payload.request;
-    syncSearchFormWithRequest(payload.request);
-    state.matrixExpanded = false;
-    state.matrixResponse = null;
-    state.selectedOfferId = null;
-    state.selectedMatrixKey = null;
-    state.viewMode = "list";
-    state.quotationText = "";
-    state.airlineFilter.hidden.clear();
-    state.airlineFilter.only = null;
-    state.detailPendingAction = null;
-    state.resultsScroll = { top: 0, left: 0 };
-    setSearchResponse(buildPendingSearchResponse(payload.request, payload.sortMode));
-    renderAll();
-
-    const data = await postJson("/api/search", payload);
-    state.request = data.request;
-    syncSearchFormWithRequest(data.request);
-    setSearchResponse(data);
-    state.searchJobId = data.searchJobId ?? null;
-    if (!data.searchComplete && state.searchJobId) {
-      queueSearchPoll(state.searchJobId);
-    }
-    renderAll();
-  } catch (err) {
-    showToast(err.message);
-  } finally {
-    submitButton.disabled = false;
-  }
+  openSearchPayloadInNewTab(payload);
 }
 
 function renderMigrationResults() {
@@ -6197,6 +6791,7 @@ function renderMigrationResults() {
     resultsContainer.innerHTML = "";
     return;
   }
+  applyMigrationClientOfferControls();
 
   const origin = months[0]?.origin ?? "";
   const destination = months[0]?.destination ?? "";
@@ -6236,7 +6831,7 @@ function renderMigrationResults() {
         || offer.itineraries?.[0]?.segments?.[0]?.airlineCode
         || "";
       const date = migrationOfferDepartureDate(offer);
-      h += `<div class="migration-card__price">${renderPriceBreakdownHtml(totalMoney, passengerCount, { totalSuffix: " total" })}</div>`;
+      h += `<div class="migration-card__price">${renderPriceBreakdownHtml(totalMoney, passengerCount)}</div>`;
       if (date) {
         h += `<div class="migration-card__detail">Fecha exacta: ${escapeHtml(formatDateCompact(date))}</div>`;
       }
@@ -6304,6 +6899,7 @@ async function startMigrationSearch() {
     originLabel,
     destinationLabel,
     jobId: null,
+    offers: [],
     cheapest: null,
     providerPaths: {},
     complete: false,
@@ -6413,27 +7009,19 @@ function updateMigrationMonth(index, data, runId = state.migrationRunId) {
   };
 
   if (data.unchanged) {
+    applyMigrationMonthSelection(m);
     return;
   }
 
   const offers = data.allOffers ?? data.offers ?? [];
+  m.offers = offers;
   if (offers.length === 0) {
     m.cheapest = null;
     m.providerPaths = {};
     return;
   }
 
-  m.cheapest = offers.reduce((best, offer) =>
-    ((offer.price?.total?.amount ?? offer.totalPrice ?? Infinity) < (best.price?.total?.amount ?? best.totalPrice ?? Infinity) ? offer : best), offers[0]);
-  const providerLinkIndex = buildProviderLinkIndex(offers);
-  const providerPaths = {};
-  migrationMonthProviderIds(m).forEach((providerId) => {
-    const path = bestProviderPathForOffer(m.cheapest, providerId, providerLinkIndex);
-    if (path) {
-      providerPaths[providerId] = path;
-    }
-  });
-  m.providerPaths = providerPaths;
+  applyMigrationMonthSelection(m);
 }
 
 function queueMigrationPoll(index, jobId, runId = state.migrationRunId) {
@@ -6500,6 +7088,14 @@ bootstrapAppShell({
   syncWorkspaceViewportHeight,
   syncSearchShellLayoutMetrics,
   syncSearchClipboardUI,
+  beforeInitialRender: async () => {
+    await loadResultsLayout({ rerender: false, showErrorToast: false });
+    if (applyStartupLaunchPayload(startupSearchLaunchPayload)) {
+      window.setTimeout(() => {
+        void refreshStartupLaunchPayload(startupSearchLaunchPayload);
+      }, 0);
+    }
+  },
   renderAll,
   settleInitialShellLayout,
   releaseInitialUiBootState,

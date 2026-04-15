@@ -164,8 +164,15 @@ const RESULTS_LAYOUT_COLUMNS = [
 
 const RESULTS_LAYOUT_FILE = path.resolve(__dirname, "..", "output", "results-layout.json");
 const RESULTS_LAYOUT_VERSION = 1;
-const RESULTS_LAYOUT_WIDTH_MIN = 96;
-const RESULTS_LAYOUT_WIDTH_MAX = 640;
+const RESULTS_LAYOUT_COLUMN_LIMITS: Record<ResultsLayoutColumnKey, { min: number; max: number }> = {
+  carrier: { min: 88, max: 320 },
+  dates: { min: 96, max: 240 },
+  duration: { min: 92, max: 240 },
+  stops: { min: 96, max: 300 },
+  baggage: { min: 64, max: 180 },
+  price: { min: 112, max: 360 },
+  links: { min: 72, max: 240 },
+};
 
 function normalizeResultsLayoutColumns(
   input: Partial<Record<ResultsLayoutColumnKey, unknown>> | undefined,
@@ -182,10 +189,11 @@ function normalizeResultsLayoutColumns(
     if (!Number.isFinite(numeric)) {
       continue;
     }
+    const limits = RESULTS_LAYOUT_COLUMN_LIMITS[key];
 
     columns[key] = Math.max(
-      RESULTS_LAYOUT_WIDTH_MIN,
-      Math.min(RESULTS_LAYOUT_WIDTH_MAX, Math.round(numeric)),
+      limits.min,
+      Math.min(limits.max, Math.round(numeric)),
     );
   }
 

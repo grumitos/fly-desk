@@ -20,6 +20,7 @@ export function bootstrapAppShell({
   syncWorkspaceViewportHeight,
   syncSearchShellLayoutMetrics,
   syncSearchClipboardUI,
+  beforeInitialRender,
   renderAll,
   settleInitialShellLayout,
   releaseInitialUiBootState,
@@ -83,8 +84,19 @@ export function bootstrapAppShell({
     }
   });
 
-  syncSearchClipboardUI();
-  renderAll();
-  settleInitialShellLayout();
-  releaseInitialUiBootState();
+  const finalizeBoot = () => {
+    syncSearchClipboardUI();
+    renderAll();
+    settleInitialShellLayout();
+    releaseInitialUiBootState();
+  };
+
+  if (typeof beforeInitialRender === "function") {
+    Promise.resolve(beforeInitialRender())
+      .catch(() => undefined)
+      .finally(finalizeBoot);
+    return;
+  }
+
+  finalizeBoot();
 }

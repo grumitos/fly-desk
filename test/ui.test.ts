@@ -279,7 +279,7 @@ test("migration cards show exact date, provider links, and can open an exact sea
         pageErrors.push(error.message);
       });
 
-      page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      page.context().route(`${baseUrl}/api/search`, async (route: Route) => {
         const body = route.request().postDataJSON();
         if (body?.request?.searchMode === "stay-range") {
           migrationRequestCount += 1;
@@ -423,13 +423,6 @@ test("migration cards show exact date, provider links, and can open an exact sea
       return document.querySelectorAll("#resultsContainer .migration-card--ok").length === 8;
     });
     const firstCard = page.locator("#resultsContainer .migration-card").first();
-    const exactRequestPromise = page.waitForRequest((request) => {
-      if (request.method() !== "POST" || request.url() !== `${baseUrl}/api/search`) {
-        return false;
-      }
-      const body = request.postDataJSON() as { request?: { searchMode?: string } };
-      return body?.request?.searchMode === "exact";
-    });
 
     const migrationProbe = await page.evaluate(() => ({
       title: document.querySelector(".migration-panel__title")?.textContent?.trim() ?? "",
@@ -490,11 +483,28 @@ test("migration cards show exact date, provider links, and can open an exact sea
     assert.ok((migrationProbe.layout?.rowCount ?? 0) >= 2);
     assert.ok((migrationProbe.layout?.actionWidth ?? 0) < (migrationProbe.layout?.cardWidth ?? 0));
 
+    const popupPromise = page.waitForEvent("popup");
     await firstCard.getByRole("button", { name: "Abrir busqueda" }).click();
-    await exactRequestPromise;
-    await page.waitForSelector('#resultsContainer article[data-oid]');
+    const popup = await popupPromise;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      if (exactRequestBody?.request?.searchMode === "exact") {
+        break;
+      }
+      await page.waitForTimeout(100);
+    }
+    await popup.waitForFunction((expectedDate) => {
+      const departureInput = document.getElementById("departureDate") as HTMLInputElement | null;
+      return departureInput?.value === expectedDate;
+    }, firstMigrationDate);
 
-    const exactProbe = await page.evaluate(() => ({
+    const sourceProbe = await page.evaluate(() => ({
+      toolbarHidden: document.getElementById("resultsToolbar")?.classList.contains("hidden") ?? true,
+      departureDate: (document.getElementById("departureDate") as HTMLInputElement | null)?.value ?? "",
+      tripType: (document.getElementById("tripType") as HTMLSelectElement | null)?.value ?? "",
+      hasMigrationPanel: Boolean(document.querySelector(".migration-panel")),
+      providerLinksText: document.querySelector("#resultsContainer .provider-links-cell")?.textContent?.trim() ?? "",
+    }));
+    const popupProbe = await popup.evaluate(() => ({
       toolbarHidden: document.getElementById("resultsToolbar")?.classList.contains("hidden") ?? true,
       departureDate: (document.getElementById("departureDate") as HTMLInputElement | null)?.value ?? "",
       tripType: (document.getElementById("tripType") as HTMLSelectElement | null)?.value ?? "",
@@ -505,12 +515,16 @@ test("migration cards show exact date, provider links, and can open an exact sea
     assert.equal(exactRequestBody?.request?.searchMode, "exact");
     assert.equal(exactRequestBody?.request?.tripType, "one-way");
     assert.equal(exactRequestBody?.request?.legs?.[0]?.departureDate, firstMigrationDate);
-    assert.equal(exactProbe.toolbarHidden, false);
-    assert.equal(exactProbe.departureDate, firstMigrationDate);
-    assert.equal(exactProbe.tripType, "one-way");
-    assert.equal(exactProbe.hasMigrationPanel, false);
-    assert.match(exactProbe.providerLinksText, /Agil/);
-    assert.match(exactProbe.providerLinksText, /Costamar/);
+    assert.equal(sourceProbe.toolbarHidden, true);
+    assert.equal(sourceProbe.hasMigrationPanel, true);
+    assert.equal(sourceProbe.departureDate, "");
+    assert.equal(sourceProbe.tripType, "round-trip");
+    assert.equal(popupProbe.toolbarHidden, false);
+    assert.equal(popupProbe.departureDate, firstMigrationDate);
+    assert.equal(popupProbe.tripType, "one-way");
+    assert.equal(popupProbe.hasMigrationPanel, false);
+    assert.match(popupProbe.providerLinksText, /Agil/);
+    assert.match(popupProbe.providerLinksText, /Costamar/);
   }, { autoOpen: false });
 });
 
@@ -844,6 +858,137 @@ test("migration keeps only a 2-month concurrent window while loading all 8 month
     });
     assert.equal(requestCount, 8);
     assert.equal(maxInFlight, 2);
+  }, { autoOpen: false });
+});
+
+test("migration replaces monthly cheapest with direct, layover, and baggage filters", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      const body = route.request().postDataJSON();
+      const departureDate = body?.request?.legs?.[0]?.departureStart ?? "2026-04-01";
+      const createMigrationOffer = (
+        id: string,
+        amount: number,
+        stops: number,
+        checkedIncluded: boolean,
+        airlineName: string,
+      ) => buildOffer({
+        id,
+        mainCarrier: "LA",
+        validatingCarrier: "LA",
+        comparisonMetrics: {
+          totalDurationMinutes: 480 + (stops * 90),
+          totalStops: stops,
+        },
+        baggage: {
+          carryOnIncluded: true,
+          checkedIncluded,
+          checkedBags: checkedIncluded ? 1 : 0,
+          description: checkedIncluded ? "23kg" : "Sin equipaje incluido",
+        },
+        price: {
+          total: {
+            amount,
+            currencyCode: "USD",
+          },
+          base: {
+            amount: Math.max(0, amount - 90),
+            currencyCode: "USD",
+          },
+          taxes: {
+            amount: 90,
+            currencyCode: "USD",
+          },
+        },
+        itineraries: [
+          {
+            direction: "outbound",
+            durationMinutes: 480 + (stops * 90),
+            stops,
+            segments: [
+              {
+                flightNumber: `${id.toUpperCase()} 100`,
+                origin: "LIM",
+                destination: "MIA",
+                departureAt: `${departureDate}T10:00:00Z`,
+                departureDate,
+                arrivalAt: `${departureDate}T18:00:00Z`,
+                airlineName,
+              },
+            ],
+          },
+        ],
+      });
+
+      const offers = [
+        createMigrationOffer("migration-2stops", 90, 2, true, "DOS ESCALAS"),
+        createMigrationOffer("migration-1stop-nobag", 100, 1, false, "UNA SIN BAG"),
+        createMigrationOffer("migration-1stop-bag", 130, 1, true, "UNA CON BAG"),
+        createMigrationOffer("migration-direct-bag", 150, 0, true, "DIRECTO BAG"),
+      ];
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "migration-filtered-job",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: body.request,
+          offers,
+          allOffers: offers,
+          searchMeta: {
+            ...buildSearchMeta("search_live"),
+            providersUsed: ["agil-local"],
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await setRouteInputs(page, "LIM", "MIA");
+    await page.click("#migrationBtn");
+    await page.waitForFunction(() => {
+      return document.querySelectorAll("#resultsContainer .migration-card--ok").length === 8;
+    });
+
+    const firstCardText = async () => page.evaluate(() =>
+      document.querySelector("#resultsContainer .migration-card")?.textContent?.replace(/\s+/g, " ").trim() ?? "");
+
+    const initialText = await firstCardText();
+    assert.match(initialText, /DOS ESCALAS/);
+    assert.match(initialText, /90\.00/);
+    assert.match(initialText, /2 escalas/);
+
+    await page.selectOption("#maxStopsFilter", "1");
+    await page.waitForFunction(() =>
+      (document.querySelector("#resultsContainer .migration-card")?.textContent ?? "").includes("UNA SIN BAG"));
+    const stopsFilteredText = await firstCardText();
+    assert.match(stopsFilteredText, /UNA SIN BAG/);
+    assert.match(stopsFilteredText, /100\.00/);
+    assert.match(stopsFilteredText, /1 escala/);
+
+    await page.check("#baggageRequired");
+    await page.waitForFunction(() =>
+      (document.querySelector("#resultsContainer .migration-card")?.textContent ?? "").includes("UNA CON BAG"));
+    const baggageFilteredText = await firstCardText();
+    assert.match(baggageFilteredText, /UNA CON BAG/);
+    assert.match(baggageFilteredText, /130\.00/);
+    assert.match(baggageFilteredText, /1 escala/);
+
+    await page.check("#nonStop");
+    await page.waitForFunction(() =>
+      (document.querySelector("#resultsContainer .migration-card")?.textContent ?? "").includes("DIRECTO BAG"));
+    const nonstopFilteredText = await firstCardText();
+    assert.match(nonstopFilteredText, /DIRECTO BAG/);
+    assert.match(nonstopFilteredText, /150\.00/);
+    assert.match(nonstopFilteredText, /Directo/);
   }, { autoOpen: false });
 });
 
@@ -1988,7 +2133,7 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
       });
     });
 
-    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+    await page.context().route(`${baseUrl}/api/search`, async (route: Route) => {
       searchRequestCount += 1;
       lastSearchRequest = route.request().postDataJSON() as Record<string, unknown>;
       await route.fulfill({
@@ -2084,11 +2229,16 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
     assert.equal(detailProbe.externalLinkText, "Abrir en Agil");
     assert.equal(detailProbe.externalLinkHref, "/r/matrix-agil-path");
 
-    const searchRequestPromise = page.waitForRequest((request) =>
-      request.method() === "POST" && request.url() === `${baseUrl}/api/search`);
+    const popupPromise = page.waitForEvent("popup");
     await page.click('[data-matrix-detail-search="2026-04-15_2026-04-19"]');
-    await searchRequestPromise;
-    await page.waitForFunction(() => {
+    const popup = await popupPromise;
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      if (searchRequestCount > 0) {
+        break;
+      }
+      await page.waitForTimeout(100);
+    }
+    await popup.waitForFunction(() => {
       const searchMode = document.getElementById("searchMode") as HTMLInputElement | null;
       return searchMode?.value === "exact";
     });
@@ -2108,7 +2258,18 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
       maxLayoverMinutes: 240,
     });
 
-    const formState = await page.evaluate(() => ({
+    const sourceFormState = await page.evaluate(() => ({
+      searchMode: (document.getElementById("searchMode") as HTMLInputElement | null)?.value,
+      departureDate: (document.getElementById("departureDate") as HTMLInputElement | null)?.value,
+      returnDate: (document.getElementById("returnDate") as HTMLInputElement | null)?.value,
+      departureStart: (document.getElementById("departureStart") as HTMLInputElement | null)?.value,
+      departureEnd: (document.getElementById("departureEnd") as HTMLInputElement | null)?.value,
+      adults: (document.getElementById("adults") as HTMLInputElement | null)?.value,
+      children: (document.getElementById("children") as HTMLInputElement | null)?.value,
+      infants: (document.getElementById("infants") as HTMLInputElement | null)?.value,
+      dateTriggerText: document.getElementById("dateTriggerText")?.textContent?.trim(),
+    }));
+    const popupFormState = await popup.evaluate(() => ({
       searchMode: (document.getElementById("searchMode") as HTMLInputElement | null)?.value,
       departureDate: (document.getElementById("departureDate") as HTMLInputElement | null)?.value,
       returnDate: (document.getElementById("returnDate") as HTMLInputElement | null)?.value,
@@ -2120,15 +2281,25 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
       dateTriggerText: document.getElementById("dateTriggerText")?.textContent?.trim(),
     }));
 
-    assert.equal(formState.searchMode, "exact");
-    assert.equal(formState.departureDate, "2026-04-15");
-    assert.equal(formState.returnDate, "2026-04-19");
-    assert.equal(formState.departureStart, "");
-    assert.equal(formState.departureEnd, "");
-    assert.equal(formState.adults, "2");
-    assert.equal(formState.children, "1");
-    assert.equal(formState.infants, "1");
-    assert.equal(formState.dateTriggerText, "15/04 → 19/04");
+    assert.equal(sourceFormState.searchMode, "roundtrip-grid");
+    assert.equal(sourceFormState.departureDate, "");
+    assert.equal(sourceFormState.returnDate, "");
+    assert.equal(sourceFormState.departureStart, "2026-04-15");
+    assert.equal(sourceFormState.departureEnd, "2026-04-19");
+    assert.equal(sourceFormState.adults, "2");
+    assert.equal(sourceFormState.children, "1");
+    assert.equal(sourceFormState.infants, "1");
+    assert.match(sourceFormState.dateTriggerText ?? "", /15\/04/);
+
+    assert.equal(popupFormState.searchMode, "exact");
+    assert.equal(popupFormState.departureDate, "2026-04-15");
+    assert.equal(popupFormState.returnDate, "2026-04-19");
+    assert.equal(popupFormState.departureStart, "");
+    assert.equal(popupFormState.departureEnd, "");
+    assert.equal(popupFormState.adults, "2");
+    assert.equal(popupFormState.children, "1");
+    assert.equal(popupFormState.infants, "1");
+    assert.equal(popupFormState.dateTriggerText, "15/04 → 19/04");
   }, { autoOpen: false });
 });
 

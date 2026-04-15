@@ -7,6 +7,30 @@ import { getPublicRuntimeConfig } from "./search-date-policy";
 const publicDir = path.resolve(__dirname, "..", "public");
 
 function contentTypeForExtension(extension: string): string {
+  if (extension === ".svg") {
+    return "image/svg+xml; charset=utf-8";
+  }
+
+  if (extension === ".ico") {
+    return "image/x-icon";
+  }
+
+  if (extension === ".png") {
+    return "image/png";
+  }
+
+  if (extension === ".jpg" || extension === ".jpeg") {
+    return "image/jpeg";
+  }
+
+  if (extension === ".webp") {
+    return "image/webp";
+  }
+
+  if (extension === ".gif") {
+    return "image/gif";
+  }
+
   if (extension === ".css") {
     return "text/css; charset=utf-8";
   }
