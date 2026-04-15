@@ -117,6 +117,10 @@ const SEARCH_LAUNCH_STORAGE_KEY_PREFIX = "flydesk.searchLaunch.v1";
 const SEARCH_LAUNCH_TTL_MS = 15 * 60 * 1000;
 const SEARCH_LAUNCH_QUERY_PARAM = "launchSearch";
 const SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM = "launchPayload";
+const RESULTS_REORDER_DURATION_MS = 170;
+const RESULTS_REORDER_ENTRY_DURATION_MS = 130;
+const RESULTS_REORDER_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
+const RESULTS_REORDER_MAX_ANIMATED_CARDS = 80;
 const autocompleteSessionCache = loadAutocompleteSessionCache();
 const searchResultCache = loadSearchResultCache();
 
@@ -594,7 +598,6 @@ function renderProviderFaviconIcon(providerId) {
       width="40"
       height="40"
       class="provider-link-icon__img"
-      loading="lazy"
       decoding="async"
     />
   `.trim();
@@ -933,7 +936,7 @@ function flexibleCombinationLabel(count) {
 }
 
 const RESULTS_LAYOUT_ENDPOINT = "/api/results-layout";
-const RESULTS_LAYOUT_FILE_HINT = "output/results-layout.json";
+const RESULTS_LAYOUT_FILE_HINT = "config/results-layout.json";
 const RESULTS_LAYOUT_EDITOR_MODE = (() => {
   try {
     const params = new URLSearchParams(window.location.search);
@@ -954,7 +957,7 @@ const RESULTS_COLUMN_DEFINITIONS = [
   { key: "stops", label: "Escalas", defaultWidth: 138, minWidth: 96, maxWidth: 300 },
   { key: "baggage", label: "Equipaje", defaultWidth: 96, minWidth: 64, maxWidth: 180 },
   { key: "price", label: "Precio", defaultWidth: 128, minWidth: 112, maxWidth: 360 },
-  { key: "links", label: "Enlace", defaultWidth: 102, minWidth: 72, maxWidth: 240 },
+  { key: "links", label: "Enlace", defaultWidth: 102, minWidth: 40, maxWidth: 240 },
 ];
 const RESULTS_PROTOTYPE_ROWS = [
   {
@@ -1460,6 +1463,110 @@ function resultsScrollViewport(container = resultsContainer) {
   return container?.querySelector("[data-results-scroll]")
     ?? container?.querySelector(".table-wrap")
     ?? null;
+}
+
+function prefersReducedMotion() {
+  try {
+    return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+  } catch {
+    return false;
+  }
+}
+
+function resultsCardAnimationKey(card) {
+  if (!(card instanceof HTMLElement)) {
+    return "";
+  }
+  if (card.dataset.oid) {
+    return `offer:${card.dataset.oid}`;
+  }
+  if (card.dataset.flexCellKey) {
+    return `flex:${card.dataset.flexCellKey}`;
+  }
+  return "";
+}
+
+function captureResultsCardRects(container = resultsContainer) {
+  const viewport = resultsScrollViewport(container) ?? container;
+  if (!viewport) {
+    return null;
+  }
+
+  const cards = [...viewport.querySelectorAll(".results-card[data-oid], .results-card[data-flex-cell-key]")];
+  if (cards.length === 0) {
+    return null;
+  }
+
+  const rects = new Map();
+  cards.forEach((card) => {
+    const key = resultsCardAnimationKey(card);
+    if (!key) {
+      return;
+    }
+    rects.set(key, card.getBoundingClientRect());
+  });
+
+  return rects.size > 0 ? rects : null;
+}
+
+function animateResultsCardReorder(container = resultsContainer, previousRects = null) {
+  if (!container || !previousRects || previousRects.size === 0 || prefersReducedMotion()) {
+    return;
+  }
+
+  const viewport = resultsScrollViewport(container) ?? container;
+  if (!viewport) {
+    return;
+  }
+
+  const cards = [...viewport.querySelectorAll(".results-card[data-oid], .results-card[data-flex-cell-key]")];
+  if (cards.length === 0 || cards.length > RESULTS_REORDER_MAX_ANIMATED_CARDS) {
+    return;
+  }
+
+  cards.forEach((card, index) => {
+    const key = resultsCardAnimationKey(card);
+    if (!key) {
+      return;
+    }
+
+    const previous = previousRects.get(key);
+    if (!previous) {
+      card.animate(
+        [
+          { opacity: 0, transform: "translateY(5px)" },
+          { opacity: 1, transform: "translateY(0)" },
+        ],
+        {
+          duration: RESULTS_REORDER_ENTRY_DURATION_MS,
+          delay: Math.min(index, 6) * 9,
+          easing: RESULTS_REORDER_EASING,
+          fill: "both",
+        },
+      );
+      return;
+    }
+
+    const current = card.getBoundingClientRect();
+    const deltaX = previous.left - current.left;
+    const deltaY = previous.top - current.top;
+
+    if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) {
+      return;
+    }
+
+    card.animate(
+      [
+        { transform: `translate(${deltaX}px, ${deltaY}px)` },
+        { transform: "translate(0, 0)" },
+      ],
+      {
+        duration: RESULTS_REORDER_DURATION_MS,
+        easing: RESULTS_REORDER_EASING,
+        fill: "both",
+      },
+    );
+  });
 }
 
 function captureResultsScroll(container = resultsContainer) {
@@ -5487,6 +5594,7 @@ function updateResultsToolbar() {
 function renderResults() {
   if (!resultsContainer) return;
   captureResultsScroll(resultsContainer);
+  const previousCardRects = captureResultsCardRects(resultsContainer);
   if (!state.searchResponse) {
     renderResultsSkeleton({ busy: false });
     return;
@@ -5538,7 +5646,10 @@ function renderResults() {
     return;
   }
   syncResultsScroll(resultsWrap);
-  requestAnimationFrame(() => syncResultsScroll(resultsWrap));
+  requestAnimationFrame(() => {
+    syncResultsScroll(resultsWrap);
+    animateResultsCardReorder(resultsContainer, previousCardRects);
+  });
   resultsWrap?.addEventListener("scroll", handleResultsScroll, { passive: true });
   resultsWrap?.addEventListener("wheel", markPollingUiInteraction, { passive: true });
   resultsWrap?.addEventListener("pointerdown", () => {
@@ -5800,6 +5911,7 @@ function compareFlexibleListCells(left, right) {
 function renderFlexibleList(container = resultsContainer) {
   if (!container) return;
   captureResultsScroll(container);
+  const previousCardRects = captureResultsCardRects(container);
   const cells = state.matrixResponse?.cells ?? [];
   if (cells.length === 0) {
     container.innerHTML = renderEmptyPanel({
@@ -5837,7 +5949,10 @@ function renderFlexibleList(container = resultsContainer) {
   container.innerHTML = html;
   const resultsWrap = resultsScrollViewport(container);
   syncResultsScroll(resultsWrap);
-  requestAnimationFrame(() => syncResultsScroll(resultsWrap));
+  requestAnimationFrame(() => {
+    syncResultsScroll(resultsWrap);
+    animateResultsCardReorder(container, previousCardRects);
+  });
   resultsWrap?.addEventListener("scroll", handleResultsScroll, { passive: true });
   resultsWrap?.addEventListener("wheel", markPollingUiInteraction, { passive: true });
   resultsWrap?.addEventListener("pointerdown", () => {

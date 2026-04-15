@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "savedAt": "2026-04-15T20:01:54.140Z",
+  "columns": {
+    "carrier": 116,
+    "dates": 168,
+    "duration": 124,
+    "stops": 124,
+    "baggage": 64,
+    "price": 132,
+    "links": 72
+  }
+}
