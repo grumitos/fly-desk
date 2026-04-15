@@ -1089,7 +1089,7 @@ test("matrix job polling returns a lightweight unchanged payload when revision h
 });
 
 test("results layout endpoints persist and read back the saved column widths locally", async () => {
-  const layoutFile = join(process.cwd(), "output", "results-layout.json");
+  const layoutFile = join(process.cwd(), "config", "results-layout.json");
   const previousLayout = existsSync(layoutFile) ? readFileSync(layoutFile, "utf8") : null;
   const columns = {
     carrier: 208,
@@ -1147,7 +1147,7 @@ test("results layout endpoints persist and read back the saved column widths loc
     if (previousLayout === null) {
       rmSync(layoutFile, { force: true });
     } else {
-      mkdirSync(join(process.cwd(), "output"), { recursive: true });
+      mkdirSync(join(process.cwd(), "config"), { recursive: true });
       writeFileSync(layoutFile, previousLayout, "utf8");
     }
   }
