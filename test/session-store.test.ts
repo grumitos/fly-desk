@@ -293,6 +293,121 @@ test("matrix jobs rewrite and refresh purchase path ids for flexible cells", () 
   assert.equal(store.resolvePurchasePath(refreshedPathId)?.path.url, "https://new.example/flexible");
 });
 
+test("findRecentCompletedSearchJob reuses the latest compatible completed search even when Costamar token changes", () => {
+  const store = new SearchSessionStore();
+  const request: SearchRequest = {
+    ...buildRequest(),
+    providerId: "costamar",
+    tripType: "round-trip",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "MAD",
+        departureDate: "2026-06-01",
+        returnDate: "2026-06-08",
+      },
+    ],
+  };
+  const baseOffer = buildOffer("offer-cache", "https://cached.example/search");
+  const costamarOffer: CanonicalOffer = {
+    ...baseOffer,
+    providerSource: "costamar",
+    purchasePaths: baseOffer.purchasePaths.map((path) => ({
+      ...path,
+      provider: "costamar",
+      label: "Buscar en Costamar",
+    })),
+  };
+
+  const completedJob = store.createSearchJob({
+    request,
+    providerContext: {
+      costamar: {
+        apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+        brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+        terminalId: "0721808110",
+        token: "old-token",
+        lang: "es",
+      },
+    },
+    offers: [costamarOffer],
+    allOffers: [costamarOffer],
+    searchMeta: {
+      ...buildSearchMeta(),
+      providersUsed: ["costamar"],
+    },
+    providerMeta: {
+      exactProvider: "costamar",
+      coverageMode: "core",
+    },
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+
+  const reused = store.findRecentCompletedSearchJob({
+    request,
+    providerContext: {
+      costamar: {
+        apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+        brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+        terminalId: "0721808110",
+        token: "fresh-token",
+        lang: "es",
+      },
+    },
+    providerIds: ["costamar"],
+    sortMode: "cheapest",
+    maxAgeMs: 10 * 60 * 1000,
+  });
+
+  assert.equal(reused?.id, completedJob.id);
+});
+
+test("findRecentCompletedSearchJob ignores expired or incompatible completed searches", () => {
+  const store = new SearchSessionStore();
+  const request = buildRequest();
+  const offer = buildOffer("offer-expired", "https://expired.example/search");
+
+  const completedJob = store.createSearchJob({
+    request,
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+
+  const expired = store.findRecentCompletedSearchJob({
+    request,
+    providerIds: ["agil-local"],
+    sortMode: "cheapest",
+    maxAgeMs: 1,
+    nowMs: Date.now() + 60_000,
+  });
+  assert.equal(expired, undefined);
+
+  const mismatchedProviderIds = store.findRecentCompletedSearchJob({
+    request,
+    providerIds: ["costamar"],
+    sortMode: "cheapest",
+    maxAgeMs: 10 * 60 * 1000,
+  });
+  assert.equal(mismatchedProviderIds, undefined);
+
+  const mismatchedSort = store.findRecentCompletedSearchJob({
+    request,
+    providerIds: ["agil-local"],
+    sortMode: "fastest",
+    maxAgeMs: 10 * 60 * 1000,
+  });
+  assert.equal(mismatchedSort, undefined);
+
+  assert.ok(store.getSearchJob(completedJob.id));
+});
+
 test("completed jobs and their purchase paths expire after the idle ttl, while running jobs stay alive", () => {
   const store = new SearchSessionStore();
   const request = buildRequest();

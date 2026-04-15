@@ -52,6 +52,7 @@ import { resolveQuotationUsdToPenRate, warmQuotationUsdToPenRate } from "./quota
 import { limitSearchResponseForPagination } from "./search-limits";
 import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
+import type { SearchJobRecord } from "./session-store";
 import { getSearchDatePolicy, validateSearchDateInPolicy } from "./search-date-policy";
 
 type SortMode = "cheapest" | "fastest" | "best-value";
@@ -161,6 +162,15 @@ const RESULTS_LAYOUT_COLUMNS = [
   "price",
   "links",
 ] as const satisfies readonly ResultsLayoutColumnKey[];
+
+const SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS = 5 * 60 * 1000;
+const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
+  const raw = Number(process.env.SEARCH_REVALIDATION_CACHE_TTL_MS ?? SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS);
+  return Number.isFinite(raw) && raw >= 0
+    ? raw
+    : SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS;
+})();
+const SEARCH_REVALIDATION_CACHE_WARNING = "Mostrando resultados cacheados mientras actualizamos en segundo plano.";
 
 const RESULTS_LAYOUT_FILE = path.resolve(__dirname, "..", "config", "results-layout.json");
 const RESULTS_LAYOUT_VERSION = 1;
@@ -997,6 +1007,63 @@ function matrixJobResponse(
   };
 }
 
+function createCachedSearchDraftResponse(
+  request: SearchRequest,
+  providerIds: ProviderId[],
+  cachedJob: SearchJobRecord,
+): SearchResponse {
+  const now = new Date().toISOString();
+  const warnings = uniqueStrings([
+    ...cachedJob.searchMeta.warnings,
+    ...cachedJob.warnings,
+    SEARCH_REVALIDATION_CACHE_WARNING,
+  ]);
+
+  return {
+    offers: cachedJob.offers,
+    allOffers: cachedJob.allOffers,
+    searchMeta: {
+      requestedAt: now,
+      completedAt: now,
+      providersUsed: providerIds,
+      warnings,
+      partial: true,
+      searchState: "search_cached",
+    },
+    providerMeta: {
+      exactProvider: providerIds[0],
+      coverageMode: request.coverageMode,
+    },
+    warnings,
+  };
+}
+
+function createProviderSearchStates(
+  providerIds: ProviderId[],
+  cachedJob?: SearchJobRecord,
+): Map<ProviderId, ProviderSearchState> {
+  const offersByProvider = new Map<ProviderId, CanonicalOffer[]>(
+    providerIds.map((providerId) => [providerId, []]),
+  );
+
+  for (const offer of cachedJob?.allOffers ?? []) {
+    const providerOffers = offersByProvider.get(offer.providerSource);
+    if (!providerOffers) {
+      continue;
+    }
+    providerOffers.push(offer);
+  }
+
+  return new Map<ProviderId, ProviderSearchState>(
+    providerIds.map((providerId) => [providerId, {
+      offers: offersByProvider.get(providerId) ?? [],
+      warnings: [],
+      partial: true,
+      completed: false,
+    }]),
+  );
+}
+
 function searchJobResponse(
   job: ReturnType<typeof getRuntime>["sessions"] extends { getSearchJob(jobId: string): infer T } ? NonNullable<T> : never,
   sinceRevision?: number,
@@ -1210,7 +1277,17 @@ export async function routeRequest(request: Request): Promise<Response> {
     const sortMode: SortMode = payload.sortMode === "cheapest" || payload.sortMode === "fastest"
       ? payload.sortMode
       : "cheapest";
-    const draft = createSearchDraftResponse(normalizedRequest, providerIds);
+    const cachedJob = runtime.sessions.findRecentCompletedSearchJob({
+      request: normalizedRequest,
+      providerContext,
+      providerIds,
+      sortMode,
+      maxAgeMs: SEARCH_REVALIDATION_CACHE_TTL_MS,
+    });
+    const draft = cachedJob
+      ? createCachedSearchDraftResponse(normalizedRequest, providerIds, cachedJob)
+      : createSearchDraftResponse(normalizedRequest, providerIds);
+    const providerStates = createProviderSearchStates(providerIds, cachedJob);
     const job = runtime.sessions.createSearchJob({
       request: normalizedRequest,
       providerContext,
@@ -1222,14 +1299,6 @@ export async function routeRequest(request: Request): Promise<Response> {
       sortMode,
       status: "running",
     });
-    const providerStates = new Map<ProviderId, ProviderSearchState>(
-      providerIds.map((providerId) => [providerId, {
-        offers: [],
-        warnings: [],
-        partial: true,
-        completed: false,
-      }]),
-    );
 
     const syncSearchJob = (status: "running" | "completed") => {
       const materialized = materializeAggregatedSearchResponse(

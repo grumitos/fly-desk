@@ -3,6 +3,7 @@ import {
   CanonicalOffer,
   MatrixCell,
   ProviderContext,
+  ProviderId,
   ProviderMeta,
   PurchasePath,
   SearchMeta,
@@ -145,6 +146,30 @@ function resolveIdleTimestampMs(record: {
   );
 }
 
+function normalizeProviderContextForSearchCache(
+  providerContext: ProviderContext | undefined,
+): {
+  costamar?: {
+    apiBaseUrl: string;
+    brandBaseUrl: string;
+    terminalId: string;
+    lang: string;
+  };
+} | null {
+  if (!providerContext?.costamar) {
+    return null;
+  }
+
+  return {
+    costamar: {
+      apiBaseUrl: String(providerContext.costamar.apiBaseUrl ?? "").trim(),
+      brandBaseUrl: String(providerContext.costamar.brandBaseUrl ?? "").trim(),
+      terminalId: String(providerContext.costamar.terminalId ?? "").trim(),
+      lang: String(providerContext.costamar.lang ?? "").trim(),
+    },
+  };
+}
+
 export class SearchSessionStore {
   private readonly sessions = new Map<string, SearchSessionMetadata>();
   private readonly purchasePaths = new Map<string, StoredPurchasePath>();
@@ -248,6 +273,72 @@ export class SearchSessionStore {
     const touchedAt = this.touchSearchJob(job);
     this.touchSessionMetadata(jobId, touchedAt);
     return job;
+  }
+
+  findRecentCompletedSearchJob(input: {
+    request: SearchRequest;
+    providerContext?: ProviderContext;
+    providerIds: ProviderId[];
+    sortMode: SearchJobRecord["sortMode"];
+    maxAgeMs: number;
+    nowMs?: number;
+  }): SearchJobRecord | undefined {
+    if (!Number.isFinite(input.maxAgeMs) || input.maxAgeMs <= 0) {
+      return undefined;
+    }
+
+    const nowMs = input.nowMs ?? Date.now();
+    const requestKey = serializeForComparison(input.request);
+    const providerIdsKey = serializeForComparison(input.providerIds);
+    const providerContextKey = serializeForComparison(
+      normalizeProviderContextForSearchCache(input.providerContext),
+    );
+
+    let latest: SearchJobRecord | undefined;
+    let latestIdleTimestamp = 0;
+
+    for (const candidate of this.searchJobs.values()) {
+      if (candidate.status !== "completed") {
+        continue;
+      }
+
+      if (candidate.sortMode !== input.sortMode) {
+        continue;
+      }
+
+      if (serializeForComparison(candidate.request) !== requestKey) {
+        continue;
+      }
+
+      if (serializeForComparison(candidate.searchMeta.providersUsed ?? []) !== providerIdsKey) {
+        continue;
+      }
+
+      const candidateContextKey = serializeForComparison(
+        normalizeProviderContextForSearchCache(candidate.providerContext),
+      );
+      if (candidateContextKey !== providerContextKey) {
+        continue;
+      }
+
+      const idleTimestamp = resolveIdleTimestampMs(candidate);
+      if ((nowMs - idleTimestamp) > input.maxAgeMs) {
+        continue;
+      }
+
+      if (!latest || idleTimestamp > latestIdleTimestamp) {
+        latest = candidate;
+        latestIdleTimestamp = idleTimestamp;
+      }
+    }
+
+    if (!latest) {
+      return undefined;
+    }
+
+    const touchedAt = this.touchSearchJob(latest);
+    this.touchSessionMetadata(latest.id, touchedAt);
+    return latest;
   }
 
   updateSearchJob(

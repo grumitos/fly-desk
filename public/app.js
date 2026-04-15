@@ -5625,7 +5625,7 @@ function renderResults() {
     .map((group) => renderExactResultsCardHtml(group, state.selectedOfferId, providerLinkIndex, passengerCount))
     .join("");
   const loadingHtml = isRunning
-    ? '<div class="results-loading results-loading--inline"><span>Los resultados se seguirán agregando.</span></div>'
+    ? '<div class="results-loading results-loading--inline"><span class="results-loading__text">Los resultados se seguirán agregando.</span></div>'
     : "";
   const html = `
     ${resultsLayoutEditorMarkup()}
@@ -5929,7 +5929,7 @@ function renderFlexibleList(container = resultsContainer) {
   let html = "";
 
   if (isRunning) {
-    html += '<div class="results-loading"><span>Cargando combinaciones flexibles...</span></div>';
+    html += '<div class="results-loading"><span class="results-loading__text">Cargando combinaciones flexibles</span></div>';
   }
 
   html += `
@@ -6137,7 +6137,7 @@ function renderCalendarView(container = resultsContainer) {
 
   let html = "";
   if (isRunning) {
-    html += '<div class="results-loading"><span>Cargando precios del calendario...</span></div>';
+    html += '<div class="results-loading"><span class="results-loading__text">Cargando precios del calendario</span></div>';
   }
 
   html += '<div class="matrix-wrap"><div class="matrix-grid cal-grid">';

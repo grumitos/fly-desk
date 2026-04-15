@@ -92,6 +92,7 @@ Runtime general:
 - `HOST=0.0.0.0` para exponer la app fuera de loopback
 - `PORT=32123` o el puerto que se quiera usar fuera del launcher
 - `SEARCH_MAX_FUTURE_DAYS=365`
+- `SEARCH_REVALIDATION_CACHE_TTL_MS=300000` TTL del cache SWR de busqueda general (misma configuracion), en milisegundos
 
 Agil:
 
