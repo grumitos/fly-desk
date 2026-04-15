@@ -10,7 +10,7 @@ import type {
   SearchMeta,
   SearchRequest,
 } from "../src/core/types";
-import { resetCostamarSessionCacheForTests } from "../src/provider-context";
+import { buildProviderContext, resetCostamarSessionCacheForTests } from "../src/provider-context";
 import { getRuntime } from "../src/runtime";
 import { withServer } from "./helpers/server";
 
@@ -996,6 +996,138 @@ test("exact searches preserve omitted maxResults so page-based caps can be suppl
 
     assert.equal(payload.searchStatus, "running");
     assert.equal(payload.request?.filters?.maxResults, undefined);
+  });
+});
+
+test("search endpoint serves cached results first for the same config while revalidating in background", async () => {
+  const runtime = getRuntime();
+  const terminalId = "9990001112";
+  const seededToken = buildJwt({
+    id: terminalId,
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  const refreshToken = buildJwt({
+    id: terminalId,
+    iat: 1893459600,
+    exp: 1893463200,
+  });
+  const request: SearchRequest = {
+    ...buildCostamarRequest(),
+    legs: [
+      {
+        origin: "LIM",
+        destination: "BCN",
+        originLabel: "",
+        destinationLabel: "",
+        departureDate: "2026-09-04",
+        departureStart: "",
+        departureEnd: "",
+        returnDate: "2026-09-18",
+        returnStart: "",
+        returnEnd: "",
+      },
+    ],
+    filters: {
+      nonStop: false,
+      includedAirlineCodes: undefined,
+      excludedAirlineCodes: undefined,
+      maxPrice: undefined,
+      maxResults: undefined,
+      maxTotalDurationMinutes: undefined,
+      maxLayoverMinutes: undefined,
+      maxStops: undefined,
+      minDepartureMinutes: undefined,
+      maxDepartureMinutes: undefined,
+      minArrivalMinutes: undefined,
+      maxArrivalMinutes: undefined,
+      baggageRequired: false,
+      verifiedOnly: false,
+      exactPurchasePathOnly: false,
+    },
+  };
+  const cachedOffer = buildCostamarOffer(
+    `https://booking.clickandbook.com/vuelos/b/LIM/BCN/2026-09-04/2026-09-18/1/0/0?terminalId=${terminalId}&lang=es&token=${seededToken}`,
+  );
+  const cachedJob = runtime.sessions.createSearchJob({
+    request,
+    providerContext: {
+      costamar: {
+        apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+        brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+        terminalId,
+        token: seededToken,
+        lang: "es",
+      },
+    },
+    offers: [cachedOffer],
+    allOffers: [cachedOffer],
+    searchMeta: {
+      ...buildSearchMeta(),
+      providersUsed: ["costamar"],
+    },
+    providerMeta: buildProviderMeta(),
+    warnings: ["Snapshot cache listo"],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+
+  const previewCacheHit = runtime.sessions.findRecentCompletedSearchJob({
+    request,
+    providerContext: buildProviderContext("costamar", {
+      costamar: {
+        apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+        brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+        terminalId,
+        token: refreshToken,
+        lang: "es",
+      },
+    }),
+    providerIds: ["costamar"],
+    sortMode: "cheapest",
+    maxAgeMs: 5 * 60 * 1000,
+  });
+  assert.equal(previewCacheHit?.id, cachedJob.id);
+
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        providerId: "costamar",
+        providerConfig: {
+          costamar: {
+            apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+            brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+            terminalId,
+            token: refreshToken,
+            lang: "es",
+          },
+        },
+        sortMode: "cheapest",
+        request,
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      searchJobId?: string;
+      searchStatus?: string;
+      searchComplete?: boolean;
+      searchMeta?: { searchState?: string; partial?: boolean };
+      warnings?: string[];
+      offers?: unknown[];
+    };
+
+    assert.equal(payload.searchStatus, "running");
+    assert.equal(payload.searchComplete, false);
+    assert.equal(payload.searchJobId === cachedJob.id, false);
+    assert.equal(payload.searchMeta?.searchState, "search_cached");
+    assert.equal(payload.searchMeta?.partial, true);
+    assert.ok((payload.offers?.length ?? 0) > 0);
+    assert.ok(payload.warnings?.some((warning) => /cachead/i.test(warning)));
   });
 });
 
