@@ -1,0 +1,113 @@
+/* ================================================================
+   SKELETON — Loading placeholder rows + shimmer
+   @layer components
+   ================================================================ */
+@layer components {
+  .results-skeleton {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .results-skeleton__header,
+  .detail-busy {
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .results-skeleton__header {
+    padding: 0.75rem var(--section-pad-inline) 0.9rem;
+  }
+
+  .results-skeleton__text,
+  .detail-busy__text {
+    margin: 0;
+    max-width: 34rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  .results-skeleton__hint {
+    margin: 0;
+    color: var(--text-faint);
+    font-size: 0.8rem;
+    line-height: 1.45;
+  }
+
+  .results-skeleton__table {
+    display: grid;
+    align-content: start;
+    gap: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--surface-control-bg-soft);
+    overflow: hidden;
+  }
+
+  .results-skeleton__head,
+  .results-skeleton__row {
+    display: grid;
+    grid-template-columns: 1fr 1.25fr 0.75fr 0.65fr 0.75fr 0.9fr 0.7fr;
+    gap: 0.75rem;
+    align-items: center;
+    padding: var(--section-pad-block) var(--section-pad-inline);
+  }
+
+  .results-skeleton__head {
+    border-bottom: 1px solid var(--line);
+    color: var(--text-faint);
+    font-size: var(--text-label-size);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .results-skeleton__row + .results-skeleton__row {
+    border-top: 1px solid var(--line);
+  }
+
+  /* ── Shimmer blocks ── */
+  .skeleton-line,
+  .skeleton-block {
+    display: block;
+    border-radius: calc(var(--r-md) * 0.72);
+    background:
+      linear-gradient(
+        90deg,
+        color-mix(in oklch, var(--surface-hover) 28%, var(--surface)) 0%,
+        color-mix(in oklch, var(--surface-hover) 62%, var(--surface)) 50%,
+        color-mix(in oklch, var(--surface-hover) 28%, var(--surface)) 100%
+      );
+    background-size: 220% 100%;
+    animation: shimmer 1.45s linear infinite;
+  }
+
+  .skeleton-line {
+    height: 0.78rem;
+  }
+
+  .skeleton-line--hero {
+    width: 10.5rem;
+    height: 1.4rem;
+  }
+
+  .skeleton-line--lg {
+    width: 84%;
+  }
+
+  .skeleton-line--md {
+    width: 62%;
+  }
+
+  .skeleton-line--sm {
+    width: 44%;
+  }
+
+  .skeleton-line--price {
+    width: 70%;
+  }
+
+  .skeleton-line--link {
+    width: 52%;
+  }
+}

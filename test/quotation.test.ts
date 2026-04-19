@@ -135,14 +135,14 @@ test("commercial quotation lists both hand and checked baggage as exclusions whe
   assert.match(text, /🚫 NO INCLUYE\n\* Maleta de mano\n\* Maleta de bodega/);
 });
 
-test("commercial quotation keeps only the dollars line even when an exchange rate exists", () => {
+test("commercial quotation renders a PEN total line when an exchange rate exists", () => {
   const text = buildCommercialQuotation(buildOffer(), buildRequest(), {
     timeZone: "UTC",
     usdToPenRate: 3.61,
   });
 
   assert.match(text, /US\$ 512 por adulto\./);
-  assert.doesNotMatch(text, / o S\/|soles|Total en soles/);
+  assert.match(text, /Total en soles: S\/\s+1,848\.32/);
 });
 
 test("commercial quotation omits all-airports labels from the route summary", () => {

@@ -1,0 +1,111 @@
+/* ================================================================
+   BASE — Reset, element defaults, fonts, scrollbars.
+   @layer reset, base
+   ================================================================ */
+@layer reset {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  * {
+    margin: 0;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  img, picture, video, canvas, svg {
+    display: block;
+    max-width: 100%;
+  }
+
+  input, button, textarea, select {
+    font: inherit;
+    color: inherit;
+  }
+
+  p, h1, h2, h3, h4, h5, h6 {
+    overflow-wrap: break-word;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+}
+
+@layer base {
+  html {
+    min-height: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: var(--text-body-size);
+    line-height: var(--text-body-lh);
+    accent-color: var(--accent);
+  }
+
+  body {
+    height: 100vh;
+    min-height: 100vh;
+    margin: 0;
+    display: grid;
+    grid-template-rows: auto auto min-content 1fr;
+    overflow: hidden;
+    color: var(--text);
+    background:
+      radial-gradient(circle at top left, color-mix(in oklch, var(--accent) 8%, transparent), transparent 26rem),
+      linear-gradient(180deg, color-mix(in oklch, var(--bg-accent) 45%, transparent), transparent 22rem),
+      var(--bg);
+  }
+
+  body.matrix-expanded-open {
+    overflow: hidden;
+  }
+
+  option {
+    color: var(--text);
+    background: var(--surface-strong);
+  }
+
+  /* ── Scrollbars ── */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: var(--scroll-track);
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: var(--scroll-thumb);
+    border-radius: var(--r-pill);
+    border: 2px solid var(--scroll-track);
+  }
+}

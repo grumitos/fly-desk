@@ -1,0 +1,457 @@
+/* ================================================================
+   OVERRIDES — Reduced motion, height breakpoints, responsive fixes
+   @layer overrides
+   ================================================================ */
+@layer overrides {
+  /* ── Reduced motion ── */
+  @media (prefers-reduced-motion: reduce) {
+    .results-loading::before,
+    .results-loading__text::after {
+      animation: none;
+    }
+
+    .results-loading__text::after {
+      width: 1.6ch;
+    }
+  }
+
+  /* ── Height breakpoints ── */
+  @media (max-height: 960px) {
+    :root {
+      --layout-gutter: clamp(0.72rem, 1vw, 1rem);
+      --shell-gap: 0.54rem;
+      --control-height-compact: 2.12rem;
+      --section-pad-inline: 0.75rem;
+      --section-pad-block: 0.6rem;
+    }
+
+    .topbar {
+      gap: 1rem;
+      padding: 0.52rem var(--layout-gutter) 0.48rem;
+    }
+
+    .topbar__brand,
+    .topbar__meta {
+      gap: 0.55rem;
+    }
+
+    .theme-switch,
+    .badge {
+      min-height: 2.05rem;
+    }
+
+    .theme-switch__button {
+      width: 1.8rem;
+      height: 1.8rem;
+    }
+
+    .search-shell {
+      --rail-control-height: 2.76rem;
+      margin-top: 0.72rem;
+      padding-top: 0.68rem;
+      padding-bottom: 0.72rem;
+    }
+
+    .panel-header {
+      padding-top: 0.68rem;
+      padding-bottom: 0.68rem;
+    }
+
+    .detail-panel__body {
+      padding-top: 0.82rem;
+      padding-bottom: 0.86rem;
+    }
+
+    .empty-state {
+      padding: clamp(1.2rem, 2vw, 1.8rem);
+    }
+  }
+
+  @media (max-height: 900px) {
+    :root {
+      --layout-gutter: clamp(0.62rem, 0.82vw, 0.88rem);
+      --shell-gap: 0.46rem;
+      --control-height-compact: 1.96rem;
+      --section-pad-inline: 0.68rem;
+      --section-pad-block: 0.52rem;
+    }
+
+    .topbar {
+      padding: 0.42rem var(--layout-gutter) 0.38rem;
+    }
+
+    .theme-switch {
+      padding: 0.16rem;
+    }
+
+    .theme-switch,
+    .badge {
+      min-height: 1.9rem;
+    }
+
+    .theme-switch__button {
+      width: 1.62rem;
+      height: 1.62rem;
+    }
+
+    .badge {
+      padding: 0 0.68rem;
+      font-size: 0.72rem;
+    }
+
+    .search-shell {
+      --rail-control-height: 2.56rem;
+      margin-top: 0.54rem;
+      padding-top: 0.56rem;
+      padding-bottom: 0.6rem;
+    }
+
+    .segmented-control__button,
+    .field-input,
+    .field-button,
+    .btn,
+    .results-toolbar__sort-btn {
+      font-size: 0.84rem;
+    }
+
+    .panel-header {
+      gap: 0.8rem;
+      padding-top: 0.58rem;
+      padding-bottom: 0.58rem;
+    }
+
+    .panel-header__title {
+      font-size: 0.96rem;
+    }
+
+    .panel-header__meta {
+      font-size: 0.78rem;
+    }
+
+    .results-container {
+      min-height: clamp(14rem, 24vh, 18rem);
+    }
+
+    .results-loading {
+      padding-top: 0.56rem;
+      font-size: 0.82rem;
+    }
+
+    .detail-panel__body {
+      padding-top: 0.72rem;
+      padding-bottom: 0.76rem;
+    }
+
+    .detail-hero {
+      font-size: 1.55rem;
+    }
+  }
+
+  /* ── Width breakpoints ── */
+  @media (max-width: 1180px) {
+    .results-layout-editor__grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .search-shell__footer-main {
+      grid-template-columns: 1fr;
+    }
+
+    .search-shell__footer-main .search-refinements,
+    .search-shell__actions {
+      grid-column: auto;
+    }
+
+    .search-refinements {
+      width: 100%;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .search-shell__actions {
+      width: min(100%, var(--shell-actions-width, 100%));
+      justify-self: start;
+    }
+  }
+
+  @media (max-width: 1120px) {
+    .topbar {
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .topbar__meta {
+      margin-left: auto;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .search-shell {
+      padding-inline: clamp(0.82rem, 1.8vw, 1rem);
+    }
+
+    .search-rail {
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+    }
+
+    .search-rail > [data-search-order="mode"] {
+      grid-column: 1 / span 2;
+    }
+
+    .search-rail > [data-search-order="trip"] {
+      grid-column: 3 / span 3;
+    }
+
+    .search-rail > [data-search-order="origin"] {
+      grid-column: 6 / span 3;
+    }
+
+    .search-rail > [data-search-order="swap"] {
+      grid-column: 9 / span 1;
+      justify-self: stretch;
+    }
+
+    .search-rail > [data-search-order="destination"] {
+      grid-column: 10 / span 3;
+    }
+
+    .search-rail > [data-search-order="dates"] {
+      grid-column: 1 / span 4;
+    }
+
+    .search-rail > [data-search-order="passengers"] {
+      grid-column: 5 / span 4;
+    }
+
+    .search-rail > [data-search-order="submit"] {
+      grid-column: 9 / span 4;
+    }
+
+    .btn--search {
+      min-width: 0;
+    }
+
+    .search-shell__footer-main {
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+    }
+
+    .search-shell__footer-main .search-refinements {
+      grid-column: 1 / span 8;
+    }
+
+    .search-shell__actions {
+      grid-column: 9 / span 4;
+      width: 100%;
+      justify-self: stretch;
+    }
+  }
+
+  @media (max-width: 1000px) {
+    :root {
+      --sidebar-width: clamp(17rem, 34vw, 20rem);
+    }
+
+    body {
+      height: auto;
+      min-height: 100vh;
+      overflow-x: hidden;
+      overflow-y: auto;
+      grid-template-rows: auto auto min-content auto;
+    }
+
+    .workspace {
+      height: auto;
+      overflow: visible;
+      grid-template-columns: 1fr;
+      grid-template-rows: minmax(24rem, auto) minmax(18rem, auto);
+      align-content: start;
+    }
+
+    .workspace__detail {
+      min-height: clamp(18rem, 31vh, 24rem);
+    }
+
+    #resultsToolbar {
+      grid-template-columns: minmax(0, 1fr) auto;
+      row-gap: 0.75rem;
+      align-items: start;
+    }
+
+    #resultsToolbar .panel-header__copy {
+      grid-column: 1 / -1;
+    }
+
+    #resultsToolbar .results-toolbar__pager {
+      grid-column: 1;
+      justify-self: start;
+    }
+
+    #resultsToolbar .panel-header__actions--results {
+      grid-column: 2;
+      justify-self: end;
+    }
+
+    .results-container {
+      min-height: clamp(20rem, 44vh, 32rem);
+      --results-gutter-inline: 0.9rem;
+      --results-gutter-block: 0.9rem;
+    }
+
+    .results-panel__body.has-sidebar {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .results-sidebar {
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+      padding: 0.9rem 0.9rem 0.75rem;
+    }
+
+    .airline-bar__scroller {
+      grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    }
+
+    .results-card {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .detail-panel__body {
+      min-height: 14rem;
+    }
+  }
+
+  @media (max-width: 840px) {
+    .search-rail {
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+
+    .search-rail > [data-search-order="mode"] {
+      grid-column: 1 / span 3;
+    }
+
+    .search-rail > [data-search-order="trip"] {
+      grid-column: 4 / span 3;
+    }
+
+    .search-rail > [data-search-order="origin"] {
+      grid-column: 1 / span 2;
+    }
+
+    .search-rail > [data-search-order="swap"] {
+      grid-column: 3 / span 1;
+      justify-self: center;
+    }
+
+    .search-rail > [data-search-order="destination"] {
+      grid-column: 4 / span 3;
+    }
+
+    .search-rail > [data-search-order="dates"] {
+      grid-column: 1 / span 3;
+    }
+
+    .search-rail > [data-search-order="passengers"] {
+      grid-column: 4 / span 3;
+    }
+
+    .search-rail > [data-search-order="submit"] {
+      grid-column: 1 / -1;
+    }
+
+    .search-shell__footer-main {
+      grid-template-columns: 1fr;
+    }
+
+    .search-shell__footer-main .search-refinements,
+    .search-shell__actions {
+      grid-column: auto;
+      width: 100%;
+    }
+
+    .results-card,
+    .results-card--flexible {
+      grid-template-columns: 1fr;
+      gap: 0.72rem;
+    }
+
+    .search-refinements {
+      width: 100%;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 720px) {
+    .search-rail {
+      grid-template-columns: 1fr;
+    }
+
+    .search-rail > [data-search-order="mode"],
+    .search-rail > [data-search-order="trip"],
+    .search-rail > [data-search-order="origin"],
+    .search-rail > [data-search-order="swap"],
+    .search-rail > [data-search-order="destination"],
+    .search-rail > [data-search-order="dates"],
+    .search-rail > [data-search-order="passengers"],
+    .search-rail > [data-search-order="submit"] {
+      grid-column: 1 / -1;
+    }
+
+    .search-rail > [data-search-order="swap"] {
+      justify-self: center;
+    }
+
+    .search-shell__footer-main {
+      grid-template-columns: 1fr;
+      align-items: stretch;
+    }
+
+    .search-refinements {
+      width: 100%;
+      grid-template-columns: 1fr;
+    }
+
+    .search-shell__actions {
+      width: 100%;
+      grid-template-columns: 1fr;
+      max-width: none;
+      justify-content: stretch;
+    }
+
+    .airline-bar__scroller {
+      grid-template-columns: 1fr;
+    }
+
+    .toast-container {
+      right: 1rem;
+      bottom: 1rem;
+    }
+
+    .toast {
+      min-width: min(18rem, calc(100vw - 2rem));
+      max-width: calc(100vw - 2rem);
+    }
+  }
+
+  /* ── Migration responsive ── */
+  @media (max-width: 1200px) {
+    .migration-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 900px) {
+    .migration-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 720px) {
+    .migration-panel {
+      padding: 0.9rem;
+    }
+
+    .migration-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+}

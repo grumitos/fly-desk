@@ -160,7 +160,7 @@ export function sortOffers(
     case "best-value":
     default:
       return cloned.sort((a, b) => {
-        const valueDiff = a.valueScore - b.valueScore;
+        const valueDiff = (a.valueScore ?? 0) - (b.valueScore ?? 0);
         return valueDiff !== 0 ? valueDiff : compareOffersByDate(a, b);
       });
   }

@@ -2,8 +2,24 @@ import { CanonicalOffer, SearchFilters, Segment } from "./types";
 import { maxStopsAcrossItineraries, totalDuration } from "./ranking";
 
 function toMinutes(iso: string): number {
+  const localTimeMatch = /T(\d{2}):(\d{2})/.exec(iso);
+  if (localTimeMatch) {
+    const hours = Number(localTimeMatch[1]);
+    const minutes = Number(localTimeMatch[2]);
+    if (
+      Number.isInteger(hours)
+      && Number.isInteger(minutes)
+      && hours >= 0
+      && hours <= 23
+      && minutes >= 0
+      && minutes <= 59
+    ) {
+      return (hours * 60) + minutes;
+    }
+  }
+
   const date = new Date(iso);
-  return date.getUTCHours() * 60 + date.getUTCMinutes();
+  return date.getHours() * 60 + date.getMinutes();
 }
 
 function firstSegment(offer: CanonicalOffer): Segment | undefined {
@@ -17,7 +33,7 @@ function lastSegment(offer: CanonicalOffer): Segment | undefined {
 
 function computeLayoverMinutes(itinerary: CanonicalOffer["itineraries"][number], index: number): number | null {
   const direct = itinerary?.layoverMinutes?.[index];
-  if (typeof direct === "number" && direct > 0) {
+  if (typeof direct === "number" && direct >= 0) {
     return direct;
   }
 

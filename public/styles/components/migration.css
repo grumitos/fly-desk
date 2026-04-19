@@ -1,0 +1,191 @@
+/* ================================================================
+   MIGRATION MODE — Cards, grid, responsive
+   @layer components
+   ================================================================ */
+@layer components {
+  .migration-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.32rem;
+    min-height: 2rem;
+    padding: 0 0.72rem;
+    border: 1px solid color-mix(in oklch, var(--accent) 40%, var(--line));
+    border-radius: var(--r-md);
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    font-family: inherit;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--motion-quick) var(--ease-standard),
+                border-color var(--motion-quick) var(--ease-standard);
+  }
+
+  .migration-btn:hover {
+    background: color-mix(in oklch, var(--accent) 18%, var(--surface-control-bg));
+    border-color: var(--accent);
+  }
+
+  .migration-btn .ico {
+    width: 0.82rem;
+    height: 0.82rem;
+  }
+
+  .migration-panel {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    gap: 0.9rem;
+    padding: 1rem 1.2rem 1.2rem;
+  }
+
+  .migration-panel__header {
+    flex-shrink: 0;
+    margin-bottom: 0;
+  }
+
+  .migration-panel__title {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .migration-panel__subtitle {
+    margin: 0.2rem 0 0;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+  }
+
+  .migration-grid-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding-right: 0.2rem;
+    padding-bottom: 0.4rem;
+  }
+
+  .migration-grid-wrap:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+    border-radius: var(--r-lg);
+  }
+
+  .migration-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.7rem;
+    align-content: start;
+    min-width: 0;
+  }
+
+  .migration-card {
+    display: grid;
+    align-content: start;
+    gap: 0.22rem;
+    min-width: 0;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--surface-control-bg);
+    transition: border-color var(--motion-base) var(--ease-standard);
+  }
+
+  .migration-card--ok {
+    border-color: color-mix(in oklch, var(--success) 35%, var(--line));
+  }
+
+  .migration-card--empty {
+    opacity: 0.7;
+  }
+
+  .migration-card--loading {
+    border-color: color-mix(in oklch, var(--accent) 25%, var(--line));
+  }
+
+  .migration-card__month {
+    margin: 0 0 0.35rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+  }
+
+  .migration-card__price {
+    font-size: 1.08rem;
+    font-weight: 700;
+    line-height: 1.15;
+    color: var(--text);
+  }
+
+  .migration-card__price .price-stack {
+    justify-items: start;
+  }
+
+  .migration-card__price--loading,
+  .migration-card__price--empty {
+    font-size: 0.85rem;
+    font-weight: 500;
+    line-height: 1.2;
+    color: var(--text-faint);
+  }
+
+  .migration-card__detail {
+    margin-top: 0.22rem;
+    font-size: 0.78rem;
+    line-height: 1.35;
+    color: var(--text-muted);
+  }
+
+  .migration-card__detail--error {
+    color: var(--danger);
+  }
+
+  .migration-card__actions {
+    display: grid;
+    gap: 0.45rem;
+    margin-top: 0.6rem;
+    min-width: 0;
+  }
+
+  .migration-card__links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    width: 100%;
+  }
+
+  .migration-card__action {
+    min-width: 0;
+    max-width: 100%;
+    flex: 0 0 auto;
+  }
+
+  .migration-card__action.btn {
+    min-height: 2rem;
+    padding: 0 0.8rem;
+    font-size: 0.78rem;
+  }
+
+  .migration-card__links .migration-card__action {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .migration-card__action--warning {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2rem;
+    padding: 0 0.72rem;
+    border: 1px dashed color-mix(in oklch, var(--warning) 35%, var(--line));
+    border-radius: var(--r-md);
+    background: color-mix(in oklch, var(--warning) 9%, var(--surface-control-bg));
+    color: var(--text-muted);
+    font-size: 0.74rem;
+    text-align: center;
+  }
+}

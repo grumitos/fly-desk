@@ -1,0 +1,117 @@
+/* ================================================================
+   TOKENS — Single source of truth for the entire design system.
+   @layer tokens
+   ================================================================ */
+@layer tokens {
+  :root {
+    /* ── Typography ── */
+    --font-sans: "IBM Plex Sans", "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", "Cascadia Mono", monospace;
+
+    /* Type scale: size / line-height / letter-spacing / weight */
+    --text-display-size: 1.625rem;  --text-display-lh: 1.15; --text-display-ls: -0.02em; --text-display-weight: 700;
+    --text-h1-size: 1.25rem;        --text-h1-lh: 1.2;       --text-h1-ls: -0.01em;      --text-h1-weight: 700;
+    --text-h2-size: 1.0625rem;      --text-h2-lh: 1.25;      --text-h2-ls: -0.005em;     --text-h2-weight: 600;
+    --text-h3-size: 0.9375rem;      --text-h3-lh: 1.3;       --text-h3-ls: 0;            --text-h3-weight: 600;
+    --text-body-size: 0.9375rem;    --text-body-lh: 1.5;     --text-body-ls: 0;           --text-body-weight: 400;
+    --text-label-size: 0.75rem;     --text-label-lh: 1.25;   --text-label-ls: 0.08em;     --text-label-weight: 600;
+    --text-micro-size: 0.6875rem;   --text-micro-lh: 1.2;    --text-micro-ls: 0.1em;      --text-micro-weight: 600;
+    --mono-price-size: 1rem;        --mono-price-weight: 600;
+    --mono-code-size: 0.8125rem;    --mono-code-weight: 500;
+
+    /* ── Spacing — closed set ── */
+    --s-2: 0.125rem;  --s-4: 0.25rem;  --s-6: 0.375rem; --s-8: 0.5rem;  --s-10: 0.625rem;
+    --s-12: 0.75rem;  --s-16: 1rem;    --s-20: 1.25rem;  --s-24: 1.5rem; --s-32: 2rem;
+    --s-40: 2.5rem;   --s-48: 3rem;    --s-64: 4rem;
+
+    /* ── Radius — 5 tiers ── */
+    --r-sm: 4px;     /* chips, badges */
+    --r-md: 8px;     /* fields, buttons, segmented */
+    --r-lg: 12px;    /* cards, popovers */
+    --r-xl: 16px;    /* panels, matrix fullscreen */
+    --r-pill: 999px;
+
+    /* ── Elevation — 4 tiers ── */
+    --elev-0: 0 0 0 1px var(--line);
+    --elev-1: 0 1px 2px rgba(15, 24, 34, 0.06), 0 0 0 1px var(--line);
+    --elev-2: 0 4px 12px rgba(15, 24, 34, 0.08), 0 0 0 1px var(--line);
+    --elev-3: 0 12px 32px rgba(15, 24, 34, 0.14), 0 0 0 1px var(--line-strong);
+    --elev-4: 0 28px 72px rgba(15, 24, 34, 0.22), 0 0 0 1px var(--line-strong);
+
+    /* ── Motion ── */
+    --motion-quick: 120ms;
+    --motion-base: 180ms;
+    --motion-slow: 260ms;
+    --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --ease-enter: cubic-bezier(0, 0, 0, 1);
+    --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+    --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+
+    /* ── Z-index ladder ── */
+    --z-base: 0;
+    --z-sticky-cell: 1;
+    --z-panel-header: 5;
+    --z-topbar: 50;
+    --z-refinement-popover: 60;
+    --z-autocomplete-menu: 70;
+    --z-pax-popover: 80;
+    --z-calendar-popover: 90;
+    --z-toast: 200;
+    --z-matrix-fullscreen: 300;
+    --z-modal: 400;
+
+    /* ── Layout ── */
+    --bp-minimum: 1024px;
+    --bp-compressed: 1280px;
+    --bp-standard: 1440px;
+    --bp-premium: 1920px;
+    --shell-edge: clamp(1rem, 1.4vw, 1.75rem);
+    --panel-gap: 0.875rem;
+    --focus-ring-width: 2px;
+    --focus-ring-offset: 2px;
+
+    /* ── Popover layout ── */
+    --layover-popover-min-width: 12.75rem;
+    --layover-popover-max-width: 14.5rem;
+
+    /* ── Legacy aliases (compat for JS & existing selectors) ── */
+    --layout-gutter: var(--shell-edge);
+    --layout-gap: var(--shell-edge);
+    --shell-gap: var(--s-8);
+    --shell-pad-x: var(--s-16);
+    --space-1: var(--s-4);
+    --space-2: var(--s-8);
+    --space-3: var(--s-12);
+    --space-4: var(--s-16);
+    --space-5: var(--s-20);
+    --space-6: var(--s-24);
+    --space-8: var(--s-32);
+    --space-10: var(--s-40);
+    --speed-fast: var(--motion-quick);
+    --speed-base: var(--motion-base);
+    --ease: var(--ease-standard);
+    --radius-control: var(--r-md);
+    --radius-panel: var(--r-xl);
+    --radius-sm: var(--r-sm);
+    --radius-md: var(--r-md);
+    --radius-lg: var(--r-lg);
+    --radius-xl: var(--r-xl);
+    --label-xs-size: var(--text-micro-size);
+    --label-sm-size: var(--text-label-size);
+    --label-md-size: 0.8125rem;
+    --label-weight: 600;
+    --label-weight-strong: 700;
+    --label-tracking-wide: 0.08em;
+    --label-tracking-tight: 0.06em;
+    --section-pad-inline: var(--s-12);
+    --section-pad-block: var(--s-10);
+    --section-gap: var(--s-10);
+    --control-pad-inline: var(--s-12);
+    --control-height-compact: 2.25rem;
+    --floating-panel-offset: var(--s-8);
+    --floating-panel-pad: var(--s-8);
+    --floating-panel-gap: var(--s-4);
+    --refinement-inline-pad: var(--s-12);
+    --sidebar-width: clamp(19rem, 21vw, 23rem);
+  }
+}

@@ -14,7 +14,10 @@ export const FLY_DESK_TEMP_ARTIFACT_PREFIXES = [
 ];
 
 export const TEMP_ARTIFACT_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
-export const TEMP_ARTIFACT_SWEEP_MIN_AGE_MS = 2 * 60 * 60 * 1000;
+export const TEMP_ARTIFACT_SWEEP_MIN_AGE_MS = Math.max(
+  5 * 60 * 1000,
+  Number(process.env.FLY_DESK_TEMP_ARTIFACT_SWEEP_MIN_AGE_MS ?? 30 * 60 * 1000),
+);
 export const TEMP_ARTIFACT_ACTIVE_MARKER_NAME = ".flydesk-active.json";
 
 const activeTempArtifacts = new Set<string>();
@@ -200,6 +203,24 @@ export async function cleanupPrefixedTempArtifacts(
     .map((entry) => entry.path);
 
   for (const targetPath of targets) {
+    if (!existsSync(targetPath)) {
+      continue;
+    }
+
+    if (activeTempArtifacts.has(targetPath) || hasLiveActiveMarker(targetPath)) {
+      continue;
+    }
+
+    if (olderThanMs > 0) {
+      try {
+        if (statSync(targetPath).mtimeMs > cutoffMs) {
+          continue;
+        }
+      } catch {
+        continue;
+      }
+    }
+
     await removePathWithRetries(targetPath);
   }
 }

@@ -1,0 +1,47 @@
+/* ================================================================
+   SEGMENTED CONTROL
+   @layer components
+   ================================================================ */
+@layer components {
+  .segmented-control {
+    display: inline-grid;
+    grid-auto-flow: column;
+    gap: 2px;
+    padding: 2px;
+    min-height: var(--rail-control-height, 2.75rem);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface-sunken);
+  }
+
+  .segmented-control--wide {
+    width: 100%;
+  }
+
+  .segmented-control__button {
+    min-width: 0;
+    min-height: calc(var(--rail-control-height, 2.75rem) - 4px);
+    padding: 0 var(--s-12);
+    border: 0;
+    border-radius: calc(var(--r-md) - 2px);
+    background: transparent;
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-weight: 600;
+    font-size: 0.8125rem;
+    letter-spacing: 0.02em;
+    transition: background var(--motion-quick) var(--ease-standard),
+                color var(--motion-quick) var(--ease-standard);
+  }
+
+  .segmented-control__button:hover {
+    background: var(--surface-raised);
+    color: var(--text);
+  }
+
+  .segmented-control__button.is-active {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--elev-1);
+  }
+}

@@ -19,6 +19,7 @@ let cachedUsdToPenRate:
 let pendingUsdToPenRateLookup:
   | {
     day: string;
+    lookupRequestKey: string;
     promise: Promise<number | undefined>;
   }
   | undefined;
@@ -124,6 +125,20 @@ function isUsdOffer(offer: CanonicalOffer): boolean {
   return String(offer.price.total.currencyCode ?? "").trim().toUpperCase() === "USD";
 }
 
+function lookupRequestKey(request: SearchRequest): string {
+  return JSON.stringify({
+    tripType: request.tripType,
+    searchMode: request.searchMode,
+    flexibleMode: request.flexibleMode,
+    legs: request.legs,
+    passengers: request.passengers,
+    cabin: request.cabin,
+    currencyCode: request.currencyCode,
+    locale: request.locale,
+    market: request.market,
+  });
+}
+
 export function buildQuotationRateLookupRequest(
   baseRequest: SearchRequest,
   offer: CanonicalOffer,
@@ -199,7 +214,12 @@ export async function resolveQuotationUsdToPenRate(
     return undefined;
   }
 
-  if (pendingUsdToPenRateLookup?.day === currentDay) {
+  const currentLookupRequestKey = lookupRequestKey(lookupRequest);
+
+  if (
+    pendingUsdToPenRateLookup?.day === currentDay
+    && pendingUsdToPenRateLookup.lookupRequestKey === currentLookupRequestKey
+  ) {
     return pendingUsdToPenRateLookup.promise;
   }
 
@@ -215,6 +235,7 @@ export async function resolveQuotationUsdToPenRate(
 
   pendingUsdToPenRateLookup = {
     day: currentDay,
+    lookupRequestKey: currentLookupRequestKey,
     promise,
   };
   void promise.finally(() => {

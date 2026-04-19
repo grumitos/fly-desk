@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -276,11 +276,14 @@ test("costamar redirect refreshes the stored token with the latest Chrome sessio
     await withServer(async (baseUrl) => {
       const response = await fetch(`${baseUrl}${redirectPath}`, { redirect: "manual" });
 
-      assert.equal(response.status, 302);
-      const location = response.headers.get("location");
-      assert.ok(location);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("location"), null);
+      assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+      const body = await response.text();
+      const match = body.match(/window\.location\.replace\('([^']+)'\)/);
+      assert.ok(match?.[1]);
 
-      const parsed = new URL(location);
+      const parsed = new URL(match?.[1] ?? "");
       assert.equal(parsed.searchParams.get("terminalId"), "0721808110");
       assert.equal(parsed.searchParams.get("lang"), "es");
       assert.equal(parsed.searchParams.get("token"), freshToken);
@@ -380,11 +383,14 @@ test("costamar matrix redirects refresh the stored token with the matrix job pro
     await withServer(async (baseUrl) => {
       const response = await fetch(`${baseUrl}${redirectPath}`, { redirect: "manual" });
 
-      assert.equal(response.status, 302);
-      const location = response.headers.get("location");
-      assert.ok(location);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("location"), null);
+      assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+      const body = await response.text();
+      const match = body.match(/window\.location\.replace\('([^']+)'\)/);
+      assert.ok(match?.[1]);
 
-      const parsed = new URL(location);
+      const parsed = new URL(match?.[1] ?? "");
       assert.equal(parsed.searchParams.get("terminalId"), "0721808110");
       assert.equal(parsed.searchParams.get("lang"), "es");
       assert.equal(parsed.searchParams.get("token"), freshToken);
@@ -1221,8 +1227,12 @@ test("matrix job polling returns a lightweight unchanged payload when revision h
 });
 
 test("results layout endpoints persist and read back the saved column widths locally", async () => {
-  const layoutFile = join(process.cwd(), "config", "results-layout.json");
-  const previousLayout = existsSync(layoutFile) ? readFileSync(layoutFile, "utf8") : null;
+  const tempConfigDir = mkdtempSync(join(tmpdir(), "flydesk-results-layout-config-"));
+  const previousConfigDir = process.env.FLYDESK_CONFIG_DIR;
+  const previousLayoutWriteFlag = process.env.FLYDESK_ALLOW_RESULTS_LAYOUT_WRITE;
+  process.env.FLYDESK_CONFIG_DIR = tempConfigDir;
+  process.env.FLYDESK_ALLOW_RESULTS_LAYOUT_WRITE = "1";
+  const layoutFile = join(tempConfigDir, "results-layout.json");
   const columns = {
     carrier: 208,
     dates: 136,
@@ -1234,7 +1244,7 @@ test("results layout endpoints persist and read back the saved column widths loc
   };
 
   try {
-    rmSync(layoutFile, { force: true });
+    rmSync(layoutFile, { force: true, recursive: true });
 
     await withServer(async (baseUrl) => {
       const initialResponse = await fetch(`${baseUrl}/api/results-layout`);
@@ -1276,12 +1286,19 @@ test("results layout endpoints persist and read back the saved column widths loc
       assert.deepEqual(readBackPayload.layout?.columns, columns);
     });
   } finally {
-    if (previousLayout === null) {
-      rmSync(layoutFile, { force: true });
+    if (previousConfigDir === undefined) {
+      delete process.env.FLYDESK_CONFIG_DIR;
     } else {
-      mkdirSync(join(process.cwd(), "config"), { recursive: true });
-      writeFileSync(layoutFile, previousLayout, "utf8");
+      process.env.FLYDESK_CONFIG_DIR = previousConfigDir;
     }
+
+    if (previousLayoutWriteFlag === undefined) {
+      delete process.env.FLYDESK_ALLOW_RESULTS_LAYOUT_WRITE;
+    } else {
+      process.env.FLYDESK_ALLOW_RESULTS_LAYOUT_WRITE = previousLayoutWriteFlag;
+    }
+
+    rmSync(tempConfigDir, { recursive: true, force: true });
   }
 });
 

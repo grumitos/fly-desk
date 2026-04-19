@@ -5,45 +5,48 @@ import { routeRequest } from "./http-router";
 import { getPublicRuntimeConfig } from "./search-date-policy";
 
 const publicDir = path.resolve(__dirname, "..", "public");
+const MAX_JSON_BODY_BYTES = Math.max(
+  1024,
+  Number(process.env.FLYDESK_MAX_JSON_BODY_BYTES ?? 256 * 1024),
+);
+const BODY_READ_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.FLYDESK_BODY_READ_TIMEOUT_MS ?? 15000),
+);
+const HTTP_REQUEST_TIMEOUT_MS = Math.max(
+  BODY_READ_TIMEOUT_MS,
+  Number(process.env.FLYDESK_REQUEST_TIMEOUT_MS ?? 30000),
+);
+
+const CONTENT_TYPE_BY_EXTENSION: Record<string, string> = {
+  ".svg": "image/svg+xml; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".css": "text/css; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+};
+
+class RequestBodyTooLargeError extends Error {
+  constructor(public readonly maxBytes: number) {
+    super(`Request body exceeds ${maxBytes} bytes.`);
+    this.name = "RequestBodyTooLargeError";
+  }
+}
+
+class RequestBodyTimeoutError extends Error {
+  constructor(public readonly timeoutMs: number) {
+    super(`Request body read timed out after ${timeoutMs}ms.`);
+    this.name = "RequestBodyTimeoutError";
+  }
+}
 
 function contentTypeForExtension(extension: string): string {
-  if (extension === ".svg") {
-    return "image/svg+xml; charset=utf-8";
-  }
-
-  if (extension === ".ico") {
-    return "image/x-icon";
-  }
-
-  if (extension === ".png") {
-    return "image/png";
-  }
-
-  if (extension === ".jpg" || extension === ".jpeg") {
-    return "image/jpeg";
-  }
-
-  if (extension === ".webp") {
-    return "image/webp";
-  }
-
-  if (extension === ".gif") {
-    return "image/gif";
-  }
-
-  if (extension === ".css") {
-    return "text/css; charset=utf-8";
-  }
-
-  if (extension === ".js") {
-    return "application/javascript; charset=utf-8";
-  }
-
-  if (extension === ".html") {
-    return "text/html; charset=utf-8";
-  }
-
-  return "application/octet-stream";
+  return CONTENT_TYPE_BY_EXTENSION[extension] ?? "application/octet-stream";
 }
 
 function noStoreHeaders(contentType: string): Record<string, string> {
@@ -97,18 +100,47 @@ async function serveIndexHtml(response: ServerResponse): Promise<void> {
   response.end(content);
 }
 
-async function readBody(request: IncomingMessage): Promise<Buffer | undefined> {
-  const chunks: Buffer[] = [];
+async function readBody(request: IncomingMessage, maxBytes: number): Promise<Buffer | undefined> {
+  const declaredLength = Number(request.headers["content-length"] ?? "");
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new RequestBodyTooLargeError(maxBytes);
+  }
 
-  for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  const bodyTimeout = setTimeout(() => {
+    request.destroy(new RequestBodyTimeoutError(BODY_READ_TIMEOUT_MS));
+  }, BODY_READ_TIMEOUT_MS);
+
+  try {
+    for await (const chunk of request) {
+      const nextChunk = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += nextChunk.byteLength;
+      if (totalBytes > maxBytes) {
+        throw new RequestBodyTooLargeError(maxBytes);
+      }
+
+      chunks.push(nextChunk);
+    }
+  } catch (error) {
+    if (error instanceof RequestBodyTimeoutError || error instanceof RequestBodyTooLargeError) {
+      throw error;
+    }
+
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new RequestBodyTimeoutError(BODY_READ_TIMEOUT_MS);
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(bodyTimeout);
   }
 
   return chunks.length > 0 ? Buffer.concat(chunks) : undefined;
 }
 
 async function proxyToRouter(request: IncomingMessage, response: ServerResponse): Promise<void> {
-  const body = await readBody(request);
+  const body = await readBody(request, MAX_JSON_BODY_BYTES);
   const forwardedProto = request.headers["x-forwarded-proto"];
   const isEncryptedSocket = "encrypted" in request.socket && Boolean(request.socket.encrypted);
   const protocol = typeof forwardedProto === "string"
@@ -149,7 +181,7 @@ async function proxyToRouter(request: IncomingMessage, response: ServerResponse)
 }
 
 export function createServer() {
-  return createHttpServer(async (request, response) => {
+  const server = createHttpServer(async (request, response) => {
     try {
       const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
 
@@ -174,9 +206,29 @@ export function createServer() {
 
       await proxyToRouter(request, response);
     } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        response.writeHead(413, { "Content-Type": "application/json; charset=utf-8" });
+        response.end(JSON.stringify({
+          errors: [`Request body exceeds ${error.maxBytes} bytes.`],
+        }));
+        return;
+      }
+
+      if (error instanceof RequestBodyTimeoutError) {
+        response.writeHead(408, { "Content-Type": "application/json; charset=utf-8" });
+        response.end(JSON.stringify({
+          errors: [`Request body read timed out after ${error.timeoutMs}ms.`],
+        }));
+        return;
+      }
+
       const message = error instanceof Error ? error.message : "Unexpected server error";
       response.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
-      response.end(JSON.stringify({ error: message }));
+      response.end(JSON.stringify({ errors: [message] }));
     }
   });
+
+  server.requestTimeout = HTTP_REQUEST_TIMEOUT_MS;
+  server.headersTimeout = Math.max(server.headersTimeout, HTTP_REQUEST_TIMEOUT_MS + 5000);
+  return server;
 }

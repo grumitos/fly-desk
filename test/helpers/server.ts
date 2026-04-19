@@ -1,5 +1,6 @@
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
+import { resetRuntimeForTests } from "../../src/runtime";
 import { createServer } from "../../src/server";
 
 export async function withServer<T>(run: (baseUrl: string) => Promise<T>): Promise<T> {
@@ -16,6 +17,7 @@ export async function withServer<T>(run: (baseUrl: string) => Promise<T>): Promi
     return await run(baseUrl);
   } finally {
     try {
+      server.closeAllConnections?.();
       await new Promise<void>((resolve, reject) => {
         server.close((error) => {
           if (error) {
@@ -32,6 +34,7 @@ export async function withServer<T>(run: (baseUrl: string) => Promise<T>): Promi
       } else {
         process.env.SEARCH_TODAY_OVERRIDE = previousSearchTodayOverride;
       }
+      resetRuntimeForTests();
     }
   }
 }

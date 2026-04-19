@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -42,6 +42,23 @@ let cachedCostamarSessions:
   | { readAtMs: number; candidates: CostamarSessionCandidate[] }
   | undefined;
 const runtimeCostamarSessionCandidates = new Map<string, CostamarSessionCandidate>();
+
+function applyPrivatePermissions(targetPath: string): void {
+  try {
+    const stats = statSync(targetPath);
+    if (stats.isDirectory()) {
+      chmodSync(targetPath, 0o700);
+      for (const child of readdirSync(targetPath)) {
+        applyPrivatePermissions(join(targetPath, child));
+      }
+      return;
+    }
+
+    chmodSync(targetPath, 0o600);
+  } catch {
+    // Best-effort hardening for temporary artifacts.
+  }
+}
 
 function costamarCdpTabScanEnabled(): boolean {
   return String(process.env.COSTAMAR_CDP_TAB_SCAN_ENABLED ?? "0").trim() !== "0";
@@ -528,11 +545,14 @@ function copyCostamarSessionsToTemp(userDataDir: string, profileName: string): s
   }
 
   const destination = join(tmpdir(), `travel_quote_foundation_costamar_${randomUUID()}`);
-  mkdirSync(destination, { recursive: true });
+  mkdirSync(destination, { recursive: true, mode: 0o700 });
+  applyPrivatePermissions(destination);
 
   for (const entry of readdirSync(source)) {
     try {
-      copyFileSync(join(source, entry), join(destination, entry));
+      const copied = join(destination, entry);
+      copyFileSync(join(source, entry), copied);
+      applyPrivatePermissions(copied);
     } catch {
       // Skip locked session files.
     }
@@ -582,6 +602,7 @@ function copyChromeArtifactToTemp(userDataDir: string, profileName: string, rela
 
   try {
     copyFileSync(source, destination);
+    applyPrivatePermissions(destination);
     return destination;
   } catch {
     return undefined;
@@ -637,6 +658,7 @@ function readCostamarCandidatesFromChromeArtifactDirectory(
 
     try {
       copyFileSync(file.fullPath, tempFile);
+      applyPrivatePermissions(tempFile);
       const buffer = readFileSync(tempFile);
       candidates.push(
         ...extractCostamarSessionCandidatesFromBuffer(buffer, `${profileName}/${relativePath}/${file.name}`),

@@ -1,0 +1,384 @@
+/* ================================================================
+   POPOVER SURFACE — Unified grammar for overlays
+   (autocomplete, pax, layover, calendar, refinement-popover)
+   @layer components
+   ================================================================ */
+@layer components {
+  .autocomplete-menu,
+  .pax-popover,
+  .calendar-popover,
+  .refinement-popover,
+  .toast,
+  .matrix-fullscreen__panel {
+    border: 1px solid var(--line-strong);
+    background: var(--overlay);
+  }
+
+  .autocomplete-menu,
+  .pax-popover,
+  .calendar-popover,
+  .toast {
+    box-shadow: var(--elev-3);
+  }
+
+  /* ── Autocomplete ── */
+  .autocomplete-menu {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: var(--z-autocomplete-menu);
+    display: grid;
+    gap: var(--s-4);
+    min-width: 18rem;
+    padding: var(--s-8);
+    border-radius: var(--r-lg);
+  }
+
+  .location-item {
+    display: grid;
+    gap: var(--s-2);
+    width: 100%;
+    padding: var(--s-10) var(--s-12);
+    border: 0;
+    border-left: 3px solid transparent;
+    border-radius: var(--r-md);
+    background: transparent;
+    text-align: left;
+    color: var(--text);
+    transition: background var(--motion-quick) var(--ease-standard);
+  }
+
+  .location-item:hover,
+  .location-item.is-active {
+    background: var(--accent-soft);
+    border-left-color: var(--accent);
+  }
+
+  .location-item-code {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+
+  .location-item-meta {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+  }
+
+  /* ── Pax popover ── */
+  .pax-wrapper {
+    position: relative;
+  }
+
+  .pax-popover {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: var(--z-pax-popover);
+    width: 20rem;
+    display: grid;
+    gap: var(--s-4);
+    padding: var(--s-8);
+    border-radius: var(--r-lg);
+  }
+
+  .pax-popover__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-16);
+    padding: var(--s-6) var(--s-4);
+    border-radius: var(--r-md);
+    transition: background var(--motion-quick) var(--ease-standard);
+  }
+
+  .pax-popover__row:hover {
+    background: color-mix(in oklch, var(--surface-hover) 70%, transparent);
+  }
+
+  .pax-popover__label {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+
+  .pax-popover__controls {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-6);
+  }
+
+  .pax-popover__value {
+    min-width: 1.3rem;
+    text-align: center;
+    font-family: var(--font-mono);
+    font-weight: 600;
+  }
+
+  /* ── Calendar popover ── */
+  #calendarPopover {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: var(--z-calendar-popover);
+    width: min(60rem, calc(100vw - 4rem));
+    max-height: min(70vh, 42rem);
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .calendar-popover {
+    display: grid;
+    gap: var(--s-12);
+    padding: var(--s-12) var(--s-12) var(--s-16);
+    border-radius: var(--r-xl);
+  }
+
+  .calendar-popover__header,
+  .calendar-popover__footer,
+  .calendar-popover__summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--s-16);
+  }
+
+  .calendar-popover__actions,
+  .calendar-nav {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-6);
+  }
+
+  .calendar-popover__title {
+    margin: var(--s-2) 0 0;
+    font-size: var(--text-h2-size);
+    letter-spacing: var(--text-h2-ls);
+  }
+
+  .calendar-selection-summary {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+
+  .calendar-flex-mode {
+    display: grid;
+    gap: var(--s-6);
+  }
+
+  .calendar-flex-mode .segmented-control__button {
+    min-height: 2.2rem;
+    padding-inline: var(--s-8);
+    font-size: 0.82rem;
+  }
+
+  .calendar-stay {
+    display: inline-flex;
+    align-items: end;
+    gap: var(--s-10);
+  }
+
+  .calendar-stay__field {
+    display: grid;
+    gap: var(--s-4);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+  }
+
+  .calendar-stay__input {
+    width: 5.25rem;
+    min-height: 2.55rem;
+    padding: 0 var(--s-10);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface-control-bg);
+    transition: border-color var(--motion-quick) var(--ease-standard),
+                box-shadow var(--motion-quick) var(--ease-standard);
+  }
+
+  .calendar-stay__input:hover {
+    border-color: var(--line-strong);
+  }
+
+  .calendar-stay__input:focus-visible {
+    border-color: var(--accent);
+    box-shadow: var(--focus-ring);
+  }
+
+  .calendar-months {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-12);
+  }
+
+  .calendar-month {
+    display: grid;
+    gap: var(--s-10);
+    padding: var(--s-10);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--surface-control-bg-soft);
+  }
+
+  .calendar-month__header h3 {
+    margin: 0;
+    font-size: 0.98rem;
+    text-transform: capitalize;
+  }
+
+  .calendar-weekdays,
+  .calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: var(--s-4);
+  }
+
+  .calendar-weekdays span {
+    font-size: var(--text-label-size);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    text-align: center;
+  }
+
+  .calendar-day {
+    min-height: 2.35rem;
+    border: 1px solid transparent;
+    border-radius: var(--r-md);
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    transition: background var(--motion-quick) var(--ease-standard),
+                border-color var(--motion-quick) var(--ease-standard);
+  }
+
+  .calendar-day:hover:not(:disabled) {
+    background: var(--surface-hover);
+    border-color: var(--line);
+  }
+
+  .calendar-day:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  .calendar-day--outside {
+    color: var(--text-faint);
+    opacity: 0.55;
+  }
+
+  .calendar-day--today {
+    border-color: color-mix(in oklch, var(--accent) 28%, var(--line));
+  }
+
+  .calendar-day.is-start,
+  .calendar-day.is-end {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-contrast);
+  }
+
+  .calendar-day.is-between {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+  }
+
+  /* ── Refinement popover (layover) ── */
+  .refinement-popover {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: var(--z-refinement-popover);
+    min-width: var(--layover-popover-min-width);
+    display: grid;
+    gap: var(--s-4);
+    padding: var(--s-8);
+    border-radius: var(--r-lg);
+    box-shadow: var(--elev-2);
+  }
+
+  .refinement-popover--layover {
+    min-width: calc(var(--layover-popover-min-width) + 0.35rem);
+    gap: var(--s-10);
+    padding: var(--s-8);
+  }
+
+  .refinement-popover__section {
+    display: grid;
+    gap: var(--s-6);
+  }
+
+  .refinement-popover__section-label {
+    margin: 0;
+    font-size: var(--text-label-size);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  .refinement-popover__section + .refinement-popover__section {
+    padding-top: var(--s-8);
+    border-top: 1px solid var(--line);
+  }
+
+  .refinement-choice-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-6);
+  }
+
+  .refinement-choice-grid--stops {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .refinement-choice-grid--times {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .refinement-choice-grid .refinement-popover__option {
+    justify-content: center;
+    text-align: center;
+  }
+
+  .refinement-popover__option {
+    min-height: 2.05rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 0 var(--s-8);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface-control-bg-soft);
+    color: var(--text);
+    font: inherit;
+    font-size: 0.84rem;
+    font-weight: 600;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color var(--motion-quick) var(--ease-standard),
+                background var(--motion-quick) var(--ease-standard),
+                color var(--motion-quick) var(--ease-standard);
+  }
+
+  .refinement-popover__option:hover {
+    border-color: var(--line-strong);
+    background: var(--surface-hover);
+  }
+
+  .refinement-popover__option:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: var(--focus-ring);
+  }
+
+  .refinement-popover__option.is-selected {
+    border-color: var(--selection-border);
+    background: var(--selection-bg);
+    color: var(--selection-fg);
+  }
+}

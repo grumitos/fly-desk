@@ -3,6 +3,83 @@ import * as path from "node:path";
 
 export const DEFAULT_SERVER_HOST = "127.0.0.1";
 
+function decodeQuotedEnvValue(value: string, quote: '"' | "'"): string {
+  const decoded = value;
+  if (quote === "'") {
+    return decoded;
+  }
+
+  return decoded
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\r")
+    .replace(/\\t/g, "\t")
+    .replace(/\\\\/g, "\\")
+    .replace(/\\"/g, '"');
+}
+
+function parseEnvValue(rawValue: string): string {
+  const trimmedLeft = rawValue.trimStart();
+  if (!trimmedLeft) {
+    return "";
+  }
+
+  const quote = trimmedLeft[0];
+  if (quote === '"' || quote === "'") {
+    let escaped = false;
+    let value = "";
+    for (let index = 1; index < trimmedLeft.length; index += 1) {
+      const char = trimmedLeft[index];
+      if (!escaped && char === quote) {
+        return decodeQuotedEnvValue(value, quote);
+      }
+
+      if (quote === '"' && char === "\\" && !escaped) {
+        escaped = true;
+        continue;
+      }
+
+      if (escaped) {
+        value += `\\${char}`;
+        escaped = false;
+      } else {
+        value += char;
+      }
+    }
+
+    return decodeQuotedEnvValue(value, quote);
+  }
+
+  for (let index = 0; index < trimmedLeft.length; index += 1) {
+    const char = trimmedLeft[index];
+    if (char !== "#") {
+      continue;
+    }
+
+    if (index === 0 || /\s/.test(trimmedLeft[index - 1] ?? "")) {
+      return trimmedLeft.slice(0, index).trimEnd();
+    }
+  }
+
+  return trimmedLeft.trimEnd();
+}
+
+function parseEnvAssignment(line: string): { key: string; value: string } | undefined {
+  const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
+  if (!match) {
+    return undefined;
+  }
+
+  const key = match[1]?.trim();
+  if (!key) {
+    return undefined;
+  }
+
+  return {
+    key,
+    value: parseEnvValue(match[2] ?? ""),
+  };
+}
+
 function applyEnvFile(filePath: string): void {
   if (!existsSync(filePath)) {
     return;
@@ -15,16 +92,13 @@ function applyEnvFile(filePath: string): void {
       continue;
     }
 
-    const separatorIndex = trimmed.indexOf("=");
-    if (separatorIndex < 0) {
+    const parsed = parseEnvAssignment(line);
+    if (!parsed) {
       continue;
     }
 
-    const key = trimmed.slice(0, separatorIndex).trim();
-    const value = trimmed.slice(separatorIndex + 1).trim();
-
-    if (key && !process.env[key]) {
-      process.env[key] = value;
+    if (process.env[parsed.key] === undefined) {
+      process.env[parsed.key] = parsed.value;
     }
   }
 }

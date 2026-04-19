@@ -171,17 +171,20 @@ Variables utiles del launcher:
 
 ## Verificacion reciente
 
-Estado validado el 31 de marzo de 2026:
+Estado validado el 19 de abril de 2026:
 
 - `npm run typecheck`
-- `npm test` con `67/67` pruebas en verde
+- `npm run lint` (sin errores; warnings de complejidad pendientes)
+- pruebas backend impactadas (`config`, `http-router`, `location-suggestion-cache`, `quotation`, `temp-artifacts`) en verde
 - verificacion del launcher de abrir/cerrar sobre `32123`
 
 ## Documentacion vigente
 
+- [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md): arquitectura actual del backend y flujo de requests
+- [`docs/TECH_DEBT.md`](./docs/TECH_DEBT.md): deuda tecnica priorizada
 - [`docs/REPO_CURRENT_STATE.md`](./docs/REPO_CURRENT_STATE.md): estado funcional y tecnico actual
 - [`docs/DEPLOY_RAILWAY.md`](./docs/DEPLOY_RAILWAY.md): notas de deploy remoto y limites actuales
-- [`docs/CODE_AUDIT_2026-03-27.md`](./docs/CODE_AUDIT_2026-03-27.md): auditoria historica previa al saneamiento repo-wide
+- [`docs/CODE_AUDIT_2026-03-27.md`](./docs/CODE_AUDIT_2026-03-27.md): auditoria historica
 
 ## Nota de deploy
 

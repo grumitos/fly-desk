@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser, BrowserContext, Page } from "playwright";
@@ -253,6 +253,15 @@ const COSTAMAR_REDIRECT_SESSION_WARNING =
   "Costamar redirect token is missing, expired, or incompatible with this terminal.";
 const COSTAMAR_SESSION_WARMUP_POLL_MS = 500;
 const COSTAMAR_B2B_KEYSTROKE_DELAY_MS = 35;
+const COSTAMAR_B2B_AUTH_PROMPT_WINDOW_MS = 60 * 1000;
+const COSTAMAR_B2B_AUTH_PROMPT_MAX_ATTEMPTS = Math.max(
+  1,
+  Number(process.env.COSTAMAR_B2B_AUTH_PROMPT_MAX_ATTEMPTS ?? 6),
+);
+const COSTAMAR_B2B_AUTH_CODE_REPLAY_WINDOW_MS = Math.max(
+  5000,
+  Number(process.env.COSTAMAR_B2B_AUTH_CODE_REPLAY_WINDOW_MS ?? 25 * 1000),
+);
 const DEFAULT_COSTAMAR_B2B_BASE_URL = "https://b2b.clickandbook.com/lang/es/b2b";
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 
@@ -263,6 +272,7 @@ let playwrightPromise: Promise<typeof import("playwright")> | undefined;
 let liveCostamarBrowserConnection:
   | { endpoint: string; browser: Browser; context: BrowserContext }
   | undefined;
+let liveCostamarBrowserConnectionRefs = 0;
 let pendingLiveCostamarBrowserConnection:
   | Promise<{ endpoint: string; browser: Browser; context: BrowserContext } | undefined>
   | undefined;
@@ -300,6 +310,9 @@ let pendingCostamarB2bCredentialPrompt:
   | Promise<{ email?: string; password?: string }>
   | undefined;
 let pendingCostamarB2bAuthPrompt: Promise<string | undefined> | undefined;
+let costamarB2bAuthPromptWindowStartedAtMs = 0;
+let costamarB2bAuthPromptAttempts = 0;
+const recentCostamarB2bAuthCodes = new Map<string, number>();
 
 export const COSTAMAR_CONCURRENCY = Object.freeze({
   get matrixMinimum() {
@@ -367,6 +380,23 @@ function resolveCostamarChromeLaunchOptions(): { userDataDir?: string; profileDi
 
 function resolveCostamarChromeProfileName(): string {
   return resolveCostamarChromeLaunchOptions().profileDirectory || "Default";
+}
+
+function applyPrivatePermissions(targetPath: string): void {
+  try {
+    const stats = statSync(targetPath);
+    if (stats.isDirectory()) {
+      chmodSync(targetPath, 0o700);
+      for (const child of readdirSync(targetPath)) {
+        applyPrivatePermissions(join(targetPath, child));
+      }
+      return;
+    }
+
+    chmodSync(targetPath, 0o600);
+  } catch {
+    // Best-effort hardening for copied browser artifacts.
+  }
 }
 
 function resolveCostamarChromeExecutable(): string {
@@ -455,6 +485,35 @@ function rememberInteractiveCostamarB2bCredentials(credentials: { email?: string
   };
 }
 
+function canPromptCostamarB2bAuthCode(nowMs = Date.now()): boolean {
+  if ((nowMs - costamarB2bAuthPromptWindowStartedAtMs) >= COSTAMAR_B2B_AUTH_PROMPT_WINDOW_MS) {
+    costamarB2bAuthPromptWindowStartedAtMs = nowMs;
+    costamarB2bAuthPromptAttempts = 0;
+  }
+
+  if (costamarB2bAuthPromptAttempts >= COSTAMAR_B2B_AUTH_PROMPT_MAX_ATTEMPTS) {
+    return false;
+  }
+
+  costamarB2bAuthPromptAttempts += 1;
+  return true;
+}
+
+function rememberCostamarB2bAuthCode(code: string, nowMs = Date.now()): boolean {
+  for (const [savedCode, savedAtMs] of recentCostamarB2bAuthCodes.entries()) {
+    if ((nowMs - savedAtMs) > COSTAMAR_B2B_AUTH_CODE_REPLAY_WINDOW_MS) {
+      recentCostamarB2bAuthCodes.delete(savedCode);
+    }
+  }
+
+  if (recentCostamarB2bAuthCodes.has(code)) {
+    return false;
+  }
+
+  recentCostamarB2bAuthCodes.set(code, nowMs);
+  return true;
+}
+
 function clearInteractiveCostamarB2bCredentials(): void {
   cachedInteractiveCostamarB2bCredentials = {};
 }
@@ -517,7 +576,10 @@ async function promptCostamarB2bAuthCode(challengeLabel?: string): Promise<strin
   const configuredSecret = resolveCostamarB2bTotpSecret();
   if (configuredSecret) {
     try {
-      return generateTotpCode(configuredSecret);
+      const generatedCode = generateTotpCode(configuredSecret);
+      return rememberCostamarB2bAuthCode(generatedCode)
+        ? generatedCode
+        : undefined;
     } catch {
       // Fall through to the interactive prompt below when the stored secret is invalid.
     }
@@ -527,13 +589,22 @@ async function promptCostamarB2bAuthCode(challengeLabel?: string): Promise<strin
     return undefined;
   }
 
+  if (!canPromptCostamarB2bAuthCode()) {
+    return undefined;
+  }
+
   if (!pendingCostamarB2bAuthPrompt) {
     pendingCostamarB2bAuthPrompt = (async () => {
       const prompted = await costamarB2bPromptProvider({
         authCode: true,
         challengeLabel,
       });
-      return prompted?.authCode?.trim() || undefined;
+      const code = prompted?.authCode?.trim() || undefined;
+      if (!code) {
+        return undefined;
+      }
+
+      return rememberCostamarB2bAuthCode(code) ? code : undefined;
     })().finally(() => {
       pendingCostamarB2bAuthPrompt = undefined;
     });
@@ -627,13 +698,38 @@ function normalizeCostamarB2bTokenResponse(rawValue: unknown): string {
   return "";
 }
 
-async function closeLiveCostamarBrowserConnection(): Promise<void> {
+async function closeLiveCostamarBrowserConnection(options?: { force?: boolean }): Promise<void> {
+  if (!options?.force && liveCostamarBrowserConnectionRefs > 0) {
+    return;
+  }
+
   const cached = liveCostamarBrowserConnection;
   liveCostamarBrowserConnection = undefined;
   pendingLiveCostamarBrowserConnection = undefined;
+  liveCostamarBrowserConnectionRefs = 0;
   if (cached) {
     await cached.browser.close().catch(() => undefined);
   }
+}
+
+function retainLiveCostamarBrowserConnection(
+  connection: { endpoint: string; browser: Browser; context: BrowserContext },
+): { endpoint: string; browser: Browser; context: BrowserContext } {
+  if (liveCostamarBrowserConnection?.browser === connection.browser) {
+    liveCostamarBrowserConnectionRefs += 1;
+  }
+
+  return connection;
+}
+
+function releaseLiveCostamarBrowserConnection(
+  connection: { endpoint: string; browser: Browser; context: BrowserContext } | undefined,
+): void {
+  if (!connection || liveCostamarBrowserConnection?.browser !== connection.browser) {
+    return;
+  }
+
+  liveCostamarBrowserConnectionRefs = Math.max(0, liveCostamarBrowserConnectionRefs - 1);
 }
 
 async function connectToLiveCostamarBrowserContext(): Promise<{
@@ -656,11 +752,12 @@ async function connectToLiveCostamarBrowserContext(): Promise<{
     liveCostamarBrowserConnection
     && liveCostamarBrowserConnection.endpoint === browserWsEndpoint
   ) {
-    return liveCostamarBrowserConnection;
+    return retainLiveCostamarBrowserConnection(liveCostamarBrowserConnection);
   }
 
   if (pendingLiveCostamarBrowserConnection) {
-    return pendingLiveCostamarBrowserConnection;
+    const pending = await pendingLiveCostamarBrowserConnection;
+    return pending ? retainLiveCostamarBrowserConnection(pending) : undefined;
   }
 
   pendingLiveCostamarBrowserConnection = (async () => {
@@ -682,9 +779,11 @@ async function connectToLiveCostamarBrowserContext(): Promise<{
         context,
       };
       liveCostamarBrowserConnection = connection;
+      liveCostamarBrowserConnectionRefs = 0;
       browser.on("disconnected", () => {
         if (liveCostamarBrowserConnection?.browser === browser) {
           liveCostamarBrowserConnection = undefined;
+          liveCostamarBrowserConnectionRefs = 0;
         }
       });
       liveCostamarBrowserRetryAfterMs = 0;
@@ -697,22 +796,25 @@ async function connectToLiveCostamarBrowserContext(): Promise<{
     }
   })();
 
-  return pendingLiveCostamarBrowserConnection;
+  const pending = await pendingLiveCostamarBrowserConnection;
+  return pending ? retainLiveCostamarBrowserConnection(pending) : undefined;
 }
 
 function copyPathSafe(source: string, destination: string): void {
   try {
     const stats = statSync(source);
     if (stats.isDirectory()) {
-      mkdirSync(destination, { recursive: true });
+      mkdirSync(destination, { recursive: true, mode: 0o700 });
+      applyPrivatePermissions(destination);
       readdirSync(source, { withFileTypes: true }).forEach((entry) => {
         copyPathSafe(join(source, entry.name), join(destination, entry.name));
       });
       return;
     }
 
-    mkdirSync(join(destination, ".."), { recursive: true });
+    mkdirSync(join(destination, ".."), { recursive: true, mode: 0o700 });
     copyFileSync(source, destination);
+    applyPrivatePermissions(destination);
   } catch {
     // Ignore locked or transient browser artifacts while cloning the profile.
   }
@@ -721,7 +823,8 @@ function copyPathSafe(source: string, destination: string): void {
 function prepareTemporaryCostamarChromeProfile(profileName: string): string {
   const sourceRoot = resolveCostamarChromeLaunchOptions().userDataDir || DEFAULT_CHROME_USER_DATA_DIR;
   const tempRoot = join(tmpdir(), `travel_quote_foundation_costamar_browser_${randomUUID()}`);
-  mkdirSync(join(tempRoot, profileName), { recursive: true });
+  mkdirSync(join(tempRoot, profileName), { recursive: true, mode: 0o700 });
+  applyPrivatePermissions(tempRoot);
   registerActiveTempArtifact(tempRoot);
 
   [
@@ -1449,6 +1552,9 @@ async function generateCostamarRedirectContextViaB2B(
     token: "",
   });
   let liveBrowser: Browser | undefined;
+  let retainedLiveSession:
+    | { endpoint: string; browser: Browser; context: BrowserContext }
+    | undefined;
   let livePage: Page | undefined;
   let closeLivePage = false;
   let resetLiveBrowserConnection = false;
@@ -1459,6 +1565,7 @@ async function generateCostamarRedirectContextViaB2B(
     try {
       const liveSession = await connectToLiveCostamarBrowserContext();
       if (liveSession) {
+        retainedLiveSession = liveSession;
         liveBrowser = liveSession.browser;
         livePage = await liveSession.context.newPage();
         closeLivePage = true;
@@ -1515,6 +1622,7 @@ async function generateCostamarRedirectContextViaB2B(
       if (closeLivePage && livePage) {
         await livePage.close().catch(() => undefined);
       }
+      releaseLiveCostamarBrowserConnection(retainedLiveSession);
       if (resetLiveBrowserConnection) {
         await closeLiveCostamarBrowserConnection();
       }
@@ -1642,8 +1750,8 @@ async function warmCostamarRedirectContext(
     });
   }
 
+  recentCostamarSessionWarmups.set(warmupKey, Date.now());
   const promise = (async () => {
-    recentCostamarSessionWarmups.set(warmupKey, Date.now());
     const seedContext = {
       ...context,
       token: "",
@@ -1727,7 +1835,10 @@ export function resetCostamarWarmupStateForTests(): void {
   cachedInteractiveCostamarB2bCredentials = {};
   pendingCostamarB2bCredentialPrompt = undefined;
   pendingCostamarB2bAuthPrompt = undefined;
-  void closeLiveCostamarBrowserConnection();
+  recentCostamarB2bAuthCodes.clear();
+  costamarB2bAuthPromptWindowStartedAtMs = 0;
+  costamarB2bAuthPromptAttempts = 0;
+  void closeLiveCostamarBrowserConnection({ force: true });
   liveCostamarBrowserRetryAfterMs = 0;
   playwrightPromise = undefined;
 }
@@ -2036,11 +2147,7 @@ async function fetchCostamarJson<T>(
   }
 
   if (!response.ok) {
-    throw new Error(
-      bodyText
-        ? `${action} failed with ${response.status} ${response.statusText}: ${bodyText}`
-        : `${action} failed with ${response.status} ${response.statusText}`,
-    );
+    throw new Error(`${action} failed with ${response.status} ${response.statusText}`);
   }
 
   return parsed as T;

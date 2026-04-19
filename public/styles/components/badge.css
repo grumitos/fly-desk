@@ -1,0 +1,55 @@
+/* ================================================================
+   BADGE
+   @layer components
+   ================================================================ */
+@layer components {
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.25rem;
+    padding: 0 var(--s-10);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface-control-bg-muted);
+    color: var(--text-muted);
+    font-size: var(--text-label-size);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+
+  .badge--accent {
+    border-color: color-mix(in oklch, var(--accent) 28%, var(--line));
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+  }
+
+  .badge--success,
+  .badge--green {
+    border-color: color-mix(in oklch, var(--success) 28%, var(--line));
+    background: var(--success-soft);
+    color: var(--success);
+  }
+
+  .badge--warning,
+  .badge--amber {
+    border-color: color-mix(in oklch, var(--warning) 28%, var(--line));
+    background: var(--warning-soft);
+    color: var(--warning);
+  }
+
+  .badge--danger,
+  .badge--red {
+    border-color: color-mix(in oklch, var(--danger) 28%, var(--line));
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+
+  .badge--group-count {
+    margin-left: var(--s-4);
+    font-size: 0.62rem;
+    min-height: 1.1rem;
+    padding: 0 var(--s-4);
+    vertical-align: middle;
+  }
+}

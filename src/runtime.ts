@@ -30,3 +30,7 @@ export function getRuntime(): RuntimeServices {
 
   return runtime;
 }
+
+export function resetRuntimeForTests(): void {
+  runtime = undefined;
+}

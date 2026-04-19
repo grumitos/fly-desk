@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomInt, randomUUID } from "node:crypto";
 import { spawn, ChildProcess } from "node:child_process";
-import { readFileSync, rmSync, mkdirSync, cpSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, mkdirSync, cpSync, existsSync, readdirSync, chmodSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Browser, BrowserContext, Page } from "playwright";
@@ -43,7 +43,6 @@ import {
   Money,
   ProviderMeta,
   PurchasePath,
-  SearchMeta,
   SearchResponse,
   SearchRequest,
   Segment,
@@ -249,6 +248,14 @@ let cachedSession: AgilSessionData | undefined;
 let pendingSessionPromise: Promise<AgilSessionData> | undefined;
 let cachedAgilApimSubscriptionKey: string | undefined;
 let agilApimSubscriptionKeyPromise: Promise<string> | undefined;
+
+function rememberCachedAgilSession(session: AgilSessionData): AgilSessionData {
+  if (!cachedSession || session.capturedAtMs >= cachedSession.capturedAtMs) {
+    cachedSession = session;
+  }
+
+  return cachedSession ?? session;
+}
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
@@ -480,11 +487,29 @@ function resolveAgilSmartAddress(): string | undefined {
   return undefined;
 }
 
+function applyPrivatePermissions(targetPath: string): void {
+  try {
+    const stats = statSync(targetPath);
+    if (stats.isDirectory()) {
+      chmodSync(targetPath, 0o700);
+      for (const child of readdirSync(targetPath)) {
+        applyPrivatePermissions(join(targetPath, child));
+      }
+      return;
+    }
+
+    chmodSync(targetPath, 0o600);
+  } catch {
+    // Best-effort hardening for copied browser artifacts.
+  }
+}
+
 function prepareTemporaryChromeProfile(profileName: string): string {
   const sourceRoot = resolveBrowserUserDataDir();
   const tempRoot = join(tmpdir(), `travel_quote_foundation_agil_${randomUUID()}`);
   const profileRoot = join(tempRoot, profileName);
-  mkdirSync(profileRoot, { recursive: true });
+  mkdirSync(profileRoot, { recursive: true, mode: 0o700 });
+  applyPrivatePermissions(tempRoot);
   registerActiveTempArtifact(tempRoot);
 
   const items = [
@@ -504,20 +529,12 @@ function prepareTemporaryChromeProfile(profileName: string): string {
     }
 
     const destination = join(tempRoot, relativePath);
-    mkdirSync(join(destination, ".."), { recursive: true });
+    mkdirSync(join(destination, ".."), { recursive: true, mode: 0o700 });
     cpSync(source, destination, { recursive: true, force: true });
+    applyPrivatePermissions(destination);
   }
 
   return tempRoot;
-}
-
-function resolveChromeProfileName(): string {
-  const configured = process.env.AGIL_CHROME_PROFILE?.trim();
-  if (configured) {
-    return configured;
-  }
-
-  return readChromeProfileName();
 }
 
 function launchChromeForCdp(userDataDir: string, profileName: string, port: number): ChildProcess {
@@ -719,7 +736,7 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
 
   for (const profileName of profileNames) {
     const userDataDir = prepareTemporaryChromeProfile(profileName);
-    const port = 9400 + Math.floor(Math.random() * 200);
+    const port = randomInt(9400, 9600);
     const chrome = launchChromeForCdp(userDataDir, profileName, port);
     let browser: Browser | undefined;
 
@@ -865,8 +882,7 @@ async function loadAgilSession(now: number): Promise<AgilSessionData> {
     }
   }
 
-  cachedSession = await refreshAgilToken(extracted);
-  return cachedSession;
+  return rememberCachedAgilSession(await refreshAgilToken(extracted));
 }
 
 async function getAgilSession(): Promise<AgilSessionData> {
@@ -1789,8 +1805,7 @@ async function searchGroupsAcrossGds(
     return await searchAll();
   } catch (error) {
     if (error instanceof Error && error.message === "AGIL_TOKEN_EXPIRED") {
-      session = await refreshAgilToken(session);
-      cachedSession = session;
+      session = rememberCachedAgilSession(await refreshAgilToken(session));
       return searchAll();
     }
 
@@ -1826,8 +1841,7 @@ async function searchCellPrice(baseSession: AgilSessionData, request: SearchRequ
     return await searchAll();
   } catch (error) {
     if (error instanceof Error && error.message === "AGIL_TOKEN_EXPIRED") {
-      session = await refreshAgilToken(session);
-      cachedSession = session;
+      session = rememberCachedAgilSession(await refreshAgilToken(session));
       return searchAll();
     }
 
@@ -1955,8 +1969,7 @@ export async function resolveLocalAgilExactProgressive(
     await searchAll();
   } catch (error) {
     if (error instanceof Error && error.message === "AGIL_TOKEN_EXPIRED") {
-      session = await refreshAgilToken(session);
-      cachedSession = session;
+      session = rememberCachedAgilSession(await refreshAgilToken(session));
       await searchAll();
     } else {
       throw error;

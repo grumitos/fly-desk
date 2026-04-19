@@ -1,0 +1,162 @@
+/* ================================================================
+   MATRIX + CALENDAR GRID
+   @layer components
+   ================================================================ */
+@layer components {
+  .matrix-wrap {
+    height: 100%;
+    overflow: auto;
+    padding: 1rem;
+  }
+
+  .matrix-grid {
+    display: grid;
+    gap: 0.4rem;
+    min-width: max-content;
+  }
+
+  .matrix-row {
+    display: grid;
+    grid-template-columns: 5rem repeat(var(--cols), minmax(8.5rem, 1fr));
+    gap: 0.4rem;
+  }
+
+  .cal-grid > .cal-row:first-child {
+    position: sticky;
+    top: 0;
+    z-index: calc(var(--z-sticky-cell) + 1);
+  }
+
+  .matrix-corner,
+  .matrix-header,
+  .matrix-label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 3rem;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface-control-bg);
+    color: var(--text-faint);
+    font-size: 0.76rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .cal-header,
+  .cal-corner {
+    position: sticky;
+    top: 0;
+    z-index: calc(var(--z-sticky-cell) + 1);
+    background: color-mix(in oklch, var(--panel-strong) 92%, transparent);
+  }
+
+  .cal-label,
+  .cal-corner {
+    position: sticky;
+    left: 0;
+    z-index: calc(var(--z-sticky-cell) + 1);
+    background: color-mix(in oklch, var(--panel-strong) 92%, transparent);
+  }
+
+  .cal-corner {
+    z-index: calc(var(--z-sticky-cell) + 2);
+  }
+
+  .matrix-cell,
+  .cal-cell {
+    display: grid;
+    align-content: center;
+    gap: 0.22rem;
+    min-height: 5.2rem;
+    padding: 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: color-mix(in oklch, var(--surface) 92%, transparent);
+    color: var(--text);
+    text-align: left;
+  }
+
+  .matrix-cell:hover:not(:disabled),
+  .cal-cell:hover:not(:disabled) {
+    background: var(--surface-hover);
+  }
+
+  .matrix-cell.is-active,
+  .cal-cell.is-active {
+    border-color: color-mix(in oklch, var(--accent) 35%, var(--line));
+    box-shadow: var(--focus-ring);
+  }
+
+  /* ── Price tiers ── */
+  .matrix-cell--best,
+  .cal-cell--best {
+    background: color-mix(in oklch, var(--success-soft) 90%, var(--surface));
+  }
+
+  .matrix-cell--good,
+  .cal-cell--good {
+    background: color-mix(in oklch, var(--accent-soft) 82%, var(--surface));
+  }
+
+  .matrix-cell--ok,
+  .cal-cell--ok {
+    background: color-mix(in oklch, var(--warning-soft) 68%, var(--surface));
+  }
+
+  .matrix-cell--warm,
+  .cal-cell--warm {
+    background: color-mix(in oklch, var(--warning-soft) 88%, var(--surface));
+  }
+
+  .matrix-cell--bad,
+  .cal-cell--bad {
+    background: color-mix(in oklch, var(--danger-soft) 88%, var(--surface));
+  }
+
+  .matrix-price,
+  .cal-price {
+    font-size: 0.88rem;
+  }
+
+  .matrix-price .price-stack__total,
+  .cal-price .price-stack__total {
+    font-size: 0.88rem;
+  }
+
+  .matrix-price .price-stack__meta,
+  .cal-price .price-stack__meta {
+    font-size: 0.66rem;
+  }
+
+  .matrix-meta,
+  .cal-meta {
+    color: var(--text-muted);
+    font-size: 0.76rem;
+  }
+
+  .matrix-price--loading {
+    color: var(--text-faint);
+  }
+
+  /* ── Fullscreen overlay ── */
+  .matrix-fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-matrix-fullscreen);
+    display: grid;
+    place-items: center;
+    background: color-mix(in oklch, var(--surface) 82%, transparent);
+    backdrop-filter: blur(4px);
+  }
+
+  .matrix-fullscreen__panel {
+    width: min(96vw, 80rem);
+    max-height: 92vh;
+    display: flex;
+    flex-direction: column;
+    border-radius: var(--r-xl);
+    overflow: hidden;
+  }
+}

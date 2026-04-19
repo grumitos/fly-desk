@@ -22,7 +22,7 @@ function cloneSuggestions(suggestions: ReadonlyArray<LocationSuggestion>): Locat
 
 function normalizeSessionId(value: string | undefined): string {
   const normalized = String(value ?? "").trim();
-  return normalized || "anonymous";
+  return (normalized ? normalized.replaceAll("::", "__") : "") || "anonymous";
 }
 
 function normalizeQuery(value: string): string {
@@ -36,6 +36,10 @@ function cacheKey(parts: CacheKeyParts): string {
     String(Math.max(1, Math.trunc(parts.limit))),
     normalizeQuery(parts.query),
   ].join("::");
+}
+
+function sessionIdFromCacheKey(key: string): string {
+  return key.split("::")[0] ?? "anonymous";
 }
 
 export class LocationSuggestionCacheStore {
@@ -98,8 +102,7 @@ export class LocationSuggestionCacheStore {
   purgeExpired(nowMs = Date.now()): void {
     for (const [key, entry] of this.entries) {
       if (entry.expiresAtMs <= nowMs) {
-        const sessionId = key.split("::", 1)[0] ?? "anonymous";
-        this.deleteKey(sessionId, key);
+        this.deleteKey(sessionIdFromCacheKey(key), key, { preserveInflight: true });
       }
     }
   }
@@ -141,9 +144,11 @@ export class LocationSuggestionCacheStore {
     }
   }
 
-  private deleteKey(sessionId: string, key: string): void {
+  private deleteKey(sessionId: string, key: string, options?: { preserveInflight?: boolean }): void {
     this.entries.delete(key);
-    this.inflight.delete(key);
+    if (!options?.preserveInflight) {
+      this.inflight.delete(key);
+    }
     const keys = this.sessionKeys.get(sessionId);
     if (!keys) {
       return;

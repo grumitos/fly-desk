@@ -1,0 +1,31 @@
+/* ================================================================
+   TOAST — Notifications container + variants
+   @layer components
+   ================================================================ */
+@layer components {
+  .toast-container {
+    position: fixed;
+    right: 1.5rem;
+    bottom: 1.5rem;
+    z-index: var(--z-toast);
+    display: grid;
+    gap: 0.6rem;
+  }
+
+  .toast {
+    min-width: 18rem;
+    max-width: 28rem;
+    padding: 0.85rem 0.95rem;
+    border-radius: var(--r-lg);
+  }
+
+  .toast--error {
+    border-color: color-mix(in oklch, var(--danger) 30%, var(--line));
+    color: var(--danger);
+  }
+
+  .toast--success {
+    border-color: color-mix(in oklch, var(--success) 30%, var(--line));
+    color: var(--success);
+  }
+}

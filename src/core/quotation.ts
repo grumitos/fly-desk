@@ -316,18 +316,35 @@ function buildCommercialScheduleLine(
 function buildCommercialPriceLines(
   offer: CanonicalOffer,
   request: SearchRequest,
-  _options: QuotationRenderOptions,
+  options: QuotationRenderOptions,
 ): string[] {
   const currencyCode = String(offer.price.total.currencyCode ?? "").trim().toUpperCase();
   const totalAmount = offer.price.total.amount;
   const adults = request.passengers.adults;
   const children = request.passengers.children;
   const infants = request.passengers.infants;
+  const usdToPenRate = typeof options.usdToPenRate === "number"
+    && Number.isFinite(options.usdToPenRate)
+    && options.usdToPenRate > 0
+    ? options.usdToPenRate
+    : undefined;
+
+  const appendPenTotal = (lines: string[]): string[] => {
+    if (currencyCode !== "USD" || usdToPenRate === undefined) {
+      return lines;
+    }
+
+    const totalPen = totalAmount * usdToPenRate;
+    return [
+      ...lines,
+      formatCommercialTotalLine("Total en soles", "S/", totalPen),
+    ];
+  };
 
   if (currencyCode !== "USD") {
-    return [
+    return appendPenTotal([
       formatCommercialTotalLine("Total", currencyCode || "USD", totalAmount),
-    ];
+    ]);
   }
 
   if (adults > 0 && children === 0 && infants === 0) {
@@ -340,12 +357,12 @@ function buildCommercialPriceLines(
       lines.push(formatCommercialTotalLine("Total", "US$", totalAmount));
     }
 
-    return lines;
+    return appendPenTotal(lines);
   }
 
-  return [
+  return appendPenTotal([
     formatCommercialTotalLine("Total", "US$", totalAmount),
-  ];
+  ]);
 }
 
 function buildCommercialQuotationText(

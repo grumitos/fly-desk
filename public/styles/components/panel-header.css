@@ -1,0 +1,113 @@
+/* ================================================================
+   PANEL HEADER — Unified for results, detail, matrix fullscreen.
+   @layer components
+   ================================================================ */
+@layer components {
+  .panel-header {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: var(--s-16);
+    padding: var(--s-12) var(--s-16);
+    border-bottom: 1px solid var(--line);
+  }
+
+  #resultsToolbar,
+  .workspace__detail > .detail-panel__header {
+    align-items: center;
+    min-height: calc(var(--control-height-compact) + (var(--s-10) * 2));
+  }
+
+  #resultsToolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1fr);
+    align-items: center;
+  }
+
+  #resultsToolbar .panel-header__copy {
+    grid-column: 1;
+  }
+
+  #resultsToolbar .panel-header__actions--results {
+    margin-left: 0;
+    min-width: max-content;
+    grid-column: 3;
+    justify-self: end;
+  }
+
+  .panel-header__copy {
+    display: grid;
+    gap: var(--s-2);
+    min-width: 0;
+  }
+
+  .panel-header__eyebrow {
+    margin: 0;
+  }
+
+  .panel-header__title {
+    margin: 0;
+    font-size: var(--text-h2-size);
+    font-weight: var(--text-h2-weight);
+  }
+
+  .panel-header__meta {
+    margin: 0;
+    max-width: 34rem;
+    color: var(--text-muted);
+    font-size: 0.84rem;
+    line-height: 1.4;
+  }
+
+  .panel-header__actions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-8);
+    flex-wrap: wrap;
+    justify-content: end;
+  }
+
+  .panel-header__actions--results,
+  .results-toolbar__sort,
+  .results-toolbar__view {
+    display: flex;
+    align-items: center;
+    gap: var(--s-8);
+  }
+
+  .panel-header__actions--results {
+    justify-content: flex-end;
+  }
+
+  #resultsToolbar .panel-header__copy,
+  .workspace__detail > .detail-panel__header .panel-header__copy {
+    min-height: var(--control-height-compact);
+    align-content: center;
+  }
+
+  #resultsToolbar .panel-header__actions,
+  .workspace__detail > .detail-panel__header .panel-header__actions {
+    min-height: var(--control-height-compact);
+  }
+
+  /* ── Eyebrow shared ── */
+  .topbar__eyebrow,
+  .detail-panel__eyebrow,
+  .empty-panel__eyebrow,
+  .calendar-popover__eyebrow,
+  .results-skeleton__eyebrow,
+  .detail-section__title {
+    margin: 0;
+    font-size: var(--text-label-size);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  .search-shell,
+  .workspace__panel {
+    border: 1px solid var(--line);
+    background: var(--panel-strong);
+  }
+}

@@ -1,0 +1,102 @@
+/* ================================================================
+   TOOLBAR PILL — Sort buttons, copy/paste, pager
+   @layer components
+   ================================================================ */
+@layer components {
+  .results-toolbar__sort-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s-4);
+    min-height: var(--control-height-compact);
+    padding: 0 var(--s-10);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface-control-bg-muted);
+    color: var(--text-muted);
+    font: inherit;
+    font-size: 0.84rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color var(--motion-quick) var(--ease-standard),
+                background var(--motion-quick) var(--ease-standard),
+                color var(--motion-quick) var(--ease-standard);
+  }
+
+  .results-toolbar__sort-btn:hover {
+    border-color: var(--line-strong);
+    background: var(--surface-raised);
+    color: var(--text);
+  }
+
+  .results-toolbar__sort-btn:focus-visible {
+    border-color: var(--accent);
+    box-shadow: var(--focus-ring);
+    outline: none;
+  }
+
+  .results-toolbar__sort-btn.is-active {
+    border-color: var(--selection-border);
+    background: var(--selection-bg);
+    color: var(--selection-fg);
+  }
+
+  /* ── Pager ── */
+  .results-toolbar__pager {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-8);
+    width: max-content;
+    min-width: 0;
+    justify-self: center;
+    grid-column: 2;
+  }
+
+  .pager-arrow {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.8rem;
+    height: 1.8rem;
+    border: none;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color var(--motion-quick) var(--ease-standard),
+                background var(--motion-quick) var(--ease-standard);
+  }
+
+  .pager-arrow:hover:not(:disabled) {
+    color: var(--text);
+    background: var(--surface-hover);
+  }
+
+  .pager-arrow:disabled {
+    color: var(--text-faint);
+    cursor: default;
+    opacity: 0.4;
+  }
+
+  .pager-label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
+    flex: 0 0 7ch;
+    min-width: 7ch;
+    text-align: center;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+
+  .pager-label--placeholder {
+    color: var(--text-faint);
+    letter-spacing: 0.12em;
+  }
+}

@@ -1,0 +1,235 @@
+/* ================================================================
+   DETAIL PANEL — body, hero, segments, layover, pairs, quotation
+   @layer components
+   ================================================================ */
+@layer components {
+  .detail-panel__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    overflow-x: hidden;
+    padding: var(--s-16);
+  }
+
+  .detail-busy__stack {
+    display: grid;
+    gap: 0.7rem;
+    margin-top: 0.2rem;
+  }
+
+  /* ── Hero ── */
+  .detail-hero {
+    display: grid;
+    gap: 0.18rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .detail-hero__total {
+    font-size: 1.65rem;
+    font-weight: 700;
+    letter-spacing: -0.05em;
+  }
+
+  .detail-hero__meta {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+
+  .detail-summary {
+    margin-top: 0.35rem;
+    color: var(--text-muted);
+    font-size: 0.92rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* ── Section ── */
+  .detail-section {
+    display: grid;
+    gap: var(--section-gap);
+    margin-top: 0.85rem;
+    padding-top: 0.85rem;
+    border-top: 1px solid var(--line);
+    min-width: 0;
+  }
+
+  .detail-section__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-bottom: 0.7rem;
+    min-width: 0;
+  }
+
+  /* ── Segment ── */
+  .detail-segment {
+    display: grid;
+    gap: var(--section-gap);
+    min-width: 0;
+  }
+
+  .detail-segment__dir {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .detail-segment__title {
+    font-weight: 700;
+    color: var(--text);
+  }
+
+  .detail-segment__meta {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+
+  .detail-segment__leg {
+    display: grid;
+    gap: 0.25rem;
+    padding: 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface-control-bg);
+    min-width: 0;
+  }
+
+  .detail-segment__leg--choice {
+    width: 100%;
+    cursor: pointer;
+    padding: 0.75rem;
+    border-color: transparent;
+    background: transparent;
+    appearance: none;
+    color: inherit;
+    font: inherit;
+    line-height: 1.35;
+    text-align: left;
+  }
+
+  .detail-segment__leg--choice.is-selected {
+    border-color: var(--selection-border);
+    background: var(--selection-bg);
+    color: var(--selection-fg);
+  }
+
+  .detail-segment__leg--choice:focus-visible {
+    border-color: color-mix(in oklch, var(--accent) 45%, var(--line));
+    box-shadow: var(--focus-ring);
+    outline: none;
+  }
+
+  .detail-segment__flight {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    font-weight: 600;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .detail-segment__times,
+  .detail-pair__key {
+    color: var(--text-muted);
+  }
+
+  .detail-segment__times {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .detail-segment__route {
+    color: var(--text-faint);
+    font-size: 0.8rem;
+    line-height: 1.35;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* ── Layover ── */
+  .detail-layover {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.15rem 0;
+    min-width: 0;
+  }
+
+  .detail-layover__line {
+    flex: 1;
+    height: 1px;
+    background: var(--line);
+  }
+
+  .detail-layover__label {
+    color: var(--text-muted);
+    font-size: 0.76rem;
+    font-weight: 500;
+    min-width: 0;
+    white-space: normal;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+
+  /* ── Pairs ── */
+  .detail-pair {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    font-size: 0.88rem;
+    min-width: 0;
+  }
+
+  .detail-pair--strong .detail-pair__key,
+  .detail-pair--strong .detail-pair__val {
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  .detail-pair__val {
+    min-width: 0;
+    margin-left: auto;
+    max-width: 100%;
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+
+  /* ── Subsection ── */
+  .detail-subsection + .detail-subsection {
+    margin-top: 0.85rem;
+  }
+
+  .detail-subsection__title {
+    margin: 0 0 0.45rem;
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  /* ── Quote textarea ── */
+  .quote-textarea {
+    min-height: 12rem;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    padding: 0.85rem 0.95rem;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface-control-bg);
+    color: var(--text);
+    resize: vertical;
+  }
+}

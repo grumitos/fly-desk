@@ -1,0 +1,538 @@
+/* ================================================================
+   LAYOUT — Body grid, workspace grid, shell, breakpoints.
+   @layer layout
+   ================================================================ */
+@layer layout {
+  /* ── Shell search form ── */
+  .search-shell {
+    --rail-control-height: 2.75rem;
+    position: relative;
+    display: grid;
+    gap: var(--s-8);
+    margin: var(--shell-edge) var(--shell-edge) 0;
+    padding: var(--s-12) var(--s-16);
+    border: 1px solid var(--line);
+    border-radius: var(--r-xl);
+    background: var(--panel-strong);
+    overflow: visible;
+  }
+
+  .search-rail {
+    display: grid;
+    grid-template-columns:
+      var(--shell-mode-track, max-content)
+      var(--shell-trip-track, max-content)
+      minmax(11rem, 1.18fr)
+      minmax(var(--rail-control-height), max-content)
+      minmax(11rem, 1.18fr)
+      minmax(11rem, 1fr)
+      minmax(10rem, 0.92fr)
+      var(--shell-actions-width, max-content);
+    gap: var(--s-8);
+    align-items: stretch;
+  }
+
+  .rail-segment {
+    min-width: 0;
+    display: grid;
+    grid-template-rows: minmax(0.82rem, auto) minmax(var(--rail-control-height), auto);
+    align-content: end;
+    gap: var(--s-4);
+  }
+
+  .rail-segment--location {
+    position: relative;
+  }
+
+  .rail-segment--submit {
+    display: flex;
+    align-items: flex-end;
+  }
+
+  /* ── Search shell footer ── */
+  .search-shell__footer {
+    display: grid;
+    gap: var(--s-8);
+  }
+
+  .search-shell__footer-main {
+    display: grid;
+    grid-template-columns:
+      var(--shell-mode-track, max-content)
+      var(--shell-trip-track, max-content)
+      minmax(11rem, 1.18fr)
+      minmax(var(--rail-control-height), max-content)
+      minmax(11rem, 1.18fr)
+      minmax(11rem, 1fr)
+      minmax(10rem, 0.92fr)
+      var(--shell-actions-width, max-content);
+    align-items: start;
+    gap: var(--s-8);
+  }
+
+  .search-shell__footer-main .search-refinements {
+    grid-column: 1 / span 2;
+    min-width: 0;
+  }
+
+  .search-shell__actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: center;
+    gap: var(--s-8);
+    grid-column: 8;
+    justify-self: stretch;
+    width: 100%;
+  }
+
+  .search-shell__action {
+    min-width: 0;
+    width: 100%;
+    min-height: var(--control-height-compact);
+    padding-inline: var(--s-12);
+    gap: var(--s-6);
+  }
+
+  .search-shell__action:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .search-shell__action .ico {
+    flex-shrink: 0;
+  }
+
+  /* ── Search refinements ── */
+  .search-refinements {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: stretch;
+    gap: var(--s-8);
+    width: 100%;
+    padding-top: 0.1rem;
+    min-width: 0;
+  }
+
+  /* ── Workspace ── */
+  .workspace {
+    grid-row: 4;
+    height: var(--workspace-height, auto);
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--sidebar-width);
+    gap: var(--panel-gap);
+    padding: var(--panel-gap) var(--shell-edge) var(--shell-edge);
+    align-items: stretch;
+    overflow: hidden;
+  }
+
+  .workspace__content,
+  .workspace__detail {
+    min-height: 0;
+  }
+
+  .workspace__content {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 100%;
+  }
+
+  .workspace__panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+    border: 1px solid var(--line);
+    border-radius: var(--r-xl);
+    background: var(--panel-strong);
+    overflow: hidden;
+  }
+
+  .results-panel {
+    flex: 1 1 auto;
+  }
+
+  .workspace__detail {
+    gap: 0;
+  }
+
+  /* ── Validation error bar ── */
+  .error-bar {
+    grid-row: 3;
+    margin: var(--shell-edge) var(--shell-edge) 0;
+    padding: var(--s-10) var(--s-12);
+    border: 1px solid color-mix(in oklch, var(--danger) 28%, var(--line));
+    border-left: 3px solid var(--danger);
+    border-radius: var(--r-md);
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+
+  .error-bar ul {
+    margin: 0;
+    padding-left: 1rem;
+  }
+
+  /* ══════════════════════════════════════════════
+     BREAKPOINTS
+     ══════════════════════════════════════════════ */
+
+  /* ── Compact height ── */
+  @media (max-height: 960px) {
+    :root {
+      --shell-edge: clamp(0.72rem, 1vw, 1rem);
+      --control-height-compact: 2.12rem;
+    }
+
+    .search-shell {
+      --rail-control-height: 2.56rem;
+      padding: var(--s-8) var(--s-12);
+    }
+
+    .topbar {
+      gap: var(--s-16);
+      padding: var(--s-6) var(--shell-edge) var(--s-6);
+    }
+
+    .topbar__brand,
+    .topbar__meta {
+      gap: var(--s-8);
+    }
+
+    .theme-switch,
+    .badge {
+      min-height: 2.05rem;
+    }
+
+    .theme-switch__button {
+      width: 1.8rem;
+      height: 1.8rem;
+    }
+
+    .panel-header {
+      padding-top: var(--s-8);
+      padding-bottom: var(--s-8);
+    }
+
+    .detail-panel__body {
+      padding-top: var(--s-10);
+      padding-bottom: var(--s-12);
+    }
+
+    .empty-state {
+      padding: clamp(1.2rem, 2vw, 1.8rem);
+    }
+  }
+
+  @media (max-height: 900px) {
+    :root {
+      --shell-edge: clamp(0.62rem, 0.82vw, 0.88rem);
+      --control-height-compact: 1.96rem;
+    }
+
+    .topbar {
+      padding: var(--s-4) var(--shell-edge);
+    }
+
+    .theme-switch {
+      padding: var(--s-2);
+    }
+
+    .theme-switch,
+    .badge {
+      min-height: 1.9rem;
+    }
+
+    .theme-switch__button {
+      width: 1.62rem;
+      height: 1.62rem;
+    }
+
+    .badge {
+      padding: 0 var(--s-8);
+      font-size: var(--text-label-size);
+    }
+
+    .search-shell {
+      --rail-control-height: 2.56rem;
+      padding: var(--s-6) var(--s-12);
+    }
+
+    .segmented-control__button,
+    .field-input,
+    .field-button,
+    .btn,
+    .results-toolbar__sort-btn {
+      font-size: 0.84rem;
+    }
+
+    .panel-header {
+      gap: var(--s-10);
+      padding-top: var(--s-8);
+      padding-bottom: var(--s-8);
+    }
+
+    .panel-header__title {
+      font-size: 0.96rem;
+    }
+
+    .panel-header__meta {
+      font-size: 0.78rem;
+    }
+
+    .results-container {
+      min-height: clamp(14rem, 24vh, 18rem);
+    }
+
+    .results-loading {
+      padding-top: var(--s-8);
+      font-size: 0.82rem;
+    }
+
+    .detail-panel__body {
+      padding-top: var(--s-10);
+      padding-bottom: var(--s-10);
+    }
+
+    .detail-hero {
+      font-size: 1.55rem;
+    }
+  }
+
+  /* ── Width breakpoints ── */
+  @media (max-width: 1180px) {
+    .results-layout-editor__grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .search-shell__footer-main {
+      grid-template-columns: 1fr;
+    }
+
+    .search-shell__footer-main .search-refinements,
+    .search-shell__actions {
+      grid-column: auto;
+    }
+
+    .search-refinements {
+      width: 100%;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .search-shell__actions {
+      width: min(100%, var(--shell-actions-width, 100%));
+      justify-self: start;
+    }
+  }
+
+  @media (max-width: 1120px) {
+    .topbar {
+      gap: var(--s-10);
+      flex-wrap: wrap;
+    }
+
+    .topbar__meta {
+      margin-left: auto;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .search-shell {
+      padding-inline: clamp(0.82rem, 1.8vw, 1rem);
+    }
+
+    .search-rail {
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+    }
+
+    .search-rail > [data-search-order="mode"]        { grid-column: 1 / span 2; }
+    .search-rail > [data-search-order="trip"]         { grid-column: 3 / span 3; }
+    .search-rail > [data-search-order="origin"]       { grid-column: 6 / span 3; }
+    .search-rail > [data-search-order="swap"]         { grid-column: 9 / span 1; justify-self: stretch; }
+    .search-rail > [data-search-order="destination"]  { grid-column: 10 / span 3; }
+    .search-rail > [data-search-order="dates"]        { grid-column: 1 / span 4; }
+    .search-rail > [data-search-order="passengers"]   { grid-column: 5 / span 4; }
+    .search-rail > [data-search-order="submit"]       { grid-column: 9 / span 4; }
+
+    .btn--search {
+      min-width: 0;
+    }
+
+    .search-shell__footer-main {
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+    }
+
+    .search-shell__footer-main .search-refinements {
+      grid-column: 1 / span 8;
+    }
+
+    .search-shell__actions {
+      grid-column: 9 / span 4;
+      width: 100%;
+      justify-self: stretch;
+    }
+  }
+
+  @media (max-width: 1000px) {
+    :root {
+      --sidebar-width: clamp(17rem, 34vw, 20rem);
+    }
+
+    body {
+      height: auto;
+      min-height: 100vh;
+      overflow-x: hidden;
+      overflow-y: auto;
+      grid-template-rows: auto auto min-content auto;
+    }
+
+    .workspace {
+      height: auto;
+      overflow: visible;
+      grid-template-columns: 1fr;
+      grid-template-rows: minmax(24rem, auto) minmax(18rem, auto);
+      align-content: start;
+    }
+
+    .workspace__detail {
+      min-height: clamp(18rem, 31vh, 24rem);
+    }
+
+    #resultsToolbar {
+      grid-template-columns: minmax(0, 1fr) auto;
+      row-gap: var(--s-10);
+      align-items: start;
+    }
+
+    #resultsToolbar .panel-header__copy {
+      grid-column: 1 / -1;
+    }
+
+    #resultsToolbar .results-toolbar__pager {
+      grid-column: 1;
+      justify-self: start;
+    }
+
+    #resultsToolbar .panel-header__actions--results {
+      grid-column: 2;
+      justify-self: end;
+    }
+
+    .results-container {
+      min-height: clamp(20rem, 44vh, 32rem);
+      --results-gutter-inline: var(--s-12);
+      --results-gutter-block: var(--s-12);
+    }
+
+    .results-panel__body.has-sidebar {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .results-sidebar {
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+      padding: var(--s-12);
+    }
+
+    .airline-bar__scroller {
+      grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    }
+
+    .results-card {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .detail-panel__body {
+      min-height: 14rem;
+    }
+  }
+
+  @media (max-width: 840px) {
+    .search-rail {
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+
+    .search-rail > [data-search-order="mode"]        { grid-column: 1 / span 3; }
+    .search-rail > [data-search-order="trip"]         { grid-column: 4 / span 3; }
+    .search-rail > [data-search-order="origin"]       { grid-column: 1 / span 2; }
+    .search-rail > [data-search-order="swap"]         { grid-column: 3 / span 1; justify-self: center; }
+    .search-rail > [data-search-order="destination"]  { grid-column: 4 / span 3; }
+    .search-rail > [data-search-order="dates"]        { grid-column: 1 / span 3; }
+    .search-rail > [data-search-order="passengers"]   { grid-column: 4 / span 3; }
+    .search-rail > [data-search-order="submit"]       { grid-column: 1 / -1; }
+
+    .search-shell__footer-main {
+      grid-template-columns: 1fr;
+    }
+
+    .search-shell__footer-main .search-refinements,
+    .search-shell__actions {
+      grid-column: auto;
+      width: 100%;
+    }
+
+    .results-card,
+    .results-card--flexible {
+      grid-template-columns: 1fr;
+      gap: var(--s-10);
+    }
+
+    .search-refinements {
+      width: 100%;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 720px) {
+    .search-rail {
+      grid-template-columns: 1fr;
+    }
+
+    .search-rail > [data-search-order="mode"],
+    .search-rail > [data-search-order="trip"],
+    .search-rail > [data-search-order="origin"],
+    .search-rail > [data-search-order="swap"],
+    .search-rail > [data-search-order="destination"],
+    .search-rail > [data-search-order="dates"],
+    .search-rail > [data-search-order="passengers"],
+    .search-rail > [data-search-order="submit"] {
+      grid-column: 1 / -1;
+    }
+
+    .search-rail > [data-search-order="swap"] {
+      justify-self: center;
+    }
+
+    .search-shell__footer-main {
+      grid-template-columns: 1fr;
+      align-items: stretch;
+    }
+
+    .search-refinements {
+      width: 100%;
+      grid-template-columns: 1fr;
+    }
+
+    .search-shell__actions {
+      width: 100%;
+      grid-template-columns: 1fr;
+      max-width: none;
+      justify-content: stretch;
+    }
+
+    .airline-bar__scroller {
+      grid-template-columns: 1fr;
+    }
+
+    .toast-container {
+      right: var(--s-16);
+      bottom: var(--s-16);
+    }
+
+    .toast {
+      min-width: min(18rem, calc(100vw - 2rem));
+      max-width: calc(100vw - 2rem);
+    }
+  }
+}

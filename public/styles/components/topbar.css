@@ -1,0 +1,41 @@
+/* ================================================================
+   TOPBAR
+   @layer components
+   ================================================================ */
+@layer components {
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-topbar);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-24);
+    padding: var(--s-10) var(--shell-edge) var(--s-8);
+    background: color-mix(in oklch, var(--panel) 84%, transparent);
+    border-bottom: 1px solid var(--line);
+    backdrop-filter: blur(18px);
+  }
+
+  .topbar__brand,
+  .topbar__meta {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-10);
+  }
+
+  .topbar__brand {
+    color: var(--accent-strong);
+  }
+
+  .topbar__brand-copy {
+    display: grid;
+    gap: 0.08rem;
+  }
+
+  .topbar__brand-copy strong {
+    font-size: 0.94rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+}

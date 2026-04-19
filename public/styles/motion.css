@@ -1,0 +1,34 @@
+/* ================================================================
+   MOTION — Keyframes + transition catalog
+   @layer components  (keyframes must be in same layer as consumers)
+   ================================================================ */
+@layer components {
+  @keyframes shimmer {
+    to {
+      background-position: -120% 0;
+    }
+  }
+
+  @keyframes results-loading-pulse {
+    0%,
+    100% {
+      transform: scale(0.78);
+      opacity: 0.42;
+    }
+
+    50% {
+      transform: scale(1);
+      opacity: 0.95;
+    }
+  }
+
+  @keyframes results-loading-dots {
+    0% {
+      width: 0;
+    }
+
+    100% {
+      width: 1.6ch;
+    }
+  }
+}

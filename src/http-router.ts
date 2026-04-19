@@ -44,7 +44,6 @@ import {
   buildProviderContext,
   getCostamarTokenStatus,
   resolveLatestCostamarProviderContext,
-  resolveProviderId,
   resolveUsableCostamarBrandedToken,
   verifyCostamarTokenLive,
 } from "./provider-context";
@@ -172,7 +171,12 @@ const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
 })();
 const SEARCH_REVALIDATION_CACHE_WARNING = "Mostrando resultados cacheados mientras actualizamos en segundo plano.";
 
-const RESULTS_LAYOUT_FILE = path.resolve(__dirname, "..", "config", "results-layout.json");
+function resolveResultsLayoutFile(): string {
+  const dir = process.env.FLYDESK_CONFIG_DIR?.trim()
+    ? path.resolve(process.env.FLYDESK_CONFIG_DIR.trim())
+    : path.resolve(__dirname, "..", "config");
+  return path.resolve(dir, "results-layout.json");
+}
 const RESULTS_LAYOUT_VERSION = 1;
 const RESULTS_LAYOUT_COLUMN_LIMITS: Record<ResultsLayoutColumnKey, { min: number; max: number }> = {
   carrier: { min: 88, max: 320 },
@@ -218,7 +222,7 @@ async function readResultsLayoutFile(): Promise<{
   columns: Record<ResultsLayoutColumnKey, number>;
 } | null> {
   try {
-    const raw = await readFile(RESULTS_LAYOUT_FILE, "utf8");
+    const raw = await readFile(resolveResultsLayoutFile(), "utf8");
     const parsed = JSON.parse(raw) as {
       version?: unknown;
       savedAt?: unknown;
@@ -252,8 +256,9 @@ async function writeResultsLayoutFile(
     columns,
   };
 
-  await mkdir(path.dirname(RESULTS_LAYOUT_FILE), { recursive: true });
-  await writeFile(RESULTS_LAYOUT_FILE, JSON.stringify(payload, null, 2), "utf8");
+  const layoutFile = resolveResultsLayoutFile();
+  await mkdir(path.dirname(layoutFile), { recursive: true });
+  await writeFile(layoutFile, JSON.stringify(payload, null, 2), "utf8");
   return payload;
 }
 
@@ -270,6 +275,13 @@ function json(body: unknown, init?: ResponseInit): Response {
       "Content-Type": "application/json; charset=utf-8",
       ...(init?.headers ?? {}),
     },
+  });
+}
+
+function jsonErrors(errors: string[], status = 400, headers?: HeadersInit): Response {
+  return json({ errors }, {
+    status,
+    ...(headers ? { headers } : {}),
   });
 }
 
@@ -341,6 +353,39 @@ function costamarRedirectBlockedResponse(): Response {
     status: 409,
     headers: {
       "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer",
+    },
+  });
+}
+
+function costamarTokenRelayRedirectResponse(targetLocation: string): Response {
+  const serializedLocation = targetLocation
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/</g, "\\u003c");
+
+  return html(`<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <title>Abriendo Costamar</title>
+  </head>
+  <body>
+    <p>Abriendo Costamar…</p>
+    <script>
+      window.location.replace('${serializedLocation}');
+    </script>
+    <noscript>
+      <a rel="noreferrer" href="${serializedLocation}">Continuar en Costamar</a>
+    </noscript>
+  </body>
+</html>`, {
+    status: 200,
+    headers: {
+      "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer",
     },
   });
 }
@@ -409,13 +454,6 @@ function normalizeCabin(input: unknown): Cabin {
     : "ECONOMY";
 }
 
-function shouldPreserveOneWayStayRangeInputs(
-  tripType: TripType,
-  searchMode: SearchMode,
-): boolean {
-  return tripType === "one-way" && searchMode === "stay-range";
-}
-
 function normalizeRequest(
   input: SearchPayload["request"] | undefined,
   providerId?: ProviderId,
@@ -425,7 +463,6 @@ function normalizeRequest(
   const flexibleMode = normalizeFlexibleMode(input?.flexibleMode);
   const leg: Record<string, unknown> = input?.legs?.[0] ?? {};
   const filters = input?.filters ?? {};
-  const preserveOneWayStayRangeInputs = shouldPreserveOneWayStayRangeInputs(tripType, searchMode);
 
   const request: SearchRequest = {
     providerId,
@@ -445,8 +482,8 @@ function normalizeRequest(
         returnStart: stringValue(leg.returnStart),
         returnEnd: stringValue(leg.returnEnd),
         stayNights: numberValue(leg.stayNights),
-        minNights: preserveOneWayStayRangeInputs ? numberValue(leg.minNights) : numberValue(leg.minNights),
-        maxNights: preserveOneWayStayRangeInputs ? numberValue(leg.maxNights) : numberValue(leg.maxNights),
+        minNights: numberValue(leg.minNights),
+        maxNights: numberValue(leg.maxNights),
       },
     ],
     passengers: {
@@ -537,7 +574,7 @@ function validateRequest(request: SearchRequest): string[] {
       request.tripType === "round-trip" &&
       leg.departureDate &&
       leg.returnDate &&
-      leg.returnDate <= leg.departureDate
+      leg.returnDate < leg.departureDate
     ) {
       errors.push("Return date must be after departure date.");
     }
@@ -930,6 +967,12 @@ function mergeLocationSuggestions(
   return [...deduped.values()];
 }
 
+function parseProviderIdFromQuery(value: string): ProviderId | undefined {
+  return value === "costamar" || value === "agil-local"
+    ? value
+    : undefined;
+}
+
 function isLoopbackHost(hostname: string): boolean {
   const normalized = hostname.trim().toLowerCase();
   return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "[::1]";
@@ -1120,6 +1163,10 @@ export async function routeRequest(request: Request): Promise<Response> {
   const runtime = getRuntime();
   const url = new URL(request.url);
 
+  if (url.pathname === "/api/locations" && request.method !== "GET") {
+    return jsonErrors(["Method not allowed."], 405, { Allow: "GET" });
+  }
+
   if (request.method === "GET" && url.pathname === "/api/health") {
     return json({ ok: true });
   }
@@ -1153,10 +1200,14 @@ export async function routeRequest(request: Request): Promise<Response> {
       return json({ error: "This layout endpoint is only available on localhost." }, { status: 403 });
     }
 
+    if (String(process.env.FLYDESK_ALLOW_RESULTS_LAYOUT_WRITE ?? "1").trim() === "0") {
+      return jsonErrors(["Results layout writes are disabled by server policy."], 403);
+    }
+
     const payload = await readPayload<ResultsLayoutPayload>(request);
     const columns = normalizeResultsLayoutColumns(payload?.columns);
     if (!columns) {
-      return json({ errors: ["A full results column layout is required."] }, { status: 400 });
+      return jsonErrors(["A full results column layout is required."], 400);
     }
 
     const layout = await writeResultsLayoutFile(columns);
@@ -1173,7 +1224,7 @@ export async function routeRequest(request: Request): Promise<Response> {
   if (request.method === "GET" && url.pathname === "/api/agil/locations") {
     const query = stringValue(url.searchParams.get("q"));
     if (query.length < 2) {
-      return json({ query, suggestions: [] });
+      return json({ query, providerId: "agil-local", suggestions: [] });
     }
 
     const limit = integerParam(url.searchParams.get("limit"), 8, 1, 20);
@@ -1185,7 +1236,7 @@ export async function routeRequest(request: Request): Promise<Response> {
   if (request.method === "GET" && url.pathname === "/api/costamar/locations") {
     const query = stringValue(url.searchParams.get("q"));
     if (query.length < 2) {
-      return json({ query, suggestions: [] });
+      return json({ query, providerId: "costamar", suggestions: [] });
     }
 
     const limit = integerParam(url.searchParams.get("limit"), 8, 1, 20);
@@ -1195,44 +1246,73 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "GET" && url.pathname === "/api/locations") {
+    const rawProviderId = stringValue(url.searchParams.get("providerId"));
+    const explicitProviderId = rawProviderId
+      ? parseProviderIdFromQuery(rawProviderId)
+      : undefined;
+    if (rawProviderId && !explicitProviderId) {
+      return jsonErrors(["providerId must be 'agil-local' or 'costamar'."], 400);
+    }
+
+    const providerIds = explicitProviderId
+      ? [explicitProviderId]
+      : resolveSearchProviderIds(undefined);
     const query = stringValue(url.searchParams.get("q"));
     if (query.length < 2) {
-      return json({ query, suggestions: [] });
+      if (providerIds.length === 1) {
+        return json({ query, providerId: providerIds[0], suggestions: [] });
+      }
+
+      return json({ query, providerIds, suggestions: [] });
     }
 
     const limit = integerParam(url.searchParams.get("limit"), 8, 1, 20);
     const clientSessionId = resolveLocationSuggestionSessionId(url.searchParams.get("clientSessionId"));
-    const rawProviderId = stringValue(url.searchParams.get("providerId"));
-    const providerIds = rawProviderId
-      ? [resolveProviderId(rawProviderId as ProviderId | undefined)]
-      : resolveSearchProviderIds(undefined);
 
     if (providerIds.length === 1) {
       const providerId = providerIds[0];
-      const suggestions = await suggestLocationsForProvider(runtime, clientSessionId, providerId, query, limit);
+      let suggestions: LocationSuggestion[];
+      try {
+        suggestions = await suggestLocationsForProvider(runtime, clientSessionId, providerId, query, limit);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Location suggest failed.";
+        return jsonErrors([`${providerId}: ${message}`], 502);
+      }
       return json({ query, providerId, suggestions });
     }
 
     const settled = await Promise.allSettled(
-      providerIds.map(async (providerId) => ({
-        providerId,
-        suggestions: await suggestLocationsForProvider(runtime, clientSessionId, providerId, query, limit) as LocationSuggestion[],
-      })),
+      providerIds.map(async (providerId) =>
+        suggestLocationsForProvider(runtime, clientSessionId, providerId, query, limit),
+      ),
     );
 
-    const fulfilled = settled
-      .filter((result): result is PromiseFulfilledResult<{ providerId: ProviderId; suggestions: LocationSuggestion[] }> => result.status === "fulfilled")
-      .map((result) => result.value.suggestions);
+    const fulfilled: LocationSuggestion[][] = [];
+    const failures: string[] = [];
+    settled.forEach((result, index) => {
+      const providerId = providerIds[index] ?? "agil-local";
+      if (result.status === "fulfilled") {
+        fulfilled.push(result.value as LocationSuggestion[]);
+        return;
+      }
+
+      const message = result.reason instanceof Error
+        ? result.reason.message
+        : "Location suggest failed.";
+      failures.push(`${providerId}: ${message}`);
+    });
 
     if (fulfilled.length === 0) {
-      const failure = settled.find((result) => result.status === "rejected");
-      throw failure?.status === "rejected" && failure.reason instanceof Error
-        ? failure.reason
-        : new Error("Location suggest failed.");
+      return jsonErrors(uniqueStrings(failures), 502);
     }
 
     const suggestions = mergeLocationSuggestions(fulfilled, limit);
-    return json({ query, providerIds, suggestions });
+    return json({
+      query,
+      providerIds,
+      suggestions,
+      ...(failures.length > 0 ? { warnings: uniqueStrings(failures) } : {}),
+    });
   }
 
   if (request.method === "POST" && url.pathname === "/api/local/open-url") {
@@ -1301,11 +1381,12 @@ export async function routeRequest(request: Request): Promise<Response> {
     });
 
     const syncSearchJob = (status: "running" | "completed") => {
+      const stateSnapshot = new Map(providerStates);
       const materialized = materializeAggregatedSearchResponse(
         normalizedRequest,
         sortMode,
         providerIds,
-        providerStates,
+        stateSnapshot,
       );
       const limited = limitSearchResponseForPagination(normalizedRequest, materialized);
 
@@ -1354,10 +1435,11 @@ export async function routeRequest(request: Request): Promise<Response> {
         });
         syncSearchJob("running");
       } catch (error) {
+        const detail = error instanceof Error ? error.message : "Search job failed.";
         providerStates.set(providerId, {
           offers: [],
           warnings: [
-            error instanceof Error ? error.message : "Search job failed.",
+            `${providerId}: ${detail}`,
           ],
           partial: true,
           completed: true,
@@ -1373,6 +1455,10 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/search/")) {
+    if (!isLoopbackHost(url.hostname)) {
+      return json({ error: "This search-job endpoint is only available on localhost." }, { status: 403 });
+    }
+
     const jobId = url.pathname.slice("/api/search/".length);
     const job = runtime.sessions.getSearchJob(jobId);
 
@@ -1433,10 +1519,11 @@ export async function routeRequest(request: Request): Promise<Response> {
     });
 
     const syncMatrixJob = (status: "running" | "completed") => {
+      const stateSnapshot = new Map(providerStates);
       const materialized = materializeAggregatedMatrixResponse(
         normalizedRequest,
         providerIds,
-        providerStates,
+        stateSnapshot,
       );
 
       runtime.sessions.updateMatrixJob(job.id, (current) => ({
@@ -1489,10 +1576,11 @@ export async function routeRequest(request: Request): Promise<Response> {
           completed: true,
         });
       } catch (error) {
+        const detail = error instanceof Error ? error.message : "Matrix job failed.";
         providerStates.set(providerId, {
           response: materializeFailedMatrixResponse(
             draftResponse,
-            error instanceof Error ? error.message : "Matrix job failed.",
+            `${providerId}: ${detail}`,
           ),
           completed: true,
         });
@@ -1509,6 +1597,10 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/matrix/")) {
+    if (!isLoopbackHost(url.hostname)) {
+      return json({ error: "This matrix-job endpoint is only available on localhost." }, { status: 403 });
+    }
+
     const jobId = url.pathname.slice("/api/matrix/".length);
     const job = runtime.sessions.getMatrixJob(jobId);
 
@@ -1559,12 +1651,23 @@ export async function routeRequest(request: Request): Promise<Response> {
         if (!canRedirect) {
           return costamarRedirectBlockedResponse();
         }
+
+        try {
+          const parsed = new URL(location);
+          if (parsed.searchParams.has("token")) {
+            return costamarTokenRelayRedirectResponse(location);
+          }
+        } catch {
+          // Fall back to direct redirect when URL parsing fails.
+        }
       }
 
       return new Response(null, {
         status: 302,
         headers: {
           Location: location,
+          "Cache-Control": "no-store",
+          "Referrer-Policy": "no-referrer",
         },
       });
     }

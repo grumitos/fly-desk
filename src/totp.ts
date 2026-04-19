@@ -3,6 +3,13 @@ import { createHmac } from "node:crypto";
 const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 const COSTAMAR_TOTP_LABEL_PATTERN = /costamar|click\s*&?\s*book|clickandbook/i;
 const TOTP_JSON_HINT_PATTERN = /totp|otp|auth|secret|uri/i;
+const TOTP_PERIOD_BOUNDARY_GRACE_MS = 3000;
+
+const cachedTotpCodes = new Map<string, {
+  counter: number;
+  code: string;
+  expiresAtMs: number;
+}>();
 
 interface TotpConfig {
   key: Buffer;
@@ -352,9 +359,30 @@ function normalizeTotpSecretInput(input: string): TotpConfig {
   };
 }
 
+function totpCacheKey(config: TotpConfig): string {
+  return `${config.algorithm}:${config.period}:${config.digits}:${config.key.toString("base64")}`;
+}
+
 export function generateTotpCode(secretInput: string, nowMs = Date.now()): string {
   const { key, digits, period, algorithm } = normalizeTotpSecretInput(secretInput);
+  const periodMs = period * 1000;
   const counter = Math.floor(nowMs / 1000 / period);
+  const cacheKey = totpCacheKey({ key, digits, period, algorithm });
+  const cached = cachedTotpCodes.get(cacheKey);
+
+  if (cached && cached.expiresAtMs > nowMs) {
+    if (cached.counter === counter) {
+      return cached.code;
+    }
+
+    if (
+      cached.counter === (counter - 1)
+      && (nowMs % periodMs) <= TOTP_PERIOD_BOUNDARY_GRACE_MS
+    ) {
+      return cached.code;
+    }
+  }
+
   const counterBuffer = Buffer.alloc(8);
   counterBuffer.writeUInt32BE(Math.floor(counter / 0x100000000), 0);
   counterBuffer.writeUInt32BE(counter >>> 0, 4);
@@ -369,5 +397,12 @@ export function generateTotpCode(secretInput: string, nowMs = Date.now()): strin
   ) >>> 0;
 
   const mod = 10 ** digits;
-  return String(truncated % mod).padStart(digits, "0");
+  const code = String(truncated % mod).padStart(digits, "0");
+  cachedTotpCodes.set(cacheKey, {
+    counter,
+    code,
+    expiresAtMs: ((counter + 1) * periodMs) + TOTP_PERIOD_BOUNDARY_GRACE_MS,
+  });
+
+  return code;
 }

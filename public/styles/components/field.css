@@ -1,0 +1,160 @@
+/* ================================================================
+   FIELD — Input labeled single-row (origin/dest/dates/pax).
+   @layer components
+   ================================================================ */
+@layer components {
+  .field-label {
+    display: inline-flex;
+    align-items: center;
+    font-size: var(--text-micro-size);
+    font-weight: var(--text-label-weight, 600);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .field-shell {
+    display: flex;
+    align-items: center;
+    min-height: var(--rail-control-height, 2.75rem);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface-control-bg);
+    box-shadow: var(--surface-control-shadow);
+    transition: border-color var(--motion-quick) var(--ease-standard),
+                box-shadow var(--motion-quick) var(--ease-standard);
+  }
+
+  .field-shell:focus-within {
+    border-color: var(--accent);
+    box-shadow: var(--focus-ring);
+  }
+
+  .field-input,
+  .field-select,
+  .refinement__input,
+  .calendar-stay__input,
+  .quote-textarea {
+    width: 100%;
+    border: 0;
+    outline: none;
+    background: transparent;
+  }
+
+  .field-input,
+  .field-select {
+    min-height: var(--rail-control-height, 2.75rem);
+    padding: 0 var(--s-12);
+  }
+
+  .field-input::placeholder,
+  .refinement__input::placeholder {
+    color: var(--text-faint);
+  }
+
+  .field-input--code {
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    font-family: var(--font-mono);
+  }
+
+  .field-select {
+    appearance: none;
+    padding-right: 2.8rem;
+    background-image:
+      linear-gradient(45deg, transparent 50%, var(--text-faint) 50%),
+      linear-gradient(135deg, var(--text-faint) 50%, transparent 50%);
+    background-position:
+      calc(100% - 1rem) 50%,
+      calc(100% - 0.72rem) 50%;
+    background-size: 0.42rem 0.42rem, 0.42rem 0.42rem;
+    background-repeat: no-repeat;
+  }
+
+  .field-button,
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-8);
+    min-height: var(--rail-control-height, 2.75rem);
+    padding: 0 var(--s-12);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface-control-bg);
+    color: var(--text);
+    box-shadow: var(--surface-control-shadow);
+    outline: none;
+    transition: border-color var(--motion-quick) var(--ease-standard),
+                background var(--motion-quick) var(--ease-standard),
+                color var(--motion-quick) var(--ease-standard),
+                box-shadow var(--motion-quick) var(--ease-standard);
+  }
+
+  .field-button {
+    width: 100%;
+    text-align: left;
+  }
+
+  .field-button:hover,
+  .btn:hover {
+    border-color: var(--line-strong);
+  }
+
+  .field-button:focus-visible,
+  .btn:focus-visible {
+    border-color: var(--accent);
+    box-shadow: var(--focus-ring);
+  }
+
+  .field-button.is-invalid {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 3px var(--danger-soft);
+  }
+
+  .btn {
+    justify-content: center;
+    font-weight: 600;
+  }
+
+  .btn--primary {
+    background: var(--accent);
+    border-color: var(--accent-strong);
+    color: var(--accent-contrast);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .btn--primary:hover {
+    background: var(--accent-strong);
+  }
+
+  .btn--secondary {
+    background: var(--surface-control-bg-muted);
+    color: var(--text);
+  }
+
+  .btn--ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-muted);
+  }
+
+  .btn--ghost:hover {
+    background: var(--surface-raised);
+    border-color: var(--line);
+  }
+
+  .btn--sm {
+    min-height: var(--control-height-compact);
+    padding: 0 var(--s-12);
+    font-size: 0.82rem;
+  }
+
+  .btn--search {
+    min-width: 9.9rem;
+    width: 100%;
+  }
+}

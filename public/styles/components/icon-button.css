@@ -1,0 +1,61 @@
+/* ================================================================
+   ICON BUTTON + STEPPER
+   @layer components
+   ================================================================ */
+@layer components {
+  .icon-button,
+  .stepper-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--rail-control-height, 2.75rem);
+    height: var(--rail-control-height, 2.75rem);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: var(--surface-control-bg-muted);
+    color: var(--text);
+    outline: none;
+    transition: border-color var(--motion-quick) var(--ease-standard),
+                background var(--motion-quick) var(--ease-standard),
+                color var(--motion-quick) var(--ease-standard);
+  }
+
+  .icon-button:hover,
+  .stepper-button:hover {
+    border-color: var(--line-strong);
+    background: var(--surface-raised);
+  }
+
+  .icon-button:focus-visible,
+  .stepper-button:focus-visible {
+    border-color: var(--accent);
+    box-shadow: var(--focus-ring);
+  }
+
+  .icon-button--swap {
+    align-self: end;
+    margin-bottom: 0;
+  }
+
+  .icon-button.is-active,
+  .results-toolbar__sort-btn.is-active {
+    border-color: var(--selection-border);
+    background: var(--selection-bg);
+    color: var(--selection-fg);
+  }
+
+  .icon-button--sm {
+    width: var(--control-height-compact);
+    height: var(--control-height-compact);
+  }
+
+  .icon-button--ghost {
+    border-color: transparent;
+    background: transparent;
+  }
+
+  .icon-button--ghost:hover {
+    background: var(--surface-raised);
+    border-color: var(--line);
+  }
+}

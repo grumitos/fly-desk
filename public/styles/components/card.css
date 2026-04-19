@@ -1,0 +1,449 @@
+/* ================================================================
+   RESULTS CARD + FLEXIBLE VARIANT
+   @layer components
+   ================================================================ */
+@layer components {
+  /* ── Results list wrapper ── */
+  .results-list-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    box-sizing: border-box;
+    padding-block: var(--results-gutter-block);
+    padding-inline: var(--results-gutter-inline);
+    scrollbar-gutter: stable both-edges;
+  }
+
+  .results-list {
+    display: grid;
+    align-content: start;
+    gap: 0.68rem;
+  }
+
+  .results-list--layout-edit {
+    width: max-content;
+    min-width: 100%;
+  }
+
+  /* ── Card grid ── */
+  .results-card {
+    display: grid;
+    grid-template-columns:
+      minmax(var(--results-col-carrier, 8.2rem), 1fr)
+      minmax(var(--results-col-dates, 9.6rem), 1.15fr)
+      minmax(var(--results-col-duration, 7.8rem), 0.92fr)
+      minmax(var(--results-col-stops, 8.6rem), 0.9fr)
+      minmax(var(--results-col-baggage, 5.2rem), 0.58fr)
+      minmax(var(--results-col-price, 8rem), 0.82fr)
+      minmax(var(--results-col-links, 6.4rem), 0.68fr);
+    column-gap: clamp(0.48rem, 0.82vw, 0.75rem);
+    row-gap: 0.54rem;
+    align-items: center;
+    padding: var(--s-12) var(--s-12);
+    border: 1px solid color-mix(in oklch, var(--line) 92%, transparent);
+    border-radius: var(--r-lg);
+    background: var(--surface-control-bg);
+    box-shadow: var(--surface-control-shadow);
+    cursor: pointer;
+    transition:
+      border-color var(--motion-quick) var(--ease-standard),
+      background var(--motion-quick) var(--ease-standard),
+      transform var(--motion-quick) var(--ease-standard),
+      box-shadow var(--motion-quick) var(--ease-standard);
+  }
+
+  .results-list--layout-edit .results-card {
+    grid-template-columns:
+      minmax(0, var(--results-col-carrier, 132px))
+      minmax(0, var(--results-col-dates, 154px))
+      minmax(0, var(--results-col-duration, 126px))
+      minmax(0, var(--results-col-stops, 138px))
+      minmax(0, var(--results-col-baggage, 96px))
+      minmax(0, var(--results-col-price, 128px))
+      minmax(0, var(--results-col-links, 102px));
+    width: 100%;
+    min-width: max-content;
+  }
+
+  .results-card:hover {
+    border-color: color-mix(in oklch, var(--accent) 38%, var(--line));
+    transform: translateY(-1px);
+  }
+
+  .results-card.is-active {
+    border-color: color-mix(in oklch, var(--accent) 60%, var(--line));
+    background: color-mix(in oklch, var(--accent-soft) 22%, var(--surface-control-bg));
+  }
+
+  .results-card:focus-visible {
+    outline: 2px solid color-mix(in oklch, var(--accent) 42%, var(--line));
+    outline-offset: 2px;
+  }
+
+  .results-card--disabled {
+    cursor: default;
+    opacity: 0.74;
+  }
+
+  .results-card--placeholder {
+    pointer-events: none;
+  }
+
+  /* ── Card cells ── */
+  .results-card__airline,
+  .results-card__schedule,
+  .results-card__route,
+  .results-card__journey,
+  .results-card__baggage,
+  .results-card__price,
+  .results-card__links {
+    display: grid;
+    gap: 0.22rem;
+    min-width: 0;
+  }
+
+  .results-card__airline-name,
+  .results-card__route-main,
+  .results-card__journey-main {
+    font-weight: 700;
+  }
+
+  .results-card__airline-name {
+    font-size: 0.96rem;
+  }
+
+  .results-card__airline-meta,
+  .results-card__schedule-sub,
+  .results-card__micro-label,
+  .results-card__status {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    line-height: 1.3;
+  }
+
+  .results-card__airline-meta--muted {
+    color: var(--text-faint);
+  }
+
+  .results-card__schedule-main {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.28rem;
+    font-size: clamp(1.08rem, 1.1vw + 0.45rem, 1.42rem);
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    white-space: nowrap;
+  }
+
+  .results-card__schedule-separator {
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .results-card__schedule-offset {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--text-muted);
+  }
+
+  .results-card__route-main {
+    font-size: 0.91rem;
+  }
+
+  .results-card__journey-main {
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+  }
+
+  .results-card__journey-sub {
+    min-width: 0;
+    min-height: 1.2rem;
+    display: flex;
+    align-items: center;
+  }
+
+  .results-card__journey--flex {
+    align-content: center;
+  }
+
+  .results-card__baggage {
+    justify-items: stretch;
+    overflow: hidden;
+  }
+
+  .results-card__baggage .results-card__micro-label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .results-card__baggage .baggage-icons {
+    max-width: 100%;
+    overflow: hidden;
+    justify-content: flex-start;
+  }
+
+  /* ── Shared cell helpers ── */
+  .cell-main {
+    font-weight: 600;
+  }
+
+  .carrier-label {
+    display: inline-block;
+    max-width: 10.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+  }
+
+  .results-card .carrier-label,
+  .results-card .results-date-stack > .cell-main,
+  .results-card .results-date-stack > .cell-sub {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .cell-sub {
+    color: var(--text-muted);
+    font-size: 0.83rem;
+  }
+
+  .cell-sub--ghost {
+    visibility: hidden;
+    user-select: none;
+  }
+
+  .cell-sub--warning {
+    color: var(--warning);
+    font-weight: 600;
+  }
+
+  .results-date-stack {
+    display: grid;
+    gap: 0.16rem;
+    min-width: 0;
+    min-height: 2.35rem;
+    align-content: center;
+  }
+
+  /* ── Stops summary ── */
+  .results-card__stops-summary {
+    display: inline-block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.76rem;
+    font-weight: 600;
+    line-height: 1.15;
+    color: var(--text-muted);
+  }
+
+  .results-card__stops-summary--warning {
+    color: color-mix(in oklch, var(--warning) 70%, var(--text));
+  }
+
+  .results-card__stops-summary--danger {
+    color: color-mix(in oklch, var(--danger) 72%, var(--text));
+  }
+
+  .results-card__stops-summary--direct {
+    color: color-mix(in oklch, var(--success) 72%, var(--text));
+  }
+
+  /* ── Price stack ── */
+  .results-price {
+    white-space: normal;
+    text-align: right;
+  }
+
+  .price-stack {
+    display: inline-grid;
+    gap: 0.16rem;
+    justify-items: end;
+    line-height: 1.1;
+    min-width: 0;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .price-stack__total {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .price-stack__meta {
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .price-stack--matrix {
+    justify-items: center;
+  }
+
+  /* ── Provider links ── */
+  .row-link {
+    color: var(--accent-strong);
+    font-weight: 600;
+  }
+
+  .row-link--static {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .row-link--provider {
+    display: inline-grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    box-sizing: border-box;
+    border-radius: 0;
+    background: transparent;
+    border: none;
+  }
+
+  .provider-link-icon__img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+
+  .baggage-icons {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+  }
+
+  .baggage-icons__item {
+    display: inline-grid;
+    place-items: center;
+  }
+
+  .ico--bag-yes {
+    color: color-mix(in oklch, var(--text) 92%, black);
+  }
+
+  .ico--bag-no {
+    color: var(--text-muted);
+    opacity: 0.52;
+  }
+
+  .provider-links-cell {
+    display: grid;
+    gap: 0.28rem;
+    align-content: center;
+    min-width: 0;
+  }
+
+  .results-card .provider-links-cell {
+    display: grid;
+    width: 100%;
+    max-width: 100%;
+    gap: 0.28rem;
+    font-size: 0.84rem;
+  }
+
+  .provider-links-cell__item {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    line-height: 1.15;
+  }
+
+  .provider-links-cell__item--link,
+  .provider-links-cell__item--warning {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .results-card .provider-links-cell > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .results-card .provider-links-cell .row-link,
+  .results-card .provider-links-cell .cell-sub--warning {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .results-card .provider-links-cell .row-link--provider {
+    display: inline-grid;
+  }
+
+  .provider-link-warning {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.28rem;
+    width: 100%;
+  }
+
+  .results-card .provider-links-cell .provider-link-warning {
+    display: inline-flex;
+  }
+
+  .provider-link-warning__text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .results-card__price {
+    justify-items: stretch;
+    overflow: hidden;
+  }
+
+  .results-card__links {
+    justify-items: stretch;
+    overflow: hidden;
+  }
+
+  .results-card__price .price-stack {
+    justify-self: stretch;
+    max-width: 100%;
+  }
+
+  .results-card__links .provider-links-cell,
+  .results-card__links .cell-sub {
+    justify-self: stretch;
+    max-width: 100%;
+    text-align: right;
+  }
+
+  /* ── Flexible variant ── */
+  .results-card--flexible {
+    grid-template-columns: minmax(8.2rem, 0.82fr) minmax(11rem, 1.12fr) minmax(8.8rem, 0.92fr) minmax(7.5rem, 0.72fr);
+  }
+
+  .results-card--flexible .results-card__price {
+    align-content: center;
+  }
+}
