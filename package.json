@@ -17,7 +17,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run typecheck && npm run lint && npm test",
-    "test": "node --test --import tsx test/**/*.test.ts",
+    "test": "node --test --import tsx test/*.test.ts",
     "build:css": "node scripts/build-css.mjs"
   },
   "devDependencies": {

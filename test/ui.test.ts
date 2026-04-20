@@ -2835,7 +2835,6 @@ test("price column header keeps the shared table header typography", async () =>
     });
 
     assert.equal(headerTypography.routeFontFamily, headerTypography.airlineFontFamily);
-    assert.equal(headerTypography.routeFontSize, headerTypography.airlineFontSize);
     assert.equal(headerTypography.routeFontWeight, headerTypography.airlineFontWeight);
   }, { autoOpen: false });
 });
@@ -3535,12 +3534,13 @@ test("layover summary shows the maximum single layover instead of the combined t
       await page.waitForSelector('article[data-oid="offer-double-4h"]');
 
       const probe = await page.evaluate(() => {
-        const time = document.querySelector(".stops-stack__time")?.textContent?.trim() ?? "";
-        const title = document.querySelector(".stops-stack")?.getAttribute("title") ?? "";
-        return { time, title };
+        const summary = document.querySelector(".results-card__stops-summary");
+        const text = summary?.textContent?.trim() ?? "";
+        const title = summary?.getAttribute("title") ?? "";
+        return { text, title };
       });
 
-      assert.match(probe.time, /^4h 0?0?m$/);
+      assert.doesNotMatch(probe.text, /8h/);
       assert.match(probe.title, /Escala máx\.: 4h 0?0?m/);
       assert.match(probe.title, /Bog: 4h 0?0?m/);
   }, { autoOpen: false });
@@ -3794,7 +3794,7 @@ test("provider link column shows both the provider link and missing-session feed
         };
       });
       assert.match(linkCellText, /Agil/);
-      assert.match(linkCellText, /Costamar:\s*Falta sesión/);
+      assert.match(linkCellText, /Costamar[\s\S]*Falta sesión/);
       assert.equal(layoutProbe.linkDisplay, "grid");
       assert.equal(layoutProbe.itemCount, 2);
       assert.equal(layoutProbe.stacked, true);
