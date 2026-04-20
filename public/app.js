@@ -4014,7 +4014,7 @@ function buildPendingSearchResponse(request, sortMode) {
   };
 }
 
-function resetExactSearchUiState(request, sortModeValue, { syncForm = false } = {}) {
+function resetExactSearchUiState(request, sortModeValue, { syncForm = false, providerConfig } = {}) {
   stopMatrixPolling();
   stopSearchPolling();
   exitMigrationMode();
@@ -4030,6 +4030,7 @@ function resetExactSearchUiState(request, sortModeValue, { syncForm = false } = 
   state.matrixExpanded = false;
   state.matrixResponse = null;
   state.viewMode = "list";
+  state.providerConfig = normalizeClipboardProviderConfig(providerConfig);
   state.request = request;
   if (syncForm) {
     syncSearchFormWithRequest(request);
@@ -4075,7 +4076,10 @@ async function launchExactSearchInCurrentTab(payload, { syncForm = false } = {})
     return false;
   }
   const sortModeValue = payload.sortMode || state.sortMode || "cheapest";
-  resetExactSearchUiState(payload.request, sortModeValue, { syncForm });
+  resetExactSearchUiState(payload.request, sortModeValue, {
+    syncForm,
+    providerConfig: payload.providerConfig,
+  });
   seedExactSearchResponse(payload.request, sortModeValue);
   renderAll();
   await fetchExactSearchData(payload.request, sortModeValue, { syncForm, providerConfig: payload.providerConfig });
