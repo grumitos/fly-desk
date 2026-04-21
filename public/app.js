@@ -853,13 +853,14 @@ function renderProviderLinkItem(path, providerId) {
     return "";
   }
 
-  const warningTitle = fallback.title || `${label}: ${fallback.label}`;
+  const warningLabel = `${label}: ${fallback.label}`;
+  const warningTitle = fallback.title || warningLabel;
   return `
     <div class="provider-links-cell__item provider-links-cell__item--warning">
       <span class="cell-sub cell-sub--warning provider-link-warning" title="${escapeHtml(warningTitle)}">
         ${icon}
         <span class="sr-only">${escapeHtml(label)}</span>
-        <span class="provider-link-warning__text">${escapeHtml(fallback.label)}</span>
+        <span class="provider-link-warning__text">${escapeHtml(warningLabel)}</span>
       </span>
     </div>
   `.trim();
@@ -2014,7 +2015,7 @@ function renderDetailHeroPriceHtml(m, passengerCount) {
   return `
     <div class="detail-hero">
       <span class="detail-hero__total">${escapeHtml(labels.totalLabel)}</span>
-      ${labels.perPersonLabel ? `<span class="detail-hero__meta">${escapeHtml(labels.perPersonLabel)}</span>` : ""}
+      ${labels.perPersonLabel ? `<span class="detail-hero__meta">${escapeHtml(`${labels.perPersonLabel} por persona`)}</span>` : ""}
     </div>
   `.trim();
 }
@@ -4051,8 +4052,12 @@ function seedExactSearchResponse(request, sortModeValue) {
   return false;
 }
 
-async function fetchExactSearchData(request, sortModeValue, { syncForm = false } = {}) {
-  const data = await postJson("/api/search", { request, sortMode: sortModeValue });
+async function fetchExactSearchData(request, sortModeValue, { syncForm = false, providerConfig } = {}) {
+  const data = await postJson("/api/search", {
+    request,
+    sortMode: sortModeValue,
+    providerConfig: normalizeClipboardProviderConfig(providerConfig),
+  });
   state.request = data.request ?? request;
   if (syncForm) {
     syncSearchFormWithRequest(state.request);
@@ -4073,7 +4078,10 @@ async function launchExactSearchInCurrentTab(payload, { syncForm = false } = {})
   resetExactSearchUiState(payload.request, sortModeValue, { syncForm });
   seedExactSearchResponse(payload.request, sortModeValue);
   renderAll();
-  await fetchExactSearchData(payload.request, sortModeValue, { syncForm });
+  await fetchExactSearchData(payload.request, sortModeValue, {
+    syncForm,
+    providerConfig: payload.providerConfig,
+  });
   renderAll();
   return true;
 }
@@ -4094,7 +4102,10 @@ async function refreshStartupLaunchPayload(payload) {
   }
   const sortModeValue = payload.sortMode || state.sortMode || "cheapest";
   try {
-    await fetchExactSearchData(payload.request, sortModeValue, { syncForm: true });
+    await fetchExactSearchData(payload.request, sortModeValue, {
+      syncForm: true,
+      providerConfig: payload.providerConfig,
+    });
     renderAll();
   } catch (err) {
     showToast(err.message);
@@ -5111,12 +5122,17 @@ function renderStopsSummary(offer) {
   const primaryCity = items[0]?.city || "Ciudad por confirmar";
   const citySummary = items.length > 1 ? `${primaryCity} +${items.length - 1}` : primaryCity;
   const summaryText = `${label} · ${citySummary}`;
+  const maxLayoverMinutes = items.reduce((max, item) => Math.max(max, item.minutes), 0);
+  const maxLayoverLabel = maxLayoverMinutes > 0 ? formatDuration(maxLayoverMinutes) : "";
   const detailTitle = items.length
-    ? `${label}: ${items.map((item) => item.city).join(" | ")}`
+    ? `Escala máx.: ${maxLayoverLabel}${items.length ? ` | ${items.map((item) => `${item.city}: ${formatDuration(item.minutes)}`).join(" | ")}` : ""}`
     : summaryText;
 
   return `
-    <span class="results-card__stops-summary ${toneClass}" title="${escapeHtml(detailTitle)}">${escapeHtml(summaryText)}</span>
+    <span class="stops-stack" title="${escapeHtml(detailTitle)}">
+      <span class="results-card__stops-summary ${toneClass}">${escapeHtml(summaryText)}</span>
+      ${maxLayoverLabel ? `<span class="stops-stack__time">${escapeHtml(maxLayoverLabel)}</span>` : ""}
+    </span>
   `;
 }
 
@@ -5204,7 +5220,10 @@ function renderExactResultsCardHtml(group, selectedOfferId, providerLinkIndex, p
         ${renderBaggageIconsHtml(offer)}
       </div>
 
-      <div class="results-card__price results-price" data-result-price>${renderPriceBreakdownHtml(offer.price?.total, passengerCount)}</div>
+      <div class="results-card__price results-price" data-result-price>${renderPriceBreakdownHtml(offer.price?.total, passengerCount, {
+        totalSuffix: " total",
+        perPersonSuffix: " por persona",
+      })}</div>
       <div class="results-card__links results-links-cell" data-result-links>${renderProviderLinksCell(offer, providerLinkIndex)}</div>
     </article>
   `;
@@ -5223,7 +5242,10 @@ function renderFlexibleResultsCardHtml(cell) {
   const priceHtml = cell.confidence === "loading"
     ? '<span class="results-card__status">Cargando...</span>'
     : cell.price
-      ? renderPriceBreakdownHtml(cell.price, passengerCount)
+      ? renderPriceBreakdownHtml(cell.price, passengerCount, {
+        totalSuffix: " total",
+        perPersonSuffix: " por persona",
+      })
       : `<span class="results-card__status">${escapeHtml(flexibleCellStateLabel(cell))}</span>`;
   const rowLabel = [
     isActive ? "Combinación seleccionada" : "Ver combinación flexible",
@@ -6269,7 +6291,7 @@ function renderMatrixCellDetail(cell) {
   h += detailPairHtml("Pasajeros", passengerSummary);
   if (cell.price) {
     h += detailPairHtml("Total", priceLabels(cell.price, passengerCount).totalLabel, { strong: true });
-    h += detailPairHtml("Por pax", priceLabels(cell.price, passengerCount).perPersonLabel);
+    h += detailPairHtml("Por persona", priceLabels(cell.price, passengerCount).perPersonLabel);
   }
   h += detailPairHtml("Filtros", flexibleCellFilterSummary(request?.filters ?? fallbackRequest?.filters));
   h += detailPairHtml("Cabina", request?.cabin ?? fallbackRequest?.cabin ?? "ECONOMY");
@@ -6415,7 +6437,7 @@ function renderDetailPanel() {
   // Fare
   h += '<div class="detail-section"><div class="detail-section__title">Tarifa</div>';
   h += `<div class="detail-pair detail-pair--strong"><span class="detail-pair__key">Total</span><span class="detail-pair__val">${offerPriceLabels.totalLabel}</span></div>`;
-  h += `<div class="detail-pair"><span class="detail-pair__key">Por pax</span><span class="detail-pair__val">${offerPriceLabels.perPersonLabel}</span></div>`;
+  h += `<div class="detail-pair"><span class="detail-pair__key">Por persona</span><span class="detail-pair__val">${offerPriceLabels.perPersonLabel}</span></div>`;
   if (offer.price?.base) h += `<div class="detail-pair"><span class="detail-pair__key">Base</span><span class="detail-pair__val">${formatMoney(offer.price.base)}</span></div>`;
   if (offer.price?.taxes) h += `<div class="detail-pair"><span class="detail-pair__key">Tasas</span><span class="detail-pair__val">${formatMoney(offer.price.taxes)}</span></div>`;
   if (offer.fareMeta?.lastTicketingDate) h += `<div class="detail-pair"><span class="detail-pair__key">Emisión límite</span><span class="detail-pair__val">${offer.fareMeta.lastTicketingDate}</span></div>`;

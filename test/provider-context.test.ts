@@ -4,10 +4,12 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildProviderContextAsync,
   buildProviderContext,
   DEFAULT_COSTAMAR_API_BASE_URL,
   DEFAULT_COSTAMAR_BRAND_BASE_URL,
   DEFAULT_COSTAMAR_TERMINAL_ID,
+  getCostamarChromeSessionScanCountForTests,
   normalizeCostamarProviderContext,
   resetCostamarSessionCacheForTests,
   resolveLatestCostamarProviderContext,
@@ -53,6 +55,60 @@ test("normalizeCostamarProviderContext rejects unapproved api hosts from env", (
     } else {
       process.env.COSTAMAR_API_BASE_URL = previous;
     }
+  }
+});
+
+test("buildProviderContextAsync coalesces concurrent Costamar scans in-flight", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-inflight-dedup-"));
+  const profileName = "Profile 90";
+  const sessionsDir = join(tempRoot, profileName, "Sessions");
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  writeFileSync(
+    join(sessionsDir, "Tabs_1"),
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${token}`,
+    "utf8",
+  );
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const contexts = await Promise.all([
+      buildProviderContextAsync("costamar", { costamar: { terminalId: "0721808110", lang: "es" } }),
+      buildProviderContextAsync("costamar", { costamar: { terminalId: "0721808110", lang: "es" } }),
+      buildProviderContextAsync("costamar", { costamar: { terminalId: "0721808110", lang: "es" } }),
+      buildProviderContextAsync("costamar", { costamar: { terminalId: "0721808110", lang: "es" } }),
+    ]);
+
+    contexts.forEach((context) => {
+      assert.equal(context?.costamar?.terminalId, "0721808110");
+      assert.equal(context?.costamar?.token, token);
+    });
+    assert.equal(getCostamarChromeSessionScanCountForTests(), 1);
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
   }
 });
 

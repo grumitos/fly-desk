@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser, BrowserContext, Page } from "playwright";
 import {
+  removePathWithRetries,
   registerActiveTempArtifact,
   unregisterActiveTempArtifact,
 } from "./temp-artifacts";
@@ -1416,22 +1417,28 @@ async function launchCostamarBrowserContext(): Promise<{
 }> {
   const profileName = resolveCostamarChromeProfileName();
   const tempRoot = prepareTemporaryCostamarChromeProfile(profileName);
-  const playwright = await getPlaywright();
-  const context = await playwright.chromium.launchPersistentContext(tempRoot, {
-    executablePath: resolveCostamarChromeExecutable(),
-    headless: costamarBrowserAutomationHeadless(),
-    args: [
-      `--profile-directory=${profileName}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-    ],
-  });
+  try {
+    const playwright = await getPlaywright();
+    const context = await playwright.chromium.launchPersistentContext(tempRoot, {
+      executablePath: resolveCostamarChromeExecutable(),
+      headless: costamarBrowserAutomationHeadless(),
+      args: [
+        `--profile-directory=${profileName}`,
+        "--no-first-run",
+        "--no-default-browser-check",
+      ],
+    });
 
-  return {
-    context,
-    tempRoot,
-    profileName,
-  };
+    return {
+      context,
+      tempRoot,
+      profileName,
+    };
+  } catch (error) {
+    await removePathWithRetries(tempRoot, 6, 250);
+    unregisterActiveTempArtifact(tempRoot);
+    throw error;
+  }
 }
 
 async function generateCostamarRedirectContextViaB2B(
@@ -1598,7 +1605,7 @@ async function generateCostamarRedirectContextViaB2B(
       await browserContext.close().catch(() => undefined);
     }
     if (tempRoot) {
-      rmSync(tempRoot, { recursive: true, force: true });
+      await removePathWithRetries(tempRoot, 6, 250);
       unregisterActiveTempArtifact(tempRoot);
     }
   }

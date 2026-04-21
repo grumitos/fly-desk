@@ -4,24 +4,23 @@ import { buildCommercialQuotation } from "./core/quotation";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import {
-  normalizeFlexibleRoundTripRequest,
-  resolveFlexibleRoundTripMode,
-} from "./core/flexible-search";
-import {
-  Cabin,
   CanonicalOffer,
-  FlexibleRoundTripMode,
   LocationSuggestion,
   MatrixCell,
   MatrixResponse,
-  ProviderConfigInput,
   ProviderContext,
   ProviderId,
-  SearchMode,
   SearchRequest,
   SearchResponse,
-  TripType,
 } from "./core/types";
+import {
+  prepareSearchContract,
+  resolveSearchProviderIds,
+  resolveSortMode,
+  SearchPayload,
+  SortMode,
+  validateSearchContract,
+} from "./http-search-contract";
 import {
   createLocalAgilSearchDraft,
   resolveLocalAgilExactProgressive,
@@ -41,7 +40,7 @@ import {
 } from "./local-costamar";
 import { openUrlLocally } from "./local-browser";
 import {
-  buildProviderContext,
+  buildProviderContextAsync,
   getCostamarTokenStatus,
   resolveLatestCostamarProviderContext,
   resolveProviderId,
@@ -53,20 +52,6 @@ import { limitSearchResponseForPagination } from "./search-limits";
 import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
 import type { SearchJobRecord } from "./session-store";
-import { getSearchDatePolicy, validateSearchDateInPolicy } from "./search-date-policy";
-
-type SortMode = "cheapest" | "fastest" | "best-value";
-
-interface SearchPayload {
-  providerId?: ProviderId;
-  providerConfig?: ProviderConfigInput;
-  request?: Partial<SearchRequest> & {
-    legs?: Array<Record<string, unknown>>;
-    passengers?: Record<string, unknown>;
-    filters?: Record<string, unknown>;
-  };
-  sortMode?: SortMode;
-}
 
 interface SessionPayload {
   searchSessionId?: string;
@@ -257,12 +242,6 @@ async function writeResultsLayoutFile(
   return payload;
 }
 
-function parseExplicitProviderId(value: unknown): ProviderId | undefined {
-  return value === "costamar" || value === "agil-local"
-    ? value
-    : undefined;
-}
-
 function json(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
     status: init?.status ?? 200,
@@ -349,15 +328,6 @@ function stringValue(input: unknown, fallback = ""): string {
   return typeof input === "string" ? input.trim() : fallback;
 }
 
-function numberValue(input: unknown, fallback?: number): number | undefined {
-  if (input === undefined || input === null || input === "") {
-    return fallback;
-  }
-
-  const value = typeof input === "number" ? input : Number(input);
-  return Number.isFinite(value) ? value : fallback;
-}
-
 function integerParam(input: string | null, fallback: number, min: number, max: number): number {
   const parsed = Number(input);
   if (!Number.isFinite(parsed)) {
@@ -365,259 +335,6 @@ function integerParam(input: string | null, fallback: number, min: number, max: 
   }
 
   return Math.min(max, Math.max(min, Math.trunc(parsed)));
-}
-
-function booleanValue(input: unknown, fallback = false): boolean {
-  return typeof input === "boolean" ? input : fallback;
-}
-
-function stringList(input: unknown): string[] | undefined {
-  if (!Array.isArray(input)) {
-    return undefined;
-  }
-
-  const values = input
-    .map((entry) => typeof entry === "string" ? entry.trim().toUpperCase() : "")
-    .filter(Boolean);
-
-  return values.length > 0 ? values : undefined;
-}
-
-function normalizeTripType(input: unknown): TripType {
-  if (input === "one-way" || input === "multi-city") {
-    return input;
-  }
-  return "round-trip";
-}
-
-function normalizeSearchMode(input: unknown): SearchMode {
-  if (input === "stay-range" || input === "roundtrip-grid" || input === "month-view") {
-    return input;
-  }
-  return "exact";
-}
-
-function normalizeFlexibleMode(input: unknown): FlexibleRoundTripMode | undefined {
-  return input === "fixed-ranges" || input === "exact-stay"
-    ? input
-    : undefined;
-}
-
-function normalizeCabin(input: unknown): Cabin {
-  return input === "PREMIUM_ECONOMY" || input === "BUSINESS" || input === "FIRST"
-    ? input
-    : "ECONOMY";
-}
-
-function shouldPreserveOneWayStayRangeInputs(
-  tripType: TripType,
-  searchMode: SearchMode,
-): boolean {
-  return tripType === "one-way" && searchMode === "stay-range";
-}
-
-function normalizeRequest(
-  input: SearchPayload["request"] | undefined,
-  providerId?: ProviderId,
-): SearchRequest {
-  const tripType = normalizeTripType(input?.tripType);
-  const searchMode = normalizeSearchMode(input?.searchMode);
-  const flexibleMode = normalizeFlexibleMode(input?.flexibleMode);
-  const leg: Record<string, unknown> = input?.legs?.[0] ?? {};
-  const filters = input?.filters ?? {};
-  const preserveOneWayStayRangeInputs = shouldPreserveOneWayStayRangeInputs(tripType, searchMode);
-
-  const request: SearchRequest = {
-    providerId,
-    tripType,
-    searchMode,
-    flexibleMode,
-    legs: [
-      {
-        origin: stringValue(leg.origin).toUpperCase(),
-        destination: stringValue(leg.destination).toUpperCase(),
-        originLabel: stringValue(leg.originLabel),
-        destinationLabel: stringValue(leg.destinationLabel),
-        departureDate: stringValue(leg.departureDate),
-        departureStart: stringValue(leg.departureStart),
-        departureEnd: stringValue(leg.departureEnd),
-        returnDate: stringValue(leg.returnDate),
-        returnStart: stringValue(leg.returnStart),
-        returnEnd: stringValue(leg.returnEnd),
-        stayNights: numberValue(leg.stayNights),
-        minNights: preserveOneWayStayRangeInputs ? numberValue(leg.minNights) : numberValue(leg.minNights),
-        maxNights: preserveOneWayStayRangeInputs ? numberValue(leg.maxNights) : numberValue(leg.maxNights),
-      },
-    ],
-    passengers: {
-      adults: numberValue(input?.passengers?.adults, 1) ?? 1,
-      children: numberValue(input?.passengers?.children, 0) ?? 0,
-      infants: numberValue(input?.passengers?.infants, 0) ?? 0,
-    },
-    cabin: normalizeCabin(input?.cabin),
-    filters: {
-      nonStop: booleanValue(filters.nonStop, false),
-      includedAirlineCodes: stringList(filters.includedAirlineCodes),
-      excludedAirlineCodes: stringList(filters.excludedAirlineCodes),
-      maxPrice: numberValue(filters.maxPrice),
-      maxResults: numberValue(filters.maxResults),
-      maxTotalDurationMinutes: numberValue(filters.maxTotalDurationMinutes),
-      maxLayoverMinutes: numberValue(filters.maxLayoverMinutes),
-      maxStops: numberValue(filters.maxStops),
-      minDepartureMinutes: numberValue(filters.minDepartureMinutes),
-      maxDepartureMinutes: numberValue(filters.maxDepartureMinutes),
-      minArrivalMinutes: numberValue(filters.minArrivalMinutes),
-      maxArrivalMinutes: numberValue(filters.maxArrivalMinutes),
-      baggageRequired: booleanValue(filters.baggageRequired, false),
-      verifiedOnly: booleanValue(filters.verifiedOnly, false),
-      exactPurchasePathOnly: booleanValue(filters.exactPurchasePathOnly, false),
-    },
-    coverageMode: input?.coverageMode === "extended" ? "extended" : "core",
-    redirectMode: input?.redirectMode === "none" || input?.redirectMode === "strict"
-      ? input.redirectMode
-      : "best-effort",
-    currencyCode: stringValue(input?.currencyCode, "USD").toUpperCase(),
-    locale: stringValue(input?.locale, "es-PE"),
-    market: stringValue(input?.market, "PE"),
-  };
-
-  return normalizeFlexibleRoundTripRequest(request);
-}
-
-function validateRequest(request: SearchRequest): string[] {
-  const leg = request.legs[0];
-  const errors: string[] = [];
-  const datePolicy = getSearchDatePolicy();
-  const flexibleRoundTripMode = resolveFlexibleRoundTripMode(request);
-  const dateFields: Array<[string, string | undefined]> = [
-    ["Departure date", leg.departureDate],
-    ["Return date", leg.returnDate],
-    ["Departure start", leg.departureStart],
-    ["Departure end", leg.departureEnd],
-    ["Return start", leg.returnStart],
-    ["Return end", leg.returnEnd],
-  ];
-
-  if (!leg.origin || leg.origin.length < 3) {
-    errors.push("Origin is required and must be an IATA-like code.");
-  }
-
-  if (!leg.destination || leg.destination.length < 3) {
-    errors.push("Destination is required and must be an IATA-like code.");
-  }
-
-  if (leg.origin && leg.destination && leg.origin === leg.destination) {
-    errors.push("Origin and destination must be different.");
-  }
-
-  if (request.passengers.adults < 1) {
-    errors.push("At least one adult is required.");
-  }
-
-  if (request.passengers.infants > request.passengers.adults) {
-    errors.push("Infants cannot exceed adults.");
-  }
-
-  if (
-    request.passengers.adults + request.passengers.children + request.passengers.infants > 9
-  ) {
-    errors.push("Passenger count cannot exceed 9.");
-  }
-
-  if (request.searchMode === "exact") {
-    if (!leg.departureDate) {
-      errors.push("Departure date is required for exact search.");
-    }
-
-    if (request.tripType === "round-trip" && !leg.returnDate) {
-      errors.push("Return date is required for round-trip exact search.");
-    }
-
-    if (
-      request.tripType === "round-trip" &&
-      leg.departureDate &&
-      leg.returnDate &&
-      leg.returnDate <= leg.departureDate
-    ) {
-      errors.push("Return date must be after departure date.");
-    }
-  }
-
-  if (request.searchMode === "roundtrip-grid") {
-    if (!leg.departureStart || !leg.departureEnd) {
-      errors.push("Departure range is required for matrix search.");
-    }
-
-    if (
-      request.tripType === "round-trip" &&
-      flexibleRoundTripMode !== "exact-stay" &&
-      (!leg.returnStart || !leg.returnEnd)
-    ) {
-      errors.push("Return range is required for round-trip matrix search.");
-    }
-
-    if (
-      request.tripType === "round-trip"
-      && flexibleRoundTripMode === "exact-stay"
-      && !Number.isFinite(leg.stayNights)
-    ) {
-      errors.push("Stay nights is required for exact-stay matrix search.");
-    }
-  }
-
-  if (request.searchMode === "stay-range") {
-    if (!leg.departureStart || !leg.departureEnd) {
-      errors.push("Departure range is required for range search.");
-    }
-
-    if (
-      request.tripType === "round-trip" &&
-      (!leg.returnStart || !leg.returnEnd)
-    ) {
-      errors.push("Return range is required for round-trip range search.");
-    }
-  }
-
-  if (leg.departureStart && leg.departureEnd && leg.departureEnd < leg.departureStart) {
-    errors.push("Departure range end must be on or after departure range start.");
-  }
-
-  if (leg.returnStart && leg.returnEnd && leg.returnEnd < leg.returnStart) {
-    errors.push("Return range end must be on or after return range start.");
-  }
-
-  dateFields.forEach(([label, value]) => {
-    errors.push(...validateSearchDateInPolicy(label, value, datePolicy));
-  });
-
-  return errors;
-}
-
-function validateProviderContext(
-  providerId: ProviderId,
-  providerContext: ProviderContext | undefined,
-): string[] {
-  if (providerId !== "costamar") {
-    return [];
-  }
-
-  const errors: string[] = [];
-  const context = providerContext?.costamar;
-  if (!context?.terminalId) {
-    errors.push("Costamar terminalId is required.");
-  }
-
-  return errors;
-}
-
-function resolveSearchProviderIds(
-  explicitProviderId: ProviderId | undefined,
-): ProviderId[] {
-  if (explicitProviderId) {
-    return [explicitProviderId];
-  }
-
-  return ["agil-local", "costamar"];
 }
 
 function createSearchDraftResponse(
@@ -930,9 +647,8 @@ function mergeLocationSuggestions(
   return [...deduped.values()];
 }
 
-function isLoopbackHost(hostname: string): boolean {
-  const normalized = hostname.trim().toLowerCase();
-  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "[::1]";
+function isTrustedLocalRequest(request: Request): boolean {
+  return request.headers.get("x-flydesk-client-loopback") === "1";
 }
 
 function validateLocalOpenUrl(input: string): URL | undefined {
@@ -1116,6 +832,245 @@ function warmSearchSessionQuotationRate(
   void warmQuotationUsdToPenRate(session);
 }
 
+function shouldBuildCostamarProviderContext(providerIds: ProviderId[]): boolean {
+  return providerIds.includes("costamar");
+}
+
+async function handleSearchRequest(
+  runtime: ReturnType<typeof getRuntime>,
+  request: Request,
+): Promise<Response> {
+  const payload = await readPayload<SearchPayload>(request);
+  const contract = prepareSearchContract(payload);
+  const providerContext = shouldBuildCostamarProviderContext(contract.providerIds)
+    ? await buildProviderContextAsync("costamar", payload?.providerConfig)
+    : undefined;
+  const errors = validateSearchContract(contract, providerContext);
+  if (errors.length > 0) {
+    return json({ errors }, { status: 400 });
+  }
+
+  const sortMode = resolveSortMode(payload?.sortMode);
+  const normalizedRequest = contract.request;
+  const providerIds = contract.providerIds;
+  const cachedJob = runtime.sessions.findRecentCompletedSearchJob({
+    request: normalizedRequest,
+    providerContext,
+    providerIds,
+    sortMode,
+    maxAgeMs: SEARCH_REVALIDATION_CACHE_TTL_MS,
+  });
+  const draft = cachedJob
+    ? createCachedSearchDraftResponse(normalizedRequest, providerIds, cachedJob)
+    : createSearchDraftResponse(normalizedRequest, providerIds);
+  const providerStates = createProviderSearchStates(providerIds, cachedJob);
+  const job = runtime.sessions.createSearchJob({
+    request: normalizedRequest,
+    providerContext,
+    offers: draft.offers,
+    allOffers: draft.allOffers ?? draft.offers,
+    searchMeta: draft.searchMeta,
+    providerMeta: draft.providerMeta,
+    warnings: draft.warnings,
+    sortMode,
+    status: "running",
+  });
+
+  const syncSearchJob = (status: "running" | "completed") => {
+    const materialized = materializeAggregatedSearchResponse(
+      normalizedRequest,
+      sortMode,
+      providerIds,
+      providerStates,
+    );
+    const limited = limitSearchResponseForPagination(normalizedRequest, materialized);
+
+    runtime.sessions.updateSearchJob(job.id, (current) => ({
+      ...current,
+      offers: limited.offers,
+      allOffers: limited.allOffers ?? limited.offers,
+      searchMeta: {
+        ...limited.searchMeta,
+        requestedAt: current.searchMeta.requestedAt,
+        partial: limited.searchMeta.partial,
+        searchState: limited.searchMeta.searchState,
+      },
+      providerMeta: limited.providerMeta,
+      warnings: limited.warnings,
+      status,
+      error: undefined,
+    }));
+    warmSearchSessionQuotationRate(runtime, job.id, providerIds, status);
+
+    return materialized;
+  };
+
+  const resolvers = providerIds.map(async (providerId) => {
+    const adapter = getProgressiveAdapter(providerId);
+    const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
+      providerStates.set(providerId, {
+        offers: partialResult.offers,
+        warnings: partialResult.warnings,
+        partial: true,
+        completed: false,
+      });
+      syncSearchJob("running");
+      return true;
+    };
+
+    try {
+      const result = normalizedRequest.searchMode === "stay-range"
+        ? await adapter.resolveRangeProgressive(normalizedRequest, providerContext, onProgress)
+        : await adapter.resolveExactProgressive(normalizedRequest, providerContext, onProgress);
+      providerStates.set(providerId, {
+        offers: result.offers,
+        warnings: result.warnings,
+        partial: result.partial,
+        completed: true,
+      });
+      syncSearchJob("running");
+    } catch (error) {
+      providerStates.set(providerId, {
+        offers: [],
+        warnings: [
+          error instanceof Error ? error.message : "Search job failed.",
+        ],
+        partial: true,
+        completed: true,
+      });
+    }
+  });
+
+  void Promise.allSettled(resolvers).then(() => {
+    syncSearchJob("completed");
+  });
+
+  return json(searchJobResponse(job));
+}
+
+async function handleMatrixRequest(
+  runtime: ReturnType<typeof getRuntime>,
+  request: Request,
+): Promise<Response> {
+  const payload = await readPayload<SearchPayload>(request);
+  const contract = prepareSearchContract(payload, { forceRoundTripGrid: true });
+  const providerContext = shouldBuildCostamarProviderContext(contract.providerIds)
+    ? await buildProviderContextAsync("costamar", payload?.providerConfig)
+    : undefined;
+  const errors = validateSearchContract(contract, providerContext);
+  if (errors.length > 0) {
+    return json({ errors }, { status: 400 });
+  }
+
+  const normalizedRequest = contract.request;
+  const providerIds = contract.providerIds;
+  const providerStates = new Map<ProviderId, ProviderMatrixState>(
+    providerIds.map((providerId) => {
+      const adapter = getProgressiveAdapter(providerId);
+      const response = adapter.createMatrixDraft(normalizedRequest, {
+        exactProvider: providerId,
+        coverageMode: normalizedRequest.coverageMode,
+      });
+      return [providerId, {
+        response,
+        completed: false,
+      }];
+    }),
+  );
+  const draft = materializeAggregatedMatrixResponse(
+    normalizedRequest,
+    providerIds,
+    providerStates,
+  );
+  const job = runtime.sessions.createMatrixJob({
+    request: normalizedRequest,
+    providerContext,
+    cells: draft.cells,
+    axes: draft.axes,
+    confidenceSummary: draft.confidenceSummary,
+    recommendations: draft.recommendations,
+    searchMeta: draft.searchMeta,
+    providerMeta: draft.providerMeta,
+    warnings: draft.warnings,
+    status: "running",
+  });
+
+  const syncMatrixJob = (status: "running" | "completed") => {
+    const materialized = materializeAggregatedMatrixResponse(
+      normalizedRequest,
+      providerIds,
+      providerStates,
+    );
+
+    runtime.sessions.updateMatrixJob(job.id, (current) => ({
+      ...current,
+      cells: materialized.cells,
+      axes: materialized.axes,
+      confidenceSummary: materialized.confidenceSummary,
+      recommendations: materialized.recommendations,
+      searchMeta: {
+        ...materialized.searchMeta,
+        requestedAt: current.searchMeta.requestedAt,
+        searchSessionId: current.id,
+      },
+      providerMeta: materialized.providerMeta,
+      warnings: materialized.warnings,
+      status,
+      error: undefined,
+    }));
+  };
+
+  const resolvers = providerIds.map(async (providerId) => {
+    const adapter = getProgressiveAdapter(providerId);
+    const currentState = providerStates.get(providerId);
+    const draftResponse = currentState?.response ?? adapter.createMatrixDraft(normalizedRequest, {
+      exactProvider: providerId,
+      coverageMode: normalizedRequest.coverageMode,
+    });
+
+    try {
+      const result = await adapter.resolveMatrixProgressive(
+        normalizedRequest,
+        providerContext,
+        draftResponse,
+        (cell) => {
+          const providerState = providerStates.get(providerId);
+          if (!providerState) {
+            return;
+          }
+
+          providerStates.set(providerId, {
+            response: updateMatrixDraftCell(providerState.response, cell),
+            completed: false,
+          });
+          syncMatrixJob("running");
+        },
+      );
+
+      providerStates.set(providerId, {
+        response: result,
+        completed: true,
+      });
+    } catch (error) {
+      providerStates.set(providerId, {
+        response: materializeFailedMatrixResponse(
+          draftResponse,
+          error instanceof Error ? error.message : "Matrix job failed.",
+        ),
+        completed: true,
+      });
+    }
+
+    syncMatrixJob("running");
+  });
+
+  void Promise.allSettled(resolvers).then(() => {
+    syncMatrixJob("completed");
+  });
+
+  return json(matrixJobResponse(job));
+}
+
 export async function routeRequest(request: Request): Promise<Response> {
   const runtime = getRuntime();
   const url = new URL(request.url);
@@ -1125,7 +1080,7 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "GET" && url.pathname === "/api/diagnostics") {
-    if (!isLoopbackHost(url.hostname)) {
+    if (!isTrustedLocalRequest(request)) {
       return json({ error: "This diagnostic endpoint is only available on localhost." }, { status: 403 });
     }
 
@@ -1140,7 +1095,7 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "GET" && url.pathname === "/api/results-layout") {
-    if (!isLoopbackHost(url.hostname)) {
+    if (!isTrustedLocalRequest(request)) {
       return json({ error: "This layout endpoint is only available on localhost." }, { status: 403 });
     }
 
@@ -1149,7 +1104,7 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "POST" && url.pathname === "/api/results-layout") {
-    if (!isLoopbackHost(url.hostname)) {
+    if (!isTrustedLocalRequest(request)) {
       return json({ error: "This layout endpoint is only available on localhost." }, { status: 403 });
     }
 
@@ -1164,6 +1119,10 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "GET" && url.pathname === "/api/costamar/token-status") {
+    if (!isTrustedLocalRequest(request)) {
+      return json({ error: "This Costamar token endpoint is only available on localhost." }, { status: 403 });
+    }
+
     const status = getCostamarTokenStatus();
     const verify = url.searchParams.get("verify") === "true";
     const verification = verify ? await verifyCostamarTokenLive() : undefined;
@@ -1236,7 +1195,7 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "POST" && url.pathname === "/api/local/open-url") {
-    if (!isLoopbackHost(url.hostname)) {
+    if (!isTrustedLocalRequest(request)) {
       return json({ error: "This local browser action is only available on localhost." }, { status: 403 });
     }
 
@@ -1260,116 +1219,7 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "POST" && url.pathname === "/api/search") {
-    const payload = await readPayload<SearchPayload>(request);
-    const explicitProviderId = parseExplicitProviderId(payload.providerId);
-    const providerContext = buildProviderContext("costamar", payload.providerConfig);
-    const providerIds = resolveSearchProviderIds(explicitProviderId);
-    const normalizedRequest = normalizeRequest(payload.request, explicitProviderId);
-    const errors = [
-      ...validateRequest(normalizedRequest),
-      ...(explicitProviderId === "costamar" ? validateProviderContext("costamar", providerContext) : []),
-    ];
-
-    if (errors.length > 0) {
-      return json({ errors }, { status: 400 });
-    }
-
-    const sortMode: SortMode = payload.sortMode === "cheapest" || payload.sortMode === "fastest"
-      ? payload.sortMode
-      : "cheapest";
-    const cachedJob = runtime.sessions.findRecentCompletedSearchJob({
-      request: normalizedRequest,
-      providerContext,
-      providerIds,
-      sortMode,
-      maxAgeMs: SEARCH_REVALIDATION_CACHE_TTL_MS,
-    });
-    const draft = cachedJob
-      ? createCachedSearchDraftResponse(normalizedRequest, providerIds, cachedJob)
-      : createSearchDraftResponse(normalizedRequest, providerIds);
-    const providerStates = createProviderSearchStates(providerIds, cachedJob);
-    const job = runtime.sessions.createSearchJob({
-      request: normalizedRequest,
-      providerContext,
-      offers: draft.offers,
-      allOffers: draft.allOffers ?? draft.offers,
-      searchMeta: draft.searchMeta,
-      providerMeta: draft.providerMeta,
-      warnings: draft.warnings,
-      sortMode,
-      status: "running",
-    });
-
-    const syncSearchJob = (status: "running" | "completed") => {
-      const materialized = materializeAggregatedSearchResponse(
-        normalizedRequest,
-        sortMode,
-        providerIds,
-        providerStates,
-      );
-      const limited = limitSearchResponseForPagination(normalizedRequest, materialized);
-
-      runtime.sessions.updateSearchJob(job.id, (current) => ({
-        ...current,
-        offers: limited.offers,
-        allOffers: limited.allOffers ?? limited.offers,
-        searchMeta: {
-          ...limited.searchMeta,
-          requestedAt: current.searchMeta.requestedAt,
-          partial: limited.searchMeta.partial,
-          searchState: limited.searchMeta.searchState,
-        },
-        providerMeta: limited.providerMeta,
-        warnings: limited.warnings,
-        status,
-        error: undefined,
-      }));
-      warmSearchSessionQuotationRate(runtime, job.id, providerIds, status);
-
-      return materialized;
-    };
-
-    const resolvers = providerIds.map(async (providerId) => {
-      const adapter = getProgressiveAdapter(providerId);
-      const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
-        providerStates.set(providerId, {
-          offers: partialResult.offers,
-          warnings: partialResult.warnings,
-          partial: true,
-          completed: false,
-        });
-        syncSearchJob("running");
-        return true;
-      };
-
-      try {
-        const result = normalizedRequest.searchMode === "stay-range"
-          ? await adapter.resolveRangeProgressive(normalizedRequest, providerContext, onProgress)
-          : await adapter.resolveExactProgressive(normalizedRequest, providerContext, onProgress);
-        providerStates.set(providerId, {
-          offers: result.offers,
-          warnings: result.warnings,
-          partial: result.partial,
-          completed: true,
-        });
-        syncSearchJob("running");
-      } catch (error) {
-        providerStates.set(providerId, {
-          offers: [],
-          warnings: [
-            error instanceof Error ? error.message : "Search job failed.",
-          ],
-          partial: true,
-          completed: true,
-        });
-      }
-    });
-
-    void Promise.allSettled(resolvers).then(() => {
-      syncSearchJob("completed");
-    });
-
-    return json(searchJobResponse(job));
+    return handleSearchRequest(runtime, request);
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/search/")) {
@@ -1384,128 +1234,7 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "POST" && url.pathname === "/api/matrix") {
-    const payload = await readPayload<SearchPayload>(request);
-    const explicitProviderId = parseExplicitProviderId(payload.providerId);
-    const providerIds = resolveSearchProviderIds(explicitProviderId);
-    const normalizedRequest = normalizeFlexibleRoundTripRequest({
-      ...normalizeRequest(payload.request, explicitProviderId),
-      searchMode: "roundtrip-grid",
-    });
-    const providerContext = buildProviderContext("costamar", payload.providerConfig);
-
-    const errors = [
-      ...validateRequest(normalizedRequest),
-      ...(explicitProviderId === "costamar" ? validateProviderContext("costamar", providerContext) : []),
-    ];
-    if (errors.length > 0) {
-      return json({ errors }, { status: 400 });
-    }
-
-    const providerStates = new Map<ProviderId, ProviderMatrixState>(
-      providerIds.map((providerId) => {
-        const adapter = getProgressiveAdapter(providerId);
-        const response = adapter.createMatrixDraft(normalizedRequest, {
-          exactProvider: providerId,
-          coverageMode: normalizedRequest.coverageMode,
-        });
-        return [providerId, {
-          response,
-          completed: false,
-        }];
-      }),
-    );
-    const draft = materializeAggregatedMatrixResponse(
-      normalizedRequest,
-      providerIds,
-      providerStates,
-    );
-    const job = runtime.sessions.createMatrixJob({
-      request: normalizedRequest,
-      providerContext,
-      cells: draft.cells,
-      axes: draft.axes,
-      confidenceSummary: draft.confidenceSummary,
-      recommendations: draft.recommendations,
-      searchMeta: draft.searchMeta,
-      providerMeta: draft.providerMeta,
-      warnings: draft.warnings,
-      status: "running",
-    });
-
-    const syncMatrixJob = (status: "running" | "completed") => {
-      const materialized = materializeAggregatedMatrixResponse(
-        normalizedRequest,
-        providerIds,
-        providerStates,
-      );
-
-      runtime.sessions.updateMatrixJob(job.id, (current) => ({
-        ...current,
-        cells: materialized.cells,
-        axes: materialized.axes,
-        confidenceSummary: materialized.confidenceSummary,
-        recommendations: materialized.recommendations,
-        searchMeta: {
-          ...materialized.searchMeta,
-          requestedAt: current.searchMeta.requestedAt,
-          searchSessionId: current.id,
-        },
-        providerMeta: materialized.providerMeta,
-        warnings: materialized.warnings,
-        status,
-        error: undefined,
-      }));
-    };
-
-    const resolvers = providerIds.map(async (providerId) => {
-      const adapter = getProgressiveAdapter(providerId);
-      const currentState = providerStates.get(providerId);
-      const draftResponse = currentState?.response ?? adapter.createMatrixDraft(normalizedRequest, {
-        exactProvider: providerId,
-        coverageMode: normalizedRequest.coverageMode,
-      });
-
-      try {
-        const result = await adapter.resolveMatrixProgressive(
-          normalizedRequest,
-          providerContext,
-          draftResponse,
-          (cell) => {
-            const providerState = providerStates.get(providerId);
-            if (!providerState) {
-              return;
-            }
-
-            providerStates.set(providerId, {
-              response: updateMatrixDraftCell(providerState.response, cell),
-              completed: false,
-            });
-            syncMatrixJob("running");
-          },
-        );
-
-        providerStates.set(providerId, {
-          response: result,
-          completed: true,
-        });
-      } catch (error) {
-        providerStates.set(providerId, {
-          response: materializeFailedMatrixResponse(
-            draftResponse,
-            error instanceof Error ? error.message : "Matrix job failed.",
-          ),
-          completed: true,
-        });
-      }
-
-      syncMatrixJob("running");
-    });
-
-    void Promise.allSettled(resolvers).then(() => {
-      syncMatrixJob("completed");
-    });
-
-    return json(matrixJobResponse(job));
+    return handleMatrixRequest(runtime, request);
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/matrix/")) {

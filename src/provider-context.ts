@@ -42,6 +42,8 @@ let cachedCostamarSessions:
   | { readAtMs: number; candidates: CostamarSessionCandidate[] }
   | undefined;
 const runtimeCostamarSessionCandidates = new Map<string, CostamarSessionCandidate>();
+const pendingCostamarProviderContextResolutions = new Map<string, Promise<CostamarProviderContext>>();
+let costamarChromeSessionScanCountForTests = 0;
 
 function costamarCdpTabScanEnabled(): boolean {
   return String(process.env.COSTAMAR_CDP_TAB_SCAN_ENABLED ?? "0").trim() !== "0";
@@ -474,6 +476,28 @@ function pickLatestCostamarSessionCandidateForTerminal(
   return pickLatestCostamarSessionCandidate(scoped, nowMs);
 }
 
+function mergeCostamarSessionCandidates(...groups: CostamarSessionCandidate[][]): CostamarSessionCandidate[] {
+  const deduped = new Map<string, CostamarSessionCandidate>();
+
+  groups.flat().forEach((candidate) => {
+    const key = `${candidate.terminalId}::${candidate.token}`;
+    const existing = deduped.get(key);
+    if (!existing) {
+      deduped.set(key, candidate);
+      return;
+    }
+
+    if (
+      candidate.expMs > existing.expMs
+      || (candidate.expMs === existing.expMs && candidate.iatMs > existing.iatMs)
+    ) {
+      deduped.set(key, candidate);
+    }
+  });
+
+  return [...deduped.values()];
+}
+
 function shouldRefreshCostamarToken(
   currentToken: string | undefined,
   candidate: CostamarSessionCandidate | undefined,
@@ -751,17 +775,20 @@ function readCostamarSessionCandidateFromChrome(
   terminalId?: string,
   options?: { bypassCache?: boolean },
 ): CostamarSessionCandidate | undefined {
+  const runtimeCandidates = runtimeCostamarCandidates();
+
   if (
     !options?.bypassCache
     && cachedCostamarSessions
     && (Date.now() - cachedCostamarSessions.readAtMs) < COSTAMAR_SESSION_CACHE_TTL_MS
   ) {
     return pickLatestCostamarSessionCandidateForTerminal(
-      [...runtimeCostamarCandidates(), ...cachedCostamarSessions.candidates],
+      [...runtimeCandidates, ...cachedCostamarSessions.candidates],
       terminalId,
     );
   }
 
+  costamarChromeSessionScanCountForTests += 1;
   const configuredUserDataDirs = readChromeUserDataDirCandidates(true);
   const allUserDataDirs = readChromeUserDataDirCandidates();
   const configuredProfile = resolveConfiguredChromeProfile();
@@ -794,12 +821,17 @@ function readCostamarSessionCandidateFromChrome(
     );
   }
 
+  const mergedCandidates = mergeCostamarSessionCandidates(
+    cachedCostamarSessions?.candidates ?? [],
+    runtimeCandidates,
+    candidates,
+  );
   cachedCostamarSessions = {
     readAtMs: Date.now(),
-    candidates,
+    candidates: mergedCandidates,
   };
   return pickLatestCostamarSessionCandidateForTerminal(
-    [...runtimeCostamarCandidates(), ...candidates],
+    [...runtimeCandidates, ...mergedCandidates],
     terminalId,
   );
 }
@@ -833,6 +865,12 @@ function maybeRefreshCostamarSessionCandidate(
 export function resetCostamarSessionCacheForTests(): void {
   cachedCostamarSessions = undefined;
   runtimeCostamarSessionCandidates.clear();
+  pendingCostamarProviderContextResolutions.clear();
+  costamarChromeSessionScanCountForTests = 0;
+}
+
+export function getCostamarChromeSessionScanCountForTests(): number {
+  return costamarChromeSessionScanCountForTests;
 }
 
 export function resolveProviderId(providerId?: ProviderId): ProviderId {
@@ -899,6 +937,33 @@ export function resolveCostamarProviderContext(
   });
 }
 
+function resolveCostamarProviderContextDedupKey(
+  input?: CostamarProviderConfigInput,
+): string {
+  const normalized = normalizeCostamarProviderContext(input);
+  return `${normalized.terminalId}::${normalized.lang}::${normalized.token}`;
+}
+
+export async function resolveCostamarProviderContextInFlight(
+  input?: CostamarProviderConfigInput,
+): Promise<CostamarProviderContext> {
+  const key = resolveCostamarProviderContextDedupKey(input);
+  const pending = pendingCostamarProviderContextResolutions.get(key);
+  if (pending) {
+    return pending;
+  }
+
+  const resolution = Promise.resolve()
+    .then(() => resolveCostamarProviderContext(input))
+    .finally(() => {
+      if (pendingCostamarProviderContextResolutions.get(key) === resolution) {
+        pendingCostamarProviderContextResolutions.delete(key);
+      }
+    });
+  pendingCostamarProviderContextResolutions.set(key, resolution);
+  return resolution;
+}
+
 export function resolveLatestCostamarProviderContext(
   input?: CostamarProviderConfigInput,
 ): CostamarProviderContext {
@@ -940,6 +1005,19 @@ export function buildProviderContext(
 
   return {
     costamar: resolveCostamarProviderContext(providerConfig?.costamar),
+  };
+}
+
+export async function buildProviderContextAsync(
+  providerId: ProviderId,
+  providerConfig?: ProviderConfigInput,
+): Promise<ProviderContext | undefined> {
+  if (providerId !== "costamar") {
+    return undefined;
+  }
+
+  return {
+    costamar: await resolveCostamarProviderContextInFlight(providerConfig?.costamar),
   };
 }
 
