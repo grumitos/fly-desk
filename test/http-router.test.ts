@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { request as httpRequest } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +11,11 @@ import type {
   SearchMeta,
   SearchRequest,
 } from "../src/core/types";
-import { buildProviderContext, resetCostamarSessionCacheForTests } from "../src/provider-context";
+import {
+  buildProviderContext,
+  getCostamarChromeSessionScanCountForTests,
+  resetCostamarSessionCacheForTests,
+} from "../src/provider-context";
 import { getRuntime } from "../src/runtime";
 import { withServer } from "./helpers/server";
 
@@ -212,6 +217,111 @@ test("rejects exact searches when origin and destination are omitted", async () 
     const payload = await response.json() as { errors?: string[] };
     assert.ok(payload.errors?.some((message) => message.includes("Origin is required")));
     assert.ok(payload.errors?.some((message) => message.includes("Destination is required")));
+  });
+});
+
+test("rejects invalid passenger counts", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sortMode: "cheapest",
+        request: {
+          tripType: "round-trip",
+          searchMode: "exact",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MAD",
+              departureDate: "2026-04-15",
+              returnDate: "2026-04-22",
+            },
+          ],
+          passengers: {
+            adults: 1.5,
+            children: -1,
+            infants: 0,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { errors?: string[] };
+    assert.ok(payload.errors?.includes("Adults must be a non-negative integer."));
+    assert.ok(payload.errors?.includes("Children must be a non-negative integer."));
+  });
+});
+
+test("rejects unsupported multi-city searches", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sortMode: "cheapest",
+        request: {
+          tripType: "multi-city",
+          searchMode: "exact",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MAD",
+              departureDate: "2026-04-15",
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { errors?: string[] };
+    assert.ok(payload.errors?.includes("Multi-city search is not supported."));
+  });
+});
+
+test("search endpoint preserves best-value sort mode", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sortMode: "best-value",
+        request: {
+          tripType: "round-trip",
+          searchMode: "exact",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MAD",
+              departureDate: "2026-04-15",
+              returnDate: "2026-04-22",
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { sortMode?: string };
+    assert.equal(payload.sortMode, "best-value");
   });
 });
 
@@ -999,6 +1109,45 @@ test("exact searches preserve omitted maxResults so page-based caps can be suppl
   });
 });
 
+test("agil-local searches skip Costamar context scans", async () => {
+  resetCostamarSessionCacheForTests();
+
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        providerId: "agil-local",
+        request: {
+          tripType: "round-trip",
+          searchMode: "exact",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MAD",
+              departureDate: "2026-05-01",
+              returnDate: "2026-05-31",
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+          filters: {},
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+  });
+
+  assert.equal(getCostamarChromeSessionScanCountForTests(), 0);
+  resetCostamarSessionCacheForTests();
+});
+
 test("search endpoint serves cached results first for the same config while revalidating in background", async () => {
   const runtime = getRuntime();
   const terminalId = "9990001112";
@@ -1301,5 +1450,68 @@ test("diagnostics endpoint exposes loopback-only runtime counters", async () => 
     assert.equal(typeof payload.sessions?.counts?.searchJobs, "number");
     assert.equal(typeof payload.sessions?.counts?.purchasePaths, "number");
     assert.equal(typeof payload.tempArtifacts?.totals?.count, "number");
+  });
+});
+
+test("diagnostics endpoint ignores spoofed Host headers on loopback", async () => {
+  await withServer(async (baseUrl) => {
+    const url = new URL(baseUrl);
+    const payload = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+      const req = httpRequest({
+        host: url.hostname,
+        port: Number(url.port),
+        path: "/api/diagnostics",
+        method: "GET",
+        headers: {
+          Host: "evil.example",
+        },
+      }, (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+        response.on("end", () => {
+          resolve({
+            statusCode: response.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf8"),
+          });
+        });
+      });
+
+      req.on("error", reject);
+      req.end();
+    });
+
+    assert.equal(payload.statusCode, 200);
+    const json = JSON.parse(payload.body) as { ok?: boolean };
+    assert.equal(json.ok, true);
+  });
+});
+
+test("rejects oversized JSON bodies before routing", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        request: {
+          tripType: "round-trip",
+          searchMode: "exact",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MAD",
+              departureDate: "2026-04-15",
+              returnDate: "2026-04-22",
+              originLabel: "X".repeat(1_100_000),
+            },
+          ],
+        },
+      }),
+    });
+
+    assert.equal(response.status, 413);
+    const payload = await response.json() as { error?: string };
+    assert.match(payload.error ?? "", /byte limit/i);
   });
 });

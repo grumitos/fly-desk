@@ -2107,7 +2107,7 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
 }
 
 .results-card__route-main {
-  font-size: 0.91rem;
+  font-size: 0.96rem;
 }
 
 .results-card__journey-main {
@@ -2120,6 +2120,21 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   min-height: 1.2rem;
   display: flex;
   align-items: center;
+}
+
+.stops-stack {
+  display: grid;
+  gap: 0.16rem;
+  min-width: 0;
+}
+
+.stops-stack__time {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .results-card__journey--flex {

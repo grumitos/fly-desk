@@ -5,6 +5,13 @@ import { routeRequest } from "./http-router";
 import { getPublicRuntimeConfig } from "./search-date-policy";
 
 const publicDir = path.resolve(__dirname, "..", "public");
+const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
+
+class RequestBodyTooLargeError extends Error {
+  constructor(limitBytes: number) {
+    super(`Request body exceeds the ${limitBytes} byte limit.`);
+  }
+}
 
 function contentTypeForExtension(extension: string): string {
   if (extension === ".svg") {
@@ -98,13 +105,32 @@ async function serveIndexHtml(response: ServerResponse): Promise<void> {
 }
 
 async function readBody(request: IncomingMessage): Promise<Buffer | undefined> {
+  const declaredLength = Number(request.headers["content-length"]);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BODY_BYTES) {
+    throw new RequestBodyTooLargeError(MAX_REQUEST_BODY_BYTES);
+  }
+
   const chunks: Buffer[] = [];
+  let totalBytes = 0;
 
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const normalized = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += normalized.byteLength;
+    if (totalBytes > MAX_REQUEST_BODY_BYTES) {
+      throw new RequestBodyTooLargeError(MAX_REQUEST_BODY_BYTES);
+    }
+
+    chunks.push(normalized);
   }
 
   return chunks.length > 0 ? Buffer.concat(chunks) : undefined;
+}
+
+function isLoopbackRemoteAddress(value: string | undefined): boolean {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "127.0.0.1"
+    || normalized === "::1"
+    || normalized === "::ffff:127.0.0.1";
 }
 
 async function proxyToRouter(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -122,8 +148,20 @@ async function proxyToRouter(request: IncomingMessage, response: ServerResponse)
 
   for (const [key, value] of Object.entries(request.headers)) {
     if (typeof value === "string") {
+      if (key.toLowerCase().startsWith("x-flydesk-")) {
+        continue;
+      }
       headers.push([key, value]);
     }
+  }
+
+  headers.push([
+    "x-flydesk-client-loopback",
+    isLoopbackRemoteAddress(request.socket.remoteAddress) ? "1" : "0",
+  ]);
+
+  if (typeof request.socket.remoteAddress === "string" && request.socket.remoteAddress.length > 0) {
+    headers.push(["x-flydesk-client-address", request.socket.remoteAddress]);
   }
 
   const requestInit: RequestInit & { duplex?: "half" } = {
@@ -174,6 +212,12 @@ export function createServer() {
 
       await proxyToRouter(request, response);
     } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        response.writeHead(413, { "Content-Type": "application/json; charset=utf-8" });
+        response.end(JSON.stringify({ error: error.message }));
+        return;
+      }
+
       const message = error instanceof Error ? error.message : "Unexpected server error";
       response.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
       response.end(JSON.stringify({ error: message }));

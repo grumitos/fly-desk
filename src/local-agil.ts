@@ -567,6 +567,21 @@ async function getPlaywright(): Promise<typeof import("playwright")> {
   return playwrightPromise;
 }
 
+async function cleanupTemporaryChromeLaunch(userDataDir: string, chrome?: ChildProcess): Promise<void> {
+  if (chrome) {
+    try {
+      chrome.kill("SIGTERM");
+    } catch {
+      // Ignore processes that are already gone.
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  await removePathWithRetries(userDataDir, 6, 250);
+  unregisterActiveTempArtifact(userDataDir);
+}
+
 async function fetchAgil(
   url: string,
   init: RequestInit,
@@ -720,10 +735,11 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
   for (const profileName of profileNames) {
     const userDataDir = prepareTemporaryChromeProfile(profileName);
     const port = 9400 + Math.floor(Math.random() * 200);
-    const chrome = launchChromeForCdp(userDataDir, profileName, port);
+    let chrome: ChildProcess | undefined;
     let browser: Browser | undefined;
 
     try {
+      chrome = launchChromeForCdp(userDataDir, profileName, port);
       await waitForDebugger(port);
       const playwright = await getPlaywright();
       browser = await playwright.chromium.connectOverCDP(`http://127.0.0.1:${port}`);
@@ -737,10 +753,7 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
         await browser.close().catch(() => undefined);
       }
 
-      chrome.kill("SIGTERM");
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      await removePathWithRetries(userDataDir, 6, 250);
-      unregisterActiveTempArtifact(userDataDir);
+      await cleanupTemporaryChromeLaunch(userDataDir, chrome);
     }
   }
 
