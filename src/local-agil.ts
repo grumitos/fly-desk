@@ -224,6 +224,14 @@ const AGIL_SESSION_REVALIDATE_MS = Math.max(
   15000,
   Number(process.env.AGIL_SESSION_REVALIDATE_MS ?? 60000),
 );
+const AGIL_RANGE_DAY_RETRY_ATTEMPTS = Math.max(
+  0,
+  Math.trunc(Number(process.env.AGIL_RANGE_DAY_RETRY_ATTEMPTS ?? 1)) || 0,
+);
+const AGIL_RANGE_DAY_RETRY_DELAY_MS = Math.max(
+  0,
+  Math.trunc(Number(process.env.AGIL_RANGE_DAY_RETRY_DELAY_MS ?? 250)) || 0,
+);
 
 export const AGIL_CONCURRENCY = Object.freeze({
   get matrixMinimum() {
@@ -252,6 +260,31 @@ let agilApimSubscriptionKeyPromise: Promise<string> | undefined;
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+function waitMs(durationMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, Math.max(0, durationMs));
+  });
+}
+
+async function searchLocalAgilExactWithRetry(request: SearchRequest): Promise<ProviderSearchResult> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await searchLocalAgilExact(request);
+    } catch (error) {
+      if (attempt >= AGIL_RANGE_DAY_RETRY_ATTEMPTS) {
+        throw error;
+      }
+
+      attempt += 1;
+      const retryDelayMs = AGIL_RANGE_DAY_RETRY_DELAY_MS * attempt;
+      if (retryDelayMs > 0) {
+        await waitMs(retryDelayMs);
+      }
+    }
+  }
 }
 
 function agilBundlePriority(url: string): number {
@@ -2002,7 +2035,7 @@ export async function searchLocalAgilRange(request: SearchRequest): Promise<Prov
   const outcomes = await mapConcurrent(candidates, AGIL_CONCURRENCY.rangeSearch, async (derivedRequest) => {
     try {
       return {
-        result: await searchLocalAgilExact(derivedRequest),
+        result: await searchLocalAgilExactWithRetry(derivedRequest),
       };
     } catch (error) {
       return {
@@ -2044,7 +2077,7 @@ export async function resolveLocalAgilRangeProgressive(
 
   await mapConcurrent(candidates, AGIL_CONCURRENCY.rangeSearch, async (derivedRequest) => {
     try {
-      const result = await searchLocalAgilExact(derivedRequest);
+      const result = await searchLocalAgilExactWithRetry(derivedRequest);
       aggregatedOffers.push(...result.offers);
       if (result.partial) {
         partial = true;

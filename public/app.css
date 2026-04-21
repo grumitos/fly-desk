@@ -3406,6 +3406,20 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   border-color: color-mix(in srgb, var(--accent) 25%, var(--line));
 }
 
+.migration-card--selected {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 52%, transparent);
+}
+
+.migration-card[tabindex="0"] {
+  cursor: pointer;
+}
+
+.migration-card:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
 .migration-card__month {
   margin: 0 0 0.35rem;
   font-size: 0.82rem;
