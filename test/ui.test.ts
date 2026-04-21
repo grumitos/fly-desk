@@ -423,13 +423,24 @@ test("migration cards show exact date, provider links, and can open an exact sea
       return document.querySelectorAll("#resultsContainer .migration-card--ok").length === 8;
     });
     const firstCard = page.locator("#resultsContainer .migration-card").first();
+    await firstCard.click({ position: { x: 18, y: 18 } });
+    await page.waitForFunction(() => {
+      const detail = document.getElementById("detailContent");
+      return Boolean(
+        detail
+        && /Segmentos/.test(detail.textContent || "")
+        && /Tarifa/.test(detail.textContent || ""),
+      );
+    });
 
     const migrationProbe = await page.evaluate(() => ({
       title: document.querySelector(".migration-panel__title")?.textContent?.trim() ?? "",
       subtitle: document.querySelector(".migration-panel__subtitle")?.textContent?.trim() ?? "",
       cardCount: document.querySelectorAll("#resultsContainer .migration-card").length,
       loadingCount: document.querySelectorAll("#resultsContainer .migration-card--loading").length,
+      selectedCount: document.querySelectorAll("#resultsContainer .migration-card--selected").length,
       firstCardText: document.querySelector("#resultsContainer .migration-card")?.textContent?.trim() ?? "",
+      detailText: document.querySelector("#detailContent")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
       layout: (() => {
         const scroller = document.querySelector(".migration-grid-wrap");
         const grid = document.querySelector(".migration-grid");
@@ -474,7 +485,12 @@ test("migration cards show exact date, provider links, and can open an exact sea
     assert.equal(migrationProbe.subtitle, "Solo ida · Precio más bajo por mes");
     assert.equal(migrationProbe.cardCount, 8);
     assert.equal(migrationProbe.loadingCount, 0);
+    assert.equal(migrationProbe.selectedCount, 1);
     assert.match(migrationProbe.firstCardText, /Fecha exacta:/);
+    assert.match(migrationProbe.detailText, /Segmentos/);
+    assert.match(migrationProbe.detailText, /Tarifa/);
+    assert.match(migrationProbe.detailText, /Compra/);
+    assert.match(migrationProbe.detailText, /LIM → MIA/);
     assert.ok(migrationProbe.layout);
     assert.equal(migrationProbe.layout?.overflowX, "hidden");
     assert.equal(migrationProbe.layout?.overflowY, "auto");
@@ -989,6 +1005,166 @@ test("migration replaces monthly cheapest with direct, layover, and baggage filt
     assert.match(nonstopFilteredText, /DIRECTO BAG/);
     assert.match(nonstopFilteredText, /150\.00/);
     assert.match(nonstopFilteredText, /Directo/);
+  }, { autoOpen: false });
+});
+
+test("migration applies max layover filter when monthly options include stopovers with different durations", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
+      const body = route.request().postDataJSON();
+      const departureDate = body?.request?.legs?.[0]?.departureStart ?? "2026-04-01";
+      const longFirstArrival = `${departureDate}T14:00:00Z`;
+      const longSecondDeparture = `${departureDate}T19:00:00Z`; // 5h layover
+      const shortFirstArrival = `${departureDate}T13:00:00Z`;
+      const shortSecondDeparture = `${departureDate}T14:30:00Z`; // 1h30 layover
+
+      const longLayoverOffer = buildOffer({
+        id: "migration-long-layover",
+        mainCarrier: "LA",
+        validatingCarrier: "LA",
+        comparisonMetrics: {
+          totalDurationMinutes: 720,
+          totalStops: 1,
+        },
+        price: {
+          total: {
+            amount: 100,
+            currencyCode: "USD",
+          },
+          base: {
+            amount: 30,
+            currencyCode: "USD",
+          },
+          taxes: {
+            amount: 70,
+            currencyCode: "USD",
+          },
+        },
+        itineraries: [
+          {
+            direction: "outbound",
+            durationMinutes: 720,
+            stops: 1,
+            segments: [
+              {
+                flightNumber: "LONG 101",
+                origin: "LIM",
+                destination: "BOG",
+                departureAt: `${departureDate}T10:00:00Z`,
+                departureDate,
+                arrivalAt: longFirstArrival,
+                airlineName: "LAYOVER LARGO",
+              },
+              {
+                flightNumber: "LONG 102",
+                origin: "BOG",
+                destination: "MIA",
+                departureAt: longSecondDeparture,
+                departureDate,
+                arrivalAt: `${departureDate}T23:00:00Z`,
+                airlineName: "LAYOVER LARGO",
+              },
+            ],
+          },
+        ],
+      });
+
+      const shortLayoverOffer = buildOffer({
+        id: "migration-short-layover",
+        mainCarrier: "LA",
+        validatingCarrier: "LA",
+        comparisonMetrics: {
+          totalDurationMinutes: 640,
+          totalStops: 1,
+        },
+        price: {
+          total: {
+            amount: 150,
+            currencyCode: "USD",
+          },
+          base: {
+            amount: 80,
+            currencyCode: "USD",
+          },
+          taxes: {
+            amount: 70,
+            currencyCode: "USD",
+          },
+        },
+        itineraries: [
+          {
+            direction: "outbound",
+            durationMinutes: 640,
+            stops: 1,
+            segments: [
+              {
+                flightNumber: "SHORT 201",
+                origin: "LIM",
+                destination: "BOG",
+                departureAt: `${departureDate}T09:00:00Z`,
+                departureDate,
+                arrivalAt: shortFirstArrival,
+                airlineName: "LAYOVER CORTO",
+              },
+              {
+                flightNumber: "SHORT 202",
+                origin: "BOG",
+                destination: "MIA",
+                departureAt: shortSecondDeparture,
+                departureDate,
+                arrivalAt: `${departureDate}T20:00:00Z`,
+                airlineName: "LAYOVER CORTO",
+              },
+            ],
+          },
+        ],
+      });
+
+      const offers = [longLayoverOffer, shortLayoverOffer];
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "migration-layover-filter-job",
+          searchComplete: true,
+          searchStatus: "completed",
+          sortMode: "cheapest",
+          request: body.request,
+          offers,
+          allOffers: offers,
+          searchMeta: {
+            ...buildSearchMeta("search_live"),
+            providersUsed: ["agil-local"],
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await setRouteInputs(page, "LIM", "MIA");
+    await page.click("#migrationBtn");
+    await page.waitForFunction(() => {
+      return document.querySelectorAll("#resultsContainer .migration-card--ok").length === 8;
+    });
+
+    const firstCardText = async () => page.evaluate(() =>
+      document.querySelector("#resultsContainer .migration-card")?.textContent?.replace(/\s+/g, " ").trim() ?? "");
+
+    const initialText = await firstCardText();
+    assert.match(initialText, /LAYOVER LARGO/);
+    assert.match(initialText, /100\.00/);
+
+    await page.selectOption("#maxLayoverMinutes", "120");
+    await page.waitForFunction(() =>
+      (document.querySelector("#resultsContainer .migration-card")?.textContent ?? "").includes("LAYOVER CORTO"));
+    const layoverFilteredText = await firstCardText();
+    assert.match(layoverFilteredText, /LAYOVER CORTO/);
+    assert.match(layoverFilteredText, /150\.00/);
   }, { autoOpen: false });
 });
 

@@ -3072,8 +3072,10 @@ function buildOfferGroups(offers) {
   return [...groups.values()].map((group) => [...group]);
 }
 
-function getGroupForOffer(offerId) {
-  const all = state.searchResponse?.filteredOffers ?? state.searchResponse?.allOffers ?? [];
+function getGroupForOffer(
+  offerId,
+  all = state.searchResponse?.filteredOffers ?? state.searchResponse?.allOffers ?? [],
+) {
   const target = all.find((offer) => offer.id === offerId);
   if (!target) return null;
   const key = offerVariantGroupKey(target);
@@ -4128,8 +4130,37 @@ function stopSearchPolling() {
   state.searchJobId = null;
 }
 
+function selectedMigrationMonth() {
+  if (!state.migrationActive || !state.migrationSelectedMonthKey) {
+    return null;
+  }
+
+  return state.migrationMonths.find((month) => month?.key === state.migrationSelectedMonthKey) ?? null;
+}
+
+function selectedMigrationOfferContext() {
+  const month = selectedMigrationMonth();
+  if (!month) {
+    return null;
+  }
+
+  return {
+    month,
+    offers: migrationMonthOffers(month),
+    request: month.request ?? state.request,
+    jobId: month.jobId ?? null,
+  };
+}
+
 function selOffer() {
   if (!state.selectedOfferId) return null;
+  const migrationContext = selectedMigrationOfferContext();
+  if (migrationContext) {
+    return migrationContext.offers.find((offer) => offer.id === state.selectedOfferId)
+      ?? migrationContext.month.cheapest
+      ?? null;
+  }
+
   return state.searchResponse?.offers?.find(o => o.id === state.selectedOfferId)
     ?? state.searchResponse?.filteredOffers?.find(o => o.id === state.selectedOfferId)
     ?? state.searchResponse?.allOffers?.find(o => o.id === state.selectedOfferId)
@@ -4142,6 +4173,11 @@ function selMatrixCell() {
 }
 
 function sessionId() {
+  const migrationContext = selectedMigrationOfferContext();
+  if (migrationContext?.jobId) {
+    return migrationContext.jobId;
+  }
+
   return state.searchResponse?.searchMeta?.searchSessionId ?? null;
 }
 
@@ -5442,6 +5478,9 @@ function selectOffer(offerId) {
   if (state.selectedOfferId !== nextOfferId) {
     clearQuotationState();
   }
+  if (state.migrationActive && !nextOfferId) {
+    state.migrationSelectedMonthKey = null;
+  }
   state.selectedMatrixKey = null;
   state.selectedOfferId = nextOfferId;
   renderResultsArea();
@@ -6322,6 +6361,9 @@ function renderMatrixCellDetail(cell) {
 function renderDetailPanel() {
   const offer = selOffer();
   const matrixCell = offer ? null : selMatrixCell();
+  const migrationOfferContext = selectedMigrationOfferContext();
+  const detailRequest = migrationOfferContext?.request ?? state.searchResponse?.request ?? state.request;
+  const detailAllOffers = migrationOfferContext?.offers ?? state.searchResponse?.allOffers ?? [];
   if (quotationButton) quotationButton.disabled = !offer;
 
   if (!offer && !matrixCell) {
@@ -6347,7 +6389,7 @@ function renderDetailPanel() {
 
   if (state.detailPendingAction) {
     const copy = detailActionCopy();
-    const passengerCount = passengerCountForRequest(state.searchResponse?.request ?? state.request);
+    const passengerCount = passengerCountForRequest(detailRequest);
     const carrier = carrierDisplayParts(offer);
     const summary = `${escapeHtml(offer.origin)} → ${escapeHtml(offer.destination)} · ${escapeHtml(carrier.display)}`;
     if (detailContent) {
@@ -6371,10 +6413,10 @@ function renderDetailPanel() {
     return;
   }
 
-  const group = getGroupForOffer(offer.id) ?? [offer];
+  const group = getGroupForOffer(offer.id, detailAllOffers) ?? [offer];
   const carrier = carrierDisplayParts(offer);
-  const providerLinkIndex = buildProviderLinkIndex(state.searchResponse?.allOffers ?? []);
-  const passengerCount = passengerCountForRequest(state.searchResponse?.request ?? state.request);
+  const providerLinkIndex = buildProviderLinkIndex(detailAllOffers);
+  const passengerCount = passengerCountForRequest(detailRequest);
   const offerPriceLabels = priceLabels(offer.price?.total, passengerCount);
 
   let h = "";
@@ -6624,6 +6666,7 @@ window.addEventListener("resize", debounce(() => {
     if (state.migrationActive) {
       applyMigrationClientOfferControls();
       renderMigrationResults();
+      renderDetailPanel();
       return;
     }
     if (!state.searchResponse?.allOffers) return;
@@ -6772,6 +6815,7 @@ function exitMigrationMode() {
   state.migrationRunId += 1;
   state.migrationActive = false;
   state.migrationMonths = [];
+  state.migrationSelectedMonthKey = null;
   resultsToolbar?.classList.remove("hidden");
 }
 
@@ -6820,6 +6864,43 @@ function applyMigrationClientOfferControls(filters = getActiveClientFilters()) {
   state.migrationMonths.forEach((month) => {
     applyMigrationMonthSelection(month, filters);
   });
+
+  const selectedMonth = selectedMigrationMonth();
+  if (!selectedMonth?.cheapest) {
+    if (state.selectedOfferId) {
+      clearQuotationState();
+    }
+    state.selectedOfferId = null;
+    state.migrationSelectedMonthKey = null;
+    return;
+  }
+
+  if (state.selectedOfferId !== selectedMonth.cheapest.id) {
+    clearQuotationState();
+    state.selectedOfferId = selectedMonth.cheapest.id;
+  }
+}
+
+function selectMigrationMonth(index, { rerender = true } = {}) {
+  const month = state.migrationMonths[index];
+  if (!month) return false;
+
+  applyMigrationMonthSelection(month);
+  if (!month.cheapest) return false;
+
+  if (state.selectedOfferId !== month.cheapest.id) {
+    clearQuotationState();
+  }
+  state.migrationSelectedMonthKey = month.key;
+  state.selectedOfferId = month.cheapest.id;
+  state.selectedMatrixKey = null;
+  state.detailPendingAction = null;
+
+  if (rerender) {
+    renderMigrationResults();
+    renderDetailPanel();
+  }
+  return true;
 }
 
 function migrationOfferDepartureDate(offer) {
@@ -6952,7 +7033,8 @@ function renderMigrationResults() {
     const statusClass = m.complete
       ? (m.cheapest ? "migration-card--ok" : "migration-card--empty")
       : "migration-card--loading";
-    h += `<div class="migration-card ${statusClass}">`;
+    const isSelected = Boolean(m.cheapest) && m.key === state.migrationSelectedMonthKey;
+    h += `<div class="migration-card ${statusClass}${isSelected ? " migration-card--selected" : ""}" data-migration-select-index="${index}" tabindex="${m.cheapest ? "0" : "-1"}">`;
     h += `<div class="migration-card__month">${escapeHtml(m.label)}</div>`;
     if (!m.complete && !m.cheapest) {
       h += `<div class="migration-card__price migration-card__price--loading">Buscando&hellip;</div>`;
@@ -6994,6 +7076,31 @@ function renderMigrationResults() {
 
   h += `</div></div></div>`;
   resultsContainer.innerHTML = h;
+  resultsContainer.querySelectorAll("[data-migration-select-index]").forEach((card) => {
+    const select = () => {
+      const index = Number.parseInt(card.dataset.migrationSelectIndex ?? "", 10);
+      if (Number.isFinite(index)) {
+        selectMigrationMonth(index);
+      }
+    };
+
+    card.addEventListener("click", (event) => {
+      const interactiveTarget = event.target instanceof Element
+        ? event.target.closest("a, button")
+        : null;
+      if (interactiveTarget) {
+        return;
+      }
+      select();
+    });
+    card.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      select();
+    });
+  });
   resultsContainer.querySelectorAll("[data-migration-exact-index]").forEach((button) => {
     button.addEventListener("click", () => {
       const index = Number.parseInt(button.dataset.migrationExactIndex ?? "", 10);
@@ -7021,6 +7128,7 @@ async function startMigrationSearch() {
   state.searchResponse = null;
   state.matrixResponse = null;
   state.selectedOfferId = null;
+  state.migrationSelectedMonthKey = null;
 
   const monthRanges = migrationMonthRanges(todayISO(), MIGRATION_MONTH_COUNT);
   const adults = parseInt($("adults")?.value, 10) || 1;
@@ -7055,6 +7163,7 @@ async function startMigrationSearch() {
   if (resultsToolbar) resultsToolbar.classList.add("hidden");
   if (emptyState) emptyState.classList.add("hidden");
   renderMigrationResults();
+  renderDetailPanel();
 
   const launchMonthSearch = async (index) => {
     const month = state.migrationMonths[index];
@@ -7106,6 +7215,7 @@ async function startMigrationSearch() {
       }
     }
     renderMigrationResults();
+    renderDetailPanel();
   };
 
   void (async () => {
@@ -7181,6 +7291,7 @@ function queueMigrationPoll(index, jobId, runId = state.migrationRunId) {
         if (!m || m.jobId !== jobId) return;
         updateMigrationMonth(index, data, runId);
         renderMigrationResults();
+        renderDetailPanel();
         if (!data.searchComplete) {
           queueMigrationPoll(index, jobId, runId);
         }
@@ -7189,6 +7300,7 @@ function queueMigrationPoll(index, jobId, runId = state.migrationRunId) {
         const m = state.migrationMonths[index];
         if (m) { m.complete = true; m.error = "Error de conexión"; }
         renderMigrationResults();
+        renderDetailPanel();
       }
     },
   });

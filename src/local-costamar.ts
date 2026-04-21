@@ -320,6 +320,14 @@ export const COSTAMAR_CONCURRENCY = Object.freeze({
   },
   httpTimeoutMs: COSTAMAR_HTTP_TIMEOUT_MS,
 });
+const COSTAMAR_RANGE_DAY_RETRY_ATTEMPTS = Math.max(
+  0,
+  Math.trunc(Number(process.env.COSTAMAR_RANGE_DAY_RETRY_ATTEMPTS ?? 1)) || 0,
+);
+const COSTAMAR_RANGE_DAY_RETRY_DELAY_MS = Math.max(
+  0,
+  Math.trunc(Number(process.env.COSTAMAR_RANGE_DAY_RETRY_DELAY_MS ?? 250)) || 0,
+);
 
 const engineCache = new Map<string, Promise<CostamarEngineMetadata>>();
 const COSTAMAR_B2B_AUTH_HINT_PATTERN =
@@ -1751,6 +1759,34 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
 }
 
+function waitMs(durationMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, Math.max(0, durationMs));
+  });
+}
+
+async function searchLocalCostamarExactWithRetry(
+  request: SearchRequest,
+  providerContext?: ProviderContext,
+): Promise<ProviderSearchResult> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await searchLocalCostamarExact(request, providerContext);
+    } catch (error) {
+      if (attempt >= COSTAMAR_RANGE_DAY_RETRY_ATTEMPTS) {
+        throw error;
+      }
+
+      attempt += 1;
+      const retryDelayMs = COSTAMAR_RANGE_DAY_RETRY_DELAY_MS * attempt;
+      if (retryDelayMs > 0) {
+        await waitMs(retryDelayMs);
+      }
+    }
+  }
+}
+
 function toCostamarDayStart(dateIso?: string): string | undefined {
   if (!dateIso) {
     return undefined;
@@ -2810,7 +2846,7 @@ export async function searchLocalCostamarRange(
   const outcomes = await mapConcurrent(candidates, COSTAMAR_CONCURRENCY.rangeSearch, async (derivedRequest) => {
     try {
       return {
-        result: await searchLocalCostamarExact(derivedRequest, providerContext),
+        result: await searchLocalCostamarExactWithRetry(derivedRequest, providerContext),
       };
     } catch (error) {
       return {
@@ -2851,7 +2887,7 @@ export async function resolveLocalCostamarRangeProgressive(
 
   await mapConcurrent(candidates, COSTAMAR_CONCURRENCY.rangeSearch, async (derivedRequest) => {
     try {
-      const result = await searchLocalCostamarExact(derivedRequest, providerContext);
+      const result = await searchLocalCostamarExactWithRetry(derivedRequest, providerContext);
       aggregatedOffers.push(...result.offers);
       warnings.push(...result.warnings);
     } catch (error) {

@@ -33,6 +33,7 @@ export const state = {
   migrationRunId: 0,
   migrationMonths: [],
   migrationPollHandles: new Set(),
+  migrationSelectedMonthKey: null,
 };
 
 export const autocompleteState = {
