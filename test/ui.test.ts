@@ -1280,43 +1280,41 @@ test("paste can restore a copied search in a fresh view from system clipboard", 
   await withDesktopPage(async ({ baseUrl, page }) => {
     const clipboardPayload = JSON.stringify({
       type: "fly-desk-search-config",
-      version: 1,
+      version: 2,
       copiedAt: "2026-03-28T12:00:00.000Z",
       mode: "exact",
       tripType: "round-trip",
-      origin: {
-        value: "Lima",
-        code: "LIM",
-        label: "Lima",
-      },
-      destination: {
-        value: "Miami",
-        code: "MIA",
-        label: "Miami",
-      },
-      dates: {
-        departureDate: "2026-04-15",
-        returnDate: "2026-04-22",
-        departureStart: "",
-        departureEnd: "",
-        returnStart: "",
-        returnEnd: "",
-      },
-      stay: {
-        min: "7",
-        max: "14",
-      },
-      passengers: {
-        adults: "2",
-        children: "1",
-        infants: "0",
-      },
-      filters: {
-        nonStop: true,
-        baggageRequired: true,
-        maxLayoverMinutes: "240",
-      },
       sortMode: "fastest",
+      request: {
+        tripType: "round-trip",
+        searchMode: "exact",
+        cabin: "ECONOMY",
+        coverageMode: "core",
+        redirectMode: "best-effort",
+        currencyCode: "USD",
+        locale: "es-PE",
+        market: "PE",
+        passengers: {
+          adults: 2,
+          children: 1,
+          infants: 0,
+        },
+        filters: {
+          nonStop: true,
+          baggageRequired: true,
+          maxLayoverMinutes: 240,
+        },
+        legs: [
+          {
+            origin: "LIM",
+            destination: "MIA",
+            originLabel: "Aeropuerto Internacional Jorge Chavez, Lima, Perú (LIM)",
+            destinationLabel: "Todos los aeropuertos, Miami, Estados Unidos (MIA)",
+            departureDate: "2026-04-15",
+            returnDate: "2026-04-22",
+          },
+        ],
+      },
     });
 
     await openDesktop(page, baseUrl);
@@ -1335,7 +1333,7 @@ test("paste can restore a copied search in a fresh view from system clipboard", 
     await page.click("#pasteSearchConfigBtn");
     await page.waitForFunction(() => {
       const origin = document.getElementById("origin") as HTMLInputElement | null;
-      return origin?.value === "Lima";
+      return origin?.value === "Lima, Perú (LIM)";
     });
 
     const restored = await page.evaluate(() => ({
@@ -1355,8 +1353,8 @@ test("paste can restore a copied search in a fresh view from system clipboard", 
       layoverActive: document.getElementById("layoverFilter")?.classList.contains("is-active") ?? false,
     }));
 
-    assert.equal(restored.origin, "Lima");
-    assert.equal(restored.destination, "Miami");
+    assert.equal(restored.origin, "Lima, Perú (LIM)");
+    assert.equal(restored.destination, "Miami, Estados Unidos (MIA)");
     assert.equal(restored.departureDate, "2026-04-15");
     assert.equal(restored.returnDate, "2026-04-22");
     assert.equal(restored.adults, "2");
@@ -1441,89 +1439,101 @@ test("copying a flexible exact-stay search emits a compact reusable request payl
   });
 });
 
-test("paste can import a Costamar branded URL and submit its provider session", async () => {
+test("paste rejects legacy v1 clipboard payloads", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
-    const officialUrl = "https://booking.clickandbook.com/vuelos/b/CCS/MAD/2026-05-12/2026-05-22/1/0/0?terminalId=0721808110&lang=es&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjA3MjE4MDgxMTAiLCJpYXQiOjE3NzU1OTg4NTAsImV4cCI6MTc3NTYwMjQ1MH0.Bn6HcF2E6mPBi1c5xoBqaVm1f7DPvMAAmKNBumDwhuI";
-    let postedBody: Record<string, unknown> | null = null;
-
-    await page.route(`${baseUrl}/api/search`, async (route: Route) => {
-      postedBody = route.request().postDataJSON() as Record<string, unknown>;
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          searchJobId: "search-job-costamar-url",
-          searchComplete: true,
-          searchStatus: "completed",
-          sortMode: "cheapest",
-          request: postedBody?.request ?? {},
-          offers: [],
-          allOffers: [],
-          searchMeta: buildSearchMeta("search_live"),
-          providerMeta: {
-            exactProvider: "agil-local",
-            coverageMode: "core",
-          },
-          warnings: [],
-        }),
-      });
+    const legacyPayload = JSON.stringify({
+      type: "fly-desk-search-config",
+      version: 1,
+      mode: "exact",
+      tripType: "round-trip",
+      origin: { code: "LIM", value: "Lima" },
+      destination: { code: "MAD", value: "Madrid" },
     });
 
     await openDesktop(page, baseUrl);
     await page.evaluate(() => {
       window.localStorage.removeItem("flydesk.searchClipboard");
     });
-    await page.evaluate((rawPayload) => navigator.clipboard.writeText(rawPayload), officialUrl);
-
+    await page.evaluate((rawPayload) => navigator.clipboard.writeText(rawPayload), legacyPayload);
     await page.click("#pasteSearchConfigBtn");
-    await page.waitForFunction(() => {
-      const origin = document.getElementById("origin") as HTMLInputElement | null;
-      return origin?.value === "CCS";
-    });
+    await page.waitForTimeout(250);
 
-    const restored = await page.evaluate(() => ({
+    const probe = await page.evaluate(() => ({
       origin: (document.getElementById("origin") as HTMLInputElement | null)?.value ?? "",
       destination: (document.getElementById("destination") as HTMLInputElement | null)?.value ?? "",
-      departureDate: (document.getElementById("departureDate") as HTMLInputElement | null)?.value ?? "",
-      returnDate: (document.getElementById("returnDate") as HTMLInputElement | null)?.value ?? "",
-      adults: (document.getElementById("adults") as HTMLInputElement | null)?.value ?? "",
-      children: (document.getElementById("children") as HTMLInputElement | null)?.value ?? "",
-      infants: (document.getElementById("infants") as HTMLInputElement | null)?.value ?? "",
-      storedClipboard: JSON.parse(window.localStorage.getItem("flydesk.searchClipboard") || "null"),
+      storedClipboard: window.localStorage.getItem("flydesk.searchClipboard"),
     }));
 
-    assert.equal(restored.origin, "CCS");
-    assert.equal(restored.destination, "MAD");
-    assert.equal(restored.departureDate, "2026-05-12");
-    assert.equal(restored.returnDate, "2026-05-22");
-    assert.equal(restored.adults, "1");
-    assert.equal(restored.children, "0");
-    assert.equal(restored.infants, "0");
-    assert.deepEqual(restored.storedClipboard?.providerConfig, {
-      costamar: {
-        terminalId: "0721808110",
-        token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjA3MjE4MDgxMTAiLCJpYXQiOjE3NzU1OTg4NTAsImV4cCI6MTc3NTYwMjQ1MH0.Bn6HcF2E6mPBi1c5xoBqaVm1f7DPvMAAmKNBumDwhuI",
-        lang: "es",
-      },
-    });
-    assert.equal(restored.storedClipboard?.request?.searchMode, "exact");
-    assert.equal(restored.storedClipboard?.request?.tripType, "round-trip");
-    assert.equal(restored.storedClipboard?.request?.legs?.[0]?.departureDate, "2026-05-12");
-    assert.equal(restored.storedClipboard?.request?.legs?.[0]?.returnDate, "2026-05-22");
-    assert.equal(restored.storedClipboard?.version, 2);
-    assert.equal(Object.prototype.hasOwnProperty.call(restored.storedClipboard ?? {}, "summary"), false);
+    assert.equal(probe.origin, "");
+    assert.equal(probe.destination, "");
+    assert.equal(probe.storedClipboard, null);
+  }, {
+    autoOpen: false,
+    createPage: async ({ baseUrl, browser }) => {
+      const context = await browser.newContext();
+      await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseUrl });
+      return context.newPage();
+    },
+  });
+});
 
-    await submitAndWaitForRequest(page, baseUrl, "/api/search");
+test("copy normalizes origin and destination labels before writing clipboard payload", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await openDesktop(page, baseUrl);
+    await page.evaluate(() => {
+      const origin = document.getElementById("origin") as HTMLInputElement | null;
+      const destination = document.getElementById("destination") as HTMLInputElement | null;
+      if (!origin || !destination) {
+        throw new Error("Missing location inputs");
+      }
 
-    assert.deepEqual(postedBody?.providerConfig, {
-      costamar: {
-        terminalId: "0721808110",
-        token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjA3MjE4MDgxMTAiLCJpYXQiOjE3NzU1OTg4NTAsImV4cCI6MTc3NTYwMjQ1MH0.Bn6HcF2E6mPBi1c5xoBqaVm1f7DPvMAAmKNBumDwhuI",
-        lang: "es",
-      },
+      origin.value = "Aeropuerto Internacional Jorge Chavez, Lima, Perú (LIM)";
+      origin.dataset.code = "LIM";
+      origin.dataset.label = "Aeropuerto Internacional Jorge Chavez, Lima, Perú (LIM)";
+      destination.value = "Todos los aeropuertos, Madrid, España (MAD)";
+      destination.dataset.code = "MAD";
+      destination.dataset.label = "Todos los aeropuertos, Madrid, España (MAD)";
     });
-    assert.equal((postedBody?.request as { legs?: Array<{ origin?: string; destination?: string }> })?.legs?.[0]?.origin, "CCS");
-    assert.equal((postedBody?.request as { legs?: Array<{ origin?: string; destination?: string }> })?.legs?.[0]?.destination, "MAD");
+    await page.click("#copySearchConfigBtn");
+
+    const clipboardState = await page.evaluate(async () => {
+      const raw = await navigator.clipboard.readText();
+      return JSON.parse(raw);
+    });
+
+    assert.equal(clipboardState.request?.legs?.[0]?.originLabel, "Lima, Perú (LIM)");
+    assert.equal(clipboardState.request?.legs?.[0]?.destinationLabel, "Madrid, España (MAD)");
+  }, {
+    autoOpen: false,
+    createPage: async ({ baseUrl, browser }) => {
+      const context = await browser.newContext();
+      await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseUrl });
+      return context.newPage();
+    },
+  });
+});
+
+test("paste rejects legacy Costamar URL clipboard entries", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const officialUrl = "https://booking.clickandbook.com/vuelos/b/CCS/MAD/2026-05-12/2026-05-22/1/0/0?terminalId=0721808110&lang=es&token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjA3MjE4MDgxMTAiLCJpYXQiOjE3NzU1OTg4NTAsImV4cCI6MTc3NTYwMjQ1MH0.Bn6HcF2E6mPBi1c5xoBqaVm1f7DPvMAAmKNBumDwhuI";
+
+    await openDesktop(page, baseUrl);
+    await page.evaluate(() => {
+      window.localStorage.removeItem("flydesk.searchClipboard");
+    });
+    await page.evaluate((rawPayload) => navigator.clipboard.writeText(rawPayload), officialUrl);
+    await page.click("#pasteSearchConfigBtn");
+    await page.waitForTimeout(250);
+
+    const probe = await page.evaluate(() => ({
+      origin: (document.getElementById("origin") as HTMLInputElement | null)?.value ?? "",
+      destination: (document.getElementById("destination") as HTMLInputElement | null)?.value ?? "",
+      storedClipboard: window.localStorage.getItem("flydesk.searchClipboard"),
+    }));
+
+    assert.equal(probe.origin, "");
+    assert.equal(probe.destination, "");
+    assert.equal(probe.storedClipboard, null);
   }, {
     autoOpen: false,
     createPage: async ({ baseUrl, browser }) => {
@@ -2149,12 +2159,20 @@ test("flexible fixed-ranges calendar marks grouped cells with a stacked style an
 
 test("location suggestions stay anchored to the origin field", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
+    let sawCostamarProvider = false;
 
     await page.route("**/api/locations?*", async (route: Route) => {
-      if (!route.request().url().includes(`${baseUrl}/api/locations?q=LIM&limit=8`)) {
+      const requestUrl = new URL(route.request().url());
+      if (requestUrl.origin !== baseUrl || requestUrl.pathname !== "/api/locations") {
         await route.continue();
         return;
       }
+
+      if (requestUrl.searchParams.get("q") !== "LIM" || requestUrl.searchParams.get("limit") !== "8") {
+        await route.continue();
+        return;
+      }
+      sawCostamarProvider = requestUrl.searchParams.get("providerId") === "costamar";
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -2213,20 +2231,28 @@ test("location suggestions stay anchored to the origin field", async () => {
       assert.ok(probe.centerDelta <= 4, JSON.stringify(probe));
       assert.ok(probe.menuTop <= probe.shellBottom, JSON.stringify(probe));
       assert.equal(probe.hitInMenu, true, JSON.stringify(probe));
+      assert.equal(sawCostamarProvider, true);
   }, { autoOpen: false });
 });
 
 test("location suggestions reuse the session cache on refocus", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let requestCount = 0;
+    let sawCostamarProvider = false;
 
     await page.route("**/api/locations?*", async (route: Route) => {
-      if (!route.request().url().includes(`${baseUrl}/api/locations?q=LIM&limit=8`)) {
+      const requestUrl = new URL(route.request().url());
+      if (requestUrl.origin !== baseUrl || requestUrl.pathname !== "/api/locations") {
+        await route.continue();
+        return;
+      }
+      if (requestUrl.searchParams.get("q") !== "LIM" || requestUrl.searchParams.get("limit") !== "8") {
         await route.continue();
         return;
       }
 
       requestCount += 1;
+      sawCostamarProvider = requestUrl.searchParams.get("providerId") === "costamar";
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -2257,6 +2283,7 @@ test("location suggestions reuse the session cache on refocus", async () => {
     }));
 
     assert.equal(requestCount, 1);
+    assert.equal(sawCostamarProvider, true);
     assert.equal(probe.menuHidden, false);
     assert.equal(probe.itemCount, 1);
   }, { autoOpen: false });
@@ -2265,10 +2292,18 @@ test("location suggestions reuse the session cache on refocus", async () => {
 test("stale autocomplete failures no longer hide the latest valid suggestions", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let liRequests = 0;
+    let sawCostamarProvider = false;
 
     await page.route("**/api/locations?*", async (route: Route) => {
-      const requestUrl = route.request().url();
-      if (requestUrl.includes(`${baseUrl}/api/locations?q=LI&limit=8`)) {
+      const requestUrl = new URL(route.request().url());
+      if (requestUrl.origin !== baseUrl || requestUrl.pathname !== "/api/locations") {
+        await route.continue();
+        return;
+      }
+
+      sawCostamarProvider = requestUrl.searchParams.get("providerId") === "costamar";
+
+      if (requestUrl.searchParams.get("q") === "LI" && requestUrl.searchParams.get("limit") === "8") {
         liRequests += 1;
         await new Promise((resolve) => setTimeout(resolve, 420));
         try {
@@ -2283,7 +2318,7 @@ test("stale autocomplete failures no longer hide the latest valid suggestions", 
         return;
       }
 
-      if (!requestUrl.includes(`${baseUrl}/api/locations?q=LIM&limit=8`)) {
+      if (requestUrl.searchParams.get("q") !== "LIM" || requestUrl.searchParams.get("limit") !== "8") {
         await route.continue();
         return;
       }
@@ -2319,9 +2354,65 @@ test("stale autocomplete failures no longer hide the latest valid suggestions", 
     }));
 
     assert.equal(liRequests > 0, true);
+    assert.equal(sawCostamarProvider, true);
     assert.equal(probe.menuHidden, false);
     assert.equal(probe.itemCount, 1);
     assert.equal(probe.toastCount, 0);
+  }, { autoOpen: false });
+});
+
+test("location suggestions normalize Costamar labels before selection", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let sawCostamarProvider = false;
+    await page.route("**/api/locations?*", async (route: Route) => {
+      const requestUrl = new URL(route.request().url());
+      if (requestUrl.origin !== baseUrl || requestUrl.pathname !== "/api/locations") {
+        await route.continue();
+        return;
+      }
+
+      if (requestUrl.searchParams.get("q") !== "MAD" || requestUrl.searchParams.get("limit") !== "8") {
+        await route.continue();
+        return;
+      }
+
+      sawCostamarProvider = requestUrl.searchParams.get("providerId") === "costamar";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          query: "MAD",
+          suggestions: [
+            {
+              code: "MAD",
+              city: "Madrid",
+              country: "ES",
+              countryCode: "ES",
+              label: "Todos los aeropuertos, Madrid, España (MAD)",
+            },
+          ],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.fill("#destination", "MAD");
+    await page.waitForSelector("#destinationSuggestions .location-item");
+    await page.keyboard.press("Enter");
+
+    const probe = await page.evaluate(() => {
+      const destination = document.getElementById("destination") as HTMLInputElement | null;
+      return {
+        value: destination?.value ?? "",
+        code: destination?.dataset.code ?? "",
+        label: destination?.dataset.label ?? "",
+      };
+    });
+
+    assert.equal(sawCostamarProvider, true);
+    assert.equal(probe.value, "Madrid, España (MAD)");
+    assert.equal(probe.code, "MAD");
+    assert.equal(probe.label, "Madrid, España (MAD)");
   }, { autoOpen: false });
 });
 

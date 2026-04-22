@@ -106,10 +106,11 @@ const {
   maxFutureDaysDefault: SEARCH_DATE_DEFAULT_MAX_FUTURE_DAYS,
   formatDateCompact,
 });
-const AUTOCOMPLETE_SESSION_STORAGE_KEY = "flydesk.autocompleteCache.v1";
+const AUTOCOMPLETE_SESSION_STORAGE_KEY = "flydesk.autocompleteCache.v2";
 const AUTOCOMPLETE_CLIENT_SESSION_STORAGE_KEY = "flydesk.clientSessionId";
 const AUTOCOMPLETE_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
 const AUTOCOMPLETE_CACHE_MAX_ENTRIES = 80;
+const AUTOCOMPLETE_PROVIDER_ID = "costamar";
 const SEARCH_RESULT_CACHE_STORAGE_KEY = "flydesk.searchResultCache.v1";
 const SEARCH_RESULT_CACHE_TTL_MS = 4 * 60 * 60 * 1000;
 const SEARCH_RESULT_CACHE_MAX_ENTRIES = 16;
@@ -117,7 +118,6 @@ const SEARCH_LAUNCH_STORAGE_KEY_PREFIX = "flydesk.searchLaunch.v1";
 const SEARCH_LAUNCH_TTL_MS = 15 * 60 * 1000;
 const SEARCH_LAUNCH_QUERY_PARAM = "launchSearch";
 const SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM = "launchPayload";
-const SEARCH_CONFIG_CLIPBOARD_LEGACY_VERSION = 1;
 const RESULTS_REORDER_DURATION_MS = 170;
 const RESULTS_REORDER_ENTRY_DURATION_MS = 130;
 const RESULTS_REORDER_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
@@ -200,16 +200,158 @@ function normalizeAutocompleteQuery(query) {
   return String(query || "").trim().toUpperCase();
 }
 
-function autocompleteCacheKey(query, limit) {
+function normalizeLocationCode(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (!normalized) return "";
+  const match = normalized.match(/[A-Z]{3}/);
+  return match ? match[0] : "";
+}
+
+function sanitizeLocationToken(value) {
+  return String(value || "").replace(/\s+/g, " ").replace(/^[,;:\-\s]+|[,;:\-\s]+$/g, "").trim();
+}
+
+function stripLocationPrefix(value) {
+  const source = sanitizeLocationToken(value);
+  if (!source) return "";
+  const withoutPrefix = source.replace(
+    /^(?:todos?\s+los?\s+aeropuertos?|all\s+airports?|aeropuerto(?:s)?(?:\s+internacional(?:es)?)?(?:\s+de)?|airport(?:s)?(?:\s+international)?(?:\s+of)?)\s*(?:[:,\-]\s*|\s+)/i,
+    "",
+  ).trim();
+  return withoutPrefix.replace(/^[A-Z]{3}\s*[·-]\s*/u, "").trim();
+}
+
+let regionDisplayNames;
+
+function countryNameFromCode(code) {
+  const normalizedCode = String(code || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(normalizedCode)) {
+    return undefined;
+  }
+
+  if (regionDisplayNames === undefined) {
+    try {
+      regionDisplayNames = new Intl.DisplayNames(["es"], { type: "region" });
+    } catch {
+      regionDisplayNames = null;
+    }
+  }
+
+  const label = regionDisplayNames?.of(normalizedCode);
+  const sanitized = sanitizeLocationToken(label);
+  return sanitized || undefined;
+}
+
+function normalizeCountryName(country, countryCode) {
+  const direct = sanitizeLocationToken(country);
+  const fromDirectCode = countryNameFromCode(direct);
+  if (fromDirectCode) {
+    return fromDirectCode;
+  }
+  if (direct) {
+    return direct;
+  }
+
+  const fromCountryCode = countryNameFromCode(countryCode);
+  if (fromCountryCode) {
+    return fromCountryCode;
+  }
+
+  const fallbackCode = sanitizeLocationToken(countryCode);
+  return fallbackCode || "";
+}
+
+function extractLabelParts(label) {
+  const source = sanitizeLocationToken(label);
+  if (!source) {
+    return { text: "", code: "" };
+  }
+
+  const codeMatch = source.match(/\(([A-Za-z]{3})\)\s*$/);
+  const code = codeMatch ? normalizeLocationCode(codeMatch[1]) : "";
+  const text = sanitizeLocationToken(codeMatch ? source.slice(0, codeMatch.index) : source);
+  return { text, code };
+}
+
+function buildNormalizedLocationLabel(city, country, code, fallbackLabel = "") {
+  const safeCity = sanitizeLocationToken(city);
+  const safeCountry = sanitizeLocationToken(country);
+  const safeCode = normalizeLocationCode(code);
+  const safeFallback = sanitizeLocationToken(fallbackLabel);
+  const base = [safeCity, safeCountry].filter(Boolean).join(", ");
+
+  if (base && safeCode) {
+    return `${base} (${safeCode})`;
+  }
+  if (base) {
+    return base;
+  }
+  if (safeCode) {
+    return safeCode;
+  }
+  return safeFallback;
+}
+
+function normalizeLocationSuggestion(suggestion = {}) {
+  const fallbackCity = sanitizeLocationToken(suggestion.city);
+  const fallbackCountry = normalizeCountryName(suggestion.country, suggestion.countryCode);
+  const rawLabel = String(suggestion.label || "").trim();
+  const labelParts = extractLabelParts(rawLabel);
+  const splitParts = labelParts.text
+    .split(",")
+    .map((part) => stripLocationPrefix(part))
+    .filter(Boolean);
+  const parsedCity = splitParts.length >= 2 ? splitParts[splitParts.length - 2] : splitParts[0] || "";
+  const parsedCountry = splitParts.length >= 1 ? splitParts[splitParts.length - 1] : "";
+  const city = sanitizeLocationToken(parsedCity || fallbackCity);
+  const countryFromLabel = sanitizeLocationToken(parsedCountry);
+  const country = normalizeCountryName(countryFromLabel, suggestion.countryCode) || fallbackCountry;
+  const code = normalizeLocationCode(suggestion.code || labelParts.code || suggestion.cityCode);
+  const label = buildNormalizedLocationLabel(city, country, code, rawLabel);
+
+  return {
+    ...suggestion,
+    code,
+    city: city || fallbackCity || code,
+    country: country || fallbackCountry,
+    countryCode: sanitizeLocationToken(suggestion.countryCode).toUpperCase() || undefined,
+    label,
+  };
+}
+
+function normalizeLocationSuggestions(suggestions = []) {
+  return (suggestions ?? []).map((suggestion) => normalizeLocationSuggestion(suggestion));
+}
+
+function normalizeRequestLegLocationLabels(leg = {}) {
+  const originNormalized = normalizeLocationSuggestion({
+    code: leg.origin,
+    label: leg.originLabel || leg.origin,
+  });
+  const destinationNormalized = normalizeLocationSuggestion({
+    code: leg.destination,
+    label: leg.destinationLabel || leg.destination,
+  });
+
+  return {
+    ...leg,
+    origin: originNormalized.code || String(leg.origin || "").trim().toUpperCase(),
+    destination: destinationNormalized.code || String(leg.destination || "").trim().toUpperCase(),
+    originLabel: originNormalized.label || leg.originLabel || leg.origin || "",
+    destinationLabel: destinationNormalized.label || leg.destinationLabel || leg.destination || "",
+  };
+}
+
+function autocompleteCacheKey(providerId, query, limit) {
   return [
-    "all",
+    String(providerId || AUTOCOMPLETE_PROVIDER_ID),
     String(limit),
     normalizeAutocompleteQuery(query),
   ].join("::");
 }
 
-function readAutocompleteCache(query, limit) {
-  const key = autocompleteCacheKey(query, limit);
+function readAutocompleteCache(providerId, query, limit) {
+  const key = autocompleteCacheKey(providerId, query, limit);
   const entry = autocompleteSessionCache.get(key);
   if (!entry) {
     return [];
@@ -226,8 +368,8 @@ function readAutocompleteCache(query, limit) {
   return entry.suggestions.map((suggestion) => ({ ...suggestion }));
 }
 
-function writeAutocompleteCache(query, limit, suggestions) {
-  const key = autocompleteCacheKey(query, limit);
+function writeAutocompleteCache(providerId, query, limit, suggestions) {
+  const key = autocompleteCacheKey(providerId, query, limit);
   autocompleteSessionCache.set(key, {
     touchedAtMs: Date.now(),
     suggestions: (suggestions ?? []).map((suggestion) => ({ ...suggestion })),
@@ -2043,9 +2185,16 @@ function clearResolvedLocation(id, keepValue = true) {
 function applyResolvedLocation(id, location = {}) {
   const input = $(id);
   if (!input) return;
-  const value = String(location.value || location.label || location.code || "").trim();
-  const code = String(location.code || "").trim().toUpperCase();
-  const label = String(location.label || value).trim();
+  const normalized = normalizeLocationSuggestion({
+    code: location.code,
+    city: location.city,
+    country: location.country,
+    countryCode: location.countryCode,
+    label: location.label || location.value || location.code || "",
+  });
+  const code = normalized.code;
+  const label = String(normalized.label || location.value || location.code || "").trim();
+  const value = String(label || code || location.value || "").trim();
   input.value = value;
   if (code) input.dataset.code = code;
   else delete input.dataset.code;
@@ -2154,14 +2303,11 @@ function syncPaxPopoverPosition() {
 function selectLocationSuggestion(id, suggestion) {
   const input = $(id);
   if (!input) return;
-  input.value = suggestion.label;
-  input.dataset.code = suggestion.code;
-  input.dataset.label = suggestion.label;
+  const normalized = normalizeLocationSuggestion(suggestion);
+  input.value = normalized.label;
+  input.dataset.code = normalized.code;
+  input.dataset.label = normalized.label;
   hideLocationMenu(id);
-}
-
-function isIsoDatePathSegment(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || "").trim());
 }
 
 function normalizeClipboardProviderConfig(rawProviderConfig) {
@@ -2239,7 +2385,7 @@ function buildClipboardRequestFromPayload(payload) {
     passengers,
     filters,
     legs: [
-      {
+      normalizeRequestLegLocationLabels({
         ...baseLeg,
         origin: baseLeg?.origin || payload?.origin?.code || payload?.origin?.value || "",
         destination: baseLeg?.destination || payload?.destination?.code || payload?.destination?.value || "",
@@ -2264,7 +2410,7 @@ function buildClipboardRequestFromPayload(payload) {
         stayNights: inferredSearchMode === "roundtrip-grid" && inferredFlexibleMode === "exact-stay"
           ? stayNights
           : undefined,
-      },
+      }),
     ],
   };
 }
@@ -2292,105 +2438,7 @@ function withClipboardMetadata(payload) {
 
 function isSupportedSearchClipboardVersion(version) {
   const normalizedVersion = Number.parseInt(String(version), 10);
-  return normalizedVersion === SEARCH_CONFIG_CLIPBOARD_VERSION
-    || normalizedVersion === SEARCH_CONFIG_CLIPBOARD_LEGACY_VERSION;
-}
-
-function buildCostamarClipboardPayloadFromUrl(raw) {
-  const source = String(raw || "").trim();
-  if (!source) return null;
-
-  let parsed;
-  try {
-    parsed = new URL(source);
-  } catch {
-    return null;
-  }
-
-  if (parsed.protocol !== "https:" || parsed.hostname.toLowerCase() !== "booking.clickandbook.com") {
-    return null;
-  }
-
-  const path = parsed.pathname.replace(/\/+$/, "").split("/").filter(Boolean);
-  if (path.length < 7 || path[0] !== "vuelos" || path[1] !== "b") {
-    return null;
-  }
-
-  const origin = String(path[2] || "").trim().toUpperCase();
-  const destination = String(path[3] || "").trim().toUpperCase();
-  const departureDate = String(path[4] || "").trim();
-  if (!origin || !destination || !isIsoDatePathSegment(departureDate)) {
-    return null;
-  }
-
-  let returnDate = "";
-  let passengerOffset = 5;
-  if (isIsoDatePathSegment(path[5])) {
-    returnDate = String(path[5] || "").trim();
-    passengerOffset = 6;
-  }
-
-  const adults = String(path[passengerOffset] || "").trim();
-  const children = String(path[passengerOffset + 1] || "").trim();
-  const infants = String(path[passengerOffset + 2] || "").trim();
-  if (!/^\d+$/.test(adults) || !/^\d+$/.test(children) || !/^\d+$/.test(infants)) {
-    return null;
-  }
-
-  const terminalId = String(parsed.searchParams.get("terminalId") || "").trim();
-  const token = String(parsed.searchParams.get("token") || "").trim();
-  const lang = String(parsed.searchParams.get("lang") || "es").trim() || "es";
-  const stayNights = returnDate ? Math.max(0, diffDaysIso(departureDate, returnDate)) : undefined;
-
-  return withClipboardMetadata({
-    type: SEARCH_CONFIG_CLIPBOARD_TYPE,
-    version: SEARCH_CONFIG_CLIPBOARD_VERSION,
-    copiedAt: new Date().toISOString(),
-    mode: "exact",
-    tripType: returnDate ? "round-trip" : "one-way",
-    origin: {
-      value: origin,
-      code: origin,
-      label: origin,
-    },
-    destination: {
-      value: destination,
-      code: destination,
-      label: destination,
-    },
-    dates: {
-      departureDate,
-      returnDate,
-      departureStart: "",
-      departureEnd: "",
-      returnStart: "",
-      returnEnd: "",
-    },
-    stay: {
-      nights: typeof stayNights === "number" ? String(stayNights) : "",
-      min: typeof stayNights === "number" ? String(stayNights) : "",
-      max: typeof stayNights === "number" ? String(stayNights) : "",
-    },
-    passengers: {
-      adults,
-      children,
-      infants,
-    },
-    filters: {
-      nonStop: false,
-      baggageRequired: false,
-      maxStops: "",
-      maxLayoverMinutes: "",
-    },
-    sortMode: state.sortMode || "cheapest",
-    providerConfig: normalizeClipboardProviderConfig({
-      costamar: {
-        terminalId,
-        token,
-        lang,
-      },
-    }),
-  });
+  return normalizedVersion === SEARCH_CONFIG_CLIPBOARD_VERSION;
 }
 
 function parseSearchClipboardPayload(raw) {
@@ -2405,7 +2453,7 @@ function parseSearchClipboardPayload(raw) {
       providerConfig: normalizeClipboardProviderConfig(parsed.providerConfig),
     };
   } catch {
-    return buildCostamarClipboardPayloadFromUrl(raw);
+    return null;
   }
 }
 
@@ -2668,6 +2716,7 @@ async function fetchLocationSuggestions(id, query) {
   auto.requestId = requestId;
   const normalizedQuery = query.trim();
   const limit = 8;
+  const providerId = AUTOCOMPLETE_PROVIDER_ID;
 
   if (auto.abortController) {
     auto.abortController.abort();
@@ -2679,7 +2728,7 @@ async function fetchLocationSuggestions(id, query) {
     return;
   }
 
-  const cachedSuggestions = readAutocompleteCache(normalizedQuery, limit);
+  const cachedSuggestions = readAutocompleteCache(providerId, normalizedQuery, limit);
   if (cachedSuggestions.length > 0) {
     if (!input || document.activeElement !== input) {
       hideLocationMenu(id);
@@ -2697,7 +2746,7 @@ async function fetchLocationSuggestions(id, query) {
 
   try {
     const data = await getJson(
-      `/api/locations?q=${encodeURIComponent(normalizedQuery)}&limit=${limit}&clientSessionId=${encodeURIComponent(getClientSessionId())}`,
+      `/api/locations?q=${encodeURIComponent(normalizedQuery)}&limit=${limit}&providerId=${encodeURIComponent(providerId)}&clientSessionId=${encodeURIComponent(getClientSessionId())}`,
       { signal: controller.signal },
     );
     if (autocompleteState[id].requestId !== requestId) return;
@@ -2708,9 +2757,9 @@ async function fetchLocationSuggestions(id, query) {
       hideLocationMenu(id);
       return;
     }
-    auto.items = data.suggestions ?? [];
+    auto.items = normalizeLocationSuggestions(data.suggestions ?? []);
     auto.activeIndex = auto.items.length > 0 ? 0 : -1;
-    writeAutocompleteCache(normalizedQuery, limit, auto.items);
+    writeAutocompleteCache(providerId, normalizedQuery, limit, auto.items);
     renderLocationMenu(id);
   } catch (err) {
     if (autocompleteState[id].requestId !== requestId) return;
@@ -3290,11 +3339,6 @@ function offerOperatingCopy(offer) {
 function renderBaggageIconsHtml(offer) {
   const baggage = offer?.baggage ?? {};
   const items = [
-    {
-      icon: "ico-personal-item",
-      label: "Artículo personal",
-      included: baggage.carryOnIncluded === true,
-    },
     {
       icon: "ico-carry-on",
       label: "Cabina",
@@ -6618,8 +6662,15 @@ function renderDetailPanel() {
   h += '<div class="detail-section"><div class="detail-section__title">Equipaje</div>';
   const carryIcon = `<svg class="ico ico--xs ${offer.baggage?.carryOnIncluded ? "ico--bag-yes" : "ico--bag-no"}"><use href="#ico-carry-on"/></svg>`;
   const checkIcon = `<svg class="ico ico--xs ${offer.baggage?.checkedIncluded ? "ico--bag-yes" : "ico--bag-no"}"><use href="#ico-luggage"/></svg>`;
+  const checkedBagCount = offer.baggage?.checkedBags ?? 1;
+  const checkedBagLabel = checkedBagCount === 1 ? "1 maleta facturada" : `${checkedBagCount} maletas facturadas`;
+  const checkedBagDetail = offer.baggage?.checkedIncluded
+    ? offer.baggage?.description?.trim()
+      ? `${checkedBagCount}x ${offer.baggage.description}`.trim()
+      : checkedBagLabel
+    : "No incluido";
   h += `<div class="detail-pair"><span class="detail-pair__key">${carryIcon} Cabina</span><span class="detail-pair__val">${offer.baggage?.carryOnIncluded ? "Incluido" : "No incluido"}</span></div>`;
-  h += `<div class="detail-pair"><span class="detail-pair__key">${checkIcon} Bodega</span><span class="detail-pair__val">${offer.baggage?.checkedIncluded ? `${offer.baggage.checkedBags ?? 1}x ${offer.baggage.description ?? ""}`.trim() : "No incluido"}</span></div>`;
+  h += `<div class="detail-pair"><span class="detail-pair__key">${checkIcon} Bodega</span><span class="detail-pair__val">${checkedBagDetail}</span></div>`;
   h += '</div>';
 
   // Fare
