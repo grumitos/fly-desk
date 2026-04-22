@@ -30,6 +30,7 @@ import {
   prioritizeMatrixLoadingCells,
 } from "./core/matrix";
 import { buildOfferSignature } from "./core/offer-signature";
+import { buildFlexibleVariantGroupKey } from "./core/variant-group-key";
 import { maxStopsAcrossItineraries } from "./core/ranking";
 import {
   ProviderSearchResult,
@@ -169,6 +170,7 @@ interface AgilCellQuote {
   amount: number;
   currencyCode: string;
   validatingCarrier?: string;
+  variantKey?: string;
 }
 
 interface AgilGeoTreeLocation {
@@ -1692,10 +1694,14 @@ async function searchCellWithGds(
       return best;
     }
 
+    const outbound = outboundCandidates[0];
+    const inbound = request.tripType === "round-trip"
+      ? inboundCandidates[0]
+      : undefined;
     const itineraries = (
       request.tripType === "round-trip"
-        ? [outboundCandidates[0].itinerary, inboundCandidates[0].itinerary]
-        : [outboundCandidates[0].itinerary]
+        ? [outbound.itinerary, inbound?.itinerary].filter((itinerary): itinerary is Itinerary => Boolean(itinerary))
+        : [outbound.itinerary]
     );
 
     if (typeof maxStops === "number" && maxStopsAcrossItineraries(itineraries) > maxStops) {
@@ -1707,11 +1713,27 @@ async function searchCellWithGds(
       return best;
     }
 
-    if (!best || totalFare < best.amount) {
+    const currencyCode = group.pricingInfo?.tipoCambio?.code || request.currencyCode;
+    const baggage = buildBaggageSummary(outbound.baggage, inbound?.baggage);
+    const variantKey = buildFlexibleVariantGroupKey({
+      mainCarrier: outbound.itinerary.segments[0]?.marketingCarrier ?? validatingCarrier,
+      validatingCarrier,
+      totalAmount: totalFare,
+      currencyCode,
+      itineraries,
+      baggage,
+    });
+
+    if (
+      !best
+      || totalFare < best.amount
+      || (totalFare === best.amount && variantKey < String(best.variantKey ?? ""))
+    ) {
       return {
         amount: totalFare,
-        currencyCode: group.pricingInfo?.tipoCambio?.code || request.currencyCode,
+        currencyCode,
         validatingCarrier,
+        variantKey,
       };
     }
 
@@ -2198,6 +2220,7 @@ export async function resolveLocalAgilMatrixProgressive(
               amount: quote.amount,
               currencyCode: quote.currencyCode || request.currencyCode,
             },
+            variantKey: quote.variantKey,
             purchasePaths: buildPurchasePaths(cell.derivedRequest),
             confidence: "live" as const,
             selectable: true,

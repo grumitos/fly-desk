@@ -1862,6 +1862,291 @@ test("exact-stay matrix results open in the compact list and keep calendar hidde
   }, { autoOpen: false });
 });
 
+test("flexible exact-stay groups equivalent dates into one card and lets detail switch between grouped dates", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const baseMatrix = buildMatrixResponse();
+    const derivedRequestFor = (departureDate: string, returnDate: string) => ({
+      ...baseMatrix.cells[0].derivedRequest,
+      legs: [
+        {
+          origin: "LIM",
+          destination: "MIA",
+          departureDate,
+          returnDate,
+        },
+      ],
+    });
+    const completedMatrix = buildMatrixResponse({
+      matrixComplete: true,
+      matrixStatus: "completed",
+      request: {
+        ...baseMatrix.request,
+        flexibleMode: "exact-stay",
+        legs: [
+          {
+            ...baseMatrix.request.legs[0],
+            departureStart: "2026-04-15",
+            departureEnd: "2026-04-21",
+            returnStart: "2026-04-15",
+            returnEnd: "2026-04-21",
+            stayNights: 4,
+          },
+        ],
+      },
+      cells: [
+        {
+          ...baseMatrix.cells[0],
+          key: "2026-04-16_2026-04-20",
+          departureDate: "2026-04-16",
+          returnDate: "2026-04-20",
+          confidence: "live",
+          selectable: true,
+          stateCode: "live",
+          tooltip: "Agil exact search.",
+          variantKey: "variant-direct-la",
+          price: {
+            amount: 280,
+            currencyCode: "USD",
+          },
+          derivedRequest: derivedRequestFor("2026-04-16", "2026-04-20"),
+        },
+        {
+          ...baseMatrix.cells[0],
+          key: "2026-04-17_2026-04-21",
+          departureDate: "2026-04-17",
+          returnDate: "2026-04-21",
+          confidence: "live",
+          selectable: true,
+          stateCode: "live",
+          tooltip: "Agil exact search.",
+          variantKey: "variant-direct-la",
+          price: {
+            amount: 280,
+            currencyCode: "USD",
+          },
+          derivedRequest: derivedRequestFor("2026-04-17", "2026-04-21"),
+        },
+        {
+          ...baseMatrix.cells[0],
+          key: "2026-04-18_2026-04-22",
+          departureDate: "2026-04-18",
+          returnDate: "2026-04-22",
+          confidence: "live",
+          selectable: true,
+          stateCode: "live",
+          tooltip: "Agil exact search with stop.",
+          variantKey: "variant-stop-la",
+          price: {
+            amount: 299,
+            currencyCode: "USD",
+          },
+          derivedRequest: derivedRequestFor("2026-04-18", "2026-04-22"),
+        },
+      ],
+      axes: {
+        departureDates: ["2026-04-16", "2026-04-17", "2026-04-18"],
+        returnDates: ["2026-04-20", "2026-04-21", "2026-04-22"],
+      },
+      confidenceSummary: {
+        live: 3,
+      },
+      searchMeta: buildSearchMeta("search_live"),
+    });
+
+    await page.route(`${baseUrl}/api/matrix`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(completedMatrix),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await setRouteInputs(page, "LIM", "MIA");
+    await page.evaluate(() => {
+      const stayNights = document.getElementById("stayNights") as HTMLInputElement | null;
+      if (!stayNights) throw new Error("Missing stayNights input");
+      stayNights.value = "4";
+      stayNights.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    await page.click('[data-mode="flexible"]');
+    await setDateValue(page, "departureStart", "2026-04-15");
+    await setDateValue(page, "departureEnd", "2026-04-21");
+    await page.click("#submitButton");
+    await page.waitForSelector(".results-list--flexible article");
+
+    const groupedProbe = await page.evaluate(() => ({
+      rowCount: document.querySelectorAll(".results-list--flexible article").length,
+      firstCardText: document.querySelector(".results-list--flexible article")?.textContent?.replace(/\s+/g, " ").trim() ?? "",
+      firstCardBadge: document.querySelector(".results-list--flexible article .badge--group-count")?.textContent?.trim() ?? "",
+    }));
+
+    assert.equal(groupedProbe.rowCount, 2);
+    assert.match(groupedProbe.firstCardText, /También 17\/04/);
+    assert.equal(groupedProbe.firstCardBadge, "2");
+
+    await page.click(".results-list--flexible article");
+    await page.waitForSelector("[data-matrix-group-cell-key]");
+
+    const detailInitial = await page.evaluate(() => ({
+      variantCount: document.querySelectorAll("[data-matrix-group-cell-key]").length,
+      selectedVariant: document.querySelector('[data-matrix-group-cell-key][aria-pressed="true"]')?.getAttribute("data-matrix-group-cell-key") ?? "",
+    }));
+
+    assert.equal(detailInitial.variantCount, 2);
+    assert.equal(detailInitial.selectedVariant, "2026-04-16_2026-04-20");
+
+    await page.click('[data-matrix-group-cell-key="2026-04-17_2026-04-21"]');
+    await page.waitForFunction(() => (
+      document.querySelector('[data-matrix-group-cell-key][aria-pressed="true"]')?.getAttribute("data-matrix-group-cell-key")
+      === "2026-04-17_2026-04-21"
+    ));
+  }, { autoOpen: false });
+});
+
+test("flexible fixed-ranges calendar marks grouped cells with a stacked style and highlights equivalent peers", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const baseMatrix = buildMatrixResponse();
+    const derivedRequestFor = (departureDate: string, returnDate: string) => ({
+      ...baseMatrix.cells[0].derivedRequest,
+      legs: [
+        {
+          origin: "LIM",
+          destination: "MIA",
+          departureDate,
+          returnDate,
+        },
+      ],
+    });
+    const completedMatrix = buildMatrixResponse({
+      matrixComplete: true,
+      matrixStatus: "completed",
+      request: {
+        ...baseMatrix.request,
+        flexibleMode: "fixed-ranges",
+        legs: [
+          {
+            ...baseMatrix.request.legs[0],
+            departureStart: "2026-04-15",
+            departureEnd: "2026-04-16",
+            returnStart: "2026-04-19",
+            returnEnd: "2026-04-20",
+            stayNights: undefined,
+          },
+        ],
+      },
+      cells: [
+        {
+          ...baseMatrix.cells[0],
+          key: "2026-04-15_2026-04-19",
+          departureDate: "2026-04-15",
+          returnDate: "2026-04-19",
+          confidence: "live",
+          selectable: true,
+          stateCode: "live",
+          tooltip: "Agil exact search.",
+          variantKey: "variant-direct-la",
+          price: {
+            amount: 280,
+            currencyCode: "USD",
+          },
+          derivedRequest: derivedRequestFor("2026-04-15", "2026-04-19"),
+        },
+        {
+          ...baseMatrix.cells[0],
+          key: "2026-04-16_2026-04-20",
+          departureDate: "2026-04-16",
+          returnDate: "2026-04-20",
+          confidence: "live",
+          selectable: true,
+          stateCode: "live",
+          tooltip: "Agil exact search.",
+          variantKey: "variant-direct-la",
+          price: {
+            amount: 280,
+            currencyCode: "USD",
+          },
+          derivedRequest: derivedRequestFor("2026-04-16", "2026-04-20"),
+        },
+        {
+          ...baseMatrix.cells[0],
+          key: "2026-04-15_2026-04-20",
+          departureDate: "2026-04-15",
+          returnDate: "2026-04-20",
+          confidence: "live",
+          selectable: true,
+          stateCode: "live",
+          tooltip: "Agil stopover search.",
+          variantKey: "variant-stop-la",
+          price: {
+            amount: 320,
+            currencyCode: "USD",
+          },
+          derivedRequest: derivedRequestFor("2026-04-15", "2026-04-20"),
+        },
+        {
+          ...baseMatrix.cells[0],
+          key: "2026-04-16_2026-04-19",
+          departureDate: "2026-04-16",
+          returnDate: "2026-04-19",
+          confidence: "live",
+          selectable: true,
+          stateCode: "live",
+          tooltip: "Agil direct alt fare.",
+          variantKey: "variant-direct-alt",
+          price: {
+            amount: 305,
+            currencyCode: "USD",
+          },
+          derivedRequest: derivedRequestFor("2026-04-16", "2026-04-19"),
+        },
+      ],
+      axes: {
+        departureDates: ["2026-04-15", "2026-04-16"],
+        returnDates: ["2026-04-19", "2026-04-20"],
+      },
+      confidenceSummary: {
+        live: 4,
+      },
+      searchMeta: buildSearchMeta("search_live"),
+    });
+
+    await page.route(`${baseUrl}/api/matrix`, async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(completedMatrix),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await setRouteInputs(page, "LIM", "MIA");
+    await page.click('[data-mode="flexible"]');
+    await chooseFlexibleSubmode(page, "fixed-ranges");
+    await setDateValue(page, "departureStart", "2026-04-15");
+    await setDateValue(page, "departureEnd", "2026-04-16");
+    await setDateValue(page, "returnStart", "2026-04-19");
+    await setDateValue(page, "returnEnd", "2026-04-20");
+    await page.click("#submitButton");
+    await page.waitForSelector(".results-list--flexible article");
+
+    await page.click('.results-list--flexible article[data-flex-cell-key="2026-04-15_2026-04-19"]');
+    await page.click('[data-view="calendar"]');
+    await page.waitForSelector(".matrix-wrap .matrix-cell");
+
+    const calendarProbe = await page.evaluate(() => ({
+      groupedCount: document.querySelectorAll(".matrix-wrap .matrix-cell--grouped").length,
+      peerCount: document.querySelectorAll(".matrix-wrap .matrix-cell--group-peer").length,
+      activeCount: document.querySelectorAll(".matrix-wrap .matrix-cell.is-active").length,
+    }));
+
+    assert.equal(calendarProbe.groupedCount, 2);
+    assert.equal(calendarProbe.peerCount, 1);
+    assert.equal(calendarProbe.activeCount, 1);
+  }, { autoOpen: false });
+});
+
 test("location suggestions stay anchored to the origin field", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
 

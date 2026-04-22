@@ -277,6 +277,7 @@ export interface MatrixCell {
   returnDate?: string;
   stayNights?: number;
   price?: Money;
+  variantKey?: string;
   confidence: PriceConfidence | "loading" | "empty" | "unavailable";
   providerSource: ProviderId;
   selectable: boolean;
