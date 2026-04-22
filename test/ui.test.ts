@@ -2282,10 +2282,148 @@ test("location suggestions reuse the session cache on refocus", async () => {
       itemCount: document.querySelectorAll("#originSuggestions .location-item").length,
     }));
 
-    assert.equal(requestCount, 1);
+    assert.equal(requestCount >= 2, true);
     assert.equal(sawCostamarProvider, true);
     assert.equal(probe.menuHidden, false);
     assert.equal(probe.itemCount, 1);
+  }, { autoOpen: false });
+});
+
+test("typing uses related cached suggestions immediately while network refresh runs in background", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route("**/api/locations?*", async (route: Route) => {
+      const requestUrl = new URL(route.request().url());
+      if (requestUrl.origin !== baseUrl || requestUrl.pathname !== "/api/locations") {
+        await route.continue();
+        return;
+      }
+
+      const query = requestUrl.searchParams.get("q");
+      const limit = requestUrl.searchParams.get("limit");
+      if (limit !== "8" || requestUrl.searchParams.get("providerId") !== "costamar") {
+        await route.continue();
+        return;
+      }
+
+      if (query === "LIM") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            query: "LIM",
+            suggestions: [
+              {
+                code: "LIM",
+                city: "Lima",
+                country: "Peru",
+                label: "LIM - Lima, Peru",
+              },
+            ],
+          }),
+        });
+        return;
+      }
+
+      if (query === "LI") {
+        await new Promise((resolve) => setTimeout(resolve, 420));
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            query: "LI",
+            suggestions: [],
+          }),
+        });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.fill("#origin", "LIM");
+    await page.waitForSelector("#originSuggestions .location-item");
+    await page.fill("#origin", "LI");
+    await page.waitForTimeout(260);
+
+    const immediateProbe = await page.evaluate(() => ({
+      menuHidden: document.getElementById("originSuggestions")?.classList.contains("hidden") ?? true,
+      itemCount: document.querySelectorAll("#originSuggestions .location-item").length,
+      firstItem: (document.querySelector("#originSuggestions .location-item-code") as HTMLElement | null)?.innerText ?? "",
+    }));
+
+    assert.equal(immediateProbe.menuHidden, false);
+    assert.equal(immediateProbe.itemCount > 0, true);
+    assert.match(immediateProbe.firstItem.toUpperCase(), /LIM/);
+  }, { autoOpen: false });
+});
+
+test("typing city/country/iata with separators still matches cached suggestions", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route("**/api/locations?*", async (route: Route) => {
+      const requestUrl = new URL(route.request().url());
+      if (requestUrl.origin !== baseUrl || requestUrl.pathname !== "/api/locations") {
+        await route.continue();
+        return;
+      }
+
+      const query = requestUrl.searchParams.get("q");
+      const limit = requestUrl.searchParams.get("limit");
+      if (limit !== "8" || requestUrl.searchParams.get("providerId") !== "costamar") {
+        await route.continue();
+        return;
+      }
+
+      if (query === "LIM") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            query: "LIM",
+            suggestions: [
+              {
+                code: "LIM",
+                city: "Lima",
+                country: "Perú",
+                label: "LIM - Lima, Perú",
+              },
+            ],
+          }),
+        });
+        return;
+      }
+
+      if (query === "Lima/Perú/LIM") {
+        await new Promise((resolve) => setTimeout(resolve, 420));
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            query: "Lima/Perú/LIM",
+            suggestions: [],
+          }),
+        });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.fill("#origin", "LIM");
+    await page.waitForSelector("#originSuggestions .location-item");
+    await page.fill("#origin", "Lima/Perú/LIM");
+    await page.waitForTimeout(260);
+
+    const immediateProbe = await page.evaluate(() => ({
+      menuHidden: document.getElementById("originSuggestions")?.classList.contains("hidden") ?? true,
+      itemCount: document.querySelectorAll("#originSuggestions .location-item").length,
+      firstItem: (document.querySelector("#originSuggestions .location-item-code") as HTMLElement | null)?.innerText ?? "",
+    }));
+
+    assert.equal(immediateProbe.menuHidden, false);
+    assert.equal(immediateProbe.itemCount > 0, true);
+    assert.match(immediateProbe.firstItem.toUpperCase(), /LIM/);
   }, { autoOpen: false });
 });
 
@@ -2413,6 +2551,63 @@ test("location suggestions normalize Costamar labels before selection", async ()
     assert.equal(probe.value, "Madrid, España (MAD)");
     assert.equal(probe.code, "MAD");
     assert.equal(probe.label, "Madrid, España (MAD)");
+  }, { autoOpen: false });
+});
+
+test("location suggestions avoid duplicate entries when cache and network match", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route("**/api/locations?*", async (route: Route) => {
+      const requestUrl = new URL(route.request().url());
+      if (requestUrl.origin !== baseUrl || requestUrl.pathname !== "/api/locations") {
+        await route.continue();
+        return;
+      }
+
+      if (requestUrl.searchParams.get("q") !== "MAD" || requestUrl.searchParams.get("limit") !== "8") {
+        await route.continue();
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          query: "MAD",
+          suggestions: [
+            {
+              code: "MAD",
+              city: "Madrid",
+              country: "España",
+              label: "Todos los aeropuertos, Madrid, España (MAD)",
+            },
+            {
+              code: "MAD",
+              city: "Madrid",
+              country: "ES",
+              countryCode: "ES",
+              label: "MAD - Madrid, España",
+            },
+          ],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.fill("#destination", "MAD");
+    await page.waitForSelector("#destinationSuggestions .location-item");
+    await page.waitForTimeout(120);
+
+    const probe = await page.evaluate(() => {
+      const items = [...document.querySelectorAll("#destinationSuggestions .location-item-code")]
+        .map((node) => (node as HTMLElement).innerText.trim());
+      return {
+        itemCount: items.length,
+        items,
+      };
+    });
+
+    assert.equal(probe.itemCount, 1);
+    assert.match((probe.items[0] ?? "").toUpperCase(), /MAD/);
   }, { autoOpen: false });
 });
 

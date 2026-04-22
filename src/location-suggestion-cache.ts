@@ -1,6 +1,8 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { LocationSuggestion, ProviderId } from "./core/types";
 
-export const LOCATION_SUGGESTION_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
+export const LOCATION_SUGGESTION_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const LOCATION_SUGGESTION_CACHE_MAX_ENTRIES_PER_SESSION = 80;
 
 interface CacheEntry {
@@ -14,6 +16,21 @@ interface CacheKeyParts {
   providerId: ProviderId;
   query: string;
   limit: number;
+}
+
+interface PersistedLocationSuggestionCache {
+  version: 1;
+  savedAt: string;
+  entries: Array<{
+    key: string;
+    suggestions: LocationSuggestion[];
+    expiresAtMs: number;
+    touchedAtMs: number;
+  }>;
+}
+
+interface LocationSuggestionCacheStoreOptions {
+  persistPath?: string;
 }
 
 function cloneSuggestions(suggestions: ReadonlyArray<LocationSuggestion>): LocationSuggestion[] {
@@ -42,6 +59,17 @@ export class LocationSuggestionCacheStore {
   private readonly entries = new Map<string, CacheEntry>();
   private readonly inflight = new Map<string, Promise<LocationSuggestion[]>>();
   private readonly sessionKeys = new Map<string, Set<string>>();
+  private readonly persistPath: string | undefined;
+  private persistTimer: NodeJS.Timeout | undefined;
+  private bootstrapping = false;
+  private lastPersistedPayload = "";
+
+  constructor(options?: LocationSuggestionCacheStoreOptions) {
+    this.persistPath = options?.persistPath?.trim() || undefined;
+    if (this.persistPath) {
+      this.loadPersisted();
+    }
+  }
 
   async getOrLoad(
     sessionId: string | undefined,
@@ -85,6 +113,7 @@ export class LocationSuggestionCacheStore {
         });
         this.trackKey(normalizedSessionId, key);
         this.trimSession(normalizedSessionId);
+        this.schedulePersist();
         return cloneSuggestions(nextSuggestions);
       })
       .finally(() => {
@@ -96,11 +125,16 @@ export class LocationSuggestionCacheStore {
   }
 
   purgeExpired(nowMs = Date.now()): void {
+    let removed = false;
     for (const [key, entry] of this.entries) {
       if (entry.expiresAtMs <= nowMs) {
         const sessionId = key.split("::", 1)[0] ?? "anonymous";
         this.deleteKey(sessionId, key);
+        removed = true;
       }
+    }
+    if (removed) {
+      this.schedulePersist();
     }
   }
 
@@ -110,6 +144,7 @@ export class LocationSuggestionCacheStore {
       sessions: this.sessionKeys.size,
       entries: this.entries.size,
       inflight: this.inflight.size,
+      persistence: this.persistPath ? "enabled" : "disabled",
     };
   }
 
@@ -151,6 +186,104 @@ export class LocationSuggestionCacheStore {
     keys.delete(key);
     if (keys.size === 0) {
       this.sessionKeys.delete(sessionId);
+    }
+    this.schedulePersist();
+  }
+
+  private schedulePersist(): void {
+    if (!this.persistPath || this.bootstrapping || this.persistTimer) {
+      return;
+    }
+
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = undefined;
+      this.persistNow();
+    }, 120);
+    this.persistTimer.unref?.();
+  }
+
+  private loadPersisted(): void {
+    if (!this.persistPath || !existsSync(this.persistPath)) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(readFileSync(this.persistPath, "utf8")) as PersistedLocationSuggestionCache;
+      if (parsed?.version !== 1 || !Array.isArray(parsed.entries)) {
+        return;
+      }
+
+      this.bootstrapping = true;
+      const nowMs = Date.now();
+      parsed.entries.forEach((entry) => {
+        const key = String(entry?.key ?? "").trim();
+        if (!key) {
+          return;
+        }
+
+        const expiresAtMs = Number(entry?.expiresAtMs);
+        const touchedAtMs = Number(entry?.touchedAtMs);
+        const suggestions = Array.isArray(entry?.suggestions)
+          ? entry.suggestions.map((suggestion) => ({ ...suggestion }))
+          : [];
+        if (!Number.isFinite(expiresAtMs) || !Number.isFinite(touchedAtMs) || expiresAtMs <= nowMs) {
+          return;
+        }
+
+        this.entries.set(key, {
+          suggestions,
+          expiresAtMs,
+          touchedAtMs,
+        });
+        const sessionId = key.split("::", 1)[0] ?? "anonymous";
+        this.trackKey(sessionId, key);
+      });
+    } catch {
+      // Ignore malformed cache files and start fresh in-memory.
+    } finally {
+      this.bootstrapping = false;
+    }
+
+    this.lastPersistedPayload = JSON.stringify(this.buildPersistencePayload());
+    this.purgeExpired();
+  }
+
+  private buildPersistencePayload(): PersistedLocationSuggestionCache {
+    const entries = [...this.entries.entries()]
+      .map(([key, entry]) => ({
+        key,
+        suggestions: cloneSuggestions(entry.suggestions),
+        expiresAtMs: entry.expiresAtMs,
+        touchedAtMs: entry.touchedAtMs,
+      }))
+      .sort((left, right) => left.key.localeCompare(right.key));
+
+    return {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      entries,
+    };
+  }
+
+  private persistNow(): void {
+    if (!this.persistPath) {
+      return;
+    }
+
+    try {
+      const payload = this.buildPersistencePayload();
+      const serialized = JSON.stringify(payload);
+      if (serialized === this.lastPersistedPayload) {
+        return;
+      }
+
+      mkdirSync(dirname(this.persistPath), { recursive: true });
+      const tempPath = `${this.persistPath}.${process.pid}.tmp`;
+      writeFileSync(tempPath, serialized, "utf8");
+      renameSync(tempPath, this.persistPath);
+      this.lastPersistedPayload = serialized;
+    } catch {
+      // Ignore persistence failures; in-memory cache remains available.
     }
   }
 }

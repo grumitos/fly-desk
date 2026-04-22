@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { COMPLETED_SEARCH_SESSION_TTL_MS, SearchSessionStore } from "../src/session-store";
 import type {
   CanonicalOffer,
@@ -472,5 +475,70 @@ test("completed jobs and their purchase paths expire after the idle ttl, while r
   assert.equal(store.resolvePurchasePath(matrixPathId!), undefined);
   assert.ok(store.getSearchJob(runningJob.id));
   assert.ok(store.resolvePurchasePath(runningPathId!));
+});
+
+test("search session store persists completed searches and matrix jobs locally", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-persist-"));
+  const persistPath = join(tempRoot, "search-session-store.json");
+  const request = buildRequest();
+  const meta = buildSearchMeta();
+  const providerMeta = buildProviderMeta();
+
+  const firstStore = new SearchSessionStore({ persistPath });
+  const completedOffer = buildOffer("offer-persisted", "https://persisted.example/search");
+  const completedSearchJob = firstStore.createSearchJob({
+    request,
+    offers: [completedOffer],
+    allOffers: [completedOffer],
+    searchMeta: meta,
+    providerMeta,
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  const runningSearchJob = firstStore.createSearchJob({
+    request,
+    offers: [buildOffer("offer-running", "https://running.example/search")],
+    allOffers: [buildOffer("offer-running", "https://running.example/search")],
+    searchMeta: meta,
+    providerMeta,
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+  const completedMatrixJob = firstStore.createMatrixJob({
+    request: {
+      ...request,
+      tripType: "round-trip",
+      searchMode: "roundtrip-grid",
+    },
+    cells: [buildMatrixCell("2026-04-15_2026-04-22", "https://persisted.example/flexible")],
+    axes: {
+      departureDates: ["2026-04-15"],
+      returnDates: ["2026-04-22"],
+    },
+    confidenceSummary: { live: 1 },
+    recommendations: [],
+    providerMeta,
+    searchMeta: meta,
+    warnings: [],
+    status: "completed",
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 260));
+
+  const secondStore = new SearchSessionStore({ persistPath });
+  const restoredSearch = secondStore.getSearchJob(completedSearchJob.id);
+  const restoredMatrix = secondStore.getMatrixJob(completedMatrixJob.id);
+  const restoredRunning = secondStore.getSearchJob(runningSearchJob.id);
+  const restoredPathId = restoredSearch?.allOffers[0]?.purchasePaths[0]?.id;
+
+  assert.ok(restoredSearch);
+  assert.ok(restoredMatrix);
+  assert.equal(restoredRunning, undefined);
+  assert.ok(restoredPathId);
+  assert.ok(secondStore.resolvePurchasePath(restoredPathId!));
+
+  rmSync(tempRoot, { recursive: true, force: true });
 });
 
