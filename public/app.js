@@ -117,6 +117,7 @@ const SEARCH_LAUNCH_STORAGE_KEY_PREFIX = "flydesk.searchLaunch.v1";
 const SEARCH_LAUNCH_TTL_MS = 15 * 60 * 1000;
 const SEARCH_LAUNCH_QUERY_PARAM = "launchSearch";
 const SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM = "launchPayload";
+const SEARCH_CONFIG_CLIPBOARD_LEGACY_VERSION = 1;
 const RESULTS_REORDER_DURATION_MS = 170;
 const RESULTS_REORDER_ENTRY_DURATION_MS = 130;
 const RESULTS_REORDER_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
@@ -2268,35 +2269,31 @@ function buildClipboardRequestFromPayload(payload) {
   };
 }
 
-function buildClipboardSummary(request, sortModeValue) {
-  const passengers = request?.passengers ?? {};
-  const leg = request?.legs?.[0] ?? {};
-  const stayNights = leg?.stayNights ?? resolveExactStayNights(leg);
+function withClipboardMetadata(payload) {
+  const request = buildClipboardRequestFromPayload(payload);
+  const mode = request?.searchMode && request.searchMode !== "exact" ? "flexible" : "exact";
+  const tripTypeValue = request?.tripType === "one-way" ? "one-way" : "round-trip";
+  const flexibleModeValue = request?.searchMode === "roundtrip-grid"
+    ? resolveRoundTripFlexibleMode(request)
+    : undefined;
 
   return {
-    route: toolbarRouteSummary(request),
-    dates: toolbarDateSummary(request),
-    tripType: request?.tripType === "one-way" ? "Solo ida" : "Ida y vuelta",
-    mode: clipboardModeLabel(request),
-    stay: typeof stayNights === "number" ? `${stayNights} noches` : "",
-    passengers: formatPassengerSummary(
-      Number.parseInt(String(passengers.adults ?? 1), 10) || 1,
-      Number.parseInt(String(passengers.children ?? 0), 10) || 0,
-      Number.parseInt(String(passengers.infants ?? 0), 10) || 0,
-    ),
-    filters: flexibleCellFilterSummary(request?.filters ?? {}),
-    cabin: request?.cabin ?? "ECONOMY",
-    sort: sortModeLabel(sortModeValue),
+    type: SEARCH_CONFIG_CLIPBOARD_TYPE,
+    version: SEARCH_CONFIG_CLIPBOARD_VERSION,
+    copiedAt: String(payload?.copiedAt || new Date().toISOString()),
+    mode,
+    ...(flexibleModeValue ? { flexibleMode: flexibleModeValue } : {}),
+    tripType: tripTypeValue,
+    sortMode: String(payload?.sortMode || "cheapest"),
+    providerConfig: normalizeClipboardProviderConfig(payload?.providerConfig),
+    request,
   };
 }
 
-function withClipboardMetadata(payload) {
-  const request = buildClipboardRequestFromPayload(payload);
-  return {
-    ...payload,
-    request,
-    summary: buildClipboardSummary(request, payload?.sortMode || "cheapest"),
-  };
+function isSupportedSearchClipboardVersion(version) {
+  const normalizedVersion = Number.parseInt(String(version), 10);
+  return normalizedVersion === SEARCH_CONFIG_CLIPBOARD_VERSION
+    || normalizedVersion === SEARCH_CONFIG_CLIPBOARD_LEGACY_VERSION;
 }
 
 function buildCostamarClipboardPayloadFromUrl(raw) {
@@ -2400,7 +2397,7 @@ function parseSearchClipboardPayload(raw) {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
-    if (!parsed || parsed.type !== SEARCH_CONFIG_CLIPBOARD_TYPE || parsed.version !== SEARCH_CONFIG_CLIPBOARD_VERSION) {
+    if (!parsed || parsed.type !== SEARCH_CONFIG_CLIPBOARD_TYPE || !isSupportedSearchClipboardVersion(parsed.version)) {
       return null;
     }
     return {
@@ -2433,49 +2430,11 @@ function syncSearchClipboardUI() {
 }
 
 function buildSearchClipboardPayload() {
-  const readLocation = (id) => {
-    const input = $(id);
-    return {
-      value: String(input?.value || "").trim(),
-      code: String(input?.dataset.code || "").trim().toUpperCase(),
-      label: String(input?.dataset.label || input?.value || "").trim(),
-    };
-  };
-
   const formPayload = getFormPayload();
   const payload = {
     type: SEARCH_CONFIG_CLIPBOARD_TYPE,
     version: SEARCH_CONFIG_CLIPBOARD_VERSION,
     copiedAt: new Date().toISOString(),
-    mode: state.flexMode ? "flexible" : "exact",
-    flexibleMode: isFlexibleRoundTripMode() ? activeFlexibleRoundTripMode() : undefined,
-    tripType: tripType.value === "one-way" ? "one-way" : "round-trip",
-    origin: readLocation("origin"),
-    destination: readLocation("destination"),
-    dates: {
-      departureDate: controlValue("departureDate"),
-      returnDate: controlValue("returnDate"),
-      departureStart: controlValue("departureStart"),
-      departureEnd: controlValue("departureEnd"),
-      returnStart: controlValue("returnStart"),
-      returnEnd: controlValue("returnEnd"),
-    },
-    stay: {
-      nights: controlValue("stayNights"),
-      min: controlValue("stayNights"),
-      max: controlValue("stayNights"),
-    },
-    passengers: {
-      adults: controlValue("adults"),
-      children: controlValue("children"),
-      infants: controlValue("infants"),
-    },
-    filters: {
-      nonStop: controlChecked("nonStop"),
-      baggageRequired: controlChecked("baggageRequired"),
-      maxStops: controlValue("maxStopsFilter"),
-      maxLayoverMinutes: controlValue("maxLayoverMinutes"),
-    },
     sortMode: controlValue("sortMode") || state.sortMode || "cheapest",
     providerConfig: normalizeClipboardProviderConfig(state.providerConfig),
     request: {

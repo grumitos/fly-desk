@@ -1379,7 +1379,7 @@ test("paste can restore a copied search in a fresh view from system clipboard", 
   });
 });
 
-test("copying a flexible exact-stay search includes reusable request metadata and summary", async () => {
+test("copying a flexible exact-stay search emits a compact reusable request payload", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await openDesktop(page, baseUrl);
     await setRouteInputs(page, "CCS", "MAD");
@@ -1413,6 +1413,7 @@ test("copying a flexible exact-stay search includes reusable request metadata an
     const payload = JSON.parse(clipboardState.clipboard);
     const storedPayload = JSON.parse(clipboardState.stored);
 
+    assert.equal(payload.version, 2);
     assert.equal(payload.mode, "flexible");
     assert.equal(payload.flexibleMode, "exact-stay");
     assert.equal(payload.tripType, "round-trip");
@@ -1425,13 +1426,11 @@ test("copying a flexible exact-stay search includes reusable request metadata an
     assert.equal(payload.request.legs[0].stayNights, 10);
     assert.equal(payload.request.filters.baggageRequired, true);
     assert.equal(payload.request.filters.maxLayoverMinutes, 240);
-    assert.equal(payload.summary.route, "CCS → MAD");
-    assert.match(payload.summary.dates, /01\/05/);
-    assert.match(payload.summary.dates, /31\/05/);
-    assert.match(payload.summary.dates, /10 noches/i);
-    assert.equal(payload.summary.sort, "Más rápido");
+    assert.equal(Object.prototype.hasOwnProperty.call(payload, "origin"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(payload, "destination"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(payload, "summary"), false);
     assert.deepEqual(storedPayload.request, payload.request);
-    assert.deepEqual(storedPayload.summary, payload.summary);
+    assert.equal(Object.prototype.hasOwnProperty.call(storedPayload, "summary"), false);
   }, {
     autoOpen: false,
     createPage: async ({ baseUrl, browser }) => {
@@ -1511,7 +1510,8 @@ test("paste can import a Costamar branded URL and submit its provider session", 
     assert.equal(restored.storedClipboard?.request?.tripType, "round-trip");
     assert.equal(restored.storedClipboard?.request?.legs?.[0]?.departureDate, "2026-05-12");
     assert.equal(restored.storedClipboard?.request?.legs?.[0]?.returnDate, "2026-05-22");
-    assert.equal(restored.storedClipboard?.summary?.route, "CCS → MAD");
+    assert.equal(restored.storedClipboard?.version, 2);
+    assert.equal(Object.prototype.hasOwnProperty.call(restored.storedClipboard ?? {}, "summary"), false);
 
     await submitAndWaitForRequest(page, baseUrl, "/api/search");
 
