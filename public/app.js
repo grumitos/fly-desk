@@ -108,7 +108,7 @@ const {
 });
 const AUTOCOMPLETE_SESSION_STORAGE_KEY = "flydesk.autocompleteCache.v2";
 const AUTOCOMPLETE_CLIENT_SESSION_STORAGE_KEY = "flydesk.clientSessionId";
-const AUTOCOMPLETE_CACHE_TTL_MS = 8 * 60 * 60 * 1000;
+const AUTOCOMPLETE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const AUTOCOMPLETE_CACHE_MAX_ENTRIES = 80;
 const AUTOCOMPLETE_PROVIDER_ID = "costamar";
 const SEARCH_RESULT_CACHE_STORAGE_KEY = "flydesk.searchResultCache.v1";
@@ -150,7 +150,9 @@ function getClientSessionId() {
 
 function loadAutocompleteSessionCache() {
   try {
-    const raw = window.sessionStorage.getItem(AUTOCOMPLETE_SESSION_STORAGE_KEY);
+    const localRaw = window.localStorage.getItem(AUTOCOMPLETE_SESSION_STORAGE_KEY);
+    const sessionRaw = window.sessionStorage.getItem(AUTOCOMPLETE_SESSION_STORAGE_KEY);
+    const raw = localRaw || sessionRaw;
     if (!raw) {
       return new Map();
     }
@@ -174,6 +176,10 @@ function loadAutocompleteSessionCache() {
       });
     });
 
+    if (!localRaw && sessionRaw) {
+      window.localStorage.setItem(AUTOCOMPLETE_SESSION_STORAGE_KEY, raw);
+    }
+
     return cache;
   } catch {
     return new Map();
@@ -190,14 +196,24 @@ function persistAutocompleteSessionCache() {
         touchedAtMs: value.touchedAtMs,
         suggestions: value.suggestions.map((suggestion) => ({ ...suggestion })),
       }));
-    window.sessionStorage.setItem(AUTOCOMPLETE_SESSION_STORAGE_KEY, JSON.stringify({ entries }));
+    window.localStorage.setItem(AUTOCOMPLETE_SESSION_STORAGE_KEY, JSON.stringify({ entries }));
   } catch {
-    // sessionStorage can be unavailable in privacy-restricted contexts.
+    // localStorage can be unavailable in privacy-restricted contexts.
   }
 }
 
 function normalizeAutocompleteQuery(query) {
-  return String(query || "").trim().toUpperCase();
+  return normalizeSearchComparableText(query);
+}
+
+function normalizeSearchComparableText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toUpperCase();
 }
 
 function normalizeLocationCode(value) {
@@ -320,7 +336,28 @@ function normalizeLocationSuggestion(suggestion = {}) {
 }
 
 function normalizeLocationSuggestions(suggestions = []) {
-  return (suggestions ?? []).map((suggestion) => normalizeLocationSuggestion(suggestion));
+  const deduped = new Map();
+  for (const suggestion of suggestions ?? []) {
+    const normalized = normalizeLocationSuggestion(suggestion);
+    const key = normalizeLocationSuggestionIdentity(normalized);
+    if (!key || deduped.has(key)) {
+      continue;
+    }
+    deduped.set(key, normalized);
+  }
+
+  return [...deduped.values()];
+}
+
+function normalizeLocationSuggestionIdentity(suggestion = {}) {
+  return normalizeSearchComparableText([
+    normalizeLocationCode(suggestion.code),
+    sanitizeLocationToken(suggestion.city),
+    sanitizeLocationToken(suggestion.country),
+    sanitizeLocationToken(suggestion.label),
+  ]
+    .filter(Boolean)
+    .join(" "));
 }
 
 function normalizeRequestLegLocationLabels(leg = {}) {
@@ -365,14 +402,14 @@ function readAutocompleteCache(providerId, query, limit) {
 
   entry.touchedAtMs = Date.now();
   persistAutocompleteSessionCache();
-  return entry.suggestions.map((suggestion) => ({ ...suggestion }));
+  return normalizeLocationSuggestions(entry.suggestions ?? []);
 }
 
 function writeAutocompleteCache(providerId, query, limit, suggestions) {
   const key = autocompleteCacheKey(providerId, query, limit);
   autocompleteSessionCache.set(key, {
     touchedAtMs: Date.now(),
-    suggestions: (suggestions ?? []).map((suggestion) => ({ ...suggestion })),
+    suggestions: normalizeLocationSuggestions(suggestions ?? []).map((suggestion) => ({ ...suggestion })),
   });
 
   while (autocompleteSessionCache.size > AUTOCOMPLETE_CACHE_MAX_ENTRIES) {
@@ -385,6 +422,84 @@ function writeAutocompleteCache(providerId, query, limit, suggestions) {
   }
 
   persistAutocompleteSessionCache();
+}
+
+function locationSuggestionSearchText(suggestion) {
+  return normalizeSearchComparableText([
+    suggestion?.code,
+    suggestion?.city,
+    suggestion?.country,
+    suggestion?.countryCode,
+    suggestion?.cityCode,
+    suggestion?.label,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" "));
+}
+
+function readAutocompleteCacheBySimilarity(providerId, query, limit) {
+  const normalizedProviderId = String(providerId || AUTOCOMPLETE_PROVIDER_ID);
+  const normalizedQuery = normalizeAutocompleteQuery(query);
+  const normalizedLimit = Math.max(1, Math.trunc(limit));
+  const nowMs = Date.now();
+  const staleKeys = [];
+  const deduped = new Map();
+  let touchedAny = false;
+
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  for (const [key, entry] of autocompleteSessionCache.entries()) {
+    const [keyProviderId, keyLimit] = key.split("::");
+    if (keyProviderId !== normalizedProviderId) {
+      continue;
+    }
+    if (Number.parseInt(String(keyLimit || "0"), 10) !== normalizedLimit) {
+      continue;
+    }
+    if (!entry || !Number.isFinite(entry.touchedAtMs) || (nowMs - entry.touchedAtMs) > AUTOCOMPLETE_CACHE_TTL_MS) {
+      staleKeys.push(key);
+      continue;
+    }
+
+    entry.touchedAtMs = nowMs;
+    touchedAny = true;
+    for (const suggestion of entry.suggestions ?? []) {
+      const normalizedSuggestion = normalizeLocationSuggestion(suggestion);
+      if (!locationSuggestionSearchText(normalizedSuggestion).includes(normalizedQuery)) {
+        continue;
+      }
+
+      const dedupeKey = String(
+        normalizedSuggestion.code
+        || normalizedSuggestion.label
+        || normalizedSuggestion.city
+        || "",
+      ).trim().toUpperCase();
+      if (!dedupeKey || deduped.has(dedupeKey)) {
+        continue;
+      }
+      deduped.set(dedupeKey, normalizedSuggestion);
+      if (deduped.size >= normalizedLimit) {
+        break;
+      }
+    }
+
+    if (deduped.size >= normalizedLimit) {
+      break;
+    }
+  }
+
+  if (staleKeys.length > 0) {
+    staleKeys.forEach((key) => autocompleteSessionCache.delete(key));
+    persistAutocompleteSessionCache();
+  } else if (touchedAny) {
+    persistAutocompleteSessionCache();
+  }
+
+  return [...deduped.values()].slice(0, normalizedLimit);
 }
 
 function cloneSerializable(value) {
@@ -2729,16 +2844,19 @@ async function fetchLocationSuggestions(id, query) {
   }
 
   const cachedSuggestions = readAutocompleteCache(providerId, normalizedQuery, limit);
-  if (cachedSuggestions.length > 0) {
+  const fallbackCachedSuggestions = cachedSuggestions.length > 0
+    ? cachedSuggestions
+    : readAutocompleteCacheBySimilarity(providerId, normalizedQuery, limit);
+  const showedCacheFirst = fallbackCachedSuggestions.length > 0;
+  if (showedCacheFirst) {
     if (!input || document.activeElement !== input) {
       hideLocationMenu(id);
       return;
     }
 
-    auto.items = cachedSuggestions;
+    auto.items = fallbackCachedSuggestions;
     auto.activeIndex = auto.items.length > 0 ? 0 : -1;
     renderLocationMenu(id);
-    return;
   }
 
   const controller = new AbortController();
@@ -2770,6 +2888,9 @@ async function fetchLocationSuggestions(id, query) {
       return;
     }
     if (!input || document.activeElement !== input) {
+      return;
+    }
+    if (showedCacheFirst && auto.items.length > 0) {
       return;
     }
     hideLocationMenu(id);
@@ -5311,6 +5432,9 @@ function renderExactResultsCardHtml(group, selectedOfferId, providerLinkIndex, p
   const dateSecondary = dateSummary.secondary
     ? `<span class="cell-sub">${escapeHtml(dateSummary.secondary)}</span>`
     : '<span class="cell-sub cell-sub--ghost" aria-hidden="true">&nbsp;</span>';
+  const cacheRevalidationTag = shouldShowSearchCacheRevalidationTag()
+    ? '<span class="results-card__cache-tag" title="Resultados recuperados desde cache mientras se actualizan en segundo plano">Cache revalidando</span>'
+    : "";
 
   return `
     <article
@@ -5325,6 +5449,7 @@ function renderExactResultsCardHtml(group, selectedOfferId, providerLinkIndex, p
         <span class="results-card__airline-name carrier-label" data-result-airline title="${escapeHtml(carrier.display)}">${escapeHtml(carrier.display)}</span>
         ${flightCodes ? `<span class="results-card__airline-meta" data-result-flight-numbers>${escapeHtml(flightCodes)}</span>` : ""}
         ${operatingCopy ? `<span class="results-card__airline-meta results-card__airline-meta--muted">${escapeHtml(operatingCopy)}</span>` : ""}
+        ${cacheRevalidationTag}
       </div>
 
       <div class="results-card__schedule">
@@ -5362,6 +5487,16 @@ function renderExactResultsCardHtml(group, selectedOfferId, providerLinkIndex, p
       <div class="results-card__links results-links-cell" data-result-links>${renderProviderLinksCell(offer, providerLinkIndex)}</div>
     </article>
   `;
+}
+
+function shouldShowSearchCacheRevalidationTag() {
+  const response = state.searchResponse;
+  if (!response) {
+    return false;
+  }
+
+  return response.searchStatus === "running"
+    && response.searchMeta?.searchState === "search_cached";
 }
 
 function flexibleRouteSummary(cell) {

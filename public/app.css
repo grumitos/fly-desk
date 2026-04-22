@@ -2085,6 +2085,26 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   color: var(--text-faint);
 }
 
+.results-card__cache-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.08rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--warning) 26%, var(--line));
+  background: color-mix(in srgb, var(--warning-soft) 72%, transparent);
+  color: color-mix(in srgb, var(--warning) 74%, var(--text));
+  font-size: 0.67rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .results-card__schedule-main {
   display: inline-flex;
   align-items: baseline;

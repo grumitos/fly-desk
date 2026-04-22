@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import {
   CanonicalOffer,
   MatrixCell,
@@ -10,7 +12,13 @@ import {
   SearchRequest,
 } from "./core/types";
 
-export const COMPLETED_SEARCH_SESSION_TTL_MS = 60 * 60 * 1000;
+const COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
+export const COMPLETED_SEARCH_SESSION_TTL_MS = (() => {
+  const raw = Number(process.env.SEARCH_COMPLETED_SESSION_TTL_MS ?? COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS);
+  return Number.isFinite(raw) && raw >= 0
+    ? raw
+    : COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS;
+})();
 
 interface StoredPurchasePath {
   sessionId: string;
@@ -124,6 +132,18 @@ interface PurgeSummary {
   purchasePaths: number;
 }
 
+interface PersistedSearchSessionStore {
+  version: 1;
+  savedAt: string;
+  searchJobs: SearchJobRecord[];
+  matrixJobs: MatrixJobRecord[];
+  purchasePaths: StoredPurchasePath[];
+}
+
+interface SearchSessionStoreOptions {
+  persistPath?: string;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -178,6 +198,17 @@ export class SearchSessionStore {
   private readonly ownerPurchasePathIds = new Map<string, Map<string, string>>();
   private readonly matrixJobs = new Map<string, MatrixJobRecord>();
   private readonly searchJobs = new Map<string, SearchJobRecord>();
+  private readonly persistPath: string | undefined;
+  private persistTimer: NodeJS.Timeout | undefined;
+  private bootstrapping = false;
+  private lastPersistedPayload = "";
+
+  constructor(options?: SearchSessionStoreOptions) {
+    this.persistPath = options?.persistPath?.trim() || undefined;
+    if (this.persistPath) {
+      this.loadPersisted();
+    }
+  }
 
   getSession(sessionId: string): SearchSessionRecord | undefined {
     const job = this.searchJobs.get(sessionId);
@@ -261,6 +292,7 @@ export class SearchSessionStore {
       ...rewrittenAllOffers.map((offer) => offer.id),
       ...rewrittenOffers.map((offer) => offer.id),
     ]));
+    this.schedulePersist();
     return record;
   }
 
@@ -382,6 +414,7 @@ export class SearchSessionStore {
       ...rewrittenAllOffers.map((offer) => offer.id),
       ...rewrittenOffers.map((offer) => offer.id),
     ]));
+    this.schedulePersist();
     return next;
   }
 
@@ -430,6 +463,7 @@ export class SearchSessionStore {
 
     this.matrixJobs.set(id, record);
     this.pruneSessionOwners(id, new Set(record.cells.map((cell) => cell.key)));
+    this.schedulePersist();
     return record;
   }
 
@@ -477,6 +511,7 @@ export class SearchSessionStore {
 
     this.matrixJobs.set(jobId, next);
     this.pruneSessionOwners(jobId, new Set(rewrittenCells.map((cell) => cell.key)));
+    this.schedulePersist();
     return next;
   }
 
@@ -513,6 +548,10 @@ export class SearchSessionStore {
       removedMatrixJobs += 1;
       this.matrixJobs.delete(jobId);
       this.forgetSessionPurchasePaths(jobId);
+    }
+
+    if (removedSearchJobs > 0 || removedMatrixJobs > 0) {
+      this.schedulePersist();
     }
 
     return {
@@ -607,7 +646,10 @@ export class SearchSessionStore {
       this.purchasePaths.set(purchasePathId, {
         sessionId,
         ownerId,
-        path: rawPath,
+        path: {
+          ...rawPath,
+          id: purchasePathId,
+        },
         fingerprint,
         createdAt: previous?.createdAt ?? timestamp,
         updatedAt: timestamp,
@@ -737,6 +779,7 @@ export class SearchSessionStore {
 
     this.sessionPurchasePathIds.delete(sessionId);
     this.sessionOwnerKeys.delete(sessionId);
+    this.schedulePersist();
   }
 
   private forgetPurchasePathById(sessionId: string, purchasePathId: string): void {
@@ -748,6 +791,7 @@ export class SearchSessionStore {
         this.sessionPurchasePathIds.delete(sessionId);
       }
     }
+    this.schedulePersist();
   }
 
   private dropOwnerPurchasePaths(ownerKey: string): void {
@@ -775,6 +819,124 @@ export class SearchSessionStore {
         this.sessionOwnerKeys.delete(sessionId);
       }
     }
+    this.schedulePersist();
+  }
+
+  private schedulePersist(): void {
+    if (!this.persistPath || this.bootstrapping || this.persistTimer) {
+      return;
+    }
+
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = undefined;
+      this.persistNow();
+    }, 180);
+    this.persistTimer.unref?.();
+  }
+
+  private buildPersistencePayload(): PersistedSearchSessionStore {
+    const searchJobs = [...this.searchJobs.values()]
+      .filter((job) => job.status === "completed")
+      .sort((left, right) => left.id.localeCompare(right.id));
+    const matrixJobs = [...this.matrixJobs.values()]
+      .filter((job) => job.status === "completed")
+      .sort((left, right) => left.id.localeCompare(right.id));
+    const activeSessionIds = new Set<string>([
+      ...searchJobs.map((job) => job.id),
+      ...matrixJobs.map((job) => job.id),
+    ]);
+    const purchasePaths = [...this.purchasePaths.values()]
+      .filter((path) => activeSessionIds.has(path.sessionId))
+      .sort((left, right) => left.path.id.localeCompare(right.path.id));
+
+    return {
+      version: 1,
+      savedAt: nowIso(),
+      searchJobs,
+      matrixJobs,
+      purchasePaths,
+    };
+  }
+
+  private persistNow(): void {
+    if (!this.persistPath) {
+      return;
+    }
+
+    try {
+      const payload = this.buildPersistencePayload();
+      const serialized = JSON.stringify(payload);
+      if (serialized === this.lastPersistedPayload) {
+        return;
+      }
+
+      mkdirSync(dirname(this.persistPath), { recursive: true });
+      const tempPath = `${this.persistPath}.${process.pid}.tmp`;
+      writeFileSync(tempPath, serialized, "utf8");
+      renameSync(tempPath, this.persistPath);
+      this.lastPersistedPayload = serialized;
+    } catch {
+      // Ignore persistence failures; in-memory store remains usable.
+    }
+  }
+
+  private loadPersisted(): void {
+    if (!this.persistPath || !existsSync(this.persistPath)) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(readFileSync(this.persistPath, "utf8")) as PersistedSearchSessionStore;
+      if (parsed?.version !== 1) {
+        return;
+      }
+
+      const searchJobs = Array.isArray(parsed.searchJobs) ? parsed.searchJobs : [];
+      const matrixJobs = Array.isArray(parsed.matrixJobs) ? parsed.matrixJobs : [];
+      const purchasePaths = Array.isArray(parsed.purchasePaths) ? parsed.purchasePaths : [];
+
+      this.bootstrapping = true;
+      searchJobs
+        .filter((job) => job?.status === "completed" && typeof job?.id === "string")
+        .forEach((job) => {
+          this.searchJobs.set(job.id, job);
+          this.syncSearchSessionMetadata(job);
+        });
+      matrixJobs
+        .filter((job) => job?.status === "completed" && typeof job?.id === "string")
+        .forEach((job) => {
+          this.matrixJobs.set(job.id, job);
+        });
+
+      const activeSessionIds = new Set<string>([
+        ...this.searchJobs.keys(),
+        ...this.matrixJobs.keys(),
+      ]);
+      purchasePaths
+        .filter((entry) => entry && typeof entry.path?.id === "string" && activeSessionIds.has(entry.sessionId))
+        .forEach((entry) => {
+          this.purchasePaths.set(entry.path.id, entry);
+          const ids = this.sessionPurchasePathIds.get(entry.sessionId) ?? new Set<string>();
+          ids.add(entry.path.id);
+          this.sessionPurchasePathIds.set(entry.sessionId, ids);
+
+          const ownerKey = this.ownerKey(entry.sessionId, entry.ownerId);
+          const ownerKeys = this.sessionOwnerKeys.get(entry.sessionId) ?? new Set<string>();
+          ownerKeys.add(ownerKey);
+          this.sessionOwnerKeys.set(entry.sessionId, ownerKeys);
+
+          const ownerPaths = this.ownerPurchasePathIds.get(ownerKey) ?? new Map<string, string>();
+          ownerPaths.set(entry.fingerprint, entry.path.id);
+          this.ownerPurchasePathIds.set(ownerKey, ownerPaths);
+        });
+    } catch {
+      // Ignore malformed files and continue with an empty store.
+    } finally {
+      this.bootstrapping = false;
+    }
+
+    this.lastPersistedPayload = JSON.stringify(this.buildPersistencePayload());
+    this.purgeExpired();
   }
 
   private ownerKey(sessionId: string, ownerId: string): string {

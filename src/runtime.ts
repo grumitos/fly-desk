@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { loadRuntimeConfig } from "./config";
 import { LocalAgilProvider } from "./core/agil-provider";
 import { LocalCostamarProvider } from "./core/costamar-provider";
@@ -13,6 +14,23 @@ export interface RuntimeServices {
 
 let runtime: RuntimeServices | undefined;
 
+function isNodeTestProcess(): boolean {
+  return process.argv.includes("--test") || process.env.NODE_ENV === "test";
+}
+
+function resolvePersistPath(envKey: string, defaultFileName: string): string | undefined {
+  const explicit = process.env[envKey]?.trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  if (isNodeTestProcess()) {
+    return undefined;
+  }
+
+  return join(process.cwd(), "output", "cache", defaultFileName);
+}
+
 export function getRuntime(): RuntimeServices {
   if (runtime) {
     return runtime;
@@ -24,8 +42,18 @@ export function getRuntime(): RuntimeServices {
       new LocalAgilProvider(),
       new LocalCostamarProvider(),
     ]),
-    locationSuggestions: new LocationSuggestionCacheStore(),
-    sessions: new SearchSessionStore(),
+    locationSuggestions: new LocationSuggestionCacheStore({
+      persistPath: resolvePersistPath(
+        "FLY_DESK_LOCATION_SUGGESTION_CACHE_PATH",
+        "location-suggestion-cache.json",
+      ),
+    }),
+    sessions: new SearchSessionStore({
+      persistPath: resolvePersistPath(
+        "FLY_DESK_SEARCH_SESSION_STORE_PATH",
+        "search-session-store.json",
+      ),
+    }),
   };
 
   return runtime;
