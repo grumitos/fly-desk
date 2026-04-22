@@ -2834,6 +2834,44 @@ html[data-theme="dark"] .theme-switch__button[data-theme-value="dark"] {
   background: color-mix(in srgb, var(--danger-soft) 88%, var(--surface));
 }
 
+.matrix-cell--grouped,
+.cal-cell--grouped {
+  position: relative;
+  isolation: isolate;
+}
+
+.matrix-cell--grouped::before,
+.matrix-cell--grouped::after,
+.cal-cell--grouped::before,
+.cal-cell--grouped::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.matrix-cell--grouped::before,
+.cal-cell--grouped::before {
+  transform: translate(3px, 3px);
+  opacity: 0.42;
+}
+
+.matrix-cell--grouped::after,
+.cal-cell--grouped::after {
+  transform: translate(6px, 6px);
+  opacity: 0.22;
+}
+
+.matrix-cell--group-peer,
+.cal-cell--group-peer {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--line));
+}
+
 .matrix-price,
 .cal-price {
   font-size: 0.88rem;

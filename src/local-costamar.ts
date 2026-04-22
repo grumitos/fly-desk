@@ -24,6 +24,7 @@ import {
   prioritizeMatrixLoadingCells,
 } from "./core/matrix";
 import { buildOfferSignature } from "./core/offer-signature";
+import { buildOfferVariantGroupKey } from "./core/variant-group-key";
 import { ProviderSearchResult } from "./core/provider";
 import { maxStopsAcrossItineraries } from "./core/ranking";
 import {
@@ -3058,6 +3059,7 @@ function buildMatrixCellFromOffer(
       amount: offer.price.total.amount,
       currencyCode: offer.price.total.currencyCode,
     },
+    variantKey: buildOfferVariantGroupKey(offer),
     purchasePaths: offer.purchasePaths.length > 0
       ? offer.purchasePaths
       : providerContext?.costamar

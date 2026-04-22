@@ -3021,42 +3021,41 @@ function resolvedOfferPurchasePaths(offer, providerLinkIndex) {
   return [...primaryPaths, ...extraPaths];
 }
 
-function buildOfferGroups(offers) {
+function groupItemsByKey(items, resolveKey) {
   const groups = new Map();
-  for (const offer of offers) {
-    const key = offerVariantGroupKey(offer);
+  for (const item of items ?? []) {
+    const key = resolveKey(item);
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(offer);
+    groups.get(key).push(item);
   }
+
   return [...groups.values()].map((group) => [...group]);
 }
 
-function getGroupForOffer(
-  offerId,
-  all = state.searchResponse?.filteredOffers ?? state.searchResponse?.allOffers ?? [],
+function getGroupForItem(
+  itemId,
+  all,
+  resolveItemId,
+  resolveGroupKey,
+  compareItems,
 ) {
-  const target = all.find((offer) => offer.id === offerId);
+  const target = (all ?? []).find((item) => resolveItemId(item) === itemId);
   if (!target) return null;
-  const key = offerVariantGroupKey(target);
-  return all
-    .filter((offer) => offerVariantGroupKey(offer) === key)
-    .sort(compareOfferTravelDates);
+  const key = resolveGroupKey(target);
+  return (all ?? [])
+    .filter((item) => resolveGroupKey(item) === key)
+    .sort(compareItems);
 }
 
-function formatOfferDateLabel(offer) {
-  const { departureDate, returnDate } = offerPrimaryDates(offer);
-  const departureText = formatDateCompact(departureDate);
-  if (!returnDate) {
-    return departureText;
-  }
-  return `${departureText} → ${formatDateCompact(returnDate)}`;
-}
-
-function buildGroupDateSummary(group, selectedOfferId) {
-  const orderedGroup = [...group].sort(compareOfferTravelDates);
-  const current = orderedGroup.find((offer) => offer.id === selectedOfferId) ?? orderedGroup[0];
-  const labels = [...new Set(orderedGroup.map((offer) => formatOfferDateLabel(offer)))];
-  const primary = current ? formatOfferDateLabel(current) : "—";
+function buildGroupDateSummaryForItems(
+  group,
+  selectedItemId,
+  { resolveItemId, dateLabelForItem, compareItems },
+) {
+  const orderedGroup = [...group].sort(compareItems);
+  const current = orderedGroup.find((item) => resolveItemId(item) === selectedItemId) ?? orderedGroup[0];
+  const labels = [...new Set(orderedGroup.map((item) => dateLabelForItem(item)).filter(Boolean))];
+  const primary = current ? dateLabelForItem(current) : "—";
   const alternatives = labels.filter((label) => label !== primary);
   let secondary = "";
 
@@ -3069,8 +3068,105 @@ function buildGroupDateSummary(group, selectedOfferId) {
   return {
     primary,
     secondary,
-    title: labels.join(" | "),
+    title: labels.length > 0 ? labels.join(" | ") : primary,
   };
+}
+
+function buildOfferGroups(offers) {
+  return groupItemsByKey(offers, offerVariantGroupKey);
+}
+
+function getGroupForOffer(
+  offerId,
+  all = state.searchResponse?.filteredOffers ?? state.searchResponse?.allOffers ?? [],
+) {
+  return getGroupForItem(
+    offerId,
+    all,
+    (offer) => offer.id,
+    offerVariantGroupKey,
+    compareOfferTravelDates,
+  );
+}
+
+function formatOfferDateLabel(offer) {
+  const { departureDate, returnDate } = offerPrimaryDates(offer);
+  const departureText = formatDateCompact(departureDate);
+  if (!returnDate) {
+    return departureText;
+  }
+  return `${departureText} → ${formatDateCompact(returnDate)}`;
+}
+
+function buildGroupDateSummary(group, selectedOfferId) {
+  return buildGroupDateSummaryForItems(group, selectedOfferId, {
+    resolveItemId: (offer) => offer.id,
+    dateLabelForItem: formatOfferDateLabel,
+    compareItems: compareOfferTravelDates,
+  });
+}
+
+function matrixCellDateLabel(cell) {
+  const departureDate = String(cell?.departureDate || "").trim();
+  if (!departureDate) {
+    return "—";
+  }
+
+  const departureLabel = formatDateCompact(departureDate);
+  const returnDate = String(cell?.returnDate || "").trim();
+  if (!returnDate) {
+    return departureLabel;
+  }
+
+  return `${departureLabel} → ${formatDateCompact(returnDate)}`;
+}
+
+function compareMatrixCellTravelDates(left, right) {
+  const departureDiff = String(left?.departureDate || "").localeCompare(String(right?.departureDate || ""));
+  if (departureDiff !== 0) return departureDiff;
+
+  const returnDiff = String(left?.returnDate || "").localeCompare(String(right?.returnDate || ""));
+  if (returnDiff !== 0) return returnDiff;
+
+  return String(left?.key || "").localeCompare(String(right?.key || ""));
+}
+
+function matrixCellVariantGroupKey(cell) {
+  const variantKey = String(cell?.variantKey || "").trim();
+  const amount = Number(cell?.price?.amount);
+  const currencyCode = String(cell?.price?.currencyCode || "").trim().toUpperCase();
+
+  if (!variantKey || !Number.isFinite(amount) || !currencyCode) {
+    return `matrix-cell::${String(cell?.key || "")}`;
+  }
+
+  return `${variantKey}##${amount.toFixed(2)}##${currencyCode}`;
+}
+
+function buildMatrixCellGroups(cells) {
+  return groupItemsByKey(cells, matrixCellVariantGroupKey)
+    .map((group) => [...group].sort(compareMatrixCellTravelDates));
+}
+
+function getGroupForMatrixCell(
+  cellKey,
+  all = state.matrixResponse?.cells ?? [],
+) {
+  return getGroupForItem(
+    cellKey,
+    all,
+    (cell) => cell.key,
+    matrixCellVariantGroupKey,
+    compareMatrixCellTravelDates,
+  );
+}
+
+function buildMatrixGroupDateSummary(group, selectedCellKey) {
+  return buildGroupDateSummaryForItems(group, selectedCellKey, {
+    resolveItemId: (cell) => cell.key,
+    dateLabelForItem: matrixCellDateLabel,
+    compareItems: compareMatrixCellTravelDates,
+  });
 }
 
 function itineraryWindowSummary(itinerary) {
@@ -5230,8 +5326,37 @@ function flexibleRouteSummary(cell) {
   return [leg.origin, leg.destination].filter(Boolean).join(" - ") || toolbarRouteSummary(request) || "Ruta por confirmar";
 }
 
-function renderFlexibleResultsCardHtml(cell) {
-  const isActive = cell.key === state.selectedMatrixKey;
+function flexibleGroupRepresentativeCell(group) {
+  if (!Array.isArray(group) || group.length === 0) {
+    return null;
+  }
+
+  return group.find((cell) => cell.key === state.selectedMatrixKey)
+    ?? [...group].sort(compareFlexibleListCells)[0]
+    ?? group[0];
+}
+
+function flexibleGroupProviderSummary(group) {
+  const labels = [...new Set((group ?? []).map((cell) => providerLabel(cell.providerSource)).filter(Boolean))];
+  if (labels.length <= 1) return labels[0] ?? "Proveedor por confirmar";
+  return `${labels[0]} +${labels.length - 1}`;
+}
+
+function renderFlexibleResultsCardHtml(group) {
+  const cell = flexibleGroupRepresentativeCell(group);
+  if (!cell) {
+    return "";
+  }
+
+  const isActive = (group ?? []).some((entry) => entry.key === state.selectedMatrixKey);
+  const rowKey = isActive
+    ? state.selectedMatrixKey ?? cell.key
+    : cell.key;
+  const dateSummary = buildMatrixGroupDateSummary(group, state.selectedMatrixKey);
+  const badge = group.length > 1
+    ? `<span class="badge badge--accent badge--group-count" title="${group.length} fechas equivalentes">${group.length}</span>`
+    : "";
+  const providerSummary = flexibleGroupProviderSummary(group);
   const stayLabel = cell.stayNights != null ? `${cell.stayNights} noches` : "—";
   const passengerCount = passengerCountForRequest(flexibleCellRequest(cell) ?? state.matrixResponse?.request ?? state.request);
   const priceHtml = cell.confidence === "loading"
@@ -5242,10 +5367,12 @@ function renderFlexibleResultsCardHtml(cell) {
         perPersonSuffix: " por persona",
       })
       : `<span class="results-card__status">${escapeHtml(flexibleCellStateLabel(cell))}</span>`;
+  const dateSecondary = dateSummary.secondary
+    ? `<span class="cell-sub">${escapeHtml(dateSummary.secondary)}</span>`
+    : `<span class="cell-sub">${escapeHtml(providerSummary)}</span>`;
   const rowLabel = [
     isActive ? "Combinación seleccionada" : "Ver combinación flexible",
-    formatDateCompact(cell.departureDate),
-    cell.returnDate ? formatDateCompact(cell.returnDate) : "",
+    dateSummary.primary,
     stayLabel,
     cell.price ? priceLabels(cell.price, passengerCount).combinedLabel : flexibleCellStateLabel(cell),
   ].filter(Boolean).join(" · ");
@@ -5253,8 +5380,9 @@ function renderFlexibleResultsCardHtml(cell) {
   return `
     <article
       class="results-card results-card--flexible ${isActive ? "is-active" : ""} ${!cell.selectable ? "results-card--disabled" : ""}"
-      data-flex-cell-key="${cell.key}"
-      data-mk="${cell.key}"
+      data-flex-cell-key="${escapeHtml(rowKey)}"
+      data-mk="${escapeHtml(rowKey)}"
+      data-flex-variant-group-key="${escapeHtml(matrixCellVariantGroupKey(cell))}"
       tabindex="0"
       role="button"
       aria-label="${escapeHtml(rowLabel)}"
@@ -5268,15 +5396,15 @@ function renderFlexibleResultsCardHtml(cell) {
 
       <div class="results-card__route">
         <span class="results-card__route-main">${escapeHtml(flexibleRouteSummary(cell))}</span>
-        <div class="results-date-stack">
-          <span class="cell-main">${escapeHtml(stayLabel)}</span>
-          <span class="cell-sub">${escapeHtml(providerLabel(cell.providerSource))}</span>
+        <div class="results-date-stack" title="${escapeHtml(dateSummary.title)}">
+          <span class="cell-main">${escapeHtml(stayLabel)}${badge}</span>
+          ${dateSecondary}
         </div>
       </div>
 
       <div class="results-card__journey results-card__journey--flex">
         <span class="results-card__journey-main">${escapeHtml(flexibleCellStateLabel(cell))}</span>
-        <span class="cell-sub">${escapeHtml(cell.selectable ? "Consulta exacta disponible" : "Sin reconsulta disponible")}</span>
+        <span class="cell-sub">${escapeHtml(cell.selectable ? `Consulta exacta disponible · ${providerSummary}` : `Sin reconsulta disponible · ${providerSummary}`)}</span>
       </div>
 
       <div class="results-card__price results-price">${priceHtml}</div>
@@ -5944,7 +6072,15 @@ function renderFlexibleList(container = resultsContainer) {
     return;
   }
 
-  const orderedCells = [...cells].sort(compareFlexibleListCells);
+  const groupedCells = buildMatrixCellGroups(cells);
+  const orderedGroups = [...groupedCells].sort((leftGroup, rightGroup) => {
+    const left = flexibleGroupRepresentativeCell(leftGroup);
+    const right = flexibleGroupRepresentativeCell(rightGroup);
+    if (!left && !right) return 0;
+    if (!left) return 1;
+    if (!right) return -1;
+    return compareFlexibleListCells(left, right);
+  });
   const isRunning = state.matrixResponse?.matrixStatus === "running";
   let html = "";
 
@@ -5957,8 +6093,8 @@ function renderFlexibleList(container = resultsContainer) {
       <div class="results-list results-list--flexible">
   `;
 
-  orderedCells.forEach((cell) => {
-    html += renderFlexibleResultsCardHtml(cell);
+  orderedGroups.forEach((group) => {
+    html += renderFlexibleResultsCardHtml(group);
   });
 
   html += `
@@ -6152,6 +6288,18 @@ function renderCalendarView(container = resultsContainer) {
   const returns = state.matrixResponse.axes.returnDates;
   const departures = state.matrixResponse.axes.departureDates;
   const isOneWay = state.request?.tripType === "one-way";
+  const groupedCells = buildMatrixCellGroups(cells);
+  const groupSizeByCellKey = new Map();
+  groupedCells.forEach((group) => {
+    const size = group.length;
+    group.forEach((cell) => {
+      groupSizeByCellKey.set(cell.key, size);
+    });
+  });
+  const selectedGroup = state.selectedMatrixKey
+    ? getGroupForMatrixCell(state.selectedMatrixKey, cells) ?? []
+    : [];
+  const selectedGroupKeys = new Set(selectedGroup.map((entry) => entry.key));
   const priceStats = getMatrixPriceStats(cells);
   const isRunning = state.matrixResponse?.matrixStatus === "running";
 
@@ -6172,7 +6320,12 @@ function renderCalendarView(container = resultsContainer) {
       const passengerCount = passengerCountForRequest(flexibleCellRequest(cell) ?? state.matrixResponse?.request ?? state.request);
       const toneClass = matrixToneClass(cell, priceStats);
       const calTone = toneClass.replace("matrix-cell--", "cal-cell--");
-      html += `<button class="matrix-cell cal-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass} ${calTone}" type="button" ${!cell.selectable ? "disabled" : ""} data-mk="${cell.key}" title="${escapeHtml(cell.tooltip ?? "")}">`;
+      const groupSize = groupSizeByCellKey.get(cell.key) ?? 1;
+      const groupedClass = groupSize > 1 ? "matrix-cell--grouped cal-cell--grouped" : "";
+      const peerClass = selectedGroupKeys.has(cell.key) && cell.key !== state.selectedMatrixKey
+        ? "matrix-cell--group-peer cal-cell--group-peer"
+        : "";
+      html += `<button class="matrix-cell cal-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass} ${calTone} ${groupedClass} ${peerClass}" type="button" ${!cell.selectable ? "disabled" : ""} data-mk="${cell.key}" data-group-size="${groupSize}" title="${escapeHtml(cell.tooltip ?? "")}">`;
       html += `<div class="matrix-price cal-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? renderPriceBreakdownHtml(cell.price, passengerCount, { className: "price-stack price-stack--matrix" }) : "—"}</div>`;
       html += `<div class="matrix-meta cal-meta">${isLoading ? "cargando" : cell.stateCode ?? ""}</div></button>`;
     });
@@ -6188,7 +6341,12 @@ function renderCalendarView(container = resultsContainer) {
         const passengerCount = passengerCountForRequest(flexibleCellRequest(cell) ?? state.matrixResponse?.request ?? state.request);
         const toneClass = matrixToneClass(cell, priceStats);
         const calTone = toneClass.replace("matrix-cell--", "cal-cell--");
-        html += `<button class="matrix-cell cal-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass} ${calTone}" type="button" ${!cell.selectable ? "disabled" : ""} data-mk="${cell.key}" title="${escapeHtml(cell.tooltip ?? "")}">`;
+        const groupSize = groupSizeByCellKey.get(cell.key) ?? 1;
+        const groupedClass = groupSize > 1 ? "matrix-cell--grouped cal-cell--grouped" : "";
+        const peerClass = selectedGroupKeys.has(cell.key) && cell.key !== state.selectedMatrixKey
+          ? "matrix-cell--group-peer cal-cell--group-peer"
+          : "";
+        html += `<button class="matrix-cell cal-cell ${cell.key === state.selectedMatrixKey ? "is-active" : ""} ${isLoading ? "is-loading" : ""} ${toneClass} ${calTone} ${groupedClass} ${peerClass}" type="button" ${!cell.selectable ? "disabled" : ""} data-mk="${cell.key}" data-group-size="${groupSize}" title="${escapeHtml(cell.tooltip ?? "")}">`;
         html += `<div class="matrix-price cal-price ${isLoading ? "matrix-price--loading" : ""}">${isLoading ? "..." : cell.price ? renderPriceBreakdownHtml(cell.price, passengerCount, { className: "price-stack price-stack--matrix" }) : "—"}</div>`;
         html += `<div class="matrix-meta cal-meta">${isLoading ? "cargando" : cell.stateCode ?? ""} ${cell.stayNights != null ? cell.stayNights + "n" : ""}</div></button>`;
       });
@@ -6254,6 +6412,7 @@ function detailPairHtml(label, value, options = {}) {
 }
 
 function renderMatrixCellDetail(cell) {
+  const group = getGroupForMatrixCell(cell.key) ?? [cell];
   const request = flexibleCellRequest(cell);
   const fallbackRequest = state.matrixResponse?.request ?? request ?? {};
   const leg = request?.legs?.[0] ?? fallbackRequest?.legs?.[0] ?? {};
@@ -6280,10 +6439,33 @@ function renderMatrixCellDetail(cell) {
   h += detailPairHtml("Estadia", stayLabel);
   h += detailPairHtml("Estado", flexibleCellStateLabel(cell));
   h += detailPairHtml("Proveedor", providerLabel(cell.providerSource));
+  if (group.length > 1) {
+    h += detailPairHtml("Fechas equivalentes", `${group.length} variantes`);
+  }
   if (cell.tooltip) {
     h += detailPairHtml("Detalle", cell.tooltip);
   }
   h += '</div>';
+
+  if (group.length > 1) {
+    h += `
+      <div class="detail-section">
+        <div class="detail-segment">
+          <div class="detail-segment__dir">
+            <span class="detail-segment__title">Fechas equivalentes</span>
+            <span class="detail-segment__meta">${group.length} variantes</span>
+          </div>
+    `;
+    group.forEach((member) => {
+      const isSelected = member.key === state.selectedMatrixKey;
+      const label = matrixCellDateLabel(member);
+      h += `<button type="button" class="detail-segment__leg detail-segment__leg--choice ${isSelected ? "is-selected" : ""}" data-matrix-group-cell-key="${escapeHtml(member.key)}" aria-pressed="${isSelected ? "true" : "false"}" title="${escapeHtml(label)}">${escapeHtml(label)}</button>`;
+    });
+    h += `
+        </div>
+      </div>
+    `;
+  }
 
   h += '<div class="detail-section"><div class="detail-section__title">Contexto de busqueda</div>';
   h += detailPairHtml("Pasajeros", passengerSummary);
@@ -6312,6 +6494,11 @@ function renderMatrixCellDetail(cell) {
   h += '</div>';
 
   if (detailContent) detailContent.innerHTML = h;
+  detailContent?.querySelectorAll("[data-matrix-group-cell-key]").forEach((button) => {
+    button.addEventListener("click", () => {
+      selectMatrixCell(button.dataset.matrixGroupCellKey);
+    });
+  });
   detailContent?.querySelector("[data-matrix-detail-search]")?.addEventListener("click", () => {
     void launchMatrixCellSearch(cell.key);
   });
