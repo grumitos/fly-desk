@@ -81,9 +81,11 @@ interface AgilAirline {
 }
 
 interface AgilBaggageInfo {
-  piezas?: number;
+  piezas?: number | string;
+  descripcion1?: string;
   cabina?: {
-    piezas?: number;
+    piezas?: number | string;
+    descripcion1?: string;
   };
 }
 
@@ -1009,9 +1011,29 @@ function parseIsoDiffMinutes(start?: string, end?: string): number {
 
 function parseAgilDurationMinutes(value?: string, start?: string, end?: string): number {
   if (value) {
-    const match = value.match(/^(\d+)\.(\d{2})$/);
-    if (match) {
-      return Number(match[1]) * 60 + Number(match[2]);
+    const trimmed = value.trim();
+    const dotted = trimmed.match(/^(\d+)\.(\d{2})$/);
+    if (dotted) {
+      return Number(dotted[1]) * 60 + Number(dotted[2]);
+    }
+
+    const compact = trimmed.match(/^(\d{4})$/);
+    if (compact) {
+      const hours = Number(compact[1].slice(0, 2));
+      const minutes = Number(compact[1].slice(2));
+      if (minutes < 60) {
+        return (hours * 60) + minutes;
+      }
+    }
+
+    const hhmm = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+    if (hhmm) {
+      return Number(hhmm[1]) * 60 + Number(hhmm[2]);
+    }
+
+    const iso = trimmed.match(/^PT(?:(\d+)H)?(?:(\d+)M)?$/i);
+    if (iso) {
+      return Number(iso[1] ?? 0) * 60 + Number(iso[2] ?? 0);
     }
   }
 
@@ -1063,6 +1085,26 @@ function minimumNumber(values: Array<number | undefined>): number | undefined {
   }
 
   return Math.min(...numeric);
+}
+
+function parseAgilNumericValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const parsed = Number(normalized.replace(",", "."));
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return undefined;
 }
 
 function segmentCarrierCode(flight: AgilFlightSegment, fallbackCarrier?: string): string {
@@ -1140,14 +1182,22 @@ function normalizeJourneyCandidates(
 }
 
 function buildBaggageSummary(...infos: Array<AgilBaggageInfo | undefined>): BaggageSummary | undefined {
-  const checkedBags = minimumNumber(infos.map((info) => info?.piezas));
-  const cabinPieces = minimumNumber(infos.map((info) => info?.cabina?.piezas));
+  const checkedBags = minimumNumber(infos.map((info) => parseAgilNumericValue(info?.piezas)));
+  const cabinPieces = minimumNumber(infos.map((info) => parseAgilNumericValue(info?.cabina?.piezas)));
+  const hasCarryDescription = infos.some((info) => {
+    const description = info?.cabina?.descripcion1 ?? info?.descripcion1;
+    return typeof description === "string" && /equipaje\s+de\s+mano|maleta\s+de\s+mano|cabina|carry|hand/i.test(description);
+  });
 
-  if (checkedBags === undefined && cabinPieces === undefined) {
+  if (checkedBags === undefined && cabinPieces === undefined && !hasCarryDescription) {
     return undefined;
   }
 
-  const carryOnIncluded = typeof cabinPieces === "number" ? cabinPieces > 0 : undefined;
+  const carryOnIncluded = typeof cabinPieces === "number"
+    ? cabinPieces > 0
+    : hasCarryDescription
+      ? true
+      : undefined;
   const checkedIncluded = typeof checkedBags === "number" ? checkedBags > 0 : undefined;
 
   let description = "";

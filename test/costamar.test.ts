@@ -1219,6 +1219,114 @@ test("mapCostamarRecommendationToOffer keeps the Costamar redirect when a fresh 
   }
 });
 
+test("mapCostamarRecommendationToOffer reads carry-on and checked baggage from the selected Costamar flight", () => {
+  const recommendation = buildRecommendation();
+  const firstFlight = recommendation.itinerary?.[0]?.flights?.[0];
+  if (!firstFlight) {
+    throw new Error("Test fixture must include at least one flight.");
+  }
+
+  firstFlight.baggage = {
+    description: "BAGG DYN",
+    pieces: "2",
+  };
+  firstFlight.handBaggage = {
+    description: "HAND DYN",
+    pieces: "1",
+  };
+  firstFlight.segments = [
+    {
+      departureAirport: {
+        code: "LIM",
+        cityName: "Lima",
+      },
+      arrivalAirport: {
+        code: "MAD",
+        cityName: "Madrid",
+      },
+      departureDateTime: "2026-06-01T10:00:00-05:00",
+      arrivalDateTime: "2026-06-01T22:00:00+02:00",
+      marketingAirline: {
+        code: "UX",
+        name: "Air Europa",
+      },
+      flightNumber: "75",
+    },
+  ];
+
+  const normalized = mapCostamarRecommendationToOffer(
+    recommendation,
+    buildExactRequest(),
+    {
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: "secret-token",
+      lang: "es",
+    },
+    buildEngine(),
+  );
+
+  assert.ok(normalized.offer);
+  assert.equal(normalized.offer?.baggage?.carryOnIncluded, true);
+  assert.equal(normalized.offer?.baggage?.checkedIncluded, true);
+  assert.equal(normalized.offer?.baggage?.checkedBags, 2);
+});
+
+test("mapCostamarRecommendationToOffer keeps checked baggage disabled when Costamar reports zero pieces", () => {
+  const recommendation = buildRecommendation();
+  const firstFlight = recommendation.itinerary?.[0]?.flights?.[0];
+  if (!firstFlight) {
+    throw new Error("Test fixture must include at least one flight.");
+  }
+
+  firstFlight.baggage = {
+    description: "BAGG DYN",
+    pieces: "0",
+  };
+  firstFlight.handBaggage = {
+    description: "HAND DYN",
+    pieces: "1",
+  };
+  firstFlight.segments = [
+    {
+      departureAirport: {
+        code: "LIM",
+        cityName: "Lima",
+      },
+      arrivalAirport: {
+        code: "MAD",
+        cityName: "Madrid",
+      },
+      departureDateTime: "2026-06-01T10:00:00-05:00",
+      arrivalDateTime: "2026-06-01T22:00:00+02:00",
+      marketingAirline: {
+        code: "UX",
+        name: "Air Europa",
+      },
+      flightNumber: "75",
+    },
+  ];
+
+  const normalized = mapCostamarRecommendationToOffer(
+    recommendation,
+    buildExactRequest(),
+    {
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: "secret-token",
+      lang: "es",
+    },
+    buildEngine(),
+  );
+
+  assert.ok(normalized.offer);
+  assert.equal(normalized.offer?.baggage?.carryOnIncluded, true);
+  assert.equal(normalized.offer?.baggage?.checkedIncluded, false);
+  assert.equal(normalized.offer?.baggage?.checkedBags, undefined);
+});
+
 test("buildCostamarSearchBody matches the live booking frontend payload shape", () => {
   const request = buildRequest();
   request.searchMode = "exact";
@@ -1476,6 +1584,44 @@ test("mapCostamarRecommendationToOffer keeps USD as the offer currency for quota
   assert.equal(normalized.offer?.price.total.currencyCode, "USD");
   assert.equal(normalized.offer?.price.base?.currencyCode, "USD");
   assert.equal(normalized.offer?.price.taxes?.currencyCode, "USD");
+});
+
+test("mapCostamarRecommendationToOffer interprets compact HHMM elapsed times correctly", () => {
+  const recommendation = buildRecommendation();
+  const firstFlight = recommendation.itinerary?.[0]?.flights?.[0];
+  if (!firstFlight) {
+    throw new Error("Test fixture must include at least one flight segment.");
+  }
+
+  firstFlight.departureDateTime = "2026-06-12T22:05:00-05:00";
+  firstFlight.arrivalDateTime = "2026-06-13T17:50:00+02:00";
+  firstFlight.elapsedTime = "1245";
+
+  const normalized = mapCostamarRecommendationToOffer(
+    recommendation,
+    {
+      ...buildExactRequest(),
+      legs: [
+        {
+          origin: "LIM",
+          destination: "BCN",
+          departureDate: "2026-06-12",
+        },
+      ],
+    },
+    {
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: "secret-token",
+      lang: "es",
+    },
+    buildEngine(),
+  );
+
+  assert.ok(normalized.offer);
+  assert.equal(normalized.offer?.itineraries[0]?.durationMinutes, 765);
+  assert.equal(normalized.offer?.itineraries[0]?.segments[0]?.durationMinutes, 765);
 });
 
 test("searchLocalCostamarExact can warm a missing branded token from a seeded Chrome session", async () => {
@@ -2012,6 +2158,8 @@ test("searchLocalCostamarExact applies Costamar markups using the provider paylo
 
     assert.equal(result.offers.length, 1);
     assert.equal(result.offers[0]?.price.total.amount, 1036.56);
+    assert.equal(result.offers[0]?.itineraries[0]?.durationMinutes, 226);
+    assert.equal(result.offers[0]?.itineraries[1]?.durationMinutes, 219);
     assert.equal(result.warnings.length, 0);
   } finally {
     global.fetch = previousFetch;

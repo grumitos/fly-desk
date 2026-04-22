@@ -108,6 +108,7 @@ interface CostamarSegmentLike {
   fareBasisCode?: string;
   cabinType?: string;
   baggage?: unknown;
+  handBaggage?: unknown;
 }
 
 interface CostamarFlight extends CostamarSegmentLike {
@@ -1831,6 +1832,14 @@ function parseDurationMinutes(value: unknown, departureAt?: string, arrivalAt?: 
   if (typeof value === "string") {
     const trimmed = value.trim();
     if (/^\d+$/.test(trimmed)) {
+      if (trimmed.length === 4) {
+        const hours = Number(trimmed.slice(0, 2));
+        const minutes = Number(trimmed.slice(2));
+        if (minutes < 60) {
+          return (hours * 60) + minutes;
+        }
+      }
+
       return Math.max(0, Number(trimmed));
     }
 
@@ -1880,6 +1889,53 @@ function baggageEntryList(value: unknown): unknown[] {
   return [];
 }
 
+function asBaggageRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function parseBaggageFlag(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    if (["1", "true", "yes", "si", "sí", "included", "incluido"].includes(normalized)) {
+      return true;
+    }
+    if (["0", "false", "no", "excluded", "excluido"].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return undefined;
+}
+
+function isCostamarCodeLikeDescription(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return normalized === "dynamic"
+    || normalized.startsWith("bagg ")
+    || normalized.startsWith("hand ");
+}
+
 function buildBaggageSummaryFromSegments(segments: CostamarSegmentLike[]): BaggageSummary | undefined {
   let carryOnIncluded = false;
   let checkedIncluded = false;
@@ -1887,12 +1943,16 @@ function buildBaggageSummaryFromSegments(segments: CostamarSegmentLike[]): Bagga
   const descriptions: string[] = [];
 
   for (const segment of segments) {
-    for (const entry of baggageEntryList(segment.baggage)) {
-      if (!entry || typeof entry !== "object") {
+    const entries = [
+      ...baggageEntryList(segment.baggage).map((entry) => ({ entry, scope: "checked" as const })),
+      ...baggageEntryList(segment.handBaggage).map((entry) => ({ entry, scope: "hand" as const })),
+    ];
+    for (const { entry, scope } of entries) {
+      const record = asBaggageRecord(entry);
+      if (!record) {
         continue;
       }
 
-      const record = entry as Record<string, unknown>;
       const type = String(
         record.type
         ?? record.baggageType
@@ -1901,24 +1961,53 @@ function buildBaggageSummaryFromSegments(segments: CostamarSegmentLike[]): Bagga
         ?? "",
       ).toLowerCase();
       const description = String(record.description ?? record.name ?? "").trim();
+      const normalizedDescription = description.toLowerCase();
       const quantity = numberValue(
         record.quantity
         ?? record.amount
         ?? record.pieces
         ?? record.qty,
-      ) ?? 0;
+      );
+      const explicitIncluded = parseBaggageFlag(
+        record.included
+        ?? record.isIncluded
+        ?? record.include
+        ?? record.hasBaggage
+        ?? record.available,
+      );
+      const carrySignal = scope === "hand"
+        || type.includes("carry")
+        || type.includes("hand")
+        || type.includes("cab")
+        || normalizedDescription.includes("carry")
+        || normalizedDescription.includes("hand")
+        || normalizedDescription.includes("mano")
+        || normalizedDescription.includes("cabina");
+      const checkedSignal = scope === "checked"
+        || type.includes("check")
+        || type.includes("hold")
+        || type.includes("bagg")
+        || normalizedDescription.includes("bodega")
+        || normalizedDescription.includes("factur")
+        || normalizedDescription.includes("check")
+        || normalizedDescription.includes("bagg");
 
-      if (description) {
-        descriptions.push(description);
+      if (carrySignal) {
+        if (explicitIncluded === true || (typeof quantity === "number" && quantity > 0) || scope === "hand") {
+          carryOnIncluded = true;
+        }
       }
 
-      if (type.includes("carry") || type.includes("hand") || type.includes("cab")) {
-        carryOnIncluded = carryOnIncluded || quantity > 0 || Boolean(description);
-      }
-
-      if (type.includes("check") || type.includes("hold") || description.toLowerCase().includes("bodega")) {
-        checkedIncluded = checkedIncluded || quantity > 0 || Boolean(description);
-        checkedBags += quantity > 0 ? quantity : 0;
+      if (checkedSignal) {
+        if (explicitIncluded === true || (typeof quantity === "number" && quantity > 0)) {
+          checkedIncluded = true;
+        }
+        if (typeof quantity === "number" && quantity > 0) {
+          checkedBags = Math.max(checkedBags, quantity);
+        }
+        if (description && !isCostamarCodeLikeDescription(description)) {
+          descriptions.push(description);
+        }
       }
     }
   }
@@ -2228,10 +2317,11 @@ function normalizeItinerary(
     return { rawSegments: [] };
   }
 
-  const rawSegments = asArray(selectedFlight.segments).length > 0
-    ? asArray(selectedFlight.segments)
+  const flightSegments = asArray(selectedFlight.segments);
+  const rawSegments = flightSegments.length > 0
+    ? [selectedFlight, ...flightSegments]
     : [selectedFlight];
-  const segments = rawSegments
+  const segments = (flightSegments.length > 0 ? flightSegments : [selectedFlight])
     .map((segment, segmentIndex) => normalizeSegment(
       segment,
       `${recommendation.id ?? "recommendation"}-${direction}-${index}-${segmentIndex}`,
