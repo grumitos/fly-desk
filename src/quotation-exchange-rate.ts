@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { CanonicalOffer, SearchRequest } from "./core/types";
@@ -82,8 +82,16 @@ function persistUsdToPenRateCache(): void {
 
   try {
     const cachePath = resolveQuotationUsdToPenRateCachePath();
+    const tempPath = `${cachePath}.${process.pid}.${Date.now()}.tmp`;
     mkdirSync(dirname(cachePath), { recursive: true });
-    writeFileSync(cachePath, JSON.stringify(cachedUsdToPenRate), "utf8");
+    writeFileSync(tempPath, JSON.stringify(cachedUsdToPenRate), "utf8");
+    try {
+      renameSync(tempPath, cachePath);
+    } catch {
+      rmSync(cachePath, { force: true });
+      renameSync(tempPath, cachePath);
+    }
+    rmSync(tempPath, { force: true });
   } catch {
     // Ignore persistence failures and keep the in-memory cache usable.
   }

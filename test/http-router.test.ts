@@ -16,6 +16,7 @@ import {
   getCostamarChromeSessionScanCountForTests,
   resetCostamarSessionCacheForTests,
 } from "../src/provider-context";
+import { routeRequest } from "../src/http-router";
 import { getRuntime } from "../src/runtime";
 import { withServer } from "./helpers/server";
 
@@ -254,6 +255,80 @@ test("rejects invalid passenger counts", async () => {
     assert.ok(payload.errors?.includes("Adults must be a non-negative integer."));
     assert.ok(payload.errors?.includes("Children must be a non-negative integer."));
   });
+});
+
+test("rejects non-loopback location requests without a valid api token", { concurrency: false }, async () => {
+  const previousApiToken = process.env.FLY_DESK_API_TOKEN;
+  process.env.FLY_DESK_API_TOKEN = "test-token";
+
+  try {
+    const response = await routeRequest(new Request("http://fly-desk.local/api/locations?q=l", {
+      method: "GET",
+      headers: {
+        "x-flydesk-client-loopback": "0",
+      },
+    }));
+
+    assert.equal(response.status, 403);
+    const payload = await response.json() as { error?: string };
+    assert.match(payload.error ?? "", /localhost access or a valid API token/i);
+  } finally {
+    if (previousApiToken === undefined) {
+      delete process.env.FLY_DESK_API_TOKEN;
+    } else {
+      process.env.FLY_DESK_API_TOKEN = previousApiToken;
+    }
+  }
+});
+
+test("accepts non-loopback location requests with a valid api token", { concurrency: false }, async () => {
+  const previousApiToken = process.env.FLY_DESK_API_TOKEN;
+  process.env.FLY_DESK_API_TOKEN = "test-token";
+
+  try {
+    const response = await routeRequest(new Request("http://fly-desk.local/api/locations?q=l", {
+      method: "GET",
+      headers: {
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
+      },
+    }));
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { query?: string; suggestions?: unknown[] };
+    assert.equal(payload.query, "l");
+    assert.deepEqual(payload.suggestions, []);
+  } finally {
+    if (previousApiToken === undefined) {
+      delete process.env.FLY_DESK_API_TOKEN;
+    } else {
+      process.env.FLY_DESK_API_TOKEN = previousApiToken;
+    }
+  }
+});
+
+test("rejects non-loopback purchase path redirects without a valid api token", { concurrency: false }, async () => {
+  const previousApiToken = process.env.FLY_DESK_API_TOKEN;
+  process.env.FLY_DESK_API_TOKEN = "test-token";
+
+  try {
+    const response = await routeRequest(new Request("http://fly-desk.local/r/missing-path", {
+      method: "GET",
+      headers: {
+        "x-flydesk-client-loopback": "0",
+      },
+    }));
+
+    assert.equal(response.status, 403);
+    const payload = await response.json() as { error?: string };
+    assert.match(payload.error ?? "", /localhost access or a valid API token/i);
+  } finally {
+    if (previousApiToken === undefined) {
+      delete process.env.FLY_DESK_API_TOKEN;
+    } else {
+      process.env.FLY_DESK_API_TOKEN = previousApiToken;
+    }
+  }
 });
 
 test("rejects unsupported multi-city searches", async () => {
