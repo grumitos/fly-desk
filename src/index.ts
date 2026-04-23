@@ -21,13 +21,27 @@ async function main() {
   const port = Number(process.env.PORT ?? "3000");
   const host = resolveServerHost();
   const server = createServer();
+  let periodicCleanupPromise: Promise<void> | undefined;
+  const runPeriodicCleanup = (): void => {
+    if (periodicCleanupPromise) {
+      return;
+    }
+
+    periodicCleanupPromise = cleanupPrefixedTempArtifacts(undefined, {
+      olderThanMs: TEMP_ARTIFACT_SWEEP_MIN_AGE_MS,
+    })
+      .catch((error) => {
+        const detail = error instanceof Error ? error.message : "unknown cleanup failure";
+        console.warn(`Fly Desk periodic temp cleanup skipped: ${detail}`);
+      })
+      .finally(() => {
+        periodicCleanupPromise = undefined;
+      });
+  };
   const maintenanceHandle = setInterval(() => {
     runtime.sessions.purgeExpired();
     runtime.locationSuggestions.purgeExpired();
-    void cleanupPrefixedTempArtifacts(undefined, { olderThanMs: TEMP_ARTIFACT_SWEEP_MIN_AGE_MS }).catch((error) => {
-      const detail = error instanceof Error ? error.message : "unknown cleanup failure";
-      console.warn(`Fly Desk periodic temp cleanup skipped: ${detail}`);
-    });
+    runPeriodicCleanup();
   }, TEMP_ARTIFACT_SWEEP_INTERVAL_MS);
   maintenanceHandle.unref?.();
 
@@ -42,6 +56,7 @@ async function main() {
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
+    await periodicCleanupPromise?.catch(() => undefined);
     runtime.locationSuggestions.purgeExpired(Number.POSITIVE_INFINITY);
     runtime.sessions.purgeExpired(Number.POSITIVE_INFINITY);
     await cleanupPrefixedTempArtifacts(undefined, { olderThanMs: 0 }).catch(() => undefined);

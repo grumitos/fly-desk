@@ -254,8 +254,7 @@ test("search payload keeps USD fixed without hidden max stops or a currency cont
       });
       await setDateValue(page, "departureDate", "2026-04-15");
       await setDateValue(page, "returnDate", "2026-04-22");
-      await page.click("#submitButton");
-      await page.waitForTimeout(200);
+      await submitAndWaitForRequest(page, baseUrl, "/api/search");
 
       assert.equal(capturedCurrencyCode, "USD");
       assert.equal(capturedCabin, "ECONOMY");
@@ -273,6 +272,10 @@ test("migration cards show exact date, provider links, and can open an exact sea
     let firstRequestBody: any = null;
     let firstMigrationDate = "";
     let exactRequestBody: any = null;
+    let resolveExactSearchRequest!: () => void;
+    const exactSearchRequestSeen = new Promise<void>((resolve) => {
+      resolveExactSearchRequest = resolve;
+    });
     const pageErrors: string[] = [];
     const allRequestsCompleted = new Promise<void>((resolve) => {
       page.on("pageerror", (error) => {
@@ -354,6 +357,7 @@ test("migration cards show exact date, provider links, and can open an exact sea
         }
 
         exactRequestBody = body;
+        resolveExactSearchRequest();
         const exactOffer = buildOffer({
           id: "exact-offer-1",
           origin: "LIM",
@@ -502,12 +506,7 @@ test("migration cards show exact date, provider links, and can open an exact sea
     const popupPromise = page.waitForEvent("popup");
     await firstCard.getByRole("button", { name: "Abrir busqueda" }).click();
     const popup = await popupPromise;
-    for (let attempt = 0; attempt < 80; attempt += 1) {
-      if (exactRequestBody?.request?.searchMode === "exact") {
-        break;
-      }
-      await page.waitForTimeout(100);
-    }
+    await exactSearchRequestSeen;
     await popup.waitForFunction((expectedDate) => {
       const departureInput = document.getElementById("departureDate") as HTMLInputElement | null;
       return departureInput?.value === expectedDate;
@@ -848,7 +847,21 @@ test("migration keeps only a 2-month concurrent window while loading all 8 month
 
     await page.click("#migrationBtn");
 
-    await page.waitForTimeout(250);
+    await new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + 2500;
+      const tick = () => {
+        if (requestCount >= 2) {
+          resolve();
+          return;
+        }
+        if (Date.now() > deadline) {
+          reject(new Error(`Expected at least 2 migration requests, got ${requestCount}`));
+          return;
+        }
+        setTimeout(tick, 25);
+      };
+      tick();
+    });
     assert.equal(requestCount, 2);
     assert.equal(maxInFlight, 2);
 
@@ -1456,7 +1469,7 @@ test("paste rejects legacy v1 clipboard payloads", async () => {
     });
     await page.evaluate((rawPayload) => navigator.clipboard.writeText(rawPayload), legacyPayload);
     await page.click("#pasteSearchConfigBtn");
-    await page.waitForTimeout(250);
+    await page.waitForFunction(() => document.querySelectorAll(".toast").length > 0);
 
     const probe = await page.evaluate(() => ({
       origin: (document.getElementById("origin") as HTMLInputElement | null)?.value ?? "",
@@ -1523,7 +1536,7 @@ test("paste rejects legacy Costamar URL clipboard entries", async () => {
     });
     await page.evaluate((rawPayload) => navigator.clipboard.writeText(rawPayload), officialUrl);
     await page.click("#pasteSearchConfigBtn");
-    await page.waitForTimeout(250);
+    await page.waitForFunction(() => document.querySelectorAll(".toast").length > 0);
 
     const probe = await page.evaluate(() => ({
       origin: (document.getElementById("origin") as HTMLInputElement | null)?.value ?? "",
@@ -2275,7 +2288,10 @@ test("location suggestions reuse the session cache on refocus", async () => {
     await page.waitForSelector("#originSuggestions .location-item");
     await page.locator("body").click({ position: { x: 16, y: 16 } });
     await page.focus("#origin");
-    await page.waitForTimeout(260);
+    await page.waitForFunction(() => {
+      const menu = document.getElementById("originSuggestions");
+      return menu && !menu.classList.contains("hidden");
+    });
 
     const probe = await page.evaluate(() => ({
       menuHidden: document.getElementById("originSuggestions")?.classList.contains("hidden") ?? true,
@@ -2344,7 +2360,11 @@ test("typing uses related cached suggestions immediately while network refresh r
     await page.fill("#origin", "LIM");
     await page.waitForSelector("#originSuggestions .location-item");
     await page.fill("#origin", "LI");
-    await page.waitForTimeout(260);
+    await page.waitForFunction(() => {
+      const input = document.getElementById("origin") as HTMLInputElement | null;
+      const firstItem = document.querySelector("#originSuggestions .location-item-code") as HTMLElement | null;
+      return input?.value === "LI" && /LIM/i.test(firstItem?.innerText ?? "");
+    });
 
     const immediateProbe = await page.evaluate(() => ({
       menuHidden: document.getElementById("originSuggestions")?.classList.contains("hidden") ?? true,
@@ -2413,7 +2433,11 @@ test("typing city/country/iata with separators still matches cached suggestions"
     await page.fill("#origin", "LIM");
     await page.waitForSelector("#originSuggestions .location-item");
     await page.fill("#origin", "Lima/Perú/LIM");
-    await page.waitForTimeout(260);
+    await page.waitForFunction(() => {
+      const input = document.getElementById("origin") as HTMLInputElement | null;
+      const firstItem = document.querySelector("#originSuggestions .location-item-code") as HTMLElement | null;
+      return input?.value === "Lima/Perú/LIM" && /LIM/i.test(firstItem?.innerText ?? "");
+    });
 
     const immediateProbe = await page.evaluate(() => ({
       menuHidden: document.getElementById("originSuggestions")?.classList.contains("hidden") ?? true,
@@ -2431,6 +2455,14 @@ test("stale autocomplete failures no longer hide the latest valid suggestions", 
   await withDesktopPage(async ({ baseUrl, page }) => {
     let liRequests = 0;
     let sawCostamarProvider = false;
+    let resolveLiRequest!: () => void;
+    let resolveLiFailureSettled!: () => void;
+    const liRequestSeen = new Promise<void>((resolve) => {
+      resolveLiRequest = resolve;
+    });
+    const liFailureSettled = new Promise<void>((resolve) => {
+      resolveLiFailureSettled = resolve;
+    });
 
     await page.route("**/api/locations?*", async (route: Route) => {
       const requestUrl = new URL(route.request().url());
@@ -2443,6 +2475,7 @@ test("stale autocomplete failures no longer hide the latest valid suggestions", 
 
       if (requestUrl.searchParams.get("q") === "LI" && requestUrl.searchParams.get("limit") === "8") {
         liRequests += 1;
+        resolveLiRequest();
         await new Promise((resolve) => setTimeout(resolve, 420));
         try {
           await route.fulfill({
@@ -2452,6 +2485,8 @@ test("stale autocomplete failures no longer hide the latest valid suggestions", 
           });
         } catch {
           // The browser can abort this stale request once the new query takes over.
+        } finally {
+          resolveLiFailureSettled();
         }
         return;
       }
@@ -2480,10 +2515,11 @@ test("stale autocomplete failures no longer hide the latest valid suggestions", 
 
     await openDesktop(page, baseUrl);
     await page.fill("#origin", "LI");
-    await page.waitForTimeout(220);
+    await liRequestSeen;
     await page.fill("#origin", "LIM");
     await page.waitForSelector("#originSuggestions .location-item");
-    await page.waitForTimeout(450);
+    await liFailureSettled;
+    await page.waitForFunction(() => document.querySelectorAll(".toast--error").length === 0);
 
     const probe = await page.evaluate(() => ({
       menuHidden: document.getElementById("originSuggestions")?.classList.contains("hidden") ?? true,
@@ -2594,8 +2630,9 @@ test("location suggestions avoid duplicate entries when cache and network match"
 
     await openDesktop(page, baseUrl);
     await page.fill("#destination", "MAD");
-    await page.waitForSelector("#destinationSuggestions .location-item");
-    await page.waitForTimeout(120);
+    await page.waitForFunction(() => {
+      return document.querySelectorAll("#destinationSuggestions .location-item").length === 1;
+    });
 
     const probe = await page.evaluate(() => {
       const items = [...document.querySelectorAll("#destinationSuggestions .location-item-code")]
@@ -2784,6 +2821,10 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
     let lastMatrixRequest: Record<string, unknown> | null = null;
     let searchRequestCount = 0;
     let lastSearchRequest: Record<string, unknown> | null = null;
+    let resolveExactSearchRequest!: () => void;
+    const exactSearchRequestSeen = new Promise<void>((resolve) => {
+      resolveExactSearchRequest = resolve;
+    });
 
     const matrixRequest = {
       tripType: "round-trip",
@@ -2883,6 +2924,7 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
     await page.context().route(`${baseUrl}/api/search`, async (route: Route) => {
       searchRequestCount += 1;
       lastSearchRequest = route.request().postDataJSON() as Record<string, unknown>;
+      resolveExactSearchRequest();
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -2951,7 +2993,10 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
 
     await page.click('.results-list--flexible [data-flex-cell-key="2026-04-15_2026-04-19"]');
     await page.waitForSelector('[data-matrix-detail-search="2026-04-15_2026-04-19"]');
-    await page.waitForTimeout(200);
+    await page.waitForFunction(() => {
+      return document.querySelector('.results-list--flexible article.is-active[data-flex-cell-key="2026-04-15_2026-04-19"]')
+        && document.getElementById("detailContent")?.textContent?.includes("Ruta exacta");
+    });
 
     assert.equal(searchRequestCount, 0);
 
@@ -2979,12 +3024,7 @@ test("clicking a flexible round-trip list row opens detail first and preserves p
     const popupPromise = page.waitForEvent("popup");
     await page.click('[data-matrix-detail-search="2026-04-15_2026-04-19"]');
     const popup = await popupPromise;
-    for (let attempt = 0; attempt < 80; attempt += 1) {
-      if (searchRequestCount > 0) {
-        break;
-      }
-      await page.waitForTimeout(100);
-    }
+    await exactSearchRequestSeen;
     await popup.waitForFunction(() => {
       const searchMode = document.getElementById("searchMode") as HTMLInputElement | null;
       return searchMode?.value === "exact";
@@ -6149,7 +6189,10 @@ test("quotation state clears when selecting another offer and ignores late respo
 
     await page.click("#quotationButton");
     await page.click('article[data-oid="offer-1"]');
-    await page.waitForTimeout(400);
+    await page.waitForFunction(() => {
+      return document.querySelector('article.is-active[data-oid="offer-1"]')
+        && document.querySelectorAll(".quote-textarea").length === 0;
+    });
 
     const quotationProbe = await page.evaluate(() => ({
       selectedOfferId: document.querySelector('article.is-active[data-oid]')?.getAttribute("data-oid") ?? "",

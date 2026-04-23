@@ -5156,7 +5156,7 @@ function showErrors(errors) {
   if (errors.some((error) => /fecha|ventana|salida|regreso|matriz|rango/i.test(error))) {
     dateTrigger?.classList.add("is-invalid");
   }
-  validationBox.innerHTML = `<ul>${errors.map((e) => `<li>${e}</li>`).join("")}</ul>`;
+  validationBox.innerHTML = `<ul>${errors.map((e) => `<li>${escapeHtml(e)}</li>`).join("")}</ul>`;
   syncWorkspaceViewportHeight();
 }
 
@@ -6407,15 +6407,17 @@ function renderAirlineBar() {
       </button>
       ${airlines.map((airline) => {
         const priceStr = airline.minPrice < Infinity ? `${airline.currency} ${numFmt.format(airline.minPrice)}` : "Precio pendiente";
+        const safeAirlineCode = escapeHtml(airline.code);
+        const safePriceStr = escapeHtml(priceStr);
         return `
           <button
             type="button"
             class="airline-chip ${activeCode === airline.code ? "is-active" : ""}"
-            data-airline-code="${airline.code}"
+            data-airline-code="${safeAirlineCode}"
             title="${escapeHtml(airline.display)}"
           >
             <span class="airline-chip__name">${escapeHtml(airline.display)}</span>
-            <span class="airline-chip__meta">${priceStr}</span>
+            <span class="airline-chip__meta">${safePriceStr}</span>
             <span class="airline-chip__meta">${airline.count} opción${airline.count === 1 ? "" : "es"}</span>
           </button>
         `;

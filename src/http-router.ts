@@ -2,6 +2,7 @@ import { materializeSearchResponse } from "./core/orchestrator";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
 import { buildCommercialQuotation } from "./core/quotation";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { timingSafeEqual } from "node:crypto";
 import * as path from "node:path";
 import {
   CanonicalOffer,
@@ -651,6 +652,57 @@ function isTrustedLocalRequest(request: Request): boolean {
   return request.headers.get("x-flydesk-client-loopback") === "1";
 }
 
+function resolveConfiguredApiAccessToken(): string | undefined {
+  const configured = String(process.env.FLY_DESK_API_TOKEN ?? "").trim();
+  return configured || undefined;
+}
+
+function resolveProvidedApiAccessToken(request: Request): string | undefined {
+  const tokenHeader = String(request.headers.get("x-flydesk-api-token") ?? "").trim();
+  if (tokenHeader) {
+    return tokenHeader;
+  }
+
+  const authorizationHeader = String(request.headers.get("authorization") ?? "").trim();
+  if (authorizationHeader.toLowerCase().startsWith("bearer ")) {
+    const bearer = authorizationHeader.slice("bearer ".length).trim();
+    return bearer || undefined;
+  }
+
+  return undefined;
+}
+
+function hasValidApiAccessToken(request: Request, expectedToken: string): boolean {
+  const providedToken = resolveProvidedApiAccessToken(request);
+  if (!providedToken) {
+    return false;
+  }
+
+  const expected = Buffer.from(expectedToken, "utf8");
+  const provided = Buffer.from(providedToken, "utf8");
+  if (expected.length !== provided.length) {
+    return false;
+  }
+
+  return timingSafeEqual(expected, provided);
+}
+
+function isTrustedApiRequest(request: Request): boolean {
+  if (isTrustedLocalRequest(request)) {
+    return true;
+  }
+
+  const token = resolveConfiguredApiAccessToken();
+  return token ? hasValidApiAccessToken(request, token) : false;
+}
+
+function apiAuthRequiredResponse(): Response {
+  return json(
+    { error: "This endpoint requires localhost access or a valid API token." },
+    { status: 403 },
+  );
+}
+
 function validateLocalOpenUrl(input: string): URL | undefined {
   try {
     const candidate = new URL(input);
@@ -1130,6 +1182,10 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "GET" && url.pathname === "/api/agil/locations") {
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
+    }
+
     const query = stringValue(url.searchParams.get("q"));
     if (query.length < 2) {
       return json({ query, suggestions: [] });
@@ -1142,6 +1198,10 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "GET" && url.pathname === "/api/costamar/locations") {
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
+    }
+
     const query = stringValue(url.searchParams.get("q"));
     if (query.length < 2) {
       return json({ query, suggestions: [] });
@@ -1154,6 +1214,10 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "GET" && url.pathname === "/api/locations") {
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
+    }
+
     const query = stringValue(url.searchParams.get("q"));
     if (query.length < 2) {
       return json({ query, suggestions: [] });
@@ -1219,10 +1283,18 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "POST" && url.pathname === "/api/search") {
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
+    }
+
     return handleSearchRequest(runtime, request);
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/search/")) {
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
+    }
+
     const jobId = url.pathname.slice("/api/search/".length);
     const job = runtime.sessions.getSearchJob(jobId);
 
@@ -1234,10 +1306,18 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "POST" && url.pathname === "/api/matrix") {
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
+    }
+
     return handleMatrixRequest(runtime, request);
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/matrix/")) {
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
+    }
+
     const jobId = url.pathname.slice("/api/matrix/".length);
     const job = runtime.sessions.getMatrixJob(jobId);
 
@@ -1249,6 +1329,10 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/r/")) {
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
+    }
+
     const purchasePathId = url.pathname.slice(3);
     const resolved = runtime.sessions.resolvePurchasePath(purchasePathId);
 
@@ -1311,6 +1395,10 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "POST" && url.pathname === "/api/quotation") {
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
+    }
+
     const payload = await readPayload<QuotationPayload>(request);
 
     if (!payload.searchSessionId || !payload.offerId) {

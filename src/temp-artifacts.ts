@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -93,13 +93,27 @@ function hasLiveActiveMarker(targetPath: string): boolean {
 }
 
 function writeActiveMarker(targetPath: string): void {
+  const markerPath = resolveActiveMarkerPath(targetPath);
+  const tempPath = `${markerPath}.${process.pid}.${Date.now()}.tmp`;
   try {
-    writeFileSync(resolveActiveMarkerPath(targetPath), JSON.stringify({
+    writeFileSync(tempPath, JSON.stringify({
       pid: process.pid,
       updatedAt: new Date().toISOString(),
     }), "utf8");
+    try {
+      renameSync(tempPath, markerPath);
+    } catch {
+      rmSync(markerPath, { force: true });
+      renameSync(tempPath, markerPath);
+    }
   } catch {
     // Marker writes are best-effort: cleanup still has the in-process set as a fallback.
+  } finally {
+    try {
+      rmSync(tempPath, { force: true });
+    } catch {
+      // Ignore marker temp cleanup failures.
+    }
   }
 }
 

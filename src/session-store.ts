@@ -791,6 +791,32 @@ export class SearchSessionStore {
         this.sessionPurchasePathIds.delete(sessionId);
       }
     }
+    const trackedOwners = this.sessionOwnerKeys.get(sessionId);
+    if (trackedOwners) {
+      for (const ownerKey of [...trackedOwners]) {
+        const ownerPaths = this.ownerPurchasePathIds.get(ownerKey);
+        if (!ownerPaths) {
+          trackedOwners.delete(ownerKey);
+          continue;
+        }
+
+        for (const [fingerprint, currentPurchasePathId] of [...ownerPaths.entries()]) {
+          if (currentPurchasePathId === purchasePathId) {
+            ownerPaths.delete(fingerprint);
+          }
+        }
+
+        if (ownerPaths.size === 0) {
+          this.ownerPurchasePathIds.delete(ownerKey);
+          trackedOwners.delete(ownerKey);
+        }
+      }
+
+      if (trackedOwners.size === 0) {
+        this.sessionOwnerKeys.delete(sessionId);
+      }
+    }
+
     this.schedulePersist();
   }
 
