@@ -5,7 +5,7 @@ import { withServer } from "./server";
 export async function openDesktop(page: Page, baseUrl: string): Promise<void> {
   await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
   await page.setViewportSize({ width: 1440, height: 960 });
-  await page.waitForSelector("#searchForm");
+  await page.getByRole("combobox", { name: "Origen" }).waitFor();
 }
 
 export async function setDateValue(page: Page, id: string, value: string): Promise<void> {
