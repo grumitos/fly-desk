@@ -36,7 +36,9 @@ async function listenOnChromiumSafePort() {
 
 export async function withServer<T>(run: (baseUrl: string) => Promise<T>): Promise<T> {
   const previousSearchTodayOverride = process.env.SEARCH_TODAY_OVERRIDE;
+  const previousBackgroundSearchJobs = process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS;
   process.env.SEARCH_TODAY_OVERRIDE = previousSearchTodayOverride ?? "2026-03-31";
+  process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS = "1";
   const { server, port } = await listenOnChromiumSafePort();
   const baseUrl = `http://127.0.0.1:${port}`;
 
@@ -59,6 +61,12 @@ export async function withServer<T>(run: (baseUrl: string) => Promise<T>): Promi
         delete process.env.SEARCH_TODAY_OVERRIDE;
       } else {
         process.env.SEARCH_TODAY_OVERRIDE = previousSearchTodayOverride;
+      }
+
+      if (previousBackgroundSearchJobs === undefined) {
+        delete process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS;
+      } else {
+        process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS = previousBackgroundSearchJobs;
       }
     }
   }

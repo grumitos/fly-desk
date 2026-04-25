@@ -10,10 +10,12 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "demo": "tsx src/demo.ts",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "npm run build:frontend && npm run build:backend",
+    "build:backend": "tsc -p tsconfig.build.json",
+    "build:frontend": "cd frontend && npm run build",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "lint": "echo \"No configurado todavia\"",
+    "lint": "npm --prefix frontend run lint",
     "test": "node --test --import tsx test/**/*.test.ts"
   },
   "devDependencies": {

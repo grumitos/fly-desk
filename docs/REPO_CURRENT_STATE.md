@@ -1,14 +1,15 @@
 # Estado Actual de la Repo
 
-Fecha de corte: 2026-04-09
+Fecha de corte: 2026-04-25
 
 ## Resumen
 
-Fly Desk es hoy una aplicacion local-first para agentes de viajes, con frontend vanilla modularizado y backend Node, conectada a Agil mediante reutilizacion de sesion local del navegador y a Costamar mediante contexto controlado por entorno.
+Fly Desk es hoy una aplicacion local-first para agentes de viajes, con frontend React/Vite y backend Node, conectada a Agil mediante reutilizacion de sesion local del navegador y a Costamar mediante contexto controlado por entorno.
 
 El repo no versiona artefactos generados de build:
 
 - `dist/` esta ignorado
+- `frontend/dist/` esta ignorado
 - `output/` esta ignorado
 - no se versionan bundles minificados ni capturas de smoke locales
 
@@ -66,14 +67,12 @@ El repo no versiona artefactos generados de build:
 
 ### Frontend
 
-- `public/app.js` sigue siendo el entrypoint, pero ya no concentra toda la infraestructura basica
-- se abrieron seams en `public/app/`:
-  - `runtime.js`
-  - `date.js`
-  - `network.js`
-  - `render.js`
-  - `bootstrap.js`
-- la UI visible se mantuvo sin rediseño
+- `frontend/src/main.tsx` monta la app React
+- `frontend/src/App.tsx` compone el workspace operacional
+- `frontend/src/components/` contiene topbar, rail de busqueda, resultados, detalle y componentes UI
+- `frontend/src/hooks/` concentra busqueda/polling y autocomplete
+- `frontend/src/index.css` define tokens, layout y tema claro/oscuro
+- el backend sirve el build generado en `frontend/dist`
 
 ### Launchers
 
@@ -88,34 +87,25 @@ El repo no versiona artefactos generados de build:
 
 ### Frontend
 
-- `public/index.html`
-  - shell desktop
-  - bootstrap de tema
-  - script runtime embebido
-- `public/app.css`
+- `frontend/index.html`
+  - shell Vite
+- `frontend/src/main.tsx`
+  - entrypoint React
+- `frontend/src/App.tsx`
+  - composicion principal, filtros y seleccion de ofertas
+- `frontend/src/components/`
+  - `TopBar`, `SearchShell`, `ResultsPanel`, `DetailPanel` y componentes UI
+- `frontend/src/hooks/`
+  - `useSearch` y `useAutocomplete`
+- `frontend/src/lib/api.ts`
+  - `getJson`, `postJson`, busqueda, polling, autocomplete y cotizacion
+- `frontend/src/index.css`
   - tokens, layout, componentes, overlays y estados visuales
-- `public/app.js`
-  - entrypoint del frontend
-- `public/app/runtime.js`
-  - estado compartido
-  - refs del DOM
-  - constantes runtime
-- `public/app/date.js`
-  - helpers de fechas
-  - politica de rango en cliente
-- `public/app/network.js`
-  - `getJson`
-  - `postJson`
-  - `scheduleJsonPoll`
-- `public/app/render.js`
-  - render shell global
-- `public/app/bootstrap.js`
-  - wiring de inicializacion
 
 ### Backend
 
 - `src/server.ts`
-  - serving de `public/`
+  - serving de `frontend/dist`
   - inyeccion de config runtime en `index.html`
 - `src/http-router.ts`
   - `/api/health`
@@ -192,6 +182,7 @@ El repo no versiona artefactos generados de build:
 - `test/session-store.test.ts`
 - `test/theme-css.test.ts`
 - `test/ui.test.ts`
+- `test/variant-group-key.test.ts`
 
 Helpers y fixtures de test:
 
@@ -220,12 +211,17 @@ Cobertura importante actual:
 Comandos:
 
 - `npm run typecheck`
+- `npm run lint`
+- `npm run build`
 - `npm test`
 
-Resultado al 9 de abril de 2026:
+Resultado al 25 de abril de 2026:
 
-- `106/106` pruebas en verde
-- launcher verificado con abrir, reabrir, cerrar y reabrir sobre `32123`
+- typecheck en verde
+- lint frontend en verde via script raiz
+- build frontend/backend en verde
+- suite automatica en verde: `155/155`
+- `test/helpers/server.ts` desactiva jobs progresivos de fondo durante tests HTTP con `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1`; esto evita handles vivos en Windows y no cambia el runtime normal
 
 ## Documentacion historica
 
@@ -236,13 +232,32 @@ Siguen siendo utiles como referencia historica, no como descripcion del estado p
 
 ## Deuda tecnica vigente
 
-- `public/app.js` sigue siendo un entrypoint grande aunque ya tiene infraestructura extraida
+- `frontend/src/App.tsx` concentra composicion, filtros y seleccion; conviene seguir extrayendo verticalmente si crece
 - `src/local-agil.ts` sigue concentrando mucha logica de sesion, cliente y mapping
 - el store sigue siendo en memoria; no hay persistencia externa para jobs
-- no hay linter real configurado
+- `npm run lint` delega al ESLint real del frontend
 - el deploy remoto completo sigue bloqueado por la dependencia de sesion local de navegador para Agil
 - la extraccion de token Costamar por CDP requiere que Chrome se lance con `--remote-debugging-port`; sin ese flag, se depende de archivos de sesion que Chrome puede no tener desbloqueados
 - la busqueda migratoria lanza 8 jobs de rango concurrentes, lo cual puede generar alta carga en providers
+
+## Cambios del 25 de abril de 2026
+
+### Frontend React/Vite activo
+
+- `src/server.ts` sirve `frontend/dist`
+- `npm run build` compila frontend y backend
+- `npm run lint` delega a `npm --prefix frontend run lint`
+- `docs/FRONTEND_IDENTITY.md` define la identidad visual actual
+
+### Endurecimiento posterior a auditoria
+
+- el polling de busqueda sigue activo cuando el backend responde `unchanged` sin estado final
+- el autocomplete ignora respuestas obsoletas fuera de orden
+- los controles custom de autocomplete y pasajeros tienen semantica accesible adicional
+- el servidor emite headers basicos de hardening en respuestas propias
+- JSON invalido se reporta como 400 en lugar de 500
+- `frontend/src/lib/api.ts` adapta el contrato React simple al payload BFF real (`request` + `sortMode`) y normaliza la respuesta para la UI actual
+- los smoke tests de UI apuntan al shell React/Vite vigente, no al DOM legacy de `public/`
 
 ## Cambios del 9 de abril de 2026
 

@@ -170,6 +170,10 @@ const RESULTS_LAYOUT_COLUMN_LIMITS: Record<ResultsLayoutColumnKey, { min: number
   links: { min: 40, max: 240 },
 };
 
+function shouldRunBackgroundSearchJobs(): boolean {
+  return process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS !== "1";
+}
+
 function normalizeResultsLayoutColumns(
   input: Partial<Record<ResultsLayoutColumnKey, unknown>> | undefined,
 ): Record<ResultsLayoutColumnKey, number> | undefined {
@@ -957,45 +961,47 @@ async function handleSearchRequest(
     return materialized;
   };
 
-  const resolvers = providerIds.map(async (providerId) => {
-    const adapter = getProgressiveAdapter(providerId);
-    const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
-      providerStates.set(providerId, {
-        offers: partialResult.offers,
-        warnings: partialResult.warnings,
-        partial: true,
-        completed: false,
-      });
-      syncSearchJob("running");
-      return true;
-    };
+  if (shouldRunBackgroundSearchJobs()) {
+    const resolvers = providerIds.map(async (providerId) => {
+      const adapter = getProgressiveAdapter(providerId);
+      const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
+        providerStates.set(providerId, {
+          offers: partialResult.offers,
+          warnings: partialResult.warnings,
+          partial: true,
+          completed: false,
+        });
+        syncSearchJob("running");
+        return true;
+      };
 
-    try {
-      const result = normalizedRequest.searchMode === "stay-range"
-        ? await adapter.resolveRangeProgressive(normalizedRequest, providerContext, onProgress)
-        : await adapter.resolveExactProgressive(normalizedRequest, providerContext, onProgress);
-      providerStates.set(providerId, {
-        offers: result.offers,
-        warnings: result.warnings,
-        partial: result.partial,
-        completed: true,
-      });
-      syncSearchJob("running");
-    } catch (error) {
-      providerStates.set(providerId, {
-        offers: [],
-        warnings: [
-          error instanceof Error ? error.message : "Search job failed.",
-        ],
-        partial: true,
-        completed: true,
-      });
-    }
-  });
+      try {
+        const result = normalizedRequest.searchMode === "stay-range"
+          ? await adapter.resolveRangeProgressive(normalizedRequest, providerContext, onProgress)
+          : await adapter.resolveExactProgressive(normalizedRequest, providerContext, onProgress);
+        providerStates.set(providerId, {
+          offers: result.offers,
+          warnings: result.warnings,
+          partial: result.partial,
+          completed: true,
+        });
+        syncSearchJob("running");
+      } catch (error) {
+        providerStates.set(providerId, {
+          offers: [],
+          warnings: [
+            error instanceof Error ? error.message : "Search job failed.",
+          ],
+          partial: true,
+          completed: true,
+        });
+      }
+    });
 
-  void Promise.allSettled(resolvers).then(() => {
-    syncSearchJob("completed");
-  });
+    void Promise.allSettled(resolvers).then(() => {
+      syncSearchJob("completed");
+    });
+  }
 
   return json(searchJobResponse(job));
 }
@@ -1072,53 +1078,55 @@ async function handleMatrixRequest(
     }));
   };
 
-  const resolvers = providerIds.map(async (providerId) => {
-    const adapter = getProgressiveAdapter(providerId);
-    const currentState = providerStates.get(providerId);
-    const draftResponse = currentState?.response ?? adapter.createMatrixDraft(normalizedRequest, {
-      exactProvider: providerId,
-      coverageMode: normalizedRequest.coverageMode,
+  if (shouldRunBackgroundSearchJobs()) {
+    const resolvers = providerIds.map(async (providerId) => {
+      const adapter = getProgressiveAdapter(providerId);
+      const currentState = providerStates.get(providerId);
+      const draftResponse = currentState?.response ?? adapter.createMatrixDraft(normalizedRequest, {
+        exactProvider: providerId,
+        coverageMode: normalizedRequest.coverageMode,
+      });
+
+      try {
+        const result = await adapter.resolveMatrixProgressive(
+          normalizedRequest,
+          providerContext,
+          draftResponse,
+          (cell) => {
+            const providerState = providerStates.get(providerId);
+            if (!providerState) {
+              return;
+            }
+
+            providerStates.set(providerId, {
+              response: updateMatrixDraftCell(providerState.response, cell),
+              completed: false,
+            });
+            syncMatrixJob("running");
+          },
+        );
+
+        providerStates.set(providerId, {
+          response: result,
+          completed: true,
+        });
+      } catch (error) {
+        providerStates.set(providerId, {
+          response: materializeFailedMatrixResponse(
+            draftResponse,
+            error instanceof Error ? error.message : "Matrix job failed.",
+          ),
+          completed: true,
+        });
+      }
+
+      syncMatrixJob("running");
     });
 
-    try {
-      const result = await adapter.resolveMatrixProgressive(
-        normalizedRequest,
-        providerContext,
-        draftResponse,
-        (cell) => {
-          const providerState = providerStates.get(providerId);
-          if (!providerState) {
-            return;
-          }
-
-          providerStates.set(providerId, {
-            response: updateMatrixDraftCell(providerState.response, cell),
-            completed: false,
-          });
-          syncMatrixJob("running");
-        },
-      );
-
-      providerStates.set(providerId, {
-        response: result,
-        completed: true,
-      });
-    } catch (error) {
-      providerStates.set(providerId, {
-        response: materializeFailedMatrixResponse(
-          draftResponse,
-          error instanceof Error ? error.message : "Matrix job failed.",
-        ),
-        completed: true,
-      });
-    }
-
-    syncMatrixJob("running");
-  });
-
-  void Promise.allSettled(resolvers).then(() => {
-    syncMatrixJob("completed");
-  });
+    void Promise.allSettled(resolvers).then(() => {
+      syncMatrixJob("completed");
+    });
+  }
 
   return json(matrixJobResponse(job));
 }

@@ -4,12 +4,18 @@ import * as path from "node:path";
 import { routeRequest } from "./http-router";
 import { getPublicRuntimeConfig } from "./search-date-policy";
 
-const publicDir = path.resolve(__dirname, "..", "public");
+const publicDir = path.resolve(__dirname, "..", "frontend", "dist");
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 
 class RequestBodyTooLargeError extends Error {
   constructor(limitBytes: number) {
     super(`Request body exceeds the ${limitBytes} byte limit.`);
+  }
+}
+
+class BadRequestError extends Error {
+  constructor(message: string) {
+    super(message);
   }
 }
 
@@ -50,6 +56,22 @@ function contentTypeForExtension(extension: string): string {
     return "text/html; charset=utf-8";
   }
 
+  if (extension === ".woff2") {
+    return "font/woff2";
+  }
+
+  if (extension === ".woff") {
+    return "font/woff";
+  }
+
+  if (extension === ".ttf") {
+    return "font/ttf";
+  }
+
+  if (extension === ".json") {
+    return "application/json; charset=utf-8";
+  }
+
   return "application/octet-stream";
 }
 
@@ -57,6 +79,10 @@ function noStoreHeaders(contentType: string): Record<string, string> {
   return {
     "Content-Type": contentType,
     "Cache-Control": "no-store",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
   };
 }
 
@@ -175,7 +201,15 @@ async function proxyToRouter(request: IncomingMessage, response: ServerResponse)
 
   const webRequest = new Request(url, requestInit);
 
-  const webResponse = await routeRequest(webRequest);
+  let webResponse: Response;
+  try {
+    webResponse = await routeRequest(webRequest);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new BadRequestError("Invalid JSON payload.");
+    }
+    throw error;
+  }
 
   response.writeHead(
     webResponse.status,
@@ -213,13 +247,19 @@ export function createServer() {
       await proxyToRouter(request, response);
     } catch (error) {
       if (error instanceof RequestBodyTooLargeError) {
-        response.writeHead(413, { "Content-Type": "application/json; charset=utf-8" });
+        response.writeHead(413, noStoreHeaders("application/json; charset=utf-8"));
+        response.end(JSON.stringify({ error: error.message }));
+        return;
+      }
+
+      if (error instanceof BadRequestError) {
+        response.writeHead(400, noStoreHeaders("application/json; charset=utf-8"));
         response.end(JSON.stringify({ error: error.message }));
         return;
       }
 
       const message = error instanceof Error ? error.message : "Unexpected server error";
-      response.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
+      response.writeHead(500, noStoreHeaders("application/json; charset=utf-8"));
       response.end(JSON.stringify({ error: message }));
     }
   });

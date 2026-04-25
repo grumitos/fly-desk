@@ -20,6 +20,8 @@ output/
 .tmp_*.js
 *.har
 
+frontend/frontend/
+
 cloud.txt
 hetzner.txt
 token.txt

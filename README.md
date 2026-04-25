@@ -5,7 +5,7 @@ Workspace local para busqueda y cotizacion aerea orientado a agentes de viajes.
 Fly Desk hoy es una app local-first con:
 
 - servidor Node que sirve UI y API en el mismo proceso
-- frontend desktop en `public/` con HTML/CSS y JavaScript vanilla en modulos ES
+- frontend desktop React/Vite en `frontend/`, servido desde `frontend/dist`
 - integracion local con Agil reutilizando sesion real de navegador
 - integracion con Costamar usando contexto controlado por entorno
 - store en memoria para jobs, redirects y resultados
@@ -52,18 +52,16 @@ El feedback de carga vigente es inline:
 
 ### Frontend
 
-- `public/index.html`: shell desktop y bootstrap inicial
-- `public/app.css`: tokens, layout, componentes y estados visuales
-- `public/app.js`: entrypoint del frontend
-- `public/app/runtime.js`: estado compartido, refs DOM y constantes runtime
-- `public/app/date.js`: helpers de fechas y politica de rango en cliente
-- `public/app/network.js`: helpers de fetch y polling
-- `public/app/render.js`: shell de render global
-- `public/app/bootstrap.js`: wiring de inicializacion del frontend
+- `frontend/src/App.tsx`: composicion principal del workspace
+- `frontend/src/components/`: topbar, rail de busqueda, resultados, detalle y componentes UI
+- `frontend/src/hooks/`: busqueda/polling y autocomplete
+- `frontend/src/lib/api.ts`: cliente HTTP del BFF
+- `frontend/src/index.css`: tokens, layout, tema claro/oscuro y estados visuales
+- `frontend/dist/`: artefacto generado que sirve el backend
 
 ### Backend
 
-- `src/server.ts`: servidor HTTP y serving de assets de `public/`
+- `src/server.ts`: servidor HTTP y serving de assets de `frontend/dist`
 - `src/http-router.ts`: BFF HTTP
 - `src/search-date-policy.ts`: politica compartida de fechas y config publica embebida
 - `src/provider-context.ts`: normalizacion y recovery de contexto de providers
@@ -139,6 +137,8 @@ Costamar:
 - `npm run build`
 - `npm start`
 - `npm run typecheck`
+- `npm run lint`
+- `npm --prefix frontend run lint`
 - `npm test`
 - `npm run demo`
 
@@ -171,11 +171,15 @@ Variables utiles del launcher:
 
 ## Verificacion reciente
 
-Estado validado el 31 de marzo de 2026:
+Estado validado el 25 de abril de 2026:
 
 - `npm run typecheck`
-- `npm test` con `67/67` pruebas en verde
-- verificacion del launcher de abrir/cerrar sobre `32123`
+- `npm run lint`
+- `npm --prefix frontend run lint`
+- `npm run build`
+- `npm test` (`155/155`)
+
+Nota de QA: los helpers HTTP de test fijan `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1` para validar contratos inmediatos sin dejar jobs progresivos vivos despues del cierre del servidor. El runtime normal no define esa variable y conserva el polling/revalidacion en segundo plano.
 
 ## Documentacion vigente
 
