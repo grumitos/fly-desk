@@ -91,6 +91,10 @@ Runtime general:
 - `PORT=32123` o el puerto que se quiera usar fuera del launcher
 - `SEARCH_MAX_FUTURE_DAYS=365`
 - `SEARCH_REVALIDATION_CACHE_TTL_MS=300000` TTL del cache SWR de busqueda general (misma configuracion), en milisegundos
+- `SEARCH_COMPLETED_SESSION_TTL_MS=14400000` TTL idle para jobs completados y redirects cacheados, en milisegundos
+- `FLY_DESK_SESSION_DB_PATH=output/cache/fly-desk-cache.sqlite` cache SQLite local de jobs completados, matriz y redirects
+- `FLY_DESK_SEARCH_SESSION_STORE_PATH=output/cache/search-session-store.json` ruta JSON legada; si existe y la DB esta vacia, se migra a SQLite y se elimina
+- `FLY_DESK_LOCATION_SUGGESTION_CACHE_PATH=output/cache/location-suggestion-cache.json` cache JSON acotado para autocomplete
 
 Agil:
 

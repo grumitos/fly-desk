@@ -59,6 +59,7 @@ async function main() {
     await periodicCleanupPromise?.catch(() => undefined);
     runtime.locationSuggestions.purgeExpired(Number.POSITIVE_INFINITY);
     runtime.sessions.purgeExpired(Number.POSITIVE_INFINITY);
+    runtime.sessions.close();
     await cleanupPrefixedTempArtifacts(undefined, { olderThanMs: 0 }).catch(() => undefined);
   };
 

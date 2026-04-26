@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database = require("better-sqlite3");
 import { COMPLETED_SEARCH_SESSION_TTL_MS, SearchSessionStore } from "../src/session-store";
 import type {
   CanonicalOffer,
@@ -166,6 +167,33 @@ function buildMatrixCell(key: string, url: string): MatrixCell {
       },
     ],
   };
+}
+
+function readSqlitePayloadText(dbPath: string): string {
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    const rows = [
+      ...db.prepare("SELECT payload FROM search_jobs ORDER BY id").all() as Array<{ payload: string }>,
+      ...db.prepare("SELECT payload FROM matrix_jobs ORDER BY id").all() as Array<{ payload: string }>,
+      ...db.prepare("SELECT payload FROM purchase_paths ORDER BY id").all() as Array<{ payload: string }>,
+    ];
+    return rows.map((row) => row.payload).join("\n");
+  } finally {
+    db.close();
+  }
+}
+
+function readSqliteCounts(dbPath: string): { searchJobs: number; matrixJobs: number; purchasePaths: number } {
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    return {
+      searchJobs: Number((db.prepare("SELECT COUNT(*) AS count FROM search_jobs").get() as { count: number }).count),
+      matrixJobs: Number((db.prepare("SELECT COUNT(*) AS count FROM matrix_jobs").get() as { count: number }).count),
+      purchasePaths: Number((db.prepare("SELECT COUNT(*) AS count FROM purchase_paths").get() as { count: number }).count),
+    };
+  } finally {
+    db.close();
+  }
 }
 
 test("search job refresh preserves stable purchase path ids when the underlying path did not change", () => {
@@ -477,14 +505,14 @@ test("completed jobs and their purchase paths expire after the idle ttl, while r
   assert.ok(store.resolvePurchasePath(runningPathId!));
 });
 
-test("search session store persists completed searches and matrix jobs locally", async () => {
+test("search session store persists completed searches and matrix jobs in sqlite", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-persist-"));
-  const persistPath = join(tempRoot, "search-session-store.json");
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
   const request = buildRequest();
   const meta = buildSearchMeta();
   const providerMeta = buildProviderMeta();
 
-  const firstStore = new SearchSessionStore({ persistPath });
+  const firstStore = new SearchSessionStore({ dbPath });
   const completedOffer = buildOffer("offer-persisted", "https://persisted.example/search");
   const completedSearchJob = firstStore.createSearchJob({
     request,
@@ -526,8 +554,14 @@ test("search session store persists completed searches and matrix jobs locally",
   });
 
   await new Promise((resolve) => setTimeout(resolve, 260));
+  firstStore.close();
 
-  const secondStore = new SearchSessionStore({ persistPath });
+  const counts = readSqliteCounts(dbPath);
+  assert.equal(counts.searchJobs, 1);
+  assert.equal(counts.matrixJobs, 1);
+  assert.equal(counts.purchasePaths, 2);
+
+  const secondStore = new SearchSessionStore({ dbPath });
   const restoredSearch = secondStore.getSearchJob(completedSearchJob.id);
   const restoredMatrix = secondStore.getMatrixJob(completedMatrixJob.id);
   const restoredRunning = secondStore.getSearchJob(runningSearchJob.id);
@@ -538,6 +572,93 @@ test("search session store persists completed searches and matrix jobs locally",
   assert.equal(restoredRunning, undefined);
   assert.ok(restoredPathId);
   assert.ok(secondStore.resolvePurchasePath(restoredPathId!));
+  secondStore.close();
+
+  rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test("search session store migrates legacy json to sqlite and redacts Costamar tokens", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-migrate-"));
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const legacyPersistPath = join(tempRoot, "search-session-store.json");
+  const request: SearchRequest = {
+    ...buildRequest(),
+    providerId: "costamar",
+    tripType: "round-trip",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "MAD",
+        departureDate: "2026-06-01",
+        returnDate: "2026-06-08",
+      },
+    ],
+  };
+  const secretToken = "legacy-secret-token";
+  const costamarUrl = `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${secretToken}`;
+  const baseOffer = buildOffer("offer-costamar", costamarUrl);
+  const costamarOffer: CanonicalOffer = {
+    ...baseOffer,
+    providerSource: "costamar",
+    purchasePaths: baseOffer.purchasePaths.map((path) => ({
+      ...path,
+      provider: "costamar",
+      label: "Buscar en Costamar",
+    })),
+  };
+  const transientStore = new SearchSessionStore();
+  const completedJob = transientStore.createSearchJob({
+    request,
+    providerContext: {
+      costamar: {
+        apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+        brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+        terminalId: "0721808110",
+        token: secretToken,
+        lang: "es",
+      },
+    },
+    offers: [costamarOffer],
+    allOffers: [costamarOffer],
+    searchMeta: {
+      ...buildSearchMeta(),
+      providersUsed: ["costamar"],
+    },
+    providerMeta: {
+      exactProvider: "costamar",
+      coverageMode: "core",
+    },
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  const purchasePathId = completedJob.allOffers[0]?.purchasePaths[0]?.id;
+  assert.ok(purchasePathId);
+  const storedPath = transientStore.resolvePurchasePath(purchasePathId);
+  assert.ok(storedPath);
+
+  writeFileSync(legacyPersistPath, JSON.stringify({
+    version: 1,
+    savedAt: new Date().toISOString(),
+    searchJobs: [completedJob],
+    matrixJobs: [],
+    purchasePaths: [storedPath],
+  }), "utf8");
+
+  const migratedStore = new SearchSessionStore({ dbPath, legacyPersistPath });
+  const restoredJob = migratedStore.getSearchJob(completedJob.id);
+  const restoredPath = migratedStore.resolvePurchasePath(purchasePathId);
+  const persistedPayloads = readSqlitePayloadText(dbPath);
+
+  assert.equal(existsSync(legacyPersistPath), false);
+  assert.ok(restoredJob);
+  assert.notEqual(restoredJob.providerContext?.costamar?.token, secretToken);
+  assert.ok(restoredPath?.path.url);
+  assert.equal(restoredPath.path.url.includes(secretToken), false);
+  assert.equal(restoredPath.path.url.includes("token="), false);
+  assert.equal(persistedPayloads.includes(secretToken), false);
+  assert.equal(persistedPayloads.includes("token="), false);
+  migratedStore.close();
 
   rmSync(tempRoot, { recursive: true, force: true });
 });
