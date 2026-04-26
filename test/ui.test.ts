@@ -28,6 +28,20 @@ test("current React shell exposes the primary search controls", async () => {
   });
 });
 
+test("current React shell hides workflows that are not connected yet", async () => {
+  await withDesktopPage(async ({ page }) => {
+    const visibleText = await page.locator("body").innerText();
+
+    assert.doesNotMatch(visibleText, /0 resultados/);
+    assert.doesNotMatch(visibleText, /Multidestino/);
+    assert.doesNotMatch(visibleText, /Migratorio/);
+    assert.doesNotMatch(visibleText, /Calendario/);
+
+    const flexible = page.getByRole("button", { name: "Flexible" });
+    await assert.equal(await flexible.isDisabled(), true);
+  });
+});
+
 test("autocomplete uses combobox, listbox, and option semantics", async () => {
   await withDesktopPage(async ({ baseUrl, browser }) => {
     const page = await browser.newPage();
@@ -47,6 +61,9 @@ test("autocomplete uses combobox, listbox, and option semantics", async () => {
 
     await openDesktop(page, baseUrl);
     const origin = page.getByRole("combobox", { name: "Origen" });
+    await origin.fill("li");
+    await page.waitForResponse("**/api/locations**");
+    await origin.fill("");
     await origin.fill("li");
 
     const listbox = page.getByRole("listbox");
@@ -72,6 +89,47 @@ test("autocomplete uses combobox, listbox, and option semantics", async () => {
   }, { autoOpen: false });
 });
 
+test("autocomplete resolves an exact location match and closes suggestions", async () => {
+  await withDesktopPage(async ({ baseUrl, browser }) => {
+    const page = await browser.newPage();
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          query: "lim",
+          suggestions: [
+            { code: "LIM", city: "Lima", country: "PE", countryCode: "PE", label: "All airports: Lima, PE (LIM)" },
+          ],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    const origin = page.getByRole("combobox", { name: "Origen" });
+    await origin.fill("lim");
+    await page.waitForResponse("**/api/locations**");
+
+    assert.equal(await origin.inputValue(), "lim");
+
+    await page.getByRole("button", { name: "Buscar" }).focus();
+    await page.waitForFunction(() => {
+      const input = document.querySelector<HTMLInputElement>('[aria-label="Origen"]');
+      return input?.value === "LIM - Lima, Perú";
+    });
+
+    const state = await origin.evaluate((input) => ({
+      value: (input as HTMLInputElement).value,
+      expanded: input.getAttribute("aria-expanded"),
+      listboxes: document.querySelectorAll('[role="listbox"]').length,
+    }));
+
+    assert.equal(state.value, "LIM - Lima, Perú");
+    assert.equal(state.expanded, "false");
+    assert.equal(state.listboxes, 0);
+  }, { autoOpen: false });
+});
+
 test("passenger steppers have accessible icon-only labels", async () => {
   await withDesktopPage(async ({ page }) => {
     await page.getByRole("button", { name: "Seleccionar pasajeros" }).click();
@@ -84,9 +142,9 @@ test("passenger steppers have accessible icon-only labels", async () => {
 
     assert.ok(labels.includes("Quitar adultos"));
     assert.ok(labels.includes("Agregar adultos"));
-    assert.ok(labels.includes("Quitar ninos"));
-    assert.ok(labels.includes("Agregar ninos"));
-    assert.ok(labels.includes("Quitar bebes"));
-    assert.ok(labels.includes("Agregar bebes"));
+    assert.ok(labels.includes("Quitar niños"));
+    assert.ok(labels.includes("Agregar niños"));
+    assert.ok(labels.includes("Quitar bebés"));
+    assert.ok(labels.includes("Agregar bebés"));
   });
 });

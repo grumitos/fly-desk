@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { LocationSuggestion } from "@/types"
-import { suggestLocations } from "@/lib/api"
+import { getCachedLocationSuggestions, suggestLocations } from "@/lib/api"
+import { findLocationSuggestionMatch } from "@/lib/locations"
 
-export function useAutocomplete(field: "origin" | "destination") {
+export function useAutocomplete(
+  field: "origin" | "destination",
+  onResolved?: (suggestion: LocationSuggestion) => void
+) {
   void field
 
   const [query, setQuery] = useState("")
@@ -12,37 +16,99 @@ export function useAutocomplete(field: "origin" | "destination") {
   const debounceRef = useRef<number | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const requestSeqRef = useRef(0)
+  const resolvedLabelRef = useRef("")
+  const queryRef = useRef("")
+  const onResolvedRef = useRef(onResolved)
 
-  const fetchSuggestions = useCallback(async (q: string) => {
+  useEffect(() => {
+    onResolvedRef.current = onResolved
+  }, [onResolved])
+
+  const updateQuery = useCallback((value: string) => {
+    queryRef.current = value
+    setQuery(value)
+  }, [])
+
+  const warmSuggestions = useCallback(async (q: string) => {
     const requestSeq = ++requestSeqRef.current
     if (q.length < 2) {
       setSuggestions([])
+      setOpen(false)
       return
     }
+
+    const cached = getCachedLocationSuggestions(q)
+    setSuggestions(cached)
+    setOpen(cached.length > 0)
+    setActiveIndex(-1)
+
     try {
-      const items = await suggestLocations(q)
-      if (requestSeq === requestSeqRef.current) {
-        setSuggestions(items)
-      }
+      await suggestLocations(q)
     } catch {
       if (requestSeq === requestSeqRef.current) {
         setSuggestions([])
+        setOpen(false)
       }
     }
   }, [])
 
   useEffect(() => {
+    if (query && query === resolvedLabelRef.current) {
+      setSuggestions([])
+      setOpen(false)
+      return
+    }
+
     if (debounceRef.current) window.clearTimeout(debounceRef.current)
-    debounceRef.current = window.setTimeout(() => fetchSuggestions(query), 180)
+    debounceRef.current = window.setTimeout(() => warmSuggestions(query), 180)
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current)
     }
-  }, [query, fetchSuggestions])
+  }, [query, warmSuggestions])
 
   const selectSuggestion = useCallback((s: LocationSuggestion) => {
+    resolvedLabelRef.current = s.label
+    queryRef.current = s.label
     setQuery(s.label)
     setOpen(false)
     setActiveIndex(-1)
+    onResolvedRef.current?.(s)
+  }, [])
+
+  const resolveCurrentQuery = useCallback(async (): Promise<LocationSuggestion | undefined> => {
+    const value = queryRef.current.trim()
+    requestSeqRef.current += 1
+    if (debounceRef.current) window.clearTimeout(debounceRef.current)
+
+    if (!value || value === resolvedLabelRef.current) {
+      setSuggestions([])
+      setOpen(false)
+      setActiveIndex(-1)
+      return undefined
+    }
+
+    const cached = getCachedLocationSuggestions(value)
+    let exactMatch = findLocationSuggestionMatch(value, cached)
+
+    if (!exactMatch && value.length >= 2) {
+      try {
+        exactMatch = findLocationSuggestionMatch(value, await suggestLocations(value))
+      } catch {
+        exactMatch = undefined
+      }
+    }
+
+    if (exactMatch) {
+      resolvedLabelRef.current = exactMatch.label
+      queryRef.current = exactMatch.label
+      setQuery(exactMatch.label)
+      onResolvedRef.current?.(exactMatch)
+    }
+
+    setSuggestions([])
+    setOpen(false)
+    setActiveIndex(-1)
+    return exactMatch
   }, [])
 
   const onKeyDown = useCallback(
@@ -69,13 +135,14 @@ export function useAutocomplete(field: "origin" | "destination") {
 
   return {
     query,
-    setQuery,
+    setQuery: updateQuery,
     suggestions,
     open,
     setOpen,
     activeIndex,
     setActiveIndex,
     onKeyDown,
+    resolveCurrentQuery,
     selectSuggestion,
     inputRef,
   }

@@ -4,12 +4,9 @@ import {
   ArrowRightLeft,
   Calendar,
   ChevronDown,
-  Luggage,
   Minus,
   Plus,
-  Route,
   Search,
-  Sparkles,
   Users,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -22,8 +19,8 @@ interface SearchShellProps {
 }
 
 export function SearchShell({ onSearch, loading }: SearchShellProps) {
-  const [mode, setMode] = useState<"exact" | "flexible">("exact")
-  const [trip, setTrip] = useState<"round-trip" | "one-way" | "multi-city">("round-trip")
+  const [mode] = useState<"exact" | "flexible">("exact")
+  const [trip, setTrip] = useState<"round-trip" | "one-way">("round-trip")
   const [originCode, setOriginCode] = useState("")
   const [destCode, setDestCode] = useState("")
   const [departureDate, setDepartureDate] = useState("")
@@ -31,12 +28,10 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
   const [adults, setAdults] = useState(1)
   const [children, setChildren] = useState(0)
   const [infants, setInfants] = useState(0)
-  const [nonStop, setNonStop] = useState(false)
-  const [baggage, setBaggage] = useState(false)
   const [paxOpen, setPaxOpen] = useState(false)
 
-  const origin = useAutocomplete("origin")
-  const destination = useAutocomplete("destination")
+  const origin = useAutocomplete("origin", (suggestion) => setOriginCode(suggestion.code))
+  const destination = useAutocomplete("destination", (suggestion) => setDestCode(suggestion.code))
   const paxRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -54,20 +49,22 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
     destination.setQuery(origin.query)
   }
 
-  const handleSubmit = (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
+    const [resolvedOrigin, resolvedDestination] = await Promise.all([
+      origin.resolveCurrentQuery(),
+      destination.resolveCurrentQuery(),
+    ])
     const request: SearchRequest = {
-      origin: originCode.toUpperCase().trim(),
-      destination: destCode.toUpperCase().trim(),
+      origin: (resolvedOrigin?.code ?? originCode).toUpperCase().trim(),
+      destination: (resolvedDestination?.code ?? destCode).toUpperCase().trim(),
       departureDate: departureDate || undefined,
       returnDate: trip === "round-trip" ? returnDate || undefined : undefined,
-      tripType: trip === "multi-city" ? "one-way" : trip,
+      tripType: trip,
       adults,
       children,
       infants,
-      searchMode: mode === "exact" ? "exact" : "stay-range",
-      nonStop,
-      baggageRequired: baggage,
+      searchMode: "exact",
     }
     onSearch(request)
   }
@@ -76,7 +73,6 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
   const tripTabs: { key: typeof trip; label: string; icon: ReactNode }[] = [
     { key: "round-trip", label: "Ida y vuelta", icon: <ArrowRightLeft className="h-3.5 w-3.5" /> },
     { key: "one-way", label: "Solo ida", icon: <ArrowRight className="h-3.5 w-3.5" /> },
-    { key: "multi-city", label: "Multidestino", icon: <Route className="h-3.5 w-3.5" /> },
   ]
 
   return (
@@ -84,10 +80,10 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
         <div className="flex flex-wrap items-center gap-2">
           <SegmentedControl>
-            <SegmentButton active={mode === "exact"} onClick={() => setMode("exact")}>
+            <SegmentButton active={mode === "exact"} onClick={() => undefined}>
               Exacto
             </SegmentButton>
-            <SegmentButton active={mode === "flexible"} onClick={() => setMode("flexible")}>
+            <SegmentButton active={mode === "flexible"} disabled onClick={() => undefined}>
               Flexible
             </SegmentButton>
           </SegmentedControl>
@@ -102,10 +98,6 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
           </SegmentedControl>
         </div>
 
-        <div className="hidden items-center gap-1.5 text-[11px] text-muted-foreground md:flex">
-          <Sparkles className="h-3.5 w-3.5 text-primary" />
-          Comparacion compacta para agentes
-        </div>
       </div>
 
       <form onSubmit={handleSubmit}>
@@ -120,6 +112,7 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
             placeholder="Ciudad o IATA"
             roundedClass="lg:rounded-l-lg"
             onFocus={() => origin.setOpen(true)}
+            onBlur={origin.resolveCurrentQuery}
             onKeyDown={origin.onKeyDown}
             onChange={(value) => {
               origin.setQuery(value)
@@ -152,6 +145,7 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
             activeIndex={destination.activeIndex}
             placeholder="Ciudad o IATA"
             onFocus={() => destination.setOpen(true)}
+            onBlur={destination.resolveCurrentQuery}
             onKeyDown={destination.onKeyDown}
             onChange={(value) => {
               destination.setQuery(value)
@@ -188,9 +182,9 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
 
             {paxOpen && (
               <div className="absolute right-0 z-50 mt-1 w-72 rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-lg">
-                <PaxRow label="Adultos" detail="12+ anos" value={adults} onInc={() => setAdults((v) => Math.min(v + 1, 9))} onDec={() => setAdults((v) => Math.max(v - 1, 1))} />
-                <PaxRow label="Ninos" detail="2-11 anos" value={children} onInc={() => setChildren((v) => Math.min(v + 1, 8))} onDec={() => setChildren((v) => Math.max(v - 1, 0))} />
-                <PaxRow label="Bebes" detail="Menos de 2 anos" value={infants} onInc={() => setInfants((v) => Math.min(v + 1, adults))} onDec={() => setInfants((v) => Math.max(v - 1, 0))} />
+                <PaxRow label="Adultos" detail="12+ años" value={adults} onInc={() => setAdults((v) => Math.min(v + 1, 9))} onDec={() => setAdults((v) => Math.max(v - 1, 1))} />
+                <PaxRow label="Niños" detail="2-11 años" value={children} onInc={() => setChildren((v) => Math.min(v + 1, 8))} onDec={() => setChildren((v) => Math.max(v - 1, 0))} />
+                <PaxRow label="Bebés" detail="Menos de 2 años" value={infants} onInc={() => setInfants((v) => Math.min(v + 1, adults))} onDec={() => setInfants((v) => Math.max(v - 1, 0))} />
               </div>
             )}
           </div>
@@ -206,16 +200,6 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
         </div>
       </form>
 
-      <div className="mt-2 flex flex-wrap items-center gap-2 px-1">
-        <ChipCheck active={nonStop} onChange={setNonStop}>
-          <Route className="h-3.5 w-3.5" />
-          Directo
-        </ChipCheck>
-        <ChipCheck active={baggage} onChange={setBaggage}>
-          <Luggage className="h-3.5 w-3.5" />
-          Equipaje
-        </ChipCheck>
-      </div>
     </section>
   )
 }
@@ -230,6 +214,7 @@ function LocationField({
   placeholder,
   roundedClass = "",
   onFocus,
+  onBlur,
   onKeyDown,
   onChange,
   onSelect,
@@ -243,6 +228,7 @@ function LocationField({
   placeholder: string
   roundedClass?: string
   onFocus: () => void
+  onBlur: () => void | Promise<unknown>
   onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void
   onChange: (value: string) => void
   onSelect: (suggestion: LocationSuggestion) => void
@@ -270,9 +256,12 @@ function LocationField({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         onFocus={onFocus}
+        onBlur={() => {
+          void onBlur()
+        }}
         onKeyDown={onKeyDown}
         placeholder={placeholder}
-        className={`fd-control h-14 w-full px-3 pb-2.5 pt-6 text-sm font-semibold uppercase placeholder:text-muted-foreground/60 placeholder:normal-case ${roundedClass}`}
+        className={`fd-control h-14 w-full px-3 pb-2.5 pt-6 text-sm font-semibold placeholder:text-muted-foreground/60 ${roundedClass}`}
       />
       {open && suggestions.length > 0 && (
         <div id={listboxId} role="listbox" className="absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg">
@@ -324,33 +313,29 @@ function SegmentedControl({ children }: { children: ReactNode }) {
   )
 }
 
-function SegmentButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+function SegmentButton({
+  active,
+  disabled,
+  onClick,
+  children,
+}: {
+  active: boolean
+  disabled?: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
+      disabled={disabled}
       className={`inline-flex h-7 items-center justify-center gap-1.5 rounded-md px-2.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-        active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+        active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-muted-foreground"
       }`}
     >
       {children}
     </button>
-  )
-}
-
-function ChipCheck({ active, onChange, children }: { active: boolean; onChange: (value: boolean) => void; children: ReactNode }) {
-  return (
-    <label
-      className={`inline-flex h-8 select-none items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition-colors focus-within:ring-2 focus-within:ring-ring ${
-        active
-          ? "border-primary/30 bg-primary/10 text-primary"
-          : "border-input bg-secondary text-secondary-foreground hover:bg-accent"
-      }`}
-    >
-      <input type="checkbox" className="sr-only" checked={active} onChange={(event) => onChange(event.target.checked)} />
-      {children}
-    </label>
   )
 }
 

@@ -1,16 +1,14 @@
 import { useState, type ReactNode } from "react"
-import { ArrowUpDown, Briefcase, CalendarDays, ChevronDown, ChevronUp, Clock, Plane, Rows3, Table2 } from "lucide-react"
+import { AlertTriangle, ArrowUpDown, Briefcase, ChevronDown, ChevronUp, Clock, ExternalLink, Plane } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import type { CanonicalOffer, SearchJobResponse, SortMode, ViewMode } from "@/types"
+import type { CanonicalOffer, SearchJobResponse, SortMode } from "@/types"
 
 interface ResultsPanelProps {
   results: SearchJobResponse | null
   loading: boolean
   sort: SortMode
   onSort: (s: SortMode) => void
-  view: ViewMode
-  onView: (v: ViewMode) => void
   onSelectOffer: (offer: CanonicalOffer) => void
   selectedOfferId?: string
 }
@@ -20,8 +18,6 @@ export function ResultsPanel({
   loading,
   sort,
   onSort,
-  view,
-  onView,
   onSelectOffer,
   selectedOfferId,
 }: ResultsPanelProps) {
@@ -29,10 +25,11 @@ export function ResultsPanel({
   const meta = results?.searchMeta
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const routeLabel = results?.request ? `${results.request.origin} -> ${results.request.destination}` : "Sin consulta"
+  const warnings = uniqueWarnings([...(results?.warnings ?? []), ...(meta?.warnings ?? [])])
 
   return (
-    <section className="fd-panel min-w-0 overflow-hidden">
-      <div className="border-b border-border bg-secondary/60 px-3 py-3">
+    <section className="fd-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+      <div className="shrink-0 border-b border-border bg-secondary/60 px-3 py-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -54,26 +51,23 @@ export function ResultsPanel({
                 Precio
               </SortChip>
               <SortChip active={sort === "fastest"} onClick={() => onSort("fastest")}>
-                Duracion
+                Duración
               </SortChip>
-            </Segmented>
-            <Segmented>
-              <IconChip active={view === "list"} label="Lista" onClick={() => onView("list")}>
-                <Rows3 className="h-3.5 w-3.5" />
-              </IconChip>
-              <IconChip active={view === "calendar"} label="Calendario" onClick={() => onView("calendar")}>
-                <CalendarDays className="h-3.5 w-3.5" />
-              </IconChip>
             </Segmented>
           </div>
         </div>
+        {warnings.length > 0 && (
+          <div className="mt-2 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-2.5 py-2 text-xs text-warning-foreground">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <p className="line-clamp-2">{warnings.join(" ")}</p>
+          </div>
+        )}
       </div>
 
       {renderBody({
         loading,
         results,
         offers,
-        view,
         selectedOfferId,
         expandedId,
         setExpandedId,
@@ -87,7 +81,6 @@ function renderBody({
   loading,
   results,
   offers,
-  view,
   selectedOfferId,
   expandedId,
   setExpandedId,
@@ -96,7 +89,6 @@ function renderBody({
   loading: boolean
   results: SearchJobResponse | null
   offers: CanonicalOffer[]
-  view: ViewMode
   selectedOfferId?: string
   expandedId: string | null
   setExpandedId: (id: string | null) => void
@@ -104,7 +96,7 @@ function renderBody({
 }) {
   if (loading && offers.length === 0) {
     return (
-      <div className="space-y-2 p-3">
+      <div className="flex-1 space-y-2 overflow-auto p-3">
         {Array.from({ length: 7 }).map((_, index) => (
           <div key={index} className="h-[74px] w-full animate-pulse rounded-xl bg-muted" />
         ))}
@@ -117,7 +109,7 @@ function renderBody({
       <EmptyState
         icon={<Plane className="h-7 w-7" />}
         title="Busca vuelos para comparar"
-        body="Ingresa origen, destino y fechas. La lista priorizara precio, duracion, escalas, equipaje y proveedor."
+        body="Ingresa origen, destino y fechas. La lista priorizará precio, duración, escalas, equipaje y proveedor."
       />
     )
   }
@@ -127,33 +119,19 @@ function renderBody({
       <EmptyState
         icon={<ArrowUpDown className="h-7 w-7" />}
         title="Sin resultados para esta consulta"
-        body="Ajusta fechas, escalas, equipaje o aerolineas para ampliar la cobertura."
+        body="Ajusta fechas, escalas, equipaje o aerolíneas para ampliar la cobertura."
       />
     )
   }
 
-  if (view === "calendar") {
-    return (
-      <div className="p-3">
-        <div className="rounded-xl border border-dashed border-border bg-secondary/50 p-8 text-center">
-          <Table2 className="mx-auto mb-3 h-8 w-8 text-primary" />
-          <h3 className="text-sm font-bold">Calendario preparado</h3>
-          <p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-            La vista calendario queda reservada para matriz de fechas y celdas comparables cuando la consulta flexible entregue cobertura.
-          </p>
-        </div>
-      </div>
-    )
-  }
-
   return (
-    <div className="p-3">
+    <div className="flex-1 overflow-auto p-3">
       <div className="hidden grid-cols-[minmax(130px,1.1fr)_88px_88px_minmax(120px,1fr)_82px_64px_82px_86px_112px] gap-2 px-3 pb-2 text-[10px] font-bold uppercase text-muted-foreground lg:grid">
-        <div>Aerolinea</div>
+        <div>Aerolínea</div>
         <div>Salida</div>
         <div>Llegada</div>
         <div>Ruta</div>
-        <div>Duracion</div>
+        <div>Duración</div>
         <div>Esc.</div>
         <div>Equipaje</div>
         <div>Proveedor</div>
@@ -177,13 +155,13 @@ function renderBody({
                       <Plane className="h-4 w-4" />
                     </div>
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-bold">{offer.airline || "Aerolinea"}</div>
+                      <div className="truncate text-sm font-bold">{offer.airline || "Aerolínea"}</div>
                       <div className="text-[11px] text-muted-foreground">{offer.providerSource}</div>
                     </div>
                   </div>
 
                   <DataPoint label="Salida" value={fmtTime(offer.departureDate)} />
-                  <DataPoint label="Llegada" value={fmtTime(offer.returnDate)} />
+                  <DataPoint label="Llegada" value={fmtTime(offer.arrivalDate)} />
                   <div className="min-w-0 text-xs text-muted-foreground">
                     <div className="truncate font-medium text-foreground">{offer.stopMeta || "Ruta principal"}</div>
                     <div className="truncate">Comparar condiciones antes de cotizar</div>
@@ -205,9 +183,12 @@ function renderBody({
                   </div>
                   <div className="flex items-center gap-1 text-xs text-muted-foreground">
                     <Briefcase className="h-3.5 w-3.5" />
-                    {offer.baggage || "-"}
+                    {offer.baggageLabel || "-"}
                   </div>
-                  <div className="truncate text-xs text-muted-foreground">{offer.providerSource}</div>
+                  <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                    {offer.purchasePaths?.length ? <ExternalLink className="h-3.5 w-3.5 text-primary" /> : null}
+                    <span className="truncate">{offer.providerSource}</span>
+                  </div>
                   <div className="text-right">
                     <div className="font-mono text-base font-bold text-foreground">
                       {offer.price?.total?.currencyCode || "USD"} {offer.price?.total?.amount?.toLocaleString("es-PE") || "-"}
@@ -239,9 +220,11 @@ function renderBody({
               {expanded && (
                 <div className="grid gap-3 border-t border-border bg-secondary/40 px-3 py-3 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
                   <Detail label="Salida completa" value={offer.departureDate || "-"} />
+                  <Detail label="Llegada" value={offer.arrivalDate || "-"} />
                   <Detail label="Regreso" value={offer.returnDate || "No aplica"} />
-                  <Detail label="Duracion" value={offer.duration || "-"} />
-                  <Detail label="Equipaje" value={offer.baggage || "Consultar"} />
+                  <Detail label="Duración" value={offer.duration || "-"} />
+                  <Detail label="Equipaje" value={offer.baggageLabel || "Consultar"} />
+                  <Detail label="Estado" value={offer.priceStatus || "Sin verificar"} />
                 </div>
               )}
             </article>
@@ -254,7 +237,7 @@ function renderBody({
 
 function EmptyState({ icon, title, body }: { icon: ReactNode; title: string; body: string }) {
   return (
-    <div className="grid min-h-[360px] place-items-center p-6 text-center">
+    <div className="grid h-full min-h-[360px] place-items-center p-6 text-center">
       <div>
         <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-xl bg-secondary text-primary">{icon}</div>
         <h3 className="text-base font-bold">{title}</h3>
@@ -274,22 +257,6 @@ function SortChip({ active, onClick, children }: { active: boolean; onClick: () 
       type="button"
       onClick={onClick}
       className={`h-7 rounded-md px-2.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-        active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-accent hover:text-foreground"
-      }`}
-    >
-      {children}
-    </button>
-  )
-}
-
-function IconChip({ active, onClick, label, children }: { active: boolean; onClick: () => void; label: string; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-label={label}
-      title={label}
-      className={`inline-flex h-7 w-8 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
         active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-accent hover:text-foreground"
       }`}
     >
@@ -324,4 +291,8 @@ function fmtTime(dateStr?: string) {
   } catch {
     return dateStr
   }
+}
+
+function uniqueWarnings(messages: string[]) {
+  return Array.from(new Set(messages.map((message) => message.trim()).filter(Boolean)))
 }
