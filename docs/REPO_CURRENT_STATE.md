@@ -15,27 +15,24 @@ El repo no versiona artefactos generados de build:
 
 ## Estado funcional vigente
 
-### Busqueda y producto
+### Busqueda y producto en React
 
 - busqueda exacta
-- busqueda flexible por rango y por matriz
-- busqueda migratoria mensual (solo ida, 8 meses)
 - autocomplete de origen y destino
-- filtros visibles `Directo`, `Equipaje` y `Escala`
-- lista de resultados con paginacion
-- vista calendario
-- barra de aerolineas
-- panel lateral de detalle
-- `reprice`
+- filtros visibles de escalas, tiempo maximo de escala, equipaje y aerolineas
+- lista de resultados con advertencias del backend
+- panel lateral de detalle con precio, equipaje, condiciones, advertencias, rutas de compra y cotizacion
 - `quotation`
-- purchase paths y apertura local del flujo equivalente cuando aplica
+- purchase paths y apertura del flujo equivalente cuando aplica
+
+La UI React no debe mostrar controles simulados. Busqueda flexible, matriz/calendario, migratorio mensual, multidestino y `reprice` existen como logica backend/legado o contrato parcial, pero permanecen fuera de la interfaz hasta reconstruirse desde cero con los componentes React actuales.
 
 ### Feedback de carga
 
 - busqueda exacta: placeholder inline en el area de resultados
-- matriz flexible: celdas `loading` en la propia matriz
-- busqueda migratoria: tarjetas con estado de carga por mes
-- `reprice` y `quotation`: estado de carga dentro del panel de detalle
+- polling de busqueda: badge `Actualizando` en resultados
+- resultados parciales: badge `Parcial` y advertencias del backend
+- `quotation`: estado de carga dentro del panel de detalle
 
 ## Cambios estructurales ya consolidados
 
@@ -278,11 +275,4 @@ Siguen siendo utiles como referencia historica, no como descripcion del estado p
 
 ### Modo de busqueda migratoria
 
-- boton "Migratorio" en la topbar del frontend
-- solo ida, 8 meses siguientes
-- toma origen y destino del formulario existente
-- lanza 8 busquedas de rango concurrentes (una por mes)
-- muestra grid de tarjetas con precio mas bajo por mes
-- cada tarjeta muestra: mes, precio, fecha de salida, aerolinea, escalas
-- estados de carga progresivos por mes
-- salir del modo migratorio al hacer una busqueda normal
+La implementacion anterior tenia modo migratorio mensual. En la reconstruccion React actual el acceso fue retirado para no mostrar una seccion simulada. Si se reactiva, debe reconstruirse desde cero sobre el contrato backend vigente y la paleta actual, sin heredar CSS ni estructura legacy.

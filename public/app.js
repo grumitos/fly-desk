@@ -5832,7 +5832,7 @@ function queueMatrixPoll(jobId) {
 function renderToolbar() {
   const active = state.searchResponse ?? state.matrixResponse;
   if (!active) {
-    if (runtimeBadge) { runtimeBadge.textContent = "Listo"; runtimeBadge.className = "badge"; }
+    if (runtimeBadge) { runtimeBadge.textContent = ""; runtimeBadge.className = "badge"; }
     if (resultPill) { resultPill.textContent = "0"; resultPill.className = "badge badge--accent"; }
     return;
   }

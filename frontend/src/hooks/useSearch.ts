@@ -19,7 +19,7 @@ export function useSearch() {
   }, [])
 
   const runSearch = useCallback(
-    async (request: SearchRequest, sortMode: SortMode) => {
+    async (request: SearchRequest, sortMode: SortMode): Promise<boolean> => {
       clearPoll()
       abortRef.current = false
       setLoading(true)
@@ -54,9 +54,11 @@ export function useSearch() {
         } else {
           setLoading(false)
         }
+        return true
       } catch (err) {
         setLoading(false)
         setError(err instanceof Error ? err.message : "Error de búsqueda")
+        return false
       }
     },
     [clearPoll]
