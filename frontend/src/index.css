@@ -37,10 +37,10 @@
 
   --radius-sm: 0.375rem;
   --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
-  --radius-2xl: 1.25rem;
-  --radius-3xl: 1.5rem;
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 0.875rem;
+  --radius-3xl: 1rem;
 
   --font-sans: "Inter", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
@@ -55,9 +55,34 @@
     color-scheme: light;
   }
 
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
   body {
     @apply bg-background text-foreground font-sans antialiased;
     min-height: 100vh;
+    text-rendering: geometricPrecision;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    cursor: not-allowed;
   }
 }
 
@@ -122,7 +147,7 @@
   @keyframes fd-workspace-in {
     from {
       opacity: 0;
-      transform: translateY(0.5rem);
+      transform: translateY(0.375rem);
     }
 
     to {
@@ -131,28 +156,74 @@
     }
   }
 
+  @keyframes fd-skeleton-sheen {
+    from {
+      background-position: 120% 0;
+    }
+
+    to {
+      background-position: -120% 0;
+    }
+  }
+
   .text-balance {
     text-wrap: balance;
   }
 
   .fd-workspace-enter {
-    animation: fd-workspace-in 220ms ease-out both;
+    animation: fd-workspace-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 
   .fd-panel {
-    @apply rounded-xl border border-border bg-card text-card-foreground;
+    @apply rounded-xl border border-border bg-card text-card-foreground shadow-[0_1px_0_rgba(31,31,30,0.04)];
   }
 
   .fd-control {
-    @apply rounded-lg border border-input bg-card text-foreground transition-colors hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring;
+    @apply rounded-lg border border-input bg-card text-foreground transition-[background-color,border-color,box-shadow,transform] duration-150 ease-out hover:border-border hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.995] disabled:pointer-events-none disabled:opacity-55;
   }
 
   .fd-label {
     @apply text-[10px] font-bold uppercase text-muted-foreground;
-    letter-spacing: 0;
+    letter-spacing: 0.04em;
   }
 
   .fd-meta {
     @apply text-xs text-muted-foreground;
+  }
+
+  .fd-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent) transparent;
+  }
+
+  .fd-scrollbar::-webkit-scrollbar {
+    height: 10px;
+    width: 10px;
+  }
+
+  .fd-scrollbar::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+    background-color: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent);
+  }
+
+  .fd-skeleton {
+    background:
+      linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--color-card) 74%, transparent) 50%, transparent 100%),
+      var(--color-muted);
+    background-size: 220% 100%, 100% 100%;
+    animation: fd-skeleton-sheen 1200ms ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
   }
 }

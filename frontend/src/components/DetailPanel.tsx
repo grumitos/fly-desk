@@ -90,7 +90,7 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
 
   return (
     <Card className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl">
-      <div className="shrink-0 border-b border-border px-4 py-3">
+      <div className="shrink-0 border-b border-border bg-secondary/45 px-3 py-2.5">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h2 className="truncate text-sm font-bold">Oferta seleccionada</h2>
@@ -111,10 +111,10 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
+      <div className="fd-scrollbar min-h-0 flex-1 space-y-3 overflow-auto p-3">
         <section>
           <div className="fd-label mb-1">Precio</div>
-          <div className="font-mono text-2xl font-bold">
+          <div className="font-mono text-xl font-bold">
             {offer.price?.total?.currencyCode || "USD"}{" "}
             {offer.price?.total?.amount?.toLocaleString("es-PE", { minimumFractionDigits: 2 }) || "-"}
           </div>
@@ -124,7 +124,7 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
           </div>
         </section>
 
-        <div className="grid grid-cols-2 gap-x-4 gap-y-3 border-y border-border py-3">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 border-y border-border py-3">
           <InfoTile label="Proveedor" value={offer.providerSource || "-"} />
           <InfoTile label="Duración" value={offer.duration || "-"} />
           <InfoTile label="Salida" value={fmtDateTime(offer.departureDate)} />
@@ -181,14 +181,14 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
                 type="button"
                 onClick={copyToClipboard}
                 disabled={Boolean(activeQuotation.error)}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-primary transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-primary transition-colors duration-150 hover:bg-accent disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                 {copied ? "Copiado" : "Copiar"}
               </button>
             </div>
             <pre
-              className={`max-h-64 overflow-auto rounded-xl border p-3 whitespace-pre-wrap font-mono text-xs leading-relaxed ${
+              className={`fd-scrollbar max-h-64 overflow-auto rounded-xl border p-3 whitespace-pre-wrap font-mono text-xs leading-relaxed ${
                 activeQuotation.error
                   ? "border-destructive/30 bg-destructive/10 text-destructive"
                   : "border-border bg-secondary/70 text-foreground"
@@ -205,7 +205,7 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
 
 function PanelHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
-    <div className="border-b border-border px-4 py-3">
+    <div className="border-b border-border bg-secondary/45 px-3 py-2.5">
       <h2 className="text-sm font-bold">{title}</h2>
       <p className="text-xs text-muted-foreground">{subtitle}</p>
     </div>
