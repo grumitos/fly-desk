@@ -76,7 +76,7 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
   ]
 
   return (
-    <section className="fd-panel overflow-visible p-2">
+    <section className="fd-panel overflow-visible p-2" aria-busy={loading}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
         <div className="flex flex-wrap items-center gap-2">
           <SegmentedControl>
@@ -98,10 +98,13 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
           </SegmentedControl>
         </div>
 
+        <div className="hidden h-7 items-center rounded-lg border border-border bg-secondary px-2 text-[11px] font-semibold text-muted-foreground sm:inline-flex">
+          {loading ? "Consultando proveedores" : "Listo para consultar"}
+        </div>
       </div>
 
       <form onSubmit={handleSubmit}>
-        <div className="grid grid-cols-1 gap-1 lg:grid-cols-[minmax(150px,1.2fr)_36px_minmax(150px,1.2fr)_minmax(130px,.85fr)_minmax(130px,.85fr)_minmax(150px,.9fr)_128px]">
+        <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-[minmax(150px,1.2fr)_34px_minmax(150px,1.2fr)_minmax(128px,.85fr)_minmax(128px,.85fr)_minmax(144px,.9fr)_124px]">
           <LocationField
             label="Origen"
             value={origin.query}
@@ -129,7 +132,7 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
             <button
               type="button"
               onClick={swapRoute}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-secondary text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-secondary text-muted-foreground transition-[background-color,color,transform] duration-150 hover:bg-accent hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Intercambiar ruta"
             >
               <ArrowRightLeft className="h-3.5 w-3.5" />
@@ -171,7 +174,7 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
               type="button"
               aria-label="Seleccionar pasajeros"
               onClick={() => setPaxOpen((value) => !value)}
-              className="fd-control flex h-14 w-full items-end gap-2 px-3 pb-2.5 pt-6 text-left"
+              className="fd-control flex h-[52px] w-full items-end gap-2 px-3 pb-2 pt-5 text-left"
             >
               <Users className="h-4 w-4 shrink-0 text-muted-foreground" />
               <span className="min-w-0 flex-1 text-sm font-semibold">
@@ -192,7 +195,7 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
           <Button
             type="submit"
             disabled={loading}
-            className="h-14 rounded-lg text-sm"
+            className="h-[52px] rounded-lg text-sm"
           >
             <Search className="h-4 w-4" />
             {loading ? "Buscando" : "Buscar"}
@@ -261,10 +264,10 @@ function LocationField({
         }}
         onKeyDown={onKeyDown}
         placeholder={placeholder}
-        className={`fd-control h-14 w-full px-3 pb-2.5 pt-6 text-sm font-semibold placeholder:text-muted-foreground/60 ${roundedClass}`}
+        className={`fd-control h-[52px] w-full px-3 pb-2 pt-5 text-sm font-semibold placeholder:text-muted-foreground/60 ${roundedClass}`}
       />
       {open && suggestions.length > 0 && (
-        <div id={listboxId} role="listbox" className="absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg">
+        <div id={listboxId} role="listbox" className="fd-scrollbar absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg">
           {suggestions.map((suggestion, index) => (
             <button
               id={`${listboxId}-${index}`}
@@ -273,7 +276,7 @@ function LocationField({
               role="option"
               aria-selected={index === activeIndex}
               onMouseDown={() => onSelect(suggestion)}
-              className={`w-full rounded-lg px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              className={`w-full rounded-lg px-3 py-2 text-left text-sm transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                 index === activeIndex ? "bg-accent text-accent-foreground" : "hover:bg-muted"
               }`}
             >
@@ -291,7 +294,7 @@ function DateField({ label, value, onChange }: { label: string; value: string; o
   return (
     <div className="relative">
       <label className="fd-label absolute left-3 top-2 z-10">{label}</label>
-      <div className="fd-control flex h-14 items-end gap-2 px-3 pb-2.5 pt-6">
+      <div className="fd-control flex h-[52px] items-end gap-2 px-3 pb-2 pt-5">
         <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" />
         <input
           type="date"
@@ -307,7 +310,7 @@ function DateField({ label, value, onChange }: { label: string; value: string; o
 
 function SegmentedControl({ children }: { children: ReactNode }) {
   return (
-    <div className="inline-flex items-center rounded-lg border border-input bg-secondary p-0.5">
+    <div className="inline-flex min-h-8 items-center rounded-lg border border-input bg-secondary p-0.5">
       {children}
     </div>
   )
@@ -330,7 +333,7 @@ function SegmentButton({
       onClick={onClick}
       aria-pressed={active}
       disabled={disabled}
-      className={`inline-flex h-7 items-center justify-center gap-1.5 rounded-md px-2.5 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+      className={`inline-flex h-7 items-center justify-center gap-1.5 rounded-md px-2.5 text-xs font-semibold transition-[background-color,color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
         active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-muted-foreground"
       }`}
     >
@@ -353,7 +356,7 @@ function PaxRow({
   onDec: () => void
 }) {
   return (
-    <div className="flex items-center justify-between rounded-lg px-2 py-2 hover:bg-muted">
+    <div className="flex items-center justify-between rounded-lg px-2 py-2 transition-colors duration-150 hover:bg-muted">
       <div>
         <div className="text-sm font-semibold">{label}</div>
         <div className="text-xs text-muted-foreground">{detail}</div>

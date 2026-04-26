@@ -19,12 +19,18 @@ export function useSearch() {
   }, [])
 
   const runSearch = useCallback(
-    async (request: SearchRequest, sortMode: SortMode): Promise<boolean> => {
+    async (
+      request: SearchRequest,
+      sortMode: SortMode,
+      options: { keepPreviousResults?: boolean } = {}
+    ): Promise<boolean> => {
       clearPoll()
       abortRef.current = false
       setLoading(true)
       setError(null)
-      setResults(null)
+      if (!options.keepPreviousResults) {
+        setResults(null)
+      }
 
       try {
         const job = await startSearch(request, sortMode)
