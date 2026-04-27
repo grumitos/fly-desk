@@ -1,8 +1,8 @@
 import { useState } from "react"
-import { AlertTriangle, Check, Clipboard, Copy, ExternalLink, Loader2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { AppIcon } from "@/components/ui/app-icon"
 import { fetchQuotation } from "@/lib/api"
 import type { CanonicalOffer } from "@/types"
 
@@ -12,23 +12,26 @@ interface DetailPanelProps {
 }
 
 export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
-  const [quotation, setQuotation] = useState<{ offerId: string; text: string; error?: boolean } | null>(null)
+  const [quotation, setQuotation] = useState<{ key: string; text: string; error?: boolean } | null>(null)
   const [loading, setLoading] = useState(false)
-  const [copiedOfferId, setCopiedOfferId] = useState<string | null>(null)
+  const [copiedOfferKey, setCopiedOfferKey] = useState<string | null>(null)
   const [pathFeedback, setPathFeedback] = useState<string | null>(null)
 
-  const activeQuotation = quotation && quotation.offerId === offer?.id ? quotation : null
-  const copied = copiedOfferId === offer?.id
+  const quoteSearchJobId = offer?.sourceSearchJobId ?? searchJobId
+  const quoteOfferId = offer?.sourceOfferId ?? offer?.id
+  const quoteKey = quoteSearchJobId && quoteOfferId ? `${quoteSearchJobId}:${quoteOfferId}` : undefined
+  const activeQuotation = quotation && quotation.key === quoteKey ? quotation : null
+  const copied = copiedOfferKey === quoteKey
   const purchasePath = offer ? bestPurchasePath(offer) : undefined
 
   const handleQuotation = async () => {
-    if (!offer || !searchJobId) return
+    if (!offer || !quoteSearchJobId || !quoteOfferId || !quoteKey) return
     setLoading(true)
     try {
-      const result = await fetchQuotation(searchJobId, offer.id)
-      setQuotation({ offerId: offer.id, text: result.commercialText })
+      const result = await fetchQuotation(quoteSearchJobId, quoteOfferId)
+      setQuotation({ key: quoteKey, text: result.commercialText })
     } catch {
-      setQuotation({ offerId: offer.id, text: "No se pudo generar la cotización. Revisa la oferta o intenta nuevamente.", error: true })
+      setQuotation({ key: quoteKey, text: "No se pudo generar la cotización. Revisa la oferta o intenta nuevamente.", error: true })
     } finally {
       setLoading(false)
     }
@@ -38,9 +41,9 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
     if (!offer || !activeQuotation || activeQuotation.error) return
     try {
       await navigator.clipboard.writeText(activeQuotation.text)
-      setCopiedOfferId(offer.id)
+      setCopiedOfferKey(quoteKey ?? null)
       setTimeout(() => {
-        setCopiedOfferId((current) => (current === offer.id ? null : current))
+        setCopiedOfferKey((current) => (current === quoteKey ? null : current))
       }, 2000)
     } catch {
       return
@@ -76,7 +79,7 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
         <div className="grid min-h-0 flex-1 place-items-center p-6 text-center">
           <div>
             <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg bg-secondary text-primary">
-              <ExternalLink className="h-6 w-6" />
+              <AppIcon name="externalLink" />
             </div>
             <h2 className="text-sm font-bold">Selecciona una oferta</h2>
             <p className="mt-1 text-sm leading-6 text-muted-foreground">
@@ -99,12 +102,12 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
           <div className="flex shrink-0 items-center gap-1.5">
             {purchasePath && (
               <Button size="sm" variant="secondary" onClick={handlePurchasePath}>
-                <ExternalLink className="h-3.5 w-3.5" />
+                <AppIcon name="externalLink" />
                 Abrir
               </Button>
             )}
-            <Button size="sm" onClick={handleQuotation} disabled={loading || !searchJobId}>
-              {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clipboard className="h-3.5 w-3.5" />}
+            <Button size="sm" onClick={handleQuotation} disabled={loading || !quoteSearchJobId || !quoteOfferId}>
+              {loading ? <AppIcon name="loading" spin /> : <AppIcon name="clipboard" />}
               {loading ? "Generando" : "Cotizar"}
             </Button>
           </div>
@@ -157,9 +160,9 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
         )}
 
         {offer.warnings && offer.warnings.length > 0 && (
-          <section className="rounded-xl border border-warning/30 bg-warning/10 p-3 text-xs text-warning-foreground">
+          <section className="fd-alert fd-alert-warning text-xs font-medium">
             <div className="mb-1 flex items-center gap-2 font-bold">
-              <AlertTriangle className="h-3.5 w-3.5" />
+              <AppIcon name="alert" />
               Advertencias
             </div>
             <div className="space-y-1">
@@ -183,14 +186,14 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
                 disabled={Boolean(activeQuotation.error)}
                 className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-primary transition-colors duration-150 hover:bg-accent disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                {copied ? <AppIcon name="check" /> : <AppIcon name="copy" />}
                 {copied ? "Copiado" : "Copiar"}
               </button>
             </div>
             <pre
               className={`fd-scrollbar max-h-64 overflow-auto rounded-xl border p-3 whitespace-pre-wrap font-mono text-xs leading-relaxed ${
                 activeQuotation.error
-                  ? "border-destructive/30 bg-destructive/10 text-destructive"
+                  ? "border-destructive/50 bg-destructive-soft text-destructive-soft-foreground"
                   : "border-border bg-secondary/70 text-foreground"
               }`}
             >

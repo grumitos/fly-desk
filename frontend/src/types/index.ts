@@ -14,12 +14,18 @@ export interface SearchRequest {
   origin: string
   destination: string
   departureDate?: string
+  departureStart?: string
+  departureEnd?: string
   returnDate?: string
+  returnStart?: string
+  returnEnd?: string
+  stayNights?: number
   tripType: "round-trip" | "one-way"
   adults: number
   children: number
   infants: number
-  searchMode: "exact" | "stay-range" | "roundtrip-grid"
+  searchMode: "exact" | "stay-range" | "roundtrip-grid" | "month-view"
+  flexibleMode?: "exact-stay" | "fixed-ranges"
   nonStop?: boolean
   maxStopsFilter?: string
   maxLayoverMinutes?: string
@@ -94,6 +100,8 @@ export interface ComparisonMetrics {
 
 export interface CanonicalOffer {
   id: string
+  sourceOfferId?: string
+  sourceSearchJobId?: string
   providerSource: string
   airline: string
   origin?: string
@@ -152,6 +160,24 @@ export interface SearchJobResponse extends SearchResponse {
   sortMode: string
   request: SearchRequest
   unchanged?: boolean
+}
+
+export interface MatrixCell {
+  key: string
+  departureDate: string
+  returnDate?: string
+  stayNights?: number
+  price?: {
+    amount: number
+    currencyCode: string
+  }
+  confidence: string
+  providerSource: string
+  selectable: boolean
+  requiresRequery: boolean
+  stateCode: string
+  tooltip?: string
+  purchasePaths?: PurchasePath[]
 }
 
 export type SortMode = "cheapest" | "fastest" | "best-value"

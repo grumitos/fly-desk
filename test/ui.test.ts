@@ -28,17 +28,30 @@ test("current React shell exposes the primary search controls", async () => {
   });
 });
 
-test("current React shell hides workflows that are not connected yet", async () => {
+test("current React shell exposes connected flexible and migratory search modes", async () => {
   await withDesktopPage(async ({ page }) => {
     const visibleText = await page.locator("body").innerText();
 
     assert.doesNotMatch(visibleText, /0 resultados/);
+    assert.doesNotMatch(visibleText, /Listo para consultar/);
     assert.doesNotMatch(visibleText, /Multidestino/);
-    assert.doesNotMatch(visibleText, /Migratorio/);
-    assert.doesNotMatch(visibleText, /Calendario/);
+    assert.match(visibleText, /Migratorio/);
 
     const flexible = page.getByRole("button", { name: "Flexible" });
-    await assert.equal(await flexible.isDisabled(), true);
+    await assert.equal(await flexible.isDisabled(), false);
+    await flexible.click();
+
+    assert.match(await page.locator("body").innerText(), /SALIDA DESDE/);
+    assert.match(await page.locator("body").innerText(), /SALIDA HASTA/);
+    assert.match(await page.locator("body").innerText(), /4 d[ií]as/);
+
+    const migratory = page.getByRole("button", { name: "Migratorio" });
+    await assert.equal(await migratory.isDisabled(), false);
+    await migratory.click();
+
+    const migratoryText = await page.locator("body").innerText();
+    assert.doesNotMatch(migratoryText, /SALIDA/);
+    assert.doesNotMatch(migratoryText, /REGRESO/);
   });
 });
 
@@ -148,3 +161,360 @@ test("passenger steppers have accessible icon-only labels", async () => {
     assert.ok(labels.includes("Agregar bebés"));
   });
 });
+
+test("search fields show invalid outline without helper text", async () => {
+  await withDesktopPage(async ({ page }) => {
+    const origin = page.getByRole("combobox", { name: "Origen" });
+
+    await origin.fill("12");
+    await page.getByRole("combobox", { name: "Destino" }).focus();
+
+    await assert.equal(await origin.getAttribute("aria-invalid"), "true");
+    assert.match(await origin.getAttribute("class") ?? "", /fd-control-invalid/);
+    await assert.equal(await page.getByText("Ingresa un origen válido.").count(), 0);
+
+    await page.getByRole("button", { name: "Flexible" }).click();
+    await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
+    await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
+    await page.getByRole("button", { name: "Buscar" }).click();
+
+    await assert.equal(await page.getByRole("button", { name: "Salida desde" }).getAttribute("aria-invalid"), "true");
+    await assert.equal(await page.getByText("Selecciona el inicio del rango.").count(), 0);
+    await assert.equal(await page.getByText("Selecciona el fin del rango.").count(), 0);
+  });
+});
+
+test("date calendars use the runtime minimum date for both trip dates", async () => {
+  await withDesktopPage(async ({ page }) => {
+    await page.getByRole("button", { name: "Salida" }).click();
+
+    const departureCalendar = page.getByRole("dialog", { name: "Calendario de salida" });
+    await departureCalendar.waitFor();
+    await assert.equal(await departureCalendar.getByRole("button", { name: "30 mar 2026" }).isDisabled(), true);
+    await assert.equal(await departureCalendar.getByRole("button", { name: "31 mar 2026" }).isDisabled(), false);
+    await departureCalendar.getByRole("button", { name: "31 mar 2026" }).click();
+
+    await page.getByRole("button", { name: "Regreso" }).click();
+
+    const returnCalendar = page.getByRole("dialog", { name: "Calendario de regreso" });
+    await returnCalendar.waitFor();
+    await assert.equal(await returnCalendar.getByRole("button", { name: "30 mar 2026" }).isDisabled(), true);
+    await assert.equal(await returnCalendar.getByRole("button", { name: "31 mar 2026" }).isDisabled(), false);
+  });
+});
+
+test("one-way flexible search sends an expanded stay-range payload", async () => {
+  await withDesktopPage(async ({ page }) => {
+    let payload: Record<string, unknown> | undefined;
+
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      payload = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "job-1",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: "best-value",
+          request: payload?.request,
+          offers: [],
+          allOffers: [],
+          searchMeta: {
+            requestedAt: "2026-03-31T00:00:00.000Z",
+            completedAt: "2026-03-31T00:00:00.000Z",
+            providersUsed: [],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.getByRole("button", { name: "Solo ida" }).click();
+    await page.getByRole("button", { name: "Flexible" }).click();
+    await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
+    await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
+    await page.getByRole("button", { name: "Salida desde" }).click();
+    await page.getByRole("dialog", { name: "Calendario de salida desde" }).getByRole("button", { name: "02 abr 2026" }).click();
+    await page.getByRole("button", { name: "Salida hasta" }).click();
+    await page.getByRole("dialog", { name: "Calendario de salida hasta" }).getByRole("button", { name: "04 abr 2026" }).click();
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+
+    const request = payload?.request as {
+      tripType?: string;
+      searchMode?: string;
+      legs?: Array<Record<string, unknown>>;
+    };
+    const leg = request.legs?.[0];
+
+    assert.equal(request.tripType, "one-way");
+    assert.equal(request.searchMode, "stay-range");
+    assert.equal(leg?.departureStart, "2026-03-31");
+    assert.equal(leg?.departureEnd, "2026-04-08");
+    assert.equal(leg?.departureDate, undefined);
+    assert.equal(leg?.returnDate, undefined);
+  });
+});
+
+test("round-trip flexible search sends matrix exact-stay payload", async () => {
+  await withDesktopPage(async ({ page }) => {
+    let payload: Record<string, unknown> | undefined;
+
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/matrix", async (route) => {
+      payload = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          matrixJobId: "matrix-1",
+          matrixComplete: true,
+          matrixStatus: "completed",
+          revision: 1,
+          request: payload?.request,
+          searchMeta: {
+            requestedAt: "2026-03-31T00:00:00.000Z",
+            completedAt: "2026-03-31T00:00:00.000Z",
+            providersUsed: [],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+          cells: [
+            {
+              key: "2026-04-03_2026-04-10",
+              departureDate: "2026-04-03",
+              returnDate: "2026-04-10",
+              stayNights: 7,
+              price: { amount: 480, currencyCode: "USD" },
+              confidence: "live",
+              providerSource: "agil-local",
+              selectable: true,
+              requiresRequery: false,
+              stateCode: "live",
+              tooltip: "Mejor tarifa",
+            },
+          ],
+          axes: {
+            departureDates: ["2026-04-03"],
+            returnDates: ["2026-04-10"],
+          },
+          confidenceSummary: { live: 1 },
+          recommendations: [],
+        }),
+      });
+    });
+
+    await page.getByRole("button", { name: "Flexible" }).click();
+    await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
+    await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
+    await page.getByRole("button", { name: "Salida desde" }).click();
+    await page.getByRole("dialog", { name: "Calendario de salida desde" }).getByRole("button", { name: "03 abr 2026" }).click();
+    await page.getByRole("button", { name: "Salida hasta" }).click();
+    await page.getByRole("dialog", { name: "Calendario de salida hasta" }).getByRole("button", { name: "05 abr 2026" }).click();
+    await Promise.all([
+      page.waitForResponse("**/api/matrix"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+
+    const request = payload?.request as {
+      tripType?: string;
+      searchMode?: string;
+      flexibleMode?: string;
+      legs?: Array<Record<string, unknown>>;
+    };
+    const leg = request.legs?.[0];
+
+    assert.equal(request.tripType, "round-trip");
+    assert.equal(request.searchMode, "roundtrip-grid");
+    assert.equal(request.flexibleMode, "exact-stay");
+    assert.equal(leg?.departureStart, "2026-03-31");
+    assert.equal(leg?.departureEnd, "2026-04-09");
+    assert.equal(leg?.stayNights, 7);
+    await page.getByText("USD 480").waitFor();
+  });
+});
+
+test("migratory search fans out into eight monthly stay-range searches", async () => {
+  await withDesktopPage(async ({ page }) => {
+    const payloads: Array<Record<string, unknown>> = [];
+    let resolveEightRequests: () => void = () => {};
+    const eightRequests = new Promise<void>((resolve) => {
+      resolveEightRequests = resolve;
+    });
+
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      payloads.push(payload);
+      const request = payload.request as { legs?: Array<{ departureStart?: string }> };
+      const index = payloads.length - 1;
+      const departureDate = request.legs?.[0]?.departureStart ?? "2026-03-31";
+
+      if (payloads.length === 8) {
+        resolveEightRequests();
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: `migration-job-${index}`,
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: "cheapest",
+          request: payload.request,
+          offers: [buildBackendOffer(`offer-${index}`, departureDate, 300 + index * 10)],
+          allOffers: [buildBackendOffer(`offer-${index}`, departureDate, 300 + index * 10)],
+          searchMeta: {
+            requestedAt: "2026-03-31T00:00:00.000Z",
+            completedAt: "2026-03-31T00:00:00.000Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.getByRole("button", { name: "Migratorio" }).click();
+    await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
+    await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
+    await Promise.all([
+      eightRequests,
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+
+    const monthRequests = payloads
+      .map((payload) => payload.request as {
+        tripType?: string;
+        searchMode?: string;
+        legs?: Array<Record<string, unknown>>;
+      })
+      .sort((left, right) => String(left.legs?.[0]?.departureStart).localeCompare(String(right.legs?.[0]?.departureStart)));
+
+    assert.equal(monthRequests.length, 8);
+    assert.ok(monthRequests.every((request) => request.tripType === "one-way"));
+    assert.ok(monthRequests.every((request) => request.searchMode === "stay-range"));
+    assert.equal(monthRequests[0].legs?.[0]?.departureStart, "2026-03-31");
+    assert.equal(monthRequests[0].legs?.[0]?.departureEnd, "2026-03-31");
+    assert.equal(monthRequests[1].legs?.[0]?.departureStart, "2026-04-01");
+    assert.equal(monthRequests[7].legs?.[0]?.departureStart, "2026-10-01");
+    assert.equal(monthRequests[7].legs?.[0]?.departureEnd, "2026-10-31");
+    assert.ok(monthRequests.every((request) => request.legs?.[0]?.returnDate === undefined));
+    await page.getByText("Marzo de 2026").waitFor();
+    await page.getByText("USD 300").waitFor();
+  });
+});
+
+test("technical Agil session errors are cleaned and grouped in the alert", async () => {
+  await withDesktopPage(async ({ page }) => {
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: "Unable to extract Agil session from Chrome profiles. connected browser: browserType.connectOverCDP: connect ECONNREFUSED 127.0.0.1:9222 Call log: \u001b[2m - <ws preparing> retrieving websocket url from http://127.0.0.1:9222\u001b[22m | Profile 40: Agil local session data is incomplete in Chrome localStorage.",
+        }),
+      });
+    });
+
+    await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
+    await page.getByRole("combobox", { name: "Destino" }).fill("CUZ");
+    await page.getByRole("button", { name: "Salida" }).click();
+    await page.getByRole("dialog", { name: "Calendario de salida" }).getByRole("button", { name: "31 mar 2026" }).click();
+    await page.getByRole("button", { name: "Regreso" }).click();
+    await page.getByRole("dialog", { name: "Calendario de regreso" }).getByRole("button", { name: "01 abr 2026" }).click();
+    await page.getByRole("button", { name: "Buscar" }).click();
+
+    const alert = page.getByRole("alert");
+    await alert.waitFor();
+    const text = await alert.innerText();
+
+    assert.match(text, /No se pudo leer la sesión local de Agil desde Chrome/);
+    assert.match(text, /Chrome remoto no está respondiendo en 127\.0\.0\.1:9222/);
+    assert.match(text, /Profile 40: Agil local session data is incomplete in Chrome localStorage/);
+    assert.doesNotMatch(text, /\u001b|\[2m|\[22m|Call log/);
+  });
+});
+
+function buildBackendOffer(id: string, departureDate: string, amount: number) {
+  return {
+    id,
+    providerSource: "agil-local",
+    mainCarrier: "LATAM",
+    price: {
+      total: { amount, currencyCode: "USD" },
+    },
+    itineraries: [
+      {
+        direction: "outbound",
+        segments: [
+          {
+            origin: "LIM",
+            destination: "MIA",
+            departureAt: `${departureDate}T08:00:00.000Z`,
+            arrivalAt: `${departureDate}T14:00:00.000Z`,
+          },
+        ],
+      },
+    ],
+    comparisonMetrics: {
+      totalDurationMinutes: 360,
+      totalStops: 0,
+    },
+    baggage: {
+      carryOnIncluded: true,
+      checkedIncluded: false,
+    },
+  };
+}
