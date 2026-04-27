@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react"
 import type { SearchRequest, SearchJobResponse, SortMode } from "@/types"
-import { startSearch, pollSearch } from "@/lib/api"
+import { startSearch, pollSearch, startMatrix, pollMatrix, startMigrationSearch } from "@/lib/api"
 
 const POLL_INTERVAL_MS = 900
 
@@ -33,7 +33,18 @@ export function useSearch() {
       }
 
       try {
-        const job = await startSearch(request, sortMode)
+        if (request.searchMode === "month-view") {
+          const job = await startMigrationSearch(request, sortMode)
+          if (abortRef.current) return false
+          setResults(job)
+          setLoading(false)
+          return true
+        }
+
+        const flexibleMatrix = request.searchMode === "roundtrip-grid"
+        const job = flexibleMatrix
+          ? await startMatrix(request, sortMode)
+          : await startSearch(request, sortMode)
         setResults(job)
 
         if (!job.searchComplete) {
@@ -41,7 +52,9 @@ export function useSearch() {
           const doPoll = async () => {
             if (abortRef.current) return
             try {
-              const updated = await pollSearch(job.searchJobId, lastRevision)
+              const updated = flexibleMatrix
+                ? await pollMatrix(job.searchJobId, sortMode, lastRevision)
+                : await pollSearch(job.searchJobId, lastRevision)
               if (abortRef.current) return
               if (!updated.unchanged) {
                 lastRevision = updated.revision

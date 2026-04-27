@@ -23,7 +23,9 @@
   --color-accent-foreground: #1f1f1e;
 
   --color-destructive: #d97757;
-  --color-destructive-foreground: #121212;
+  --color-destructive-foreground: #ffffff;
+  --color-destructive-soft: #d977571f;
+  --color-destructive-soft-foreground: #7a2e18;
 
   --color-border: #1f1f1e26;
   --color-input: #1f1f1e26;
@@ -33,7 +35,9 @@
   --color-success-foreground: #f8f8f6;
 
   --color-warning: #d97757;
-  --color-warning-foreground: #121212;
+  --color-warning-foreground: #ffffff;
+  --color-warning-soft: #d977571a;
+  --color-warning-soft-foreground: #6f321f;
 
   --radius-sm: 0.375rem;
   --radius-md: 0.5rem;
@@ -125,7 +129,9 @@
     --color-accent-foreground: #e2e1da;
 
     --color-destructive: #d97757;
-    --color-destructive-foreground: #121212;
+    --color-destructive-foreground: #ffffff;
+    --color-destructive-soft: #d9775726;
+    --color-destructive-soft-foreground: #f2c3b3;
 
     --color-border: #e2e1da26;
     --color-input: #e2e1da26;
@@ -135,7 +141,9 @@
     --color-success-foreground: #121212;
 
     --color-warning: #d97757;
-    --color-warning-foreground: #121212;
+    --color-warning-foreground: #ffffff;
+    --color-warning-soft: #d9775726;
+    --color-warning-soft-foreground: #f2c3b3;
   }
 
   html.dark {
@@ -182,6 +190,10 @@
     @apply rounded-lg border border-input bg-card text-foreground transition-[background-color,border-color,box-shadow,transform] duration-150 ease-out hover:border-border hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.995] disabled:pointer-events-none disabled:opacity-55;
   }
 
+  .fd-control-invalid {
+    @apply border-destructive bg-destructive-soft shadow-[0_0_0_1px_color-mix(in_srgb,var(--color-destructive)_24%,transparent)] hover:border-destructive focus-visible:ring-destructive;
+  }
+
   .fd-label {
     @apply text-[10px] font-bold uppercase text-muted-foreground;
     letter-spacing: 0.04em;
@@ -206,6 +218,18 @@
     border-radius: 999px;
     background-clip: padding-box;
     background-color: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent);
+  }
+
+  .fd-alert {
+    @apply rounded-xl border px-3 py-2.5 text-sm leading-5;
+  }
+
+  .fd-alert-warning {
+    @apply border-warning/45 bg-warning-soft text-warning-soft-foreground;
+  }
+
+  .fd-alert-error {
+    @apply border-destructive/50 bg-destructive-soft text-destructive-soft-foreground;
   }
 
   .fd-skeleton {

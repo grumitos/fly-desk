@@ -1,7 +1,7 @@
 import { memo, useState, type ReactNode } from "react"
-import { AlertTriangle, ArrowUpDown, Briefcase, ChevronDown, ChevronUp, Clock, ExternalLink, Plane } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { AppIcon } from "@/components/ui/app-icon"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { CanonicalOffer, SearchJobResponse, SortMode } from "@/types"
 
@@ -58,9 +58,13 @@ function ResultsPanelBase({
           </div>
         </div>
         {warnings.length > 0 && (
-          <div className="mt-2 flex min-h-9 items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 px-2.5 py-2 text-xs text-warning-foreground">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <p className="line-clamp-2">{warnings.join(" ")}</p>
+          <div className="fd-alert fd-alert-warning mt-2 flex min-h-9 items-start gap-2 text-xs font-medium">
+            <AppIcon name="alert" className="mt-0.5" />
+            <div className="min-w-0 space-y-1">
+              {warnings.map((warning, index) => (
+                <p key={`${warning}-${index}`}>{warning}</p>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -108,7 +112,7 @@ function renderBody({
   if (!results && !loading) {
     return (
       <EmptyState
-        icon={<Plane className="h-7 w-7" />}
+        icon={<AppIcon name="flight" />}
         title="Busca vuelos para comparar"
         body="Ingresa origen, destino y fechas. La lista priorizará precio, duración, escalas, equipaje y proveedor."
       />
@@ -118,7 +122,7 @@ function renderBody({
   if (!loading && results && offers.length === 0) {
     return (
       <EmptyState
-        icon={<ArrowUpDown className="h-7 w-7" />}
+        icon={<AppIcon name="bestValue" />}
         title="Sin resultados para esta consulta"
         body="Ajusta fechas, escalas, equipaje o aerolíneas para ampliar la cobertura."
       />
@@ -153,7 +157,7 @@ function renderBody({
                 <div className="grid gap-2 px-3 py-2.5 lg:grid-cols-[minmax(130px,1.1fr)_82px_82px_minmax(120px,1fr)_78px_56px_78px_78px_108px] lg:items-center">
                   <div className="flex min-w-0 items-center gap-2.5">
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-secondary text-primary">
-                      <Plane className="h-4 w-4" />
+                      <AppIcon name="flight" />
                     </div>
                     <div className="min-w-0">
                       <div className="truncate text-sm font-bold">{offer.airline || "Aerolínea"}</div>
@@ -168,7 +172,7 @@ function renderBody({
                     <div className="truncate">Comparar condiciones antes de cotizar</div>
                   </div>
                   <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <Clock className="h-3.5 w-3.5" />
+                    <AppIcon name="clock" />
                     {offer.duration || "-"}
                   </div>
                   <div>
@@ -183,11 +187,11 @@ function renderBody({
                     )}
                   </div>
                   <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <Briefcase className="h-3.5 w-3.5" />
+                    <AppIcon name="baggage" />
                     {offer.baggageLabel || "-"}
                   </div>
                   <div className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-                    {offer.purchasePaths?.length ? <ExternalLink className="h-3.5 w-3.5 text-primary" /> : null}
+                    {offer.purchasePaths?.length ? <AppIcon name="externalLink" className="text-primary" /> : null}
                     <span className="truncate">{offer.providerSource}</span>
                   </div>
                   <div className="text-right">
@@ -214,7 +218,7 @@ function renderBody({
                   }}
                 >
                   {expanded ? "Menos" : "Detalle"}
-                  {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                  {expanded ? <AppIcon name="chevronUp" /> : <AppIcon name="chevronDown" />}
                 </Button>
               </div>
 

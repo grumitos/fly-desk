@@ -86,7 +86,7 @@ Solid orange surfaces must use white foreground text/icons for contrast and legi
 - `result-row`: dense comparison row prioritizing airline, schedule, route, baggage, provider, and price.
 - `detail-panel`: selected offer and quotation workflow, with flat data groups instead of inner cards.
 
-Do not render placeholder sections for workflows that are not connected in the React app. Flexible search, matrix calendar, monthly migratory search, and multi-city search must stay hidden until rebuilt against the backend contract with current components and tokens.
+Do not render placeholder sections for workflows that are not connected in the React app. Flexible search is connected through `stay-range` and `/api/matrix`; monthly migratory search is connected through client-side monthly `stay-range` fan-out. The matrix calendar view and multi-city search must stay hidden until rebuilt against the backend contract with current components and tokens.
 
 ## Interaction States
 

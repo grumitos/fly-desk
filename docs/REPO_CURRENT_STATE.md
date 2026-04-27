@@ -18,6 +18,8 @@ El repo no versiona artefactos generados de build:
 ### Busqueda y producto en React
 
 - busqueda exacta
+- busqueda flexible: solo ida por rango y ida/vuelta por matriz exact-stay
+- busqueda migratoria mensual: 8 meses desde el mes actual, agregando la mejor tarifa mensual
 - autocomplete de origen y destino
 - filtros visibles de escalas, tiempo maximo de escala, equipaje y aerolineas
 - lista de resultados con advertencias del backend
@@ -25,7 +27,7 @@ El repo no versiona artefactos generados de build:
 - `quotation`
 - purchase paths y apertura del flujo equivalente cuando aplica
 
-La UI React no debe mostrar controles simulados. Busqueda flexible, matriz/calendario, migratorio mensual, multidestino y `reprice` existen como logica backend/legado o contrato parcial, pero permanecen fuera de la interfaz hasta reconstruirse desde cero con los componentes React actuales.
+La UI React no debe mostrar controles simulados. Busqueda flexible y migratorio mensual estan conectados en React; matriz/calendario, multidestino y `reprice` permanecen fuera de la interfaz hasta reconstruirse desde cero con los componentes React actuales.
 
 ### Feedback de carga
 
@@ -195,7 +197,7 @@ Cobertura importante actual:
 - key requerida para Agil live
 - helpers compartidos de matriz
 - rail de busqueda y orden del formulario
-- smoke de `exacto/flexible` con `ida/ida-vuelta`
+- smoke de `exacto/flexible/migratorio` con `ida/ida-vuelta`
 - tema claro y oscuro
 - calendario custom
 - autocomplete anclado
@@ -217,7 +219,7 @@ Resultado al 25 de abril de 2026:
 - typecheck en verde
 - lint frontend en verde via script raiz
 - build frontend/backend en verde
-- suite automatica en verde: `155/155`
+- suite automatica en verde: `168/168`
 - `test/helpers/server.ts` desactiva jobs progresivos de fondo durante tests HTTP con `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1`; esto evita handles vivos en Windows y no cambia el runtime normal
 
 ## Documentacion historica
@@ -235,7 +237,7 @@ Siguen siendo utiles como referencia historica, no como descripcion del estado p
 - `npm run lint` delega al ESLint real del frontend
 - el deploy remoto completo sigue bloqueado por la dependencia de sesion local de navegador para Agil
 - la extraccion de token Costamar por CDP requiere que Chrome se lance con `--remote-debugging-port`; sin ese flag, se depende de archivos de sesion que Chrome puede no tener desbloqueados
-- la busqueda migratoria lanza 8 jobs de rango concurrentes, lo cual puede generar alta carga en providers
+- la busqueda migratoria lanza 8 jobs de rango con concurrencia limitada, lo cual debe vigilarse si sube el volumen de uso
 
 ## Cambios del 25 de abril de 2026
 
@@ -275,4 +277,4 @@ Siguen siendo utiles como referencia historica, no como descripcion del estado p
 
 ### Modo de busqueda migratoria
 
-La implementacion anterior tenia modo migratorio mensual. En la reconstruccion React actual el acceso fue retirado para no mostrar una seccion simulada. Si se reactiva, debe reconstruirse desde cero sobre el contrato backend vigente y la paleta actual, sin heredar CSS ni estructura legacy.
+React vuelve a exponer `Migratorio` como flujo real. Usa origen y destino, arma 8 rangos mensuales contando el mes actual, consulta cada mes como `stay-range` con concurrencia limitada y conserva la sesion original de cada oferta para cotizacion.

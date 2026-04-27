@@ -1,9 +1,9 @@
 import { memo, useCallback, useMemo, useState, type ReactNode } from "react"
-import { Funnel, ListChecks, PanelRight, X } from "lucide-react"
 import { DetailPanel } from "@/components/DetailPanel"
 import { ResultsPanel } from "@/components/ResultsPanel"
 import { SearchShell } from "@/components/SearchShell"
 import { TopBar } from "@/components/TopBar"
+import { AppIcon } from "@/components/ui/app-icon"
 import { Badge } from "@/components/ui/badge"
 import { useSearch } from "@/hooks/useSearch"
 import type { CanonicalOffer, SearchRequest, SortMode } from "@/types"
@@ -133,9 +133,9 @@ export default function App() {
   const shouldShowWorkspace = workspaceReady || Boolean(results) || loading
   const isSearchIdle = !shouldShowWorkspace
   const mobileTabs = [
-    { id: "results" as const, label: "Resultados", icon: <ListChecks className="h-3.5 w-3.5" /> },
-    { id: "filters" as const, label: "Filtros", icon: <Funnel className="h-3.5 w-3.5" /> },
-    { id: "detail" as const, label: "Oferta", icon: <PanelRight className="h-3.5 w-3.5" /> },
+    { id: "results" as const, label: "Resultados", icon: <AppIcon name="list" /> },
+    { id: "filters" as const, label: "Filtros", icon: <AppIcon name="filters" /> },
+    { id: "detail" as const, label: "Oferta", icon: <AppIcon name="detail" /> },
   ]
 
   return (
@@ -143,13 +143,13 @@ export default function App() {
       <TopBar />
 
       <main
-        className={`mx-auto flex min-h-0 w-full max-w-[1560px] flex-1 flex-col gap-2.5 px-2.5 py-2.5 sm:px-4 sm:py-3 ${
-          isSearchIdle ? "justify-center pb-[12vh]" : ""
+        className={`mx-auto flex min-h-0 w-full max-w-[1560px] flex-1 flex-col gap-2.5 px-2.5 sm:px-4 ${
+          isSearchIdle ? "justify-center pb-[10vh] pt-2.5 sm:pt-3" : "py-2.5 sm:py-3"
         }`}
       >
         <div
           className={`w-full transition-[transform,opacity] duration-200 ease-out ${
-            isSearchIdle ? "mx-auto -translate-y-4" : "translate-y-0"
+            isSearchIdle ? "mx-auto -translate-y-6" : "translate-y-0"
           }`}
         >
           <SearchShell onSearch={handleSearch} loading={loading} />
@@ -157,9 +157,16 @@ export default function App() {
           {error && (
             <div
               role="alert"
-              className="mt-2 rounded-xl border border-destructive/25 bg-destructive/10 p-3 text-sm font-medium text-destructive"
+              className="fd-alert fd-alert-error mt-2 flex items-start gap-2 font-medium"
             >
-              {error}
+              <AppIcon name="alert" className="mt-0.5" />
+              <div className="min-w-0 space-y-1">
+                {formatAlertLines(error).map((line, index) => (
+                  <p key={`${line}-${index}`} className={index === 0 ? "font-bold" : "text-xs leading-5"}>
+                    {line}
+                  </p>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -253,7 +260,7 @@ const FiltersPanel = memo(function FiltersPanel({
             onClick={onClear}
             className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-semibold text-primary transition-colors duration-150 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <X className="h-3.5 w-3.5" />
+            <AppIcon name="x" />
             Limpiar
           </button>
         )}
@@ -385,4 +392,11 @@ function maxLayoverForOffer(offer: CanonicalOffer): number {
   return (offer.itineraries ?? [])
     .flatMap((itinerary) => itinerary.layoverMinutes ?? [])
     .reduce((max, minutes) => Math.max(max, minutes), 0)
+}
+
+function formatAlertLines(message: string) {
+  return message
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
 }

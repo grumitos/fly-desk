@@ -175,13 +175,13 @@ Variables utiles del launcher:
 
 ## Verificacion reciente
 
-Estado validado el 25 de abril de 2026:
+Estado validado el 27 de abril de 2026:
 
 - `npm run typecheck`
 - `npm run lint`
 - `npm --prefix frontend run lint`
 - `npm run build`
-- `npm test` (`155/155`)
+- `npm test` (`168/168`)
 
 Nota de QA: los helpers HTTP de test fijan `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1` para validar contratos inmediatos sin dejar jobs progresivos vivos despues del cierre del servidor. El runtime normal no define esa variable y conserva el polling/revalidacion en segundo plano.
 
