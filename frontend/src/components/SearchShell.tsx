@@ -2,7 +2,6 @@ import { useMemo, useState, type FormEvent, type KeyboardEvent, type RefObject }
 import { es } from "react-day-picker/locale"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
-import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { AppIcon, type AppIconName } from "@/components/ui/app-icon"
@@ -57,6 +56,12 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
   const origin = useAutocomplete("origin", (suggestion) => setOriginCode(suggestion.code))
   const destination = useAutocomplete("destination", (suggestion) => setDestCode(suggestion.code))
 
+  const updateAdults = (nextAdults: number) => {
+    const clampedAdults = Math.max(1, Math.min(nextAdults, 9))
+    setAdults(clampedAdults)
+    setInfants((current) => Math.min(current, clampedAdults))
+  }
+
   const handleDepartureDateChange = (nextDate: string) => {
     const clampedDate = clampIsoDate(nextDate, datePolicy.minSearchDate, datePolicy.maxSearchDate)
     setDepartureDate(clampedDate)
@@ -104,6 +109,11 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
+
+    if (loading) {
+      return
+    }
+
     setTouched({
       origin: true,
       destination: true,
@@ -178,7 +188,7 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
   return (
     <section className="fd-panel overflow-visible p-2" aria-busy={loading}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <ToggleGroup
             type="single"
             value={mode}
@@ -198,6 +208,18 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
             </ToggleGroupItem>
           </ToggleGroup>
 
+          {mode === "flexible" && (
+            <div className="fd-inline-enter min-w-0">
+              <FlexibleOptionsBar
+                expandWindow={expandFlexibleWindow}
+                onExpandWindowChange={setExpandFlexibleWindow}
+                stayNights={stayNights}
+                onStayNightsChange={setStayNights}
+                showStayNights={trip === "round-trip"}
+              />
+            </div>
+          )}
+
           {mode !== "migration" && (
             <ToggleGroup
               type="single"
@@ -216,16 +238,6 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
           )}
         </div>
       </div>
-
-      {mode === "flexible" && (
-        <FlexibleOptionsBar
-          expandWindow={expandFlexibleWindow}
-          onExpandWindowChange={setExpandFlexibleWindow}
-          stayNights={stayNights}
-          onStayNightsChange={setStayNights}
-          showStayNights={trip === "round-trip"}
-        />
-      )}
 
       <form onSubmit={handleSubmit}>
         <div className={searchGridClassName}>
@@ -342,6 +354,8 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
                   type="button"
                   variant="outline"
                   aria-label="Seleccionar pasajeros"
+                  aria-expanded={paxOpen}
+                  aria-haspopup="dialog"
                   className="fd-control flex h-[52px] w-full justify-start gap-2 px-3 pt-4 text-left hover:bg-accent/60"
                 >
                   <AppIcon name="passengers" className="text-muted-foreground" />
@@ -353,9 +367,9 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
               </PopoverTrigger>
 
               <PopoverContent align="end" className="w-72">
-                <PaxRow label="Adultos" detail="12+ años" value={adults} onInc={() => setAdults((v) => Math.min(v + 1, 9))} onDec={() => setAdults((v) => Math.max(v - 1, 1))} />
-                <PaxRow label="Niños" detail="2-11 años" value={children} onInc={() => setChildren((v) => Math.min(v + 1, 8))} onDec={() => setChildren((v) => Math.max(v - 1, 0))} />
-                <PaxRow label="Bebés" detail="Menos de 2 años" value={infants} onInc={() => setInfants((v) => Math.min(v + 1, adults))} onDec={() => setInfants((v) => Math.max(v - 1, 0))} />
+                <PaxRow label="Adultos" detail="12+ años" value={adults} onInc={() => updateAdults(adults + 1)} onDec={() => updateAdults(adults - 1)} decDisabled={adults <= 1} incDisabled={adults >= 9} />
+                <PaxRow label="Niños" detail="2-11 años" value={children} onInc={() => setChildren((v) => Math.min(v + 1, 8))} onDec={() => setChildren((v) => Math.max(v - 1, 0))} decDisabled={children <= 0} incDisabled={children >= 8} />
+                <PaxRow label="Bebés" detail="Menos de 2 años" value={infants} onInc={() => setInfants((v) => Math.min(v + 1, adults))} onDec={() => setInfants((v) => Math.max(v - 1, 0))} decDisabled={infants <= 0} incDisabled={infants >= adults} />
               </PopoverContent>
             </div>
           </Popover>
@@ -365,7 +379,7 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
             disabled={loading}
             className="h-[52px] rounded-lg text-sm"
           >
-            <AppIcon name="search" />
+            {loading ? <AppIcon name="loading" spin /> : <AppIcon name="search" />}
             {loading ? "Buscando" : "Buscar"}
           </Button>
         </div>
@@ -417,38 +431,41 @@ function LocationField({
   return (
     <div className="relative">
       <label htmlFor={fieldId} className="fd-label absolute left-3 top-2 z-10">{label}</label>
-      {icon && (
-        <AppIcon name={icon} className="pointer-events-none absolute left-3 top-[35px] z-10 -translate-y-1/2 text-muted-foreground" />
-      )}
-      <Input
-        id={fieldId}
-        ref={inputRef}
-        aria-label={label}
-        aria-autocomplete="list"
-        aria-controls={listboxId}
-        aria-expanded={open && suggestions.length > 0}
-        aria-activedescendant={activeOptionId}
-        aria-invalid={invalid}
-        autoComplete="off"
-        name={fieldId}
-        role="combobox"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        onFocus={onFocus}
-        onBlur={() => {
-          void onBlur()
-        }}
-        onKeyDown={onKeyDown}
-        placeholder={placeholder}
+      <div
         className={cn(
-          "fd-control h-[52px] w-full px-3 pb-2 pt-5 text-sm font-semibold placeholder:text-muted-foreground/60",
-          icon && "pl-9",
+          "fd-control flex h-[52px] w-full items-center gap-2 px-3 pt-4",
           invalid && "fd-control-invalid",
           roundedClass,
         )}
-      />
+      >
+        {icon && (
+          <AppIcon name={icon} className="pointer-events-none text-muted-foreground" />
+        )}
+        <input
+          id={fieldId}
+          ref={inputRef}
+          aria-label={label}
+          aria-autocomplete="list"
+          aria-controls={listboxId}
+          aria-expanded={open && suggestions.length > 0}
+          aria-activedescendant={activeOptionId}
+          aria-invalid={invalid}
+          autoComplete="off"
+          name={fieldId}
+          role="combobox"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onFocus={onFocus}
+          onBlur={() => {
+            void onBlur()
+          }}
+          onKeyDown={onKeyDown}
+          placeholder={placeholder}
+          className="min-w-0 flex-1 bg-transparent text-sm font-semibold leading-none text-foreground outline-none placeholder:text-muted-foreground/60"
+        />
+      </div>
       {open && suggestions.length > 0 && (
-        <div id={listboxId} role="listbox" className="fd-scrollbar absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg">
+        <div id={listboxId} role="listbox" className="fd-popover-enter fd-scrollbar absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg">
           {suggestions.map((suggestion, index) => (
             <Button
               id={`${listboxId}-${index}`}
@@ -578,7 +595,7 @@ function FlexibleOptionsBar({
   showStayNights: boolean
 }) {
   return (
-    <div className="mb-2 flex flex-wrap items-center gap-1.5 px-1">
+    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
       <Button
         type="button"
         variant="outline"
@@ -586,7 +603,7 @@ function FlexibleOptionsBar({
         onClick={() => onExpandWindowChange(!expandWindow)}
         className={`h-8 px-2.5 text-xs ${
           expandWindow
-            ? "border-primary/45 bg-primary/10 text-primary"
+            ? "fd-selected-passive"
             : "border-input bg-secondary text-muted-foreground hover:text-foreground"
         }`}
       >
@@ -609,6 +626,7 @@ function FlexibleOptionsBar({
             size="icon"
             aria-label="Quitar noche"
             onClick={() => onStayNightsChange(Math.max(1, stayNights - 1))}
+            disabled={stayNights <= 1}
             className="h-7 w-7 text-muted-foreground hover:text-foreground"
           >
             <AppIcon name="minus" />
@@ -622,6 +640,7 @@ function FlexibleOptionsBar({
             size="icon"
             aria-label="Agregar noche"
             onClick={() => onStayNightsChange(Math.min(45, stayNights + 1))}
+            disabled={stayNights >= 45}
             className="h-7 w-7 text-muted-foreground hover:text-foreground"
           >
             <AppIcon name="plus" />
@@ -638,12 +657,16 @@ function PaxRow({
   value,
   onInc,
   onDec,
+  incDisabled = false,
+  decDisabled = false,
 }: {
   label: string
   detail: string
   value: number
   onInc: () => void
   onDec: () => void
+  incDisabled?: boolean
+  decDisabled?: boolean
 }) {
   return (
     <div className="flex items-center justify-between rounded-lg px-2 py-2 transition-colors duration-150 hover:bg-muted">
@@ -652,11 +675,11 @@ function PaxRow({
         <div className="text-xs text-muted-foreground">{detail}</div>
       </div>
       <div className="flex items-center gap-2">
-        <Button type="button" variant="outline" size="icon" onClick={onDec} aria-label={`Quitar ${label.toLowerCase()}`} className="fd-control h-8 w-8">
+        <Button type="button" variant="outline" size="icon" onClick={onDec} disabled={decDisabled} aria-label={`Quitar ${label.toLowerCase()}`} className="fd-control h-8 w-8">
           <AppIcon name="minus" />
         </Button>
         <span className="w-6 text-center font-mono text-sm font-bold">{value}</span>
-        <Button type="button" variant="outline" size="icon" onClick={onInc} aria-label={`Agregar ${label.toLowerCase()}`} className="fd-control h-8 w-8">
+        <Button type="button" variant="outline" size="icon" onClick={onInc} disabled={incDisabled} aria-label={`Agregar ${label.toLowerCase()}`} className="fd-control h-8 w-8">
           <AppIcon name="plus" />
         </Button>
       </div>

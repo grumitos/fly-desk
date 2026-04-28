@@ -34,10 +34,11 @@ import {
 import { createElement, forwardRef } from "react"
 
 const BrandPlane = forwardRef<SVGSVGElement, LucideProps>(function BrandPlane(
-  { color = "currentColor", size = 24, strokeWidth = 2, absoluteStrokeWidth, ...props },
+  { color = "currentColor", size = 24, strokeWidth: _strokeWidth, absoluteStrokeWidth: _absoluteStrokeWidth, ...props },
   ref,
 ) {
-  const iconStrokeWidth = absoluteStrokeWidth ? (Number(strokeWidth) * 24) / Number(size) : strokeWidth
+  void _strokeWidth
+  void _absoluteStrokeWidth
 
   return createElement(
     "svg",
@@ -49,16 +50,15 @@ const BrandPlane = forwardRef<SVGSVGElement, LucideProps>(function BrandPlane(
       height: size,
       viewBox: "0 0 24 24",
       fill: "none",
-      stroke: color,
-      strokeWidth: iconStrokeWidth,
-      strokeLinecap: "round",
-      strokeLinejoin: "round",
+      color,
     },
     createElement("path", { key: "canvas", stroke: "none", d: "M0 0h24v24H0z", fill: "none" }),
-    createElement("path", { key: "fold", d: "M10 14l11 -11" }),
     createElement("path", {
       key: "body",
-      d: "M21 3l-6.5 18a.55 .55 0 0 1 -1 0l-3.5 -7l-7 -3.5a.55 .55 0 0 1 0 -1l18 -6.5",
+      fill: color,
+      fillRule: "evenodd",
+      clipRule: "evenodd",
+      d: "M21.96 3.05c.76-.3 1.51.42 1.25 1.19l-5.36 15.7c-.26.77-1.24.98-1.79.38l-4.2-4.57-2.45 3.43c-.47.66-1.5.44-1.67-.36l-1.02-4.9-4.52-1.5c-.84-.28-.88-1.46-.05-1.78l19.81-7.59ZM19.46 6.45l-10.3 6.2 3.25 1.07 7.05-7.27Zm-5.94 8.62 2.86 3.13 2.75-8.12-5.61 4.99Z",
     }),
   )
 }) as LucideIcon

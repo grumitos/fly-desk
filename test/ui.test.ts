@@ -28,7 +28,7 @@ test("current React shell exposes the primary search controls", async () => {
   });
 });
 
-test("current React shell exposes connected flexible and migratory search modes", async () => {
+test("current React shell exposes flexible mode and keeps migratory disabled", async () => {
   await withDesktopPage(async ({ page }) => {
     const visibleText = await page.locator("body").innerText();
 
@@ -37,6 +37,9 @@ test("current React shell exposes connected flexible and migratory search modes"
     assert.doesNotMatch(visibleText, /Multidestino/);
     assert.match(visibleText, /Migratorio/);
 
+    const migratory = page.getByRole("button", { name: "Migratorio" });
+    await assert.equal(await migratory.isDisabled(), true);
+
     const flexible = page.getByRole("button", { name: "Flexible" });
     await assert.equal(await flexible.isDisabled(), false);
     await flexible.click();
@@ -44,14 +47,7 @@ test("current React shell exposes connected flexible and migratory search modes"
     assert.match(await page.locator("body").innerText(), /SALIDA DESDE/);
     assert.match(await page.locator("body").innerText(), /SALIDA HASTA/);
     assert.match(await page.locator("body").innerText(), /4 d[ií]as/);
-
-    const migratory = page.getByRole("button", { name: "Migratorio" });
-    await assert.equal(await migratory.isDisabled(), false);
-    await migratory.click();
-
-    const migratoryText = await page.locator("body").innerText();
-    assert.doesNotMatch(migratoryText, /SALIDA/);
-    assert.doesNotMatch(migratoryText, /REGRESO/);
+    await assert.equal(await migratory.isDisabled(), true);
   });
 });
 
@@ -170,7 +166,7 @@ test("search fields show invalid outline without helper text", async () => {
     await page.getByRole("combobox", { name: "Destino" }).focus();
 
     await assert.equal(await origin.getAttribute("aria-invalid"), "true");
-    assert.match(await origin.getAttribute("class") ?? "", /fd-control-invalid/);
+    assert.match(await origin.locator("xpath=..").getAttribute("class") ?? "", /fd-control-invalid/);
     await assert.equal(await page.getByText("Ingresa un origen válido.").count(), 0);
 
     await page.getByRole("button", { name: "Flexible" }).click();
@@ -364,88 +360,15 @@ test("round-trip flexible search sends matrix exact-stay payload", async () => {
   });
 });
 
-test("migratory search fans out into eight monthly stay-range searches", async () => {
+test("disabled migratory search keeps the regular search rail active", async () => {
   await withDesktopPage(async ({ page }) => {
-    const payloads: Array<Record<string, unknown>> = [];
-    let resolveEightRequests: () => void = () => {};
-    const eightRequests = new Promise<void>((resolve) => {
-      resolveEightRequests = resolve;
-    });
+    const migratory = page.getByRole("button", { name: "Migratorio" });
 
-    await page.route("**/api/locations**", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ suggestions: [] }),
-      });
-    });
-    await page.route("**/api/search", async (route) => {
-      const payload = route.request().postDataJSON() as Record<string, unknown>;
-      payloads.push(payload);
-      const request = payload.request as { legs?: Array<{ departureStart?: string }> };
-      const index = payloads.length - 1;
-      const departureDate = request.legs?.[0]?.departureStart ?? "2026-03-31";
-
-      if (payloads.length === 8) {
-        resolveEightRequests();
-      }
-
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          searchJobId: `migration-job-${index}`,
-          searchComplete: true,
-          searchStatus: "completed",
-          revision: 1,
-          sortMode: "cheapest",
-          request: payload.request,
-          offers: [buildBackendOffer(`offer-${index}`, departureDate, 300 + index * 10)],
-          allOffers: [buildBackendOffer(`offer-${index}`, departureDate, 300 + index * 10)],
-          searchMeta: {
-            requestedAt: "2026-03-31T00:00:00.000Z",
-            completedAt: "2026-03-31T00:00:00.000Z",
-            providersUsed: ["agil-local"],
-            warnings: [],
-            partial: false,
-            searchState: "search_live",
-          },
-          providerMeta: {
-            exactProvider: "agil-local",
-            coverageMode: "core",
-          },
-          warnings: [],
-        }),
-      });
-    });
-
-    await page.getByRole("button", { name: "Migratorio" }).click();
-    await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
-    await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
-    await Promise.all([
-      eightRequests,
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
-
-    const monthRequests = payloads
-      .map((payload) => payload.request as {
-        tripType?: string;
-        searchMode?: string;
-        legs?: Array<Record<string, unknown>>;
-      })
-      .sort((left, right) => String(left.legs?.[0]?.departureStart).localeCompare(String(right.legs?.[0]?.departureStart)));
-
-    assert.equal(monthRequests.length, 8);
-    assert.ok(monthRequests.every((request) => request.tripType === "one-way"));
-    assert.ok(monthRequests.every((request) => request.searchMode === "stay-range"));
-    assert.equal(monthRequests[0].legs?.[0]?.departureStart, "2026-03-31");
-    assert.equal(monthRequests[0].legs?.[0]?.departureEnd, "2026-03-31");
-    assert.equal(monthRequests[1].legs?.[0]?.departureStart, "2026-04-01");
-    assert.equal(monthRequests[7].legs?.[0]?.departureStart, "2026-10-01");
-    assert.equal(monthRequests[7].legs?.[0]?.departureEnd, "2026-10-31");
-    assert.ok(monthRequests.every((request) => request.legs?.[0]?.returnDate === undefined));
-    await page.getByText("Marzo de 2026").waitFor();
-    await page.getByText("USD 300").waitFor();
+    await assert.equal(await migratory.isDisabled(), true);
+    await assert.equal(await page.getByRole("button", { name: "Salida" }).isVisible(), true);
+    await assert.equal(await page.getByRole("button", { name: "Regreso" }).isVisible(), true);
+    await assert.equal(await page.getByRole("button", { name: "Ida y vuelta" }).isVisible(), true);
+    await assert.equal(await page.getByRole("button", { name: "Solo ida" }).isVisible(), true);
   });
 });
 
@@ -492,35 +415,3 @@ test("technical Agil session errors stay out of the alert and are available in p
     assert.match(logText, /connectOverCDP/);
   });
 });
-
-function buildBackendOffer(id: string, departureDate: string, amount: number) {
-  return {
-    id,
-    providerSource: "agil-local",
-    mainCarrier: "LATAM",
-    price: {
-      total: { amount, currencyCode: "USD" },
-    },
-    itineraries: [
-      {
-        direction: "outbound",
-        segments: [
-          {
-            origin: "LIM",
-            destination: "MIA",
-            departureAt: `${departureDate}T08:00:00.000Z`,
-            arrivalAt: `${departureDate}T14:00:00.000Z`,
-          },
-        ],
-      },
-    ],
-    comparisonMetrics: {
-      totalDurationMinutes: 360,
-      totalStops: 0,
-    },
-    baggage: {
-      carryOnIncluded: true,
-      checkedIncluded: false,
-    },
-  };
-}

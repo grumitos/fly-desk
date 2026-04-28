@@ -78,7 +78,7 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
         <PanelHeader title="Oferta" subtitle="Sin selección" />
         <div className="grid min-h-0 flex-1 place-items-center p-6 text-center">
           <div>
-            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg bg-secondary text-primary">
+            <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg bg-secondary text-muted-foreground">
               <AppIcon name="externalLink" />
             </div>
             <h2 className="text-sm font-bold">Selecciona una oferta</h2>
@@ -154,13 +154,13 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
         </section>
 
         {pathFeedback && (
-          <div className="rounded-lg border border-border bg-secondary/70 px-3 py-2 text-xs text-muted-foreground">
+          <div className="fd-popover-enter rounded-lg border border-border bg-secondary/70 px-3 py-2 text-xs text-muted-foreground">
             {pathFeedback}
           </div>
         )}
 
         {offer.warnings && offer.warnings.length > 0 && (
-          <section className="fd-alert fd-alert-warning text-xs font-medium">
+          <section className="fd-popover-enter fd-alert fd-alert-warning text-xs font-medium">
             <div className="mb-1 flex items-center gap-2 font-bold">
               <AppIcon name="alert" />
               Advertencias
@@ -174,7 +174,7 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
         )}
 
         {activeQuotation && (
-          <section className="space-y-2">
+          <section className="fd-popover-enter space-y-2">
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="fd-label">Cotización</div>

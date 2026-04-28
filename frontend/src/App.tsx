@@ -159,7 +159,7 @@ export default function App() {
           }`}
         >
           <div
-            className={`w-full transition-[transform,opacity] duration-200 ease-out ${
+            className={`w-full transform-gpu transition-[transform,opacity] duration-200 ease-out ${
               isSearchIdle ? "mx-auto -translate-y-6" : "translate-y-0"
             }`}
           >
@@ -168,7 +168,7 @@ export default function App() {
             {error && (
               <div
                 role="alert"
-                className="fd-alert fd-alert-error mt-2 flex items-start gap-2 font-medium"
+                className="fd-popover-enter fd-alert fd-alert-error mt-2 flex items-start gap-2 font-medium"
               >
                 <AppIcon name="alert" className="mt-0.5" />
                 <div className="min-w-0 space-y-1">
@@ -351,7 +351,7 @@ const FiltersPanel = memo(function FiltersPanel({
             {allAirlines.map((airline) => (
               <label
                 key={airline.name}
-                className="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors duration-150 hover:bg-muted"
+                className="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.995]"
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <Checkbox
@@ -397,6 +397,7 @@ function ChoiceRow({ label, active, onClick }: { label: string; active: boolean;
       type="button"
       variant="ghost"
       onClick={onClick}
+      aria-pressed={active}
       className={`h-auto w-full justify-between rounded-lg px-2 py-1.5 text-sm font-normal ${
         active ? "bg-primary/10 text-primary" : "hover:bg-muted"
       }`}
