@@ -198,8 +198,11 @@ function buildHttpDiagnosticLog(url: string, response: Response, data: unknown):
 }
 
 async function readJsonBody(response: Response): Promise<unknown> {
+  const text = await response.text()
+  if (!text) return undefined
+
   try {
-    return await response.json()
+    return JSON.parse(text)
   } catch {
     return undefined
   }
@@ -238,6 +241,7 @@ async function postJson<T>(url: string, payload: unknown): Promise<T> {
   }
   const data = await readJsonBody(res)
   if (!res.ok) throw new FlyDeskApiError(apiErrorMessage(data), buildHttpDiagnosticLog(url, res, data))
+  if (data === undefined) throw new FlyDeskApiError("El servidor devolvió una respuesta no válida.", buildHttpDiagnosticLog(url, res, data))
   return data as T
 }
 
@@ -250,6 +254,7 @@ async function getJson<T>(url: string): Promise<T> {
   }
   const data = await readJsonBody(res)
   if (!res.ok) throw new FlyDeskApiError(apiErrorMessage(data), buildHttpDiagnosticLog(url, res, data))
+  if (data === undefined) throw new FlyDeskApiError("El servidor devolvió una respuesta no válida.", buildHttpDiagnosticLog(url, res, data))
   return data as T
 }
 

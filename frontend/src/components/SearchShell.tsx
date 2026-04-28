@@ -1,9 +1,8 @@
-import { useMemo, useState, type FormEvent, type KeyboardEvent, type RefObject } from "react"
+import { useMemo, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react"
 import { es } from "react-day-picker/locale"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { AppIcon, type AppIconName } from "@/components/ui/app-icon"
 import { useAutocomplete } from "@/hooks/useAutocomplete"
 import { cn } from "@/lib/utils"
@@ -189,24 +188,18 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
     <section className="fd-panel overflow-visible p-2" aria-busy={loading}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <ToggleGroup
-            type="single"
-            value={mode}
-            onValueChange={(value) => {
-              if (value) handleModeChange(value as SearchModeControl)
-            }}
-          >
-            <ToggleGroupItem value="exact" aria-label="Modo exacto">
+          <SegmentedControl>
+            <SegmentButton active={mode === "exact"} onClick={() => handleModeChange("exact")}>
               Exacto
-            </ToggleGroupItem>
-            <ToggleGroupItem value="flexible" aria-label="Modo flexible">
+            </SegmentButton>
+            <SegmentButton active={mode === "flexible"} onClick={() => handleModeChange("flexible")}>
               Flexible
-            </ToggleGroupItem>
-            <ToggleGroupItem value="migration" aria-label="Modo migratorio">
+            </SegmentButton>
+            <SegmentButton active={mode === "migration"} onClick={() => handleModeChange("migration")}>
               <AppIcon name="migration" />
               Migratorio
-            </ToggleGroupItem>
-          </ToggleGroup>
+            </SegmentButton>
+          </SegmentedControl>
 
           {mode === "flexible" && (
             <div className="fd-inline-enter min-w-0">
@@ -221,20 +214,14 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
           )}
 
           {mode !== "migration" && (
-            <ToggleGroup
-              type="single"
-              value={trip}
-              onValueChange={(value) => {
-                if (value) handleTripChange(value as "round-trip" | "one-way")
-              }}
-            >
+            <SegmentedControl>
               {tripTabs.map((item) => (
-                <ToggleGroupItem key={item.key} value={item.key} aria-label={item.label}>
+                <SegmentButton key={item.key} active={trip === item.key} onClick={() => handleTripChange(item.key)}>
                   <AppIcon name={item.icon} />
                   {item.label}
-                </ToggleGroupItem>
+                </SegmentButton>
               ))}
-            </ToggleGroup>
+            </SegmentedControl>
           )}
         </div>
       </div>
@@ -555,6 +542,9 @@ function DateField({
             locale={es}
             weekStartsOn={1}
             fixedWeeks
+            labels={{
+              labelDayButton: (date) => formatDateLabel(localDateToIso(date)),
+            }}
             selected={selectedDate}
             defaultMonth={selectedDate ?? minSelectableDate}
             startMonth={minSelectableDate}
@@ -648,6 +638,40 @@ function FlexibleOptionsBar({
         </div>
       )}
     </div>
+  )
+}
+
+function SegmentedControl({ children }: { children: ReactNode }) {
+  return (
+    <div className="inline-flex min-h-8 items-center rounded-lg border border-input bg-secondary p-0.5">
+      {children}
+    </div>
+  )
+}
+
+function SegmentButton({
+  active,
+  disabled,
+  onClick,
+  children,
+}: {
+  active: boolean
+  disabled?: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      disabled={disabled}
+      className={`inline-flex h-7 transform-gpu items-center justify-center gap-1.5 rounded-md px-2.5 text-xs font-semibold transition-[background-color,color,box-shadow,transform] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] disabled:pointer-events-none disabled:opacity-45 disabled:active:scale-100 ${
+        active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
   )
 }
 

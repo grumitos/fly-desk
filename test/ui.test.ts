@@ -28,7 +28,7 @@ test("current React shell exposes the primary search controls", async () => {
   });
 });
 
-test("current React shell exposes flexible mode and keeps migratory disabled", async () => {
+test("current React shell exposes flexible and migratory search modes", async () => {
   await withDesktopPage(async ({ page }) => {
     const visibleText = await page.locator("body").innerText();
 
@@ -38,7 +38,7 @@ test("current React shell exposes flexible mode and keeps migratory disabled", a
     assert.match(visibleText, /Migratorio/);
 
     const migratory = page.getByRole("button", { name: "Migratorio" });
-    await assert.equal(await migratory.isDisabled(), true);
+    await assert.equal(await migratory.isDisabled(), false);
 
     const flexible = page.getByRole("button", { name: "Flexible" });
     await assert.equal(await flexible.isDisabled(), false);
@@ -47,7 +47,12 @@ test("current React shell exposes flexible mode and keeps migratory disabled", a
     assert.match(await page.locator("body").innerText(), /SALIDA DESDE/);
     assert.match(await page.locator("body").innerText(), /SALIDA HASTA/);
     assert.match(await page.locator("body").innerText(), /4 d[ií]as/);
-    await assert.equal(await migratory.isDisabled(), true);
+    await assert.equal(await migratory.isDisabled(), false);
+
+    await migratory.click();
+    await assert.equal(await page.getByRole("button", { name: "Salida" }).count(), 0);
+    await assert.equal(await page.getByRole("button", { name: "Regreso" }).count(), 0);
+    await assert.equal(await page.getByRole("button", { name: "Buscar" }).isVisible(), true);
   });
 });
 
@@ -70,9 +75,6 @@ test("autocomplete uses combobox, listbox, and option semantics", async () => {
 
     await openDesktop(page, baseUrl);
     const origin = page.getByRole("combobox", { name: "Origen" });
-    await origin.fill("li");
-    await page.waitForResponse("**/api/locations**");
-    await origin.fill("");
     await origin.fill("li");
 
     const listbox = page.getByRole("listbox");
@@ -360,15 +362,73 @@ test("round-trip flexible search sends matrix exact-stay payload", async () => {
   });
 });
 
-test("disabled migratory search keeps the regular search rail active", async () => {
+test("migratory search sends monthly stay-range requests", async () => {
   await withDesktopPage(async ({ page }) => {
+    const payloads: Record<string, unknown>[] = [];
     const migratory = page.getByRole("button", { name: "Migratorio" });
 
-    await assert.equal(await migratory.isDisabled(), true);
-    await assert.equal(await page.getByRole("button", { name: "Salida" }).isVisible(), true);
-    await assert.equal(await page.getByRole("button", { name: "Regreso" }).isVisible(), true);
-    await assert.equal(await page.getByRole("button", { name: "Ida y vuelta" }).isVisible(), true);
-    await assert.equal(await page.getByRole("button", { name: "Solo ida" }).isVisible(), true);
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      payloads.push(payload);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: `migration-month-${payloads.length}`,
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: "cheapest",
+          request: payload.request,
+          offers: [],
+          allOffers: [],
+          searchMeta: {
+            requestedAt: "2026-03-31T00:00:00.000Z",
+            completedAt: "2026-03-31T00:00:00.000Z",
+            providersUsed: [],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await assert.equal(await migratory.isDisabled(), false);
+    await migratory.click();
+    await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
+    await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+    await page.getByText("Sin resultados para esta consulta").waitFor();
+
+    assert.equal(payloads.length, 8);
+    const firstRequest = payloads[0].request as {
+      tripType?: string;
+      searchMode?: string;
+      legs?: Array<Record<string, unknown>>;
+    };
+    const firstLeg = firstRequest.legs?.[0];
+
+    assert.equal(firstRequest.tripType, "one-way");
+    assert.equal(firstRequest.searchMode, "stay-range");
+    assert.equal(firstLeg?.departureStart, "2026-03-31");
+    assert.equal(firstLeg?.departureEnd, "2026-03-31");
+    assert.equal(firstLeg?.returnDate, undefined);
   });
 });
 

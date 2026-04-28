@@ -87,17 +87,15 @@ export default function App() {
 
   const handleFilterChange = useCallback(
     (next: Partial<Filters>) => {
-      setFilters((previous) => {
-        const merged = { ...previous, ...next }
-        if (lastRequest) {
-          runSearch({ ...lastRequest, ...merged, includedAirlineCodes: selectedAirlines }, sortMode, {
-            keepPreviousResults: true,
-          })
-        }
-        return merged
-      })
+      const merged = { ...filters, ...next }
+      setFilters(merged)
+      if (lastRequest) {
+        runSearch({ ...lastRequest, ...merged, includedAirlineCodes: selectedAirlines }, sortMode, {
+          keepPreviousResults: true,
+        })
+      }
     },
-    [lastRequest, runSearch, selectedAirlines, sortMode]
+    [filters, lastRequest, runSearch, selectedAirlines, sortMode]
   )
 
   const handleClearFilters = useCallback(() => {
@@ -120,14 +118,14 @@ export default function App() {
   }, [lastRequest, runSearch, sortMode])
 
   const toggleAirline = useCallback((airline: string) => {
-    setSelectedAirlines((previous) => {
-      const next = previous.includes(airline) ? previous.filter((item) => item !== airline) : [...previous, airline]
-      if (lastRequest) {
-        runSearch({ ...lastRequest, ...filters, includedAirlineCodes: next }, sortMode, { keepPreviousResults: true })
-      }
-      return next
-    })
-  }, [filters, lastRequest, runSearch, sortMode])
+    const nextAirlines = selectedAirlines.includes(airline)
+      ? selectedAirlines.filter((item) => item !== airline)
+      : [...selectedAirlines, airline]
+    setSelectedAirlines(nextAirlines)
+    if (lastRequest) {
+      runSearch({ ...lastRequest, ...filters, includedAirlineCodes: nextAirlines }, sortMode, { keepPreviousResults: true })
+    }
+  }, [filters, lastRequest, runSearch, selectedAirlines, sortMode])
 
   const hasFilters =
     Boolean(filters.nonStop) ||
@@ -398,12 +396,12 @@ function ChoiceRow({ label, active, onClick }: { label: string; active: boolean;
       variant="ghost"
       onClick={onClick}
       aria-pressed={active}
-      className={`h-auto w-full justify-between rounded-lg px-2 py-1.5 text-sm font-normal ${
-        active ? "bg-primary/10 text-primary" : "hover:bg-muted"
+      className={`flex w-full transform-gpu items-center justify-between rounded-lg px-2 py-1.5 text-sm transition-[background-color,color,transform] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.995] ${
+        active ? "fd-selected-passive" : "hover:bg-muted"
       }`}
     >
       {label}
-      <span className={`h-2 w-2 rounded-full ${active ? "bg-primary" : "bg-border"}`} />
+      <span className={`h-2 w-2 rounded-full ${active ? "bg-foreground" : "bg-border"}`} />
     </Button>
   )
 }

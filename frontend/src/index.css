@@ -238,7 +238,7 @@
 
   .fd-label {
     @apply text-[10px] font-bold uppercase text-muted-foreground;
-    letter-spacing: 0.04em;
+    letter-spacing: 0;
   }
 
   .fd-meta {
