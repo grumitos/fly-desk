@@ -1,11 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   AGIL_CONCURRENCY,
   buildLocalAgilSearchRedirectUrl,
   parseAgilApimSubscriptionKeyFromFrontendBundle,
   parseAgilRefreshTokenPayload,
   parseAgilSessionData,
+  readAgilChromeProfileCandidatesForTests,
   readAgilStorageSnapshotFromPage,
   sameAgilSessionIdentity,
   resetAgilApimSubscriptionKeyCacheForTests,
@@ -115,6 +119,52 @@ test("Agil session identity changes when the browser switches account or seller"
     internalCode: "WXYZ",
     ip: "1.2.3.4",
   }), false);
+});
+
+test("Agil profile discovery tries the configured Chrome profile before automatic profiles", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-agil-profiles-"));
+  mkdirSync(join(tempRoot, "Profile 10"), { recursive: true });
+  mkdirSync(join(tempRoot, "Profile 40"), { recursive: true });
+  writeFileSync(
+    join(tempRoot, "Local State"),
+    JSON.stringify({
+      profile: {
+        last_used: "Profile 10",
+        last_active_profiles: ["Profile 10"],
+        info_cache: {
+          "Profile 10": {},
+          "Profile 40": {},
+        },
+      },
+    }),
+    "utf8",
+  );
+
+  const previousUserDataDir = process.env.AGIL_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.AGIL_CHROME_PROFILE;
+  process.env.AGIL_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.AGIL_CHROME_PROFILE = "Profile 40";
+
+  try {
+    assert.deepEqual(readAgilChromeProfileCandidatesForTests().slice(0, 2), [
+      "Profile 40",
+      "Profile 10",
+    ]);
+  } finally {
+    if (previousUserDataDir === undefined) {
+      delete process.env.AGIL_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.AGIL_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.AGIL_CHROME_PROFILE;
+    } else {
+      process.env.AGIL_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("falls back to the motorvuelos origin when tokenSearchFlight is missing on agilsmart", async () => {

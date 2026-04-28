@@ -159,6 +159,7 @@ export interface SearchJobResponse extends SearchResponse {
   revision: number
   sortMode: string
   request: SearchRequest
+  diagnosticLog?: string[]
   unchanged?: boolean
 }
 

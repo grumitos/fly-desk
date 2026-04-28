@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { AppIcon } from "@/components/ui/app-icon"
+import { Button } from "@/components/ui/button"
 
 function getInitialTheme(): "light" | "dark" {
   try {
@@ -32,19 +33,26 @@ function ThemeToggle({
   const nextTheme = theme === "dark" ? "light" : "dark"
 
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
+      size="icon"
       onClick={() => setTheme(nextTheme)}
       aria-label="Cambiar tema"
       aria-pressed={theme === "dark"}
-      className="inline-flex size-7 items-center justify-center rounded-md border border-transparent text-foreground transition-[background-color,border-color,color,box-shadow,transform] duration-150 hover:border-border hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 active:scale-95"
+      className="size-7 border border-transparent text-foreground hover:border-border hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-ring/40"
     >
       <AppIcon name={theme === "dark" ? "sun" : "moon"} />
-    </button>
+    </Button>
   )
 }
 
-export function TopBar() {
+interface TopBarProps {
+  logViewActive?: boolean
+  onLogViewToggle?: () => void
+}
+
+export function TopBar({ logViewActive = false, onLogViewToggle }: TopBarProps) {
   const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme)
 
   useEffect(() => {
@@ -55,9 +63,15 @@ export function TopBar() {
     <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur">
       <div className="mx-auto flex min-h-11 max-w-[1560px] flex-wrap items-center justify-between gap-2 px-3 py-1.5 sm:px-4">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center text-primary">
+          <button
+            type="button"
+            onClick={onLogViewToggle}
+            aria-label="Alternar registro"
+            aria-pressed={logViewActive}
+            className="flex h-7 w-7 shrink-0 cursor-default items-center justify-center border-0 bg-transparent p-0 text-primary outline-none"
+          >
             <AppIcon name="brandPlane" className="h-6 w-6" />
-          </div>
+          </button>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="truncate text-sm font-bold text-foreground">Fly Desk</span>

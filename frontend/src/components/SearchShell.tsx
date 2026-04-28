@@ -1,5 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react"
+import { useMemo, useState, type FormEvent, type KeyboardEvent, type RefObject } from "react"
+import { es } from "react-day-picker/locale"
 import { Button } from "@/components/ui/button"
+import { Calendar } from "@/components/ui/calendar"
+import { Input } from "@/components/ui/input"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { AppIcon, type AppIconName } from "@/components/ui/app-icon"
 import { useAutocomplete } from "@/hooks/useAutocomplete"
 import { cn } from "@/lib/utils"
@@ -12,13 +17,6 @@ const DATE_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
   timeZone: "UTC",
 })
 
-const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
-  month: "long",
-  year: "numeric",
-  timeZone: "UTC",
-})
-
-const WEEKDAY_LABELS = ["L", "M", "M", "J", "V", "S", "D"]
 type SearchModeControl = "exact" | "flexible" | "migration"
 
 interface SearchShellProps {
@@ -58,7 +56,6 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
 
   const origin = useAutocomplete("origin", (suggestion) => setOriginCode(suggestion.code))
   const destination = useAutocomplete("destination", (suggestion) => setDestCode(suggestion.code))
-  const paxRef = useRef<HTMLDivElement>(null)
 
   const handleDepartureDateChange = (nextDate: string) => {
     const clampedDate = clampIsoDate(nextDate, datePolicy.minSearchDate, datePolicy.maxSearchDate)
@@ -85,14 +82,6 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
       returnDate: false,
     }))
   }
-
-  useEffect(() => {
-    function onDocClick(e: MouseEvent) {
-      if (paxRef.current && !paxRef.current.contains(e.target as Node)) setPaxOpen(false)
-    }
-    document.addEventListener("mousedown", onDocClick)
-    return () => document.removeEventListener("mousedown", onDocClick)
-  }, [])
 
   const swapRoute = () => {
     setOriginCode(destCode)
@@ -190,28 +179,40 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
     <section className="fd-panel overflow-visible p-2" aria-busy={loading}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
         <div className="flex flex-wrap items-center gap-2">
-          <SegmentedControl>
-            <SegmentButton active={mode === "exact"} onClick={() => handleModeChange("exact")}>
+          <ToggleGroup
+            type="single"
+            value={mode}
+            onValueChange={(value) => {
+              if (value) handleModeChange(value as SearchModeControl)
+            }}
+          >
+            <ToggleGroupItem value="exact" aria-label="Modo exacto">
               Exacto
-            </SegmentButton>
-            <SegmentButton active={mode === "flexible"} onClick={() => handleModeChange("flexible")}>
+            </ToggleGroupItem>
+            <ToggleGroupItem value="flexible" aria-label="Modo flexible">
               Flexible
-            </SegmentButton>
-            <SegmentButton active={mode === "migration"} onClick={() => handleModeChange("migration")}>
+            </ToggleGroupItem>
+            <ToggleGroupItem value="migration" aria-label="Modo migratorio">
               <AppIcon name="migration" />
               Migratorio
-            </SegmentButton>
-          </SegmentedControl>
+            </ToggleGroupItem>
+          </ToggleGroup>
 
           {mode !== "migration" && (
-            <SegmentedControl>
+            <ToggleGroup
+              type="single"
+              value={trip}
+              onValueChange={(value) => {
+                if (value) handleTripChange(value as "round-trip" | "one-way")
+              }}
+            >
               {tripTabs.map((item) => (
-                <SegmentButton key={item.key} active={trip === item.key} onClick={() => handleTripChange(item.key)}>
+                <ToggleGroupItem key={item.key} value={item.key} aria-label={item.label}>
                   <AppIcon name={item.icon} />
                   {item.label}
-                </SegmentButton>
+                </ToggleGroupItem>
               ))}
-            </SegmentedControl>
+            </ToggleGroup>
           )}
         </div>
       </div>
@@ -259,14 +260,16 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
           />
 
           <div className="hidden items-center justify-center lg:flex">
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              size="icon"
               onClick={swapRoute}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-secondary text-muted-foreground transition-[background-color,color,transform] duration-150 hover:bg-accent hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-8 w-8 text-muted-foreground hover:text-foreground"
               aria-label="Intercambiar ruta"
             >
               <AppIcon name="swap" />
-            </button>
+            </Button>
           </div>
 
           <LocationField
@@ -331,29 +334,31 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
             </>
           )}
 
-          <div className="relative" ref={paxRef}>
-            <label className="fd-label absolute left-3 top-2 z-10">Pasajeros</label>
-            <button
-              type="button"
-              aria-label="Seleccionar pasajeros"
-              onClick={() => setPaxOpen((value) => !value)}
-              className="fd-control flex h-[52px] w-full items-center gap-2 px-3 pt-4 text-left"
-            >
-              <AppIcon name="passengers" className="text-muted-foreground" />
-              <span className="min-w-0 flex-1 text-sm font-semibold leading-none">
-                {passengerTotal} pasajero{passengerTotal > 1 ? "s" : ""}
-              </span>
-              <AppIcon name="chevronDown" className={`text-muted-foreground transition-transform ${paxOpen ? "rotate-180" : ""}`} />
-            </button>
+          <Popover open={paxOpen} onOpenChange={setPaxOpen}>
+            <div className="relative">
+              <label className="fd-label absolute left-3 top-2 z-10">Pasajeros</label>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  aria-label="Seleccionar pasajeros"
+                  className="fd-control flex h-[52px] w-full justify-start gap-2 px-3 pt-4 text-left hover:bg-accent/60"
+                >
+                  <AppIcon name="passengers" className="text-muted-foreground" />
+                  <span className="min-w-0 flex-1 text-sm font-semibold leading-none">
+                    {passengerTotal} pasajero{passengerTotal > 1 ? "s" : ""}
+                  </span>
+                  <AppIcon name="chevronDown" className={`text-muted-foreground transition-transform ${paxOpen ? "rotate-180" : ""}`} />
+                </Button>
+              </PopoverTrigger>
 
-            {paxOpen && (
-              <div className="absolute right-0 z-50 mt-1 w-72 rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-lg">
+              <PopoverContent align="end" className="w-72">
                 <PaxRow label="Adultos" detail="12+ años" value={adults} onInc={() => setAdults((v) => Math.min(v + 1, 9))} onDec={() => setAdults((v) => Math.max(v - 1, 1))} />
                 <PaxRow label="Niños" detail="2-11 años" value={children} onInc={() => setChildren((v) => Math.min(v + 1, 8))} onDec={() => setChildren((v) => Math.max(v - 1, 0))} />
                 <PaxRow label="Bebés" detail="Menos de 2 años" value={infants} onInc={() => setInfants((v) => Math.min(v + 1, adults))} onDec={() => setInfants((v) => Math.max(v - 1, 0))} />
-              </div>
-            )}
-          </div>
+              </PopoverContent>
+            </div>
+          </Popover>
 
           <Button
             type="submit"
@@ -415,7 +420,7 @@ function LocationField({
       {icon && (
         <AppIcon name={icon} className="pointer-events-none absolute left-3 top-[35px] z-10 -translate-y-1/2 text-muted-foreground" />
       )}
-      <input
+      <Input
         id={fieldId}
         ref={inputRef}
         aria-label={label}
@@ -445,20 +450,21 @@ function LocationField({
       {open && suggestions.length > 0 && (
         <div id={listboxId} role="listbox" className="fd-scrollbar absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg">
           {suggestions.map((suggestion, index) => (
-            <button
+            <Button
               id={`${listboxId}-${index}`}
               key={`${suggestion.code}-${index}`}
               type="button"
+              variant="ghost"
               role="option"
               aria-selected={index === activeIndex}
               onMouseDown={() => onSelect(suggestion)}
-              className={`w-full rounded-lg px-3 py-2 text-left text-sm transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              className={`h-auto w-full justify-start rounded-lg px-3 py-2 text-left text-sm font-normal ${
                 index === activeIndex ? "bg-accent text-accent-foreground" : "hover:bg-muted"
               }`}
             >
               <div className="font-bold">{suggestion.code}</div>
               <div className="truncate text-xs text-muted-foreground">{suggestion.label}</div>
-            </button>
+            </Button>
           ))}
         </div>
       )}
@@ -484,122 +490,78 @@ function DateField({
   onTouch?: () => void
 }) {
   const [open, setOpen] = useState(false)
-  const fieldRef = useRef<HTMLDivElement>(null)
-  const initialVisibleMonth = normalizeMonth(value || minDate)
-  const [visibleMonth, setVisibleMonth] = useState(initialVisibleMonth)
-
-  useEffect(() => {
-    function onDocClick(event: MouseEvent) {
-      if (fieldRef.current && !fieldRef.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-
-    document.addEventListener("mousedown", onDocClick)
-    return () => document.removeEventListener("mousedown", onDocClick)
-  }, [])
-
   const fieldId = `date-${toDomId(label)}`
   const selectedLabel = value ? formatDateLabel(value) : "Seleccionar"
-  const days = getCalendarDays(visibleMonth)
-  const previousMonth = addMonths(visibleMonth, -1)
-  const nextMonth = addMonths(visibleMonth, 1)
-  const canGoPrevious = monthEndIso(previousMonth) >= minDate
-  const canGoNext = maxDate ? monthStartIso(nextMonth) <= maxDate : true
+  const selectedDate = value ? isoToLocalDate(value) : undefined
+  const minSelectableDate = isoToLocalDate(minDate)
+  const maxSelectableDate = maxDate ? isoToLocalDate(maxDate) : undefined
+  const disabledDays = maxSelectableDate
+    ? [{ before: minSelectableDate }, { after: maxSelectableDate }]
+    : [{ before: minSelectableDate }]
 
   return (
-    <div ref={fieldRef} className="relative">
-      <label id={`${fieldId}-label`} className="fd-label absolute left-3 top-2 z-10">{label}</label>
-      <button
-        type="button"
-        aria-labelledby={`${fieldId}-label`}
-        aria-expanded={open}
-        aria-haspopup="dialog"
-        aria-invalid={invalid}
-        onClick={() => {
-          onTouch?.()
-          setVisibleMonth(normalizeMonth(value || minDate))
-          setOpen((current) => !current)
-        }}
-        className={cn(
-          "fd-control flex h-[52px] w-full items-center gap-2 px-3 pt-4 text-left",
-          invalid && "fd-control-invalid",
-        )}
-      >
-        <AppIcon name="calendar" className="text-muted-foreground" />
-        <span className={`min-w-0 flex-1 truncate text-sm font-semibold leading-none ${value ? "text-foreground" : "text-muted-foreground"}`}>
-          {selectedLabel}
-        </span>
-      </button>
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) onTouch?.()
+        setOpen(nextOpen)
+      }}
+    >
+      <div className="relative">
+        <label id={`${fieldId}-label`} className="fd-label absolute left-3 top-2 z-10">{label}</label>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            aria-labelledby={`${fieldId}-label`}
+            aria-expanded={open}
+            aria-invalid={invalid}
+            className={cn(
+              "fd-control flex h-[52px] w-full justify-start gap-2 px-3 pt-4 text-left hover:bg-accent/60",
+              invalid && "fd-control-invalid",
+            )}
+          >
+            <AppIcon name="calendar" className="text-muted-foreground" />
+            <span className={`min-w-0 flex-1 truncate text-sm font-semibold leading-none ${value ? "text-foreground" : "text-muted-foreground"}`}>
+              {selectedLabel}
+            </span>
+          </Button>
+        </PopoverTrigger>
 
-      {open && (
-        <div
-          role="dialog"
+        <PopoverContent
+          align="start"
+          className="w-[min(20rem,calc(100vw-2rem))]"
           aria-label={`Calendario de ${label.toLowerCase()}`}
-          className="absolute left-0 z-50 mt-1 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-border bg-popover p-2 text-popover-foreground shadow-lg"
         >
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <button
-              type="button"
-              aria-label="Mes anterior"
-              disabled={!canGoPrevious}
-              onClick={() => setVisibleMonth(previousMonth)}
-              className="fd-control inline-flex h-8 w-8 items-center justify-center"
-            >
-              <AppIcon name="chevronLeft" />
-            </button>
-            <div className="min-w-0 flex-1 text-center text-sm font-bold capitalize">
-              {formatMonthLabel(visibleMonth)}
-            </div>
-            <button
-              type="button"
-              aria-label="Mes siguiente"
-              disabled={!canGoNext}
-              onClick={() => setVisibleMonth(nextMonth)}
-              className="fd-control inline-flex h-8 w-8 items-center justify-center"
-            >
-              <AppIcon name="chevronRight" />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-7 gap-1 text-center">
-            {WEEKDAY_LABELS.map((day, index) => (
-              <div key={`${day}-${index}`} className="fd-label flex h-7 items-center justify-center">
-                {day}
-              </div>
-            ))}
-            {days.map((day) => {
-              const disabled = day.iso < minDate || Boolean(maxDate && day.iso > maxDate)
-              const selected = day.iso === value
-
-              return (
-                <button
-                  key={day.iso}
-                  type="button"
-                  disabled={disabled}
-                  aria-pressed={selected}
-                  aria-label={formatDateLabel(day.iso)}
-                  onClick={() => {
-                    onChange(day.iso)
-                    setOpen(false)
-                  }}
-                  className={`inline-flex h-9 items-center justify-center rounded-lg text-sm font-semibold transition-[background-color,border-color,color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                    selected
-                      ? "bg-primary text-primary-foreground shadow-sm"
-                      : day.inMonth
-                        ? "text-foreground hover:bg-accent hover:text-accent-foreground"
-                        : "text-muted-foreground/55 hover:bg-accent hover:text-accent-foreground"
-                  } disabled:pointer-events-none disabled:text-muted-foreground/35 disabled:line-through`}
-                >
-                  {day.dayOfMonth}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
-    </div>
+          <Calendar
+            mode="single"
+            locale={es}
+            weekStartsOn={1}
+            fixedWeeks
+            selected={selectedDate}
+            defaultMonth={selectedDate ?? minSelectableDate}
+            startMonth={minSelectableDate}
+            endMonth={maxSelectableDate}
+            disabled={disabledDays}
+            onSelect={(date) => {
+              if (!date) return
+              onChange(localDateToIso(date))
+              setOpen(false)
+            }}
+          />
+        </PopoverContent>
+      </div>
+    </Popover>
   )
+}
+
+function isoToLocalDate(value: string) {
+  const [year, month, day] = value.split("-").map(Number)
+  return new Date(year, month - 1, day)
+}
+
+function localDateToIso(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
 }
 
 function FlexibleOptionsBar({
@@ -617,11 +579,12 @@ function FlexibleOptionsBar({
 }) {
   return (
     <div className="mb-2 flex flex-wrap items-center gap-1.5 px-1">
-      <button
+      <Button
         type="button"
+        variant="outline"
         aria-pressed={expandWindow}
         onClick={() => onExpandWindowChange(!expandWindow)}
-        className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition-[background-color,border-color,color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+        className={`h-8 px-2.5 text-xs ${
           expandWindow
             ? "border-primary/45 bg-primary/10 text-primary"
             : "border-input bg-secondary text-muted-foreground hover:text-foreground"
@@ -629,7 +592,7 @@ function FlexibleOptionsBar({
       >
         <AppIcon name="calendar" />
         ±4 días
-      </button>
+      </Button>
 
       {showStayNights && (
         <div
@@ -640,62 +603,32 @@ function FlexibleOptionsBar({
           <span id="flexible-stay-nights-label" className="px-2 text-xs font-semibold text-muted-foreground">
             Estadía
           </span>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             aria-label="Quitar noche"
             onClick={() => onStayNightsChange(Math.max(1, stayNights - 1))}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-7 w-7 text-muted-foreground hover:text-foreground"
           >
             <AppIcon name="minus" />
-          </button>
+          </Button>
           <span className="min-w-14 px-1 text-center text-xs font-semibold text-foreground">
             {stayNights} noche{stayNights === 1 ? "" : "s"}
           </span>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             aria-label="Agregar noche"
             onClick={() => onStayNightsChange(Math.min(45, stayNights + 1))}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-7 w-7 text-muted-foreground hover:text-foreground"
           >
             <AppIcon name="plus" />
-          </button>
+          </Button>
         </div>
       )}
     </div>
-  )
-}
-
-function SegmentedControl({ children }: { children: ReactNode }) {
-  return (
-    <div className="inline-flex min-h-8 items-center rounded-lg border border-input bg-secondary p-0.5">
-      {children}
-    </div>
-  )
-}
-
-function SegmentButton({
-  active,
-  disabled,
-  onClick,
-  children,
-}: {
-  active: boolean
-  disabled?: boolean
-  onClick: () => void
-  children: ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      disabled={disabled}
-      className={`inline-flex h-7 items-center justify-center gap-1.5 rounded-md px-2.5 text-xs font-semibold transition-[background-color,color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-        active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-muted-foreground"
-      }`}
-    >
-      {children}
-    </button>
   )
 }
 
@@ -719,13 +652,13 @@ function PaxRow({
         <div className="text-xs text-muted-foreground">{detail}</div>
       </div>
       <div className="flex items-center gap-2">
-        <button type="button" onClick={onDec} aria-label={`Quitar ${label.toLowerCase()}`} className="fd-control inline-flex h-8 w-8 items-center justify-center">
+        <Button type="button" variant="outline" size="icon" onClick={onDec} aria-label={`Quitar ${label.toLowerCase()}`} className="fd-control h-8 w-8">
           <AppIcon name="minus" />
-        </button>
+        </Button>
         <span className="w-6 text-center font-mono text-sm font-bold">{value}</span>
-        <button type="button" onClick={onInc} aria-label={`Agregar ${label.toLowerCase()}`} className="fd-control inline-flex h-8 w-8 items-center justify-center">
+        <Button type="button" variant="outline" size="icon" onClick={onInc} aria-label={`Agregar ${label.toLowerCase()}`} className="fd-control h-8 w-8">
           <AppIcon name="plus" />
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -871,47 +804,4 @@ function clampIsoDate(value: string, minDate: string, maxDate?: string) {
 
 function formatDateLabel(value: string) {
   return DATE_LABEL_FORMATTER.format(new Date(`${value}T00:00:00Z`)).replace(".", "")
-}
-
-function formatMonthLabel(value: string) {
-  return MONTH_LABEL_FORMATTER.format(new Date(`${value}-01T00:00:00Z`))
-}
-
-function normalizeMonth(value: string) {
-  return isIsoDate(value) ? value.slice(0, 7) : todayIso().slice(0, 7)
-}
-
-function addMonths(monthValue: string, delta: number) {
-  const [year, month] = monthValue.split("-").map(Number)
-  const date = new Date(Date.UTC(year, month - 1 + delta, 1))
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`
-}
-
-function monthStartIso(monthValue: string) {
-  return `${monthValue}-01`
-}
-
-function monthEndIso(monthValue: string) {
-  const [year, month] = monthValue.split("-").map(Number)
-  return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10)
-}
-
-function getCalendarDays(monthValue: string) {
-  const [year, month] = monthValue.split("-").map(Number)
-  const firstDate = new Date(Date.UTC(year, month - 1, 1))
-  const startOffset = (firstDate.getUTCDay() + 6) % 7
-  const startDate = new Date(firstDate)
-  startDate.setUTCDate(firstDate.getUTCDate() - startOffset)
-
-  return Array.from({ length: 42 }, (_, index) => {
-    const date = new Date(startDate)
-    date.setUTCDate(startDate.getUTCDate() + index)
-    const iso = date.toISOString().slice(0, 10)
-
-    return {
-      iso,
-      dayOfMonth: date.getUTCDate(),
-      inMonth: date.getUTCMonth() === month - 1,
-    }
-  })
 }

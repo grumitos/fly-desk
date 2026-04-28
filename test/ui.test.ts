@@ -449,7 +449,7 @@ test("migratory search fans out into eight monthly stay-range searches", async (
   });
 });
 
-test("technical Agil session errors are cleaned and grouped in the alert", async () => {
+test("technical Agil session errors stay out of the alert and are available in plain logs", async () => {
   await withDesktopPage(async ({ page }) => {
     await page.route("**/api/locations**", async (route) => {
       await route.fulfill({
@@ -480,10 +480,16 @@ test("technical Agil session errors are cleaned and grouped in the alert", async
     await alert.waitFor();
     const text = await alert.innerText();
 
-    assert.match(text, /No se pudo leer la sesión local de Agil desde Chrome/);
-    assert.match(text, /Chrome remoto no está respondiendo en 127\.0\.0\.1:9222/);
-    assert.match(text, /Profile 40: Agil local session data is incomplete in Chrome localStorage/);
+    assert.match(text, /No se pudo leer la sesión local de Agil/);
+    assert.doesNotMatch(text, /Chrome remoto|127\.0\.0\.1:9222/);
+    assert.doesNotMatch(text, /Profile 40|localStorage|connectOverCDP/);
     assert.doesNotMatch(text, /\u001b|\[2m|\[22m|Call log/);
+
+    await page.getByRole("button", { name: "Alternar registro" }).click();
+    const logText = await page.getByRole("textbox", { name: "Registro de búsqueda" }).inputValue();
+    assert.match(logText, /HTTP 500/);
+    assert.match(logText, /Profile 40: Agil local session data is incomplete in Chrome localStorage/);
+    assert.match(logText, /connectOverCDP/);
   });
 });
 

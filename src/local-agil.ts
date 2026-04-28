@@ -451,6 +451,8 @@ function readChromeProfileCandidates(): string[] {
     candidates.push(normalized);
   };
 
+  pushUnique(process.env.AGIL_CHROME_PROFILE?.trim());
+
   try {
     pushUnique(readChromeProfileName());
   } catch {
@@ -484,10 +486,11 @@ function readChromeProfileCandidates(): string[] {
   }
 
   pushUnique("Default");
-
-  // Treat .env as a portable fallback, not as a hard-coded local profile.
-  pushUnique(process.env.AGIL_CHROME_PROFILE?.trim());
   return candidates;
+}
+
+export function readAgilChromeProfileCandidatesForTests(): string[] {
+  return readChromeProfileCandidates();
 }
 
 function findChromeExecutable(): string {

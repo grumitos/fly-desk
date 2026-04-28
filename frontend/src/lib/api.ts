@@ -14,6 +14,16 @@ const MIGRATION_MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
 const locationSuggestionCache = new Map<string, LocationSuggestion[]>()
 const locationSuggestionPool = new Map<string, LocationSuggestion>()
 
+export class FlyDeskApiError extends Error {
+  readonly diagnosticLog: string[]
+
+  constructor(message: string, diagnosticLog: string[]) {
+    super(message)
+    this.name = "FlyDeskApiError"
+    this.diagnosticLog = diagnosticLog
+  }
+}
+
 type MigrationMonthRange = {
   key: string
   label: string
@@ -55,6 +65,28 @@ function translateApiMessage(message: string): string {
     "Purchase path is unavailable.": "El enlace de compra ya no está disponible.",
     "Not found": "No encontrado.",
     "Invalid JSON payload.": "La solicitud enviada no es válida.",
+    "AGIL_TOKEN_EXPIRED": "La sesión de Agil venció. Vuelve a iniciar sesión en Agil e intenta nuevamente.",
+    "Agil exact search.": "Búsqueda exacta en Agil.",
+    "Agil returned no live result for this combination.": "Agil no devolvió una tarifa disponible para esta combinación.",
+    "Agil error while resolving this combination.": "No se pudo consultar Agil para esta combinación.",
+    "Agil exact search with stop.": "Búsqueda exacta en Agil con escala.",
+    "Agil stopover search.": "Búsqueda en Agil con escala.",
+    "Agil direct alt fare.": "Tarifa alternativa directa de Agil.",
+    "Costamar exact search.": "Búsqueda exacta en Costamar.",
+    "Costamar live search.": "Búsqueda en vivo de Costamar.",
+    "Costamar returned no live result for this combination.": "Costamar no devolvió una tarifa disponible para esta combinación.",
+    "Consultando Costamar...": "Consultando Costamar...",
+    "Consultando Agil...": "Consultando Agil...",
+    "Matrix loading from Agil in parallel.": "Agil está consultando la matriz.",
+    "Matrix finished with partial Agil failures.": "Agil completó la matriz con resultados parciales.",
+    "Matrix built from Agil exact searches in parallel.": "Matriz creada con búsquedas exactas de Agil.",
+    "Selecting a cell runs a full Agil exact search for offers.": "Selecciona una fecha para ver las ofertas disponibles.",
+    "Matrix loading from Costamar with useful date combinations only.": "Costamar está consultando la matriz.",
+    "Matrix finished with partial Costamar failures.": "Costamar completó la matriz con resultados parciales.",
+    "Matrix seeded from Costamar native flexible search and completed with exact searches.": "Matriz creada con búsquedas de Costamar.",
+    "Matrix built from Costamar exact searches over useful date combinations.": "Matriz creada con búsquedas exactas de Costamar.",
+    "Matrix keeps only useful date combinations based on the requested stay window.": "La matriz conserva las combinaciones útiles para la estadía solicitada.",
+    "Selecting a cell runs a full Costamar exact search for offers.": "Selecciona una fecha para ver las ofertas disponibles.",
   }
 
   if (exact[normalized]) return exact[normalized]
@@ -72,23 +104,15 @@ function translateApiMessage(message: string): string {
   }
 
   if (normalized.includes("Unable to extract Agil session from Chrome profiles")) {
-    const details: string[] = []
-    if (/ECONNREFUSED\s+127\.0\.0\.1:9222/i.test(normalized)) {
-      details.push("Chrome remoto no está respondiendo en 127.0.0.1:9222.")
-    }
-
-    const profileMatches = normalized.match(/Profile\s+\d+:[^|.]+(?:\.)?/gi) ?? []
-    profileMatches.forEach((entry) => details.push(entry.replace(/\.$/, "")))
-
-    return [
-      "No se pudo leer la sesión local de Agil desde Chrome.",
-      ...details,
-      "Abre Chrome con la sesión de Agil activa o revisa la configuración del navegador local.",
-    ].join("\n")
+    return "No se pudo leer la sesión local de Agil. Abre Agil en Chrome con la sesión activa y vuelve a intentar."
   }
 
   if (normalized.includes("byte limit")) {
     return "La solicitud es demasiado grande."
+  }
+
+  if (normalized.includes("AGIL_APIM_SUBSCRIPTION_KEY")) {
+    return "No se pudo consultar Agil por una configuración local incompleta."
   }
 
   if (/^Agil returned no offers/i.test(normalized)) {
@@ -99,50 +123,133 @@ function translateApiMessage(message: string): string {
     return "Costamar no devolvió ofertas para esta búsqueda."
   }
 
-  if (/Agil .*search failed/i.test(normalized)) {
-    return "Falló la búsqueda en Agil."
+  if (/^Agil exact search/i.test(normalized)) {
+    return "Búsqueda exacta en Agil."
   }
 
-  if (/Costamar .*search failed/i.test(normalized)) {
-    return "Falló la búsqueda en Costamar."
+  if (/^Costamar (exact|live) search/i.test(normalized)) {
+    return "Búsqueda en vivo de Costamar."
   }
 
-  return normalized || "Ocurrió un error inesperado."
+  if (/Agil/i.test(normalized) && /(failed|error|omitted|rejected|Internal Server Error|500|401|403|expired|session|sesión)/i.test(normalized)) {
+    return "No se pudo consultar Agil. Verifica que la sesión esté activa e intenta nuevamente."
+  }
+
+  if (/Costamar/i.test(normalized) && /(failed|error|token|auth|login|session|sesión|401|403|500|expired|challenge)/i.test(normalized)) {
+    return "No se pudo consultar Costamar. Verifica que la sesión esté activa e intenta nuevamente."
+  }
+
+  return normalized ? "No se pudo completar la operación. Intenta nuevamente." : "Ocurrió un error inesperado."
 }
 
 function stripAnsi(value: string) {
   return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "")
 }
 
-function apiErrorMessage(data: { errors?: unknown; error?: unknown }): string {
-  if (Array.isArray(data.errors)) {
-    return data.errors
-      .map((message) => translateApiMessage(String(message)))
-      .join("\n")
+function uniqueStrings(values: Array<string | undefined>) {
+  return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))))
+}
+
+function apiRawMessages(data: unknown): string[] {
+  if (!data || typeof data !== "object") {
+    return []
   }
 
-  if (typeof data.error === "string") {
-    return translateApiMessage(data.error)
+  const payload = data as { errors?: unknown; error?: unknown }
+  if (Array.isArray(payload.errors)) {
+    return payload.errors.map((message) => String(message))
   }
 
-  return "Ocurrió un error inesperado."
+  if (typeof payload.error === "string") {
+    return [payload.error]
+  }
+
+  if (payload.error !== undefined) {
+    return [JSON.stringify(payload.error)]
+  }
+
+  return []
+}
+
+function toDiagnosticLines(messages: string[]): string[] {
+  return uniqueStrings(
+    messages.flatMap((message) => (
+      stripAnsi(message)
+        .split(/\n+/)
+        .map((line) => line.trim())
+    )),
+  )
+}
+
+function translateMessages(messages: string[]): string {
+  const translated = uniqueStrings(messages.map((message) => translateApiMessage(message)))
+  return translated.length > 0 ? translated.join("\n") : "Ocurrió un error inesperado."
+}
+
+function apiErrorMessage(data: unknown): string {
+  return translateMessages(apiRawMessages(data))
+}
+
+function buildHttpDiagnosticLog(url: string, response: Response, data: unknown): string[] {
+  return toDiagnosticLines([
+    `HTTP ${response.status} ${response.statusText} ${url}`,
+    ...apiRawMessages(data),
+  ])
+}
+
+async function readJsonBody(response: Response): Promise<unknown> {
+  try {
+    return await response.json()
+  } catch {
+    return undefined
+  }
+}
+
+export function diagnosticLogFromError(error: unknown): string[] {
+  if (error instanceof FlyDeskApiError) {
+    return error.diagnosticLog
+  }
+
+  if (error instanceof Error) {
+    return toDiagnosticLines([error.message])
+  }
+
+  return toDiagnosticLines([String(error)])
+}
+
+export function userMessageFromError(error: unknown): string {
+  if (error instanceof FlyDeskApiError) {
+    return error.message
+  }
+
+  return "No se pudo completar la búsqueda. Intenta nuevamente."
 }
 
 async function postJson<T>(url: string, payload: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  })
-  const data = await res.json()
-  if (!res.ok) throw new Error(apiErrorMessage(data))
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  } catch (error) {
+    throw new FlyDeskApiError("No se pudo conectar con Fly Desk. Intenta nuevamente.", diagnosticLogFromError(error))
+  }
+  const data = await readJsonBody(res)
+  if (!res.ok) throw new FlyDeskApiError(apiErrorMessage(data), buildHttpDiagnosticLog(url, res, data))
   return data as T
 }
 
 async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url)
-  const data = await res.json()
-  if (!res.ok) throw new Error(apiErrorMessage(data))
+  let res: Response
+  try {
+    res = await fetch(url)
+  } catch (error) {
+    throw new FlyDeskApiError("No se pudo conectar con Fly Desk. Intenta nuevamente.", diagnosticLogFromError(error))
+  }
+  const data = await readJsonBody(res)
+  if (!res.ok) throw new FlyDeskApiError(apiErrorMessage(data), buildHttpDiagnosticLog(url, res, data))
   return data as T
 }
 
@@ -358,6 +465,9 @@ function normalizeOffer(input: unknown): CanonicalOffer {
   const price = offer.price && typeof offer.price === "object"
     ? offer.price as CanonicalOffer["price"]
     : { total: { amount: 0, currencyCode: "USD" } }
+  const warnings = Array.isArray(offer.warnings)
+    ? uniqueStrings(offer.warnings.map((warning) => translateApiMessage(String(warning))))
+    : undefined
 
   return {
     ...(offer as Partial<CanonicalOffer>),
@@ -375,16 +485,25 @@ function normalizeOffer(input: unknown): CanonicalOffer {
     baggage: typeof offer.baggage === "object" && offer.baggage ? offer.baggage as CanonicalOffer["baggage"] : undefined,
     baggageLabel: baggageLabel(offer.baggage),
     hasCheckedBaggage: hasCheckedBaggage(offer.baggage),
+    warnings,
     price,
   }
 }
 
+function rawOfferWarnings(input: unknown): string[] {
+  const offer = input && typeof input === "object" ? input as Record<string, unknown> : {}
+  return Array.isArray(offer.warnings) ? offer.warnings.map((warning) => String(warning)) : []
+}
+
 function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
-  const warnings = (data.warnings ?? []).map((warning) => translateApiMessage(String(warning)))
+  const rawWarnings = (data.warnings ?? []).map((warning) => String(warning))
+  const rawMetaWarnings = (data.searchMeta?.warnings ?? []).map((warning) => String(warning))
+  const rawWarningsFromOffers = [...(data.offers ?? []), ...(data.allOffers ?? [])].flatMap(rawOfferWarnings)
+  const warnings = rawWarnings.map((warning) => translateApiMessage(warning))
   const searchMeta = data.searchMeta
     ? {
         ...data.searchMeta,
-        warnings: (data.searchMeta.warnings ?? []).map((warning) => translateApiMessage(String(warning))),
+        warnings: rawMetaWarnings.map((warning) => translateApiMessage(warning)),
       }
     : data.searchMeta
 
@@ -395,11 +514,8 @@ function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
     request: fromBackendRequest(data.request),
     offers: (data.offers ?? []).map(normalizeOffer),
     allOffers: (data.allOffers ?? []).map(normalizeOffer),
+    diagnosticLog: toDiagnosticLines([...rawWarnings, ...rawMetaWarnings, ...rawWarningsFromOffers]),
   }
-}
-
-function normalizeMatrixWarnings(data: BackendMatrixJobResponse) {
-  return (data.warnings ?? []).map((warning) => translateApiMessage(String(warning)))
 }
 
 function normalizeMatrixOffer(cell: MatrixCell, request: SearchRequest): CanonicalOffer {
@@ -407,6 +523,7 @@ function normalizeMatrixOffer(cell: MatrixCell, request: SearchRequest): Canonic
   const amount = cell.price?.amount ?? 0
   const departureAt = `${cell.departureDate}T00:00:00Z`
   const returnAt = cell.returnDate ? `${cell.returnDate}T00:00:00Z` : undefined
+  const tooltip = cell.tooltip ? translateApiMessage(cell.tooltip) : undefined
 
   return {
     id: cell.key,
@@ -422,11 +539,11 @@ function normalizeMatrixOffer(cell: MatrixCell, request: SearchRequest): Canonic
     stopMeta: cell.returnDate
       ? `${cell.departureDate} -> ${cell.returnDate}`
       : cell.departureDate,
-    baggageLabel: cell.tooltip,
+    baggageLabel: tooltip,
     priceConfidence: cell.confidence,
     priceStatus: cell.confidence,
     purchasePaths: cell.purchasePaths,
-    warnings: cell.tooltip ? [cell.tooltip] : undefined,
+    warnings: tooltip ? [tooltip] : undefined,
     price: {
       total: {
         amount,
@@ -438,9 +555,14 @@ function normalizeMatrixOffer(cell: MatrixCell, request: SearchRequest): Canonic
 
 function normalizeMatrixJob(data: BackendMatrixJobResponse, sortMode: SortMode): SearchJobResponse {
   const request = fromBackendRequest(data.request)
+  const rawWarnings = (data.warnings ?? []).map((warning) => String(warning))
+  const rawMetaWarnings = (data.searchMeta?.warnings ?? []).map((warning) => String(warning))
+  const rawError = data.error ? [data.error] : []
+  const rawCellTooltips = (data.cells ?? []).map((cell) => cell.tooltip).filter((tooltip): tooltip is string => Boolean(tooltip))
+  const recommendations = (data.recommendations ?? []).map((recommendation) => translateApiMessage(recommendation))
   const warnings = [
-    ...normalizeMatrixWarnings(data),
-    ...(data.error ? [translateApiMessage(data.error)] : []),
+    ...rawWarnings.map((warning) => translateApiMessage(warning)),
+    ...rawError.map((warning) => translateApiMessage(warning)),
   ]
   const cells = data.cells ?? []
   const pricedCells = cells.filter((cell) => typeof cell.price?.amount === "number")
@@ -459,7 +581,7 @@ function normalizeMatrixJob(data: BackendMatrixJobResponse, sortMode: SortMode):
     searchMeta: data.searchMeta
       ? {
           ...data.searchMeta,
-          warnings: (data.searchMeta.warnings ?? []).map((warning) => translateApiMessage(String(warning))),
+          warnings: rawMetaWarnings.map((warning) => translateApiMessage(warning)),
         }
       : {
           requestedAt: new Date().toISOString(),
@@ -475,8 +597,15 @@ function normalizeMatrixJob(data: BackendMatrixJobResponse, sortMode: SortMode):
     },
     warnings: [
       ...warnings,
-      ...(data.recommendations ?? []),
+      ...recommendations,
     ],
+    diagnosticLog: toDiagnosticLines([
+      ...rawWarnings,
+      ...rawMetaWarnings,
+      ...rawError,
+      ...rawCellTooltips,
+      ...(data.recommendations ?? []),
+    ]),
   }
 }
 
@@ -566,10 +695,6 @@ function offerAmount(offer: CanonicalOffer) {
   return typeof amount === "number" && Number.isFinite(amount) ? amount : Number.POSITIVE_INFINITY
 }
 
-function uniqueStrings(values: Array<string | undefined>) {
-  return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))))
-}
-
 function todayIso() {
   const date = new Date()
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
@@ -639,6 +764,7 @@ export async function startMigrationSearch(request: SearchRequest, sortMode: Sor
           job,
           offer: offer ? normalizeMigrationOffer(offer, range, job) : undefined,
           warnings: uniqueStrings([...(job.warnings ?? []), ...(job.searchMeta?.warnings ?? [])]),
+          diagnosticLog: job.diagnosticLog ?? [],
           complete: job.searchComplete,
         }
       } catch (error) {
@@ -646,7 +772,8 @@ export async function startMigrationSearch(request: SearchRequest, sortMode: Sor
           range,
           job: undefined,
           offer: undefined,
-          warnings: [`${range.label}: ${error instanceof Error ? error.message : "No se pudo consultar el mes."}`],
+          warnings: [`${range.label}: ${userMessageFromError(error)}`],
+          diagnosticLog: diagnosticLogFromError(error).map((line) => `${range.label}: ${line}`),
           complete: false,
         }
       }
@@ -654,6 +781,7 @@ export async function startMigrationSearch(request: SearchRequest, sortMode: Sor
   )
   const offers = monthResults.flatMap((result) => result.offer ? [result.offer] : [])
   const warnings = uniqueStrings(monthResults.flatMap((result) => result.warnings))
+  const diagnosticLog = toDiagnosticLines(monthResults.flatMap((result) => result.diagnosticLog))
   const providerMeta = monthResults.find((result) => result.job?.providerMeta)?.job?.providerMeta ?? {
     exactProvider: "agil-local",
     coverageMode: "core",
@@ -682,6 +810,7 @@ export async function startMigrationSearch(request: SearchRequest, sortMode: Sor
     },
     providerMeta,
     warnings: monthlyWarnings,
+    diagnosticLog,
   }
 }
 
