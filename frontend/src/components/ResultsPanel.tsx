@@ -150,7 +150,7 @@ function EmptyState({ icon, title, body }: { icon: ReactNode; title: string; bod
   return (
     <div className="grid h-full min-h-[320px] place-items-center p-6 text-center">
       <div>
-        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-secondary text-primary">{icon}</div>
+        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-secondary text-muted-foreground">{icon}</div>
         <h3 className="text-base font-bold">{title}</h3>
         <p className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">{body}</p>
       </div>

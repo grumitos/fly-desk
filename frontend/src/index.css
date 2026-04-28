@@ -164,6 +164,30 @@
     }
   }
 
+  @keyframes fd-inline-in {
+    from {
+      opacity: 0;
+      transform: translateX(-0.375rem) scale(0.985);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+  }
+
+  @keyframes fd-popover-in {
+    from {
+      opacity: 0;
+      transform: translateY(-0.25rem) scale(0.985);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
   @keyframes fd-skeleton-sheen {
     from {
       background-position: 120% 0;
@@ -182,16 +206,34 @@
     animation: fd-workspace-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 
+  .fd-inline-enter {
+    transform-origin: left center;
+    animation: fd-inline-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .fd-popover-enter {
+    transform-origin: top center;
+    animation: fd-popover-in 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
   .fd-panel {
-    @apply rounded-xl border border-border bg-card text-card-foreground shadow-[0_1px_0_rgba(31,31,30,0.04)];
+    @apply rounded-xl border border-border bg-card text-card-foreground shadow-[0_1px_0_rgba(31,31,30,0.04)] transition-[background-color,border-color,box-shadow] duration-150 ease-out;
   }
 
   .fd-control {
-    @apply rounded-lg border border-input bg-card text-foreground transition-[background-color,border-color,box-shadow,transform] duration-150 ease-out hover:border-border hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.995] disabled:pointer-events-none disabled:opacity-55;
+    @apply transform-gpu rounded-lg border border-input bg-card text-foreground transition-[background-color,border-color,box-shadow,transform] duration-150 ease-out hover:border-border hover:bg-accent/60 focus-within:outline-none focus-within:ring-2 focus-within:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.995] disabled:pointer-events-none disabled:opacity-55;
+  }
+
+  .fd-control-quiet {
+    @apply transform-gpu rounded-md text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100;
+  }
+
+  .fd-selected-passive {
+    @apply border-border bg-accent text-accent-foreground shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-foreground)_14%,transparent)];
   }
 
   .fd-control-invalid {
-    @apply border-destructive bg-destructive-soft shadow-[0_0_0_1px_color-mix(in_srgb,var(--color-destructive)_24%,transparent)] hover:border-destructive focus-visible:ring-destructive;
+    @apply border-destructive bg-destructive-soft shadow-[0_0_0_1px_color-mix(in_srgb,var(--color-destructive)_24%,transparent)] hover:border-destructive focus-within:ring-destructive focus-visible:ring-destructive;
   }
 
   .fd-label {
