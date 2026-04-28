@@ -7,7 +7,7 @@ function getInitialTheme(): "light" | "dark" {
     const saved = localStorage.getItem("flydesk-theme")
     if (saved === "light" || saved === "dark") return saved
   } catch {
-    return "light"
+    // localStorage can be blocked; fall through to the DOM class.
   }
 
   return document.documentElement.classList.contains("dark") ? "dark" : "light"

@@ -43,7 +43,12 @@ export function useAutocomplete(
     setActiveIndex(-1)
 
     try {
-      await suggestLocations(q)
+      const fresh = await suggestLocations(q)
+      if (requestSeq === requestSeqRef.current && queryRef.current === q) {
+        setSuggestions(fresh)
+        setOpen(fresh.length > 0)
+        setActiveIndex(-1)
+      }
     } catch {
       if (requestSeq === requestSeqRef.current) {
         setSuggestions([])

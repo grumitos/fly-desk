@@ -15,7 +15,7 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
   const [quotation, setQuotation] = useState<{ key: string; text: string; error?: boolean } | null>(null)
   const [loading, setLoading] = useState(false)
   const [copiedOfferKey, setCopiedOfferKey] = useState<string | null>(null)
-  const [pathFeedback, setPathFeedback] = useState<string | null>(null)
+  const [pathFeedback, setPathFeedback] = useState<{ offerId: string; message: string } | null>(null)
 
   const quoteSearchJobId = offer?.sourceSearchJobId ?? searchJobId
   const quoteOfferId = offer?.sourceOfferId ?? offer?.id
@@ -23,6 +23,7 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
   const activeQuotation = quotation && quotation.key === quoteKey ? quotation : null
   const copied = copiedOfferKey === quoteKey
   const purchasePath = offer ? bestPurchasePath(offer) : undefined
+  const activePathFeedback = pathFeedback && pathFeedback.offerId === offer?.id ? pathFeedback.message : null
 
   const handleQuotation = async () => {
     if (!offer || !quoteSearchJobId || !quoteOfferId || !quoteKey) return
@@ -51,25 +52,31 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
   }
 
   const handlePurchasePath = async () => {
-    if (!purchasePath) return
+    if (!offer || !purchasePath) return
     setPathFeedback(null)
 
     if (purchasePath.url) {
-      window.open(purchasePath.url, purchasePath.requiresNewTab ? "_blank" : "_self", "noopener,noreferrer")
+      const safeUrl = normalizeSafePurchaseUrl(purchasePath.url)
+      if (!safeUrl) {
+        setPathFeedback({ offerId: offer.id, message: "El enlace del proveedor no es válido o no usa HTTPS/HTTP." })
+        return
+      }
+
+      window.open(safeUrl, purchasePath.requiresNewTab ? "_blank" : "_self", "noopener,noreferrer")
       return
     }
 
     if (purchasePath.referenceText) {
       try {
         await navigator.clipboard.writeText(purchasePath.referenceText)
-        setPathFeedback("Referencia copiada.")
+        setPathFeedback({ offerId: offer.id, message: "Referencia copiada." })
       } catch {
-        setPathFeedback("No se pudo copiar la referencia.")
+        setPathFeedback({ offerId: offer.id, message: "No se pudo copiar la referencia." })
       }
       return
     }
 
-    setPathFeedback("Esta oferta no tiene enlace de proveedor disponible.")
+    setPathFeedback({ offerId: offer.id, message: "Esta oferta no tiene enlace de proveedor disponible." })
   }
 
   if (!offer) {
@@ -153,9 +160,9 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
           </div>
         </section>
 
-        {pathFeedback && (
+        {activePathFeedback && (
           <div className="fd-popover-enter rounded-lg border border-border bg-secondary/70 px-3 py-2 text-xs text-muted-foreground">
-            {pathFeedback}
+            {activePathFeedback}
           </div>
         )}
 
@@ -285,4 +292,13 @@ function purchasePathRank(path: NonNullable<CanonicalOffer["purchasePaths"]>[num
   }
   const stateScore = path.state === "api_bookable" || path.state === "deeplink_exact" ? 20 : 0
   return (precisionScore[path.precision] ?? 0) + stateScore + (path.score ?? 0)
+}
+
+function normalizeSafePurchaseUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value, window.location.origin)
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : undefined
+  } catch {
+    return undefined
+  }
 }
