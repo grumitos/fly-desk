@@ -1,0 +1,331 @@
+.fd-results-list {
+  container-type: inline-size;
+}
+
+.fd-result-card {
+  --fd-result-accent: var(--color-primary);
+  display: grid;
+  grid-template-columns:
+    minmax(7rem, 1.05fr)
+    minmax(8.4rem, 1.15fr)
+    minmax(7.5rem, 1fr)
+    minmax(6.4rem, 0.82fr)
+    minmax(3.8rem, 0.48fr)
+    minmax(6.8rem, 0.76fr)
+    2.5rem;
+  column-gap: clamp(0.48rem, 0.82vw, 0.75rem);
+  row-gap: 0.54rem;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 0.86rem 0.92rem;
+  border: 1px solid color-mix(in srgb, var(--fd-result-accent) 42%, var(--color-border));
+  border-radius: var(--radius-xl);
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--color-primary) 9%, transparent), transparent 36%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-card) 92%, var(--color-secondary)),
+      var(--color-card)
+    );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--color-card) 78%, transparent),
+    0 12px 24px color-mix(in srgb, var(--color-foreground) 7%, transparent);
+  color: var(--color-foreground);
+  cursor: pointer;
+  transition:
+    border-color 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.fd-result-card:hover {
+  border-color: color-mix(in srgb, var(--fd-result-accent) 64%, var(--color-border));
+  transform: translateY(-1px);
+}
+
+.fd-result-card.is-selected {
+  border-color: color-mix(in srgb, var(--fd-result-accent) 72%, var(--color-primary) 18%);
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--color-primary) 15%, transparent), transparent 40%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-card) 88%, var(--color-secondary)),
+      var(--color-card)
+    );
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--fd-result-accent) 28%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--color-card) 78%, transparent),
+    0 14px 28px color-mix(in srgb, var(--color-foreground) 9%, transparent);
+}
+
+.fd-result-card:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--fd-result-accent) 58%, var(--color-primary) 18%);
+  outline-offset: 2px;
+}
+
+.fd-result-card__airline,
+.fd-result-card__schedule,
+.fd-result-card__route,
+.fd-result-card__journey,
+.fd-result-card__baggage,
+.fd-result-card__price,
+.fd-result-card__provider {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.fd-result-card__airline-name,
+.fd-result-card__route-main,
+.fd-result-card__date-main,
+.fd-result-card__journey-main {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 800;
+}
+
+.fd-result-card__airline-name {
+  font-size: 0.98rem;
+  line-height: 1.15;
+}
+
+.fd-result-card__meta,
+.fd-result-card__micro-label {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--color-muted-foreground);
+  font-size: 0.76rem;
+  line-height: 1.26;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-result-card__meta--muted {
+  color: color-mix(in srgb, var(--color-muted-foreground) 72%, transparent);
+}
+
+.fd-result-card__schedule-main {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+  max-width: 100%;
+  gap: 0.28rem;
+  overflow: hidden;
+  font-size: 1.22rem;
+  font-weight: 900;
+  line-height: 1.02;
+  white-space: nowrap;
+}
+
+.fd-result-card__schedule-separator {
+  color: var(--color-muted-foreground);
+  font-weight: 600;
+}
+
+.fd-result-card__schedule-offset {
+  color: var(--color-muted-foreground);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.fd-result-card__route-main {
+  font-size: 0.98rem;
+  line-height: 1.18;
+}
+
+.fd-result-card__date-main {
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+  line-height: 1.18;
+}
+
+.fd-result-card__journey-main {
+  font-family: var(--font-mono);
+  font-size: 0.91rem;
+  line-height: 1.18;
+}
+
+.fd-result-card__stops {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--color-muted-foreground);
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.16;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-result-card__stops--direct {
+  color: color-mix(in srgb, var(--color-success) 82%, var(--color-foreground));
+}
+
+.fd-result-card__stops--warning {
+  color: color-mix(in srgb, var(--color-warning) 82%, var(--color-foreground));
+}
+
+.fd-result-card__stops--danger {
+  color: color-mix(in srgb, var(--color-destructive) 82%, var(--color-foreground));
+}
+
+.fd-result-card__layover {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--color-muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-result-card__baggage {
+  align-content: center;
+}
+
+.fd-result-card__baggage-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.fd-result-card__bag-icon {
+  display: inline-grid;
+  width: 1.05rem;
+  height: 1.05rem;
+  place-items: center;
+}
+
+.fd-result-card__bag-icon svg {
+  width: 1rem;
+  height: 1rem;
+  stroke-width: 2;
+}
+
+.fd-result-card__bag-icon.is-included {
+  color: var(--color-foreground);
+}
+
+.fd-result-card__bag-icon.is-missing {
+  color: var(--color-muted-foreground);
+  opacity: 0.48;
+}
+
+.fd-result-card__price {
+  justify-items: end;
+  overflow: hidden;
+  text-align: right;
+}
+
+.fd-result-card__price-total,
+.fd-result-card__price-meta {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-result-card__price-total {
+  font-size: 0.98rem;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.fd-result-card__price-meta {
+  color: var(--color-muted-foreground);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.fd-result-card__provider {
+  justify-items: end;
+}
+
+.fd-result-card__provider img,
+.fd-result-card__provider span {
+  display: grid;
+  width: 2.35rem;
+  height: 2.35rem;
+  place-items: center;
+}
+
+.fd-result-card__provider img {
+  object-fit: contain;
+}
+
+.fd-result-card__provider span {
+  border: 1px solid color-mix(in srgb, var(--color-primary) 36%, var(--color-border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-card));
+  color: var(--color-primary);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.dark .fd-result-card {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--color-card-foreground) 10%, transparent),
+    0 12px 24px color-mix(in srgb, var(--color-background) 72%, transparent);
+}
+
+.dark .fd-result-card.is-selected {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--fd-result-accent) 32%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--color-card-foreground) 10%, transparent),
+    0 14px 28px color-mix(in srgb, var(--color-background) 78%, transparent);
+}
+
+@container (max-width: 740px) {
+  .fd-result-card {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) 2.7rem;
+  }
+
+  .fd-result-card__airline,
+  .fd-result-card__route {
+    grid-column: span 1;
+  }
+
+  .fd-result-card__price {
+    align-content: center;
+  }
+}
+
+@container (max-width: 620px) {
+  .fd-result-card {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .fd-result-card__airline,
+  .fd-result-card__schedule,
+  .fd-result-card__route,
+  .fd-result-card__journey,
+  .fd-result-card__baggage,
+  .fd-result-card__price {
+    grid-column: 1;
+  }
+
+  .fd-result-card__provider {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .fd-result-card__price {
+    justify-items: start;
+    text-align: left;
+  }
+}

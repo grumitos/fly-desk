@@ -5,6 +5,10 @@ import { SearchShell } from "@/components/SearchShell"
 import { TopBar } from "@/components/TopBar"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Switch } from "@/components/ui/switch"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useSearch } from "@/hooks/useSearch"
 import type { CanonicalOffer, SearchRequest, SortMode } from "@/types"
 
@@ -16,7 +20,7 @@ type Filters = {
 }
 
 export default function App() {
-  const { results, loading, error, runSearch } = useSearch()
+  const { results, loading, error, diagnosticLog, runSearch } = useSearch()
   const [sortMode, setSortMode] = useState<SortMode>("best-value")
   const [selectedOffer, setSelectedOffer] = useState<CanonicalOffer | null>(null)
   const [lastRequest, setLastRequest] = useState<SearchRequest | null>(null)
@@ -24,6 +28,7 @@ export default function App() {
   const [filters, setFilters] = useState<Filters>({})
   const [selectedAirlines, setSelectedAirlines] = useState<string[]>([])
   const [mobilePanel, setMobilePanel] = useState<"results" | "filters" | "detail">("results")
+  const [plainLogView, setPlainLogView] = useState(false)
 
   const allOffers = useMemo(() => results?.offers ?? [], [results?.offers])
   const allAirlines = useMemo(() => {
@@ -140,91 +145,115 @@ export default function App() {
 
   return (
     <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground">
-      <TopBar />
+      <TopBar
+        logViewActive={plainLogView}
+        onLogViewToggle={() => setPlainLogView((active) => !active)}
+      />
 
-      <main
-        className={`mx-auto flex min-h-0 w-full max-w-[1560px] flex-1 flex-col gap-2.5 px-2.5 sm:px-4 ${
-          isSearchIdle ? "justify-center pb-[10vh] pt-2.5 sm:pt-3" : "py-2.5 sm:py-3"
-        }`}
-      >
-        <div
-          className={`w-full transition-[transform,opacity] duration-200 ease-out ${
-            isSearchIdle ? "mx-auto -translate-y-6" : "translate-y-0"
+      {plainLogView ? (
+        <PlainLogView lines={diagnosticLog} />
+      ) : (
+        <main
+          className={`mx-auto flex min-h-0 w-full max-w-[1560px] flex-1 flex-col gap-2.5 px-2.5 sm:px-4 ${
+            isSearchIdle ? "justify-center pb-[10vh] pt-2.5 sm:pt-3" : "py-2.5 sm:py-3"
           }`}
         >
-          <SearchShell onSearch={handleSearch} loading={loading} />
+          <div
+            className={`w-full transition-[transform,opacity] duration-200 ease-out ${
+              isSearchIdle ? "mx-auto -translate-y-6" : "translate-y-0"
+            }`}
+          >
+            <SearchShell onSearch={handleSearch} loading={loading} />
 
-          {error && (
-            <div
-              role="alert"
-              className="fd-alert fd-alert-error mt-2 flex items-start gap-2 font-medium"
+            {error && (
+              <div
+                role="alert"
+                className="fd-alert fd-alert-error mt-2 flex items-start gap-2 font-medium"
+              >
+                <AppIcon name="alert" className="mt-0.5" />
+                <div className="min-w-0 space-y-1">
+                  {formatAlertLines(error).map((line, index) => (
+                    <p key={`${line}-${index}`} className={index === 0 ? "font-bold" : "text-xs leading-5"}>
+                      {line}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {shouldShowWorkspace && (
+            <Tabs
+              value={mobilePanel}
+              onValueChange={(value) => setMobilePanel(value as "results" | "filters" | "detail")}
+              className="min-h-0 flex-1 gap-2.5"
             >
-              <AppIcon name="alert" className="mt-0.5" />
-              <div className="min-w-0 space-y-1">
-                {formatAlertLines(error).map((line, index) => (
-                  <p key={`${line}-${index}`} className={index === 0 ? "font-bold" : "text-xs leading-5"}>
-                    {line}
-                  </p>
+              <TabsList className="grid grid-cols-3 gap-1 xl:hidden">
+                {mobileTabs.map((tab) => (
+                  <TabsTrigger
+                    key={tab.id}
+                    value={tab.id}
+                  >
+                    {tab.icon}
+                    {tab.label}
+                  </TabsTrigger>
                 ))}
+              </TabsList>
+
+              <div className="fd-workspace-enter grid min-h-0 flex-1 grid-cols-1 gap-2.5 overflow-hidden xl:grid-cols-[232px_minmax(0,1fr)_324px]">
+                <div className={`${mobilePanel === "filters" ? "block" : "hidden"} min-h-0 xl:block`}>
+                  <FiltersPanel
+                    hasFilters={hasFilters}
+                    filters={filters}
+                    allAirlines={allAirlines}
+                    selectedAirlines={selectedAirlines}
+                    onClear={handleClearFilters}
+                    onFilterChange={handleFilterChange}
+                    onToggleAirline={toggleAirline}
+                  />
+                </div>
+
+                <div className={`${mobilePanel === "results" ? "block" : "hidden"} min-h-0 xl:block`}>
+                  <ResultsPanel
+                    results={filteredResults}
+                    loading={loading}
+                    sort={sortMode}
+                    onSort={handleSort}
+                    onSelectOffer={(offer) => {
+                      setSelectedOffer(offer)
+                      setMobilePanel("detail")
+                    }}
+                    selectedOfferId={selectedOffer?.id}
+                  />
+                </div>
+
+                <div className={`${mobilePanel === "detail" ? "block" : "hidden"} min-h-0 xl:block`}>
+                  <DetailPanel offer={selectedOffer} searchJobId={results?.searchJobId} />
+                </div>
               </div>
-            </div>
+            </Tabs>
           )}
-        </div>
-
-        {shouldShowWorkspace && (
-          <>
-            <div className="grid grid-cols-3 gap-1 rounded-xl border border-border bg-secondary p-1 xl:hidden">
-              {mobileTabs.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setMobilePanel(tab.id)}
-                  aria-pressed={mobilePanel === tab.id}
-                  className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-lg text-xs font-bold transition-[background-color,color,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                    mobilePanel === tab.id ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {tab.icon}
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="fd-workspace-enter grid min-h-0 flex-1 grid-cols-1 gap-2.5 overflow-hidden xl:grid-cols-[232px_minmax(0,1fr)_324px]">
-              <div className={`${mobilePanel === "filters" ? "block" : "hidden"} min-h-0 xl:block`}>
-                <FiltersPanel
-                  hasFilters={hasFilters}
-                  filters={filters}
-                  allAirlines={allAirlines}
-                  selectedAirlines={selectedAirlines}
-                  onClear={handleClearFilters}
-                  onFilterChange={handleFilterChange}
-                  onToggleAirline={toggleAirline}
-                />
-              </div>
-
-              <div className={`${mobilePanel === "results" ? "block" : "hidden"} min-h-0 xl:block`}>
-                <ResultsPanel
-                  results={filteredResults}
-                  loading={loading}
-                  sort={sortMode}
-                  onSort={handleSort}
-                  onSelectOffer={(offer) => {
-                    setSelectedOffer(offer)
-                    setMobilePanel("detail")
-                  }}
-                  selectedOfferId={selectedOffer?.id}
-                />
-              </div>
-
-              <div className={`${mobilePanel === "detail" ? "block" : "hidden"} min-h-0 xl:block`}>
-                <DetailPanel offer={selectedOffer} searchJobId={results?.searchJobId} />
-              </div>
-            </div>
-          </>
-        )}
-      </main>
+        </main>
+      )}
     </div>
+  )
+}
+
+function PlainLogView({ lines }: { lines: string[] }) {
+  const text = lines.length > 0
+    ? lines.join("\n")
+    : "Sin logs para copiar. Ejecuta una búsqueda y vuelve a esta vista."
+
+  return (
+    <main className="min-h-0 flex-1 bg-background">
+      <textarea
+        aria-label="Registro de búsqueda"
+        readOnly
+        spellCheck={false}
+        value={text}
+        className="fd-scrollbar h-full w-full resize-none border-0 bg-background p-4 font-mono text-xs leading-5 text-foreground outline-none"
+      />
+    </main>
   )
 }
 
@@ -255,14 +284,16 @@ const FiltersPanel = memo(function FiltersPanel({
           </div>
         </div>
         {hasFilters && (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={onClear}
-            className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-xs font-semibold text-primary transition-colors duration-150 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="h-7 px-2 text-xs text-primary"
           >
             <AppIcon name="x" />
             Limpiar
-          </button>
+          </Button>
         )}
       </div>
 
@@ -323,20 +354,10 @@ const FiltersPanel = memo(function FiltersPanel({
                 className="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors duration-150 hover:bg-muted"
               >
                 <span className="flex min-w-0 items-center gap-2">
-                  <span
-                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                      selectedAirlines.includes(airline.name)
-                        ? "border-primary bg-primary"
-                        : "border-input bg-card"
-                    }`}
-                  >
-                    {selectedAirlines.includes(airline.name) && <span className="h-1.5 w-1.5 rounded-full bg-primary-foreground" />}
-                  </span>
-                  <input
-                    type="checkbox"
-                    className="sr-only"
+                  <Checkbox
                     checked={selectedAirlines.includes(airline.name)}
-                    onChange={() => onToggleAirline(airline.name)}
+                    onCheckedChange={() => onToggleAirline(airline.name)}
+                    aria-label={airline.name}
                   />
                   <span className="truncate">{airline.name}</span>
                 </span>
@@ -363,28 +384,26 @@ function FilterGroup({ title, children }: { title: string; children: ReactNode }
 
 function SwitchRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
   return (
-    <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-sm transition-colors duration-150 hover:bg-muted">
+    <div className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-sm transition-colors duration-150 hover:bg-muted">
       <span>{label}</span>
-      <span className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-150 ${checked ? "bg-primary" : "bg-input"}`}>
-        <input type="checkbox" className="sr-only" checked={checked} onChange={(event) => onChange(event.target.checked)} />
-        <span className={`block h-4 w-4 rounded-full bg-card shadow-sm transition-transform duration-150 ${checked ? "translate-x-4" : "translate-x-0.5"}`} />
-      </span>
-    </label>
+      <Switch checked={checked} onCheckedChange={onChange} aria-label={label} />
+    </div>
   )
 }
 
 function ChoiceRow({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       onClick={onClick}
-      className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-sm transition-[background-color,color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+      className={`h-auto w-full justify-between rounded-lg px-2 py-1.5 text-sm font-normal ${
         active ? "bg-primary/10 text-primary" : "hover:bg-muted"
       }`}
     >
       {label}
       <span className={`h-2 w-2 rounded-full ${active ? "bg-primary" : "bg-border"}`} />
-    </button>
+    </Button>
   )
 }
 

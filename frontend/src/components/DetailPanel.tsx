@@ -180,15 +180,17 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
                 <div className="fd-label">Cotización</div>
                 <p className="text-xs text-muted-foreground">Texto comercial para enviar al cliente</p>
               </div>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="sm"
                 onClick={copyToClipboard}
                 disabled={Boolean(activeQuotation.error)}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-primary transition-colors duration-150 hover:bg-accent disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-8 px-2 text-xs text-primary"
               >
                 {copied ? <AppIcon name="check" /> : <AppIcon name="copy" />}
                 {copied ? "Copiado" : "Copiar"}
-              </button>
+              </Button>
             </div>
             <pre
               className={`fd-scrollbar max-h-64 overflow-auto rounded-xl border p-3 whitespace-pre-wrap font-mono text-xs leading-relaxed ${
