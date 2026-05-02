@@ -27,7 +27,6 @@ import {
   calendarState,
   calendarStayConfig,
   calendarTitle,
-  copySearchConfigBtn,
   dateTrigger,
   dateTriggerText,
   DEFAULT_CURRENCY_CODE,
@@ -47,7 +46,6 @@ import {
   matrixFullscreenClose,
   matrixFullscreenMeta,
   migrationBtn,
-  pasteSearchConfigBtn,
   paxAdultsDisplay,
   paxChildrenDisplay,
   paxInfantsDisplay,
@@ -69,9 +67,6 @@ import {
   rootEl,
   runtimeBadge,
   runtimeSearchDatePolicy,
-  SEARCH_CONFIG_CLIPBOARD_KEY,
-  SEARCH_CONFIG_CLIPBOARD_TYPE,
-  SEARCH_CONFIG_CLIPBOARD_VERSION,
   SEARCH_DATE_DEFAULT_MAX_FUTURE_DAYS,
   searchForm,
   searchMode,
@@ -114,10 +109,40 @@ const AUTOCOMPLETE_PROVIDER_ID = "costamar";
 const SEARCH_RESULT_CACHE_STORAGE_KEY = "flydesk.searchResultCache.v1";
 const SEARCH_RESULT_CACHE_TTL_MS = 4 * 60 * 60 * 1000;
 const SEARCH_RESULT_CACHE_MAX_ENTRIES = 16;
-const SEARCH_LAUNCH_STORAGE_KEY_PREFIX = "flydesk.searchLaunch.v1";
-const SEARCH_LAUNCH_TTL_MS = 15 * 60 * 1000;
-const SEARCH_LAUNCH_QUERY_PARAM = "launchSearch";
+const SEARCH_SHARE_PAYLOAD_TYPE = "fly-desk-search-config";
+const SEARCH_SHARE_PAYLOAD_VERSION = 2;
 const SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM = "launchPayload";
+const SEARCH_SHARE_QUERY_PARAM_NAMES = [
+  SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM,
+  "mode",
+  "searchMode",
+  "trip",
+  "tripType",
+  "origin",
+  "destination",
+  "departure",
+  "departureDate",
+  "return",
+  "returnDate",
+  "departureStart",
+  "departureEnd",
+  "returnStart",
+  "returnEnd",
+  "stayNights",
+  "flexible",
+  "adults",
+  "children",
+  "infants",
+  "sort",
+  "nonStop",
+  "maxStops",
+  "maxLayover",
+  "baggage",
+  "airlines",
+  "airline",
+  "maxResults",
+  "compact",
+];
 const RESULTS_REORDER_DURATION_MS = 170;
 const RESULTS_REORDER_ENTRY_DURATION_MS = 130;
 const RESULTS_REORDER_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
@@ -634,83 +659,47 @@ function writeSearchResultCache(request, sortModeValue, response) {
   persistSearchResultCache();
 }
 
-function createSearchLaunchToken() {
-  if (window.crypto?.randomUUID) {
-    return window.crypto.randomUUID();
-  }
-  return `launch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function searchLaunchStorageKey(token) {
-  return `${SEARCH_LAUNCH_STORAGE_KEY_PREFIX}.${token}`;
-}
-
-function cleanupSearchLaunchStorage(nowMs = Date.now()) {
-  try {
-    const staleKeys = [];
-    for (let index = 0; index < window.localStorage.length; index++) {
-      const key = window.localStorage.key(index);
-      if (!key || !key.startsWith(`${SEARCH_LAUNCH_STORAGE_KEY_PREFIX}.`)) {
-        continue;
-      }
-      const raw = window.localStorage.getItem(key);
-      if (!raw) {
-        staleKeys.push(key);
-        continue;
-      }
-      try {
-        const parsed = JSON.parse(raw);
-        const createdAtMs = Number(parsed?.createdAtMs);
-        if (!Number.isFinite(createdAtMs) || nowMs - createdAtMs > SEARCH_LAUNCH_TTL_MS) {
-          staleKeys.push(key);
-        }
-      } catch {
-        staleKeys.push(key);
-      }
-    }
-
-    staleKeys.forEach((key) => window.localStorage.removeItem(key));
-  } catch {
-    // localStorage can be unavailable in privacy-restricted contexts.
-  }
-}
-
-function persistSearchLaunchPayload(payload) {
+function buildSearchLaunchPayload(payload) {
   if (!payload?.request) {
     return null;
   }
-  try {
-    cleanupSearchLaunchStorage();
-    const token = createSearchLaunchToken();
-    const key = searchLaunchStorageKey(token);
-    window.localStorage.setItem(key, JSON.stringify({
-      createdAtMs: Date.now(),
-      payload: cloneSerializable(payload),
-    }));
-    return token;
-  } catch {
+
+  const request = cloneSerializable(payload.request);
+  if (!request) {
     return null;
   }
+
+  const mode = request.searchMode === "month-view"
+    ? "migration"
+    : request.searchMode && request.searchMode !== "exact" ? "flexible" : "exact";
+
+  return {
+    type: SEARCH_SHARE_PAYLOAD_TYPE,
+    version: SEARCH_SHARE_PAYLOAD_VERSION,
+    copiedAt: String(payload.copiedAt || new Date().toISOString()),
+    mode,
+    tripType: request.tripType === "one-way" ? "one-way" : "round-trip",
+    sortMode: String(payload.sortMode || state.sortMode || "cheapest"),
+    providerConfig: normalizeSearchProviderConfig(payload.providerConfig) || undefined,
+    request,
+  };
 }
 
-function encodeSearchLaunchPayload(payload) {
-  if (!payload?.request) {
-    return "";
+function normalizeSearchLaunchPayload(payload) {
+  const version = Number.parseInt(String(payload?.version), 10);
+  if (
+    !payload?.request
+    || payload.type !== SEARCH_SHARE_PAYLOAD_TYPE
+    || version !== SEARCH_SHARE_PAYLOAD_VERSION
+  ) {
+    return null;
   }
-  try {
-    const json = JSON.stringify(cloneSerializable(payload));
-    const utf8Bytes = new TextEncoder().encode(json);
-    let binary = "";
-    utf8Bytes.forEach((byte) => {
-      binary += String.fromCharCode(byte);
-    });
-    return btoa(binary)
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_")
-      .replace(/=+$/g, "");
-  } catch {
-    return "";
-  }
+
+  return {
+    ...payload,
+    sortMode: String(payload.sortMode || "cheapest"),
+    providerConfig: normalizeSearchProviderConfig(payload.providerConfig) || undefined,
+  };
 }
 
 function decodeSearchLaunchPayload(encoded) {
@@ -728,76 +717,176 @@ function decodeSearchLaunchPayload(encoded) {
     const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
     const json = new TextDecoder().decode(bytes);
     const parsed = JSON.parse(json);
-    return parsed?.request ? parsed : null;
+    return normalizeSearchLaunchPayload(parsed);
   } catch {
     return null;
   }
 }
 
-function stripLaunchSearchParamFromUrl() {
-  try {
-    const url = new URL(window.location.href);
-    if (!url.searchParams.has(SEARCH_LAUNCH_QUERY_PARAM) && !url.searchParams.has(SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM)) {
-      return;
-    }
-    url.searchParams.delete(SEARCH_LAUNCH_QUERY_PARAM);
-    url.searchParams.delete(SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM);
-    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-  } catch {
-    // Ignore URL parsing issues.
+function readableSearchModeForRequest(request) {
+  if (request?.searchMode === "month-view") {
+    return "migration";
+  }
+  return request?.searchMode && request.searchMode !== "exact" ? "flexible" : "exact";
+}
+
+function searchModeFromReadableParams(params, tripType) {
+  const mode = String(params.get("mode") || "").trim();
+  if (mode === "migration") {
+    return "month-view";
+  }
+  if (mode === "flexible") {
+    return tripType === "round-trip" ? "roundtrip-grid" : "stay-range";
+  }
+  if (mode === "exact") {
+    return "exact";
+  }
+  const searchModeValue = String(params.get("searchMode") || "").trim();
+  return ["exact", "stay-range", "roundtrip-grid", "month-view"].includes(searchModeValue)
+    ? searchModeValue
+    : "exact";
+}
+
+function setReadableSearchParam(url, key, value) {
+  const normalized = value === undefined || value === null ? "" : String(value).trim();
+  if (normalized) {
+    url.searchParams.set(key, normalized);
   }
 }
 
-function consumeSearchLaunchPayloadFromUrl() {
-  let launchToken = "";
-  let encodedPayload = "";
-  try {
-    const url = new URL(window.location.href);
-    launchToken = String(url.searchParams.get(SEARCH_LAUNCH_QUERY_PARAM) || "").trim();
-    encodedPayload = String(url.searchParams.get(SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM) || "").trim();
-    if (!launchToken && !encodedPayload) {
-      return null;
-    }
-  } catch {
+function boolReadableSearchParam(params, key) {
+  const value = String(params.get(key) || "").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
+function numberReadableSearchParam(params, key) {
+  const value = Number(params.get(key));
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function optionalReadableSearchParam(params, key, fallbackKey) {
+  return String(params.get(key) || (fallbackKey ? params.get(fallbackKey) : "") || "").trim();
+}
+
+function readReadableSearchLaunchPayloadFromUrl(url) {
+  const params = url.searchParams;
+  const origin = optionalReadableSearchParam(params, "origin").toUpperCase();
+  const destination = optionalReadableSearchParam(params, "destination").toUpperCase();
+  if (!origin || !destination) {
     return null;
   }
 
-  let payload = null;
-  try {
-    if (launchToken) {
-      const raw = window.localStorage.getItem(searchLaunchStorageKey(launchToken));
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        const createdAtMs = Number(parsed?.createdAtMs);
-        if (Number.isFinite(createdAtMs) && Date.now() - createdAtMs <= SEARCH_LAUNCH_TTL_MS) {
-          payload = cloneSerializable(parsed?.payload);
-        }
-      }
-    }
-    if (!payload && encodedPayload) {
-      payload = decodeSearchLaunchPayload(encodedPayload);
-    }
-  } catch {
-    payload = null;
-  } finally {
-    try {
-      if (launchToken) {
-        window.localStorage.removeItem(searchLaunchStorageKey(launchToken));
-      }
-    } catch {
-      // Ignore localStorage issues.
-    }
-    cleanupSearchLaunchStorage();
-    stripLaunchSearchParamFromUrl();
+  const tripType = (optionalReadableSearchParam(params, "trip") || optionalReadableSearchParam(params, "tripType")) === "one-way"
+    ? "one-way"
+    : "round-trip";
+  const searchModeValue = searchModeFromReadableParams(params, tripType);
+  const flexibleModeValue = optionalReadableSearchParam(params, "flexible");
+  const maxStops = numberReadableSearchParam(params, "maxStops");
+  const maxLayoverMinutes = numberReadableSearchParam(params, "maxLayover");
+  const airlines = [
+    ...params.getAll("airline"),
+    ...optionalReadableSearchParam(params, "airlines").split(","),
+  ].map((code) => code.trim().toUpperCase()).filter(Boolean);
+
+  return {
+    type: SEARCH_SHARE_PAYLOAD_TYPE,
+    version: SEARCH_SHARE_PAYLOAD_VERSION,
+    mode: readableSearchModeForRequest({ searchMode: searchModeValue }),
+    tripType,
+    sortMode: optionalReadableSearchParam(params, "sort") || "cheapest",
+    request: {
+      tripType,
+      searchMode: searchModeValue,
+      flexibleMode: searchModeValue === "roundtrip-grid" && ["exact-stay", "fixed-ranges"].includes(flexibleModeValue)
+        ? flexibleModeValue
+        : undefined,
+      cabin: "ECONOMY",
+      currencyCode: DEFAULT_CURRENCY_CODE,
+      coverageMode: "core",
+      redirectMode: "best-effort",
+      passengers: {
+        adults: numberReadableSearchParam(params, "adults") ?? 1,
+        children: numberReadableSearchParam(params, "children") ?? 0,
+        infants: numberReadableSearchParam(params, "infants") ?? 0,
+      },
+      filters: {
+        nonStop: boolReadableSearchParam(params, "nonStop") || maxStops === 0,
+        baggageRequired: boolReadableSearchParam(params, "baggage"),
+        ...(Number.isFinite(maxStops) ? { maxStops } : {}),
+        ...(Number.isFinite(maxLayoverMinutes) ? { maxLayoverMinutes } : {}),
+        ...(airlines.length ? { includedAirlineCodes: airlines } : {}),
+        ...(numberReadableSearchParam(params, "maxResults") ? { maxResults: numberReadableSearchParam(params, "maxResults") } : {}),
+        ...(boolReadableSearchParam(params, "compact") ? { compactAllOffers: true } : {}),
+      },
+      legs: [{
+        origin,
+        destination,
+        departureDate: optionalReadableSearchParam(params, "departure", "departureDate") || undefined,
+        returnDate: optionalReadableSearchParam(params, "return", "returnDate") || undefined,
+        departureStart: optionalReadableSearchParam(params, "departureStart") || undefined,
+        departureEnd: optionalReadableSearchParam(params, "departureEnd") || undefined,
+        returnStart: optionalReadableSearchParam(params, "returnStart") || undefined,
+        returnEnd: optionalReadableSearchParam(params, "returnEnd") || undefined,
+        stayNights: numberReadableSearchParam(params, "stayNights"),
+      }],
+    },
+  };
+}
+
+function writeReadableSearchLaunchParams(url, payload) {
+  const request = payload?.request;
+  const leg = request?.legs?.[0] ?? {};
+  const passengers = request?.passengers ?? {};
+  const filters = request?.filters ?? {};
+  if (!request || !leg.origin || !leg.destination) {
+    return false;
   }
 
-  return payload?.request ? payload : null;
+  SEARCH_SHARE_QUERY_PARAM_NAMES.forEach((key) => url.searchParams.delete(key));
+  setReadableSearchParam(url, "mode", readableSearchModeForRequest(request));
+  setReadableSearchParam(url, "trip", request.tripType === "one-way" ? "one-way" : "round-trip");
+  setReadableSearchParam(url, "origin", leg.origin);
+  setReadableSearchParam(url, "destination", leg.destination);
+  setReadableSearchParam(url, "departure", leg.departureDate);
+  setReadableSearchParam(url, "return", leg.returnDate);
+  setReadableSearchParam(url, "departureStart", leg.departureStart);
+  setReadableSearchParam(url, "departureEnd", leg.departureEnd);
+  setReadableSearchParam(url, "returnStart", leg.returnStart);
+  setReadableSearchParam(url, "returnEnd", leg.returnEnd);
+  setReadableSearchParam(url, "stayNights", leg.stayNights);
+  setReadableSearchParam(url, "flexible", request.flexibleMode);
+  setReadableSearchParam(url, "adults", passengers.adults ?? 1);
+  setReadableSearchParam(url, "children", passengers.children ?? 0);
+  setReadableSearchParam(url, "infants", passengers.infants ?? 0);
+  setReadableSearchParam(url, "sort", payload.sortMode || state.sortMode || "cheapest");
+  if (filters.nonStop) setReadableSearchParam(url, "nonStop", 1);
+  if (Number.isFinite(Number(filters.maxStops)) && !filters.nonStop) setReadableSearchParam(url, "maxStops", filters.maxStops);
+  if (Number.isFinite(Number(filters.maxLayoverMinutes))) setReadableSearchParam(url, "maxLayover", filters.maxLayoverMinutes);
+  if (filters.baggageRequired) setReadableSearchParam(url, "baggage", 1);
+  if (Array.isArray(filters.includedAirlineCodes) && filters.includedAirlineCodes.length) {
+    setReadableSearchParam(url, "airlines", filters.includedAirlineCodes.map((code) => String(code).toUpperCase()).join(","));
+  }
+  setReadableSearchParam(url, "maxResults", filters.maxResults);
+  if (filters.compactAllOffers) setReadableSearchParam(url, "compact", 1);
+  return true;
+}
+
+function readSearchLaunchPayloadFromUrl() {
+  try {
+    const url = new URL(window.location.href);
+    const readablePayload = readReadableSearchLaunchPayloadFromUrl(url);
+    if (readablePayload) {
+      return readablePayload;
+    }
+    return decodeSearchLaunchPayload(url.searchParams.get(SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM) || "");
+  } catch {
+    return null;
+  }
 }
 
 function openSearchPayloadInNewTab(payload) {
-  const token = persistSearchLaunchPayload(payload);
-  const encodedPayload = encodeSearchLaunchPayload(payload);
-  if (!token && !encodedPayload) {
+  const launchPayload = buildSearchLaunchPayload(payload);
+  if (!launchPayload) {
     showToast("No pude preparar la busqueda para otra pestana.");
     return false;
   }
@@ -805,13 +894,9 @@ function openSearchPayloadInNewTab(payload) {
   let openedTab = null;
   try {
     const url = new URL(window.location.href);
-    if (token) {
-      url.searchParams.set(SEARCH_LAUNCH_QUERY_PARAM, token);
+    if (writeReadableSearchLaunchParams(url, launchPayload)) {
+      openedTab = window.open(url.toString(), "_blank", "noopener");
     }
-    if (encodedPayload) {
-      url.searchParams.set(SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM, encodedPayload);
-    }
-    openedTab = window.open(url.toString(), "_blank", "noopener");
   } catch {
     openedTab = null;
   }
@@ -820,18 +905,11 @@ function openSearchPayloadInNewTab(payload) {
     return true;
   }
 
-  try {
-    if (token) {
-      window.localStorage.removeItem(searchLaunchStorageKey(token));
-    }
-  } catch {
-    // Ignore localStorage issues.
-  }
   showToast("No pude abrir otra pestana. Habilita pop-ups para Fly Desk.");
   return false;
 }
 
-const startupSearchLaunchPayload = consumeSearchLaunchPayloadFromUrl();
+const startupSearchLaunchPayload = readSearchLaunchPayloadFromUrl();
 
 function providerIdFromRequest(request) {
   return request?.providerId === "costamar" ? "costamar" : "agil-local";
@@ -2020,20 +2098,6 @@ function toolbarDateSummary(request = activeResultsRequest()) {
   return departureStart ? formatDateCompact(departureStart) : "";
 }
 
-function clipboardModeLabel(request) {
-  if (request?.searchMode === "roundtrip-grid") {
-    return resolveRoundTripFlexibleMode(request) === "fixed-ranges"
-      ? "Flexible ida y vuelta · rangos fijos"
-      : "Flexible ida y vuelta · estadía exacta";
-  }
-
-  if (request?.searchMode === "stay-range") {
-    return "Flexible";
-  }
-
-  return "Exacta";
-}
-
 function buildResultsPanelMeta({ hasMatrix, matrixCellCount }) {
   const active = state.searchResponse ?? state.matrixResponse;
   if (!active) {
@@ -2425,7 +2489,7 @@ function selectLocationSuggestion(id, suggestion) {
   hideLocationMenu(id);
 }
 
-function normalizeClipboardProviderConfig(rawProviderConfig) {
+function normalizeSearchProviderConfig(rawProviderConfig) {
   const costamar = rawProviderConfig?.costamar;
   if (!costamar || typeof costamar !== "object") {
     return null;
@@ -2445,197 +2509,6 @@ function normalizeClipboardProviderConfig(rawProviderConfig) {
       ...(lang ? { lang } : {}),
     },
   };
-}
-
-function buildClipboardRequestFromPayload(payload) {
-  const baseRequest = payload?.request ?? {};
-  const baseLeg = baseRequest?.legs?.[0] ?? {};
-  const inferredTripType = baseRequest?.tripType === "one-way" || payload?.tripType === "one-way"
-    ? "one-way"
-    : "round-trip";
-  const inferredFlexibleMode = baseRequest?.flexibleMode === "fixed-ranges"
-    || payload?.flexibleMode === "fixed-ranges"
-    || (payload?.mode === "flexible" && payload?.dates?.returnStart && payload?.dates?.returnEnd)
-    ? "fixed-ranges"
-    : "exact-stay";
-  const inferredSearchMode = baseRequest?.searchMode
-    || (payload?.mode === "flexible"
-      ? inferredTripType === "round-trip" ? "roundtrip-grid" : "stay-range"
-      : "exact");
-  const passengers = {
-    ...baseRequest?.passengers,
-    adults: parseOptionalInteger(payload?.passengers?.adults ?? baseRequest?.passengers?.adults) ?? 1,
-    children: parseOptionalInteger(payload?.passengers?.children ?? baseRequest?.passengers?.children) ?? 0,
-    infants: parseOptionalInteger(payload?.passengers?.infants ?? baseRequest?.passengers?.infants) ?? 0,
-  };
-  const maxStops = parseOptionalInteger(payload?.filters?.maxStops ?? baseRequest?.filters?.maxStops);
-  const maxLayoverMinutes = parseOptionalInteger(
-    payload?.filters?.maxLayoverMinutes ?? baseRequest?.filters?.maxLayoverMinutes,
-  );
-  const filters = {
-    ...(baseRequest?.filters ?? {}),
-    nonStop: payload?.filters?.nonStop ?? baseRequest?.filters?.nonStop === true,
-    baggageRequired: payload?.filters?.baggageRequired ?? baseRequest?.filters?.baggageRequired === true,
-    ...(typeof maxStops === "number" ? { maxStops } : {}),
-    ...(typeof maxLayoverMinutes === "number" ? { maxLayoverMinutes } : {}),
-  };
-  const stayNights = parseOptionalInteger(
-    payload?.stay?.nights
-    ?? payload?.stay?.min
-    ?? payload?.stay?.max
-    ?? baseLeg?.stayNights,
-  );
-
-  return {
-    ...baseRequest,
-    tripType: inferredTripType,
-    searchMode: inferredSearchMode,
-    flexibleMode: inferredSearchMode === "roundtrip-grid" ? inferredFlexibleMode : undefined,
-    cabin: baseRequest?.cabin ?? "ECONOMY",
-    coverageMode: baseRequest?.coverageMode ?? "core",
-    redirectMode: baseRequest?.redirectMode ?? "best-effort",
-    currencyCode: baseRequest?.currencyCode ?? DEFAULT_CURRENCY_CODE,
-    locale: baseRequest?.locale ?? state.request?.locale ?? "es-PE",
-    market: baseRequest?.market ?? state.request?.market ?? "PE",
-    passengers,
-    filters,
-    legs: [
-      normalizeRequestLegLocationLabels({
-        ...baseLeg,
-        origin: baseLeg?.origin || payload?.origin?.code || payload?.origin?.value || "",
-        destination: baseLeg?.destination || payload?.destination?.code || payload?.destination?.value || "",
-        originLabel: baseLeg?.originLabel || payload?.origin?.label || payload?.origin?.value || "",
-        destinationLabel: baseLeg?.destinationLabel || payload?.destination?.label || payload?.destination?.value || "",
-        departureDate: inferredSearchMode === "exact" ? String(payload?.dates?.departureDate || baseLeg?.departureDate || "") : undefined,
-        returnDate: inferredSearchMode === "exact" && inferredTripType === "round-trip"
-          ? String(payload?.dates?.returnDate || baseLeg?.returnDate || "")
-          : undefined,
-        departureStart: inferredSearchMode !== "exact"
-          ? String(payload?.dates?.departureStart || baseLeg?.departureStart || "")
-          : undefined,
-        departureEnd: inferredSearchMode !== "exact"
-          ? String(payload?.dates?.departureEnd || baseLeg?.departureEnd || "")
-          : undefined,
-        returnStart: inferredSearchMode === "roundtrip-grid" && inferredFlexibleMode === "fixed-ranges"
-          ? String(payload?.dates?.returnStart || baseLeg?.returnStart || "")
-          : undefined,
-        returnEnd: inferredSearchMode === "roundtrip-grid" && inferredFlexibleMode === "fixed-ranges"
-          ? String(payload?.dates?.returnEnd || baseLeg?.returnEnd || "")
-          : undefined,
-        stayNights: inferredSearchMode === "roundtrip-grid" && inferredFlexibleMode === "exact-stay"
-          ? stayNights
-          : undefined,
-      }),
-    ],
-  };
-}
-
-function withClipboardMetadata(payload) {
-  const request = buildClipboardRequestFromPayload(payload);
-  const mode = request?.searchMode && request.searchMode !== "exact" ? "flexible" : "exact";
-  const tripTypeValue = request?.tripType === "one-way" ? "one-way" : "round-trip";
-  const flexibleModeValue = request?.searchMode === "roundtrip-grid"
-    ? resolveRoundTripFlexibleMode(request)
-    : undefined;
-
-  return {
-    type: SEARCH_CONFIG_CLIPBOARD_TYPE,
-    version: SEARCH_CONFIG_CLIPBOARD_VERSION,
-    copiedAt: String(payload?.copiedAt || new Date().toISOString()),
-    mode,
-    ...(flexibleModeValue ? { flexibleMode: flexibleModeValue } : {}),
-    tripType: tripTypeValue,
-    sortMode: String(payload?.sortMode || "cheapest"),
-    providerConfig: normalizeClipboardProviderConfig(payload?.providerConfig),
-    request,
-  };
-}
-
-function isSupportedSearchClipboardVersion(version) {
-  const normalizedVersion = Number.parseInt(String(version), 10);
-  return normalizedVersion === SEARCH_CONFIG_CLIPBOARD_VERSION;
-}
-
-function parseSearchClipboardPayload(raw) {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || parsed.type !== SEARCH_CONFIG_CLIPBOARD_TYPE || !isSupportedSearchClipboardVersion(parsed.version)) {
-      return null;
-    }
-    return {
-      ...parsed,
-      providerConfig: normalizeClipboardProviderConfig(parsed.providerConfig),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function readStoredSearchClipboard() {
-  try {
-    const stored = window.localStorage.getItem(SEARCH_CONFIG_CLIPBOARD_KEY);
-    const payload = parseSearchClipboardPayload(stored);
-    if (!payload && stored) window.localStorage.removeItem(SEARCH_CONFIG_CLIPBOARD_KEY);
-    return payload;
-  } catch {
-    return null;
-  }
-}
-
-function canReadSystemSearchClipboard() {
-  return typeof navigator.clipboard?.readText === "function";
-}
-
-function syncSearchClipboardUI() {
-  if (!pasteSearchConfigBtn) return;
-  pasteSearchConfigBtn.disabled = !Boolean(readStoredSearchClipboard() || canReadSystemSearchClipboard());
-}
-
-function buildSearchClipboardPayload() {
-  const formPayload = getFormPayload();
-  const payload = {
-    type: SEARCH_CONFIG_CLIPBOARD_TYPE,
-    version: SEARCH_CONFIG_CLIPBOARD_VERSION,
-    copiedAt: new Date().toISOString(),
-    sortMode: controlValue("sortMode") || state.sortMode || "cheapest",
-    providerConfig: normalizeClipboardProviderConfig(state.providerConfig),
-    request: {
-      ...formPayload.request,
-      locale: formPayload.request.locale ?? state.request?.locale ?? "es-PE",
-      market: formPayload.request.market ?? state.request?.market ?? "PE",
-    },
-  };
-
-  return withClipboardMetadata(payload);
-}
-
-function persistSearchClipboardPayload(payload) {
-  const serialized = JSON.stringify(payload);
-  try {
-    window.localStorage.setItem(SEARCH_CONFIG_CLIPBOARD_KEY, serialized);
-  } catch {
-    // Ignore storage failures; clipboard write still provides a usable path.
-  }
-  return serialized;
-}
-
-async function readSystemSearchClipboard() {
-  if (!canReadSystemSearchClipboard()) {
-    return { payload: null, reason: "unsupported" };
-  }
-  try {
-    const payload = parseSearchClipboardPayload(await navigator.clipboard.readText());
-    return {
-      payload,
-      reason: payload ? "ok" : "invalid",
-    };
-  } catch (error) {
-    const reason = error instanceof DOMException && error.name === "NotAllowedError"
-      ? "permission"
-      : "unavailable";
-    return { payload: null, reason };
-  }
 }
 
 function clearRenderedSearchState() {
@@ -2731,64 +2604,6 @@ function syncSearchFormWithRequest(request) {
   showErrors([]);
   updatePaxLabel();
   updateModeFields();
-}
-
-function applySearchClipboardPayload(payload) {
-  if (!payload) return false;
-
-  const request = buildClipboardRequestFromPayload(payload);
-  state.providerConfig = normalizeClipboardProviderConfig(payload.providerConfig);
-  state.sortMode = String(payload.sortMode || "cheapest");
-  sortMode.value = state.sortMode;
-  syncSearchFormWithRequest(request);
-
-  calendarState.selectionStage = "start";
-  closeCalendarPopover();
-  showErrors([]);
-  updatePaxLabel();
-  updateModeFields();
-  clearRenderedSearchState();
-  renderAll();
-  return true;
-}
-
-async function copySearchConfiguration() {
-  const payload = buildSearchClipboardPayload();
-  const serialized = persistSearchClipboardPayload(payload);
-  const clipboardSynced = await writeClipboardText(serialized);
-
-  syncSearchClipboardUI();
-  showToast(
-    clipboardSynced
-      ? "Configuracion copiada. Ya puedes pegarla en otra pestana."
-      : "Configuracion guardada para pegarla en otra pestana.",
-    "success",
-  );
-}
-
-async function pasteSearchConfiguration() {
-  let payload = readStoredSearchClipboard();
-
-  if (!payload) {
-    const clipboardResult = await readSystemSearchClipboard();
-    payload = clipboardResult.payload;
-    if (payload) persistSearchClipboardPayload(payload);
-    else if (clipboardResult.reason === "permission") {
-      syncSearchClipboardUI();
-      showToast("Permite acceso al portapapeles para pegar la configuracion.", "error");
-      return;
-    }
-  }
-
-  if (!payload) {
-    syncSearchClipboardUI();
-    showToast("No hay una configuracion copiada todavia.");
-    return;
-  }
-
-  applySearchClipboardPayload(payload);
-  syncSearchClipboardUI();
-  showToast("Configuracion pegada. Pulsa Buscar para ejecutarla.", "success");
 }
 
 function renderLocationMenu(id) {
@@ -4278,7 +4093,7 @@ async function fetchExactSearchData(request, sortModeValue, { syncForm = false, 
   const data = await postJson("/api/search", {
     request,
     sortMode: sortModeValue,
-    providerConfig: normalizeClipboardProviderConfig(providerConfig),
+    providerConfig: normalizeSearchProviderConfig(providerConfig),
   });
   state.request = data.request ?? request;
   if (syncForm) {
@@ -4313,8 +4128,12 @@ function applyStartupLaunchPayload(payload) {
     return false;
   }
   const sortModeValue = payload.sortMode || state.sortMode || "cheapest";
-  resetExactSearchUiState(payload.request, sortModeValue, { syncForm: true });
-  seedExactSearchResponse(payload.request, sortModeValue);
+  state.providerConfig = normalizeSearchProviderConfig(payload.providerConfig);
+  state.sortMode = sortModeValue;
+  sortMode.value = state.sortMode;
+  syncSearchFormWithRequest(payload.request);
+  clearRenderedSearchState();
+  showToast("Configuracion cargada. Pulsa Buscar para ejecutarla.", "success");
   return true;
 }
 
@@ -4609,7 +4428,6 @@ function syncSearchShellLayoutMetrics() {
   const modeSegment = searchForm.querySelector('[data-search-order="mode"]');
   const tripSegment = searchForm.querySelector('[data-search-order="trip"]');
   const refinementItems = [...searchForm.querySelectorAll(".search-refinements > .refinement")];
-  const actionButtons = [...searchForm.querySelectorAll(".search-shell__action")];
 
   const modeWidth = measureTrackWidth(modeSegment);
   const tripWidth = measureTrackWidth(tripSegment);
@@ -4635,12 +4453,8 @@ function syncSearchShellLayoutMetrics() {
   }
 
   const submitWidth = measureIntrinsicWidth(submitButton);
-  const actionRailWidth = actionButtons.reduce((totalWidth, button, index) => {
-    return totalWidth + measureIntrinsicWidth(button) + (index > 0 ? shellGap : 0);
-  }, 0);
-  const nextActionWidth = Math.max(submitWidth, actionRailWidth);
-  if (nextActionWidth > 0) {
-    searchForm.style.setProperty("--shell-actions-width", `${Math.ceil(nextActionWidth)}px`);
+  if (submitWidth > 0) {
+    searchForm.style.setProperty("--shell-actions-width", `${Math.ceil(submitWidth)}px`);
   }
 }
 
@@ -5209,7 +5023,7 @@ function getFormPayload() {
   syncResultsPageSize();
   return {
     sortMode: String(fd.get("sortMode") || "cheapest"),
-    providerConfig: normalizeClipboardProviderConfig(state.providerConfig) || undefined,
+    providerConfig: normalizeSearchProviderConfig(state.providerConfig) || undefined,
     request: {
       tripType: t,
       searchMode: m,
@@ -6927,14 +6741,6 @@ matrixFullscreenBackdrop?.addEventListener("click", () => {
   closeMatrixExpanded();
 });
 
-copySearchConfigBtn?.addEventListener("click", async () => {
-  await copySearchConfiguration();
-});
-
-pasteSearchConfigBtn?.addEventListener("click", async () => {
-  await pasteSearchConfiguration();
-});
-
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !layoverPopover?.classList.contains("hidden")) {
     closeLayoverPopover();
@@ -7505,7 +7311,7 @@ async function startMigrationSearch() {
 
     const payload = {
       sortMode: "cheapest",
-      providerConfig: normalizeClipboardProviderConfig(state.providerConfig) || undefined,
+      providerConfig: normalizeSearchProviderConfig(state.providerConfig) || undefined,
       request: {
         tripType: "one-way",
         searchMode: "stay-range",
@@ -7650,7 +7456,6 @@ migrationBtn?.addEventListener("click", () => {
    ================================================================ */
 
 bootstrapAppShell({
-  SEARCH_CONFIG_CLIPBOARD_KEY,
   swapRouteBtn,
   $,
   hideLocationMenu,
@@ -7670,14 +7475,9 @@ bootstrapAppShell({
   syncCalendarPopoverPosition,
   syncWorkspaceViewportHeight,
   syncSearchShellLayoutMetrics,
-  syncSearchClipboardUI,
   beforeInitialRender: async () => {
     await loadResultsLayout({ rerender: false, showErrorToast: false });
-    if (applyStartupLaunchPayload(startupSearchLaunchPayload)) {
-      window.setTimeout(() => {
-        void refreshStartupLaunchPayload(startupSearchLaunchPayload);
-      }, 0);
-    }
+    applyStartupLaunchPayload(startupSearchLaunchPayload);
   },
   renderAll,
   settleInitialShellLayout,

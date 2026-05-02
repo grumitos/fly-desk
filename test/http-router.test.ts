@@ -262,7 +262,7 @@ test("rejects non-loopback location requests without a valid api token", { concu
   process.env.FLY_DESK_API_TOKEN = "test-token";
 
   try {
-    const response = await routeRequest(new Request("http://fly-desk.local/api/locations?q=l", {
+    const response = await routeRequest(new Request("http://fly-desk.local/api/locations?q=", {
       method: "GET",
       headers: {
         "x-flydesk-client-loopback": "0",
@@ -286,7 +286,7 @@ test("accepts non-loopback location requests with a valid api token", { concurre
   process.env.FLY_DESK_API_TOKEN = "test-token";
 
   try {
-    const response = await routeRequest(new Request("http://fly-desk.local/api/locations?q=l", {
+    const response = await routeRequest(new Request("http://fly-desk.local/api/locations?q=", {
       method: "GET",
       headers: {
         "x-flydesk-client-loopback": "0",
@@ -296,7 +296,7 @@ test("accepts non-loopback location requests with a valid api token", { concurre
 
     assert.equal(response.status, 200);
     const payload = await response.json() as { query?: string; suggestions?: unknown[] };
-    assert.equal(payload.query, "l");
+    assert.equal(payload.query, "");
     assert.deepEqual(payload.suggestions, []);
   } finally {
     if (previousApiToken === undefined) {

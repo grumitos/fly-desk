@@ -2,8 +2,8 @@ import { memo, type ReactNode } from "react"
 import { ResultCard } from "@/components/results/ResultCard"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Badge } from "@/components/ui/badge"
+import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-control"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import type { CanonicalOffer, MigrationMonthSummary, SearchJobResponse, SortMode } from "@/types"
 
 interface ResultsPanelProps {
@@ -47,24 +47,29 @@ function ResultsPanelBase({
             </p>
           </div>
 
-          <ToggleGroup
-            type="single"
-            value={sort}
-            onValueChange={(value) => {
-              if (value) onSort(value as SortMode)
-            }}
-            className="bg-card"
-          >
-            <ToggleGroupItem value="best-value" aria-label="Ordenar por mejor valor">
+          <SegmentedControl aria-label="Orden de resultados">
+            <SegmentButton
+              active={sort === "best-value"}
+              aria-label="Ordenar por mejor valor"
+              onClick={() => onSort("best-value")}
+            >
               Mejor valor
-            </ToggleGroupItem>
-            <ToggleGroupItem value="cheapest" aria-label="Ordenar por precio">
+            </SegmentButton>
+            <SegmentButton
+              active={sort === "cheapest"}
+              aria-label="Ordenar por precio"
+              onClick={() => onSort("cheapest")}
+            >
               Precio
-            </ToggleGroupItem>
-            <ToggleGroupItem value="fastest" aria-label="Ordenar por duración">
+            </SegmentButton>
+            <SegmentButton
+              active={sort === "fastest"}
+              aria-label="Ordenar por duración"
+              onClick={() => onSort("fastest")}
+            >
               Duración
-            </ToggleGroupItem>
-          </ToggleGroup>
+            </SegmentButton>
+          </SegmentedControl>
         </div>
 
         {warnings.length > 0 && (

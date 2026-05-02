@@ -260,17 +260,18 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 export async function suggestLocations(query: string, limit = 8): Promise<LocationSuggestion[]> {
-  if (query.length < 2) return []
+  if (query.trim().length < 1) return []
   const data = await getJson<{ suggestions: LocationSuggestion[] }>(
-    `${API_BASE}/api/locations?q=${encodeURIComponent(query)}&limit=${limit}`
+    `${API_BASE}/api/locations?q=${encodeURIComponent(query)}&limit=${limit}&providerId=costamar`
   )
   const suggestions = normalizeLocationSuggestions(data.suggestions)
-  rememberLocationSuggestions(query, limit, suggestions)
-  return suggestions
+  const rankedSuggestions = filterLocationSuggestions(query, suggestions, limit)
+  rememberLocationSuggestions(query, limit, rankedSuggestions)
+  return rankedSuggestions
 }
 
 export function getCachedLocationSuggestions(query: string, limit = 8): LocationSuggestion[] {
-  if (query.length < 2) return []
+  if (query.trim().length < 1) return []
   const key = locationSuggestionCacheKey(query, limit)
   return locationSuggestionCache.get(key) ?? filterLocationSuggestions(query, [...locationSuggestionPool.values()], limit)
 }
@@ -298,37 +299,47 @@ function locationSuggestionCacheId(suggestion: LocationSuggestion) {
     .join("|")
 }
 
-type BackendSearchJobResponse = Omit<SearchJobResponse, "request" | "offers" | "allOffers"> & {
-  request?: {
-    tripType?: "round-trip" | "one-way" | "multi-city"
-    searchMode?: SearchRequest["searchMode"]
-    flexibleMode?: SearchRequest["flexibleMode"]
-    legs?: Array<{
-      origin?: string
-      destination?: string
-      departureDate?: string
-      departureStart?: string
-      departureEnd?: string
-      returnDate?: string
-      returnStart?: string
-      returnEnd?: string
-      stayNights?: number
-    }>
-    passengers?: {
-      adults?: number
-      children?: number
-      infants?: number
-    }
-    filters?: {
-      nonStop?: boolean
-      baggageRequired?: boolean
-      maxStops?: number
-      maxLayoverMinutes?: number
-      includedAirlineCodes?: string[]
-      maxResults?: number
-      compactAllOffers?: boolean
-    }
+export type BackendSearchRequest = {
+  tripType?: "round-trip" | "one-way" | "multi-city"
+  searchMode?: SearchRequest["searchMode"]
+  flexibleMode?: SearchRequest["flexibleMode"]
+  legs?: Array<{
+    origin?: string
+    destination?: string
+    departureDate?: string
+    departureStart?: string
+    departureEnd?: string
+    returnDate?: string
+    returnStart?: string
+    returnEnd?: string
+    stayNights?: number
+  }>
+  passengers?: {
+    adults?: number
+    children?: number
+    infants?: number
   }
+  filters?: {
+    nonStop?: boolean
+    baggageRequired?: boolean
+    maxStops?: number
+    maxLayoverMinutes?: number
+    includedAirlineCodes?: string[]
+    maxResults?: number
+    compactAllOffers?: boolean
+  }
+  currencyCode?: string
+  locale?: string
+  market?: string
+}
+
+export type BackendSearchPayload = {
+  sortMode: SortMode
+  request: BackendSearchRequest
+}
+
+type BackendSearchJobResponse = Omit<SearchJobResponse, "request" | "offers" | "allOffers"> & {
+  request?: BackendSearchRequest
   offers?: unknown[]
   allOffers?: unknown[]
 }
@@ -353,7 +364,7 @@ type BackendMatrixJobResponse = {
   recommendations?: string[]
 }
 
-function toBackendPayload(request: SearchRequest, sortMode: SortMode) {
+export function toBackendPayload(request: SearchRequest, sortMode: SortMode): BackendSearchPayload {
   const maxStops = request.nonStop
     ? 0
     : request.maxStopsFilter === "1"
@@ -400,7 +411,7 @@ function toBackendPayload(request: SearchRequest, sortMode: SortMode) {
   }
 }
 
-function fromBackendRequest(request: BackendSearchJobResponse["request"]): SearchRequest {
+export function fromBackendRequest(request: BackendSearchRequest | undefined): SearchRequest {
   const leg = request?.legs?.[0] ?? {}
   return {
     origin: leg.origin ?? "",

@@ -188,6 +188,30 @@
     }
   }
 
+  @keyframes fd-label-word-swap {
+    from {
+      opacity: 0;
+      transform: translateY(0.18rem);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes fd-field-value-swap {
+    from {
+      opacity: 0;
+      transform: translateY(0.12rem);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
   @keyframes fd-skeleton-sheen {
     from {
       background-position: 120% 0;
@@ -216,16 +240,82 @@
     animation: fd-popover-in 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 
+  .fd-inline-reveal {
+    max-height: 0;
+    max-width: 0;
+    overflow: hidden;
+    pointer-events: none;
+    transform: translateX(-0.375rem) scale(0.985);
+    transform-origin: left center;
+    opacity: 0;
+    transition:
+      max-height 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      max-width 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 160ms ease-out,
+      transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+      margin 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .fd-inline-reveal-open {
+    max-height: 6rem;
+    max-width: min(28rem, calc(100vw - 2rem));
+    margin-inline: 0;
+    pointer-events: auto;
+    transform: translateX(0) scale(1);
+    opacity: 1;
+  }
+
+  .fd-inline-reveal-closed {
+    margin-inline: -0.25rem;
+  }
+
+  .fd-disabled-section {
+    filter: grayscale(0.18);
+  }
+
+  .fd-control-disabled-section {
+    @apply border-input bg-secondary text-muted-foreground shadow-none;
+    filter: grayscale(0.18);
+    opacity: 0.66;
+  }
+
+  .fd-label-word-swap {
+    display: inline-block;
+    animation: fd-label-word-swap 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .fd-label-word-extra {
+    display: inline-block;
+    margin-left: 0.25em;
+    overflow: hidden;
+    vertical-align: baseline;
+    transition:
+      max-width 170ms cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 140ms ease-out,
+      transform 170ms cubic-bezier(0.22, 1, 0.36, 1);
+    white-space: nowrap;
+  }
+
+  .fd-label-word-extra-visible {
+    max-width: 4rem;
+    transform: translateY(0);
+    opacity: 1;
+  }
+
+  .fd-field-value-swap {
+    animation: fd-field-value-swap 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
   .fd-panel {
     @apply rounded-xl border border-border bg-card text-card-foreground shadow-[0_1px_0_rgba(31,31,30,0.04)] transition-[background-color,border-color,box-shadow] duration-150 ease-out;
   }
 
   .fd-control {
-    @apply transform-gpu rounded-lg border border-input bg-card text-foreground transition-[background-color,border-color,box-shadow,transform] duration-150 ease-out hover:border-border hover:bg-accent/60 focus-within:outline-none focus-within:ring-2 focus-within:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.995] disabled:pointer-events-none disabled:opacity-55;
+    @apply transform-gpu rounded-lg border border-input bg-card text-foreground transition-[background-color,border-color,box-shadow,transform,opacity,color,filter] duration-150 ease-out hover:border-border hover:bg-accent/60 focus-within:outline-none focus-within:ring-2 focus-within:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.995] disabled:pointer-events-none disabled:opacity-55;
   }
 
   .fd-control-quiet {
-    @apply transform-gpu rounded-md text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100;
+    @apply transform-gpu rounded-md text-muted-foreground transition-[background-color,color,transform,opacity,filter] duration-150 ease-out hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100;
   }
 
   .fd-selected-passive {

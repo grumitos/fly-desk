@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database = require("better-sqlite3");
 import { LocationSuggestionCacheStore, LOCATION_SUGGESTION_CACHE_TTL_MS } from "../src/location-suggestion-cache";
 
 test("location suggestion cache reuses the first result for the same session and query", async () => {
@@ -70,7 +71,7 @@ test("location suggestion cache purges expired entries", async () => {
 
 test("location suggestion cache survives process-like restarts when persisted", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-location-cache-persist-"));
-  const persistPath = join(tempRoot, "location-suggestions.json");
+  const dbPath = join(tempRoot, "location-suggestions.sqlite");
   let calls = 0;
 
   const loader = async () => {
@@ -83,45 +84,42 @@ test("location suggestion cache survives process-like restarts when persisted", 
     }];
   };
 
-  const first = new LocationSuggestionCacheStore({ persistPath });
+  const first = new LocationSuggestionCacheStore({ dbPath });
   await first.getOrLoad("session-a", "costamar", "lim", 8, loader);
-  await new Promise((resolve) => setTimeout(resolve, 180));
 
-  const second = new LocationSuggestionCacheStore({ persistPath });
+  const second = new LocationSuggestionCacheStore({ dbPath });
   const restored = await second.getOrLoad("session-a", "costamar", "LIM", 8, loader);
 
   assert.equal(calls, 1);
   assert.equal(restored.length, 1);
   assert.equal(restored[0]?.code, "LIM");
+  const db = new Database(dbPath, { readonly: true });
+  const rows = db.prepare("SELECT key, payload FROM location_suggestions").all() as Array<{ key: string; payload: string }>;
+  db.close();
+  assert.equal(rows.length, 1);
+  assert.match(rows[0]?.key ?? "", /session-a::costamar::8::LIM/);
 
+  first.close();
+  second.close();
   rmSync(tempRoot, { recursive: true, force: true });
 });
 
 test("location suggestion cache keeps valid persisted entries while reloading expired ones", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-location-cache-expiry-"));
-  const persistPath = join(tempRoot, "location-suggestions.json");
-  mkdirSync(tempRoot, { recursive: true });
-  const nowMs = Date.now();
-  const staleTouchedAtMs = nowMs - LOCATION_SUGGESTION_CACHE_TTL_MS - 2_000;
+  const dbPath = join(tempRoot, "location-suggestions.sqlite");
+  const bootstrap = new LocationSuggestionCacheStore({ dbPath });
 
-  writeFileSync(persistPath, JSON.stringify({
-    version: 1,
-    savedAt: new Date().toISOString(),
-    entries: [
-      {
-        key: "session-a::costamar::8::LIM",
-        touchedAtMs: nowMs - 2_000,
-        expiresAtMs: nowMs + 120_000,
-        suggestions: [{ code: "LIM", city: "Lima", country: "Peru", label: "LIM - Lima, Peru" }],
-      },
-      {
-        key: "session-a::costamar::8::MAD",
-        touchedAtMs: staleTouchedAtMs,
-        expiresAtMs: nowMs - 1,
-        suggestions: [{ code: "MAD", city: "Madrid", country: "Spain", label: "MAD - Madrid, Spain" }],
-      },
-    ],
-  }), "utf8");
+  await bootstrap.getOrLoad("session-a", "costamar", "LIM", 8, async () => [
+    { code: "LIM", city: "Lima", country: "Peru", label: "LIM - Lima, Peru" },
+  ]);
+  await bootstrap.getOrLoad("session-a", "costamar", "MAD", 8, async () => [
+    { code: "MAD", city: "Madrid", country: "Spain", label: "MAD - Madrid, Spain" },
+  ]);
+
+  const db = new Database(dbPath);
+  db.prepare("UPDATE location_suggestions SET expires_at_ms = ? WHERE key = ?")
+    .run(Date.now() - 1, "session-a::costamar::8::MAD");
+  db.close();
 
   let calls = 0;
   const loader = async () => {
@@ -134,7 +132,7 @@ test("location suggestion cache keeps valid persisted entries while reloading ex
     }];
   };
 
-  const cache = new LocationSuggestionCacheStore({ persistPath });
+  const cache = new LocationSuggestionCacheStore({ dbPath });
   const restored = await cache.getOrLoad("session-a", "costamar", "LIM", 8, async () => {
     throw new Error("LIM should come from persisted cache");
   });
@@ -146,5 +144,42 @@ test("location suggestion cache keeps valid persisted entries while reloading ex
   assert.equal(reloaded[0]?.code, "MAD");
   assert.equal(calls, 1);
 
+  bootstrap.close();
+  cache.close();
+  rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test("location suggestion cache migrates valid legacy JSON entries into SQLite", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-location-cache-migrate-"));
+  const dbPath = join(tempRoot, "location-suggestions.sqlite");
+  const legacyPersistPath = join(tempRoot, "location-suggestions.json");
+  mkdirSync(tempRoot, { recursive: true });
+
+  writeFileSync(legacyPersistPath, JSON.stringify({
+    version: 1,
+    savedAt: new Date().toISOString(),
+    entries: [
+      {
+        key: "session-a::costamar::8::LIM",
+        touchedAtMs: Date.now() - 2_000,
+        expiresAtMs: Date.now() + LOCATION_SUGGESTION_CACHE_TTL_MS,
+        suggestions: [{ code: "LIM", city: "Lima", country: "Peru", label: "LIM - Lima, Peru" }],
+      },
+    ],
+  }), "utf8");
+
+  const cache = new LocationSuggestionCacheStore({ dbPath, legacyPersistPath });
+  const restored = await cache.getOrLoad("session-a", "costamar", "LIM", 8, async () => {
+    throw new Error("LIM should come from migrated cache");
+  });
+  const db = new Database(dbPath, { readonly: true });
+  const row = db.prepare("SELECT payload FROM location_suggestions WHERE key = ?")
+    .get("session-a::costamar::8::LIM") as { payload?: string } | undefined;
+  db.close();
+
+  assert.equal(restored[0]?.code, "LIM");
+  assert.ok(row?.payload);
+
+  cache.close();
   rmSync(tempRoot, { recursive: true, force: true });
 });

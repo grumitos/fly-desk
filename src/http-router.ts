@@ -1283,7 +1283,7 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     const query = stringValue(url.searchParams.get("q"));
-    if (query.length < 2) {
+    if (query.length < 1) {
       return json({ query, suggestions: [] });
     }
 
@@ -1299,7 +1299,7 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     const query = stringValue(url.searchParams.get("q"));
-    if (query.length < 2) {
+    if (query.length < 1) {
       return json({ query, suggestions: [] });
     }
 
@@ -1315,7 +1315,7 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     const query = stringValue(url.searchParams.get("q"));
-    if (query.length < 2) {
+    if (query.length < 1) {
       return json({ query, suggestions: [] });
     }
 

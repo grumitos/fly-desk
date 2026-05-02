@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useSearch } from "@/hooks/useSearch"
+import { readSharedSearchFromUrl, writeSharedSearchToUrl, type SharedSearchState } from "@/lib/search-share"
 import type { CanonicalOffer, SearchRequest, SortMode } from "@/types"
 
 type Filters = {
@@ -21,12 +22,14 @@ type Filters = {
 
 export default function App() {
   const { results, loading, error, diagnosticLog, runSearch } = useSearch()
-  const [sortMode, setSortMode] = useState<SortMode>("best-value")
+  const [initialSharedSearch] = useState<SharedSearchState | null>(() => readInitialSharedSearch())
+  const [sortMode, setSortMode] = useState<SortMode>(() => initialSharedSearch?.sortMode ?? "best-value")
   const [selectedOffer, setSelectedOffer] = useState<CanonicalOffer | null>(null)
+  const [initialSharedRequest] = useState<SearchRequest | null>(() => initialSharedSearch?.request ?? null)
   const [lastRequest, setLastRequest] = useState<SearchRequest | null>(null)
   const [workspaceReady, setWorkspaceReady] = useState(false)
-  const [filters, setFilters] = useState<Filters>({})
-  const [selectedAirlines, setSelectedAirlines] = useState<string[]>([])
+  const [filters, setFilters] = useState<Filters>(() => filtersFromRequest(initialSharedSearch?.request))
+  const [selectedAirlines, setSelectedAirlines] = useState<string[]>(() => initialSharedSearch?.request.includedAirlineCodes ?? [])
   const [mobilePanel, setMobilePanel] = useState<"results" | "filters" | "detail">("results")
   const [plainLogView, setPlainLogView] = useState(false)
 
@@ -61,7 +64,7 @@ export default function App() {
   const handleSearch = useCallback(
     (request: SearchRequest, sort?: SortMode) => {
       const merged = { ...request, ...filters, includedAirlineCodes: selectedAirlines }
-      const nextSort = sort ?? "best-value"
+      const nextSort = sort ?? sortMode
       setSelectedOffer(null)
       setSortMode(nextSort)
       setWorkspaceReady(false)
@@ -69,17 +72,21 @@ export default function App() {
         if (started) {
           setLastRequest(merged)
           setWorkspaceReady(true)
+          writeSharedSearchToUrl(merged, nextSort)
         }
       })
     },
-    [filters, runSearch, selectedAirlines]
+    [filters, runSearch, selectedAirlines, sortMode]
   )
 
   const handleSort = useCallback(
     (sort: SortMode) => {
       setSortMode(sort)
       if (lastRequest) {
-        runSearch({ ...lastRequest, sortMode: sort }, sort, { keepPreviousResults: true })
+        const nextRequest = { ...lastRequest, sortMode: sort }
+        setLastRequest(nextRequest)
+        writeSharedSearchToUrl(nextRequest, sort)
+        runSearch(nextRequest, sort, { keepPreviousResults: true })
       }
     },
     [lastRequest, runSearch]
@@ -90,7 +97,10 @@ export default function App() {
       const merged = { ...filters, ...next }
       setFilters(merged)
       if (lastRequest) {
-        runSearch({ ...lastRequest, ...merged, includedAirlineCodes: selectedAirlines }, sortMode, {
+        const nextRequest = { ...lastRequest, ...merged, includedAirlineCodes: selectedAirlines }
+        setLastRequest(nextRequest)
+        writeSharedSearchToUrl(nextRequest, sortMode)
+        runSearch(nextRequest, sortMode, {
           keepPreviousResults: true,
         })
       }
@@ -102,18 +112,17 @@ export default function App() {
     setFilters({})
     setSelectedAirlines([])
     if (lastRequest) {
-      runSearch(
-        {
-          ...lastRequest,
-          nonStop: undefined,
-          maxStopsFilter: undefined,
-          maxLayoverMinutes: undefined,
-          baggageRequired: undefined,
-          includedAirlineCodes: undefined,
-        },
-        sortMode,
-        { keepPreviousResults: true }
-      )
+      const nextRequest = {
+        ...lastRequest,
+        nonStop: undefined,
+        maxStopsFilter: undefined,
+        maxLayoverMinutes: undefined,
+        baggageRequired: undefined,
+        includedAirlineCodes: undefined,
+      }
+      setLastRequest(nextRequest)
+      writeSharedSearchToUrl(nextRequest, sortMode)
+      runSearch(nextRequest, sortMode, { keepPreviousResults: true })
     }
   }, [lastRequest, runSearch, sortMode])
 
@@ -123,7 +132,10 @@ export default function App() {
       : [...selectedAirlines, airline]
     setSelectedAirlines(nextAirlines)
     if (lastRequest) {
-      runSearch({ ...lastRequest, ...filters, includedAirlineCodes: nextAirlines }, sortMode, { keepPreviousResults: true })
+      const nextRequest = { ...lastRequest, ...filters, includedAirlineCodes: nextAirlines }
+      setLastRequest(nextRequest)
+      writeSharedSearchToUrl(nextRequest, sortMode)
+      runSearch(nextRequest, sortMode, { keepPreviousResults: true })
     }
   }, [filters, lastRequest, runSearch, selectedAirlines, sortMode])
 
@@ -165,6 +177,7 @@ export default function App() {
               onSearch={handleSearch}
               loading={loading}
               controlsPlacement={shouldShowWorkspace ? "topbar" : "inline"}
+              syncedRequest={lastRequest ?? initialSharedRequest}
             />
 
             {error && (
@@ -190,7 +203,7 @@ export default function App() {
               onValueChange={(value) => setMobilePanel(value as "results" | "filters" | "detail")}
               className="min-h-0 flex-1 gap-2.5"
             >
-              <TabsList className="grid grid-cols-3 gap-1 xl:hidden">
+              <TabsList className="grid grid-cols-3 xl:hidden">
                 {mobileTabs.map((tab) => (
                   <TabsTrigger
                     key={tab.id}
@@ -421,4 +434,23 @@ function formatAlertLines(message: string) {
     .split(/\n+/)
     .map((line) => line.trim())
     .filter(Boolean)
+}
+
+function readInitialSharedSearch(): SharedSearchState | null {
+  try {
+    return readSharedSearchFromUrl(new URL(window.location.href))
+  } catch {
+    return null
+  }
+}
+
+function filtersFromRequest(request: SearchRequest | null | undefined): Filters {
+  if (!request) return {}
+
+  return {
+    nonStop: request.nonStop,
+    maxStopsFilter: request.maxStopsFilter,
+    maxLayoverMinutes: request.maxLayoverMinutes,
+    baggageRequired: request.baggageRequired,
+  }
 }

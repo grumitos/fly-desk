@@ -1,5 +1,4 @@
 export function bootstrapAppShell({
-  SEARCH_CONFIG_CLIPBOARD_KEY,
   swapRouteBtn,
   $,
   hideLocationMenu,
@@ -19,7 +18,6 @@ export function bootstrapAppShell({
   syncCalendarPopoverPosition,
   syncWorkspaceViewportHeight,
   syncSearchShellLayoutMetrics,
-  syncSearchClipboardUI,
   beforeInitialRender,
   renderAll,
   settleInitialShellLayout,
@@ -78,14 +76,7 @@ export function bootstrapAppShell({
     syncCalendarPopoverPosition();
   }, true);
 
-  window.addEventListener("storage", (event) => {
-    if (event.key === SEARCH_CONFIG_CLIPBOARD_KEY) {
-      syncSearchClipboardUI();
-    }
-  });
-
   const finalizeBoot = () => {
-    syncSearchClipboardUI();
     renderAll();
     settleInitialShellLayout();
     releaseInitialUiBootState();

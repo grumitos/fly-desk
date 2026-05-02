@@ -3,6 +3,10 @@ import type { LocationSuggestion } from "@/types"
 import { getCachedLocationSuggestions, suggestLocations } from "@/lib/api"
 import { findLocationSuggestionMatch } from "@/lib/locations"
 
+interface UpdateQueryOptions {
+  showSuggestions?: boolean
+}
+
 export function useAutocomplete(
   field: "origin" | "destination",
   onResolved?: (suggestion: LocationSuggestion) => void
@@ -19,48 +23,73 @@ export function useAutocomplete(
   const resolvedLabelRef = useRef("")
   const queryRef = useRef("")
   const onResolvedRef = useRef(onResolved)
+  const shouldWarmQueryRef = useRef(false)
 
   useEffect(() => {
     onResolvedRef.current = onResolved
   }, [onResolved])
 
-  const updateQuery = useCallback((value: string) => {
-    queryRef.current = value
-    setQuery(value)
+  const inputHasFocus = useCallback(() => inputRef.current === document.activeElement, [])
+
+  const closeSuggestions = useCallback(() => {
+    setSuggestions([])
+    setOpen(false)
+    setActiveIndex(-1)
   }, [])
+
+  const updateQuery = useCallback((value: string, options: UpdateQueryOptions = {}) => {
+    queryRef.current = value
+    shouldWarmQueryRef.current = Boolean(options.showSuggestions)
+    setQuery(value)
+    if (!options.showSuggestions) {
+      closeSuggestions()
+    }
+  }, [closeSuggestions])
+
+  const showSuggestions = useCallback((available: LocationSuggestion[]) => {
+    setOpen(inputHasFocus() && available.length > 0)
+    setActiveIndex(-1)
+  }, [inputHasFocus])
+
+  const openSuggestions = useCallback(() => {
+    setOpen(suggestions.length > 0)
+  }, [suggestions.length])
 
   const warmSuggestions = useCallback(async (q: string) => {
     const requestSeq = ++requestSeqRef.current
-    if (q.length < 2) {
-      setSuggestions([])
-      setOpen(false)
+    if (q.trim().length < 1) {
+      closeSuggestions()
       return
     }
 
     const cached = getCachedLocationSuggestions(q)
     setSuggestions(cached)
-    setOpen(cached.length > 0)
-    setActiveIndex(-1)
+    showSuggestions(cached)
+    if (cached.length > 0) {
+      return
+    }
 
     try {
       const fresh = await suggestLocations(q)
       if (requestSeq === requestSeqRef.current && queryRef.current === q) {
         setSuggestions(fresh)
-        setOpen(fresh.length > 0)
-        setActiveIndex(-1)
+        showSuggestions(fresh)
       }
     } catch {
       if (requestSeq === requestSeqRef.current) {
-        setSuggestions([])
-        setOpen(false)
+        closeSuggestions()
       }
     }
-  }, [])
+  }, [closeSuggestions, showSuggestions])
 
   useEffect(() => {
     if (query && query === resolvedLabelRef.current) {
-      setSuggestions([])
-      setOpen(false)
+      closeSuggestions()
+      return
+    }
+
+    if (!shouldWarmQueryRef.current || !inputHasFocus()) {
+      closeSuggestions()
       return
     }
 
@@ -69,16 +98,15 @@ export function useAutocomplete(
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current)
     }
-  }, [query, warmSuggestions])
+  }, [closeSuggestions, inputHasFocus, query, warmSuggestions])
 
   const selectSuggestion = useCallback((s: LocationSuggestion) => {
     resolvedLabelRef.current = s.label
     queryRef.current = s.label
     setQuery(s.label)
-    setOpen(false)
-    setActiveIndex(-1)
+    closeSuggestions()
     onResolvedRef.current?.(s)
-  }, [])
+  }, [closeSuggestions])
 
   const resolveCurrentQuery = useCallback(async (): Promise<LocationSuggestion | undefined> => {
     const value = queryRef.current.trim()
@@ -86,16 +114,14 @@ export function useAutocomplete(
     if (debounceRef.current) window.clearTimeout(debounceRef.current)
 
     if (!value || value === resolvedLabelRef.current) {
-      setSuggestions([])
-      setOpen(false)
-      setActiveIndex(-1)
+      closeSuggestions()
       return undefined
     }
 
     const cached = getCachedLocationSuggestions(value)
     let exactMatch = findLocationSuggestionMatch(value, cached)
 
-    if (!exactMatch && value.length >= 2) {
+    if (!exactMatch && value.length >= 1) {
       try {
         exactMatch = findLocationSuggestionMatch(value, await suggestLocations(value))
       } catch {
@@ -110,11 +136,9 @@ export function useAutocomplete(
       onResolvedRef.current?.(exactMatch)
     }
 
-    setSuggestions([])
-    setOpen(false)
-    setActiveIndex(-1)
+    closeSuggestions()
     return exactMatch
-  }, [])
+  }, [closeSuggestions])
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -144,6 +168,7 @@ export function useAutocomplete(
     suggestions,
     open,
     setOpen,
+    openSuggestions,
     activeIndex,
     setActiveIndex,
     onKeyDown,
