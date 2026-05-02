@@ -43,7 +43,11 @@ export function getRuntime(): RuntimeServices {
       new LocalCostamarProvider(),
     ]),
     locationSuggestions: new LocationSuggestionCacheStore({
-      persistPath: resolvePersistPath(
+      dbPath: resolvePersistPath(
+        "FLY_DESK_LOCATION_SUGGESTION_DB_PATH",
+        "location-suggestion-cache.sqlite",
+      ),
+      legacyPersistPath: resolvePersistPath(
         "FLY_DESK_LOCATION_SUGGESTION_CACHE_PATH",
         "location-suggestion-cache.json",
       ),

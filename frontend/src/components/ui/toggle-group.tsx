@@ -3,6 +3,7 @@ import * as ToggleGroupPrimitive from "@radix-ui/react-toggle-group"
 import type { VariantProps } from "class-variance-authority"
 
 import { buttonVariants } from "@/components/ui/button-variants"
+import { segmentedControlClassName, segmentedItemBaseClassName, segmentedItemDataStateClassName } from "@/components/ui/segmented-control-classes"
 import { cn } from "@/lib/utils"
 
 function ToggleGroup({
@@ -18,7 +19,7 @@ function ToggleGroup({
       data-slot="toggle-group"
       data-variant={variant}
       data-size={size}
-      className={cn("inline-flex items-center rounded-lg border border-input bg-secondary p-0.5", className)}
+      className={cn(segmentedControlClassName, className)}
       {...props}
     >
       {React.Children.map(children, (child) =>
@@ -45,7 +46,9 @@ function ToggleGroupItem({
       data-slot="toggle-group-item"
       className={cn(
         buttonVariants({ variant, size }),
-        "border-0 bg-transparent shadow-none data-[state=on]:bg-card data-[state=on]:text-foreground data-[state=on]:shadow-sm data-[state=off]:text-muted-foreground data-[state=off]:hover:bg-transparent data-[state=off]:hover:text-foreground",
+        segmentedItemBaseClassName,
+        segmentedItemDataStateClassName,
+        "border-0 bg-transparent shadow-none",
         className
       )}
       {...props}

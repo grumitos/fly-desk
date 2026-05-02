@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
+import Database = require("better-sqlite3");
 import { LocationSuggestion, ProviderId } from "./core/types";
 
 export const LOCATION_SUGGESTION_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -29,7 +30,17 @@ interface PersistedLocationSuggestionCache {
   }>;
 }
 
+interface SqliteLocationSuggestionRow {
+  key: string;
+  session_id: string;
+  expires_at_ms: number;
+  touched_at_ms: number;
+  payload: string;
+}
+
 interface LocationSuggestionCacheStoreOptions {
+  dbPath?: string;
+  legacyPersistPath?: string;
   persistPath?: string;
 }
 
@@ -55,18 +66,31 @@ function cacheKey(parts: CacheKeyParts): string {
   ].join("::");
 }
 
+function parseJsonPayload<T>(payload: string): T | undefined {
+  try {
+    return JSON.parse(payload) as T;
+  } catch {
+    return undefined;
+  }
+}
+
 export class LocationSuggestionCacheStore {
   private readonly entries = new Map<string, CacheEntry>();
   private readonly inflight = new Map<string, Promise<LocationSuggestion[]>>();
   private readonly sessionKeys = new Map<string, Set<string>>();
-  private readonly persistPath: string | undefined;
-  private persistTimer: NodeJS.Timeout | undefined;
+  private readonly dbPath: string | undefined;
+  private readonly legacyPersistPath: string | undefined;
+  private readonly db: Database.Database | undefined;
   private bootstrapping = false;
-  private lastPersistedPayload = "";
 
   constructor(options?: LocationSuggestionCacheStoreOptions) {
-    this.persistPath = options?.persistPath?.trim() || undefined;
-    if (this.persistPath) {
+    this.dbPath = options?.dbPath?.trim() || undefined;
+    this.legacyPersistPath = options?.legacyPersistPath?.trim() || options?.persistPath?.trim() || undefined;
+
+    if (this.dbPath) {
+      mkdirSync(dirname(this.dbPath), { recursive: true });
+      this.db = new Database(this.dbPath);
+      this.initializeDatabase();
       this.loadPersisted();
     }
   }
@@ -91,6 +115,7 @@ export class LocationSuggestionCacheStore {
 
     if (cached && cached.expiresAtMs > nowMs) {
       cached.touchedAtMs = nowMs;
+      this.persistEntry(key, normalizedSessionId, providerId, query, normalizedLimit, cached);
       return cloneSuggestions(cached.suggestions);
     }
 
@@ -105,16 +130,17 @@ export class LocationSuggestionCacheStore {
 
     const promise = loader()
       .then((suggestions) => {
-        const nextSuggestions = cloneSuggestions(suggestions);
-        this.entries.set(key, {
-          suggestions: nextSuggestions,
-          expiresAtMs: nowMs + LOCATION_SUGGESTION_CACHE_TTL_MS,
-          touchedAtMs: nowMs,
-        });
+        const resolvedAtMs = Date.now();
+        const nextEntry = {
+          suggestions: cloneSuggestions(suggestions),
+          expiresAtMs: resolvedAtMs + LOCATION_SUGGESTION_CACHE_TTL_MS,
+          touchedAtMs: resolvedAtMs,
+        };
+        this.entries.set(key, nextEntry);
         this.trackKey(normalizedSessionId, key);
         this.trimSession(normalizedSessionId);
-        this.schedulePersist();
-        return cloneSuggestions(nextSuggestions);
+        this.persistEntry(key, normalizedSessionId, providerId, query, normalizedLimit, nextEntry);
+        return cloneSuggestions(nextEntry.suggestions);
       })
       .finally(() => {
         this.inflight.delete(key);
@@ -125,17 +151,14 @@ export class LocationSuggestionCacheStore {
   }
 
   purgeExpired(nowMs = Date.now()): void {
-    let removed = false;
     for (const [key, entry] of this.entries) {
       if (entry.expiresAtMs <= nowMs) {
         const sessionId = key.split("::", 1)[0] ?? "anonymous";
         this.deleteKey(sessionId, key);
-        removed = true;
       }
     }
-    if (removed) {
-      this.schedulePersist();
-    }
+
+    this.db?.prepare("DELETE FROM location_suggestions WHERE expires_at_ms <= ?").run(nowMs);
   }
 
   getDiagnostics() {
@@ -144,8 +167,12 @@ export class LocationSuggestionCacheStore {
       sessions: this.sessionKeys.size,
       entries: this.entries.size,
       inflight: this.inflight.size,
-      persistence: this.persistPath ? "enabled" : "disabled",
+      persistence: this.dbPath ? "sqlite" : "disabled",
     };
+  }
+
+  close(): void {
+    this.db?.close();
   }
 
   private trackKey(sessionId: string, key: string): void {
@@ -180,110 +207,243 @@ export class LocationSuggestionCacheStore {
     this.entries.delete(key);
     this.inflight.delete(key);
     const keys = this.sessionKeys.get(sessionId);
-    if (!keys) {
-      return;
+    if (keys) {
+      keys.delete(key);
+      if (keys.size === 0) {
+        this.sessionKeys.delete(sessionId);
+      }
     }
-    keys.delete(key);
-    if (keys.size === 0) {
-      this.sessionKeys.delete(sessionId);
+
+    if (!this.bootstrapping) {
+      this.db?.prepare("DELETE FROM location_suggestions WHERE key = ?").run(key);
     }
-    this.schedulePersist();
   }
 
-  private schedulePersist(): void {
-    if (!this.persistPath || this.bootstrapping || this.persistTimer) {
+  private initializeDatabase(): void {
+    if (!this.db) {
       return;
     }
 
-    this.persistTimer = setTimeout(() => {
-      this.persistTimer = undefined;
-      this.persistNow();
-    }, 120);
-    this.persistTimer.unref?.();
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS location_suggestions (
+        key TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        provider_id TEXT NOT NULL,
+        query TEXT NOT NULL,
+        limit_value INTEGER NOT NULL,
+        expires_at_ms INTEGER NOT NULL,
+        touched_at_ms INTEGER NOT NULL,
+        payload TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_location_suggestions_expiry
+        ON location_suggestions (expires_at_ms);
+
+      CREATE INDEX IF NOT EXISTS idx_location_suggestions_session_touch
+        ON location_suggestions (session_id, touched_at_ms);
+    `);
   }
 
   private loadPersisted(): void {
-    if (!this.persistPath || !existsSync(this.persistPath)) {
+    if (!this.db) {
       return;
     }
 
     try {
-      const parsed = JSON.parse(readFileSync(this.persistPath, "utf8")) as PersistedLocationSuggestionCache;
-      if (parsed?.version !== 1 || !Array.isArray(parsed.entries)) {
-        return;
-      }
-
       this.bootstrapping = true;
-      const nowMs = Date.now();
-      parsed.entries.forEach((entry) => {
-        const key = String(entry?.key ?? "").trim();
-        if (!key) {
-          return;
-        }
-
-        const expiresAtMs = Number(entry?.expiresAtMs);
-        const touchedAtMs = Number(entry?.touchedAtMs);
-        const suggestions = Array.isArray(entry?.suggestions)
-          ? entry.suggestions.map((suggestion) => ({ ...suggestion }))
-          : [];
-        if (!Number.isFinite(expiresAtMs) || !Number.isFinite(touchedAtMs) || expiresAtMs <= nowMs) {
-          return;
-        }
-
-        this.entries.set(key, {
-          suggestions,
-          expiresAtMs,
-          touchedAtMs,
-        });
-        const sessionId = key.split("::", 1)[0] ?? "anonymous";
-        this.trackKey(sessionId, key);
-      });
-    } catch {
-      // Ignore malformed cache files and start fresh in-memory.
+      this.db.prepare("DELETE FROM location_suggestions WHERE expires_at_ms <= ?").run(Date.now());
+      const migrated = this.migrateLegacyJsonIfNeeded();
+      if (!migrated) {
+        this.loadSqlitePayload();
+      }
     } finally {
       this.bootstrapping = false;
     }
 
-    this.lastPersistedPayload = JSON.stringify(this.buildPersistencePayload());
     this.purgeExpired();
   }
 
-  private buildPersistencePayload(): PersistedLocationSuggestionCache {
-    const entries = [...this.entries.entries()]
-      .map(([key, entry]) => ({
-        key,
-        suggestions: cloneSuggestions(entry.suggestions),
-        expiresAtMs: entry.expiresAtMs,
-        touchedAtMs: entry.touchedAtMs,
-      }))
-      .sort((left, right) => left.key.localeCompare(right.key));
+  private migrateLegacyJsonIfNeeded(): boolean {
+    if (!this.db || !this.legacyPersistPath || !existsSync(this.legacyPersistPath) || this.databaseHasRows()) {
+      return false;
+    }
 
-    return {
-      version: 1,
-      savedAt: new Date().toISOString(),
-      entries,
-    };
+    const parsed = this.readLegacyJsonPayload();
+    if (!parsed) {
+      return false;
+    }
+
+    this.loadLegacyPayload(parsed);
+    this.persistAllEntries();
+
+    try {
+      rmSync(this.legacyPersistPath, { force: true });
+    } catch {
+      // Keep the imported SQLite cache even if the old JSON file cannot be removed.
+    }
+    return true;
   }
 
-  private persistNow(): void {
-    if (!this.persistPath) {
-      return;
+  private readLegacyJsonPayload(): PersistedLocationSuggestionCache | undefined {
+    if (!this.legacyPersistPath) {
+      return undefined;
     }
 
     try {
-      const payload = this.buildPersistencePayload();
-      const serialized = JSON.stringify(payload);
-      if (serialized === this.lastPersistedPayload) {
-        return;
+      const parsed = JSON.parse(readFileSync(this.legacyPersistPath, "utf8")) as PersistedLocationSuggestionCache;
+      if (parsed?.version !== 1 || !Array.isArray(parsed.entries)) {
+        return undefined;
+      }
+      return parsed;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private databaseHasRows(): boolean {
+    if (!this.db) {
+      return false;
+    }
+
+    const row = this.db
+      .prepare("SELECT COUNT(*) AS total FROM location_suggestions")
+      .get() as { total?: number } | undefined;
+    return Number(row?.total ?? 0) > 0;
+  }
+
+  private loadSqlitePayload(): void {
+    if (!this.db) {
+      return;
+    }
+
+    const rows = this.db
+      .prepare("SELECT key, session_id, expires_at_ms, touched_at_ms, payload FROM location_suggestions ORDER BY key")
+      .all() as SqliteLocationSuggestionRow[];
+
+    for (const row of rows) {
+      const suggestions = parseJsonPayload<LocationSuggestion[]>(row.payload);
+      if (!Array.isArray(suggestions)) {
+        this.db.prepare("DELETE FROM location_suggestions WHERE key = ?").run(row.key);
+        continue;
       }
 
-      mkdirSync(dirname(this.persistPath), { recursive: true });
-      const tempPath = `${this.persistPath}.${process.pid}.tmp`;
-      writeFileSync(tempPath, serialized, "utf8");
-      renameSync(tempPath, this.persistPath);
-      this.lastPersistedPayload = serialized;
-    } catch {
-      // Ignore persistence failures; in-memory cache remains available.
+      this.entries.set(row.key, {
+        suggestions: cloneSuggestions(suggestions),
+        expiresAtMs: Number(row.expires_at_ms),
+        touchedAtMs: Number(row.touched_at_ms),
+      });
+      this.trackKey(row.session_id, row.key);
     }
+  }
+
+  private loadLegacyPayload(parsed: PersistedLocationSuggestionCache): void {
+    const nowMs = Date.now();
+    for (const entry of parsed.entries) {
+      const key = String(entry?.key ?? "").trim();
+      if (!key || !Array.isArray(entry?.suggestions)) {
+        continue;
+      }
+
+      const expiresAtMs = Number(entry.expiresAtMs);
+      const touchedAtMs = Number(entry.touchedAtMs);
+      if (!Number.isFinite(expiresAtMs) || !Number.isFinite(touchedAtMs) || expiresAtMs <= nowMs) {
+        continue;
+      }
+
+      const sessionId = key.split("::", 1)[0] ?? "anonymous";
+      this.entries.set(key, {
+        suggestions: cloneSuggestions(entry.suggestions),
+        expiresAtMs,
+        touchedAtMs,
+      });
+      this.trackKey(sessionId, key);
+    }
+  }
+
+  private persistEntry(
+    key: string,
+    sessionId: string,
+    providerId: ProviderId,
+    query: string,
+    limit: number,
+    entry: CacheEntry,
+  ): void {
+    if (!this.db || this.bootstrapping) {
+      return;
+    }
+
+    this.db.prepare(`
+      INSERT INTO location_suggestions (
+        key,
+        session_id,
+        provider_id,
+        query,
+        limit_value,
+        expires_at_ms,
+        touched_at_ms,
+        payload
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        session_id = excluded.session_id,
+        provider_id = excluded.provider_id,
+        query = excluded.query,
+        limit_value = excluded.limit_value,
+        expires_at_ms = excluded.expires_at_ms,
+        touched_at_ms = excluded.touched_at_ms,
+        payload = excluded.payload
+    `).run(
+      key,
+      sessionId,
+      providerId,
+      normalizeQuery(query),
+      limit,
+      entry.expiresAtMs,
+      entry.touchedAtMs,
+      JSON.stringify(entry.suggestions),
+    );
+  }
+
+  private persistAllEntries(): void {
+    if (!this.db) {
+      return;
+    }
+
+    const insert = this.db.prepare(`
+      INSERT INTO location_suggestions (
+        key,
+        session_id,
+        provider_id,
+        query,
+        limit_value,
+        expires_at_ms,
+        touched_at_ms,
+        payload
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        session_id = excluded.session_id,
+        provider_id = excluded.provider_id,
+        query = excluded.query,
+        limit_value = excluded.limit_value,
+        expires_at_ms = excluded.expires_at_ms,
+        touched_at_ms = excluded.touched_at_ms,
+        payload = excluded.payload
+    `);
+    const write = this.db.transaction(() => {
+      for (const [key, entry] of this.entries) {
+        const [sessionId = "anonymous", providerId = "costamar", rawLimit = "8", query = ""] = key.split("::");
+        insert.run(
+          key,
+          sessionId,
+          providerId,
+          query,
+          Math.max(1, Math.trunc(Number(rawLimit) || 8)),
+          entry.expiresAtMs,
+          entry.touchedAtMs,
+          JSON.stringify(entry.suggestions),
+        );
+      }
+    });
+
+    write();
   }
 }

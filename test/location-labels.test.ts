@@ -1,6 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { findLocationSuggestionMatch, normalizeLocationSuggestion } from "../frontend/src/lib/locations"
+import { filterLocationSuggestions, findLocationSuggestionMatch, normalizeLocationSuggestion } from "../frontend/src/lib/locations"
+import { rankLocationSuggestions as rankBackendLocationSuggestions } from "../src/location-suggestions"
 
 test("location labels use IATA - city, country and remove all-airports noise", () => {
   const suggestion = normalizeLocationSuggestion({
@@ -52,4 +53,24 @@ test("location match avoids ambiguous country matches", () => {
   ]
 
   assert.equal(findLocationSuggestionMatch("peru", suggestions), undefined)
+})
+
+test("location suggestions prefer IATA prefix, then city prefix, then country prefix", () => {
+  const suggestions = [
+    normalizeLocationSuggestion({ code: "AGU", city: "Aguascalientes", country: "México", countryCode: "MX", label: "AGU - Aguascalientes, México" }),
+    normalizeLocationSuggestion({ code: "ALC", city: "Alicante", country: "España", countryCode: "ES", label: "ALC - Alicante, España" }),
+    normalizeLocationSuggestion({ code: "ALI", city: "Alice", country: "Estados Unidos", countryCode: "US", label: "ALI - Alice, Estados Unidos" }),
+    normalizeLocationSuggestion({ code: "LIM", city: "Lima", country: "Perú", countryCode: "PE", label: "LIM - Lima, Perú" }),
+    normalizeLocationSuggestion({ code: "LIS", city: "Lisboa", country: "Portugal", countryCode: "PT", label: "LIS - Lisboa, Portugal" }),
+    normalizeLocationSuggestion({ code: "MEX", city: "Ciudad de México", country: "Liechtenstein", countryCode: "LI", label: "MEX - Ciudad de México, Liechtenstein" }),
+  ]
+
+  assert.deepEqual(
+    filterLocationSuggestions("li", suggestions, 8).map((suggestion) => suggestion.code),
+    ["LIM", "LIS", "MEX"],
+  )
+  assert.deepEqual(
+    rankBackendLocationSuggestions("li", suggestions, 8).map((suggestion) => suggestion.code),
+    ["LIM", "LIS", "MEX"],
+  )
 })

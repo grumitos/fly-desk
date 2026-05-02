@@ -49,6 +49,7 @@ import {
   SearchRequest,
   Segment,
 } from "./core/types";
+import { rankLocationSuggestions } from "./location-suggestions";
 
 interface BrowserStorageSnapshot {
   tokenSearchFlight: string;
@@ -1492,7 +1493,7 @@ function mapAgilGeoTreeLocation(entry: AgilGeoTreeLocation): AgilLocationSuggest
 
 export async function suggestLocalAgilLocations(query: string, limit = 8): Promise<AgilLocationSuggestion[]> {
   const normalizedQuery = query.trim();
-  if (normalizedQuery.length < 2) {
+  if (normalizedQuery.length < 1) {
     return [];
   }
 
@@ -1531,7 +1532,7 @@ export async function suggestLocalAgilLocations(query: string, limit = 8): Promi
     }
   }
 
-  return [...deduped.values()].slice(0, Math.max(1, limit));
+  return rankLocationSuggestions(normalizedQuery, [...deduped.values()], limit) as AgilLocationSuggestion[];
 }
 
 function buildPurchasePaths(request: SearchRequest): PurchasePath[] {

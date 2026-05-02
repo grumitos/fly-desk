@@ -1,9 +1,10 @@
-import { useMemo, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type RefObject } from "react"
 import { createPortal } from "react-dom"
 import { es } from "react-day-picker/locale"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-control"
 import { TOPBAR_SEARCH_CONTROLS_ID } from "@/components/TopBar"
 import { AppIcon, type AppIconName } from "@/components/ui/app-icon"
 import { useAutocomplete } from "@/hooks/useAutocomplete"
@@ -25,9 +26,10 @@ interface SearchShellProps {
   onSearch: (req: SearchRequest, sort?: SortMode) => void
   loading: boolean
   controlsPlacement?: "inline" | "topbar"
+  syncedRequest?: SearchRequest | null
 }
 
-export function SearchShell({ onSearch, loading, controlsPlacement = "inline" }: SearchShellProps) {
+export function SearchShell({ onSearch, loading, controlsPlacement = "inline", syncedRequest = null }: SearchShellProps) {
   const [mode, setMode] = useState<SearchModeControl>("exact")
   const [trip, setTrip] = useState<"round-trip" | "one-way">("round-trip")
   const [originCode, setOriginCode] = useState("")
@@ -50,15 +52,51 @@ export function SearchShell({ onSearch, loading, controlsPlacement = "inline" }:
   const returnMinDate = maxIsoDate(datePolicy.minSearchDate, departureDate || datePolicy.minSearchDate)
   const departureLabel = mode === "flexible" ? "Salida desde" : "Salida"
   const endDateLabel = mode === "flexible" ? "Salida hasta" : "Regreso"
+  const dateFieldsDisabled = mode === "migration"
   const searchGridClassName = cn(
-    "grid grid-cols-1 gap-1.5",
-    mode === "migration"
-      ? "lg:grid-cols-[minmax(180px,1.2fr)_34px_minmax(180px,1.2fr)_minmax(144px,.9fr)_124px]"
-      : "lg:grid-cols-[minmax(150px,1.2fr)_34px_minmax(150px,1.2fr)_minmax(128px,.85fr)_minmax(128px,.85fr)_minmax(144px,.9fr)_124px]",
+    "grid grid-cols-1 gap-1.5 transition-[grid-template-columns] duration-200 ease-out",
+    "lg:grid-cols-[minmax(150px,1.2fr)_34px_minmax(150px,1.2fr)_minmax(128px,.85fr)_minmax(128px,.85fr)_minmax(144px,.9fr)_124px]",
   )
 
   const origin = useAutocomplete("origin", (suggestion) => setOriginCode(suggestion.code))
   const destination = useAutocomplete("destination", (suggestion) => setDestCode(suggestion.code))
+  const setOriginQuery = origin.setQuery
+  const setDestinationQuery = destination.setQuery
+  const resolveOriginQuery = origin.resolveCurrentQuery
+  const resolveDestinationQuery = destination.resolveCurrentQuery
+
+  useEffect(() => {
+    if (!syncedRequest) return
+
+    const frame = window.requestAnimationFrame(() => {
+      const nextMode = modeFromSearchRequest(syncedRequest)
+      const nextTrip = syncedRequest.searchMode === "month-view" ? "one-way" : syncedRequest.tripType
+      const nextOrigin = syncedRequest.origin.toUpperCase().trim()
+      const nextDestination = syncedRequest.destination.toUpperCase().trim()
+
+      setMode(nextMode)
+      setTrip(nextTrip)
+      setOriginCode(nextOrigin)
+      setDestCode(nextDestination)
+      setOriginQuery(nextOrigin)
+      setDestinationQuery(nextDestination)
+      setDepartureDate(dateStartFromSearchRequest(syncedRequest))
+      setReturnDate(dateEndFromSearchRequest(syncedRequest))
+      setStayNights(syncedRequest.stayNights ?? 7)
+      if (syncedRequest.searchMode !== "exact") {
+        setExpandFlexibleWindow(false)
+      }
+      setTouched({
+        origin: false,
+        destination: false,
+        departureDate: false,
+        returnDate: false,
+      })
+      void resolveOriginQuery()
+      void resolveDestinationQuery()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [resolveDestinationQuery, resolveOriginQuery, setDestinationQuery, setOriginQuery, syncedRequest])
 
   const updateAdults = (nextAdults: number) => {
     const clampedAdults = Math.max(1, Math.min(nextAdults, 9))
@@ -220,34 +258,33 @@ export function SearchShell({ onSearch, loading, controlsPlacement = "inline" }:
         <form onSubmit={handleSubmit}>
           <div className={searchGridClassName}>
             <LocationField
-            label="Origen"
-            value={origin.query}
-            inputRef={origin.inputRef}
-            suggestions={origin.suggestions}
-            open={origin.open}
-            activeIndex={origin.activeIndex}
-            placeholder="Ciudad o IATA"
-            icon="location"
-            roundedClass="lg:rounded-l-lg"
-            onFocus={() => origin.setOpen(true)}
-            onBlur={() => {
-              setTouched((current) => ({ ...current, origin: true }))
-              return origin.resolveCurrentQuery()
-            }}
-            onKeyDown={origin.onKeyDown}
-            onChange={(value) => {
-              origin.setQuery(value)
-              setOriginCode(value)
-              origin.setOpen(true)
-              setTouched((current) => ({ ...current, origin: true }))
-            }}
-            onSelect={(suggestion) => {
-              origin.selectSuggestion(suggestion)
-              setOriginCode(suggestion.code)
-              setTouched((current) => ({ ...current, origin: true }))
-            }}
-            invalid={touched.origin && Boolean(validation.origin)}
-          />
+              label="Origen"
+              value={origin.query}
+              inputRef={origin.inputRef}
+              suggestions={origin.suggestions}
+              open={origin.open}
+              activeIndex={origin.activeIndex}
+              placeholder="Ciudad o IATA"
+              icon="location"
+              roundedClass="lg:rounded-l-lg"
+              onFocus={origin.openSuggestions}
+              onBlur={() => {
+                setTouched((current) => ({ ...current, origin: true }))
+                return origin.resolveCurrentQuery()
+              }}
+              onKeyDown={origin.onKeyDown}
+              onChange={(value) => {
+                origin.setQuery(value, { showSuggestions: true })
+                setOriginCode(value)
+                setTouched((current) => ({ ...current, origin: true }))
+              }}
+              onSelect={(suggestion) => {
+                origin.selectSuggestion(suggestion)
+                setOriginCode(suggestion.code)
+                setTouched((current) => ({ ...current, origin: true }))
+              }}
+              invalid={touched.origin && Boolean(validation.origin)}
+            />
 
           <div className="hidden items-center justify-center lg:flex">
             <Button
@@ -271,16 +308,15 @@ export function SearchShell({ onSearch, loading, controlsPlacement = "inline" }:
             activeIndex={destination.activeIndex}
             placeholder="Ciudad o IATA"
             icon="location"
-            onFocus={() => destination.setOpen(true)}
+            onFocus={destination.openSuggestions}
             onBlur={() => {
               setTouched((current) => ({ ...current, destination: true }))
               return destination.resolveCurrentQuery()
             }}
             onKeyDown={destination.onKeyDown}
             onChange={(value) => {
-              destination.setQuery(value)
+              destination.setQuery(value, { showSuggestions: true })
               setDestCode(value)
-              destination.setOpen(true)
               setTouched((current) => ({ ...current, destination: true }))
             }}
             onSelect={(suggestion) => {
@@ -291,36 +327,34 @@ export function SearchShell({ onSearch, loading, controlsPlacement = "inline" }:
             invalid={touched.destination && Boolean(validation.destination)}
           />
 
-          {mode !== "migration" && (
-            <>
-              <DateField
-                label={departureLabel}
-                value={departureDate}
-                minDate={datePolicy.minSearchDate}
-                maxDate={datePolicy.maxSearchDate}
-                onChange={(value) => {
-                  handleDepartureDateChange(value)
-                  setTouched((current) => ({ ...current, departureDate: true }))
-                }}
-                invalid={touched.departureDate && Boolean(validation.departureDate)}
-                onTouch={() => setTouched((current) => ({ ...current, departureDate: true }))}
-              />
-              <DateField
-                label={endDateLabel}
-                value={returnDate}
-                minDate={returnMinDate}
-                maxDate={datePolicy.maxSearchDate}
-                disabled={mode === "exact" && trip === "one-way"}
-                disabledLabel="No aplica"
-                onChange={(value) => {
-                  handleReturnDateChange(value)
-                  setTouched((current) => ({ ...current, returnDate: true }))
-                }}
-                invalid={mode !== "exact" || trip !== "one-way" ? touched.returnDate && Boolean(validation.returnDate) : false}
-                onTouch={() => setTouched((current) => ({ ...current, returnDate: true }))}
-              />
-            </>
-          )}
+          <DateField
+            label={departureLabel}
+            value={departureDate}
+            minDate={datePolicy.minSearchDate}
+            maxDate={datePolicy.maxSearchDate}
+            disabled={dateFieldsDisabled}
+            disabledLabel="No aplica"
+            onChange={(value) => {
+              handleDepartureDateChange(value)
+              setTouched((current) => ({ ...current, departureDate: true }))
+            }}
+            invalid={!dateFieldsDisabled && touched.departureDate && Boolean(validation.departureDate)}
+            onTouch={() => setTouched((current) => ({ ...current, departureDate: true }))}
+          />
+          <DateField
+            label={endDateLabel}
+            value={returnDate}
+            minDate={returnMinDate}
+            maxDate={datePolicy.maxSearchDate}
+            disabled={dateFieldsDisabled || (mode === "exact" && trip === "one-way")}
+            disabledLabel="No aplica"
+            onChange={(value) => {
+              handleReturnDateChange(value)
+              setTouched((current) => ({ ...current, returnDate: true }))
+            }}
+            invalid={!dateFieldsDisabled && (mode !== "exact" || trip !== "one-way") ? touched.returnDate && Boolean(validation.returnDate) : false}
+            onTouch={() => setTouched((current) => ({ ...current, returnDate: true }))}
+          />
 
           <Popover open={paxOpen} onOpenChange={setPaxOpen}>
             <div className="relative">
@@ -388,6 +422,10 @@ function SearchModeControls({
   onStayNightsChange: (value: number) => void
   topbar: boolean
 }) {
+  const flexibleControlsActive = mode === "flexible"
+  const tripControlsDisabled = mode === "migration"
+  const displayedTrip = tripControlsDisabled ? "one-way" : trip
+
   return (
     <div
       className={cn(
@@ -403,33 +441,40 @@ function SearchModeControls({
           Flexible
         </SegmentButton>
         <SegmentButton active={mode === "migration"} onClick={() => onModeChange("migration")}>
-          <AppIcon name="migration" />
           Migratorio
         </SegmentButton>
       </SegmentedControl>
 
-      {mode === "flexible" && (
-        <div className="fd-inline-enter min-w-0">
-          <FlexibleOptionsBar
-            expandWindow={expandFlexibleWindow}
-            onExpandWindowChange={onExpandFlexibleWindowChange}
-            stayNights={stayNights}
-            onStayNightsChange={onStayNightsChange}
-            showStayNights={trip === "round-trip"}
-          />
-        </div>
-      )}
+      <div
+        aria-hidden={!flexibleControlsActive}
+        className={cn(
+          "fd-inline-reveal min-w-0",
+          flexibleControlsActive ? "fd-inline-reveal-open" : "fd-inline-reveal-closed",
+        )}
+      >
+        <FlexibleOptionsBar
+          expandWindow={expandFlexibleWindow}
+          onExpandWindowChange={onExpandFlexibleWindowChange}
+          stayNights={stayNights}
+          onStayNightsChange={onStayNightsChange}
+          disabled={!flexibleControlsActive}
+          stayNightsDisabled={trip !== "round-trip"}
+        />
+      </div>
 
-      {mode !== "migration" && (
-        <SegmentedControl>
-          {tripTabs.map((item) => (
-            <SegmentButton key={item.key} active={trip === item.key} onClick={() => onTripChange(item.key)}>
-              <AppIcon name={item.icon} />
-              {item.label}
-            </SegmentButton>
-          ))}
-        </SegmentedControl>
-      )}
+      <SegmentedControl disabled={tripControlsDisabled}>
+        {tripTabs.map((item) => (
+          <SegmentButton
+            key={item.key}
+            active={displayedTrip === item.key}
+            disabled={tripControlsDisabled}
+            onClick={() => onTripChange(item.key)}
+          >
+            <AppIcon name={item.icon} />
+            {item.label}
+          </SegmentButton>
+        ))}
+      </SegmentedControl>
     </div>
   )
 }
@@ -472,9 +517,45 @@ function LocationField({
   const activeOptionId = activeIndex >= 0 && suggestions[activeIndex]
     ? `${listboxId}-${activeIndex}`
     : undefined
+  const fieldRef = useRef<HTMLDivElement | null>(null)
+  const [listboxStyle, setListboxStyle] = useState<CSSProperties | null>(null)
+  const shouldShowListbox = open && suggestions.length > 0
+  const listboxTarget = typeof document === "undefined" ? null : document.body
+
+  useLayoutEffect(() => {
+    if (!shouldShowListbox) return
+
+    const updateListboxStyle = () => {
+      const rect = fieldRef.current?.getBoundingClientRect()
+      if (!rect) return
+
+      setListboxStyle({
+        left: rect.left,
+        maxHeight: Math.max(96, Math.min(288, window.innerHeight - rect.bottom - 12)),
+        position: "fixed",
+        top: rect.bottom + 4,
+        width: rect.width,
+        zIndex: 90,
+      })
+    }
+
+    const frame = window.requestAnimationFrame(updateListboxStyle)
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateListboxStyle)
+    if (fieldRef.current) {
+      resizeObserver?.observe(fieldRef.current)
+    }
+    window.addEventListener("resize", updateListboxStyle)
+    window.addEventListener("scroll", updateListboxStyle, true)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      resizeObserver?.disconnect()
+      window.removeEventListener("resize", updateListboxStyle)
+      window.removeEventListener("scroll", updateListboxStyle, true)
+    }
+  }, [shouldShowListbox, suggestions.length, value])
 
   return (
-    <div className="relative">
+    <div ref={fieldRef} className="relative">
       <label htmlFor={fieldId} className="fd-label absolute left-3 top-2 z-10">{label}</label>
       <div
         className={cn(
@@ -509,8 +590,13 @@ function LocationField({
           className={`${SEARCH_FIELD_VALUE_CLASS} bg-transparent text-foreground outline-none placeholder:text-muted-foreground/60`}
         />
       </div>
-      {open && suggestions.length > 0 && (
-        <div id={listboxId} role="listbox" className="fd-popover-enter fd-scrollbar absolute z-50 mt-1 max-h-72 w-full overflow-auto rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg">
+      {listboxTarget && shouldShowListbox && listboxStyle ? createPortal(
+        <div
+          id={listboxId}
+          role="listbox"
+          style={listboxStyle}
+          className="fd-popover-enter fd-scrollbar overflow-auto rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg"
+        >
           {suggestions.map((suggestion, index) => (
             <Button
               id={`${listboxId}-${index}`}
@@ -519,19 +605,35 @@ function LocationField({
               variant="ghost"
               role="option"
               aria-selected={index === activeIndex}
-              onMouseDown={() => onSelect(suggestion)}
+              onMouseDown={(event) => {
+                event.preventDefault()
+                onSelect(suggestion)
+              }}
               className={`h-auto w-full justify-start rounded-lg px-3 py-2 text-left text-sm font-normal ${
                 index === activeIndex ? "bg-accent text-accent-foreground" : "hover:bg-muted"
               }`}
             >
               <div className="font-bold">{suggestion.code}</div>
-              <div className="truncate text-xs text-muted-foreground">{suggestion.label}</div>
+              <div className="truncate text-xs text-muted-foreground">{suggestionPlaceLabel(suggestion)}</div>
             </Button>
           ))}
-        </div>
-      )}
+        </div>,
+        listboxTarget,
+      ) : null}
     </div>
   )
+}
+
+function suggestionPlaceLabel(suggestion: LocationSuggestion): string {
+  const normalizedCode = suggestion.code.trim().toUpperCase()
+  const label = suggestion.label.trim()
+  const codePrefix = `${normalizedCode} - `
+
+  if (normalizedCode && label.toUpperCase().startsWith(codePrefix)) {
+    return label.slice(codePrefix.length).trim()
+  }
+
+  return label || [suggestion.city, suggestion.country].filter(Boolean).join(", ")
 }
 
 function DateField({
@@ -565,6 +667,12 @@ function DateField({
     ? [{ before: minSelectableDate }, { after: maxSelectableDate }]
     : [{ before: minSelectableDate }]
 
+  useEffect(() => {
+    if (!disabled) return
+    const frame = window.requestAnimationFrame(() => setOpen(false))
+    return () => window.cancelAnimationFrame(frame)
+  }, [disabled])
+
   return (
     <Popover
       open={disabled ? false : open}
@@ -574,8 +682,10 @@ function DateField({
         setOpen(nextOpen)
       }}
     >
-      <div className="relative">
-        <label id={`${fieldId}-label`} className="fd-label absolute left-3 top-2 z-10">{label}</label>
+      <div className={cn("relative transition-[opacity,filter,transform] duration-200 ease-out", disabled && "fd-disabled-section")}>
+        <label id={`${fieldId}-label`} className="fd-label absolute left-3 top-2 z-10">
+          <AnimatedDateLabel label={label} />
+        </label>
         <PopoverTrigger asChild>
           <button
             type="button"
@@ -586,12 +696,12 @@ function DateField({
             className={cn(
               SEARCH_FIELD_CONTROL_CLASS,
               "justify-start text-left hover:bg-accent/60",
-              disabled && "bg-secondary text-muted-foreground hover:bg-secondary",
+              disabled && "fd-control-disabled-section hover:bg-secondary",
               invalid && "fd-control-invalid",
             )}
           >
             <AppIcon name="calendar" className="text-muted-foreground" />
-            <span className={`${SEARCH_FIELD_VALUE_CLASS} ${value ? "text-foreground" : "text-muted-foreground"}`}>
+            <span key={selectedLabel} className={`${SEARCH_FIELD_VALUE_CLASS} fd-field-value-swap ${!disabled && value ? "text-foreground" : "text-muted-foreground"}`}>
               {selectedLabel}
             </span>
           </button>
@@ -627,6 +737,36 @@ function DateField({
   )
 }
 
+function AnimatedDateLabel({ label }: { label: string }) {
+  const [primary, ...rest] = label.split(" ")
+  const qualifier = rest.join(" ")
+
+  return (
+    <>
+      <span key={primary} className="fd-label-word-swap">{primary}</span>
+      <AnimatedOptionalLabelWord word={qualifier} />
+    </>
+  )
+}
+
+function AnimatedOptionalLabelWord({ word }: { word: string }) {
+  if (!word) {
+    return null
+  }
+
+  return (
+    <>
+      {" "}
+      <span
+        key={word}
+        className="fd-label-word-extra fd-label-word-extra-visible fd-label-word-swap"
+      >
+        {word}
+      </span>
+    </>
+  )
+}
+
 function isoToLocalDate(value: string) {
   const [year, month, day] = value.split("-").map(Number)
   return new Date(year, month - 1, day)
@@ -641,20 +781,25 @@ function FlexibleOptionsBar({
   onExpandWindowChange,
   stayNights,
   onStayNightsChange,
-  showStayNights,
+  disabled = false,
+  stayNightsDisabled,
 }: {
   expandWindow: boolean
   onExpandWindowChange: (value: boolean) => void
   stayNights: number
   onStayNightsChange: (value: number) => void
-  showStayNights: boolean
+  disabled?: boolean
+  stayNightsDisabled: boolean
 }) {
+  const stayControlsDisabled = disabled || stayNightsDisabled
+
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-1.5">
       <Button
         type="button"
         variant="outline"
         aria-pressed={expandWindow}
+        disabled={disabled}
         onClick={() => onExpandWindowChange(!expandWindow)}
         className={`h-8 px-2.5 text-xs ${
           expandWindow
@@ -666,77 +811,45 @@ function FlexibleOptionsBar({
         ±4 días
       </Button>
 
-      {showStayNights && (
-        <div
-          role="group"
-          aria-labelledby="flexible-stay-nights-label"
-          className="inline-flex h-8 items-center rounded-lg border border-input bg-secondary p-0.5"
+      <div
+        role="group"
+        aria-disabled={stayControlsDisabled}
+        aria-labelledby="flexible-stay-nights-label"
+        className={cn(
+          "inline-flex h-8 items-center overflow-hidden rounded-lg border border-input bg-secondary p-0.5 transition-[background-color,border-color,opacity,filter,transform] duration-200 ease-out",
+          stayControlsDisabled && "fd-control-disabled-section",
+        )}
+      >
+        <span id="flexible-stay-nights-label" className="px-2 text-xs font-semibold text-muted-foreground">
+          Estadía
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label="Quitar noche"
+          onClick={() => onStayNightsChange(Math.max(1, stayNights - 1))}
+          disabled={stayControlsDisabled || stayNights <= 1}
+          className="h-7 w-7 text-muted-foreground hover:text-foreground"
         >
-          <span id="flexible-stay-nights-label" className="px-2 text-xs font-semibold text-muted-foreground">
-            Estadía
-          </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="Quitar noche"
-            onClick={() => onStayNightsChange(Math.max(1, stayNights - 1))}
-            disabled={stayNights <= 1}
-            className="h-7 w-7 text-muted-foreground hover:text-foreground"
-          >
-            <AppIcon name="minus" />
-          </Button>
-          <span className="min-w-14 px-1 text-center text-xs font-semibold text-foreground">
-            {stayNights} noche{stayNights === 1 ? "" : "s"}
-          </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label="Agregar noche"
-            onClick={() => onStayNightsChange(Math.min(45, stayNights + 1))}
-            disabled={stayNights >= 45}
-            className="h-7 w-7 text-muted-foreground hover:text-foreground"
-          >
-            <AppIcon name="plus" />
-          </Button>
-        </div>
-      )}
+          <AppIcon name="minus" />
+        </Button>
+        <span className={cn("min-w-14 px-1 text-center text-xs font-semibold transition-colors duration-150", stayControlsDisabled ? "text-muted-foreground" : "text-foreground")}>
+          {stayNights} noche{stayNights === 1 ? "" : "s"}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label="Agregar noche"
+          onClick={() => onStayNightsChange(Math.min(45, stayNights + 1))}
+          disabled={stayControlsDisabled || stayNights >= 45}
+          className="h-7 w-7 text-muted-foreground hover:text-foreground"
+        >
+          <AppIcon name="plus" />
+        </Button>
+      </div>
     </div>
-  )
-}
-
-function SegmentedControl({ children }: { children: ReactNode }) {
-  return (
-    <div className="inline-flex min-h-8 items-center rounded-lg border border-input bg-secondary p-0.5">
-      {children}
-    </div>
-  )
-}
-
-function SegmentButton({
-  active,
-  disabled,
-  onClick,
-  children,
-}: {
-  active: boolean
-  disabled?: boolean
-  onClick: () => void
-  children: ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      disabled={disabled}
-      className={`inline-flex h-7 transform-gpu items-center justify-center gap-1.5 rounded-md px-2.5 text-xs font-semibold transition-[background-color,color,box-shadow,transform] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.98] disabled:pointer-events-none disabled:opacity-45 disabled:active:scale-100 ${
-        active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-      }`}
-    >
-      {children}
-    </button>
   )
 }
 
@@ -916,4 +1029,21 @@ function clampIsoDate(value: string, minDate: string, maxDate?: string) {
 
 function formatDateLabel(value: string) {
   return DATE_LABEL_FORMATTER.format(new Date(`${value}T00:00:00Z`)).replace(".", "")
+}
+
+function modeFromSearchRequest(request: SearchRequest): SearchModeControl {
+  if (request.searchMode === "month-view") return "migration"
+  return request.searchMode === "exact" ? "exact" : "flexible"
+}
+
+function dateStartFromSearchRequest(request: SearchRequest) {
+  return request.searchMode === "exact"
+    ? request.departureDate ?? ""
+    : request.departureStart ?? request.departureDate ?? ""
+}
+
+function dateEndFromSearchRequest(request: SearchRequest) {
+  return request.searchMode === "exact"
+    ? request.returnDate ?? ""
+    : request.departureEnd ?? request.returnDate ?? ""
 }

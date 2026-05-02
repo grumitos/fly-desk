@@ -64,6 +64,7 @@ import {
   terminalPromptAvailable,
 } from "./terminal-secret-prompt";
 import { generateTotpCode } from "./totp";
+import { rankLocationSuggestions } from "./location-suggestions";
 
 interface CostamarEngineMetadata {
   code?: string;
@@ -3303,7 +3304,7 @@ export async function suggestLocalCostamarLocations(
   limit = 8,
 ): Promise<LocationSuggestion[]> {
   const normalizedQuery = query.trim();
-  if (normalizedQuery.length < 2) {
+  if (normalizedQuery.length < 1) {
     return [];
   }
 
@@ -3330,7 +3331,7 @@ export async function suggestLocalCostamarLocations(
       .map((entry) => mapLocationSuggestion(entry))
       .filter((entry): entry is LocationSuggestion => Boolean(entry));
 
-    return suggestions.slice(0, Math.max(1, limit));
+    return rankLocationSuggestions(normalizedQuery, suggestions, limit);
   } finally {
     clearTimeout(timeout);
   }
