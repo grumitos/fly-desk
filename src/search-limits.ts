@@ -24,7 +24,9 @@ export function limitSearchResponseForPagination(
   response: SearchResponse,
 ): SearchResponse {
   const limit = resolveListSearchResultLimit(request);
-  const allOffers = response.allOffers ?? response.offers;
+  const allOffers = request.filters.compactAllOffers
+    ? response.offers.slice(0, limit)
+    : response.allOffers ?? response.offers;
 
   if (!Number.isFinite(limit)) {
     return {

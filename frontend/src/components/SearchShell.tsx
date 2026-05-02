@@ -1,8 +1,10 @@
 import { useMemo, useState, type FormEvent, type KeyboardEvent, type ReactNode, type RefObject } from "react"
+import { createPortal } from "react-dom"
 import { es } from "react-day-picker/locale"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { TOPBAR_SEARCH_CONTROLS_ID } from "@/components/TopBar"
 import { AppIcon, type AppIconName } from "@/components/ui/app-icon"
 import { useAutocomplete } from "@/hooks/useAutocomplete"
 import { cn } from "@/lib/utils"
@@ -14,15 +16,18 @@ const DATE_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
   year: "numeric",
   timeZone: "UTC",
 })
+const SEARCH_FIELD_CONTROL_CLASS = "fd-control flex h-[52px] w-full items-center gap-2 px-3 pt-4"
+const SEARCH_FIELD_VALUE_CLASS = "min-w-0 flex-1 truncate text-sm font-semibold leading-none"
 
 type SearchModeControl = "exact" | "flexible" | "migration"
 
 interface SearchShellProps {
   onSearch: (req: SearchRequest, sort?: SortMode) => void
   loading: boolean
+  controlsPlacement?: "inline" | "topbar"
 }
 
-export function SearchShell({ onSearch, loading }: SearchShellProps) {
+export function SearchShell({ onSearch, loading, controlsPlacement = "inline" }: SearchShellProps) {
   const [mode, setMode] = useState<SearchModeControl>("exact")
   const [trip, setTrip] = useState<"round-trip" | "one-way">("round-trip")
   const [originCode, setOriginCode] = useState("")
@@ -183,52 +188,38 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
     { key: "round-trip", label: "Ida y vuelta", icon: "roundTrip" },
     { key: "one-way", label: "Solo ida", icon: "oneWay" },
   ]
+  const topbarControlsTarget = controlsPlacement === "topbar"
+    ? document.getElementById(TOPBAR_SEARCH_CONTROLS_ID)
+    : null
+  const shouldPortalControls = Boolean(topbarControlsTarget)
+  const searchControls = (
+    <SearchModeControls
+      mode={mode}
+      trip={trip}
+      tripTabs={tripTabs}
+      expandFlexibleWindow={expandFlexibleWindow}
+      stayNights={stayNights}
+      onModeChange={handleModeChange}
+      onTripChange={handleTripChange}
+      onExpandFlexibleWindowChange={setExpandFlexibleWindow}
+      onStayNightsChange={setStayNights}
+      topbar={shouldPortalControls}
+    />
+  )
 
   return (
-    <section className="fd-panel overflow-visible p-2" aria-busy={loading}>
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <SegmentedControl>
-            <SegmentButton active={mode === "exact"} onClick={() => handleModeChange("exact")}>
-              Exacto
-            </SegmentButton>
-            <SegmentButton active={mode === "flexible"} onClick={() => handleModeChange("flexible")}>
-              Flexible
-            </SegmentButton>
-            <SegmentButton active={mode === "migration"} onClick={() => handleModeChange("migration")}>
-              <AppIcon name="migration" />
-              Migratorio
-            </SegmentButton>
-          </SegmentedControl>
+    <>
+      {topbarControlsTarget ? createPortal(searchControls, topbarControlsTarget) : null}
+      <section className="overflow-visible" aria-busy={loading}>
+        {!shouldPortalControls && (
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            {searchControls}
+          </div>
+        )}
 
-          {mode === "flexible" && (
-            <div className="fd-inline-enter min-w-0">
-              <FlexibleOptionsBar
-                expandWindow={expandFlexibleWindow}
-                onExpandWindowChange={setExpandFlexibleWindow}
-                stayNights={stayNights}
-                onStayNightsChange={setStayNights}
-                showStayNights={trip === "round-trip"}
-              />
-            </div>
-          )}
-
-          {mode !== "migration" && (
-            <SegmentedControl>
-              {tripTabs.map((item) => (
-                <SegmentButton key={item.key} active={trip === item.key} onClick={() => handleTripChange(item.key)}>
-                  <AppIcon name={item.icon} />
-                  {item.label}
-                </SegmentButton>
-              ))}
-            </SegmentedControl>
-          )}
-        </div>
-      </div>
-
-      <form onSubmit={handleSubmit}>
-        <div className={searchGridClassName}>
-          <LocationField
+        <form onSubmit={handleSubmit}>
+          <div className={searchGridClassName}>
+            <LocationField
             label="Origen"
             value={origin.query}
             inputRef={origin.inputRef}
@@ -314,22 +305,20 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
                 invalid={touched.departureDate && Boolean(validation.departureDate)}
                 onTouch={() => setTouched((current) => ({ ...current, departureDate: true }))}
               />
-              {mode === "flexible" || trip === "round-trip" ? (
-                <DateField
-                  label={endDateLabel}
-                  value={returnDate}
-                  minDate={returnMinDate}
-                  maxDate={datePolicy.maxSearchDate}
-                  onChange={(value) => {
-                    handleReturnDateChange(value)
-                    setTouched((current) => ({ ...current, returnDate: true }))
-                  }}
-                  invalid={touched.returnDate && Boolean(validation.returnDate)}
-                  onTouch={() => setTouched((current) => ({ ...current, returnDate: true }))}
-                />
-              ) : (
-                <div className="hidden lg:block" />
-              )}
+              <DateField
+                label={endDateLabel}
+                value={returnDate}
+                minDate={returnMinDate}
+                maxDate={datePolicy.maxSearchDate}
+                disabled={mode === "exact" && trip === "one-way"}
+                disabledLabel="No aplica"
+                onChange={(value) => {
+                  handleReturnDateChange(value)
+                  setTouched((current) => ({ ...current, returnDate: true }))
+                }}
+                invalid={mode !== "exact" || trip !== "one-way" ? touched.returnDate && Boolean(validation.returnDate) : false}
+                onTouch={() => setTouched((current) => ({ ...current, returnDate: true }))}
+              />
             </>
           )}
 
@@ -337,20 +326,19 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
             <div className="relative">
               <label className="fd-label absolute left-3 top-2 z-10">Pasajeros</label>
               <PopoverTrigger asChild>
-                <Button
+                <button
                   type="button"
-                  variant="outline"
                   aria-label="Seleccionar pasajeros"
                   aria-expanded={paxOpen}
                   aria-haspopup="dialog"
-                  className="fd-control flex h-[52px] w-full justify-start gap-2 px-3 pt-4 text-left hover:bg-accent/60"
+                  className={`${SEARCH_FIELD_CONTROL_CLASS} justify-start text-left hover:bg-accent/60`}
                 >
                   <AppIcon name="passengers" className="text-muted-foreground" />
-                  <span className="min-w-0 flex-1 text-sm font-semibold leading-none">
+                  <span className={SEARCH_FIELD_VALUE_CLASS}>
                     {passengerTotal} pasajero{passengerTotal > 1 ? "s" : ""}
                   </span>
                   <AppIcon name="chevronDown" className={`text-muted-foreground transition-transform ${paxOpen ? "rotate-180" : ""}`} />
-                </Button>
+                </button>
               </PopoverTrigger>
 
               <PopoverContent align="end" className="w-72">
@@ -369,10 +357,80 @@ export function SearchShell({ onSearch, loading }: SearchShellProps) {
             {loading ? <AppIcon name="loading" spin /> : <AppIcon name="search" />}
             {loading ? "Buscando" : "Buscar"}
           </Button>
-        </div>
-      </form>
+          </div>
+        </form>
 
-    </section>
+      </section>
+    </>
+  )
+}
+
+function SearchModeControls({
+  mode,
+  trip,
+  tripTabs,
+  expandFlexibleWindow,
+  stayNights,
+  onModeChange,
+  onTripChange,
+  onExpandFlexibleWindowChange,
+  onStayNightsChange,
+  topbar,
+}: {
+  mode: SearchModeControl
+  trip: "round-trip" | "one-way"
+  tripTabs: { key: "round-trip" | "one-way"; label: string; icon: AppIconName }[]
+  expandFlexibleWindow: boolean
+  stayNights: number
+  onModeChange: (mode: SearchModeControl) => void
+  onTripChange: (trip: "round-trip" | "one-way") => void
+  onExpandFlexibleWindowChange: (value: boolean) => void
+  onStayNightsChange: (value: number) => void
+  topbar: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        "flex min-w-0 flex-wrap items-center gap-2",
+        topbar && "max-w-[calc(100vw-11rem)] justify-center",
+      )}
+    >
+      <SegmentedControl>
+        <SegmentButton active={mode === "exact"} onClick={() => onModeChange("exact")}>
+          Exacto
+        </SegmentButton>
+        <SegmentButton active={mode === "flexible"} onClick={() => onModeChange("flexible")}>
+          Flexible
+        </SegmentButton>
+        <SegmentButton active={mode === "migration"} onClick={() => onModeChange("migration")}>
+          <AppIcon name="migration" />
+          Migratorio
+        </SegmentButton>
+      </SegmentedControl>
+
+      {mode === "flexible" && (
+        <div className="fd-inline-enter min-w-0">
+          <FlexibleOptionsBar
+            expandWindow={expandFlexibleWindow}
+            onExpandWindowChange={onExpandFlexibleWindowChange}
+            stayNights={stayNights}
+            onStayNightsChange={onStayNightsChange}
+            showStayNights={trip === "round-trip"}
+          />
+        </div>
+      )}
+
+      {mode !== "migration" && (
+        <SegmentedControl>
+          {tripTabs.map((item) => (
+            <SegmentButton key={item.key} active={trip === item.key} onClick={() => onTripChange(item.key)}>
+              <AppIcon name={item.icon} />
+              {item.label}
+            </SegmentButton>
+          ))}
+        </SegmentedControl>
+      )}
+    </div>
   )
 }
 
@@ -420,7 +478,7 @@ function LocationField({
       <label htmlFor={fieldId} className="fd-label absolute left-3 top-2 z-10">{label}</label>
       <div
         className={cn(
-          "fd-control flex h-[52px] w-full items-center gap-2 px-3 pt-4",
+          SEARCH_FIELD_CONTROL_CLASS,
           invalid && "fd-control-invalid",
           roundedClass,
         )}
@@ -448,7 +506,7 @@ function LocationField({
           }}
           onKeyDown={onKeyDown}
           placeholder={placeholder}
-          className="min-w-0 flex-1 bg-transparent text-sm font-semibold leading-none text-foreground outline-none placeholder:text-muted-foreground/60"
+          className={`${SEARCH_FIELD_VALUE_CLASS} bg-transparent text-foreground outline-none placeholder:text-muted-foreground/60`}
         />
       </div>
       {open && suggestions.length > 0 && (
@@ -481,6 +539,8 @@ function DateField({
   value,
   minDate,
   maxDate,
+  disabled = false,
+  disabledLabel = "No aplica",
   onChange,
   invalid = false,
   onTouch,
@@ -489,13 +549,15 @@ function DateField({
   value: string
   minDate: string
   maxDate?: string
+  disabled?: boolean
+  disabledLabel?: string
   onChange: (value: string) => void
   invalid?: boolean
   onTouch?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const fieldId = `date-${toDomId(label)}`
-  const selectedLabel = value ? formatDateLabel(value) : "Seleccionar"
+  const selectedLabel = disabled ? disabledLabel : value ? formatDateLabel(value) : "Seleccionar"
   const selectedDate = value ? isoToLocalDate(value) : undefined
   const minSelectableDate = isoToLocalDate(minDate)
   const maxSelectableDate = maxDate ? isoToLocalDate(maxDate) : undefined
@@ -505,8 +567,9 @@ function DateField({
 
   return (
     <Popover
-      open={open}
+      open={disabled ? false : open}
       onOpenChange={(nextOpen) => {
+        if (disabled) return
         if (nextOpen) onTouch?.()
         setOpen(nextOpen)
       }}
@@ -514,22 +577,24 @@ function DateField({
       <div className="relative">
         <label id={`${fieldId}-label`} className="fd-label absolute left-3 top-2 z-10">{label}</label>
         <PopoverTrigger asChild>
-          <Button
+          <button
             type="button"
-            variant="outline"
             aria-labelledby={`${fieldId}-label`}
-            aria-expanded={open}
+            aria-expanded={disabled ? false : open}
             aria-invalid={invalid}
+            disabled={disabled}
             className={cn(
-              "fd-control flex h-[52px] w-full justify-start gap-2 px-3 pt-4 text-left hover:bg-accent/60",
+              SEARCH_FIELD_CONTROL_CLASS,
+              "justify-start text-left hover:bg-accent/60",
+              disabled && "bg-secondary text-muted-foreground hover:bg-secondary",
               invalid && "fd-control-invalid",
             )}
           >
             <AppIcon name="calendar" className="text-muted-foreground" />
-            <span className={`min-w-0 flex-1 truncate text-sm font-semibold leading-none ${value ? "text-foreground" : "text-muted-foreground"}`}>
+            <span className={`${SEARCH_FIELD_VALUE_CLASS} ${value ? "text-foreground" : "text-muted-foreground"}`}>
               {selectedLabel}
             </span>
-          </Button>
+          </button>
         </PopoverTrigger>
 
         <PopoverContent

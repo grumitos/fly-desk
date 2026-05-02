@@ -2,10 +2,21 @@ import { createServer as createHttpServer, IncomingMessage, ServerResponse } fro
 import { readFile, stat } from "node:fs/promises";
 import * as path from "node:path";
 import { routeRequest } from "./http-router";
+import { logPerfSpan, startPerfTimer } from "./perf";
 import { getPublicRuntimeConfig } from "./search-date-policy";
 
 const publicDir = path.resolve(__dirname, "..", "frontend", "dist");
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
+
+interface CachedFile {
+  filePath: string;
+  mtimeMs: number;
+  size: number;
+  contentType: string;
+  content: Buffer;
+}
+
+const fileCache = new Map<string, CachedFile>();
 
 class RequestBodyTooLargeError extends Error {
   constructor(limitBytes: number) {
@@ -75,10 +86,10 @@ function contentTypeForExtension(extension: string): string {
   return "application/octet-stream";
 }
 
-function noStoreHeaders(contentType: string): Record<string, string> {
+function responseHeaders(contentType: string, cacheControl: string): Record<string, string> {
   return {
     "Content-Type": contentType,
-    "Cache-Control": "no-store",
+    "Cache-Control": cacheControl,
     "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -86,12 +97,42 @@ function noStoreHeaders(contentType: string): Record<string, string> {
   };
 }
 
-async function serveStaticFile(response: ServerResponse, filePath: string): Promise<void> {
+function noStoreHeaders(contentType: string): Record<string, string> {
+  return responseHeaders(contentType, "no-store");
+}
+
+function staticAssetHeaders(contentType: string, immutable: boolean): Record<string, string> {
+  return responseHeaders(
+    contentType,
+    immutable ? "public, max-age=31536000, immutable" : "no-cache",
+  );
+}
+
+async function readCachedFile(filePath: string): Promise<CachedFile> {
+  const fileStat = await stat(filePath);
+  const cached = fileCache.get(filePath);
+  if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) {
+    return cached;
+  }
+
   const content = await readFile(filePath);
   const contentType = contentTypeForExtension(path.extname(filePath));
+  const next = {
+    filePath,
+    mtimeMs: fileStat.mtimeMs,
+    size: fileStat.size,
+    contentType,
+    content,
+  };
+  fileCache.set(filePath, next);
+  return next;
+}
 
-  response.writeHead(200, noStoreHeaders(contentType));
-  response.end(content);
+async function serveStaticFile(response: ServerResponse, filePath: string, immutable: boolean): Promise<void> {
+  const cached = await readCachedFile(filePath);
+
+  response.writeHead(200, staticAssetHeaders(cached.contentType, immutable));
+  response.end(cached.content);
 }
 
 async function resolvePublicAsset(pathname: string): Promise<string | undefined> {
@@ -119,7 +160,7 @@ function escapeInlineScriptJson(value: string): string {
 
 async function serveIndexHtml(response: ServerResponse): Promise<void> {
   const filePath = path.join(publicDir, "index.html");
-  const template = await readFile(filePath, "utf8");
+  const template = (await readCachedFile(filePath)).content.toString("utf8");
   const runtimeConfig = escapeInlineScriptJson(JSON.stringify(getPublicRuntimeConfig()));
   const content = template.replace(
     "<!-- __FLYDESK_RUNTIME_CONFIG__ -->",
@@ -222,9 +263,17 @@ async function proxyToRouter(request: IncomingMessage, response: ServerResponse)
 
 export function createServer() {
   return createHttpServer(async (request, response) => {
-    try {
-      const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+    const requestStart = startPerfTimer();
+    const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+    response.once("finish", () => {
+      logPerfSpan("http.request", requestStart, {
+        method: request.method ?? "UNKNOWN",
+        path: pathname,
+        status: response.statusCode,
+      });
+    });
 
+    try {
       if (request.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
         await serveIndexHtml(response);
         return;
@@ -233,7 +282,7 @@ export function createServer() {
       if (request.method === "GET") {
         const assetPath = await resolvePublicAsset(pathname);
         if (assetPath) {
-          await serveStaticFile(response, assetPath);
+          await serveStaticFile(response, assetPath, pathname.startsWith("/assets/"));
           return;
         }
       }

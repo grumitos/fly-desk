@@ -77,6 +77,10 @@
   min-width: 0;
 }
 
+.fd-result-card__eyebrow {
+  display: none;
+}
+
 .fd-result-card__airline-name,
 .fd-result-card__route-main,
 .fd-result-card__date-main,
@@ -132,6 +136,15 @@
   color: var(--color-muted-foreground);
   font-size: 0.72rem;
   font-weight: 800;
+}
+
+.fd-result-card__schedule-unknown {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-muted-foreground);
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
 }
 
 .fd-result-card__route-main {
@@ -274,6 +287,168 @@
   font-family: var(--font-mono);
   font-size: 0.78rem;
   font-weight: 900;
+}
+
+.fd-result-card--compact {
+  grid-template-columns: minmax(0, 1fr) 2.2rem;
+  align-items: start;
+  min-height: 10.75rem;
+  padding: 0.72rem;
+  border-radius: var(--radius-lg);
+  row-gap: 0.46rem;
+}
+
+.fd-result-card--compact .fd-result-card__eyebrow {
+  display: block;
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-primary);
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1.14;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.fd-result-card--compact .fd-result-card__airline {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.fd-result-card--compact .fd-result-card__provider {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
+  justify-items: end;
+}
+
+.fd-result-card--compact .fd-result-card__schedule,
+.fd-result-card--compact .fd-result-card__route,
+.fd-result-card--compact .fd-result-card__journey,
+.fd-result-card--compact .fd-result-card__baggage,
+.fd-result-card--compact .fd-result-card__price {
+  grid-column: 1 / -1;
+}
+
+.fd-result-card--compact .fd-result-card__airline-name,
+.fd-result-card--compact .fd-result-card__route-main {
+  font-size: 0.9rem;
+}
+
+.fd-result-card--compact .fd-result-card__meta,
+.fd-result-card--compact .fd-result-card__micro-label,
+.fd-result-card--compact .fd-result-card__stops,
+.fd-result-card--compact .fd-result-card__layover,
+.fd-result-card--compact .fd-result-card__price-meta {
+  font-size: 0.7rem;
+}
+
+.fd-result-card--compact .fd-result-card__schedule-main {
+  font-size: 1.06rem;
+}
+
+.fd-result-card--compact .fd-result-card__date-main,
+.fd-result-card--compact .fd-result-card__journey-main,
+.fd-result-card--compact .fd-result-card__price-total {
+  font-size: 0.86rem;
+}
+
+.fd-result-card--compact .fd-result-card__price {
+  justify-items: start;
+  text-align: left;
+}
+
+.fd-result-card--compact .fd-result-card__baggage {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 0.42rem;
+}
+
+.fd-result-card--compact .fd-result-card__provider img,
+.fd-result-card--compact .fd-result-card__provider span {
+  width: 2rem;
+  height: 2rem;
+}
+
+.fd-migration-grid-shell {
+  container-type: inline-size;
+}
+
+.fd-migration-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.68rem;
+}
+
+.fd-migration-month-card {
+  display: grid;
+  min-height: 10.75rem;
+  align-content: start;
+  gap: 0.56rem;
+  padding: 0.72rem;
+  border: 1px dashed color-mix(in srgb, var(--color-border) 86%, var(--color-muted-foreground));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-card) 86%, var(--color-secondary));
+  color: var(--color-foreground);
+}
+
+.fd-migration-month-card .fd-result-card__eyebrow {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-primary);
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1.14;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.fd-migration-month-card__title {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.94rem;
+  font-weight: 900;
+  line-height: 1.12;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-migration-month-card__meta,
+.fd-migration-month-card__body {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-muted-foreground);
+  font-size: 0.74rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+}
+
+.fd-migration-month-card__body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+@container (max-width: 860px) {
+  .fd-migration-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 660px) {
+  .fd-migration-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 430px) {
+  .fd-migration-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .dark .fd-result-card {

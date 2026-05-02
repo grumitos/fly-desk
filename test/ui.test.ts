@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { openDesktop, withDesktopPage } from "./helpers/ui";
+import { buildOffer } from "./helpers/ui-fixtures";
 
 test("current React shell exposes the primary search controls", async () => {
   await withDesktopPage(async ({ page }) => {
@@ -53,6 +54,18 @@ test("current React shell exposes flexible and migratory search modes", async ()
     await assert.equal(await page.getByRole("button", { name: "Salida" }).count(), 0);
     await assert.equal(await page.getByRole("button", { name: "Regreso" }).count(), 0);
     await assert.equal(await page.getByRole("button", { name: "Buscar" }).isVisible(), true);
+  });
+});
+
+test("one-way exact search keeps the return field visible but disabled", async () => {
+  await withDesktopPage(async ({ page }) => {
+    await page.getByRole("button", { name: "Solo ida" }).click();
+
+    const returnField = page.locator('button[aria-labelledby="date-regreso-label"]');
+    await returnField.waitFor({ state: "visible" });
+    assert.equal(await returnField.count(), 1);
+    assert.equal(await returnField.isDisabled(), true);
+    assert.match(await returnField.innerText(), /No aplica/);
   });
 });
 
@@ -359,6 +372,9 @@ test("round-trip flexible search sends matrix exact-stay payload", async () => {
     assert.equal(leg?.departureEnd, "2026-04-09");
     assert.equal(leg?.stayNights, 7);
     await page.getByText("USD 480").waitFor();
+    const bodyText = await page.locator("body").innerText();
+    assert.doesNotMatch(bodyText, /\b00:00\b/);
+    assert.match(bodyText, /Horario por confirmar/);
   });
 });
 
@@ -377,6 +393,29 @@ test("migratory search sends monthly stay-range requests", async () => {
     await page.route("**/api/search", async (route) => {
       const payload = route.request().postDataJSON() as Record<string, unknown>;
       payloads.push(payload);
+      const offers = payloads.length === 1
+        ? [
+            buildOffer({
+              id: "migration-offer-1",
+              itineraries: [
+                {
+                  direction: "outbound",
+                  durationMinutes: 80,
+                  stops: 0,
+                  segments: [
+                    {
+                      flightNumber: "LA 2011",
+                      origin: "LIM",
+                      destination: "MIA",
+                      departureAt: "2026-04-15T14:00:00Z",
+                      arrivalAt: "2026-04-15T15:20:00Z",
+                    },
+                  ],
+                },
+              ],
+            }),
+          ]
+        : [];
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -387,8 +426,8 @@ test("migratory search sends monthly stay-range requests", async () => {
           revision: 1,
           sortMode: "cheapest",
           request: payload.request,
-          offers: [],
-          allOffers: [],
+          offers,
+          allOffers: offers,
           searchMeta: {
             requestedAt: "2026-03-31T00:00:00.000Z",
             completedAt: "2026-03-31T00:00:00.000Z",
@@ -414,18 +453,29 @@ test("migratory search sends monthly stay-range requests", async () => {
       page.waitForResponse("**/api/search"),
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
-    await page.getByText("Sin resultados para esta consulta").waitFor();
+    await page.getByText("USD 512").waitFor();
+    const topbarControls = page.getByTestId("topbar-search-controls");
+    assert.equal(await topbarControls.getByRole("button", { name: "Migratorio" }).count(), 1);
+    assert.equal(await page.locator("main").getByRole("button", { name: "Migratorio" }).count(), 0);
+    assert.equal(await page.getByTestId("migration-month-card").count(), 8);
+    const bodyText = await page.locator("body").innerText();
+    assert.doesNotMatch(bodyText, /\b00:00\b/);
+    assert.match(bodyText, /14:00/);
+    assert.match(bodyText, /Marzo de 2026/i);
 
     assert.equal(payloads.length, 8);
     const firstRequest = payloads[0].request as {
       tripType?: string;
       searchMode?: string;
       legs?: Array<Record<string, unknown>>;
+      filters?: Record<string, unknown>;
     };
     const firstLeg = firstRequest.legs?.[0];
 
     assert.equal(firstRequest.tripType, "one-way");
     assert.equal(firstRequest.searchMode, "stay-range");
+    assert.equal(firstRequest.filters?.maxResults, 25);
+    assert.equal(firstRequest.filters?.compactAllOffers, true);
     assert.equal(firstLeg?.departureStart, "2026-03-31");
     assert.equal(firstLeg?.departureEnd, "2026-03-31");
     assert.equal(firstLeg?.returnDate, undefined);
