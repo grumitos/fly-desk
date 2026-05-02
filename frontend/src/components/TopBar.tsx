@@ -2,6 +2,8 @@ import { useEffect, useState } from "react"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
 
+export const TOPBAR_SEARCH_CONTROLS_ID = "fd-topbar-search-controls"
+
 function getInitialTheme(): "light" | "dark" {
   try {
     const saved = localStorage.getItem("flydesk-theme")
@@ -61,8 +63,8 @@ export function TopBar({ logViewActive = false, onLogViewToggle }: TopBarProps) 
 
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur">
-      <div className="mx-auto flex min-h-11 max-w-[1560px] flex-wrap items-center justify-between gap-2 px-3 py-1.5 sm:px-4">
-        <div className="flex min-w-0 items-center gap-2">
+      <div className="mx-auto grid min-h-11 max-w-[1560px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 py-1.5 sm:px-4">
+        <div className="flex min-w-0 items-center gap-2 justify-self-start">
           <button
             type="button"
             onClick={onLogViewToggle}
@@ -79,9 +81,13 @@ export function TopBar({ logViewActive = false, onLogViewToggle }: TopBarProps) 
           </div>
         </div>
 
-        <div aria-hidden="true" />
+        <div
+          id={TOPBAR_SEARCH_CONTROLS_ID}
+          data-testid="topbar-search-controls"
+          className="min-w-0 justify-self-center"
+        />
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 justify-self-end">
           <div className="inline-flex items-center rounded-lg border border-input bg-secondary p-0.5 text-muted-foreground">
             <ThemeToggle theme={theme} setTheme={setTheme} />
           </div>

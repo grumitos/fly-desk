@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import Database = require("better-sqlite3");
+import { logPerfSpan, startPerfTimer } from "./perf";
+import { LIST_SEARCH_RESULT_LIMIT } from "./search-limits";
 import {
   CanonicalOffer,
   MatrixCell,
@@ -14,6 +16,12 @@ import {
 } from "./core/types";
 
 const COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
+const PERSISTED_SEARCH_JOB_ALL_OFFERS_LIMIT = (() => {
+  const raw = Number(process.env.SEARCH_PERSISTED_JOB_ALL_OFFERS_LIMIT ?? LIST_SEARCH_RESULT_LIMIT);
+  return Number.isFinite(raw) && raw > 0
+    ? Math.trunc(raw)
+    : LIST_SEARCH_RESULT_LIMIT;
+})();
 export const COMPLETED_SEARCH_SESSION_TTL_MS = (() => {
   const raw = Number(process.env.SEARCH_COMPLETED_SESSION_TTL_MS ?? COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS);
   return Number.isFinite(raw) && raw >= 0
@@ -163,6 +171,13 @@ function safeJsonSize(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
 
+function persistenceComparisonPayload(payload: PersistedSearchSessionStore): PersistedSearchSessionStore {
+  return {
+    ...payload,
+    savedAt: "",
+  };
+}
+
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -207,6 +222,14 @@ function normalizeProviderContextForSearchCache(
       lang: String(providerContext.costamar.lang ?? "").trim(),
     },
   };
+}
+
+function normalizeSearchRequestForSearchCache(request: SearchRequest): SearchRequest {
+  const next = cloneJson(request);
+  if (next.filters?.compactAllOffers !== true) {
+    delete next.filters.compactAllOffers;
+  }
+  return next;
 }
 
 function redactProviderContextForPersistence(providerContext: ProviderContext | undefined): ProviderContext | undefined {
@@ -268,8 +291,12 @@ function redactStoredPurchasePathForPersistence(entry: StoredPurchasePath): Stor
 }
 
 function redactSearchJobForPersistence(job: SearchJobRecord): SearchJobRecord {
+  const next = cloneJson(job);
+
   return {
-    ...cloneJson(job),
+    ...next,
+    offers: next.offers.slice(0, PERSISTED_SEARCH_JOB_ALL_OFFERS_LIMIT),
+    allOffers: next.allOffers.slice(0, PERSISTED_SEARCH_JOB_ALL_OFFERS_LIMIT),
     providerContext: redactProviderContextForPersistence(job.providerContext),
   };
 }
@@ -305,6 +332,9 @@ export class SearchSessionStore {
       mkdirSync(dirname(dbPath), { recursive: true });
       this.db = new Database(dbPath);
       this.db.pragma("journal_mode = WAL");
+      this.db.pragma("synchronous = NORMAL");
+      this.db.pragma("temp_store = MEMORY");
+      this.db.pragma("busy_timeout = 5000");
       this.db.pragma("foreign_keys = ON");
       this.initializeDatabase();
       this.loadPersisted();
@@ -430,7 +460,7 @@ export class SearchSessionStore {
     }
 
     const nowMs = input.nowMs ?? Date.now();
-    const requestKey = serializeForComparison(input.request);
+    const requestKey = serializeForComparison(normalizeSearchRequestForSearchCache(input.request));
     const providerIdsKey = serializeForComparison(input.providerIds);
     const providerContextKey = serializeForComparison(
       normalizeProviderContextForSearchCache(input.providerContext),
@@ -448,7 +478,7 @@ export class SearchSessionStore {
         continue;
       }
 
-      if (serializeForComparison(candidate.request) !== requestKey) {
+      if (serializeForComparison(normalizeSearchRequestForSearchCache(candidate.request)) !== requestKey) {
         continue;
       }
 
@@ -983,8 +1013,19 @@ export class SearchSessionStore {
       ...searchJobs.map((job) => job.id),
       ...matrixJobs.map((job) => job.id),
     ]);
+    const activeOwnerKeys = new Set<string>();
+    for (const job of searchJobs) {
+      for (const offer of [...job.offers, ...job.allOffers]) {
+        activeOwnerKeys.add(this.ownerKey(job.id, offer.id));
+      }
+    }
+    for (const job of matrixJobs) {
+      for (const cell of job.cells) {
+        activeOwnerKeys.add(this.ownerKey(job.id, cell.key));
+      }
+    }
     const purchasePaths = [...this.purchasePaths.values()]
-      .filter((path) => activeSessionIds.has(path.sessionId))
+      .filter((path) => activeSessionIds.has(path.sessionId) && activeOwnerKeys.has(this.ownerKey(path.sessionId, path.ownerId)))
       .map(redactStoredPurchasePathForPersistence)
       .sort((left, right) => left.path.id.localeCompare(right.path.id));
 
@@ -1002,10 +1043,12 @@ export class SearchSessionStore {
       return false;
     }
 
+    const persistStart = startPerfTimer();
     try {
       const payload = this.buildPersistencePayload();
       const serialized = JSON.stringify(payload);
-      if (serialized === this.lastPersistedPayload) {
+      const serializedForComparison = JSON.stringify(persistenceComparisonPayload(payload));
+      if (serializedForComparison === this.lastPersistedPayload) {
         return true;
       }
 
@@ -1049,7 +1092,7 @@ export class SearchSessionStore {
             resolveIdleTimestampMs(job),
             job.status,
             job.sortMode,
-            serializeForComparison(job.request),
+            serializeForComparison(normalizeSearchRequestForSearchCache(job.request)),
             serializeForComparison(job.searchMeta.providersUsed ?? []),
             serializeForComparison(normalizeProviderContextForSearchCache(job.providerContext)),
             JSON.stringify(job),
@@ -1083,7 +1126,13 @@ export class SearchSessionStore {
       });
 
       writePayload(payload);
-      this.lastPersistedPayload = serialized;
+      this.lastPersistedPayload = serializedForComparison;
+      logPerfSpan("sessionStore.persist", persistStart, {
+        searchJobs: payload.searchJobs.length,
+        matrixJobs: payload.matrixJobs.length,
+        purchasePaths: payload.purchasePaths.length,
+        bytes: Buffer.byteLength(serialized, "utf8"),
+      });
       return true;
     } catch {
       // Ignore persistence failures; in-memory store remains usable.
@@ -1150,7 +1199,7 @@ export class SearchSessionStore {
       this.bootstrapping = false;
     }
 
-    this.lastPersistedPayload = JSON.stringify(this.buildPersistencePayload());
+    this.lastPersistedPayload = "";
     this.purgeExpired();
   }
 

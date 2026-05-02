@@ -1,6 +1,7 @@
 import { loadRuntimeConfig, resolveServerHost } from "./config";
 import { getRuntime } from "./runtime";
 import { createServer } from "./server";
+import { logPerfSpan, startPerfTimer } from "./perf";
 import {
   cleanupPrefixedTempArtifacts,
   TEMP_ARTIFACT_SWEEP_INTERVAL_MS,
@@ -8,14 +9,20 @@ import {
 } from "./temp-artifacts";
 
 async function main() {
+  const startupStart = startPerfTimer();
   loadRuntimeConfig();
+  const runtimeStart = startPerfTimer();
   const runtime = getRuntime();
+  logPerfSpan("startup.runtime", runtimeStart);
 
+  const cleanupStart = startPerfTimer();
   try {
     await cleanupPrefixedTempArtifacts();
   } catch (error) {
     const detail = error instanceof Error ? error.message : "unknown cleanup failure";
     console.warn(`Fly Desk temp cleanup skipped: ${detail}`);
+  } finally {
+    logPerfSpan("startup.tempCleanup", cleanupStart);
   }
 
   const port = Number(process.env.PORT ?? "3000");
@@ -74,6 +81,7 @@ async function main() {
     server.listen(port, host, resolve);
   });
 
+  logPerfSpan("startup.ready", startupStart, { host, port });
   console.log(`Fly Desk running at http://${host}:${port}`);
 }
 

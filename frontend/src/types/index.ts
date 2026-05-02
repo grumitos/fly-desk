@@ -31,6 +31,8 @@ export interface SearchRequest {
   maxLayoverMinutes?: string
   baggageRequired?: boolean
   includedAirlineCodes?: string[]
+  maxResults?: number
+  compactAllOffers?: boolean
   sortMode?: string
 }
 
@@ -134,6 +136,17 @@ export interface CanonicalOffer {
   }
 }
 
+export interface MigrationMonthSummary {
+  key: string
+  label: string
+  departureStart: string
+  departureEnd: string
+  searchJobId?: string
+  offer?: CanonicalOffer
+  warnings?: string[]
+  status: "available" | "partial" | "empty" | "error"
+}
+
 export interface SearchResponse {
   offers: CanonicalOffer[]
   allOffers?: CanonicalOffer[]
@@ -159,6 +172,7 @@ export interface SearchJobResponse extends SearchResponse {
   revision: number
   sortMode: string
   request: SearchRequest
+  migrationMonths?: MigrationMonthSummary[]
   diagnosticLog?: string[]
   unchanged?: boolean
 }

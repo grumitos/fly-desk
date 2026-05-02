@@ -52,6 +52,7 @@ import { resolveQuotationUsdToPenRate, warmQuotationUsdToPenRate } from "./quota
 import { limitSearchResponseForPagination } from "./search-limits";
 import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
+import { logPerfSpan, startPerfTimer } from "./perf";
 import type { SearchJobRecord } from "./session-store";
 
 interface SessionPayload {
@@ -896,11 +897,23 @@ async function handleSearchRequest(
   runtime: ReturnType<typeof getRuntime>,
   request: Request,
 ): Promise<Response> {
+  const requestStart = startPerfTimer();
   const payload = await readPayload<SearchPayload>(request);
   const contract = prepareSearchContract(payload);
-  const providerContext = shouldBuildCostamarProviderContext(contract.providerIds)
-    ? await buildProviderContextAsync("costamar", payload?.providerConfig)
-    : undefined;
+  const requestErrors = validateSearchContract(contract, undefined, { skipProviderContext: true });
+  if (requestErrors.length > 0) {
+    return json({ errors: requestErrors }, { status: 400 });
+  }
+
+  let providerContext: ProviderContext | undefined;
+  if (shouldBuildCostamarProviderContext(contract.providerIds)) {
+    const contextStart = startPerfTimer();
+    try {
+      providerContext = await buildProviderContextAsync("costamar", payload?.providerConfig);
+    } finally {
+      logPerfSpan("search.providerContext", contextStart, { providerId: "costamar" });
+    }
+  }
   const errors = validateSearchContract(contract, providerContext);
   if (errors.length > 0) {
     return json({ errors }, { status: 400 });
@@ -930,6 +943,13 @@ async function handleSearchRequest(
     warnings: draft.warnings,
     sortMode,
     status: "running",
+  });
+  logPerfSpan("search.accepted", requestStart, {
+    jobId: job.id,
+    mode: normalizedRequest.searchMode,
+    providers: providerIds.join(","),
+    cached: Boolean(cachedJob),
+    offers: job.offers.length,
   });
 
   const syncSearchJob = (status: "running" | "completed") => {
@@ -962,7 +982,9 @@ async function handleSearchRequest(
   };
 
   if (shouldRunBackgroundSearchJobs()) {
+    const failedProviderIds = new Set<ProviderId>();
     const resolvers = providerIds.map(async (providerId) => {
+      const providerStart = startPerfTimer();
       const adapter = getProgressiveAdapter(providerId);
       const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
         providerStates.set(providerId, {
@@ -985,6 +1007,13 @@ async function handleSearchRequest(
           partial: result.partial,
           completed: true,
         });
+        logPerfSpan("search.provider", providerStart, {
+          jobId: job.id,
+          providerId,
+          status: "completed",
+          offers: result.offers.length,
+          partial: result.partial,
+        });
         syncSearchJob("running");
       } catch (error) {
         providerStates.set(providerId, {
@@ -995,11 +1024,26 @@ async function handleSearchRequest(
           partial: true,
           completed: true,
         });
+        failedProviderIds.add(providerId);
+        logPerfSpan("search.provider", providerStart, {
+          jobId: job.id,
+          providerId,
+          status: "failed",
+          error: error instanceof Error ? error.name : "Error",
+        });
       }
     });
 
-    void Promise.allSettled(resolvers).then(() => {
-      syncSearchJob("completed");
+    void Promise.allSettled(resolvers).then((settled) => {
+      const materialized = syncSearchJob("completed");
+      logPerfSpan("search.job", requestStart, {
+        jobId: job.id,
+        status: "completed",
+        providers: providerIds.join(","),
+        failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
+        offers: materialized.offers.length,
+        partial: materialized.searchMeta.partial,
+      });
     });
   }
 
@@ -1010,11 +1054,23 @@ async function handleMatrixRequest(
   runtime: ReturnType<typeof getRuntime>,
   request: Request,
 ): Promise<Response> {
+  const requestStart = startPerfTimer();
   const payload = await readPayload<SearchPayload>(request);
   const contract = prepareSearchContract(payload, { forceRoundTripGrid: true });
-  const providerContext = shouldBuildCostamarProviderContext(contract.providerIds)
-    ? await buildProviderContextAsync("costamar", payload?.providerConfig)
-    : undefined;
+  const requestErrors = validateSearchContract(contract, undefined, { skipProviderContext: true });
+  if (requestErrors.length > 0) {
+    return json({ errors: requestErrors }, { status: 400 });
+  }
+
+  let providerContext: ProviderContext | undefined;
+  if (shouldBuildCostamarProviderContext(contract.providerIds)) {
+    const contextStart = startPerfTimer();
+    try {
+      providerContext = await buildProviderContextAsync("costamar", payload?.providerConfig);
+    } finally {
+      logPerfSpan("matrix.providerContext", contextStart, { providerId: "costamar" });
+    }
+  }
   const errors = validateSearchContract(contract, providerContext);
   if (errors.length > 0) {
     return json({ errors }, { status: 400 });
@@ -1052,6 +1108,12 @@ async function handleMatrixRequest(
     warnings: draft.warnings,
     status: "running",
   });
+  logPerfSpan("matrix.accepted", requestStart, {
+    jobId: job.id,
+    mode: normalizedRequest.searchMode,
+    providers: providerIds.join(","),
+    cells: job.cells.length,
+  });
 
   const syncMatrixJob = (status: "running" | "completed") => {
     const materialized = materializeAggregatedMatrixResponse(
@@ -1076,10 +1138,14 @@ async function handleMatrixRequest(
       status,
       error: undefined,
     }));
+
+    return materialized;
   };
 
   if (shouldRunBackgroundSearchJobs()) {
+    const failedProviderIds = new Set<ProviderId>();
     const resolvers = providerIds.map(async (providerId) => {
+      const providerStart = startPerfTimer();
       const adapter = getProgressiveAdapter(providerId);
       const currentState = providerStates.get(providerId);
       const draftResponse = currentState?.response ?? adapter.createMatrixDraft(normalizedRequest, {
@@ -1110,6 +1176,13 @@ async function handleMatrixRequest(
           response: result,
           completed: true,
         });
+        logPerfSpan("matrix.provider", providerStart, {
+          jobId: job.id,
+          providerId,
+          status: "completed",
+          cells: result.cells.length,
+          partial: result.searchMeta.partial,
+        });
       } catch (error) {
         providerStates.set(providerId, {
           response: materializeFailedMatrixResponse(
@@ -1118,13 +1191,28 @@ async function handleMatrixRequest(
           ),
           completed: true,
         });
+        failedProviderIds.add(providerId);
+        logPerfSpan("matrix.provider", providerStart, {
+          jobId: job.id,
+          providerId,
+          status: "failed",
+          error: error instanceof Error ? error.name : "Error",
+        });
       }
 
       syncMatrixJob("running");
     });
 
-    void Promise.allSettled(resolvers).then(() => {
-      syncMatrixJob("completed");
+    void Promise.allSettled(resolvers).then((settled) => {
+      const materialized = syncMatrixJob("completed");
+      logPerfSpan("matrix.job", requestStart, {
+        jobId: job.id,
+        status: "completed",
+        providers: providerIds.join(","),
+        failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
+        cells: materialized.cells.length,
+        partial: materialized.searchMeta.partial,
+      });
     });
   }
 

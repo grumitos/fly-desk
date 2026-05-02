@@ -138,6 +138,7 @@ function normalizeRequest(
       excludedAirlineCodes: stringList(filters.excludedAirlineCodes),
       maxPrice: numberValue(filters.maxPrice),
       maxResults: numberValue(filters.maxResults),
+      compactAllOffers: booleanValue(filters.compactAllOffers, false),
       maxTotalDurationMinutes: numberValue(filters.maxTotalDurationMinutes),
       maxLayoverMinutes: numberValue(filters.maxLayoverMinutes),
       maxStops: numberValue(filters.maxStops),
@@ -153,9 +154,9 @@ function normalizeRequest(
     redirectMode: input?.redirectMode === "none" || input?.redirectMode === "strict"
       ? input.redirectMode
       : "best-effort",
-    currencyCode: stringValue(input?.currencyCode, "USD").toUpperCase(),
-    locale: stringValue(input?.locale, "es-PE"),
-    market: stringValue(input?.market, "PE"),
+      currencyCode: stringValue(input?.currencyCode, "USD").toUpperCase(),
+      locale: stringValue(input?.locale, "es-PE"),
+      market: stringValue(input?.market, "PE"),
   };
 
   return normalizeFlexibleRoundTripRequest(request);
@@ -337,10 +338,11 @@ export function prepareSearchContract(
 export function validateSearchContract(
   contract: PreparedSearchContract,
   providerContext: ProviderContext | undefined,
+  options?: { skipProviderContext?: boolean },
 ): string[] {
   return [
     ...validateRequest(contract.request),
-    ...(contract.explicitProviderId === "costamar"
+    ...(!options?.skipProviderContext && contract.explicitProviderId === "costamar"
       ? validateProviderContext("costamar", providerContext)
       : []),
   ];

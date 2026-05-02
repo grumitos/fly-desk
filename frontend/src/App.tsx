@@ -161,7 +161,11 @@ export default function App() {
               isSearchIdle ? "mx-auto -translate-y-6" : "translate-y-0"
             }`}
           >
-            <SearchShell onSearch={handleSearch} loading={loading} />
+            <SearchShell
+              onSearch={handleSearch}
+              loading={loading}
+              controlsPlacement={shouldShowWorkspace ? "topbar" : "inline"}
+            />
 
             {error && (
               <div

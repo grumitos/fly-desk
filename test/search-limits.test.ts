@@ -98,3 +98,12 @@ test("explicit lower maxResults still wins over the default early-stop limit", (
   assert.equal(limited.allOffers?.length, 14);
   assert.equal(limited.offers[4]?.id, "offer-5");
 });
+
+test("compact allOffers is opt-in for internal summary searches", () => {
+  const request = buildRequest(5);
+  request.filters.compactAllOffers = true;
+
+  const limited = limitSearchResponseForPagination(request, buildResponse(14));
+  assert.equal(limited.offers.length, 5);
+  assert.equal(limited.allOffers?.length, 5);
+});

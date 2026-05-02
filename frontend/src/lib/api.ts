@@ -6,6 +6,7 @@ const MIGRATION_MONTH_COUNT = 8
 const MIGRATION_CONCURRENT_REQUESTS = 2
 const MIGRATION_POLL_INTERVAL_MS = 900
 const MIGRATION_POLL_LIMIT = 90
+const MIGRATION_MONTH_RESULT_LIMIT = 25
 const MIGRATION_MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
   month: "long",
   year: "numeric",
@@ -324,6 +325,8 @@ type BackendSearchJobResponse = Omit<SearchJobResponse, "request" | "offers" | "
       maxStops?: number
       maxLayoverMinutes?: number
       includedAirlineCodes?: string[]
+      maxResults?: number
+      compactAllOffers?: boolean
     }
   }
   offers?: unknown[]
@@ -387,6 +390,8 @@ function toBackendPayload(request: SearchRequest, sortMode: SortMode) {
         maxStops,
         maxLayoverMinutes: request.maxLayoverMinutes ? Number(request.maxLayoverMinutes) : undefined,
         includedAirlineCodes: request.includedAirlineCodes?.length ? request.includedAirlineCodes : undefined,
+        maxResults: request.maxResults,
+        compactAllOffers: request.compactAllOffers,
       },
       currencyCode: "USD",
       locale: "es-PE",
@@ -418,6 +423,8 @@ function fromBackendRequest(request: BackendSearchJobResponse["request"]): Searc
     baggageRequired: request?.filters?.baggageRequired,
     maxLayoverMinutes: request?.filters?.maxLayoverMinutes?.toString(),
     includedAirlineCodes: request?.filters?.includedAirlineCodes,
+    maxResults: request?.filters?.maxResults,
+    compactAllOffers: request?.filters?.compactAllOffers,
   }
 }
 
@@ -526,8 +533,6 @@ function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
 function normalizeMatrixOffer(cell: MatrixCell, request: SearchRequest): CanonicalOffer {
   const currencyCode = cell.price?.currencyCode ?? "USD"
   const amount = cell.price?.amount ?? 0
-  const departureAt = `${cell.departureDate}T00:00:00Z`
-  const returnAt = cell.returnDate ? `${cell.returnDate}T00:00:00Z` : undefined
   const tooltip = cell.tooltip ? translateApiMessage(cell.tooltip) : undefined
 
   return {
@@ -536,9 +541,9 @@ function normalizeMatrixOffer(cell: MatrixCell, request: SearchRequest): Canonic
     airline: "Flexible",
     origin: request.origin,
     destination: request.destination,
-    departureDate: departureAt,
-    returnDate: returnAt,
-    arrivalDate: returnAt,
+    departureDate: cell.departureDate,
+    returnDate: cell.returnDate,
+    arrivalDate: cell.returnDate,
     duration: cell.stayNights ? `${cell.stayNights} noches` : "",
     stops: 0,
     stopMeta: cell.returnDate
@@ -645,6 +650,8 @@ function migrationRequestForMonth(request: SearchRequest, range: MigrationMonthR
     returnEnd: undefined,
     flexibleMode: undefined,
     stayNights: undefined,
+    maxResults: MIGRATION_MONTH_RESULT_LIMIT,
+    compactAllOffers: true,
   }
 }
 
@@ -785,6 +792,18 @@ export async function startMigrationSearch(request: SearchRequest, sortMode: Sor
     }
   )
   const offers = monthResults.flatMap((result) => result.offer ? [result.offer] : [])
+  const migrationMonths = monthResults.map((result) => ({
+    key: result.range.key,
+    label: result.range.label,
+    departureStart: result.range.departureStart,
+    departureEnd: result.range.departureEnd,
+    searchJobId: result.job?.searchJobId,
+    offer: result.offer,
+    warnings: result.warnings,
+    status: result.offer
+      ? result.complete ? "available" as const : "partial" as const
+      : result.complete ? "empty" as const : "error" as const,
+  }))
   const warnings = uniqueStrings(monthResults.flatMap((result) => result.warnings))
   const diagnosticLog = toDiagnosticLines(monthResults.flatMap((result) => result.diagnosticLog))
   const providerMeta = monthResults.find((result) => result.job?.providerMeta)?.job?.providerMeta ?? {
@@ -805,6 +824,7 @@ export async function startMigrationSearch(request: SearchRequest, sortMode: Sor
     request,
     offers,
     allOffers: offers,
+    migrationMonths,
     searchMeta: {
       requestedAt,
       completedAt,

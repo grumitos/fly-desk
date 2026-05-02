@@ -395,6 +395,52 @@ test("findRecentCompletedSearchJob reuses the latest compatible completed search
   assert.equal(reused?.id, completedJob.id);
 });
 
+test("findRecentCompletedSearchJob treats compactAllOffers false as the default cache key", () => {
+  const store = new SearchSessionStore();
+  const request = buildRequest();
+  const offer = buildOffer("offer-compact-default", "https://cached.example/default");
+  const completedJob = store.createSearchJob({
+    request,
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+
+  const requestWithDefaultFlag: SearchRequest = {
+    ...buildRequest(),
+    filters: {
+      ...buildRequest().filters,
+      compactAllOffers: false,
+    },
+  };
+  const reused = store.findRecentCompletedSearchJob({
+    request: requestWithDefaultFlag,
+    providerIds: ["agil-local"],
+    sortMode: "cheapest",
+    maxAgeMs: 10 * 60 * 1000,
+  });
+  assert.equal(reused?.id, completedJob.id);
+
+  const compactRequest: SearchRequest = {
+    ...buildRequest(),
+    filters: {
+      ...buildRequest().filters,
+      compactAllOffers: true,
+    },
+  };
+  const notReused = store.findRecentCompletedSearchJob({
+    request: compactRequest,
+    providerIds: ["agil-local"],
+    sortMode: "cheapest",
+    maxAgeMs: 10 * 60 * 1000,
+  });
+  assert.equal(notReused, undefined);
+});
+
 test("findRecentCompletedSearchJob ignores expired or incompatible completed searches", () => {
   const store = new SearchSessionStore();
   const request = buildRequest();

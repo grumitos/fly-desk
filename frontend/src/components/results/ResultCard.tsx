@@ -8,6 +8,8 @@ interface ResultCardProps {
   selected: boolean
   passengerCount: number
   onSelect: (offer: CanonicalOffer) => void
+  variant?: "regular" | "compact"
+  eyebrow?: string
 }
 
 type LayoverItem = {
@@ -15,7 +17,14 @@ type LayoverItem = {
   minutes: number
 }
 
-export function ResultCard({ offer, selected, passengerCount, onSelect }: ResultCardProps) {
+export function ResultCard({
+  offer,
+  selected,
+  passengerCount,
+  onSelect,
+  variant = "regular",
+  eyebrow,
+}: ResultCardProps) {
   const carrier = carrierDisplayParts(offer)
   const itinerary = primaryItineraryForOffer(offer)
   const windowSummary = itineraryWindowSummary(itinerary, offer)
@@ -43,8 +52,12 @@ export function ResultCard({ offer, selected, passengerCount, onSelect }: Result
       tabIndex={0}
       aria-label={rowLabel}
       aria-pressed={selected}
-      data-testid="result-card"
-      className={cn("fd-result-card", selected && "is-selected")}
+      data-testid={variant === "compact" ? "migration-month-card" : "result-card"}
+      className={cn(
+        "fd-result-card",
+        variant === "compact" && "fd-result-card--compact",
+        selected && "is-selected",
+      )}
       onClick={() => onSelect(offer)}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -53,6 +66,8 @@ export function ResultCard({ offer, selected, passengerCount, onSelect }: Result
         }
       }}
     >
+      {eyebrow && <span className="fd-result-card__eyebrow">{eyebrow}</span>}
+
       <div className="fd-result-card__airline">
         <span className="fd-result-card__airline-name" title={carrier.display}>{carrier.display}</span>
         <span className="fd-result-card__meta" title={flightCodes || offer.providerSource || undefined}>
@@ -63,11 +78,17 @@ export function ResultCard({ offer, selected, passengerCount, onSelect }: Result
 
       <div className="fd-result-card__schedule">
         <div className="fd-result-card__schedule-main">
-          <span>{windowSummary.departureTime}</span>
-          <span className="fd-result-card__schedule-separator">-</span>
-          <span>{windowSummary.arrivalTime}</span>
-          {windowSummary.arrivalDayOffset > 0 && (
-            <span className="fd-result-card__schedule-offset">+{windowSummary.arrivalDayOffset}</span>
+          {windowSummary.hasKnownSchedule ? (
+            <>
+              <span>{windowSummary.departureTime}</span>
+              <span className="fd-result-card__schedule-separator">-</span>
+              <span>{windowSummary.arrivalTime}</span>
+              {windowSummary.arrivalDayOffset > 0 && (
+                <span className="fd-result-card__schedule-offset">+{windowSummary.arrivalDayOffset}</span>
+              )}
+            </>
+          ) : (
+            <span className="fd-result-card__schedule-unknown">Horario por confirmar</span>
           )}
         </div>
         <span className="fd-result-card__meta">{windowSummary.departureDateLabel}</span>
@@ -224,14 +245,18 @@ function itineraryWindowSummary(itinerary: Itinerary | null, offer: CanonicalOff
   const arrivalDate = isoDatePart(arrivalIso)
   const origin = String(first?.origin ?? offer.origin ?? "").trim().toUpperCase()
   const destination = String(last?.destination ?? offer.destination ?? "").trim().toUpperCase()
-  const departureTime = timeOfIso(departureIso) || "-"
-  const arrivalTime = timeOfIso(arrivalIso) || "-"
+  const parsedDepartureTime = timeOfIso(departureIso)
+  const parsedArrivalTime = timeOfIso(arrivalIso)
+  const hasKnownSchedule = Boolean(parsedDepartureTime || parsedArrivalTime)
+  const departureTime = parsedDepartureTime || "-"
+  const arrivalTime = parsedArrivalTime || "-"
 
   return {
     origin,
     destination,
     route: [origin, destination].filter(Boolean).join(" - ") || "Ruta por confirmar",
-    schedule: `${departureTime} - ${arrivalTime}`,
+    schedule: hasKnownSchedule ? `${departureTime} - ${arrivalTime}` : "Horario por confirmar",
+    hasKnownSchedule,
     departureTime,
     arrivalTime,
     departureDateLabel: departureDate ? `Ida ${formatDateCompact(departureDate)}` : "Horario por confirmar",
@@ -413,9 +438,11 @@ function providerBadge(offer: CanonicalOffer) {
 
 function timeOfIso(value?: string) {
   if (!value) return ""
-  if (value.includes("T") && value.length >= 16) return value.slice(11, 16)
+  const trimmed = value.trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return ""
+  if (trimmed.includes("T") && trimmed.length >= 16) return trimmed.slice(11, 16)
 
-  const parsed = new Date(value)
+  const parsed = new Date(trimmed)
   if (Number.isNaN(parsed.getTime())) return ""
   return parsed.toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hour12: false })
 }
