@@ -1,8 +1,14 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
+import { segmentedControlClassName } from "@/components/ui/segmented-control-classes"
+import { SlidingSegmentIndicator } from "@/components/ui/sliding-segment-indicator"
+import { useSlidingSegmentIndicator } from "@/components/ui/use-sliding-segment-indicator"
+import { cn } from "@/lib/utils"
 
 export const TOPBAR_SEARCH_CONTROLS_ID = "fd-topbar-search-controls"
+const TOPBAR_ICON_BUTTON_CLASS =
+  "relative z-10 h-8 w-8 rounded-none border-0 text-foreground transition-[background-color,color,transform,opacity] hover:text-foreground focus-visible:ring-0"
 
 function getInitialTheme(): "light" | "dark" {
   try {
@@ -42,19 +48,40 @@ function ThemeToggle({
       onClick={() => setTheme(nextTheme)}
       aria-label="Cambiar tema"
       aria-pressed={theme === "dark"}
-      className="size-7 border border-transparent text-foreground hover:border-border hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-ring/40"
+      className={`${TOPBAR_ICON_BUTTON_CLASS} fd-theme-toggle`}
     >
       <AppIcon name={theme === "dark" ? "sun" : "moon"} />
     </Button>
   )
 }
 
-interface TopBarProps {
-  logViewActive?: boolean
-  onLogViewToggle?: () => void
+function TopBarIconGroup({ children }: { children: ReactNode }) {
+  const { containerRef, indicatorStyle } = useSlidingSegmentIndicator<HTMLDivElement>({ trackActive: false })
+
+  return (
+    <div
+      ref={containerRef}
+      className={cn("fd-segmented-control text-muted-foreground", segmentedControlClassName)}
+    >
+      <SlidingSegmentIndicator style={indicatorStyle} />
+      {children}
+    </div>
+  )
 }
 
-export function TopBar({ logViewActive = false, onLogViewToggle }: TopBarProps) {
+interface TopBarProps {
+  onResetSearch?: () => void
+  copySearchDisabled?: boolean
+  onCopySearchConfig?: () => void
+  onPasteSearchConfig?: () => void
+}
+
+export function TopBar({
+  onResetSearch,
+  copySearchDisabled = true,
+  onCopySearchConfig,
+  onPasteSearchConfig,
+}: TopBarProps) {
   const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme)
 
   useEffect(() => {
@@ -67,18 +94,16 @@ export function TopBar({ logViewActive = false, onLogViewToggle }: TopBarProps) 
         <div className="flex min-w-0 items-center gap-2 justify-self-start">
           <button
             type="button"
-            onClick={onLogViewToggle}
-            aria-label="Alternar registro"
-            aria-pressed={logViewActive}
-            className="flex h-7 w-7 shrink-0 cursor-default items-center justify-center border-0 bg-transparent p-0 text-primary outline-none"
+            onClick={onResetSearch}
+            aria-label="Limpiar búsqueda"
+            title="Limpiar búsqueda"
+            className="group -ml-1 flex min-w-0 items-center gap-2 border-0 border-none bg-transparent px-1 py-0.5 text-left outline-none transition-[color,opacity,transform] duration-150 hover:text-primary focus-visible:outline-none focus-visible:ring-0 active:scale-[0.99]"
           >
-            <AppIcon name="brandPlane" className="h-6 w-6" />
+            <AppIcon name="brandPlane" className="h-6 w-6 text-primary transition-transform duration-150 group-hover:-translate-y-px" />
+            <span className="min-w-0 truncate text-sm font-bold text-foreground transition-colors duration-150 group-hover:text-primary">
+              Fly Desk
+            </span>
           </button>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-sm font-bold text-foreground">Fly Desk</span>
-            </div>
-          </div>
         </div>
 
         <div
@@ -88,9 +113,34 @@ export function TopBar({ logViewActive = false, onLogViewToggle }: TopBarProps) 
         />
 
         <div className="flex items-center gap-1.5 justify-self-end">
-          <div className="inline-flex items-center rounded-lg border border-input bg-secondary p-0.5 text-muted-foreground">
+          <TopBarIconGroup>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onCopySearchConfig}
+              disabled={copySearchDisabled}
+              aria-label="Copiar configuración"
+              title={copySearchDisabled ? "Completa una búsqueda para copiar la configuración" : "Copiar configuración"}
+              className={TOPBAR_ICON_BUTTON_CLASS}
+            >
+              <AppIcon name="copy" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onPasteSearchConfig}
+              aria-label="Pegar configuración"
+              title="Pegar configuración"
+              className={TOPBAR_ICON_BUTTON_CLASS}
+            >
+              <AppIcon name="clipboard" />
+            </Button>
+          </TopBarIconGroup>
+          <TopBarIconGroup>
             <ThemeToggle theme={theme} setTheme={setTheme} />
-          </div>
+          </TopBarIconGroup>
         </div>
       </div>
     </header>

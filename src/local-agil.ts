@@ -2402,10 +2402,11 @@ export function createLocalAgilMatrixDraft(
 export async function resolveLocalAgilMatrixProgressive(
   request: SearchRequest,
   draft: MatrixResponse,
-  onCellResolved?: (cell: MatrixCell) => void,
+  onCellResolved?: (cell: MatrixCell) => boolean | void,
 ): Promise<MatrixResponse> {
   const session = await getAgilSession();
   let partial = false;
+  let stopRequested = false;
   const prioritizedCells = prioritizeMatrixLoadingCells(draft.cells, draft.axes, request.tripType);
 
   const resolvedLoadingCells = await mapConcurrent(prioritizedCells, AGIL_CONCURRENCY.matrixCell, async (cell) => {
@@ -2435,7 +2436,9 @@ export async function resolveLocalAgilMatrixProgressive(
             tooltip: "Agil returned no live result for this combination.",
           } satisfies MatrixCell;
 
-      onCellResolved?.(nextCell);
+      if (onCellResolved?.(nextCell) === false) {
+        stopRequested = true;
+      }
       return nextCell;
     } catch (error) {
       partial = true;
@@ -2448,9 +2451,13 @@ export async function resolveLocalAgilMatrixProgressive(
           ? `Agil error: ${error.message}`
           : "Agil error while resolving this combination.",
       } satisfies MatrixCell;
-      onCellResolved?.(nextCell);
+      if (onCellResolved?.(nextCell) === false) {
+        stopRequested = true;
+      }
       return nextCell;
     }
+  }, {
+    canContinue: () => !stopRequested,
   });
   const resolvedByKey = new Map(resolvedLoadingCells.map((cell) => [cell.key, cell]));
   const resolvedCells = draft.cells.map((cell) => resolvedByKey.get(cell.key) ?? cell);

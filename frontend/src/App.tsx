@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState, type ReactNode } from "react"
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { DetailPanel } from "@/components/DetailPanel"
 import { ResultsPanel } from "@/components/ResultsPanel"
 import { SearchShell } from "@/components/SearchShell"
@@ -10,8 +10,15 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useSearch } from "@/hooks/useSearch"
-import { readSharedSearchFromUrl, writeSharedSearchToUrl, type SharedSearchState } from "@/lib/search-share"
-import type { CanonicalOffer, SearchRequest, SortMode } from "@/types"
+import {
+  clearSharedSearchFromUrl,
+  readSharedSearchFromText,
+  readSharedSearchFromUrl,
+  writeSharedSearchToClipboard,
+  writeSharedSearchToUrl,
+  type SharedSearchState,
+} from "@/lib/search-share"
+import type { CanonicalOffer, SearchJobResponse, SearchRequest, SortMode } from "@/types"
 
 type Filters = {
   nonStop?: boolean
@@ -21,53 +28,97 @@ type Filters = {
 }
 
 export default function App() {
-  const { results, loading, error, diagnosticLog, runSearch } = useSearch()
-  const [initialSharedSearch] = useState<SharedSearchState | null>(() => readInitialSharedSearch())
+  const { results, loading, error, statusMessage, diagnosticLog, runSearch, cancel, reset } = useSearch()
+  const [initialSharedSearch, setInitialSharedSearch] = useState<SharedSearchState | null>(() => readInitialSharedSearch())
+  const initialSharedRequest = initialSharedSearch?.request ?? null
   const [sortMode, setSortMode] = useState<SortMode>(() => initialSharedSearch?.sortMode ?? "best-value")
   const [selectedOffer, setSelectedOffer] = useState<CanonicalOffer | null>(null)
-  const [initialSharedRequest] = useState<SearchRequest | null>(() => initialSharedSearch?.request ?? null)
   const [lastRequest, setLastRequest] = useState<SearchRequest | null>(null)
   const [workspaceReady, setWorkspaceReady] = useState(false)
   const [filters, setFilters] = useState<Filters>(() => filtersFromRequest(initialSharedSearch?.request))
   const [selectedAirlines, setSelectedAirlines] = useState<string[]>(() => initialSharedSearch?.request.includedAirlineCodes ?? [])
   const [mobilePanel, setMobilePanel] = useState<"results" | "filters" | "detail">("results")
   const [plainLogView, setPlainLogView] = useState(false)
+  const [clipboardError, setClipboardError] = useState<string | null>(null)
+  const [searchDraft, setSearchDraft] = useState<SearchRequest | null>(initialSharedRequest)
+  const [searchResetToken, setSearchResetToken] = useState(0)
+  const filtersRef = useRef(filters)
+  const selectedAirlinesRef = useRef(selectedAirlines)
+  const sortModeRef = useRef(sortMode)
+  const searchFrameRef = useRef<HTMLDivElement | null>(null)
+  const pendingSearchFrameRectRef = useRef<DOMRect | null>(null)
+  const searchLayoutAnimationRef = useRef<Animation | null>(null)
 
-  const allOffers = useMemo(() => results?.offers ?? [], [results?.offers])
+  useEffect(() => {
+    filtersRef.current = filters
+  }, [filters])
+
+  useEffect(() => {
+    selectedAirlinesRef.current = selectedAirlines
+  }, [selectedAirlines])
+
+  useEffect(() => {
+    sortModeRef.current = sortMode
+  }, [sortMode])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || !event.shiftKey || event.key.toLowerCase() !== "l") return
+      event.preventDefault()
+      setPlainLogView((active) => !active)
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [])
+
+  const candidateOffers = useMemo(() => {
+    const sourceOffers = results && isMigrationResults(results) && results.allOffers?.length
+      ? results.allOffers
+      : results?.offers ?? []
+    return sortOffersForDisplay(sourceOffers, sortMode)
+  }, [results, sortMode])
   const allAirlines = useMemo(() => {
     const counts = new Map<string, number>()
-    allOffers.forEach((offer) => counts.set(offer.airline, (counts.get(offer.airline) ?? 0) + 1))
+    candidateOffers.forEach((offer) => counts.set(offer.airline, (counts.get(offer.airline) ?? 0) + 1))
     return Array.from(counts.entries())
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [allOffers])
+  }, [candidateOffers])
 
-  const filteredOffers = useMemo(() => {
-    let list = allOffers
-    if (filters.nonStop) list = list.filter((offer) => offer.stops === 0)
-    if (filters.maxStopsFilter === "1") list = list.filter((offer) => offer.stops <= 1)
-    if (filters.maxStopsFilter === "2+") list = list.filter((offer) => offer.stops >= 2)
-    if (filters.maxLayoverMinutes) {
-      const maxMinutes = Number(filters.maxLayoverMinutes)
-      list = list.filter((offer) => maxLayoverForOffer(offer) <= maxMinutes)
-    }
-    if (filters.baggageRequired) list = list.filter((offer) => offer.hasCheckedBaggage)
-    if (selectedAirlines.length > 0) list = list.filter((offer) => selectedAirlines.includes(offer.airline))
-    return list
-  }, [allOffers, filters, selectedAirlines])
+  const filteredCandidateOffers = useMemo(
+    () => applyClientFilters(candidateOffers, filters, selectedAirlines),
+    [candidateOffers, filters, selectedAirlines],
+  )
 
   const filteredResults = useMemo(() => {
     if (!results) return null
-    return { ...results, offers: filteredOffers }
-  }, [results, filteredOffers])
+    if (isMigrationResults(results)) {
+      return applyMigrationFilters(results, filteredCandidateOffers, sortMode)
+    }
+
+    return { ...results, offers: filteredCandidateOffers, sortMode }
+  }, [results, filteredCandidateOffers, sortMode])
+
+  const visibleSelectedOffer = useMemo(() => {
+    if (!filteredResults) return null
+    if (selectedOffer && filteredResults.offers.some((offer) => offer.id === selectedOffer.id)) {
+      return selectedOffer
+    }
+
+    return isMigrationResults(filteredResults) ? filteredResults.offers[0] ?? null : null
+  }, [filteredResults, selectedOffer])
 
   const handleSearch = useCallback(
     (request: SearchRequest, sort?: SortMode) => {
-      const merged = { ...request, ...filters, includedAirlineCodes: selectedAirlines }
-      const nextSort = sort ?? sortMode
+      pendingSearchFrameRectRef.current = searchFrameRef.current?.getBoundingClientRect() ?? null
+      const merged = { ...request, ...filtersRef.current, includedAirlineCodes: selectedAirlinesRef.current }
+      const nextSort = sort ?? sortModeRef.current
+      setClipboardError(null)
       setSelectedOffer(null)
       setSortMode(nextSort)
       setWorkspaceReady(false)
+      setSearchDraft(merged)
       void runSearch(merged, nextSort).then((started) => {
         if (started) {
           setLastRequest(merged)
@@ -76,39 +127,104 @@ export default function App() {
         }
       })
     },
-    [filters, runSearch, selectedAirlines, sortMode]
+    [runSearch]
   )
+
+  const handlePasteSearchConfig = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard.readText()
+      const sharedSearch = readSharedSearchFromText(text)
+      if (!sharedSearch) {
+        setClipboardError("No se encontró una configuración de búsqueda válida en el portapapeles.")
+        return
+      }
+
+      const nextFilters = filtersFromRequest(sharedSearch.request)
+      filtersRef.current = nextFilters
+      selectedAirlinesRef.current = sharedSearch.request.includedAirlineCodes ?? []
+      sortModeRef.current = sharedSearch.sortMode
+      setClipboardError(null)
+      setSelectedOffer(null)
+      setWorkspaceReady(false)
+      setSortMode(sharedSearch.sortMode)
+      setFilters(nextFilters)
+      setSelectedAirlines(sharedSearch.request.includedAirlineCodes ?? [])
+      setLastRequest(sharedSearch.request)
+      setSearchDraft(sharedSearch.request)
+      writeSharedSearchToUrl(sharedSearch.request, sharedSearch.sortMode)
+    } catch {
+      setClipboardError("No se pudo leer el portapapeles. Revisa el permiso del navegador e intenta nuevamente.")
+    }
+  }, [])
+
+  const handleCopySearchConfig = useCallback(async () => {
+    const draft = searchDraft ?? lastRequest ?? initialSharedRequest
+    if (!draft) return
+
+    const request = {
+      ...draft,
+      ...filtersRef.current,
+      includedAirlineCodes: selectedAirlinesRef.current.length ? selectedAirlinesRef.current : undefined,
+    }
+
+    try {
+      setClipboardError(null)
+      await writeSharedSearchToClipboard(request, sortModeRef.current)
+    } catch {
+      setClipboardError("No se pudo copiar la configuración. Revisa el permiso del navegador e intenta nuevamente.")
+    }
+  }, [initialSharedRequest, lastRequest, searchDraft])
+
+  const handleResetSearch = useCallback(() => {
+    reset()
+    filtersRef.current = {}
+    selectedAirlinesRef.current = []
+    sortModeRef.current = "best-value"
+    setInitialSharedSearch(null)
+    setClipboardError(null)
+    setSelectedOffer(null)
+    setWorkspaceReady(false)
+    setFilters({})
+    setSelectedAirlines([])
+    setSortMode("best-value")
+    setLastRequest(null)
+    setSearchDraft(null)
+    setMobilePanel("results")
+    setPlainLogView(false)
+    setSearchResetToken((token) => token + 1)
+    clearSharedSearchFromUrl()
+  }, [reset])
 
   const handleSort = useCallback(
     (sort: SortMode) => {
+      sortModeRef.current = sort
       setSortMode(sort)
       if (lastRequest) {
         const nextRequest = { ...lastRequest, sortMode: sort }
         setLastRequest(nextRequest)
         writeSharedSearchToUrl(nextRequest, sort)
-        runSearch(nextRequest, sort, { keepPreviousResults: true })
       }
     },
-    [lastRequest, runSearch]
+    [lastRequest]
   )
 
   const handleFilterChange = useCallback(
     (next: Partial<Filters>) => {
       const merged = { ...filters, ...next }
+      filtersRef.current = merged
       setFilters(merged)
       if (lastRequest) {
         const nextRequest = { ...lastRequest, ...merged, includedAirlineCodes: selectedAirlines }
         setLastRequest(nextRequest)
         writeSharedSearchToUrl(nextRequest, sortMode)
-        runSearch(nextRequest, sortMode, {
-          keepPreviousResults: true,
-        })
       }
     },
-    [filters, lastRequest, runSearch, selectedAirlines, sortMode]
+    [filters, lastRequest, selectedAirlines, sortMode]
   )
 
   const handleClearFilters = useCallback(() => {
+    filtersRef.current = {}
+    selectedAirlinesRef.current = []
     setFilters({})
     setSelectedAirlines([])
     if (lastRequest) {
@@ -122,22 +238,21 @@ export default function App() {
       }
       setLastRequest(nextRequest)
       writeSharedSearchToUrl(nextRequest, sortMode)
-      runSearch(nextRequest, sortMode, { keepPreviousResults: true })
     }
-  }, [lastRequest, runSearch, sortMode])
+  }, [lastRequest, sortMode])
 
   const toggleAirline = useCallback((airline: string) => {
     const nextAirlines = selectedAirlines.includes(airline)
       ? selectedAirlines.filter((item) => item !== airline)
       : [...selectedAirlines, airline]
+    selectedAirlinesRef.current = nextAirlines
     setSelectedAirlines(nextAirlines)
     if (lastRequest) {
       const nextRequest = { ...lastRequest, ...filters, includedAirlineCodes: nextAirlines }
       setLastRequest(nextRequest)
       writeSharedSearchToUrl(nextRequest, sortMode)
-      runSearch(nextRequest, sortMode, { keepPreviousResults: true })
     }
-  }, [filters, lastRequest, runSearch, selectedAirlines, sortMode])
+  }, [filters, lastRequest, selectedAirlines, sortMode])
 
   const hasFilters =
     Boolean(filters.nonStop) ||
@@ -147,6 +262,35 @@ export default function App() {
     selectedAirlines.length > 0
   const shouldShowWorkspace = workspaceReady || Boolean(results) || loading
   const isSearchIdle = !shouldShowWorkspace
+
+  useLayoutEffect(() => {
+    const frame = searchFrameRef.current
+    if (!frame) return
+
+    const previousRect = pendingSearchFrameRectRef.current
+    pendingSearchFrameRectRef.current = null
+    if (!previousRect) return
+    if (isSearchIdle) return
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
+
+    const nextRect = frame.getBoundingClientRect()
+    const deltaX = previousRect.left - nextRect.left
+    const deltaY = previousRect.top - nextRect.top
+    if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) return
+
+    searchLayoutAnimationRef.current?.cancel()
+    searchLayoutAnimationRef.current = frame.animate(
+      [
+        { transform: `translate3d(${deltaX}px, ${deltaY}px, 0)`, width: `${previousRect.width}px` },
+        { transform: "translate3d(0, 0, 0)", width: `${nextRect.width}px` },
+      ],
+      {
+        duration: 240,
+        easing: "cubic-bezier(0.4, 0, 0.2, 1)",
+      }
+    )
+  }, [isSearchIdle])
+
   const mobileTabs = [
     { id: "results" as const, label: "Resultados", icon: <AppIcon name="list" /> },
     { id: "filters" as const, label: "Filtros", icon: <AppIcon name="filters" /> },
@@ -156,38 +300,45 @@ export default function App() {
   return (
     <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground">
       <TopBar
-        logViewActive={plainLogView}
-        onLogViewToggle={() => setPlainLogView((active) => !active)}
+        onResetSearch={handleResetSearch}
+        copySearchDisabled={!searchDraft && !lastRequest && !initialSharedRequest}
+        onCopySearchConfig={handleCopySearchConfig}
+        onPasteSearchConfig={handlePasteSearchConfig}
       />
 
       {plainLogView ? (
         <PlainLogView lines={diagnosticLog} />
       ) : (
         <main
-          className={`mx-auto flex min-h-0 w-full max-w-[1560px] flex-1 flex-col gap-2.5 px-2.5 sm:px-4 ${
-            isSearchIdle ? "justify-center pb-[10vh] pt-2.5 sm:pt-3" : "py-2.5 sm:py-3"
+          className={`fd-search-stage mx-auto min-h-0 w-full max-w-[1560px] flex-1 px-2.5 sm:px-4 ${
+            isSearchIdle ? "fd-search-stage-idle" : "fd-search-stage-active"
           }`}
         >
           <div
-            className={`w-full transform-gpu transition-[transform,opacity] duration-200 ease-out ${
-              isSearchIdle ? "mx-auto -translate-y-6" : "translate-y-0"
-            }`}
+            ref={searchFrameRef}
+            data-testid="search-shell-frame"
+            className="fd-search-frame"
           >
             <SearchShell
               onSearch={handleSearch}
               loading={loading}
+              onCancelSearch={cancel}
               controlsPlacement={shouldShowWorkspace ? "topbar" : "inline"}
               syncedRequest={lastRequest ?? initialSharedRequest}
+              resetToken={searchResetToken}
+              onSearchConfigDraftChange={setSearchDraft}
             />
 
-            {error && (
+            {(clipboardError || error || statusMessage) && (
               <div
                 role="alert"
-                className="fd-popover-enter fd-alert fd-alert-error mt-2 flex items-start gap-2 font-medium"
+                className={`fd-popover-enter fd-alert mt-2 flex items-start gap-2 font-medium ${
+                  clipboardError || error ? "fd-alert-error" : "fd-alert-warning"
+                }`}
               >
                 <AppIcon name="alert" className="mt-0.5" />
                 <div className="min-w-0 space-y-1">
-                  {formatAlertLines(error).map((line, index) => (
+                  {formatAlertLines(clipboardError || error || statusMessage || "").map((line, index) => (
                     <p key={`${line}-${index}`} className={index === 0 ? "font-bold" : "text-xs leading-5"}>
                       {line}
                     </p>
@@ -201,7 +352,7 @@ export default function App() {
             <Tabs
               value={mobilePanel}
               onValueChange={(value) => setMobilePanel(value as "results" | "filters" | "detail")}
-              className="min-h-0 flex-1 gap-2.5"
+              className="fd-shell-workspace min-h-0 gap-2.5"
             >
               <TabsList className="grid grid-cols-3 xl:hidden">
                 {mobileTabs.map((tab) => (
@@ -238,12 +389,12 @@ export default function App() {
                       setSelectedOffer(offer)
                       setMobilePanel("detail")
                     }}
-                    selectedOfferId={selectedOffer?.id}
+                    selectedOfferId={visibleSelectedOffer?.id}
                   />
                 </div>
 
                 <div className={`${mobilePanel === "detail" ? "block" : "hidden"} min-h-0 xl:block`}>
-                  <DetailPanel offer={selectedOffer} searchJobId={results?.searchJobId} />
+                  <DetailPanel offer={visibleSelectedOffer} searchJobId={results?.searchJobId} />
                 </div>
               </div>
             </Tabs>
@@ -362,7 +513,7 @@ const FiltersPanel = memo(function FiltersPanel({
             Aparecerán al tener resultados.
           </div>
         ) : (
-          <div className="fd-scrollbar max-h-64 space-y-1 overflow-auto pr-1">
+          <div className="fd-scrollbar-hidden max-h-64 space-y-1 overflow-auto pr-1">
             {allAirlines.map((airline) => (
               <label
                 key={airline.name}
@@ -427,6 +578,131 @@ function maxLayoverForOffer(offer: CanonicalOffer): number {
   return (offer.itineraries ?? [])
     .flatMap((itinerary) => itinerary.layoverMinutes ?? [])
     .reduce((max, minutes) => Math.max(max, minutes), 0)
+}
+
+function applyClientFilters(offers: CanonicalOffer[], filters: Filters, selectedAirlines: string[]) {
+  let list = offers
+  if (filters.nonStop) list = list.filter((offer) => maxStopsForFilter(offer) === 0)
+  if (filters.maxStopsFilter === "1") list = list.filter((offer) => maxStopsForFilter(offer) <= 1)
+  if (filters.maxStopsFilter === "2+") list = list.filter((offer) => maxStopsForFilter(offer) >= 2)
+  if (filters.maxLayoverMinutes) {
+    const maxMinutes = Number(filters.maxLayoverMinutes)
+    list = list.filter((offer) => maxLayoverForOffer(offer) <= maxMinutes)
+  }
+  if (filters.baggageRequired) list = list.filter((offer) => offer.hasCheckedBaggage)
+  if (selectedAirlines.length > 0) list = list.filter((offer) => selectedAirlines.includes(offer.airline))
+  return list
+}
+
+function isMigrationResults(results: { migrationMonths?: unknown[]; request: SearchRequest }) {
+  return results.request.searchMode === "month-view" || Boolean(results.migrationMonths?.length)
+}
+
+function applyMigrationFilters(results: SearchJobResponse, filteredOffers: CanonicalOffer[], sortMode: SortMode) {
+  const visibleOfferIds = new Set(filteredOffers.map((offer) => offer.id))
+  const migrationMonths = (results.migrationMonths ?? []).map((month) => {
+    const monthOffers = month.offers?.length
+      ? month.offers
+      : month.offer ? [month.offer] : []
+    const visibleMonthOffers = monthOffers.filter((offer) => visibleOfferIds.has(offer.id))
+    const selectedOffer = cheapestOfferForMonth(visibleMonthOffers)
+
+    return {
+      ...month,
+      offer: selectedOffer,
+      filtered: !selectedOffer && monthOffers.length > 0 && month.status !== "loading",
+    }
+  })
+  const offers = migrationMonths.flatMap((month) => month.offer ? [month.offer] : [])
+
+  return {
+    ...results,
+    offers,
+    migrationMonths,
+    sortMode,
+  }
+}
+
+function cheapestOfferForMonth(offers: CanonicalOffer[]) {
+  return [...offers].sort((left, right) =>
+    compareNumber(priceAmount(left), priceAmount(right))
+      || compareNumber(totalDurationForDisplay(left), totalDurationForDisplay(right)),
+  )[0]
+}
+
+function sortOffersForDisplay(offers: CanonicalOffer[], sortMode: SortMode): CanonicalOffer[] {
+  if (offers.length <= 1) return offers
+
+  return offers
+    .map((offer, index) => ({ offer, index }))
+    .sort((left, right) => {
+      const compared = compareOffersForDisplay(left.offer, right.offer, sortMode)
+      return compared !== 0 ? compared : left.index - right.index
+    })
+    .map((item) => item.offer)
+}
+
+function compareOffersForDisplay(left: CanonicalOffer, right: CanonicalOffer, sortMode: SortMode): number {
+  if (sortMode === "cheapest") {
+    return compareNumber(priceAmount(left), priceAmount(right))
+      || compareNumber(totalDurationForDisplay(left), totalDurationForDisplay(right))
+  }
+
+  if (sortMode === "fastest") {
+    return compareNumber(totalDurationForDisplay(left), totalDurationForDisplay(right))
+      || compareNumber(priceAmount(left), priceAmount(right))
+  }
+
+  const leftScore = normalizedNumber(left.valueScore)
+  const rightScore = normalizedNumber(right.valueScore)
+  if (leftScore !== null || rightScore !== null) {
+    return compareNumber(leftScore ?? Number.POSITIVE_INFINITY, rightScore ?? Number.POSITIVE_INFINITY)
+      || compareNumber(priceAmount(left), priceAmount(right))
+      || compareNumber(totalDurationForDisplay(left), totalDurationForDisplay(right))
+  }
+
+  return 0
+}
+
+function compareNumber(left: number, right: number): number {
+  if (left === right) return 0
+  return left < right ? -1 : 1
+}
+
+function priceAmount(offer: CanonicalOffer): number {
+  return normalizedNumber(offer.price?.total?.amount) ?? Number.POSITIVE_INFINITY
+}
+
+function totalDurationForDisplay(offer: CanonicalOffer): number {
+  const metricDuration = normalizedNumber(offer.comparisonMetrics?.totalDurationMinutes)
+  if (metricDuration !== null) return metricDuration
+
+  const itineraryDuration = (offer.itineraries ?? [])
+    .map((itinerary) => normalizedNumber(itinerary.durationMinutes) ?? 0)
+    .reduce((sum, minutes) => sum + minutes, 0)
+
+  return itineraryDuration > 0 ? itineraryDuration : Number.POSITIVE_INFINITY
+}
+
+function normalizedNumber(value: unknown): number | null {
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : null
+}
+
+function maxStopsForFilter(offer: CanonicalOffer): number {
+  const itineraryStops = (offer.itineraries ?? [])
+    .map((itinerary) => {
+      if (typeof itinerary.stops === "number" && Number.isFinite(itinerary.stops)) {
+        return itinerary.stops
+      }
+
+      return Math.max(0, (itinerary.segments?.length ?? 1) - 1)
+    })
+    .filter((stops) => Number.isFinite(stops))
+
+  return itineraryStops.length > 0
+    ? Math.max(...itineraryStops)
+    : offer.stops
 }
 
 function formatAlertLines(message: string) {

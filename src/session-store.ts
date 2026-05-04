@@ -29,6 +29,8 @@ export const COMPLETED_SEARCH_SESSION_TTL_MS = (() => {
     : COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS;
 })();
 
+type SearchJobStatus = "running" | "completed" | "failed" | "cancelled";
+
 interface StoredPurchasePath {
   sessionId: string;
   ownerId: string;
@@ -50,7 +52,7 @@ interface SearchSessionMetadata {
   updatedAt: string;
   lastAccessedAt: string;
   revision: number;
-  status: "running" | "completed" | "failed";
+  status: SearchJobStatus;
   error?: string;
 }
 
@@ -67,7 +69,7 @@ export interface SearchSessionRecord {
   updatedAt: string;
   lastAccessedAt: string;
   revision: number;
-  status: "running" | "completed" | "failed";
+  status: SearchJobStatus;
   error?: string;
 }
 
@@ -85,7 +87,7 @@ export interface MatrixJobRecord {
   providerMeta: ProviderMeta;
   searchMeta: SearchMeta;
   warnings: string[];
-  status: "running" | "completed" | "failed";
+  status: SearchJobStatus;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -103,7 +105,7 @@ export interface SearchJobRecord {
   providerMeta: ProviderMeta;
   warnings: string[];
   sortMode: "cheapest" | "fastest" | "best-value";
-  status: "running" | "completed" | "failed";
+  status: SearchJobStatus;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -120,10 +122,12 @@ interface StoreDiagnostics {
     runningSearchJobs: number;
     completedSearchJobs: number;
     failedSearchJobs: number;
+    cancelledSearchJobs: number;
     matrixJobs: number;
     runningMatrixJobs: number;
     completedMatrixJobs: number;
     failedMatrixJobs: number;
+    cancelledMatrixJobs: number;
     purchasePaths: number;
   };
   approxBytes: {
@@ -165,6 +169,10 @@ function nowIso(): string {
 
 function serializeForComparison(value: unknown): string {
   return JSON.stringify(value);
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
 function safeJsonSize(value: unknown): number {
@@ -558,6 +566,30 @@ export class SearchSessionStore {
     return next;
   }
 
+  cancelSearchJob(jobId: string, message = "Search cancelled by user."): SearchJobRecord | undefined {
+    return this.updateSearchJob(jobId, (current) => {
+      if (current.status !== "running") {
+        return current;
+      }
+
+      const warnings = uniqueStrings([...current.warnings, message]);
+      const metaWarnings = uniqueStrings([...(current.searchMeta.warnings ?? []), message]);
+      return {
+        ...current,
+        status: "cancelled",
+        error: message,
+        warnings,
+        searchMeta: {
+          ...current.searchMeta,
+          completedAt: nowIso(),
+          warnings: metaWarnings,
+          partial: current.offers.length > 0 || current.allOffers.length > 0,
+          searchState: "search_cancelled",
+        },
+      };
+    });
+  }
+
   resolvePurchasePath(purchasePathId: string): StoredPurchasePath | undefined {
     const stored = this.purchasePaths.get(purchasePathId);
     if (!stored) {
@@ -655,6 +687,30 @@ export class SearchSessionStore {
     return next;
   }
 
+  cancelMatrixJob(jobId: string, message = "Search cancelled by user."): MatrixJobRecord | undefined {
+    return this.updateMatrixJob(jobId, (current) => {
+      if (current.status !== "running") {
+        return current;
+      }
+
+      const warnings = uniqueStrings([...current.warnings, message]);
+      const metaWarnings = uniqueStrings([...(current.searchMeta.warnings ?? []), message]);
+      return {
+        ...current,
+        status: "cancelled",
+        error: message,
+        warnings,
+        searchMeta: {
+          ...current.searchMeta,
+          completedAt: nowIso(),
+          warnings: metaWarnings,
+          partial: true,
+          searchState: "search_cancelled",
+        },
+      };
+    });
+  }
+
   purgeExpired(nowMs = Date.now()): PurgeSummary {
     const beforeSessions = this.sessions.size;
     const beforePurchasePaths = this.purchasePaths.size;
@@ -714,10 +770,12 @@ export class SearchSessionStore {
         runningSearchJobs: searchJobs.filter((job) => job.status === "running").length,
         completedSearchJobs: searchJobs.filter((job) => job.status === "completed").length,
         failedSearchJobs: searchJobs.filter((job) => job.status === "failed").length,
+        cancelledSearchJobs: searchJobs.filter((job) => job.status === "cancelled").length,
         matrixJobs: matrixJobs.length,
         runningMatrixJobs: matrixJobs.filter((job) => job.status === "running").length,
         completedMatrixJobs: matrixJobs.filter((job) => job.status === "completed").length,
         failedMatrixJobs: matrixJobs.filter((job) => job.status === "failed").length,
+        cancelledMatrixJobs: matrixJobs.filter((job) => job.status === "cancelled").length,
         purchasePaths: this.purchasePaths.size,
       },
       approxBytes: {

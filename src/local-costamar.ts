@@ -3181,9 +3181,10 @@ export async function resolveLocalCostamarMatrixProgressive(
   request: SearchRequest,
   providerContext: ProviderContext | undefined,
   draft: MatrixResponse,
-  onCellResolved?: (cell: MatrixCell) => void,
+  onCellResolved?: (cell: MatrixCell) => boolean | void,
 ): Promise<MatrixResponse> {
   let partial = false;
+  let stopRequested = false;
   const seeded = await seedMatrixWithFlexibleSearch(request, providerContext).catch(() => new Map<string, CanonicalOffer>());
   const seededKeys = new Set<string>();
   const seededCells = draft.cells.map((cell) => {
@@ -3202,12 +3203,14 @@ export async function resolveLocalCostamarMatrixProgressive(
       seededOffer,
       providerContext,
     );
-    onCellResolved?.(nextCell);
+    if (onCellResolved?.(nextCell) === false) {
+      stopRequested = true;
+    }
     return nextCell;
   });
 
   const prioritizedCells = prioritizeMatrixLoadingCells(seededCells, draft.axes, request.tripType)
-    .filter((cell) => !seededKeys.has(cell.key));
+    .filter((cell) => !stopRequested && !seededKeys.has(cell.key));
   const resolvedLoadingCells = await mapConcurrent(prioritizedCells, COSTAMAR_CONCURRENCY.matrixCell, async (cell) => {
     try {
       const offer = await resolveCellPrice(cell.derivedRequest, providerContext);
@@ -3220,7 +3223,9 @@ export async function resolveLocalCostamarMatrixProgressive(
             stateCode: "chg" as const,
             tooltip: "Costamar returned no live result for this combination.",
           } satisfies MatrixCell;
-      onCellResolved?.(nextCell);
+      if (onCellResolved?.(nextCell) === false) {
+        stopRequested = true;
+      }
       return nextCell;
     } catch (error) {
       partial = true;
@@ -3233,9 +3238,13 @@ export async function resolveLocalCostamarMatrixProgressive(
           ? `Costamar error: ${error.message}`
           : "Costamar error while resolving this combination.",
       } satisfies MatrixCell;
-      onCellResolved?.(nextCell);
+      if (onCellResolved?.(nextCell) === false) {
+        stopRequested = true;
+      }
       return nextCell;
     }
+  }, {
+    canContinue: () => !stopRequested,
   });
 
   const resolvedByKey = new Map(resolvedLoadingCells.map((cell) => [cell.key, cell]));

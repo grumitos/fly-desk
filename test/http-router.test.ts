@@ -1184,6 +1184,72 @@ test("exact searches preserve omitted maxResults so page-based caps can be suppl
   });
 });
 
+test("search jobs can be cancelled before polling completes", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        request: {
+          tripType: "round-trip",
+          searchMode: "exact",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MAD",
+              departureDate: "2026-05-01",
+              returnDate: "2026-05-31",
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+          filters: {
+            nonStop: false,
+            baggageRequired: false,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const accepted = await response.json() as {
+      searchJobId?: string;
+      searchStatus?: string;
+    };
+    assert.equal(accepted.searchStatus, "running");
+    assert.ok(accepted.searchJobId);
+
+    const cancelResponse = await fetch(`${baseUrl}/api/search/${accepted.searchJobId}/cancel`, {
+      method: "POST",
+    });
+    assert.equal(cancelResponse.status, 200);
+    const cancelled = await cancelResponse.json() as {
+      searchComplete?: boolean;
+      searchStatus?: string;
+      searchMeta?: { searchState?: string; warnings?: string[] };
+      warnings?: string[];
+    };
+    assert.equal(cancelled.searchStatus, "cancelled");
+    assert.equal(cancelled.searchComplete, true);
+    assert.equal(cancelled.searchMeta?.searchState, "search_cancelled");
+    assert.ok(cancelled.warnings?.includes("Search cancelled by user."));
+
+    const pollResponse = await fetch(`${baseUrl}/api/search/${accepted.searchJobId}`);
+    assert.equal(pollResponse.status, 200);
+    const polled = await pollResponse.json() as {
+      searchComplete?: boolean;
+      searchStatus?: string;
+    };
+    assert.equal(polled.searchStatus, "cancelled");
+    assert.equal(polled.searchComplete, true);
+  });
+});
+
 test("agil-local searches skip Costamar context scans", async () => {
   resetCostamarSessionCacheForTests();
 

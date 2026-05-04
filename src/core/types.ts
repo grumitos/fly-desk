@@ -13,6 +13,7 @@ export type SearchState =
   | "search_live"
   | "search_cached"
   | "search_partial"
+  | "search_cancelled"
   | "search_failed";
 
 export type PriceConfidence =

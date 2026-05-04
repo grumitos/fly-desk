@@ -4,6 +4,8 @@ import type { VariantProps } from "class-variance-authority"
 
 import { buttonVariants } from "@/components/ui/button-variants"
 import { segmentedControlClassName, segmentedItemBaseClassName, segmentedItemDataStateClassName } from "@/components/ui/segmented-control-classes"
+import { SlidingSegmentIndicator } from "@/components/ui/sliding-segment-indicator"
+import { useSlidingSegmentIndicator } from "@/components/ui/use-sliding-segment-indicator"
 import { cn } from "@/lib/utils"
 
 function ToggleGroup({
@@ -14,14 +16,18 @@ function ToggleGroup({
   ...props
 }: React.ComponentProps<typeof ToggleGroupPrimitive.Root> &
   VariantProps<typeof buttonVariants>) {
+  const { containerRef, indicatorStyle } = useSlidingSegmentIndicator<HTMLDivElement>()
+
   return (
     <ToggleGroupPrimitive.Root
+      ref={containerRef}
       data-slot="toggle-group"
       data-variant={variant}
       data-size={size}
-      className={cn(segmentedControlClassName, className)}
+      className={cn("fd-segmented-control", segmentedControlClassName, className)}
       {...props}
     >
+      <SlidingSegmentIndicator style={indicatorStyle} />
       {React.Children.map(children, (child) =>
         React.isValidElement(child)
           ? React.cloneElement(child as React.ReactElement<{ variant?: typeof variant; size?: typeof size }>, {

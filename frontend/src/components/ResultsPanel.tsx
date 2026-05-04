@@ -1,10 +1,20 @@
-import { memo, type ReactNode } from "react"
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { ResultCard } from "@/components/results/ResultCard"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-control"
 import { Skeleton } from "@/components/ui/skeleton"
 import type { CanonicalOffer, MigrationMonthSummary, SearchJobResponse, SortMode } from "@/types"
+
+const RUNNING_WARNING_DELAY_MS = 12000
+const CACHED_WARNING_DELAY_MS = 18000
+const RESULTS_PAGE_SIZE_FALLBACK = 4
+const RESULTS_PAGE_SIZE_MAX = 12
+const RESULTS_CARD_HEIGHT_ESTIMATE_PX = 126
+const RESULTS_CARD_GAP_PX = 10
+const RESULTS_LIST_TOP_INSET_PX = 4
+const RESULTS_EXTRA_ROW_MIN_BLANK_PX = 28
 
 interface ResultsPanelProps {
   results: SearchJobResponse | null
@@ -26,10 +36,21 @@ function ResultsPanelBase({
   const offers = results?.offers ?? []
   const meta = results?.searchMeta
   const isMigration = results?.request.searchMode === "month-view" || Boolean(results?.migrationMonths?.length)
+  const isCancelled = results?.searchStatus === "cancelled"
   const routeLabel = results?.request ? `${results.request.origin} -> ${results.request.destination}` : "Sin consulta"
   const warnings = uniqueWarnings([...(results?.warnings ?? []), ...(meta?.warnings ?? [])])
+  const noFlightIssues = useMemo(() => providerNoFlightIssues(warnings), [warnings])
+  const warningDelayElapsed = useWarningDelayElapsed(results, loading)
+  const displayedWarnings = shouldDelayWarnings(results, loading, noFlightIssues.length)
+    ? warningDelayElapsed ? warnings : []
+    : warnings
+  const warningSummary = displayedWarnings.length > 0
+    ? warningSummaryLabel(displayedWarnings, noFlightIssues)
+    : null
+  const isRevalidatingCachedSearch = meta?.searchState === "search_cached"
+  const pendingMigrationMonths = results?.migrationMonths?.filter((month) => month.status === "loading" || month.status === "partial").length ?? 0
   const summaryLabel = isMigration
-    ? `${results?.migrationMonths?.length ?? 8} meses · ${offers.length} con tarifa`
+    ? `${results?.migrationMonths?.length ?? 8} meses · ${offers.length} con tarifa${pendingMigrationMonths ? ` · ${pendingMigrationMonths} buscando` : ""}`
     : `${offers.length} oferta${offers.length === 1 ? "" : "s"}`
 
   return (
@@ -38,56 +59,57 @@ function ResultsPanelBase({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h2 className="truncate text-sm font-bold">Resultados</h2>
+              <h2 className="truncate text-sm font-bold">{isMigration ? "Vuelo migratorio" : "Resultados"}</h2>
+              {isRevalidatingCachedSearch && <Badge variant="warning">Cache revalidando</Badge>}
               {loading && <Badge variant="warning">Actualizando</Badge>}
+              {isCancelled && !loading && <Badge variant="warning">Detenida</Badge>}
               {meta?.partial && !loading && <Badge variant="warning">Parcial</Badge>}
+              {warningSummary && (
+                <Badge variant="warning" title={displayedWarnings.join("\n")}>
+                  {warningSummary}
+                </Badge>
+              )}
             </div>
             <p className="text-xs text-muted-foreground">
               {routeLabel} · {summaryLabel}
             </p>
           </div>
 
-          <SegmentedControl aria-label="Orden de resultados">
-            <SegmentButton
-              active={sort === "best-value"}
-              aria-label="Ordenar por mejor valor"
-              onClick={() => onSort("best-value")}
-            >
-              Mejor valor
-            </SegmentButton>
-            <SegmentButton
-              active={sort === "cheapest"}
-              aria-label="Ordenar por precio"
-              onClick={() => onSort("cheapest")}
-            >
-              Precio
-            </SegmentButton>
-            <SegmentButton
-              active={sort === "fastest"}
-              aria-label="Ordenar por duración"
-              onClick={() => onSort("fastest")}
-            >
-              Duración
-            </SegmentButton>
-          </SegmentedControl>
+          {!isMigration && (
+            <SegmentedControl aria-label="Orden de resultados">
+              <SegmentButton
+                active={sort === "best-value"}
+                aria-label="Ordenar por mejor valor"
+                onClick={() => onSort("best-value")}
+              >
+                Mejor valor
+              </SegmentButton>
+              <SegmentButton
+                active={sort === "cheapest"}
+                aria-label="Ordenar por precio"
+                onClick={() => onSort("cheapest")}
+              >
+                Precio
+              </SegmentButton>
+              <SegmentButton
+                active={sort === "fastest"}
+                aria-label="Ordenar por duración"
+                onClick={() => onSort("fastest")}
+              >
+                Duración
+              </SegmentButton>
+            </SegmentedControl>
+          )}
         </div>
 
-        {warnings.length > 0 && (
-          <div className="fd-alert fd-alert-warning mt-2 flex min-h-9 items-start gap-2 text-xs font-medium">
-            <AppIcon name="alert" className="mt-0.5" />
-            <div className="min-w-0 space-y-1">
-              {warnings.map((warning, index) => (
-                <p key={`${warning}-${index}`}>{warning}</p>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {renderBody({
         loading,
         results,
         offers,
+        isCancelled,
+        noFlightIssues,
         selectedOfferId,
         onSelectOffer,
       })}
@@ -99,31 +121,35 @@ function renderBody({
   loading,
   results,
   offers,
+  noFlightIssues,
+  isCancelled,
   selectedOfferId,
   onSelectOffer,
 }: {
   loading: boolean
   results: SearchJobResponse | null
   offers: CanonicalOffer[]
+  isCancelled: boolean
+  noFlightIssues: ProviderNoFlightIssue[]
   selectedOfferId?: string
   onSelectOffer: (offer: CanonicalOffer) => void
 }) {
-  if (loading && offers.length === 0) {
-    return (
-      <div className="fd-scrollbar flex-1 space-y-2.5 overflow-auto p-3">
-        {Array.from({ length: 6 }).map((_, index) => (
-          <Skeleton key={index} className="h-[104px] w-full" />
-        ))}
-      </div>
-    )
-  }
-
   if (!results && !loading) {
     return (
       <EmptyState
         icon={<AppIcon name="flight" />}
         title="Busca vuelos para comparar"
         body="Ingresa origen, destino y fechas. La lista priorizará precio, duración, escalas, equipaje y proveedor."
+      />
+    )
+  }
+
+  if (isCancelled && offers.length === 0) {
+    return (
+      <EmptyState
+        icon={<AppIcon name="x" />}
+        title="Búsqueda detenida"
+        body="Ajusta origen, destino, fechas o pasajeros y vuelve a buscar cuando esté listo."
       />
     )
   }
@@ -139,30 +165,206 @@ function renderBody({
     )
   }
 
+  if (loading && offers.length === 0) {
+    return (
+      <div className="flex-1 space-y-2.5 overflow-hidden p-3">
+        {Array.from({ length: RESULTS_PAGE_SIZE_FALLBACK }).map((_, index) => (
+          <Skeleton key={index} className="h-[104px] w-full" />
+        ))}
+      </div>
+    )
+  }
+
   if (!loading && results && offers.length === 0) {
+    const emptyModel = emptySearchModel(noFlightIssues)
+
     return (
       <EmptyState
         icon={<AppIcon name="bestValue" />}
-        title="Sin resultados para esta consulta"
-        body="Ajusta fechas, escalas, equipaje o aerolíneas para ampliar la cobertura."
+        title={emptyModel.title}
+        body={emptyModel.body}
       />
     )
   }
 
   return (
-    <div className="fd-scrollbar flex-1 overflow-auto p-2.5">
-      <div className="fd-results-list space-y-2.5 pt-1">
-        {offers.map((offer) => (
-          <ResultCard
-            key={offer.id}
-            offer={offer}
-            selected={selectedOfferId === offer.id}
-            passengerCount={passengerCountForRequest(results?.request)}
-            onSelect={onSelectOffer}
-          />
-        ))}
+    <PaginatedResultsList
+      offers={offers}
+      passengerCount={passengerCountForRequest(results?.request)}
+      selectedOfferId={selectedOfferId}
+      onSelectOffer={onSelectOffer}
+    />
+  )
+}
+
+function PaginatedResultsList({
+  offers,
+  passengerCount,
+  selectedOfferId,
+  onSelectOffer,
+}: {
+  offers: CanonicalOffer[]
+  passengerCount: number
+  selectedOfferId?: string
+  onSelectOffer: (offer: CanonicalOffer) => void
+}) {
+  const { pageSize, viewportRef } = useAdaptiveResultsPageSize(offers.length)
+  const pageKey = useMemo(() => offerPaginationKey(offers), [offers])
+  const [pageState, setPageState] = useState({ key: "", index: 0 })
+  const pageCount = Math.max(1, Math.ceil(offers.length / pageSize))
+  const selectedPageIndex = useMemo(() => {
+    if (!selectedOfferId) return
+
+    const selectedIndex = offers.findIndex((offer) => offer.id === selectedOfferId)
+    if (selectedIndex < 0) return
+
+    return Math.floor(selectedIndex / pageSize)
+  }, [offers, pageSize, selectedOfferId])
+
+  const requestedPageIndex = pageState.key === pageKey
+    ? pageState.index
+    : selectedPageIndex ?? 0
+  const safePageIndex = Math.max(0, Math.min(requestedPageIndex, pageCount - 1))
+  const startIndex = safePageIndex * pageSize
+  const pageOffers = offers.slice(startIndex, startIndex + pageSize)
+  const endIndex = startIndex + pageOffers.length
+  const handlePageChange = (nextPageIndex: number) => {
+    setPageState({
+      key: pageKey,
+      index: Math.max(0, Math.min(nextPageIndex, pageCount - 1)),
+    })
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-2.5" data-testid="results-page-shell">
+      <div ref={viewportRef} className="fd-scrollbar-hidden min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain" data-testid="results-page-body">
+        <div className="fd-results-list grid content-start gap-2.5 pt-1">
+          {pageOffers.map((offer) => (
+            <ResultCard
+              key={offer.id}
+              offer={offer}
+              selected={selectedOfferId === offer.id}
+              passengerCount={passengerCount}
+              onSelect={onSelectOffer}
+            />
+          ))}
+        </div>
       </div>
+
+      {pageCount > 1 && (
+        <ResultsPagination
+          endIndex={endIndex}
+          pageCount={pageCount}
+          pageIndex={safePageIndex}
+          startIndex={startIndex}
+          totalCount={offers.length}
+          onPageChange={handlePageChange}
+        />
+      )}
     </div>
+  )
+}
+
+function ResultsPagination({
+  endIndex,
+  pageCount,
+  pageIndex,
+  startIndex,
+  totalCount,
+  onPageChange,
+}: {
+  endIndex: number
+  pageCount: number
+  pageIndex: number
+  startIndex: number
+  totalCount: number
+  onPageChange: (pageIndex: number) => void
+}) {
+  const firstDisabled = pageIndex <= 0
+  const lastDisabled = pageIndex >= pageCount - 1
+
+  return (
+    <nav
+      aria-label="Paginación de resultados"
+      className="mt-2 flex shrink-0 items-center justify-between gap-2 border-t border-border/80 px-1 pb-0.5 pt-2"
+      data-testid="results-pagination"
+    >
+      <p className="min-w-[6.25rem] pl-1 text-xs font-semibold text-muted-foreground">
+        {startIndex + 1}-{endIndex} de {totalCount}
+      </p>
+      <div className="flex min-w-0 items-center justify-end gap-1">
+        <Button
+          aria-label="Primera página"
+          className="h-7 w-7 rounded-md"
+          disabled={firstDisabled}
+          size="icon"
+          type="button"
+          variant="ghost"
+          onClick={() => onPageChange(0)}
+        >
+          <AppIcon name="chevronsLeft" className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          aria-label="Página anterior"
+          className="h-7 w-7 rounded-md"
+          disabled={firstDisabled}
+          size="icon"
+          type="button"
+          variant="ghost"
+          onClick={() => onPageChange(pageIndex - 1)}
+        >
+          <AppIcon name="chevronLeft" className="h-3.5 w-3.5" />
+        </Button>
+
+        {paginationItems(pageIndex, pageCount).map((item) => (
+          typeof item === "number" ? (
+            <Button
+              key={item}
+              aria-current={item === pageIndex ? "page" : undefined}
+              aria-label={`Página ${item + 1}`}
+              className="h-7 min-w-7 rounded-md px-2 text-xs"
+              size="sm"
+              type="button"
+              variant={item === pageIndex ? "secondary" : "ghost"}
+              onClick={() => onPageChange(item)}
+            >
+              {item + 1}
+            </Button>
+          ) : (
+            <span
+              key={item}
+              aria-hidden="true"
+              className="grid h-7 min-w-5 place-items-center text-xs font-bold text-muted-foreground"
+            >
+              ...
+            </span>
+          )
+        ))}
+
+        <Button
+          aria-label="Página siguiente"
+          className="h-7 w-7 rounded-md"
+          disabled={lastDisabled}
+          size="icon"
+          type="button"
+          variant="ghost"
+          onClick={() => onPageChange(pageIndex + 1)}
+        >
+          <AppIcon name="chevronRight" className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          aria-label="Última página"
+          className="h-7 w-7 rounded-md"
+          disabled={lastDisabled}
+          size="icon"
+          type="button"
+          variant="ghost"
+          onClick={() => onPageChange(pageCount - 1)}
+        >
+          <AppIcon name="chevronsRight" className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </nav>
   )
 }
 
@@ -182,15 +384,19 @@ function MigrationMonthGrid({
       <div className="fd-migration-grid pt-1">
         {months.map((month) => (
           month.offer ? (
-            <ResultCard
-              key={month.key}
-              offer={month.offer}
-              selected={selectedOfferId === month.offer.id}
-              passengerCount={passengerCount}
-              onSelect={onSelectOffer}
-              variant="compact"
-              eyebrow={month.label}
-            />
+            <div key={month.key} className="relative min-w-0">
+              <ResultCard
+                offer={month.offer}
+                selected={selectedOfferId === month.offer.id}
+                passengerCount={passengerCount}
+                onSelect={onSelectOffer}
+                variant="compact"
+                eyebrow={month.label}
+              />
+              {month.status === "partial" && (
+                <span className="fd-migration-month-card__status">Actualizando</span>
+              )}
+            </div>
           ) : (
             <MigrationEmptyMonthCard key={month.key} month={month} />
           )
@@ -201,19 +407,29 @@ function MigrationMonthGrid({
 }
 
 function MigrationEmptyMonthCard({ month }: { month: DisplayMigrationMonth }) {
+  const loading = month.status === "loading"
+  const error = month.status === "error"
+
   return (
-    <article className="fd-migration-month-card" data-testid="migration-month-card">
+    <article
+      className={`fd-migration-month-card${loading ? " fd-migration-month-card--loading" : ""}${error ? " fd-migration-month-card--error" : ""}`}
+      data-testid="migration-month-card"
+    >
       <span className="fd-result-card__eyebrow">{month.label}</span>
       <div>
         <p className="fd-migration-month-card__title">
-          {month.filtered ? "Sin tarifa con filtros" : "Sin tarifa disponible"}
+          {loading
+            ? "Buscando..."
+            : month.filtered ? "Sin tarifa con filtros" : "Sin tarifa disponible"}
         </p>
         <p className="fd-migration-month-card__meta">
           {formatDateRange(month.departureStart, month.departureEnd)}
         </p>
       </div>
       <p className="fd-migration-month-card__body">
-        {month.filtered
+        {loading
+          ? "Consultando el precio más bajo disponible para este mes."
+          : month.filtered
           ? "Ajusta directo, equipaje o aerolínea para volver a incluir este mes."
           : month.warnings?.[0] ?? "No hubo una oferta disponible para este mes."}
       </p>
@@ -241,6 +457,194 @@ type DisplayMigrationMonth = MigrationMonthSummary & {
 
 function uniqueWarnings(messages: string[]) {
   return Array.from(new Set(messages.map((message) => message.trim()).filter(Boolean)))
+}
+
+function useWarningDelayElapsed(results: SearchJobResponse | null, loading: boolean) {
+  const [elapsedKey, setElapsedKey] = useState<string | null>(null)
+  const jobId = results?.searchJobId
+  const searchState = results?.searchMeta?.searchState
+  const delayMs = searchState === "search_cached" ? CACHED_WARNING_DELAY_MS : RUNNING_WARNING_DELAY_MS
+  const delayKey = jobId && loading && !results?.searchComplete
+    ? `${jobId}:${searchState ?? "unknown"}`
+    : null
+
+  useEffect(() => {
+    if (!delayKey) return
+
+    const timer = window.setTimeout(() => setElapsedKey(delayKey), delayMs)
+    return () => window.clearTimeout(timer)
+  }, [delayKey, delayMs])
+
+  return !delayKey || elapsedKey === delayKey
+}
+
+function shouldDelayWarnings(
+  results: SearchJobResponse | null,
+  loading: boolean,
+  noFlightIssueCount: number,
+) {
+  if (!results || !loading || results.searchComplete) return false
+  if (noFlightIssueCount > 0 && results.offers.length === 0) return false
+  return true
+}
+
+type ProviderNoFlightIssue = {
+  provider: "Agil" | "Costamar"
+  warning: string
+}
+
+function providerNoFlightIssues(warnings: string[]): ProviderNoFlightIssue[] {
+  const issues: ProviderNoFlightIssue[] = []
+  const seen = new Set<string>()
+
+  for (const warning of warnings) {
+    const normalized = warning.toLowerCase()
+    const provider = normalized.includes("agil no devolvió")
+      ? "Agil"
+      : normalized.includes("costamar no devolvió")
+        ? "Costamar"
+        : null
+
+    if (!provider || seen.has(provider)) continue
+    seen.add(provider)
+    issues.push({ provider, warning })
+  }
+
+  return issues
+}
+
+function emptySearchModel(noFlightIssues: ProviderNoFlightIssue[]) {
+  if (noFlightIssues.length > 0) {
+    const providers = providerSentence(noFlightIssues.map((issue) => issue.provider))
+    return {
+      title: noFlightIssues.length === 1
+        ? `${providers} no devolvió vuelos`
+        : `${providers} no devolvieron vuelos`,
+      body: noFlightIssues.length === 1
+        ? `${noFlightIssues[0].warning} Ajusta fechas, escalas o equipaje para ampliar la búsqueda.`
+        : "Los proveedores consultados informaron que no hay vuelos para esta combinación. Ajusta fechas, escalas o equipaje para ampliar la búsqueda.",
+    }
+  }
+
+  return {
+    title: "Sin resultados para esta consulta",
+    body: "Ajusta fechas, escalas, equipaje o aerolíneas para ampliar la cobertura.",
+  }
+}
+
+function providerSentence(providers: string[]) {
+  if (providers.length === 0) return "Los proveedores"
+  if (providers.length === 1) return providers[0]
+  return `${providers.slice(0, -1).join(", ")} y ${providers[providers.length - 1]}`
+}
+
+function warningSummaryLabel(warnings: string[], noFlightIssues: ProviderNoFlightIssue[]) {
+  if (noFlightIssues.length > 0) {
+    return noFlightIssues.length === 1
+      ? `${noFlightIssues[0].provider} sin vuelos`
+      : "Agil y Costamar sin vuelos"
+  }
+
+  return warnings.length === 1 ? "1 aviso" : `${warnings.length} avisos`
+}
+
+function useAdaptiveResultsPageSize(itemCount: number) {
+  const viewportRef = useRef<HTMLDivElement | null>(null)
+  const [pageSize, setPageSize] = useState(RESULTS_PAGE_SIZE_FALLBACK)
+  const rowHeightRef = useRef(RESULTS_CARD_HEIGHT_ESTIMATE_PX)
+
+  useLayoutEffect(() => {
+    const node = viewportRef.current
+    if (!node || itemCount <= 0) return
+
+    let frame = 0
+    const update = () => {
+      const list = node.querySelector<HTMLElement>(".fd-results-list")
+      const availableHeight = Math.max(0, node.clientHeight - RESULTS_LIST_TOP_INSET_PX)
+      const measuredCards = list
+        ? Array.from(list.querySelectorAll<HTMLElement>(".fd-result-card"))
+        : []
+      const listStyle = list ? window.getComputedStyle(list) : null
+      const measuredGap = listStyle
+        ? Number.parseFloat(listStyle.rowGap || listStyle.gap || `${RESULTS_CARD_GAP_PX}`)
+        : RESULTS_CARD_GAP_PX
+      const gap = Number.isFinite(measuredGap) ? measuredGap : RESULTS_CARD_GAP_PX
+      const measuredCardHeight = measuredCards.reduce((maxHeight, card) => {
+        return Math.max(maxHeight, card.getBoundingClientRect().height)
+      }, 0)
+      if (measuredCardHeight > 0 && Math.abs(measuredCardHeight - rowHeightRef.current) > 1) {
+        rowHeightRef.current = measuredCardHeight
+      }
+
+      const rowHeight = rowHeightRef.current
+      const fullyVisibleRows = Math.max(1, Math.floor((availableHeight + gap) / (rowHeight + gap)))
+      const usedHeight = fullyVisibleRows * rowHeight + Math.max(0, fullyVisibleRows - 1) * gap
+      const blankHeight = availableHeight - usedHeight
+      const shouldAddOverflowRow = blankHeight >= RESULTS_EXTRA_ROW_MIN_BLANK_PX && fullyVisibleRows < itemCount
+      const nextPageSize = Math.max(
+        1,
+        Math.min(itemCount, RESULTS_PAGE_SIZE_MAX, fullyVisibleRows + (shouldAddOverflowRow ? 1 : 0)),
+      )
+
+      setPageSize((current) => current === nextPageSize ? current : nextPageSize)
+    }
+    const scheduleUpdate = () => {
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(update)
+    }
+
+    scheduleUpdate()
+
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", scheduleUpdate)
+      return () => {
+        window.cancelAnimationFrame(frame)
+        window.removeEventListener("resize", scheduleUpdate)
+      }
+    }
+
+    const observer = new ResizeObserver(scheduleUpdate)
+    observer.observe(node)
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      observer.disconnect()
+    }
+  }, [itemCount])
+
+  return { pageSize, viewportRef }
+}
+
+function offerPaginationKey(offers: CanonicalOffer[]) {
+  if (offers.length === 0) return "empty"
+  if (offers.length <= 6) return offers.map((offer) => offer.id).join("|")
+
+  const middleIndex = Math.floor(offers.length / 2)
+  return [
+    offers.length,
+    offers[0]?.id,
+    offers[1]?.id,
+    offers[middleIndex]?.id,
+    offers[offers.length - 1]?.id,
+  ].join("|")
+}
+
+type PaginationItem = number | "ellipsis-left" | "ellipsis-right"
+
+function paginationItems(pageIndex: number, pageCount: number): PaginationItem[] {
+  if (pageCount <= 5) {
+    return Array.from({ length: pageCount }, (_, index) => index)
+  }
+
+  if (pageIndex <= 2) {
+    return [0, 1, 2, 3, "ellipsis-right", pageCount - 1]
+  }
+
+  if (pageIndex >= pageCount - 3) {
+    return [0, "ellipsis-left", pageCount - 4, pageCount - 3, pageCount - 2, pageCount - 1]
+  }
+
+  return [0, "ellipsis-left", pageIndex - 1, pageIndex, pageIndex + 1, "ellipsis-right", pageCount - 1]
 }
 
 function passengerCountForRequest(request: SearchJobResponse["request"] | undefined) {
