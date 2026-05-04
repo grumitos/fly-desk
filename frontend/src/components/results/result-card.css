@@ -394,6 +394,46 @@
   color: var(--color-foreground);
 }
 
+.fd-migration-month-card--loading {
+  border-style: solid;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-card) 92%, var(--color-secondary)) 0%,
+      color-mix(in srgb, var(--color-secondary) 86%, var(--color-card)) 48%,
+      color-mix(in srgb, var(--color-card) 92%, var(--color-secondary)) 100%
+    );
+  background-size: 220% 100%;
+  animation: fd-migration-card-loading 1.15s ease-in-out infinite;
+}
+
+.fd-migration-month-card--error {
+  border-color: color-mix(in srgb, var(--color-destructive) 42%, var(--color-border));
+}
+
+.fd-migration-month-card__status {
+  position: absolute;
+  right: 0.55rem;
+  bottom: 0.5rem;
+  border-radius: var(--radius-md);
+  background: var(--color-warning-soft);
+  color: var(--color-warning-soft-foreground);
+  padding: 0.18rem 0.42rem;
+  font-size: 0.65rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+@keyframes fd-migration-card-loading {
+  0% {
+    background-position: 100% 0;
+  }
+
+  100% {
+    background-position: -100% 0;
+  }
+}
+
 .fd-migration-month-card .fd-result-card__eyebrow {
   display: block;
   min-width: 0;

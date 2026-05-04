@@ -5,6 +5,8 @@ import {
   segmentedItemBaseClassName,
   segmentedItemInactiveClassName,
 } from "@/components/ui/segmented-control-classes"
+import { SlidingSegmentIndicator } from "@/components/ui/sliding-segment-indicator"
+import { useSlidingSegmentIndicator } from "@/components/ui/use-sliding-segment-indicator"
 import { cn } from "@/lib/utils"
 
 interface SegmentedControlProps extends HTMLAttributes<HTMLDivElement> {
@@ -13,16 +15,21 @@ interface SegmentedControlProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 function SegmentedControl({ children, disabled = false, className, ...props }: SegmentedControlProps) {
+  const { containerRef, indicatorStyle } = useSlidingSegmentIndicator<HTMLDivElement>()
+
   return (
     <div
+      ref={containerRef}
       aria-disabled={disabled}
       className={cn(
+        "fd-segmented-control",
         segmentedControlClassName,
         disabled && "fd-disabled-section",
         className,
       )}
       {...props}
     >
+      <SlidingSegmentIndicator style={indicatorStyle} />
       {children}
     </div>
   )

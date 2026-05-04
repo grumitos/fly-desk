@@ -143,8 +143,10 @@ export interface MigrationMonthSummary {
   departureEnd: string
   searchJobId?: string
   offer?: CanonicalOffer
+  offers?: CanonicalOffer[]
+  filtered?: boolean
   warnings?: string[]
-  status: "available" | "partial" | "empty" | "error"
+  status: "loading" | "available" | "partial" | "empty" | "error"
 }
 
 export interface SearchResponse {

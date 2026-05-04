@@ -1,4 +1,4 @@
-import type { CanonicalOffer, LocationSuggestion, MatrixCell, SearchRequest, SearchJobResponse, SortMode } from "@/types"
+import type { CanonicalOffer, LocationSuggestion, MatrixCell, MigrationMonthSummary, SearchRequest, SearchJobResponse, SortMode } from "@/types"
 import { filterLocationSuggestions, normalizeLocationSearchText, normalizeLocationSuggestions } from "@/lib/locations"
 
 const API_BASE = ""
@@ -25,11 +25,38 @@ export class FlyDeskApiError extends Error {
   }
 }
 
+export class FlyDeskSearchCancelledError extends Error {
+  constructor() {
+    super("Búsqueda detenida por el usuario.")
+    this.name = "FlyDeskSearchCancelledError"
+  }
+}
+
+type RequestOptions = {
+  signal?: AbortSignal
+}
+
+type SearchRequestOptions = RequestOptions & {
+  onJobStart?: (job: { id: string; type: "search" | "matrix" }) => void
+  onMigrationProgress?: (job: SearchJobResponse) => void
+}
+
 type MigrationMonthRange = {
   key: string
   label: string
   departureStart: string
   departureEnd: string
+}
+
+type MigrationMonthWorkResult = {
+  complete: boolean
+  diagnosticLog: string[]
+  job?: SearchJobResponse
+  offer?: CanonicalOffer
+  offers: CanonicalOffer[]
+  range: MigrationMonthRange
+  status: MigrationMonthSummary["status"]
+  warnings: string[]
 }
 
 function translateApiMessage(message: string): string {
@@ -78,6 +105,10 @@ function translateApiMessage(message: string): string {
     "Costamar returned no live result for this combination.": "Costamar no devolvió una tarifa disponible para esta combinación.",
     "Consultando Costamar...": "Consultando Costamar...",
     "Consultando Agil...": "Consultando Agil...",
+    "Consultando Agil y Costamar. Los resultados se iran agregando.": "Consultando Agil y Costamar. Los resultados se irán agregando.",
+    "Consultando Agil. Los resultados se iran agregando.": "Consultando Agil. Los resultados se irán agregando.",
+    "Consultando Costamar. Los resultados se iran agregando.": "Consultando Costamar. Los resultados se irán agregando.",
+    "Mostrando resultados cacheados mientras actualizamos en segundo plano.": "Mostrando resultados cacheados mientras actualizamos en segundo plano.",
     "Matrix loading from Agil in parallel.": "Agil está consultando la matriz.",
     "Matrix finished with partial Agil failures.": "Agil completó la matriz con resultados parciales.",
     "Matrix built from Agil exact searches in parallel.": "Matriz creada con búsquedas exactas de Agil.",
@@ -88,6 +119,7 @@ function translateApiMessage(message: string): string {
     "Matrix built from Costamar exact searches over useful date combinations.": "Matriz creada con búsquedas exactas de Costamar.",
     "Matrix keeps only useful date combinations based on the requested stay window.": "La matriz conserva las combinaciones útiles para la estadía solicitada.",
     "Selecting a cell runs a full Costamar exact search for offers.": "Selecciona una fecha para ver las ofertas disponibles.",
+    "Search cancelled by user.": "Búsqueda detenida por el usuario.",
   }
 
   if (exact[normalized]) return exact[normalized]
@@ -117,11 +149,11 @@ function translateApiMessage(message: string): string {
   }
 
   if (/^Agil returned no offers/i.test(normalized)) {
-    return "Agil no devolvió ofertas para esta búsqueda."
+    return "Agil no devolvió vuelos para esta búsqueda."
   }
 
   if (/^Costamar returned no offers/i.test(normalized)) {
-    return "Costamar no devolvió ofertas para esta búsqueda."
+    return "Costamar no devolvió vuelos para esta búsqueda."
   }
 
   if (/^Agil exact search/i.test(normalized)) {
@@ -210,6 +242,10 @@ async function readJsonBody(response: Response): Promise<unknown> {
 }
 
 export function diagnosticLogFromError(error: unknown): string[] {
+  if (error instanceof FlyDeskSearchCancelledError) {
+    return toDiagnosticLines([error.message])
+  }
+
   if (error instanceof FlyDeskApiError) {
     return error.diagnosticLog
   }
@@ -222,6 +258,10 @@ export function diagnosticLogFromError(error: unknown): string[] {
 }
 
 export function userMessageFromError(error: unknown): string {
+  if (error instanceof FlyDeskSearchCancelledError) {
+    return error.message
+  }
+
   if (error instanceof FlyDeskApiError) {
     return error.message
   }
@@ -229,30 +269,54 @@ export function userMessageFromError(error: unknown): string {
   return "No se pudo completar la búsqueda. Intenta nuevamente."
 }
 
-async function postJson<T>(url: string, payload: unknown): Promise<T> {
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new FlyDeskSearchCancelledError()
+  }
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError"
+    || error instanceof Error && error.name === "AbortError"
+}
+
+async function postJson<T>(url: string, payload: unknown, options: RequestOptions = {}): Promise<T> {
+  throwIfAborted(options.signal)
   let res: Response
   try {
     res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      signal: options.signal,
     })
   } catch (error) {
+    if (isAbortLikeError(error) || options.signal?.aborted) {
+      throw new FlyDeskSearchCancelledError()
+    }
+
     throw new FlyDeskApiError("No se pudo conectar con Fly Desk. Intenta nuevamente.", diagnosticLogFromError(error))
   }
+  throwIfAborted(options.signal)
   const data = await readJsonBody(res)
   if (!res.ok) throw new FlyDeskApiError(apiErrorMessage(data), buildHttpDiagnosticLog(url, res, data))
   if (data === undefined) throw new FlyDeskApiError("El servidor devolvió una respuesta no válida.", buildHttpDiagnosticLog(url, res, data))
   return data as T
 }
 
-async function getJson<T>(url: string): Promise<T> {
+async function getJson<T>(url: string, options: RequestOptions = {}): Promise<T> {
+  throwIfAborted(options.signal)
   let res: Response
   try {
-    res = await fetch(url)
+    res = await fetch(url, { signal: options.signal })
   } catch (error) {
+    if (isAbortLikeError(error) || options.signal?.aborted) {
+      throw new FlyDeskSearchCancelledError()
+    }
+
     throw new FlyDeskApiError("No se pudo conectar con Fly Desk. Intenta nuevamente.", diagnosticLogFromError(error))
   }
+  throwIfAborted(options.signal)
   const data = await readJsonBody(res)
   if (!res.ok) throw new FlyDeskApiError(apiErrorMessage(data), buildHttpDiagnosticLog(url, res, data))
   if (data === undefined) throw new FlyDeskApiError("El servidor devolvió una respuesta no válida.", buildHttpDiagnosticLog(url, res, data))
@@ -666,20 +730,12 @@ function migrationRequestForMonth(request: SearchRequest, range: MigrationMonthR
   }
 }
 
-async function settleSearchJob(job: SearchJobResponse): Promise<SearchJobResponse> {
-  let current = job
-
-  for (let attempt = 0; attempt < MIGRATION_POLL_LIMIT && !current.searchComplete; attempt += 1) {
-    await delay(MIGRATION_POLL_INTERVAL_MS)
-    current = await pollSearch(job.searchJobId)
-  }
-
-  return current
-}
-
-function cheapestOffer(job: SearchJobResponse): CanonicalOffer | undefined {
-  const offers = job.allOffers?.length ? job.allOffers : job.offers
-  return [...offers].sort((left, right) => offerAmount(left) - offerAmount(right))[0]
+function cheapestOffer(offers: CanonicalOffer[]): CanonicalOffer | undefined {
+  return [...offers].sort((left, right) =>
+    offerAmount(left) - offerAmount(right)
+      || (left.comparisonMetrics?.totalDurationMinutes ?? Number.POSITIVE_INFINITY)
+        - (right.comparisonMetrics?.totalDurationMinutes ?? Number.POSITIVE_INFINITY)
+  )[0]
 }
 
 function normalizeMigrationOffer(offer: CanonicalOffer, range: MigrationMonthRange, job: SearchJobResponse): CanonicalOffer {
@@ -691,6 +747,11 @@ function normalizeMigrationOffer(offer: CanonicalOffer, range: MigrationMonthRan
     stopMeta: `${range.label} · ${offer.stopMeta || `${offer.origin ?? ""} -> ${offer.destination ?? ""}`}`,
     tags: uniqueStrings(["Migratorio", range.label, ...(offer.tags ?? [])]),
   }
+}
+
+function normalizeMigrationOffers(job: SearchJobResponse, range: MigrationMonthRange): CanonicalOffer[] {
+  const offers = job.allOffers?.length ? job.allOffers : job.offers
+  return offers.map((offer) => normalizeMigrationOffer(offer, range, job))
 }
 
 async function runWithConcurrency<T, R>(
@@ -749,112 +810,197 @@ function formatMigrationMonthLabel(monthValue: string) {
   return label.charAt(0).toUpperCase() + label.slice(1)
 }
 
-function delay(ms: number) {
-  return new Promise((resolve) => globalThis.setTimeout(resolve, ms))
+function delay(ms: number, signal?: AbortSignal) {
+  throwIfAborted(signal)
+
+  return new Promise<void>((resolve, reject) => {
+    const timeout = globalThis.setTimeout(() => {
+      signal?.removeEventListener("abort", handleAbort)
+      resolve()
+    }, ms)
+    const handleAbort = () => {
+      globalThis.clearTimeout(timeout)
+      reject(new FlyDeskSearchCancelledError())
+    }
+
+    signal?.addEventListener("abort", handleAbort, { once: true })
+  })
 }
 
-export async function startSearch(request: SearchRequest, sortMode: SortMode): Promise<SearchJobResponse> {
-  const data = await postJson<BackendSearchJobResponse>(`${API_BASE}/api/search`, toBackendPayload(request, sortMode))
+export async function startSearch(
+  request: SearchRequest,
+  sortMode: SortMode,
+  options: SearchRequestOptions = {}
+): Promise<SearchJobResponse> {
+  const data = await postJson<BackendSearchJobResponse>(`${API_BASE}/api/search`, toBackendPayload(request, sortMode), options)
+  if (data.searchJobId) {
+    options.onJobStart?.({ id: data.searchJobId, type: "search" })
+  }
   return normalizeSearchJob(data)
 }
 
-export async function pollSearch(jobId: string, sinceRevision?: number): Promise<SearchJobResponse> {
+export async function pollSearch(jobId: string, sinceRevision?: number, options: RequestOptions = {}): Promise<SearchJobResponse> {
   let url = `${API_BASE}/api/search/${jobId}`
   if (sinceRevision !== undefined) url += `?sinceRevision=${sinceRevision}`
-  const data = await getJson<BackendSearchJobResponse>(url)
+  const data = await getJson<BackendSearchJobResponse>(url, options)
   return normalizeSearchJob(data)
 }
 
-export async function startMatrix(request: SearchRequest, sortMode: SortMode): Promise<SearchJobResponse> {
-  const data = await postJson<BackendMatrixJobResponse>(`${API_BASE}/api/matrix`, toBackendPayload(request, sortMode))
+export async function startMatrix(
+  request: SearchRequest,
+  sortMode: SortMode,
+  options: SearchRequestOptions = {}
+): Promise<SearchJobResponse> {
+  const data = await postJson<BackendMatrixJobResponse>(`${API_BASE}/api/matrix`, toBackendPayload(request, sortMode), options)
+  if (data.matrixJobId) {
+    options.onJobStart?.({ id: data.matrixJobId, type: "matrix" })
+  }
   return normalizeMatrixJob(data, sortMode)
 }
 
-export async function startMigrationSearch(request: SearchRequest, sortMode: SortMode): Promise<SearchJobResponse> {
+export async function pollMatrix(
+  jobId: string,
+  sortMode: SortMode,
+  sinceRevision?: number,
+  options: RequestOptions = {}
+): Promise<SearchJobResponse> {
+  let url = `${API_BASE}/api/matrix/${jobId}`
+  if (sinceRevision !== undefined) url += `?sinceRevision=${sinceRevision}`
+  const data = await getJson<BackendMatrixJobResponse>(url, options)
+  return normalizeMatrixJob(data, sortMode)
+}
+
+export async function cancelSearchJob(job: { id: string; type: "search" | "matrix" }): Promise<void> {
+  const path = job.type === "matrix" ? "matrix" : "search"
+  await postJson<unknown>(`${API_BASE}/api/${path}/${encodeURIComponent(job.id)}/cancel`, {})
+}
+
+export async function startMigrationSearch(
+  request: SearchRequest,
+  sortMode: SortMode,
+  options: SearchRequestOptions = {}
+): Promise<SearchJobResponse> {
   const requestedAt = new Date().toISOString()
   const ranges = migrationMonthRanges(request.departureStart ?? request.departureDate)
-  const monthResults = await runWithConcurrency(
+  const monthResults: MigrationMonthWorkResult[] = ranges.map((range) => ({
+    range,
+    offers: [],
+    warnings: [],
+    diagnosticLog: [],
+    complete: false,
+    status: "loading",
+  }))
+
+  const buildMigrationJob = (searchComplete: boolean): SearchJobResponse => {
+    const selectedOffers = monthResults.flatMap((result) => result.offer ? [result.offer] : [])
+    const allOffers = monthResults.flatMap((result) => result.offers)
+    const warnings = uniqueStrings(monthResults.flatMap((result) => result.warnings))
+    const diagnosticLog = toDiagnosticLines(monthResults.flatMap((result) => result.diagnosticLog))
+    const providerMeta = monthResults.find((result) => result.job?.providerMeta)?.job?.providerMeta ?? {
+      exactProvider: "agil-local",
+      coverageMode: "core",
+    }
+    const hasPendingMonth = monthResults.some((result) => !result.complete)
+    const monthlyWarnings = searchComplete && selectedOffers.length === 0
+      ? uniqueStrings([...warnings, "Migratorio no encontró tarifas disponibles en los próximos 8 meses."])
+      : warnings
+
+    return {
+      searchJobId: `migration-${requestedAt}`,
+      searchComplete,
+      searchStatus: searchComplete ? "completed" : "running",
+      revision: Math.max(1, ...monthResults.map((result) => result.job?.revision ?? 0)),
+      sortMode,
+      request,
+      offers: selectedOffers,
+      allOffers,
+      migrationMonths: monthResults.map((result) => ({
+        key: result.range.key,
+        label: result.range.label,
+        departureStart: result.range.departureStart,
+        departureEnd: result.range.departureEnd,
+        searchJobId: result.job?.searchJobId,
+        offer: result.offer,
+        offers: result.offers,
+        warnings: result.warnings,
+        status: result.status,
+      })),
+      searchMeta: {
+        requestedAt,
+        completedAt: searchComplete ? new Date().toISOString() : "",
+        providersUsed: uniqueStrings(monthResults.flatMap((result) => result.job?.searchMeta?.providersUsed ?? [])),
+        warnings: monthlyWarnings,
+        partial: hasPendingMonth || monthResults.some((result) => result.status === "partial" || result.status === "error"),
+        searchState: searchComplete && !hasPendingMonth ? "search_live" : "search_partial",
+      },
+      providerMeta,
+      warnings: monthlyWarnings,
+      diagnosticLog,
+    }
+  }
+
+  const emitProgress = () => {
+    options.onMigrationProgress?.(buildMigrationJob(false))
+  }
+
+  emitProgress()
+
+  await runWithConcurrency(
     ranges,
     MIGRATION_CONCURRENT_REQUESTS,
-    async (range) => {
+    async (range, index) => {
       try {
-        const initial = await startSearch(migrationRequestForMonth(request, range), "cheapest")
-        const job = await settleSearchJob(initial)
-        const offer = cheapestOffer(job)
+        throwIfAborted(options.signal)
+        let job = await startSearch(migrationRequestForMonth(request, range), "cheapest", options)
+        let lastRevision = job.revision
 
-        return {
-          range,
-          job,
-          offer: offer ? normalizeMigrationOffer(offer, range, job) : undefined,
-          warnings: uniqueStrings([...(job.warnings ?? []), ...(job.searchMeta?.warnings ?? [])]),
-          diagnosticLog: job.diagnosticLog ?? [],
-          complete: job.searchComplete,
+        for (let attempt = 0; attempt <= MIGRATION_POLL_LIMIT; attempt += 1) {
+          const offers = normalizeMigrationOffers(job, range)
+          const offer = cheapestOffer(offers)
+          monthResults[index] = {
+            range,
+            job,
+            offer,
+            offers,
+            warnings: uniqueStrings([...(job.warnings ?? []), ...(job.searchMeta?.warnings ?? [])]),
+            diagnosticLog: job.diagnosticLog ?? [],
+            complete: job.searchComplete,
+            status: offer
+              ? job.searchComplete ? "available" : "partial"
+              : job.searchComplete ? "empty" : "loading",
+          }
+          emitProgress()
+
+          if (job.searchComplete || attempt === MIGRATION_POLL_LIMIT) break
+
+          await delay(MIGRATION_POLL_INTERVAL_MS, options.signal)
+          const polled = await pollSearch(job.searchJobId, lastRevision, options)
+          if (!polled.unchanged) {
+            job = polled
+            lastRevision = polled.revision
+          }
         }
       } catch (error) {
-        return {
+        if (error instanceof FlyDeskSearchCancelledError) {
+          throw error
+        }
+
+        monthResults[index] = {
           range,
-          job: undefined,
-          offer: undefined,
+          offers: [],
           warnings: [`${range.label}: ${userMessageFromError(error)}`],
           diagnosticLog: diagnosticLogFromError(error).map((line) => `${range.label}: ${line}`),
-          complete: false,
+          complete: true,
+          status: "error",
         }
+        emitProgress()
       }
     }
   )
-  const offers = monthResults.flatMap((result) => result.offer ? [result.offer] : [])
-  const migrationMonths = monthResults.map((result) => ({
-    key: result.range.key,
-    label: result.range.label,
-    departureStart: result.range.departureStart,
-    departureEnd: result.range.departureEnd,
-    searchJobId: result.job?.searchJobId,
-    offer: result.offer,
-    warnings: result.warnings,
-    status: result.offer
-      ? result.complete ? "available" as const : "partial" as const
-      : result.complete ? "empty" as const : "error" as const,
-  }))
-  const warnings = uniqueStrings(monthResults.flatMap((result) => result.warnings))
-  const diagnosticLog = toDiagnosticLines(monthResults.flatMap((result) => result.diagnosticLog))
-  const providerMeta = monthResults.find((result) => result.job?.providerMeta)?.job?.providerMeta ?? {
-    exactProvider: "agil-local",
-    coverageMode: "core",
-  }
-  const completedAt = new Date().toISOString()
-  const monthlyWarnings = offers.length
-    ? warnings
-    : uniqueStrings([...warnings, "Migratorio no encontró tarifas disponibles en los próximos 8 meses."])
 
-  return {
-    searchJobId: `migration-${Date.now()}`,
-    searchComplete: true,
-    searchStatus: "completed",
-    revision: Math.max(1, ...monthResults.map((result) => result.job?.revision ?? 0)),
-    sortMode,
-    request,
-    offers,
-    allOffers: offers,
-    migrationMonths,
-    searchMeta: {
-      requestedAt,
-      completedAt,
-      providersUsed: uniqueStrings(monthResults.flatMap((result) => result.job?.searchMeta?.providersUsed ?? [])),
-      warnings: monthlyWarnings,
-      partial: monthResults.some((result) => !result.complete),
-      searchState: monthResults.some((result) => !result.complete) ? "search_partial" : "search_live",
-    },
-    providerMeta,
-    warnings: monthlyWarnings,
-    diagnosticLog,
-  }
-}
-
-export async function pollMatrix(jobId: string, sortMode: SortMode, sinceRevision?: number): Promise<SearchJobResponse> {
-  let url = `${API_BASE}/api/matrix/${jobId}`
-  if (sinceRevision !== undefined) url += `?sinceRevision=${sinceRevision}`
-  const data = await getJson<BackendMatrixJobResponse>(url)
-  return normalizeMatrixJob(data, sortMode)
+  const finalJob = buildMigrationJob(true)
+  options.onMigrationProgress?.(finalJob)
+  return finalJob
 }
 
 export async function fetchQuotation(searchSessionId: string, offerId: string) {

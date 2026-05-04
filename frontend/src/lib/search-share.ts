@@ -1,4 +1,4 @@
-import { fromBackendRequest, type BackendSearchRequest } from "@/lib/api"
+import { fromBackendRequest, toBackendPayload, type BackendSearchRequest } from "@/lib/api"
 import type { SearchRequest, SortMode } from "@/types"
 
 const SEARCH_SHARE_PAYLOAD_TYPE = "fly-desk-search-config"
@@ -41,7 +41,11 @@ type SharedSearchMode = "exact" | "flexible" | "migration"
 interface LegacySharedSearchPayload {
   type: typeof SEARCH_SHARE_PAYLOAD_TYPE
   version: typeof SEARCH_SHARE_PAYLOAD_VERSION
+  copiedAt?: unknown
+  mode?: unknown
+  tripType?: unknown
   sortMode?: unknown
+  providerConfig?: unknown
   request?: BackendSearchRequest
   frontendRequest?: unknown
 }
@@ -68,6 +72,21 @@ export function decodeSharedSearchPayload(encoded: string): SharedSearchState | 
   }
 }
 
+export function readSharedSearchFromText(text: string): SharedSearchState | null {
+  const source = text.trim()
+  if (!source) return null
+
+  try {
+    const parsed = JSON.parse(source) as Partial<LegacySharedSearchPayload>
+    const normalized = normalizeSharedSearchPayload(parsed)
+    if (normalized) return normalized
+  } catch {
+    // The URL launch payload is base64url-encoded JSON.
+  }
+
+  return decodeSharedSearchPayload(source)
+}
+
 export function readSharedSearchFromUrl(url: URL): SharedSearchState | null {
   const readableSearch = readReadableSharedSearchFromUrl(url)
   if (readableSearch) return readableSearch
@@ -82,6 +101,40 @@ export function writeSharedSearchToUrl(request: SearchRequest, sortMode: SortMod
   const url = new URL(window.location.href)
   writeReadableSharedSearchParams(url, request, sortMode)
   window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`)
+  return true
+}
+
+export function clearSharedSearchFromUrl(): boolean {
+  if (typeof window === "undefined") return false
+
+  const url = new URL(window.location.href)
+  for (const key of SHARED_SEARCH_QUERY_PARAMS) {
+    url.searchParams.delete(key)
+  }
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`)
+  return true
+}
+
+export function serializeSharedSearchPayload(request: SearchRequest, sortMode: SortMode): string {
+  const backendPayload = toBackendPayload(request, sortMode)
+
+  return JSON.stringify({
+    type: SEARCH_SHARE_PAYLOAD_TYPE,
+    version: SEARCH_SHARE_PAYLOAD_VERSION,
+    copiedAt: new Date().toISOString(),
+    mode: sharedModeForRequest(request),
+    tripType: request.tripType,
+    sortMode,
+    providerConfig: null,
+    request: backendPayload.request,
+    frontendRequest: request,
+  })
+}
+
+export async function writeSharedSearchToClipboard(request: SearchRequest, sortMode: SortMode): Promise<boolean> {
+  if (!navigator.clipboard?.writeText) return false
+
+  await navigator.clipboard.writeText(serializeSharedSearchPayload(request, sortMode))
   return true
 }
 

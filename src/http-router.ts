@@ -41,8 +41,8 @@ import {
 } from "./local-costamar";
 import { openUrlLocally } from "./local-browser";
 import {
-  buildProviderContextAsync,
   getCostamarTokenStatus,
+  normalizeCostamarProviderContext,
   resolveLatestCostamarProviderContext,
   resolveProviderId,
   resolveUsableCostamarBrandedToken,
@@ -53,7 +53,7 @@ import { limitSearchResponseForPagination } from "./search-limits";
 import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
 import { logPerfSpan, startPerfTimer } from "./perf";
-import type { SearchJobRecord } from "./session-store";
+import { COMPLETED_SEARCH_SESSION_TTL_MS, type SearchJobRecord } from "./session-store";
 
 interface SessionPayload {
   searchSessionId?: string;
@@ -101,7 +101,7 @@ interface ProgressiveSearchAdapter {
     request: SearchRequest,
     providerContext: ProviderContext | undefined,
     draft: MatrixResponse,
-    onCellResolved?: (cell: MatrixResponse["cells"][number]) => void,
+    onCellResolved?: (cell: MatrixResponse["cells"][number]) => boolean | void,
   ): Promise<MatrixResponse>;
 }
 
@@ -150,7 +150,7 @@ const RESULTS_LAYOUT_COLUMNS = [
   "links",
 ] as const satisfies readonly ResultsLayoutColumnKey[];
 
-const SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS = 5 * 60 * 1000;
+const SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS = COMPLETED_SEARCH_SESSION_TTL_MS;
 const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
   const raw = Number(process.env.SEARCH_REVALIDATION_CACHE_TTL_MS ?? SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS);
   return Number.isFinite(raw) && raw >= 0
@@ -158,6 +158,9 @@ const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
     : SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS;
 })();
 const SEARCH_REVALIDATION_CACHE_WARNING = "Mostrando resultados cacheados mientras actualizamos en segundo plano.";
+const SEARCH_CANCELLED_WARNING = "Search cancelled by user.";
+const BACKGROUND_SEARCH_START_DELAY_MS = 250;
+const CACHED_BACKGROUND_SEARCH_START_DELAY_MS = 1500;
 
 const RESULTS_LAYOUT_FILE = path.resolve(__dirname, "..", "config", "results-layout.json");
 const RESULTS_LAYOUT_VERSION = 1;
@@ -173,6 +176,13 @@ const RESULTS_LAYOUT_COLUMN_LIMITS: Record<ResultsLayoutColumnKey, { min: number
 
 function shouldRunBackgroundSearchJobs(): boolean {
   return process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS !== "1";
+}
+
+function scheduleBackgroundSearchJob(callback: () => void, delayMs: number): void {
+  const timer = setTimeout(callback, delayMs);
+  if (typeof timer === "object" && timer && "unref" in timer) {
+    (timer as { unref: () => void }).unref();
+  }
 }
 
 function normalizeResultsLayoutColumns(
@@ -756,7 +766,7 @@ function matrixJobResponse(
   const unchanged = typeof sinceRevision === "number" && sinceRevision >= job.revision;
   const base = {
     matrixJobId: job.id,
-    matrixComplete: job.status === "completed" || job.status === "failed",
+    matrixComplete: job.status === "completed" || job.status === "failed" || job.status === "cancelled",
     matrixStatus: job.status,
     revision: job.revision,
     request: job.request,
@@ -844,7 +854,7 @@ function searchJobResponse(
   const unchanged = typeof sinceRevision === "number" && sinceRevision >= job.revision;
   const base = {
     searchJobId: job.id,
-    searchComplete: job.status === "completed" || job.status === "failed",
+    searchComplete: job.status === "completed" || job.status === "failed" || job.status === "cancelled",
     searchStatus: job.status,
     revision: job.revision,
     sortMode: job.sortMode,
@@ -865,6 +875,32 @@ function searchJobResponse(
     offers: job.offers,
     allOffers: job.allOffers,
   };
+}
+
+function isSearchJobRunning(runtime: ReturnType<typeof getRuntime>, jobId: string): boolean {
+  return runtime.sessions.getSearchJob(jobId)?.status === "running";
+}
+
+function isMatrixJobRunning(runtime: ReturnType<typeof getRuntime>, jobId: string): boolean {
+  return runtime.sessions.getMatrixJob(jobId)?.status === "running";
+}
+
+function cancelSearchJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: string): Response {
+  const job = runtime.sessions.cancelSearchJob(jobId, SEARCH_CANCELLED_WARNING);
+  if (!job) {
+    return json({ error: "Search job not found." }, { status: 404 });
+  }
+
+  return json(searchJobResponse(job));
+}
+
+function cancelMatrixJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: string): Response {
+  const job = runtime.sessions.cancelMatrixJob(jobId, SEARCH_CANCELLED_WARNING);
+  if (!job) {
+    return json({ error: "Matrix job not found." }, { status: 404 });
+  }
+
+  return json(matrixJobResponse(job));
 }
 
 function warmSearchSessionQuotationRate(
@@ -893,6 +929,19 @@ function shouldBuildCostamarProviderContext(providerIds: ProviderId[]): boolean 
   return providerIds.includes("costamar");
 }
 
+function buildInitialProviderContext(
+  providerIds: ProviderId[],
+  payload: SearchPayload | undefined,
+): ProviderContext | undefined {
+  if (!shouldBuildCostamarProviderContext(providerIds)) {
+    return undefined;
+  }
+
+  return {
+    costamar: normalizeCostamarProviderContext(payload?.providerConfig?.costamar),
+  };
+}
+
 async function handleSearchRequest(
   runtime: ReturnType<typeof getRuntime>,
   request: Request,
@@ -905,15 +954,7 @@ async function handleSearchRequest(
     return json({ errors: requestErrors }, { status: 400 });
   }
 
-  let providerContext: ProviderContext | undefined;
-  if (shouldBuildCostamarProviderContext(contract.providerIds)) {
-    const contextStart = startPerfTimer();
-    try {
-      providerContext = await buildProviderContextAsync("costamar", payload?.providerConfig);
-    } finally {
-      logPerfSpan("search.providerContext", contextStart, { providerId: "costamar" });
-    }
-  }
+  const providerContext = buildInitialProviderContext(contract.providerIds, payload);
   const errors = validateSearchContract(contract, providerContext);
   if (errors.length > 0) {
     return json({ errors }, { status: 400 });
@@ -963,88 +1004,126 @@ async function handleSearchRequest(
 
     runtime.sessions.updateSearchJob(job.id, (current) => ({
       ...current,
-      offers: limited.offers,
-      allOffers: limited.allOffers ?? limited.offers,
-      searchMeta: {
-        ...limited.searchMeta,
-        requestedAt: current.searchMeta.requestedAt,
-        partial: limited.searchMeta.partial,
-        searchState: limited.searchMeta.searchState,
-      },
-      providerMeta: limited.providerMeta,
-      warnings: limited.warnings,
-      status,
-      error: undefined,
+      ...(current.status === "cancelled"
+        ? {}
+        : {
+            offers: limited.offers,
+            allOffers: limited.allOffers ?? limited.offers,
+            searchMeta: {
+              ...limited.searchMeta,
+              requestedAt: current.searchMeta.requestedAt,
+              partial: limited.searchMeta.partial,
+              searchState: limited.searchMeta.searchState,
+            },
+            providerMeta: limited.providerMeta,
+            warnings: limited.warnings,
+            status,
+            error: undefined,
+          }),
     }));
-    warmSearchSessionQuotationRate(runtime, job.id, providerIds, status);
+    const currentStatus = runtime.sessions.getSearchJob(job.id)?.status;
+    if (currentStatus === "running" || currentStatus === "completed") {
+      warmSearchSessionQuotationRate(runtime, job.id, providerIds, status);
+    }
 
     return materialized;
   };
 
   if (shouldRunBackgroundSearchJobs()) {
-    const failedProviderIds = new Set<ProviderId>();
-    const resolvers = providerIds.map(async (providerId) => {
-      const providerStart = startPerfTimer();
-      const adapter = getProgressiveAdapter(providerId);
-      const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
-        providerStates.set(providerId, {
-          offers: partialResult.offers,
-          warnings: partialResult.warnings,
-          partial: true,
-          completed: false,
-        });
-        syncSearchJob("running");
-        return true;
-      };
-
-      try {
-        const result = normalizedRequest.searchMode === "stay-range"
-          ? await adapter.resolveRangeProgressive(normalizedRequest, providerContext, onProgress)
-          : await adapter.resolveExactProgressive(normalizedRequest, providerContext, onProgress);
-        providerStates.set(providerId, {
-          offers: result.offers,
-          warnings: result.warnings,
-          partial: result.partial,
-          completed: true,
-        });
-        logPerfSpan("search.provider", providerStart, {
-          jobId: job.id,
-          providerId,
-          status: "completed",
-          offers: result.offers.length,
-          partial: result.partial,
-        });
-        syncSearchJob("running");
-      } catch (error) {
-        providerStates.set(providerId, {
-          offers: [],
-          warnings: [
-            error instanceof Error ? error.message : "Search job failed.",
-          ],
-          partial: true,
-          completed: true,
-        });
-        failedProviderIds.add(providerId);
-        logPerfSpan("search.provider", providerStart, {
-          jobId: job.id,
-          providerId,
-          status: "failed",
-          error: error instanceof Error ? error.name : "Error",
-        });
+    scheduleBackgroundSearchJob(() => {
+      if (!isSearchJobRunning(runtime, job.id)) {
+        return;
       }
-    });
 
-    void Promise.allSettled(resolvers).then((settled) => {
-      const materialized = syncSearchJob("completed");
-      logPerfSpan("search.job", requestStart, {
-        jobId: job.id,
-        status: "completed",
-        providers: providerIds.join(","),
-        failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
-        offers: materialized.offers.length,
-        partial: materialized.searchMeta.partial,
+      const failedProviderIds = new Set<ProviderId>();
+      const resolvers = providerIds.map(async (providerId) => {
+        const providerStart = startPerfTimer();
+        const adapter = getProgressiveAdapter(providerId);
+        const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
+          if (!isSearchJobRunning(runtime, job.id)) {
+            return false;
+          }
+
+          providerStates.set(providerId, {
+            offers: partialResult.offers,
+            warnings: partialResult.warnings,
+            partial: true,
+            completed: false,
+          });
+          syncSearchJob("running");
+          return isSearchJobRunning(runtime, job.id);
+        };
+
+        try {
+          if (!isSearchJobRunning(runtime, job.id)) {
+            return;
+          }
+
+          const result = normalizedRequest.searchMode === "stay-range"
+            ? await adapter.resolveRangeProgressive(normalizedRequest, providerContext, onProgress)
+            : await adapter.resolveExactProgressive(normalizedRequest, providerContext, onProgress);
+          if (!isSearchJobRunning(runtime, job.id)) {
+            return;
+          }
+
+          providerStates.set(providerId, {
+            offers: result.offers,
+            warnings: result.warnings,
+            partial: result.partial,
+            completed: true,
+          });
+          logPerfSpan("search.provider", providerStart, {
+            jobId: job.id,
+            providerId,
+            status: "completed",
+            offers: result.offers.length,
+            partial: result.partial,
+          });
+          syncSearchJob("running");
+        } catch (error) {
+          if (!isSearchJobRunning(runtime, job.id)) {
+            return;
+          }
+
+          providerStates.set(providerId, {
+            offers: [],
+            warnings: [
+              error instanceof Error ? error.message : "Search job failed.",
+            ],
+            partial: true,
+            completed: true,
+          });
+          failedProviderIds.add(providerId);
+          logPerfSpan("search.provider", providerStart, {
+            jobId: job.id,
+            providerId,
+            status: "failed",
+            error: error instanceof Error ? error.name : "Error",
+          });
+        }
       });
-    });
+
+      void Promise.allSettled(resolvers).then((settled) => {
+        if (!isSearchJobRunning(runtime, job.id)) {
+          logPerfSpan("search.job", requestStart, {
+            jobId: job.id,
+            status: runtime.sessions.getSearchJob(job.id)?.status ?? "missing",
+            providers: providerIds.join(","),
+          });
+          return;
+        }
+
+        const materialized = syncSearchJob("completed");
+        logPerfSpan("search.job", requestStart, {
+          jobId: job.id,
+          status: "completed",
+          providers: providerIds.join(","),
+          failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
+          offers: materialized.offers.length,
+          partial: materialized.searchMeta.partial,
+        });
+      });
+    }, cachedJob ? CACHED_BACKGROUND_SEARCH_START_DELAY_MS : BACKGROUND_SEARCH_START_DELAY_MS);
   }
 
   return json(searchJobResponse(job));
@@ -1062,15 +1141,7 @@ async function handleMatrixRequest(
     return json({ errors: requestErrors }, { status: 400 });
   }
 
-  let providerContext: ProviderContext | undefined;
-  if (shouldBuildCostamarProviderContext(contract.providerIds)) {
-    const contextStart = startPerfTimer();
-    try {
-      providerContext = await buildProviderContextAsync("costamar", payload?.providerConfig);
-    } finally {
-      logPerfSpan("matrix.providerContext", contextStart, { providerId: "costamar" });
-    }
-  }
+  const providerContext = buildInitialProviderContext(contract.providerIds, payload);
   const errors = validateSearchContract(contract, providerContext);
   if (errors.length > 0) {
     return json({ errors }, { status: 400 });
@@ -1124,96 +1195,133 @@ async function handleMatrixRequest(
 
     runtime.sessions.updateMatrixJob(job.id, (current) => ({
       ...current,
-      cells: materialized.cells,
-      axes: materialized.axes,
-      confidenceSummary: materialized.confidenceSummary,
-      recommendations: materialized.recommendations,
-      searchMeta: {
-        ...materialized.searchMeta,
-        requestedAt: current.searchMeta.requestedAt,
-        searchSessionId: current.id,
-      },
-      providerMeta: materialized.providerMeta,
-      warnings: materialized.warnings,
-      status,
-      error: undefined,
+      ...(current.status === "cancelled"
+        ? {}
+        : {
+            cells: materialized.cells,
+            axes: materialized.axes,
+            confidenceSummary: materialized.confidenceSummary,
+            recommendations: materialized.recommendations,
+            searchMeta: {
+              ...materialized.searchMeta,
+              requestedAt: current.searchMeta.requestedAt,
+              searchSessionId: current.id,
+            },
+            providerMeta: materialized.providerMeta,
+            warnings: materialized.warnings,
+            status,
+            error: undefined,
+          }),
     }));
 
     return materialized;
   };
 
   if (shouldRunBackgroundSearchJobs()) {
-    const failedProviderIds = new Set<ProviderId>();
-    const resolvers = providerIds.map(async (providerId) => {
-      const providerStart = startPerfTimer();
-      const adapter = getProgressiveAdapter(providerId);
-      const currentState = providerStates.get(providerId);
-      const draftResponse = currentState?.response ?? adapter.createMatrixDraft(normalizedRequest, {
-        exactProvider: providerId,
-        coverageMode: normalizedRequest.coverageMode,
-      });
-
-      try {
-        const result = await adapter.resolveMatrixProgressive(
-          normalizedRequest,
-          providerContext,
-          draftResponse,
-          (cell) => {
-            const providerState = providerStates.get(providerId);
-            if (!providerState) {
-              return;
-            }
-
-            providerStates.set(providerId, {
-              response: updateMatrixDraftCell(providerState.response, cell),
-              completed: false,
-            });
-            syncMatrixJob("running");
-          },
-        );
-
-        providerStates.set(providerId, {
-          response: result,
-          completed: true,
-        });
-        logPerfSpan("matrix.provider", providerStart, {
-          jobId: job.id,
-          providerId,
-          status: "completed",
-          cells: result.cells.length,
-          partial: result.searchMeta.partial,
-        });
-      } catch (error) {
-        providerStates.set(providerId, {
-          response: materializeFailedMatrixResponse(
-            draftResponse,
-            error instanceof Error ? error.message : "Matrix job failed.",
-          ),
-          completed: true,
-        });
-        failedProviderIds.add(providerId);
-        logPerfSpan("matrix.provider", providerStart, {
-          jobId: job.id,
-          providerId,
-          status: "failed",
-          error: error instanceof Error ? error.name : "Error",
-        });
+    scheduleBackgroundSearchJob(() => {
+      if (!isMatrixJobRunning(runtime, job.id)) {
+        return;
       }
 
-      syncMatrixJob("running");
-    });
+      const failedProviderIds = new Set<ProviderId>();
+      const resolvers = providerIds.map(async (providerId) => {
+        const providerStart = startPerfTimer();
+        const adapter = getProgressiveAdapter(providerId);
+        const currentState = providerStates.get(providerId);
+        const draftResponse = currentState?.response ?? adapter.createMatrixDraft(normalizedRequest, {
+          exactProvider: providerId,
+          coverageMode: normalizedRequest.coverageMode,
+        });
 
-    void Promise.allSettled(resolvers).then((settled) => {
-      const materialized = syncMatrixJob("completed");
-      logPerfSpan("matrix.job", requestStart, {
-        jobId: job.id,
-        status: "completed",
-        providers: providerIds.join(","),
-        failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
-        cells: materialized.cells.length,
-        partial: materialized.searchMeta.partial,
+        try {
+          if (!isMatrixJobRunning(runtime, job.id)) {
+            return;
+          }
+
+          const result = await adapter.resolveMatrixProgressive(
+            normalizedRequest,
+            providerContext,
+            draftResponse,
+            (cell) => {
+              if (!isMatrixJobRunning(runtime, job.id)) {
+                return false;
+              }
+
+              const providerState = providerStates.get(providerId);
+              if (!providerState) {
+                return false;
+              }
+
+              providerStates.set(providerId, {
+                response: updateMatrixDraftCell(providerState.response, cell),
+                completed: false,
+              });
+              syncMatrixJob("running");
+              return isMatrixJobRunning(runtime, job.id);
+            },
+          );
+          if (!isMatrixJobRunning(runtime, job.id)) {
+            return;
+          }
+
+          providerStates.set(providerId, {
+            response: result,
+            completed: true,
+          });
+          logPerfSpan("matrix.provider", providerStart, {
+            jobId: job.id,
+            providerId,
+            status: "completed",
+            cells: result.cells.length,
+            partial: result.searchMeta.partial,
+          });
+        } catch (error) {
+          if (!isMatrixJobRunning(runtime, job.id)) {
+            return;
+          }
+
+          providerStates.set(providerId, {
+            response: materializeFailedMatrixResponse(
+              draftResponse,
+              error instanceof Error ? error.message : "Matrix job failed.",
+            ),
+            completed: true,
+          });
+          failedProviderIds.add(providerId);
+          logPerfSpan("matrix.provider", providerStart, {
+            jobId: job.id,
+            providerId,
+            status: "failed",
+            error: error instanceof Error ? error.name : "Error",
+          });
+        }
+
+        if (isMatrixJobRunning(runtime, job.id)) {
+          syncMatrixJob("running");
+        }
       });
-    });
+
+      void Promise.allSettled(resolvers).then((settled) => {
+        if (!isMatrixJobRunning(runtime, job.id)) {
+          logPerfSpan("matrix.job", requestStart, {
+            jobId: job.id,
+            status: runtime.sessions.getMatrixJob(job.id)?.status ?? "missing",
+            providers: providerIds.join(","),
+          });
+          return;
+        }
+
+        const materialized = syncMatrixJob("completed");
+        logPerfSpan("matrix.job", requestStart, {
+          jobId: job.id,
+          status: "completed",
+          providers: providerIds.join(","),
+          failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
+          cells: materialized.cells.length,
+          partial: materialized.searchMeta.partial,
+        });
+      });
+    }, BACKGROUND_SEARCH_START_DELAY_MS);
   }
 
   return json(matrixJobResponse(job));
@@ -1386,6 +1494,15 @@ export async function routeRequest(request: Request): Promise<Response> {
     return handleSearchRequest(runtime, request);
   }
 
+  if (request.method === "POST" && url.pathname.startsWith("/api/search/") && url.pathname.endsWith("/cancel")) {
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
+    }
+
+    const jobId = url.pathname.slice("/api/search/".length, -"/cancel".length);
+    return cancelSearchJobResponse(runtime, jobId);
+  }
+
   if (request.method === "GET" && url.pathname.startsWith("/api/search/")) {
     if (!isTrustedApiRequest(request)) {
       return apiAuthRequiredResponse();
@@ -1407,6 +1524,15 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     return handleMatrixRequest(runtime, request);
+  }
+
+  if (request.method === "POST" && url.pathname.startsWith("/api/matrix/") && url.pathname.endsWith("/cancel")) {
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
+    }
+
+    const jobId = url.pathname.slice("/api/matrix/".length, -"/cancel".length);
+    return cancelMatrixJobResponse(runtime, jobId);
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/matrix/")) {

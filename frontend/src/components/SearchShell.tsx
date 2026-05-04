@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type RefObject } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type RefObject } from "react"
 import { createPortal } from "react-dom"
 import { es } from "react-day-picker/locale"
 import { Button } from "@/components/ui/button"
@@ -18,18 +18,29 @@ const DATE_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
   timeZone: "UTC",
 })
 const SEARCH_FIELD_CONTROL_CLASS = "fd-control flex h-[52px] w-full items-center gap-2 px-3 pt-4"
-const SEARCH_FIELD_VALUE_CLASS = "min-w-0 flex-1 truncate text-sm font-semibold leading-none"
+const SEARCH_FIELD_VALUE_CLASS = "h-4 min-w-0 flex-1 truncate text-sm font-semibold leading-4"
 
 type SearchModeControl = "exact" | "flexible" | "migration"
 
 interface SearchShellProps {
   onSearch: (req: SearchRequest, sort?: SortMode) => void
+  onCancelSearch?: () => void
   loading: boolean
   controlsPlacement?: "inline" | "topbar"
   syncedRequest?: SearchRequest | null
+  resetToken?: number
+  onSearchConfigDraftChange?: (request: SearchRequest | null) => void
 }
 
-export function SearchShell({ onSearch, loading, controlsPlacement = "inline", syncedRequest = null }: SearchShellProps) {
+export function SearchShell({
+  onSearch,
+  onCancelSearch,
+  loading,
+  controlsPlacement = "inline",
+  syncedRequest = null,
+  resetToken = 0,
+  onSearchConfigDraftChange,
+}: SearchShellProps) {
   const [mode, setMode] = useState<SearchModeControl>("exact")
   const [trip, setTrip] = useState<"round-trip" | "one-way">("round-trip")
   const [originCode, setOriginCode] = useState("")
@@ -42,6 +53,7 @@ export function SearchShell({ onSearch, loading, controlsPlacement = "inline", s
   const [children, setChildren] = useState(0)
   const [infants, setInfants] = useState(0)
   const [paxOpen, setPaxOpen] = useState(false)
+  const lastResetTokenRef = useRef(resetToken)
   const [touched, setTouched] = useState<Record<"origin" | "destination" | "departureDate" | "returnDate", boolean>>({
     origin: false,
     destination: false,
@@ -98,6 +110,37 @@ export function SearchShell({ onSearch, loading, controlsPlacement = "inline", s
     return () => window.cancelAnimationFrame(frame)
   }, [resolveDestinationQuery, resolveOriginQuery, setDestinationQuery, setOriginQuery, syncedRequest])
 
+  useEffect(() => {
+    if (resetToken === lastResetTokenRef.current) return
+    lastResetTokenRef.current = resetToken
+
+    const frame = window.requestAnimationFrame(() => {
+      setMode("exact")
+      setTrip("round-trip")
+      setOriginCode("")
+      setDestCode("")
+      setOriginQuery("")
+      setDestinationQuery("")
+      setDepartureDate("")
+      setReturnDate("")
+      setStayNights(7)
+      setExpandFlexibleWindow(true)
+      setAdults(1)
+      setChildren(0)
+      setInfants(0)
+      setPaxOpen(false)
+      setTouched({
+        origin: false,
+        destination: false,
+        departureDate: false,
+        returnDate: false,
+      })
+      onSearchConfigDraftChange?.(null)
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [onSearchConfigDraftChange, resetToken, setDestinationQuery, setOriginQuery])
+
   const updateAdults = (nextAdults: number) => {
     const clampedAdults = Math.max(1, Math.min(nextAdults, 9))
     setAdults(clampedAdults)
@@ -149,10 +192,91 @@ export function SearchShell({ onSearch, loading, controlsPlacement = "inline", s
     minReturnDate: returnMinDate,
   })
 
+  const buildRequest = useCallback((origin: string, destination: string): SearchRequest => {
+    const flexiblePaddingDays = mode === "flexible" && expandFlexibleWindow ? 4 : 0
+    const flexibleDepartureStart = mode === "migration"
+      ? datePolicy.minSearchDate
+      : mode === "flexible"
+      ? clampIsoDate(addDays(departureDate, -flexiblePaddingDays), datePolicy.minSearchDate, datePolicy.maxSearchDate)
+      : undefined
+    const flexibleDepartureEnd = mode === "flexible"
+      ? clampIsoDate(addDays(returnDate, flexiblePaddingDays), datePolicy.minSearchDate, datePolicy.maxSearchDate)
+      : undefined
+
+    return {
+      origin,
+      destination,
+      departureDate: mode === "exact" ? departureDate || undefined : undefined,
+      departureStart: flexibleDepartureStart,
+      departureEnd: flexibleDepartureEnd,
+      returnDate: mode === "exact" && trip === "round-trip" ? returnDate || undefined : undefined,
+      tripType: mode === "migration" ? "one-way" : trip,
+      adults,
+      children,
+      infants,
+      searchMode: mode === "migration"
+        ? "month-view"
+        : mode === "flexible"
+          ? trip === "round-trip" ? "roundtrip-grid" : "stay-range"
+          : "exact",
+      flexibleMode: mode === "flexible" && trip === "round-trip" ? "exact-stay" : undefined,
+      stayNights: mode === "flexible" && trip === "round-trip" ? stayNights : undefined,
+    }
+  }, [
+    adults,
+    children,
+    datePolicy.maxSearchDate,
+    datePolicy.minSearchDate,
+    departureDate,
+    expandFlexibleWindow,
+    infants,
+    mode,
+    returnDate,
+    stayNights,
+    trip,
+  ])
+
+  const hasValidationError = hasBlockingValidationError(validation)
+
+  useEffect(() => {
+    if (hasValidationError) {
+      onSearchConfigDraftChange?.(null)
+      return
+    }
+
+    const draftOrigin = normalizeLocationCandidate(originCode || origin.query)
+    const draftDestination = normalizeLocationCandidate(destCode || destination.query)
+    const draft = isValidLocationCandidate(draftOrigin) && isValidLocationCandidate(draftDestination)
+      ? buildRequest(draftOrigin, draftDestination)
+      : null
+
+    onSearchConfigDraftChange?.(draft)
+  }, [
+    adults,
+    children,
+    datePolicy.maxSearchDate,
+    datePolicy.minSearchDate,
+    departureDate,
+    destCode,
+    destination.query,
+    expandFlexibleWindow,
+    infants,
+    hasValidationError,
+    buildRequest,
+    mode,
+    onSearchConfigDraftChange,
+    origin.query,
+    originCode,
+    returnDate,
+    stayNights,
+    trip,
+  ])
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
 
     if (loading) {
+      onCancelSearch?.()
       return
     }
 
@@ -190,35 +314,7 @@ export function SearchShell({ onSearch, loading, controlsPlacement = "inline", s
       return
     }
 
-    const flexiblePaddingDays = mode === "flexible" && expandFlexibleWindow ? 4 : 0
-    const flexibleDepartureStart = mode === "migration"
-      ? datePolicy.minSearchDate
-      : mode === "flexible"
-      ? clampIsoDate(addDays(departureDate, -flexiblePaddingDays), datePolicy.minSearchDate, datePolicy.maxSearchDate)
-      : undefined
-    const flexibleDepartureEnd = mode === "flexible"
-      ? clampIsoDate(addDays(returnDate, flexiblePaddingDays), datePolicy.minSearchDate, datePolicy.maxSearchDate)
-      : undefined
-    const request: SearchRequest = {
-      origin: resolvedRequest.origin,
-      destination: resolvedRequest.destination,
-      departureDate: mode === "exact" ? departureDate || undefined : undefined,
-      departureStart: flexibleDepartureStart,
-      departureEnd: flexibleDepartureEnd,
-      returnDate: mode === "exact" && trip === "round-trip" ? returnDate || undefined : undefined,
-      tripType: mode === "migration" ? "one-way" : trip,
-      adults,
-      children,
-      infants,
-      searchMode: mode === "migration"
-        ? "month-view"
-        : mode === "flexible"
-          ? trip === "round-trip" ? "roundtrip-grid" : "stay-range"
-          : "exact",
-      flexibleMode: mode === "flexible" && trip === "round-trip" ? "exact-stay" : undefined,
-      stayNights: mode === "flexible" && trip === "round-trip" ? stayNights : undefined,
-    }
-    onSearch(request)
+    onSearch(buildRequest(resolvedRequest.origin, resolvedRequest.destination))
   }
 
   const passengerTotal = adults + children + infants
@@ -358,7 +454,7 @@ export function SearchShell({ onSearch, loading, controlsPlacement = "inline", s
 
           <Popover open={paxOpen} onOpenChange={setPaxOpen}>
             <div className="relative">
-              <label className="fd-label absolute left-3 top-2 z-10">Pasajeros</label>
+              <label className="fd-label pointer-events-none absolute left-3 top-2.5 z-10">Pasajeros</label>
               <PopoverTrigger asChild>
                 <button
                   type="button"
@@ -384,12 +480,40 @@ export function SearchShell({ onSearch, loading, controlsPlacement = "inline", s
           </Popover>
 
           <Button
-            type="submit"
-            disabled={loading}
-            className="h-[52px] rounded-lg text-sm"
+            type={loading ? "button" : "submit"}
+            onClick={loading
+              ? (event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  onCancelSearch?.()
+                }
+              : undefined}
+            aria-label={loading ? "Detener búsqueda" : "Buscar"}
+            title={loading ? "Detener búsqueda" : undefined}
+            className={cn(
+              "h-[52px] rounded-lg text-sm",
+              loading && "group border border-primary/40 hover:border-destructive hover:bg-destructive hover:text-destructive-foreground",
+            )}
           >
-            {loading ? <AppIcon name="loading" spin /> : <AppIcon name="search" />}
-            {loading ? "Buscando" : "Buscar"}
+            {loading ? (
+              <>
+                <span className="relative grid h-4 w-4 place-items-center">
+                  <AppIcon name="loading" spin className="transition-opacity duration-150 group-hover:opacity-0" />
+                  <AppIcon name="x" className="absolute opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+                </span>
+                <span className="relative inline-grid min-w-16">
+                  <span className="transition-opacity duration-150 group-hover:opacity-0">Buscando</span>
+                  <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                    Detener
+                  </span>
+                </span>
+              </>
+            ) : (
+              <>
+                <AppIcon name="search" />
+                Buscar
+              </>
+            )}
           </Button>
           </div>
         </form>
@@ -434,13 +558,22 @@ function SearchModeControls({
       )}
     >
       <SegmentedControl>
-        <SegmentButton active={mode === "exact"} onClick={() => onModeChange("exact")}>
+        <SegmentButton
+          active={mode === "exact"}
+          onClick={() => onModeChange("exact")}
+        >
           Exacto
         </SegmentButton>
-        <SegmentButton active={mode === "flexible"} onClick={() => onModeChange("flexible")}>
+        <SegmentButton
+          active={mode === "flexible"}
+          onClick={() => onModeChange("flexible")}
+        >
           Flexible
         </SegmentButton>
-        <SegmentButton active={mode === "migration"} onClick={() => onModeChange("migration")}>
+        <SegmentButton
+          active={mode === "migration"}
+          onClick={() => onModeChange("migration")}
+        >
           Migratorio
         </SegmentButton>
       </SegmentedControl>
@@ -556,7 +689,7 @@ function LocationField({
 
   return (
     <div ref={fieldRef} className="relative">
-      <label htmlFor={fieldId} className="fd-label absolute left-3 top-2 z-10">{label}</label>
+      <label htmlFor={fieldId} className="fd-label pointer-events-none absolute left-3 top-2.5 z-10">{label}</label>
       <div
         className={cn(
           SEARCH_FIELD_CONTROL_CLASS,
@@ -683,7 +816,7 @@ function DateField({
       }}
     >
       <div className={cn("relative transition-[opacity,filter,transform] duration-200 ease-out", disabled && "fd-disabled-section")}>
-        <label id={`${fieldId}-label`} className="fd-label absolute left-3 top-2 z-10">
+        <label id={`${fieldId}-label`} className="fd-label pointer-events-none absolute left-3 top-2.5 z-10">
           <AnimatedDateLabel label={label} />
         </label>
         <PopoverTrigger asChild>
@@ -738,32 +871,10 @@ function DateField({
 }
 
 function AnimatedDateLabel({ label }: { label: string }) {
-  const [primary, ...rest] = label.split(" ")
-  const qualifier = rest.join(" ")
-
   return (
-    <>
-      <span key={primary} className="fd-label-word-swap">{primary}</span>
-      <AnimatedOptionalLabelWord word={qualifier} />
-    </>
-  )
-}
-
-function AnimatedOptionalLabelWord({ word }: { word: string }) {
-  if (!word) {
-    return null
-  }
-
-  return (
-    <>
-      {" "}
-      <span
-        key={word}
-        className="fd-label-word-extra fd-label-word-extra-visible fd-label-word-swap"
-      >
-        {word}
-      </span>
-    </>
+    <span key={label} className="fd-label-word-swap whitespace-nowrap leading-none">
+      {label}
+    </span>
   )
 }
 
@@ -794,7 +905,7 @@ function FlexibleOptionsBar({
   const stayControlsDisabled = disabled || stayNightsDisabled
 
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+    <div className="flex min-w-0 flex-wrap items-center gap-2">
       <Button
         type="button"
         variant="outline"
