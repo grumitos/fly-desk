@@ -1272,329 +1272,6 @@ function flexibleCombinationLabel(count) {
   return `${count} combinación${count === 1 ? "" : "es"}`;
 }
 
-const RESULTS_LAYOUT_ENDPOINT = "/api/results-layout";
-const RESULTS_LAYOUT_FILE_HINT = "config/results-layout.json";
-const RESULTS_LAYOUT_EDITOR_MODE = (() => {
-  try {
-    const params = new URLSearchParams(window.location.search);
-    const raw = String(
-      params.get("layoutEditor")
-      || params.get("layout")
-      || "",
-    ).trim().toLowerCase();
-    return raw === "1" || raw === "true" || raw === "editor";
-  } catch {
-    return false;
-  }
-})();
-const RESULTS_COLUMN_DEFINITIONS = [
-  { key: "carrier", label: "Aerolínea", defaultWidth: 132, minWidth: 88, maxWidth: 320 },
-  { key: "dates", label: "Fechas", defaultWidth: 154, minWidth: 96, maxWidth: 240 },
-  { key: "duration", label: "Duración", defaultWidth: 126, minWidth: 92, maxWidth: 240 },
-  { key: "stops", label: "Escalas", defaultWidth: 138, minWidth: 96, maxWidth: 300 },
-  { key: "baggage", label: "Equipaje", defaultWidth: 96, minWidth: 64, maxWidth: 180 },
-  { key: "price", label: "Precio", defaultWidth: 128, minWidth: 112, maxWidth: 360 },
-  { key: "links", label: "Enlace", defaultWidth: 102, minWidth: 40, maxWidth: 240 },
-];
-const RESULTS_PROTOTYPE_ROWS = [
-  {
-    airline: "Delta Air Lines",
-    departureDate: "20/05",
-    returnDate: "27/05",
-    routeLabel: "LIM → MXP",
-    duration: "69h 35m",
-    stopTone: "danger",
-    stopTime: "10h 0m",
-    stopMeta: "ATL +1 escala",
-    carryOnIncluded: false,
-    checkedIncluded: false,
-    priceAmount: 1416.83,
-    linkLabel: "Costamar",
-  },
-  {
-    airline: "Delta Air Lines",
-    departureDate: "20/05",
-    returnDate: "27/05",
-    routeLabel: "LIM → MXP",
-    duration: "70h 35m",
-    stopTone: "danger",
-    stopTime: "10h 0m",
-    stopMeta: "ATL +1 escala",
-    carryOnIncluded: false,
-    checkedIncluded: false,
-    priceAmount: 1420.58,
-    linkLabel: "Costamar",
-  },
-  {
-    airline: "Air France",
-    departureDate: "20/05",
-    returnDate: "27/05",
-    routeLabel: "LIM → MXP",
-    duration: "62h 40m",
-    stopTone: "warning",
-    stopTime: "8h 5m",
-    stopMeta: "CDG +1 escala",
-    carryOnIncluded: false,
-    checkedIncluded: false,
-    priceAmount: 1459.84,
-    linkLabel: "Costamar",
-  },
-  {
-    airline: "Air France",
-    departureDate: "20/05",
-    returnDate: "28/05",
-    routeLabel: "LIM → MXP",
-    duration: "77h 0m",
-    stopTone: "danger",
-    stopTime: "10h 0m",
-    stopMeta: "CDG +1 escala",
-    carryOnIncluded: false,
-    checkedIncluded: false,
-    priceAmount: 1463.54,
-    linkLabel: "Costamar",
-  },
-  {
-    airline: "Air France",
-    departureDate: "20/05",
-    returnDate: "27/05",
-    routeLabel: "LIM → MXP",
-    duration: "63h 40m",
-    stopTone: "warning",
-    stopTime: "8h 5m",
-    stopMeta: "CDG +1 escala",
-    carryOnIncluded: false,
-    checkedIncluded: false,
-    priceAmount: 1463.64,
-    linkLabel: "Costamar",
-  },
-];
-
-function createDefaultResultsColumnLayout() {
-  return Object.fromEntries(
-    RESULTS_COLUMN_DEFINITIONS.map((column) => [column.key, column.defaultWidth]),
-  );
-}
-
-function normalizedResultsColumnLayout(input) {
-  if (!input || typeof input !== "object") {
-    return null;
-  }
-
-  const columns = {};
-  let validCount = 0;
-
-  RESULTS_COLUMN_DEFINITIONS.forEach((column) => {
-    const numeric = Number(input?.[column.key]);
-    if (!Number.isFinite(numeric)) {
-      return;
-    }
-
-    columns[column.key] = Math.max(
-      column.minWidth,
-      Math.min(column.maxWidth, Math.round(numeric)),
-    );
-    validCount += 1;
-  });
-
-  return validCount === RESULTS_COLUMN_DEFINITIONS.length
-    ? columns
-    : null;
-}
-
-function currentResultsColumnLayout() {
-  return normalizedResultsColumnLayout(state.resultsColumnLayout)
-    ?? createDefaultResultsColumnLayout();
-}
-
-function resultsLayoutStatusText() {
-  if (state.resultsLayoutSaving) {
-    return "Guardando layout local...";
-  }
-
-  if (!state.resultsLayoutLoaded) {
-    return "Cargando layout local...";
-  }
-
-  if (state.resultsLayoutSavedAt) {
-    return `Guardado ${formatDT(state.resultsLayoutSavedAt)} en ${RESULTS_LAYOUT_FILE_HINT}`;
-  }
-
-  return `Aún no hay un layout guardado. Cuando lo guardes quedará en ${RESULTS_LAYOUT_FILE_HINT}`;
-}
-
-function buildResultsLayoutEditorHtml({
-  eyebrow = "Edición temporal",
-  title = "Ajusta columnas en esta misma vista",
-  description = "Estás viendo la instancia normal con resultados reales. Ajusta anchos y guarda para reutilizar luego.",
-} = {}) {
-  const layout = currentResultsColumnLayout();
-  const fields = RESULTS_COLUMN_DEFINITIONS.map((column) => `
-    <label class="results-layout-field">
-      <span class="results-layout-field__label">${escapeHtml(column.label)}</span>
-      <div class="results-layout-field__control">
-        <input
-          type="number"
-          min="${column.minWidth}"
-          max="${column.maxWidth}"
-          step="4"
-          value="${layout[column.key]}"
-          data-results-layout-input="${column.key}"
-          aria-label="Ancho de ${escapeHtml(column.label)} en píxeles"
-        />
-        <span class="results-layout-field__unit">px</span>
-      </div>
-    </label>
-  `).join("");
-
-  return `
-    <section class="results-layout-editor" aria-label="Editor de columnas">
-      <div class="results-layout-editor__header">
-        <div class="results-layout-editor__copy">
-          <p class="results-layout-editor__eyebrow">${escapeHtml(eyebrow)}</p>
-          <h2 class="results-layout-editor__title">${escapeHtml(title)}</h2>
-          <p class="results-layout-editor__text">${escapeHtml(description)}</p>
-        </div>
-        <div class="results-layout-editor__actions">
-          <button type="button" class="btn btn--secondary btn--sm" data-results-layout-action="reset">Restaurar</button>
-          <button type="button" class="btn btn--primary btn--sm" data-results-layout-action="save" ${state.resultsLayoutSaving ? "disabled" : ""}>Guardar layout</button>
-        </div>
-      </div>
-      <div class="results-layout-editor__grid">${fields}</div>
-      <p class="results-layout-editor__status">${escapeHtml(resultsLayoutStatusText())}</p>
-    </section>
-  `;
-}
-
-function buildResultsTableHeaderHtml() {
-  const layout = currentResultsColumnLayout();
-  return `
-    <colgroup>
-      ${RESULTS_COLUMN_DEFINITIONS.map((column) => `
-        <col data-results-col="${column.key}" style="width:${layout[column.key]}px">
-      `).join("")}
-    </colgroup>
-    <thead><tr>${RESULTS_COLUMN_DEFINITIONS.map((column) => `<th>${escapeHtml(column.label)}</th>`).join("")}</tr></thead>
-  `;
-}
-
-function resultsLayoutEditorEnabled() {
-  return RESULTS_LAYOUT_EDITOR_MODE;
-}
-
-function readResultsLayoutColumnDefinition(key) {
-  return RESULTS_COLUMN_DEFINITIONS.find((column) => column.key === key) ?? null;
-}
-
-function clampResultsLayoutWidth(column, value) {
-  const numeric = Number(value);
-  if (!column || !Number.isFinite(numeric)) {
-    return null;
-  }
-
-  return Math.max(
-    column.minWidth,
-    Math.min(column.maxWidth, Math.round(numeric)),
-  );
-}
-
-function buildResultsLayoutStyleVars(layout = currentResultsColumnLayout()) {
-  return RESULTS_COLUMN_DEFINITIONS
-    .map((column) => `--results-col-${column.key}:${Math.round(layout[column.key])}px`)
-    .join(";");
-}
-
-function resultsLayoutEditorMarkup() {
-  if (!resultsLayoutEditorEnabled()) {
-    return "";
-  }
-
-  return buildResultsLayoutEditorHtml();
-}
-
-function resultsLayoutInlineStyleAttr() {
-  return ` style="${escapeHtml(buildResultsLayoutStyleVars())}"`;
-}
-
-function resultsListExactClassName() {
-  return resultsLayoutEditorEnabled()
-    ? "results-list results-list--exact results-list--layout-edit"
-    : "results-list results-list--exact";
-}
-
-async function loadResultsLayout({ rerender = true, showErrorToast = true } = {}) {
-  try {
-    const data = await getJson(RESULTS_LAYOUT_ENDPOINT);
-    const layout = normalizedResultsColumnLayout(data?.layout?.columns);
-    state.resultsColumnLayout = layout ?? createDefaultResultsColumnLayout();
-    state.resultsLayoutSavedAt = typeof data?.layout?.savedAt === "string"
-      ? data.layout.savedAt
-      : "";
-  } catch (err) {
-    state.resultsColumnLayout = createDefaultResultsColumnLayout();
-    state.resultsLayoutSavedAt = "";
-    if (showErrorToast) {
-      showToast(`No pude cargar layout local (${err.message}).`);
-    }
-  } finally {
-    state.resultsLayoutLoaded = true;
-    if (rerender) {
-      renderResultsArea();
-      updateResultsToolbar();
-    }
-  }
-}
-
-function resetResultsLayoutDraft() {
-  state.resultsColumnLayout = createDefaultResultsColumnLayout();
-  state.resultsLayoutSavedAt = "";
-  renderResultsArea();
-}
-
-function updateResultsLayoutDraftColumn(key, rawValue) {
-  const column = readResultsLayoutColumnDefinition(key);
-  if (!column) {
-    return;
-  }
-
-  const clamped = clampResultsLayoutWidth(column, rawValue);
-  if (clamped == null) {
-    return;
-  }
-
-  state.resultsColumnLayout = {
-    ...currentResultsColumnLayout(),
-    [column.key]: clamped,
-  };
-  state.resultsLayoutSavedAt = "";
-  renderResultsArea();
-}
-
-async function saveResultsLayoutDraft() {
-  if (state.resultsLayoutSaving) {
-    return;
-  }
-
-  state.resultsLayoutSaving = true;
-  renderResultsArea();
-  try {
-    const payload = { columns: currentResultsColumnLayout() };
-    const data = await postJson(RESULTS_LAYOUT_ENDPOINT, payload);
-    const layout = normalizedResultsColumnLayout(data?.layout?.columns);
-    state.resultsColumnLayout = layout ?? payload.columns;
-    state.resultsLayoutSavedAt = typeof data?.layout?.savedAt === "string"
-      ? data.layout.savedAt
-      : new Date().toISOString();
-    state.resultsLayoutLoaded = true;
-    showToast(`Layout guardado en ${RESULTS_LAYOUT_FILE_HINT}`, "success");
-  } catch (err) {
-    showToast(`No pude guardar layout (${err.message}).`);
-  } finally {
-    state.resultsLayoutSaving = false;
-    renderResultsArea();
-    updateResultsToolbar();
-  }
-}
-
 const RESULTS_SKELETON_ROW_COUNT = 6;
 
 function buildResultsPlaceholderRows(count = RESULTS_SKELETON_ROW_COUNT) {
@@ -1709,9 +1386,8 @@ function renderResultsSkeleton({
 
   resultsContainer.innerHTML = `
     <div class="results-skeleton" aria-live="polite" aria-busy="${busy ? "true" : "false"}">
-      ${resultsLayoutEditorMarkup()}
       <div class="results-list-wrap" data-results-scroll="1">
-        <div class="${resultsListExactClassName()}"${resultsLayoutInlineStyleAttr()}>${cards}</div>
+        <div class="results-list results-list--exact">${cards}</div>
       </div>
     </div>
   `;
@@ -5749,9 +5425,7 @@ function renderResults() {
 
   if (offers.length === 0 && !isRunning) {
     const emptyPanelHtml = renderEmptyPanel(emptySearchPanelModel(state.searchResponse));
-    resultsContainer.innerHTML = resultsLayoutEditorEnabled()
-      ? `${resultsLayoutEditorMarkup()}${emptyPanelHtml}`
-      : emptyPanelHtml;
+    resultsContainer.innerHTML = emptyPanelHtml;
     return;
   }
 
@@ -5769,10 +5443,9 @@ function renderResults() {
     ? '<div class="results-loading results-loading--inline"><span class="results-loading__text">Los resultados se seguirán agregando.</span></div>'
     : "";
   const html = `
-    ${resultsLayoutEditorMarkup()}
     ${loadingHtml}
     <div class="results-list-wrap" data-results-scroll="1" aria-live="polite" aria-busy="${isRunning ? "true" : "false"}">
-      <div class="${resultsListExactClassName()}"${resultsLayoutInlineStyleAttr()}>${cards}</div>
+      <div class="results-list results-list--exact">${cards}</div>
     </div>
   `;
 
@@ -5812,18 +5485,6 @@ function renderSearchResultsViewport({ includeAirlineBar = false } = {}) {
 }
 
 function handleResultsClick(e) {
-  if (resultsLayoutEditorEnabled()) {
-    const actionButton = e.target.closest("[data-results-layout-action]");
-    if (actionButton) {
-      if (actionButton.dataset.resultsLayoutAction === "save") {
-        void saveResultsLayoutDraft();
-      } else if (actionButton.dataset.resultsLayoutAction === "reset") {
-        resetResultsLayoutDraft();
-      }
-      return;
-    }
-  }
-
   const pager = e.target.closest("[data-results-page]");
   if (pager) {
     const total = state.searchResponse?.filteredOfferGroups?.length ?? 0;
@@ -5919,19 +5580,6 @@ function handleResultsKeydown(e) {
     e.preventDefault();
     focusAdjacentResultsRow(row, -1);
   }
-}
-
-function handleResultsInput(e) {
-  if (!resultsLayoutEditorEnabled()) {
-    return;
-  }
-
-  const input = e.target.closest("[data-results-layout-input]");
-  if (!input) {
-    return;
-  }
-
-  updateResultsLayoutDraftColumn(input.dataset.resultsLayoutInput, input.value);
 }
 
 function selectMatrixCell(cellKey) {
@@ -6764,7 +6412,6 @@ resultsToolbar?.addEventListener("click", handleResultsClick);
 
 // Results container click delegation (set up once)
 resultsContainer?.addEventListener("click", handleResultsClick);
-resultsContainer?.addEventListener("input", handleResultsInput);
 resultsContainer?.addEventListener("keydown", handleResultsKeydown);
 resultsContainer?.addEventListener("pointerdown", () => {
   state.pollPointerDown = true;
@@ -7476,7 +7123,6 @@ bootstrapAppShell({
   syncWorkspaceViewportHeight,
   syncSearchShellLayoutMetrics,
   beforeInitialRender: async () => {
-    await loadResultsLayout({ rerender: false, showErrorToast: false });
     applyStartupLaunchPayload(startupSearchLaunchPayload);
   },
   renderAll,

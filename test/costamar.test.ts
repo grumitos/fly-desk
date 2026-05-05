@@ -1130,7 +1130,7 @@ test("applyCostamarContextToBrandedSearchUrl refreshes terminal and token query 
   assert.equal(parsed.searchParams.get("token"), freshToken);
 });
 
-test("mapCostamarRecommendationToOffer omits the Costamar redirect when the branded token is expired", () => {
+test("mapCostamarRecommendationToOffer keeps a Costamar redirect when the branded token is expired", () => {
   const normalized = mapCostamarRecommendationToOffer(
     buildRecommendation(),
     buildExactRequest(),
@@ -1149,7 +1149,14 @@ test("mapCostamarRecommendationToOffer omits the Costamar redirect when the bran
   );
 
   assert.ok(normalized.offer);
-  assert.deepEqual(normalized.offer?.purchasePaths, []);
+  assert.equal(normalized.offer?.purchasePaths.length, 1);
+  const path = normalized.offer?.purchasePaths[0];
+  assert.equal(path?.provider, "costamar");
+  assert.equal(path?.type, "search-redirect");
+  const parsed = new URL(path?.url ?? "");
+  assert.equal(parsed.searchParams.get("terminalId"), "0721808110");
+  assert.equal(parsed.searchParams.get("lang"), "es");
+  assert.equal(parsed.searchParams.get("token"), null);
 });
 
 test("mapCostamarRecommendationToOffer keeps the Costamar redirect when a fresh token is recovered", () => {

@@ -1,4 +1,5 @@
 import {
+  diffDays,
   normalizeFlexibleRoundTripRequest,
   resolveFlexibleRoundTripMode,
 } from "./core/flexible-search";
@@ -32,6 +33,8 @@ export interface PreparedSearchContract {
   providerIds: ProviderId[];
   request: SearchRequest;
 }
+
+const MAX_STAY_NIGHTS = 90;
 
 function stringValue(input: unknown, fallback = ""): string {
   return typeof input === "string" ? input.trim() : fallback;
@@ -167,6 +170,7 @@ function validateRequest(request: SearchRequest): string[] {
   const errors: string[] = [];
   const datePolicy = getSearchDatePolicy();
   const flexibleRoundTripMode = resolveFlexibleRoundTripMode(request);
+  const enforceMaxSearchDate = !isExtendedOneWayMonthScan(request);
   const dateFields: Array<[string, string | undefined]> = [
     ["Departure date", leg.departureDate],
     ["Return date", leg.returnDate],
@@ -235,6 +239,15 @@ function validateRequest(request: SearchRequest): string[] {
     ) {
       errors.push("Return date must be after departure date.");
     }
+
+    if (
+      request.tripType === "round-trip"
+      && leg.departureDate
+      && leg.returnDate
+      && diffDays(leg.departureDate, leg.returnDate) > MAX_STAY_NIGHTS
+    ) {
+      errors.push(`Stay length cannot exceed ${MAX_STAY_NIGHTS} nights.`);
+    }
   }
 
   if (request.searchMode === "roundtrip-grid") {
@@ -256,6 +269,15 @@ function validateRequest(request: SearchRequest): string[] {
       && !Number.isFinite(leg.stayNights)
     ) {
       errors.push("Stay nights is required for exact-stay matrix search.");
+    }
+
+    if (
+      request.tripType === "round-trip"
+      && flexibleRoundTripMode === "exact-stay"
+      && Number.isFinite(leg.stayNights)
+      && (leg.stayNights as number) > MAX_STAY_NIGHTS
+    ) {
+      errors.push(`Stay length cannot exceed ${MAX_STAY_NIGHTS} nights.`);
     }
   }
 
@@ -281,10 +303,22 @@ function validateRequest(request: SearchRequest): string[] {
   }
 
   dateFields.forEach(([label, value]) => {
-    errors.push(...validateSearchDateInPolicy(label, value, datePolicy));
+    errors.push(...validateSearchDateInPolicy(label, value, datePolicy, {
+      enforceMaxDate: enforceMaxSearchDate,
+    }));
   });
 
   return errors;
+}
+
+function isExtendedOneWayMonthScan(request: SearchRequest): boolean {
+  const leg = request.legs[0];
+  return request.tripType === "one-way"
+    && request.searchMode === "stay-range"
+    && request.filters.compactAllOffers === true
+    && !leg.returnDate
+    && !leg.returnStart
+    && !leg.returnEnd;
 }
 
 function validateProviderContext(

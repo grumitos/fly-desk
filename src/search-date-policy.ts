@@ -11,6 +11,10 @@ export interface PublicRuntimeConfig {
   searchDatePolicy: SearchDatePolicy;
 }
 
+export interface SearchDateValidationOptions {
+  enforceMaxDate?: boolean;
+}
+
 function formatLocalIsoDate(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
@@ -75,6 +79,7 @@ export function validateSearchDateInPolicy(
   label: string,
   value: string | undefined,
   policy = getSearchDatePolicy(),
+  options: SearchDateValidationOptions = {},
 ): string[] {
   if (!value) {
     return [];
@@ -88,7 +93,7 @@ export function validateSearchDateInPolicy(
     return [`${label} must be on or after ${policy.minSearchDate}.`];
   }
 
-  if (value > policy.maxSearchDate) {
+  if (options.enforceMaxDate !== false && value > policy.maxSearchDate) {
     return [`${label} must be on or before ${policy.maxSearchDate}.`];
   }
 

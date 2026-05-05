@@ -42,8 +42,10 @@ El feedback de carga vigente es inline:
 
 - el servidor escucha en `127.0.0.1` por defecto
 - `HOST` solo se usa como override explicito para despliegues no locales
-- la ventana de fechas es movil: `minSearchDate = hoy`, `maxSearchDate = hoy + 365 dias`
+- la ventana de fechas normal es movil: `minSearchDate = hoy`, `maxSearchDate = hoy + 365 dias`
 - `SEARCH_MAX_FUTURE_DAYS` permite ajustar esa ventana
+- las estadias ida/vuelta se limitan a 90 noches
+- el barrido migratorio de solo ida mantiene su busqueda extendida por meses
 - Costamar ya no acepta `apiBaseUrl` ni `brandBaseUrl` por request
 - las base URLs de Costamar solo salen de entorno y quedan limitadas a hosts aprobados
 - Agil requiere sesion local de navegador y `AGIL_APIM_SUBSCRIPTION_KEY` para requests HTTP reales
@@ -92,6 +94,7 @@ Runtime general:
 - `SEARCH_MAX_FUTURE_DAYS=365`
 - `SEARCH_REVALIDATION_CACHE_TTL_MS=300000` TTL del cache SWR de busqueda general (misma configuracion), en milisegundos
 - `SEARCH_COMPLETED_SESSION_TTL_MS=14400000` TTL idle para jobs completados y redirects cacheados, en milisegundos
+- `FLY_DESK_SEARCH_WORKER_PROCESSES=0` desactiva los procesos hijos para busquedas de proveedor; por defecto quedan activos para que una busqueda pesada no bloquee el servidor web ni otras pestañas
 - `FLY_DESK_SESSION_DB_PATH=output/cache/fly-desk-cache.sqlite` cache SQLite local de jobs completados, matriz y redirects
 - `FLY_DESK_SEARCH_SESSION_STORE_PATH=output/cache/search-session-store.json` ruta JSON legada; si existe y la DB esta vacia, se migra a SQLite y se elimina
 - `FLY_DESK_LOCATION_SUGGESTION_CACHE_PATH=output/cache/location-suggestion-cache.json` cache JSON acotado para autocomplete

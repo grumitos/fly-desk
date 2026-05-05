@@ -566,7 +566,11 @@ export class SearchSessionStore {
     return next;
   }
 
-  cancelSearchJob(jobId: string, message = "Search cancelled by user."): SearchJobRecord | undefined {
+  cancelSearchJob(
+    jobId: string,
+    message = "Search cancelled by user.",
+    options: { cachePartial?: boolean } = {},
+  ): SearchJobRecord | undefined {
     return this.updateSearchJob(jobId, (current) => {
       if (current.status !== "running") {
         return current;
@@ -574,17 +578,19 @@ export class SearchSessionStore {
 
       const warnings = uniqueStrings([...current.warnings, message]);
       const metaWarnings = uniqueStrings([...(current.searchMeta.warnings ?? []), message]);
+      const hasPartialResults = current.offers.length > 0 || current.allOffers.length > 0;
+      const cachePartial = Boolean(options.cachePartial && hasPartialResults);
       return {
         ...current,
-        status: "cancelled",
-        error: message,
+        status: cachePartial ? "completed" : "cancelled",
+        error: cachePartial ? undefined : message,
         warnings,
         searchMeta: {
           ...current.searchMeta,
           completedAt: nowIso(),
           warnings: metaWarnings,
-          partial: current.offers.length > 0 || current.allOffers.length > 0,
-          searchState: "search_cancelled",
+          partial: cachePartial || hasPartialResults,
+          searchState: cachePartial ? "search_partial" : "search_cancelled",
         },
       };
     });
@@ -687,7 +693,11 @@ export class SearchSessionStore {
     return next;
   }
 
-  cancelMatrixJob(jobId: string, message = "Search cancelled by user."): MatrixJobRecord | undefined {
+  cancelMatrixJob(
+    jobId: string,
+    message = "Search cancelled by user.",
+    options: { cachePartial?: boolean } = {},
+  ): MatrixJobRecord | undefined {
     return this.updateMatrixJob(jobId, (current) => {
       if (current.status !== "running") {
         return current;
@@ -695,17 +705,19 @@ export class SearchSessionStore {
 
       const warnings = uniqueStrings([...current.warnings, message]);
       const metaWarnings = uniqueStrings([...(current.searchMeta.warnings ?? []), message]);
+      const hasPartialResults = current.cells.some((cell) => cell.confidence !== "loading");
+      const cachePartial = Boolean(options.cachePartial && hasPartialResults);
       return {
         ...current,
-        status: "cancelled",
-        error: message,
+        status: cachePartial ? "completed" : "cancelled",
+        error: cachePartial ? undefined : message,
         warnings,
         searchMeta: {
           ...current.searchMeta,
           completedAt: nowIso(),
           warnings: metaWarnings,
           partial: true,
-          searchState: "search_cancelled",
+          searchState: cachePartial ? "search_partial" : "search_cancelled",
         },
       };
     });

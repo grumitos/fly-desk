@@ -6,7 +6,9 @@ import { join } from "node:path";
 import type { SearchRequest } from "../src/core/types";
 import {
   buildQuotationRateLookupRequest,
+  fetchExternalUsdToPenRate,
   resolveQuotationUsdToPenRate,
+  resolveStandaloneUsdToPenRate,
   resetQuotationUsdToPenRateCacheForTests,
   warmQuotationUsdToPenRate,
 } from "../src/quotation-exchange-rate";
@@ -212,6 +214,80 @@ test("resolveQuotationUsdToPenRate refreshes the cache on a new Lima day", async
   assert.equal(secondRate, 3.5);
   assert.equal(thirdRate, 3.7);
   assert.equal(lookupCalls, 2);
+});
+
+test("resolveQuotationUsdToPenRate falls back to an external daily rate when Agil has no rate", async () => {
+  resetQuotationUsdToPenRateCacheForTests();
+
+  const offer = buildOffer({
+    providerSource: "costamar",
+    tripType: "round-trip",
+  });
+  const session = buildSession({
+    offers: [offer],
+  });
+  let externalCalls = 0;
+
+  const rate = await resolveQuotationUsdToPenRate(session, offer, {
+    now: new Date("2026-04-07T15:00:00.000Z"),
+    searchRate: async () => undefined,
+    fetchExternalRate: async () => {
+      externalCalls += 1;
+      return 3.517;
+    },
+  });
+
+  assert.equal(rate, 3.517);
+  assert.equal(externalCalls, 1);
+});
+
+test("resolveStandaloneUsdToPenRate uses the selected offer rate before an external lookup", async () => {
+  resetQuotationUsdToPenRateCacheForTests();
+  let externalCalls = 0;
+
+  const rate = await resolveStandaloneUsdToPenRate(buildOffer({
+    usdToPenRate: 3.62,
+  }), {
+    now: new Date("2026-04-07T15:00:00.000Z"),
+    fetchExternalRate: async () => {
+      externalCalls += 1;
+      return 3.517;
+    },
+  });
+
+  assert.equal(rate, 3.62);
+  assert.equal(externalCalls, 0);
+});
+
+test("fetchExternalUsdToPenRate reads SUNAT daily rate payloads", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousUrl = process.env.FLY_DESK_QUOTATION_RATE_URL;
+  process.env.FLY_DESK_QUOTATION_RATE_URL = "https://example.test/tipo-cambio.json";
+  globalThis.fetch = (async (url: string | URL | Request) => {
+    assert.equal(String(url), "https://example.test/tipo-cambio.json");
+    return new Response(JSON.stringify({
+      fecha: "2026-05-05",
+      sunat: 3.517,
+      compra: 3.512,
+      venta: 3.522,
+    }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+  }) as typeof fetch;
+
+  try {
+    assert.equal(await fetchExternalUsdToPenRate(), 3.517);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousUrl === undefined) {
+      delete process.env.FLY_DESK_QUOTATION_RATE_URL;
+    } else {
+      process.env.FLY_DESK_QUOTATION_RATE_URL = previousUrl;
+    }
+  }
 });
 
 test("resolveQuotationUsdToPenRate shares the same in-flight lookup on the current Lima day", async () => {

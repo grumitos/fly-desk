@@ -2,15 +2,125 @@
   container-type: inline-size;
 }
 
+.fd-results-list--fixed-layout {
+  width: max-content;
+  min-width: 100%;
+}
+
+.fd-results-list--fixed-layout .fd-result-card:not(.fd-result-card--compact) {
+  grid-template-columns:
+    minmax(0, var(--fd-results-col-carrier, 132px))
+    minmax(0, var(--fd-results-col-dates, 154px))
+    minmax(0, var(--fd-results-col-duration, 126px))
+    minmax(0, var(--fd-results-col-stops, 138px))
+    minmax(0, var(--fd-results-col-price, 128px))
+    minmax(0, var(--fd-results-col-links, 102px));
+  justify-content: center;
+  min-width: max-content;
+}
+
+.fd-results-list--fixed-layout .fd-result-card__route-baggage .fd-result-card__micro-label {
+  display: none;
+}
+
+.fd-results-list--fixed-layout .fd-result-card__price {
+  justify-items: start;
+  text-align: left;
+}
+
+.fd-results-list--fixed-layout .fd-result-card__provider {
+  justify-items: end;
+}
+
+.fd-results-list--fixed-layout .fd-result-card__provider-action {
+  justify-self: end;
+}
+
+.fd-results-layout-editor {
+  display: grid;
+  flex-shrink: 0;
+  gap: 0.65rem;
+  margin: 0 0.75rem 0.2rem;
+  padding: 0.72rem;
+  border: 1px solid color-mix(in srgb, var(--color-border) 82%, var(--color-muted-foreground));
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--color-card) 88%, var(--color-secondary));
+}
+
+.fd-results-layout-editor__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.fd-results-layout-editor__title {
+  margin: 0;
+  font-size: 0.86rem;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.fd-results-layout-editor__status {
+  margin: 0.18rem 0 0;
+  color: var(--color-muted-foreground);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.fd-results-layout-editor__grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(7.2rem, 1fr));
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.1rem;
+}
+
+.fd-results-layout-field {
+  display: grid;
+  min-width: 0;
+  gap: 0.3rem;
+}
+
+.fd-results-layout-field__label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-muted-foreground);
+  font-size: 0.7rem;
+  font-weight: 900;
+  line-height: 1.12;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-results-layout-field__range {
+  width: 100%;
+  accent-color: var(--color-primary);
+}
+
+.fd-results-layout-field__value {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.28rem;
+}
+
+.fd-results-layout-field__value span {
+  color: var(--color-muted-foreground);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
 .fd-result-card {
   --fd-result-accent: var(--color-primary);
+  --fd-result-card-edge-padding: 0.92rem;
   display: grid;
   grid-template-columns:
     minmax(7rem, 1.05fr)
     minmax(8.4rem, 1.15fr)
     minmax(7.5rem, 1fr)
     minmax(6.4rem, 0.82fr)
-    minmax(3.8rem, 0.48fr)
     minmax(6.8rem, 0.76fr)
     2.5rem;
   column-gap: clamp(0.48rem, 0.82vw, 0.75rem);
@@ -18,7 +128,7 @@
   align-items: center;
   width: 100%;
   min-width: 0;
-  padding: 0.86rem 0.92rem;
+  padding: 0.86rem var(--fd-result-card-edge-padding);
   border: 1px solid color-mix(in srgb, var(--fd-result-accent) 42%, var(--color-border));
   border-radius: var(--radius-xl);
   background:
@@ -69,7 +179,6 @@
 .fd-result-card__schedule,
 .fd-result-card__route,
 .fd-result-card__journey,
-.fd-result-card__baggage,
 .fd-result-card__price,
 .fd-result-card__provider {
   display: grid;
@@ -201,15 +310,22 @@
   white-space: nowrap;
 }
 
-.fd-result-card__baggage {
-  align-content: center;
-}
-
 .fd-result-card__baggage-icons {
   display: inline-flex;
   align-items: center;
   gap: 0.28rem;
   min-width: 0;
+}
+
+.fd-result-card__route-baggage {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.34rem;
+}
+
+.fd-result-card__route-baggage .fd-result-card__micro-label {
+  flex: 0 1 auto;
 }
 
 .fd-result-card__bag-icon {
@@ -265,6 +381,22 @@
 
 .fd-result-card__provider {
   justify-items: end;
+}
+
+.fd-result-card__provider-action {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  justify-self: end;
+}
+
+.fd-result-card__provider-action:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--fd-result-accent) 58%, var(--color-primary) 18%);
+  outline-offset: 2px;
 }
 
 .fd-result-card__provider img,
@@ -327,7 +459,6 @@
 .fd-result-card--compact .fd-result-card__schedule,
 .fd-result-card--compact .fd-result-card__route,
 .fd-result-card--compact .fd-result-card__journey,
-.fd-result-card--compact .fd-result-card__baggage,
 .fd-result-card--compact .fd-result-card__price {
   grid-column: 1 / -1;
 }
@@ -358,12 +489,6 @@
 .fd-result-card--compact .fd-result-card__price {
   justify-items: start;
   text-align: left;
-}
-
-.fd-result-card--compact .fd-result-card__baggage {
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  column-gap: 0.42rem;
 }
 
 .fd-result-card--compact .fd-result-card__provider img,
@@ -505,8 +630,10 @@
 }
 
 @container (max-width: 740px) {
-  .fd-result-card {
+  .fd-result-card,
+  .fd-results-list--fixed-layout .fd-result-card:not(.fd-result-card--compact) {
     grid-template-columns: repeat(2, minmax(0, 1fr)) 2.7rem;
+    min-width: 0;
   }
 
   .fd-result-card__airline,
@@ -520,7 +647,8 @@
 }
 
 @container (max-width: 620px) {
-  .fd-result-card {
+  .fd-result-card,
+  .fd-results-list--fixed-layout .fd-result-card:not(.fd-result-card--compact) {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: start;
   }
@@ -529,7 +657,6 @@
   .fd-result-card__schedule,
   .fd-result-card__route,
   .fd-result-card__journey,
-  .fd-result-card__baggage,
   .fd-result-card__price {
     grid-column: 1;
   }

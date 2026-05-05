@@ -130,6 +130,7 @@ function buildCostamarOffer(url: string): CanonicalOffer {
         currencyCode: "USD",
       },
     },
+    usdToPenRate: 3.5,
     priceConfidence: "live",
     priceStatus: "unverified",
     purchasePaths: [
@@ -191,6 +192,85 @@ function buildCostamarMatrixCell(url: string): MatrixCell {
     ],
   };
 }
+
+test("quotation uses the stored exact offer when the selected result belongs to a search job", async () => {
+  const runtime = getRuntime();
+  const offer = buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0");
+  const searchMeta = buildSearchMeta();
+  const now = new Date().toISOString();
+  const job = runtime.sessions.createSearchJob({
+    request: buildCostamarRequest(),
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: {
+      ...searchMeta,
+      requestedAt: now,
+      completedAt: now,
+    },
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/quotation`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        searchSessionId: job.id,
+        offerId: offer.id,
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { commercialText?: string };
+    assert.match(payload.commercialText ?? "", /COTIZACIÓN BOLETO AÉREO/);
+    assert.match(payload.commercialText ?? "", /US\$ 1,234 por adulto/);
+    assert.match(payload.commercialText ?? "", /S\/ 4,319 aprox\. por adulto/);
+  });
+});
+
+test("quotation can use the displayed flexible result snapshot without re-querying a search job", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/quotation`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        offer: {
+          id: "2026-06-01_2026-06-08",
+          providerSource: "costamar",
+          airline: "Flexible",
+          origin: "LIM",
+          destination: "MAD",
+          departureDate: "2026-06-01",
+          returnDate: "2026-06-08",
+          price: {
+            total: {
+              amount: 498,
+              currencyCode: "USD",
+            },
+          },
+          priceConfidence: "live",
+          priceStatus: "unverified",
+          usdToPenRate: 3.5,
+        },
+        request: buildCostamarRequest(),
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { commercialText?: string };
+    assert.match(payload.commercialText ?? "", /LIM \(LIM\) - MAD \(MAD\) - LIM \(LIM\)/);
+    assert.match(payload.commercialText ?? "", /US\$ 498 por adulto/);
+    assert.match(payload.commercialText ?? "", /S\/ 1,743 aprox\. por adulto/);
+    assert.match(payload.commercialText ?? "", /Horario ida: LIM · 01 junio/);
+  });
+});
 
 test("rejects exact searches when origin and destination are omitted", async () => {
   await withServer(async (baseUrl) => {
@@ -488,6 +568,96 @@ test("costamar redirect refreshes the stored token with the latest Chrome sessio
   }
 });
 
+test("costamar redirect uses an already usable stored token without scanning Chrome", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-redirect-fast-"));
+  const profileName = "Profile 41";
+  const sessionsDir = join(tempRoot, profileName, "Sessions");
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const usableToken = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  const newerToken = buildJwt({
+    id: "0721808110",
+    iat: 1893459600,
+    exp: 1893463200,
+  });
+  writeFileSync(
+    join(sessionsDir, "Tabs_1"),
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&token=${newerToken}`,
+    "utf8",
+  );
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const runtime = getRuntime();
+    const job = runtime.sessions.createSearchJob({
+      request: buildCostamarRequest(),
+      providerContext: {
+        costamar: {
+          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+          terminalId: "0721808110",
+          token: usableToken,
+          lang: "es",
+        },
+      },
+      offers: [buildCostamarOffer(
+        `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${usableToken}`,
+      )],
+      allOffers: [buildCostamarOffer(
+        `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${usableToken}`,
+      )],
+      searchMeta: buildSearchMeta(),
+      providerMeta: buildProviderMeta(),
+      warnings: [],
+      sortMode: "cheapest",
+      status: "completed",
+    });
+
+    const session = runtime.sessions.getSession(job.id);
+    const redirectPath = session?.offers[0]?.purchasePaths[0]?.url;
+    assert.ok(redirectPath);
+
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}${redirectPath}`, { redirect: "manual" });
+
+      assert.equal(response.status, 302);
+      const location = response.headers.get("location");
+      assert.ok(location);
+
+      const parsed = new URL(location);
+      assert.equal(parsed.searchParams.get("terminalId"), "0721808110");
+      assert.equal(parsed.searchParams.get("lang"), "es");
+      assert.equal(parsed.searchParams.get("token"), usableToken);
+    });
+
+    assert.equal(getCostamarChromeSessionScanCountForTests(), 0);
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("costamar matrix redirects refresh the stored token with the matrix job provider context", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-matrix-redirect-"));
   const profileName = "Profile 42";
@@ -727,6 +897,114 @@ test("rejects exact searches outside the rolling date window", async () => {
     assert.equal(response.status, 400);
     const payload = await response.json() as { errors?: string[] };
     assert.ok(payload.errors?.some((message) => message.includes("Departure date must be on or before 2027-03-31.")));
+  });
+});
+
+test("rejects round-trip stays longer than 90 nights", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sortMode: "cheapest",
+        request: {
+          tripType: "round-trip",
+          searchMode: "exact",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MIA",
+              departureDate: "2026-06-01",
+              returnDate: "2026-09-01",
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { errors?: string[] };
+    assert.ok(payload.errors?.some((message) => message.includes("Stay length cannot exceed 90 nights.")));
+  });
+});
+
+test("rejects flexible exact-stay searches longer than 90 nights", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/matrix`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sortMode: "cheapest",
+        request: {
+          tripType: "round-trip",
+          searchMode: "roundtrip-grid",
+          flexibleMode: "exact-stay",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MIA",
+              departureStart: "2026-06-01",
+              departureEnd: "2026-06-10",
+              stayNights: 91,
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { errors?: string[] };
+    assert.ok(payload.errors?.some((message) => message.includes("Stay length cannot exceed 90 nights.")));
+  });
+});
+
+test("accepts extended one-way month scans for migratory search beyond the normal stay limit", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sortMode: "cheapest",
+        request: {
+          tripType: "one-way",
+          searchMode: "stay-range",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MIA",
+              departureStart: "2026-07-01",
+              departureEnd: "2026-07-31",
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+          filters: {
+            compactAllOffers: true,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
   });
 });
 
@@ -1250,6 +1528,67 @@ test("search jobs can be cancelled before polling completes", async () => {
   });
 });
 
+test("search cancel from page refresh completes partial results so they remain cacheable", async () => {
+  const runtime = getRuntime();
+  const request = buildCostamarRequest();
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  const providerContext = buildProviderContext("costamar", {
+    costamar: {
+      apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token,
+      lang: "es",
+    },
+  });
+  const offer = buildCostamarOffer(
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${token}`,
+  );
+  const job = runtime.sessions.createSearchJob({
+    request,
+    providerContext,
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+
+  await withServer(async (baseUrl) => {
+    const cancelResponse = await fetch(`${baseUrl}/api/search/${job.id}/cancel?cachePartial=1`, {
+      method: "POST",
+    });
+    assert.equal(cancelResponse.status, 200);
+    const cancelled = await cancelResponse.json() as {
+      searchComplete?: boolean;
+      searchStatus?: string;
+      searchMeta?: { searchState?: string; partial?: boolean; warnings?: string[] };
+      warnings?: string[];
+    };
+    assert.equal(cancelled.searchStatus, "completed");
+    assert.equal(cancelled.searchComplete, true);
+    assert.equal(cancelled.searchMeta?.searchState, "search_partial");
+    assert.equal(cancelled.searchMeta?.partial, true);
+    assert.ok(cancelled.warnings?.includes("Search stopped because the page was refreshed."));
+
+    const cached = runtime.sessions.findRecentCompletedSearchJob({
+      request,
+      providerContext,
+      providerIds: ["costamar"],
+      sortMode: "cheapest",
+      maxAgeMs: 5 * 60 * 1000,
+    });
+    assert.equal(cached?.id, job.id);
+    assert.equal(cached?.offers.length, 1);
+  });
+});
+
 test("agil-local searches skip Costamar context scans", async () => {
   resetCostamarSessionCacheForTests();
 
@@ -1310,10 +1649,10 @@ test("search endpoint serves cached results first for the same config while reva
         destination: "BCN",
         originLabel: "",
         destinationLabel: "",
-        departureDate: "2026-09-04",
+        departureDate: "2026-06-04",
         departureStart: "",
         departureEnd: "",
-        returnDate: "2026-09-18",
+        returnDate: "2026-06-18",
         returnStart: "",
         returnEnd: "",
       },
@@ -1336,9 +1675,12 @@ test("search endpoint serves cached results first for the same config while reva
       exactPurchasePathOnly: false,
     },
   };
-  const cachedOffer = buildCostamarOffer(
-    `https://booking.clickandbook.com/vuelos/b/LIM/BCN/2026-09-04/2026-09-18/1/0/0?terminalId=${terminalId}&lang=es&token=${seededToken}`,
-  );
+  const cachedOffer = {
+    ...buildCostamarOffer(
+      `https://booking.clickandbook.com/vuelos/b/LIM/BCN/2026-06-04/2026-06-18/1/0/0?terminalId=${terminalId}&lang=es&token=${seededToken}`,
+    ),
+    purchasePaths: [],
+  };
   const cachedJob = runtime.sessions.createSearchJob({
     request,
     providerContext: {
@@ -1408,7 +1750,7 @@ test("search endpoint serves cached results first for the same config while reva
       searchComplete?: boolean;
       searchMeta?: { searchState?: string; partial?: boolean };
       warnings?: string[];
-      offers?: unknown[];
+      offers?: Array<{ purchasePaths?: Array<{ provider?: string; type?: string; url?: string }> }>;
     };
 
     assert.equal(payload.searchStatus, "running");
@@ -1417,6 +1759,10 @@ test("search endpoint serves cached results first for the same config while reva
     assert.equal(payload.searchMeta?.searchState, "search_cached");
     assert.equal(payload.searchMeta?.partial, true);
     assert.ok((payload.offers?.length ?? 0) > 0);
+    const purchasePath = payload.offers?.[0]?.purchasePaths?.[0];
+    assert.equal(purchasePath?.provider, "costamar");
+    assert.equal(purchasePath?.type, "search-redirect");
+    assert.match(purchasePath?.url ?? "", /^\/r\//);
     assert.ok(payload.warnings?.some((warning) => /cachead/i.test(warning)));
   });
 });
@@ -1518,9 +1864,8 @@ test("results layout endpoints persist and read back the saved column widths loc
     dates: 136,
     duration: 148,
     stops: 192,
-    baggage: 108,
     price: 236,
-    links: 160,
+    links: 84,
   };
 
   try {

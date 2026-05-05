@@ -109,12 +109,14 @@ test("commercial quotation lists multiple airlines and moves missing baggage to 
   assert.match(text, /COTIZACIÓN BOLETO AÉREO ✈️/);
   assert.match(text, /✈️ Ruta: Lima \(LIM\) - Buenos Aires \(BUE\) - Lima \(LIM\)/);
   assert.match(text, /✈️ Aerolíneas: Aerolíneas Argentinas \+ LATAM/);
-  assert.match(text, /🛫 Horario ida: LIM · 11 abril a las 02:45 am/);
-  assert.match(text, /🛬 Horario retorno: AEP · 10 mayo a las 10:35 pm/);
+  assert.match(text, /🛫 Horario ida: LIM · 11 abril a las 02:45 am → AEP · 11 abril a las 09:05 am/);
+  assert.match(text, /🔁 Escalas ida: Sin escalas/);
+  assert.match(text, /🛬 Horario retorno: AEP · 10 mayo a las 10:35 pm → LIM · 11 mayo a las 01:30 am/);
+  assert.match(text, /🔁 Escalas retorno: Sin escalas/);
   assert.match(text, /✅ INCLUYE\n\* Boleto de ida y vuelta\n\* Equipaje incluido: mochila o artículo personal y maleta de mano/);
   assert.match(text, /🚫 NO INCLUYE\n\* Maleta de bodega/);
   assert.match(text, /📋 CONDICIONES\n- Reembolsos no permitidos después de emitir\.\n\* Cambios de nombre no permitidos\.\n\* Cambios de fecha y ruta sujetos a condiciones de la tarifa\./);
-  assert.match(text, /💵 PRECIO:\n\nUS\$ 1,799 por adulto\./);
+  assert.match(text, /💵 PRECIO:\nUS\$ 1,799 por adulto\.\nS\/ 6,329 aprox\. por adulto\./);
   assert.doesNotMatch(text, /Sin Maleta Facturada/);
   assert.doesNotMatch(text, /DETALLE TECNICO/);
   assert.doesNotMatch(text, /\[Aquí no se coloca nada de momento, el agente decide\]/);
@@ -135,14 +137,113 @@ test("commercial quotation lists both hand and checked baggage as exclusions whe
   assert.match(text, /🚫 NO INCLUYE\n\* Maleta de mano\n\* Maleta de bodega/);
 });
 
-test("commercial quotation keeps only the dollars line even when an exchange rate exists", () => {
+test("commercial quotation includes layover cities and checked baggage weight when available", () => {
+  const text = buildCommercialQuotation(buildOffer({
+    baggage: {
+      carryOnIncluded: true,
+      checkedIncluded: true,
+      checkedBags: 1,
+      description: "23kg",
+    },
+    itineraries: [
+      {
+        direction: "outbound",
+        durationMinutes: 780,
+        stops: 1,
+        layoverMinutes: [120],
+        segments: [
+          {
+            id: "seg-1",
+            marketingCarrier: "LA",
+            flightNumber: "LA 2400",
+            origin: "LIM",
+            destination: "MAD",
+            departureAt: "2026-05-20T20:00:00Z",
+            arrivalAt: "2026-05-21T08:00:00Z",
+            durationMinutes: 720,
+          },
+          {
+            id: "seg-2",
+            marketingCarrier: "IB",
+            flightNumber: "IB 447",
+            origin: "MAD",
+            destination: "BIO",
+            departureAt: "2026-05-21T10:00:00Z",
+            arrivalAt: "2026-05-21T11:00:00Z",
+            durationMinutes: 60,
+          },
+        ],
+      },
+    ],
+  }), {
+    ...buildRequest(),
+    tripType: "one-way",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "BIO",
+        originLabel: "LIM - Lima, Peru",
+        destinationLabel: "BIO - Bilbao, España",
+        departureDate: "2026-05-20",
+      },
+    ],
+  }, {
+    timeZone: "UTC",
+  });
+
+  assert.match(text, /🛫 Horario ida: LIM · 20 mayo a las 08:00 pm → BIO · 21 mayo a las 11:00 am/);
+  assert.match(text, /🔁 Escalas ida: 1 escala en MAD/);
+  assert.match(text, /Equipaje incluido: mochila o artículo personal, maleta de mano y 1 maleta de bodega de 23kg/);
+  assert.match(text, /💵 PRECIO:\nUS\$ 512 por adulto\./);
+});
+
+test("commercial quotation includes soles under the dollars line when an exchange rate exists", () => {
   const text = buildCommercialQuotation(buildOffer(), buildRequest(), {
     timeZone: "UTC",
     usdToPenRate: 3.61,
   });
 
   assert.match(text, /US\$ 512 por adulto\./);
-  assert.doesNotMatch(text, / o S\/|soles|Total en soles/);
+  assert.match(text, /S\/ 1,848\.32 aprox\. por adulto\./);
+});
+
+test("commercial quotation does not include soles when LIM is not a route endpoint", () => {
+  const request = buildRequest();
+  request.legs[0] = {
+    ...request.legs[0],
+    origin: "MAD",
+    destination: "BIO",
+    originLabel: "MAD - Madrid, España",
+    destinationLabel: "BIO - Bilbao, España",
+  };
+
+  const text = buildCommercialQuotation(buildOffer({
+    origin: "MAD",
+    destination: "BIO",
+    itineraries: [
+      {
+        direction: "outbound",
+        durationMinutes: 60,
+        stops: 0,
+        segments: [
+          {
+            flightNumber: "IB 447",
+            marketingCarrier: "IB",
+            origin: "MAD",
+            destination: "BIO",
+            departureAt: "2026-04-15T14:00:00Z",
+            arrivalAt: "2026-04-15T15:00:00Z",
+          },
+        ],
+      },
+    ],
+  }), request, {
+    timeZone: "UTC",
+    usdToPenRate: 3.61,
+  });
+
+  assert.match(text, /US\$ 512 por adulto\./);
+  assert.doesNotMatch(text, /S\//);
 });
 
 test("commercial quotation omits all-airports labels from the route summary", () => {

@@ -373,6 +373,22 @@
     @apply rounded-xl border border-border bg-card text-card-foreground shadow-[0_1px_0_rgba(31,31,30,0.04)] transition-[background-color,border-color,box-shadow] duration-150 ease-out;
   }
 
+  .fd-panel-header {
+    @apply shrink-0 border-b border-border bg-secondary/60 px-3 py-2.5;
+  }
+
+  .fd-panel-footer {
+    @apply shrink-0 border-t border-border bg-secondary/60 px-3 py-2.5;
+  }
+
+  .fd-panel-title {
+    @apply truncate text-sm font-bold;
+  }
+
+  .fd-panel-subtitle {
+    @apply truncate text-xs text-muted-foreground;
+  }
+
   .fd-control {
     @apply transform-gpu rounded-lg border border-input bg-card text-foreground transition-[background-color,border-color,box-shadow,transform,opacity,color,filter] duration-150 ease-out hover:border-border hover:bg-accent/60 focus-within:outline-none focus-within:ring-2 focus-within:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.995] disabled:pointer-events-none disabled:opacity-55;
   }
