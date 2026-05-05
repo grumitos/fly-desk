@@ -8,6 +8,7 @@ import type { SearchSessionRecord } from "./session-store";
 interface ResolveQuotationUsdToPenRateOptions {
   now?: Date;
   searchRate?: (request: SearchRequest) => Promise<number | undefined>;
+  fetchExternalRate?: () => Promise<number | undefined>;
 }
 
 let cachedUsdToPenRate:
@@ -39,11 +40,45 @@ function resolveLimaDay(now = new Date()): string {
 }
 
 function normalizePositiveRate(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 2 || value > 8) {
     return undefined;
   }
 
   return Number(value.toFixed(4));
+}
+
+function quotationRateUrl(): string {
+  return process.env.FLY_DESK_QUOTATION_RATE_URL?.trim()
+    || "https://free.e-api.net.pe/tipo-cambio/today.json";
+}
+
+function pickExternalRate(payload: unknown): number | undefined {
+  if (!payload || typeof payload !== "object") {
+    return undefined;
+  }
+
+  const record = payload as Record<string, unknown>;
+  return normalizePositiveRate(
+    record.sunat
+      ?? record.venta
+      ?? record.rate
+      ?? record.usdToPen
+      ?? record.pen
+      ?? record.PEN,
+  );
+}
+
+export async function fetchExternalUsdToPenRate(): Promise<number | undefined> {
+  const response = await fetch(quotationRateUrl(), {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    return undefined;
+  }
+
+  return pickExternalRate(await response.json());
 }
 
 function loadPersistedUsdToPenRate(): void {
@@ -182,10 +217,6 @@ export async function resolveQuotationUsdToPenRate(
   const now = options.now ?? new Date();
   const currentDay = resolveLimaDay(now);
 
-  if (cachedUsdToPenRate?.day === currentDay) {
-    return cachedUsdToPenRate.rate;
-  }
-
   if (sessionMatchesCurrentLimaDay(session, currentDay)) {
     const sessionRate = pickMostCommonUsdToPenRate(session.offers);
     if (sessionRate !== undefined) {
@@ -196,6 +227,10 @@ export async function resolveQuotationUsdToPenRate(
     if (offerRate !== undefined) {
       return rememberUsdToPenRate(offerRate, now);
     }
+  }
+
+  if (cachedUsdToPenRate?.day === currentDay) {
+    return cachedUsdToPenRate.rate;
   }
 
   if (String(offer.price.total.currencyCode ?? "").trim().toUpperCase() !== "USD") {
@@ -213,8 +248,20 @@ export async function resolveQuotationUsdToPenRate(
 
   const promise = (async () => {
     try {
-      const searchRate = options.searchRate ?? resolveLocalAgilUsdToPenRate;
-      const resolvedRate = normalizePositiveRate(await searchRate(lookupRequest));
+      if (options.searchRate) {
+        const resolvedRate = normalizePositiveRate(await options.searchRate(lookupRequest));
+        if (resolvedRate !== undefined) {
+          return rememberUsdToPenRate(resolvedRate, now);
+        }
+      }
+
+      const fetchExternalRate = options.fetchExternalRate ?? fetchExternalUsdToPenRate;
+      const externalRate = normalizePositiveRate(await fetchExternalRate());
+      if (externalRate !== undefined) {
+        return rememberUsdToPenRate(externalRate, now);
+      }
+
+      const resolvedRate = normalizePositiveRate(await resolveLocalAgilUsdToPenRate(lookupRequest));
       return resolvedRate === undefined ? undefined : rememberUsdToPenRate(resolvedRate, now);
     } catch {
       return undefined;
@@ -232,6 +279,33 @@ export async function resolveQuotationUsdToPenRate(
   });
 
   return promise;
+}
+
+export async function resolveStandaloneUsdToPenRate(
+  offer: CanonicalOffer,
+  options: ResolveQuotationUsdToPenRateOptions = {},
+): Promise<number | undefined> {
+  loadPersistedUsdToPenRate();
+
+  const now = options.now ?? new Date();
+  const currentDay = resolveLimaDay(now);
+
+  const offerRate = normalizePositiveRate(offer.usdToPenRate);
+  if (offerRate !== undefined) {
+    return rememberUsdToPenRate(offerRate, now);
+  }
+
+  if (cachedUsdToPenRate?.day === currentDay) {
+    return cachedUsdToPenRate.rate;
+  }
+
+  if (!isUsdOffer(offer)) {
+    return undefined;
+  }
+
+  const fetchExternalRate = options.fetchExternalRate ?? fetchExternalUsdToPenRate;
+  const externalRate = normalizePositiveRate(await fetchExternalRate());
+  return externalRate === undefined ? undefined : rememberUsdToPenRate(externalRate, now);
 }
 
 export function warmQuotationUsdToPenRate(

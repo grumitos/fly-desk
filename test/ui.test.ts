@@ -549,6 +549,85 @@ test("running search button cancels the active job and returns to editing", asyn
   }, { autoOpen: false });
 });
 
+test("page refresh cancels the active search and asks the server to cache partial results", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search**", async (route) => {
+      const url = new URL(route.request().url());
+      const method = route.request().method();
+
+      if (method === "POST" && url.pathname === "/api/search") {
+        const payload = route.request().postDataJSON() as Record<string, unknown>;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            searchJobId: "refresh-job",
+            searchComplete: false,
+            searchStatus: "running",
+            revision: 1,
+            sortMode: payload.sortMode,
+            request: payload.request,
+            offers: [buildOffer({ id: "refresh-partial-offer" })],
+            allOffers: [buildOffer({ id: "refresh-partial-offer" })],
+            searchMeta: {
+              requestedAt: "2026-05-04T15:21:48.419Z",
+              completedAt: "2026-05-04T15:21:48.419Z",
+              providersUsed: ["agil-local"],
+              warnings: ["Consultando Agil. Los resultados se iran agregando."],
+              partial: true,
+              searchState: "search_partial",
+            },
+            providerMeta: {
+              exactProvider: "agil-local",
+              coverageMode: "core",
+            },
+            warnings: ["Consultando Agil. Los resultados se iran agregando."],
+          }),
+        });
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/api/search/refresh-job/cancel") {
+        assert.equal(url.searchParams.get("cachePartial"), "1");
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ok: true }),
+        });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=best-value&maxStops=1`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await Promise.all([
+      page.waitForResponse((response) => response.url().endsWith("/api/search") && response.request().method() === "POST"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+
+    await page.getByRole("button", { name: "Detener búsqueda" }).waitFor();
+    const refreshCancelRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return request.method() === "POST"
+        && url.pathname === "/api/search/refresh-job/cancel"
+        && url.searchParams.get("cachePartial") === "1";
+    });
+    await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+    await refreshCancelRequest;
+  }, { autoOpen: false });
+});
+
 test("current React shell exposes flexible and migratory search modes", async () => {
   await withDesktopPage(async ({ page }) => {
     const visibleText = await page.locator("body").innerText();
@@ -567,7 +646,7 @@ test("current React shell exposes flexible and migratory search modes", async ()
 
     assert.match(await page.locator("body").innerText(), /SALIDA\s*DESDE/);
     assert.match(await page.locator("body").innerText(), /SALIDA\s*HASTA/);
-    assert.match(await page.locator("body").innerText(), /4 d[ií]as/);
+    assert.doesNotMatch(await page.locator("body").innerText(), /4 d[ií]as/);
     const flexibleDateLabels = await page.locator("#date-salida-desde-label, #date-salida-hasta-label").evaluateAll((labels) =>
       labels.map((label) => ({
         height: Math.round(label.getBoundingClientRect().height),
@@ -617,11 +696,9 @@ test("one-way flexible search keeps stay controls visible but disabled", async (
     await page.getByRole("button", { name: "Flexible" }).click();
     await page.getByRole("button", { name: "Solo ida" }).click();
 
-    const flexibleWindow = page.getByRole("button", { name: /4 d[ií]as/ });
     const stayGroup = page.getByRole("group", { name: "Estadía" });
     await stayGroup.waitFor({ state: "visible" });
 
-    await assert.equal(await flexibleWindow.isDisabled(), false);
     await assert.equal(await stayGroup.getAttribute("aria-disabled"), "true");
     await assert.equal(await page.getByRole("button", { name: "Quitar noche" }).isDisabled(), true);
     await assert.equal(await page.getByRole("button", { name: "Agregar noche" }).isDisabled(), true);
@@ -777,7 +854,7 @@ test("date calendars use the runtime minimum date for both trip dates", async ()
   });
 });
 
-test("one-way flexible search sends an expanded stay-range payload", async () => {
+test("one-way flexible search sends the selected stay-range payload without hidden expansion", async () => {
   await withDesktopPage(async ({ page }) => {
     let payload: Record<string, unknown> | undefined;
 
@@ -841,8 +918,8 @@ test("one-way flexible search sends an expanded stay-range payload", async () =>
 
     assert.equal(request.tripType, "one-way");
     assert.equal(request.searchMode, "stay-range");
-    assert.equal(leg?.departureStart, "2026-03-31");
-    assert.equal(leg?.departureEnd, "2026-04-08");
+    assert.equal(leg?.departureStart, "2026-04-02");
+    assert.equal(leg?.departureEnd, "2026-04-04");
     assert.equal(leg?.departureDate, undefined);
     assert.equal(leg?.returnDate, undefined);
   });
@@ -1167,7 +1244,7 @@ test("paste accepts desktop search config JSON and sends the same exact backend 
   }, { autoOpen: false });
 });
 
-test("topbar brand clears the shared search state without adding a visible control box", async () => {
+test("topbar brand opens the current instance root without hardcoding the port", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.route("**/api/locations**", async (route) => {
       await route.fulfill({
@@ -1217,14 +1294,17 @@ test("topbar brand clears the shared search state without adding a visible contr
       return origin?.value.includes("LIM") && destination?.value.includes("BIO");
     });
 
-    const brandReset = page.getByRole("button", { name: "Limpiar búsqueda" });
-    const brandStyle = await brandReset.evaluate((button) => {
-      const style = getComputedStyle(button);
+    const instanceRoot = `${new URL(baseUrl).origin}/`;
+    const brandLink = page.getByRole("link", { name: "Abrir Fly Desk" });
+    const brandHref = await brandLink.getAttribute("href");
+    const brandStyle = await brandLink.evaluate((link) => {
+      const style = getComputedStyle(link);
       return {
         backgroundColor: style.backgroundColor,
         borderStyle: style.borderStyle,
       };
     });
+    assert.equal(brandHref, instanceRoot);
     assert.equal(brandStyle.backgroundColor, "rgba(0, 0, 0, 0)");
     assert.equal(brandStyle.borderStyle, "none");
     assert.equal(await page.getByRole("button", { name: "Copiar configuración" }).isDisabled(), false);
@@ -1235,7 +1315,8 @@ test("topbar brand clears the shared search state without adding a visible contr
     ]);
     await page.locator(".fd-workspace-enter").waitFor({ state: "visible" });
 
-    await brandReset.click();
+    await brandLink.click();
+    await page.waitForURL(instanceRoot);
     await page.waitForFunction(() => {
       const origin = document.querySelector<HTMLInputElement>('[aria-label="Origen"]');
       const destination = document.querySelector<HTMLInputElement>('[aria-label="Destino"]');
@@ -1608,8 +1689,8 @@ test("round-trip flexible search sends matrix exact-stay payload", async () => {
     assert.equal(request.tripType, "round-trip");
     assert.equal(request.searchMode, "roundtrip-grid");
     assert.equal(request.flexibleMode, "exact-stay");
-    assert.equal(leg?.departureStart, "2026-03-31");
-    assert.equal(leg?.departureEnd, "2026-04-09");
+    assert.equal(leg?.departureStart, "2026-04-03");
+    assert.equal(leg?.departureEnd, "2026-04-05");
     assert.equal(leg?.stayNights, 7);
     await page.getByText("USD 480").waitFor();
     const bodyText = await page.locator("body").innerText();
@@ -1619,6 +1700,10 @@ test("round-trip flexible search sends matrix exact-stay payload", async () => {
     assert.match(await sortControl.getAttribute("class") ?? "", /items-stretch/);
     assert.doesNotMatch(await sortControl.getAttribute("class") ?? "", /p-0\.5/);
     assert.equal(await sortControl.locator(".fd-segmented-indicator").count(), 1);
+    assert.deepEqual(
+      (await sortControl.getByRole("button").allTextContents()).map((label) => label.trim()),
+      ["Precio", "Duración", "Mejor valor"],
+    );
     assert.doesNotMatch(await page.getByRole("button", { name: "Ordenar por mejor valor" }).getAttribute("class") ?? "", /bg-card/);
     await assert.equal(await page.getByRole("button", { name: "Ordenar por mejor valor" }).getAttribute("aria-pressed"), "true");
   });

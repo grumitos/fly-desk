@@ -198,3 +198,19 @@ export interface MatrixCell {
 }
 
 export type SortMode = "cheapest" | "fastest" | "best-value"
+
+export type ResultsLayoutColumnKey =
+  | "carrier"
+  | "dates"
+  | "duration"
+  | "stops"
+  | "price"
+  | "links"
+
+export type ResultsColumnLayout = Record<ResultsLayoutColumnKey, number>
+
+export interface ResultsLayout {
+  version: number
+  savedAt: string
+  columns: ResultsColumnLayout
+}

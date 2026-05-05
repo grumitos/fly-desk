@@ -1,4 +1,14 @@
-import type { CanonicalOffer, LocationSuggestion, MatrixCell, MigrationMonthSummary, SearchRequest, SearchJobResponse, SortMode } from "@/types"
+import type {
+  CanonicalOffer,
+  LocationSuggestion,
+  MatrixCell,
+  MigrationMonthSummary,
+  ResultsColumnLayout,
+  ResultsLayout,
+  SearchRequest,
+  SearchJobResponse,
+  SortMode,
+} from "@/types"
 import { filterLocationSuggestions, normalizeLocationSearchText, normalizeLocationSuggestions } from "@/lib/locations"
 
 const API_BASE = ""
@@ -76,6 +86,7 @@ function translateApiMessage(message: string): string {
     "Departure date is required for exact search.": "Selecciona una fecha de salida.",
     "Return date is required for round-trip exact search.": "Selecciona una fecha de regreso.",
     "Return date must be after departure date.": "La fecha de regreso debe ser posterior a la salida.",
+    "Stay length cannot exceed 90 nights.": "La estadía máxima es de 90 noches.",
     "Departure range is required for matrix search.": "Selecciona un rango de salida.",
     "Return range is required for round-trip matrix search.": "Selecciona un rango de regreso.",
     "Stay nights is required for exact-stay matrix search.": "Indica la cantidad de noches.",
@@ -338,6 +349,23 @@ export function getCachedLocationSuggestions(query: string, limit = 8): Location
   if (query.trim().length < 1) return []
   const key = locationSuggestionCacheKey(query, limit)
   return locationSuggestionCache.get(key) ?? filterLocationSuggestions(query, [...locationSuggestionPool.values()], limit)
+}
+
+export async function getResultsLayout(options: RequestOptions = {}): Promise<ResultsLayout | null> {
+  const data = await getJson<{ layout: ResultsLayout | null }>(`${API_BASE}/api/results-layout`, options)
+  return data.layout ?? null
+}
+
+export async function saveResultsLayout(
+  columns: ResultsColumnLayout,
+  options: RequestOptions = {},
+): Promise<ResultsLayout> {
+  const data = await postJson<{ ok?: boolean; layout: ResultsLayout }>(
+    `${API_BASE}/api/results-layout`,
+    { columns },
+    options,
+  )
+  return data.layout
 }
 
 function rememberLocationSuggestions(query: string, limit: number, suggestions: LocationSuggestion[]) {
@@ -870,9 +898,32 @@ export async function pollMatrix(
   return normalizeMatrixJob(data, sortMode)
 }
 
-export async function cancelSearchJob(job: { id: string; type: "search" | "matrix" }): Promise<void> {
+export async function cancelSearchJob(
+  job: { id: string; type: "search" | "matrix" },
+  options: { cachePartial?: boolean; keepalive?: boolean } = {}
+): Promise<void> {
   const path = job.type === "matrix" ? "matrix" : "search"
-  await postJson<unknown>(`${API_BASE}/api/${path}/${encodeURIComponent(job.id)}/cancel`, {})
+  const query = options.cachePartial ? "?cachePartial=1" : ""
+  const url = `${API_BASE}/api/${path}/${encodeURIComponent(job.id)}/cancel${query}`
+  const payload = {}
+
+  if (options.keepalive) {
+    const body = JSON.stringify(payload)
+    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+      const sent = navigator.sendBeacon(url, new Blob([body], { type: "application/json" }))
+      if (sent) return
+    }
+
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      keepalive: true,
+    })
+    return
+  }
+
+  await postJson<unknown>(url, payload)
 }
 
 export async function startMigrationSearch(
@@ -1003,9 +1054,18 @@ export async function startMigrationSearch(
   return finalJob
 }
 
-export async function fetchQuotation(searchSessionId: string, offerId: string) {
+export async function fetchQuotation(input: {
+  searchSessionId?: string
+  offerId?: string
+  offer: CanonicalOffer
+  request: SearchRequest
+}) {
   return postJson<{ commercialText: string; offer: unknown }>(`${API_BASE}/api/quotation`, {
-    searchSessionId,
-    offerId,
+    searchSessionId: input.searchSessionId,
+    offerId: input.offerId,
+    offer: input.offer,
+    request: toBackendPayload(input.request, input.request.sortMode === "cheapest" || input.request.sortMode === "fastest" || input.request.sortMode === "best-value"
+      ? input.request.sortMode
+      : "best-value").request,
   })
 }

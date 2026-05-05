@@ -19,6 +19,8 @@ const DATE_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
 })
 const SEARCH_FIELD_CONTROL_CLASS = "fd-control flex h-[52px] w-full items-center gap-2 px-3 pt-4"
 const SEARCH_FIELD_VALUE_CLASS = "h-4 min-w-0 flex-1 truncate text-sm font-semibold leading-4"
+const SEARCH_MAX_FUTURE_DAYS_FALLBACK = 365
+const MAX_STAY_NIGHTS = 90
 
 type SearchModeControl = "exact" | "flexible" | "migration"
 
@@ -48,7 +50,6 @@ export function SearchShell({
   const [departureDate, setDepartureDate] = useState("")
   const [returnDate, setReturnDate] = useState("")
   const [stayNights, setStayNights] = useState(7)
-  const [expandFlexibleWindow, setExpandFlexibleWindow] = useState(true)
   const [adults, setAdults] = useState(1)
   const [children, setChildren] = useState(0)
   const [infants, setInfants] = useState(0)
@@ -62,6 +63,9 @@ export function SearchShell({
   })
   const datePolicy = useMemo(() => getRuntimeSearchDatePolicy(), [])
   const returnMinDate = maxIsoDate(datePolicy.minSearchDate, departureDate || datePolicy.minSearchDate)
+  const endDateMaxDate = mode === "exact" && trip === "round-trip" && departureDate
+    ? minIsoDate(datePolicy.maxSearchDate, addDays(departureDate, MAX_STAY_NIGHTS))
+    : datePolicy.maxSearchDate
   const departureLabel = mode === "flexible" ? "Salida desde" : "Salida"
   const endDateLabel = mode === "flexible" ? "Salida hasta" : "Regreso"
   const dateFieldsDisabled = mode === "migration"
@@ -94,10 +98,7 @@ export function SearchShell({
       setDestinationQuery(nextDestination)
       setDepartureDate(dateStartFromSearchRequest(syncedRequest))
       setReturnDate(dateEndFromSearchRequest(syncedRequest))
-      setStayNights(syncedRequest.stayNights ?? 7)
-      if (syncedRequest.searchMode !== "exact") {
-        setExpandFlexibleWindow(false)
-      }
+      setStayNights(clampStayNights(syncedRequest.stayNights ?? 7))
       setTouched({
         origin: false,
         destination: false,
@@ -124,7 +125,6 @@ export function SearchShell({
       setDepartureDate("")
       setReturnDate("")
       setStayNights(7)
-      setExpandFlexibleWindow(true)
       setAdults(1)
       setChildren(0)
       setInfants(0)
@@ -149,18 +149,32 @@ export function SearchShell({
 
   const handleDepartureDateChange = (nextDate: string) => {
     const clampedDate = clampIsoDate(nextDate, datePolicy.minSearchDate, datePolicy.maxSearchDate)
+    const maxReturnDate = mode === "exact" && trip === "round-trip"
+      ? minIsoDate(datePolicy.maxSearchDate, addDays(clampedDate, MAX_STAY_NIGHTS))
+      : datePolicy.maxSearchDate
     setDepartureDate(clampedDate)
-    setReturnDate((current) => current && current < clampedDate ? clampedDate : current)
+    setReturnDate((current) => {
+      if (!current) return current
+      if (current < clampedDate) return clampedDate
+      if (current > maxReturnDate) return maxReturnDate
+      return current
+    })
   }
 
   const handleReturnDateChange = (nextDate: string) => {
-    setReturnDate(clampIsoDate(nextDate, returnMinDate, datePolicy.maxSearchDate))
+    setReturnDate(clampIsoDate(nextDate, returnMinDate, endDateMaxDate))
   }
 
   const handleTripChange = (nextTrip: "round-trip" | "one-way") => {
     setTrip(nextTrip)
     if (nextTrip === "round-trip" && returnDate && returnDate < returnMinDate) {
       setReturnDate(returnMinDate)
+    } else if (nextTrip === "round-trip" && returnDate && departureDate) {
+      setReturnDate((current) => clampIsoDate(
+        current,
+        returnMinDate,
+        minIsoDate(datePolicy.maxSearchDate, addDays(departureDate, MAX_STAY_NIGHTS)),
+      ))
     }
   }
 
@@ -190,17 +204,17 @@ export function SearchShell({
     minDepartureDate: datePolicy.minSearchDate,
     maxDate: datePolicy.maxSearchDate,
     minReturnDate: returnMinDate,
+    maxStayNights: MAX_STAY_NIGHTS,
   })
 
   const buildRequest = useCallback((origin: string, destination: string): SearchRequest => {
-    const flexiblePaddingDays = mode === "flexible" && expandFlexibleWindow ? 4 : 0
     const flexibleDepartureStart = mode === "migration"
       ? datePolicy.minSearchDate
       : mode === "flexible"
-      ? clampIsoDate(addDays(departureDate, -flexiblePaddingDays), datePolicy.minSearchDate, datePolicy.maxSearchDate)
+      ? clampIsoDate(departureDate, datePolicy.minSearchDate, datePolicy.maxSearchDate)
       : undefined
     const flexibleDepartureEnd = mode === "flexible"
-      ? clampIsoDate(addDays(returnDate, flexiblePaddingDays), datePolicy.minSearchDate, datePolicy.maxSearchDate)
+      ? clampIsoDate(returnDate, datePolicy.minSearchDate, datePolicy.maxSearchDate)
       : undefined
 
     return {
@@ -220,7 +234,7 @@ export function SearchShell({
           ? trip === "round-trip" ? "roundtrip-grid" : "stay-range"
           : "exact",
       flexibleMode: mode === "flexible" && trip === "round-trip" ? "exact-stay" : undefined,
-      stayNights: mode === "flexible" && trip === "round-trip" ? stayNights : undefined,
+      stayNights: mode === "flexible" && trip === "round-trip" ? clampStayNights(stayNights) : undefined,
     }
   }, [
     adults,
@@ -228,7 +242,6 @@ export function SearchShell({
     datePolicy.maxSearchDate,
     datePolicy.minSearchDate,
     departureDate,
-    expandFlexibleWindow,
     infants,
     mode,
     returnDate,
@@ -259,7 +272,6 @@ export function SearchShell({
     departureDate,
     destCode,
     destination.query,
-    expandFlexibleWindow,
     infants,
     hasValidationError,
     buildRequest,
@@ -309,6 +321,7 @@ export function SearchShell({
       minDepartureDate: datePolicy.minSearchDate,
       maxDate: datePolicy.maxSearchDate,
       minReturnDate: returnMinDate,
+      maxStayNights: MAX_STAY_NIGHTS,
     })
     if (hasBlockingValidationError(resolvedValidation)) {
       return
@@ -331,11 +344,9 @@ export function SearchShell({
       mode={mode}
       trip={trip}
       tripTabs={tripTabs}
-      expandFlexibleWindow={expandFlexibleWindow}
       stayNights={stayNights}
       onModeChange={handleModeChange}
       onTripChange={handleTripChange}
-      onExpandFlexibleWindowChange={setExpandFlexibleWindow}
       onStayNightsChange={setStayNights}
       topbar={shouldPortalControls}
     />
@@ -441,7 +452,7 @@ export function SearchShell({
             label={endDateLabel}
             value={returnDate}
             minDate={returnMinDate}
-            maxDate={datePolicy.maxSearchDate}
+            maxDate={endDateMaxDate}
             disabled={dateFieldsDisabled || (mode === "exact" && trip === "one-way")}
             disabledLabel="No aplica"
             onChange={(value) => {
@@ -527,22 +538,18 @@ function SearchModeControls({
   mode,
   trip,
   tripTabs,
-  expandFlexibleWindow,
   stayNights,
   onModeChange,
   onTripChange,
-  onExpandFlexibleWindowChange,
   onStayNightsChange,
   topbar,
 }: {
   mode: SearchModeControl
   trip: "round-trip" | "one-way"
   tripTabs: { key: "round-trip" | "one-way"; label: string; icon: AppIconName }[]
-  expandFlexibleWindow: boolean
   stayNights: number
   onModeChange: (mode: SearchModeControl) => void
   onTripChange: (trip: "round-trip" | "one-way") => void
-  onExpandFlexibleWindowChange: (value: boolean) => void
   onStayNightsChange: (value: number) => void
   topbar: boolean
 }) {
@@ -586,8 +593,6 @@ function SearchModeControls({
         )}
       >
         <FlexibleOptionsBar
-          expandWindow={expandFlexibleWindow}
-          onExpandWindowChange={onExpandFlexibleWindowChange}
           stayNights={stayNights}
           onStayNightsChange={onStayNightsChange}
           disabled={!flexibleControlsActive}
@@ -888,15 +893,11 @@ function localDateToIso(date: Date) {
 }
 
 function FlexibleOptionsBar({
-  expandWindow,
-  onExpandWindowChange,
   stayNights,
   onStayNightsChange,
   disabled = false,
   stayNightsDisabled,
 }: {
-  expandWindow: boolean
-  onExpandWindowChange: (value: boolean) => void
   stayNights: number
   onStayNightsChange: (value: number) => void
   disabled?: boolean
@@ -906,22 +907,6 @@ function FlexibleOptionsBar({
 
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-2">
-      <Button
-        type="button"
-        variant="outline"
-        aria-pressed={expandWindow}
-        disabled={disabled}
-        onClick={() => onExpandWindowChange(!expandWindow)}
-        className={`h-8 px-2.5 text-xs ${
-          expandWindow
-            ? "fd-selected-passive"
-            : "border-input bg-secondary text-muted-foreground hover:text-foreground"
-        }`}
-      >
-        <AppIcon name="calendar" />
-        ±4 días
-      </Button>
-
       <div
         role="group"
         aria-disabled={stayControlsDisabled}
@@ -953,8 +938,8 @@ function FlexibleOptionsBar({
           variant="ghost"
           size="icon"
           aria-label="Agregar noche"
-          onClick={() => onStayNightsChange(Math.min(45, stayNights + 1))}
-          disabled={stayControlsDisabled || stayNights >= 45}
+          onClick={() => onStayNightsChange(clampStayNights(stayNights + 1))}
+          disabled={stayControlsDisabled || stayNights >= MAX_STAY_NIGHTS}
           className="h-7 w-7 text-muted-foreground hover:text-foreground"
         >
           <AppIcon name="plus" />
@@ -1002,7 +987,7 @@ function PaxRow({
 
 interface RuntimeSearchDatePolicy {
   minSearchDate: string
-  maxSearchDate?: string
+  maxSearchDate: string
   maxFutureDays?: number
 }
 
@@ -1019,7 +1004,7 @@ function getRuntimeSearchDatePolicy(): RuntimeSearchDatePolicy {
   const minSearchDate = isIsoDate(configured?.minSearchDate) ? configured.minSearchDate : todayIso()
   const maxSearchDate = isIsoDate(configured?.maxSearchDate)
     ? configured.maxSearchDate
-    : addDays(minSearchDate, configured?.maxFutureDays ?? 365)
+    : addDays(minSearchDate, configured?.maxFutureDays ?? SEARCH_MAX_FUTURE_DAYS_FALLBACK)
 
   return { minSearchDate, maxSearchDate, maxFutureDays: configured?.maxFutureDays }
 }
@@ -1045,6 +1030,21 @@ function maxIsoDate(left: string, right: string) {
   return left > right ? left : right
 }
 
+function minIsoDate(left: string, right: string) {
+  return left < right ? left : right
+}
+
+function diffDays(fromIso: string, toIso: string) {
+  const from = new Date(`${fromIso}T00:00:00Z`).getTime()
+  const to = new Date(`${toIso}T00:00:00Z`).getTime()
+  return Math.round((to - from) / 86400000)
+}
+
+function clampStayNights(value: number) {
+  const numeric = Number.isFinite(value) ? Math.trunc(value) : 7
+  return Math.max(1, Math.min(MAX_STAY_NIGHTS, numeric))
+}
+
 interface SearchValidationInput {
   originValue: string
   destinationValue: string
@@ -1054,6 +1054,7 @@ interface SearchValidationInput {
   mode: SearchModeControl
   minDepartureDate: string
   minReturnDate: string
+  maxStayNights: number
   maxDate?: string
 }
 
@@ -1108,6 +1109,8 @@ function buildSearchValidation(input: SearchValidationInput): SearchValidationSt
       state.returnDate = "Selecciona una fecha de regreso."
     } else if (input.returnDate < input.minReturnDate) {
       state.returnDate = `Debe ser igual o posterior a ${formatDateLabel(input.minReturnDate)}.`
+    } else if (input.departureDate && diffDays(input.departureDate, input.returnDate) > input.maxStayNights) {
+      state.returnDate = `La estadía máxima es de ${input.maxStayNights} noches.`
     } else if (input.maxDate && input.returnDate > input.maxDate) {
       state.returnDate = `Debe ser igual o anterior a ${formatDateLabel(input.maxDate)}.`
     }

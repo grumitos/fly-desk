@@ -11,7 +11,6 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useSearch } from "@/hooks/useSearch"
 import {
-  clearSharedSearchFromUrl,
   readSharedSearchFromText,
   readSharedSearchFromUrl,
   writeSharedSearchToClipboard,
@@ -28,8 +27,8 @@ type Filters = {
 }
 
 export default function App() {
-  const { results, loading, error, statusMessage, diagnosticLog, runSearch, cancel, reset } = useSearch()
-  const [initialSharedSearch, setInitialSharedSearch] = useState<SharedSearchState | null>(() => readInitialSharedSearch())
+  const { results, loading, error, statusMessage, diagnosticLog, runSearch, cancel } = useSearch()
+  const [initialSharedSearch] = useState<SharedSearchState | null>(() => readInitialSharedSearch())
   const initialSharedRequest = initialSharedSearch?.request ?? null
   const [sortMode, setSortMode] = useState<SortMode>(() => initialSharedSearch?.sortMode ?? "best-value")
   const [selectedOffer, setSelectedOffer] = useState<CanonicalOffer | null>(null)
@@ -41,7 +40,7 @@ export default function App() {
   const [plainLogView, setPlainLogView] = useState(false)
   const [clipboardError, setClipboardError] = useState<string | null>(null)
   const [searchDraft, setSearchDraft] = useState<SearchRequest | null>(initialSharedRequest)
-  const [searchResetToken, setSearchResetToken] = useState(0)
+  const [resultsLayoutEditorActive] = useState(() => resultsLayoutEditorEnabledFromUrl())
   const filtersRef = useRef(filters)
   const selectedAirlinesRef = useRef(selectedAirlines)
   const sortModeRef = useRef(sortMode)
@@ -175,26 +174,6 @@ export default function App() {
     }
   }, [initialSharedRequest, lastRequest, searchDraft])
 
-  const handleResetSearch = useCallback(() => {
-    reset()
-    filtersRef.current = {}
-    selectedAirlinesRef.current = []
-    sortModeRef.current = "best-value"
-    setInitialSharedSearch(null)
-    setClipboardError(null)
-    setSelectedOffer(null)
-    setWorkspaceReady(false)
-    setFilters({})
-    setSelectedAirlines([])
-    setSortMode("best-value")
-    setLastRequest(null)
-    setSearchDraft(null)
-    setMobilePanel("results")
-    setPlainLogView(false)
-    setSearchResetToken((token) => token + 1)
-    clearSharedSearchFromUrl()
-  }, [reset])
-
   const handleSort = useCallback(
     (sort: SortMode) => {
       sortModeRef.current = sort
@@ -260,7 +239,7 @@ export default function App() {
     Boolean(filters.maxLayoverMinutes) ||
     Boolean(filters.baggageRequired) ||
     selectedAirlines.length > 0
-  const shouldShowWorkspace = workspaceReady || Boolean(results) || loading
+  const shouldShowWorkspace = workspaceReady || Boolean(results) || loading || resultsLayoutEditorActive
   const isSearchIdle = !shouldShowWorkspace
 
   useLayoutEffect(() => {
@@ -300,7 +279,6 @@ export default function App() {
   return (
     <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground">
       <TopBar
-        onResetSearch={handleResetSearch}
         copySearchDisabled={!searchDraft && !lastRequest && !initialSharedRequest}
         onCopySearchConfig={handleCopySearchConfig}
         onPasteSearchConfig={handlePasteSearchConfig}
@@ -325,7 +303,6 @@ export default function App() {
               onCancelSearch={cancel}
               controlsPlacement={shouldShowWorkspace ? "topbar" : "inline"}
               syncedRequest={lastRequest ?? initialSharedRequest}
-              resetToken={searchResetToken}
               onSearchConfigDraftChange={setSearchDraft}
             />
 
@@ -394,7 +371,7 @@ export default function App() {
                 </div>
 
                 <div className={`${mobilePanel === "detail" ? "block" : "hidden"} min-h-0 xl:block`}>
-                  <DetailPanel offer={visibleSelectedOffer} searchJobId={results?.searchJobId} />
+                  <DetailPanel offer={visibleSelectedOffer} request={filteredResults?.request} searchJobId={results?.searchJobId} />
                 </div>
               </div>
             </Tabs>
@@ -441,12 +418,12 @@ const FiltersPanel = memo(function FiltersPanel({
   onToggleAirline: (airline: string) => void
 }) {
   return (
-    <aside className="fd-panel fd-scrollbar h-full overflow-auto p-2.5">
-      <div className="mb-2.5 flex items-center justify-between gap-2">
+    <aside className="fd-panel flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="fd-panel-header flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <div>
-            <h2 className="text-sm font-bold">Filtros</h2>
-            <p className="text-xs text-muted-foreground">Refina sin perder contexto</p>
+            <h2 className="fd-panel-title">Filtros</h2>
+            <p className="fd-panel-subtitle">Refina sin perder contexto</p>
           </div>
         </div>
         {hasFilters && (
@@ -463,78 +440,80 @@ const FiltersPanel = memo(function FiltersPanel({
         )}
       </div>
 
-      <FilterGroup title="Escalas">
-        <SwitchRow
-          label="Solo directos"
-          checked={Boolean(filters.nonStop)}
-          onChange={(checked) => onFilterChange({ nonStop: checked ? true : undefined, maxStopsFilter: undefined })}
-        />
-        <ChoiceRow
-          label="Hasta 1 escala"
-          active={filters.maxStopsFilter === "1"}
-          onClick={() => onFilterChange({ maxStopsFilter: filters.maxStopsFilter === "1" ? undefined : "1", nonStop: undefined })}
-        />
-        <ChoiceRow
-          label="2+ escalas"
-          active={filters.maxStopsFilter === "2+"}
-          onClick={() => onFilterChange({ maxStopsFilter: filters.maxStopsFilter === "2+" ? undefined : "2+", nonStop: undefined })}
-        />
-      </FilterGroup>
+      <div className="fd-scrollbar min-h-0 flex-1 overflow-auto p-2.5">
+        <FilterGroup title="Escalas">
+          <SwitchRow
+            label="Solo directos"
+            checked={Boolean(filters.nonStop)}
+            onChange={(checked) => onFilterChange({ nonStop: checked ? true : undefined, maxStopsFilter: undefined })}
+          />
+          <ChoiceRow
+            label="Hasta 1 escala"
+            active={filters.maxStopsFilter === "1"}
+            onClick={() => onFilterChange({ maxStopsFilter: filters.maxStopsFilter === "1" ? undefined : "1", nonStop: undefined })}
+          />
+          <ChoiceRow
+            label="2+ escalas"
+            active={filters.maxStopsFilter === "2+"}
+            onClick={() => onFilterChange({ maxStopsFilter: filters.maxStopsFilter === "2+" ? undefined : "2+", nonStop: undefined })}
+          />
+        </FilterGroup>
 
-      <FilterGroup title="Tiempo de escala">
-        <ChoiceRow
-          label="Hasta 2 h"
-          active={filters.maxLayoverMinutes === "120"}
-          onClick={() => onFilterChange({ maxLayoverMinutes: filters.maxLayoverMinutes === "120" ? undefined : "120" })}
-        />
-        <ChoiceRow
-          label="Hasta 4 h"
-          active={filters.maxLayoverMinutes === "240"}
-          onClick={() => onFilterChange({ maxLayoverMinutes: filters.maxLayoverMinutes === "240" ? undefined : "240" })}
-        />
-        <ChoiceRow
-          label="Hasta 6 h"
-          active={filters.maxLayoverMinutes === "360"}
-          onClick={() => onFilterChange({ maxLayoverMinutes: filters.maxLayoverMinutes === "360" ? undefined : "360" })}
-        />
-      </FilterGroup>
+        <FilterGroup title="Tiempo de escala">
+          <ChoiceRow
+            label="Hasta 2 h"
+            active={filters.maxLayoverMinutes === "120"}
+            onClick={() => onFilterChange({ maxLayoverMinutes: filters.maxLayoverMinutes === "120" ? undefined : "120" })}
+          />
+          <ChoiceRow
+            label="Hasta 4 h"
+            active={filters.maxLayoverMinutes === "240"}
+            onClick={() => onFilterChange({ maxLayoverMinutes: filters.maxLayoverMinutes === "240" ? undefined : "240" })}
+          />
+          <ChoiceRow
+            label="Hasta 6 h"
+            active={filters.maxLayoverMinutes === "360"}
+            onClick={() => onFilterChange({ maxLayoverMinutes: filters.maxLayoverMinutes === "360" ? undefined : "360" })}
+          />
+        </FilterGroup>
 
-      <FilterGroup title="Equipaje">
-        <SwitchRow
-          label="Incluye equipaje"
-          checked={Boolean(filters.baggageRequired)}
-          onChange={(checked) => onFilterChange({ baggageRequired: checked ? true : undefined })}
-        />
-      </FilterGroup>
+        <FilterGroup title="Equipaje">
+          <SwitchRow
+            label="Incluye equipaje"
+            checked={Boolean(filters.baggageRequired)}
+            onChange={(checked) => onFilterChange({ baggageRequired: checked ? true : undefined })}
+          />
+        </FilterGroup>
 
-      <FilterGroup title="Aerolíneas">
-        {allAirlines.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border bg-secondary/60 px-3 py-4 text-center text-xs text-muted-foreground">
-            Aparecerán al tener resultados.
-          </div>
-        ) : (
-          <div className="fd-scrollbar-hidden max-h-64 space-y-1 overflow-auto pr-1">
-            {allAirlines.map((airline) => (
-              <label
-                key={airline.name}
-                className="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.995]"
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <Checkbox
-                    checked={selectedAirlines.includes(airline.name)}
-                    onCheckedChange={() => onToggleAirline(airline.name)}
-                    aria-label={airline.name}
-                  />
-                  <span className="truncate">{airline.name}</span>
-                </span>
-                <Badge variant="secondary" className="h-5 rounded-md px-1.5 text-[10px]">
-                  {airline.count}
-                </Badge>
-              </label>
-            ))}
-          </div>
-        )}
-      </FilterGroup>
+        <FilterGroup title="Aerolíneas">
+          {allAirlines.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border bg-secondary/60 px-3 py-4 text-center text-xs text-muted-foreground">
+              Aparecerán al tener resultados.
+            </div>
+          ) : (
+            <div className="fd-scrollbar-hidden max-h-64 space-y-1 overflow-auto pr-1">
+              {allAirlines.map((airline) => (
+                <label
+                  key={airline.name}
+                  className="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.995]"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <Checkbox
+                      checked={selectedAirlines.includes(airline.name)}
+                      onCheckedChange={() => onToggleAirline(airline.name)}
+                      aria-label={airline.name}
+                    />
+                    <span className="truncate">{airline.name}</span>
+                  </span>
+                  <Badge variant="secondary" className="h-5 rounded-md px-1.5 text-[10px]">
+                    {airline.count}
+                  </Badge>
+                </label>
+              ))}
+            </div>
+          )}
+        </FilterGroup>
+      </div>
     </aside>
   )
 })
@@ -718,6 +697,12 @@ function readInitialSharedSearch(): SharedSearchState | null {
   } catch {
     return null
   }
+}
+
+function resultsLayoutEditorEnabledFromUrl() {
+  const params = new URLSearchParams(window.location.search)
+  const raw = String(params.get("layoutEditor") || params.get("layout") || "").trim().toLowerCase()
+  return raw === "1" || raw === "true" || raw === "editor"
 }
 
 function filtersFromRequest(request: SearchRequest | null | undefined): Filters {

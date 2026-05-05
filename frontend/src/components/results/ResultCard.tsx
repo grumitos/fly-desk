@@ -1,5 +1,7 @@
+import type { MouseEvent } from "react"
 import { Backpack, Luggage } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { bestPurchasePath, normalizeSafePurchaseUrl } from "@/lib/purchase-path"
 import type { CanonicalOffer, Itinerary, Segment } from "@/types"
 import "./result-card.css"
 
@@ -34,6 +36,10 @@ export function ResultCard({
   const stops = stopsSummary(offer)
   const price = priceLabels(offer.price?.total, passengerCount)
   const provider = providerBadge(offer)
+  const providerPurchasePath = bestPurchasePath(offer)
+  const providerPurchaseUrl = providerPurchasePath?.url
+    ? normalizeSafePurchaseUrl(providerPurchasePath.url)
+    : undefined
   const rowLabel = [
     selected ? "Oferta seleccionada" : "Seleccionar oferta",
     carrier.display,
@@ -45,6 +51,17 @@ export function ResultCard({
   ]
     .filter(Boolean)
     .join(" - ")
+  const providerOpenLabel = `Abrir ${provider.label}`
+
+  const handleProviderOpen = (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation()
+    if (!providerPurchasePath || !providerPurchaseUrl) return
+    window.open(
+      providerPurchaseUrl,
+      providerPurchasePath.requiresNewTab ? "_blank" : "_self",
+      "noopener,noreferrer",
+    )
+  }
 
   return (
     <article
@@ -96,8 +113,12 @@ export function ResultCard({
 
       <div className="fd-result-card__route">
         <span className="fd-result-card__route-main" title={windowSummary.route}>{windowSummary.route}</span>
-        <span className="fd-result-card__date-main" title={dates.title}>{dates.primary}</span>
+        {dates.primary && <span className="fd-result-card__date-main" title={dates.title}>{dates.primary}</span>}
         {dates.secondary && <span className="fd-result-card__meta">{dates.secondary}</span>}
+        <span className="fd-result-card__route-baggage">
+          <span className="fd-result-card__micro-label">Equipaje</span>
+          <BaggageIcons offer={offer} />
+        </span>
       </div>
 
       <div className="fd-result-card__journey">
@@ -116,24 +137,36 @@ export function ResultCard({
         {stops.layoverLabel && <span className="fd-result-card__layover">{stops.layoverLabel}</span>}
       </div>
 
-      <div className="fd-result-card__baggage">
-        <span className="fd-result-card__micro-label">Equipaje</span>
-        <BaggageIcons offer={offer} />
-      </div>
-
       <div className="fd-result-card__price">
         <span className="fd-result-card__price-total" title={price.totalLabel}>{price.totalLabel}</span>
         {price.perPersonLabel && <span className="fd-result-card__price-meta">{price.perPersonLabel} por persona</span>}
       </div>
 
       <div className="fd-result-card__provider" title={provider.label}>
-        {provider.icon ? (
-          <img src={provider.icon} alt="" aria-hidden="true" decoding="async" />
+        {providerPurchaseUrl ? (
+          <button
+            type="button"
+            aria-label={providerOpenLabel}
+            className="fd-result-card__provider-action"
+            title={providerOpenLabel}
+            onClick={handleProviderOpen}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            <ProviderBadge provider={provider} />
+          </button>
         ) : (
-          <span>{provider.shortLabel}</span>
+          <ProviderBadge provider={provider} />
         )}
       </div>
     </article>
+  )
+}
+
+function ProviderBadge({ provider }: { provider: ReturnType<typeof providerBadge> }) {
+  return provider.icon ? (
+    <img src={provider.icon} alt="" aria-hidden="true" decoding="async" />
+  ) : (
+    <span>{provider.shortLabel}</span>
   )
 }
 
@@ -265,11 +298,8 @@ function itineraryWindowSummary(itinerary: Itinerary | null, offer: CanonicalOff
 }
 
 function offerDateSummary(offer: CanonicalOffer) {
-  const departureDate = isoDatePart(offer.departureDate) || isoDatePart(primarySegmentForOffer(offer)?.departureAt)
   const returnDate = isoDatePart(offer.returnDate)
-  const primary = returnDate
-    ? `${formatDateCompact(departureDate)} → ${formatDateCompact(returnDate)}`
-    : formatDateCompact(departureDate)
+  const primary = returnDate ? `Vuelta ${formatDateCompact(returnDate)}` : ""
 
   return {
     primary,

@@ -1,11 +1,31 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react"
 import { ResultCard } from "@/components/results/ResultCard"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-control"
 import { Skeleton } from "@/components/ui/skeleton"
-import type { CanonicalOffer, MigrationMonthSummary, SearchJobResponse, SortMode } from "@/types"
+import { getResultsLayout, saveResultsLayout } from "@/lib/api"
+import { cn } from "@/lib/utils"
+import type {
+  CanonicalOffer,
+  MigrationMonthSummary,
+  ResultsColumnLayout,
+  ResultsLayoutColumnKey,
+  SearchJobResponse,
+  SortMode,
+} from "@/types"
 
 const RUNNING_WARNING_DELAY_MS = 12000
 const CACHED_WARNING_DELAY_MS = 18000
@@ -15,6 +35,28 @@ const RESULTS_CARD_HEIGHT_ESTIMATE_PX = 126
 const RESULTS_CARD_GAP_PX = 10
 const RESULTS_LIST_TOP_INSET_PX = 4
 const RESULTS_EXTRA_ROW_MIN_BLANK_PX = 28
+const RESULTS_LAYOUT_FILE_HINT = "config/results-layout.json"
+const RESULTS_COLUMN_DEFINITIONS = [
+  { key: "carrier", label: "Aerolínea", defaultWidth: 148, minWidth: 88, maxWidth: 320 },
+  { key: "dates", label: "Fechas", defaultWidth: 164, minWidth: 112, maxWidth: 260 },
+  { key: "duration", label: "Duración", defaultWidth: 96, minWidth: 92, maxWidth: 240 },
+  { key: "stops", label: "Escalas", defaultWidth: 148, minWidth: 96, maxWidth: 300 },
+  { key: "price", label: "Precio", defaultWidth: 136, minWidth: 112, maxWidth: 360 },
+  { key: "links", label: "Proveedor", defaultWidth: 64, minWidth: 40, maxWidth: 84 },
+] as const satisfies ReadonlyArray<{
+  key: ResultsLayoutColumnKey
+  label: string
+  defaultWidth: number
+  minWidth: number
+  maxWidth: number
+}>
+const DEFAULT_RESULTS_COLUMN_LAYOUT = Object.fromEntries(
+  RESULTS_COLUMN_DEFINITIONS.map((column) => [column.key, column.defaultWidth]),
+) as ResultsColumnLayout
+const RESULTS_COLUMN_TOTAL_WIDTH = RESULTS_COLUMN_DEFINITIONS.reduce(
+  (total, column) => total + column.defaultWidth,
+  0,
+)
 
 interface ResultsPanelProps {
   results: SearchJobResponse | null
@@ -52,14 +94,15 @@ function ResultsPanelBase({
   const summaryLabel = isMigration
     ? `${results?.migrationMonths?.length ?? 8} meses · ${offers.length} con tarifa${pendingMigrationMonths ? ` · ${pendingMigrationMonths} buscando` : ""}`
     : `${offers.length} oferta${offers.length === 1 ? "" : "s"}`
+  const layoutEditor = useResultsLayoutEditor()
 
   return (
     <section className="fd-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden" aria-busy={loading}>
-      <div className="shrink-0 border-b border-border bg-secondary/60 px-3 py-2.5">
+      <div className="fd-panel-header">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h2 className="truncate text-sm font-bold">{isMigration ? "Vuelo migratorio" : "Resultados"}</h2>
+              <h2 className="fd-panel-title">{isMigration ? "Vuelo migratorio" : "Resultados"}</h2>
               {isRevalidatingCachedSearch && <Badge variant="warning">Cache revalidando</Badge>}
               {loading && <Badge variant="warning">Actualizando</Badge>}
               {isCancelled && !loading && <Badge variant="warning">Detenida</Badge>}
@@ -70,20 +113,13 @@ function ResultsPanelBase({
                 </Badge>
               )}
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="fd-panel-subtitle">
               {routeLabel} · {summaryLabel}
             </p>
           </div>
 
           {!isMigration && (
             <SegmentedControl aria-label="Orden de resultados">
-              <SegmentButton
-                active={sort === "best-value"}
-                aria-label="Ordenar por mejor valor"
-                onClick={() => onSort("best-value")}
-              >
-                Mejor valor
-              </SegmentButton>
               <SegmentButton
                 active={sort === "cheapest"}
                 aria-label="Ordenar por precio"
@@ -98,11 +134,31 @@ function ResultsPanelBase({
               >
                 Duración
               </SegmentButton>
+              <SegmentButton
+                active={sort === "best-value"}
+                aria-label="Ordenar por mejor valor"
+                onClick={() => onSort("best-value")}
+              >
+                Mejor valor
+              </SegmentButton>
             </SegmentedControl>
           )}
         </div>
 
       </div>
+
+      {layoutEditor.enabled && (
+        <ResultsLayoutEditor
+          columns={layoutEditor.columns}
+          error={layoutEditor.error}
+          loading={layoutEditor.loading}
+          savedAt={layoutEditor.savedAt}
+          saving={layoutEditor.saving}
+          onColumnChange={layoutEditor.updateColumn}
+          onReset={layoutEditor.reset}
+          onSave={layoutEditor.save}
+        />
+      )}
 
       {renderBody({
         loading,
@@ -112,6 +168,7 @@ function ResultsPanelBase({
         noFlightIssues,
         selectedOfferId,
         onSelectOffer,
+        resultsLayout: layoutEditor.enabled ? layoutEditor.columns : null,
       })}
     </section>
   )
@@ -125,6 +182,7 @@ function renderBody({
   isCancelled,
   selectedOfferId,
   onSelectOffer,
+  resultsLayout,
 }: {
   loading: boolean
   results: SearchJobResponse | null
@@ -133,6 +191,7 @@ function renderBody({
   noFlightIssues: ProviderNoFlightIssue[]
   selectedOfferId?: string
   onSelectOffer: (offer: CanonicalOffer) => void
+  resultsLayout: ResultsColumnLayout | null
 }) {
   if (!results && !loading) {
     return (
@@ -193,6 +252,7 @@ function renderBody({
       passengerCount={passengerCountForRequest(results?.request)}
       selectedOfferId={selectedOfferId}
       onSelectOffer={onSelectOffer}
+      resultsLayout={resultsLayout}
     />
   )
 }
@@ -202,13 +262,18 @@ function PaginatedResultsList({
   passengerCount,
   selectedOfferId,
   onSelectOffer,
+  resultsLayout,
 }: {
   offers: CanonicalOffer[]
   passengerCount: number
   selectedOfferId?: string
   onSelectOffer: (offer: CanonicalOffer) => void
+  resultsLayout: ResultsColumnLayout | null
 }) {
   const { pageSize, viewportRef } = useAdaptiveResultsPageSize(offers.length)
+  const layoutStyle = useMemo(() => (
+    resultsLayout ? resultsLayoutStyleVars(resultsLayout) : undefined
+  ), [resultsLayout])
   const pageKey = useMemo(() => offerPaginationKey(offers), [offers])
   const [pageState, setPageState] = useState({ key: "", index: 0 })
   const pageCount = Math.max(1, Math.ceil(offers.length / pageSize))
@@ -237,8 +302,21 @@ function PaginatedResultsList({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-2.5" data-testid="results-page-shell">
-      <div ref={viewportRef} className="fd-scrollbar-hidden min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain" data-testid="results-page-body">
-        <div className="fd-results-list grid content-start gap-2.5 pt-1">
+      <div
+        ref={viewportRef}
+        className={cn(
+          "fd-scrollbar-hidden min-h-0 flex-1 overflow-y-auto overscroll-contain",
+          resultsLayout ? "overflow-x-auto" : "overflow-x-hidden",
+        )}
+        data-testid="results-page-body"
+      >
+        <div
+          className={cn(
+            "fd-results-list grid content-start gap-2.5 pt-1",
+            resultsLayout && "fd-results-list--fixed-layout",
+          )}
+          style={layoutStyle}
+        >
           {pageOffers.map((offer) => (
             <ResultCard
               key={offer.id}
@@ -263,6 +341,332 @@ function PaginatedResultsList({
       )}
     </div>
   )
+}
+
+function ResultsLayoutEditor({
+  columns,
+  error,
+  loading,
+  savedAt,
+  saving,
+  onColumnChange,
+  onReset,
+  onSave,
+}: {
+  columns: ResultsColumnLayout
+  error: string
+  loading: boolean
+  savedAt: string
+  saving: boolean
+  onColumnChange: (key: ResultsLayoutColumnKey, value: number) => void
+  onReset: () => void
+  onSave: () => void
+}) {
+  return (
+    <section className="fd-results-layout-editor" aria-label="Ajuste temporal de columnas">
+      <div className="fd-results-layout-editor__header">
+        <div className="min-w-0">
+          <h3 className="fd-results-layout-editor__title">Columnas</h3>
+          <p className="fd-results-layout-editor__status">
+            {resultsLayoutStatus({ error, loading, savedAt, saving })}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            aria-label="Restaurar anchos"
+            className="h-8 rounded-md"
+            disabled={saving}
+            size="sm"
+            type="button"
+            variant="secondary"
+            onClick={onReset}
+          >
+            Restaurar
+          </Button>
+          <Button
+            aria-label="Guardar layout"
+            className="h-8 rounded-md"
+            disabled={loading || saving}
+            size="sm"
+            type="button"
+            onClick={onSave}
+          >
+            {saving && <AppIcon name="loading" className="h-3.5 w-3.5 animate-spin" />}
+            Guardar
+          </Button>
+        </div>
+      </div>
+
+      <div className="fd-results-layout-editor__grid">
+        {RESULTS_COLUMN_DEFINITIONS.map((column) => (
+          <label key={column.key} className="fd-results-layout-field">
+            <span className="fd-results-layout-field__label">{column.label}</span>
+            <input
+              aria-label={`Ancho de ${column.label}`}
+              className="fd-results-layout-field__range"
+              disabled={saving}
+              max={column.maxWidth}
+              min={column.minWidth}
+              step={4}
+              type="range"
+              value={columns[column.key]}
+              onChange={(event) => onColumnChange(column.key, Number(event.target.value))}
+            />
+            <div className="fd-results-layout-field__value">
+              <Input
+                aria-label={`${column.label} en pixeles`}
+                className="h-7 rounded-md px-2 text-xs"
+                disabled={saving}
+                max={column.maxWidth}
+                min={column.minWidth}
+                step={4}
+                type="number"
+                value={columns[column.key]}
+                onChange={(event) => onColumnChange(column.key, Number(event.target.value))}
+              />
+              <span>px</span>
+            </div>
+          </label>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function useResultsLayoutEditor() {
+  const enabled = useMemo(() => resultsLayoutEditorEnabledFromUrl(), [])
+  const [columns, setColumns] = useState<ResultsColumnLayout>(DEFAULT_RESULTS_COLUMN_LAYOUT)
+  const [savedAt, setSavedAt] = useState("")
+  const [error, setError] = useState("")
+  const [loading, setLoading] = useState(enabled)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (!enabled) return
+
+    const controller = new AbortController()
+    getResultsLayout({ signal: controller.signal })
+      .then((layout) => {
+        if (controller.signal.aborted) return
+        setColumns(normalizeResultsLayoutBudget(layout?.columns ?? DEFAULT_RESULTS_COLUMN_LAYOUT))
+        setSavedAt(layout?.savedAt ?? "")
+        setError("")
+      })
+      .catch((caught: unknown) => {
+        if (controller.signal.aborted) return
+        setColumns(DEFAULT_RESULTS_COLUMN_LAYOUT)
+        setSavedAt("")
+        setError(errorMessage(caught))
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+
+    return () => controller.abort()
+  }, [enabled])
+
+  const updateColumn = useCallback((key: ResultsLayoutColumnKey, value: number) => {
+    const definition = RESULTS_COLUMN_DEFINITIONS.find((column) => column.key === key)
+    if (!definition) return
+
+    setColumns((current) => normalizeResultsLayoutBudget({
+      ...current,
+      [key]: clampResultsLayoutColumn(definition, value),
+    }, key))
+    setSavedAt("")
+    setError("")
+  }, [])
+
+  const reset = useCallback(() => {
+    setColumns(DEFAULT_RESULTS_COLUMN_LAYOUT)
+    setSavedAt("")
+    setError("")
+  }, [])
+
+  const save = useCallback(() => {
+    if (saving) return
+
+    setSaving(true)
+    setError("")
+    void saveResultsLayout(normalizeResultsLayoutBudget(columns))
+      .then((layout) => {
+        setColumns(layout.columns)
+        setSavedAt(layout.savedAt)
+      })
+      .catch((caught: unknown) => setError(errorMessage(caught)))
+      .finally(() => setSaving(false))
+  }, [columns, saving])
+
+  return {
+    enabled,
+    columns,
+    error,
+    loading,
+    savedAt,
+    saving,
+    reset,
+    save,
+    updateColumn,
+  }
+}
+
+function resultsLayoutEditorEnabledFromUrl() {
+  const params = new URLSearchParams(window.location.search)
+  const raw = String(params.get("layoutEditor") || params.get("layout") || "").trim().toLowerCase()
+  return raw === "1" || raw === "true" || raw === "editor"
+}
+
+function clampResultsLayoutColumn(
+  definition: (typeof RESULTS_COLUMN_DEFINITIONS)[number],
+  value: number,
+) {
+  const numeric = Number.isFinite(value) ? value : definition.defaultWidth
+  return Math.max(definition.minWidth, Math.min(definition.maxWidth, Math.round(numeric)))
+}
+
+function normalizeResultsLayoutBudget(
+  columns: ResultsColumnLayout,
+  lockedKey?: ResultsLayoutColumnKey,
+): ResultsColumnLayout {
+  const normalized = Object.fromEntries(
+    RESULTS_COLUMN_DEFINITIONS.map((definition) => [
+      definition.key,
+      clampResultsLayoutColumn(definition, columns[definition.key]),
+    ]),
+  ) as ResultsColumnLayout
+  let overflow = resultsLayoutColumnTotal(normalized) - RESULTS_COLUMN_TOTAL_WIDTH
+
+  if (overflow > 0) {
+    const donors = RESULTS_COLUMN_DEFINITIONS
+      .filter((definition) => definition.key !== lockedKey)
+      .sort((left, right) => resultsLayoutShrinkPriority(left.key) - resultsLayoutShrinkPriority(right.key))
+
+    for (const definition of donors) {
+      if (overflow <= 0) break
+
+      const shrinkable = normalized[definition.key] - definition.minWidth
+      if (shrinkable <= 0) continue
+
+      const shrinkBy = Math.min(shrinkable, overflow)
+      normalized[definition.key] -= shrinkBy
+      overflow -= shrinkBy
+    }
+
+    if (overflow > 0 && lockedKey) {
+      const lockedDefinition = RESULTS_COLUMN_DEFINITIONS.find((definition) => definition.key === lockedKey)
+      if (lockedDefinition) {
+        normalized[lockedKey] = Math.max(lockedDefinition.minWidth, normalized[lockedKey] - overflow)
+      }
+    }
+
+    return normalized
+  }
+
+  let underflow = Math.abs(overflow)
+  const recipients = RESULTS_COLUMN_DEFINITIONS
+    .filter((definition) => definition.key !== lockedKey)
+    .sort((left, right) => resultsLayoutGrowPriority(left.key) - resultsLayoutGrowPriority(right.key))
+
+  underflow = growResultsLayoutColumns(normalized, recipients, underflow, "defaultWidth")
+  underflow = growResultsLayoutColumns(normalized, recipients, underflow, "maxWidth")
+
+  if (underflow > 0 && lockedKey) {
+    const lockedDefinition = RESULTS_COLUMN_DEFINITIONS.find((definition) => definition.key === lockedKey)
+    if (lockedDefinition) {
+      normalized[lockedKey] = Math.min(lockedDefinition.maxWidth, normalized[lockedKey] + underflow)
+    }
+  }
+
+  return normalized
+}
+
+function growResultsLayoutColumns(
+  columns: ResultsColumnLayout,
+  definitions: ReadonlyArray<(typeof RESULTS_COLUMN_DEFINITIONS)[number]>,
+  underflow: number,
+  targetKey: "defaultWidth" | "maxWidth",
+) {
+  let remaining = underflow
+
+  for (const definition of definitions) {
+    if (remaining <= 0) break
+
+    const growable = definition[targetKey] - columns[definition.key]
+    if (growable <= 0) continue
+
+    const growBy = Math.min(growable, remaining)
+    columns[definition.key] += growBy
+    remaining -= growBy
+  }
+
+  return remaining
+}
+
+function resultsLayoutColumnTotal(columns: ResultsColumnLayout) {
+  return RESULTS_COLUMN_DEFINITIONS.reduce((total, definition) => total + columns[definition.key], 0)
+}
+
+function resultsLayoutShrinkPriority(key: ResultsLayoutColumnKey) {
+  const priorities: Record<ResultsLayoutColumnKey, number> = {
+    duration: 0,
+    links: 1,
+    price: 2,
+    dates: 3,
+    carrier: 4,
+    stops: 5,
+  }
+  return priorities[key]
+}
+
+function resultsLayoutGrowPriority(key: ResultsLayoutColumnKey) {
+  const priorities: Record<ResultsLayoutColumnKey, number> = {
+    stops: 0,
+    dates: 1,
+    carrier: 2,
+    price: 3,
+    duration: 4,
+    links: 5,
+  }
+  return priorities[key]
+}
+
+function resultsLayoutStyleVars(columns: ResultsColumnLayout): CSSProperties {
+  const style: Record<string, string> = {}
+  RESULTS_COLUMN_DEFINITIONS.forEach((column) => {
+    style[`--fd-results-col-${column.key}`] = `${Math.round(columns[column.key])}px`
+  })
+  return style as CSSProperties
+}
+
+function resultsLayoutStatus({
+  error,
+  loading,
+  savedAt,
+  saving,
+}: {
+  error: string
+  loading: boolean
+  savedAt: string
+  saving: boolean
+}) {
+  if (saving) return `Guardando en ${RESULTS_LAYOUT_FILE_HINT}`
+  if (loading) return `Cargando ${RESULTS_LAYOUT_FILE_HINT}`
+  if (error) return error
+  if (savedAt) return `Guardado ${formatLayoutSavedAt(savedAt)}`
+  return `Sin guardar en ${RESULTS_LAYOUT_FILE_HINT}`
+}
+
+function formatLayoutSavedAt(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat("es-PE", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date)
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "No se pudo completar la acción."
 }
 
 function ResultsPagination({

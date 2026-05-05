@@ -1,11 +1,12 @@
 import { materializeSearchResponse } from "./core/orchestrator";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
-import { buildCommercialQuotation } from "./core/quotation";
+import { buildCommercialQuotation, shouldIncludePenQuotationPrice } from "./core/quotation";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { timingSafeEqual } from "node:crypto";
 import * as path from "node:path";
 import {
   CanonicalOffer,
+  Itinerary,
   LocationSuggestion,
   MatrixCell,
   MatrixResponse,
@@ -13,6 +14,7 @@ import {
   ProviderId,
   SearchRequest,
   SearchResponse,
+  Segment,
 } from "./core/types";
 import {
   prepareSearchContract,
@@ -32,6 +34,7 @@ import {
 } from "./local-agil";
 import {
   applyCostamarContextToBrandedSearchUrl,
+  buildCostamarPurchasePaths,
   createLocalCostamarMatrixDraft,
   createLocalCostamarSearchDraft,
   resolveLocalCostamarExactProgressive,
@@ -48,8 +51,9 @@ import {
   resolveUsableCostamarBrandedToken,
   verifyCostamarTokenLive,
 } from "./provider-context";
-import { resolveQuotationUsdToPenRate, warmQuotationUsdToPenRate } from "./quotation-exchange-rate";
+import { resolveQuotationUsdToPenRate, resolveStandaloneUsdToPenRate } from "./quotation-exchange-rate";
 import { limitSearchResponseForPagination } from "./search-limits";
+import { runProviderMatrixInWorker, runProviderSearchInWorker } from "./search-worker-client";
 import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
 import { logPerfSpan, startPerfTimer } from "./perf";
@@ -61,6 +65,8 @@ interface SessionPayload {
 
 interface QuotationPayload extends SessionPayload {
   offerId?: string;
+  offer?: unknown;
+  request?: unknown;
 }
 
 type ResultsLayoutColumnKey =
@@ -68,7 +74,6 @@ type ResultsLayoutColumnKey =
   | "dates"
   | "duration"
   | "stops"
-  | "baggage"
   | "price"
   | "links";
 
@@ -145,7 +150,6 @@ const RESULTS_LAYOUT_COLUMNS = [
   "dates",
   "duration",
   "stops",
-  "baggage",
   "price",
   "links",
 ] as const satisfies readonly ResultsLayoutColumnKey[];
@@ -159,6 +163,7 @@ const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
 })();
 const SEARCH_REVALIDATION_CACHE_WARNING = "Mostrando resultados cacheados mientras actualizamos en segundo plano.";
 const SEARCH_CANCELLED_WARNING = "Search cancelled by user.";
+const SEARCH_REFRESH_CANCELLED_WARNING = "Search stopped because the page was refreshed.";
 const BACKGROUND_SEARCH_START_DELAY_MS = 250;
 const CACHED_BACKGROUND_SEARCH_START_DELAY_MS = 1500;
 
@@ -166,12 +171,11 @@ const RESULTS_LAYOUT_FILE = path.resolve(__dirname, "..", "config", "results-lay
 const RESULTS_LAYOUT_VERSION = 1;
 const RESULTS_LAYOUT_COLUMN_LIMITS: Record<ResultsLayoutColumnKey, { min: number; max: number }> = {
   carrier: { min: 88, max: 320 },
-  dates: { min: 96, max: 240 },
+  dates: { min: 112, max: 260 },
   duration: { min: 92, max: 240 },
   stops: { min: 96, max: 300 },
-  baggage: { min: 64, max: 180 },
   price: { min: 112, max: 360 },
-  links: { min: 40, max: 240 },
+  links: { min: 40, max: 84 },
 };
 
 function shouldRunBackgroundSearchJobs(): boolean {
@@ -183,6 +187,329 @@ function scheduleBackgroundSearchJob(callback: () => void, delayMs: number): voi
   if (typeof timer === "object" && timer && "unref" in timer) {
     (timer as { unref: () => void }).unref();
   }
+}
+
+function quotationObjectRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function quotationStringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function quotationNumberValue(value: unknown): number | undefined {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function quotationBoolValue(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function quotationStringArrayValue(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => String(item ?? "").trim()).filter(Boolean)
+    : [];
+}
+
+function normalizeProviderSource(value: unknown): ProviderId {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized.includes("costamar") ? "costamar" : "agil-local";
+}
+
+function normalizeTripType(value: unknown): SearchRequest["tripType"] {
+  return value === "one-way" || value === "multi-city" ? value : "round-trip";
+}
+
+function normalizeSearchMode(value: unknown): SearchRequest["searchMode"] {
+  return value === "stay-range" || value === "roundtrip-grid" || value === "month-view"
+    ? value
+    : "exact";
+}
+
+function normalizeCabin(value: unknown): SearchRequest["cabin"] {
+  return value === "PREMIUM_ECONOMY" || value === "BUSINESS" || value === "FIRST"
+    ? value
+    : "ECONOMY";
+}
+
+function normalizeQuotationRequestSnapshot(input: unknown, offerInput?: unknown): SearchRequest | undefined {
+  const payload = quotationObjectRecord(input);
+  const offer = quotationObjectRecord(offerInput);
+  const rawLegs = Array.isArray(payload?.legs) ? payload.legs : [];
+  const rawLeg = quotationObjectRecord(rawLegs[0]) ?? {};
+  const origin = quotationStringValue(rawLeg.origin) ?? quotationStringValue(offer?.origin);
+  const destination = quotationStringValue(rawLeg.destination) ?? quotationStringValue(offer?.destination);
+
+  if (!origin || !destination) {
+    return undefined;
+  }
+
+  const rawPassengers = quotationObjectRecord(payload?.passengers);
+  const rawFilters = quotationObjectRecord(payload?.filters);
+  const tripType = normalizeTripType(payload?.tripType);
+
+  return {
+    providerId: payload?.providerId ? normalizeProviderSource(payload.providerId) : undefined,
+    tripType,
+    searchMode: normalizeSearchMode(payload?.searchMode),
+    flexibleMode: payload?.flexibleMode === "exact-stay" || payload?.flexibleMode === "fixed-ranges"
+      ? payload.flexibleMode
+      : undefined,
+    legs: [
+      {
+        origin,
+        destination,
+        originLabel: quotationStringValue(rawLeg.originLabel),
+        destinationLabel: quotationStringValue(rawLeg.destinationLabel),
+        departureDate: quotationStringValue(rawLeg.departureDate) ?? quotationStringValue(offer?.departureDate)?.slice(0, 10),
+        departureStart: quotationStringValue(rawLeg.departureStart),
+        departureEnd: quotationStringValue(rawLeg.departureEnd),
+        returnDate: tripType === "round-trip"
+          ? quotationStringValue(rawLeg.returnDate) ?? quotationStringValue(offer?.returnDate)?.slice(0, 10)
+          : undefined,
+        returnStart: quotationStringValue(rawLeg.returnStart),
+        returnEnd: quotationStringValue(rawLeg.returnEnd),
+        stayNights: quotationNumberValue(rawLeg.stayNights),
+        minNights: quotationNumberValue(rawLeg.minNights),
+        maxNights: quotationNumberValue(rawLeg.maxNights),
+      },
+    ],
+    passengers: {
+      adults: Math.max(1, Math.round(quotationNumberValue(rawPassengers?.adults) ?? 1)),
+      children: Math.max(0, Math.round(quotationNumberValue(rawPassengers?.children) ?? 0)),
+      infants: Math.max(0, Math.round(quotationNumberValue(rawPassengers?.infants) ?? 0)),
+    },
+    cabin: normalizeCabin(payload?.cabin),
+    filters: {
+      nonStop: quotationBoolValue(rawFilters?.nonStop),
+      maxStops: quotationNumberValue(rawFilters?.maxStops),
+      includedAirlineCodes: quotationStringArrayValue(rawFilters?.includedAirlineCodes),
+      excludedAirlineCodes: quotationStringArrayValue(rawFilters?.excludedAirlineCodes),
+      maxPrice: quotationNumberValue(rawFilters?.maxPrice),
+      currencyCode: quotationStringValue(rawFilters?.currencyCode),
+      maxResults: quotationNumberValue(rawFilters?.maxResults),
+      compactAllOffers: quotationBoolValue(rawFilters?.compactAllOffers),
+      maxTotalDurationMinutes: quotationNumberValue(rawFilters?.maxTotalDurationMinutes),
+      maxLayoverMinutes: quotationNumberValue(rawFilters?.maxLayoverMinutes),
+      minDepartureMinutes: quotationNumberValue(rawFilters?.minDepartureMinutes),
+      maxDepartureMinutes: quotationNumberValue(rawFilters?.maxDepartureMinutes),
+      minArrivalMinutes: quotationNumberValue(rawFilters?.minArrivalMinutes),
+      maxArrivalMinutes: quotationNumberValue(rawFilters?.maxArrivalMinutes),
+      baggageRequired: quotationBoolValue(rawFilters?.baggageRequired),
+      verifiedOnly: quotationBoolValue(rawFilters?.verifiedOnly),
+      exactPurchasePathOnly: quotationBoolValue(rawFilters?.exactPurchasePathOnly),
+    },
+    coverageMode: payload?.coverageMode === "extended" ? "extended" : "core",
+    redirectMode: payload?.redirectMode === "strict" || payload?.redirectMode === "best-effort"
+      ? payload.redirectMode
+      : "none",
+    currencyCode: quotationStringValue(payload?.currencyCode) ?? "USD",
+    locale: quotationStringValue(payload?.locale) ?? "es-PE",
+    market: quotationStringValue(payload?.market) ?? "PE",
+  };
+}
+
+function normalizeQuotationSegment(input: unknown, fallback: {
+  direction: "outbound" | "inbound";
+  origin: string;
+  destination: string;
+  departureAt?: string;
+}): Segment {
+  const raw = quotationObjectRecord(input) ?? {};
+  const origin = quotationStringValue(raw.origin) ?? fallback.origin;
+  const destination = quotationStringValue(raw.destination) ?? fallback.destination;
+  const departureAt = quotationStringValue(raw.departureAt) ?? fallback.departureAt ?? "";
+  const arrivalAt = quotationStringValue(raw.arrivalAt) ?? departureAt;
+
+  return {
+    id: quotationStringValue(raw.id) ?? `${fallback.direction}-segment`,
+    marketingCarrier: quotationStringValue(raw.marketingCarrier) ?? "",
+    marketingCarrierName: quotationStringValue(raw.marketingCarrierName),
+    operatingCarrier: quotationStringValue(raw.operatingCarrier),
+    operatingCarrierName: quotationStringValue(raw.operatingCarrierName),
+    flightNumber: quotationStringValue(raw.flightNumber) ?? "",
+    origin,
+    originName: quotationStringValue(raw.originName),
+    destination,
+    destinationName: quotationStringValue(raw.destinationName),
+    departureAt,
+    arrivalAt,
+    durationMinutes: Math.max(0, Math.round(quotationNumberValue(raw.durationMinutes) ?? 0)),
+    originTerminal: quotationStringValue(raw.originTerminal),
+    destinationTerminal: quotationStringValue(raw.destinationTerminal),
+  };
+}
+
+function normalizeQuotationItineraries(input: unknown, request: SearchRequest, offer: Record<string, unknown>): Itinerary[] {
+  const leg = request.legs[0];
+  const rawItineraries = Array.isArray(input) ? input : [];
+  const normalized = rawItineraries.flatMap((item, index): Itinerary[] => {
+    const raw = quotationObjectRecord(item);
+    if (!raw) {
+      return [];
+    }
+
+    const direction = raw.direction === "inbound" || raw.direction === "multi" ? raw.direction : "outbound";
+    const rawSegments = Array.isArray(raw.segments) ? raw.segments : [];
+    const fallback = {
+      direction: direction === "inbound" ? "inbound" as const : "outbound" as const,
+      origin: direction === "inbound" ? leg.destination : leg.origin,
+      destination: direction === "inbound" ? leg.origin : leg.destination,
+      departureAt: direction === "inbound"
+        ? quotationStringValue(offer.returnDate) ?? leg.returnDate
+        : quotationStringValue(offer.departureDate) ?? leg.departureDate,
+    };
+    const segments = rawSegments.length > 0
+      ? rawSegments.map((segment) => normalizeQuotationSegment(segment, fallback))
+      : [normalizeQuotationSegment(undefined, fallback)];
+
+    return [{
+      id: quotationStringValue(raw.id) ?? `itinerary-${index}`,
+      direction,
+      durationMinutes: Math.max(0, Math.round(quotationNumberValue(raw.durationMinutes) ?? 0)),
+      stops: Math.max(0, Math.round(quotationNumberValue(raw.stops) ?? Math.max(0, segments.length - 1))),
+      layoverMinutes: Array.isArray(raw.layoverMinutes)
+        ? raw.layoverMinutes.map((value) => Math.max(0, Math.round(quotationNumberValue(value) ?? 0)))
+        : [],
+      segments,
+    }];
+  });
+
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  const outboundDeparture = quotationStringValue(offer.departureDate) ?? leg.departureDate ?? leg.departureStart ?? "";
+  const outbound = normalizeQuotationSegment(undefined, {
+    direction: "outbound",
+    origin: leg.origin,
+    destination: leg.destination,
+    departureAt: outboundDeparture,
+  });
+  const itineraries: Itinerary[] = [{
+    id: "outbound",
+    direction: "outbound",
+    durationMinutes: 0,
+    stops: 0,
+    layoverMinutes: [],
+    segments: [outbound],
+  }];
+
+  const returnDeparture = quotationStringValue(offer.returnDate) ?? leg.returnDate ?? leg.returnStart;
+  if (request.tripType === "round-trip" && returnDeparture) {
+    const inbound = normalizeQuotationSegment(undefined, {
+      direction: "inbound",
+      origin: leg.destination,
+      destination: leg.origin,
+      departureAt: returnDeparture,
+    });
+    itineraries.push({
+      id: "inbound",
+      direction: "inbound",
+      durationMinutes: 0,
+      stops: 0,
+      layoverMinutes: [],
+      segments: [inbound],
+    });
+  }
+
+  return itineraries;
+}
+
+function normalizeQuotationOfferSnapshot(input: unknown, request: SearchRequest): CanonicalOffer | undefined {
+  const offer = quotationObjectRecord(input);
+  if (!offer) {
+    return undefined;
+  }
+
+  const rawPrice = quotationObjectRecord(offer.price);
+  const rawTotal = quotationObjectRecord(rawPrice?.total) ?? rawPrice;
+  const amount = quotationNumberValue(rawTotal?.amount);
+  if (amount === undefined) {
+    return undefined;
+  }
+
+  const providerSource = normalizeProviderSource(offer.providerSource);
+  const mainCarrier = quotationStringValue(offer.mainCarrier)
+    ?? quotationStringValue(offer.validatingCarrier)
+    ?? quotationStringValue(offer.airline)
+    ?? "";
+  const itineraries = normalizeQuotationItineraries(offer.itineraries, request, offer);
+  const rawBaggage = quotationObjectRecord(offer.baggage);
+  const rawFareMeta = quotationObjectRecord(offer.fareMeta);
+  const rawMetrics = quotationObjectRecord(offer.comparisonMetrics);
+  const totalStops = quotationNumberValue(rawMetrics?.totalStops) ?? quotationNumberValue(offer.stops) ?? 0;
+
+  return {
+    id: quotationStringValue(offer.sourceOfferId) ?? quotationStringValue(offer.id) ?? "selected-offer",
+    signature: quotationStringValue(offer.signature) ?? quotationStringValue(offer.id) ?? "selected-offer",
+    providerSource,
+    providerOfferRef: quotationStringValue(offer.providerOfferRef) ?? quotationStringValue(offer.id) ?? "selected-offer",
+    tripType: request.tripType,
+    validatingCarrier: quotationStringValue(offer.validatingCarrier) ?? mainCarrier,
+    mainCarrier,
+    origin: quotationStringValue(offer.origin) ?? request.legs[0].origin,
+    destination: quotationStringValue(offer.destination) ?? request.legs[0].destination,
+    itineraries,
+    price: {
+      total: {
+        amount,
+        currencyCode: quotationStringValue(rawTotal?.currencyCode) ?? request.currencyCode ?? "USD",
+      },
+      base: quotationObjectRecord(rawPrice?.base)
+        ? {
+            amount: quotationNumberValue(quotationObjectRecord(rawPrice?.base)?.amount) ?? amount,
+            currencyCode: quotationStringValue(quotationObjectRecord(rawPrice?.base)?.currencyCode) ?? quotationStringValue(rawTotal?.currencyCode) ?? "USD",
+          }
+        : undefined,
+      taxes: quotationObjectRecord(rawPrice?.taxes)
+        ? {
+            amount: quotationNumberValue(quotationObjectRecord(rawPrice?.taxes)?.amount) ?? 0,
+            currencyCode: quotationStringValue(quotationObjectRecord(rawPrice?.taxes)?.currencyCode) ?? quotationStringValue(rawTotal?.currencyCode) ?? "USD",
+          }
+        : undefined,
+    },
+    usdToPenRate: quotationNumberValue(offer.usdToPenRate),
+    baggage: rawBaggage
+      ? {
+          carryOnIncluded: quotationBoolValue(rawBaggage.carryOnIncluded),
+          checkedIncluded: quotationBoolValue(rawBaggage.checkedIncluded),
+          checkedBags: quotationNumberValue(rawBaggage.checkedBags),
+          description: quotationStringValue(rawBaggage.description),
+        }
+      : undefined,
+    fareMeta: rawFareMeta
+      ? {
+          lastTicketingDate: quotationStringValue(rawFareMeta.lastTicketingDate),
+          seatsRemaining: quotationNumberValue(rawFareMeta.seatsRemaining),
+          refundable: quotationBoolValue(rawFareMeta.refundable),
+          changeable: quotationBoolValue(rawFareMeta.changeable),
+          co2Kg: quotationNumberValue(rawFareMeta.co2Kg),
+        }
+      : undefined,
+    priceConfidence: offer.priceConfidence === "indicative"
+      || offer.priceConfidence === "validated"
+      || offer.priceConfidence === "landing-page"
+      || offer.priceConfidence === "stale"
+      ? offer.priceConfidence
+      : "live",
+    priceStatus: offer.priceStatus === "verified" || offer.priceStatus === "stale" ? offer.priceStatus : "unverified",
+    priceVerifiedAt: quotationStringValue(offer.priceVerifiedAt),
+    purchasePaths: [],
+    comparisonMetrics: {
+      totalDurationMinutes: Math.max(0, Math.round(quotationNumberValue(rawMetrics?.totalDurationMinutes) ?? 0)),
+      totalStops: Math.max(0, Math.round(totalStops)),
+      baggageScore: Math.max(0, Math.round(quotationNumberValue(rawMetrics?.baggageScore) ?? 0)),
+      purchasePathScore: Math.max(0, Math.round(quotationNumberValue(rawMetrics?.purchasePathScore) ?? 0)),
+    },
+    tags: quotationStringArrayValue(offer.tags),
+    warnings: quotationStringArrayValue(offer.warnings),
+    rawRefs: quotationObjectRecord(offer.rawRefs),
+    valueScore: quotationNumberValue(offer.valueScore) ?? 0,
+  };
 }
 
 function normalizeResultsLayoutColumns(
@@ -620,6 +947,58 @@ function getProgressiveAdapter(providerId: ProviderId): ProgressiveSearchAdapter
   return PROGRESSIVE_ADAPTERS[providerId];
 }
 
+function shouldUseSearchWorkerProcesses(): boolean {
+  return process.env.FLY_DESK_SEARCH_WORKER_PROCESSES !== "0";
+}
+
+async function resolveProviderSearchProgressive(
+  providerId: ProviderId,
+  request: SearchRequest,
+  providerContext: ProviderContext | undefined,
+  onProgress: (result: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => boolean | void,
+): Promise<{ offers: CanonicalOffer[]; warnings: string[]; partial: boolean }> {
+  const kind = request.searchMode === "stay-range" ? "range" : "exact";
+  if (shouldUseSearchWorkerProcesses()) {
+    return runProviderSearchInWorker({
+      kind,
+      providerId,
+      request,
+      providerContext,
+      onProgress,
+    });
+  }
+
+  const adapter = getProgressiveAdapter(providerId);
+  return kind === "range"
+    ? adapter.resolveRangeProgressive(request, providerContext, onProgress)
+    : adapter.resolveExactProgressive(request, providerContext, onProgress);
+}
+
+async function resolveProviderMatrixProgressive(
+  providerId: ProviderId,
+  request: SearchRequest,
+  providerContext: ProviderContext | undefined,
+  draft: MatrixResponse,
+  onCellResolved: (cell: MatrixResponse["cells"][number]) => boolean | void,
+): Promise<MatrixResponse> {
+  if (shouldUseSearchWorkerProcesses()) {
+    return runProviderMatrixInWorker({
+      providerId,
+      request,
+      providerContext,
+      draft,
+      onCellResolved,
+    });
+  }
+
+  return getProgressiveAdapter(providerId).resolveMatrixProgressive(
+    request,
+    providerContext,
+    draft,
+    onCellResolved,
+  );
+}
+
 async function suggestLocationsForProvider(
   runtime: ReturnType<typeof getRuntime>,
   sessionId: string | undefined,
@@ -821,6 +1200,102 @@ function createCachedSearchDraftResponse(
   };
 }
 
+function recoverCachedCostamarPurchasePaths(
+  cachedJob: SearchJobRecord | undefined,
+  providerContext: ProviderContext | undefined,
+): SearchJobRecord | undefined {
+  const costamarContext = providerContext?.costamar ?? cachedJob?.providerContext?.costamar;
+  if (!cachedJob || !costamarContext) {
+    return cachedJob;
+  }
+
+  const repairOffer = (offer: CanonicalOffer): CanonicalOffer => {
+    if (offer.providerSource !== "costamar") {
+      return offer;
+    }
+
+    const existingPaths = offer.purchasePaths ?? [];
+    if (existingPaths.some((path) => path.provider === "costamar" && typeof path.url === "string" && path.url.trim())) {
+      return offer;
+    }
+
+    return {
+      ...offer,
+      purchasePaths: [
+        ...existingPaths,
+        ...buildCostamarPurchasePaths(
+          buildCostamarOfferRedirectRequest(cachedJob.request, offer),
+          costamarContext,
+        ),
+      ],
+    };
+  };
+  const allOffers = cachedJob.allOffers.map(repairOffer);
+  const offersById = new Map(allOffers.map((offer) => [offer.id, offer] as const));
+
+  return {
+    ...cachedJob,
+    allOffers,
+    offers: cachedJob.offers.map((offer) => offersById.get(offer.id) ?? repairOffer(offer)),
+  };
+}
+
+function buildCostamarOfferRedirectRequest(
+  request: SearchRequest,
+  offer: CanonicalOffer,
+): SearchRequest {
+  const leg = request.legs[0];
+  const outbound = offer.itineraries?.find((itinerary) => itinerary.direction === "outbound")
+    ?? offer.itineraries?.[0];
+  const inbound = offer.itineraries?.find((itinerary) => itinerary.direction === "inbound");
+  const departureDate = isoDateFromValue(outbound?.segments[0]?.departureAt)
+    ?? leg.departureDate
+    ?? leg.departureStart
+    ?? "";
+  const returnDate = request.tripType === "round-trip"
+    ? isoDateFromValue(inbound?.segments[0]?.departureAt)
+      ?? leg.returnDate
+      ?? leg.returnStart
+      ?? ""
+    : "";
+
+  return {
+    ...request,
+    searchMode: "exact",
+    flexibleMode: undefined,
+    legs: [
+      {
+        ...leg,
+        origin: leg.origin || offer.origin,
+        destination: leg.destination || offer.destination,
+        departureDate,
+        departureStart: undefined,
+        departureEnd: undefined,
+        returnDate,
+        returnStart: undefined,
+        returnEnd: undefined,
+        stayNights: undefined,
+        minNights: undefined,
+        maxNights: undefined,
+      },
+    ],
+  };
+}
+
+function isoDateFromValue(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(normalized)) {
+    return normalized.slice(0, 10);
+  }
+
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString().slice(0, 10);
+}
+
 function createProviderSearchStates(
   providerIds: ProviderId[],
   cachedJob?: SearchJobRecord,
@@ -885,8 +1360,17 @@ function isMatrixJobRunning(runtime: ReturnType<typeof getRuntime>, jobId: strin
   return runtime.sessions.getMatrixJob(jobId)?.status === "running";
 }
 
-function cancelSearchJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: string): Response {
-  const job = runtime.sessions.cancelSearchJob(jobId, SEARCH_CANCELLED_WARNING);
+function shouldCachePartialCancellation(url: URL): boolean {
+  return url.searchParams.get("cachePartial") === "1";
+}
+
+function cancelSearchJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: string, url: URL): Response {
+  const cachePartial = shouldCachePartialCancellation(url);
+  const job = runtime.sessions.cancelSearchJob(
+    jobId,
+    cachePartial ? SEARCH_REFRESH_CANCELLED_WARNING : SEARCH_CANCELLED_WARNING,
+    { cachePartial },
+  );
   if (!job) {
     return json({ error: "Search job not found." }, { status: 404 });
   }
@@ -894,35 +1378,18 @@ function cancelSearchJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: 
   return json(searchJobResponse(job));
 }
 
-function cancelMatrixJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: string): Response {
-  const job = runtime.sessions.cancelMatrixJob(jobId, SEARCH_CANCELLED_WARNING);
+function cancelMatrixJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: string, url: URL): Response {
+  const cachePartial = shouldCachePartialCancellation(url);
+  const job = runtime.sessions.cancelMatrixJob(
+    jobId,
+    cachePartial ? SEARCH_REFRESH_CANCELLED_WARNING : SEARCH_CANCELLED_WARNING,
+    { cachePartial },
+  );
   if (!job) {
     return json({ error: "Matrix job not found." }, { status: 404 });
   }
 
   return json(matrixJobResponse(job));
-}
-
-function warmSearchSessionQuotationRate(
-  runtime: ReturnType<typeof getRuntime>,
-  sessionId: string,
-  providerIds: ProviderId[],
-  status: "running" | "completed",
-): void {
-  const session = runtime.sessions.getSession(sessionId);
-  if (!session) {
-    return;
-  }
-
-  const hasUsdOffer = session.offers.some((offer) => String(offer.price.total.currencyCode ?? "").trim().toUpperCase() === "USD");
-  const hasSessionRate = session.offers.some((offer) => typeof offer.usdToPenRate === "number" && offer.usdToPenRate > 0);
-  const shouldWarmEarly = providerIds.length === 1 && providerIds[0] === "costamar";
-
-  if (!hasUsdOffer || hasSessionRate || (!shouldWarmEarly && status !== "completed")) {
-    return;
-  }
-
-  void warmQuotationUsdToPenRate(session);
 }
 
 function shouldBuildCostamarProviderContext(providerIds: ProviderId[]): boolean {
@@ -970,10 +1437,11 @@ async function handleSearchRequest(
     sortMode,
     maxAgeMs: SEARCH_REVALIDATION_CACHE_TTL_MS,
   });
-  const draft = cachedJob
-    ? createCachedSearchDraftResponse(normalizedRequest, providerIds, cachedJob)
+  const cacheSeedJob = recoverCachedCostamarPurchasePaths(cachedJob, providerContext);
+  const draft = cacheSeedJob
+    ? createCachedSearchDraftResponse(normalizedRequest, providerIds, cacheSeedJob)
     : createSearchDraftResponse(normalizedRequest, providerIds);
-  const providerStates = createProviderSearchStates(providerIds, cachedJob);
+  const providerStates = createProviderSearchStates(providerIds, cacheSeedJob);
   const job = runtime.sessions.createSearchJob({
     request: normalizedRequest,
     providerContext,
@@ -989,7 +1457,7 @@ async function handleSearchRequest(
     jobId: job.id,
     mode: normalizedRequest.searchMode,
     providers: providerIds.join(","),
-    cached: Boolean(cachedJob),
+    cached: Boolean(cacheSeedJob),
     offers: job.offers.length,
   });
 
@@ -1021,11 +1489,6 @@ async function handleSearchRequest(
             error: undefined,
           }),
     }));
-    const currentStatus = runtime.sessions.getSearchJob(job.id)?.status;
-    if (currentStatus === "running" || currentStatus === "completed") {
-      warmSearchSessionQuotationRate(runtime, job.id, providerIds, status);
-    }
-
     return materialized;
   };
 
@@ -1038,7 +1501,6 @@ async function handleSearchRequest(
       const failedProviderIds = new Set<ProviderId>();
       const resolvers = providerIds.map(async (providerId) => {
         const providerStart = startPerfTimer();
-        const adapter = getProgressiveAdapter(providerId);
         const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
           if (!isSearchJobRunning(runtime, job.id)) {
             return false;
@@ -1059,9 +1521,12 @@ async function handleSearchRequest(
             return;
           }
 
-          const result = normalizedRequest.searchMode === "stay-range"
-            ? await adapter.resolveRangeProgressive(normalizedRequest, providerContext, onProgress)
-            : await adapter.resolveExactProgressive(normalizedRequest, providerContext, onProgress);
+          const result = await resolveProviderSearchProgressive(
+            providerId,
+            normalizedRequest,
+            providerContext,
+            onProgress,
+          );
           if (!isSearchJobRunning(runtime, job.id)) {
             return;
           }
@@ -1123,7 +1588,7 @@ async function handleSearchRequest(
           partial: materialized.searchMeta.partial,
         });
       });
-    }, cachedJob ? CACHED_BACKGROUND_SEARCH_START_DELAY_MS : BACKGROUND_SEARCH_START_DELAY_MS);
+    }, cacheSeedJob ? CACHED_BACKGROUND_SEARCH_START_DELAY_MS : BACKGROUND_SEARCH_START_DELAY_MS);
   }
 
   return json(searchJobResponse(job));
@@ -1238,7 +1703,8 @@ async function handleMatrixRequest(
             return;
           }
 
-          const result = await adapter.resolveMatrixProgressive(
+          const result = await resolveProviderMatrixProgressive(
+            providerId,
             normalizedRequest,
             providerContext,
             draftResponse,
@@ -1500,7 +1966,7 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     const jobId = url.pathname.slice("/api/search/".length, -"/cancel".length);
-    return cancelSearchJobResponse(runtime, jobId);
+    return cancelSearchJobResponse(runtime, jobId, url);
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/search/")) {
@@ -1532,7 +1998,7 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     const jobId = url.pathname.slice("/api/matrix/".length, -"/cancel".length);
-    return cancelMatrixJobResponse(runtime, jobId);
+    return cancelMatrixJobResponse(runtime, jobId, url);
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/matrix/")) {
@@ -1576,16 +2042,33 @@ export async function routeRequest(request: Request): Promise<Response> {
           const parsedTerminalId = parsed.searchParams.get("terminalId")?.trim() || undefined;
           const parsedLang = parsed.searchParams.get("lang")?.trim() || undefined;
           const parsedToken = parsed.searchParams.get("token")?.trim() || undefined;
+          const terminalId = parsedTerminalId || sessionContext?.terminalId;
+          const lang = parsedLang || sessionContext?.lang;
+          const parsedTokenIsUsable = Boolean(resolveUsableCostamarBrandedToken(parsedToken, terminalId));
+          const fastContext = normalizeCostamarProviderContext({
+            ...(sessionContext ?? {}),
+            ...(terminalId ? { terminalId } : {}),
+            ...(lang ? { lang } : {}),
+            token: parsedTokenIsUsable ? parsedToken : sessionContext?.token,
+          });
+
+          if (resolveUsableCostamarBrandedToken(fastContext.token, fastContext.terminalId)) {
+            location = applyCostamarContextToBrandedSearchUrl(location, fastContext);
+            canRedirect = true;
+          }
+
           const refreshContext = {
             ...(sessionContext ?? {}),
-            ...(parsedTerminalId ? { terminalId: parsedTerminalId } : {}),
-            ...(parsedLang ? { lang: parsedLang } : {}),
-            ...(parsedToken ? { token: parsedToken } : {}),
+            ...(terminalId ? { terminalId } : {}),
+            ...(lang ? { lang } : {}),
+            ...(parsedToken || sessionContext?.token ? { token: parsedToken || sessionContext?.token } : {}),
           };
-          const refreshedContext = resolveLatestCostamarProviderContext(refreshContext);
-          if (resolveUsableCostamarBrandedToken(refreshedContext.token, refreshedContext.terminalId)) {
-            location = applyCostamarContextToBrandedSearchUrl(location, refreshedContext);
-            canRedirect = true;
+          if (!canRedirect) {
+            const refreshedContext = resolveLatestCostamarProviderContext(refreshContext);
+            if (resolveUsableCostamarBrandedToken(refreshedContext.token, refreshedContext.terminalId)) {
+              location = applyCostamarContextToBrandedSearchUrl(location, refreshedContext);
+              canRedirect = true;
+            }
           }
         } catch {
           canRedirect = false;
@@ -1623,23 +2106,31 @@ export async function routeRequest(request: Request): Promise<Response> {
 
     const payload = await readPayload<QuotationPayload>(request);
 
-    if (!payload.searchSessionId || !payload.offerId) {
-      return json({ errors: ["searchSessionId and offerId are required."] }, { status: 400 });
-    }
+    const session = payload.searchSessionId ? runtime.sessions.getSession(payload.searchSessionId) : undefined;
+    const storedOffer = session && payload.offerId
+      ? runtime.sessions.getOffer(payload.searchSessionId as string, payload.offerId)
+      : undefined;
+    const snapshotRequest = normalizeQuotationRequestSnapshot(payload.request, payload.offer);
+    const requestSnapshot = session?.request ?? snapshotRequest;
+    const offerSnapshot = !storedOffer && requestSnapshot
+      ? normalizeQuotationOfferSnapshot(payload.offer, requestSnapshot)
+      : undefined;
+    const offer = storedOffer ?? offerSnapshot;
 
-    const session = runtime.sessions.getSession(payload.searchSessionId);
-    const offer = session ? runtime.sessions.getOffer(payload.searchSessionId, payload.offerId) : undefined;
-
-    if (!session || !offer) {
+    if (!requestSnapshot || !offer) {
       return json({ errors: ["Session or offer not found."] }, { status: 404 });
     }
 
-    const usdToPenRate = await resolveQuotationUsdToPenRate(session, offer);
+    const usdToPenRate = shouldIncludePenQuotationPrice(offer, requestSnapshot)
+      ? session
+        ? await resolveQuotationUsdToPenRate(session, offer)
+        : await resolveStandaloneUsdToPenRate(offer)
+      : undefined;
 
     return json({
       searchSessionId: payload.searchSessionId,
       offer,
-      commercialText: buildCommercialQuotation(offer, session.request, { usdToPenRate }),
+      commercialText: buildCommercialQuotation(offer, requestSnapshot, { usdToPenRate }),
     });
   }
 

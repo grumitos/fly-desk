@@ -1,40 +1,50 @@
 import { useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { AppIcon } from "@/components/ui/app-icon"
 import { fetchQuotation } from "@/lib/api"
-import type { CanonicalOffer } from "@/types"
+import { bestPurchasePath, normalizeSafePurchaseUrl } from "@/lib/purchase-path"
+import type { CanonicalOffer, SearchRequest } from "@/types"
 
 interface DetailPanelProps {
   offer: CanonicalOffer | null
+  request?: SearchRequest
   searchJobId?: string
 }
 
-export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
+export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
   const [quotation, setQuotation] = useState<{ key: string; text: string; error?: boolean } | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [loadingKey, setLoadingKey] = useState<string | null>(null)
   const [copiedOfferKey, setCopiedOfferKey] = useState<string | null>(null)
   const [pathFeedback, setPathFeedback] = useState<{ offerId: string; message: string } | null>(null)
 
   const quoteSearchJobId = offer?.sourceSearchJobId ?? searchJobId
   const quoteOfferId = offer?.sourceOfferId ?? offer?.id
-  const quoteKey = quoteSearchJobId && quoteOfferId ? `${quoteSearchJobId}:${quoteOfferId}` : undefined
+  const quoteKey = offer && request
+    ? `${quoteSearchJobId ?? "snapshot"}:${quoteOfferId ?? offer.id}:${request.origin}:${request.destination}:${request.departureDate ?? request.departureStart ?? ""}:${request.returnDate ?? request.returnStart ?? ""}`
+    : undefined
   const activeQuotation = quotation && quotation.key === quoteKey ? quotation : null
   const copied = copiedOfferKey === quoteKey
   const purchasePath = offer ? bestPurchasePath(offer) : undefined
   const activePathFeedback = pathFeedback && pathFeedback.offerId === offer?.id ? pathFeedback.message : null
+  const loading = Boolean(quoteKey && loadingKey === quoteKey)
+  const canQuote = Boolean(offer && request && quoteKey)
 
   const handleQuotation = async () => {
-    if (!offer || !quoteSearchJobId || !quoteOfferId || !quoteKey) return
-    setLoading(true)
+    if (!offer || !request || !quoteKey) return
+    setLoadingKey(quoteKey)
     try {
-      const result = await fetchQuotation(quoteSearchJobId, quoteOfferId)
+      const result = await fetchQuotation({
+        searchSessionId: quoteSearchJobId,
+        offerId: quoteOfferId,
+        offer,
+        request,
+      })
       setQuotation({ key: quoteKey, text: result.commercialText })
     } catch {
       setQuotation({ key: quoteKey, text: "No se pudo generar la cotización. Revisa la oferta o intenta nuevamente.", error: true })
     } finally {
-      setLoading(false)
+      setLoadingKey((current) => (current === quoteKey ? null : current))
     }
   }
 
@@ -81,7 +91,7 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
 
   if (!offer) {
     return (
-      <Card className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl">
+      <section className="fd-panel flex h-full min-h-0 flex-col overflow-hidden">
         <PanelHeader title="Oferta" subtitle="Sin selección" />
         <div className="grid min-h-0 flex-1 place-items-center p-6 text-center">
           <div>
@@ -94,29 +104,17 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
             </p>
           </div>
         </div>
-      </Card>
+      </section>
     )
   }
 
   return (
-    <Card className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl">
-      <div className="shrink-0 border-b border-border bg-secondary/45 px-3 py-2.5">
+    <section className="fd-panel flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="fd-panel-header">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-bold">Oferta seleccionada</h2>
-            <p className="truncate text-xs text-muted-foreground">{offer.airline}</p>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {purchasePath && (
-              <Button size="sm" variant="secondary" onClick={handlePurchasePath}>
-                <AppIcon name="externalLink" />
-                Abrir
-              </Button>
-            )}
-            <Button size="sm" onClick={handleQuotation} disabled={loading || !quoteSearchJobId || !quoteOfferId}>
-              {loading ? <AppIcon name="loading" spin /> : <AppIcon name="clipboard" />}
-              {loading ? "Generando" : "Cotizar"}
-            </Button>
+            <h2 className="fd-panel-title">Oferta seleccionada</h2>
+            <p className="fd-panel-subtitle">{offer.airline}</p>
           </div>
         </div>
       </div>
@@ -159,12 +157,6 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
             {offer.stopMeta && <p>Ruta: <span className="font-medium text-foreground">{offer.stopMeta}</span></p>}
           </div>
         </section>
-
-        {activePathFeedback && (
-          <div className="fd-popover-enter rounded-lg border border-border bg-secondary/70 px-3 py-2 text-xs text-muted-foreground">
-            {activePathFeedback}
-          </div>
-        )}
 
         {offer.warnings && offer.warnings.length > 0 && (
           <section className="fd-popover-enter fd-alert fd-alert-warning text-xs font-medium">
@@ -211,15 +203,35 @@ export function DetailPanel({ offer, searchJobId }: DetailPanelProps) {
           </section>
         )}
       </div>
-    </Card>
+
+      <div className="fd-panel-footer">
+        {activePathFeedback && (
+          <div className="fd-popover-enter mb-2 rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
+            {activePathFeedback}
+          </div>
+        )}
+        <div className="flex items-center justify-end gap-1.5">
+          {purchasePath && (
+            <Button size="sm" variant="secondary" onClick={handlePurchasePath}>
+              <AppIcon name="externalLink" />
+              Abrir
+            </Button>
+          )}
+          <Button size="sm" onClick={handleQuotation} disabled={loading || !canQuote}>
+            {loading ? <AppIcon name="loading" spin /> : <AppIcon name="clipboard" />}
+            {loading ? "Generando" : "Cotizar"}
+          </Button>
+        </div>
+      </div>
+    </section>
   )
 }
 
 function PanelHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
-    <div className="border-b border-border bg-secondary/45 px-3 py-2.5">
-      <h2 className="text-sm font-bold">{title}</h2>
-      <p className="text-xs text-muted-foreground">{subtitle}</p>
+    <div className="fd-panel-header">
+      <h2 className="fd-panel-title">{title}</h2>
+      <p className="fd-panel-subtitle">{subtitle}</p>
     </div>
   )
 }
@@ -276,29 +288,4 @@ function priceConfidenceLabel(value: string) {
     stale: "desactualizada",
   }
   return labels[value] ?? value
-}
-
-function bestPurchasePath(offer: CanonicalOffer) {
-  const paths = offer.purchasePaths ?? []
-  return [...paths].sort((left, right) => purchasePathRank(right) - purchasePathRank(left))[0]
-}
-
-function purchasePathRank(path: NonNullable<CanonicalOffer["purchasePaths"]>[number]) {
-  const precisionScore: Record<string, number> = {
-    "exact-offer": 40,
-    "exact-search": 30,
-    "broad-search": 20,
-    manual: 10,
-  }
-  const stateScore = path.state === "api_bookable" || path.state === "deeplink_exact" ? 20 : 0
-  return (precisionScore[path.precision] ?? 0) + stateScore + (path.score ?? 0)
-}
-
-function normalizeSafePurchaseUrl(value: string): string | undefined {
-  try {
-    const url = new URL(value, window.location.origin)
-    return url.protocol === "https:" || url.protocol === "http:" ? url.href : undefined
-  } catch {
-    return undefined
-  }
 }

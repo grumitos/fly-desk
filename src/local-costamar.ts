@@ -2354,14 +2354,10 @@ function normalizeItinerary(
   };
 }
 
-function buildPurchasePaths(
+export function buildCostamarPurchasePaths(
   request: SearchRequest,
   context: CostamarProviderContext,
 ): CanonicalOffer["purchasePaths"] {
-  if (!resolveUsableCostamarBrandedToken(context.token, context.terminalId)) {
-    return [];
-  }
-
   return [
     {
       id: "costamar-search",
@@ -2753,7 +2749,7 @@ export function mapCostamarRecommendationToOffer(
     } satisfies FareMeta,
     priceConfidence: "live",
     priceStatus: "unverified",
-    purchasePaths: buildPurchasePaths(request, context),
+    purchasePaths: buildCostamarPurchasePaths(request, context),
     comparisonMetrics: {
       totalDurationMinutes: 0,
       totalStops: 0,
@@ -3154,7 +3150,7 @@ function buildMatrixCellFromOffer(
     purchasePaths: offer.purchasePaths.length > 0
       ? offer.purchasePaths
       : providerContext?.costamar
-        ? buildPurchasePaths(cell.derivedRequest, providerContext.costamar)
+        ? buildCostamarPurchasePaths(cell.derivedRequest, providerContext.costamar)
         : [],
     confidence: "live",
     selectable: true,

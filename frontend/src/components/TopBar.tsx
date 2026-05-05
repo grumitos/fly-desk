@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
 import { segmentedControlClassName } from "@/components/ui/segmented-control-classes"
@@ -70,19 +70,18 @@ function TopBarIconGroup({ children }: { children: ReactNode }) {
 }
 
 interface TopBarProps {
-  onResetSearch?: () => void
   copySearchDisabled?: boolean
   onCopySearchConfig?: () => void
   onPasteSearchConfig?: () => void
 }
 
 export function TopBar({
-  onResetSearch,
   copySearchDisabled = true,
   onCopySearchConfig,
   onPasteSearchConfig,
 }: TopBarProps) {
   const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme)
+  const homeHref = useMemo(() => `${window.location.origin}/`, [])
 
   useEffect(() => {
     syncTheme(theme)
@@ -92,18 +91,17 @@ export function TopBar({
     <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur">
       <div className="mx-auto grid min-h-11 max-w-[1560px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 py-1.5 sm:px-4">
         <div className="flex min-w-0 items-center gap-2 justify-self-start">
-          <button
-            type="button"
-            onClick={onResetSearch}
-            aria-label="Limpiar búsqueda"
-            title="Limpiar búsqueda"
+          <a
+            href={homeHref}
+            aria-label="Abrir Fly Desk"
+            title="Abrir Fly Desk"
             className="group -ml-1 flex min-w-0 items-center gap-2 border-0 border-none bg-transparent px-1 py-0.5 text-left outline-none transition-[color,opacity,transform] duration-150 hover:text-primary focus-visible:outline-none focus-visible:ring-0 active:scale-[0.99]"
           >
             <AppIcon name="brandPlane" className="h-6 w-6 text-primary transition-transform duration-150 group-hover:-translate-y-px" />
             <span className="min-w-0 truncate text-sm font-bold text-foreground transition-colors duration-150 group-hover:text-primary">
               Fly Desk
             </span>
-          </button>
+          </a>
         </div>
 
         <div

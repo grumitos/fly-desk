@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type { SearchRequest, SearchJobResponse, SortMode } from "@/types"
 import {
   cancelSearchJob,
@@ -51,7 +51,14 @@ export function useSearch() {
     activeJobsRef.current.delete(`${job.type}:${job.id}`)
   }, [])
 
-  const cancelActiveJobs = useCallback((options: { showFeedback?: boolean; setIdle?: boolean } = {}) => {
+  const cancelActiveJobs = useCallback((options: {
+    cachePartial?: boolean
+    keepalive?: boolean
+    showFeedback?: boolean
+    setIdle?: boolean
+  } = {}) => {
+    const cachePartial = options.cachePartial ?? false
+    const keepalive = options.keepalive ?? false
     const showFeedback = options.showFeedback ?? false
     const setIdle = options.setIdle ?? false
     const jobs = [...activeJobsRef.current.values()]
@@ -89,9 +96,25 @@ export function useSearch() {
     }
 
     if (jobs.length > 0) {
-      void Promise.allSettled(jobs.map((job) => cancelSearchJob(job)))
+      void Promise.allSettled(jobs.map((job) => cancelSearchJob(job, { cachePartial, keepalive })))
     }
   }, [appendDiagnosticLog, clearPoll])
+
+  useEffect(() => {
+    let sent = false
+    const cancelForPageExit = () => {
+      if (sent) return
+      sent = true
+      cancelActiveJobs({ cachePartial: true, keepalive: true, showFeedback: false, setIdle: false })
+    }
+
+    window.addEventListener("pagehide", cancelForPageExit)
+    window.addEventListener("beforeunload", cancelForPageExit)
+    return () => {
+      window.removeEventListener("pagehide", cancelForPageExit)
+      window.removeEventListener("beforeunload", cancelForPageExit)
+    }
+  }, [cancelActiveJobs])
 
   const runSearch = useCallback(
     async (
