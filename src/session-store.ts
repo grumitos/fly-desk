@@ -807,9 +807,16 @@ export class SearchSessionStore {
   }
 
   private rewriteMatrixCellPaths(sessionId: string, cell: MatrixCell): MatrixCell {
+    const purchasePaths = this.rewritePurchasePaths(sessionId, cell.key, cell.purchasePaths ?? []);
     return {
       ...cell,
-      purchasePaths: this.rewritePurchasePaths(sessionId, cell.key, cell.purchasePaths ?? []),
+      purchasePaths,
+      offer: cell.offer
+        ? {
+            ...cell.offer,
+            purchasePaths,
+          }
+        : undefined,
     };
   }
 

@@ -547,6 +547,50 @@ function durationLabel(minutes: unknown): string {
   return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`
 }
 
+function finiteNumber(value: unknown): number | undefined {
+  const parsed = typeof value === "number" ? value : Number(value)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  const parsed = finiteNumber(value)
+  return parsed !== undefined && parsed > 0 ? parsed : undefined
+}
+
+function itineraryDurationMinutesFromOffer(offer: Record<string, unknown>): number | undefined {
+  const itineraries = Array.isArray(offer.itineraries) ? offer.itineraries as Array<Record<string, unknown>> : []
+  const total = itineraries.reduce((sum, itinerary) => {
+    const direct = positiveNumber(itinerary.durationMinutes)
+    if (direct !== undefined) return sum + direct
+
+    const segments = Array.isArray(itinerary.segments) ? itinerary.segments as Array<Record<string, unknown>> : []
+    return sum + segments.reduce((segmentSum, segment) => {
+      const duration = positiveNumber(segment.durationMinutes)
+      if (duration !== undefined) return segmentSum + duration
+
+      const departureAt = typeof segment.departureAt === "string" ? Date.parse(segment.departureAt) : Number.NaN
+      const arrivalAt = typeof segment.arrivalAt === "string" ? Date.parse(segment.arrivalAt) : Number.NaN
+      const diff = arrivalAt - departureAt
+      return Number.isFinite(diff) && diff > 0 ? segmentSum + Math.round(diff / 60000) : segmentSum
+    }, 0)
+  }, 0)
+
+  return total > 0 ? total : undefined
+}
+
+function itineraryStopsFromOffer(offer: Record<string, unknown>): number | undefined {
+  const itineraries = Array.isArray(offer.itineraries) ? offer.itineraries as Array<Record<string, unknown>> : []
+  if (!itineraries.length) return undefined
+
+  return itineraries.reduce((sum, itinerary) => {
+    const direct = finiteNumber(itinerary.stops)
+    if (direct !== undefined && direct >= 0) return sum + direct
+
+    const segments = Array.isArray(itinerary.segments) ? itinerary.segments : []
+    return sum + Math.max(0, segments.length - 1)
+  }, 0)
+}
+
 function baggageLabel(baggage: unknown): string | undefined {
   if (!baggage) return undefined
   if (typeof baggage === "string") return baggage
@@ -583,6 +627,19 @@ function normalizeOffer(input: unknown): CanonicalOffer {
   const warnings = Array.isArray(offer.warnings)
     ? uniqueStrings(offer.warnings.map((warning) => translateApiMessage(String(warning))))
     : undefined
+  const totalDurationMinutes = positiveNumber(metrics.totalDurationMinutes)
+    ?? itineraryDurationMinutesFromOffer(offer)
+  const totalStops = finiteNumber(metrics.totalStops)
+    ?? itineraryStopsFromOffer(offer)
+    ?? finiteNumber(offer.stops)
+    ?? 0
+  const comparisonMetrics = {
+    ...(offer.comparisonMetrics && typeof offer.comparisonMetrics === "object"
+      ? offer.comparisonMetrics as CanonicalOffer["comparisonMetrics"]
+      : {}),
+    ...(totalDurationMinutes !== undefined ? { totalDurationMinutes } : {}),
+    totalStops,
+  }
 
   return {
     ...(offer as Partial<CanonicalOffer>),
@@ -594,12 +651,13 @@ function normalizeOffer(input: unknown): CanonicalOffer {
     departureDate: String(outbound?.departureAt ?? offer.departureDate ?? ""),
     arrivalDate: typeof outbound?.arrivalAt === "string" ? outbound.arrivalAt : undefined,
     returnDate: typeof inbound?.departureAt === "string" ? inbound.departureAt : offer.returnDate as string | undefined,
-    duration: durationLabel(metrics.totalDurationMinutes),
-    stops: typeof metrics.totalStops === "number" ? metrics.totalStops : Number(offer.stops ?? 0),
+    duration: durationLabel(totalDurationMinutes),
+    stops: totalStops,
     stopMeta: `${String(outbound?.origin ?? "")} -> ${String(outbound?.destination ?? "")}`,
     baggage: typeof offer.baggage === "object" && offer.baggage ? offer.baggage as CanonicalOffer["baggage"] : undefined,
     baggageLabel: baggageLabel(offer.baggage),
     hasCheckedBaggage: hasCheckedBaggage(offer.baggage),
+    comparisonMetrics,
     warnings,
     price,
   }
@@ -637,6 +695,20 @@ function normalizeMatrixOffer(cell: MatrixCell, request: SearchRequest): Canonic
   const currencyCode = cell.price?.currencyCode ?? "USD"
   const amount = cell.price?.amount ?? 0
   const tooltip = cell.tooltip ? translateApiMessage(cell.tooltip) : undefined
+
+  if (cell.offer) {
+    const offer = normalizeOffer(cell.offer)
+    return {
+      ...offer,
+      priceConfidence: cell.confidence || offer.priceConfidence,
+      priceStatus: cell.confidence || offer.priceStatus,
+      purchasePaths: cell.purchasePaths ?? offer.purchasePaths,
+      warnings: uniqueStrings([
+        ...(offer.warnings ?? []),
+        ...(tooltip && !/live search|exact search/i.test(tooltip) ? [tooltip] : []),
+      ]),
+    }
+  }
 
   return {
     id: cell.key,

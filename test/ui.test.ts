@@ -1459,6 +1459,13 @@ test("exact results paginate visible offers with hidden minimal result scroll", 
     await pagedCards.filter({ hasText: `P${String(visibleCards + 1).padStart(2, "0")}` }).first().waitFor();
     assert.match(await pagination.innerText(), new RegExp(`^${visibleCards + 1}-\\d+ de 18`));
     assert.equal(await pagedCards.filter({ hasText: "P01" }).count(), 0);
+
+    const firstVisibleCard = pagedCards.first();
+    assert.equal(await firstVisibleCard.locator(".fd-result-card__schedule").count(), 2);
+    assert.equal(await firstVisibleCard.locator(".fd-result-card__schedules").getAttribute("data-trip-type"), "round-trip");
+    assert.match(await firstVisibleCard.locator(".fd-result-card__schedules").innerText(), /Ida/);
+    assert.match(await firstVisibleCard.locator(".fd-result-card__schedules").innerText(), /Vuelta/);
+    assert.doesNotMatch(await firstVisibleCard.locator(".fd-result-card__route").innerText(), /Vuelta/);
   }, { autoOpen: false });
 });
 
@@ -1637,7 +1644,7 @@ test("round-trip flexible search sends matrix exact-stay payload", async () => {
             searchState: "search_live",
           },
           providerMeta: {
-            exactProvider: "agil-local",
+            exactProvider: "costamar",
             coverageMode: "core",
           },
           warnings: [],
@@ -1649,11 +1656,78 @@ test("round-trip flexible search sends matrix exact-stay payload", async () => {
               stayNights: 7,
               price: { amount: 480, currencyCode: "USD" },
               confidence: "live",
-              providerSource: "agil-local",
+              providerSource: "costamar",
               selectable: true,
               requiresRequery: false,
               stateCode: "live",
               tooltip: "Mejor tarifa",
+              offer: {
+                id: "costamar-matrix-offer",
+                providerSource: "costamar",
+                providerOfferRef: "costamar-ref",
+                tripType: "round-trip",
+                validatingCarrier: "H2",
+                mainCarrier: "H2",
+                origin: "LIM",
+                destination: "MIA",
+                itineraries: [
+                  {
+                    id: "outbound",
+                    direction: "outbound",
+                    durationMinutes: 345,
+                    stops: 0,
+                    layoverMinutes: [],
+                    segments: [
+                      {
+                        id: "outbound-1",
+                        marketingCarrier: "H2",
+                        marketingCarrierName: "Sky Airline",
+                        flightNumber: "2550",
+                        origin: "LIM",
+                        destination: "MIA",
+                        departureAt: "2026-04-03T14:25:00",
+                        arrivalAt: "2026-04-03T20:10:00",
+                        durationMinutes: 345,
+                      },
+                    ],
+                  },
+                  {
+                    id: "inbound",
+                    direction: "inbound",
+                    durationMinutes: 370,
+                    stops: 0,
+                    layoverMinutes: [],
+                    segments: [
+                      {
+                        id: "inbound-1",
+                        marketingCarrier: "H2",
+                        marketingCarrierName: "Sky Airline",
+                        flightNumber: "2551",
+                        origin: "MIA",
+                        destination: "LIM",
+                        departureAt: "2026-04-10T08:30:00",
+                        arrivalAt: "2026-04-10T14:40:00",
+                        durationMinutes: 370,
+                      },
+                    ],
+                  },
+                ],
+                price: {
+                  total: { amount: 480, currencyCode: "USD" },
+                },
+                priceConfidence: "live",
+                priceStatus: "unverified",
+                purchasePaths: [],
+                comparisonMetrics: {
+                  totalDurationMinutes: 715,
+                  totalStops: 0,
+                  baggageScore: 0,
+                  purchasePathScore: 0,
+                },
+                tags: [],
+                warnings: [],
+                valueScore: 0,
+              },
             },
           ],
           axes: {
@@ -1693,9 +1767,18 @@ test("round-trip flexible search sends matrix exact-stay payload", async () => {
     assert.equal(leg?.departureEnd, "2026-04-05");
     assert.equal(leg?.stayNights, 7);
     await page.getByText("USD 480").waitFor();
+    const flexibleCard = page.getByTestId("result-card").first();
+    assert.equal(await flexibleCard.locator(".fd-result-card__schedule").count(), 2);
+    assert.equal(await flexibleCard.locator(".fd-result-card__schedules").getAttribute("data-trip-type"), "round-trip");
+    assert.doesNotMatch(await flexibleCard.locator(".fd-result-card__route").innerText(), /Vuelta/);
     const bodyText = await page.locator("body").innerText();
     assert.doesNotMatch(bodyText, /\b00:00\b/);
-    assert.match(bodyText, /Horario por confirmar/);
+    assert.match(bodyText, /14:25/);
+    assert.match(bodyText, /20:10/);
+    assert.match(bodyText, /08:30/);
+    assert.match(bodyText, /14:40/);
+    assert.match(bodyText, /11h 55m/);
+    assert.doesNotMatch(bodyText, /Horario por confirmar/);
     const sortControl = page.getByLabel("Orden de resultados");
     assert.match(await sortControl.getAttribute("class") ?? "", /items-stretch/);
     assert.doesNotMatch(await sortControl.getAttribute("class") ?? "", /p-0\.5/);
@@ -1805,6 +1888,10 @@ test("migratory search sends monthly stay-range requests", async () => {
     await page.waitForTimeout(240);
     assert.ok(Math.abs(await topbarHeight() - flexibleTopbarHeight) <= 2);
     assert.equal(await page.getByTestId("migration-month-card").count(), 8);
+    const migrationCard = page.getByTestId("migration-month-card").first();
+    assert.equal(await migrationCard.locator(".fd-result-card__schedule").count(), 1);
+    assert.equal(await migrationCard.locator(".fd-result-card__schedules").getAttribute("data-trip-type"), "one-way");
+    assert.doesNotMatch(await migrationCard.locator(".fd-result-card__schedules").innerText(), /Vuelta/);
     const bodyText = await page.locator("body").innerText();
     assert.doesNotMatch(bodyText, /\b00:00\b/);
     assert.match(bodyText, /14:00/);

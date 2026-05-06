@@ -188,6 +188,7 @@ export interface MatrixCell {
     amount: number
     currencyCode: string
   }
+  variantKey?: string
   confidence: string
   providerSource: string
   selectable: boolean
@@ -195,6 +196,7 @@ export interface MatrixCell {
   stateCode: string
   tooltip?: string
   purchasePaths?: PurchasePath[]
+  offer?: CanonicalOffer
 }
 
 export type SortMode = "cheapest" | "fastest" | "best-value"
