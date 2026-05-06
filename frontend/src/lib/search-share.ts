@@ -284,7 +284,7 @@ function normalizeFrontendRequest(value: unknown): SearchRequest | null {
 function normalizeSortMode(value: unknown): SortMode {
   return value === "cheapest" || value === "fastest" || value === "best-value"
     ? value
-    : "best-value"
+    : "cheapest"
 }
 
 function normalizeSearchMode(value: unknown): SearchRequest["searchMode"] {

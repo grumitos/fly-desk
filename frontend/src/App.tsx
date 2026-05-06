@@ -30,7 +30,7 @@ export default function App() {
   const { results, loading, error, statusMessage, diagnosticLog, runSearch, cancel } = useSearch()
   const [initialSharedSearch] = useState<SharedSearchState | null>(() => readInitialSharedSearch())
   const initialSharedRequest = initialSharedSearch?.request ?? null
-  const [sortMode, setSortMode] = useState<SortMode>(() => initialSharedSearch?.sortMode ?? "best-value")
+  const [sortMode, setSortMode] = useState<SortMode>(() => initialSharedSearch?.sortMode ?? "cheapest")
   const [selectedOffer, setSelectedOffer] = useState<CanonicalOffer | null>(null)
   const [lastRequest, setLastRequest] = useState<SearchRequest | null>(null)
   const [workspaceReady, setWorkspaceReady] = useState(false)

@@ -16,6 +16,10 @@ import {
   getCostamarChromeSessionScanCountForTests,
   resetCostamarSessionCacheForTests,
 } from "../src/provider-context";
+import {
+  resetCostamarWarmupStateForTests,
+  setCostamarWarmupGeneratorForTests,
+} from "../src/local-costamar";
 import { routeRequest } from "../src/http-router";
 import { getRuntime } from "../src/runtime";
 import { withServer } from "./helpers/server";
@@ -670,6 +674,119 @@ test("costamar redirect uses an already usable stored token without scanning Chr
   }
 });
 
+test("costamar redirect warms a missing token through the B2B flow", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-redirect-warmup-"));
+  const profileName = "Profile 43";
+  const freshToken = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  const staleToken = buildJwt({
+    id: "0721808110",
+    iat: 1700000000,
+    exp: 1700003600,
+  });
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  const previousWarmupEnabled = process.env.COSTAMAR_SESSION_WARMUP_ENABLED;
+  const previousWarmupCooldown = process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS;
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  process.env.COSTAMAR_SESSION_WARMUP_ENABLED = "1";
+  process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS = "0";
+  resetCostamarSessionCacheForTests();
+  resetCostamarWarmupStateForTests();
+
+  let warmedRequest: SearchRequest | undefined;
+  setCostamarWarmupGeneratorForTests(async (request, context) => {
+    warmedRequest = request;
+    return {
+      ...context,
+      token: freshToken,
+    };
+  });
+
+  try {
+    const runtime = getRuntime();
+    const job = runtime.sessions.createSearchJob({
+      request: buildCostamarRequest(),
+      providerContext: {
+        costamar: {
+          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+          terminalId: "0721808110",
+          token: staleToken,
+          lang: "es",
+        },
+      },
+      offers: [buildCostamarOffer(
+        "https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es",
+      )],
+      allOffers: [buildCostamarOffer(
+        "https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es",
+      )],
+      searchMeta: buildSearchMeta(),
+      providerMeta: buildProviderMeta(),
+      warnings: [],
+      sortMode: "cheapest",
+      status: "completed",
+    });
+
+    const session = runtime.sessions.getSession(job.id);
+    const redirectPath = session?.offers[0]?.purchasePaths[0]?.url;
+    assert.ok(redirectPath);
+
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}${redirectPath}`, { redirect: "manual" });
+
+      assert.equal(response.status, 302);
+      const location = response.headers.get("location");
+      assert.ok(location);
+
+      const parsed = new URL(location);
+      assert.equal(parsed.searchParams.get("terminalId"), "0721808110");
+      assert.equal(parsed.searchParams.get("lang"), "es");
+      assert.equal(parsed.searchParams.get("token"), freshToken);
+    });
+
+    assert.equal(warmedRequest?.searchMode, "exact");
+    assert.equal(warmedRequest?.tripType, "round-trip");
+    assert.equal(warmedRequest?.legs[0]?.origin, "LIM");
+    assert.equal(warmedRequest?.legs[0]?.destination, "MAD");
+    assert.equal(warmedRequest?.legs[0]?.departureDate, "2026-06-01");
+    assert.equal(warmedRequest?.legs[0]?.returnDate, "2026-06-08");
+  } finally {
+    resetCostamarWarmupStateForTests();
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    if (previousWarmupEnabled === undefined) {
+      delete process.env.COSTAMAR_SESSION_WARMUP_ENABLED;
+    } else {
+      process.env.COSTAMAR_SESSION_WARMUP_ENABLED = previousWarmupEnabled;
+    }
+
+    if (previousWarmupCooldown === undefined) {
+      delete process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS;
+    } else {
+      process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS = previousWarmupCooldown;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("costamar matrix redirects refresh the stored token with the matrix job provider context", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-matrix-redirect-"));
   const profileName = "Profile 42";
@@ -786,9 +903,12 @@ test("costamar redirect blocks locally when no fresh token is available", async 
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-redirect-blocked-"));
   const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
   const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  const previousWarmupEnabled = process.env.COSTAMAR_SESSION_WARMUP_ENABLED;
   process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
   process.env.COSTAMAR_CHROME_PROFILE = "Profile 99";
+  process.env.COSTAMAR_SESSION_WARMUP_ENABLED = "0";
   resetCostamarSessionCacheForTests();
+  resetCostamarWarmupStateForTests();
 
   const staleToken = buildJwt({
     id: "0721808110",
@@ -835,6 +955,7 @@ test("costamar redirect blocks locally when no fresh token is available", async 
       assert.match(body, /token vigente/i);
     });
   } finally {
+    resetCostamarWarmupStateForTests();
     resetCostamarSessionCacheForTests();
     if (previousUserDataDir === undefined) {
       delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
@@ -846,6 +967,12 @@ test("costamar redirect blocks locally when no fresh token is available", async 
       delete process.env.COSTAMAR_CHROME_PROFILE;
     } else {
       process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    if (previousWarmupEnabled === undefined) {
+      delete process.env.COSTAMAR_SESSION_WARMUP_ENABLED;
+    } else {
+      process.env.COSTAMAR_SESSION_WARMUP_ENABLED = previousWarmupEnabled;
     }
 
     rmSync(tempRoot, { recursive: true, force: true });

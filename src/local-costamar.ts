@@ -1629,9 +1629,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function warmCostamarRedirectContext(
+export async function warmCostamarRedirectContext(
   request: SearchRequest,
   context: CostamarProviderContext,
+  options: { force?: boolean } = {},
 ): Promise<CostamarProviderContext> {
   if (!canWarmCostamarSession(request)) {
     return context;
@@ -1654,7 +1655,7 @@ async function warmCostamarRedirectContext(
 
   const nowMs = Date.now();
   const lastAttemptAt = recentCostamarSessionWarmups.get(warmupKey) ?? 0;
-  if ((nowMs - lastAttemptAt) < costamarSessionWarmupCooldownMs()) {
+  if (!options.force && (nowMs - lastAttemptAt) < costamarSessionWarmupCooldownMs()) {
     return resolveLatestCostamarProviderContext({
       ...context,
       token: "",
