@@ -10,6 +10,9 @@ import {
   LocationSuggestion,
   MatrixCell,
   MatrixResponse,
+  ProviderDiagnosticEvent,
+  ProviderDiagnosticKind,
+  ProviderDiagnostics,
   ProviderContext,
   ProviderId,
   SearchRequest,
@@ -25,6 +28,7 @@ import {
   validateSearchContract,
 } from "./http-search-contract";
 import {
+  AGIL_CONCURRENCY,
   createLocalAgilSearchDraft,
   resolveLocalAgilExactProgressive,
   createLocalAgilMatrixDraft,
@@ -33,6 +37,7 @@ import {
   suggestLocalAgilLocations,
 } from "./local-agil";
 import {
+  COSTAMAR_CONCURRENCY,
   applyCostamarContextToBrandedSearchUrl,
   buildCostamarPurchasePaths,
   createLocalCostamarMatrixDraft,
@@ -58,6 +63,14 @@ import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import { COMPLETED_SEARCH_SESSION_TTL_MS, type SearchJobRecord } from "./session-store";
+import {
+  appendProviderDiagnosticEvent,
+  cloneProviderDiagnostics,
+  createProviderDiagnostics,
+  recordProviderDiagnosticEvent,
+  setProviderDiagnosticStatus,
+  withProviderDiagnostics,
+} from "./provider-diagnostics";
 
 interface SessionPayload {
   searchSessionId?: string;
@@ -164,8 +177,20 @@ const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
 const SEARCH_REVALIDATION_CACHE_WARNING = "Mostrando resultados cacheados mientras actualizamos en segundo plano.";
 const SEARCH_CANCELLED_WARNING = "Search cancelled by user.";
 const SEARCH_REFRESH_CANCELLED_WARNING = "Search stopped because the page was refreshed.";
-const BACKGROUND_SEARCH_START_DELAY_MS = 250;
-const CACHED_BACKGROUND_SEARCH_START_DELAY_MS = 1500;
+function readNonNegativeEnvMs(name: string, fallbackMs: number): number {
+  const raw = Number(process.env[name] ?? fallbackMs);
+  return Number.isFinite(raw) && raw >= 0
+    ? Math.trunc(raw)
+    : fallbackMs;
+}
+
+function backgroundSearchStartDelayMs(): number {
+  return readNonNegativeEnvMs("FLY_DESK_BACKGROUND_SEARCH_START_DELAY_MS", 0);
+}
+
+function cachedBackgroundSearchStartDelayMs(): number {
+  return readNonNegativeEnvMs("FLY_DESK_CACHED_BACKGROUND_SEARCH_START_DELAY_MS", 250);
+}
 
 const RESULTS_LAYOUT_FILE = path.resolve(__dirname, "..", "config", "results-layout.json");
 const RESULTS_LAYOUT_VERSION = 1;
@@ -187,6 +212,89 @@ function scheduleBackgroundSearchJob(callback: () => void, delayMs: number): voi
   if (typeof timer === "object" && timer && "unref" in timer) {
     (timer as { unref: () => void }).unref();
   }
+}
+
+function providerDiagnosticKindForRequest(request: SearchRequest): ProviderDiagnosticKind {
+  return request.searchMode === "stay-range" ? "range" : "exact";
+}
+
+function providerConcurrencyDetail(providerId: ProviderId, kind: ProviderDiagnosticKind): string {
+  if (providerId === "agil-local") {
+    if (kind === "matrix") {
+      return `workerProcesses=${shouldUseSearchWorkerProcesses() ? 1 : 0} matrixCellConcurrency=${AGIL_CONCURRENCY.matrixCell}`;
+    }
+
+    if (kind === "range") {
+      return `workerProcesses=${shouldUseSearchWorkerProcesses() ? 1 : 0} rangeConcurrency=${AGIL_CONCURRENCY.rangeSearch} gdsConcurrency=${AGIL_CONCURRENCY.gdsSearch}`;
+    }
+
+    return `workerProcesses=${shouldUseSearchWorkerProcesses() ? 1 : 0} gdsConcurrency=${AGIL_CONCURRENCY.gdsSearch}`;
+  }
+
+  if (kind === "matrix") {
+    return `workerProcesses=${shouldUseSearchWorkerProcesses() ? 1 : 0} matrixCellConcurrency=${COSTAMAR_CONCURRENCY.matrixCell}`;
+  }
+
+  if (kind === "range") {
+    return `workerProcesses=${shouldUseSearchWorkerProcesses() ? 1 : 0} rangeConcurrency=${COSTAMAR_CONCURRENCY.rangeSearch} markupConcurrency=${COSTAMAR_CONCURRENCY.markup}`;
+  }
+
+  return `workerProcesses=${shouldUseSearchWorkerProcesses() ? 1 : 0} markupConcurrency=${COSTAMAR_CONCURRENCY.markup}`;
+}
+
+function createProviderDiagnosticsForRun(
+  providerIds: ProviderId[],
+  kind: ProviderDiagnosticKind,
+): ProviderDiagnostics[] {
+  return providerIds.map((providerId) => createProviderDiagnostics(
+    providerId,
+    kind,
+    providerConcurrencyDetail(providerId, kind),
+  ));
+}
+
+function cloneProviderDiagnosticsList(entries: ProviderDiagnostics[] | undefined): ProviderDiagnostics[] {
+  return (entries ?? []).map(cloneProviderDiagnostics);
+}
+
+function updateProviderDiagnosticsEntry(
+  entries: ProviderDiagnostics[] | undefined,
+  providerId: ProviderId,
+  update: (entry: ProviderDiagnostics) => void,
+): ProviderDiagnostics[] {
+  return cloneProviderDiagnosticsList(entries).map((entry) => {
+    if (entry.providerId !== providerId) {
+      return entry;
+    }
+
+    update(entry);
+    return entry;
+  });
+}
+
+function applyProviderDiagnosticEvent(
+  entries: ProviderDiagnostics[] | undefined,
+  providerId: ProviderId,
+  event: ProviderDiagnosticEvent | string,
+  status: ProviderDiagnostics["status"] = "running",
+): ProviderDiagnostics[] {
+  return updateProviderDiagnosticsEntry(entries, providerId, (entry) => {
+    const name = typeof event === "string" ? event : event.name;
+    const detail = typeof event === "string" ? undefined : event.detail;
+    appendProviderDiagnosticEvent(entry, name, detail);
+    setProviderDiagnosticStatus(entry, status);
+  });
+}
+
+function applyProviderDiagnosticSummary(
+  entries: ProviderDiagnostics[] | undefined,
+  providerId: ProviderId,
+  status: ProviderDiagnostics["status"],
+  summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "error">,
+): ProviderDiagnostics[] {
+  return updateProviderDiagnosticsEntry(entries, providerId, (entry) => {
+    setProviderDiagnosticStatus(entry, status, summary);
+  });
 }
 
 function quotationObjectRecord(value: unknown): Record<string, unknown> | undefined {
@@ -956,6 +1064,8 @@ async function resolveProviderSearchProgressive(
   request: SearchRequest,
   providerContext: ProviderContext | undefined,
   onProgress: (result: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => boolean | void,
+  diagnostics: ProviderDiagnostics | undefined,
+  onProviderEvent: ((event: ProviderDiagnosticEvent) => void) | undefined,
 ): Promise<{ offers: CanonicalOffer[]; warnings: string[]; partial: boolean }> {
   const kind = request.searchMode === "stay-range" ? "range" : "exact";
   if (shouldUseSearchWorkerProcesses()) {
@@ -965,13 +1075,21 @@ async function resolveProviderSearchProgressive(
       request,
       providerContext,
       onProgress,
+      onProviderEvent,
     });
   }
 
   const adapter = getProgressiveAdapter(providerId);
-  return kind === "range"
-    ? adapter.resolveRangeProgressive(request, providerContext, onProgress)
-    : adapter.resolveExactProgressive(request, providerContext, onProgress);
+  const run = async () => {
+    recordProviderDiagnosticEvent("provider_started");
+    return kind === "range"
+      ? adapter.resolveRangeProgressive(request, providerContext, onProgress)
+      : adapter.resolveExactProgressive(request, providerContext, onProgress);
+  };
+
+  return diagnostics
+    ? withProviderDiagnostics(diagnostics, onProviderEvent, run)
+    : run();
 }
 
 async function resolveProviderMatrixProgressive(
@@ -980,6 +1098,8 @@ async function resolveProviderMatrixProgressive(
   providerContext: ProviderContext | undefined,
   draft: MatrixResponse,
   onCellResolved: (cell: MatrixResponse["cells"][number]) => boolean | void,
+  diagnostics: ProviderDiagnostics | undefined,
+  onProviderEvent: ((event: ProviderDiagnosticEvent) => void) | undefined,
 ): Promise<MatrixResponse> {
   if (shouldUseSearchWorkerProcesses()) {
     return runProviderMatrixInWorker({
@@ -988,15 +1108,23 @@ async function resolveProviderMatrixProgressive(
       providerContext,
       draft,
       onCellResolved,
+      onProviderEvent,
     });
   }
 
-  return getProgressiveAdapter(providerId).resolveMatrixProgressive(
-    request,
-    providerContext,
-    draft,
-    onCellResolved,
-  );
+  const run = async () => {
+    recordProviderDiagnosticEvent("provider_started");
+    return getProgressiveAdapter(providerId).resolveMatrixProgressive(
+      request,
+      providerContext,
+      draft,
+      onCellResolved,
+    );
+  };
+
+  return diagnostics
+    ? withProviderDiagnostics(diagnostics, onProviderEvent, run)
+    : run();
 }
 
 async function suggestLocationsForProvider(
@@ -1152,6 +1280,7 @@ function matrixJobResponse(
     searchMeta: job.searchMeta,
     providerMeta: job.providerMeta,
     warnings: job.warnings,
+    providerDiagnostics: job.providerDiagnostics,
     error: job.error,
     unchanged,
   };
@@ -1337,6 +1466,7 @@ function searchJobResponse(
     searchMeta: job.searchMeta,
     providerMeta: job.providerMeta,
     warnings: job.warnings,
+    providerDiagnostics: job.providerDiagnostics,
     error: job.error,
     unchanged,
   };
@@ -1430,6 +1560,8 @@ async function handleSearchRequest(
   const sortMode = resolveSortMode(payload?.sortMode);
   const normalizedRequest = contract.request;
   const providerIds = contract.providerIds;
+  const diagnosticKind = providerDiagnosticKindForRequest(normalizedRequest);
+  const providerDiagnostics = createProviderDiagnosticsForRun(providerIds, diagnosticKind);
   const cachedJob = runtime.sessions.findRecentCompletedSearchJob({
     request: normalizedRequest,
     providerContext,
@@ -1450,6 +1582,7 @@ async function handleSearchRequest(
     searchMeta: draft.searchMeta,
     providerMeta: draft.providerMeta,
     warnings: draft.warnings,
+    providerDiagnostics,
     sortMode,
     status: "running",
   });
@@ -1501,9 +1634,44 @@ async function handleSearchRequest(
       const failedProviderIds = new Set<ProviderId>();
       const resolvers = providerIds.map(async (providerId) => {
         const providerStart = startPerfTimer();
+        const providerDiagnosticSeed = providerDiagnostics.find((entry) => entry.providerId === providerId);
+        const recordProviderEvent = (
+          event: ProviderDiagnosticEvent | string,
+          status: ProviderDiagnostics["status"] = "running",
+        ) => {
+          runtime.sessions.updateSearchJob(job.id, (current) => ({
+            ...current,
+            providerDiagnostics: applyProviderDiagnosticEvent(
+              current.providerDiagnostics,
+              providerId,
+              event,
+              status,
+            ),
+          }));
+        };
+        const recordProviderSummary = (
+          status: ProviderDiagnostics["status"],
+          summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "error">,
+        ) => {
+          runtime.sessions.updateSearchJob(job.id, (current) => ({
+            ...current,
+            providerDiagnostics: applyProviderDiagnosticSummary(
+              current.providerDiagnostics,
+              providerId,
+              status,
+              summary,
+            ),
+          }));
+        };
+        let firstProgressReported = false;
         const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
           if (!isSearchJobRunning(runtime, job.id)) {
             return false;
+          }
+
+          if (!firstProgressReported) {
+            firstProgressReported = true;
+            recordProviderEvent("first_progress");
           }
 
           providerStates.set(providerId, {
@@ -1521,11 +1689,17 @@ async function handleSearchRequest(
             return;
           }
 
+          if (shouldUseSearchWorkerProcesses()) {
+            recordProviderEvent("worker_spawned");
+          }
+
           const result = await resolveProviderSearchProgressive(
             providerId,
             normalizedRequest,
             providerContext,
             onProgress,
+            providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
+            (event) => recordProviderEvent(event),
           );
           if (!isSearchJobRunning(runtime, job.id)) {
             return;
@@ -1544,6 +1718,11 @@ async function handleSearchRequest(
             offers: result.offers.length,
             partial: result.partial,
           });
+          recordProviderEvent("completed", "completed");
+          recordProviderSummary("completed", {
+            offers: result.offers.length,
+            warningCount: result.warnings.length,
+          });
           syncSearchJob("running");
         } catch (error) {
           if (!isSearchJobRunning(runtime, job.id)) {
@@ -1559,6 +1738,12 @@ async function handleSearchRequest(
             completed: true,
           });
           failedProviderIds.add(providerId);
+          recordProviderEvent("failed", "failed");
+          recordProviderSummary("failed", {
+            offers: 0,
+            warningCount: 1,
+            error: error instanceof Error ? error.message : "Search job failed.",
+          });
           logPerfSpan("search.provider", providerStart, {
             jobId: job.id,
             providerId,
@@ -1588,7 +1773,7 @@ async function handleSearchRequest(
           partial: materialized.searchMeta.partial,
         });
       });
-    }, cacheSeedJob ? CACHED_BACKGROUND_SEARCH_START_DELAY_MS : BACKGROUND_SEARCH_START_DELAY_MS);
+    }, cacheSeedJob ? cachedBackgroundSearchStartDelayMs() : backgroundSearchStartDelayMs());
   }
 
   return json(searchJobResponse(job));
@@ -1614,6 +1799,7 @@ async function handleMatrixRequest(
 
   const normalizedRequest = contract.request;
   const providerIds = contract.providerIds;
+  const providerDiagnostics = createProviderDiagnosticsForRun(providerIds, "matrix");
   const providerStates = new Map<ProviderId, ProviderMatrixState>(
     providerIds.map((providerId) => {
       const adapter = getProgressiveAdapter(providerId);
@@ -1642,6 +1828,7 @@ async function handleMatrixRequest(
     searchMeta: draft.searchMeta,
     providerMeta: draft.providerMeta,
     warnings: draft.warnings,
+    providerDiagnostics,
     status: "running",
   });
   logPerfSpan("matrix.accepted", requestStart, {
@@ -1691,6 +1878,36 @@ async function handleMatrixRequest(
       const failedProviderIds = new Set<ProviderId>();
       const resolvers = providerIds.map(async (providerId) => {
         const providerStart = startPerfTimer();
+        const providerDiagnosticSeed = providerDiagnostics.find((entry) => entry.providerId === providerId);
+        const recordProviderEvent = (
+          event: ProviderDiagnosticEvent | string,
+          status: ProviderDiagnostics["status"] = "running",
+        ) => {
+          runtime.sessions.updateMatrixJob(job.id, (current) => ({
+            ...current,
+            providerDiagnostics: applyProviderDiagnosticEvent(
+              current.providerDiagnostics,
+              providerId,
+              event,
+              status,
+            ),
+          }));
+        };
+        const recordProviderSummary = (
+          status: ProviderDiagnostics["status"],
+          summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "error">,
+        ) => {
+          runtime.sessions.updateMatrixJob(job.id, (current) => ({
+            ...current,
+            providerDiagnostics: applyProviderDiagnosticSummary(
+              current.providerDiagnostics,
+              providerId,
+              status,
+              summary,
+            ),
+          }));
+        };
+        let firstProgressReported = false;
         const adapter = getProgressiveAdapter(providerId);
         const currentState = providerStates.get(providerId);
         const draftResponse = currentState?.response ?? adapter.createMatrixDraft(normalizedRequest, {
@@ -1703,6 +1920,10 @@ async function handleMatrixRequest(
             return;
           }
 
+          if (shouldUseSearchWorkerProcesses()) {
+            recordProviderEvent("worker_spawned");
+          }
+
           const result = await resolveProviderMatrixProgressive(
             providerId,
             normalizedRequest,
@@ -1711,6 +1932,11 @@ async function handleMatrixRequest(
             (cell) => {
               if (!isMatrixJobRunning(runtime, job.id)) {
                 return false;
+              }
+
+              if (!firstProgressReported) {
+                firstProgressReported = true;
+                recordProviderEvent("first_progress");
               }
 
               const providerState = providerStates.get(providerId);
@@ -1725,6 +1951,8 @@ async function handleMatrixRequest(
               syncMatrixJob("running");
               return isMatrixJobRunning(runtime, job.id);
             },
+            providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
+            (event) => recordProviderEvent(event),
           );
           if (!isMatrixJobRunning(runtime, job.id)) {
             return;
@@ -1741,6 +1969,11 @@ async function handleMatrixRequest(
             cells: result.cells.length,
             partial: result.searchMeta.partial,
           });
+          recordProviderEvent("completed", "completed");
+          recordProviderSummary("completed", {
+            offers: result.cells.filter((cell) => typeof cell.price?.amount === "number").length,
+            warningCount: result.warnings.length,
+          });
         } catch (error) {
           if (!isMatrixJobRunning(runtime, job.id)) {
             return;
@@ -1754,6 +1987,12 @@ async function handleMatrixRequest(
             completed: true,
           });
           failedProviderIds.add(providerId);
+          recordProviderEvent("failed", "failed");
+          recordProviderSummary("failed", {
+            offers: 0,
+            warningCount: 1,
+            error: error instanceof Error ? error.message : "Matrix job failed.",
+          });
           logPerfSpan("matrix.provider", providerStart, {
             jobId: job.id,
             providerId,
@@ -1787,7 +2026,7 @@ async function handleMatrixRequest(
           partial: materialized.searchMeta.partial,
         });
       });
-    }, BACKGROUND_SEARCH_START_DELAY_MS);
+    }, backgroundSearchStartDelayMs());
   }
 
   return json(matrixJobResponse(job));

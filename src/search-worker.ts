@@ -11,6 +11,11 @@ import {
   resolveLocalCostamarRangeProgressive,
 } from "./local-costamar";
 import type { CanonicalOffer, MatrixResponse } from "./core/types";
+import {
+  createProviderDiagnostics,
+  recordProviderDiagnosticEvent,
+  withProviderDiagnostics,
+} from "./provider-diagnostics";
 import type {
   ProviderSearchWorkerComplete,
   ProviderSearchWorkerError,
@@ -47,51 +52,61 @@ function createMatrixDraft(input: ProviderSearchWorkerRequest): MatrixResponse {
 }
 
 async function runProviderSearch(input: ProviderSearchWorkerRequest): Promise<ProviderSearchWorkerComplete> {
-  if (input.kind === "matrix") {
-    const draft = createMatrixDraft(input);
-    const response = input.providerId === "costamar"
-      ? await resolveLocalCostamarMatrixProgressive(input.request, input.providerContext, draft, (cell) => {
-          send({ id: input.id, type: "matrix-progress", cell });
-          return true;
-        })
-      : await resolveLocalAgilMatrixProgressive(input.request, draft, (cell) => {
-          send({ id: input.id, type: "matrix-progress", cell });
-          return true;
-        });
+  const diagnostics = createProviderDiagnostics(input.providerId, input.kind === "matrix" ? "matrix" : input.kind);
+  diagnostics.events = [];
+  const emitEvent = (event: typeof diagnostics.events[number]) => {
+    send({ id: input.id, type: "provider-event", event });
+  };
+
+  return withProviderDiagnostics(diagnostics, emitEvent, async () => {
+    recordProviderDiagnosticEvent("provider_started");
+
+    if (input.kind === "matrix") {
+      const draft = createMatrixDraft(input);
+      const response = input.providerId === "costamar"
+        ? await resolveLocalCostamarMatrixProgressive(input.request, input.providerContext, draft, (cell) => {
+            send({ id: input.id, type: "matrix-progress", cell });
+            return true;
+          })
+        : await resolveLocalAgilMatrixProgressive(input.request, draft, (cell) => {
+            send({ id: input.id, type: "matrix-progress", cell });
+            return true;
+          });
+
+      return {
+        id: input.id,
+        type: "matrix-complete",
+        response,
+      };
+    }
+
+    const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
+      send({
+        id: input.id,
+        type: "search-progress",
+        offers: partialResult.offers,
+        warnings: partialResult.warnings,
+        partial: partialResult.partial,
+      });
+      return true;
+    };
+
+    const result = input.providerId === "costamar"
+      ? input.kind === "range"
+        ? await resolveLocalCostamarRangeProgressive(input.request, input.providerContext, onProgress)
+        : await resolveLocalCostamarExactProgressive(input.request, input.providerContext, onProgress)
+      : input.kind === "range"
+        ? await resolveLocalAgilRangeProgressive(input.request, onProgress)
+        : await resolveLocalAgilExactProgressive(input.request, onProgress);
 
     return {
       id: input.id,
-      type: "matrix-complete",
-      response,
+      type: "search-complete",
+      offers: result.offers,
+      warnings: result.warnings,
+      partial: result.partial,
     };
-  }
-
-  const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
-    send({
-      id: input.id,
-      type: "search-progress",
-      offers: partialResult.offers,
-      warnings: partialResult.warnings,
-      partial: partialResult.partial,
-    });
-    return true;
-  };
-
-  const result = input.providerId === "costamar"
-    ? input.kind === "range"
-      ? await resolveLocalCostamarRangeProgressive(input.request, input.providerContext, onProgress)
-      : await resolveLocalCostamarExactProgressive(input.request, input.providerContext, onProgress)
-    : input.kind === "range"
-      ? await resolveLocalAgilRangeProgressive(input.request, onProgress)
-      : await resolveLocalAgilExactProgressive(input.request, onProgress);
-
-  return {
-    id: input.id,
-    type: "search-complete",
-    offers: result.offers,
-    warnings: result.warnings,
-    partial: result.partial,
-  };
+  });
 }
 
 process.on("message", (message: ProviderSearchWorkerRequest) => {

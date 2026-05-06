@@ -8,6 +8,7 @@ import {
   CanonicalOffer,
   MatrixCell,
   ProviderContext,
+  ProviderDiagnostics,
   ProviderId,
   ProviderMeta,
   PurchasePath,
@@ -48,6 +49,7 @@ interface SearchSessionMetadata {
   searchMeta: SearchMeta;
   providerMeta: ProviderMeta;
   warnings: string[];
+  providerDiagnostics?: ProviderDiagnostics[];
   createdAt: string;
   updatedAt: string;
   lastAccessedAt: string;
@@ -65,6 +67,7 @@ export interface SearchSessionRecord {
   searchMeta: SearchMeta;
   providerMeta: ProviderMeta;
   warnings: string[];
+  providerDiagnostics?: ProviderDiagnostics[];
   createdAt: string;
   updatedAt: string;
   lastAccessedAt: string;
@@ -87,6 +90,7 @@ export interface MatrixJobRecord {
   providerMeta: ProviderMeta;
   searchMeta: SearchMeta;
   warnings: string[];
+  providerDiagnostics?: ProviderDiagnostics[];
   status: SearchJobStatus;
   error?: string;
   createdAt: string;
@@ -104,6 +108,7 @@ export interface SearchJobRecord {
   searchMeta: SearchMeta;
   providerMeta: ProviderMeta;
   warnings: string[];
+  providerDiagnostics?: ProviderDiagnostics[];
   sortMode: "cheapest" | "fastest" | "best-value";
   status: SearchJobStatus;
   error?: string;
@@ -379,6 +384,7 @@ export class SearchSessionStore {
       },
       providerMeta: updatedSession.providerMeta,
       warnings: [...updatedSession.warnings],
+      providerDiagnostics: updatedSession.providerDiagnostics,
       createdAt: updatedSession.createdAt,
       updatedAt: updatedSession.updatedAt,
       lastAccessedAt: updatedSession.lastAccessedAt,
@@ -931,6 +937,7 @@ export class SearchSessionStore {
       },
       providerMeta: job.providerMeta,
       warnings: [...job.warnings],
+      providerDiagnostics: job.providerDiagnostics,
       createdAt: existing?.createdAt ?? job.createdAt,
       updatedAt: job.updatedAt,
       lastAccessedAt: job.lastAccessedAt,
@@ -1432,6 +1439,7 @@ export class SearchSessionStore {
       searchMeta: job.searchMeta,
       providerMeta: job.providerMeta,
       warnings: job.warnings,
+      providerDiagnostics: job.providerDiagnostics,
       sortMode: job.sortMode,
       status: job.status,
       error: job.error,
@@ -1449,6 +1457,7 @@ export class SearchSessionStore {
       providerMeta: job.providerMeta,
       searchMeta: job.searchMeta,
       warnings: job.warnings,
+      providerDiagnostics: job.providerDiagnostics,
       status: job.status,
       error: job.error,
     };

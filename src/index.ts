@@ -7,6 +7,7 @@ import {
   TEMP_ARTIFACT_SWEEP_INTERVAL_MS,
   TEMP_ARTIFACT_SWEEP_MIN_AGE_MS,
 } from "./temp-artifacts";
+import { startProviderPrewarmLoop } from "./provider-prewarm";
 
 async function main() {
   const startupStart = startPerfTimer();
@@ -28,6 +29,7 @@ async function main() {
   const port = Number(process.env.PORT ?? "3000");
   const host = resolveServerHost();
   const server = createServer();
+  const providerPrewarmHandle = startProviderPrewarmLoop();
   let periodicCleanupPromise: Promise<void> | undefined;
   const runPeriodicCleanup = (): void => {
     if (periodicCleanupPromise) {
@@ -60,6 +62,9 @@ async function main() {
 
     shuttingDown = true;
     clearInterval(maintenanceHandle);
+    if (providerPrewarmHandle) {
+      clearInterval(providerPrewarmHandle);
+    }
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });

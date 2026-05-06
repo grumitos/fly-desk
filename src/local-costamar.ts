@@ -51,6 +51,7 @@ import {
   resolveLatestCostamarProviderContext,
   resolveUsableCostamarBrandedToken,
 } from "./provider-context";
+import { recordProviderFirstHttpRequest } from "./provider-diagnostics";
 import { openUrlLocally } from "./local-browser";
 import {
   resolveMatrixCellConcurrency,
@@ -1750,6 +1751,10 @@ export function resetCostamarWarmupStateForTests(): void {
   playwrightPromise = undefined;
 }
 
+export function prewarmLocalCostamarContext(): void {
+  resolveLatestCostamarProviderContext();
+}
+
 function asArray<T>(value: T | T[] | undefined | null): T[] {
   if (value === undefined || value === null) {
     return [];
@@ -2134,6 +2139,7 @@ async function fetchCostamar(
 ): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), COSTAMAR_HTTP_TIMEOUT_MS);
+  recordProviderFirstHttpRequest(action);
 
   try {
     return await fetch(`${context.apiBaseUrl}${path}`, {

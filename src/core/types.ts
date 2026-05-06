@@ -148,6 +148,26 @@ export interface ProviderContext {
   costamar?: CostamarProviderContext;
 }
 
+export type ProviderDiagnosticKind = "exact" | "range" | "matrix";
+export type ProviderDiagnosticStatus = "queued" | "running" | "completed" | "failed";
+
+export interface ProviderDiagnosticEvent {
+  name: string;
+  at: string;
+  elapsedMs?: number;
+  detail?: string;
+}
+
+export interface ProviderDiagnostics {
+  providerId: ProviderId;
+  kind: ProviderDiagnosticKind;
+  status: ProviderDiagnosticStatus;
+  events: ProviderDiagnosticEvent[];
+  offers?: number;
+  warningCount?: number;
+  error?: string;
+}
+
 export interface LocationSuggestion {
   code: string;
   city: string;
@@ -314,6 +334,7 @@ export interface SearchResponse {
   searchMeta: SearchMeta;
   providerMeta: ProviderMeta;
   warnings: string[];
+  providerDiagnostics?: ProviderDiagnostics[];
 }
 
 export interface MatrixResponse {
@@ -327,4 +348,5 @@ export interface MatrixResponse {
   searchMeta: SearchMeta;
   providerMeta: ProviderMeta;
   warnings: string[];
+  providerDiagnostics?: ProviderDiagnostics[];
 }

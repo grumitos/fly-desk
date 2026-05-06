@@ -2,6 +2,7 @@ import type {
   CanonicalOffer,
   MatrixCell,
   MatrixResponse,
+  ProviderDiagnosticEvent,
   ProviderContext,
   ProviderId,
   SearchRequest,
@@ -28,6 +29,11 @@ export type ProviderSearchWorkerProgress =
       id: string;
       type: "matrix-progress";
       cell: MatrixCell;
+    }
+  | {
+      id: string;
+      type: "provider-event";
+      event: ProviderDiagnosticEvent;
     };
 
 export type ProviderSearchWorkerComplete =

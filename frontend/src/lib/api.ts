@@ -225,6 +225,32 @@ function toDiagnosticLines(messages: string[]): string[] {
   )
 }
 
+function providerDiagnosticLabel(providerId: string): string {
+  return providerId === "costamar" ? "Costamar" : "Agil"
+}
+
+function providerDiagnosticLines(
+  diagnostics: SearchJobResponse["providerDiagnostics"] | undefined
+): string[] {
+  return (diagnostics ?? []).flatMap((entry) => {
+    const provider = providerDiagnosticLabel(entry.providerId)
+    const summary = [
+      `${provider} ${entry.kind}: ${entry.status}`,
+      typeof entry.offers === "number" ? `${entry.offers} resultado${entry.offers === 1 ? "" : "s"}` : "",
+      typeof entry.warningCount === "number" ? `${entry.warningCount} alerta${entry.warningCount === 1 ? "" : "s"}` : "",
+      entry.error ? `error=${entry.error}` : "",
+    ].filter(Boolean).join(" · ")
+
+    const events = entry.events.map((event) => {
+      const elapsed = typeof event.elapsedMs === "number" ? `+${Math.round(event.elapsedMs)}ms` : ""
+      const detail = event.detail ? ` · ${event.detail}` : ""
+      return `${provider} ${entry.kind}: ${event.name}${elapsed ? ` ${elapsed}` : ""}${detail}`
+    })
+
+    return [summary, ...events]
+  })
+}
+
 function translateMessages(messages: string[]): string {
   const translated = uniqueStrings(messages.map((message) => translateApiMessage(message)))
   return translated.length > 0 ? translated.join("\n") : "Ocurrió un error inesperado."
@@ -454,6 +480,7 @@ type BackendMatrixJobResponse = {
   }
   confidenceSummary?: Record<string, number>
   recommendations?: string[]
+  providerDiagnostics?: SearchJobResponse["providerDiagnostics"]
 }
 
 export function toBackendPayload(request: SearchRequest, sortMode: SortMode): BackendSearchPayload {
@@ -687,7 +714,12 @@ function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
     request: fromBackendRequest(data.request),
     offers: (data.offers ?? []).map(normalizeOffer),
     allOffers: (data.allOffers ?? []).map(normalizeOffer),
-    diagnosticLog: toDiagnosticLines([...rawWarnings, ...rawMetaWarnings, ...rawWarningsFromOffers]),
+    diagnosticLog: toDiagnosticLines([
+      ...rawWarnings,
+      ...rawMetaWarnings,
+      ...rawWarningsFromOffers,
+      ...providerDiagnosticLines(data.providerDiagnostics),
+    ]),
   }
 }
 
@@ -784,12 +816,14 @@ function normalizeMatrixJob(data: BackendMatrixJobResponse, sortMode: SortMode):
       ...warnings,
       ...recommendations,
     ],
+    providerDiagnostics: data.providerDiagnostics,
     diagnosticLog: toDiagnosticLines([
       ...rawWarnings,
       ...rawMetaWarnings,
       ...rawError,
       ...rawCellTooltips,
       ...(data.recommendations ?? []),
+      ...providerDiagnosticLines(data.providerDiagnostics),
     ]),
   }
 }
