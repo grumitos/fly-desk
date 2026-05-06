@@ -1198,9 +1198,34 @@ test("default search keeps Costamar enabled even when its token is missing", asy
     assert.equal(response.status, 200);
     const payload = await response.json() as {
       searchMeta?: { providersUsed?: string[] };
+      providerDiagnostics?: Array<{
+        providerId?: string;
+        kind?: string;
+        status?: string;
+        events?: Array<{ name?: string; detail?: string }>;
+      }>;
     };
 
     assert.deepEqual(payload.searchMeta?.providersUsed, ["agil-local", "costamar"]);
+    assert.deepEqual(
+      payload.providerDiagnostics?.map((entry) => entry.providerId),
+      ["agil-local", "costamar"],
+    );
+    assert.deepEqual(
+      payload.providerDiagnostics?.map((entry) => entry.kind),
+      ["exact", "exact"],
+    );
+    assert.deepEqual(
+      payload.providerDiagnostics?.map((entry) => entry.status),
+      ["queued", "queued"],
+    );
+    assert.equal(
+      payload.providerDiagnostics?.every((entry) =>
+        entry.events?.some((event) => event.name === "queued")
+        && !entry.events?.some((event) => /token/i.test(event.detail ?? ""))
+      ),
+      true,
+    );
   });
 });
 

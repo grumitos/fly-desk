@@ -95,6 +95,10 @@ Runtime general:
 - `SEARCH_REVALIDATION_CACHE_TTL_MS=300000` TTL del cache SWR de busqueda general (misma configuracion), en milisegundos
 - `SEARCH_COMPLETED_SESSION_TTL_MS=14400000` TTL idle para jobs completados y redirects cacheados, en milisegundos
 - `FLY_DESK_SEARCH_WORKER_PROCESSES=0` desactiva los procesos hijos para busquedas de proveedor; por defecto quedan activos para que una busqueda pesada no bloquee el servidor web ni otras pestañas
+- `FLY_DESK_BACKGROUND_SEARCH_START_DELAY_MS=0` delay antes de iniciar la consulta live en segundo plano
+- `FLY_DESK_CACHED_BACKGROUND_SEARCH_START_DELAY_MS=250` delay antes de revalidar una respuesta cacheada
+- `FLY_DESK_PROVIDER_PREWARM=1` activa el prewarm silencioso de sesiones/tokens al iniciar y de forma periodica
+- `FLY_DESK_PROVIDER_PREWARM_INTERVAL_MS=600000` intervalo del prewarm silencioso, en milisegundos
 - `FLY_DESK_SESSION_DB_PATH=output/cache/fly-desk-cache.sqlite` cache SQLite local de jobs completados, matriz y redirects
 - `FLY_DESK_SEARCH_SESSION_STORE_PATH=output/cache/search-session-store.json` ruta JSON legada; si existe y la DB esta vacia, se migra a SQLite y se elimina
 - `FLY_DESK_LOCATION_SUGGESTION_CACHE_PATH=output/cache/location-suggestion-cache.json` cache JSON acotado para autocomplete

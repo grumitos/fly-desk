@@ -50,6 +50,7 @@ import {
   Segment,
 } from "./core/types";
 import { rankLocationSuggestions } from "./location-suggestions";
+import { recordProviderFirstHttpRequest } from "./provider-diagnostics";
 
 interface BrowserStorageSnapshot {
   tokenSearchFlight: string;
@@ -636,6 +637,7 @@ async function fetchAgil(
   const timeout = setTimeout(() => controller.abort(), AGIL_HTTP_TIMEOUT_MS);
   const headers = new Headers(init.headers);
   headers.set("Ocp-Apim-Subscription-Key", await resolveAgilApimSubscriptionKey());
+  recordProviderFirstHttpRequest(label);
 
   try {
     return await fetch(url, {
@@ -1086,6 +1088,10 @@ async function getAgilSession(): Promise<AgilSessionData> {
 export function resetAgilSessionCacheForTests(): void {
   cachedSession = undefined;
   pendingSessionPromise = undefined;
+}
+
+export async function prewarmLocalAgilSession(): Promise<void> {
+  await getAgilSession();
 }
 
 function cabinToAgilClass(cabin: SearchRequest["cabin"]): number {

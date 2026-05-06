@@ -6,6 +6,7 @@ import type {
   CanonicalOffer,
   MatrixCell,
   MatrixResponse,
+  ProviderDiagnosticEvent,
   ProviderContext,
   ProviderId,
   SearchRequest,
@@ -27,6 +28,7 @@ export interface ProviderSearchWorkerInput {
   request: SearchRequest;
   providerContext?: ProviderContext;
   onProgress?: (result: ProviderSearchResult) => boolean | void;
+  onProviderEvent?: (event: ProviderDiagnosticEvent) => void;
 }
 
 export interface ProviderMatrixWorkerInput {
@@ -35,6 +37,7 @@ export interface ProviderMatrixWorkerInput {
   providerContext?: ProviderContext;
   draft: MatrixResponse;
   onCellResolved?: (cell: MatrixCell) => boolean | void;
+  onProviderEvent?: (event: ProviderDiagnosticEvent) => void;
 }
 
 function searchWorkerProcessesEnabled(): boolean {
@@ -148,6 +151,11 @@ export async function runProviderSearchInWorker(input: ProviderSearchWorkerInput
       providerContext: input.providerContext,
     },
     (message, child) => {
+      if (message.type === "provider-event") {
+        input.onProviderEvent?.(message.event);
+        return;
+      }
+
       if (message.type !== "search-progress") {
         return;
       }
@@ -186,6 +194,11 @@ export async function runProviderMatrixInWorker(input: ProviderMatrixWorkerInput
       draft: input.draft,
     },
     (message, child) => {
+      if (message.type === "provider-event") {
+        input.onProviderEvent?.(message.event);
+        return;
+      }
+
       if (message.type !== "matrix-progress") {
         return;
       }

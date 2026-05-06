@@ -165,6 +165,7 @@ export interface SearchResponse {
     coverageMode: string
   }
   warnings: string[]
+  providerDiagnostics?: ProviderDiagnostics[]
 }
 
 export interface SearchJobResponse extends SearchResponse {
@@ -177,6 +178,23 @@ export interface SearchJobResponse extends SearchResponse {
   migrationMonths?: MigrationMonthSummary[]
   diagnosticLog?: string[]
   unchanged?: boolean
+}
+
+export interface ProviderDiagnosticEvent {
+  name: string
+  at: string
+  elapsedMs?: number
+  detail?: string
+}
+
+export interface ProviderDiagnostics {
+  providerId: string
+  kind: "exact" | "range" | "matrix"
+  status: "queued" | "running" | "completed" | "failed"
+  events: ProviderDiagnosticEvent[]
+  offers?: number
+  warningCount?: number
+  error?: string
 }
 
 export interface MatrixCell {
