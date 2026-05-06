@@ -1760,6 +1760,7 @@ test("round-trip flexible search sends matrix exact-stay payload", async () => {
     };
     const leg = request.legs?.[0];
 
+    assert.equal(payload?.sortMode, "cheapest");
     assert.equal(request.tripType, "round-trip");
     assert.equal(request.searchMode, "roundtrip-grid");
     assert.equal(request.flexibleMode, "exact-stay");
@@ -1788,7 +1789,8 @@ test("round-trip flexible search sends matrix exact-stay payload", async () => {
       ["Precio", "Duración", "Mejor valor"],
     );
     assert.doesNotMatch(await page.getByRole("button", { name: "Ordenar por mejor valor" }).getAttribute("class") ?? "", /bg-card/);
-    await assert.equal(await page.getByRole("button", { name: "Ordenar por mejor valor" }).getAttribute("aria-pressed"), "true");
+    assert.equal(await page.getByRole("button", { name: "Ordenar por precio" }).getAttribute("aria-pressed"), "true");
+    assert.equal(await page.getByRole("button", { name: "Ordenar por mejor valor" }).getAttribute("aria-pressed"), "false");
   });
 });
 

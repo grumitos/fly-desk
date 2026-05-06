@@ -46,6 +46,7 @@ import {
   resolveLocalCostamarMatrixProgressive,
   resolveLocalCostamarRangeProgressive,
   suggestLocalCostamarLocations,
+  warmCostamarRedirectContext,
 } from "./local-costamar";
 import { openUrlLocally } from "./local-browser";
 import {
@@ -1425,6 +1426,120 @@ function isoDateFromValue(value: string | undefined): string | undefined {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString().slice(0, 10);
 }
 
+function isIsoDateValue(value: string | undefined): value is string {
+  return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
+}
+
+function passengerCountFromPath(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function exactCostamarRequestFromFallback(fallback: SearchRequest | undefined): SearchRequest | undefined {
+  const leg = fallback?.legs[0];
+  if (!fallback || !leg || fallback.tripType === "multi-city" || !isIsoDateValue(leg.departureDate)) {
+    return undefined;
+  }
+
+  if (fallback.tripType === "round-trip" && !isIsoDateValue(leg.returnDate)) {
+    return undefined;
+  }
+
+  return {
+    ...fallback,
+    providerId: "costamar",
+    searchMode: "exact",
+    flexibleMode: undefined,
+    legs: [
+      {
+        ...leg,
+        departureStart: undefined,
+        departureEnd: undefined,
+        returnStart: undefined,
+        returnEnd: undefined,
+        stayNights: undefined,
+        minNights: undefined,
+        maxNights: undefined,
+      },
+    ],
+  };
+}
+
+function costamarRedirectRequestFromUrl(
+  location: string,
+  fallback: SearchRequest | undefined,
+): SearchRequest | undefined {
+  try {
+    const parsed = new URL(location);
+    const pathParts = parsed.pathname
+      .split("/")
+      .filter(Boolean)
+      .map((part) => decodeURIComponent(part));
+    const markerIndex = pathParts.lastIndexOf("b");
+    if (markerIndex < 0) {
+      return exactCostamarRequestFromFallback(fallback);
+    }
+
+    const parts = pathParts.slice(markerIndex + 1);
+    if (parts.length !== 6 && parts.length !== 7) {
+      return exactCostamarRequestFromFallback(fallback);
+    }
+
+    const isRoundTrip = parts.length === 7;
+    const origin = parts[0]?.trim().toUpperCase();
+    const destination = parts[1]?.trim().toUpperCase();
+    const departureDate = parts[2]?.trim();
+    const returnDate = isRoundTrip ? parts[3]?.trim() : undefined;
+    const passengerOffset = isRoundTrip ? 4 : 3;
+    const fallbackPassengers = fallback?.passengers ?? { adults: 1, children: 0, infants: 0 };
+
+    if (!origin || !destination || !isIsoDateValue(departureDate)) {
+      return exactCostamarRequestFromFallback(fallback);
+    }
+
+    if (isRoundTrip && !isIsoDateValue(returnDate)) {
+      return exactCostamarRequestFromFallback(fallback);
+    }
+
+    const fallbackLeg = fallback?.legs[0];
+    return {
+      providerId: "costamar",
+      tripType: isRoundTrip ? "round-trip" : "one-way",
+      searchMode: "exact",
+      legs: [
+        {
+          ...(fallbackLeg ?? {}),
+          origin,
+          destination,
+          departureDate,
+          departureStart: undefined,
+          departureEnd: undefined,
+          returnDate,
+          returnStart: undefined,
+          returnEnd: undefined,
+          stayNights: undefined,
+          minNights: undefined,
+          maxNights: undefined,
+        },
+      ],
+      passengers: {
+        adults: passengerCountFromPath(parts[passengerOffset], fallbackPassengers.adults || 1),
+        children: passengerCountFromPath(parts[passengerOffset + 1], fallbackPassengers.children || 0),
+        infants: passengerCountFromPath(parts[passengerOffset + 2], fallbackPassengers.infants || 0),
+      },
+      cabin: fallback?.cabin ?? "ECONOMY",
+      filters: fallback?.filters ?? {},
+      coverageMode: fallback?.coverageMode ?? "core",
+      redirectMode: fallback?.redirectMode ?? "best-effort",
+      currencyCode: fallback?.currencyCode ?? "USD",
+      locale: fallback?.locale ?? "es-PE",
+      market: fallback?.market ?? "PE",
+    };
+  } catch {
+    return exactCostamarRequestFromFallback(fallback);
+  }
+}
+
 function createProviderSearchStates(
   providerIds: ProviderId[],
   cachedJob?: SearchJobRecord,
@@ -2271,8 +2386,10 @@ export async function routeRequest(request: Request): Promise<Response> {
       let location = resolved.path.url;
 
       if (resolved.path.provider === "costamar" && resolved.path.type === "search-redirect") {
-        const providerContext = runtime.sessions.getSession(resolved.sessionId)?.providerContext
-          ?? runtime.sessions.getMatrixJob(resolved.sessionId)?.providerContext;
+        const searchSession = runtime.sessions.getSession(resolved.sessionId);
+        const matrixJob = runtime.sessions.getMatrixJob(resolved.sessionId);
+        const providerContext = searchSession?.providerContext ?? matrixJob?.providerContext;
+        const fallbackRequest = searchSession?.request ?? matrixJob?.request;
         let canRedirect = false;
 
         try {
@@ -2296,6 +2413,7 @@ export async function routeRequest(request: Request): Promise<Response> {
             canRedirect = true;
           }
 
+          let redirectContext = fastContext;
           const refreshContext = {
             ...(sessionContext ?? {}),
             ...(terminalId ? { terminalId } : {}),
@@ -2304,9 +2422,21 @@ export async function routeRequest(request: Request): Promise<Response> {
           };
           if (!canRedirect) {
             const refreshedContext = resolveLatestCostamarProviderContext(refreshContext);
+            redirectContext = refreshedContext;
             if (resolveUsableCostamarBrandedToken(refreshedContext.token, refreshedContext.terminalId)) {
               location = applyCostamarContextToBrandedSearchUrl(location, refreshedContext);
               canRedirect = true;
+            }
+          }
+
+          if (!canRedirect) {
+            const redirectRequest = costamarRedirectRequestFromUrl(location, fallbackRequest);
+            if (redirectRequest) {
+              const warmedContext = await warmCostamarRedirectContext(redirectRequest, redirectContext, { force: true });
+              if (resolveUsableCostamarBrandedToken(warmedContext.token, warmedContext.terminalId)) {
+                location = applyCostamarContextToBrandedSearchUrl(location, warmedContext);
+                canRedirect = true;
+              }
             }
           }
         } catch {
