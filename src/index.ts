@@ -9,6 +9,8 @@ import {
 } from "./temp-artifacts";
 import { startProviderPrewarmLoop } from "./provider-prewarm";
 
+const STARTUP_BACKGROUND_TASK_DELAY_MS = 10_000;
+
 async function main() {
   const startupStart = startPerfTimer();
   loadRuntimeConfig();
@@ -16,41 +18,35 @@ async function main() {
   const runtime = getRuntime();
   logPerfSpan("startup.runtime", runtimeStart);
 
-  const cleanupStart = startPerfTimer();
-  try {
-    await cleanupPrefixedTempArtifacts();
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "unknown cleanup failure";
-    console.warn(`Fly Desk temp cleanup skipped: ${detail}`);
-  } finally {
-    logPerfSpan("startup.tempCleanup", cleanupStart);
-  }
-
   const port = Number(process.env.PORT ?? "3000");
   const host = resolveServerHost();
   const server = createServer();
-  const providerPrewarmHandle = startProviderPrewarmLoop();
-  let periodicCleanupPromise: Promise<void> | undefined;
-  const runPeriodicCleanup = (): void => {
-    if (periodicCleanupPromise) {
+  let providerPrewarmHandle: NodeJS.Timeout | undefined;
+  let providerPrewarmStartTimer: NodeJS.Timeout | undefined;
+  let startupCleanupTimer: NodeJS.Timeout | undefined;
+  let tempCleanupPromise: Promise<void> | undefined;
+  const runTempCleanup = (label: string, options?: { olderThanMs?: number }): void => {
+    if (tempCleanupPromise) {
       return;
     }
 
-    periodicCleanupPromise = cleanupPrefixedTempArtifacts(undefined, {
-      olderThanMs: TEMP_ARTIFACT_SWEEP_MIN_AGE_MS,
-    })
+    const cleanupStart = startPerfTimer();
+    tempCleanupPromise = cleanupPrefixedTempArtifacts(undefined, options)
       .catch((error) => {
         const detail = error instanceof Error ? error.message : "unknown cleanup failure";
-        console.warn(`Fly Desk periodic temp cleanup skipped: ${detail}`);
+        console.warn(`Fly Desk temp cleanup skipped: ${detail}`);
       })
       .finally(() => {
-        periodicCleanupPromise = undefined;
+        logPerfSpan(label, cleanupStart);
+        tempCleanupPromise = undefined;
       });
   };
   const maintenanceHandle = setInterval(() => {
     runtime.sessions.purgeExpired();
     runtime.locationSuggestions.purgeExpired();
-    runPeriodicCleanup();
+    runTempCleanup("periodic.tempCleanup", {
+      olderThanMs: TEMP_ARTIFACT_SWEEP_MIN_AGE_MS,
+    });
   }, TEMP_ARTIFACT_SWEEP_INTERVAL_MS);
   maintenanceHandle.unref?.();
 
@@ -62,13 +58,19 @@ async function main() {
 
     shuttingDown = true;
     clearInterval(maintenanceHandle);
+    if (startupCleanupTimer) {
+      clearTimeout(startupCleanupTimer);
+    }
+    if (providerPrewarmStartTimer) {
+      clearTimeout(providerPrewarmStartTimer);
+    }
     if (providerPrewarmHandle) {
       clearInterval(providerPrewarmHandle);
     }
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
-    await periodicCleanupPromise?.catch(() => undefined);
+    await tempCleanupPromise?.catch(() => undefined);
     runtime.locationSuggestions.purgeExpired(Number.POSITIVE_INFINITY);
     runtime.sessions.purgeExpired(Number.POSITIVE_INFINITY);
     runtime.sessions.close();
@@ -88,6 +90,16 @@ async function main() {
 
   logPerfSpan("startup.ready", startupStart, { host, port });
   console.log(`Fly Desk running at http://${host}:${port}`);
+  startupCleanupTimer = setTimeout(() => {
+    startupCleanupTimer = undefined;
+    runTempCleanup("startup.tempCleanup");
+  }, STARTUP_BACKGROUND_TASK_DELAY_MS);
+  startupCleanupTimer.unref?.();
+  providerPrewarmStartTimer = setTimeout(() => {
+    providerPrewarmStartTimer = undefined;
+    providerPrewarmHandle = startProviderPrewarmLoop();
+  }, STARTUP_BACKGROUND_TASK_DELAY_MS);
+  providerPrewarmStartTimer.unref?.();
 }
 
 void main();

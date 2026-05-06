@@ -5,12 +5,17 @@ $script:AppName = "Fly Desk"
 $script:ProjectRoot = Split-Path -Parent $PSScriptRoot
 $script:RuntimeDir = Join-Path $script:ProjectRoot ".launcher"
 $script:StateFile = Join-Path $script:RuntimeDir "state.json"
+$script:GitUpdateStateFile = Join-Path $script:RuntimeDir "git-update-state.json"
 $script:LauncherLog = Join-Path $script:RuntimeDir "launcher.log"
 $script:LauncherPort = if ($env:FLY_DESK_LAUNCHER_PORT) { [int]$env:FLY_DESK_LAUNCHER_PORT } else { 32123 }
 $script:ServerOutLog = ""
 $script:ServerErrLog = ""
 $script:SkipBrowser = $false
 $script:SilentMode = $false
+$script:SkipGitUpdate = $false
+$script:GitRemoteCheckTtlSeconds = 300
+$script:GitRemoteCheckTimeoutSeconds = 3
+$script:GitPullTimeoutSeconds = 90
 
 function Test-EnabledFlag {
   param([string]$Value)
@@ -28,8 +33,31 @@ function Test-EnabledFlag {
   }
 }
 
+function Read-NonNegativeIntEnv {
+  param(
+    [string]$Name,
+    [int]$Fallback
+  )
+
+  $value = [Environment]::GetEnvironmentVariable($Name)
+  if (-not $value) {
+    return $Fallback
+  }
+
+  $parsed = 0
+  if ([int]::TryParse($value.Trim(), [ref]$parsed) -and $parsed -ge 0) {
+    return $parsed
+  }
+
+  return $Fallback
+}
+
 $script:SkipBrowser = Test-EnabledFlag -Value $env:FLY_DESK_SKIP_BROWSER
 $script:SilentMode = Test-EnabledFlag -Value $env:FLY_DESK_SILENT
+$script:SkipGitUpdate = Test-EnabledFlag -Value $env:FLY_DESK_SKIP_GIT_UPDATE
+$script:GitRemoteCheckTtlSeconds = Read-NonNegativeIntEnv -Name "FLY_DESK_GIT_CHECK_TTL_SECONDS" -Fallback 300
+$script:GitRemoteCheckTimeoutSeconds = Read-NonNegativeIntEnv -Name "FLY_DESK_GIT_CHECK_TIMEOUT_SECONDS" -Fallback 3
+$script:GitPullTimeoutSeconds = Read-NonNegativeIntEnv -Name "FLY_DESK_GIT_PULL_TIMEOUT_SECONDS" -Fallback 90
 
 function Ensure-RuntimeDir {
   if (-not (Test-Path -LiteralPath $script:RuntimeDir)) {
@@ -106,6 +134,13 @@ function Get-NpmPath {
   ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 }
 
+function Get-GitPath {
+  @(
+    (Get-CommandPath "git.exe"),
+    (Get-CommandPath "git")
+  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+}
+
 function Assert-NodeReady {
   $nodePath = Get-NodePath
   if (-not $nodePath) {
@@ -154,6 +189,220 @@ function Invoke-LoggedProcess {
 
   if ($process.ExitCode -ne 0) {
     Fail-Launcher "$StepName fallo con codigo $($process.ExitCode). Revisa:`n$script:ServerOutLog`n$script:ServerErrLog"
+  }
+}
+
+function Invoke-GitCommand {
+  param(
+    [string]$GitPath,
+    [string[]]$ArgumentList,
+    [int]$TimeoutSeconds
+  )
+
+  Ensure-RuntimeDir
+  $safeTimeoutSeconds = [Math]::Max(1, $TimeoutSeconds)
+  $stamp = "{0}-{1}" -f (Get-Date -Format "yyyyMMdd-HHmmssfff"), ([Guid]::NewGuid().ToString("N"))
+  $stdoutPath = Join-Path $script:RuntimeDir "git-$stamp.out.log"
+  $stderrPath = Join-Path $script:RuntimeDir "git-$stamp.err.log"
+  $timedOut = $false
+  $exitCode = 1
+
+  try {
+    $process = Start-Process `
+      -FilePath $GitPath `
+      -ArgumentList $ArgumentList `
+      -WorkingDirectory $script:ProjectRoot `
+      -PassThru `
+      -WindowStyle Hidden `
+      -RedirectStandardOutput $stdoutPath `
+      -RedirectStandardError $stderrPath
+
+    if (-not $process.WaitForExit($safeTimeoutSeconds * 1000)) {
+      $timedOut = $true
+      Stop-ProcessTree -ProcessId $process.Id
+    } else {
+      $exitCode = $process.ExitCode
+    }
+  } catch {
+    $exitCode = 1
+    Set-Content -LiteralPath $stderrPath -Value $_.Exception.Message -Encoding UTF8
+  }
+
+  $stdout = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue } else { "" }
+  $stderr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue } else { "" }
+  Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+
+  return [pscustomobject]@{
+    ExitCode = $exitCode
+    StdOut = [string]$stdout
+    StdErr = [string]$stderr
+    TimedOut = $timedOut
+  }
+}
+
+function Get-GitUpdateState {
+  if (-not (Test-Path -LiteralPath $script:GitUpdateStateFile)) {
+    return $null
+  }
+
+  try {
+    return Get-Content -LiteralPath $script:GitUpdateStateFile -Raw | ConvertFrom-Json
+  } catch {
+    Write-LauncherLog "git-update-state.json estaba dañado y sera regenerado."
+    return $null
+  }
+}
+
+function Save-GitUpdateState {
+  param(
+    [string]$LocalHead,
+    [string]$RemoteHead,
+    [string]$RemoteName,
+    [string]$RemoteRef
+  )
+
+  Ensure-RuntimeDir
+  [pscustomobject]@{
+    localHead = $LocalHead
+    remoteHead = $RemoteHead
+    remoteName = $RemoteName
+    remoteRef = $RemoteRef
+    checkedAt = (Get-Date).ToString("o")
+  } | ConvertTo-Json | Set-Content -LiteralPath $script:GitUpdateStateFile -Encoding UTF8
+}
+
+function Test-RecentGitRemoteMatch {
+  param(
+    [string]$LocalHead,
+    [string]$RemoteName,
+    [string]$RemoteRef
+  )
+
+  if ($script:GitRemoteCheckTtlSeconds -le 0) {
+    return $false
+  }
+
+  $state = Get-GitUpdateState
+  if (-not $state) {
+    return $false
+  }
+
+  if ([string]$state.localHead -ne $LocalHead `
+    -or [string]$state.remoteHead -ne $LocalHead `
+    -or [string]$state.remoteName -ne $RemoteName `
+    -or [string]$state.remoteRef -ne $RemoteRef) {
+    return $false
+  }
+
+  try {
+    $checkedAt = [DateTime]::Parse([string]$state.checkedAt)
+    return ((Get-Date) - $checkedAt).TotalSeconds -lt $script:GitRemoteCheckTtlSeconds
+  } catch {
+    return $false
+  }
+}
+
+function Ensure-ProjectUpdated {
+  if ($script:SkipGitUpdate) {
+    Write-LauncherLog "Git update omitido por FLY_DESK_SKIP_GIT_UPDATE."
+    return
+  }
+
+  $gitPath = Get-GitPath
+  if (-not $gitPath) {
+    Write-LauncherLog "Git no esta disponible; se omite actualizacion del proyecto."
+    return
+  }
+
+  $repoCheck = Invoke-GitCommand -GitPath $gitPath -ArgumentList @("rev-parse", "--is-inside-work-tree") -TimeoutSeconds 5
+  if ($repoCheck.TimedOut -or $repoCheck.ExitCode -ne 0 -or $repoCheck.StdOut.Trim() -ne "true") {
+    Write-LauncherLog "No se pudo confirmar repositorio Git; se omite actualizacion."
+    return
+  }
+
+  $branchResult = Invoke-GitCommand -GitPath $gitPath -ArgumentList @("rev-parse", "--abbrev-ref", "HEAD") -TimeoutSeconds 5
+  $branch = $branchResult.StdOut.Trim()
+  if ($branchResult.TimedOut -or $branchResult.ExitCode -ne 0 -or -not $branch -or $branch -eq "HEAD") {
+    Write-LauncherLog "Git update omitido: HEAD sin rama local rastreable."
+    return
+  }
+
+  $remoteResult = Invoke-GitCommand -GitPath $gitPath -ArgumentList @("config", "--get", "branch.$branch.remote") -TimeoutSeconds 5
+  $mergeResult = Invoke-GitCommand -GitPath $gitPath -ArgumentList @("config", "--get", "branch.$branch.merge") -TimeoutSeconds 5
+  $remoteName = $remoteResult.StdOut.Trim()
+  $remoteRef = $mergeResult.StdOut.Trim()
+  if ($remoteResult.TimedOut -or $mergeResult.TimedOut `
+    -or $remoteResult.ExitCode -ne 0 -or $mergeResult.ExitCode -ne 0 `
+    -or -not $remoteName -or -not $remoteRef) {
+    Write-LauncherLog "Git update omitido: la rama $branch no tiene upstream configurado."
+    return
+  }
+
+  $headResult = Invoke-GitCommand -GitPath $gitPath -ArgumentList @("rev-parse", "HEAD") -TimeoutSeconds 5
+  $localHead = $headResult.StdOut.Trim()
+  if ($headResult.TimedOut -or $headResult.ExitCode -ne 0 -or -not $localHead) {
+    Write-LauncherLog "Git update omitido: no se pudo leer HEAD local."
+    return
+  }
+
+  if (Test-RecentGitRemoteMatch -LocalHead $localHead -RemoteName $remoteName -RemoteRef $remoteRef) {
+    Write-LauncherLog "Git update omitido: remoto ya confirmado en el mismo commit dentro del TTL ($script:GitRemoteCheckTtlSeconds s)."
+    return
+  }
+
+  $remoteCheck = Invoke-GitCommand -GitPath $gitPath -ArgumentList @("ls-remote", $remoteName, $remoteRef) -TimeoutSeconds $script:GitRemoteCheckTimeoutSeconds
+  if ($remoteCheck.TimedOut) {
+    Write-LauncherLog "Git update omitido: chequeo remoto excedio $script:GitRemoteCheckTimeoutSeconds s."
+    return
+  }
+
+  if ($remoteCheck.ExitCode -ne 0) {
+    Write-LauncherLog "Git update omitido: no se pudo consultar $remoteName/$remoteRef. $($remoteCheck.StdErr.Trim())"
+    return
+  }
+
+  $remoteLine = @($remoteCheck.StdOut -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 1)
+  $remoteHead = if ($remoteLine.Count -gt 0) { @($remoteLine[0] -split "\s+" | Where-Object { $_ })[0] } else { "" }
+  if (-not $remoteHead) {
+    Write-LauncherLog "Git update omitido: el remoto no devolvio commit para $remoteName/$remoteRef."
+    return
+  }
+
+  Save-GitUpdateState -LocalHead $localHead -RemoteHead $remoteHead -RemoteName $remoteName -RemoteRef $remoteRef
+  if ($remoteHead -eq $localHead) {
+    Write-LauncherLog "Git update omitido: $branch ya esta en el mismo commit que $remoteName/$remoteRef ($localHead)."
+    return
+  }
+
+  $statusResult = Invoke-GitCommand -GitPath $gitPath -ArgumentList @("status", "--porcelain") -TimeoutSeconds 5
+  if ($statusResult.TimedOut -or $statusResult.ExitCode -ne 0) {
+    Write-LauncherLog "Git update omitido: no se pudo comprobar si hay cambios locales."
+    return
+  }
+
+  if ($statusResult.StdOut.Trim().Length -gt 0) {
+    Write-LauncherLog "Git update omitido: hay cambios locales sin commitear; no se ejecuta pull."
+    return
+  }
+
+  $remoteBranch = $remoteRef -replace "^refs/heads/", ""
+  Write-LauncherLog "Git update: remoto cambio de $localHead a $remoteHead; ejecutando pull --ff-only."
+  $pullResult = Invoke-GitCommand -GitPath $gitPath -ArgumentList @("pull", "--ff-only", $remoteName, $remoteBranch) -TimeoutSeconds $script:GitPullTimeoutSeconds
+  if ($pullResult.TimedOut) {
+    Write-LauncherLog "Git update fallo: pull excedio $script:GitPullTimeoutSeconds s."
+    return
+  }
+
+  if ($pullResult.ExitCode -ne 0) {
+    Write-LauncherLog "Git update fallo: pull --ff-only no completo. $($pullResult.StdErr.Trim())"
+    return
+  }
+
+  $newHeadResult = Invoke-GitCommand -GitPath $gitPath -ArgumentList @("rev-parse", "HEAD") -TimeoutSeconds 5
+  $newHead = $newHeadResult.StdOut.Trim()
+  if ($newHead) {
+    Save-GitUpdateState -LocalHead $newHead -RemoteHead $newHead -RemoteName $remoteName -RemoteRef $remoteRef
+    Write-LauncherLog "Git update completado: $branch quedo en $newHead."
   }
 }
 
@@ -610,6 +859,7 @@ function Start-ServerProcess {
 try {
   Ensure-RuntimeDir
   Write-LauncherLog "Inicio del launcher en puerto fijo $script:LauncherPort."
+  Ensure-ProjectUpdated
 
   $state = Get-State
   $statePid = if ($state -and $state.pid) { [int]$state.pid } else { 0 }
