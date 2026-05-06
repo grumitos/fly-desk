@@ -167,6 +167,8 @@ Entradas para abrir y cerrar la app sin terminal:
 Comportamiento actual del launcher:
 
 - usa el puerto fijo `32123`
+- antes de reutilizar o relanzar, chequea Git con cache local; si el remoto ya fue confirmado en el mismo commit, salta la red
+- si hay un commit remoto nuevo y el working tree esta limpio, ejecuta `git pull --ff-only`
 - si Fly Desk ya esta sano en ese puerto, reutiliza la instancia
 - si `node_modules/` no existe, instala dependencias
 - si `dist/` esta ausente o vieja, ejecuta `npm run build`
@@ -179,6 +181,10 @@ Variables utiles del launcher:
 - `FLY_DESK_SKIP_BROWSER=1`
 - `FLY_DESK_SILENT=1`
 - `FLY_DESK_LAUNCHER_PORT=32123`
+- `FLY_DESK_SKIP_GIT_UPDATE=1`
+- `FLY_DESK_GIT_CHECK_TTL_SECONDS=300`
+- `FLY_DESK_GIT_CHECK_TIMEOUT_SECONDS=3`
+- `FLY_DESK_GIT_PULL_TIMEOUT_SECONDS=90`
 
 ## Verificacion reciente
 
