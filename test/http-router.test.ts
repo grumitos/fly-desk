@@ -160,6 +160,8 @@ function buildCostamarOffer(url: string): CanonicalOffer {
 }
 
 function buildCostamarMatrixCell(url: string): MatrixCell {
+  const offer = buildCostamarOffer(url);
+
   return {
     key: "2026-06-01_2026-06-08",
     departureDate: "2026-06-01",
@@ -190,6 +192,16 @@ function buildCostamarMatrixCell(url: string): MatrixCell {
         state: "search_redirect",
       },
     ],
+    offer: {
+      ...offer,
+      id: "matrix-offer-costamar-1",
+      purchasePaths: [
+        {
+          ...offer.purchasePaths[0],
+          id: "matrix-offer-costamar-1-path",
+        },
+      ],
+    },
   };
 }
 
@@ -731,8 +743,16 @@ test("costamar matrix redirects refresh the stored token with the matrix job pro
 
     const redirectPath = job.cells[0]?.purchasePaths?.[0]?.url;
     assert.ok(redirectPath);
+    assert.equal(job.cells[0]?.offer?.purchasePaths[0]?.url, redirectPath);
+    assert.doesNotMatch(JSON.stringify(job.cells), /token=/);
 
     await withServer(async (baseUrl) => {
+      const jobResponse = await fetch(`${baseUrl}/api/matrix/${job.id}`);
+      assert.equal(jobResponse.status, 200);
+      const jobBody = await jobResponse.text();
+      assert.match(jobBody, /"offer"/);
+      assert.doesNotMatch(jobBody, /token=/);
+
       const response = await fetch(`${baseUrl}${redirectPath}`, { redirect: "manual" });
 
       assert.equal(response.status, 302);

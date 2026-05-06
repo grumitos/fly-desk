@@ -26,7 +26,7 @@ import {
 import { buildOfferSignature } from "./core/offer-signature";
 import { buildOfferVariantGroupKey } from "./core/variant-group-key";
 import { ProviderSearchResult } from "./core/provider";
-import { maxStopsAcrossItineraries } from "./core/ranking";
+import { computeValueScores, enrichComparisonMetrics, maxStopsAcrossItineraries } from "./core/ranking";
 import {
   BaggageSummary,
   CanonicalOffer,
@@ -3140,6 +3140,12 @@ function buildMatrixCellFromOffer(
   offer: CanonicalOffer,
   providerContext?: ProviderContext,
 ): MatrixCell {
+  const purchasePaths = offer.purchasePaths.length > 0
+    ? offer.purchasePaths
+    : providerContext?.costamar
+      ? buildCostamarPurchasePaths(cell.derivedRequest, providerContext.costamar)
+      : [];
+
   return {
     ...cell,
     price: {
@@ -3147,11 +3153,11 @@ function buildMatrixCellFromOffer(
       currencyCode: offer.price.total.currencyCode,
     },
     variantKey: buildOfferVariantGroupKey(offer),
-    purchasePaths: offer.purchasePaths.length > 0
-      ? offer.purchasePaths
-      : providerContext?.costamar
-        ? buildCostamarPurchasePaths(cell.derivedRequest, providerContext.costamar)
-        : [],
+    purchasePaths,
+    offer: {
+      ...offer,
+      purchasePaths,
+    },
     confidence: "live",
     selectable: true,
     stateCode: "live",
@@ -3164,7 +3170,9 @@ async function resolveCellPrice(
   providerContext?: ProviderContext,
 ): Promise<CanonicalOffer | undefined> {
   const search = await searchLocalCostamarExact(derivedRequest, providerContext);
-  return search.offers.reduce<CanonicalOffer | undefined>((best, current) => {
+  const offers = computeValueScores(enrichComparisonMetrics(search.offers));
+
+  return offers.reduce<CanonicalOffer | undefined>((best, current) => {
     if (!best || current.price.total.amount < best.price.total.amount) {
       return current;
     }

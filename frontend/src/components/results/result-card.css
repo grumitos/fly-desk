@@ -176,6 +176,7 @@
 }
 
 .fd-result-card__airline,
+.fd-result-card__schedules,
 .fd-result-card__schedule,
 .fd-result-card__route,
 .fd-result-card__journey,
@@ -190,9 +191,12 @@
   display: none;
 }
 
+.fd-result-card__schedules {
+  gap: 0.52rem;
+}
+
 .fd-result-card__airline-name,
 .fd-result-card__route-main,
-.fd-result-card__date-main,
 .fd-result-card__journey-main {
   min-width: 0;
   max-width: 100%;
@@ -258,12 +262,6 @@
 
 .fd-result-card__route-main {
   font-size: 0.98rem;
-  line-height: 1.18;
-}
-
-.fd-result-card__date-main {
-  font-family: var(--font-mono);
-  font-size: 0.92rem;
   line-height: 1.18;
 }
 
@@ -456,7 +454,7 @@
   justify-items: end;
 }
 
-.fd-result-card--compact .fd-result-card__schedule,
+.fd-result-card--compact .fd-result-card__schedules,
 .fd-result-card--compact .fd-result-card__route,
 .fd-result-card--compact .fd-result-card__journey,
 .fd-result-card--compact .fd-result-card__price {
@@ -480,7 +478,6 @@
   font-size: 1.06rem;
 }
 
-.fd-result-card--compact .fd-result-card__date-main,
 .fd-result-card--compact .fd-result-card__journey-main,
 .fd-result-card--compact .fd-result-card__price-total {
   font-size: 0.86rem;
@@ -654,7 +651,7 @@
   }
 
   .fd-result-card__airline,
-  .fd-result-card__schedule,
+  .fd-result-card__schedules,
   .fd-result-card__route,
   .fd-result-card__journey,
   .fd-result-card__price {

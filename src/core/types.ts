@@ -288,6 +288,7 @@ export interface MatrixCell {
   tooltip?: string;
   derivedRequest?: SearchRequest;
   purchasePaths?: PurchasePath[];
+  offer?: CanonicalOffer;
 }
 
 export interface SearchMeta {
