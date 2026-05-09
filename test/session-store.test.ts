@@ -1,9 +1,9 @@
-import test from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Database = require("better-sqlite3");
+import { Database } from "bun:sqlite";
 import { COMPLETED_SEARCH_SESSION_TTL_MS, SearchSessionStore } from "../src/session-store";
 import type {
   CanonicalOffer,
@@ -12,6 +12,24 @@ import type {
   SearchMeta,
   SearchRequest,
 } from "../src/core/types";
+
+function getSql<T>(db: Database, sql: string, ...params: any[]): T | undefined {
+  const statement = db.prepare(sql);
+  try {
+    return statement.get(...params) as T | undefined;
+  } finally {
+    statement.finalize();
+  }
+}
+
+function allSql<T>(db: Database, sql: string, ...params: any[]): T[] {
+  const statement = db.prepare(sql);
+  try {
+    return statement.all(...params) as T[];
+  } finally {
+    statement.finalize();
+  }
+}
 
 function buildRequest(): SearchRequest {
   return {
@@ -120,7 +138,6 @@ function buildOffer(id: string, url: string): CanonicalOffer {
     },
     tags: [],
     warnings: [],
-    valueScore: 1,
   };
 }
 
@@ -170,12 +187,12 @@ function buildMatrixCell(key: string, url: string): MatrixCell {
 }
 
 function readSqlitePayloadText(dbPath: string): string {
-  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  const db = new Database(dbPath, { readonly: true });
   try {
     const rows = [
-      ...db.prepare("SELECT payload FROM search_jobs ORDER BY id").all() as Array<{ payload: string }>,
-      ...db.prepare("SELECT payload FROM matrix_jobs ORDER BY id").all() as Array<{ payload: string }>,
-      ...db.prepare("SELECT payload FROM purchase_paths ORDER BY id").all() as Array<{ payload: string }>,
+      ...allSql<{ payload: string }>(db, "SELECT payload FROM search_jobs ORDER BY id"),
+      ...allSql<{ payload: string }>(db, "SELECT payload FROM matrix_jobs ORDER BY id"),
+      ...allSql<{ payload: string }>(db, "SELECT payload FROM purchase_paths ORDER BY id"),
     ];
     return rows.map((row) => row.payload).join("\n");
   } finally {
@@ -184,12 +201,12 @@ function readSqlitePayloadText(dbPath: string): string {
 }
 
 function readSqliteCounts(dbPath: string): { searchJobs: number; matrixJobs: number; purchasePaths: number } {
-  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  const db = new Database(dbPath, { readonly: true });
   try {
     return {
-      searchJobs: Number((db.prepare("SELECT COUNT(*) AS count FROM search_jobs").get() as { count: number }).count),
-      matrixJobs: Number((db.prepare("SELECT COUNT(*) AS count FROM matrix_jobs").get() as { count: number }).count),
-      purchasePaths: Number((db.prepare("SELECT COUNT(*) AS count FROM purchase_paths").get() as { count: number }).count),
+      searchJobs: Number(getSql<{ count: number }>(db, "SELECT COUNT(*) AS count FROM search_jobs")?.count ?? 0),
+      matrixJobs: Number(getSql<{ count: number }>(db, "SELECT COUNT(*) AS count FROM matrix_jobs")?.count ?? 0),
+      purchasePaths: Number(getSql<{ count: number }>(db, "SELECT COUNT(*) AS count FROM purchase_paths")?.count ?? 0),
     };
   } finally {
     db.close();

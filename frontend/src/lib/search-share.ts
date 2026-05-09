@@ -282,7 +282,7 @@ function normalizeFrontendRequest(value: unknown): SearchRequest | null {
 }
 
 function normalizeSortMode(value: unknown): SortMode {
-  return value === "cheapest" || value === "fastest" || value === "best-value"
+  return value === "cheapest" || value === "fastest"
     ? value
     : "cheapest"
 }

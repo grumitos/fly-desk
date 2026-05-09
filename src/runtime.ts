@@ -14,8 +14,8 @@ export interface RuntimeServices {
 
 let runtime: RuntimeServices | undefined;
 
-function isNodeTestProcess(): boolean {
-  return process.argv.includes("--test") || process.env.NODE_ENV === "test";
+function isTestProcess(): boolean {
+  return process.env.NODE_ENV === "test";
 }
 
 function resolvePersistPath(envKey: string, defaultFileName: string): string | undefined {
@@ -24,7 +24,7 @@ function resolvePersistPath(envKey: string, defaultFileName: string): string | u
     return explicit;
   }
 
-  if (isNodeTestProcess()) {
+  if (isTestProcess()) {
     return undefined;
   }
 

@@ -123,10 +123,10 @@ Keyboard focus must be visible, and visible controls must be reachable by tab un
 
 Before finishing frontend work, run:
 
-- `npm run typecheck`
-- `npm run lint`
-- `npm run build`
-- `npm test`
+- `bun run typecheck`
+- `bun run lint`
+- `bun run build`
+- `bun test test/**/*.test.ts`
 - Playwright smoke against the built app at desktop `1440x900`, tablet `1024x768`, and mobile `390x844`.
 
 The smoke must check:

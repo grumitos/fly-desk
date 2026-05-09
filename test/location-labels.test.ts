@@ -1,4 +1,4 @@
-import test from "node:test"
+import { test } from "bun:test";
 import assert from "node:assert/strict"
 import { filterLocationSuggestions, findLocationSuggestionMatch, normalizeLocationSuggestion } from "../frontend/src/lib/locations"
 import { rankLocationSuggestions as rankBackendLocationSuggestions } from "../src/location-suggestions"

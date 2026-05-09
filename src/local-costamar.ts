@@ -26,7 +26,7 @@ import {
 import { buildOfferSignature } from "./core/offer-signature";
 import { buildOfferVariantGroupKey } from "./core/variant-group-key";
 import { ProviderSearchResult } from "./core/provider";
-import { computeValueScores, enrichComparisonMetrics, maxStopsAcrossItineraries } from "./core/ranking";
+import { enrichComparisonMetrics, maxStopsAcrossItineraries, totalDuration } from "./core/ranking";
 import {
   BaggageSummary,
   CanonicalOffer,
@@ -2052,12 +2052,21 @@ function dedupeCostamarOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
       String(offer.baggage?.carryOnIncluded ?? ""),
     ].join("::");
     const existing = deduped.get(key);
-    if (!existing || offer.valueScore < existing.valueScore) {
+    if (!existing || compareByPriceThenDuration(offer, existing) < 0) {
       deduped.set(key, offer);
     }
   }
 
   return [...deduped.values()];
+}
+
+function compareByPriceThenDuration(left: CanonicalOffer, right: CanonicalOffer): number {
+  const priceDiff = left.price.total.amount - right.price.total.amount;
+  if (priceDiff !== 0) {
+    return priceDiff;
+  }
+
+  return totalDuration(left) - totalDuration(right);
 }
 
 function sumMoneyLike(value: unknown): number {
@@ -2772,7 +2781,6 @@ export function mapCostamarRecommendationToOffer(
       recommendationId: recommendation.id,
       pos: recommendation.pos,
     },
-    valueScore: 0,
   };
 
   const signature = buildOfferSignature(offer);
@@ -3177,10 +3185,10 @@ async function resolveCellPrice(
   providerContext?: ProviderContext,
 ): Promise<CanonicalOffer | undefined> {
   const search = await searchLocalCostamarExact(derivedRequest, providerContext);
-  const offers = computeValueScores(enrichComparisonMetrics(search.offers));
+  const offers = enrichComparisonMetrics(search.offers);
 
   return offers.reduce<CanonicalOffer | undefined>((best, current) => {
-    if (!best || current.price.total.amount < best.price.total.amount) {
+    if (!best || compareByPriceThenDuration(current, best) < 0) {
       return current;
     }
 

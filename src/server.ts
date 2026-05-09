@@ -1,11 +1,11 @@
-import { createServer as createHttpServer, IncomingMessage, ServerResponse } from "node:http";
 import { readFile, stat } from "node:fs/promises";
 import * as path from "node:path";
+import type { Server as BunServer } from "bun";
 import { routeRequest } from "./http-router";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import { getPublicRuntimeConfig } from "./search-date-policy";
 
-const publicDir = path.resolve(__dirname, "..", "frontend", "dist");
+const publicDir = path.resolve(process.cwd(), "frontend", "dist");
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 
 interface CachedFile {
@@ -14,6 +14,11 @@ interface CachedFile {
   size: number;
   contentType: string;
   content: Buffer;
+}
+
+interface CreateServerOptions {
+  port?: number;
+  hostname?: string;
 }
 
 const fileCache = new Map<string, CachedFile>();
@@ -128,11 +133,20 @@ async function readCachedFile(filePath: string): Promise<CachedFile> {
   return next;
 }
 
-async function serveStaticFile(response: ServerResponse, filePath: string, immutable: boolean): Promise<void> {
+function bufferToArrayBuffer(buffer: Buffer): ArrayBuffer {
+  return buffer.buffer.slice(
+    buffer.byteOffset,
+    buffer.byteOffset + buffer.byteLength,
+  ) as ArrayBuffer;
+}
+
+async function serveStaticFile(filePath: string, immutable: boolean): Promise<Response> {
   const cached = await readCachedFile(filePath);
 
-  response.writeHead(200, staticAssetHeaders(cached.contentType, immutable));
-  response.end(cached.content);
+  return new Response(bufferToArrayBuffer(cached.content), {
+    status: 200,
+    headers: staticAssetHeaders(cached.contentType, immutable),
+  });
 }
 
 async function resolvePublicAsset(pathname: string): Promise<string | undefined> {
@@ -158,7 +172,7 @@ function escapeInlineScriptJson(value: string): string {
   return value.replace(/</g, "\\u003c");
 }
 
-async function serveIndexHtml(response: ServerResponse): Promise<void> {
+async function serveIndexHtml(): Promise<Response> {
   const filePath = path.join(publicDir, "index.html");
   const template = (await readCachedFile(filePath)).content.toString("utf8");
   const runtimeConfig = escapeInlineScriptJson(JSON.stringify(getPublicRuntimeConfig()));
@@ -167,30 +181,28 @@ async function serveIndexHtml(response: ServerResponse): Promise<void> {
     `<script>window.__FLYDESK_RUNTIME__ = ${runtimeConfig};</script>`,
   );
 
-  response.writeHead(200, noStoreHeaders("text/html; charset=utf-8"));
-  response.end(content);
+  return new Response(content, {
+    status: 200,
+    headers: noStoreHeaders("text/html; charset=utf-8"),
+  });
 }
 
-async function readBody(request: IncomingMessage): Promise<Buffer | undefined> {
-  const declaredLength = Number(request.headers["content-length"]);
+async function readBody(request: Request): Promise<ArrayBuffer | undefined> {
+  if (request.method === "GET" || request.method === "HEAD") {
+    return undefined;
+  }
+
+  const declaredLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BODY_BYTES) {
     throw new RequestBodyTooLargeError(MAX_REQUEST_BODY_BYTES);
   }
 
-  const chunks: Buffer[] = [];
-  let totalBytes = 0;
-
-  for await (const chunk of request) {
-    const normalized = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    totalBytes += normalized.byteLength;
-    if (totalBytes > MAX_REQUEST_BODY_BYTES) {
-      throw new RequestBodyTooLargeError(MAX_REQUEST_BODY_BYTES);
-    }
-
-    chunks.push(normalized);
+  const body = await request.arrayBuffer();
+  if (body.byteLength > MAX_REQUEST_BODY_BYTES) {
+    throw new RequestBodyTooLargeError(MAX_REQUEST_BODY_BYTES);
   }
 
-  return chunks.length > 0 ? Buffer.concat(chunks) : undefined;
+  return body.byteLength > 0 ? body : undefined;
 }
 
 function isLoopbackRemoteAddress(value: string | undefined): boolean {
@@ -200,51 +212,37 @@ function isLoopbackRemoteAddress(value: string | undefined): boolean {
     || normalized === "::ffff:127.0.0.1";
 }
 
-async function proxyToRouter(request: IncomingMessage, response: ServerResponse): Promise<void> {
+async function proxyToRouter(request: Request, server: BunServer<undefined>): Promise<Response> {
   const body = await readBody(request);
-  const forwardedProto = request.headers["x-forwarded-proto"];
-  const isEncryptedSocket = "encrypted" in request.socket && Boolean(request.socket.encrypted);
-  const protocol = typeof forwardedProto === "string"
-    ? forwardedProto.split(",")[0]?.trim() || "http"
-    : isEncryptedSocket
-      ? "https"
-      : "http";
-  const host = request.headers.host ?? "localhost";
-  const url = `${protocol}://${host}${request.url ?? "/"}`;
-  const headers: [string, string][] = [];
+  const headers = new Headers();
 
-  for (const [key, value] of Object.entries(request.headers)) {
-    if (typeof value === "string") {
-      if (key.toLowerCase().startsWith("x-flydesk-")) {
-        continue;
-      }
-      headers.push([key, value]);
+  request.headers.forEach((value, key) => {
+    if (key.toLowerCase().startsWith("x-flydesk-")) {
+      return;
     }
-  }
+    headers.append(key, value);
+  });
 
-  headers.push([
+  const remoteAddress = server.requestIP(request)?.address;
+  headers.set(
     "x-flydesk-client-loopback",
-    isLoopbackRemoteAddress(request.socket.remoteAddress) ? "1" : "0",
-  ]);
+    isLoopbackRemoteAddress(remoteAddress) ? "1" : "0",
+  );
 
-  if (typeof request.socket.remoteAddress === "string" && request.socket.remoteAddress.length > 0) {
-    headers.push(["x-flydesk-client-address", request.socket.remoteAddress]);
+  if (remoteAddress) {
+    headers.set("x-flydesk-client-address", remoteAddress);
   }
 
   const requestInit: RequestInit & { duplex?: "half" } = {
     method: request.method,
-    headers: new Headers(headers),
-    body: body && request.method !== "GET" && request.method !== "HEAD"
-      ? new Uint8Array(body)
-      : undefined,
-    duplex: "half",
+    headers,
+    body,
+    duplex: body ? "half" : undefined,
   };
-
-  const webRequest = new Request(url, requestInit);
 
   let webResponse: Response;
   try {
-    webResponse = await routeRequest(webRequest);
+    webResponse = await routeRequest(new Request(request.url, requestInit));
   } catch (error) {
     if (error instanceof SyntaxError) {
       throw new BadRequestError("Invalid JSON payload.");
@@ -252,64 +250,75 @@ async function proxyToRouter(request: IncomingMessage, response: ServerResponse)
     throw error;
   }
 
-  response.writeHead(
-    webResponse.status,
-    Object.fromEntries(webResponse.headers.entries()),
-  );
-
-  const responseBody = Buffer.from(await webResponse.arrayBuffer());
-  response.end(responseBody);
+  return webResponse;
 }
 
-export function createServer() {
-  return createHttpServer(async (request, response) => {
-    const requestStart = startPerfTimer();
-    const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
-    response.once("finish", () => {
-      logPerfSpan("http.request", requestStart, {
-        method: request.method ?? "UNKNOWN",
-        path: pathname,
-        status: response.statusCode,
-      });
-    });
+async function routeServerRequest(request: Request, server: BunServer<undefined>): Promise<Response> {
+  const pathname = new URL(request.url).pathname;
 
-    try {
-      if (request.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
-        await serveIndexHtml(response);
-        return;
-      }
+  if (request.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
+    return serveIndexHtml();
+  }
 
-      if (request.method === "GET") {
-        const assetPath = await resolvePublicAsset(pathname);
-        if (assetPath) {
-          await serveStaticFile(response, assetPath, pathname.startsWith("/assets/"));
-          return;
-        }
-      }
-
-      if (request.method === "GET" && pathname === "/favicon.ico") {
-        response.writeHead(204);
-        response.end();
-        return;
-      }
-
-      await proxyToRouter(request, response);
-    } catch (error) {
-      if (error instanceof RequestBodyTooLargeError) {
-        response.writeHead(413, noStoreHeaders("application/json; charset=utf-8"));
-        response.end(JSON.stringify({ error: error.message }));
-        return;
-      }
-
-      if (error instanceof BadRequestError) {
-        response.writeHead(400, noStoreHeaders("application/json; charset=utf-8"));
-        response.end(JSON.stringify({ error: error.message }));
-        return;
-      }
-
-      const message = error instanceof Error ? error.message : "Unexpected server error";
-      response.writeHead(500, noStoreHeaders("application/json; charset=utf-8"));
-      response.end(JSON.stringify({ error: message }));
+  if (request.method === "GET") {
+    const assetPath = await resolvePublicAsset(pathname);
+    if (assetPath) {
+      return serveStaticFile(assetPath, pathname.startsWith("/assets/"));
     }
+  }
+
+  if (request.method === "GET" && pathname === "/favicon.ico") {
+    return new Response(null, { status: 204 });
+  }
+
+  return proxyToRouter(request, server);
+}
+
+export async function handleRequest(request: Request, server: BunServer<undefined>): Promise<Response> {
+  const requestStart = startPerfTimer();
+  const pathname = new URL(request.url).pathname;
+  let status = 500;
+
+  try {
+    const response = await routeServerRequest(request, server);
+    status = response.status;
+    return response;
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      status = 413;
+      return Response.json(
+        { error: error.message },
+        { status, headers: noStoreHeaders("application/json; charset=utf-8") },
+      );
+    }
+
+    if (error instanceof BadRequestError) {
+      status = 400;
+      return Response.json(
+        { error: error.message },
+        { status, headers: noStoreHeaders("application/json; charset=utf-8") },
+      );
+    }
+
+    const message = error instanceof Error ? error.message : "Unexpected server error";
+    status = 500;
+    return Response.json(
+      { error: message },
+      { status, headers: noStoreHeaders("application/json; charset=utf-8") },
+    );
+  } finally {
+    logPerfSpan("http.request", requestStart, {
+      method: request.method,
+      path: pathname,
+      status,
+    });
+  }
+}
+
+export function createServer(options: CreateServerOptions = {}): BunServer<undefined> {
+  return Bun.serve({
+    port: options.port ?? 0,
+    hostname: options.hostname,
+    fetch: handleRequest,
   });
 }

@@ -164,7 +164,6 @@ La UI React no debe mostrar controles simulados. Busqueda flexible y migratorio 
 - `tools/start-fly-desk.ps1`
 - `tools/stop-fly-desk.cmd`
 - `tools/stop-fly-desk.ps1`
-- `tools/stop-fly-desk.js`
 
 ## Pruebas vigentes
 
@@ -209,10 +208,10 @@ Cobertura importante actual:
 
 Comandos:
 
-- `npm run typecheck`
-- `npm run lint`
-- `npm run build`
-- `npm test`
+- `bun run typecheck`
+- `bun run lint`
+- `bun run build`
+- `bun test test/**/*.test.ts`
 
 Resultado al 25 de abril de 2026:
 
@@ -234,18 +233,18 @@ Siguen siendo utiles como referencia historica, no como descripcion del estado p
 - `frontend/src/App.tsx` concentra composicion, filtros y seleccion; conviene seguir extrayendo verticalmente si crece
 - `src/local-agil.ts` sigue concentrando mucha logica de sesion, cliente y mapping
 - el store sigue siendo en memoria; no hay persistencia externa para jobs
-- `npm run lint` delega al ESLint real del frontend
+- `bun run lint` delega al ESLint real del frontend
 - el deploy remoto completo sigue bloqueado por la dependencia de sesion local de navegador para Agil
 - la extraccion de token Costamar por CDP requiere que Chrome se lance con `--remote-debugging-port`; sin ese flag, se depende de archivos de sesion que Chrome puede no tener desbloqueados
 - la busqueda migratoria lanza 8 jobs de rango con concurrencia limitada, lo cual debe vigilarse si sube el volumen de uso
 
 ## Cambios del 25 de abril de 2026
 
-### Frontend React/Vite activo
+### Frontend React/Bun activo
 
 - `src/server.ts` sirve `frontend/dist`
-- `npm run build` compila frontend y backend
-- `npm run lint` delega a `npm --prefix frontend run lint`
+- `bun run build` compila el frontend con `scripts/build-frontend.ts`
+- `bun run lint` delega a `bun run --filter './frontend' lint`
 - `docs/FRONTEND_IDENTITY.md` define la identidad visual actual
 
 ### Endurecimiento posterior a auditoria

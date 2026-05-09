@@ -120,17 +120,11 @@ function Get-CommandPath {
   return $null
 }
 
-function Get-NodePath {
+function Get-BunPath {
   @(
-    (Get-CommandPath "node.exe"),
-    (Get-CommandPath "node")
-  ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
-}
-
-function Get-NpmPath {
-  @(
-    (Get-CommandPath "npm.cmd"),
-    (Get-CommandPath "npm")
+    (Get-CommandPath "bun.exe"),
+    (Get-CommandPath "bun"),
+    (Join-Path $env:USERPROFILE ".bun\bin\bun.exe")
   ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 }
 
@@ -141,31 +135,19 @@ function Get-GitPath {
   ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
 }
 
-function Assert-NodeReady {
-  $nodePath = Get-NodePath
-  if (-not $nodePath) {
-    Fail-Launcher "No se encontro Node.js. Instala Node.js 20 o superior y vuelve a abrir Fly Desk."
+function Assert-BunReady {
+  $bunPath = Get-BunPath
+  if (-not $bunPath) {
+    Fail-Launcher "No se encontro Bun. Instala Bun y vuelve a abrir Fly Desk."
   }
 
-  $versionText = (& $nodePath -v).Trim()
-  if (-not $versionText -or $versionText -notmatch "^v(?<major>\d+)") {
-    Fail-Launcher "No se pudo leer correctamente la version de Node.js."
+  $versionText = (& $bunPath --version).Trim()
+  if (-not $versionText) {
+    Fail-Launcher "No se pudo leer correctamente la version de Bun."
   }
 
-  if ([int]$Matches["major"] -lt 20) {
-    Fail-Launcher "Fly Desk necesita Node.js 20 o superior. Version detectada: $versionText"
-  }
-
-  return $nodePath
-}
-
-function Assert-NpmReady {
-  $npmPath = Get-NpmPath
-  if (-not $npmPath) {
-    Fail-Launcher "No se encontro npm. Reinstala Node.js y vuelve a abrir Fly Desk."
-  }
-
-  return $npmPath
+  Write-LauncherLog "Bun detectado: $versionText ($bunPath)"
+  return $bunPath
 }
 
 function Invoke-LoggedProcess {
@@ -427,7 +409,7 @@ function Get-LatestWriteTime {
 }
 
 function Test-BuildNeeded {
-  $distEntry = Join-Path $script:ProjectRoot "dist\\index.js"
+  $distEntry = Join-Path $script:ProjectRoot "frontend\\dist\\index.html"
   if (-not (Test-Path -LiteralPath $distEntry)) {
     return $true
   }
@@ -435,15 +417,20 @@ function Test-BuildNeeded {
   $distTime = (Get-Item -LiteralPath $distEntry).LastWriteTime
   $sourceTime = Get-LatestWriteTime -Paths @(
     (Join-Path $script:ProjectRoot "src"),
-    (Join-Path $script:ProjectRoot "public"),
-    (Join-Path $script:ProjectRoot "api")
+    (Join-Path $script:ProjectRoot "frontend\src"),
+    (Join-Path $script:ProjectRoot "frontend\public"),
+    (Join-Path $script:ProjectRoot "frontend\index.html"),
+    (Join-Path $script:ProjectRoot "scripts\build-frontend.ts")
   )
 
   $configFiles = @(
     (Join-Path $script:ProjectRoot "package.json"),
-    (Join-Path $script:ProjectRoot "package-lock.json"),
+    (Join-Path $script:ProjectRoot "frontend\package.json"),
+    (Join-Path $script:ProjectRoot "bun.lock"),
+    (Join-Path $script:ProjectRoot "bunfig.toml"),
     (Join-Path $script:ProjectRoot "tsconfig.json"),
-    (Join-Path $script:ProjectRoot "tsconfig.build.json")
+    (Join-Path $script:ProjectRoot "frontend\tsconfig.json"),
+    (Join-Path $script:ProjectRoot "frontend\tsconfig.app.json")
   ) | Where-Object { Test-Path -LiteralPath $_ }
 
   foreach ($configFile in $configFiles) {
@@ -456,15 +443,15 @@ function Test-BuildNeeded {
 }
 
 function Ensure-DependenciesAndBuild {
-  $npmPath = Assert-NpmReady
+  $bunPath = Assert-BunReady
   $nodeModules = Join-Path $script:ProjectRoot "node_modules"
 
   if (-not (Test-Path -LiteralPath $nodeModules)) {
-    Invoke-LoggedProcess -FilePath $npmPath -ArgumentList @("install") -WorkingDirectory $script:ProjectRoot -StepName "npm install"
+    Invoke-LoggedProcess -FilePath $bunPath -ArgumentList @("install", "--frozen-lockfile") -WorkingDirectory $script:ProjectRoot -StepName "bun install --frozen-lockfile"
   }
 
   if (Test-BuildNeeded) {
-    Invoke-LoggedProcess -FilePath $npmPath -ArgumentList @("run", "build") -WorkingDirectory $script:ProjectRoot -StepName "npm run build"
+    Invoke-LoggedProcess -FilePath $bunPath -ArgumentList @("run", "build") -WorkingDirectory $script:ProjectRoot -StepName "bun run build"
   }
 }
 
@@ -487,7 +474,7 @@ function Test-HealthEndpoint {
   }
 }
 
-function Test-NodeProcess {
+function Test-BunProcess {
   param([int]$ProcessId)
 
   if ($ProcessId -le 0) {
@@ -501,7 +488,7 @@ function Test-NodeProcess {
     }
 
     $processName = [string]$process.Name
-    return $processName -eq "node.exe" -or $processName -eq "node"
+    return $processName -eq "bun.exe" -or $processName -eq "bun"
   } catch {
     return $false
   }
@@ -675,32 +662,25 @@ function Test-FlyDeskServerProcess {
   }
 
   try {
-    $distEntry = Join-Path $script:ProjectRoot "dist\\index.js"
     $srcEntry = Join-Path $script:ProjectRoot "src\\index.ts"
     $process = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId"
     if (-not $process) {
       return $false
     }
 
-    if (-not (Test-NodeProcess -ProcessId $ProcessId)) {
+    if (-not (Test-BunProcess -ProcessId $ProcessId)) {
       return $false
     }
 
     $commandLine = [string]$process.CommandLine
-    if (($commandLine -like "*$distEntry*") `
-      -or ($commandLine -like "*$srcEntry*") `
+    if (($commandLine -like "*$srcEntry*") `
+      -or ($commandLine -like "*src\\index.ts*") `
+      -or ($commandLine -like "*src/index.ts*") `
       -or (
         $commandLine -like "*$script:ProjectRoot*" `
-          -and (
-            $commandLine -like "*src\\index.ts*" `
-              -or $commandLine -like "*src/index.ts*"
-          )
+          -and $commandLine -like "*run*start*"
       )) {
       return $true
-    }
-
-    if (($commandLine -like "*dist\\index.js*") -or ($commandLine -like "*dist/index.js*")) {
-      return Test-ProcessHostsFlyDeskUi -ProcessId $ProcessId
     }
 
     return $false
@@ -731,7 +711,7 @@ function Get-FlyDeskEndpointProcessIds {
 
   return @(
     $records |
-      Where-Object { Test-NodeProcess -ProcessId ([int]$_.ProcessId) } |
+      Where-Object { Test-BunProcess -ProcessId ([int]$_.ProcessId) } |
       Where-Object { Test-FlyDeskUiEndpoint -Port ([int]$_.Port) } |
       ForEach-Object { [int]$_.ProcessId } |
       Sort-Object -Unique
@@ -823,22 +803,17 @@ function Wait-ForServer {
 
 function Start-ServerProcess {
   param(
-    [string]$NodePath,
+    [string]$BunPath,
     [int]$Port
   )
-
-  $distEntry = Join-Path $script:ProjectRoot "dist\\index.js"
-  if (-not (Test-Path -LiteralPath $distEntry)) {
-    Fail-Launcher "No existe dist\\index.js despues de compilar."
-  }
 
   $previousPort = $env:PORT
   $env:PORT = "$Port"
 
   try {
     $process = Start-Process `
-      -FilePath $NodePath `
-      -ArgumentList @($distEntry) `
+      -FilePath $BunPath `
+      -ArgumentList @("run", "start") `
       -WorkingDirectory $script:ProjectRoot `
       -PassThru `
       -WindowStyle Hidden `
@@ -903,11 +878,11 @@ try {
   Initialize-RunLogs
   Write-LauncherLog "Logs de esta ejecucion: $script:ServerOutLog | $script:ServerErrLog"
 
-  $nodePath = Assert-NodeReady
+  $bunPath = Assert-BunReady
   Ensure-DependenciesAndBuild
   Clear-State
 
-  $serverProcessId = Start-ServerProcess -NodePath $nodePath -Port $script:LauncherPort
+  $serverProcessId = Start-ServerProcess -BunPath $bunPath -Port $script:LauncherPort
   Save-State -Port $script:LauncherPort -ProcessId $serverProcessId -StdOutLog $script:ServerOutLog -StdErrLog $script:ServerErrLog
   if (-not (Wait-ForServer -Port $script:LauncherPort -ProcessId $serverProcessId)) {
     Stop-ProcessTree -ProcessId $serverProcessId

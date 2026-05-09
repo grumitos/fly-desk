@@ -1,6 +1,6 @@
 import { applySearchFilters } from "./filtering";
 import { ProviderExecutionContext, SearchProvider } from "./provider";
-import { computeValueScores, enrichComparisonMetrics, sortOffers } from "./ranking";
+import { enrichComparisonMetrics, sortOffers } from "./ranking";
 import {
   CanonicalOffer,
   MatrixResponse,
@@ -40,14 +40,13 @@ export function buildSearchMeta(
 
 export function materializeSearchResponse(
   request: SearchRequest,
-  sortMode: "cheapest" | "fastest" | "best-value",
+  sortMode: "cheapest" | "fastest",
   exactProviderId: ProviderId,
   exactResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean },
 ): SearchResponse {
   let offers = exactResult.offers;
 
   offers = enrichComparisonMetrics(offers);
-  offers = computeValueScores(offers);
   offers = sortOffers(offers, sortMode);
   const allOffers = offers;
   offers = applySearchFilters(allOffers, request.filters);
@@ -101,7 +100,7 @@ export class SearchOrchestrator {
 
   async search(
     request: SearchRequest,
-    sortMode: "cheapest" | "fastest" | "best-value" = "cheapest",
+    sortMode: "cheapest" | "fastest" = "cheapest",
     options?: SearchExecutionOptions,
   ): Promise<SearchResponse> {
     const provider = this.resolveProvider(options?.providerId ?? request.providerId);

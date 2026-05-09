@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { applySearchFilters } from "../src/core/filtering";
 
@@ -108,7 +108,6 @@ function buildFilterOffer(id: string, layoverMinutes: number) {
     },
     tags: [],
     warnings: [],
-    valueScore: 0,
   } as any;
 }
 

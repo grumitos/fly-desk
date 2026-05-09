@@ -144,14 +144,13 @@ Costamar:
 
 ## Scripts
 
-- `npm run dev`
-- `npm run build`
-- `npm start`
-- `npm run typecheck`
-- `npm run lint`
-- `npm --prefix frontend run lint`
-- `npm test`
-- `npm run demo`
+- `bun run dev`
+- `bun run build`
+- `bun run start`
+- `bun run typecheck`
+- `bun run lint` (delegates to `bun run --filter './frontend' lint`)
+- `bun test test/**/*.test.ts`
+- `bun run demo`
 
 ## Arranque con un clic
 
@@ -170,8 +169,8 @@ Comportamiento actual del launcher:
 - antes de reutilizar o relanzar, chequea Git con cache local; si el remoto ya fue confirmado en el mismo commit, salta la red
 - si hay un commit remoto nuevo y el working tree esta limpio, ejecuta `git pull --ff-only`
 - si Fly Desk ya esta sano en ese puerto, reutiliza la instancia
-- si `node_modules/` no existe, instala dependencias
-- si `dist/` esta ausente o vieja, ejecuta `npm run build`
+- si `node_modules/` no existe, ejecuta `bun install --frozen-lockfile`
+- si `frontend/dist/` esta ausente o vieja, ejecuta `bun run build`
 - persiste estado y logs en `.launcher/`
 - los `.vbs` esperan a que abrir o cerrar termine, evitando carreras entre doble click de abrir/cerrar
 - el cierre espera a que `32123` deje de estar en `LISTENING`
@@ -188,13 +187,12 @@ Variables utiles del launcher:
 
 ## Verificacion reciente
 
-Estado validado el 27 de abril de 2026:
+Estado validado tras la migracion Bun:
 
-- `npm run typecheck`
-- `npm run lint`
-- `npm --prefix frontend run lint`
-- `npm run build`
-- `npm test` (`168/168`)
+- `bun run typecheck`
+- `bun run lint`
+- `bun run build`
+- `bun test test/**/*.test.ts`
 
 Nota de QA: los helpers HTTP de test fijan `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1` para validar contratos inmediatos sin dejar jobs progresivos vivos despues del cierre del servidor. El runtime normal no define esa variable y conserva el polling/revalidacion en segundo plano.
 
