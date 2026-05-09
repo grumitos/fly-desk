@@ -668,17 +668,27 @@ function Test-FlyDeskServerProcess {
       return $false
     }
 
-    if (-not (Test-BunProcess -ProcessId $ProcessId)) {
-      return $false
-    }
-
     $commandLine = [string]$process.CommandLine
-    if (($commandLine -like "*$srcEntry*") `
-      -or ($commandLine -like "*src\\index.ts*") `
-      -or ($commandLine -like "*src/index.ts*") `
+    $distEntry = Join-Path $script:ProjectRoot "dist\\index.js"
+
+    if ((
+        (Test-BunProcess -ProcessId $ProcessId) `
+        -and (
+          ($commandLine -like "*$srcEntry*") `
+          -or ($commandLine -like "*src\\index.ts*") `
+          -or ($commandLine -like "*src/index.ts*") `
+          -or (
+            $commandLine -like "*$script:ProjectRoot*" `
+              -and $commandLine -like "*run*start*"
+          )
+        )
+      ) `
       -or (
-        $commandLine -like "*$script:ProjectRoot*" `
-          -and $commandLine -like "*run*start*"
+        $commandLine -like "*$distEntry*" `
+          -or (
+            $commandLine -like "*$script:ProjectRoot*" `
+              -and ($commandLine -like "*dist\\index.js*" -or $commandLine -like "*dist/index.js*")
+          )
       )) {
       return $true
     }
@@ -711,7 +721,7 @@ function Get-FlyDeskEndpointProcessIds {
 
   return @(
     $records |
-      Where-Object { Test-BunProcess -ProcessId ([int]$_.ProcessId) } |
+      Where-Object { Test-FlyDeskServerProcess -ProcessId ([int]$_.ProcessId) } |
       Where-Object { Test-FlyDeskUiEndpoint -Port ([int]$_.Port) } |
       ForEach-Object { [int]$_.ProcessId } |
       Sort-Object -Unique
@@ -808,7 +818,9 @@ function Start-ServerProcess {
   )
 
   $previousPort = $env:PORT
+  $previousBunExecutablePath = $env:BUN_EXECUTABLE_PATH
   $env:PORT = "$Port"
+  $env:BUN_EXECUTABLE_PATH = $BunPath
 
   try {
     $process = Start-Process `
@@ -824,6 +836,12 @@ function Start-ServerProcess {
       Remove-Item Env:PORT -ErrorAction SilentlyContinue
     } else {
       $env:PORT = $previousPort
+    }
+
+    if ($null -eq $previousBunExecutablePath) {
+      Remove-Item Env:BUN_EXECUTABLE_PATH -ErrorAction SilentlyContinue
+    } else {
+      $env:BUN_EXECUTABLE_PATH = $previousBunExecutablePath
     }
   }
 
