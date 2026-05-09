@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { spawn, ChildProcess } from "node:child_process";
+import { spawn, spawnSync, ChildProcess } from "node:child_process";
 import { readFileSync, rmSync, mkdirSync, cpSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -70,6 +70,23 @@ interface AgilSessionData {
   internalCode: string;
   ip: string;
   capturedAtMs: number;
+}
+
+interface CdpResponse {
+  id?: number;
+  sessionId?: string;
+  method?: string;
+  params?: unknown;
+  result?: unknown;
+  error?: {
+    message?: string;
+  };
+}
+
+interface CdpClient {
+  close: () => void;
+  send: (method: string, params?: Record<string, unknown>, sessionId?: string) => Promise<unknown>;
+  waitForEvent: (method: string, sessionId: string | undefined, timeoutMs: number) => Promise<unknown>;
 }
 
 interface AgilCityLike {
@@ -422,6 +439,135 @@ function defaultChromeUserDataDir(): string | undefined {
     : undefined;
 }
 
+function normalizeChromePath(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (
+    (trimmed.startsWith("\"") && trimmed.endsWith("\""))
+    || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim() || undefined;
+  }
+
+  return trimmed;
+}
+
+function extractChromeFlagValue(commandLine: string, flagName: string): string | undefined {
+  const escapedFlag = flagName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = commandLine.match(new RegExp(
+    `(?:^|\\s)--${escapedFlag}(?:=|\\s+)(?:"([^"]+)"|'([^']+)'|(\\S+))`,
+    "i",
+  ));
+  return normalizeChromePath(match?.[1] ?? match?.[2] ?? match?.[3]);
+}
+
+function extractChromeUserDataDirsFromCommandLines(commandLines: string[]): string[] {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const pushUnique = (value?: string) => {
+    const normalized = normalizeChromePath(value);
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
+
+  for (const commandLine of commandLines) {
+    if (!/chrome(?:\.exe)?/i.test(commandLine) || !commandLine.includes("--user-data-dir")) {
+      continue;
+    }
+
+    pushUnique(extractChromeFlagValue(commandLine, "user-data-dir"));
+  }
+
+  return candidates;
+}
+
+export function extractAgilChromeUserDataDirsFromCommandLinesForTests(commandLines: string[]): string[] {
+  return extractChromeUserDataDirsFromCommandLines(commandLines);
+}
+
+function extractChromeDebugPortsFromCommandLines(commandLines: string[]): number[] {
+  const ports: number[] = [];
+  const seen = new Set<number>();
+
+  for (const commandLine of commandLines) {
+    if (!/chrome(?:\.exe)?/i.test(commandLine) || !commandLine.includes("--remote-debugging-port")) {
+      continue;
+    }
+
+    const rawPort = extractChromeFlagValue(commandLine, "remote-debugging-port");
+    const port = Number(rawPort);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535 || seen.has(port)) {
+      continue;
+    }
+
+    seen.add(port);
+    ports.push(port);
+  }
+
+  return ports;
+}
+
+export function extractAgilChromeDebugPortsFromCommandLinesForTests(commandLines: string[]): number[] {
+  return extractChromeDebugPortsFromCommandLines(commandLines);
+}
+
+function runningChromeProcessDiscoveryEnabled(): boolean {
+  return process.env.AGIL_CHROME_PROCESS_DISCOVERY !== "0";
+}
+
+function readRunningChromeCommandLines(): string[] {
+  if (!runningChromeProcessDiscoveryEnabled()) {
+    return [];
+  }
+
+  if (process.platform !== "win32") {
+    return [];
+  }
+
+  const script = [
+    "$ErrorActionPreference='SilentlyContinue';",
+    "Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe'\" |",
+    "Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--user-data-dir') } |",
+    "ForEach-Object { $_.CommandLine }",
+  ].join(" ");
+  const result = spawnSync("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    script,
+  ], {
+    encoding: "utf8",
+    timeout: 3000,
+    windowsHide: true,
+  });
+
+  if (result.status !== 0 || !result.stdout) {
+    return [];
+  }
+
+  return result.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function readRunningChromeUserDataDirCandidates(): string[] {
+  return extractChromeUserDataDirsFromCommandLines(readRunningChromeCommandLines())
+    .filter((candidate) => existsSync(candidate));
+}
+
+function readRunningChromeDebugPorts(): number[] {
+  return extractChromeDebugPortsFromCommandLines(readRunningChromeCommandLines());
+}
+
 function readAgilChromeUserDataDirCandidates(): string[] {
   const candidates: string[] = [];
   const seen = new Set<string>();
@@ -438,6 +584,7 @@ function readAgilChromeUserDataDirCandidates(): string[] {
   pushUnique(process.env.AGIL_CHROME_USER_DATA_DIR);
   pushUnique(process.env.CHROME_USER_DATA_DIR);
   pushUnique(process.env.COSTAMAR_CHROME_USER_DATA_DIR);
+  readRunningChromeUserDataDirCandidates().forEach((candidate) => pushUnique(candidate));
   pushUnique(defaultChromeUserDataDir());
   return candidates;
 }
@@ -465,8 +612,309 @@ function resolveAgilBrowserConnectTimeoutMs(): number {
   return Math.max(500, Number(process.env.AGIL_BROWSER_CONNECT_TIMEOUT_MS ?? 2500));
 }
 
+function resolveChromeDevToolsBrowserWsEndpoint(userDataDir: string): string | undefined {
+  const devToolsPath = join(userDataDir, "DevToolsActivePort");
+  if (!existsSync(devToolsPath)) {
+    return undefined;
+  }
+
+  try {
+    const [portLine = "", browserPath = ""] = readFileSync(devToolsPath, "utf8")
+      .trim()
+      .split(/\r?\n/);
+    const port = Number(portLine);
+    const normalizedPath = browserPath.trim();
+    if (!Number.isFinite(port) || port <= 0 || port > 65535 || !normalizedPath.startsWith("/")) {
+      return undefined;
+    }
+
+    return `ws://127.0.0.1:${port}${normalizedPath}`;
+  } catch {
+    return undefined;
+  }
+}
+
+export function resolveAgilChromeDevToolsBrowserWsEndpointForTests(userDataDir: string): string | undefined {
+  return resolveChromeDevToolsBrowserWsEndpoint(userDataDir);
+}
+
+async function resolveChromeDevToolsBrowserWsEndpointFromPort(port: number): Promise<string | undefined> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), resolveAgilBrowserConnectTimeoutMs());
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const payload = await response.json() as { webSocketDebuggerUrl?: unknown };
+    return typeof payload.webSocketDebuggerUrl === "string"
+      ? payload.webSocketDebuggerUrl
+      : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readRunningChromeDevToolsBrowserWsEndpoints(): Promise<string[]> {
+  const endpoints: string[] = [];
+  const seen = new Set<string>();
+
+  for (const port of readRunningChromeDebugPorts()) {
+    const endpoint = await resolveChromeDevToolsBrowserWsEndpointFromPort(port);
+    if (!endpoint || seen.has(endpoint)) {
+      continue;
+    }
+
+    seen.add(endpoint);
+    endpoints.push(endpoint);
+  }
+
+  return endpoints;
+}
+
+function cdpErrorMessage(method: string, response: CdpResponse): string {
+  return response.error?.message
+    ? `${method}: ${response.error.message}`
+    : `${method} failed.`;
+}
+
+async function createCdpClient(endpoint: string, timeoutMs: number): Promise<CdpClient> {
+  if (typeof WebSocket !== "function") {
+    throw new Error("WebSocket is not available for Chrome DevTools.");
+  }
+
+  const socket = new WebSocket(endpoint);
+  let nextId = 1;
+  const pending = new Map<number, {
+    method: string;
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
+  const eventWaiters: Array<{
+    method: string;
+    sessionId?: string;
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }> = [];
+
+  const failAll = (error: Error) => {
+    for (const [id, waiter] of pending) {
+      clearTimeout(waiter.timer);
+      waiter.reject(error);
+      pending.delete(id);
+    }
+
+    while (eventWaiters.length > 0) {
+      const waiter = eventWaiters.pop();
+      if (!waiter) {
+        continue;
+      }
+      clearTimeout(waiter.timer);
+      waiter.reject(error);
+    }
+  };
+
+  socket.addEventListener("message", (event) => {
+    let message: CdpResponse;
+    try {
+      message = JSON.parse(String(event.data)) as CdpResponse;
+    } catch {
+      return;
+    }
+
+    if (typeof message.id === "number") {
+      const waiter = pending.get(message.id);
+      if (!waiter) {
+        return;
+      }
+
+      pending.delete(message.id);
+      clearTimeout(waiter.timer);
+      if (message.error) {
+        waiter.reject(new Error(cdpErrorMessage(waiter.method, message)));
+      } else {
+        waiter.resolve(message.result);
+      }
+      return;
+    }
+
+    if (!message.method) {
+      return;
+    }
+
+    for (let index = 0; index < eventWaiters.length; index += 1) {
+      const waiter = eventWaiters[index];
+      if (waiter.method !== message.method || waiter.sessionId !== message.sessionId) {
+        continue;
+      }
+
+      eventWaiters.splice(index, 1);
+      clearTimeout(waiter.timer);
+      waiter.resolve(message.params);
+      break;
+    }
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Chrome DevTools websocket did not open in time.")), timeoutMs);
+    socket.addEventListener("open", () => {
+      clearTimeout(timer);
+      resolve();
+    }, { once: true });
+    socket.addEventListener("error", () => {
+      clearTimeout(timer);
+      reject(new Error("Chrome DevTools websocket failed to open."));
+    }, { once: true });
+  });
+
+  socket.addEventListener("error", () => failAll(new Error("Chrome DevTools websocket failed.")));
+  socket.addEventListener("close", () => failAll(new Error("Chrome DevTools websocket closed.")));
+
+  return {
+    close: () => {
+      try {
+        socket.close();
+      } catch {
+        // Ignore close failures.
+      }
+    },
+    send: (method, params = {}, sessionId) => {
+      const id = nextId;
+      nextId += 1;
+      const payload: Record<string, unknown> = {
+        id,
+        method,
+        params,
+      };
+      if (sessionId) {
+        payload.sessionId = sessionId;
+      }
+
+      socket.send(JSON.stringify(payload));
+      return new Promise<unknown>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          reject(new Error(`${method} timed out.`));
+        }, timeoutMs);
+        pending.set(id, {
+          method,
+          resolve,
+          reject,
+          timer,
+        });
+      });
+    },
+    waitForEvent: (method, sessionId, eventTimeoutMs) => new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const index = eventWaiters.findIndex((waiter) =>
+          waiter.method === method && waiter.sessionId === sessionId && waiter.resolve === resolve
+        );
+        if (index >= 0) {
+          eventWaiters.splice(index, 1);
+        }
+        reject(new Error(`${method} timed out.`));
+      }, eventTimeoutMs);
+      eventWaiters.push({
+        method,
+        sessionId,
+        resolve,
+        reject,
+        timer,
+      });
+    }),
+  };
+}
+
+function normalizeCdpStorageSnapshot(value: unknown): BrowserStorageSnapshot {
+  const candidate = typeof value === "object" && value !== null
+    ? value as Partial<BrowserStorageSnapshot>
+    : {};
+
+  return {
+    tokenSearchFlight: typeof candidate.tokenSearchFlight === "string" ? candidate.tokenSearchFlight : "",
+    userData: typeof candidate.userData === "string" ? candidate.userData : "",
+    ip: typeof candidate.ip === "string" ? candidate.ip : "",
+  };
+}
+
+async function waitForAgilStorageSnapshotInCdpSession(
+  client: CdpClient,
+  sessionId: string,
+): Promise<BrowserStorageSnapshot> {
+  const deadline = Date.now() + 5000;
+  let latest: BrowserStorageSnapshot = {
+    tokenSearchFlight: "",
+    userData: "",
+    ip: "",
+  };
+
+  do {
+    const evaluated = await client.send("Runtime.evaluate", {
+      expression: `(() => ({
+        tokenSearchFlight: localStorage.getItem("tokenSearchFlight") || localStorage.getItem("tokenTravelC") || "",
+        userData: localStorage.getItem("user_data") || "",
+        ip: localStorage.getItem("ip") || ""
+      }))()`,
+      returnByValue: true,
+      awaitPromise: true,
+    }, sessionId) as { result?: { value?: unknown } };
+    latest = normalizeCdpStorageSnapshot(evaluated.result?.value);
+    if (latest.tokenSearchFlight && latest.userData && latest.ip) {
+      return latest;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  } while (Date.now() < deadline);
+
+  return latest;
+}
+
+async function readAgilStorageSnapshotFromDevToolsEndpoint(endpoint: string): Promise<BrowserStorageSnapshot> {
+  const client = await createCdpClient(endpoint, resolveAgilBrowserConnectTimeoutMs());
+  try {
+    return await readAgilStorageSnapshotFromNavigable(async (origin) => {
+      const target = await client.send("Target.createTarget", { url: "about:blank" }) as { targetId?: string };
+      const targetId = target.targetId;
+      if (!targetId) {
+        throw new Error("Chrome DevTools did not create a target.");
+      }
+
+      try {
+        const attached = await client.send("Target.attachToTarget", {
+          targetId,
+          flatten: true,
+        }) as { sessionId?: string };
+        const sessionId = attached.sessionId;
+        if (!sessionId) {
+          throw new Error("Chrome DevTools did not attach to the target.");
+        }
+
+        await client.send("Page.enable", {}, sessionId);
+        await client.send("Runtime.enable", {}, sessionId);
+        const domReady = client.waitForEvent("Page.domContentEventFired", sessionId, 30000).catch(() => undefined);
+        await client.send("Page.navigate", { url: origin }, sessionId);
+        await domReady;
+        return await waitForAgilStorageSnapshotInCdpSession(client, sessionId);
+      } finally {
+        await client.send("Target.closeTarget", { targetId }).catch(() => undefined);
+      }
+    });
+  } finally {
+    client.close();
+  }
+}
+
 function temporaryChromeStorageFallbackEnabled(): boolean {
-  return String(process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK ?? "0").trim() === "1";
+  const value = String(process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK ?? "1").trim().toLowerCase();
+  return value !== "0" && value !== "false" && value !== "no" && value !== "off";
 }
 
 function readChromeProfileName(userDataDir = resolveBrowserUserDataDir()): string {
@@ -783,6 +1231,17 @@ async function readAgilStorageSnapshotFromContext(
   });
 }
 
+async function disconnectBrowser(browser: Browser | undefined): Promise<void> {
+  if (!browser) {
+    return;
+  }
+
+  const maybeDisconnectable = browser as Browser & { disconnect?: () => void | Promise<void> };
+  if (typeof maybeDisconnectable.disconnect === "function") {
+    await Promise.resolve(maybeDisconnectable.disconnect()).catch(() => undefined);
+  }
+}
+
 function candidateTokensNearKey(text: string, key: string): string[] {
   const candidates: string[] = [];
   let cursor = 0;
@@ -988,9 +1447,34 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
       const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
       failures.push(`connected browser: ${detail}`);
     } finally {
-      if (browser) {
-        await browser.close().catch(() => undefined);
-      }
+      await disconnectBrowser(browser);
+    }
+  }
+
+  for (const devToolsEndpoint of await readRunningChromeDevToolsBrowserWsEndpoints()) {
+    if (devToolsEndpoint === browserEndpoint) {
+      continue;
+    }
+
+    try {
+      return await readAgilStorageSnapshotFromDevToolsEndpoint(devToolsEndpoint);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
+      failures.push(`running Chrome DevTools: ${detail}`);
+    }
+  }
+
+  for (const userDataDir of userDataDirs) {
+    const devToolsEndpoint = resolveChromeDevToolsBrowserWsEndpoint(userDataDir);
+    if (!devToolsEndpoint || devToolsEndpoint === browserEndpoint) {
+      continue;
+    }
+
+    try {
+      return await readAgilStorageSnapshotFromDevToolsEndpoint(devToolsEndpoint);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
+      failures.push(`${userDataDir} DevTools: ${detail}`);
     }
   }
 
@@ -1030,25 +1514,19 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
       const userDataDir = prepareTemporaryChromeProfile(userDataDirRoot, profileName);
       const port = 9400 + Math.floor(Math.random() * 200);
       let chrome: ChildProcess | undefined;
-      let browser: Browser | undefined;
 
       try {
         chrome = launchChromeForCdp(userDataDir, profileName, port);
         await waitForDebugger(port);
-        const playwright = await getPlaywright();
-        browser = await playwright.chromium.connectOverCDP(`http://127.0.0.1:${port}`, {
-          timeout: resolveAgilBrowserConnectTimeoutMs(),
-        });
-        const context = browser.contexts()[0];
-        return await readAgilStorageSnapshotFromContext(context);
+        const endpoint = await resolveChromeDevToolsBrowserWsEndpointFromPort(port);
+        if (!endpoint) {
+          throw new Error("Chrome debugger endpoint was not available.");
+        }
+        return await readAgilStorageSnapshotFromDevToolsEndpoint(endpoint);
       } catch (error) {
         const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
         failures.push(`${profileName}: ${detail}`);
       } finally {
-        if (browser) {
-          await browser.close().catch(() => undefined);
-        }
-
         await cleanupTemporaryChromeLaunch(userDataDir, chrome);
       }
     }

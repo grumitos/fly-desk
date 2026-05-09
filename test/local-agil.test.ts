@@ -6,12 +6,15 @@ import { join } from "node:path";
 import {
   AGIL_CONCURRENCY,
   buildLocalAgilSearchRedirectUrl,
+  extractAgilChromeDebugPortsFromCommandLinesForTests,
+  extractAgilChromeUserDataDirsFromCommandLinesForTests,
   extractAgilBrowserStorageSnapshotForTests,
   parseAgilApimSubscriptionKeyFromFrontendBundle,
   parseAgilRefreshTokenPayload,
   parseAgilSessionData,
   readAgilChromeProfileCandidatesForTests,
   readAgilStorageSnapshotFromPage,
+  resolveAgilChromeDevToolsBrowserWsEndpointForTests,
   sameAgilSessionIdentity,
   resetAgilApimSubscriptionKeyCacheForTests,
   shouldReuseAgilSession,
@@ -168,6 +171,39 @@ test("Agil profile discovery tries the configured Chrome profile before automati
   }
 });
 
+test("Agil user data discovery reads active Chrome process profile roots", () => {
+  assert.deepEqual(extractAgilChromeUserDataDirsFromCommandLinesForTests([
+    '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9222 --user-data-dir=D:\\ChromeRuns\\live-profile --new-window about:blank',
+    '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --user-data-dir="D:\\Chrome Runs\\profile with spaces" --profile-directory=Default',
+    '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --type=renderer --lang=es-419',
+  ]), [
+    "D:\\ChromeRuns\\live-profile",
+    "D:\\Chrome Runs\\profile with spaces",
+  ]);
+});
+
+test("Agil DevTools discovery reads active Chrome remote debugging ports", () => {
+  assert.deepEqual(extractAgilChromeDebugPortsFromCommandLinesForTests([
+    '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9222 --user-data-dir=D:\\ChromeRuns\\live-profile',
+    '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --type=renderer --remote-debugging-port=9222 --user-data-dir=D:\\ChromeRuns\\live-profile',
+    '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=not-a-port --user-data-dir=D:\\ChromeRuns\\bad',
+  ]), [9222]);
+});
+
+test("Agil can resolve an active Chrome DevTools browser endpoint from a user data dir", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-agil-devtools-"));
+  writeFileSync(join(tempRoot, "DevToolsActivePort"), "9222\n/devtools/browser/session-id\n", "utf8");
+
+  try {
+    assert.equal(
+      resolveAgilChromeDevToolsBrowserWsEndpointForTests(tempRoot),
+      "ws://127.0.0.1:9222/devtools/browser/session-id",
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("Agil session extraction prefers fresher Chrome storage over a stale configured profile", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-agil-storage-freshness-"));
   const staleProfile = "Profile 40";
@@ -223,8 +259,10 @@ test("Agil session extraction prefers fresher Chrome storage over a stale config
   const previousProfile = process.env.AGIL_CHROME_PROFILE;
   const previousBrowserUrl = process.env.AGIL_BROWSER_URL;
   const previousBrowserWsEndpoint = process.env.AGIL_BROWSER_WS_ENDPOINT;
+  const previousProcessDiscovery = process.env.AGIL_CHROME_PROCESS_DISCOVERY;
   process.env.AGIL_CHROME_USER_DATA_DIR = tempRoot;
   process.env.AGIL_CHROME_PROFILE = staleProfile;
+  process.env.AGIL_CHROME_PROCESS_DISCOVERY = "0";
   delete process.env.AGIL_BROWSER_URL;
   delete process.env.AGIL_BROWSER_WS_ENDPOINT;
 
@@ -259,6 +297,12 @@ test("Agil session extraction prefers fresher Chrome storage over a stale config
       delete process.env.AGIL_BROWSER_WS_ENDPOINT;
     } else {
       process.env.AGIL_BROWSER_WS_ENDPOINT = previousBrowserWsEndpoint;
+    }
+
+    if (previousProcessDiscovery === undefined) {
+      delete process.env.AGIL_CHROME_PROCESS_DISCOVERY;
+    } else {
+      process.env.AGIL_CHROME_PROCESS_DISCOVERY = previousProcessDiscovery;
     }
 
     rmSync(tempRoot, { recursive: true, force: true });

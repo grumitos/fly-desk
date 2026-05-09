@@ -54,6 +54,63 @@ function resolveWorkerPath(): string | undefined {
   return existsSync(workerPath) ? workerPath : undefined;
 }
 
+interface BunExecutableResolverOptions {
+  env?: Record<string, string | undefined>;
+  execPath?: string;
+  platform?: NodeJS.Platform;
+  exists?: (path: string) => boolean;
+}
+
+function normalizeExecutableCandidate(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  if (
+    (trimmed.startsWith("\"") && trimmed.endsWith("\""))
+    || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim() || undefined;
+  }
+
+  return trimmed;
+}
+
+function isLikelyBunExecutable(value: string): boolean {
+  const fileName = value.replace(/\\/g, "/").split("/").pop()?.toLowerCase();
+  return fileName === "bun" || fileName === "bun.exe";
+}
+
+function resolveBunExecutable(options: BunExecutableResolverOptions = {}): string {
+  const env = options.env ?? process.env;
+  const execPath = normalizeExecutableCandidate(options.execPath ?? process.execPath);
+  const platform = options.platform ?? process.platform;
+  const pathExists = options.exists ?? existsSync;
+  const executableName = platform === "win32" ? "bun.exe" : "bun";
+  const explicitExecutable = normalizeExecutableCandidate(env.BUN_EXECUTABLE_PATH);
+  if (explicitExecutable) {
+    return explicitExecutable;
+  }
+
+  if (execPath && isLikelyBunExecutable(execPath)) {
+    return execPath;
+  }
+
+  const bunInstall = normalizeExecutableCandidate(env.BUN_INSTALL);
+  const candidates = [
+    bunInstall ? join(bunInstall, "bin", executableName) : undefined,
+    env.USERPROFILE ? join(env.USERPROFILE, ".bun", "bin", "bun.exe") : undefined,
+    env.HOME ? join(env.HOME, ".bun", "bin", executableName) : undefined,
+  ];
+
+  return candidates.find((candidate) => candidate && pathExists(candidate)) ?? "bun";
+}
+
+export function resolveSearchWorkerBunExecutableForTests(options: BunExecutableResolverOptions): string {
+  return resolveBunExecutable(options);
+}
+
 function rejectWithWorkerError(message: Extract<ProviderSearchWorkerMessage, { type: "error" }>): Error {
   const error = new Error(message.message);
   error.name = message.name || "ProviderSearchWorkerError";
@@ -118,10 +175,12 @@ function runInWorker(
   }
 
   return new Promise((resolve, reject) => {
-    const child = Bun.spawn([process.execPath, workerPath], {
+    const bunExecutable = resolveBunExecutable();
+    const child = Bun.spawn([bunExecutable, workerPath], {
       cwd: process.cwd(),
       env: {
         ...process.env,
+        BUN_EXECUTABLE_PATH: bunExecutable,
         FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS: "1",
       },
       stdin: "pipe",
