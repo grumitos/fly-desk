@@ -1,11 +1,12 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AGIL_CONCURRENCY,
   buildLocalAgilSearchRedirectUrl,
+  extractAgilBrowserStorageSnapshotForTests,
   parseAgilApimSubscriptionKeyFromFrontendBundle,
   parseAgilRefreshTokenPayload,
   parseAgilSessionData,
@@ -161,6 +162,103 @@ test("Agil profile discovery tries the configured Chrome profile before automati
       delete process.env.AGIL_CHROME_PROFILE;
     } else {
       process.env.AGIL_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("Agil session extraction prefers fresher Chrome storage over a stale configured profile", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-agil-storage-freshness-"));
+  const staleProfile = "Profile 40";
+  const freshProfile = "Profile 41";
+
+  const writeAgilStorage = (
+    profileName: string,
+    userCode: number,
+    internalCode: string,
+    ip: string,
+    mtime: Date,
+    token = "",
+  ) => {
+    const storageDir = join(tempRoot, profileName, "Local Storage", "leveldb");
+    mkdirSync(storageDir, { recursive: true });
+    const userPayload = Buffer.from(JSON.stringify({
+      Usuario: {
+        CodigoUsuario: userCode,
+      },
+      Cliente: {
+        Vendedor: {
+          CodigoVendedor: internalCode,
+        },
+      },
+    })).toString("base64");
+    const ipPayload = Buffer.from(ip).toString("base64");
+    const filePath = join(storageDir, "000001.log");
+    writeFileSync(filePath, `tokenTravelC ${token} user_data ${userPayload} ip ${ipPayload}`, "utf8");
+    utimesSync(filePath, mtime, mtime);
+  };
+
+  writeFileSync(
+    join(tempRoot, "Local State"),
+    JSON.stringify({
+      profile: {
+        last_used: staleProfile,
+        last_active_profiles: [staleProfile, freshProfile],
+        info_cache: {
+          [staleProfile]: {},
+          [freshProfile]: {},
+        },
+      },
+    }),
+    "utf8",
+  );
+
+  const tokenPayload = Buffer.from(JSON.stringify({ exp: 1893459600 })).toString("base64url");
+  const freshToken = `header.${tokenPayload}.signature`;
+  writeAgilStorage(staleProfile, 1111, "STALE", "1.1.1.1", new Date("2026-01-01T00:00:00Z"));
+  writeAgilStorage(freshProfile, 2222, "FRESH", "2.2.2.2", new Date("2026-02-01T00:00:00Z"), freshToken);
+
+  const previousUserDataDir = process.env.AGIL_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.AGIL_CHROME_PROFILE;
+  const previousBrowserUrl = process.env.AGIL_BROWSER_URL;
+  const previousBrowserWsEndpoint = process.env.AGIL_BROWSER_WS_ENDPOINT;
+  process.env.AGIL_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.AGIL_CHROME_PROFILE = staleProfile;
+  delete process.env.AGIL_BROWSER_URL;
+  delete process.env.AGIL_BROWSER_WS_ENDPOINT;
+
+  try {
+    const snapshot = await extractAgilBrowserStorageSnapshotForTests();
+    const session = parseAgilSessionData(snapshot);
+
+    assert.equal(session.userCode, 2222);
+    assert.equal(session.internalCode, "FRESH");
+    assert.equal(session.ip, "2.2.2.2");
+    assert.equal(session.token, freshToken);
+  } finally {
+    if (previousUserDataDir === undefined) {
+      delete process.env.AGIL_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.AGIL_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.AGIL_CHROME_PROFILE;
+    } else {
+      process.env.AGIL_CHROME_PROFILE = previousProfile;
+    }
+
+    if (previousBrowserUrl === undefined) {
+      delete process.env.AGIL_BROWSER_URL;
+    } else {
+      process.env.AGIL_BROWSER_URL = previousBrowserUrl;
+    }
+
+    if (previousBrowserWsEndpoint === undefined) {
+      delete process.env.AGIL_BROWSER_WS_ENDPOINT;
+    } else {
+      process.env.AGIL_BROWSER_WS_ENDPOINT = previousBrowserWsEndpoint;
     }
 
     rmSync(tempRoot, { recursive: true, force: true });
