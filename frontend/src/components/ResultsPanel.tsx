@@ -134,13 +134,6 @@ function ResultsPanelBase({
               >
                 Duración
               </SegmentButton>
-              <SegmentButton
-                active={sort === "best-value"}
-                aria-label="Ordenar por mejor valor"
-                onClick={() => onSort("best-value")}
-              >
-                Mejor valor
-              </SegmentButton>
             </SegmentedControl>
           )}
         </div>
@@ -239,7 +232,7 @@ function renderBody({
 
     return (
       <EmptyState
-        icon={<AppIcon name="bestValue" />}
+        icon={<AppIcon name="sort" />}
         title={emptyModel.title}
         body={emptyModel.body}
       />

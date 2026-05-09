@@ -128,7 +128,6 @@ export interface CanonicalOffer {
   comparisonMetrics?: ComparisonMetrics
   tags?: string[]
   warnings?: string[]
-  valueScore?: number
   price: {
     total: { amount: number; currencyCode: string }
     base?: { amount: number; currencyCode: string }
@@ -217,7 +216,7 @@ export interface MatrixCell {
   offer?: CanonicalOffer
 }
 
-export type SortMode = "cheapest" | "fastest" | "best-value"
+export type SortMode = "cheapest" | "fastest"
 
 export type ResultsLayoutColumnKey =
   | "carrier"

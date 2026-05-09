@@ -24,7 +24,7 @@ import type {
 } from "./search-worker-protocol";
 
 function send(message: ProviderSearchWorkerMessage): void {
-  process.send?.(message);
+  process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
 function serializeError(id: string, error: unknown): ProviderSearchWorkerError {
@@ -109,8 +109,61 @@ async function runProviderSearch(input: ProviderSearchWorkerRequest): Promise<Pr
   });
 }
 
-process.on("message", (message: ProviderSearchWorkerRequest) => {
+let pendingMessages = 0;
+let stdinEnded = false;
+let inputBuffer = "";
+
+function maybeExit(): void {
+  if (stdinEnded && pendingMessages === 0) {
+    process.exit(0);
+  }
+}
+
+function handleWorkerRequest(message: ProviderSearchWorkerRequest): void {
+  pendingMessages += 1;
   void runProviderSearch(message)
     .then((result) => send(result))
-    .catch((error) => send(serializeError(message.id, error)));
+    .catch((error) => send(serializeError(message.id, error)))
+    .finally(() => {
+      pendingMessages -= 1;
+      maybeExit();
+    });
+}
+
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  inputBuffer += String(chunk);
+  for (;;) {
+    const newlineIndex = inputBuffer.indexOf("\n");
+    if (newlineIndex === -1) {
+      break;
+    }
+
+    const line = inputBuffer.slice(0, newlineIndex).trim();
+    inputBuffer = inputBuffer.slice(newlineIndex + 1);
+    if (!line) {
+      continue;
+    }
+
+    try {
+      handleWorkerRequest(JSON.parse(line) as ProviderSearchWorkerRequest);
+    } catch (error) {
+      send(serializeError("unknown", error));
+    }
+  }
+});
+
+process.stdin.on("end", () => {
+  const line = inputBuffer.trim();
+  inputBuffer = "";
+  if (line) {
+    try {
+      handleWorkerRequest(JSON.parse(line) as ProviderSearchWorkerRequest);
+    } catch (error) {
+      send(serializeError("unknown", error));
+    }
+  }
+
+  stdinEnded = true;
+  maybeExit();
 });

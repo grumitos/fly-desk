@@ -67,7 +67,7 @@ const BrandPlane = forwardRef<SVGSVGElement, LucideProps>(function BrandPlane(
 
 export const appIconRegistry = {
   alert: AlertTriangle,
-  bestValue: ArrowUpDown,
+  sort: ArrowUpDown,
   baggage: Briefcase,
   calendar: Calendar,
   check: Check,

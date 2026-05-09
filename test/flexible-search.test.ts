@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import type { ProviderMeta, SearchRequest } from "../src/core/types";
 import {

@@ -26,11 +26,13 @@ type Filters = {
   baggageRequired?: boolean
 }
 
+const DEFAULT_SORT_MODE: SortMode = "cheapest"
+
 export default function App() {
   const { results, loading, error, statusMessage, diagnosticLog, runSearch, cancel } = useSearch()
   const [initialSharedSearch] = useState<SharedSearchState | null>(() => readInitialSharedSearch())
   const initialSharedRequest = initialSharedSearch?.request ?? null
-  const [sortMode, setSortMode] = useState<SortMode>(() => initialSharedSearch?.sortMode ?? "cheapest")
+  const [sortMode, setSortMode] = useState<SortMode>(() => initialSharedSearch?.sortMode ?? DEFAULT_SORT_MODE)
   const [selectedOffer, setSelectedOffer] = useState<CanonicalOffer | null>(null)
   const [lastRequest, setLastRequest] = useState<SearchRequest | null>(null)
   const [workspaceReady, setWorkspaceReady] = useState(false)
@@ -112,7 +114,7 @@ export default function App() {
     (request: SearchRequest, sort?: SortMode) => {
       pendingSearchFrameRectRef.current = searchFrameRef.current?.getBoundingClientRect() ?? null
       const merged = { ...request, ...filtersRef.current, includedAirlineCodes: selectedAirlinesRef.current }
-      const nextSort = sort ?? sortModeRef.current
+      const nextSort = sort ?? defaultSortForRequest()
       setClipboardError(null)
       setSelectedOffer(null)
       setSortMode(nextSort)
@@ -602,6 +604,10 @@ function applyMigrationFilters(results: SearchJobResponse, filteredOffers: Canon
   }
 }
 
+function defaultSortForRequest(): SortMode {
+  return DEFAULT_SORT_MODE
+}
+
 function cheapestOfferForMonth(offers: CanonicalOffer[]) {
   return [...offers].sort((left, right) =>
     compareNumber(priceAmount(left), priceAmount(right))
@@ -630,14 +636,6 @@ function compareOffersForDisplay(left: CanonicalOffer, right: CanonicalOffer, so
   if (sortMode === "fastest") {
     return compareNumber(totalDurationForDisplay(left), totalDurationForDisplay(right))
       || compareNumber(priceAmount(left), priceAmount(right))
-  }
-
-  const leftScore = normalizedNumber(left.valueScore)
-  const rightScore = normalizedNumber(right.valueScore)
-  if (leftScore !== null || rightScore !== null) {
-    return compareNumber(leftScore ?? Number.POSITIVE_INFINITY, rightScore ?? Number.POSITIVE_INFINITY)
-      || compareNumber(priceAmount(left), priceAmount(right))
-      || compareNumber(totalDurationForDisplay(left), totalDurationForDisplay(right))
   }
 
   return 0

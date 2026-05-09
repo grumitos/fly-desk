@@ -1835,7 +1835,6 @@ function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): Canon
       officeId: group.gds?.officeId,
       iata: group.gds?.iata,
     },
-    valueScore: 0,
   };
 
   offer.signature = buildOfferSignature(offer);

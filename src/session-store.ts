@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
-import Database = require("better-sqlite3");
+import { Database } from "bun:sqlite";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import { LIST_SEARCH_RESULT_LIMIT } from "./search-limits";
 import {
@@ -109,7 +109,7 @@ export interface SearchJobRecord {
   providerMeta: ProviderMeta;
   warnings: string[];
   providerDiagnostics?: ProviderDiagnostics[];
-  sortMode: "cheapest" | "fastest" | "best-value";
+  sortMode: "cheapest" | "fastest";
   status: SearchJobStatus;
   error?: string;
   createdAt: string;
@@ -200,6 +200,33 @@ function parseJsonPayload<T>(payload: string): T | undefined {
     return JSON.parse(payload) as T;
   } catch {
     return undefined;
+  }
+}
+
+function runSql(db: Database, sql: string, ...params: any[]): void {
+  const statement = db.prepare(sql);
+  try {
+    statement.run(...params);
+  } finally {
+    statement.finalize();
+  }
+}
+
+function getSql<T>(db: Database, sql: string, ...params: any[]): T | undefined {
+  const statement = db.prepare(sql);
+  try {
+    return statement.get(...params) as T | undefined;
+  } finally {
+    statement.finalize();
+  }
+}
+
+function allSql<T>(db: Database, sql: string, ...params: any[]): T[] {
+  const statement = db.prepare(sql);
+  try {
+    return statement.all(...params) as T[];
+  } finally {
+    statement.finalize();
   }
 }
 
@@ -329,7 +356,7 @@ export class SearchSessionStore {
   private readonly ownerPurchasePathIds = new Map<string, Map<string, string>>();
   private readonly matrixJobs = new Map<string, MatrixJobRecord>();
   private readonly searchJobs = new Map<string, SearchJobRecord>();
-  private readonly db: Database.Database | undefined;
+  private readonly db: Database | undefined;
   private readonly legacyPersistPath: string | undefined;
   private persistTimer: NodeJS.Timeout | undefined;
   private bootstrapping = false;
@@ -344,11 +371,11 @@ export class SearchSessionStore {
     if (dbPath) {
       mkdirSync(dirname(dbPath), { recursive: true });
       this.db = new Database(dbPath);
-      this.db.pragma("journal_mode = WAL");
-      this.db.pragma("synchronous = NORMAL");
-      this.db.pragma("temp_store = MEMORY");
-      this.db.pragma("busy_timeout = 5000");
-      this.db.pragma("foreign_keys = ON");
+      this.db.run("PRAGMA journal_mode = WAL;");
+      this.db.run("PRAGMA synchronous = NORMAL;");
+      this.db.run("PRAGMA temp_store = MEMORY;");
+      this.db.run("PRAGMA busy_timeout = 5000;");
+      this.db.run("PRAGMA foreign_keys = ON;");
       this.initializeDatabase();
       this.loadPersisted();
     }
@@ -360,7 +387,14 @@ export class SearchSessionStore {
       this.persistTimer = undefined;
     }
     this.persistNow();
-    this.db?.close();
+    if (this.db) {
+      try {
+        this.db.run("PRAGMA wal_checkpoint(TRUNCATE);");
+      } catch {
+        // Closing the database is still the important cleanup path.
+      }
+      this.db.close(true);
+    }
   }
 
   getSession(sessionId: string): SearchSessionRecord | undefined {
@@ -1136,7 +1170,8 @@ export class SearchSessionStore {
         return true;
       }
 
-      const insertSearchJob = this.db.prepare(`
+      const db = this.db;
+      const insertSearchJob = db.prepare(`
         INSERT INTO search_jobs (
           id,
           idle_at_ms,
@@ -1148,7 +1183,7 @@ export class SearchSessionStore {
           payload
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
-      const insertMatrixJob = this.db.prepare(`
+      const insertMatrixJob = db.prepare(`
         INSERT INTO matrix_jobs (
           id,
           idle_at_ms,
@@ -1156,7 +1191,7 @@ export class SearchSessionStore {
           payload
         ) VALUES (?, ?, ?, ?)
       `);
-      const insertPurchasePath = this.db.prepare(`
+      const insertPurchasePath = db.prepare(`
         INSERT INTO purchase_paths (
           id,
           session_id,
@@ -1165,51 +1200,57 @@ export class SearchSessionStore {
           payload
         ) VALUES (?, ?, ?, ?, ?)
       `);
-      const writePayload = this.db.transaction((nextPayload: PersistedSearchSessionStore) => {
-        this.db?.prepare("DELETE FROM purchase_paths").run();
-        this.db?.prepare("DELETE FROM matrix_jobs").run();
-        this.db?.prepare("DELETE FROM search_jobs").run();
+      try {
+        const writePayload = db.transaction((nextPayload: PersistedSearchSessionStore) => {
+          runSql(db, "DELETE FROM purchase_paths");
+          runSql(db, "DELETE FROM matrix_jobs");
+          runSql(db, "DELETE FROM search_jobs");
 
-        for (const job of nextPayload.searchJobs) {
-          insertSearchJob.run(
-            job.id,
-            resolveIdleTimestampMs(job),
-            job.status,
-            job.sortMode,
-            serializeForComparison(normalizeSearchRequestForSearchCache(job.request)),
-            serializeForComparison(job.searchMeta.providersUsed ?? []),
-            serializeForComparison(normalizeProviderContextForSearchCache(job.providerContext)),
-            JSON.stringify(job),
-          );
-        }
+          for (const job of nextPayload.searchJobs) {
+            insertSearchJob.run(
+              job.id,
+              resolveIdleTimestampMs(job),
+              job.status,
+              job.sortMode,
+              serializeForComparison(normalizeSearchRequestForSearchCache(job.request)),
+              serializeForComparison(job.searchMeta.providersUsed ?? []),
+              serializeForComparison(normalizeProviderContextForSearchCache(job.providerContext)),
+              JSON.stringify(job),
+            );
+          }
 
-        for (const job of nextPayload.matrixJobs) {
-          insertMatrixJob.run(
-            job.id,
-            resolveIdleTimestampMs(job),
-            job.status,
-            JSON.stringify(job),
-          );
-        }
+          for (const job of nextPayload.matrixJobs) {
+            insertMatrixJob.run(
+              job.id,
+              resolveIdleTimestampMs(job),
+              job.status,
+              JSON.stringify(job),
+            );
+          }
 
-        for (const path of nextPayload.purchasePaths) {
-          insertPurchasePath.run(
-            path.path.id,
-            path.sessionId,
-            path.ownerId,
-            path.fingerprint,
-            JSON.stringify(path),
-          );
-        }
+          for (const path of nextPayload.purchasePaths) {
+            insertPurchasePath.run(
+              path.path.id,
+              path.sessionId,
+              path.ownerId,
+              path.fingerprint,
+              JSON.stringify(path),
+            );
+          }
 
-        this.db?.prepare(`
-          INSERT INTO cache_meta (key, value)
-          VALUES ('savedAt', ?)
-          ON CONFLICT(key) DO UPDATE SET value = excluded.value
-        `).run(nextPayload.savedAt);
-      });
+          runSql(db, `
+            INSERT INTO cache_meta (key, value)
+            VALUES ('savedAt', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+          `, nextPayload.savedAt);
+        });
 
-      writePayload(payload);
+        writePayload(payload);
+      } finally {
+        insertSearchJob.finalize();
+        insertMatrixJob.finalize();
+        insertPurchasePath.finalize();
+      }
       this.lastPersistedPayload = serializedForComparison;
       logPerfSpan("sessionStore.persist", persistStart, {
         searchJobs: payload.searchJobs.length,
@@ -1332,12 +1373,12 @@ export class SearchSessionStore {
       return false;
     }
 
-    const row = this.db.prepare(`
+    const row = getSql<{ total?: number }>(this.db, `
       SELECT
         (SELECT COUNT(*) FROM search_jobs)
         + (SELECT COUNT(*) FROM matrix_jobs)
         + (SELECT COUNT(*) FROM purchase_paths) AS total
-    `).get() as { total?: number } | undefined;
+    `);
     return Number(row?.total ?? 0) > 0;
   }
 
@@ -1346,15 +1387,9 @@ export class SearchSessionStore {
       return;
     }
 
-    const searchJobs = this.db
-      .prepare("SELECT payload FROM search_jobs ORDER BY id")
-      .all() as SqlitePayloadRow[];
-    const matrixJobs = this.db
-      .prepare("SELECT payload FROM matrix_jobs ORDER BY id")
-      .all() as SqlitePayloadRow[];
-    const purchasePaths = this.db
-      .prepare("SELECT payload FROM purchase_paths ORDER BY id")
-      .all() as SqlitePayloadRow[];
+    const searchJobs = allSql<SqlitePayloadRow>(this.db, "SELECT payload FROM search_jobs ORDER BY id");
+    const matrixJobs = allSql<SqlitePayloadRow>(this.db, "SELECT payload FROM matrix_jobs ORDER BY id");
+    const purchasePaths = allSql<SqlitePayloadRow>(this.db, "SELECT payload FROM purchase_paths ORDER BY id");
 
     this.loadPersistencePayload({
       version: 1,

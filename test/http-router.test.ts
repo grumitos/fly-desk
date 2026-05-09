@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { request as httpRequest } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -159,7 +159,6 @@ function buildCostamarOffer(url: string): CanonicalOffer {
     },
     tags: [],
     warnings: [],
-    valueScore: 1,
   };
 }
 
@@ -461,7 +460,7 @@ test("rejects unsupported multi-city searches", async () => {
   });
 });
 
-test("search endpoint preserves best-value sort mode", async () => {
+test("search endpoint defaults unsupported sort mode to cheapest", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/search`, {
       method: "POST",
@@ -469,7 +468,7 @@ test("search endpoint preserves best-value sort mode", async () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        sortMode: "best-value",
+        sortMode: "unsupported",
         request: {
           tripType: "round-trip",
           searchMode: "exact",
@@ -492,7 +491,7 @@ test("search endpoint preserves best-value sort mode", async () => {
 
     assert.equal(response.status, 200);
     const payload = await response.json() as { sortMode?: string };
-    assert.equal(payload.sortMode, "best-value");
+    assert.equal(payload.sortMode, "cheapest");
   });
 });
 

@@ -1,4 +1,3 @@
-import { fork, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -29,6 +28,7 @@ export interface ProviderSearchWorkerInput {
   providerContext?: ProviderContext;
   onProgress?: (result: ProviderSearchResult) => boolean | void;
   onProviderEvent?: (event: ProviderDiagnosticEvent) => void;
+  shouldContinue?: () => boolean;
 }
 
 export interface ProviderMatrixWorkerInput {
@@ -38,35 +38,20 @@ export interface ProviderMatrixWorkerInput {
   draft: MatrixResponse;
   onCellResolved?: (cell: MatrixCell) => boolean | void;
   onProviderEvent?: (event: ProviderDiagnosticEvent) => void;
+  shouldContinue?: () => boolean;
+}
+
+interface WorkerHandle {
+  kill: () => void;
 }
 
 function searchWorkerProcessesEnabled(): boolean {
   return process.env.FLY_DESK_SEARCH_WORKER_PROCESSES !== "0";
 }
 
-function hasTsxLoader(execArgv: string[]): boolean {
-  return execArgv.some((arg) => arg === "tsx" || arg.endsWith("/tsx") || arg.endsWith("\\tsx"));
-}
-
-function resolveWorkerLaunch(): { modulePath: string; execArgv: string[] } | undefined {
-  const jsPath = join(__dirname, "search-worker.js");
-  if (existsSync(jsPath)) {
-    return {
-      modulePath: jsPath,
-      execArgv: process.execArgv.filter((arg) => !arg.includes("--watch")),
-    };
-  }
-
-  const tsPath = join(__dirname, "search-worker.ts");
-  if (!existsSync(tsPath)) {
-    return undefined;
-  }
-
-  const execArgv = process.execArgv.filter((arg) => !arg.includes("--watch"));
-  return {
-    modulePath: tsPath,
-    execArgv: hasTsxLoader(execArgv) ? execArgv : ["--import", "tsx", ...execArgv],
-  };
+function resolveWorkerPath(): string | undefined {
+  const workerPath = join(process.cwd(), "src", "search-worker.ts");
+  return existsSync(workerPath) ? workerPath : undefined;
 }
 
 function rejectWithWorkerError(message: Extract<ProviderSearchWorkerMessage, { type: "error" }>): Error {
@@ -78,65 +63,143 @@ function rejectWithWorkerError(message: Extract<ProviderSearchWorkerMessage, { t
   return error;
 }
 
-function runInWorker(input: ProviderSearchWorkerRequest, onMessage: (message: ProviderSearchWorkerMessage, child: ChildProcess) => void): Promise<ProviderSearchWorkerMessage> {
-  const launch = resolveWorkerLaunch();
-  if (!searchWorkerProcessesEnabled() || !launch) {
+function parseWorkerMessage(line: string): ProviderSearchWorkerMessage | undefined {
+  try {
+    return JSON.parse(line) as ProviderSearchWorkerMessage;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readJsonLines(
+  stream: ReadableStream<Uint8Array>,
+  onLine: (line: string) => void,
+): Promise<void> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    for (;;) {
+      const newlineIndex = buffer.indexOf("\n");
+      if (newlineIndex === -1) {
+        break;
+      }
+
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (line) {
+        onLine(line);
+      }
+    }
+  }
+
+  buffer += decoder.decode();
+  const tail = buffer.trim();
+  if (tail) {
+    onLine(tail);
+  }
+}
+
+function runInWorker(
+  input: ProviderSearchWorkerRequest,
+  onMessage: (message: ProviderSearchWorkerMessage, child: WorkerHandle) => void,
+  shouldContinue?: () => boolean,
+): Promise<ProviderSearchWorkerMessage> {
+  const workerPath = resolveWorkerPath();
+  if (!searchWorkerProcessesEnabled() || !workerPath) {
     return Promise.reject(new Error("Search worker processes are disabled or unavailable."));
   }
 
   return new Promise((resolve, reject) => {
-    const child = fork(launch.modulePath, {
-      execArgv: launch.execArgv,
+    const child = Bun.spawn([process.execPath, workerPath], {
+      cwd: process.cwd(),
       env: {
         ...process.env,
         FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS: "1",
       },
-      stdio: ["ignore", "ignore", "pipe", "ipc"],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    let stderr = "";
     let settled = false;
+    let cancellationTimer: ReturnType<typeof setInterval> | undefined;
+
+    const handle: WorkerHandle = {
+      kill: () => {
+        child.kill();
+      },
+    };
 
     const finish = (callback: () => void) => {
       if (settled) {
         return;
       }
       settled = true;
+      if (cancellationTimer) {
+        clearInterval(cancellationTimer);
+      }
       callback();
       child.kill();
     };
 
-    child.stderr?.on("data", (chunk) => {
-      stderr += String(chunk);
-    });
+    if (shouldContinue) {
+      cancellationTimer = setInterval(() => {
+        let keepGoing = false;
+        try {
+          keepGoing = shouldContinue();
+        } catch {
+          keepGoing = false;
+        }
 
-    child.on("message", (message: ProviderSearchWorkerMessage) => {
+        if (!keepGoing) {
+          finish(() => reject(new Error("Search worker cancelled.")));
+        }
+      }, 500);
+      cancellationTimer.unref?.();
+    }
+
+    const stderrPromise = new Response(child.stderr).text();
+    void readJsonLines(child.stdout, (line) => {
+      const message = parseWorkerMessage(line);
       if (!message || message.id !== input.id) {
         return;
       }
 
-      onMessage(message, child);
+      onMessage(message, handle);
       if (message.type === "search-complete" || message.type === "matrix-complete") {
         finish(() => resolve(message));
       } else if (message.type === "error") {
         finish(() => reject(rejectWithWorkerError(message)));
       }
-    });
-
-    child.on("error", (error) => {
+    }).catch((error) => {
       finish(() => reject(error));
     });
 
-    child.on("exit", (code, signal) => {
+    void Promise.resolve(child.exited).then(async (code) => {
       if (settled) {
         return;
       }
 
-      const detail = stderr.trim();
-      const reason = signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`;
-      finish(() => reject(new Error(`Search worker stopped before completing (${reason}).${detail ? ` ${detail}` : ""}`)));
+      const detail = (await stderrPromise).trim();
+      finish(() => reject(new Error(
+        `Search worker stopped before completing (exit code ${code ?? "unknown"}).${detail ? ` ${detail}` : ""}`,
+      )));
+    }).catch((error: unknown) => {
+      finish(() => reject(error));
     });
 
-    child.send(input);
+    Promise.resolve(child.stdin.write(new TextEncoder().encode(`${JSON.stringify(input)}\n`)))
+      .then(() => child.stdin.end())
+      .catch((error: unknown) => {
+        finish(() => reject(error));
+      });
   });
 }
 
@@ -169,6 +232,7 @@ export async function runProviderSearchInWorker(input: ProviderSearchWorkerInput
         child.kill();
       }
     },
+    input.shouldContinue,
   );
 
   if (result.type !== "search-complete") {
@@ -208,6 +272,7 @@ export async function runProviderMatrixInWorker(input: ProviderMatrixWorkerInput
         child.kill();
       }
     },
+    input.shouldContinue,
   );
 
   if (result.type !== "matrix-complete") {

@@ -290,7 +290,6 @@ export interface CanonicalOffer {
   tags: string[];
   warnings: string[];
   rawRefs?: Record<string, unknown>;
-  valueScore: number;
 }
 
 export interface MatrixCell {

@@ -617,7 +617,6 @@ function normalizeQuotationOfferSnapshot(input: unknown, request: SearchRequest)
     tags: quotationStringArrayValue(offer.tags),
     warnings: quotationStringArrayValue(offer.warnings),
     rawRefs: quotationObjectRecord(offer.rawRefs),
-    valueScore: quotationNumberValue(offer.valueScore) ?? 0,
   };
 }
 
@@ -1067,6 +1066,7 @@ async function resolveProviderSearchProgressive(
   onProgress: (result: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => boolean | void,
   diagnostics: ProviderDiagnostics | undefined,
   onProviderEvent: ((event: ProviderDiagnosticEvent) => void) | undefined,
+  shouldContinue: (() => boolean) | undefined,
 ): Promise<{ offers: CanonicalOffer[]; warnings: string[]; partial: boolean }> {
   const kind = request.searchMode === "stay-range" ? "range" : "exact";
   if (shouldUseSearchWorkerProcesses()) {
@@ -1077,6 +1077,7 @@ async function resolveProviderSearchProgressive(
       providerContext,
       onProgress,
       onProviderEvent,
+      shouldContinue,
     });
   }
 
@@ -1101,6 +1102,7 @@ async function resolveProviderMatrixProgressive(
   onCellResolved: (cell: MatrixResponse["cells"][number]) => boolean | void,
   diagnostics: ProviderDiagnostics | undefined,
   onProviderEvent: ((event: ProviderDiagnosticEvent) => void) | undefined,
+  shouldContinue: (() => boolean) | undefined,
 ): Promise<MatrixResponse> {
   if (shouldUseSearchWorkerProcesses()) {
     return runProviderMatrixInWorker({
@@ -1110,6 +1112,7 @@ async function resolveProviderMatrixProgressive(
       draft,
       onCellResolved,
       onProviderEvent,
+      shouldContinue,
     });
   }
 
@@ -1815,6 +1818,7 @@ async function handleSearchRequest(
             onProgress,
             providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
             (event) => recordProviderEvent(event),
+            () => isSearchJobRunning(runtime, job.id),
           );
           if (!isSearchJobRunning(runtime, job.id)) {
             return;
@@ -2068,6 +2072,7 @@ async function handleMatrixRequest(
             },
             providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
             (event) => recordProviderEvent(event),
+            () => isMatrixJobRunning(runtime, job.id),
           );
           if (!isMatrixJobRunning(runtime, job.id)) {
             return;

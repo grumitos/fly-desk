@@ -1,10 +1,37 @@
-import test from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Database = require("better-sqlite3");
+import { Database } from "bun:sqlite";
 import { LocationSuggestionCacheStore, LOCATION_SUGGESTION_CACHE_TTL_MS } from "../src/location-suggestion-cache";
+
+function runSql(db: Database, sql: string, ...params: any[]): void {
+  const statement = db.prepare(sql);
+  try {
+    statement.run(...params);
+  } finally {
+    statement.finalize();
+  }
+}
+
+function getSql<T>(db: Database, sql: string, ...params: any[]): T | undefined {
+  const statement = db.prepare(sql);
+  try {
+    return statement.get(...params) as T | undefined;
+  } finally {
+    statement.finalize();
+  }
+}
+
+function allSql<T>(db: Database, sql: string, ...params: any[]): T[] {
+  const statement = db.prepare(sql);
+  try {
+    return statement.all(...params) as T[];
+  } finally {
+    statement.finalize();
+  }
+}
 
 test("location suggestion cache reuses the first result for the same session and query", async () => {
   const cache = new LocationSuggestionCacheStore();
@@ -94,7 +121,7 @@ test("location suggestion cache survives process-like restarts when persisted", 
   assert.equal(restored.length, 1);
   assert.equal(restored[0]?.code, "LIM");
   const db = new Database(dbPath, { readonly: true });
-  const rows = db.prepare("SELECT key, payload FROM location_suggestions").all() as Array<{ key: string; payload: string }>;
+  const rows = allSql<{ key: string; payload: string }>(db, "SELECT key, payload FROM location_suggestions");
   db.close();
   assert.equal(rows.length, 1);
   assert.match(rows[0]?.key ?? "", /session-a::costamar::8::LIM/);
@@ -117,8 +144,12 @@ test("location suggestion cache keeps valid persisted entries while reloading ex
   ]);
 
   const db = new Database(dbPath);
-  db.prepare("UPDATE location_suggestions SET expires_at_ms = ? WHERE key = ?")
-    .run(Date.now() - 1, "session-a::costamar::8::MAD");
+  runSql(
+    db,
+    "UPDATE location_suggestions SET expires_at_ms = ? WHERE key = ?",
+    Date.now() - 1,
+    "session-a::costamar::8::MAD",
+  );
   db.close();
 
   let calls = 0;
@@ -173,8 +204,11 @@ test("location suggestion cache migrates valid legacy JSON entries into SQLite",
     throw new Error("LIM should come from migrated cache");
   });
   const db = new Database(dbPath, { readonly: true });
-  const row = db.prepare("SELECT payload FROM location_suggestions WHERE key = ?")
-    .get("session-a::costamar::8::LIM") as { payload?: string } | undefined;
+  const row = getSql<{ payload?: string }>(
+    db,
+    "SELECT payload FROM location_suggestions WHERE key = ?",
+    "session-a::costamar::8::LIM",
+  );
   db.close();
 
   assert.equal(restored[0]?.code, "LIM");
