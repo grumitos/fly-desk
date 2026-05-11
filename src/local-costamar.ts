@@ -1515,6 +1515,8 @@ async function generateCostamarRedirectContextViaB2B(
     return undefined;
   }
 
+  const warmupTimeoutMs = Math.max(2000, costamarSessionWarmupTimeoutMs());
+  const browserLaunchTimeoutMs = Math.max(10000, warmupTimeoutMs);
   const pool = new Map<string, CostamarSessionCandidate>();
   const observedPages = new Set<Page>();
   const searchUrl = buildCostamarBrandedSearchUrl(request, {
@@ -1530,24 +1532,44 @@ async function generateCostamarRedirectContextViaB2B(
 
   if (shouldUseLiveCostamarBrowserContext()) {
     try {
-      const liveSession = await connectToLiveCostamarBrowserContext();
+      const liveSession = await withCostamarB2bTimeout(
+        connectToLiveCostamarBrowserContext(),
+        warmupTimeoutMs,
+        "Costamar live browser connection",
+      );
       if (liveSession) {
         liveBrowser = liveSession.browser;
-        livePage = await liveSession.context.newPage();
+        livePage = await withCostamarB2bTimeout(
+          liveSession.context.newPage(),
+          warmupTimeoutMs,
+          "Costamar live page creation",
+        );
         closeLivePage = true;
 
         observeCostamarBrowserPages(liveSession.context, pool, "live-b2b", observedPages);
-        const hasLiveSession = await ensureCostamarB2bSession(livePage);
+        const hasLiveSession = await withCostamarB2bTimeout(
+          ensureCostamarB2bSession(livePage),
+          warmupTimeoutMs,
+          "Costamar live B2B session",
+        );
         logCostamarB2bDebug("live session resolved", { hasLiveSession });
-        await collectCostamarCandidatesFromPage(livePage, pool, "live-b2b");
+        await withCostamarB2bTimeout(
+          collectCostamarCandidatesFromPage(livePage, pool, "live-b2b"),
+          warmupTimeoutMs,
+          "Costamar live token collection",
+        );
         if (hasLiveSession) {
-          const generatedCandidate = await submitCostamarB2bFlightSearch(
-            livePage,
-            request,
-            context,
-            pool,
-            "live-b2b",
-            observedPages,
+          const generatedCandidate = await withCostamarB2bTimeout(
+            submitCostamarB2bFlightSearch(
+              livePage,
+              request,
+              context,
+              pool,
+              "live-b2b",
+              observedPages,
+            ),
+            warmupTimeoutMs,
+            "Costamar live B2B flight search",
           );
           logCostamarB2bDebug("live candidate", generatedCandidate
             ? { terminalId: generatedCandidate.terminalId, source: generatedCandidate.source }
@@ -1595,28 +1617,48 @@ async function generateCostamarRedirectContextViaB2B(
   }
 
   try {
-    const launched = await launchCostamarBrowserContext();
+    const launched = await withCostamarB2bTimeout(
+      launchCostamarBrowserContext(),
+      browserLaunchTimeoutMs,
+      "Costamar isolated browser launch",
+    );
     browserContext = launched.context;
     tempRoot = launched.tempRoot;
 
     observeCostamarBrowserPages(browserContext, pool, "existing", observedPages);
 
-    const sessionPage = browserContext.pages()[0] ?? await browserContext.newPage();
+    const sessionPage = browserContext.pages()[0] ?? await withCostamarB2bTimeout(
+      browserContext.newPage(),
+      warmupTimeoutMs,
+      "Costamar isolated page creation",
+    );
     observeCostamarBrowserPages(browserContext, pool, "b2b", observedPages);
-    const hasSession = await ensureCostamarB2bSession(sessionPage);
+    const hasSession = await withCostamarB2bTimeout(
+      ensureCostamarB2bSession(sessionPage),
+      warmupTimeoutMs,
+      "Costamar isolated B2B session",
+    );
     logCostamarB2bDebug("isolated session resolved", { hasSession, url: sessionPage.url() });
-    await collectCostamarCandidatesFromPage(sessionPage, pool, "b2b");
+    await withCostamarB2bTimeout(
+      collectCostamarCandidatesFromPage(sessionPage, pool, "b2b"),
+      warmupTimeoutMs,
+      "Costamar isolated token collection",
+    );
     if (!hasSession) {
       return undefined;
     }
 
-    const generatedCandidate = await submitCostamarB2bFlightSearch(
-      sessionPage,
-      request,
-      context,
-      pool,
-      "b2b",
-      observedPages,
+    const generatedCandidate = await withCostamarB2bTimeout(
+      submitCostamarB2bFlightSearch(
+        sessionPage,
+        request,
+        context,
+        pool,
+        "b2b",
+        observedPages,
+      ),
+      warmupTimeoutMs,
+      "Costamar isolated B2B flight search",
     );
     logCostamarB2bDebug("isolated candidate", generatedCandidate
       ? { terminalId: generatedCandidate.terminalId, source: generatedCandidate.source }
@@ -1634,12 +1676,20 @@ async function generateCostamarRedirectContextViaB2B(
       });
     }
 
-    const searchPage = await browserContext.newPage();
+    const searchPage = await withCostamarB2bTimeout(
+      browserContext.newPage(),
+      warmupTimeoutMs,
+      "Costamar branded search page creation",
+    );
     observeCostamarBrowserPages(browserContext, pool, "search", observedPages);
-    await searchPage.goto(searchUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: 45000,
-    }).catch(() => undefined);
+    await withCostamarB2bTimeout(
+      searchPage.goto(searchUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: warmupTimeoutMs,
+      }),
+      warmupTimeoutMs,
+      "Costamar branded search navigation",
+    ).catch(() => undefined);
 
     const deadline = Date.now() + Math.max(2000, costamarSessionWarmupTimeoutMs());
     while (Date.now() < deadline) {
@@ -1721,8 +1771,35 @@ export function getLastCostamarWarmupDiagnosticsForTests(): CostamarWarmupDiagno
     : undefined;
 }
 
+export function getLastCostamarWarmupDiagnostics(): CostamarWarmupDiagnostics | undefined {
+  return getLastCostamarWarmupDiagnosticsForTests();
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withCostamarB2bTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  const boundedTimeoutMs = Math.max(1000, Math.trunc(timeoutMs));
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${boundedTimeoutMs}ms.`));
+        }, boundedTimeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 export async function warmCostamarRedirectContext(

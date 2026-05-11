@@ -42,6 +42,7 @@ import {
   buildCostamarPurchasePaths,
   createLocalCostamarMatrixDraft,
   createLocalCostamarSearchDraft,
+  getLastCostamarWarmupDiagnostics,
   resolveCostamarRedirectForRequest,
   resolveLocalCostamarExactProgressive,
   resolveLocalCostamarMatrixProgressive,
@@ -2217,7 +2218,8 @@ export async function routeRequest(request: Request): Promise<Response> {
     const status = getCostamarTokenStatus();
     const verify = url.searchParams.get("verify") === "true";
     const verification = verify ? await verifyCostamarTokenLive() : undefined;
-    return json({ ...status, verification });
+    const lastWarmup = getLastCostamarWarmupDiagnostics();
+    return json({ ...status, verification, lastWarmup });
   }
 
   if (request.method === "GET" && url.pathname === "/api/agil/locations") {
