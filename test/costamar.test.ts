@@ -12,9 +12,13 @@ import {
   detectCostamarB2bAuthChallenge,
   mapCostamarRecommendationToOffer,
   resetCostamarWarmupStateForTests,
+  resolveCostamarRedirectForRequest,
   searchLocalCostamarExact,
   setCostamarWarmupGeneratorForTests,
   setCostamarWarmupOpenerForTests,
+  shouldWarnCostamarRedirectUnavailable,
+  verifyCostamarRedirectCandidate,
+  warmCostamarRedirectContext,
 } from "../src/local-costamar";
 import {
   buildProviderContext,
@@ -26,7 +30,7 @@ import {
   resolveUsableCostamarBrandedToken,
 } from "../src/provider-context";
 import type { SearchRequest } from "../src/core/types";
-import { generateTotpCode } from "../src/totp";
+import { generateTotpCode, generateTotpCodeWithMetadata, totpCanSubmitSafely } from "../src/totp";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -414,6 +418,16 @@ test("applyCostamarB2bKeyboardInput clears the field and types like a user", asy
     "press:Backspace",
     "type:secret:35",
   ]);
+});
+
+test("totpCanSubmitSafely rejects codes too close to the end of their window", () => {
+  const secret = "JBSWY3DPEHPK3PXP";
+  const result = generateTotpCodeWithMetadata(secret, 29000);
+
+  assert.equal(result.periodSeconds, 30);
+  assert.equal(result.remainingSeconds, 1);
+  assert.equal(totpCanSubmitSafely(29000, result.periodSeconds, 5), false);
+  assert.equal(totpCanSubmitSafely(25000, result.periodSeconds, 5), true);
 });
 
 test("generateTotpCode supports Base32 secrets and otpauth URIs", () => {
@@ -1593,6 +1607,117 @@ test("mapCostamarRecommendationToOffer keeps USD as the offer currency for quota
   assert.equal(normalized.offer?.price.taxes?.currencyCode, "USD");
 });
 
+test("mapCostamarRecommendationToOffer parses formatted money strings", () => {
+  const recommendation = buildRecommendation() as ReturnType<typeof buildRecommendation> & {
+    pricing: Record<string, unknown>;
+  };
+  recommendation.pricing.total = "USD 1,001.16";
+  recommendation.pricing.base = "700.00";
+  recommendation.pricing.taxes = "301.16";
+
+  const normalized = mapCostamarRecommendationToOffer(
+    recommendation,
+    buildExactRequest(),
+    {
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: "secret-token",
+      lang: "es",
+    },
+    buildEngine(),
+  );
+
+  assert.ok(normalized.offer);
+  assert.equal(normalized.offer?.price.total.amount, 1001.16);
+  assert.equal(normalized.offer?.price.base?.amount, 700);
+  assert.equal(normalized.offer?.price.taxes?.amount, 301.16);
+});
+
+test("searchLocalCostamarExact does not subtract search discounts twice when applying markups", async () => {
+  const previousFetch = global.fetch;
+  const request = buildExactRequest();
+
+  global.fetch = (async (input) => {
+    const url = String(input);
+
+    if (url === "https://costamar.com.pe/vuelos/api/engines/0721808110") {
+      return new Response(
+        JSON.stringify({
+          code: "0721808110",
+          profile: {
+            id: "profile-1",
+            currencyCode: "USD",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (url === "https://costamar.com.pe/vuelos/api/flights/search") {
+      return new Response(
+        JSON.stringify({
+          status: 200,
+          data: [
+            {
+              ...buildRecommendation(),
+              pricing: {
+                ...buildRecommendation().pricing,
+                total: "950.00",
+                base: "700.00",
+                taxes: "300.00",
+                discounts: [
+                  {
+                    amount: "50.00",
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (url === "https://costamar.com.pe/vuelos/api/flights/markups/apply") {
+      return new Response(
+        JSON.stringify({
+          apply: true,
+          markupsApplied: [
+            {
+              amount: {
+                value: "10.00",
+                percentage: false,
+                perBooking: true,
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await searchLocalCostamarExact(request, {
+      costamar: {
+        apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+        brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+        terminalId: "0721808110",
+        token: "secret-token",
+        lang: "es",
+      },
+    });
+
+    assert.equal(result.offers.length, 1);
+    assert.equal(result.offers[0]?.price.total.amount, 960);
+  } finally {
+    global.fetch = previousFetch;
+  }
+});
+
 test("mapCostamarRecommendationToOffer interprets compact HHMM elapsed times correctly", () => {
   const recommendation = buildRecommendation();
   const firstFlight = recommendation.itinerary?.[0]?.flights?.[0];
@@ -1778,6 +1903,138 @@ test("searchLocalCostamarExact can warm a missing branded token from a seeded Ch
     } else {
       process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS = previousWarmupCooldown;
     }
+  }
+});
+
+test("warmCostamarRedirectContext forces refresh when requested even if the token is locally usable", async () => {
+  const request = buildExactRequest();
+  const existingToken = buildJwt({
+    id: "0721808110",
+    iat: 1893455000,
+    exp: 1893459600,
+  });
+  const refreshedToken = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893463200,
+  });
+  const previousWarmupTimeout = process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS;
+  const previousWarmupFallback = process.env.COSTAMAR_SESSION_WARMUP_OPEN_BROWSER_FALLBACK;
+
+  process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS = "50";
+  process.env.COSTAMAR_SESSION_WARMUP_OPEN_BROWSER_FALLBACK = "0";
+  resetCostamarWarmupStateForTests();
+
+  let calls = 0;
+  setCostamarWarmupGeneratorForTests(async (_request, context) => {
+    calls += 1;
+    return {
+      ...context,
+      token: refreshedToken,
+    };
+  });
+
+  const context = {
+    apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+    brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+    terminalId: "0721808110",
+    token: existingToken,
+    lang: "es",
+  };
+
+  try {
+    const unforced = await warmCostamarRedirectContext(request, context);
+    assert.equal(unforced.token, existingToken);
+    assert.equal(calls, 0);
+
+    const forced = await warmCostamarRedirectContext(request, context, { force: true });
+    assert.equal(forced.token, refreshedToken);
+    assert.equal(calls, 1);
+  } finally {
+    resetCostamarWarmupStateForTests();
+    if (previousWarmupTimeout === undefined) {
+      delete process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS;
+    } else {
+      process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS = previousWarmupTimeout;
+    }
+    if (previousWarmupFallback === undefined) {
+      delete process.env.COSTAMAR_SESSION_WARMUP_OPEN_BROWSER_FALLBACK;
+    } else {
+      process.env.COSTAMAR_SESSION_WARMUP_OPEN_BROWSER_FALLBACK = previousWarmupFallback;
+    }
+  }
+});
+
+test("verifyCostamarRedirectCandidate verifies only branded redirects that do not show auth failure", async () => {
+  const previousFetch = global.fetch;
+  const request = buildExactRequest();
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  const context = {
+    apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+    brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+    terminalId: "0721808110",
+    token,
+    lang: "es",
+  };
+
+  try {
+    global.fetch = (async () => new Response("<html>flight results</html>", { status: 200 })) as typeof fetch;
+    const accepted = await verifyCostamarRedirectCandidate(request, context);
+    assert.equal(accepted.verified, true);
+    assert.equal(accepted.state, "verified");
+
+    global.fetch = (async () => new Response("<html>login required</html>", { status: 200 })) as typeof fetch;
+    const blocked = await verifyCostamarRedirectCandidate(request, context);
+    assert.equal(blocked.verified, false);
+    assert.equal(blocked.state, "blocked");
+  } finally {
+    global.fetch = previousFetch;
+  }
+});
+
+test("resolveCostamarRedirectForRequest separates redirect verification from local token usability", async () => {
+  const previousFetch = global.fetch;
+  const request = buildExactRequest();
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  const context = {
+    apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+    brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+    terminalId: "0721808110",
+    token,
+    lang: "es",
+  };
+
+  try {
+    global.fetch = (async () => new Response("<html>login required</html>", { status: 200 })) as typeof fetch;
+    resetCostamarWarmupStateForTests();
+    setCostamarWarmupGeneratorForTests(async (_request, seedContext) => ({
+      ...seedContext,
+      token,
+    }));
+
+    const unverified = await resolveCostamarRedirectForRequest(request, context, { validateLive: false });
+    assert.equal(unverified.redirectVerification.state, "fresh_unverified");
+    assert.equal(unverified.redirectVerification.verified, false);
+    assert.equal(shouldWarnCostamarRedirectUnavailable(1, unverified.redirectVerification), false);
+
+    const blocked = await resolveCostamarRedirectForRequest(request, context, {
+      validateLive: true,
+      forceOnUnverified: true,
+    });
+    assert.equal(blocked.redirectVerification.verified, false);
+    assert.equal(blocked.redirectVerification.state, "blocked");
+    assert.equal(shouldWarnCostamarRedirectUnavailable(1, blocked.redirectVerification), true);
+  } finally {
+    global.fetch = previousFetch;
+    resetCostamarWarmupStateForTests();
   }
 });
 

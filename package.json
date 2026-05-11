@@ -16,7 +16,7 @@
     "start": "bun src/index.ts",
     "typecheck": "tsc --noEmit",
     "lint": "bun run --filter './frontend' lint",
-    "test": "NODE_ENV=test bun test --timeout=300000 test/**/*.test.ts"
+    "test": "NODE_ENV=test bun test --timeout=300000 ./test/**/*.test.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.3.13",

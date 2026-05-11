@@ -352,7 +352,25 @@ function normalizeTotpSecretInput(input: string): TotpConfig {
   };
 }
 
-export function generateTotpCode(secretInput: string, nowMs = Date.now()): string {
+export interface TotpCodeResult {
+  code: string;
+  periodSeconds: number;
+  remainingSeconds: number;
+}
+
+export function totpCanSubmitSafely(
+  nowMs: number,
+  periodSeconds: number,
+  minRemainingSeconds: number,
+): boolean {
+  const period = Math.max(1, Math.trunc(periodSeconds));
+  const minRemaining = Math.max(0, Math.trunc(minRemainingSeconds));
+  const elapsedSeconds = Math.floor(nowMs / 1000) % period;
+  const remainingSeconds = period - elapsedSeconds;
+  return remainingSeconds >= minRemaining;
+}
+
+export function generateTotpCodeWithMetadata(secretInput: string, nowMs = Date.now()): TotpCodeResult {
   const { key, digits, period, algorithm } = normalizeTotpSecretInput(secretInput);
   const counter = Math.floor(nowMs / 1000 / period);
   const counterBuffer = Buffer.alloc(8);
@@ -369,5 +387,14 @@ export function generateTotpCode(secretInput: string, nowMs = Date.now()): strin
   ) >>> 0;
 
   const mod = 10 ** digits;
-  return String(truncated % mod).padStart(digits, "0");
+  const elapsedSeconds = Math.floor(nowMs / 1000) % period;
+  return {
+    code: String(truncated % mod).padStart(digits, "0"),
+    periodSeconds: period,
+    remainingSeconds: period - elapsedSeconds,
+  };
+}
+
+export function generateTotpCode(secretInput: string, nowMs = Date.now()): string {
+  return generateTotpCodeWithMetadata(secretInput, nowMs).code;
 }
