@@ -99,6 +99,10 @@ export function SearchShell({
       setDepartureDate(dateStartFromSearchRequest(syncedRequest))
       setReturnDate(dateEndFromSearchRequest(syncedRequest))
       setStayNights(clampStayNights(syncedRequest.stayNights ?? 7))
+      const nextAdults = clampInteger(syncedRequest.adults, 1, 9, 1)
+      setAdults(nextAdults)
+      setChildren(clampInteger(syncedRequest.children, 0, 8, 0))
+      setInfants(clampInteger(syncedRequest.infants, 0, nextAdults, 0))
       setTouched({
         origin: false,
         destination: false,
@@ -1043,6 +1047,11 @@ function diffDays(fromIso: string, toIso: string) {
 function clampStayNights(value: number) {
   const numeric = Number.isFinite(value) ? Math.trunc(value) : 7
   return Math.max(1, Math.min(MAX_STAY_NIGHTS, numeric))
+}
+
+function clampInteger(value: unknown, min: number, max: number, fallback: number) {
+  const numeric = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback
+  return Math.max(min, Math.min(max, numeric))
 }
 
 interface SearchValidationInput {

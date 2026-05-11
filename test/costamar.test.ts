@@ -10,6 +10,7 @@ import {
   COSTAMAR_CONCURRENCY,
   createLocalCostamarMatrixDraft,
   detectCostamarB2bAuthChallenge,
+  isCostamarB2bAirlineSearchResponse,
   mapCostamarRecommendationToOffer,
   resetCostamarWarmupStateForTests,
   resolveCostamarRedirectForRequest,
@@ -418,6 +419,37 @@ test("applyCostamarB2bKeyboardInput clears the field and types like a user", asy
     "press:Backspace",
     "type:secret:35",
   ]);
+});
+
+test("isCostamarB2bAirlineSearchResponse accepts localized B2B token responses", () => {
+  assert.equal(
+    isCostamarB2bAirlineSearchResponse(
+      "POST",
+      "https://b2b.clickandbook.com/lang/es/airlinesearch",
+    ),
+    true,
+  );
+  assert.equal(
+    isCostamarB2bAirlineSearchResponse(
+      "POST",
+      "https://b2b.clickandbook.com/lang/en/airlinesearch",
+    ),
+    true,
+  );
+  assert.equal(
+    isCostamarB2bAirlineSearchResponse(
+      "GET",
+      "https://b2b.clickandbook.com/lang/es/airlinesearch",
+    ),
+    false,
+  );
+  assert.equal(
+    isCostamarB2bAirlineSearchResponse(
+      "POST",
+      "https://b2b.clickandbook.com/lang/es/hotelssearch",
+    ),
+    false,
+  );
 });
 
 test("totpCanSubmitSafely rejects codes too close to the end of their window", () => {
@@ -1292,6 +1324,49 @@ test("mapCostamarRecommendationToOffer reads carry-on and checked baggage from t
   assert.equal(normalized.offer?.baggage?.carryOnIncluded, true);
   assert.equal(normalized.offer?.baggage?.checkedIncluded, true);
   assert.equal(normalized.offer?.baggage?.checkedBags, 2);
+});
+
+test("mapCostamarRecommendationToOffer normalizes Costamar IATA-only city names", () => {
+  const recommendation = buildRecommendation();
+  const firstFlight = recommendation.itinerary?.[0]?.flights?.[0];
+  if (!firstFlight) {
+    throw new Error("Test fixture must include at least one flight.");
+  }
+
+  firstFlight.departureAirport = {
+    code: "LIM",
+    cityName: "LIM",
+  };
+  firstFlight.arrivalAirport = {
+    code: "CUZ",
+    cityName: "CUZ",
+  };
+
+  const normalized = mapCostamarRecommendationToOffer(
+    recommendation,
+    {
+      ...buildExactRequest(),
+      legs: [
+        {
+          origin: "LIM",
+          destination: "CUZ",
+          departureDate: "2026-06-01",
+        },
+      ],
+    },
+    {
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: "secret-token",
+      lang: "es",
+    },
+    buildEngine(),
+  );
+
+  const segment = normalized.offer?.itineraries[0]?.segments[0];
+  assert.equal(segment?.originName, "Lima");
+  assert.equal(segment?.destinationName, "Cusco");
 });
 
 test("mapCostamarRecommendationToOffer keeps checked baggage disabled when Costamar reports zero pieces", () => {

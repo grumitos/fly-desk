@@ -9,6 +9,7 @@ import type {
   SearchJobResponse,
   SortMode,
 } from "@/types"
+import { normalizeAirlineDisplayName } from "@/lib/airline-names"
 import { filterLocationSuggestions, normalizeLocationSearchText, normalizeLocationSuggestions } from "@/lib/locations"
 
 const API_BASE = ""
@@ -566,6 +567,49 @@ function firstSegment(offer: Record<string, unknown>, direction: "outbound" | "i
   return segments[0]
 }
 
+function normalizeOfferItineraries(value: unknown): CanonicalOffer["itineraries"] | undefined {
+  if (!Array.isArray(value)) return undefined
+
+  return value.map((itinerary) => {
+    const rawItinerary = itinerary && typeof itinerary === "object" ? itinerary as Record<string, unknown> : {}
+    const rawSegments = Array.isArray(rawItinerary.segments) ? rawItinerary.segments : []
+    return {
+      ...rawItinerary,
+      segments: rawSegments.map((segment) => {
+        const rawSegment = segment && typeof segment === "object" ? segment as Record<string, unknown> : {}
+        return {
+          ...rawSegment,
+          marketingCarrierName: normalizeAirlineDisplayName(rawSegment.marketingCarrierName) || undefined,
+          operatingCarrierName: normalizeAirlineDisplayName(rawSegment.operatingCarrierName) || undefined,
+        }
+      }),
+    }
+  }) as CanonicalOffer["itineraries"]
+}
+
+function offerAirlineCode(offer: Record<string, unknown>, segment?: Record<string, unknown>): string {
+  return String(
+    offer.mainCarrier
+      ?? offer.validatingCarrier
+      ?? segment?.marketingCarrier
+      ?? offer.airline
+      ?? "",
+  ).trim()
+}
+
+function offerAirlineDisplayName(offer: Record<string, unknown>, segment?: Record<string, unknown>): string {
+  const code = offerAirlineCode(offer, segment)
+  const rawName = [
+    segment?.marketingCarrierName,
+    offer.airline,
+    segment?.operatingCarrierName,
+  ].find((value) => typeof value === "string" && value.trim())
+  const name = normalizeAirlineDisplayName(rawName)
+  return name && name.toUpperCase() !== code.toUpperCase()
+    ? name
+    : code
+}
+
 function durationLabel(minutes: unknown): string {
   const value = typeof minutes === "number" ? minutes : Number(minutes)
   if (!Number.isFinite(value) || value <= 0) return ""
@@ -643,11 +687,16 @@ function hasCheckedBaggage(baggage: unknown): boolean {
 
 function normalizeOffer(input: unknown): CanonicalOffer {
   const offer = input && typeof input === "object" ? input as Record<string, unknown> : {}
+  const itineraries = normalizeOfferItineraries(offer.itineraries)
+  const offerWithNormalizedNames = {
+    ...offer,
+    ...(itineraries ? { itineraries } : {}),
+  }
   const metrics = offer.comparisonMetrics && typeof offer.comparisonMetrics === "object"
     ? offer.comparisonMetrics as Record<string, unknown>
     : {}
-  const outbound = firstSegment(offer, "outbound")
-  const inbound = firstSegment(offer, "inbound")
+  const outbound = firstSegment(offerWithNormalizedNames, "outbound")
+  const inbound = firstSegment(offerWithNormalizedNames, "inbound")
   const price = offer.price && typeof offer.price === "object"
     ? offer.price as CanonicalOffer["price"]
     : { total: { amount: 0, currencyCode: "USD" } }
@@ -672,7 +721,8 @@ function normalizeOffer(input: unknown): CanonicalOffer {
     ...(offer as Partial<CanonicalOffer>),
     id: String(offer.id ?? crypto.randomUUID()),
     providerSource: String(offer.providerSource ?? ""),
-    airline: String(offer.mainCarrier ?? offer.validatingCarrier ?? offer.airline ?? ""),
+    airline: offerAirlineDisplayName(offerWithNormalizedNames, outbound),
+    itineraries,
     origin: typeof offer.origin === "string" ? offer.origin : String(outbound?.origin ?? ""),
     destination: typeof offer.destination === "string" ? offer.destination : String(outbound?.destination ?? ""),
     departureDate: String(outbound?.departureAt ?? offer.departureDate ?? ""),

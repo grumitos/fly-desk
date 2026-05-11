@@ -110,9 +110,9 @@ test("commercial quotation lists multiple airlines and moves missing baggage to 
   assert.match(text, /✈️ Ruta: Lima \(LIM\) - Buenos Aires \(BUE\) - Lima \(LIM\)/);
   assert.match(text, /✈️ Aerolíneas: Aerolíneas Argentinas \+ LATAM/);
   assert.match(text, /🛫 Horario ida: LIM · 11 abril a las 02:45 am → AEP · 11 abril a las 09:05 am/);
-  assert.match(text, /🔁 Escalas ida: Sin escalas/);
   assert.match(text, /🛬 Horario retorno: AEP · 10 mayo a las 10:35 pm → LIM · 11 mayo a las 01:30 am/);
-  assert.match(text, /🔁 Escalas retorno: Sin escalas/);
+  assert.doesNotMatch(text, /🔁 Escalas ida: Sin escalas/);
+  assert.doesNotMatch(text, /🔁 Escalas retorno: Sin escalas/);
   assert.match(text, /✅ INCLUYE\n\* Boleto de ida y vuelta\n\* Equipaje incluido: mochila o artículo personal y maleta de mano/);
   assert.match(text, /🚫 NO INCLUYE\n\* Maleta de bodega/);
   assert.match(text, /📋 CONDICIONES\n- Reembolsos no permitidos después de emitir\.\n\* Cambios de nombre no permitidos\.\n\* Cambios de fecha y ruta sujetos a condiciones de la tarifa\./);
@@ -120,6 +120,65 @@ test("commercial quotation lists multiple airlines and moves missing baggage to 
   assert.doesNotMatch(text, /Sin Maleta Facturada/);
   assert.doesNotMatch(text, /DETALLE TECNICO/);
   assert.doesNotMatch(text, /\[Aquí no se coloca nada de momento, el agente decide\]/);
+});
+
+test("commercial quotation uses city names for IATA-only endpoints and omits direct-flight stop lines", () => {
+  const request = buildRequest();
+  request.legs[0] = {
+    ...request.legs[0],
+    origin: "LIM",
+    destination: "CUZ",
+    originLabel: "LIM",
+    destinationLabel: "CUZ",
+  };
+
+  const text = buildCommercialQuotation(buildOffer({
+    origin: "LIM",
+    destination: "CUZ",
+    itineraries: [
+      {
+        direction: "outbound",
+        durationMinutes: 85,
+        stops: 0,
+        segments: [
+          {
+            flightNumber: "JA 7031",
+            marketingCarrier: "JA",
+            marketingCarrierName: "Jetsmart Airlines",
+            origin: "LIM",
+            destination: "CUZ",
+            departureAt: "2026-10-01T11:45:00Z",
+            arrivalAt: "2026-10-01T13:11:00Z",
+            durationMinutes: 86,
+          },
+        ],
+      },
+      {
+        direction: "inbound",
+        durationMinutes: 93,
+        stops: 0,
+        segments: [
+          {
+            flightNumber: "JA 7032",
+            marketingCarrier: "JA",
+            marketingCarrierName: "Jetsmart Airlines",
+            origin: "CUZ",
+            destination: "LIM",
+            departureAt: "2026-10-04T12:42:00Z",
+            arrivalAt: "2026-10-04T14:15:00Z",
+            durationMinutes: 93,
+          },
+        ],
+      },
+    ],
+  }), request, {
+    timeZone: "UTC",
+  });
+
+  assert.match(text, /✈️ Ruta: Lima \(LIM\) - Cusco \(CUZ\) - Lima \(LIM\)/);
+  assert.match(text, /JetSmart/);
+  assert.doesNotMatch(text, /Jetsmart Airlines|JetSmart Airlines/);
+  assert.doesNotMatch(text, /Escalas ida|Escalas retorno|Sin escalas/);
 });
 
 test("commercial quotation lists both hand and checked baggage as exclusions when neither is included", () => {

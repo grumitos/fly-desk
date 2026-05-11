@@ -1,4 +1,5 @@
 import { BaggageSummary, CanonicalOffer, Itinerary, Segment } from "./types";
+import { airlineNameMatchKey } from "./airline-names";
 
 interface VariantGroupKeyInput {
   mainCarrier?: string;
@@ -39,10 +40,33 @@ function timeOfIso(iso: unknown): string {
   return typeof iso === "string" ? iso.slice(11, 16) : "";
 }
 
+function segmentCarrierMatchToken(segment: Segment): string {
+  return airlineNameMatchKey(segment.marketingCarrierName || segment.operatingCarrierName)
+    || normalizeToken(segment.marketingCarrier);
+}
+
+function carrierMatchToken(input: VariantGroupKeyInput): string {
+  const firstNamedSegment = (input.itineraries ?? [])
+    .flatMap((itinerary) => itinerary.segments ?? [])
+    .find((segment) => segment.marketingCarrierName || segment.operatingCarrierName);
+
+  return firstNamedSegment
+    ? segmentCarrierMatchToken(firstNamedSegment)
+    : normalizeToken(input.mainCarrier || input.validatingCarrier);
+}
+
+function normalizedFlightNumber(segment: Segment): string {
+  const marketingCarrier = normalizeToken(segment.marketingCarrier);
+  const flightNumber = normalizeToken(segment.flightNumber).replace(/\s+/g, "");
+  return marketingCarrier && flightNumber.startsWith(marketingCarrier)
+    ? flightNumber.slice(marketingCarrier.length)
+    : flightNumber;
+}
+
 function segmentVariantPatternKey(segment: Segment): string {
   return [
-    normalizeToken(segment.marketingCarrier),
-    normalizeToken(segment.flightNumber).replace(/\s+/g, ""),
+    segmentCarrierMatchToken(segment),
+    normalizedFlightNumber(segment),
     normalizeToken(segment.origin),
     normalizeToken(segment.destination),
     timeOfIso(segment.departureAt),
@@ -87,7 +111,7 @@ function buildVariantGroupKey(input: VariantGroupKeyInput): string {
     .join("||");
 
   return [
-    normalizeToken(input.mainCarrier || input.validatingCarrier),
+    carrierMatchToken(input),
     normalizeAmount(input.totalAmount),
     normalizeToken(input.currencyCode),
     String(duration),

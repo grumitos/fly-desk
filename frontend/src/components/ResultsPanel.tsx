@@ -357,8 +357,7 @@ function PaginatedResultsList({
       <div
         ref={viewportRef}
         className={cn(
-          "fd-scrollbar-hidden min-h-0 flex-1 overflow-y-auto overscroll-contain",
-          resultsLayout ? "overflow-x-auto" : "overflow-x-hidden",
+          "fd-scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain",
         )}
         data-testid="results-page-body"
       >
@@ -545,7 +544,7 @@ function ResultsLayoutGuideCard({
           >
             <div className="fd-results-layout-column__header">
               <span>{column.label}</span>
-              <span>{Math.round(columns[column.key])} px</span>
+              <span>{resultsLayoutColumnShareLabel(columns, column.key)}</span>
             </div>
             <div className="fd-results-layout-column__skeleton" aria-hidden="true">
               <span />
@@ -784,9 +783,22 @@ function measureCurrentResultCardColumns(list: HTMLDivElement | null): ResultsCo
 function resultsLayoutStyleVars(columns: ResultsColumnLayout): CSSProperties {
   const style: Record<string, string> = {}
   RESULTS_COLUMN_DEFINITIONS.forEach((column) => {
-    style[`--fd-results-col-${column.key}`] = `${Math.round(columns[column.key])}px`
+    style[`--fd-results-col-${column.key}`] = `${Math.max(0, Math.round(columns[column.key]))}fr`
   })
   return style as CSSProperties
+}
+
+function resultsLayoutColumnShareLabel(
+  columns: ResultsColumnLayout,
+  key: ResultsLayoutColumnKey,
+) {
+  const total = RESULTS_COLUMN_DEFINITIONS.reduce((sum, column) => (
+    sum + Math.max(0, columns[column.key])
+  ), 0)
+  if (total <= 0) return "0%"
+
+  const share = Math.max(0, columns[key]) / total * 100
+  return `${share >= 10 ? Math.round(share) : share.toFixed(1)}%`
 }
 
 function resultsLayoutStatus({

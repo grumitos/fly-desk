@@ -26,6 +26,13 @@ type Filters = {
   baggageRequired?: boolean
 }
 
+type AirlineFilterOption = {
+  id: string
+  label: string
+  codes: string[]
+  count: number
+}
+
 const DEFAULT_SORT_MODE: SortMode = "cheapest"
 
 export default function App() {
@@ -80,11 +87,21 @@ export default function App() {
     return sortOffersForDisplay(sourceOffers, sortMode)
   }, [results, sortMode])
   const allAirlines = useMemo(() => {
-    const counts = new Map<string, number>()
-    candidateOffers.forEach((offer) => counts.set(offer.airline, (counts.get(offer.airline) ?? 0) + 1))
-    return Array.from(counts.entries())
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => a.name.localeCompare(b.name))
+    const options = new Map<string, AirlineFilterOption>()
+    candidateOffers.forEach((offer) => {
+      const label = offer.airline || airlineFilterCode(offer) || "Aerolínea"
+      const codes = airlineFilterCodes(offer)
+      const id = label.toLocaleUpperCase("es-PE")
+      const current = options.get(id) ?? { id, label, codes: [], count: 0 }
+      const mergedCodes = new Set([...current.codes, ...codes])
+      options.set(id, {
+        ...current,
+        codes: Array.from(mergedCodes),
+        count: current.count + 1,
+      })
+    })
+    return Array.from(options.values())
+      .sort((a, b) => a.label.localeCompare(b.label))
   }, [candidateOffers])
 
   const filteredCandidateOffers = useMemo(
@@ -222,10 +239,18 @@ export default function App() {
     }
   }, [lastRequest, sortMode])
 
-  const toggleAirline = useCallback((airline: string) => {
-    const nextAirlines = selectedAirlines.includes(airline)
-      ? selectedAirlines.filter((item) => item !== airline)
-      : [...selectedAirlines, airline]
+  const toggleAirline = useCallback((airline: AirlineFilterOption) => {
+    const tokens = airline.codes.length > 0 ? airline.codes : [airline.label]
+    const current = new Set(selectedAirlines)
+    const selected = tokens.every((token) => current.has(token))
+    tokens.forEach((token) => {
+      if (selected) {
+        current.delete(token)
+      } else {
+        current.add(token)
+      }
+    })
+    const nextAirlines = Array.from(current)
     selectedAirlinesRef.current = nextAirlines
     setSelectedAirlines(nextAirlines)
     if (lastRequest) {
@@ -413,11 +438,11 @@ const FiltersPanel = memo(function FiltersPanel({
 }: {
   hasFilters: boolean
   filters: Filters
-  allAirlines: { name: string; count: number }[]
+  allAirlines: AirlineFilterOption[]
   selectedAirlines: string[]
   onClear: () => void
   onFilterChange: (next: Partial<Filters>) => void
-  onToggleAirline: (airline: string) => void
+  onToggleAirline: (airline: AirlineFilterOption) => void
 }) {
   return (
     <aside className="fd-panel flex h-full min-h-0 flex-col overflow-hidden">
@@ -496,16 +521,16 @@ const FiltersPanel = memo(function FiltersPanel({
             <div className="fd-scrollbar-hidden max-h-64 space-y-1 overflow-auto pr-1">
               {allAirlines.map((airline) => (
                 <label
-                  key={airline.name}
+                  key={airline.id}
                   className="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.995]"
                 >
                   <span className="flex min-w-0 items-center gap-2">
                     <Checkbox
-                      checked={selectedAirlines.includes(airline.name)}
-                      onCheckedChange={() => onToggleAirline(airline.name)}
-                      aria-label={airline.name}
+                      checked={isAirlineFilterSelected(airline, selectedAirlines)}
+                      onCheckedChange={() => onToggleAirline(airline)}
+                      aria-label={airline.label}
                     />
-                    <span className="truncate">{airline.name}</span>
+                    <span className="truncate">{airline.label}</span>
                   </span>
                   <Badge variant="secondary" className="h-5 rounded-md px-1.5 text-[10px]">
                     {airline.count}
@@ -555,6 +580,33 @@ function ChoiceRow({ label, active, onClick }: { label: string; active: boolean;
   )
 }
 
+function airlineFilterCode(offer: CanonicalOffer): string {
+  return String(offer.mainCarrier ?? offer.validatingCarrier ?? "").trim()
+}
+
+function airlineFilterCodes(offer: CanonicalOffer): string[] {
+  return Array.from(new Set([
+    airlineFilterCode(offer),
+    String(offer.validatingCarrier ?? "").trim(),
+    !airlineFilterCode(offer) ? String(offer.airline ?? "").trim() : "",
+  ].filter(Boolean)))
+}
+
+function isAirlineFilterSelected(airline: AirlineFilterOption, selectedAirlines: string[]): boolean {
+  const tokens = airline.codes.length > 0 ? airline.codes : [airline.label]
+  return tokens.every((token) => selectedAirlines.includes(token))
+}
+
+function offerMatchesSelectedAirlines(offer: CanonicalOffer, selectedAirlines: string[]): boolean {
+  if (selectedAirlines.length === 0) return true
+
+  const tokens = new Set([
+    ...airlineFilterCodes(offer),
+    String(offer.airline ?? "").trim(),
+  ].filter(Boolean))
+  return selectedAirlines.some((airline) => tokens.has(airline))
+}
+
 function maxLayoverForOffer(offer: CanonicalOffer): number {
   return (offer.itineraries ?? [])
     .flatMap((itinerary) => itinerary.layoverMinutes ?? [])
@@ -571,7 +623,7 @@ function applyClientFilters(offers: CanonicalOffer[], filters: Filters, selected
     list = list.filter((offer) => maxLayoverForOffer(offer) <= maxMinutes)
   }
   if (filters.baggageRequired) list = list.filter((offer) => offer.hasCheckedBaggage)
-  if (selectedAirlines.length > 0) list = list.filter((offer) => selectedAirlines.includes(offer.airline))
+  if (selectedAirlines.length > 0) list = list.filter((offer) => offerMatchesSelectedAirlines(offer, selectedAirlines))
   return list
 }
 

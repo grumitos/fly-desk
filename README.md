@@ -17,10 +17,8 @@ Fly Desk hoy es una app local-first Bun-only con:
 - autocomplete de origen y destino
 - filtros visibles `Directo`, `Equipaje` y `Escala`
 - lista de resultados con paginacion
-- vista calendario/matriz
 - barra de aerolineas
 - panel lateral de detalle
-- `reprice`
 - `quotation`
 - links de compra y apertura local del flujo equivalente cuando aplica
 
@@ -30,13 +28,14 @@ Controles ya retirados del frontend visible:
 - moneda editable
 - precio maximo
 - maximo de escalas como control independiente
+- multidestino
 - overlay global de carga
 
 El feedback de carga vigente es inline:
 
 - placeholder en resultados durante busqueda exacta
 - celdas `loading` dentro de la matriz
-- estado de carga dentro del panel de detalle para `reprice` y `quotation`
+- estado de carga dentro del panel de detalle para `quotation`
 
 ## Guardrails de runtime
 
@@ -55,7 +54,7 @@ El feedback de carga vigente es inline:
 ### Frontend
 
 - `frontend/src/App.tsx`: composicion principal del workspace
-- `frontend/src/components/`: topbar, rail de busqueda, resultados, detalle y componentes UI
+- `frontend/src/components/`: topbar, shell de busqueda, resultados, detalle y componentes UI
 - `frontend/src/hooks/`: busqueda/polling y autocomplete
 - `frontend/src/lib/api.ts`: cliente HTTP del BFF
 - `frontend/src/index.css`: tokens, layout, tema claro/oscuro y estados visuales
@@ -67,8 +66,8 @@ El feedback de carga vigente es inline:
 - `src/http-router.ts`: BFF HTTP
 - `src/search-date-policy.ts`: politica compartida de fechas y config publica embebida
 - `src/provider-context.ts`: normalizacion y recovery de contexto de providers
-- `src/local-agil.ts`: sesion local, cliente Agil, exact/range/matrix y reprice
-- `src/local-costamar.ts`: cliente Costamar, exact/range/matrix y reprice
+- `src/local-agil.ts`: sesion local, cliente Agil, exact/range/matrix y deep links
+- `src/local-costamar.ts`: cliente Costamar, exact/range/matrix y branded links
 - `src/core/flexible-search.ts`: helpers compartidos de derivacion de requests
 - `src/core/matrix.ts`: helpers compartidos de matriz y concurrencia
 - `src/session-store.ts`: jobs en memoria, redirects y purchase paths
@@ -142,7 +141,9 @@ Costamar:
   Queda apagado por defecto para que Chrome no vuelva a pedir permisos de depuración en cada búsqueda solo por escanear pestañas abiertas.
 - `COSTAMAR_BROWSER_HEADLESS=1`
 - `COSTAMAR_SESSION_WARMUP_ENABLED=1`
-  Activo por defecto. Primero intenta generar el token desde la sesión B2B viva de Costamar usando la misma llamada interna que dispara el formulario de vuelos y, si eso falla, cae al flujo aislado. Usa `0` para desactivarlo.
+  Activo por defecto para busquedas y redirects: intenta renovar el token antes de consultar o salir a Costamar. Usa `0` para desactivarlo.
+- `COSTAMAR_PROVIDER_B2B_PREWARM_ENABLED=0`
+  Apagado por defecto. Si lo activas, el prewarm periodico tambien puede disparar automatizacion B2B para generar un token antes de la primera busqueda; dejalo en `0` si el navegador headless de Costamar se queda colgado en tu maquina.
 - `COSTAMAR_SESSION_WARMUP_OPEN_BROWSER_FALLBACK=1`
   Opcional. Reabre la pestaña B2B y una branded search visible como último recurso. Por defecto queda apagado para evitar pestañas innecesarias.
 - `COSTAMAR_SESSION_WARMUP_TIMEOUT_MS=8000`

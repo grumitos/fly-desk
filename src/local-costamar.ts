@@ -17,6 +17,7 @@ import {
   enumerateUsefulFlexibleRequests,
   isUsefulRoundTripCombination,
 } from "./core/flexible-search";
+import { normalizeAirlineDisplayName } from "./core/airline-names";
 import {
   buildMatrixConfidenceSummary,
   mapConcurrent,
@@ -69,6 +70,7 @@ import {
 } from "./terminal-secret-prompt";
 import { generateTotpCodeWithMetadata, totpCanSubmitSafely } from "./totp";
 import { rankLocationSuggestions } from "./location-suggestions";
+import { cityNameForIataCode, normalizeIataCode } from "./core/location-display";
 
 interface CostamarEngineMetadata {
   code?: string;
@@ -369,6 +371,10 @@ const COSTAMAR_RANGE_DAY_RETRY_DELAY_MS = Math.max(
   0,
   Math.trunc(Number(process.env.COSTAMAR_RANGE_DAY_RETRY_DELAY_MS ?? 250)) || 0,
 );
+const DEFAULT_COSTAMAR_PREWARM_ORIGIN = "LIM";
+const DEFAULT_COSTAMAR_PREWARM_DESTINATION = "CUZ";
+const DEFAULT_COSTAMAR_PREWARM_DEPARTURE_OFFSET_DAYS = 30;
+const DEFAULT_COSTAMAR_PREWARM_STAY_NIGHTS = 3;
 
 const engineCache = new Map<string, Promise<CostamarEngineMetadata>>();
 const COSTAMAR_B2B_AUTH_HINT_PATTERN =
@@ -644,6 +650,10 @@ function costamarB2bDebugEnabled(): boolean {
   return String(process.env.COSTAMAR_B2B_DEBUG ?? "0").trim() === "1";
 }
 
+function costamarB2bPlaywrightFallbackEnabled(): boolean {
+  return String(process.env.COSTAMAR_B2B_PLAYWRIGHT_FALLBACK_ENABLED ?? "0").trim() !== "0";
+}
+
 function logCostamarB2bDebug(stage: string, detail?: unknown): void {
   if (!costamarB2bDebugEnabled()) {
     return;
@@ -694,12 +704,26 @@ function normalizeCostamarB2bTokenResponse(rawValue: unknown): string {
   return "";
 }
 
+export function isCostamarB2bAirlineSearchResponse(method: string, url: string): boolean {
+  if (method.toUpperCase() !== "POST") {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(url, resolveCostamarB2bBaseUrl());
+    return /\/lang\/[^/]+\/airlinesearch\/?$/i.test(parsed.pathname)
+      || /\/airlinesearch\/?$/i.test(parsed.pathname);
+  } catch {
+    return /(?:^|\/)(?:lang\/[^/]+\/)?airlinesearch(?:[/?#]|$)/i.test(url);
+  }
+}
+
 async function closeLiveCostamarBrowserConnection(): Promise<void> {
   const cached = liveCostamarBrowserConnection;
   liveCostamarBrowserConnection = undefined;
   pendingLiveCostamarBrowserConnection = undefined;
   if (cached) {
-    await cached.browser.close().catch(() => undefined);
+    await closeCostamarBrowser(cached.browser);
   }
 }
 
@@ -738,7 +762,7 @@ async function connectToLiveCostamarBrowserContext(): Promise<{
       });
       const context = browser.contexts()[0];
       if (!context) {
-        await browser.close().catch(() => undefined);
+        await closeCostamarBrowser(browser);
         liveCostamarBrowserRetryAfterMs = Date.now() + costamarSessionWarmupCooldownMs();
         return undefined;
       }
@@ -829,6 +853,210 @@ function prepareTemporaryCostamarChromeProfile(
   });
 
   return tempRoot;
+}
+
+function readSetCookieHeaders(headers: Headers): string[] {
+  const extended = headers as Headers & { getSetCookie?: () => string[] };
+  const cookies = extended.getSetCookie?.();
+  if (cookies?.length) {
+    return cookies;
+  }
+
+  const combined = headers.get("set-cookie");
+  return combined ? [combined] : [];
+}
+
+function rememberCookieFromHeaders(headers: Headers, jar: Map<string, string>): void {
+  for (const line of readSetCookieHeaders(headers)) {
+    const [pair = ""] = line.split(";");
+    const separator = pair.indexOf("=");
+    if (separator <= 0) {
+      continue;
+    }
+
+    jar.set(pair.slice(0, separator).trim(), pair.slice(separator + 1).trim());
+  }
+}
+
+function cookieHeader(jar: Map<string, string>): string {
+  return [...jar.entries()].map(([key, value]) => `${key}=${value}`).join("; ");
+}
+
+async function fetchCostamarB2bWithCookies(
+  url: string,
+  jar: Map<string, string>,
+  init: RequestInit = {},
+): Promise<{ response: Response; body: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.max(5000, costamarSessionWarmupTimeoutMs()));
+  try {
+    const cookies = cookieHeader(jar);
+    const response = await fetch(url, {
+      redirect: "manual",
+      ...init,
+      headers: {
+        ...(cookies ? { cookie: cookies } : {}),
+        ...(init.headers ?? {}),
+      },
+      signal: controller.signal,
+    });
+    rememberCookieFromHeaders(response.headers, jar);
+    return {
+      response,
+      body: await response.text(),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function decodeCostamarB2bHtmlAttribute(value: string): string {
+  return value
+    .replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_match, decimal: string) => String.fromCharCode(Number.parseInt(decimal, 10)))
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function readCostamarB2bInputValues(html: string): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const tag of html.match(/<input[^>]+>/gi) ?? []) {
+    const name = tag.match(/\bname=["']([^"']+)["']/i)?.[1];
+    if (!name) {
+      continue;
+    }
+
+    const value = tag.match(/\bvalue=["']([^"']*)["']/i)?.[1] ?? "";
+    values[name] = decodeCostamarB2bHtmlAttribute(value);
+  }
+
+  return values;
+}
+
+function costamarB2bResponseRequiresAuthenticator(html: string): boolean {
+  return /google\s+authenticator|2\s*factor|secretcode|login2factor/i.test(html);
+}
+
+async function generateCostamarRedirectContextViaB2BHttp(
+  context: CostamarProviderContext,
+): Promise<CostamarProviderContext | undefined> {
+  const credentials = await resolveCostamarB2bCredentialsForAutomation();
+  if (!credentials.email || !credentials.password || !context.terminalId) {
+    return undefined;
+  }
+
+  const base = new URL(resolveCostamarB2bBaseUrl());
+  const origin = base.origin;
+  const jar = new Map<string, string>();
+
+  try {
+    await fetchCostamarB2bWithCookies(`${origin}/login`, jar, {
+      headers: {
+        accept: "text/html,application/xhtml+xml",
+      },
+    });
+
+    const login = await fetchCostamarB2bWithCookies(`${origin}/lang/en/login`, jar, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "text/html,application/xhtml+xml",
+        referer: `${origin}/login`,
+      },
+      body: new URLSearchParams({
+        email: credentials.email,
+        password: credentials.password,
+        action: "",
+      }),
+    });
+    logCostamarB2bDebug("http login response", {
+      status: login.response.status,
+      requiresAuthenticator: costamarB2bResponseRequiresAuthenticator(login.body),
+    });
+
+    if (costamarB2bResponseRequiresAuthenticator(login.body)) {
+      const authCode = await promptCostamarB2bAuthCode("Codigo de Google Authenticator");
+      if (!authCode) {
+        return undefined;
+      }
+
+      const authFields = readCostamarB2bInputValues(login.body);
+      const auth = await fetchCostamarB2bWithCookies(`${origin}/lang/en/login2factor`, jar, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          accept: "text/html,application/xhtml+xml",
+          referer: `${origin}/lang/en/login`,
+        },
+        body: new URLSearchParams({
+          ...authFields,
+          secretcode: authCode,
+          action: "",
+        }),
+      });
+      logCostamarB2bDebug("http 2fa response", {
+        status: auth.response.status,
+        location: auth.response.headers.get("location"),
+      });
+
+      const location = auth.response.headers.get("location");
+      if (auth.response.status >= 300 && auth.response.status < 400 && location) {
+        await fetchCostamarB2bWithCookies(new URL(location, origin).toString(), jar, {
+          headers: {
+            accept: "text/html,application/xhtml+xml",
+          },
+        });
+      } else if (/login|authenticator|secretcode/i.test(auth.body)) {
+        return undefined;
+      }
+    } else {
+      const location = login.response.headers.get("location");
+      if (login.response.status >= 300 && login.response.status < 400 && location) {
+        await fetchCostamarB2bWithCookies(new URL(location, origin).toString(), jar, {
+          headers: {
+            accept: "text/html,application/xhtml+xml",
+          },
+        });
+      }
+    }
+
+    const tokenResponse = await fetchCostamarB2bWithCookies(`${origin}/lang/en/airlinesearch`, jar, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        accept: "application/json, text/javascript, */*; q=0.01",
+        "x-requested-with": "XMLHttpRequest",
+        referer: `${origin}/lang/en/b2b`,
+      },
+      body: new URLSearchParams({
+        accountid: context.terminalId,
+      }),
+    });
+    const token = normalizeCostamarB2bTokenResponse(tokenResponse.body);
+    logCostamarB2bDebug("http airlinesearch response", {
+      status: tokenResponse.response.status,
+      hasToken: Boolean(token),
+    });
+    if (!resolveUsableCostamarBrandedToken(token, context.terminalId)) {
+      return undefined;
+    }
+
+    rememberCostamarSessionCandidate({
+      terminalId: context.terminalId,
+      token,
+      source: "b2b-http:airlinesearch",
+    });
+    return resolveLatestCostamarProviderContext({
+      ...context,
+      token,
+    });
+  } catch (error) {
+    logCostamarB2bDebug("http automation failed", error instanceof Error ? error.message : "unknown error");
+    return undefined;
+  }
 }
 
 function collectCostamarCandidatesFromText(
@@ -1153,8 +1381,7 @@ async function submitCostamarB2bFlightSearch(
   }
 
   const airlineSearchTokenPromise = page.waitForResponse((response) =>
-    response.request().method() === "POST"
-    && response.url().includes("/lang/en/airlinesearch"), {
+    isCostamarB2bAirlineSearchResponse(response.request().method(), response.url()), {
     timeout: Math.max(1500, Math.min(4000, costamarSessionWarmupTimeoutMs())),
   }).then(async (response) => {
     const token = normalizeCostamarB2bTokenResponse(await response.text().catch(() => ""));
@@ -1572,8 +1799,8 @@ async function launchCostamarBrowserContextWithin(timeoutMs: number): Promise<{
     );
   } catch (error) {
     void launchPromise.then(async (launched) => {
-      await launched.context.close().catch(() => undefined);
-      await launched.browser?.close().catch(() => undefined);
+      await closeCostamarBrowserContext(launched.context);
+      await closeCostamarBrowser(launched.browser);
       if (launched.tempRoot) {
         await removePathWithRetries(launched.tempRoot, 6, 250);
         unregisterActiveTempArtifact(launched.tempRoot);
@@ -1606,6 +1833,15 @@ async function generateCostamarRedirectContextViaB2B(
   let browserContext: BrowserContext | undefined;
   let isolatedBrowser: Browser | undefined;
   let tempRoot = "";
+
+  const httpContext = await generateCostamarRedirectContextViaB2BHttp(context);
+  if (httpContext && resolveUsableCostamarBrandedToken(httpContext.token, httpContext.terminalId)) {
+    return httpContext;
+  }
+
+  if (!costamarB2bPlaywrightFallbackEnabled()) {
+    return undefined;
+  }
 
   if (shouldUseLiveCostamarBrowserContext()) {
     try {
@@ -1685,7 +1921,11 @@ async function generateCostamarRedirectContextViaB2B(
       // Fall through to the isolated-profile automation below.
     } finally {
       if (closeLivePage && livePage) {
-        await livePage.close().catch(() => undefined);
+        await withCostamarB2bTimeout(
+          livePage.close().catch(() => undefined),
+          2000,
+          "Costamar live page close",
+        ).catch(() => undefined);
       }
       if (resetLiveBrowserConnection) {
         await closeLiveCostamarBrowserConnection();
@@ -1791,12 +2031,8 @@ async function generateCostamarRedirectContextViaB2B(
     logCostamarB2bDebug("isolated automation failed", error instanceof Error ? error.message : "unknown error");
     return undefined;
   } finally {
-    if (browserContext) {
-      await browserContext.close().catch(() => undefined);
-    }
-    if (isolatedBrowser) {
-      await isolatedBrowser.close().catch(() => undefined);
-    }
+    await closeCostamarBrowserContext(browserContext);
+    await closeCostamarBrowser(isolatedBrowser);
     if (tempRoot) {
       await removePathWithRetries(tempRoot, 6, 250);
       unregisterActiveTempArtifact(tempRoot);
@@ -1875,6 +2111,42 @@ async function withCostamarB2bTimeout<T>(
   } finally {
     if (timeout) {
       clearTimeout(timeout);
+    }
+  }
+}
+
+async function closeCostamarBrowserContext(context: BrowserContext | undefined): Promise<void> {
+  if (!context) {
+    return;
+  }
+
+  await withCostamarB2bTimeout(
+    context.close().catch(() => undefined),
+    2000,
+    "Costamar browser context close",
+  ).catch(() => undefined);
+}
+
+async function closeCostamarBrowser(browser: Browser | undefined): Promise<void> {
+  if (!browser) {
+    return;
+  }
+
+  const childProcess = (browser as Browser & {
+    process?: () => { exitCode: number | null; kill: () => unknown } | null;
+  }).process?.();
+
+  await withCostamarB2bTimeout(
+    browser.close().catch(() => undefined),
+    2000,
+    "Costamar browser close",
+  ).catch(() => undefined);
+
+  if (childProcess && childProcess.exitCode === null) {
+    try {
+      childProcess.kill();
+    } catch {
+      // Browser cleanup is best-effort after a failed warm-up.
     }
   }
 }
@@ -2004,8 +2276,77 @@ export function resetCostamarWarmupStateForTests(): void {
   playwrightPromise = undefined;
 }
 
-export function prewarmLocalCostamarContext(): void {
-  resolveLatestCostamarProviderContext();
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const parsed = Number(process.env[name] ?? fallback);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.trunc(parsed)
+    : fallback;
+}
+
+function costamarProviderB2bPrewarmEnabled(): boolean {
+  return String(process.env.COSTAMAR_PROVIDER_B2B_PREWARM_ENABLED ?? "0").trim() !== "0";
+}
+
+function addUtcDays(date: Date, days: number): Date {
+  const next = new Date(date.getTime());
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function isoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+export function buildCostamarPrewarmRequest(now = new Date()): SearchRequest {
+  const departureOffsetDays = readPositiveIntegerEnv(
+    "COSTAMAR_PREWARM_DEPARTURE_OFFSET_DAYS",
+    DEFAULT_COSTAMAR_PREWARM_DEPARTURE_OFFSET_DAYS,
+  );
+  const stayNights = readPositiveIntegerEnv(
+    "COSTAMAR_PREWARM_STAY_NIGHTS",
+    DEFAULT_COSTAMAR_PREWARM_STAY_NIGHTS,
+  );
+  const departureDate = addUtcDays(now, departureOffsetDays);
+  const returnDate = addUtcDays(departureDate, stayNights);
+  const origin = process.env.COSTAMAR_PREWARM_ORIGIN?.trim().toUpperCase()
+    || DEFAULT_COSTAMAR_PREWARM_ORIGIN;
+  const destination = process.env.COSTAMAR_PREWARM_DESTINATION?.trim().toUpperCase()
+    || DEFAULT_COSTAMAR_PREWARM_DESTINATION;
+
+  return {
+    providerId: "costamar",
+    tripType: "round-trip",
+    searchMode: "exact",
+    legs: [
+      {
+        origin,
+        destination,
+        departureDate: isoDate(departureDate),
+        returnDate: isoDate(returnDate),
+      },
+    ],
+    passengers: {
+      adults: 1,
+      children: 0,
+      infants: 0,
+    },
+    cabin: "ECONOMY",
+    filters: {},
+    coverageMode: "core",
+    redirectMode: "best-effort",
+    currencyCode: "USD",
+    locale: "es-PE",
+    market: "PE",
+  };
+}
+
+export async function prewarmLocalCostamarContext(): Promise<void> {
+  const context = resolveLatestCostamarProviderContext();
+  if (!costamarProviderB2bPrewarmEnabled()) {
+    return;
+  }
+
+  await warmCostamarRedirectContext(buildCostamarPrewarmRequest(), context);
 }
 
 function asArray<T>(value: T | T[] | undefined | null): T[] {
@@ -2525,18 +2866,47 @@ function normalizeSegment(
   return {
     id: `${idSeed}-${origin}-${destination}-${rawFlightNumber || "0"}`,
     marketingCarrier,
-    marketingCarrierName: value.marketingAirline?.name,
+    marketingCarrierName: normalizeAirlineDisplayName(value.marketingAirline?.name) || undefined,
     operatingCarrier: value.operatingAirline?.code?.trim().toUpperCase(),
-    operatingCarrierName: value.operatingAirline?.name,
+    operatingCarrierName: normalizeAirlineDisplayName(value.operatingAirline?.name) || undefined,
     flightNumber: rawFlightNumber,
     origin,
-    originName: value.departureAirport?.cityName ?? value.departureAirport?.name,
+    originName: normalizeCostamarAirportCityName(value.departureAirport),
     destination,
-    destinationName: value.arrivalAirport?.cityName ?? value.arrivalAirport?.name,
+    destinationName: normalizeCostamarAirportCityName(value.arrivalAirport),
     departureAt,
     arrivalAt,
     durationMinutes: parseDurationMinutes(value.elapsedTime, departureAt, arrivalAt),
   };
+}
+
+function normalizeCostamarAirportCityLabel(value?: string, code?: string): string | undefined {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const normalizedCode = normalizeIataCode(code);
+  const normalizedValue = normalizeIataCode(normalized);
+  if (
+    /^[A-Z]{3}$/.test(normalizedValue)
+    && (!normalizedCode || normalizedValue === normalizedCode)
+  ) {
+    return undefined;
+  }
+
+  if (/^[A-Z]{2}$/.test(normalizedValue)) {
+    return undefined;
+  }
+
+  return normalized;
+}
+
+function normalizeCostamarAirportCityName(airport?: CostamarAirport): string | undefined {
+  const code = normalizeIataCode(airport?.code);
+  return normalizeCostamarAirportCityLabel(airport?.cityName, code)
+    ?? cityNameForIataCode(code)
+    ?? normalizeCostamarAirportCityLabel(airport?.name, code);
 }
 
 function normalizeItinerary(

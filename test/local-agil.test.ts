@@ -7,6 +7,7 @@ import {
   AGIL_CONCURRENCY,
   buildLocalAgilSearchRedirectUrl,
   computeAgilTotalAmountForTests,
+  createLocalAgilMatrixDraft,
   extractAgilChromeDebugPortsFromCommandLinesForTests,
   extractAgilChromeUserDataDirsFromCommandLinesForTests,
   extractAgilBrowserStorageSnapshotForTests,
@@ -15,13 +16,17 @@ import {
   parseAgilSessionData,
   readAgilChromeProfileCandidatesForTests,
   readAgilStorageSnapshotFromPage,
+  resetAgilSessionCacheForTests,
+  resolveLocalAgilMatrixProgressive,
   resolveAgilChromeDevToolsBrowserWsEndpointForTests,
   sameAgilSessionIdentity,
   resetAgilApimSubscriptionKeyCacheForTests,
+  setAgilSessionForTests,
   shouldReuseAgilSession,
   suggestLocalAgilLocations,
   extractAgilUsdToPenRate,
 } from "../src/local-agil";
+import type { SearchRequest } from "../src/core/types";
 
 test("reads Agil session storage after DOM content is ready without waiting for network idle", async () => {
   const calls: Array<{ kind: string; args: unknown[] }> = [];
@@ -497,6 +502,217 @@ test("Agil exchange rate parsing preserves four decimal rates", () => {
   } as never);
 
   assert.equal(rate, 3.7531);
+});
+
+test("Agil matrix cells include the canonical offer schedules", async () => {
+  const previousFetch = global.fetch;
+  const previousKey = process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+  const request: SearchRequest = {
+    tripType: "round-trip",
+    searchMode: "roundtrip-grid",
+    flexibleMode: "exact-stay",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "CUZ",
+        departureStart: "2026-10-16",
+        departureEnd: "2026-10-16",
+        stayNights: 3,
+      },
+    ],
+    passengers: {
+      adults: 1,
+      children: 0,
+      infants: 0,
+    },
+    cabin: "ECONOMY",
+    filters: {},
+    coverageMode: "core",
+    redirectMode: "best-effort",
+    currencyCode: "USD",
+    locale: "es-PE",
+    market: "PE",
+  };
+  const agilGroup = {
+    id: "agil-lim-cuz-10341",
+    display: true,
+    airline: {
+      code: "JA",
+      name: "JetSMART",
+    },
+    departure: [
+      {
+        segments: [
+          {
+            segmentId: 10,
+            startDateTime: "2026-10-16T06:15:00",
+            endDateTime: "2026-10-16T07:35:00",
+            stops: 0,
+            flightDuration: "01:20",
+            equipaje: {
+              piezas: 0,
+              cabina: {
+                piezas: 1,
+                descripcion1: "Equipaje de mano",
+              },
+            },
+            flightSegments: [
+              {
+                flightNumber: 123,
+                departureDateTime: "2026-10-16T06:15:00",
+                arrivalDateTime: "2026-10-16T07:35:00",
+                elapsedTime: "01:20",
+                seatsRemaining: 4,
+                departureAirport: {
+                  code: "LIM",
+                  name: "Lima",
+                },
+                arrivalAirport: {
+                  code: "CUZ",
+                  name: "Cusco",
+                },
+                marketingAirline: {
+                  code: "JA",
+                  name: "JetSMART",
+                },
+                operatingAirline: {
+                  code: "JA",
+                  name: "JetSMART",
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    returns: {
+      segments: [
+        {
+          segmentId: 20,
+          startDateTime: "2026-10-19T18:10:00",
+          endDateTime: "2026-10-19T19:35:00",
+          stops: 0,
+          flightDuration: "01:25",
+          equipaje: {
+            piezas: 0,
+            cabina: {
+              piezas: 1,
+              descripcion1: "Equipaje de mano",
+            },
+          },
+          flightSegments: [
+            {
+              flightNumber: 124,
+              departureDateTime: "2026-10-19T18:10:00",
+              arrivalDateTime: "2026-10-19T19:35:00",
+              elapsedTime: "01:25",
+              seatsRemaining: 3,
+              departureAirport: {
+                code: "CUZ",
+                name: "Cusco",
+              },
+              arrivalAirport: {
+                code: "LIM",
+                name: "Lima",
+              },
+              marketingAirline: {
+                code: "JA",
+                name: "JetSMART",
+              },
+              operatingAirline: {
+                code: "JA",
+                name: "JetSMART",
+              },
+            },
+          ],
+        },
+      ],
+    },
+    pricingInfo: {
+      totalFare: 103.41,
+      itinTotalFare: {
+        validatingCarrier: "JA",
+        fareBreakDowns: [
+          {
+            passengerType: {
+              quantity: 1,
+            },
+            passengerFare: {
+              baseFare: 75,
+              taxes: 28.41,
+              totalFare: 103.41,
+              feeNMV: 0,
+              feePTA: 0,
+              dsctoTaxes: 0,
+            },
+          },
+        ],
+      },
+      tipoCambio: {
+        code: "USD",
+        rate: 3.7531,
+      },
+    },
+  };
+
+  resetAgilSessionCacheForTests();
+  resetAgilApimSubscriptionKeyCacheForTests();
+  process.env.AGIL_APIM_SUBSCRIPTION_KEY = "test-subscription-key";
+  setAgilSessionForTests();
+  global.fetch = (async (input, init) => {
+    const url = String(input);
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("Ocp-Apim-Subscription-Key"), "test-subscription-key");
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/start-search") {
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/search") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { gds?: number };
+      return new Response(JSON.stringify({
+        groups: body.gds === 0 ? [agilGroup] : [],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const draft = createLocalAgilMatrixDraft(request, {
+      exactProvider: "agil-local",
+      coverageMode: "core",
+    });
+    const result = await resolveLocalAgilMatrixProgressive(request, draft);
+    const cell = result.cells[0];
+    const offer = cell?.offer;
+
+    assert.equal(cell?.providerSource, "agil-local");
+    assert.equal(cell?.price?.amount, 103.41);
+    assert.equal(cell?.price?.currencyCode, "USD");
+    assert.equal(offer?.providerSource, "agil-local");
+    assert.equal(offer?.price.total.amount, 103.41);
+    assert.equal(offer?.itineraries.length, 2);
+    assert.equal(offer?.itineraries[0]?.segments[0]?.departureAt, "2026-10-16T06:15:00");
+    assert.equal(offer?.itineraries[0]?.segments[0]?.arrivalAt, "2026-10-16T07:35:00");
+    assert.equal(offer?.itineraries[1]?.segments[0]?.departureAt, "2026-10-19T18:10:00");
+    assert.equal(offer?.itineraries[1]?.segments[0]?.arrivalAt, "2026-10-19T19:35:00");
+  } finally {
+    global.fetch = previousFetch;
+    resetAgilSessionCacheForTests();
+    resetAgilApimSubscriptionKeyCacheForTests();
+    if (previousKey === undefined) {
+      delete process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+    } else {
+      process.env.AGIL_APIM_SUBSCRIPTION_KEY = previousKey;
+    }
+  }
 });
 
 test("recovers AGIL_APIM_SUBSCRIPTION_KEY from the Agil frontend bundle when env is missing", async () => {

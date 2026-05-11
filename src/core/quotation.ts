@@ -1,4 +1,6 @@
 import { CanonicalOffer, Itinerary, SearchRequest, Segment } from "./types";
+import { cityNameForIataCode, normalizeIataCode, stripAllAirportsLabel } from "./location-display";
+import { normalizeAirlineDisplayName } from "./airline-names";
 
 const CARRIER_NAME_FALLBACKS: Record<string, string> = {
   AC: "Air Canada",
@@ -153,7 +155,7 @@ function carrierDisplayNameFromSegment(segment?: Segment): string {
   const fallback = CARRIER_NAME_FALLBACKS[carrierCode] ?? (carrierCode || "Aerolínea por confirmar");
   const rawName = segment?.marketingCarrierName || segment?.operatingCarrierName;
   if (rawName) {
-    const titled = titleCase(rawName);
+    const titled = normalizeAirlineDisplayName(titleCase(rawName));
     if (fallback && normalizedComparisonText(titled) === normalizedComparisonText(fallback)) {
       return fallback;
     }
@@ -191,17 +193,6 @@ function carrierDisplayName(offer: CanonicalOffer): string {
   return collectCarrierDisplayNames(offer).join(" + ");
 }
 
-function normalizeIataCode(code?: string): string {
-  return String(code ?? "").trim().toUpperCase();
-}
-
-function stripAllAirportsLabel(value: string): string {
-  return value
-    .replace(/\s*\((?:todos\s+los\s+aeropuertos|all\s+airports)\)\s*/gi, " ")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-}
-
 function locationLabel(value?: string): string {
   const normalized = String(value ?? "").trim();
   if (!normalized) {
@@ -211,15 +202,49 @@ function locationLabel(value?: string): string {
   const withoutCode = stripAllAirportsLabel(normalized.replace(/^[A-Z]{3}\s*-\s*/, "").trim());
   const firstChunk = withoutCode.split(",")[0]?.trim() ?? "";
   const base = firstChunk || withoutCode;
-  if (/^[A-Z]{3}$/.test(base)) {
-    return base;
+  const baseCode = normalizeIataCode(base);
+  if (/^[A-Z]{3}$/.test(baseCode) && base.trim().length === 3) {
+    return cityNameForIataCode(baseCode) ?? baseCode;
   }
 
   return titleCase(base);
 }
 
+function isAirportFacilityLabel(value: string): boolean {
+  return /\b(?:airport|intl|international|aeropuerto|internacional)\b/i.test(value);
+}
+
+function isUsefulCityLabel(value: string, iata: string): boolean {
+  const normalized = value.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  if (iata && normalizeIataCode(normalized) === iata && /^[A-Z]{3}$/.test(iata)) {
+    return false;
+  }
+
+  return !/^[A-Z]{2}$/i.test(normalized);
+}
+
 function cityFromRequestOrName(requestLabel?: string, name?: string, code?: string): string {
-  return locationLabel(requestLabel) || locationLabel(name) || code || "Ciudad por confirmar";
+  const iata = normalizeIataCode(code);
+  const requestCity = locationLabel(requestLabel);
+  if (isUsefulCityLabel(requestCity, iata)) {
+    return requestCity;
+  }
+
+  const providerCity = locationLabel(name);
+  if (isUsefulCityLabel(providerCity, iata) && !isAirportFacilityLabel(providerCity)) {
+    return providerCity;
+  }
+
+  return cityNameForIataCode(iata)
+    || (isUsefulCityLabel(providerCity, iata) ? providerCity : "")
+    || requestCity
+    || providerCity
+    || iata
+    || "Ciudad por confirmar";
 }
 
 function locationDisplay(requestLabel?: string, name?: string, code?: string): string {
@@ -385,14 +410,14 @@ function itineraryStopCodes(itinerary: Itinerary | undefined): string[] {
     .filter((code, index, codes) => code && codes.indexOf(code) === index);
 }
 
-function formatCommercialStops(itinerary: Itinerary | undefined): string {
+function formatCommercialStops(itinerary: Itinerary | undefined): string | undefined {
   const segments = itinerary?.segments ?? [];
   const stopCount = typeof itinerary?.stops === "number"
     ? itinerary.stops
     : Math.max(0, segments.length - 1);
 
   if (stopCount <= 0) {
-    return "Sin escalas";
+    return undefined;
   }
 
   const noun = stopCount === 1 ? "escala" : "escalas";
@@ -404,8 +429,9 @@ function formatCommercialStops(itinerary: Itinerary | undefined): string {
   return `${stopCount} ${noun}`;
 }
 
-function buildCommercialStopsLine(label: string, itinerary: Itinerary | undefined): string {
-  return `${label}: ${formatCommercialStops(itinerary)}`;
+function buildCommercialStopsLine(label: string, itinerary: Itinerary | undefined): string | undefined {
+  const stops = formatCommercialStops(itinerary);
+  return stops ? `${label}: ${stops}` : undefined;
 }
 
 function buildCommercialPriceLines(
@@ -481,12 +507,19 @@ function buildCommercialQuotationText(
     `✈️ Ruta: ${routeSummary(offer, request)}`,
     `✈️ ${carrierNames.length > 1 ? "Aerolíneas" : "Aerolínea"}: ${carrierDisplayName(offer)}`,
     buildCommercialScheduleLine("🛫 Horario ida", outbound, options),
-    buildCommercialStopsLine("🔁 Escalas ida", outbound),
-  ];
+  ].filter((line): line is string => Boolean(line));
+
+  const outboundStopsLine = buildCommercialStopsLine("🔁 Escalas ida", outbound);
+  if (outboundStopsLine) {
+    lines.push(outboundStopsLine);
+  }
 
   if (inbound) {
     lines.push(buildCommercialScheduleLine("🛬 Horario retorno", inbound, options));
-    lines.push(buildCommercialStopsLine("🔁 Escalas retorno", inbound));
+    const inboundStopsLine = buildCommercialStopsLine("🔁 Escalas retorno", inbound);
+    if (inboundStopsLine) {
+      lines.push(inboundStopsLine);
+    }
   }
 
   lines.push("");

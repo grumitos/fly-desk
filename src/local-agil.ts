@@ -22,6 +22,7 @@ import {
   enumerateUsefulRoundTripPairs,
   enumerateUsefulFlexibleRequests,
 } from "./core/flexible-search";
+import { normalizeAirlineDisplayName } from "./core/airline-names";
 import {
   buildMatrixConfidenceSummary,
   mapConcurrent,
@@ -200,6 +201,7 @@ interface AgilCellQuote {
   currencyCode: string;
   validatingCarrier?: string;
   variantKey?: string;
+  offer: CanonicalOffer;
 }
 
 interface AgilGeoTreeLocation {
@@ -1694,6 +1696,25 @@ export function resetAgilSessionCacheForTests(): void {
   pendingSessionPromise = undefined;
 }
 
+export function setAgilSessionForTests(overrides: {
+  token?: string;
+  expiresAtMs?: number;
+  userCode?: number;
+  internalCode?: string;
+  ip?: string;
+  capturedAtMs?: number;
+} = {}): void {
+  cachedSession = {
+    token: overrides.token ?? "test-agil-token",
+    expiresAtMs: overrides.expiresAtMs ?? Date.now() + (60 * 60 * 1000),
+    userCode: overrides.userCode ?? 1,
+    internalCode: overrides.internalCode ?? "TEST",
+    ip: overrides.ip ?? "127.0.0.1",
+    capturedAtMs: overrides.capturedAtMs ?? Date.now(),
+  };
+  pendingSessionPromise = undefined;
+}
+
 export async function prewarmLocalAgilSession(): Promise<void> {
   await getAgilSession();
 }
@@ -1892,9 +1913,9 @@ function normalizeJourneyCandidates(
         return {
           id: `${direction}-${sliceIndex}-${option.segmentId ?? optionIndex}-${flightIndex}`,
           marketingCarrier,
-          marketingCarrierName: flight.marketingAirline?.name ?? undefined,
+          marketingCarrierName: normalizeAirlineDisplayName(flight.marketingAirline?.name) || undefined,
           operatingCarrier: flight.operatingAirline?.code ?? marketingCarrier,
-          operatingCarrierName: flight.operatingAirline?.name ?? undefined,
+          operatingCarrierName: normalizeAirlineDisplayName(flight.operatingAirline?.name) || undefined,
           flightNumber: String(flight.flightNumber ?? flightIndex + 1),
           origin: flight.departureAirport?.code ?? "",
           originName: flight.departureAirport?.name ?? undefined,
@@ -2474,6 +2495,49 @@ function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): Canon
   return [offer];
 }
 
+function buildAgilMatrixVariantKey(offer: CanonicalOffer): string {
+  return buildFlexibleVariantGroupKey({
+    mainCarrier: offer.mainCarrier,
+    validatingCarrier: offer.validatingCarrier,
+    totalAmount: offer.price.total.amount,
+    currencyCode: offer.price.total.currencyCode,
+    itineraries: offer.itineraries,
+    baggage: offer.baggage,
+  });
+}
+
+function buildAgilCellQuoteFromOffer(offer: CanonicalOffer): AgilCellQuote {
+  return {
+    amount: offer.price.total.amount,
+    currencyCode: offer.price.total.currencyCode,
+    validatingCarrier: offer.validatingCarrier,
+    variantKey: buildAgilMatrixVariantKey(offer),
+    offer,
+  };
+}
+
+function compareAgilCellQuotes(left: AgilCellQuote, right: AgilCellQuote): number {
+  const priceDiff = left.amount - right.amount;
+  if (priceDiff !== 0) {
+    return priceDiff;
+  }
+
+  return String(left.variantKey ?? "").localeCompare(String(right.variantKey ?? ""));
+}
+
+function selectAgilMatrixQuote(groups: AgilSearchGroup[], request: SearchRequest): AgilCellQuote | undefined {
+  return groups
+    .flatMap((group) => mapGroupToOffers(group, request))
+    .map(buildAgilCellQuoteFromOffer)
+    .reduce<AgilCellQuote | undefined>((best, current) => {
+      if (!best || compareAgilCellQuotes(current, best) < 0) {
+        return current;
+      }
+
+      return best;
+    }, undefined);
+}
+
 async function searchCellWithGds(
   session: AgilSessionData,
   request: SearchRequest,
@@ -2499,74 +2563,7 @@ async function searchCellWithGds(
 
   const json = await response.json() as AgilSearchResponse;
   const groups = Array.isArray(json.groups) ? json.groups : [];
-  const maxStops = typeof request.filters.maxStops === "number"
-    ? Math.max(0, request.filters.maxStops)
-    : undefined;
-  return groups.reduce<AgilCellQuote | undefined>((best, group) => {
-    const validatingCarrier = group.pricingInfo?.itinTotalFare?.validatingCarrier
-      ?? group.airline?.code
-      ?? undefined;
-    const outboundCandidates = normalizeJourneyCandidates(
-      group.departure,
-      "outbound",
-      validatingCarrier,
-    );
-    if (outboundCandidates.length === 0) {
-      return best;
-    }
-
-    const inboundCandidates = request.tripType === "round-trip"
-      ? normalizeJourneyCandidates(group.returns, "inbound", validatingCarrier)
-      : [];
-    if (request.tripType === "round-trip" && inboundCandidates.length === 0) {
-      return best;
-    }
-
-    const outbound = outboundCandidates[0];
-    const inbound = request.tripType === "round-trip"
-      ? inboundCandidates[0]
-      : undefined;
-    const itineraries = (
-      request.tripType === "round-trip"
-        ? [outbound.itinerary, inbound?.itinerary].filter((itinerary): itinerary is Itinerary => Boolean(itinerary))
-        : [outbound.itinerary]
-    );
-
-    if (typeof maxStops === "number" && maxStopsAcrossItineraries(itineraries) > maxStops) {
-      return best;
-    }
-
-    const totalFare = computeAgilTotalAmount(group.pricingInfo);
-    if (typeof totalFare !== "number") {
-      return best;
-    }
-
-    const currencyCode = group.pricingInfo?.tipoCambio?.code || request.currencyCode;
-    const baggage = buildBaggageSummary(outbound.baggage, inbound?.baggage);
-    const variantKey = buildFlexibleVariantGroupKey({
-      mainCarrier: outbound.itinerary.segments[0]?.marketingCarrier ?? validatingCarrier,
-      validatingCarrier,
-      totalAmount: totalFare,
-      currencyCode,
-      itineraries,
-      baggage,
-    });
-
-    if (
-      !best
-      || totalFare < best.amount
-      || (totalFare === best.amount && variantKey < String(best.variantKey ?? ""))
-    ) {
-      return {
-        amount: totalFare,
-        currencyCode,
-        validatingCarrier,
-        variantKey,
-      };
-    }
-
-    return best;
-  }, undefined);
+  return selectAgilMatrixQuote(groups, request);
 }
 
 async function searchGroupsWithGds(
@@ -2729,6 +2726,33 @@ async function searchCellPrice(baseSession: AgilSessionData, request: SearchRequ
 
     throw error;
   }
+}
+
+function buildAgilMatrixCellFromQuote(
+  cell: MatrixCell & { derivedRequest: SearchRequest; confidence: "loading" },
+  quote: AgilCellQuote,
+): MatrixCell {
+  const purchasePaths = quote.offer.purchasePaths.length > 0
+    ? quote.offer.purchasePaths
+    : buildPurchasePaths(cell.derivedRequest);
+  const offer = {
+    ...quote.offer,
+    purchasePaths,
+  };
+
+  return {
+    ...cell,
+    price: offer.price.total,
+    variantKey: quote.variantKey,
+    purchasePaths,
+    offer,
+    confidence: "live",
+    selectable: true,
+    stateCode: "live",
+    tooltip: offer.validatingCarrier
+      ? `Agil exact search. Cheapest validating carrier: ${offer.validatingCarrier}.`
+      : "Agil exact search.",
+  };
 }
 
 export async function searchLocalAgilExact(request: SearchRequest): Promise<ProviderSearchResult> {
@@ -3043,21 +3067,7 @@ export async function resolveLocalAgilMatrixProgressive(
     try {
       const quote = await searchCellPrice(session, cell.derivedRequest);
       const nextCell = quote
-        ? {
-            ...cell,
-            price: {
-              amount: quote.amount,
-              currencyCode: quote.currencyCode || request.currencyCode,
-            },
-            variantKey: quote.variantKey,
-            purchasePaths: buildPurchasePaths(cell.derivedRequest),
-            confidence: "live" as const,
-            selectable: true,
-            stateCode: "live" as const,
-            tooltip: quote.validatingCarrier
-              ? `Agil exact search. Cheapest validating carrier: ${quote.validatingCarrier}.`
-              : "Agil exact search.",
-          } satisfies MatrixCell
+        ? buildAgilMatrixCellFromQuote(cell, quote)
         : {
             ...cell,
             confidence: "unavailable" as const,
