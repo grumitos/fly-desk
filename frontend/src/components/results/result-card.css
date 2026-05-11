@@ -381,6 +381,11 @@
   justify-items: end;
 }
 
+.fd-result-card__provider--stacked {
+  align-content: center;
+  gap: 0.22rem;
+}
+
 .fd-result-card__provider-action {
   display: grid;
   margin: 0;
@@ -407,6 +412,12 @@
 
 .fd-result-card__provider img {
   object-fit: contain;
+}
+
+.fd-result-card__provider--stacked img,
+.fd-result-card__provider--stacked span {
+  width: 1.72rem;
+  height: 1.72rem;
 }
 
 .fd-result-card__provider span {

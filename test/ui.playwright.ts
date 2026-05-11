@@ -1486,6 +1486,107 @@ test("exact results paginate visible offers with hidden minimal result scroll", 
   }, { autoOpen: false });
 });
 
+test("grouped provider offer renders Agil and Costamar external links vertically", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1180, height: 700 });
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      const offer = buildOffer({
+        id: "grouped-provider-offer",
+        providerSource: "agil-local",
+        purchasePaths: [
+          {
+            id: "grouped-agil-path",
+            provider: "agil-local",
+            type: "deeplink",
+            label: "Agil",
+            url: "https://example.test/agil",
+            precision: "exact-offer",
+            score: 1,
+            requiresNewTab: true,
+            commercialMode: "provider",
+            state: "deeplink_exact",
+          },
+          {
+            id: "grouped-costamar-path",
+            provider: "costamar",
+            type: "search-redirect",
+            label: "Costamar",
+            url: "https://example.test/costamar",
+            precision: "exact-search",
+            score: 0.8,
+            requiresNewTab: true,
+            commercialMode: "provider",
+            state: "search_redirect",
+          },
+        ],
+      });
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "grouped-provider-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers: [offer],
+          allOffers: [offer],
+          searchMeta: {
+            requestedAt: "2026-05-04T15:21:48.419Z",
+            completedAt: "2026-05-04T15:21:48.419Z",
+            providersUsed: ["agil-local", "costamar"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+
+    const card = page.getByTestId("result-card").first();
+    await card.waitFor();
+    const actions = card.locator(".fd-result-card__provider-action");
+    assert.equal(await actions.count(), 2);
+    await card.getByRole("button", { name: "Abrir Agil" }).waitFor();
+    await card.getByRole("button", { name: "Abrir Costamar" }).waitFor();
+
+    const layout = await actions.evaluateAll((elements) => elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        top: rect.top,
+        bottom: rect.bottom,
+        width: rect.width,
+      };
+    }));
+    assert.ok(layout[1].top >= layout[0].bottom, JSON.stringify(layout));
+    assert.ok(layout.every((item) => item.width <= 38), JSON.stringify(layout));
+  }, { autoOpen: false });
+});
+
 test("result filters refine loaded offers without restarting the search", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let searchRequests = 0;
@@ -2150,8 +2251,8 @@ test("location suggestions stay above workspace tabs after a search", async () =
         body: JSON.stringify({
           suggestions: suggestionsEnabled
             ? [
-                { code: "MIA", city: "Miami", country: "Estados Unidos", countryCode: "US", label: "Miami, Estados Unidos (MIA)" },
-                { code: "FLL", city: "Fort Lauderdale", country: "Estados Unidos", countryCode: "US", label: "Fort Lauderdale, Estados Unidos (FLL)" },
+                { code: "ZZZ", city: "Zed City", country: "Pruebas", countryCode: "ZZ", label: "Zed City, Pruebas (ZZZ)" },
+                { code: "ZZY", city: "Zeta Field", country: "Pruebas", countryCode: "ZZ", label: "Zeta Field, Pruebas (ZZY)" },
               ]
             : [],
         }),
@@ -2201,13 +2302,7 @@ test("location suggestions stay above workspace tabs after a search", async () =
     await page.getByRole("tablist").waitFor({ state: "visible" });
     suggestionsEnabled = true;
     const destination = page.getByRole("combobox", { name: "Destino" });
-    const suggestionsResponse = page.waitForResponse((response) => {
-      if (!response.url().includes("/api/locations")) return false;
-      const url = new URL(response.url());
-      return url.searchParams.get("q") === "MI";
-    });
-    await destination.fill("MI");
-    await suggestionsResponse;
+    await destination.fill("ZZ");
 
     const listbox = page.getByRole("listbox");
     await listbox.waitFor({ state: "visible" });
