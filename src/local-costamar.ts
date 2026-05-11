@@ -1,4 +1,3 @@
-import { createHash, randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,13 +23,15 @@ import {
   prioritizeMatrixLoadingCells,
 } from "./core/matrix";
 import { buildOfferSignature } from "./core/offer-signature";
+import { parseProviderAmount, roundProviderAmount } from "./core/provider-money";
 import { buildOfferVariantGroupKey } from "./core/variant-group-key";
 import { ProviderSearchResult } from "./core/provider";
-import { computeValueScores, enrichComparisonMetrics, maxStopsAcrossItineraries } from "./core/ranking";
+import { enrichComparisonMetrics, maxStopsAcrossItineraries, totalDuration } from "./core/ranking";
 import {
   BaggageSummary,
   CanonicalOffer,
   CostamarProviderContext,
+  CostamarRedirectState,
   FareMeta,
   Itinerary,
   LocationSuggestion,
@@ -38,6 +39,7 @@ import {
   MatrixResponse,
   ProviderContext,
   ProviderMeta,
+  RedirectVerification,
   SearchRequest,
   SearchResponse,
   Segment,
@@ -45,6 +47,7 @@ import {
 import {
   extractCostamarSessionCandidates,
   getCostamarProviderContext,
+  inspectCostamarBrandedToken,
   pickLatestCostamarSessionCandidate,
   rememberCostamarSessionCandidate,
   resolveChromeDevToolsBrowserWsEndpoint,
@@ -64,7 +67,7 @@ import {
   promptTerminalText,
   terminalPromptAvailable,
 } from "./terminal-secret-prompt";
-import { generateTotpCode } from "./totp";
+import { generateTotpCodeWithMetadata, totpCanSubmitSafely } from "./totp";
 import { rankLocationSuggestions } from "./location-suggestions";
 
 interface CostamarEngineMetadata {
@@ -248,6 +251,33 @@ interface CostamarMarkupResponse {
   customMarkupApplied?: CostamarMarkupApplied[];
 }
 
+interface CostamarWarmupDiagnosticStep {
+  name: string;
+  ok: boolean;
+  at: string;
+  detail?: string;
+}
+
+interface CostamarWarmupDiagnostics {
+  startedAt: string;
+  terminalId?: string;
+  credentialsPresent: boolean;
+  totpConfigured: boolean;
+  otpGenerated: boolean;
+  authPromptResolved: boolean;
+  tokenCaptured: boolean;
+  tokenValidated: boolean;
+  failureReason?: string;
+  steps: CostamarWarmupDiagnosticStep[];
+}
+
+interface CostamarRedirectResolution {
+  context: CostamarProviderContext;
+  redirectVerification: RedirectVerification;
+  diagnostics?: CostamarWarmupDiagnostics;
+  warnings: string[];
+}
+
 const COSTAMAR_HTTP_TIMEOUT_MS = Math.max(
   5000,
   Number(process.env.COSTAMAR_HTTP_TIMEOUT_MS ?? 20000),
@@ -257,6 +287,12 @@ const COSTAMAR_AIR_API_BASE_URL = process.env.COSTAMAR_AIR_API_BASE_URL?.trim()
 const COSTAMAR_REDIRECT_SESSION_WARNING =
   "Costamar redirect token is missing, expired, or incompatible with this terminal.";
 const COSTAMAR_SESSION_WARMUP_POLL_MS = 500;
+const COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS = Math.max(
+  1500,
+  Number(process.env.COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS ?? 6000),
+);
+const COSTAMAR_REDIRECT_VERIFY_FAILURE_PATTERN =
+  /login|iniciar\s+sesi[oó]n|auth|otp|captcha|expired|expirad|invalid|inv[aá]lid|unauthorized|forbidden/i;
 const COSTAMAR_B2B_KEYSTROKE_DELAY_MS = 35;
 const DEFAULT_COSTAMAR_B2B_BASE_URL = "https://b2b.clickandbook.com/lang/es/b2b";
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
@@ -305,6 +341,7 @@ let pendingCostamarB2bCredentialPrompt:
   | Promise<{ email?: string; password?: string }>
   | undefined;
 let pendingCostamarB2bAuthPrompt: Promise<string | undefined> | undefined;
+let lastCostamarWarmupDiagnostics: CostamarWarmupDiagnostics | undefined;
 
 export const COSTAMAR_CONCURRENCY = Object.freeze({
   get matrixMinimum() {
@@ -434,6 +471,11 @@ function resolveCostamarB2bTotpSecret(): string | undefined {
   return secret || undefined;
 }
 
+function costamarB2bTotpMinRemainingSeconds(): number {
+  const configured = Number(process.env.COSTAMAR_B2B_TOTP_MIN_REMAINING_SECONDS ?? 5);
+  return Number.isFinite(configured) ? Math.max(0, Math.trunc(configured)) : 5;
+}
+
 function costamarB2bInteractivePromptAvailable(): boolean {
   return costamarB2bPromptEnabled() && terminalPromptAvailable();
 }
@@ -530,7 +572,19 @@ async function promptCostamarB2bAuthCode(challengeLabel?: string): Promise<strin
   const configuredSecret = resolveCostamarB2bTotpSecret();
   if (configuredSecret) {
     try {
-      return generateTotpCode(configuredSecret);
+      const initial = generateTotpCodeWithMetadata(configuredSecret);
+      const minRemainingSeconds = costamarB2bTotpMinRemainingSeconds();
+      if (!totpCanSubmitSafely(Date.now(), initial.periodSeconds, minRemainingSeconds)) {
+        await sleep((initial.remainingSeconds * 1000) + 250);
+      }
+
+      lastCostamarWarmupDiagnostics = lastCostamarWarmupDiagnostics
+        ? {
+            ...lastCostamarWarmupDiagnostics,
+            otpGenerated: true,
+          }
+        : lastCostamarWarmupDiagnostics;
+      return generateTotpCodeWithMetadata(configuredSecret).code;
     } catch {
       // Fall through to the interactive prompt below when the stored secret is invalid.
     }
@@ -733,7 +787,7 @@ function copyPathSafe(source: string, destination: string): void {
 
 function prepareTemporaryCostamarChromeProfile(profileName: string): string {
   const sourceRoot = resolveCostamarChromeLaunchOptions().userDataDir || DEFAULT_CHROME_USER_DATA_DIR;
-  const tempRoot = join(tmpdir(), `travel_quote_foundation_costamar_browser_${randomUUID()}`);
+  const tempRoot = join(tmpdir(), `travel_quote_foundation_costamar_browser_${crypto.randomUUID()}`);
   mkdirSync(join(tempRoot, profileName), { recursive: true });
   registerActiveTempArtifact(tempRoot);
 
@@ -1461,6 +1515,8 @@ async function generateCostamarRedirectContextViaB2B(
     return undefined;
   }
 
+  const warmupTimeoutMs = Math.max(2000, costamarSessionWarmupTimeoutMs());
+  const browserLaunchTimeoutMs = Math.max(10000, warmupTimeoutMs);
   const pool = new Map<string, CostamarSessionCandidate>();
   const observedPages = new Set<Page>();
   const searchUrl = buildCostamarBrandedSearchUrl(request, {
@@ -1476,24 +1532,44 @@ async function generateCostamarRedirectContextViaB2B(
 
   if (shouldUseLiveCostamarBrowserContext()) {
     try {
-      const liveSession = await connectToLiveCostamarBrowserContext();
+      const liveSession = await withCostamarB2bTimeout(
+        connectToLiveCostamarBrowserContext(),
+        warmupTimeoutMs,
+        "Costamar live browser connection",
+      );
       if (liveSession) {
         liveBrowser = liveSession.browser;
-        livePage = await liveSession.context.newPage();
+        livePage = await withCostamarB2bTimeout(
+          liveSession.context.newPage(),
+          warmupTimeoutMs,
+          "Costamar live page creation",
+        );
         closeLivePage = true;
 
         observeCostamarBrowserPages(liveSession.context, pool, "live-b2b", observedPages);
-        const hasLiveSession = await ensureCostamarB2bSession(livePage);
+        const hasLiveSession = await withCostamarB2bTimeout(
+          ensureCostamarB2bSession(livePage),
+          warmupTimeoutMs,
+          "Costamar live B2B session",
+        );
         logCostamarB2bDebug("live session resolved", { hasLiveSession });
-        await collectCostamarCandidatesFromPage(livePage, pool, "live-b2b");
+        await withCostamarB2bTimeout(
+          collectCostamarCandidatesFromPage(livePage, pool, "live-b2b"),
+          warmupTimeoutMs,
+          "Costamar live token collection",
+        );
         if (hasLiveSession) {
-          const generatedCandidate = await submitCostamarB2bFlightSearch(
-            livePage,
-            request,
-            context,
-            pool,
-            "live-b2b",
-            observedPages,
+          const generatedCandidate = await withCostamarB2bTimeout(
+            submitCostamarB2bFlightSearch(
+              livePage,
+              request,
+              context,
+              pool,
+              "live-b2b",
+              observedPages,
+            ),
+            warmupTimeoutMs,
+            "Costamar live B2B flight search",
           );
           logCostamarB2bDebug("live candidate", generatedCandidate
             ? { terminalId: generatedCandidate.terminalId, source: generatedCandidate.source }
@@ -1541,28 +1617,48 @@ async function generateCostamarRedirectContextViaB2B(
   }
 
   try {
-    const launched = await launchCostamarBrowserContext();
+    const launched = await withCostamarB2bTimeout(
+      launchCostamarBrowserContext(),
+      browserLaunchTimeoutMs,
+      "Costamar isolated browser launch",
+    );
     browserContext = launched.context;
     tempRoot = launched.tempRoot;
 
     observeCostamarBrowserPages(browserContext, pool, "existing", observedPages);
 
-    const sessionPage = browserContext.pages()[0] ?? await browserContext.newPage();
+    const sessionPage = browserContext.pages()[0] ?? await withCostamarB2bTimeout(
+      browserContext.newPage(),
+      warmupTimeoutMs,
+      "Costamar isolated page creation",
+    );
     observeCostamarBrowserPages(browserContext, pool, "b2b", observedPages);
-    const hasSession = await ensureCostamarB2bSession(sessionPage);
+    const hasSession = await withCostamarB2bTimeout(
+      ensureCostamarB2bSession(sessionPage),
+      warmupTimeoutMs,
+      "Costamar isolated B2B session",
+    );
     logCostamarB2bDebug("isolated session resolved", { hasSession, url: sessionPage.url() });
-    await collectCostamarCandidatesFromPage(sessionPage, pool, "b2b");
+    await withCostamarB2bTimeout(
+      collectCostamarCandidatesFromPage(sessionPage, pool, "b2b"),
+      warmupTimeoutMs,
+      "Costamar isolated token collection",
+    );
     if (!hasSession) {
       return undefined;
     }
 
-    const generatedCandidate = await submitCostamarB2bFlightSearch(
-      sessionPage,
-      request,
-      context,
-      pool,
-      "b2b",
-      observedPages,
+    const generatedCandidate = await withCostamarB2bTimeout(
+      submitCostamarB2bFlightSearch(
+        sessionPage,
+        request,
+        context,
+        pool,
+        "b2b",
+        observedPages,
+      ),
+      warmupTimeoutMs,
+      "Costamar isolated B2B flight search",
     );
     logCostamarB2bDebug("isolated candidate", generatedCandidate
       ? { terminalId: generatedCandidate.terminalId, source: generatedCandidate.source }
@@ -1580,12 +1676,20 @@ async function generateCostamarRedirectContextViaB2B(
       });
     }
 
-    const searchPage = await browserContext.newPage();
+    const searchPage = await withCostamarB2bTimeout(
+      browserContext.newPage(),
+      warmupTimeoutMs,
+      "Costamar branded search page creation",
+    );
     observeCostamarBrowserPages(browserContext, pool, "search", observedPages);
-    await searchPage.goto(searchUrl, {
-      waitUntil: "domcontentloaded",
-      timeout: 45000,
-    }).catch(() => undefined);
+    await withCostamarB2bTimeout(
+      searchPage.goto(searchUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: warmupTimeoutMs,
+      }),
+      warmupTimeoutMs,
+      "Costamar branded search navigation",
+    ).catch(() => undefined);
 
     const deadline = Date.now() + Math.max(2000, costamarSessionWarmupTimeoutMs());
     while (Date.now() < deadline) {
@@ -1625,8 +1729,77 @@ async function generateCostamarRedirectContextViaB2B(
   return undefined;
 }
 
+function createCostamarWarmupDiagnostics(context: CostamarProviderContext): CostamarWarmupDiagnostics {
+  const credentials = resolveCostamarB2bCredentials();
+  return {
+    startedAt: new Date().toISOString(),
+    ...(context.terminalId ? { terminalId: context.terminalId } : {}),
+    credentialsPresent: Boolean(credentials.email && credentials.password),
+    totpConfigured: Boolean(resolveCostamarB2bTotpSecret()),
+    otpGenerated: false,
+    authPromptResolved: false,
+    tokenCaptured: false,
+    tokenValidated: false,
+    steps: [],
+  };
+}
+
+function recordCostamarWarmupStep(
+  diagnostics: CostamarWarmupDiagnostics | undefined,
+  name: string,
+  ok: boolean,
+  detail?: string,
+): void {
+  if (!diagnostics) {
+    return;
+  }
+
+  diagnostics.steps.push({
+    name,
+    ok,
+    at: new Date().toISOString(),
+    ...(detail ? { detail } : {}),
+  });
+  if (!ok && detail && !diagnostics.failureReason) {
+    diagnostics.failureReason = detail;
+  }
+}
+
+export function getLastCostamarWarmupDiagnosticsForTests(): CostamarWarmupDiagnostics | undefined {
+  return lastCostamarWarmupDiagnostics
+    ? JSON.parse(JSON.stringify(lastCostamarWarmupDiagnostics)) as CostamarWarmupDiagnostics
+    : undefined;
+}
+
+export function getLastCostamarWarmupDiagnostics(): CostamarWarmupDiagnostics | undefined {
+  return getLastCostamarWarmupDiagnosticsForTests();
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withCostamarB2bTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  const boundedTimeoutMs = Math.max(1000, Math.trunc(timeoutMs));
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${boundedTimeoutMs}ms.`));
+        }, boundedTimeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 export async function warmCostamarRedirectContext(
@@ -1638,7 +1811,8 @@ export async function warmCostamarRedirectContext(
     return context;
   }
 
-  if (resolveUsableCostamarBrandedToken(context.token, context.terminalId)) {
+  const initialInspection = inspectCostamarBrandedToken(context.token, context.terminalId);
+  if (!options.force && initialInspection.usable && !initialInspection.nearExpiry && !initialInspection.opaque) {
     return context;
   }
 
@@ -1747,6 +1921,7 @@ export function resetCostamarWarmupStateForTests(): void {
   cachedInteractiveCostamarB2bCredentials = {};
   pendingCostamarB2bCredentialPrompt = undefined;
   pendingCostamarB2bAuthPrompt = undefined;
+  lastCostamarWarmupDiagnostics = undefined;
   void closeLiveCostamarBrowserConnection();
   liveCostamarBrowserRetryAfterMs = 0;
   playwrightPromise = undefined;
@@ -1772,6 +1947,12 @@ function waitMs(durationMs: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, Math.max(0, durationMs));
   });
+}
+
+function sha1Hex(input: string): string {
+  const hasher = new Bun.CryptoHasher("sha1");
+  hasher.update(input);
+  return hasher.digest("hex");
 }
 
 async function searchLocalCostamarExactWithRetry(
@@ -1819,16 +2000,7 @@ function toCompactDate(dateIso?: string): string | undefined {
 }
 
 function numberValue(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : undefined;
-  }
-
-  return undefined;
+  return parseProviderAmount(value);
 }
 
 function parseDurationMinutes(value: unknown, departureAt?: string, arrivalAt?: string): number {
@@ -2037,7 +2209,7 @@ function buildCostamarOfferId(
   currencyCode: string,
 ): string {
   const seed = `${signature}::${totalAmount.toFixed(2)}::${currencyCode}`;
-  return `costamar-${createHash("sha1").update(seed).digest("hex").slice(0, 16)}`;
+  return `costamar-${sha1Hex(seed).slice(0, 16)}`;
 }
 
 function dedupeCostamarOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
@@ -2052,7 +2224,7 @@ function dedupeCostamarOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
       String(offer.baggage?.carryOnIncluded ?? ""),
     ].join("::");
     const existing = deduped.get(key);
-    if (!existing || offer.valueScore < existing.valueScore) {
+    if (!existing || compareByPriceThenDuration(offer, existing) < 0) {
       deduped.set(key, offer);
     }
   }
@@ -2060,37 +2232,13 @@ function dedupeCostamarOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
   return [...deduped.values()];
 }
 
-function sumMoneyLike(value: unknown): number {
-  if (value === undefined || value === null) {
-    return 0;
+function compareByPriceThenDuration(left: CanonicalOffer, right: CanonicalOffer): number {
+  const priceDiff = left.price.total.amount - right.price.total.amount;
+  if (priceDiff !== 0) {
+    return priceDiff;
   }
 
-  const direct = numberValue(value);
-  if (typeof direct === "number") {
-    return direct;
-  }
-
-  if (Array.isArray(value)) {
-    return value.reduce((sum, entry) => sum + sumMoneyLike(entry), 0);
-  }
-
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    for (const key of ["amount", "value", "total", "price", "markup"]) {
-      const numeric = numberValue(record[key]);
-      if (typeof numeric === "number") {
-        return numeric;
-      }
-    }
-
-    for (const key of ["markups", "discounts", "items", "fees", "data"]) {
-      if (record[key] !== undefined) {
-        return sumMoneyLike(record[key]);
-      }
-    }
-  }
-
-  return 0;
+  return totalDuration(left) - totalDuration(right);
 }
 
 function money(amount: number | undefined, currencyCode: string) {
@@ -2105,7 +2253,7 @@ function money(amount: number | undefined, currencyCode: string) {
 }
 
 function roundMoneyAmount(amount: number): number {
-  return Number(amount.toFixed(2));
+  return roundProviderAmount(amount);
 }
 
 function resolveCostamarOfferCurrencyCode(
@@ -2361,9 +2509,185 @@ function normalizeItinerary(
   };
 }
 
+function costamarRedirectVerification(
+  state: CostamarRedirectState,
+  verified: boolean,
+  reason?: string,
+): RedirectVerification {
+  return {
+    provider: "costamar",
+    state,
+    verified,
+    ...(reason ? { reason } : {}),
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+function costamarRedirectVerificationFromContext(context: CostamarProviderContext): RedirectVerification {
+  const inspection = inspectCostamarBrandedToken(context.token, context.terminalId);
+  if (!inspection.hasToken) {
+    return costamarRedirectVerification("missing", false, "No redirect token is available.");
+  }
+  if (!inspection.terminalMatches) {
+    return costamarRedirectVerification("blocked", false, "The redirect token belongs to another Costamar terminal.");
+  }
+  if (inspection.expired) {
+    return costamarRedirectVerification("missing", false, "The redirect token is expired.");
+  }
+  if (inspection.nearExpiry) {
+    return costamarRedirectVerification("near_expiry", false, "The redirect token is close to expiry and should be refreshed.");
+  }
+  if (inspection.opaque) {
+    return costamarRedirectVerification("cached_unverified", false, "The redirect token is opaque and requires live validation.");
+  }
+
+  return costamarRedirectVerification("fresh_unverified", false, "The redirect token is locally usable but has not been validated against the branded redirect.");
+}
+
+function costamarRedirectResponseLooksValid(status: number, location: string, body: string): boolean {
+  if (status === 401 || status === 403 || status >= 500) {
+    return false;
+  }
+  if (COSTAMAR_REDIRECT_VERIFY_FAILURE_PATTERN.test(location)
+    || COSTAMAR_REDIRECT_VERIFY_FAILURE_PATTERN.test(body)) {
+    return false;
+  }
+
+  return status >= 200 && status < 400;
+}
+
+export async function verifyCostamarRedirectCandidate(
+  request: SearchRequest,
+  context: CostamarProviderContext,
+): Promise<RedirectVerification> {
+  const localVerification = costamarRedirectVerificationFromContext(context);
+  if (!inspectCostamarBrandedToken(context.token, context.terminalId).usable) {
+    return localVerification;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS);
+  try {
+    const response = await fetch(buildCostamarBrandedSearchUrl(request, context), {
+      method: "GET",
+      redirect: "manual",
+      signal: controller.signal,
+      headers: {
+        Accept: "text/html,application/xhtml+xml",
+      },
+    });
+    const location = response.headers.get("location") ?? "";
+    const body = response.status >= 300 && response.status < 400
+      ? ""
+      : (await response.text().catch(() => "")).slice(0, 4096);
+    if (costamarRedirectResponseLooksValid(response.status, location, body)) {
+      return costamarRedirectVerification("verified", true, "The branded redirect accepted the token.");
+    }
+
+    return costamarRedirectVerification("blocked", false, `The branded redirect rejected the token with HTTP ${response.status}.`);
+  } catch (error) {
+    return costamarRedirectVerification(
+      "fresh_unverified",
+      false,
+      error instanceof Error ? `Redirect validation failed: ${error.message}` : "Redirect validation failed.",
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function redirectStateRequiresRefresh(state: CostamarRedirectState): boolean {
+  return state === "missing"
+    || state === "near_expiry"
+    || state === "refresh_failed"
+    || state === "blocked";
+}
+
+export function shouldWarnCostamarRedirectUnavailable(
+  offerCount: number,
+  verification: RedirectVerification,
+): boolean {
+  return offerCount > 0
+    && (verification.state === "missing"
+      || verification.state === "refresh_failed"
+      || verification.state === "blocked");
+}
+
+function buildCostamarRedirectWarning(verification: RedirectVerification): string {
+  if (verification.state === "blocked") {
+    return `Costamar redirect is blocked: ${verification.reason ?? "token validation failed"}.`;
+  }
+  if (verification.state === "refresh_failed") {
+    return `Costamar redirect token refresh failed: ${verification.reason ?? "no usable token was captured"}.`;
+  }
+
+  return COSTAMAR_REDIRECT_SESSION_WARNING;
+}
+
+export async function resolveCostamarRedirectForRequest(
+  request: SearchRequest,
+  seedContext: CostamarProviderContext,
+  options: { force?: boolean; validateLive?: boolean; forceOnUnverified?: boolean } = {},
+): Promise<CostamarRedirectResolution> {
+  let context = resolveLatestCostamarProviderContext(seedContext);
+  let redirectVerification = costamarRedirectVerificationFromContext(context);
+  const diagnostics = createCostamarWarmupDiagnostics(context);
+  lastCostamarWarmupDiagnostics = diagnostics;
+
+  const shouldRefresh = options.force
+    || redirectStateRequiresRefresh(redirectVerification.state)
+    || (options.forceOnUnverified && !redirectVerification.verified);
+
+  if (shouldRefresh) {
+    recordCostamarWarmupStep(diagnostics, "refresh-start", true, redirectVerification.reason);
+    const warmed = await warmCostamarRedirectContext(request, context, { force: options.force || options.forceOnUnverified });
+    context = warmed;
+    const refreshedVerification = costamarRedirectVerificationFromContext(context);
+    const inspection = inspectCostamarBrandedToken(context.token, context.terminalId);
+    diagnostics.tokenCaptured = inspection.hasToken;
+    if (!inspection.usable) {
+      redirectVerification = costamarRedirectVerification(
+        "refresh_failed",
+        false,
+        refreshedVerification.reason ?? "No usable redirect token was captured after refresh.",
+      );
+      recordCostamarWarmupStep(diagnostics, "refresh-result", false, redirectVerification.reason);
+    } else {
+      redirectVerification = refreshedVerification;
+      recordCostamarWarmupStep(diagnostics, "refresh-result", true, redirectVerification.reason);
+    }
+  }
+
+  if (options.validateLive && inspectCostamarBrandedToken(context.token, context.terminalId).usable) {
+    redirectVerification = await verifyCostamarRedirectCandidate(request, context);
+    diagnostics.tokenValidated = redirectVerification.verified;
+    recordCostamarWarmupStep(diagnostics, "live-validation", redirectVerification.verified, redirectVerification.reason);
+    if (!redirectVerification.verified && options.forceOnUnverified && !shouldRefresh) {
+      const warmed = await warmCostamarRedirectContext(request, context, { force: true });
+      context = warmed;
+      redirectVerification = await verifyCostamarRedirectCandidate(request, context);
+      diagnostics.tokenCaptured = inspectCostamarBrandedToken(context.token, context.terminalId).hasToken;
+      diagnostics.tokenValidated = redirectVerification.verified;
+      recordCostamarWarmupStep(diagnostics, "forced-refresh-validation", redirectVerification.verified, redirectVerification.reason);
+    }
+  }
+
+  const warnings = shouldWarnCostamarRedirectUnavailable(1, redirectVerification)
+    ? [buildCostamarRedirectWarning(redirectVerification)]
+    : [];
+
+  return {
+    context,
+    redirectVerification,
+    diagnostics,
+    warnings,
+  };
+}
+
 export function buildCostamarPurchasePaths(
   request: SearchRequest,
   context: CostamarProviderContext,
+  redirectVerification = costamarRedirectVerificationFromContext(context),
 ): CanonicalOffer["purchasePaths"] {
   return [
     {
@@ -2377,6 +2701,7 @@ export function buildCostamarPurchasePaths(
       requiresNewTab: true,
       commercialMode: "provider",
       state: "search_redirect",
+      redirectVerification,
     },
   ];
 }
@@ -2648,9 +2973,8 @@ async function applyMarkupToOffer(
     );
 
     const markups = sumCostamarMarkupTotals(markupResponse, recommendation, request);
-    const discounts = sumMoneyLike(recommendation.pricing?.discounts);
     const markupError = resolveCostamarMarkupError(markupResponse);
-    if (markups <= 0 && discounts <= 0) {
+    if (markups <= 0) {
       return markupError
         ? {
             ...offer,
@@ -2662,7 +2986,7 @@ async function applyMarkupToOffer(
         : offer;
     }
 
-    const total = roundMoneyAmount(offer.price.total.amount + markups - discounts);
+    const total = roundMoneyAmount(offer.price.total.amount + markups);
     return {
       ...offer,
       id: buildCostamarOfferId(offer.signature, total, offer.price.total.currencyCode),
@@ -2692,6 +3016,7 @@ export function mapCostamarRecommendationToOffer(
   request: SearchRequest,
   context: CostamarProviderContext,
   engine: CostamarEngineMetadata,
+  redirectVerification = costamarRedirectVerificationFromContext(context),
 ): { offer?: CanonicalOffer; rawSegments: CostamarSegmentLike[] } {
   const journeys = asArray(recommendation.itinerary);
   const outboundNormalized = normalizeItinerary(recommendation, "outbound", journeys[0] ?? {}, 0);
@@ -2732,7 +3057,7 @@ export function mapCostamarRecommendationToOffer(
     id: "",
     signature: "",
     providerSource: "costamar",
-    providerOfferRef: String(recommendation.id ?? createHash("sha1").update(JSON.stringify(recommendation)).digest("hex")),
+    providerOfferRef: String(recommendation.id ?? sha1Hex(JSON.stringify(recommendation))),
     tripType: request.tripType,
     validatingCarrier: pricing.validatingAirline ?? firstSegment.marketingCarrier,
     mainCarrier: firstSegment.marketingCarrier,
@@ -2756,7 +3081,8 @@ export function mapCostamarRecommendationToOffer(
     } satisfies FareMeta,
     priceConfidence: "live",
     priceStatus: "unverified",
-    purchasePaths: buildCostamarPurchasePaths(request, context),
+    purchasePaths: buildCostamarPurchasePaths(request, context, redirectVerification),
+    redirectVerification,
     comparisonMetrics: {
       totalDurationMinutes: 0,
       totalStops: 0,
@@ -2772,7 +3098,6 @@ export function mapCostamarRecommendationToOffer(
       recommendationId: recommendation.id,
       pos: recommendation.pos,
     },
-    valueScore: 0,
   };
 
   const signature = buildOfferSignature(offer);
@@ -2793,10 +3118,13 @@ async function searchRecommendations(
   flexible = false,
 ): Promise<CostamarSearchOutcome> {
   const baseContext = getCostamarProviderContext(providerContext);
-  let redirectContext = resolveLatestCostamarProviderContext(baseContext);
-  if (!resolveUsableCostamarBrandedToken(redirectContext.token, redirectContext.terminalId)) {
-    redirectContext = await warmCostamarRedirectContext(request, redirectContext);
-  }
+  const redirectResolution = await resolveCostamarRedirectForRequest(
+    request,
+    resolveLatestCostamarProviderContext(baseContext),
+    { validateLive: false },
+  );
+  let redirectContext = redirectResolution.context;
+  let redirectVerification = redirectResolution.redirectVerification;
 
   const context = resolveUsableCostamarBrandedToken(redirectContext.token, redirectContext.terminalId)
     ? {
@@ -2821,10 +3149,12 @@ async function searchRecommendations(
   );
 
   let payload = await search(context);
+  let tokenSearchRejected = false;
   if (
     context.token
     && (payload.status === 401 || payload.status === 402)
   ) {
+    tokenSearchRejected = true;
     const fallbackPayload = await search({
       ...context,
       token: "",
@@ -2834,10 +3164,25 @@ async function searchRecommendations(
     }
   }
 
+  if (tokenSearchRejected) {
+    const forcedRedirect = await resolveCostamarRedirectForRequest(request, redirectContext, {
+      force: true,
+      validateLive: false,
+    });
+    redirectContext = forcedRedirect.context;
+    redirectVerification = forcedRedirect.redirectVerification;
+  }
+
   const responseWarning = buildCostamarSearchWarning(payload);
   const recommendations = responseWarning ? [] : asArray(payload.data);
   const mapped = await mapConcurrent(recommendations, COSTAMAR_CONCURRENCY.markup, async (recommendation) => {
-    const normalized = mapCostamarRecommendationToOffer(recommendation, request, redirectContext, engine);
+    const normalized = mapCostamarRecommendationToOffer(
+      recommendation,
+      request,
+      redirectContext,
+      engine,
+      redirectVerification,
+    );
     if (!normalized.offer) {
       return undefined;
     }
@@ -2853,12 +3198,12 @@ async function searchRecommendations(
   });
 
   const offers = dedupeCostamarOffers(mapped.filter((offer): offer is CanonicalOffer => Boolean(offer)));
-  const hasUsableRedirectToken = Boolean(
-    resolveUsableCostamarBrandedToken(redirectContext.token, redirectContext.terminalId),
-  );
+  const redirectWarning = shouldWarnCostamarRedirectUnavailable(offers.length, redirectVerification)
+    ? buildCostamarRedirectWarning(redirectVerification)
+    : undefined;
   const warnings = uniqueStrings([
     ...(responseWarning ? [responseWarning] : []),
-    ...(offers.length > 0 && !hasUsableRedirectToken ? [COSTAMAR_REDIRECT_SESSION_WARNING] : []),
+    ...(redirectWarning ? [redirectWarning] : []),
     ...offers.flatMap((offer) => offer.warnings),
   ]);
 
@@ -3177,10 +3522,10 @@ async function resolveCellPrice(
   providerContext?: ProviderContext,
 ): Promise<CanonicalOffer | undefined> {
   const search = await searchLocalCostamarExact(derivedRequest, providerContext);
-  const offers = computeValueScores(enrichComparisonMetrics(search.offers));
+  const offers = enrichComparisonMetrics(search.offers);
 
   return offers.reduce<CanonicalOffer | undefined>((best, current) => {
-    if (!best || current.price.total.amount < best.price.total.amount) {
+    if (!best || compareByPriceThenDuration(current, best) < 0) {
       return current;
     }
 

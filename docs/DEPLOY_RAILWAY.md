@@ -2,7 +2,7 @@
 
 ## Estado real
 
-El proceso Node actual se puede construir y arrancar en Railway, pero la funcionalidad completa de busqueda no esta lista para un deploy remoto fiel al entorno local.
+El proceso Bun actual se puede construir y arrancar en Railway, pero la funcionalidad completa de busqueda no esta lista para un deploy remoto fiel al entorno local.
 
 Motivo principal:
 
@@ -12,8 +12,8 @@ Motivo principal:
 
 ## Lo que si funciona en Railway
 
-- build TypeScript
-- servidor Node en un solo proceso
+- build frontend con Bun
+- servidor Bun en un solo proceso
 - serving de UI y API
 - lectura de `PORT`
 - override explicito de `HOST`
@@ -21,9 +21,9 @@ Motivo principal:
 
 Comandos:
 
-- install: `npm install`
-- build: `npm run build`
-- start: `npm start`
+- install: `bun install --frozen-lockfile`
+- build: `bun run build`
+- start: `bun run start`
 - healthcheck: `/api/health`
 
 Variables minimas para un deploy remoto:
@@ -54,4 +54,4 @@ Hace falta resolver al menos:
 
 ## Conclusión
 
-Railway sigue siendo una opcion natural para el servidor Node, pero hoy sirve mejor como destino de shell/API parcial que como deploy totalmente funcional de la integracion local con Agil.
+Railway sigue siendo una opcion natural para el servidor Bun, pero hoy sirve mejor como destino de shell/API parcial que como deploy totalmente funcional de la integracion local con Agil.

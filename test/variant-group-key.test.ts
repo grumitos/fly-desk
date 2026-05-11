@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Itinerary } from "../src/core/types";
 import { buildFlexibleVariantGroupKey } from "../src/core/variant-group-key";

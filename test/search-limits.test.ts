@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { limitSearchResponseForPagination, resolveListSearchResultLimit } from "../src/search-limits";
 import type { SearchRequest, SearchResponse } from "../src/core/types";
@@ -59,7 +59,6 @@ function buildResponse(totalOffers: number): SearchResponse {
     },
     tags: [],
     warnings: [],
-    valueScore: 0,
   }));
 
   return {

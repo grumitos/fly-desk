@@ -1,6 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
-import { spawn, ChildProcess } from "node:child_process";
-import { readFileSync, rmSync, mkdirSync, cpSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, rmSync, mkdirSync, cpSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Browser, BrowserContext, Page } from "playwright";
@@ -30,6 +28,11 @@ import {
   prioritizeMatrixLoadingCells,
 } from "./core/matrix";
 import { buildOfferSignature } from "./core/offer-signature";
+import {
+  parseProviderAmount,
+  providerAmountsDiffer,
+  roundProviderAmount,
+} from "./core/provider-money";
 import { buildFlexibleVariantGroupKey } from "./core/variant-group-key";
 import { maxStopsAcrossItineraries } from "./core/ranking";
 import {
@@ -52,10 +55,15 @@ import {
 import { rankLocationSuggestions } from "./location-suggestions";
 import { recordProviderFirstHttpRequest } from "./provider-diagnostics";
 
-interface BrowserStorageSnapshot {
+export interface BrowserStorageSnapshot {
   tokenSearchFlight: string;
   userData: string;
   ip: string;
+}
+
+interface AgilStorageSnapshotCandidate {
+  snapshot: BrowserStorageSnapshot;
+  freshnessMs: number;
 }
 
 interface AgilSessionData {
@@ -65,6 +73,23 @@ interface AgilSessionData {
   internalCode: string;
   ip: string;
   capturedAtMs: number;
+}
+
+interface CdpResponse {
+  id?: number;
+  sessionId?: string;
+  method?: string;
+  params?: unknown;
+  result?: unknown;
+  error?: {
+    message?: string;
+  };
+}
+
+interface CdpClient {
+  close: () => void;
+  send: (method: string, params?: Record<string, unknown>, sessionId?: string) => Promise<unknown>;
+  waitForEvent: (method: string, sessionId: string | undefined, timeoutMs: number) => Promise<unknown>;
 }
 
 interface AgilCityLike {
@@ -221,6 +246,7 @@ const AGIL_STORAGE_ORIGINS = [
   "https://www.agilsmart.com/home-user",
   "https://motorvuelos.expertiatravel.com/",
 ] as const;
+const AGIL_TOKEN_STORAGE_KEYS = ["tokenSearchFlight", "tokenTravelC"] as const;
 const AGIL_HTTP_TIMEOUT_MS = Math.max(
   5000,
   Number(process.env.AGIL_HTTP_TIMEOUT_MS ?? 20000),
@@ -272,6 +298,12 @@ function waitMs(durationMs: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, Math.max(0, durationMs));
   });
+}
+
+function sha1Hex(input: string): string {
+  const hasher = new Bun.CryptoHasher("sha1");
+  hasher.update(input);
+  return hasher.digest("hex");
 }
 
 async function searchLocalAgilExactWithRetry(request: SearchRequest): Promise<ProviderSearchResult> {
@@ -410,13 +442,167 @@ function decodeBase64Text(value: string): string {
   return Buffer.from(value, "base64").toString("utf8");
 }
 
-function resolveBrowserUserDataDir(): string {
-  const configured = process.env.AGIL_CHROME_USER_DATA_DIR?.trim();
-  if (configured) {
-    return configured;
+function defaultChromeUserDataDir(): string | undefined {
+  return process.env.LOCALAPPDATA
+    ? join(process.env.LOCALAPPDATA, "Google", "Chrome", "User Data")
+    : undefined;
+}
+
+function normalizeChromePath(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
   }
 
-  return join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
+  if (
+    (trimmed.startsWith("\"") && trimmed.endsWith("\""))
+    || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim() || undefined;
+  }
+
+  return trimmed;
+}
+
+function extractChromeFlagValue(commandLine: string, flagName: string): string | undefined {
+  const escapedFlag = flagName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = commandLine.match(new RegExp(
+    `(?:^|\\s)--${escapedFlag}(?:=|\\s+)(?:"([^"]+)"|'([^']+)'|(\\S+))`,
+    "i",
+  ));
+  return normalizeChromePath(match?.[1] ?? match?.[2] ?? match?.[3]);
+}
+
+function extractChromeUserDataDirsFromCommandLines(commandLines: string[]): string[] {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const pushUnique = (value?: string) => {
+    const normalized = normalizeChromePath(value);
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
+
+  for (const commandLine of commandLines) {
+    if (!/chrome(?:\.exe)?/i.test(commandLine) || !commandLine.includes("--user-data-dir")) {
+      continue;
+    }
+
+    pushUnique(extractChromeFlagValue(commandLine, "user-data-dir"));
+  }
+
+  return candidates;
+}
+
+export function extractAgilChromeUserDataDirsFromCommandLinesForTests(commandLines: string[]): string[] {
+  return extractChromeUserDataDirsFromCommandLines(commandLines);
+}
+
+function extractChromeDebugPortsFromCommandLines(commandLines: string[]): number[] {
+  const ports: number[] = [];
+  const seen = new Set<number>();
+
+  for (const commandLine of commandLines) {
+    if (!/chrome(?:\.exe)?/i.test(commandLine) || !commandLine.includes("--remote-debugging-port")) {
+      continue;
+    }
+
+    const rawPort = extractChromeFlagValue(commandLine, "remote-debugging-port");
+    const port = Number(rawPort);
+    if (!Number.isInteger(port) || port <= 0 || port > 65535 || seen.has(port)) {
+      continue;
+    }
+
+    seen.add(port);
+    ports.push(port);
+  }
+
+  return ports;
+}
+
+export function extractAgilChromeDebugPortsFromCommandLinesForTests(commandLines: string[]): number[] {
+  return extractChromeDebugPortsFromCommandLines(commandLines);
+}
+
+function runningChromeProcessDiscoveryEnabled(): boolean {
+  return process.env.AGIL_CHROME_PROCESS_DISCOVERY !== "0";
+}
+
+function readRunningChromeCommandLines(): string[] {
+  if (!runningChromeProcessDiscoveryEnabled()) {
+    return [];
+  }
+
+  if (process.platform !== "win32") {
+    return [];
+  }
+
+  const script = [
+    "$ErrorActionPreference='SilentlyContinue';",
+    "Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe'\" |",
+    "Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--user-data-dir') } |",
+    "ForEach-Object { $_.CommandLine }",
+  ].join(" ");
+  const result = Bun.spawnSync(["powershell.exe",
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    script,
+  ], {
+    stdout: "pipe",
+    stderr: "ignore",
+    timeout: 3000,
+    windowsHide: true,
+  });
+  const stdout = result.stdout?.toString("utf8") ?? "";
+
+  if (result.exitCode !== 0 || !stdout) {
+    return [];
+  }
+
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function readRunningChromeUserDataDirCandidates(): string[] {
+  return extractChromeUserDataDirsFromCommandLines(readRunningChromeCommandLines())
+    .filter((candidate) => existsSync(candidate));
+}
+
+function readRunningChromeDebugPorts(): number[] {
+  return extractChromeDebugPortsFromCommandLines(readRunningChromeCommandLines());
+}
+
+function readAgilChromeUserDataDirCandidates(): string[] {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const pushUnique = (value?: string) => {
+    const normalized = value?.trim();
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
+
+  pushUnique(process.env.AGIL_CHROME_USER_DATA_DIR);
+  pushUnique(process.env.CHROME_USER_DATA_DIR);
+  pushUnique(process.env.COSTAMAR_CHROME_USER_DATA_DIR);
+  readRunningChromeUserDataDirCandidates().forEach((candidate) => pushUnique(candidate));
+  pushUnique(defaultChromeUserDataDir());
+  return candidates;
+}
+
+function resolveBrowserUserDataDir(): string {
+  return readAgilChromeUserDataDirCandidates()[0]
+    ?? join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 }
 
 function resolveAgilBrowserEndpoint(): string | undefined {
@@ -433,15 +619,324 @@ function resolveAgilBrowserEndpoint(): string | undefined {
   return undefined;
 }
 
-function readChromeProfileName(): string {
-  const localStatePath = join(resolveBrowserUserDataDir(), "Local State");
+function resolveAgilBrowserConnectTimeoutMs(): number {
+  return Math.max(500, Number(process.env.AGIL_BROWSER_CONNECT_TIMEOUT_MS ?? 2500));
+}
+
+function resolveChromeDevToolsBrowserWsEndpoint(userDataDir: string): string | undefined {
+  const devToolsPath = join(userDataDir, "DevToolsActivePort");
+  if (!existsSync(devToolsPath)) {
+    return undefined;
+  }
+
+  try {
+    const [portLine = "", browserPath = ""] = readFileSync(devToolsPath, "utf8")
+      .trim()
+      .split(/\r?\n/);
+    const port = Number(portLine);
+    const normalizedPath = browserPath.trim();
+    if (!Number.isFinite(port) || port <= 0 || port > 65535 || !normalizedPath.startsWith("/")) {
+      return undefined;
+    }
+
+    return `ws://127.0.0.1:${port}${normalizedPath}`;
+  } catch {
+    return undefined;
+  }
+}
+
+export function resolveAgilChromeDevToolsBrowserWsEndpointForTests(userDataDir: string): string | undefined {
+  return resolveChromeDevToolsBrowserWsEndpoint(userDataDir);
+}
+
+async function resolveChromeDevToolsBrowserWsEndpointFromPort(port: number): Promise<string | undefined> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), resolveAgilBrowserConnectTimeoutMs());
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const payload = await response.json() as { webSocketDebuggerUrl?: unknown };
+    return typeof payload.webSocketDebuggerUrl === "string"
+      ? payload.webSocketDebuggerUrl
+      : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readRunningChromeDevToolsBrowserWsEndpoints(): Promise<string[]> {
+  const endpoints: string[] = [];
+  const seen = new Set<string>();
+
+  for (const port of readRunningChromeDebugPorts()) {
+    const endpoint = await resolveChromeDevToolsBrowserWsEndpointFromPort(port);
+    if (!endpoint || seen.has(endpoint)) {
+      continue;
+    }
+
+    seen.add(endpoint);
+    endpoints.push(endpoint);
+  }
+
+  return endpoints;
+}
+
+function cdpErrorMessage(method: string, response: CdpResponse): string {
+  return response.error?.message
+    ? `${method}: ${response.error.message}`
+    : `${method} failed.`;
+}
+
+async function createCdpClient(endpoint: string, timeoutMs: number): Promise<CdpClient> {
+  if (typeof WebSocket !== "function") {
+    throw new Error("WebSocket is not available for Chrome DevTools.");
+  }
+
+  const socket = new WebSocket(endpoint);
+  let nextId = 1;
+  const pending = new Map<number, {
+    method: string;
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
+  const eventWaiters: Array<{
+    method: string;
+    sessionId?: string;
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }> = [];
+
+  const failAll = (error: Error) => {
+    for (const [id, waiter] of pending) {
+      clearTimeout(waiter.timer);
+      waiter.reject(error);
+      pending.delete(id);
+    }
+
+    while (eventWaiters.length > 0) {
+      const waiter = eventWaiters.pop();
+      if (!waiter) {
+        continue;
+      }
+      clearTimeout(waiter.timer);
+      waiter.reject(error);
+    }
+  };
+
+  socket.addEventListener("message", (event) => {
+    let message: CdpResponse;
+    try {
+      message = JSON.parse(String(event.data)) as CdpResponse;
+    } catch {
+      return;
+    }
+
+    if (typeof message.id === "number") {
+      const waiter = pending.get(message.id);
+      if (!waiter) {
+        return;
+      }
+
+      pending.delete(message.id);
+      clearTimeout(waiter.timer);
+      if (message.error) {
+        waiter.reject(new Error(cdpErrorMessage(waiter.method, message)));
+      } else {
+        waiter.resolve(message.result);
+      }
+      return;
+    }
+
+    if (!message.method) {
+      return;
+    }
+
+    for (let index = 0; index < eventWaiters.length; index += 1) {
+      const waiter = eventWaiters[index];
+      if (waiter.method !== message.method || waiter.sessionId !== message.sessionId) {
+        continue;
+      }
+
+      eventWaiters.splice(index, 1);
+      clearTimeout(waiter.timer);
+      waiter.resolve(message.params);
+      break;
+    }
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Chrome DevTools websocket did not open in time.")), timeoutMs);
+    socket.addEventListener("open", () => {
+      clearTimeout(timer);
+      resolve();
+    }, { once: true });
+    socket.addEventListener("error", () => {
+      clearTimeout(timer);
+      reject(new Error("Chrome DevTools websocket failed to open."));
+    }, { once: true });
+  });
+
+  socket.addEventListener("error", () => failAll(new Error("Chrome DevTools websocket failed.")));
+  socket.addEventListener("close", () => failAll(new Error("Chrome DevTools websocket closed.")));
+
+  return {
+    close: () => {
+      try {
+        socket.close();
+      } catch {
+        // Ignore close failures.
+      }
+    },
+    send: (method, params = {}, sessionId) => {
+      const id = nextId;
+      nextId += 1;
+      const payload: Record<string, unknown> = {
+        id,
+        method,
+        params,
+      };
+      if (sessionId) {
+        payload.sessionId = sessionId;
+      }
+
+      socket.send(JSON.stringify(payload));
+      return new Promise<unknown>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          reject(new Error(`${method} timed out.`));
+        }, timeoutMs);
+        pending.set(id, {
+          method,
+          resolve,
+          reject,
+          timer,
+        });
+      });
+    },
+    waitForEvent: (method, sessionId, eventTimeoutMs) => new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const index = eventWaiters.findIndex((waiter) =>
+          waiter.method === method && waiter.sessionId === sessionId && waiter.resolve === resolve
+        );
+        if (index >= 0) {
+          eventWaiters.splice(index, 1);
+        }
+        reject(new Error(`${method} timed out.`));
+      }, eventTimeoutMs);
+      eventWaiters.push({
+        method,
+        sessionId,
+        resolve,
+        reject,
+        timer,
+      });
+    }),
+  };
+}
+
+function normalizeCdpStorageSnapshot(value: unknown): BrowserStorageSnapshot {
+  const candidate = typeof value === "object" && value !== null
+    ? value as Partial<BrowserStorageSnapshot>
+    : {};
+
+  return {
+    tokenSearchFlight: typeof candidate.tokenSearchFlight === "string" ? candidate.tokenSearchFlight : "",
+    userData: typeof candidate.userData === "string" ? candidate.userData : "",
+    ip: typeof candidate.ip === "string" ? candidate.ip : "",
+  };
+}
+
+async function waitForAgilStorageSnapshotInCdpSession(
+  client: CdpClient,
+  sessionId: string,
+): Promise<BrowserStorageSnapshot> {
+  const deadline = Date.now() + 5000;
+  let latest: BrowserStorageSnapshot = {
+    tokenSearchFlight: "",
+    userData: "",
+    ip: "",
+  };
+
+  do {
+    const evaluated = await client.send("Runtime.evaluate", {
+      expression: `(() => ({
+        tokenSearchFlight: localStorage.getItem("tokenSearchFlight") || localStorage.getItem("tokenTravelC") || "",
+        userData: localStorage.getItem("user_data") || "",
+        ip: localStorage.getItem("ip") || ""
+      }))()`,
+      returnByValue: true,
+      awaitPromise: true,
+    }, sessionId) as { result?: { value?: unknown } };
+    latest = normalizeCdpStorageSnapshot(evaluated.result?.value);
+    if (latest.tokenSearchFlight && latest.userData && latest.ip) {
+      return latest;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  } while (Date.now() < deadline);
+
+  return latest;
+}
+
+async function readAgilStorageSnapshotFromDevToolsEndpoint(endpoint: string): Promise<BrowserStorageSnapshot> {
+  const client = await createCdpClient(endpoint, resolveAgilBrowserConnectTimeoutMs());
+  try {
+    return await readAgilStorageSnapshotFromNavigable(async (origin) => {
+      const target = await client.send("Target.createTarget", { url: "about:blank" }) as { targetId?: string };
+      const targetId = target.targetId;
+      if (!targetId) {
+        throw new Error("Chrome DevTools did not create a target.");
+      }
+
+      try {
+        const attached = await client.send("Target.attachToTarget", {
+          targetId,
+          flatten: true,
+        }) as { sessionId?: string };
+        const sessionId = attached.sessionId;
+        if (!sessionId) {
+          throw new Error("Chrome DevTools did not attach to the target.");
+        }
+
+        await client.send("Page.enable", {}, sessionId);
+        await client.send("Runtime.enable", {}, sessionId);
+        const domReady = client.waitForEvent("Page.domContentEventFired", sessionId, 30000).catch(() => undefined);
+        await client.send("Page.navigate", { url: origin }, sessionId);
+        await domReady;
+        return await waitForAgilStorageSnapshotInCdpSession(client, sessionId);
+      } finally {
+        await client.send("Target.closeTarget", { targetId }).catch(() => undefined);
+      }
+    });
+  } finally {
+    client.close();
+  }
+}
+
+function temporaryChromeStorageFallbackEnabled(): boolean {
+  const value = String(process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK ?? "1").trim().toLowerCase();
+  return value !== "0" && value !== "false" && value !== "no" && value !== "off";
+}
+
+function readChromeProfileName(userDataDir = resolveBrowserUserDataDir()): string {
+  const localStatePath = join(userDataDir, "Local State");
 
   const raw = readFileSync(localStatePath, "utf8");
   const parsed = JSON.parse(raw) as { profile?: { last_used?: string } };
   return parsed.profile?.last_used || "Default";
 }
 
-function readChromeProfileCandidates(): string[] {
+function readChromeProfileCandidates(userDataDir = resolveBrowserUserDataDir()): string[] {
   const candidates: string[] = [];
   const seen = new Set<string>();
   const pushUnique = (value: string | undefined) => {
@@ -456,13 +951,13 @@ function readChromeProfileCandidates(): string[] {
   pushUnique(process.env.AGIL_CHROME_PROFILE?.trim());
 
   try {
-    pushUnique(readChromeProfileName());
+    pushUnique(readChromeProfileName(userDataDir));
   } catch {
     pushUnique("Default");
   }
 
   try {
-    const localStatePath = join(resolveBrowserUserDataDir(), "Local State");
+    const localStatePath = join(userDataDir, "Local State");
     const raw = readFileSync(localStatePath, "utf8");
     const parsed = JSON.parse(raw) as {
       profile?: {
@@ -477,7 +972,6 @@ function readChromeProfileCandidates(): string[] {
   }
 
   try {
-    const userDataDir = resolveBrowserUserDataDir();
     readdirSync(userDataDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && (entry.name === "Default" || /^Profile \d+$/.test(entry.name)))
       .map((entry) => entry.name)
@@ -526,9 +1020,9 @@ function resolveAgilSmartAddress(): string | undefined {
   return undefined;
 }
 
-function prepareTemporaryChromeProfile(profileName: string): string {
-  const sourceRoot = resolveBrowserUserDataDir();
-  const tempRoot = join(tmpdir(), `travel_quote_foundation_agil_${randomUUID()}`);
+function prepareTemporaryChromeProfile(userDataDir: string, profileName: string): string {
+  const sourceRoot = userDataDir;
+  const tempRoot = join(tmpdir(), `travel_quote_foundation_agil_${crypto.randomUUID()}`);
   const profileRoot = join(tempRoot, profileName);
   mkdirSync(profileRoot, { recursive: true });
   registerActiveTempArtifact(tempRoot);
@@ -539,8 +1033,6 @@ function prepareTemporaryChromeProfile(profileName: string): string {
     join(profileName, "Secure Preferences"),
     join(profileName, "Local Storage"),
     join(profileName, "Session Storage"),
-    join(profileName, "IndexedDB"),
-    join(profileName, "WebStorage"),
   ];
 
   for (const relativePath of items) {
@@ -557,16 +1049,7 @@ function prepareTemporaryChromeProfile(profileName: string): string {
   return tempRoot;
 }
 
-function resolveChromeProfileName(): string {
-  const configured = process.env.AGIL_CHROME_PROFILE?.trim();
-  if (configured) {
-    return configured;
-  }
-
-  return readChromeProfileName();
-}
-
-function launchChromeForCdp(userDataDir: string, profileName: string, port: number): ChildProcess {
+function launchChromeForCdp(userDataDir: string, profileName: string, port: number): Bun.NullSubprocess {
   const chromePath = findChromeExecutable();
   const args = [
     `--user-data-dir=${userDataDir}`,
@@ -582,8 +1065,9 @@ function launchChromeForCdp(userDataDir: string, profileName: string, port: numb
     args.splice(args.length - 1, 0, `--host-resolver-rules=MAP agilsmart.com ${agilSmartAddress},MAP www.agilsmart.com ${agilSmartAddress}`);
   }
 
-  return spawn(chromePath, args, {
-    stdio: "ignore",
+  return Bun.spawn([chromePath, ...args], {
+    stdio: ["ignore", "ignore", "ignore"],
+    windowsHide: true,
   });
 }
 
@@ -613,7 +1097,7 @@ async function getPlaywright(): Promise<typeof import("playwright")> {
   return playwrightPromise;
 }
 
-async function cleanupTemporaryChromeLaunch(userDataDir: string, chrome?: ChildProcess): Promise<void> {
+async function cleanupTemporaryChromeLaunch(userDataDir: string, chrome?: Bun.NullSubprocess): Promise<void> {
   if (chrome) {
     try {
       chrome.kill("SIGTERM");
@@ -703,6 +1187,7 @@ export async function readAgilStorageSnapshotFromPage(
     try {
       await page.waitForFunction(() => (
         Boolean(localStorage.getItem("tokenSearchFlight"))
+        || Boolean(localStorage.getItem("tokenTravelC"))
         || Boolean(localStorage.getItem("user_data"))
         || Boolean(localStorage.getItem("ip"))
       ), {
@@ -713,7 +1198,9 @@ export async function readAgilStorageSnapshotFromPage(
     }
 
     return page.evaluate(() => ({
-      tokenSearchFlight: localStorage.getItem("tokenSearchFlight") || "",
+      tokenSearchFlight: localStorage.getItem("tokenSearchFlight")
+        || localStorage.getItem("tokenTravelC")
+        || "",
       userData: localStorage.getItem("user_data") || "",
       ip: localStorage.getItem("ip") || "",
     }));
@@ -733,6 +1220,7 @@ async function readAgilStorageSnapshotFromContext(
       try {
         await page.waitForFunction(() => (
           Boolean(localStorage.getItem("tokenSearchFlight"))
+          || Boolean(localStorage.getItem("tokenTravelC"))
           || Boolean(localStorage.getItem("user_data"))
           || Boolean(localStorage.getItem("ip"))
         ), {
@@ -743,7 +1231,9 @@ async function readAgilStorageSnapshotFromContext(
       }
 
       return await page.evaluate(() => ({
-        tokenSearchFlight: localStorage.getItem("tokenSearchFlight") || "",
+        tokenSearchFlight: localStorage.getItem("tokenSearchFlight")
+          || localStorage.getItem("tokenTravelC")
+          || "",
         userData: localStorage.getItem("user_data") || "",
         ip: localStorage.getItem("ip") || "",
       }));
@@ -751,6 +1241,17 @@ async function readAgilStorageSnapshotFromContext(
       await page.close().catch(() => undefined);
     }
   });
+}
+
+async function disconnectBrowser(browser: Browser | undefined): Promise<void> {
+  if (!browser) {
+    return;
+  }
+
+  const maybeDisconnectable = browser as Browser & { disconnect?: () => void | Promise<void> };
+  if (typeof maybeDisconnectable.disconnect === "function") {
+    await Promise.resolve(maybeDisconnectable.disconnect()).catch(() => undefined);
+  }
 }
 
 function candidateTokensNearKey(text: string, key: string): string[] {
@@ -780,9 +1281,15 @@ function extractAgilStorageSnapshotFromText(text: string): BrowserStorageSnapsho
     ip: "",
   };
 
-  for (const candidate of candidateTokensNearKey(text, "tokenSearchFlight")) {
-    if (candidate.includes(".")) {
-      snapshot.tokenSearchFlight = candidate;
+  for (const tokenKey of AGIL_TOKEN_STORAGE_KEYS) {
+    for (const candidate of candidateTokensNearKey(text, tokenKey)) {
+      if (candidate.includes(".")) {
+        snapshot.tokenSearchFlight = candidate;
+        break;
+      }
+    }
+
+    if (snapshot.tokenSearchFlight) {
       break;
     }
   }
@@ -845,8 +1352,11 @@ function readStorageFilesRecursive(directory: string): string[] {
   return files;
 }
 
-function readAgilStorageSnapshotFromProfileFiles(profileName: string): BrowserStorageSnapshot {
-  const profileRoot = join(resolveBrowserUserDataDir(), profileName);
+function readAgilStorageSnapshotFromProfileFiles(
+  userDataDir: string,
+  profileName: string,
+): AgilStorageSnapshotCandidate {
+  const profileRoot = join(userDataDir, profileName);
   if (!existsSync(profileRoot)) {
     throw new Error("Chrome profile directory does not exist.");
   }
@@ -854,56 +1364,92 @@ function readAgilStorageSnapshotFromProfileFiles(profileName: string): BrowserSt
   const storageRoots = [
     join(profileRoot, "Local Storage"),
     join(profileRoot, "Session Storage"),
-    join(profileRoot, "IndexedDB"),
-    join(profileRoot, "WebStorage"),
   ];
   let snapshot: BrowserStorageSnapshot = {
     tokenSearchFlight: "",
     userData: "",
     ip: "",
   };
+  let freshnessMs = 0;
   const failures: string[] = [];
+  const files = storageRoots
+    .flatMap((directory) => readStorageFilesRecursive(directory))
+    .map((filePath) => {
+      try {
+        return {
+          filePath,
+          mtimeMs: statSync(filePath).mtimeMs,
+        };
+      } catch {
+        return {
+          filePath,
+          mtimeMs: 0,
+        };
+      }
+    })
+    .sort((left, right) => right.mtimeMs - left.mtimeMs);
 
-  for (const filePath of storageRoots.flatMap((directory) => readStorageFilesRecursive(directory))) {
+  for (const file of files) {
     try {
-      const buffer = readFileSync(filePath);
+      const before = snapshot;
+      const buffer = readFileSync(file.filePath);
       const extracted = mergeAgilStorageSnapshots(
         extractAgilStorageSnapshotFromText(buffer.toString("utf8")),
         extractAgilStorageSnapshotFromText(buffer.toString("utf16le")),
       );
       snapshot = mergeAgilStorageSnapshots(snapshot, extracted);
-      if (snapshot.userData && snapshot.ip) {
-        return snapshot;
+      if (
+        snapshot.tokenSearchFlight !== before.tokenSearchFlight
+        || snapshot.userData !== before.userData
+        || snapshot.ip !== before.ip
+      ) {
+        freshnessMs = Math.max(freshnessMs, file.mtimeMs);
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Unable to read storage file";
-      failures.push(`${filePath}: ${detail}`);
+      failures.push(`${file.filePath}: ${detail}`);
     }
+  }
+
+  if (snapshot.userData && snapshot.ip) {
+    return {
+      snapshot,
+      freshnessMs,
+    };
   }
 
   const suffix = failures.length > 0 ? ` Read failures: ${failures.slice(0, 3).join(" | ")}` : "";
   throw new Error(`Agil local session data was not found in Chrome storage files.${suffix}`);
 }
 
-async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> {
-  const profileNames = readChromeProfileCandidates();
-  const failures: string[] = [];
+function pickBestAgilStorageSnapshotCandidate(
+  candidates: AgilStorageSnapshotCandidate[],
+): AgilStorageSnapshotCandidate | undefined {
+  return candidates
+    .slice()
+    .sort((left, right) => {
+      if (right.freshnessMs !== left.freshnessMs) {
+        return right.freshnessMs - left.freshnessMs;
+      }
 
-  for (const profileName of profileNames) {
-    try {
-      return readAgilStorageSnapshotFromProfileFiles(profileName);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
-      failures.push(`${profileName} files: ${detail}`);
-    }
-  }
+      const rightHasToken = right.snapshot.tokenSearchFlight ? 1 : 0;
+      const leftHasToken = left.snapshot.tokenSearchFlight ? 1 : 0;
+      return rightHasToken - leftHasToken;
+    })[0];
+}
+
+async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> {
+  const userDataDirs = readAgilChromeUserDataDirCandidates();
+  const failures: string[] = [];
 
   const browserEndpoint = resolveAgilBrowserEndpoint();
   if (browserEndpoint) {
     let browser: Browser | undefined;
     try {
       const playwright = await getPlaywright();
-      browser = await playwright.chromium.connectOverCDP(browserEndpoint);
+      browser = await playwright.chromium.connectOverCDP(browserEndpoint, {
+        timeout: resolveAgilBrowserConnectTimeoutMs(),
+      });
       const context = browser.contexts()[0];
       if (!context) {
         throw new Error("Connected browser exposed no contexts.");
@@ -913,38 +1459,96 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
       const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
       failures.push(`connected browser: ${detail}`);
     } finally {
-      if (browser) {
-        await browser.close().catch(() => undefined);
-      }
+      await disconnectBrowser(browser);
     }
   }
 
-  for (const profileName of profileNames) {
-    const userDataDir = prepareTemporaryChromeProfile(profileName);
-    const port = 9400 + Math.floor(Math.random() * 200);
-    let chrome: ChildProcess | undefined;
-    let browser: Browser | undefined;
+  for (const devToolsEndpoint of await readRunningChromeDevToolsBrowserWsEndpoints()) {
+    if (devToolsEndpoint === browserEndpoint) {
+      continue;
+    }
 
     try {
-      chrome = launchChromeForCdp(userDataDir, profileName, port);
-      await waitForDebugger(port);
-      const playwright = await getPlaywright();
-      browser = await playwright.chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-      const context = browser.contexts()[0];
-      return await readAgilStorageSnapshotFromContext(context);
+      return await readAgilStorageSnapshotFromDevToolsEndpoint(devToolsEndpoint);
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
-      failures.push(`${profileName}: ${detail}`);
-    } finally {
-      if (browser) {
-        await browser.close().catch(() => undefined);
+      failures.push(`running Chrome DevTools: ${detail}`);
+    }
+  }
+
+  for (const userDataDir of userDataDirs) {
+    const devToolsEndpoint = resolveChromeDevToolsBrowserWsEndpoint(userDataDir);
+    if (!devToolsEndpoint || devToolsEndpoint === browserEndpoint) {
+      continue;
+    }
+
+    try {
+      return await readAgilStorageSnapshotFromDevToolsEndpoint(devToolsEndpoint);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
+      failures.push(`${userDataDir} DevTools: ${detail}`);
+    }
+  }
+
+  for (const userDataDir of userDataDirs) {
+    const fileCandidates: AgilStorageSnapshotCandidate[] = [];
+    try {
+      for (const profileName of readChromeProfileCandidates(userDataDir)) {
+        try {
+          fileCandidates.push(readAgilStorageSnapshotFromProfileFiles(userDataDir, profileName));
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
+          failures.push(`${profileName} files: ${detail}`);
+        }
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
+      failures.push(`${userDataDir}: ${detail}`);
+    }
+
+    const bestFileCandidate = pickBestAgilStorageSnapshotCandidate(fileCandidates);
+    if (bestFileCandidate) {
+      return bestFileCandidate.snapshot;
+    }
+  }
+
+  if (!temporaryChromeStorageFallbackEnabled()) {
+    throw new Error(`Unable to extract Agil session from Chrome profiles. ${failures.join(" | ")}`.trim());
+  }
+
+  for (const userDataDirRoot of userDataDirs) {
+    for (const profileName of readChromeProfileCandidates(userDataDirRoot)) {
+      if (!existsSync(join(userDataDirRoot, profileName))) {
+        failures.push(`${profileName}: Chrome profile directory does not exist.`);
+        continue;
       }
 
-      await cleanupTemporaryChromeLaunch(userDataDir, chrome);
+      const userDataDir = prepareTemporaryChromeProfile(userDataDirRoot, profileName);
+      const port = 9400 + Math.floor(Math.random() * 200);
+      let chrome: Bun.NullSubprocess | undefined;
+
+      try {
+        chrome = launchChromeForCdp(userDataDir, profileName, port);
+        await waitForDebugger(port);
+        const endpoint = await resolveChromeDevToolsBrowserWsEndpointFromPort(port);
+        if (!endpoint) {
+          throw new Error("Chrome debugger endpoint was not available.");
+        }
+        return await readAgilStorageSnapshotFromDevToolsEndpoint(endpoint);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
+        failures.push(`${profileName}: ${detail}`);
+      } finally {
+        await cleanupTemporaryChromeLaunch(userDataDir, chrome);
+      }
     }
   }
 
   throw new Error(`Unable to extract Agil session from Chrome profiles. ${failures.join(" | ")}`.trim());
+}
+
+export async function extractAgilBrowserStorageSnapshotForTests(): Promise<BrowserStorageSnapshot> {
+  return extractBrowserStorageSnapshot();
 }
 
 export function parseAgilSessionData(snapshot: BrowserStorageSnapshot): AgilSessionData {
@@ -1000,7 +1604,7 @@ async function refreshAgilToken(session: AgilSessionData): Promise<AgilSessionDa
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      trackingCode: randomUUID(),
+      trackingCode: crypto.randomUUID(),
       muteExceptions: true,
       caller: {
         company: "Expertia",
@@ -1607,7 +2211,7 @@ function buildStableOfferId(
     tags.join("|"),
   ].join("::");
 
-  return `agil-${createHash("sha1").update(seed).digest("hex").slice(0, 16)}`;
+  return `agil-${sha1Hex(seed).slice(0, 16)}`;
 }
 
 function totalMinutes(offer: CanonicalOffer): number {
@@ -1649,32 +2253,53 @@ function dedupeAgilOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
   return [...deduped.values()];
 }
 
-function computeAgilTotalAmount(pricingInfo: AgilPricingInfo | undefined): number | undefined {
-  const fareBreakDowns = asArray(pricingInfo?.itinTotalFare?.fareBreakDowns);
-  const breakdownTotal = fareBreakDowns.reduce((sum, breakdown) => {
+function computeAgilBreakdownTotal(fareBreakDowns: AgilFareBreakdown[]): number | undefined {
+  const total = fareBreakDowns.reduce((sum, breakdown) => {
     const passengerFare = breakdown.passengerFare;
     if (!passengerFare) {
       return sum;
     }
 
-    const quantity = Math.max(1, breakdown.passengerType?.quantity ?? 1);
-    const passengerTotal = (passengerFare.totalFare ?? 0)
-      + (passengerFare.feeNMV ?? 0)
-      + (passengerFare.feePTA ?? 0)
-      - (passengerFare.dsctoTaxes ?? 0);
+    const quantity = Math.max(1, Math.trunc(parseProviderAmount(breakdown.passengerType?.quantity) ?? 1));
+    const fareTotal = parseProviderAmount(passengerFare.totalFare)
+      ?? ((parseProviderAmount(passengerFare.baseFare) ?? 0) + (parseProviderAmount(passengerFare.taxes) ?? 0));
+    const passengerTotal = fareTotal
+      + (parseProviderAmount(passengerFare.feeNMV) ?? 0)
+      + (parseProviderAmount(passengerFare.feePTA) ?? 0)
+      - (parseProviderAmount(passengerFare.dsctoTaxes) ?? 0);
 
-    return sum + (passengerTotal * quantity);
+    return passengerTotal > 0
+      ? sum + (passengerTotal * quantity)
+      : sum;
   }, 0);
 
-  if (breakdownTotal > 0) {
-    return Number(breakdownTotal.toFixed(2));
+  return total > 0 ? roundProviderAmount(total) : undefined;
+}
+
+function computeAgilTotalAmount(pricingInfo: AgilPricingInfo | undefined): number | undefined {
+  const fareBreakDowns = asArray(pricingInfo?.itinTotalFare?.fareBreakDowns);
+  const breakdownTotal = computeAgilBreakdownTotal(fareBreakDowns);
+  const providerTotal = parseProviderAmount(pricingInfo?.totalFare);
+
+  if (typeof providerTotal === "number" && providerTotal > 0) {
+    if (!breakdownTotal || providerAmountsDiffer(providerTotal, breakdownTotal)) {
+      return roundProviderAmount(providerTotal);
+    }
   }
 
-  if (typeof pricingInfo?.totalFare === "number") {
-    return Number(pricingInfo.totalFare.toFixed(2));
+  if (typeof breakdownTotal === "number") {
+    return breakdownTotal;
+  }
+
+  if (typeof providerTotal === "number" && providerTotal > 0) {
+    return roundProviderAmount(providerTotal);
   }
 
   return undefined;
+}
+
+export function computeAgilTotalAmountForTests(pricingInfo: unknown): number | undefined {
+  return computeAgilTotalAmount(pricingInfo as AgilPricingInfo | undefined);
 }
 
 export function extractAgilUsdToPenRate(
@@ -1686,7 +2311,7 @@ export function extractAgilUsdToPenRate(
       ?? fallbackCurrencyCode
       ?? "",
   ).trim().toUpperCase();
-  const rate = pricingInfo?.tipoCambio?.rate;
+  const rate = parseProviderAmount(pricingInfo?.tipoCambio?.rate);
 
   if (currencyCode !== "USD" || typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0) {
     return undefined;
@@ -1709,12 +2334,12 @@ function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): Canon
 
   const fareBreakDowns = asArray(group.pricingInfo?.itinTotalFare?.fareBreakDowns);
   const baseAmount = fareBreakDowns.reduce((sum, breakdown) => {
-    const quantity = Math.max(1, breakdown.passengerType?.quantity ?? 1);
-    return sum + ((breakdown.passengerFare?.baseFare ?? 0) * quantity);
+    const quantity = Math.max(1, Math.trunc(parseProviderAmount(breakdown.passengerType?.quantity) ?? 1));
+    return sum + ((parseProviderAmount(breakdown.passengerFare?.baseFare) ?? 0) * quantity);
   }, 0);
   const taxesAmount = fareBreakDowns.reduce((sum, breakdown) => {
-    const quantity = Math.max(1, breakdown.passengerType?.quantity ?? 1);
-    return sum + ((breakdown.passengerFare?.taxes ?? 0) * quantity);
+    const quantity = Math.max(1, Math.trunc(parseProviderAmount(breakdown.passengerType?.quantity) ?? 1));
+    return sum + ((parseProviderAmount(breakdown.passengerFare?.taxes) ?? 0) * quantity);
   }, 0);
 
   const validatingCarrier = group.pricingInfo?.itinTotalFare?.validatingCarrier
@@ -1835,7 +2460,6 @@ function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): Canon
       officeId: group.gds?.officeId,
       iata: group.gds?.iata,
     },
-    valueScore: 0,
   };
 
   offer.signature = buildOfferSignature(offer);
@@ -1988,7 +2612,7 @@ async function startAgilSearch(
       Authorization: `Bearer ${session.token}`,
       "not-loading": "true",
     },
-    body: JSON.stringify(buildAgilStartSearchPayload(request, randomUUID())),
+    body: JSON.stringify(buildAgilStartSearchPayload(request, crypto.randomUUID())),
   }, "Agil start-search");
 
   if (response.status === 401) {

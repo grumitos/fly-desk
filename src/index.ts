@@ -20,7 +20,7 @@ async function main() {
 
   const port = Number(process.env.PORT ?? "3000");
   const host = resolveServerHost();
-  const server = createServer();
+  const server = createServer({ port, hostname: host });
   let providerPrewarmHandle: NodeJS.Timeout | undefined;
   let providerPrewarmStartTimer: NodeJS.Timeout | undefined;
   let startupCleanupTimer: NodeJS.Timeout | undefined;
@@ -67,9 +67,7 @@ async function main() {
     if (providerPrewarmHandle) {
       clearInterval(providerPrewarmHandle);
     }
-    await new Promise<void>((resolve) => {
-      server.close(() => resolve());
-    });
+    await server.stop();
     await tempCleanupPromise?.catch(() => undefined);
     runtime.locationSuggestions.purgeExpired(Number.POSITIVE_INFINITY);
     runtime.sessions.purgeExpired(Number.POSITIVE_INFINITY);
@@ -82,10 +80,6 @@ async function main() {
   });
   process.once("SIGTERM", () => {
     void shutdown().finally(() => process.exit(0));
-  });
-
-  await new Promise<void>((resolve) => {
-    server.listen(port, host, resolve);
   });
 
   logPerfSpan("startup.ready", startupStart, { host, port });

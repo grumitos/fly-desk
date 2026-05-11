@@ -1,7 +1,7 @@
 import { materializeSearchResponse } from "./core/orchestrator";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
 import { buildCommercialQuotation, shouldIncludePenQuotationPrice } from "./core/quotation";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { timingSafeEqual } from "node:crypto";
 import * as path from "node:path";
 import {
@@ -42,17 +42,17 @@ import {
   buildCostamarPurchasePaths,
   createLocalCostamarMatrixDraft,
   createLocalCostamarSearchDraft,
+  getLastCostamarWarmupDiagnostics,
+  resolveCostamarRedirectForRequest,
   resolveLocalCostamarExactProgressive,
   resolveLocalCostamarMatrixProgressive,
   resolveLocalCostamarRangeProgressive,
   suggestLocalCostamarLocations,
-  warmCostamarRedirectContext,
 } from "./local-costamar";
 import { openUrlLocally } from "./local-browser";
 import {
   getCostamarTokenStatus,
   normalizeCostamarProviderContext,
-  resolveLatestCostamarProviderContext,
   resolveProviderId,
   resolveUsableCostamarBrandedToken,
   verifyCostamarTokenLive,
@@ -617,7 +617,6 @@ function normalizeQuotationOfferSnapshot(input: unknown, request: SearchRequest)
     tags: quotationStringArrayValue(offer.tags),
     warnings: quotationStringArrayValue(offer.warnings),
     rawRefs: quotationObjectRecord(offer.rawRefs),
-    valueScore: quotationNumberValue(offer.valueScore) ?? 0,
   };
 }
 
@@ -655,7 +654,7 @@ async function readResultsLayoutFile(): Promise<{
   columns: Record<ResultsLayoutColumnKey, number>;
 } | null> {
   try {
-    const raw = await readFile(RESULTS_LAYOUT_FILE, "utf8");
+    const raw = await Bun.file(RESULTS_LAYOUT_FILE).text();
     const parsed = JSON.parse(raw) as {
       version?: unknown;
       savedAt?: unknown;
@@ -690,7 +689,7 @@ async function writeResultsLayoutFile(
   };
 
   await mkdir(path.dirname(RESULTS_LAYOUT_FILE), { recursive: true });
-  await writeFile(RESULTS_LAYOUT_FILE, JSON.stringify(payload, null, 2), "utf8");
+  await Bun.write(RESULTS_LAYOUT_FILE, JSON.stringify(payload, null, 2));
   return payload;
 }
 
@@ -714,7 +713,17 @@ function html(body: string, init?: ResponseInit): Response {
   });
 }
 
-function costamarRedirectBlockedResponse(): Response {
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function costamarRedirectBlockedResponse(reason?: string): Response {
+  const reasonText = reason?.trim() ? escapeHtml(reason.trim()) : "No se pudo validar ni renovar el redirect de Costamar.";
   return html(`<!doctype html>
 <html lang="es">
   <head>
@@ -763,8 +772,9 @@ function costamarRedirectBlockedResponse(): Response {
     <main>
       <section>
         <h1>Renueva la sesion de Costamar</h1>
-        <p>Fly Desk no encontro un token vigente para abrir esta busqueda en Costamar.</p>
-        <p>Abre Costamar en Chrome, confirma que la sesion este activa y vuelve a intentar desde Fly Desk.</p>
+        <p>Fly Desk no encontro un redirect verificado para abrir esta busqueda en Costamar.</p>
+        <p><strong>Motivo:</strong> ${reasonText}</p>
+        <p>Abre Costamar B2B/Chrome, confirma que la sesion este activa y vuelve a intentar desde Fly Desk.</p>
       </section>
     </main>
   </body>
@@ -1067,6 +1077,7 @@ async function resolveProviderSearchProgressive(
   onProgress: (result: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => boolean | void,
   diagnostics: ProviderDiagnostics | undefined,
   onProviderEvent: ((event: ProviderDiagnosticEvent) => void) | undefined,
+  shouldContinue: (() => boolean) | undefined,
 ): Promise<{ offers: CanonicalOffer[]; warnings: string[]; partial: boolean }> {
   const kind = request.searchMode === "stay-range" ? "range" : "exact";
   if (shouldUseSearchWorkerProcesses()) {
@@ -1077,6 +1088,7 @@ async function resolveProviderSearchProgressive(
       providerContext,
       onProgress,
       onProviderEvent,
+      shouldContinue,
     });
   }
 
@@ -1101,6 +1113,7 @@ async function resolveProviderMatrixProgressive(
   onCellResolved: (cell: MatrixResponse["cells"][number]) => boolean | void,
   diagnostics: ProviderDiagnostics | undefined,
   onProviderEvent: ((event: ProviderDiagnosticEvent) => void) | undefined,
+  shouldContinue: (() => boolean) | undefined,
 ): Promise<MatrixResponse> {
   if (shouldUseSearchWorkerProcesses()) {
     return runProviderMatrixInWorker({
@@ -1110,6 +1123,7 @@ async function resolveProviderMatrixProgressive(
       draft,
       onCellResolved,
       onProviderEvent,
+      shouldContinue,
     });
   }
 
@@ -1815,6 +1829,7 @@ async function handleSearchRequest(
             onProgress,
             providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
             (event) => recordProviderEvent(event),
+            () => isSearchJobRunning(runtime, job.id),
           );
           if (!isSearchJobRunning(runtime, job.id)) {
             return;
@@ -2068,6 +2083,7 @@ async function handleMatrixRequest(
             },
             providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
             (event) => recordProviderEvent(event),
+            () => isMatrixJobRunning(runtime, job.id),
           );
           if (!isMatrixJobRunning(runtime, job.id)) {
             return;
@@ -2202,7 +2218,8 @@ export async function routeRequest(request: Request): Promise<Response> {
     const status = getCostamarTokenStatus();
     const verify = url.searchParams.get("verify") === "true";
     const verification = verify ? await verifyCostamarTokenLive() : undefined;
-    return json({ ...status, verification });
+    const lastWarmup = getLastCostamarWarmupDiagnostics();
+    return json({ ...status, verification, lastWarmup });
   }
 
   if (request.method === "GET" && url.pathname === "/api/agil/locations") {
@@ -2391,6 +2408,7 @@ export async function routeRequest(request: Request): Promise<Response> {
         const providerContext = searchSession?.providerContext ?? matrixJob?.providerContext;
         const fallbackRequest = searchSession?.request ?? matrixJob?.request;
         let canRedirect = false;
+        let blockedReason: string | undefined;
 
         try {
           const parsed = new URL(location);
@@ -2407,44 +2425,29 @@ export async function routeRequest(request: Request): Promise<Response> {
             ...(lang ? { lang } : {}),
             token: parsedTokenIsUsable ? parsedToken : sessionContext?.token,
           });
+          const redirectRequest = costamarRedirectRequestFromUrl(location, fallbackRequest);
 
-          if (resolveUsableCostamarBrandedToken(fastContext.token, fastContext.terminalId)) {
-            location = applyCostamarContextToBrandedSearchUrl(location, fastContext);
-            canRedirect = true;
-          }
-
-          let redirectContext = fastContext;
-          const refreshContext = {
-            ...(sessionContext ?? {}),
-            ...(terminalId ? { terminalId } : {}),
-            ...(lang ? { lang } : {}),
-            ...(parsedToken || sessionContext?.token ? { token: parsedToken || sessionContext?.token } : {}),
-          };
-          if (!canRedirect) {
-            const refreshedContext = resolveLatestCostamarProviderContext(refreshContext);
-            redirectContext = refreshedContext;
-            if (resolveUsableCostamarBrandedToken(refreshedContext.token, refreshedContext.terminalId)) {
-              location = applyCostamarContextToBrandedSearchUrl(location, refreshedContext);
+          if (redirectRequest) {
+            const redirectResolution = await resolveCostamarRedirectForRequest(redirectRequest, fastContext, {
+              force: !parsedTokenIsUsable,
+              validateLive: true,
+              forceOnUnverified: true,
+            });
+            blockedReason = redirectResolution.redirectVerification.reason;
+            if (redirectResolution.redirectVerification.verified) {
+              location = applyCostamarContextToBrandedSearchUrl(location, redirectResolution.context);
               canRedirect = true;
             }
+          } else {
+            blockedReason = "No se pudo reconstruir la busqueda Costamar desde el purchase path.";
           }
-
-          if (!canRedirect) {
-            const redirectRequest = costamarRedirectRequestFromUrl(location, fallbackRequest);
-            if (redirectRequest) {
-              const warmedContext = await warmCostamarRedirectContext(redirectRequest, redirectContext, { force: true });
-              if (resolveUsableCostamarBrandedToken(warmedContext.token, warmedContext.terminalId)) {
-                location = applyCostamarContextToBrandedSearchUrl(location, warmedContext);
-                canRedirect = true;
-              }
-            }
-          }
-        } catch {
+        } catch (error) {
+          blockedReason = error instanceof Error ? error.message : "No se pudo validar el redirect de Costamar.";
           canRedirect = false;
         }
 
         if (!canRedirect) {
-          return costamarRedirectBlockedResponse();
+          return costamarRedirectBlockedResponse(blockedReason);
         }
       }
 

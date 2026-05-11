@@ -4,7 +4,7 @@ Fecha de corte: 2026-04-25
 
 ## Resumen
 
-Fly Desk es hoy una aplicacion local-first para agentes de viajes, con frontend React/Vite y backend Node, conectada a Agil mediante reutilizacion de sesion local del navegador y a Costamar mediante contexto controlado por entorno.
+Fly Desk es hoy una aplicacion local-first para agentes de viajes, con frontend React compilado por Bun y backend Bun, conectada a Agil mediante reutilizacion de sesion local del navegador y a Costamar mediante contexto controlado por entorno.
 
 El repo no versiona artefactos generados de build:
 
@@ -71,7 +71,8 @@ La UI React no debe mostrar controles simulados. Busqueda flexible y migratorio 
 - `frontend/src/components/` contiene topbar, rail de busqueda, resultados, detalle y componentes UI
 - `frontend/src/hooks/` concentra busqueda/polling y autocomplete
 - `frontend/src/index.css` define tokens, layout y tema claro/oscuro
-- el backend sirve el build generado en `frontend/dist`
+- `scripts/build-frontend.ts` genera `frontend/dist` con `Bun.build`
+- el backend Bun sirve el build generado en `frontend/dist`
 
 ### Launchers
 
@@ -87,7 +88,7 @@ La UI React no debe mostrar controles simulados. Busqueda flexible y migratorio 
 ### Frontend
 
 - `frontend/index.html`
-  - shell Vite
+  - shell HTML/React usado por el build Bun
 - `frontend/src/main.tsx`
   - entrypoint React
 - `frontend/src/App.tsx`
@@ -164,7 +165,6 @@ La UI React no debe mostrar controles simulados. Busqueda flexible y migratorio 
 - `tools/start-fly-desk.ps1`
 - `tools/stop-fly-desk.cmd`
 - `tools/stop-fly-desk.ps1`
-- `tools/stop-fly-desk.js`
 
 ## Pruebas vigentes
 
@@ -209,10 +209,10 @@ Cobertura importante actual:
 
 Comandos:
 
-- `npm run typecheck`
-- `npm run lint`
-- `npm run build`
-- `npm test`
+- `bun run typecheck`
+- `bun run lint`
+- `bun run build`
+- `bun test test/**/*.test.ts`
 
 Resultado al 25 de abril de 2026:
 
@@ -234,18 +234,18 @@ Siguen siendo utiles como referencia historica, no como descripcion del estado p
 - `frontend/src/App.tsx` concentra composicion, filtros y seleccion; conviene seguir extrayendo verticalmente si crece
 - `src/local-agil.ts` sigue concentrando mucha logica de sesion, cliente y mapping
 - el store sigue siendo en memoria; no hay persistencia externa para jobs
-- `npm run lint` delega al ESLint real del frontend
+- `bun run lint` delega al ESLint real del frontend
 - el deploy remoto completo sigue bloqueado por la dependencia de sesion local de navegador para Agil
 - la extraccion de token Costamar por CDP requiere que Chrome se lance con `--remote-debugging-port`; sin ese flag, se depende de archivos de sesion que Chrome puede no tener desbloqueados
 - la busqueda migratoria lanza 8 jobs de rango con concurrencia limitada, lo cual debe vigilarse si sube el volumen de uso
 
 ## Cambios del 25 de abril de 2026
 
-### Frontend React/Vite activo
+### Frontend React/Bun activo
 
 - `src/server.ts` sirve `frontend/dist`
-- `npm run build` compila frontend y backend
-- `npm run lint` delega a `npm --prefix frontend run lint`
+- `bun run build` compila el frontend con `scripts/build-frontend.ts`
+- `bun run lint` delega a `bun run --filter './frontend' lint`
 - `docs/FRONTEND_IDENTITY.md` define la identidad visual actual
 
 ### Endurecimiento posterior a auditoria
@@ -256,7 +256,7 @@ Siguen siendo utiles como referencia historica, no como descripcion del estado p
 - el servidor emite headers basicos de hardening en respuestas propias
 - JSON invalido se reporta como 400 en lugar de 500
 - `frontend/src/lib/api.ts` adapta el contrato React simple al payload BFF real (`request` + `sortMode`) y normaliza la respuesta para la UI actual
-- los smoke tests de UI apuntan al shell React/Vite vigente, no al DOM legacy de `public/`
+- los smoke tests de UI apuntan al shell React/Bun vigente, no al DOM legacy de `public/`
 
 ## Cambios del 9 de abril de 2026
 

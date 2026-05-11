@@ -1,12 +1,14 @@
 import type { MouseEvent } from "react"
 import { Backpack, Luggage } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { bestPurchasePath, normalizeSafePurchaseUrl } from "@/lib/purchase-path"
-import type { CanonicalOffer } from "@/types"
+import { bestPurchasePathsByProvider, normalizeSafePurchaseUrl } from "@/lib/purchase-path"
+import type { CanonicalOffer, PurchasePath } from "@/types"
 import {
   buildResultCardModel,
+  providerBadgeForId,
   type ResultCardModel,
   type ResultJourneySummary,
+  type ResultProviderBadge,
 } from "./result-card-model"
 import "./result-card.css"
 
@@ -28,10 +30,7 @@ export function ResultCard({
   eyebrow,
 }: ResultCardProps) {
   const model = buildResultCardModel(offer, passengerCount)
-  const providerPurchasePath = bestPurchasePath(offer)
-  const providerPurchaseUrl = providerPurchasePath?.url
-    ? normalizeSafePurchaseUrl(providerPurchasePath.url)
-    : undefined
+  const providerActions = providerPurchaseActions(offer)
   const rowLabel = [
     selected ? "Oferta seleccionada" : "Seleccionar oferta",
     model.carrier.display,
@@ -42,14 +41,12 @@ export function ResultCard({
   ]
     .filter(Boolean)
     .join(" - ")
-  const providerOpenLabel = `Abrir ${model.provider.label}`
 
-  const handleProviderOpen = (event: MouseEvent<HTMLButtonElement>) => {
+  const handleProviderOpen = (event: MouseEvent<HTMLButtonElement>, action: ProviderAction) => {
     event.stopPropagation()
-    if (!providerPurchasePath || !providerPurchaseUrl) return
     window.open(
-      providerPurchaseUrl,
-      providerPurchasePath.requiresNewTab ? "_blank" : "_self",
+      action.url,
+      action.path.requiresNewTab ? "_blank" : "_self",
       "noopener,noreferrer",
     )
   }
@@ -119,24 +116,52 @@ export function ResultCard({
         {model.price.perPersonLabel && <span className="fd-result-card__price-meta">{model.price.perPersonLabel} por persona</span>}
       </div>
 
-      <div className="fd-result-card__provider" title={model.provider.label}>
-        {providerPurchaseUrl ? (
-          <button
-            type="button"
-            aria-label={providerOpenLabel}
-            className="fd-result-card__provider-action"
-            title={providerOpenLabel}
-            onClick={handleProviderOpen}
-            onKeyDown={(event) => event.stopPropagation()}
-          >
-            <ProviderBadge provider={model.provider} />
-          </button>
+      <div
+        className={cn(
+          "fd-result-card__provider",
+          providerActions.length > 1 && "fd-result-card__provider--stacked",
+        )}
+        title={providerActions.length > 0 ? providerActions.map((action) => action.badge.label).join(" / ") : model.provider.label}
+      >
+        {providerActions.length > 0 ? (
+          providerActions.map((action) => (
+            <button
+              key={`${action.path.provider}-${action.path.type}-${action.url}`}
+              type="button"
+              aria-label={`Abrir ${action.badge.label}`}
+              className="fd-result-card__provider-action"
+              title={`Abrir ${action.badge.label}`}
+              onClick={(event) => handleProviderOpen(event, action)}
+              onKeyDown={(event) => event.stopPropagation()}
+            >
+              <ProviderBadge provider={action.badge} />
+            </button>
+          ))
         ) : (
           <ProviderBadge provider={model.provider} />
         )}
       </div>
     </article>
   )
+}
+
+interface ProviderAction {
+  path: PurchasePath
+  url: string
+  badge: ResultProviderBadge
+}
+
+function providerPurchaseActions(offer: CanonicalOffer): ProviderAction[] {
+  return bestPurchasePathsByProvider(offer).flatMap((path) => {
+    const url = path.url ? normalizeSafePurchaseUrl(path.url) : undefined
+    if (!url) return []
+
+    return [{
+      path,
+      url,
+      badge: providerBadgeForId(path.provider),
+    }]
+  })
 }
 
 function ItinerarySchedule({ summary }: { summary: ResultJourneySummary }) {

@@ -2,13 +2,13 @@
 
 Workspace local para busqueda y cotizacion aerea orientado a agentes de viajes.
 
-Fly Desk hoy es una app local-first con:
+Fly Desk hoy es una app local-first Bun-only con:
 
-- servidor Node que sirve UI y API en el mismo proceso
-- frontend desktop React/Vite en `frontend/`, servido desde `frontend/dist`
+- servidor Bun (`Bun.serve`) que sirve UI y API en el mismo proceso
+- frontend desktop React en `frontend/`, compilado con `Bun.build` y servido desde `frontend/dist`
 - integracion local con Agil reutilizando sesion real de navegador
 - integracion con Costamar usando contexto controlado por entorno
-- store en memoria para jobs, redirects y resultados
+- stores SQLite locales con `bun:sqlite` para cache persistente y memoria para jobs vivos
 
 ## Alcance actual
 
@@ -63,7 +63,7 @@ El feedback de carga vigente es inline:
 
 ### Backend
 
-- `src/server.ts`: servidor HTTP y serving de assets de `frontend/dist`
+- `src/server.ts`: servidor HTTP Bun y serving de assets de `frontend/dist`
 - `src/http-router.ts`: BFF HTTP
 - `src/search-date-policy.ts`: politica compartida de fechas y config publica embebida
 - `src/provider-context.ts`: normalizacion y recovery de contexto de providers
@@ -108,8 +108,10 @@ Agil:
 - `AGIL_APIM_SUBSCRIPTION_KEY=<subscription key>`
 - `AGIL_BROWSER_URL=http://127.0.0.1:9222`
 - `AGIL_BROWSER_WS_ENDPOINT=ws://127.0.0.1:9222/devtools/browser/<id>`
-- `AGIL_CHROME_PROFILE=Profile 1`
+- `AGIL_BROWSER_CONNECT_TIMEOUT_MS=2500`
+- `AGIL_CHROME_PROFILE=Default`
 - `AGIL_CHROME_USER_DATA_DIR=...`
+- `AGIL_TEMP_CHROME_STORAGE_FALLBACK=0`
 - `AGIL_CHROME_EXECUTABLE=...`
 - `AGILSMART_HOST_IP=1.2.3.4`
 - `AGIL_HTTP_TIMEOUT_MS=20000`
@@ -144,14 +146,13 @@ Costamar:
 
 ## Scripts
 
-- `npm run dev`
-- `npm run build`
-- `npm start`
-- `npm run typecheck`
-- `npm run lint`
-- `npm --prefix frontend run lint`
-- `npm test`
-- `npm run demo`
+- `bun run dev`
+- `bun run build`
+- `bun run start`
+- `bun run typecheck`
+- `bun run lint` (delegates to `bun run --filter './frontend' lint`)
+- `bun test ./test/**/*.test.ts`
+- `bun run demo`
 
 ## Arranque con un clic
 
@@ -170,8 +171,8 @@ Comportamiento actual del launcher:
 - antes de reutilizar o relanzar, chequea Git con cache local; si el remoto ya fue confirmado en el mismo commit, salta la red
 - si hay un commit remoto nuevo y el working tree esta limpio, ejecuta `git pull --ff-only`
 - si Fly Desk ya esta sano en ese puerto, reutiliza la instancia
-- si `node_modules/` no existe, instala dependencias
-- si `dist/` esta ausente o vieja, ejecuta `npm run build`
+- si `node_modules/` no existe, ejecuta `bun install --frozen-lockfile`
+- si `frontend/dist/` esta ausente o vieja, ejecuta `bun run build`
 - persiste estado y logs en `.launcher/`
 - los `.vbs` esperan a que abrir o cerrar termine, evitando carreras entre doble click de abrir/cerrar
 - el cierre espera a que `32123` deje de estar en `LISTENING`
@@ -188,13 +189,12 @@ Variables utiles del launcher:
 
 ## Verificacion reciente
 
-Estado validado el 27 de abril de 2026:
+Estado validado tras la migracion Bun:
 
-- `npm run typecheck`
-- `npm run lint`
-- `npm --prefix frontend run lint`
-- `npm run build`
-- `npm test` (`168/168`)
+- `bun run typecheck`
+- `bun run lint`
+- `bun run build`
+- `bun test ./test/**/*.test.ts`
 
 Nota de QA: los helpers HTTP de test fijan `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1` para validar contratos inmediatos sin dejar jobs progresivos vivos despues del cierre del servidor. El runtime normal no define esa variable y conserva el polling/revalidacion en segundo plano.
 
@@ -206,7 +206,7 @@ Nota de QA: los helpers HTTP de test fijan `FLY_DESK_DISABLE_BACKGROUND_SEARCH_J
 
 ## Nota de deploy
 
-La app se puede construir y arrancar en cualquier host Node, pero el comportamiento local completo sigue siendo local-first:
+La app se puede construir y arrancar en hosts con Bun, pero el comportamiento local completo sigue siendo local-first:
 
 - el bind por defecto es loopback
 - Agil depende de sesion local de navegador

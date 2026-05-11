@@ -15,7 +15,7 @@ import {
 } from "./core/types";
 import { getSearchDatePolicy, validateSearchDateInPolicy } from "./search-date-policy";
 
-export type SortMode = "cheapest" | "fastest" | "best-value";
+export type SortMode = "cheapest" | "fastest";
 
 export interface SearchPayload {
   providerId?: ProviderId;
@@ -383,7 +383,7 @@ export function validateSearchContract(
 }
 
 export function resolveSortMode(mode: unknown): SortMode {
-  if (mode === "cheapest" || mode === "fastest" || mode === "best-value") {
+  if (mode === "cheapest" || mode === "fastest") {
     return mode;
   }
 

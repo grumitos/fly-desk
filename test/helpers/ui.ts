@@ -1,6 +1,6 @@
 import { chromium, type Browser, type Page } from "playwright";
-import { cleanupPrefixedTempArtifacts, TEMP_ARTIFACT_SWEEP_MIN_AGE_MS } from "../../src/temp-artifacts";
-import { withServer } from "./server";
+import { cleanupPrefixedTempArtifacts, TEMP_ARTIFACT_SWEEP_MIN_AGE_MS } from "../../src/temp-artifacts.ts";
+import { withServer } from "./server.ts";
 
 export async function openDesktop(page: Page, baseUrl: string): Promise<void> {
   await page.goto(baseUrl, { waitUntil: "domcontentloaded" });

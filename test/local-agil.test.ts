@@ -1,20 +1,26 @@
-import test from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AGIL_CONCURRENCY,
   buildLocalAgilSearchRedirectUrl,
+  computeAgilTotalAmountForTests,
+  extractAgilChromeDebugPortsFromCommandLinesForTests,
+  extractAgilChromeUserDataDirsFromCommandLinesForTests,
+  extractAgilBrowserStorageSnapshotForTests,
   parseAgilApimSubscriptionKeyFromFrontendBundle,
   parseAgilRefreshTokenPayload,
   parseAgilSessionData,
   readAgilChromeProfileCandidatesForTests,
   readAgilStorageSnapshotFromPage,
+  resolveAgilChromeDevToolsBrowserWsEndpointForTests,
   sameAgilSessionIdentity,
   resetAgilApimSubscriptionKeyCacheForTests,
   shouldReuseAgilSession,
   suggestLocalAgilLocations,
+  extractAgilUsdToPenRate,
 } from "../src/local-agil";
 
 test("reads Agil session storage after DOM content is ready without waiting for network idle", async () => {
@@ -167,6 +173,144 @@ test("Agil profile discovery tries the configured Chrome profile before automati
   }
 });
 
+test("Agil user data discovery reads active Chrome process profile roots", () => {
+  assert.deepEqual(extractAgilChromeUserDataDirsFromCommandLinesForTests([
+    '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9222 --user-data-dir=D:\\ChromeRuns\\live-profile --new-window about:blank',
+    '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --user-data-dir="D:\\Chrome Runs\\profile with spaces" --profile-directory=Default',
+    '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --type=renderer --lang=es-419',
+  ]), [
+    "D:\\ChromeRuns\\live-profile",
+    "D:\\Chrome Runs\\profile with spaces",
+  ]);
+});
+
+test("Agil DevTools discovery reads active Chrome remote debugging ports", () => {
+  assert.deepEqual(extractAgilChromeDebugPortsFromCommandLinesForTests([
+    '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9222 --user-data-dir=D:\\ChromeRuns\\live-profile',
+    '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --type=renderer --remote-debugging-port=9222 --user-data-dir=D:\\ChromeRuns\\live-profile',
+    '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=not-a-port --user-data-dir=D:\\ChromeRuns\\bad',
+  ]), [9222]);
+});
+
+test("Agil can resolve an active Chrome DevTools browser endpoint from a user data dir", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-agil-devtools-"));
+  writeFileSync(join(tempRoot, "DevToolsActivePort"), "9222\n/devtools/browser/session-id\n", "utf8");
+
+  try {
+    assert.equal(
+      resolveAgilChromeDevToolsBrowserWsEndpointForTests(tempRoot),
+      "ws://127.0.0.1:9222/devtools/browser/session-id",
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("Agil session extraction prefers fresher Chrome storage over a stale configured profile", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-agil-storage-freshness-"));
+  const staleProfile = "Profile 40";
+  const freshProfile = "Profile 41";
+
+  const writeAgilStorage = (
+    profileName: string,
+    userCode: number,
+    internalCode: string,
+    ip: string,
+    mtime: Date,
+    token = "",
+  ) => {
+    const storageDir = join(tempRoot, profileName, "Local Storage", "leveldb");
+    mkdirSync(storageDir, { recursive: true });
+    const userPayload = Buffer.from(JSON.stringify({
+      Usuario: {
+        CodigoUsuario: userCode,
+      },
+      Cliente: {
+        Vendedor: {
+          CodigoVendedor: internalCode,
+        },
+      },
+    })).toString("base64");
+    const ipPayload = Buffer.from(ip).toString("base64");
+    const filePath = join(storageDir, "000001.log");
+    writeFileSync(filePath, `tokenTravelC ${token} user_data ${userPayload} ip ${ipPayload}`, "utf8");
+    utimesSync(filePath, mtime, mtime);
+  };
+
+  writeFileSync(
+    join(tempRoot, "Local State"),
+    JSON.stringify({
+      profile: {
+        last_used: staleProfile,
+        last_active_profiles: [staleProfile, freshProfile],
+        info_cache: {
+          [staleProfile]: {},
+          [freshProfile]: {},
+        },
+      },
+    }),
+    "utf8",
+  );
+
+  const tokenPayload = Buffer.from(JSON.stringify({ exp: 1893459600 })).toString("base64url");
+  const freshToken = `header.${tokenPayload}.signature`;
+  writeAgilStorage(staleProfile, 1111, "STALE", "1.1.1.1", new Date("2026-01-01T00:00:00Z"));
+  writeAgilStorage(freshProfile, 2222, "FRESH", "2.2.2.2", new Date("2026-02-01T00:00:00Z"), freshToken);
+
+  const previousUserDataDir = process.env.AGIL_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.AGIL_CHROME_PROFILE;
+  const previousBrowserUrl = process.env.AGIL_BROWSER_URL;
+  const previousBrowserWsEndpoint = process.env.AGIL_BROWSER_WS_ENDPOINT;
+  const previousProcessDiscovery = process.env.AGIL_CHROME_PROCESS_DISCOVERY;
+  process.env.AGIL_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.AGIL_CHROME_PROFILE = staleProfile;
+  process.env.AGIL_CHROME_PROCESS_DISCOVERY = "0";
+  delete process.env.AGIL_BROWSER_URL;
+  delete process.env.AGIL_BROWSER_WS_ENDPOINT;
+
+  try {
+    const snapshot = await extractAgilBrowserStorageSnapshotForTests();
+    const session = parseAgilSessionData(snapshot);
+
+    assert.equal(session.userCode, 2222);
+    assert.equal(session.internalCode, "FRESH");
+    assert.equal(session.ip, "2.2.2.2");
+    assert.equal(session.token, freshToken);
+  } finally {
+    if (previousUserDataDir === undefined) {
+      delete process.env.AGIL_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.AGIL_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.AGIL_CHROME_PROFILE;
+    } else {
+      process.env.AGIL_CHROME_PROFILE = previousProfile;
+    }
+
+    if (previousBrowserUrl === undefined) {
+      delete process.env.AGIL_BROWSER_URL;
+    } else {
+      process.env.AGIL_BROWSER_URL = previousBrowserUrl;
+    }
+
+    if (previousBrowserWsEndpoint === undefined) {
+      delete process.env.AGIL_BROWSER_WS_ENDPOINT;
+    } else {
+      process.env.AGIL_BROWSER_WS_ENDPOINT = previousBrowserWsEndpoint;
+    }
+
+    if (previousProcessDiscovery === undefined) {
+      delete process.env.AGIL_CHROME_PROCESS_DISCOVERY;
+    } else {
+      process.env.AGIL_CHROME_PROCESS_DISCOVERY = previousProcessDiscovery;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("falls back to the motorvuelos origin when tokenSearchFlight is missing on agilsmart", async () => {
   const snapshots = [
     {
@@ -301,6 +445,58 @@ test("extracts the Agil subscription key from the public frontend bundle", () =>
   );
 
   assert.equal(key, "e9c66b5e1b4348ae9de63ff98d66cbbe");
+});
+
+test("Agil pricing prefers the provider total when fare breakdowns disagree", () => {
+  const amount = computeAgilTotalAmountForTests({
+    totalFare: "521.22",
+    itinTotalFare: {
+      fareBreakDowns: [
+        {
+          passengerType: { quantity: 1 },
+          passengerFare: {
+            totalFare: "510.22",
+            feeNMV: "0",
+            feePTA: "0",
+            dsctoTaxes: "0",
+          },
+        },
+      ],
+    },
+  });
+
+  assert.equal(amount, 521.22);
+});
+
+test("Agil pricing parses formatted numeric strings in fare breakdowns", () => {
+  const amount = computeAgilTotalAmountForTests({
+    itinTotalFare: {
+      fareBreakDowns: [
+        {
+          passengerType: { quantity: 2 },
+          passengerFare: {
+            totalFare: "USD 1,001.16",
+            feeNMV: "11.80",
+            feePTA: "0",
+            dsctoTaxes: "0",
+          },
+        },
+      ],
+    },
+  });
+
+  assert.equal(amount, 2025.92);
+});
+
+test("Agil exchange rate parsing preserves four decimal rates", () => {
+  const rate = extractAgilUsdToPenRate({
+    tipoCambio: {
+      code: "USD",
+      rate: "3.7531",
+    },
+  } as never);
+
+  assert.equal(rate, 3.7531);
 });
 
 test("recovers AGIL_APIM_SUBSCRIPTION_KEY from the Agil frontend bundle when env is missing", async () => {
