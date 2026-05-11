@@ -1,4 +1,3 @@
-import { readFile, stat } from "node:fs/promises";
 import * as path from "node:path";
 import type { Server as BunServer } from "bun";
 import { routeRequest } from "./http-router";
@@ -8,20 +7,10 @@ import { getPublicRuntimeConfig } from "./search-date-policy";
 const publicDir = path.resolve(process.cwd(), "frontend", "dist");
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 
-interface CachedFile {
-  filePath: string;
-  mtimeMs: number;
-  size: number;
-  contentType: string;
-  content: Buffer;
-}
-
 interface CreateServerOptions {
   port?: number;
   hostname?: string;
 }
-
-const fileCache = new Map<string, CachedFile>();
 
 class RequestBodyTooLargeError extends Error {
   constructor(limitBytes: number) {
@@ -113,39 +102,13 @@ function staticAssetHeaders(contentType: string, immutable: boolean): Record<str
   );
 }
 
-async function readCachedFile(filePath: string): Promise<CachedFile> {
-  const fileStat = await stat(filePath);
-  const cached = fileCache.get(filePath);
-  if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) {
-    return cached;
-  }
-
-  const content = await readFile(filePath);
-  const contentType = contentTypeForExtension(path.extname(filePath));
-  const next = {
-    filePath,
-    mtimeMs: fileStat.mtimeMs,
-    size: fileStat.size,
-    contentType,
-    content,
-  };
-  fileCache.set(filePath, next);
-  return next;
-}
-
-function bufferToArrayBuffer(buffer: Buffer): ArrayBuffer {
-  return buffer.buffer.slice(
-    buffer.byteOffset,
-    buffer.byteOffset + buffer.byteLength,
-  ) as ArrayBuffer;
-}
-
 async function serveStaticFile(filePath: string, immutable: boolean): Promise<Response> {
-  const cached = await readCachedFile(filePath);
+  const file = Bun.file(filePath);
+  const contentType = file.type || contentTypeForExtension(path.extname(filePath));
 
-  return new Response(bufferToArrayBuffer(cached.content), {
+  return new Response(file, {
     status: 200,
-    headers: staticAssetHeaders(cached.contentType, immutable),
+    headers: staticAssetHeaders(contentType, immutable),
   });
 }
 
@@ -161,8 +124,7 @@ async function resolvePublicAsset(pathname: string): Promise<string | undefined>
   }
 
   try {
-    const fileStat = await stat(filePath);
-    return fileStat.isFile() ? filePath : undefined;
+    return await Bun.file(filePath).exists() ? filePath : undefined;
   } catch {
     return undefined;
   }
@@ -174,7 +136,7 @@ function escapeInlineScriptJson(value: string): string {
 
 async function serveIndexHtml(): Promise<Response> {
   const filePath = path.join(publicDir, "index.html");
-  const template = (await readCachedFile(filePath)).content.toString("utf8");
+  const template = await Bun.file(filePath).text();
   const runtimeConfig = escapeInlineScriptJson(JSON.stringify(getPublicRuntimeConfig()));
   const content = template.replace(
     "<!-- __FLYDESK_RUNTIME_CONFIG__ -->",

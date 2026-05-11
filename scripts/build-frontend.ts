@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import tailwind from "bun-plugin-tailwind";
 
@@ -49,7 +49,7 @@ const stylesheetTags = result.outputs
   .map((output) => `    <link rel="stylesheet" crossorigin href="${publicAssetPath(output.path)}" />`)
   .join("\n");
 const scriptTag = `    <script type="module" crossorigin src="${publicAssetPath(entryScript.path)}"></script>`;
-const template = readFileSync(templatePath, "utf8");
+const template = await Bun.file(templatePath).text();
 const templateWithStyles = stylesheetTags
   ? template.replace("  </head>", `${stylesheetTags}\n  </head>`)
   : template;
@@ -67,4 +67,4 @@ if (existsSync(publicDir)) {
   cpSync(publicDir, distDir, { recursive: true });
 }
 
-writeFileSync(join(distDir, "index.html"), html, "utf8");
+await Bun.write(join(distDir, "index.html"), html);

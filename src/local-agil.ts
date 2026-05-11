@@ -1,5 +1,3 @@
-import { createHash, randomUUID } from "node:crypto";
-import { spawn, spawnSync, ChildProcess } from "node:child_process";
 import { readFileSync, rmSync, mkdirSync, cpSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -302,6 +300,12 @@ function waitMs(durationMs: number): Promise<void> {
   });
 }
 
+function sha1Hex(input: string): string {
+  const hasher = new Bun.CryptoHasher("sha1");
+  hasher.update(input);
+  return hasher.digest("hex");
+}
+
 async function searchLocalAgilExactWithRetry(request: SearchRequest): Promise<ProviderSearchResult> {
   let attempt = 0;
   while (true) {
@@ -542,23 +546,25 @@ function readRunningChromeCommandLines(): string[] {
     "Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--user-data-dir') } |",
     "ForEach-Object { $_.CommandLine }",
   ].join(" ");
-  const result = spawnSync("powershell.exe", [
+  const result = Bun.spawnSync(["powershell.exe",
     "-NoProfile",
     "-ExecutionPolicy",
     "Bypass",
     "-Command",
     script,
   ], {
-    encoding: "utf8",
+    stdout: "pipe",
+    stderr: "ignore",
     timeout: 3000,
     windowsHide: true,
   });
+  const stdout = result.stdout?.toString("utf8") ?? "";
 
-  if (result.status !== 0 || !result.stdout) {
+  if (result.exitCode !== 0 || !stdout) {
     return [];
   }
 
-  return result.stdout
+  return stdout
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
@@ -1016,7 +1022,7 @@ function resolveAgilSmartAddress(): string | undefined {
 
 function prepareTemporaryChromeProfile(userDataDir: string, profileName: string): string {
   const sourceRoot = userDataDir;
-  const tempRoot = join(tmpdir(), `travel_quote_foundation_agil_${randomUUID()}`);
+  const tempRoot = join(tmpdir(), `travel_quote_foundation_agil_${crypto.randomUUID()}`);
   const profileRoot = join(tempRoot, profileName);
   mkdirSync(profileRoot, { recursive: true });
   registerActiveTempArtifact(tempRoot);
@@ -1043,7 +1049,7 @@ function prepareTemporaryChromeProfile(userDataDir: string, profileName: string)
   return tempRoot;
 }
 
-function launchChromeForCdp(userDataDir: string, profileName: string, port: number): ChildProcess {
+function launchChromeForCdp(userDataDir: string, profileName: string, port: number): Bun.NullSubprocess {
   const chromePath = findChromeExecutable();
   const args = [
     `--user-data-dir=${userDataDir}`,
@@ -1059,8 +1065,9 @@ function launchChromeForCdp(userDataDir: string, profileName: string, port: numb
     args.splice(args.length - 1, 0, `--host-resolver-rules=MAP agilsmart.com ${agilSmartAddress},MAP www.agilsmart.com ${agilSmartAddress}`);
   }
 
-  return spawn(chromePath, args, {
-    stdio: "ignore",
+  return Bun.spawn([chromePath, ...args], {
+    stdio: ["ignore", "ignore", "ignore"],
+    windowsHide: true,
   });
 }
 
@@ -1090,7 +1097,7 @@ async function getPlaywright(): Promise<typeof import("playwright")> {
   return playwrightPromise;
 }
 
-async function cleanupTemporaryChromeLaunch(userDataDir: string, chrome?: ChildProcess): Promise<void> {
+async function cleanupTemporaryChromeLaunch(userDataDir: string, chrome?: Bun.NullSubprocess): Promise<void> {
   if (chrome) {
     try {
       chrome.kill("SIGTERM");
@@ -1518,7 +1525,7 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
 
       const userDataDir = prepareTemporaryChromeProfile(userDataDirRoot, profileName);
       const port = 9400 + Math.floor(Math.random() * 200);
-      let chrome: ChildProcess | undefined;
+      let chrome: Bun.NullSubprocess | undefined;
 
       try {
         chrome = launchChromeForCdp(userDataDir, profileName, port);
@@ -1597,7 +1604,7 @@ async function refreshAgilToken(session: AgilSessionData): Promise<AgilSessionDa
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      trackingCode: randomUUID(),
+      trackingCode: crypto.randomUUID(),
       muteExceptions: true,
       caller: {
         company: "Expertia",
@@ -2204,7 +2211,7 @@ function buildStableOfferId(
     tags.join("|"),
   ].join("::");
 
-  return `agil-${createHash("sha1").update(seed).digest("hex").slice(0, 16)}`;
+  return `agil-${sha1Hex(seed).slice(0, 16)}`;
 }
 
 function totalMinutes(offer: CanonicalOffer): number {
@@ -2605,7 +2612,7 @@ async function startAgilSearch(
       Authorization: `Bearer ${session.token}`,
       "not-loading": "true",
     },
-    body: JSON.stringify(buildAgilStartSearchPayload(request, randomUUID())),
+    body: JSON.stringify(buildAgilStartSearchPayload(request, crypto.randomUUID())),
   }, "Agil start-search");
 
   if (response.status === 401) {

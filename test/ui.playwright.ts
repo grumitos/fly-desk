@@ -2201,7 +2201,11 @@ test("location suggestions stay above workspace tabs after a search", async () =
     await page.getByRole("tablist").waitFor({ state: "visible" });
     suggestionsEnabled = true;
     const destination = page.getByRole("combobox", { name: "Destino" });
-    const suggestionsResponse = page.waitForResponse("**/api/locations**");
+    const suggestionsResponse = page.waitForResponse((response) => {
+      if (!response.url().includes("/api/locations")) return false;
+      const url = new URL(response.url());
+      return url.searchParams.get("q") === "MI";
+    });
     await destination.fill("MI");
     await suggestionsResponse;
 
