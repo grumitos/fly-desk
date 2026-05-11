@@ -1170,7 +1170,7 @@ export async function fetchQuotation(input: {
     searchSessionId: input.searchSessionId,
     offerId: input.offerId,
     offer: input.offer,
-    request: toBackendPayload(input.request, input.request.sortMode === "cheapest" || input.request.sortMode === "fastest" || input.request.sortMode === "best-value"
+    request: toBackendPayload(input.request, input.request.sortMode === "cheapest" || input.request.sortMode === "fastest"
       ? input.request.sortMode
       : "cheapest").request,
   })

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
-import Database = require("better-sqlite3");
+import { Database } from "bun:sqlite";
 import { LocationSuggestion, ProviderId } from "./core/types";
 
 export const LOCATION_SUGGESTION_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -74,13 +74,40 @@ function parseJsonPayload<T>(payload: string): T | undefined {
   }
 }
 
+function runSql(db: Database, sql: string, ...params: any[]): void {
+  const statement = db.prepare(sql);
+  try {
+    statement.run(...params);
+  } finally {
+    statement.finalize();
+  }
+}
+
+function getSql<T>(db: Database, sql: string, ...params: any[]): T | undefined {
+  const statement = db.prepare(sql);
+  try {
+    return statement.get(...params) as T | undefined;
+  } finally {
+    statement.finalize();
+  }
+}
+
+function allSql<T>(db: Database, sql: string, ...params: any[]): T[] {
+  const statement = db.prepare(sql);
+  try {
+    return statement.all(...params) as T[];
+  } finally {
+    statement.finalize();
+  }
+}
+
 export class LocationSuggestionCacheStore {
   private readonly entries = new Map<string, CacheEntry>();
   private readonly inflight = new Map<string, Promise<LocationSuggestion[]>>();
   private readonly sessionKeys = new Map<string, Set<string>>();
   private readonly dbPath: string | undefined;
   private readonly legacyPersistPath: string | undefined;
-  private readonly db: Database.Database | undefined;
+  private readonly db: Database | undefined;
   private bootstrapping = false;
 
   constructor(options?: LocationSuggestionCacheStoreOptions) {
@@ -158,7 +185,9 @@ export class LocationSuggestionCacheStore {
       }
     }
 
-    this.db?.prepare("DELETE FROM location_suggestions WHERE expires_at_ms <= ?").run(nowMs);
+    if (this.db) {
+      runSql(this.db, "DELETE FROM location_suggestions WHERE expires_at_ms <= ?", nowMs);
+    }
   }
 
   getDiagnostics() {
@@ -172,7 +201,14 @@ export class LocationSuggestionCacheStore {
   }
 
   close(): void {
-    this.db?.close();
+    if (this.db) {
+      try {
+        this.db.run("PRAGMA wal_checkpoint(TRUNCATE);");
+      } catch {
+        // Closing the database is still the important cleanup path.
+      }
+      this.db.close(true);
+    }
   }
 
   private trackKey(sessionId: string, key: string): void {
@@ -215,7 +251,9 @@ export class LocationSuggestionCacheStore {
     }
 
     if (!this.bootstrapping) {
-      this.db?.prepare("DELETE FROM location_suggestions WHERE key = ?").run(key);
+      if (this.db) {
+        runSql(this.db, "DELETE FROM location_suggestions WHERE key = ?", key);
+      }
     }
   }
 
@@ -251,7 +289,7 @@ export class LocationSuggestionCacheStore {
 
     try {
       this.bootstrapping = true;
-      this.db.prepare("DELETE FROM location_suggestions WHERE expires_at_ms <= ?").run(Date.now());
+      runSql(this.db, "DELETE FROM location_suggestions WHERE expires_at_ms <= ?", Date.now());
       const migrated = this.migrateLegacyJsonIfNeeded();
       if (!migrated) {
         this.loadSqlitePayload();
@@ -305,9 +343,10 @@ export class LocationSuggestionCacheStore {
       return false;
     }
 
-    const row = this.db
-      .prepare("SELECT COUNT(*) AS total FROM location_suggestions")
-      .get() as { total?: number } | undefined;
+    const row = getSql<{ total?: number }>(
+      this.db,
+      "SELECT COUNT(*) AS total FROM location_suggestions",
+    );
     return Number(row?.total ?? 0) > 0;
   }
 
@@ -316,14 +355,15 @@ export class LocationSuggestionCacheStore {
       return;
     }
 
-    const rows = this.db
-      .prepare("SELECT key, session_id, expires_at_ms, touched_at_ms, payload FROM location_suggestions ORDER BY key")
-      .all() as SqliteLocationSuggestionRow[];
+    const rows = allSql<SqliteLocationSuggestionRow>(
+      this.db,
+      "SELECT key, session_id, expires_at_ms, touched_at_ms, payload FROM location_suggestions ORDER BY key",
+    );
 
     for (const row of rows) {
       const suggestions = parseJsonPayload<LocationSuggestion[]>(row.payload);
       if (!Array.isArray(suggestions)) {
-        this.db.prepare("DELETE FROM location_suggestions WHERE key = ?").run(row.key);
+        runSql(this.db, "DELETE FROM location_suggestions WHERE key = ?", row.key);
         continue;
       }
 
@@ -372,7 +412,7 @@ export class LocationSuggestionCacheStore {
       return;
     }
 
-    this.db.prepare(`
+    runSql(this.db, `
       INSERT INTO location_suggestions (
         key,
         session_id,
@@ -391,7 +431,7 @@ export class LocationSuggestionCacheStore {
         expires_at_ms = excluded.expires_at_ms,
         touched_at_ms = excluded.touched_at_ms,
         payload = excluded.payload
-    `).run(
+    `,
       key,
       sessionId,
       providerId,
@@ -408,7 +448,8 @@ export class LocationSuggestionCacheStore {
       return;
     }
 
-    const insert = this.db.prepare(`
+    const db = this.db;
+    const insert = db.prepare(`
       INSERT INTO location_suggestions (
         key,
         session_id,
@@ -428,22 +469,26 @@ export class LocationSuggestionCacheStore {
         touched_at_ms = excluded.touched_at_ms,
         payload = excluded.payload
     `);
-    const write = this.db.transaction(() => {
-      for (const [key, entry] of this.entries) {
-        const [sessionId = "anonymous", providerId = "costamar", rawLimit = "8", query = ""] = key.split("::");
-        insert.run(
-          key,
-          sessionId,
-          providerId,
-          query,
-          Math.max(1, Math.trunc(Number(rawLimit) || 8)),
-          entry.expiresAtMs,
-          entry.touchedAtMs,
-          JSON.stringify(entry.suggestions),
-        );
-      }
-    });
+    try {
+      const write = db.transaction(() => {
+        for (const [key, entry] of this.entries) {
+          const [sessionId = "anonymous", providerId = "costamar", rawLimit = "8", query = ""] = key.split("::");
+          insert.run(
+            key,
+            sessionId,
+            providerId,
+            query,
+            Math.max(1, Math.trunc(Number(rawLimit) || 8)),
+            entry.expiresAtMs,
+            entry.touchedAtMs,
+            JSON.stringify(entry.suggestions),
+          );
+        }
+      });
 
-    write();
+      write();
+    } finally {
+      insert.finalize();
+    }
   }
 }

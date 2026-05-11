@@ -48,6 +48,8 @@ export type ResultCardModel = {
   tripType: "one-way" | "round-trip"
 }
 
+export type ResultProviderBadge = ResultCardModel["provider"]
+
 export function buildResultCardModel(
   offer: CanonicalOffer,
   passengerCount: number,
@@ -324,6 +326,10 @@ function providerBadge(offer: CanonicalOffer) {
       ? "agil-local"
       : ""
 
+  return providerBadgeForId(providerId || candidates[0])
+}
+
+export function providerBadgeForId(providerId?: string): ResultProviderBadge {
   if (providerId === "costamar") {
     return {
       label: "Costamar",
@@ -340,7 +346,7 @@ function providerBadge(offer: CanonicalOffer) {
     }
   }
 
-  const label = candidates[0] || "Proveedor"
+  const label = providerId || "Proveedor"
   return {
     label,
     shortLabel: label.slice(0, 2).toUpperCase(),

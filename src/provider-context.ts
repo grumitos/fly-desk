@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +14,7 @@ export const DEFAULT_COSTAMAR_BRAND_BASE_URL = "https://booking.clickandbook.com
 export const DEFAULT_COSTAMAR_TERMINAL_ID = "0721808110";
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 const COSTAMAR_SESSION_CACHE_TTL_MS = 30000;
-const COSTAMAR_TOKEN_REFRESH_WINDOW_MS = 2 * 60 * 1000;
+export const COSTAMAR_TOKEN_REFRESH_WINDOW_MS = 2 * 60 * 1000;
 const COSTAMAR_BRANDED_URL_REGEX = /https:\/\/booking\.clickandbook\.com\/vuelos\/b\/[^\s\x00?]+\?[^\s\x00]*/gi;
 const COSTAMAR_BRANDED_URL_ENCODED_REGEX =
   /https%(?:25)?3A%(?:25)?2F%(?:25)?2Fbooking\.clickandbook\.com%(?:25)?2Fvuelos%(?:25)?2Fb%(?:25)?2F[A-Za-z0-9%._~!$'()*+,;=:@/?&-]*/gi;
@@ -36,6 +34,28 @@ interface CostamarSessionCandidate {
   iatMs: number;
   expMs: number;
   source: string;
+}
+
+export type CostamarTokenIssue =
+  | "missing"
+  | "terminal-mismatch"
+  | "expired"
+  | "near-expiry"
+  | "opaque"
+  | "usable";
+
+export interface CostamarTokenInspection {
+  token: string;
+  hasToken: boolean;
+  opaque: boolean;
+  terminalMatches: boolean;
+  expired: boolean;
+  usable: boolean;
+  nearExpiry: boolean;
+  issuedAtMs?: number;
+  expiresAtMs?: number;
+  tokenTerminalId?: string;
+  reason: CostamarTokenIssue;
 }
 
 let cachedCostamarSessions:
@@ -204,6 +224,59 @@ export function resolveUsableCostamarBrandedToken(
   return normalized;
 }
 
+export function inspectCostamarBrandedToken(
+  token: string | undefined,
+  terminalId: string | undefined,
+  nowMs = Date.now(),
+  refreshWindowMs = COSTAMAR_TOKEN_REFRESH_WINDOW_MS,
+): CostamarTokenInspection {
+  const normalized = sanitizeCostamarToken(token);
+  if (!normalized) {
+    return {
+      token: "",
+      hasToken: false,
+      opaque: false,
+      terminalMatches: false,
+      expired: false,
+      usable: false,
+      nearExpiry: false,
+      reason: "missing",
+    };
+  }
+
+  const { iatMs, expMs } = decodeJwtTimes(normalized);
+  const tokenTerminalId = decodeCostamarTokenTerminalId(normalized);
+  const opaque = iatMs === 0 && expMs === 0;
+  const terminalMatches = costamarTokenMatchesTerminal(normalized, terminalId);
+  const expired = expMs > 0 && expMs <= nowMs;
+  const nearExpiry = expMs > 0 && expMs > nowMs && expMs <= nowMs + refreshWindowMs;
+  const usable = terminalMatches && !expired;
+  const reason: CostamarTokenIssue = !terminalMatches
+    ? "terminal-mismatch"
+    : expired
+      ? "expired"
+      : nearExpiry
+        ? "near-expiry"
+        : opaque
+          ? "opaque"
+          : "usable";
+
+  return {
+    token: normalized,
+    hasToken: true,
+    opaque,
+    terminalMatches,
+    expired,
+    usable,
+    nearExpiry,
+    ...(iatMs > 0 ? { issuedAtMs: iatMs } : {}),
+    ...(expMs > 0 ? { expiresAtMs: expMs } : {}),
+    ...(tokenTerminalId ? { tokenTerminalId } : {}),
+    reason,
+  };
+}
+
+
 function runtimeCostamarCandidates(): CostamarSessionCandidate[] {
   return [...runtimeCostamarSessionCandidates.values()];
 }
@@ -360,7 +433,7 @@ function readChromeProfileCandidates(userDataDir: string, includeConfiguredOnly 
   return candidates;
 }
 
-function isCostamarTokenNearExpiry(
+export function costamarTokenNearExpiry(
   token: string | undefined,
   terminalId: string | undefined,
   nowMs = Date.now(),
@@ -551,7 +624,7 @@ function copyCostamarSessionsToTemp(userDataDir: string, profileName: string): s
     return undefined;
   }
 
-  const destination = join(tmpdir(), `travel_quote_foundation_costamar_${randomUUID()}`);
+  const destination = join(tmpdir(), `travel_quote_foundation_costamar_${crypto.randomUUID()}`);
   mkdirSync(destination, { recursive: true });
 
   for (const entry of readdirSync(source)) {
@@ -601,7 +674,7 @@ function copyChromeArtifactToTemp(userDataDir: string, profileName: string, rela
 
   const destination = join(
     tmpdir(),
-    `travel_quote_foundation_costamar_${relativePath.replace(/[\\\/:\s]+/g, "_")}_${randomUUID()}`,
+    `travel_quote_foundation_costamar_${relativePath.replace(/[\\\/:\s]+/g, "_")}_${crypto.randomUUID()}`,
   );
 
   try {
@@ -656,7 +729,7 @@ function readCostamarCandidatesFromChromeArtifactDirectory(
   for (const file of files) {
     const tempFile = join(
       tmpdir(),
-      `travel_quote_foundation_costamar_${relativePath.replace(/[\\\/:\s]+/g, "_")}_${randomUUID()}_${file.name}`,
+      `travel_quote_foundation_costamar_${relativePath.replace(/[\\\/:\s]+/g, "_")}_${crypto.randomUUID()}_${file.name}`,
     );
 
     try {
@@ -735,16 +808,18 @@ function readCostamarCandidatesViaCDP(userDataDir: string): CostamarSessionCandi
     "socket.addEventListener('close', () => clearTimeout(timer));",
   ].join("");
 
-  const result = spawnSync(process.execPath, ["-e", script, browserWsEndpoint], {
+  const result = Bun.spawnSync([process.execPath, "-e", script, browserWsEndpoint], {
     timeout: 5000,
-    encoding: "utf8",
+    stdout: "pipe",
+    stderr: "ignore",
     windowsHide: true,
   });
+  const stdout = result.stdout?.toString("utf8") ?? "";
 
-  if (result.status !== 0 || !result.stdout) return [];
+  if (result.exitCode !== 0 || !stdout) return [];
 
   try {
-    const tabs = JSON.parse(result.stdout);
+    const tabs = JSON.parse(stdout);
     if (!Array.isArray(tabs)) return [];
 
     const candidates: CostamarSessionCandidate[] = [];
@@ -850,8 +925,8 @@ function maybeRefreshCostamarSessionCandidate(
     currentTokenIsUsable || candidateIsUsable
   ) {
     if (
-      isCostamarTokenNearExpiry(currentToken, terminalId, nowMs)
-      || (candidate && isCostamarTokenNearExpiry(candidate.token, candidate.terminalId, nowMs))
+      costamarTokenNearExpiry(currentToken, terminalId, nowMs)
+      || (candidate && costamarTokenNearExpiry(candidate.token, candidate.terminalId, nowMs))
     ) {
       return readCostamarSessionCandidateFromChrome(terminalId, { bypassCache: true }) ?? candidate;
     }

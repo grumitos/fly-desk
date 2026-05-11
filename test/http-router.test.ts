@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { request as httpRequest } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -159,7 +159,6 @@ function buildCostamarOffer(url: string): CanonicalOffer {
     },
     tags: [],
     warnings: [],
-    valueScore: 1,
   };
 }
 
@@ -207,6 +206,29 @@ function buildCostamarMatrixCell(url: string): MatrixCell {
       ],
     },
   };
+}
+
+async function withAcceptedCostamarRedirectValidation<T>(run: () => Promise<T>): Promise<T> {
+  const previousFetch = global.fetch;
+  global.fetch = (async (input, init) => {
+    const url = typeof input === "string" || input instanceof URL
+      ? String(input)
+      : input.url;
+    if (url.startsWith("https://booking.clickandbook.com/")) {
+      return new Response("<html><body>Costamar search accepted</body></html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
+    return previousFetch(input, init);
+  }) as typeof fetch;
+
+  try {
+    return await run();
+  } finally {
+    global.fetch = previousFetch;
+  }
 }
 
 test("quotation uses the stored exact offer when the selected result belongs to a search job", async () => {
@@ -461,7 +483,7 @@ test("rejects unsupported multi-city searches", async () => {
   });
 });
 
-test("search endpoint preserves best-value sort mode", async () => {
+test("search endpoint defaults unsupported sort mode to cheapest", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/search`, {
       method: "POST",
@@ -469,7 +491,7 @@ test("search endpoint preserves best-value sort mode", async () => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        sortMode: "best-value",
+        sortMode: "unsupported",
         request: {
           tripType: "round-trip",
           searchMode: "exact",
@@ -492,7 +514,7 @@ test("search endpoint preserves best-value sort mode", async () => {
 
     assert.equal(response.status, 200);
     const payload = await response.json() as { sortMode?: string };
-    assert.equal(payload.sortMode, "best-value");
+    assert.equal(payload.sortMode, "cheapest");
   });
 });
 
@@ -523,6 +545,8 @@ test("costamar redirect refreshes the stored token with the latest Chrome sessio
   process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
   process.env.COSTAMAR_CHROME_PROFILE = profileName;
   resetCostamarSessionCacheForTests();
+  resetCostamarWarmupStateForTests();
+  setCostamarWarmupGeneratorForTests(async () => undefined);
 
   try {
     const runtime = getRuntime();
@@ -554,7 +578,7 @@ test("costamar redirect refreshes the stored token with the latest Chrome sessio
     const redirectPath = session?.offers[0]?.purchasePaths[0]?.url;
     assert.ok(redirectPath);
 
-    await withServer(async (baseUrl) => {
+    await withAcceptedCostamarRedirectValidation(async () => withServer(async (baseUrl) => {
       const response = await fetch(`${baseUrl}${redirectPath}`, { redirect: "manual" });
 
       assert.equal(response.status, 302);
@@ -565,8 +589,9 @@ test("costamar redirect refreshes the stored token with the latest Chrome sessio
       assert.equal(parsed.searchParams.get("terminalId"), "0721808110");
       assert.equal(parsed.searchParams.get("lang"), "es");
       assert.equal(parsed.searchParams.get("token"), freshToken);
-    });
+    }));
   } finally {
+    resetCostamarWarmupStateForTests();
     resetCostamarSessionCacheForTests();
     if (previousUserDataDir === undefined) {
       delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
@@ -584,7 +609,7 @@ test("costamar redirect refreshes the stored token with the latest Chrome sessio
   }
 });
 
-test("costamar redirect uses an already usable stored token without scanning Chrome", async () => {
+test("costamar redirect refreshes an unverified stored token before opening Costamar", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-redirect-fast-"));
   const profileName = "Profile 41";
   const sessionsDir = join(tempRoot, profileName, "Sessions");
@@ -611,6 +636,8 @@ test("costamar redirect uses an already usable stored token without scanning Chr
   process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
   process.env.COSTAMAR_CHROME_PROFILE = profileName;
   resetCostamarSessionCacheForTests();
+  resetCostamarWarmupStateForTests();
+  setCostamarWarmupGeneratorForTests(async () => undefined);
 
   try {
     const runtime = getRuntime();
@@ -642,7 +669,7 @@ test("costamar redirect uses an already usable stored token without scanning Chr
     const redirectPath = session?.offers[0]?.purchasePaths[0]?.url;
     assert.ok(redirectPath);
 
-    await withServer(async (baseUrl) => {
+    await withAcceptedCostamarRedirectValidation(async () => withServer(async (baseUrl) => {
       const response = await fetch(`${baseUrl}${redirectPath}`, { redirect: "manual" });
 
       assert.equal(response.status, 302);
@@ -652,11 +679,12 @@ test("costamar redirect uses an already usable stored token without scanning Chr
       const parsed = new URL(location);
       assert.equal(parsed.searchParams.get("terminalId"), "0721808110");
       assert.equal(parsed.searchParams.get("lang"), "es");
-      assert.equal(parsed.searchParams.get("token"), usableToken);
-    });
+      assert.equal(parsed.searchParams.get("token"), newerToken);
+    }));
 
-    assert.equal(getCostamarChromeSessionScanCountForTests(), 0);
+    assert.ok(getCostamarChromeSessionScanCountForTests() > 0);
   } finally {
+    resetCostamarWarmupStateForTests();
     resetCostamarSessionCacheForTests();
     if (previousUserDataDir === undefined) {
       delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
@@ -737,7 +765,7 @@ test("costamar redirect warms a missing token through the B2B flow", async () =>
     const redirectPath = session?.offers[0]?.purchasePaths[0]?.url;
     assert.ok(redirectPath);
 
-    await withServer(async (baseUrl) => {
+    await withAcceptedCostamarRedirectValidation(async () => withServer(async (baseUrl) => {
       const response = await fetch(`${baseUrl}${redirectPath}`, { redirect: "manual" });
 
       assert.equal(response.status, 302);
@@ -748,7 +776,7 @@ test("costamar redirect warms a missing token through the B2B flow", async () =>
       assert.equal(parsed.searchParams.get("terminalId"), "0721808110");
       assert.equal(parsed.searchParams.get("lang"), "es");
       assert.equal(parsed.searchParams.get("token"), freshToken);
-    });
+    }));
 
     assert.equal(warmedRequest?.searchMode, "exact");
     assert.equal(warmedRequest?.tripType, "round-trip");
@@ -814,6 +842,8 @@ test("costamar matrix redirects refresh the stored token with the matrix job pro
   process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
   process.env.COSTAMAR_CHROME_PROFILE = profileName;
   resetCostamarSessionCacheForTests();
+  resetCostamarWarmupStateForTests();
+  setCostamarWarmupGeneratorForTests(async () => undefined);
 
   try {
     const runtime = getRuntime();
@@ -863,7 +893,7 @@ test("costamar matrix redirects refresh the stored token with the matrix job pro
     assert.equal(job.cells[0]?.offer?.purchasePaths[0]?.url, redirectPath);
     assert.doesNotMatch(JSON.stringify(job.cells), /token=/);
 
-    await withServer(async (baseUrl) => {
+    await withAcceptedCostamarRedirectValidation(async () => withServer(async (baseUrl) => {
       const jobResponse = await fetch(`${baseUrl}/api/matrix/${job.id}`);
       assert.equal(jobResponse.status, 200);
       const jobBody = await jobResponse.text();
@@ -880,8 +910,9 @@ test("costamar matrix redirects refresh the stored token with the matrix job pro
       assert.equal(parsed.searchParams.get("terminalId"), "0721808110");
       assert.equal(parsed.searchParams.get("lang"), "es");
       assert.equal(parsed.searchParams.get("token"), freshToken);
-    });
+    }));
   } finally {
+    resetCostamarWarmupStateForTests();
     resetCostamarSessionCacheForTests();
     if (previousUserDataDir === undefined) {
       delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
@@ -952,7 +983,7 @@ test("costamar redirect blocks locally when no fresh token is available", async 
       assert.match(response.headers.get("content-type") ?? "", /text\/html/i);
       const body = await response.text();
       assert.match(body, /Renueva la sesion de Costamar/i);
-      assert.match(body, /token vigente/i);
+      assert.match(body, /redirect verificado/i);
     });
   } finally {
     resetCostamarWarmupStateForTests();

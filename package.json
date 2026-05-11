@@ -1,31 +1,27 @@
 {
   "name": "fly-desk",
   "private": true,
+  "type": "module",
   "version": "0.1.0",
   "description": "Workspace local para busqueda y cotizacion aerea orientado a agentes de viajes.",
-  "main": "dist/index.js",
-  "engines": {
-    "node": ">=20"
-  },
+  "packageManager": "bun@1.3.13",
+  "workspaces": [
+    "frontend"
+  ],
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "demo": "tsx src/demo.ts",
-    "build": "npm run build:frontend && npm run build:backend",
-    "build:backend": "tsc -p tsconfig.build.json",
-    "build:frontend": "cd frontend && npm run build",
-    "start": "node dist/index.js",
+    "dev": "bun --watch src/index.ts",
+    "demo": "bun src/demo.ts",
+    "build": "bun run build:frontend",
+    "build:frontend": "bun scripts/build-frontend.ts",
+    "start": "bun src/index.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "npm --prefix frontend run lint",
-    "test": "node --test --import tsx test/**/*.test.ts"
+    "lint": "bun run --filter './frontend' lint",
+    "test": "NODE_ENV=test bun test --timeout=600000 ./test/**/*.test.ts"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^24.5.2",
-    "playwright": "^1.58.2",
-    "tsx": "^4.20.5",
+    "@types/bun": "^1.3.13",
+    "bun-plugin-tailwind": "^0.0.15",
+    "playwright": "1.58.2",
     "typescript": "^5.9.2"
-  },
-  "dependencies": {
-    "better-sqlite3": "^12.9.0"
   }
 }

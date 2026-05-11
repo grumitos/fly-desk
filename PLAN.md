@@ -1,76 +1,129 @@
-# Plan De Auditoría Back + Front Para Fly Desk
+# Plan: Migración Bun-Only de Fly Desk
 
 ## Summary
-Auditar Fly Desk en modo read-only, usando el set curado de skills y cubriendo backend, frontend React/Vite, seguridad local-first, integración API/UI, deuda técnica y validación real. No corregir código en esta pasada; entregar hallazgos priorizados con evidencia, rutas, impacto, riesgo y pruebas recomendadas.
+Migrar Fly Desk de Node/npm/Vite/tsx/better-sqlite3 a Bun como runtime, package manager, bundler, test runner y SQLite driver. La migración se hará en una sola rama/cambio integral, con checkpoints internos para detectar bloqueos, pero sin dejar una entrega parcial. La decisión de “conviene” se medirá principalmente por instalación, build, arranque y apertura local.
 
-Antes de ejecutar, reiniciar Codex para que cargue las nuevas skills USER.
+Fuentes base: Bun install/runtime/build/server/sqlite/test docs: `https://bun.sh/docs/installation`, `https://bun.sh/docs/runtime/http/server`, `https://bun.sh/docs/bundler`, `https://bun.sh/docs/runtime/sqlite`, `https://bun.sh/docs/test/writing-tests`, `https://bun.sh/docs/pm/lockfile`.
 
-## Skills A Usar
-- Coordinación: `planning-and-task-breakdown`, `context-engineering`
-- Backend/API: `api-and-interface-design`, `security-and-hardening`, `code-review-and-quality`
-- Frontend/UI: `frontend-product-ui`, `web-design-guidelines`, `vercel-react-best-practices`, `vercel-composition-patterns`
-- QA real: `webapp-testing`, `repo-quality-gate`
-- Deuda técnica: `safe-dead-code-cleanup`, `monolith-modularization`, `performance-optimization`
-- Documentación: `documentation-and-adrs`
+## Key Changes
+- Tooling:
+  - Exigir Bun como runtime único.
+  - Añadir `packageManager: "bun@<version-instalada>"`, `workspaces: ["frontend"]`, `bun.lock`, `bunfig.toml`.
+  - Eliminar `package-lock.json`, `frontend/package-lock.json`, `tsx`, `vite`, `@vitejs/plugin-react`, `@tailwindcss/vite`, `better-sqlite3`, `@types/better-sqlite3`.
+  - Añadir `@types/bun` y `bun-plugin-tailwind`; conservar `typescript`, `eslint`, Playwright y dependencias React/UI.
 
-## Audit Plan
-- Baseline inicial:
-  - Registrar `git status`, branch, scripts, Node/npm, estructura `src/`, `test/`, `frontend/`, `docs/`.
-  - Tratar los cambios actuales sin commitear como parte del estado a auditar, no como algo a revertir.
-  - Marcar explícitamente la divergencia documental: `README.md` y `docs/REPO_CURRENT_STATE.md` describen `public/`, mientras el código actual sirve `frontend/dist`.
+- Scripts:
+  - `dev`: `bun --watch src/index.ts`
+  - `start`: `bun src/index.ts`
+  - `build`: `bun run build:frontend`
+  - `build:frontend`: ejecutar un script Bun que compile `frontend/src/main.tsx`, procese Tailwind y genere `frontend/dist/index.html`.
+  - `typecheck`: `tsc --noEmit`
+  - `lint`: `bun --filter frontend run lint`
+  - `test`: `bun test test/**/*.test.ts`
+  - `demo`: `bun src/demo.ts`
 
-- Backend:
-  - Revisar `src/server.ts`, `src/http-router.ts`, providers, session-store, runtime, temp artifacts y políticas de fecha.
-  - Auditar límites de request body, path traversal, serving estático, errores expuestos, auth `FLY_DESK_API_TOKEN`, headers `x-flydesk-*`, endpoints loopback-only y apertura local de URLs.
-  - Revisar contratos `/api/search`, `/api/matrix`, `/api/locations`, `/api/quotation`, `/api/results-layout`, `/api/diagnostics`, `/r/:id`.
-  - Revisar concurrencia, cache/SWR, jobs en memoria, polling, stale data, revalidación, carga a providers y manejo de fallos parciales.
-  - Revisar superficies de secretos: Agil, Costamar, TOTP, tokens, logs, diagnósticos, archivos `output/`, `.launcher/`, `config/`.
+- Runtime HTTP:
+  - Reemplazar el servidor `node:http` por `Bun.serve`.
+  - Mantener el contrato interno `routeRequest(Request): Promise<Response>`.
+  - Conservar serving de `frontend/dist`, cache headers, CSP, `x-flydesk-client-loopback`, límite de body y la inyección de `window.__FLYDESK_RUNTIME__`.
+  - Usar `server.stop()` para shutdown y tests.
 
-- Frontend:
-  - Auditar `frontend/src/App.tsx`, componentes, hooks, `lib/api.ts`, tipos, CSS/Tailwind y shadcn-like components locales.
-  - Comparar UI contra `docs/FRONTEND_IDENTITY.md`: densidad, español, tokens, dark mode, layout operacional, estados interactivos, foco visible, responsive y no-overflow.
-  - Revisar integración API/UI: errores, loading, polling, filtros, sort, selección de ofertas, cotización, autocomplete y estados vacíos.
-  - Revisar accesibilidad: teclado, labels, botones, controles custom, focus-visible, contraste, semántica y navegación móvil.
-  - Revisar riesgos React: estado derivado, callbacks, renders innecesarios, stale closures, separación de componentes y duplicación.
+- Workers/procesos:
+  - Reemplazar `child_process.fork` y `tsx` en búsquedas por una implementación Bun-native.
+  - Opción elegida: usar `Bun.spawn(["bun", "src/search-worker.ts"])` con protocolo JSON por stdout/stdin, no Worker API, porque Bun Workers aún documenta partes experimentales.
+  - Mantener el protocolo de mensajes actual a nivel de tipos, cambiando solo el transporte.
+  - Conservar `FLY_DESK_SEARCH_WORKER_PROCESSES=0` como bypass para debug/tests.
 
-- Código muerto / arquitectura:
-  - Detectar referencias obsoletas entre `public/` legacy, `frontend/`, docs y servidor.
-  - No proponer borrados directos; clasificar candidatos como seguro, medio, alto o revisión manual.
-  - Mapear módulos grandes (`http-router`, providers, `App.tsx`) y proponer primeras extracciones pequeñas si hay evidencia.
-  - No proponer microservicios.
+- SQLite:
+  - Migrar `SearchSessionStore` y `LocationSuggestionCacheStore` de `better-sqlite3` a `bun:sqlite`.
+  - Mantener rutas, tablas, JSON payloads, WAL/pragma equivalentes y migración desde JSON legado.
+  - Actualizar tests que inspeccionan DB para usar `bun:sqlite`.
+  - No crear adapter permanente Node/Bun; el destino es Bun-only.
 
-## Validation Plan
-Ejecutar y registrar resultados, sin modificar archivos fuente:
+- Frontend bundling:
+  - Reemplazar Vite por script Bun de build.
+  - Usar `Bun.build` con entrypoint `frontend/src/main.tsx`, salida `frontend/dist/assets`, sourcemaps de producción desactivados salvo que ya existan.
+  - Procesar Tailwind con `bun-plugin-tailwind` vía `bunfig.toml`.
+  - Generar `frontend/dist/index.html` desde `frontend/index.html`, reemplazando `/src/main.tsx` por el asset hasheado.
+  - Copiar assets públicos necesarios y preservar rutas `/assets/provider-icons/...` y `/favicon.svg`.
 
-- `npm run typecheck`
-- `npm test`
-- `npm --prefix frontend run lint`
-- `npm run build`
-- Smoke local con app construida:
-  - iniciar servidor en puerto libre o `32123` si está disponible.
-  - abrir desktop `1440x900`, tablet `1024x768`, mobile `390x844`.
-  - verificar carga sin errores de consola, sin overflow horizontal, modo claro/oscuro, topbar, search rail, filtros, resultados, detalle, migratorio placeholder, foco por teclado.
-- Si una prueba no puede correr por entorno, reportar causa exacta y riesgo residual.
+- Tests:
+  - Cambiar imports `node:test` a `bun:test`; mantener `node:assert/strict` porque Bun lo marca compatible.
+  - Actualizar helpers HTTP para levantar `Bun.serve({ port: 0 })`.
+  - Ajustar detección de test en runtime: reemplazar `process.argv.includes("--test")` por una señal compatible con Bun, por ejemplo `NODE_ENV === "test"` fijada por el script.
+  - Validar que no queden dependencias de `node --test`, `tsx`, `dist/search-worker.js` ni `process.execArgv`.
 
-## Reporte Esperado
-Entregar en español:
+- Launcher, docs y deploy:
+  - Actualizar `tools/start-fly-desk.ps1` para buscar `bun.exe`, validar `bun --version`, instalar con `bun install --frozen-lockfile`, construir con `bun run build` y arrancar con `bun run start`.
+  - Actualizar detección de procesos de `node.exe` a `bun.exe`.
+  - Actualizar `.codex/environments/environment.toml` a `bun run dev`.
+  - Cambiar `Procfile` a `web: bun run start`.
+  - Actualizar README: requisitos, scripts, launcher, verificación y notas de deploy Bun.
 
-- Resumen ejecutivo con estado general: verde/amarillo/rojo.
-- Hallazgos priorizados por severidad:
-  - Seguridad
-  - Bugs funcionales
-  - Frontend/UX/a11y
-  - Performance/concurrencia
-  - Arquitectura/mantenibilidad
-  - Testing/QA
-  - Documentación desfasada
-- Cada hallazgo debe incluir evidencia, archivo/ruta, impacto, reproducción o razonamiento, y recomendación concreta.
-- Separar “verificado” de “inferido”.
-- Incluir lista de comandos ejecutados y resultados.
-- Incluir quick-win fixes sugeridos, pero no implementarlos en esta pasada.
+## Execution Plan
+1. Baseline antes de tocar código:
+   - Medir `npm install` o `npm ci`, `npm run build`, `npm start` hasta `/api/health`, memoria idle y tamaño `frontend/dist`.
+   - Guardar resultados en `docs/BUN_MIGRATION_BASELINE.md`.
+   - Criterio de conveniencia: Bun debe mejorar install/build/start combinado al menos 20%, no empeorar memoria idle más de 10%, y pasar todos los tests.
+
+2. Tooling Bun:
+   - Instalar Bun si falta, registrar versión exacta.
+   - Convertir root + frontend a workspace Bun con lock único.
+   - Reescribir scripts y dependencias.
+   - Verificar `bun install --frozen-lockfile` desde limpio.
+
+3. Runtime/server:
+   - Reescribir entrypoint a `Bun.serve`.
+   - Extraer handler fetch reusable para app y tests.
+   - Mantener comportamiento HTTP observable: headers, estáticos, favicon, body limit, errores JSON y health.
+
+4. SQLite:
+   - Cambiar imports a `bun:sqlite`.
+   - Adaptar métodos `.prepare` a API Bun (`query`/`prepare` según corresponda tras validación local).
+   - Verificar persistencia, purge, WAL/pragma y lectura de DB por tests.
+
+5. Workers:
+   - Sustituir `fork` por `Bun.spawn` con protocolo newline-delimited JSON.
+   - Mantener cancelación, stderr capture, errores serializados, progress y complete.
+   - Probar exact/range/matrix con workers activos y con bypass.
+
+6. Frontend:
+   - Crear build script Bun para React/Tailwind/assets.
+   - Eliminar Vite config y deps.
+   - Confirmar que `frontend/dist/index.html` conserva placeholder runtime y que el backend lo inyecta.
+   - Validar UI en navegador local y comparar bundle size contra baseline.
+
+7. Tests y repo hygiene:
+   - Migrar tests a `bun:test`.
+   - Corregir helpers, timeouts y cleanup de servidores/procesos.
+   - Actualizar docs, launcher, Procfile y Codex env.
+   - Buscar referencias remanentes a `node`, `npm`, `tsx`, `vite`, `better-sqlite3`, `package-lock`.
+
+## Test Plan
+- Automated:
+  - `bun install --frozen-lockfile`
+  - `bun run typecheck`
+  - `bun run lint`
+  - `bun run build`
+  - `bun test test/**/*.test.ts`
+  - `bun run start`, luego `GET /api/health` y `GET /`
+- Runtime scenarios:
+  - Arranque normal desde `bun run start`.
+  - Arranque desde launcher Windows.
+  - `/api/search` con workers desactivados.
+  - `/api/search`, range y matrix con workers activos.
+  - Persistencia SQLite: crear job/cache, reiniciar, restaurar, purgar expirados.
+  - Frontend: abrir UI, búsqueda básica mockeada, assets de providers, tema claro/oscuro.
+- Regression checks:
+  - No archivos `package-lock.json`.
+  - No imports `better-sqlite3`.
+  - No uso de `node --test`, `tsx`, `vite`.
+  - No dependencia de `dist/index.js` para start.
+  - `README`, `Procfile`, `.codex` y launcher apuntan a Bun.
 
 ## Assumptions
-- Esta auditoría es read-only: no fixes, no commits, no migraciones, no cambios de secrets, no cambios de pipelines.
-- El foco es el estado completo actual del repo, no solo el último diff.
-- El frontend React/Vite actual se audita como fuente activa porque `src/server.ts` sirve `frontend/dist`.
-- Los cambios sin commitear existentes son del usuario o de trabajo previo y no se revierten.
+- Estado final requerido: Bun-only completo, sin fallback Node permanente.
+- Métrica principal: eficiencia de instalación, build y arranque local.
+- Se mantienen `node:*` APIs compatibles bajo Bun cuando no hay alternativa útil, pero se eliminan herramientas Node/npm/Vite/tsx/better-sqlite3.
+- Se conserva TypeScript para typechecking; Bun no reemplaza `tsc` en esta función porque su documentación indica que el bundler no sustituye typechecking.
+- Si un bloqueo de Bun impide pasar tests o rompe workers/SQLite, la migración se considera no conveniente y se documenta el bloqueo con reproducción mínima antes de retirar cambios.

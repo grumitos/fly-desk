@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,6 +10,7 @@ import {
   DEFAULT_COSTAMAR_BRAND_BASE_URL,
   DEFAULT_COSTAMAR_TERMINAL_ID,
   getCostamarChromeSessionScanCountForTests,
+  inspectCostamarBrandedToken,
   normalizeCostamarProviderContext,
   resetCostamarSessionCacheForTests,
   resolveLatestCostamarProviderContext,
@@ -21,6 +22,49 @@ function buildJwt(payload: Record<string, unknown>): string {
   const encode = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value)).toString("base64url");
   return `${encode({ alg: "HS256", typ: "JWT" })}.${encode(payload)}.signature`;
 }
+
+test("inspectCostamarBrandedToken classifies missing, expired, near-expiry, wrong-terminal and opaque tokens", () => {
+  const nowMs = 1893456000000;
+  const freshToken = buildJwt({
+    id: "0721808110",
+    iat: 1893455900,
+    exp: 1893459600,
+  });
+  const nearExpiryToken = buildJwt({
+    id: "0721808110",
+    iat: 1893455900,
+    exp: 1893456060,
+  });
+  const expiredToken = buildJwt({
+    id: "0721808110",
+    iat: 1893455000,
+    exp: 1893455999,
+  });
+  const wrongTerminalToken = buildJwt({
+    id: "9999999999",
+    iat: 1893455900,
+    exp: 1893459600,
+  });
+
+  assert.equal(inspectCostamarBrandedToken(undefined, "0721808110", nowMs).reason, "missing");
+  assert.equal(inspectCostamarBrandedToken(freshToken, "0721808110", nowMs).reason, "usable");
+  assert.equal(inspectCostamarBrandedToken(nearExpiryToken, "0721808110", nowMs).reason, "near-expiry");
+  assert.equal(inspectCostamarBrandedToken(expiredToken, "0721808110", nowMs).reason, "expired");
+  assert.equal(inspectCostamarBrandedToken(wrongTerminalToken, "0721808110", nowMs).reason, "terminal-mismatch");
+  assert.deepEqual(
+    inspectCostamarBrandedToken("opaque-token", "0721808110", nowMs),
+    {
+      token: "opaque-token",
+      hasToken: true,
+      opaque: true,
+      terminalMatches: true,
+      expired: false,
+      usable: true,
+      nearExpiry: false,
+      reason: "opaque",
+    },
+  );
+});
 
 test("buildProviderContext ignores request-scoped Costamar base urls", () => {
   const context = buildProviderContext("costamar", {

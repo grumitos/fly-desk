@@ -28,6 +28,24 @@ export type OfferPriceStatus =
   | "verified"
   | "stale";
 
+export type CostamarRedirectState =
+  | "missing"
+  | "cached_unverified"
+  | "near_expiry"
+  | "refreshing"
+  | "fresh_unverified"
+  | "verified"
+  | "refresh_failed"
+  | "blocked";
+
+export interface RedirectVerification {
+  provider: ProviderId;
+  state: CostamarRedirectState;
+  verified: boolean;
+  reason?: string;
+  checkedAt?: string;
+}
+
 export type PurchasePathType =
   | "api-booking"
   | "deeplink"
@@ -261,6 +279,7 @@ export interface PurchasePath {
   state: PurchasePathState;
   referenceText?: string;
   expiresAt?: string;
+  redirectVerification?: RedirectVerification;
 }
 
 export interface CanonicalOffer {
@@ -286,11 +305,11 @@ export interface CanonicalOffer {
   priceStatus: OfferPriceStatus;
   priceVerifiedAt?: string;
   purchasePaths: PurchasePath[];
+  redirectVerification?: RedirectVerification;
   comparisonMetrics: ComparisonMetrics;
   tags: string[];
   warnings: string[];
   rawRefs?: Record<string, unknown>;
-  valueScore: number;
 }
 
 export interface MatrixCell {

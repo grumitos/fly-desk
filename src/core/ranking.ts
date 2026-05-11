@@ -1,15 +1,5 @@
 import { CanonicalOffer, Itinerary, PurchasePath } from "./types";
 
-function minBy<T>(values: T[], pick: (value: T) => number): number {
-  if (values.length === 0) return 0;
-  return Math.min(...values.map(pick));
-}
-
-function maxBy<T>(values: T[], pick: (value: T) => number): number {
-  if (values.length === 0) return 1;
-  return Math.max(...values.map(pick));
-}
-
 export function totalDuration(offer: CanonicalOffer): number {
   return offer.itineraries.reduce(
     (sum: number, itinerary: Itinerary) => sum + itinerary.durationMinutes,
@@ -96,53 +86,9 @@ export function enrichComparisonMetrics(offers: CanonicalOffer[]): CanonicalOffe
   }));
 }
 
-export function computeValueScores(offers: CanonicalOffer[]): CanonicalOffer[] {
-  if (offers.length === 0) return offers;
-
-  const minPrice = minBy(offers, (offer) => offer.price.total.amount);
-  const maxPrice = maxBy(offers, (offer) => offer.price.total.amount);
-  const minDuration = minBy(offers, (offer) => totalDuration(offer));
-  const maxDuration = maxBy(offers, (offer) => totalDuration(offer));
-
-  return offers.map((offer) => {
-    const duration = totalDuration(offer);
-    const stops = totalStops(offer);
-
-    const priceNorm =
-      maxPrice === minPrice
-        ? 0
-        : (offer.price.total.amount - minPrice) / (maxPrice - minPrice);
-
-    const durationNorm =
-      maxDuration === minDuration
-        ? 0
-        : (duration - minDuration) / (maxDuration - minDuration);
-
-    const stopPenalty = stops * 0.12;
-    const exactPathBonus = offer.purchasePaths.some(
-      (path: PurchasePath) => path.precision === "exact-offer",
-    )
-      ? -0.05
-      : 0;
-    const baggageBonus = offer.baggage?.checkedIncluded ? -0.03 : 0;
-
-    const valueScore = Number(
-      (
-        priceNorm * 0.55 +
-        durationNorm * 0.25 +
-        stopPenalty +
-        exactPathBonus +
-        baggageBonus
-      ).toFixed(4),
-    );
-
-    return { ...offer, valueScore };
-  });
-}
-
 export function sortOffers(
   offers: CanonicalOffer[],
-  mode: "cheapest" | "fastest" | "best-value",
+  mode: "cheapest" | "fastest",
 ): CanonicalOffer[] {
   const cloned = [...offers];
 
@@ -157,11 +103,7 @@ export function sortOffers(
         const durationDiff = totalDuration(a) - totalDuration(b);
         return durationDiff !== 0 ? durationDiff : compareOffersByDate(a, b);
       });
-    case "best-value":
     default:
-      return cloned.sort((a, b) => {
-        const valueDiff = a.valueScore - b.valueScore;
-        return valueDiff !== 0 ? valueDiff : compareOffersByDate(a, b);
-      });
+      return cloned;
   }
 }
