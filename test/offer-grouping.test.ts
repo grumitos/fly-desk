@@ -139,6 +139,74 @@ test("groupExactProviderOffers keeps offers with different schedules separate", 
   assert.equal(grouped.length, 2);
 });
 
+test("groupExactProviderOffers matches flights with normalized airline names", () => {
+  const jetSmartItineraries = (provider: ProviderId, carrier: string, name: string): CanonicalOffer["itineraries"] => [
+    {
+      id: `${provider}-outbound`,
+      direction: "outbound",
+      durationMinutes: 86,
+      stops: 0,
+      layoverMinutes: [],
+      segments: [
+        {
+          id: `${provider}-outbound-segment`,
+          marketingCarrier: carrier,
+          marketingCarrierName: name,
+          flightNumber: `${carrier} 7031`,
+          origin: "LIM",
+          destination: "CUZ",
+          departureAt: "2026-10-01T11:45:00",
+          arrivalAt: "2026-10-01T13:11:00",
+          durationMinutes: 86,
+        },
+      ],
+    },
+    {
+      id: `${provider}-inbound`,
+      direction: "inbound",
+      durationMinutes: 93,
+      stops: 0,
+      layoverMinutes: [],
+      segments: [
+        {
+          id: `${provider}-inbound-segment`,
+          marketingCarrier: carrier,
+          marketingCarrierName: name,
+          flightNumber: `${carrier} 7032`,
+          origin: "CUZ",
+          destination: "LIM",
+          departureAt: "2026-10-04T12:42:00",
+          arrivalAt: "2026-10-04T14:15:00",
+          durationMinutes: 93,
+        },
+      ],
+    },
+  ];
+
+  const grouped = groupExactProviderOffers([
+    buildOffer("agil-local", {
+      mainCarrier: "JA",
+      validatingCarrier: "JA",
+      origin: "LIM",
+      destination: "CUZ",
+      itineraries: jetSmartItineraries("agil-local", "JA", "JetSMART"),
+    }),
+    buildOffer("costamar", {
+      mainCarrier: "JZ",
+      validatingCarrier: "JZ",
+      origin: "LIM",
+      destination: "CUZ",
+      itineraries: jetSmartItineraries("costamar", "JZ", "JetSmart Airlines SpA"),
+    }),
+  ]);
+
+  assert.equal(grouped.length, 1);
+  assert.deepEqual(
+    grouped[0].purchasePaths.map((path) => path.provider),
+    ["agil-local", "costamar"],
+  );
+});
+
 test("materializeSearchResponse returns grouped provider duplicates", () => {
   const response = materializeSearchResponse(
     {

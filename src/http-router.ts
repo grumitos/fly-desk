@@ -1,6 +1,7 @@
 import { materializeSearchResponse } from "./core/orchestrator";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
 import { buildCommercialQuotation, shouldIncludePenQuotationPrice } from "./core/quotation";
+import { normalizeAirlineDisplayName } from "./core/airline-names";
 import { mkdir } from "node:fs/promises";
 import { timingSafeEqual } from "node:crypto";
 import * as path from "node:path";
@@ -430,9 +431,9 @@ function normalizeQuotationSegment(input: unknown, fallback: {
   return {
     id: quotationStringValue(raw.id) ?? `${fallback.direction}-segment`,
     marketingCarrier: quotationStringValue(raw.marketingCarrier) ?? "",
-    marketingCarrierName: quotationStringValue(raw.marketingCarrierName),
+    marketingCarrierName: normalizeAirlineDisplayName(raw.marketingCarrierName) || undefined,
     operatingCarrier: quotationStringValue(raw.operatingCarrier),
-    operatingCarrierName: quotationStringValue(raw.operatingCarrierName),
+    operatingCarrierName: normalizeAirlineDisplayName(raw.operatingCarrierName) || undefined,
     flightNumber: quotationStringValue(raw.flightNumber) ?? "",
     origin,
     originName: quotationStringValue(raw.originName),

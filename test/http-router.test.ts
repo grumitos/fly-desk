@@ -303,7 +303,7 @@ test("quotation can use the displayed flexible result snapshot without re-queryi
 
     assert.equal(response.status, 200);
     const payload = await response.json() as { commercialText?: string };
-    assert.match(payload.commercialText ?? "", /LIM \(LIM\) - MAD \(MAD\) - LIM \(LIM\)/);
+    assert.match(payload.commercialText ?? "", /Lima \(LIM\) - Madrid \(MAD\) - Lima \(LIM\)/);
     assert.match(payload.commercialText ?? "", /US\$ 498 por adulto/);
     assert.match(payload.commercialText ?? "", /S\/ 1,743 aprox\. por adulto/);
     assert.match(payload.commercialText ?? "", /Horario ida: LIM · 01 junio/);

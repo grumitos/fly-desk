@@ -27,7 +27,7 @@ El repo no versiona artefactos generados de build:
 - `quotation`
 - purchase paths y apertura del flujo equivalente cuando aplica
 
-La UI React no debe mostrar controles simulados. Busqueda flexible y migratorio mensual estan conectados en React; matriz/calendario, multidestino y `reprice` permanecen fuera de la interfaz hasta reconstruirse desde cero con los componentes React actuales.
+La UI React no debe mostrar controles simulados. Busqueda flexible y migratorio mensual estan conectados en React; multidestino permanece fuera de la interfaz.
 
 ### Feedback de carga
 
@@ -68,7 +68,7 @@ La UI React no debe mostrar controles simulados. Busqueda flexible y migratorio 
 
 - `frontend/src/main.tsx` monta la app React
 - `frontend/src/App.tsx` compone el workspace operacional
-- `frontend/src/components/` contiene topbar, rail de busqueda, resultados, detalle y componentes UI
+- `frontend/src/components/` contiene topbar, shell de busqueda, resultados, detalle y componentes UI
 - `frontend/src/hooks/` concentra busqueda/polling y autocomplete
 - `frontend/src/index.css` define tokens, layout y tema claro/oscuro
 - `scripts/build-frontend.ts` genera `frontend/dist` con `Bun.build`
@@ -118,7 +118,6 @@ La UI React no debe mostrar controles simulados. Busqueda flexible y migratorio 
   - `/api/search/:jobId`
   - `/api/matrix`
   - `/api/matrix/:jobId`
-  - `/api/reprice`
   - `/api/quotation`
   - `/r/:id`
 - `src/search-date-policy.ts`
@@ -137,14 +136,12 @@ La UI React no debe mostrar controles simulados. Busqueda flexible y migratorio 
   - exact
   - range
   - matrix
-  - reprice
   - deep links
 - `src/local-costamar.ts`
   - autocomplete
   - exact
   - range
   - matrix
-  - reprice
   - branded links
 - `src/core/flexible-search.ts`
   - helpers de derivacion de requests
@@ -196,7 +193,7 @@ Cobertura importante actual:
 - endurecimiento de contexto de Costamar
 - key requerida para Agil live
 - helpers compartidos de matriz
-- rail de busqueda y orden del formulario
+- shell de busqueda y orden del formulario
 - smoke de `exacto/flexible/migratorio` con `ida/ida-vuelta`
 - tema claro y oscuro
 - calendario custom
@@ -222,12 +219,6 @@ Resultado al 25 de abril de 2026:
 - suite automatica en verde: `168/168`
 - `test/helpers/server.ts` desactiva jobs progresivos de fondo durante tests HTTP con `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1`; esto evita handles vivos en Windows y no cambia el runtime normal
 
-## Documentacion historica
-
-Siguen siendo utiles como referencia historica, no como descripcion del estado presente:
-
-- `docs/CODE_AUDIT_2026-03-27.md`
-- `docs/UI_UX_AUDIT_2026-03-27_LIVE.md`
 
 ## Deuda tecnica vigente
 

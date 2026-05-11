@@ -1593,12 +1593,12 @@ test("normal results wait for saved column layout before drawing cards", async (
 
     assert.deepEqual(layout, {
       fixed: true,
-      carrier: "117px",
-      dates: "260px",
-      duration: "94px",
-      stops: "145px",
-      price: "127px",
-      links: "40px",
+      carrier: "117fr",
+      dates: "260fr",
+      duration: "94fr",
+      stops: "145fr",
+      price: "127fr",
+      links: "40fr",
     });
   }, { autoOpen: false });
 });

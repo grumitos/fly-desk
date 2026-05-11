@@ -1,4 +1,5 @@
 import type { CanonicalOffer, Itinerary, ProviderId, PurchasePath, Segment } from "./types";
+import { airlineNameMatchKey } from "./airline-names";
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   "agil-local": "Agilsmart",
@@ -14,9 +15,31 @@ function normalizeAmount(value: unknown): string {
   return Number.isFinite(numeric) ? numeric.toFixed(2) : "0.00";
 }
 
-function normalizedFlightCode(segment: Segment): string {
-  const carrier = normalizeToken(segment.marketingCarrier);
+function segmentCarrierMatchToken(segment: Segment): string {
+  return airlineNameMatchKey(segment.marketingCarrierName || segment.operatingCarrierName)
+    || normalizeToken(segment.marketingCarrier);
+}
+
+function offerCarrierMatchToken(offer: CanonicalOffer): string {
+  const firstNamedSegment = offer.itineraries
+    .flatMap((itinerary) => itinerary.segments ?? [])
+    .find((segment) => segment.marketingCarrierName || segment.operatingCarrierName);
+  return firstNamedSegment
+    ? segmentCarrierMatchToken(firstNamedSegment)
+    : normalizeToken(offer.mainCarrier || offer.validatingCarrier);
+}
+
+function normalizedFlightNumber(segment: Segment): string {
+  const marketingCarrier = normalizeToken(segment.marketingCarrier);
   const flightNumber = normalizeToken(segment.flightNumber).replace(/\s+/g, "");
+  return marketingCarrier && flightNumber.startsWith(marketingCarrier)
+    ? flightNumber.slice(marketingCarrier.length)
+    : flightNumber;
+}
+
+function normalizedFlightCode(segment: Segment): string {
+  const carrier = segmentCarrierMatchToken(segment);
+  const flightNumber = normalizedFlightNumber(segment);
   if (!flightNumber) return carrier;
   if (carrier && flightNumber.startsWith(carrier)) return flightNumber;
   return `${carrier}${flightNumber}`;
@@ -48,7 +71,7 @@ function itineraryExactKey(itinerary: Itinerary): unknown {
 function exactOfferGroupKey(offer: CanonicalOffer): string {
   return JSON.stringify([
     String(offer.tripType ?? "").trim().toLowerCase(),
-    normalizeToken(offer.mainCarrier || offer.validatingCarrier),
+    offerCarrierMatchToken(offer),
     normalizeToken(offer.origin),
     normalizeToken(offer.destination),
     normalizeAmount(offer.price?.total?.amount),

@@ -79,14 +79,14 @@ Solid orange surfaces must use white foreground text/icons for contrast and legi
 ## Component Families
 
 - `topbar`: sticky product identity and theme controls only. Do not show counters, readiness badges, or section tabs unless the underlying React workflow is implemented.
-- `search-rail`: one cohesive shell for trip type, origin, destination, dates, passenger selector, and search CTA.
+- `search-shell`: one cohesive shell for trip type, origin, destination, dates, passenger selector, and search CTA.
 - `field`: label + value with consistent height and focus treatment.
 - `segmented`: trip type and sorting controls.
 - `filter-panel`: compact filter groups with visible selected states and clear action.
 - `result-row`: dense comparison row prioritizing airline, schedule, route, baggage, provider, and price.
 - `detail-panel`: selected offer and quotation workflow, with flat data groups instead of inner cards.
 
-Do not render placeholder sections for workflows that are not connected in the React app. Flexible search is connected through `stay-range` and `/api/matrix`; monthly migratory search is connected through client-side monthly `stay-range` fan-out. The matrix calendar view and multi-city search must stay hidden until rebuilt against the backend contract with current components and tokens.
+Do not render placeholder sections for workflows that are not connected in the React app. Flexible search is connected through `stay-range` and `/api/matrix`; monthly migratory search is connected through client-side monthly `stay-range` fan-out. Multi-city search remains intentionally hidden.
 
 ## Interaction States
 
@@ -105,7 +105,7 @@ Keyboard focus must be visible, and visible controls must be reachable by tab un
 ## Responsive Rules
 
 - `>= 1280px`: three-column workspace is allowed: filters, results, detail.
-- `1024px`: preserve the search rail and stack secondary panels if needed.
+- `1024px`: preserve the search shell and stack secondary panels if needed.
 - `< 768px`: single-column layout; no horizontal overflow; action groups wrap instead of shrinking text below readability.
 - Overlays must stay inside viewport and remain keyboard usable.
 
@@ -133,6 +133,6 @@ The smoke must check:
 
 - Page loads without console errors.
 - No horizontal overflow.
-- Topbar, search rail, filters, results, detail panel, and future-section placeholders remain coherent.
+- Topbar, search shell, filters, results, and detail panel remain coherent.
 - Light and dark mode both render.
 - Focus order reaches visible controls.
