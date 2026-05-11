@@ -1,7 +1,7 @@
 import { materializeSearchResponse } from "./core/orchestrator";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
 import { buildCommercialQuotation, shouldIncludePenQuotationPrice } from "./core/quotation";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { timingSafeEqual } from "node:crypto";
 import * as path from "node:path";
 import {
@@ -653,7 +653,7 @@ async function readResultsLayoutFile(): Promise<{
   columns: Record<ResultsLayoutColumnKey, number>;
 } | null> {
   try {
-    const raw = await readFile(RESULTS_LAYOUT_FILE, "utf8");
+    const raw = await Bun.file(RESULTS_LAYOUT_FILE).text();
     const parsed = JSON.parse(raw) as {
       version?: unknown;
       savedAt?: unknown;
@@ -688,7 +688,7 @@ async function writeResultsLayoutFile(
   };
 
   await mkdir(path.dirname(RESULTS_LAYOUT_FILE), { recursive: true });
-  await writeFile(RESULTS_LAYOUT_FILE, JSON.stringify(payload, null, 2), "utf8");
+  await Bun.write(RESULTS_LAYOUT_FILE, JSON.stringify(payload, null, 2));
   return payload;
 }
 

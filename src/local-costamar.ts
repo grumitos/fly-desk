@@ -1,4 +1,3 @@
-import { createHash, randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -788,7 +787,7 @@ function copyPathSafe(source: string, destination: string): void {
 
 function prepareTemporaryCostamarChromeProfile(profileName: string): string {
   const sourceRoot = resolveCostamarChromeLaunchOptions().userDataDir || DEFAULT_CHROME_USER_DATA_DIR;
-  const tempRoot = join(tmpdir(), `travel_quote_foundation_costamar_browser_${randomUUID()}`);
+  const tempRoot = join(tmpdir(), `travel_quote_foundation_costamar_browser_${crypto.randomUUID()}`);
   mkdirSync(join(tempRoot, profileName), { recursive: true });
   registerActiveTempArtifact(tempRoot);
 
@@ -1873,6 +1872,12 @@ function waitMs(durationMs: number): Promise<void> {
   });
 }
 
+function sha1Hex(input: string): string {
+  const hasher = new Bun.CryptoHasher("sha1");
+  hasher.update(input);
+  return hasher.digest("hex");
+}
+
 async function searchLocalCostamarExactWithRetry(
   request: SearchRequest,
   providerContext?: ProviderContext,
@@ -2127,7 +2132,7 @@ function buildCostamarOfferId(
   currencyCode: string,
 ): string {
   const seed = `${signature}::${totalAmount.toFixed(2)}::${currencyCode}`;
-  return `costamar-${createHash("sha1").update(seed).digest("hex").slice(0, 16)}`;
+  return `costamar-${sha1Hex(seed).slice(0, 16)}`;
 }
 
 function dedupeCostamarOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
@@ -2975,7 +2980,7 @@ export function mapCostamarRecommendationToOffer(
     id: "",
     signature: "",
     providerSource: "costamar",
-    providerOfferRef: String(recommendation.id ?? createHash("sha1").update(JSON.stringify(recommendation)).digest("hex")),
+    providerOfferRef: String(recommendation.id ?? sha1Hex(JSON.stringify(recommendation))),
     tripType: request.tripType,
     validatingCarrier: pricing.validatingAirline ?? firstSegment.marketingCarrier,
     mainCarrier: firstSegment.marketingCarrier,

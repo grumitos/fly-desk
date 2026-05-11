@@ -4,7 +4,7 @@ Fecha de corte: 2026-04-25
 
 ## Resumen
 
-Fly Desk es hoy una aplicacion local-first para agentes de viajes, con frontend React/Vite y backend Node, conectada a Agil mediante reutilizacion de sesion local del navegador y a Costamar mediante contexto controlado por entorno.
+Fly Desk es hoy una aplicacion local-first para agentes de viajes, con frontend React compilado por Bun y backend Bun, conectada a Agil mediante reutilizacion de sesion local del navegador y a Costamar mediante contexto controlado por entorno.
 
 El repo no versiona artefactos generados de build:
 
@@ -71,7 +71,8 @@ La UI React no debe mostrar controles simulados. Busqueda flexible y migratorio 
 - `frontend/src/components/` contiene topbar, rail de busqueda, resultados, detalle y componentes UI
 - `frontend/src/hooks/` concentra busqueda/polling y autocomplete
 - `frontend/src/index.css` define tokens, layout y tema claro/oscuro
-- el backend sirve el build generado en `frontend/dist`
+- `scripts/build-frontend.ts` genera `frontend/dist` con `Bun.build`
+- el backend Bun sirve el build generado en `frontend/dist`
 
 ### Launchers
 
@@ -87,7 +88,7 @@ La UI React no debe mostrar controles simulados. Busqueda flexible y migratorio 
 ### Frontend
 
 - `frontend/index.html`
-  - shell Vite
+  - shell HTML/React usado por el build Bun
 - `frontend/src/main.tsx`
   - entrypoint React
 - `frontend/src/App.tsx`
@@ -255,7 +256,7 @@ Siguen siendo utiles como referencia historica, no como descripcion del estado p
 - el servidor emite headers basicos de hardening en respuestas propias
 - JSON invalido se reporta como 400 en lugar de 500
 - `frontend/src/lib/api.ts` adapta el contrato React simple al payload BFF real (`request` + `sortMode`) y normaliza la respuesta para la UI actual
-- los smoke tests de UI apuntan al shell React/Vite vigente, no al DOM legacy de `public/`
+- los smoke tests de UI apuntan al shell React/Bun vigente, no al DOM legacy de `public/`
 
 ## Cambios del 9 de abril de 2026
 

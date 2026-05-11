@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
@@ -453,7 +452,7 @@ export class SearchSessionStore {
   }
 
   createSearchJob(input: Omit<SearchJobRecord, "id" | "createdAt" | "updatedAt" | "lastAccessedAt" | "revision">): SearchJobRecord {
-    const id = randomUUID();
+    const id = crypto.randomUUID();
     const timestamp = nowIso();
     const rewrittenAllOffers = input.allOffers.map((offer) => this.rewriteOfferPaths(id, offer));
     const rewrittenOffersById = new Map(rewrittenAllOffers.map((offer) => [offer.id, offer] as const));
@@ -663,7 +662,7 @@ export class SearchSessionStore {
   }
 
   createMatrixJob(input: Omit<MatrixJobRecord, "id" | "createdAt" | "updatedAt" | "lastAccessedAt" | "revision">): MatrixJobRecord {
-    const id = randomUUID();
+    const id = crypto.randomUUID();
     const timestamp = nowIso();
     const record: MatrixJobRecord = {
       ...input,
@@ -895,7 +894,7 @@ export class SearchSessionStore {
       activeFingerprints.add(fingerprint);
 
       const existingId = ownerPaths.get(fingerprint);
-      const purchasePathId = existingId ?? randomUUID();
+      const purchasePathId = existingId ?? crypto.randomUUID();
       const previous = existingId ? this.purchasePaths.get(existingId) : undefined;
 
       ownerPaths.set(fingerprint, purchasePathId);

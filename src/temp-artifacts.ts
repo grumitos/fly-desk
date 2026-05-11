@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 
 export const FLY_DESK_TEMP_ARTIFACT_PREFIXES = [
   "playwright",
@@ -36,10 +35,20 @@ interface TempArtifactEntry {
   active: boolean;
 }
 
+function readRuntimeEnv(name: string): string | undefined {
+  return typeof Bun !== "undefined" ? Bun.env[name] : process.env[name];
+}
+
+function sleepRuntime(delayMs: number): Promise<void> {
+  return typeof Bun !== "undefined"
+    ? Bun.sleep(delayMs)
+    : new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 function readTempRoots(): string[] {
   return [
-    process.env.TEMP,
-    process.env.TMP,
+    readRuntimeEnv("TEMP"),
+    readRuntimeEnv("TMP"),
     tmpdir(),
   ]
     .filter((value): value is string => Boolean(value))
@@ -197,7 +206,7 @@ export async function removePathWithRetries(
         return;
       }
 
-      await delay(delayMs);
+      await sleepRuntime(delayMs);
     }
   }
 }

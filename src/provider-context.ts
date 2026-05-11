@@ -1,5 +1,3 @@
-import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -626,7 +624,7 @@ function copyCostamarSessionsToTemp(userDataDir: string, profileName: string): s
     return undefined;
   }
 
-  const destination = join(tmpdir(), `travel_quote_foundation_costamar_${randomUUID()}`);
+  const destination = join(tmpdir(), `travel_quote_foundation_costamar_${crypto.randomUUID()}`);
   mkdirSync(destination, { recursive: true });
 
   for (const entry of readdirSync(source)) {
@@ -676,7 +674,7 @@ function copyChromeArtifactToTemp(userDataDir: string, profileName: string, rela
 
   const destination = join(
     tmpdir(),
-    `travel_quote_foundation_costamar_${relativePath.replace(/[\\\/:\s]+/g, "_")}_${randomUUID()}`,
+    `travel_quote_foundation_costamar_${relativePath.replace(/[\\\/:\s]+/g, "_")}_${crypto.randomUUID()}`,
   );
 
   try {
@@ -731,7 +729,7 @@ function readCostamarCandidatesFromChromeArtifactDirectory(
   for (const file of files) {
     const tempFile = join(
       tmpdir(),
-      `travel_quote_foundation_costamar_${relativePath.replace(/[\\\/:\s]+/g, "_")}_${randomUUID()}_${file.name}`,
+      `travel_quote_foundation_costamar_${relativePath.replace(/[\\\/:\s]+/g, "_")}_${crypto.randomUUID()}_${file.name}`,
     );
 
     try {
@@ -810,16 +808,18 @@ function readCostamarCandidatesViaCDP(userDataDir: string): CostamarSessionCandi
     "socket.addEventListener('close', () => clearTimeout(timer));",
   ].join("");
 
-  const result = spawnSync(process.execPath, ["-e", script, browserWsEndpoint], {
+  const result = Bun.spawnSync([process.execPath, "-e", script, browserWsEndpoint], {
     timeout: 5000,
-    encoding: "utf8",
+    stdout: "pipe",
+    stderr: "ignore",
     windowsHide: true,
   });
+  const stdout = result.stdout?.toString("utf8") ?? "";
 
-  if (result.status !== 0 || !result.stdout) return [];
+  if (result.exitCode !== 0 || !stdout) return [];
 
   try {
-    const tabs = JSON.parse(result.stdout);
+    const tabs = JSON.parse(stdout);
     if (!Array.isArray(tabs)) return [];
 
     const candidates: CostamarSessionCandidate[] = [];

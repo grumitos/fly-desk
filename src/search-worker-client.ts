@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type {
@@ -263,7 +262,7 @@ function runInWorker(
 }
 
 export async function runProviderSearchInWorker(input: ProviderSearchWorkerInput): Promise<ProviderSearchResult> {
-  const id = randomUUID();
+  const id = crypto.randomUUID();
   const result = await runInWorker(
     {
       id,
@@ -306,7 +305,7 @@ export async function runProviderSearchInWorker(input: ProviderSearchWorkerInput
 }
 
 export async function runProviderMatrixInWorker(input: ProviderMatrixWorkerInput): Promise<MatrixResponse> {
-  const id = randomUUID();
+  const id = crypto.randomUUID();
   const result = await runInWorker(
     {
       id,

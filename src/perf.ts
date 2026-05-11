@@ -1,16 +1,14 @@
-import { performance } from "node:perf_hooks";
-
 type PerfFieldValue = string | number | boolean | undefined | null;
 
 export type PerfFields = Record<string, PerfFieldValue>;
 
 function readFlag(name: string): boolean {
-  const value = process.env[name]?.trim().toLowerCase();
+  const value = Bun.env[name]?.trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
 function readNumber(name: string): number | undefined {
-  const value = process.env[name]?.trim();
+  const value = Bun.env[name]?.trim();
   if (!value) {
     return undefined;
   }

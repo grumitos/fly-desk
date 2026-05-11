@@ -1,7 +1,3 @@
-import { constants as fsConstants } from "node:fs";
-import { access } from "node:fs/promises";
-import { spawn } from "node:child_process";
-
 export type LocalBrowserPreference = "chrome" | "default";
 
 export interface ChromeLaunchOptions {
@@ -14,12 +10,7 @@ interface OpenUrlResult {
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    await access(filePath, fsConstants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
+  return Bun.file(filePath).exists();
 }
 
 async function findChromeExecutable(): Promise<string | undefined> {
@@ -39,9 +30,10 @@ async function findChromeExecutable(): Promise<string | undefined> {
 }
 
 function spawnDetached(command: string, args: string[]): void {
-  const child = spawn(command, args, {
+  const child = Bun.spawn([command, ...args], {
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "ignore"],
+    windowsHide: true,
   });
 
   child.unref();
