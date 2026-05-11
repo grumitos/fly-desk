@@ -75,10 +75,7 @@ export function ResultCard({
 
       <div className="fd-result-card__airline">
         <span className="fd-result-card__airline-name" title={model.carrier.display}>{model.carrier.display}</span>
-        <span className="fd-result-card__meta" title={model.flightCodes || offer.providerSource || undefined}>
-          {model.flightCodes || offer.providerSource || "Vuelo por confirmar"}
-        </span>
-        {model.carrier.operatedBy && <span className="fd-result-card__meta fd-result-card__meta--muted">{model.carrier.operatedBy}</span>}
+        {model.carrier.operatedBy && <span className="fd-result-card__meta">{model.carrier.operatedBy}</span>}
       </div>
 
       <div className="fd-result-card__schedules" data-trip-type={model.tripType}>

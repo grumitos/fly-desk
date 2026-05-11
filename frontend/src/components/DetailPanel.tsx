@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button"
 import { AppIcon } from "@/components/ui/app-icon"
 import { fetchQuotation } from "@/lib/api"
 import { bestPurchasePath, normalizeSafePurchaseUrl } from "@/lib/purchase-path"
-import type { CanonicalOffer, SearchRequest } from "@/types"
+import { providerDisplayName } from "@/lib/providers"
+import type { CanonicalOffer, SearchRequest, Segment } from "@/types"
 
 interface DetailPanelProps {
   offer: CanonicalOffer | null
@@ -26,6 +27,7 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
   const activeQuotation = quotation && quotation.key === quoteKey ? quotation : null
   const copied = copiedOfferKey === quoteKey
   const purchasePath = offer ? bestPurchasePath(offer) : undefined
+  const flightCodes = offer ? offerFlightCodes(offer) : []
   const activePathFeedback = pathFeedback && pathFeedback.offerId === offer?.id ? pathFeedback.message : null
   const loading = Boolean(quoteKey && loadingKey === quoteKey)
   const canQuote = Boolean(offer && request && quoteKey)
@@ -132,8 +134,24 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
           </div>
         </section>
 
+        {flightCodes.length > 0 && (
+          <section className="border-b border-border pb-3">
+            <div className="fd-label mb-2">Numeros de vuelo</div>
+            <div className="flex flex-wrap gap-1.5" aria-label="Numeros de vuelo">
+              {flightCodes.map((code) => (
+                <span
+                  key={code}
+                  className="rounded-md border border-border bg-secondary px-2 py-1 font-mono text-xs font-bold text-foreground"
+                >
+                  {code}
+                </span>
+              ))}
+            </div>
+          </section>
+        )}
+
         <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 border-y border-border py-3">
-          <InfoTile label="Proveedor" value={offer.providerSource || "-"} />
+          <InfoTile label="Proveedor" value={providerDisplayName(offer.providerSource)} />
           <InfoTile label="Duración" value={offer.duration || "-"} />
           <InfoTile label="Salida" value={fmtDateTime(offer.departureDate)} />
           <InfoTile label="Regreso" value={offer.returnDate ? fmtDateTime(offer.returnDate) : "No aplica"} />
@@ -243,6 +261,26 @@ function InfoTile({ label, value }: { label: string; value: string }) {
       <div className="truncate text-sm font-semibold">{value}</div>
     </div>
   )
+}
+
+function offerFlightCodes(offer: CanonicalOffer): string[] {
+  const tokens = (offer.itineraries ?? [])
+    .flatMap((itinerary) => itinerary.segments)
+    .map((segment) => flightCodeLabel(segment))
+    .filter(Boolean)
+
+  return Array.from(new Set(tokens))
+}
+
+function flightCodeLabel(segment: Segment) {
+  const carrier = String(segment.marketingCarrier ?? "").trim().toUpperCase()
+  const flightNumber = typeof segment.flightNumber === "string"
+    ? segment.flightNumber.trim().toUpperCase().replace(/\s+/g, "")
+    : ""
+
+  if (!flightNumber) return ""
+  if (carrier && !flightNumber.startsWith(carrier)) return `${carrier}${flightNumber}`
+  return flightNumber
 }
 
 function fmtDateTime(value?: string) {

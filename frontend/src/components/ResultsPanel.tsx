@@ -7,13 +7,14 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react"
 import { ResultCard } from "@/components/results/ResultCard"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-control"
 import { Skeleton } from "@/components/ui/skeleton"
 import { getResultsLayout, saveResultsLayout } from "@/lib/api"
@@ -36,27 +37,22 @@ const RESULTS_CARD_GAP_PX = 10
 const RESULTS_LIST_TOP_INSET_PX = 4
 const RESULTS_EXTRA_ROW_MIN_BLANK_PX = 28
 const RESULTS_LAYOUT_FILE_HINT = "config/results-layout.json"
+const RESULTS_LAYOUT_RESIZE_STEP_PX = 8
 const RESULTS_COLUMN_DEFINITIONS = [
-  { key: "carrier", label: "Aerolínea", defaultWidth: 148, minWidth: 88, maxWidth: 320 },
-  { key: "dates", label: "Fechas", defaultWidth: 164, minWidth: 112, maxWidth: 260 },
-  { key: "duration", label: "Duración", defaultWidth: 96, minWidth: 92, maxWidth: 240 },
-  { key: "stops", label: "Escalas", defaultWidth: 148, minWidth: 96, maxWidth: 300 },
-  { key: "price", label: "Precio", defaultWidth: 136, minWidth: 112, maxWidth: 360 },
-  { key: "links", label: "Proveedor", defaultWidth: 64, minWidth: 40, maxWidth: 84 },
+  { key: "carrier", label: "Aerolínea", defaultWidth: 112 },
+  { key: "dates", label: "Fechas", defaultWidth: 314 },
+  { key: "duration", label: "Duración", defaultWidth: 98 },
+  { key: "stops", label: "Escalas", defaultWidth: 147 },
+  { key: "price", label: "Precio", defaultWidth: 124 },
+  { key: "links", label: "Proveedor", defaultWidth: 44 },
 ] as const satisfies ReadonlyArray<{
   key: ResultsLayoutColumnKey
   label: string
   defaultWidth: number
-  minWidth: number
-  maxWidth: number
 }>
 const DEFAULT_RESULTS_COLUMN_LAYOUT = Object.fromEntries(
   RESULTS_COLUMN_DEFINITIONS.map((column) => [column.key, column.defaultWidth]),
 ) as ResultsColumnLayout
-const RESULTS_COLUMN_TOTAL_WIDTH = RESULTS_COLUMN_DEFINITIONS.reduce(
-  (total, column) => total + column.defaultWidth,
-  0,
-)
 
 interface ResultsPanelProps {
   results: SearchJobResponse | null
@@ -95,6 +91,11 @@ function ResultsPanelBase({
     ? `${results?.migrationMonths?.length ?? 8} meses · ${offers.length} con tarifa${pendingMigrationMonths ? ` · ${pendingMigrationMonths} buscando` : ""}`
     : `${offers.length} oferta${offers.length === 1 ? "" : "s"}`
   const layoutEditor = useResultsLayoutEditor()
+  const savedResultsLayout = useSavedResultsLayout(!layoutEditor.enabled)
+  const activeResultsLayout = layoutEditor.enabled
+    ? layoutEditor.initialized ? layoutEditor.columns : null
+    : savedResultsLayout.columns ?? DEFAULT_RESULTS_COLUMN_LAYOUT
+  const resultsLayoutLoading = layoutEditor.enabled ? layoutEditor.loading : savedResultsLayout.loading
 
   return (
     <section className="fd-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden" aria-busy={loading}>
@@ -142,12 +143,11 @@ function ResultsPanelBase({
 
       {layoutEditor.enabled && (
         <ResultsLayoutEditor
-          columns={layoutEditor.columns}
           error={layoutEditor.error}
+          ready={layoutEditor.initialized}
           loading={layoutEditor.loading}
           savedAt={layoutEditor.savedAt}
           saving={layoutEditor.saving}
-          onColumnChange={layoutEditor.updateColumn}
           onReset={layoutEditor.reset}
           onSave={layoutEditor.save}
         />
@@ -161,7 +161,14 @@ function ResultsPanelBase({
         noFlightIssues,
         selectedOfferId,
         onSelectOffer,
-        resultsLayout: layoutEditor.enabled ? layoutEditor.columns : null,
+        layoutEditorEnabled: layoutEditor.enabled,
+        layoutEditorReady: layoutEditor.initialized,
+        layoutEditorSaving: layoutEditor.saving,
+        layoutColumns: layoutEditor.columns,
+        onLayoutBoundaryResize: layoutEditor.resizeColumnBoundary,
+        onLayoutColumnsMeasured: layoutEditor.initializeFromMeasuredColumns,
+        resultsLayout: activeResultsLayout,
+        resultsLayoutLoading,
       })}
     </section>
   )
@@ -175,7 +182,14 @@ function renderBody({
   isCancelled,
   selectedOfferId,
   onSelectOffer,
+  layoutEditorEnabled,
+  layoutEditorReady,
+  layoutEditorSaving,
+  layoutColumns,
+  onLayoutBoundaryResize,
+  onLayoutColumnsMeasured,
   resultsLayout,
+  resultsLayoutLoading,
 }: {
   loading: boolean
   results: SearchJobResponse | null
@@ -184,7 +198,14 @@ function renderBody({
   noFlightIssues: ProviderNoFlightIssue[]
   selectedOfferId?: string
   onSelectOffer: (offer: CanonicalOffer) => void
+  layoutEditorEnabled: boolean
+  layoutEditorReady: boolean
+  layoutEditorSaving: boolean
+  layoutColumns: ResultsColumnLayout
+  onLayoutBoundaryResize: (leftKey: ResultsLayoutColumnKey, rightKey: ResultsLayoutColumnKey, delta: number) => void
+  onLayoutColumnsMeasured: (columns: ResultsColumnLayout) => void
   resultsLayout: ResultsColumnLayout | null
+  resultsLayoutLoading: boolean
 }) {
   if (!results && !loading) {
     return (
@@ -217,6 +238,16 @@ function renderBody({
     )
   }
 
+  if (resultsLayoutLoading && offers.length > 0) {
+    return (
+      <div className="flex-1 space-y-2.5 overflow-hidden p-3">
+        {Array.from({ length: Math.min(Math.max(offers.length, 1), RESULTS_PAGE_SIZE_FALLBACK) }).map((_, index) => (
+          <Skeleton key={index} className="h-[104px] w-full" />
+        ))}
+      </div>
+    )
+  }
+
   if (loading && offers.length === 0) {
     return (
       <div className="flex-1 space-y-2.5 overflow-hidden p-3">
@@ -245,6 +276,12 @@ function renderBody({
       passengerCount={passengerCountForRequest(results?.request)}
       selectedOfferId={selectedOfferId}
       onSelectOffer={onSelectOffer}
+      layoutEditorEnabled={layoutEditorEnabled}
+      layoutEditorReady={layoutEditorReady}
+      layoutEditorSaving={layoutEditorSaving}
+      layoutColumns={layoutColumns}
+      onLayoutBoundaryResize={onLayoutBoundaryResize}
+      onLayoutColumnsMeasured={onLayoutColumnsMeasured}
       resultsLayout={resultsLayout}
     />
   )
@@ -255,15 +292,28 @@ function PaginatedResultsList({
   passengerCount,
   selectedOfferId,
   onSelectOffer,
+  layoutEditorEnabled,
+  layoutEditorReady,
+  layoutEditorSaving,
+  layoutColumns,
+  onLayoutBoundaryResize,
+  onLayoutColumnsMeasured,
   resultsLayout,
 }: {
   offers: CanonicalOffer[]
   passengerCount: number
   selectedOfferId?: string
   onSelectOffer: (offer: CanonicalOffer) => void
+  layoutEditorEnabled: boolean
+  layoutEditorReady: boolean
+  layoutEditorSaving: boolean
+  layoutColumns: ResultsColumnLayout
+  onLayoutBoundaryResize: (leftKey: ResultsLayoutColumnKey, rightKey: ResultsLayoutColumnKey, delta: number) => void
+  onLayoutColumnsMeasured: (columns: ResultsColumnLayout) => void
   resultsLayout: ResultsColumnLayout | null
 }) {
   const { pageSize, viewportRef } = useAdaptiveResultsPageSize(offers.length)
+  const listRef = useRef<HTMLDivElement | null>(null)
   const layoutStyle = useMemo(() => (
     resultsLayout ? resultsLayoutStyleVars(resultsLayout) : undefined
   ), [resultsLayout])
@@ -293,6 +343,15 @@ function PaginatedResultsList({
     })
   }
 
+  useLayoutEffect(() => {
+    if (!layoutEditorEnabled || resultsLayout || pageOffers.length === 0) return
+
+    const measured = measureCurrentResultCardColumns(listRef.current)
+    if (measured) {
+      onLayoutColumnsMeasured(measured)
+    }
+  }, [layoutEditorEnabled, onLayoutColumnsMeasured, pageOffers.length, resultsLayout])
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-2.5" data-testid="results-page-shell">
       <div
@@ -304,12 +363,20 @@ function PaginatedResultsList({
         data-testid="results-page-body"
       >
         <div
+          ref={listRef}
           className={cn(
             "fd-results-list grid content-start gap-2.5 pt-1",
             resultsLayout && "fd-results-list--fixed-layout",
           )}
           style={layoutStyle}
         >
+          {layoutEditorEnabled && layoutEditorReady && (
+            <ResultsLayoutGuideCard
+              columns={layoutColumns}
+              saving={layoutEditorSaving}
+              onBoundaryResize={onLayoutBoundaryResize}
+            />
+          )}
           {pageOffers.map((offer) => (
             <ResultCard
               key={offer.id}
@@ -337,21 +404,19 @@ function PaginatedResultsList({
 }
 
 function ResultsLayoutEditor({
-  columns,
   error,
+  ready,
   loading,
   savedAt,
   saving,
-  onColumnChange,
   onReset,
   onSave,
 }: {
-  columns: ResultsColumnLayout
   error: string
+  ready: boolean
   loading: boolean
   savedAt: string
   saving: boolean
-  onColumnChange: (key: ResultsLayoutColumnKey, value: number) => void
   onReset: () => void
   onSave: () => void
 }) {
@@ -361,14 +426,14 @@ function ResultsLayoutEditor({
         <div className="min-w-0">
           <h3 className="fd-results-layout-editor__title">Columnas</h3>
           <p className="fd-results-layout-editor__status">
-            {resultsLayoutStatus({ error, loading, savedAt, saving })}
+            {resultsLayoutStatus({ error, loading, ready, savedAt, saving })}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <Button
             aria-label="Restaurar anchos"
             className="h-8 rounded-md"
-            disabled={saving}
+            disabled={!ready || saving}
             size="sm"
             type="button"
             variant="secondary"
@@ -379,7 +444,7 @@ function ResultsLayoutEditor({
           <Button
             aria-label="Guardar layout"
             className="h-8 rounded-md"
-            disabled={loading || saving}
+            disabled={!ready || loading || saving}
             size="sm"
             type="button"
             onClick={onSave}
@@ -389,46 +454,132 @@ function ResultsLayoutEditor({
           </Button>
         </div>
       </div>
-
-      <div className="fd-results-layout-editor__grid">
-        {RESULTS_COLUMN_DEFINITIONS.map((column) => (
-          <label key={column.key} className="fd-results-layout-field">
-            <span className="fd-results-layout-field__label">{column.label}</span>
-            <input
-              aria-label={`Ancho de ${column.label}`}
-              className="fd-results-layout-field__range"
-              disabled={saving}
-              max={column.maxWidth}
-              min={column.minWidth}
-              step={4}
-              type="range"
-              value={columns[column.key]}
-              onChange={(event) => onColumnChange(column.key, Number(event.target.value))}
-            />
-            <div className="fd-results-layout-field__value">
-              <Input
-                aria-label={`${column.label} en pixeles`}
-                className="h-7 rounded-md px-2 text-xs"
-                disabled={saving}
-                max={column.maxWidth}
-                min={column.minWidth}
-                step={4}
-                type="number"
-                value={columns[column.key]}
-                onChange={(event) => onColumnChange(column.key, Number(event.target.value))}
-              />
-              <span>px</span>
-            </div>
-          </label>
-        ))}
-      </div>
     </section>
+  )
+}
+
+function ResultsLayoutGuideCard({
+  columns,
+  saving,
+  onBoundaryResize,
+}: {
+  columns: ResultsColumnLayout
+  saving: boolean
+  onBoundaryResize: (leftKey: ResultsLayoutColumnKey, rightKey: ResultsLayoutColumnKey, delta: number) => void
+}) {
+  const dragRef = useRef<{
+    leftKey: ResultsLayoutColumnKey
+    lastX: number
+    pointerId: number
+  } | null>(null)
+
+  const handleResizePointerDown = useCallback((
+    event: ReactPointerEvent<HTMLButtonElement>,
+    leftKey: ResultsLayoutColumnKey,
+  ) => {
+    if (saving) return
+
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    dragRef.current = {
+      leftKey,
+      lastX: event.clientX,
+      pointerId: event.pointerId,
+    }
+  }, [saving])
+
+  const handleResizePointerMove = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+
+    const rightKey = nextResultsLayoutColumnKey(drag.leftKey)
+    if (!rightKey) return
+
+    event.preventDefault()
+    onBoundaryResize(drag.leftKey, rightKey, event.clientX - drag.lastX)
+    drag.lastX = event.clientX
+  }, [onBoundaryResize])
+
+  const handleResizePointerEnd = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = dragRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    dragRef.current = null
+  }, [])
+
+  const handleResizeKeyDown = useCallback((
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    leftKey: ResultsLayoutColumnKey,
+  ) => {
+    if (saving) return
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return
+
+    const rightKey = nextResultsLayoutColumnKey(leftKey)
+    if (!rightKey) return
+
+    event.preventDefault()
+    onBoundaryResize(
+      leftKey,
+      rightKey,
+      event.key === "ArrowRight" ? RESULTS_LAYOUT_RESIZE_STEP_PX : -RESULTS_LAYOUT_RESIZE_STEP_PX,
+    )
+  }, [onBoundaryResize, saving])
+
+  return (
+    <article
+      className="fd-result-card fd-result-card--layout-guide"
+      aria-label="Tarjeta guia para ajustar columnas"
+      style={resultsLayoutStyleVars(columns)}
+    >
+      {RESULTS_COLUMN_DEFINITIONS.map((column, index) => {
+        const nextColumn = RESULTS_COLUMN_DEFINITIONS[index + 1]
+
+        return (
+          <div
+            key={column.key}
+            className="fd-results-layout-column"
+            data-column={column.key}
+          >
+            <div className="fd-results-layout-column__header">
+              <span>{column.label}</span>
+              <span>{Math.round(columns[column.key])} px</span>
+            </div>
+            <div className="fd-results-layout-column__skeleton" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </div>
+            {nextColumn && (
+              <button
+                aria-label={`Mover separador entre ${column.label} y ${nextColumn.label}`}
+                aria-orientation="vertical"
+                aria-valuenow={Math.round(columns[column.key])}
+                className="fd-results-layout-column__handle"
+                disabled={saving}
+                role="separator"
+                type="button"
+                onKeyDown={(event) => handleResizeKeyDown(event, column.key)}
+                onPointerCancel={handleResizePointerEnd}
+                onPointerDown={(event) => handleResizePointerDown(event, column.key)}
+                onPointerMove={handleResizePointerMove}
+                onPointerUp={handleResizePointerEnd}
+              />
+            )}
+          </div>
+        )
+      })}
+    </article>
   )
 }
 
 function useResultsLayoutEditor() {
   const enabled = useMemo(() => resultsLayoutEditorEnabledFromUrl(), [])
   const [columns, setColumns] = useState<ResultsColumnLayout>(DEFAULT_RESULTS_COLUMN_LAYOUT)
+  const [baselineColumns, setBaselineColumns] = useState<ResultsColumnLayout>(DEFAULT_RESULTS_COLUMN_LAYOUT)
+  const [initialized, setInitialized] = useState(false)
   const [savedAt, setSavedAt] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(enabled)
@@ -438,52 +589,91 @@ function useResultsLayoutEditor() {
     if (!enabled) return
 
     const controller = new AbortController()
-    getResultsLayout({ signal: controller.signal })
+
+    void getResultsLayout({ signal: controller.signal })
       .then((layout) => {
         if (controller.signal.aborted) return
-        setColumns(normalizeResultsLayoutBudget(layout?.columns ?? DEFAULT_RESULTS_COLUMN_LAYOUT))
+
+        const nextColumns = normalizeResultsLayoutColumns(layout?.columns ?? DEFAULT_RESULTS_COLUMN_LAYOUT)
+        setBaselineColumns(nextColumns)
+        setColumns(nextColumns)
+        setInitialized(true)
         setSavedAt(layout?.savedAt ?? "")
         setError("")
       })
       .catch((caught: unknown) => {
         if (controller.signal.aborted) return
+
+        setBaselineColumns(DEFAULT_RESULTS_COLUMN_LAYOUT)
         setColumns(DEFAULT_RESULTS_COLUMN_LAYOUT)
+        setInitialized(true)
         setSavedAt("")
         setError(errorMessage(caught))
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false)
+        if (!controller.signal.aborted) {
+          setLoading(false)
+        }
       })
 
     return () => controller.abort()
   }, [enabled])
 
-  const updateColumn = useCallback((key: ResultsLayoutColumnKey, value: number) => {
-    const definition = RESULTS_COLUMN_DEFINITIONS.find((column) => column.key === key)
-    if (!definition) return
+  const initializeFromMeasuredColumns = useCallback((measuredColumns: ResultsColumnLayout) => {
+    if (!enabled || initialized) return
 
-    setColumns((current) => normalizeResultsLayoutBudget({
-      ...current,
-      [key]: clampResultsLayoutColumn(definition, value),
-    }, key))
+    const nextColumns = normalizeResultsLayoutColumns(measuredColumns)
+    setBaselineColumns(nextColumns)
+    setColumns(nextColumns)
+    setInitialized(true)
+    setSavedAt("")
+    setError("")
+  }, [enabled, initialized])
+
+  const resizeColumnBoundary = useCallback((
+    leftKey: ResultsLayoutColumnKey,
+    rightKey: ResultsLayoutColumnKey,
+    delta: number,
+  ) => {
+    setColumns((current) => {
+      const leftStart = current[leftKey]
+      const rightStart = current[rightKey]
+      const boundedDelta = clamp(
+        Math.round(delta),
+        -leftStart,
+        rightStart,
+      )
+
+      if (boundedDelta === 0) return current
+
+      return {
+        ...current,
+        [leftKey]: leftStart + boundedDelta,
+        [rightKey]: rightStart - boundedDelta,
+      }
+    })
+    setInitialized(true)
     setSavedAt("")
     setError("")
   }, [])
 
   const reset = useCallback(() => {
-    setColumns(DEFAULT_RESULTS_COLUMN_LAYOUT)
+    setColumns(baselineColumns)
+    setInitialized(true)
     setSavedAt("")
     setError("")
-  }, [])
+  }, [baselineColumns])
 
   const save = useCallback(() => {
     if (saving) return
 
+    const savedColumns = normalizeResultsLayoutColumns(columns)
     setSaving(true)
     setError("")
-    void saveResultsLayout(normalizeResultsLayoutBudget(columns))
+    void saveResultsLayout(savedColumns)
       .then((layout) => {
-        setColumns(layout.columns)
+        setColumns(savedColumns)
+        setBaselineColumns(savedColumns)
         setSavedAt(layout.savedAt)
       })
       .catch((caught: unknown) => setError(errorMessage(caught)))
@@ -494,13 +684,50 @@ function useResultsLayoutEditor() {
     enabled,
     columns,
     error,
+    initialized,
+    initializeFromMeasuredColumns,
     loading,
     savedAt,
     saving,
     reset,
     save,
-    updateColumn,
+    resizeColumnBoundary,
   }
+}
+
+function useSavedResultsLayout(enabled: boolean) {
+  const [columns, setColumns] = useState<ResultsColumnLayout | null>(null)
+  const [loading, setLoading] = useState(enabled)
+
+  useEffect(() => {
+    if (!enabled) {
+      return
+    }
+
+    const controller = new AbortController()
+
+    void getResultsLayout({ signal: controller.signal })
+      .then((layout) => {
+        if (controller.signal.aborted) return
+
+        setColumns(layout?.columns ? normalizeResultsLayoutColumns(layout.columns) : null)
+      })
+      .catch((caught: unknown) => {
+        if (controller.signal.aborted) return
+
+        console.warn("No se pudo cargar el layout de resultados.", caught)
+        setColumns(null)
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoading(false)
+        }
+      })
+
+    return () => controller.abort()
+  }, [enabled])
+
+  return { columns, loading }
 }
 
 function resultsLayoutEditorEnabledFromUrl() {
@@ -509,118 +736,49 @@ function resultsLayoutEditorEnabledFromUrl() {
   return raw === "1" || raw === "true" || raw === "editor"
 }
 
-function clampResultsLayoutColumn(
+function normalizeResultsLayoutColumn(
   definition: (typeof RESULTS_COLUMN_DEFINITIONS)[number],
   value: number,
 ) {
   const numeric = Number.isFinite(value) ? value : definition.defaultWidth
-  return Math.max(definition.minWidth, Math.min(definition.maxWidth, Math.round(numeric)))
+  return Math.max(0, Math.round(numeric))
 }
 
-function normalizeResultsLayoutBudget(
-  columns: ResultsColumnLayout,
-  lockedKey?: ResultsLayoutColumnKey,
-): ResultsColumnLayout {
-  const normalized = Object.fromEntries(
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value))
+}
+
+function nextResultsLayoutColumnKey(key: ResultsLayoutColumnKey): ResultsLayoutColumnKey | null {
+  const index = RESULTS_COLUMN_DEFINITIONS.findIndex((column) => column.key === key)
+  return RESULTS_COLUMN_DEFINITIONS[index + 1]?.key ?? null
+}
+
+function normalizeResultsLayoutColumns(columns: ResultsColumnLayout): ResultsColumnLayout {
+  return Object.fromEntries(
     RESULTS_COLUMN_DEFINITIONS.map((definition) => [
       definition.key,
-      clampResultsLayoutColumn(definition, columns[definition.key]),
+      normalizeResultsLayoutColumn(definition, columns[definition.key]),
     ]),
   ) as ResultsColumnLayout
-  let overflow = resultsLayoutColumnTotal(normalized) - RESULTS_COLUMN_TOTAL_WIDTH
-
-  if (overflow > 0) {
-    const donors = RESULTS_COLUMN_DEFINITIONS
-      .filter((definition) => definition.key !== lockedKey)
-      .sort((left, right) => resultsLayoutShrinkPriority(left.key) - resultsLayoutShrinkPriority(right.key))
-
-    for (const definition of donors) {
-      if (overflow <= 0) break
-
-      const shrinkable = normalized[definition.key] - definition.minWidth
-      if (shrinkable <= 0) continue
-
-      const shrinkBy = Math.min(shrinkable, overflow)
-      normalized[definition.key] -= shrinkBy
-      overflow -= shrinkBy
-    }
-
-    if (overflow > 0 && lockedKey) {
-      const lockedDefinition = RESULTS_COLUMN_DEFINITIONS.find((definition) => definition.key === lockedKey)
-      if (lockedDefinition) {
-        normalized[lockedKey] = Math.max(lockedDefinition.minWidth, normalized[lockedKey] - overflow)
-      }
-    }
-
-    return normalized
-  }
-
-  let underflow = Math.abs(overflow)
-  const recipients = RESULTS_COLUMN_DEFINITIONS
-    .filter((definition) => definition.key !== lockedKey)
-    .sort((left, right) => resultsLayoutGrowPriority(left.key) - resultsLayoutGrowPriority(right.key))
-
-  underflow = growResultsLayoutColumns(normalized, recipients, underflow, "defaultWidth")
-  underflow = growResultsLayoutColumns(normalized, recipients, underflow, "maxWidth")
-
-  if (underflow > 0 && lockedKey) {
-    const lockedDefinition = RESULTS_COLUMN_DEFINITIONS.find((definition) => definition.key === lockedKey)
-    if (lockedDefinition) {
-      normalized[lockedKey] = Math.min(lockedDefinition.maxWidth, normalized[lockedKey] + underflow)
-    }
-  }
-
-  return normalized
 }
 
-function growResultsLayoutColumns(
-  columns: ResultsColumnLayout,
-  definitions: ReadonlyArray<(typeof RESULTS_COLUMN_DEFINITIONS)[number]>,
-  underflow: number,
-  targetKey: "defaultWidth" | "maxWidth",
-) {
-  let remaining = underflow
+function measureCurrentResultCardColumns(list: HTMLDivElement | null): ResultsColumnLayout | null {
+  const card = list?.querySelector<HTMLElement>(".fd-result-card:not(.fd-result-card--compact)")
+  if (!card) return null
 
-  for (const definition of definitions) {
-    if (remaining <= 0) break
+  const trackWidths = getComputedStyle(card).gridTemplateColumns
+    .split(/\s+/)
+    .map((track) => Number.parseFloat(track))
+    .filter((value) => Number.isFinite(value) && value > 0)
 
-    const growable = definition[targetKey] - columns[definition.key]
-    if (growable <= 0) continue
+  if (trackWidths.length < RESULTS_COLUMN_DEFINITIONS.length) return null
 
-    const growBy = Math.min(growable, remaining)
-    columns[definition.key] += growBy
-    remaining -= growBy
-  }
-
-  return remaining
-}
-
-function resultsLayoutColumnTotal(columns: ResultsColumnLayout) {
-  return RESULTS_COLUMN_DEFINITIONS.reduce((total, definition) => total + columns[definition.key], 0)
-}
-
-function resultsLayoutShrinkPriority(key: ResultsLayoutColumnKey) {
-  const priorities: Record<ResultsLayoutColumnKey, number> = {
-    duration: 0,
-    links: 1,
-    price: 2,
-    dates: 3,
-    carrier: 4,
-    stops: 5,
-  }
-  return priorities[key]
-}
-
-function resultsLayoutGrowPriority(key: ResultsLayoutColumnKey) {
-  const priorities: Record<ResultsLayoutColumnKey, number> = {
-    stops: 0,
-    dates: 1,
-    carrier: 2,
-    price: 3,
-    duration: 4,
-    links: 5,
-  }
-  return priorities[key]
+  return Object.fromEntries(
+    RESULTS_COLUMN_DEFINITIONS.map((definition, index) => [
+      definition.key,
+      Math.round(trackWidths[index]),
+    ]),
+  ) as ResultsColumnLayout
 }
 
 function resultsLayoutStyleVars(columns: ResultsColumnLayout): CSSProperties {
@@ -634,17 +792,20 @@ function resultsLayoutStyleVars(columns: ResultsColumnLayout): CSSProperties {
 function resultsLayoutStatus({
   error,
   loading,
+  ready,
   savedAt,
   saving,
 }: {
   error: string
   loading: boolean
+  ready: boolean
   savedAt: string
   saving: boolean
 }) {
   if (saving) return `Guardando en ${RESULTS_LAYOUT_FILE_HINT}`
   if (loading) return `Cargando ${RESULTS_LAYOUT_FILE_HINT}`
   if (error) return error
+  if (!ready) return "Esperando una card para medir el layout actual"
   if (savedAt) return `Guardado ${formatLayoutSavedAt(savedAt)}`
   return `Sin guardar en ${RESULTS_LAYOUT_FILE_HINT}`
 }
@@ -886,7 +1047,7 @@ function shouldDelayWarnings(
 }
 
 type ProviderNoFlightIssue = {
-  provider: "Agil" | "Costamar"
+  provider: "Agilsmart" | "Costamar"
   warning: string
 }
 
@@ -897,7 +1058,7 @@ function providerNoFlightIssues(warnings: string[]): ProviderNoFlightIssue[] {
   for (const warning of warnings) {
     const normalized = warning.toLowerCase()
     const provider = normalized.includes("agil no devolvió")
-      ? "Agil"
+      ? "Agilsmart"
       : normalized.includes("costamar no devolvió")
         ? "Costamar"
         : null
@@ -939,7 +1100,7 @@ function warningSummaryLabel(warnings: string[], noFlightIssues: ProviderNoFligh
   if (noFlightIssues.length > 0) {
     return noFlightIssues.length === 1
       ? `${noFlightIssues[0].provider} sin vuelos`
-      : "Agil y Costamar sin vuelos"
+      : "Agilsmart y Costamar sin vuelos"
   }
 
   return warnings.length === 1 ? "1 aviso" : `${warnings.length} avisos`
@@ -959,7 +1120,7 @@ function useAdaptiveResultsPageSize(itemCount: number) {
       const list = node.querySelector<HTMLElement>(".fd-results-list")
       const availableHeight = Math.max(0, node.clientHeight - RESULTS_LIST_TOP_INSET_PX)
       const measuredCards = list
-        ? Array.from(list.querySelectorAll<HTMLElement>(".fd-result-card"))
+        ? Array.from(list.querySelectorAll<HTMLElement>(".fd-result-card:not(.fd-result-card--layout-guide)"))
         : []
       const listStyle = list ? window.getComputedStyle(list) : null
       const measuredGap = listStyle

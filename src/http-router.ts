@@ -178,6 +178,8 @@ const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
 const SEARCH_REVALIDATION_CACHE_WARNING = "Mostrando resultados cacheados mientras actualizamos en segundo plano.";
 const SEARCH_CANCELLED_WARNING = "Search cancelled by user.";
 const SEARCH_REFRESH_CANCELLED_WARNING = "Search stopped because the page was refreshed.";
+const DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS = 55_000;
+const MAX_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS = 240_000;
 function readNonNegativeEnvMs(name: string, fallbackMs: number): number {
   const raw = Number(process.env[name] ?? fallbackMs);
   return Number.isFinite(raw) && raw >= 0
@@ -195,14 +197,6 @@ function cachedBackgroundSearchStartDelayMs(): number {
 
 const RESULTS_LAYOUT_FILE = path.resolve(__dirname, "..", "config", "results-layout.json");
 const RESULTS_LAYOUT_VERSION = 1;
-const RESULTS_LAYOUT_COLUMN_LIMITS: Record<ResultsLayoutColumnKey, { min: number; max: number }> = {
-  carrier: { min: 88, max: 320 },
-  dates: { min: 112, max: 260 },
-  duration: { min: 92, max: 240 },
-  stops: { min: 96, max: 300 },
-  price: { min: 112, max: 360 },
-  links: { min: 40, max: 84 },
-};
 
 function shouldRunBackgroundSearchJobs(): boolean {
   return process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS !== "1";
@@ -635,12 +629,7 @@ function normalizeResultsLayoutColumns(
     if (!Number.isFinite(numeric)) {
       continue;
     }
-    const limits = RESULTS_LAYOUT_COLUMN_LIMITS[key];
-
-    columns[key] = Math.max(
-      limits.min,
-      Math.min(limits.max, Math.round(numeric)),
-    );
+    columns[key] = Math.max(0, Math.round(numeric));
   }
 
   return Object.keys(columns).length === RESULTS_LAYOUT_COLUMNS.length
@@ -784,6 +773,43 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
       "Cache-Control": "no-store",
     },
   });
+}
+
+function costamarRedirectTotalTimeoutMs(): number {
+  const configured = Number(
+    process.env.COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS ?? DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS,
+  );
+  if (!Number.isFinite(configured)) {
+    return DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS;
+  }
+
+  return Math.max(
+    1_000,
+    Math.min(MAX_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS, Math.trunc(configured)),
+  );
+}
+
+async function withCostamarRedirectTotalTimeout<T>(promise: Promise<T>): Promise<T> {
+  const timeoutMs = costamarRedirectTotalTimeoutMs();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error(`La validacion del redirect de Costamar tardo mas de ${timeoutMs}ms.`));
+        }, timeoutMs);
+        if (typeof timeout === "object" && timeout && "unref" in timeout) {
+          (timeout as { unref: () => void }).unref();
+        }
+      }),
+    ]);
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
 }
 
 function stringValue(input: unknown, fallback = ""): string {
@@ -2428,11 +2454,13 @@ export async function routeRequest(request: Request): Promise<Response> {
           const redirectRequest = costamarRedirectRequestFromUrl(location, fallbackRequest);
 
           if (redirectRequest) {
-            const redirectResolution = await resolveCostamarRedirectForRequest(redirectRequest, fastContext, {
-              force: !parsedTokenIsUsable,
-              validateLive: true,
-              forceOnUnverified: true,
-            });
+            const redirectResolution = await withCostamarRedirectTotalTimeout(
+              resolveCostamarRedirectForRequest(redirectRequest, fastContext, {
+                force: !parsedTokenIsUsable,
+                validateLive: true,
+                forceOnUnverified: true,
+              }),
+            );
             blockedReason = redirectResolution.redirectVerification.reason;
             if (redirectResolution.redirectVerification.verified) {
               location = applyCostamarContextToBrandedSearchUrl(location, redirectResolution.context);

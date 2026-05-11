@@ -9,7 +9,7 @@ function buildPath(provider: ProviderId, url: string): PurchasePath {
     id: `${provider}-path`,
     type: provider === "costamar" ? "search-redirect" : "deeplink",
     provider,
-    label: provider === "costamar" ? "Buscar en Costamar" : "Buscar en Agil",
+    label: provider === "costamar" ? "Buscar en Costamar" : "Buscar en Agilsmart",
     url,
     precision: provider === "costamar" ? "exact-search" : "exact-offer",
     score: provider === "costamar" ? 0.8 : 1,
@@ -100,7 +100,7 @@ function buildOffer(
   };
 }
 
-test("groupExactProviderOffers merges identical Agil and Costamar offers while preserving provider links", () => {
+test("groupExactProviderOffers merges identical Agilsmart and Costamar offers while preserving provider links", () => {
   const grouped = groupExactProviderOffers([
     buildOffer("agil-local"),
     buildOffer("costamar"),
@@ -112,7 +112,7 @@ test("groupExactProviderOffers merges identical Agil and Costamar offers while p
     grouped[0].purchasePaths.map((path) => path.provider),
     ["agil-local", "costamar"],
   );
-  assert.deepEqual(grouped[0].tags, ["Agil + Costamar"]);
+  assert.deepEqual(grouped[0].tags, ["Agilsmart + Costamar"]);
 });
 
 test("groupExactProviderOffers keeps offers with different schedules separate", () => {

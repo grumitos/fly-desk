@@ -226,7 +226,7 @@ function toDiagnosticLines(messages: string[]): string[] {
 }
 
 function providerDiagnosticLabel(providerId: string): string {
-  return providerId === "costamar" ? "Costamar" : "Agil"
+  return providerId === "costamar" ? "Costamar" : "Agilsmart"
 }
 
 function providerDiagnosticLines(

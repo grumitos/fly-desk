@@ -1486,7 +1486,124 @@ test("exact results paginate visible offers with hidden minimal result scroll", 
   }, { autoOpen: false });
 });
 
-test("grouped provider offer renders Agil and Costamar external links vertically", async () => {
+test("normal results wait for saved column layout before drawing cards", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1180, height: 700 });
+
+    let releaseLayout!: () => void;
+    let markLayoutRequested!: () => void;
+    const layoutReleased = new Promise<void>((resolve) => {
+      releaseLayout = resolve;
+    });
+    const layoutRequested = new Promise<void>((resolve) => {
+      markLayoutRequested = resolve;
+    });
+
+    await page.route("**/api/results-layout", async (route) => {
+      markLayoutRequested();
+      await layoutReleased;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          layout: {
+            version: 1,
+            savedAt: "2026-05-11T17:18:33.592Z",
+            columns: {
+              carrier: 117,
+              dates: 260,
+              duration: 94,
+              stops: 145,
+              price: 127,
+              links: 40,
+            },
+          },
+        }),
+      });
+    });
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      const offers = [buildOffer({ id: "saved-layout-offer", origin: "LIM", destination: "BIO" })];
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "saved-layout-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers,
+          allOffers: offers,
+          searchMeta: {
+            requestedAt: "2026-05-11T17:18:33.592Z",
+            completedAt: "2026-05-11T17:18:33.592Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await layoutRequested;
+
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+
+    await page.waitForTimeout(100);
+    assert.equal(await page.locator('[data-testid="result-card"]').count(), 0);
+
+    releaseLayout();
+    await page.locator('[data-testid="result-card"]').waitFor({ state: "visible" });
+
+    const layout = await page.locator(".fd-results-list").evaluate((list) => {
+      const style = getComputedStyle(list);
+      return {
+        fixed: list.classList.contains("fd-results-list--fixed-layout"),
+        carrier: style.getPropertyValue("--fd-results-col-carrier").trim(),
+        dates: style.getPropertyValue("--fd-results-col-dates").trim(),
+        duration: style.getPropertyValue("--fd-results-col-duration").trim(),
+        stops: style.getPropertyValue("--fd-results-col-stops").trim(),
+        price: style.getPropertyValue("--fd-results-col-price").trim(),
+        links: style.getPropertyValue("--fd-results-col-links").trim(),
+      };
+    });
+
+    assert.deepEqual(layout, {
+      fixed: true,
+      carrier: "117px",
+      dates: "260px",
+      duration: "94px",
+      stops: "145px",
+      price: "127px",
+      links: "40px",
+    });
+  }, { autoOpen: false });
+});
+
+test("grouped provider offer renders Agilsmart and Costamar external links vertically", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 1180, height: 700 });
     await page.route("**/api/locations**", async (route) => {
@@ -1506,7 +1623,7 @@ test("grouped provider offer renders Agil and Costamar external links vertically
             id: "grouped-agil-path",
             provider: "agil-local",
             type: "deeplink",
-            label: "Agil",
+            label: "Agilsmart",
             url: "https://example.test/agil",
             precision: "exact-offer",
             score: 1,
@@ -1571,7 +1688,7 @@ test("grouped provider offer renders Agil and Costamar external links vertically
     await card.waitFor();
     const actions = card.locator(".fd-result-card__provider-action");
     assert.equal(await actions.count(), 2);
-    await card.getByRole("button", { name: "Abrir Agil" }).waitFor();
+    await card.getByRole("button", { name: "Abrir Agilsmart" }).waitFor();
     await card.getByRole("button", { name: "Abrir Costamar" }).waitFor();
 
     const layout = await actions.evaluateAll((elements) => elements.map((element) => {
@@ -1726,7 +1843,7 @@ test("empty exact results identify providers that reported no flights", async ()
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
 
-    await page.getByText("Agil y Costamar no devolvieron vuelos").waitFor();
+    await page.getByText("Agilsmart y Costamar no devolvieron vuelos").waitFor();
     await page.getByText("Los proveedores consultados informaron que no hay vuelos para esta combinación.").waitFor();
   }, { autoOpen: false });
 });

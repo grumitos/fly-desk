@@ -16,10 +16,6 @@ type ServerHandle = {
   stop: () => Promise<void>;
 };
 
-function isBunRuntime(): boolean {
-  return "Bun" in globalThis;
-}
-
 async function findAvailableChromiumSafePort(): Promise<number> {
   for (;;) {
     const port = await new Promise<number>((resolvePort, reject) => {
@@ -155,7 +151,7 @@ async function listenOnExternalBunServer(): Promise<ServerHandle> {
 }
 
 async function listenOnTestServer(): Promise<ServerHandle> {
-  return isBunRuntime()
+  return process.env.FLY_DESK_TEST_SERVER_MODE === "in-process"
     ? listenOnInProcessBunServer()
     : listenOnExternalBunServer();
 }

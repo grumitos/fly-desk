@@ -815,6 +815,125 @@ test("costamar redirect warms a missing token through the B2B flow", async () =>
   }
 });
 
+test("costamar redirect returns a controlled block when refresh hangs", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-redirect-timeout-"));
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  const previousWarmupEnabled = process.env.COSTAMAR_SESSION_WARMUP_ENABLED;
+  const previousWarmupCooldown = process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS;
+  const previousWarmupFallback = process.env.COSTAMAR_SESSION_WARMUP_OPEN_BROWSER_FALLBACK;
+  const previousWarmupTimeout = process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS;
+  const previousRedirectTimeout = process.env.COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS;
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = "Profile 44";
+  process.env.COSTAMAR_SESSION_WARMUP_ENABLED = "1";
+  process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS = "0";
+  process.env.COSTAMAR_SESSION_WARMUP_OPEN_BROWSER_FALLBACK = "0";
+  process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS = "1000";
+  process.env.COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS = "1000";
+  resetCostamarSessionCacheForTests();
+  resetCostamarWarmupStateForTests();
+
+  const staleToken = buildJwt({
+    id: "0721808110",
+    iat: 1700000000,
+    exp: 1700003600,
+  });
+
+  setCostamarWarmupGeneratorForTests(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    return undefined;
+  });
+
+  try {
+    const runtime = getRuntime();
+    const job = runtime.sessions.createSearchJob({
+      request: buildCostamarRequest(),
+      providerContext: {
+        costamar: {
+          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+          terminalId: "0721808110",
+          token: staleToken,
+          lang: "es",
+        },
+      },
+      offers: [buildCostamarOffer(
+        `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${staleToken}`,
+      )],
+      allOffers: [buildCostamarOffer(
+        `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${staleToken}`,
+      )],
+      searchMeta: buildSearchMeta(),
+      providerMeta: buildProviderMeta(),
+      warnings: [],
+      sortMode: "cheapest",
+      status: "completed",
+    });
+
+    const session = runtime.sessions.getSession(job.id);
+    const redirectPath = session?.offers[0]?.purchasePaths[0]?.url;
+    assert.ok(redirectPath);
+
+    const response = await routeRequest(new Request(`http://127.0.0.1:32123${redirectPath}`, {
+      headers: {
+        "x-flydesk-client-loopback": "1",
+      },
+    }));
+
+    assert.equal(response.status, 409);
+    const body = await response.text();
+    assert.match(body, /Renueva la sesion de Costamar/i);
+    assert.match(body, /tardo mas de/i);
+  } finally {
+    resetCostamarWarmupStateForTests();
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    if (previousWarmupEnabled === undefined) {
+      delete process.env.COSTAMAR_SESSION_WARMUP_ENABLED;
+    } else {
+      process.env.COSTAMAR_SESSION_WARMUP_ENABLED = previousWarmupEnabled;
+    }
+
+    if (previousWarmupCooldown === undefined) {
+      delete process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS;
+    } else {
+      process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS = previousWarmupCooldown;
+    }
+
+    if (previousWarmupFallback === undefined) {
+      delete process.env.COSTAMAR_SESSION_WARMUP_OPEN_BROWSER_FALLBACK;
+    } else {
+      process.env.COSTAMAR_SESSION_WARMUP_OPEN_BROWSER_FALLBACK = previousWarmupFallback;
+    }
+
+    if (previousWarmupTimeout === undefined) {
+      delete process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS;
+    } else {
+      process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS = previousWarmupTimeout;
+    }
+
+    if (previousRedirectTimeout === undefined) {
+      delete process.env.COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS;
+    } else {
+      process.env.COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS = previousRedirectTimeout;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("costamar matrix redirects refresh the stored token with the matrix job provider context", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-matrix-redirect-"));
   const profileName = "Profile 42";
