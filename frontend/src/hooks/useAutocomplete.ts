@@ -38,6 +38,7 @@ export function useAutocomplete(
   }, [])
 
   const updateQuery = useCallback((value: string, options: UpdateQueryOptions = {}) => {
+    requestSeqRef.current += 1
     queryRef.current = value
     shouldWarmQueryRef.current = Boolean(options.showSuggestions)
     setQuery(value)
@@ -110,7 +111,7 @@ export function useAutocomplete(
 
   const resolveCurrentQuery = useCallback(async (): Promise<LocationSuggestion | undefined> => {
     const value = queryRef.current.trim()
-    requestSeqRef.current += 1
+    const requestSeq = ++requestSeqRef.current
     if (debounceRef.current) window.clearTimeout(debounceRef.current)
 
     if (!value || value === resolvedLabelRef.current) {
@@ -123,10 +124,21 @@ export function useAutocomplete(
 
     if (!exactMatch && value.length >= 1) {
       try {
-        exactMatch = findLocationSuggestionMatch(value, await suggestLocations(value))
+        const fresh = await suggestLocations(value)
+        if (requestSeq !== requestSeqRef.current || queryRef.current.trim() !== value) {
+          return undefined
+        }
+        exactMatch = findLocationSuggestionMatch(value, fresh)
       } catch {
+        if (requestSeq !== requestSeqRef.current || queryRef.current.trim() !== value) {
+          return undefined
+        }
         exactMatch = undefined
       }
+    }
+
+    if (requestSeq !== requestSeqRef.current || queryRef.current.trim() !== value) {
+      return undefined
     }
 
     if (exactMatch) {
