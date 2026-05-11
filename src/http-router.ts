@@ -42,17 +42,16 @@ import {
   buildCostamarPurchasePaths,
   createLocalCostamarMatrixDraft,
   createLocalCostamarSearchDraft,
+  resolveCostamarRedirectForRequest,
   resolveLocalCostamarExactProgressive,
   resolveLocalCostamarMatrixProgressive,
   resolveLocalCostamarRangeProgressive,
   suggestLocalCostamarLocations,
-  warmCostamarRedirectContext,
 } from "./local-costamar";
 import { openUrlLocally } from "./local-browser";
 import {
   getCostamarTokenStatus,
   normalizeCostamarProviderContext,
-  resolveLatestCostamarProviderContext,
   resolveProviderId,
   resolveUsableCostamarBrandedToken,
   verifyCostamarTokenLive,
@@ -713,7 +712,17 @@ function html(body: string, init?: ResponseInit): Response {
   });
 }
 
-function costamarRedirectBlockedResponse(): Response {
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function costamarRedirectBlockedResponse(reason?: string): Response {
+  const reasonText = reason?.trim() ? escapeHtml(reason.trim()) : "No se pudo validar ni renovar el redirect de Costamar.";
   return html(`<!doctype html>
 <html lang="es">
   <head>
@@ -762,8 +771,9 @@ function costamarRedirectBlockedResponse(): Response {
     <main>
       <section>
         <h1>Renueva la sesion de Costamar</h1>
-        <p>Fly Desk no encontro un token vigente para abrir esta busqueda en Costamar.</p>
-        <p>Abre Costamar en Chrome, confirma que la sesion este activa y vuelve a intentar desde Fly Desk.</p>
+        <p>Fly Desk no encontro un redirect verificado para abrir esta busqueda en Costamar.</p>
+        <p><strong>Motivo:</strong> ${reasonText}</p>
+        <p>Abre Costamar B2B/Chrome, confirma que la sesion este activa y vuelve a intentar desde Fly Desk.</p>
       </section>
     </main>
   </body>
@@ -2396,6 +2406,7 @@ export async function routeRequest(request: Request): Promise<Response> {
         const providerContext = searchSession?.providerContext ?? matrixJob?.providerContext;
         const fallbackRequest = searchSession?.request ?? matrixJob?.request;
         let canRedirect = false;
+        let blockedReason: string | undefined;
 
         try {
           const parsed = new URL(location);
@@ -2412,44 +2423,29 @@ export async function routeRequest(request: Request): Promise<Response> {
             ...(lang ? { lang } : {}),
             token: parsedTokenIsUsable ? parsedToken : sessionContext?.token,
           });
+          const redirectRequest = costamarRedirectRequestFromUrl(location, fallbackRequest);
 
-          if (resolveUsableCostamarBrandedToken(fastContext.token, fastContext.terminalId)) {
-            location = applyCostamarContextToBrandedSearchUrl(location, fastContext);
-            canRedirect = true;
-          }
-
-          let redirectContext = fastContext;
-          const refreshContext = {
-            ...(sessionContext ?? {}),
-            ...(terminalId ? { terminalId } : {}),
-            ...(lang ? { lang } : {}),
-            ...(parsedToken || sessionContext?.token ? { token: parsedToken || sessionContext?.token } : {}),
-          };
-          if (!canRedirect) {
-            const refreshedContext = resolveLatestCostamarProviderContext(refreshContext);
-            redirectContext = refreshedContext;
-            if (resolveUsableCostamarBrandedToken(refreshedContext.token, refreshedContext.terminalId)) {
-              location = applyCostamarContextToBrandedSearchUrl(location, refreshedContext);
+          if (redirectRequest) {
+            const redirectResolution = await resolveCostamarRedirectForRequest(redirectRequest, fastContext, {
+              force: !parsedTokenIsUsable,
+              validateLive: true,
+              forceOnUnverified: true,
+            });
+            blockedReason = redirectResolution.redirectVerification.reason;
+            if (redirectResolution.redirectVerification.verified) {
+              location = applyCostamarContextToBrandedSearchUrl(location, redirectResolution.context);
               canRedirect = true;
             }
+          } else {
+            blockedReason = "No se pudo reconstruir la busqueda Costamar desde el purchase path.";
           }
-
-          if (!canRedirect) {
-            const redirectRequest = costamarRedirectRequestFromUrl(location, fallbackRequest);
-            if (redirectRequest) {
-              const warmedContext = await warmCostamarRedirectContext(redirectRequest, redirectContext, { force: true });
-              if (resolveUsableCostamarBrandedToken(warmedContext.token, warmedContext.terminalId)) {
-                location = applyCostamarContextToBrandedSearchUrl(location, warmedContext);
-                canRedirect = true;
-              }
-            }
-          }
-        } catch {
+        } catch (error) {
+          blockedReason = error instanceof Error ? error.message : "No se pudo validar el redirect de Costamar.";
           canRedirect = false;
         }
 
         if (!canRedirect) {
-          return costamarRedirectBlockedResponse();
+          return costamarRedirectBlockedResponse(blockedReason);
         }
       }
 

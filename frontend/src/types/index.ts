@@ -91,6 +91,23 @@ export interface PurchasePath {
   state: string
   referenceText?: string
   expiresAt?: string
+  redirectVerification?: RedirectVerification
+}
+
+export interface RedirectVerification {
+  provider: string
+  state:
+    | "missing"
+    | "cached_unverified"
+    | "near_expiry"
+    | "refreshing"
+    | "fresh_unverified"
+    | "verified"
+    | "refresh_failed"
+    | "blocked"
+  verified: boolean
+  reason?: string
+  checkedAt?: string
 }
 
 export interface ComparisonMetrics {
@@ -125,6 +142,7 @@ export interface CanonicalOffer {
   priceConfidence?: string
   priceStatus?: string
   purchasePaths?: PurchasePath[]
+  redirectVerification?: RedirectVerification
   comparisonMetrics?: ComparisonMetrics
   tags?: string[]
   warnings?: string[]

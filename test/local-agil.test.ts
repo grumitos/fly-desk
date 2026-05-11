@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   AGIL_CONCURRENCY,
   buildLocalAgilSearchRedirectUrl,
+  computeAgilTotalAmountForTests,
   extractAgilChromeDebugPortsFromCommandLinesForTests,
   extractAgilChromeUserDataDirsFromCommandLinesForTests,
   extractAgilBrowserStorageSnapshotForTests,
@@ -19,6 +20,7 @@ import {
   resetAgilApimSubscriptionKeyCacheForTests,
   shouldReuseAgilSession,
   suggestLocalAgilLocations,
+  extractAgilUsdToPenRate,
 } from "../src/local-agil";
 
 test("reads Agil session storage after DOM content is ready without waiting for network idle", async () => {
@@ -443,6 +445,58 @@ test("extracts the Agil subscription key from the public frontend bundle", () =>
   );
 
   assert.equal(key, "e9c66b5e1b4348ae9de63ff98d66cbbe");
+});
+
+test("Agil pricing prefers the provider total when fare breakdowns disagree", () => {
+  const amount = computeAgilTotalAmountForTests({
+    totalFare: "521.22",
+    itinTotalFare: {
+      fareBreakDowns: [
+        {
+          passengerType: { quantity: 1 },
+          passengerFare: {
+            totalFare: "510.22",
+            feeNMV: "0",
+            feePTA: "0",
+            dsctoTaxes: "0",
+          },
+        },
+      ],
+    },
+  });
+
+  assert.equal(amount, 521.22);
+});
+
+test("Agil pricing parses formatted numeric strings in fare breakdowns", () => {
+  const amount = computeAgilTotalAmountForTests({
+    itinTotalFare: {
+      fareBreakDowns: [
+        {
+          passengerType: { quantity: 2 },
+          passengerFare: {
+            totalFare: "USD 1,001.16",
+            feeNMV: "11.80",
+            feePTA: "0",
+            dsctoTaxes: "0",
+          },
+        },
+      ],
+    },
+  });
+
+  assert.equal(amount, 2025.92);
+});
+
+test("Agil exchange rate parsing preserves four decimal rates", () => {
+  const rate = extractAgilUsdToPenRate({
+    tipoCambio: {
+      code: "USD",
+      rate: "3.7531",
+    },
+  } as never);
+
+  assert.equal(rate, 3.7531);
 });
 
 test("recovers AGIL_APIM_SUBSCRIPTION_KEY from the Agil frontend bundle when env is missing", async () => {

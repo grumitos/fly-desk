@@ -30,6 +30,11 @@ import {
   prioritizeMatrixLoadingCells,
 } from "./core/matrix";
 import { buildOfferSignature } from "./core/offer-signature";
+import {
+  parseProviderAmount,
+  providerAmountsDiffer,
+  roundProviderAmount,
+} from "./core/provider-money";
 import { buildFlexibleVariantGroupKey } from "./core/variant-group-key";
 import { maxStopsAcrossItineraries } from "./core/ranking";
 import {
@@ -2241,32 +2246,53 @@ function dedupeAgilOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
   return [...deduped.values()];
 }
 
-function computeAgilTotalAmount(pricingInfo: AgilPricingInfo | undefined): number | undefined {
-  const fareBreakDowns = asArray(pricingInfo?.itinTotalFare?.fareBreakDowns);
-  const breakdownTotal = fareBreakDowns.reduce((sum, breakdown) => {
+function computeAgilBreakdownTotal(fareBreakDowns: AgilFareBreakdown[]): number | undefined {
+  const total = fareBreakDowns.reduce((sum, breakdown) => {
     const passengerFare = breakdown.passengerFare;
     if (!passengerFare) {
       return sum;
     }
 
-    const quantity = Math.max(1, breakdown.passengerType?.quantity ?? 1);
-    const passengerTotal = (passengerFare.totalFare ?? 0)
-      + (passengerFare.feeNMV ?? 0)
-      + (passengerFare.feePTA ?? 0)
-      - (passengerFare.dsctoTaxes ?? 0);
+    const quantity = Math.max(1, Math.trunc(parseProviderAmount(breakdown.passengerType?.quantity) ?? 1));
+    const fareTotal = parseProviderAmount(passengerFare.totalFare)
+      ?? ((parseProviderAmount(passengerFare.baseFare) ?? 0) + (parseProviderAmount(passengerFare.taxes) ?? 0));
+    const passengerTotal = fareTotal
+      + (parseProviderAmount(passengerFare.feeNMV) ?? 0)
+      + (parseProviderAmount(passengerFare.feePTA) ?? 0)
+      - (parseProviderAmount(passengerFare.dsctoTaxes) ?? 0);
 
-    return sum + (passengerTotal * quantity);
+    return passengerTotal > 0
+      ? sum + (passengerTotal * quantity)
+      : sum;
   }, 0);
 
-  if (breakdownTotal > 0) {
-    return Number(breakdownTotal.toFixed(2));
+  return total > 0 ? roundProviderAmount(total) : undefined;
+}
+
+function computeAgilTotalAmount(pricingInfo: AgilPricingInfo | undefined): number | undefined {
+  const fareBreakDowns = asArray(pricingInfo?.itinTotalFare?.fareBreakDowns);
+  const breakdownTotal = computeAgilBreakdownTotal(fareBreakDowns);
+  const providerTotal = parseProviderAmount(pricingInfo?.totalFare);
+
+  if (typeof providerTotal === "number" && providerTotal > 0) {
+    if (!breakdownTotal || providerAmountsDiffer(providerTotal, breakdownTotal)) {
+      return roundProviderAmount(providerTotal);
+    }
   }
 
-  if (typeof pricingInfo?.totalFare === "number") {
-    return Number(pricingInfo.totalFare.toFixed(2));
+  if (typeof breakdownTotal === "number") {
+    return breakdownTotal;
+  }
+
+  if (typeof providerTotal === "number" && providerTotal > 0) {
+    return roundProviderAmount(providerTotal);
   }
 
   return undefined;
+}
+
+export function computeAgilTotalAmountForTests(pricingInfo: unknown): number | undefined {
+  return computeAgilTotalAmount(pricingInfo as AgilPricingInfo | undefined);
 }
 
 export function extractAgilUsdToPenRate(
@@ -2278,7 +2304,7 @@ export function extractAgilUsdToPenRate(
       ?? fallbackCurrencyCode
       ?? "",
   ).trim().toUpperCase();
-  const rate = pricingInfo?.tipoCambio?.rate;
+  const rate = parseProviderAmount(pricingInfo?.tipoCambio?.rate);
 
   if (currencyCode !== "USD" || typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0) {
     return undefined;
@@ -2301,12 +2327,12 @@ function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): Canon
 
   const fareBreakDowns = asArray(group.pricingInfo?.itinTotalFare?.fareBreakDowns);
   const baseAmount = fareBreakDowns.reduce((sum, breakdown) => {
-    const quantity = Math.max(1, breakdown.passengerType?.quantity ?? 1);
-    return sum + ((breakdown.passengerFare?.baseFare ?? 0) * quantity);
+    const quantity = Math.max(1, Math.trunc(parseProviderAmount(breakdown.passengerType?.quantity) ?? 1));
+    return sum + ((parseProviderAmount(breakdown.passengerFare?.baseFare) ?? 0) * quantity);
   }, 0);
   const taxesAmount = fareBreakDowns.reduce((sum, breakdown) => {
-    const quantity = Math.max(1, breakdown.passengerType?.quantity ?? 1);
-    return sum + ((breakdown.passengerFare?.taxes ?? 0) * quantity);
+    const quantity = Math.max(1, Math.trunc(parseProviderAmount(breakdown.passengerType?.quantity) ?? 1));
+    return sum + ((parseProviderAmount(breakdown.passengerFare?.taxes) ?? 0) * quantity);
   }, 0);
 
   const validatingCarrier = group.pricingInfo?.itinTotalFare?.validatingCarrier
