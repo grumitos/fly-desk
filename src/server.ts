@@ -6,10 +6,13 @@ import { getPublicRuntimeConfig } from "./search-date-policy";
 
 const publicDir = path.resolve(process.cwd(), "frontend", "dist");
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
+const DEFAULT_SERVER_IDLE_TIMEOUT_SECONDS = 120;
+const MAX_SERVER_IDLE_TIMEOUT_SECONDS = 255;
 
 interface CreateServerOptions {
   port?: number;
   hostname?: string;
+  idleTimeoutSeconds?: number;
 }
 
 class RequestBodyTooLargeError extends Error {
@@ -277,10 +280,27 @@ export async function handleRequest(request: Request, server: BunServer<undefine
   }
 }
 
+export function resolveServerIdleTimeoutSeconds(
+  input = process.env.FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS,
+): number {
+  const normalized = String(input ?? "").trim();
+  if (!normalized) {
+    return DEFAULT_SERVER_IDLE_TIMEOUT_SECONDS;
+  }
+
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_SERVER_IDLE_TIMEOUT_SECONDS;
+  }
+
+  return Math.max(0, Math.min(MAX_SERVER_IDLE_TIMEOUT_SECONDS, Math.trunc(parsed)));
+}
+
 export function createServer(options: CreateServerOptions = {}): BunServer<undefined> {
   return Bun.serve({
     port: options.port ?? 0,
     hostname: options.hostname,
+    idleTimeout: options.idleTimeoutSeconds ?? resolveServerIdleTimeoutSeconds(),
     fetch: handleRequest,
   });
 }

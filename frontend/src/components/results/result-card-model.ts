@@ -1,4 +1,5 @@
-import type { CanonicalOffer, Itinerary, Segment } from "@/types"
+import type { CanonicalOffer, Itinerary } from "@/types"
+import { providerDisplayName } from "@/lib/providers"
 
 type LayoverItem = {
   city: string
@@ -25,7 +26,6 @@ export type ResultCardModel = {
     display: string
     operatedBy: string
   }
-  flightCodes: string
   journeys: ResultJourneySummary[]
   route: string
   duration: string
@@ -62,7 +62,6 @@ export function buildResultCardModel(
 
   return {
     carrier: carrierDisplayParts(offer),
-    flightCodes: offerFlightCodesLabel(offer),
     journeys,
     route: outboundSummary.route,
     duration: journeyDurationLabel(offer),
@@ -133,27 +132,7 @@ function operatingCopy(offer: CanonicalOffer, primaryTokens: Set<string>) {
     })
   })
 
-  return operators.size > 0 ? `Opera con ${Array.from(operators).join(" / ")}` : ""
-}
-
-function offerFlightCodesLabel(offer: CanonicalOffer) {
-  const tokens = (offer.itineraries ?? [])
-    .flatMap((itinerary) => itinerary.segments)
-    .map((segment) => flightCodeLabel(segment))
-    .filter(Boolean)
-
-  return Array.from(new Set(tokens)).join(" · ")
-}
-
-function flightCodeLabel(segment: Segment) {
-  const carrier = String(segment.marketingCarrier ?? "").trim().toUpperCase()
-  const flightNumber = typeof segment.flightNumber === "string"
-    ? segment.flightNumber.trim().toUpperCase().replace(/\s+/g, "")
-    : ""
-
-  if (!flightNumber) return ""
-  if (carrier && !flightNumber.startsWith(carrier)) return `${carrier}${flightNumber}`
-  return flightNumber
+  return operators.size > 0 ? `+ ${Array.from(operators).join(" / ")}` : ""
 }
 
 function itineraryWindowSummary(itinerary: Itinerary | null, offer: CanonicalOffer, label: "Ida" | "Vuelta") {
@@ -332,7 +311,7 @@ function providerBadge(offer: CanonicalOffer) {
 export function providerBadgeForId(providerId?: string): ResultProviderBadge {
   if (providerId === "costamar") {
     return {
-      label: "Costamar",
+      label: providerDisplayName(providerId),
       shortLabel: "CO",
       icon: "/assets/provider-icons/costamar-128.png",
     }
@@ -340,13 +319,13 @@ export function providerBadgeForId(providerId?: string): ResultProviderBadge {
 
   if (providerId === "agil-local") {
     return {
-      label: "Agil",
+      label: providerDisplayName(providerId),
       shortLabel: "AG",
       icon: "/assets/provider-icons/agilsmart-128.png",
     }
   }
 
-  const label = providerId || "Proveedor"
+  const label = providerDisplayName(providerId)
   return {
     label,
     shortLabel: label.slice(0, 2).toUpperCase(),

@@ -3,37 +3,19 @@
 }
 
 .fd-results-list--fixed-layout {
+  --fd-result-col-carrier: minmax(0, var(--fd-results-col-carrier, 112px));
+  --fd-result-col-dates: minmax(0, var(--fd-results-col-dates, 314px));
+  --fd-result-col-duration: minmax(0, var(--fd-results-col-duration, 98px));
+  --fd-result-col-stops: minmax(0, var(--fd-results-col-stops, 147px));
+  --fd-result-col-price: minmax(0, var(--fd-results-col-price, 124px));
+  --fd-result-col-links: minmax(0, var(--fd-results-col-links, 44px));
   width: max-content;
   min-width: 100%;
 }
 
 .fd-results-list--fixed-layout .fd-result-card:not(.fd-result-card--compact) {
-  grid-template-columns:
-    minmax(0, var(--fd-results-col-carrier, 132px))
-    minmax(0, var(--fd-results-col-dates, 154px))
-    minmax(0, var(--fd-results-col-duration, 126px))
-    minmax(0, var(--fd-results-col-stops, 138px))
-    minmax(0, var(--fd-results-col-price, 128px))
-    minmax(0, var(--fd-results-col-links, 102px));
   justify-content: center;
   min-width: max-content;
-}
-
-.fd-results-list--fixed-layout .fd-result-card__route-baggage .fd-result-card__micro-label {
-  display: none;
-}
-
-.fd-results-list--fixed-layout .fd-result-card__price {
-  justify-items: start;
-  text-align: left;
-}
-
-.fd-results-list--fixed-layout .fd-result-card__provider {
-  justify-items: end;
-}
-
-.fd-results-list--fixed-layout .fd-result-card__provider-action {
-  justify-self: end;
 }
 
 .fd-results-layout-editor {
@@ -69,47 +51,104 @@
   line-height: 1.25;
 }
 
-.fd-results-layout-editor__grid {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(7.2rem, 1fr));
-  gap: 0.5rem;
-  overflow-x: auto;
-  padding-bottom: 0.1rem;
-}
-
-.fd-results-layout-field {
+.fd-results-layout-column {
+  position: relative;
   display: grid;
   min-width: 0;
-  gap: 0.3rem;
+  gap: 0.42rem;
+  padding: 0.46rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-card) 92%, var(--color-secondary));
 }
 
-.fd-results-layout-field__label {
+.fd-results-layout-column__header {
+  display: grid;
   min-width: 0;
-  overflow: hidden;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.35rem;
   color: var(--color-muted-foreground);
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 900;
-  line-height: 1.12;
+  line-height: 1.1;
+}
+
+.fd-results-layout-column__header span:first-child {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.fd-results-layout-field__range {
-  width: 100%;
-  accent-color: var(--color-primary);
+.fd-results-layout-column__header span:last-child {
+  font-family: var(--font-mono);
 }
 
-.fd-results-layout-field__value {
+.fd-results-layout-column__skeleton {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.28rem;
+  gap: 0.26rem;
 }
 
-.fd-results-layout-field__value span {
-  color: var(--color-muted-foreground);
-  font-size: 0.7rem;
-  font-weight: 800;
+.fd-results-layout-column__skeleton span {
+  display: block;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-muted-foreground) 18%, transparent);
+}
+
+.fd-results-layout-column__skeleton span:nth-child(2) {
+  width: 72%;
+}
+
+.fd-results-layout-column__skeleton span:nth-child(3) {
+  width: 48%;
+}
+
+.fd-results-layout-column[data-column="links"] .fd-results-layout-column__skeleton {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-primary) 16%, var(--color-card));
+}
+
+.fd-results-layout-column[data-column="links"] .fd-results-layout-column__skeleton span {
+  display: none;
+}
+
+.fd-results-layout-column__handle {
+  position: absolute;
+  top: -0.34rem;
+  right: -0.52rem;
+  bottom: -0.34rem;
+  z-index: 1;
+  width: 0.82rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.fd-results-layout-column__handle::after {
+  position: absolute;
+  top: 0.34rem;
+  bottom: 0.34rem;
+  left: 50%;
+  width: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-primary) 56%, var(--color-border));
+  content: "";
+  transform: translateX(-50%);
+}
+
+.fd-results-layout-column__handle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 72%, var(--color-border));
+  outline-offset: 2px;
+}
+
+.fd-results-layout-column__handle:disabled {
+  cursor: default;
 }
 
 .fd-result-card {
@@ -117,12 +156,12 @@
   --fd-result-card-edge-padding: 0.92rem;
   display: grid;
   grid-template-columns:
-    minmax(7rem, 1.05fr)
-    minmax(8.4rem, 1.15fr)
-    minmax(7.5rem, 1fr)
-    minmax(6.4rem, 0.82fr)
-    minmax(6.8rem, 0.76fr)
-    2.5rem;
+    var(--fd-result-col-carrier, minmax(7rem, 1.05fr))
+    var(--fd-result-col-dates, minmax(8.4rem, 1.15fr))
+    var(--fd-result-col-duration, minmax(7.5rem, 1fr))
+    var(--fd-result-col-stops, minmax(6.4rem, 0.82fr))
+    var(--fd-result-col-price, minmax(6.8rem, 0.76fr))
+    var(--fd-result-col-links, 2.5rem);
   column-gap: clamp(0.48rem, 0.82vw, 0.75rem);
   row-gap: 0.54rem;
   align-items: center;
@@ -191,8 +230,35 @@
   display: none;
 }
 
+.fd-result-card__route,
+.fd-result-card__journey {
+  justify-items: center;
+  text-align: center;
+}
+
 .fd-result-card__schedules {
-  gap: 0.52rem;
+  align-items: start;
+  column-gap: 0.82rem;
+  row-gap: 0.34rem;
+}
+
+.fd-result-card--layout-guide {
+  border-style: dashed;
+  background: color-mix(in srgb, var(--color-card) 84%, var(--color-secondary));
+  box-shadow: none;
+  cursor: default;
+}
+
+.fd-result-card--layout-guide:hover {
+  transform: none;
+}
+
+.fd-result-card__schedules[data-trip-type="one-way"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.fd-result-card__schedules[data-trip-type="round-trip"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .fd-result-card__airline-name,
@@ -272,6 +338,7 @@
 }
 
 .fd-result-card__stops {
+  justify-self: center;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -279,6 +346,7 @@
   font-size: 0.76rem;
   font-weight: 800;
   line-height: 1.16;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -296,6 +364,7 @@
 }
 
 .fd-result-card__layover {
+  justify-self: center;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -304,6 +373,7 @@
   font-size: 0.76rem;
   font-weight: 700;
   line-height: 1.15;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -317,9 +387,11 @@
 
 .fd-result-card__route-baggage {
   display: inline-flex;
+  justify-self: center;
   min-width: 0;
   align-items: center;
   gap: 0.34rem;
+  text-align: center;
 }
 
 .fd-result-card__route-baggage .fd-result-card__micro-label {
@@ -489,6 +561,10 @@
   font-size: 1.06rem;
 }
 
+.fd-result-card--compact .fd-result-card__schedules {
+  column-gap: 0.7rem;
+}
+
 .fd-result-card--compact .fd-result-card__journey-main,
 .fd-result-card--compact .fd-result-card__price-total {
   font-size: 0.86rem;
@@ -638,8 +714,7 @@
 }
 
 @container (max-width: 740px) {
-  .fd-result-card,
-  .fd-results-list--fixed-layout .fd-result-card:not(.fd-result-card--compact) {
+  .fd-result-card {
     grid-template-columns: repeat(2, minmax(0, 1fr)) 2.7rem;
     min-width: 0;
   }
@@ -655,8 +730,7 @@
 }
 
 @container (max-width: 620px) {
-  .fd-result-card,
-  .fd-results-list--fixed-layout .fd-result-card:not(.fd-result-card--compact) {
+  .fd-result-card {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: start;
   }
@@ -677,5 +751,10 @@
   .fd-result-card__price {
     justify-items: start;
     text-align: left;
+  }
+
+  .fd-result-card__schedules,
+  .fd-result-card__schedules[data-trip-type="round-trip"] {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

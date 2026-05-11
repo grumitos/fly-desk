@@ -1,7 +1,7 @@
 import type { CanonicalOffer, Itinerary, ProviderId, PurchasePath, Segment } from "./types";
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
-  "agil-local": "Agil",
+  "agil-local": "Agilsmart",
   costamar: "Costamar",
 };
 

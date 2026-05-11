@@ -785,11 +785,28 @@ function copyPathSafe(source: string, destination: string): void {
   }
 }
 
-function prepareTemporaryCostamarChromeProfile(profileName: string): string {
+function shouldCloneCostamarChromeProfileForIsolatedAutomation(): boolean {
+  const configured = process.env.COSTAMAR_B2B_CLONE_CHROME_PROFILE?.trim();
+  if (configured) {
+    return configured !== "0";
+  }
+
+  const credentials = resolveCostamarB2bCredentials();
+  return !(credentials.email && credentials.password);
+}
+
+function prepareTemporaryCostamarChromeProfile(
+  profileName: string,
+  options: { cloneSourceProfile?: boolean } = {},
+): string {
   const sourceRoot = resolveCostamarChromeLaunchOptions().userDataDir || DEFAULT_CHROME_USER_DATA_DIR;
   const tempRoot = join(tmpdir(), `travel_quote_foundation_costamar_browser_${crypto.randomUUID()}`);
   mkdirSync(join(tempRoot, profileName), { recursive: true });
   registerActiveTempArtifact(tempRoot);
+
+  if (!options.cloneSourceProfile) {
+    return tempRoot;
+  }
 
   [
     "Local State",
@@ -1480,20 +1497,51 @@ async function launchCostamarBrowserContext(): Promise<{
   context: BrowserContext;
   tempRoot: string;
   profileName: string;
+  browser?: Browser;
 }> {
   const profileName = resolveCostamarChromeProfileName();
-  const tempRoot = prepareTemporaryCostamarChromeProfile(profileName);
+  const cloneSourceProfile = shouldCloneCostamarChromeProfileForIsolatedAutomation();
+  const tempRoot = cloneSourceProfile
+    ? prepareTemporaryCostamarChromeProfile(profileName, { cloneSourceProfile })
+    : "";
   try {
     const playwright = await getPlaywright();
-    const context = await playwright.chromium.launchPersistentContext(tempRoot, {
-      executablePath: resolveCostamarChromeExecutable(),
+    const configuredExecutable = process.env.COSTAMAR_CHROME_EXECUTABLE?.trim();
+    const executablePath = cloneSourceProfile
+      ? resolveCostamarChromeExecutable()
+      : configuredExecutable && existsSync(configuredExecutable)
+        ? configuredExecutable
+        : undefined;
+    const launchOptions = {
+      ...(executablePath ? { executablePath } : {}),
       headless: costamarBrowserAutomationHeadless(),
       args: [
-        `--profile-directory=${profileName}`,
         "--no-first-run",
         "--no-default-browser-check",
       ],
+    };
+
+    if (!cloneSourceProfile) {
+      const browser = await playwright.chromium.launch(launchOptions);
+      const context = await browser.newContext();
+      logCostamarB2bDebug("isolated browser launched", { cloneSourceProfile, profileName });
+
+      return {
+        context,
+        tempRoot,
+        profileName,
+        browser,
+      };
+    }
+
+    const context = await playwright.chromium.launchPersistentContext(tempRoot, {
+      ...launchOptions,
+      args: [
+        `--profile-directory=${profileName}`,
+        ...launchOptions.args,
+      ],
     });
+    logCostamarB2bDebug("isolated browser launched", { cloneSourceProfile, profileName });
 
     return {
       context,
@@ -1501,8 +1549,36 @@ async function launchCostamarBrowserContext(): Promise<{
       profileName,
     };
   } catch (error) {
-    await removePathWithRetries(tempRoot, 6, 250);
-    unregisterActiveTempArtifact(tempRoot);
+    if (tempRoot) {
+      await removePathWithRetries(tempRoot, 6, 250);
+      unregisterActiveTempArtifact(tempRoot);
+    }
+    throw error;
+  }
+}
+
+async function launchCostamarBrowserContextWithin(timeoutMs: number): Promise<{
+  context: BrowserContext;
+  tempRoot: string;
+  profileName: string;
+  browser?: Browser;
+}> {
+  const launchPromise = launchCostamarBrowserContext();
+  try {
+    return await withCostamarB2bTimeout(
+      launchPromise,
+      timeoutMs,
+      "Costamar isolated browser launch",
+    );
+  } catch (error) {
+    void launchPromise.then(async (launched) => {
+      await launched.context.close().catch(() => undefined);
+      await launched.browser?.close().catch(() => undefined);
+      if (launched.tempRoot) {
+        await removePathWithRetries(launched.tempRoot, 6, 250);
+        unregisterActiveTempArtifact(launched.tempRoot);
+      }
+    }).catch(() => undefined);
     throw error;
   }
 }
@@ -1528,6 +1604,7 @@ async function generateCostamarRedirectContextViaB2B(
   let closeLivePage = false;
   let resetLiveBrowserConnection = false;
   let browserContext: BrowserContext | undefined;
+  let isolatedBrowser: Browser | undefined;
   let tempRoot = "";
 
   if (shouldUseLiveCostamarBrowserContext()) {
@@ -1617,12 +1694,9 @@ async function generateCostamarRedirectContextViaB2B(
   }
 
   try {
-    const launched = await withCostamarB2bTimeout(
-      launchCostamarBrowserContext(),
-      browserLaunchTimeoutMs,
-      "Costamar isolated browser launch",
-    );
+    const launched = await launchCostamarBrowserContextWithin(browserLaunchTimeoutMs);
     browserContext = launched.context;
+    isolatedBrowser = launched.browser;
     tempRoot = launched.tempRoot;
 
     observeCostamarBrowserPages(browserContext, pool, "existing", observedPages);
@@ -1719,6 +1793,9 @@ async function generateCostamarRedirectContextViaB2B(
   } finally {
     if (browserContext) {
       await browserContext.close().catch(() => undefined);
+    }
+    if (isolatedBrowser) {
+      await isolatedBrowser.close().catch(() => undefined);
     }
     if (tempRoot) {
       await removePathWithRetries(tempRoot, 6, 250);

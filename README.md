@@ -102,6 +102,8 @@ Runtime general:
 - `FLY_DESK_SESSION_DB_PATH=output/cache/fly-desk-cache.sqlite` cache SQLite local de jobs completados, matriz y redirects
 - `FLY_DESK_SEARCH_SESSION_STORE_PATH=output/cache/search-session-store.json` ruta JSON legada; si existe y la DB esta vacia, se migra a SQLite y se elimina
 - `FLY_DESK_LOCATION_SUGGESTION_CACHE_PATH=output/cache/location-suggestion-cache.json` cache JSON acotado para autocomplete
+- `FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS=120`
+  Evita que Bun corte requests silenciosas de redirects Costamar mientras se valida o renueva token.
 
 Agil:
 
@@ -134,6 +136,8 @@ Costamar:
   Está activo por defecto. Permite intentar la generación del token usando una sesión B2B ya viva en el perfil de Chrome, aun sin credenciales explícitas.
 - `COSTAMAR_B2B_USE_LIVE_BROWSER=0`
   Si configuras `COSTAMAR_B2B_EMAIL` y `COSTAMAR_B2B_PASSWORD`, conviene dejarlo en `0` para que Costamar genere el token con un navegador aislado y no use tu Chrome vivo ni dispare prompts de depuración.
+- `COSTAMAR_B2B_CLONE_CHROME_PROFILE=0`
+  Con credenciales B2B, el navegador aislado usa un perfil limpio por defecto. Activa `1` solo si necesitas heredar una sesion del perfil Chrome configurado.
 - `COSTAMAR_CDP_TAB_SCAN_ENABLED=0`
   Queda apagado por defecto para que Chrome no vuelva a pedir permisos de depuración en cada búsqueda solo por escanear pestañas abiertas.
 - `COSTAMAR_BROWSER_HEADLESS=1`
@@ -142,6 +146,8 @@ Costamar:
 - `COSTAMAR_SESSION_WARMUP_OPEN_BROWSER_FALLBACK=1`
   Opcional. Reabre la pestaña B2B y una branded search visible como último recurso. Por defecto queda apagado para evitar pestañas innecesarias.
 - `COSTAMAR_SESSION_WARMUP_TIMEOUT_MS=8000`
+- `COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS=55000`
+  Limite total del handler `/r/...` para devolver una pantalla controlada si la renovacion/validacion del redirect queda esperando demasiado.
 - `COSTAMAR_HTTP_TIMEOUT_MS=20000`
 
 ## Scripts
