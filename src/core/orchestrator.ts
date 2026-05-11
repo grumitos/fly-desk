@@ -1,4 +1,5 @@
 import { applySearchFilters } from "./filtering";
+import { groupExactProviderOffers } from "./offer-grouping";
 import { ProviderExecutionContext, SearchProvider } from "./provider";
 import { enrichComparisonMetrics, sortOffers } from "./ranking";
 import {
@@ -44,7 +45,7 @@ export function materializeSearchResponse(
   exactProviderId: ProviderId,
   exactResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean },
 ): SearchResponse {
-  let offers = exactResult.offers;
+  let offers = groupExactProviderOffers(exactResult.offers);
 
   offers = enrichComparisonMetrics(offers);
   offers = sortOffers(offers, sortMode);
