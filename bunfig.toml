@@ -1,2 +1,6 @@
+[install]
+ignoreScripts = true
+minimumReleaseAge = 86400
+
 [serve.static]
 plugins = ["bun-plugin-tailwind"]
