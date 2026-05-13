@@ -1,8 +1,79 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { Route } from "playwright";
+import type { Locator, Page, Route } from "playwright";
 import { openDesktop, withDesktopPage } from "./helpers/ui.ts";
 import { buildOffer } from "./helpers/ui-fixtures.ts";
+
+async function waitForPressed(button: Locator): Promise<void> {
+  await button.evaluate((element) => new Promise<void>((resolve) => {
+    const finish = () => requestAnimationFrame(() => resolve());
+    if (element.getAttribute("aria-pressed") === "true") {
+      finish();
+      return;
+    }
+
+    const observer = new MutationObserver(() => {
+      if (element.getAttribute("aria-pressed") === "true") {
+        observer.disconnect();
+        finish();
+      }
+    });
+    observer.observe(element, { attributeFilter: ["aria-pressed"], attributes: true });
+  }));
+}
+
+async function clickSegment(button: Locator): Promise<void> {
+  await button.click();
+  await waitForPressed(button);
+}
+
+async function waitForStableIndicator(indicator: Locator): Promise<void> {
+  await indicator.evaluate((element) => new Promise<void>((resolve) => {
+    let previous: { width: number; x: number } | undefined;
+    let stableFrames = 0;
+
+    const sample = () => {
+      const style = getComputedStyle(element);
+      const matrix = new DOMMatrixReadOnly(style.transform);
+      const current = {
+        width: Number.parseFloat(style.width),
+        x: matrix.m41,
+      };
+
+      stableFrames = previous
+        && Math.abs(previous.width - current.width) <= 0.01
+        && Math.abs(previous.x - current.x) <= 0.01
+        ? stableFrames + 1
+        : 0;
+      previous = current;
+
+      if (stableFrames >= 2) {
+        resolve();
+        return;
+      }
+
+      requestAnimationFrame(sample);
+    };
+
+    requestAnimationFrame(sample);
+  }));
+}
+
+async function waitForLocationFieldsClosed(
+  page: Page,
+  expected: { destination: string; origin: string },
+): Promise<void> {
+  await page.waitForFunction((values) => {
+    const origin = document.querySelector<HTMLInputElement>('[aria-label="Origen"]');
+    const destination = document.querySelector<HTMLInputElement>('[aria-label="Destino"]');
+
+    return origin?.value === values.origin
+      && destination?.value === values.destination
+      && origin.getAttribute("aria-expanded") === "false"
+      && destination.getAttribute("aria-expanded") === "false"
+      && document.querySelectorAll('[role="listbox"]').length === 0;
+  }, expected);
+}
 
 test("current React shell exposes the primary search controls", async () => {
   await withDesktopPage(async ({ page }) => {
@@ -192,7 +263,8 @@ test("segmented hover keeps the shared indicator stable and theme hover inverts 
       return indicator && getComputedStyle(indicator).opacity === "1";
     });
     await page.evaluate(() => document.fonts.ready);
-    await page.waitForTimeout(100);
+    await waitForPressed(page.getByRole("button", { name: "Exacto" }));
+    await waitForStableIndicator(modeIndicator);
 
     const beforeIndicator = await modeIndicator.evaluate((indicator) => {
       const style = getComputedStyle(indicator);
@@ -297,15 +369,13 @@ test("segmented hover keeps the shared indicator stable and theme hover inverts 
     assert.equal(exactGaps.indicatorBorderRadius, "0px");
     assert.equal(exactGaps.modeToTrip, 8, JSON.stringify(exactGaps));
 
-    await page.getByRole("button", { name: "Flexible" }).click();
-    await page.waitForTimeout(240);
+    await clickSegment(page.getByRole("button", { name: "Flexible" }));
     const flexibleGaps = await readSearchModeGapMetrics();
     assert.equal(flexibleGaps.indicatorBorderRadius, "0px");
     assert.equal(flexibleGaps.modeToReveal, 8, JSON.stringify(flexibleGaps));
     assert.equal(flexibleGaps.revealToTrip, 8, JSON.stringify(flexibleGaps));
 
-    await page.getByRole("button", { name: "Migratorio" }).click();
-    await page.waitForTimeout(240);
+    await clickSegment(page.getByRole("button", { name: "Migratorio" }));
     const migratoryGaps = await readSearchModeGapMetrics();
     assert.equal(migratoryGaps.indicatorBorderRadius, "0px");
     assert.equal(migratoryGaps.modeToTrip, 8, JSON.stringify(migratoryGaps));
@@ -1006,8 +1076,10 @@ test("search URL stores the payload and reopens it without auto-searching", asyn
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
     await page.waitForFunction(() => new URL(window.location.href).searchParams.get("origin") === "LIM");
-    await page.waitForTimeout(260);
-    assert.equal(await page.getByRole("listbox").count(), 0);
+    await waitForLocationFieldsClosed(page, {
+      origin: "LIM - Lima, Perú",
+      destination: "MIA - FL, Estados Unidos",
+    });
 
     const reusableUrl = page.url();
     const sharedUrl = new URL(reusableUrl);
@@ -1029,18 +1101,15 @@ test("search URL stores the payload and reopens it without auto-searching", asyn
 
     await replayPage.goto(reusableUrl, { waitUntil: "domcontentloaded" });
     await replayPage.getByRole("combobox", { name: "Origen" }).waitFor();
-    await replayPage.waitForTimeout(260);
 
     assert.equal(new URL(replayPage.url()).searchParams.has("launchPayload"), false);
     assert.equal(payloads.length, 1);
-    await replayPage.waitForFunction(() => {
-      const origin = document.querySelector<HTMLInputElement>('[aria-label="Origen"]');
-      const destination = document.querySelector<HTMLInputElement>('[aria-label="Destino"]');
-      return origin?.value === "LIM - Lima, Perú" && destination?.value === "MIA - FL, Estados Unidos";
+    await waitForLocationFieldsClosed(replayPage, {
+      origin: "LIM - Lima, Perú",
+      destination: "MIA - FL, Estados Unidos",
     });
     assert.equal(await replayPage.getByRole("combobox", { name: "Origen" }).inputValue(), "LIM - Lima, Perú");
     assert.equal(await replayPage.getByRole("combobox", { name: "Destino" }).inputValue(), "MIA - FL, Estados Unidos");
-    assert.equal(await replayPage.getByRole("listbox").count(), 0);
 
     await Promise.all([
       replayPage.waitForResponse("**/api/search"),
@@ -1565,14 +1634,15 @@ test("normal results wait for saved column layout before drawing cards", async (
       waitUntil: "domcontentloaded",
     });
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await layoutRequested;
 
     await Promise.all([
       page.waitForResponse("**/api/search"),
       page.getByRole("button", { name: "Buscar" }).click(),
+      layoutRequested,
     ]);
 
-    await page.waitForTimeout(100);
+    await page.locator('[data-testid="result-card"]').waitFor({ state: "detached" });
+    await page.locator(".fd-skeleton").first().waitFor({ state: "visible" });
     assert.equal(await page.locator('[data-testid="result-card"]').count(), 0);
 
     releaseLayout();
@@ -1688,8 +1758,8 @@ test("grouped provider offer renders Agilsmart and Costamar external links verti
     await card.waitFor();
     const actions = card.locator(".fd-result-card__provider-action");
     assert.equal(await actions.count(), 2);
-    await card.getByRole("button", { name: "Buscar Agilsmart" }).waitFor();
-    await card.getByRole("button", { name: "Buscar Costamar" }).waitFor();
+    await card.getByRole("button", { name: "Abrir Agilsmart" }).waitFor();
+    await card.getByRole("button", { name: "Buscar en Costamar" }).waitFor();
 
     const layout = await actions.evaluateAll((elements) => elements.map((element) => {
       const rect = element.getBoundingClientRect();
@@ -2148,17 +2218,14 @@ test("migratory search sends monthly stay-range requests", async () => {
       element.getBoundingClientRect().height,
     ));
     const migrationTopbarHeight = await topbarHeight();
-    await topbarControls.getByRole("button", { name: "Flexible" }).click();
-    await page.waitForTimeout(240);
+    await clickSegment(topbarControls.getByRole("button", { name: "Flexible" }));
     const flexibleTopbarHeight = await topbarHeight();
     assert.ok(Math.abs(migrationTopbarHeight - flexibleTopbarHeight) <= 2);
     assert.equal(await topbarControls.locator(".fd-segmented-indicator").count(), 2);
     assert.doesNotMatch(await topbarControls.getByRole("button", { name: "Flexible" }).getAttribute("class") ?? "", /bg-card/);
-    await topbarControls.getByRole("button", { name: "Exacto" }).click();
-    await page.waitForTimeout(240);
+    await clickSegment(topbarControls.getByRole("button", { name: "Exacto" }));
     assert.ok(Math.abs(await topbarHeight() - flexibleTopbarHeight) <= 2);
-    await topbarControls.getByRole("button", { name: "Migratorio" }).click();
-    await page.waitForTimeout(240);
+    await clickSegment(topbarControls.getByRole("button", { name: "Migratorio" }));
     assert.ok(Math.abs(await topbarHeight() - flexibleTopbarHeight) <= 2);
     assert.equal(await page.getByTestId("migration-month-card").count(), 8);
     const migrationCard = page.getByTestId("migration-month-card").first();

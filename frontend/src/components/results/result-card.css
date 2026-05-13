@@ -421,7 +421,9 @@
 }
 
 .fd-result-card__price {
-  justify-items: end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   overflow: hidden;
   text-align: right;
 }
@@ -429,11 +431,12 @@
 .fd-result-card__price-total,
 .fd-result-card__price-meta {
   display: block;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
+  flex: 0 0 auto;
+  min-width: max-content;
+  max-width: none;
+  overflow: visible;
   font-family: var(--font-mono);
-  text-overflow: ellipsis;
+  text-align: right;
   white-space: nowrap;
 }
 
@@ -571,8 +574,8 @@
 }
 
 .fd-result-card--compact .fd-result-card__price {
-  justify-items: start;
-  text-align: left;
+  align-items: flex-end;
+  text-align: right;
 }
 
 .fd-result-card--compact .fd-result-card__provider img,
@@ -749,8 +752,8 @@
   }
 
   .fd-result-card__price {
-    justify-items: start;
-    text-align: left;
+    align-items: flex-end;
+    text-align: right;
   }
 
   .fd-result-card__schedules,
