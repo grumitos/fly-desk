@@ -24,7 +24,7 @@ import {
   prioritizeMatrixLoadingCells,
 } from "./core/matrix";
 import { buildOfferSignature } from "./core/offer-signature";
-import { parseProviderAmount, roundProviderAmount } from "./core/provider-money";
+import { parseProviderAmount } from "./core/provider-money";
 import { buildOfferVariantGroupKey } from "./core/variant-group-key";
 import { ProviderSearchResult } from "./core/provider";
 import { enrichComparisonMetrics, maxStopsAcrossItineraries, totalDuration } from "./core/ranking";
@@ -59,7 +59,6 @@ import { recordProviderFirstHttpRequest } from "./provider-diagnostics";
 import { openUrlLocally } from "./local-browser";
 import {
   resolveMatrixCellConcurrency,
-  resolveProviderSubrequestConcurrency,
   resolveRangeSearchConcurrency,
   SHARED_SEARCH_CONCURRENCY,
 } from "./search-concurrency";
@@ -233,26 +232,6 @@ export interface CostamarB2bAuthChallenge {
   inputIndexes: number[];
 }
 
-interface CostamarMarkupApplied {
-  amount?: {
-    value?: number | string;
-    percentage?: boolean;
-    appliesToBase?: boolean;
-    perPassenger?: boolean;
-    perBooking?: boolean;
-    passengersType?: string[];
-  };
-}
-
-interface CostamarMarkupResponse {
-  apply?: boolean;
-  error?: {
-    message?: string;
-  } | string;
-  markupsApplied?: CostamarMarkupApplied[];
-  customMarkupApplied?: CostamarMarkupApplied[];
-}
-
 interface CostamarWarmupDiagnosticStep {
   name: string;
   ok: boolean;
@@ -357,9 +336,6 @@ export const COSTAMAR_CONCURRENCY = Object.freeze({
   },
   get rangeSearch() {
     return resolveRangeSearchConcurrency("COSTAMAR_RANGE_SEARCH_CONCURRENCY");
-  },
-  get markup() {
-    return resolveProviderSubrequestConcurrency("COSTAMAR_MARKUP_CONCURRENCY", 4, 2);
   },
   httpTimeoutMs: COSTAMAR_HTTP_TIMEOUT_MS,
 });
@@ -2534,10 +2510,27 @@ function isCostamarCodeLikeDescription(value: string): boolean {
 }
 
 function buildBaggageSummaryFromSegments(segments: CostamarSegmentLike[]): BaggageSummary | undefined {
-  let carryOnIncluded = false;
-  let checkedIncluded = false;
+  let carryOnIncluded: boolean | undefined;
+  let checkedIncluded: boolean | undefined;
   let checkedBags = 0;
+  let sawCarrySignal = false;
+  let sawCheckedSignal = false;
   const descriptions: string[] = [];
+
+  const rememberIncludedFlag = (
+    current: boolean | undefined,
+    next: boolean | undefined,
+  ): boolean | undefined => {
+    if (next === undefined) {
+      return current;
+    }
+
+    if (current === false || next === false) {
+      return false;
+    }
+
+    return true;
+  };
 
   for (const segment of segments) {
     const entries = [
@@ -2588,17 +2581,16 @@ function buildBaggageSummaryFromSegments(segments: CostamarSegmentLike[]): Bagga
         || normalizedDescription.includes("factur")
         || normalizedDescription.includes("check")
         || normalizedDescription.includes("bagg");
+      const includedFlag = explicitIncluded ?? (typeof quantity === "number" ? quantity > 0 : undefined);
 
       if (carrySignal) {
-        if (explicitIncluded === true || (typeof quantity === "number" && quantity > 0) || scope === "hand") {
-          carryOnIncluded = true;
-        }
+        sawCarrySignal = true;
+        carryOnIncluded = rememberIncludedFlag(carryOnIncluded, includedFlag);
       }
 
       if (checkedSignal) {
-        if (explicitIncluded === true || (typeof quantity === "number" && quantity > 0)) {
-          checkedIncluded = true;
-        }
+        sawCheckedSignal = true;
+        checkedIncluded = rememberIncludedFlag(checkedIncluded, includedFlag);
         if (typeof quantity === "number" && quantity > 0) {
           checkedBags = Math.max(checkedBags, quantity);
         }
@@ -2609,13 +2601,13 @@ function buildBaggageSummaryFromSegments(segments: CostamarSegmentLike[]): Bagga
     }
   }
 
-  if (!carryOnIncluded && !checkedIncluded && checkedBags === 0 && descriptions.length === 0) {
+  if (!sawCarrySignal && !sawCheckedSignal && checkedBags === 0 && descriptions.length === 0) {
     return undefined;
   }
 
   return {
-    carryOnIncluded,
-    checkedIncluded,
+    carryOnIncluded: sawCarrySignal ? carryOnIncluded ?? false : undefined,
+    checkedIncluded: sawCheckedSignal ? checkedIncluded ?? false : undefined,
     checkedBags: checkedBags || undefined,
     description: uniqueStrings(descriptions).join(", ") || undefined,
   };
@@ -2668,10 +2660,6 @@ function money(amount: number | undefined, currencyCode: string) {
     amount: Number(amount.toFixed(2)),
     currencyCode,
   };
-}
-
-function roundMoneyAmount(amount: number): number {
-  return roundProviderAmount(amount);
 }
 
 function resolveCostamarOfferCurrencyCode(
@@ -3244,267 +3232,6 @@ export function applyCostamarContextToBrandedSearchUrl(
   return branded.toString();
 }
 
-function buildLocationsPayload(
-  itineraries: Itinerary[],
-): Array<{ cityCode?: string; countryCode?: string; date?: number }> {
-  return itineraries.map((itinerary) => ({
-    cityCode: itinerary.segments[0]?.origin ?? "",
-    countryCode: "",
-    date: toCostamarDayStartMs(itinerary.segments[0]?.departureAt?.slice(0, 10)),
-  }));
-}
-
-function buildMarkupFlightsPayload(
-  recommendation: CostamarRecommendation,
-): Array<Record<string, unknown>> {
-  return asArray(recommendation.itinerary).flatMap((journey, index) => {
-    const selectedFlight = asArray(journey.flights)[0];
-    if (!selectedFlight) {
-      return [];
-    }
-
-    const segments: CostamarSegmentLike[] = asArray(selectedFlight.segments).length > 0
-      ? asArray(selectedFlight.segments)
-      : [selectedFlight];
-    const normalizedSegments = segments.map((segment) => ({
-      bookingClass: typeof segment.bookingClass === "string"
-        ? segment.bookingClass
-        : segment.bookingClass?.code,
-      fareBasisCode: segment.fareBasisCode,
-      marketingAirline: {
-        code: segment.marketingAirline?.code,
-      },
-      operatingAirline: {
-        code: segment.operatingAirline?.code ?? segment.marketingAirline?.code,
-      },
-      flightNumber: segment.flightNumber,
-      cabinType: segment.cabinType,
-    }));
-
-    return [{
-      segments: normalizedSegments,
-      duration: parseDurationMinutes(selectedFlight.elapsedTime),
-      refNumber: index,
-    }];
-  });
-}
-
-function shouldApplyCostamarBaggageMarkup(
-  recommendation: CostamarRecommendation,
-): boolean {
-  const firstFlight = asArray(asArray(recommendation.itinerary)[0]?.flights)[0];
-  if (!firstFlight || firstFlight.marketingAirline?.code === "VV") {
-    return false;
-  }
-
-  const baggage = firstFlight.baggage as Record<string, unknown> | undefined;
-  if (!baggage) {
-    return false;
-  }
-
-  return String(baggage.pieces ?? "") !== "0";
-}
-
-function buildMarkupRequest(
-  engine: CostamarEngineMetadata,
-  request: SearchRequest,
-  recommendation: CostamarRecommendation,
-  itineraries: Itinerary[],
-): Record<string, unknown> {
-  const passengerTypes: string[] = ["ADT"];
-
-  if (request.passengers.children > 0) {
-    passengerTypes.push("CHD");
-  }
-  if (request.passengers.infants > 0) {
-    passengerTypes.push("INF");
-  }
-
-  return {
-    engineCode: engine.code ?? request.providerId ?? "costamar",
-    profileId: engine.profile?.id,
-    locations: buildLocationsPayload(itineraries),
-    passengersQuantity: request.passengers.adults + request.passengers.children + request.passengers.infants,
-    passengersType: passengerTypes,
-    flights: buildMarkupFlightsPayload(recommendation),
-    applyBaggage: shouldApplyCostamarBaggageMarkup(recommendation),
-    tripType: request.tripType === "one-way" ? "OW" : "RT",
-    routeType: recommendation.pricing?.fareQualifier,
-    fareType: recommendation.pricing?.source === "PRIVATE"
-      ? "PRIVATED"
-      : recommendation.pricing?.source,
-    validatingAirline: recommendation.pricing?.validatingAirline,
-    validatingGds: recommendation.pos?.systemProviderCode,
-  };
-}
-
-function buildCostamarPassengerFareBreakdowns(
-  recommendation: CostamarRecommendation,
-  request: SearchRequest,
-): Array<{
-  code: "ADT" | "CHD" | "INF";
-  passengerFare: {
-    base: number;
-    total: number;
-  };
-  quantity: number;
-}> {
-  const passengers = recommendation.pricing?.passengers;
-  return [
-    {
-      code: "ADT" as const,
-      passengerFare: {
-        base: numberValue(passengers?.adults?.base) ?? 0,
-        total: numberValue(passengers?.adults?.total) ?? 0,
-      },
-      quantity: request.passengers.adults,
-    },
-    {
-      code: "CHD" as const,
-      passengerFare: {
-        base: numberValue(passengers?.children?.base) ?? 0,
-        total: numberValue(passengers?.children?.total) ?? 0,
-      },
-      quantity: request.passengers.children,
-    },
-    {
-      code: "INF" as const,
-      passengerFare: {
-        base: numberValue(passengers?.infants?.base) ?? 0,
-        total: numberValue(passengers?.infants?.total) ?? 0,
-      },
-      quantity: request.passengers.infants,
-    },
-  ].filter((entry) => entry.quantity > 0);
-}
-
-function computeCostamarMarkupValue(
-  markup: CostamarMarkupApplied,
-  recommendation: CostamarRecommendation,
-  request: SearchRequest,
-): number {
-  const markupAmount = numberValue(markup.amount?.value);
-  if (typeof markupAmount !== "number") {
-    return 0;
-  }
-
-  const pricing = recommendation.pricing ?? {};
-  const totalAmount = numberValue(pricing.total) ?? numberValue(pricing.totalAmount) ?? 0;
-  if (markup.amount?.perBooking) {
-    if (markup.amount?.percentage) {
-      return roundMoneyAmount((roundMoneyAmount(totalAmount) * markupAmount) / 100);
-    }
-
-    return roundMoneyAmount(markupAmount);
-  }
-
-  const passengerTypes = asArray(markup.amount?.passengersType).map((value) => String(value));
-  let computed = 0;
-
-  buildCostamarPassengerFareBreakdowns(recommendation, request).forEach((breakdown) => {
-    if (passengerTypes.length > 0 && !passengerTypes.includes(breakdown.code)) {
-      return;
-    }
-
-    if (markup.amount?.percentage) {
-      const baseValue = markup.amount?.appliesToBase
-        ? breakdown.passengerFare.base
-        : breakdown.passengerFare.total;
-      computed += roundMoneyAmount((roundMoneyAmount(baseValue) * markupAmount) / 100) * breakdown.quantity;
-      return;
-    }
-
-    computed += markupAmount * breakdown.quantity;
-  });
-
-  return roundMoneyAmount(computed);
-}
-
-function resolveCostamarMarkupError(markupResponse: CostamarMarkupResponse): string | undefined {
-  if (typeof markupResponse.error === "string") {
-    return markupResponse.error.trim() || undefined;
-  }
-
-  if (typeof markupResponse.error?.message === "string") {
-    return markupResponse.error.message.trim() || undefined;
-  }
-
-  return undefined;
-}
-
-function sumCostamarMarkupTotals(
-  markupResponse: CostamarMarkupResponse,
-  recommendation: CostamarRecommendation,
-  request: SearchRequest,
-): number {
-  return [
-    ...asArray(markupResponse.markupsApplied),
-    ...asArray(markupResponse.customMarkupApplied),
-  ].reduce((sum, markup) => sum + computeCostamarMarkupValue(markup, recommendation, request), 0);
-}
-
-async function applyMarkupToOffer(
-  context: CostamarProviderContext,
-  engine: CostamarEngineMetadata,
-  request: SearchRequest,
-  recommendation: CostamarRecommendation,
-  offer: CanonicalOffer,
-  rawSegments: CostamarSegmentLike[],
-): Promise<CanonicalOffer> {
-  if (!engine.profile?.id || rawSegments.length === 0) {
-    return offer;
-  }
-
-  try {
-    const markupResponse = await fetchCostamarJson<CostamarMarkupResponse>(
-      context,
-      "/flights/markups/apply",
-      {
-        method: "POST",
-        body: JSON.stringify(buildMarkupRequest(engine, request, recommendation, offer.itineraries)),
-      },
-      "Costamar markup apply",
-    );
-
-    const markups = sumCostamarMarkupTotals(markupResponse, recommendation, request);
-    const markupError = resolveCostamarMarkupError(markupResponse);
-    if (markups <= 0) {
-      return markupError
-        ? {
-            ...offer,
-            warnings: [
-              ...offer.warnings,
-              `Costamar markup omitted: ${markupError}`,
-            ],
-          }
-        : offer;
-    }
-
-    const total = roundMoneyAmount(offer.price.total.amount + markups);
-    return {
-      ...offer,
-      id: buildCostamarOfferId(offer.signature, total, offer.price.total.currencyCode),
-      price: {
-        ...offer.price,
-        total: {
-          ...offer.price.total,
-          amount: total,
-        },
-      },
-    };
-  } catch (error) {
-    return {
-      ...offer,
-      warnings: [
-        ...offer.warnings,
-        error instanceof Error
-          ? `Costamar markup omitted: ${error.message}`
-          : "Costamar markup omitted.",
-      ],
-    };
-  }
-}
-
 export function mapCostamarRecommendationToOffer(
   recommendation: CostamarRecommendation,
   request: SearchRequest,
@@ -3672,7 +3399,7 @@ async function searchRecommendations(
   const recommendationVariants = recommendations.flatMap((recommendation) =>
     expandCostamarRecommendationFlightOptions(recommendation, request),
   );
-  const mapped = await mapConcurrent(recommendationVariants, COSTAMAR_CONCURRENCY.markup, async (recommendation) => {
+  const mapped = recommendationVariants.map((recommendation) => {
     const normalized = mapCostamarRecommendationToOffer(
       recommendation,
       request,
@@ -3680,18 +3407,7 @@ async function searchRecommendations(
       engine,
       redirectVerification,
     );
-    if (!normalized.offer) {
-      return undefined;
-    }
-
-    return applyMarkupToOffer(
-      context,
-      engine,
-      request,
-      recommendation,
-      normalized.offer,
-      normalized.rawSegments,
-    );
+    return normalized.offer;
   });
 
   const offers = dedupeCostamarOffers(mapped.filter((offer): offer is CanonicalOffer => Boolean(offer)));

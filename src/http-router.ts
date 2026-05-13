@@ -232,10 +232,10 @@ function providerConcurrencyDetail(providerId: ProviderId, kind: ProviderDiagnos
   }
 
   if (kind === "range") {
-    return `workerProcesses=${shouldUseSearchWorkerProcesses() ? 1 : 0} rangeConcurrency=${COSTAMAR_CONCURRENCY.rangeSearch} markupConcurrency=${COSTAMAR_CONCURRENCY.markup}`;
+    return `workerProcesses=${shouldUseSearchWorkerProcesses() ? 1 : 0} rangeConcurrency=${COSTAMAR_CONCURRENCY.rangeSearch}`;
   }
 
-  return `workerProcesses=${shouldUseSearchWorkerProcesses() ? 1 : 0} markupConcurrency=${COSTAMAR_CONCURRENCY.markup}`;
+  return `workerProcesses=${shouldUseSearchWorkerProcesses() ? 1 : 0}`;
 }
 
 function createProviderDiagnosticsForRun(
