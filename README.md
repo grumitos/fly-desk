@@ -91,7 +91,7 @@ Runtime general:
 - `HOST=0.0.0.0` para exponer la app fuera de loopback
 - `PORT=32123` o el puerto que se quiera usar fuera del launcher
 - `SEARCH_MAX_FUTURE_DAYS=365`
-- `SEARCH_REVALIDATION_CACHE_TTL_MS=300000` TTL del cache SWR de busqueda general (misma configuracion), en milisegundos
+- `SEARCH_REVALIDATION_CACHE_TTL_MS=1800000` TTL del cache SWR de busqueda general (misma configuracion), en milisegundos
 - `SEARCH_COMPLETED_SESSION_TTL_MS=14400000` TTL idle para jobs completados y redirects cacheados, en milisegundos
 - `FLY_DESK_SEARCH_WORKER_PROCESSES=0` desactiva los procesos hijos para busquedas de proveedor; por defecto quedan activos para que una busqueda pesada no bloquee el servidor web ni otras pestañas
 - `FLY_DESK_BACKGROUND_SEARCH_START_DELAY_MS=0` delay antes de iniciar la consulta live en segundo plano

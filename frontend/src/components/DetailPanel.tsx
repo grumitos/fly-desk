@@ -31,6 +31,10 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
   const activePathFeedback = pathFeedback && pathFeedback.offerId === offer?.id ? pathFeedback.message : null
   const loading = Boolean(quoteKey && loadingKey === quoteKey)
   const canQuote = Boolean(offer && request && quoteKey)
+  const purchasePathActionLabel = purchasePath?.type === "search-redirect" ? "Buscar" : "Abrir"
+  const purchasePathActionTitle = purchasePath?.type === "search-redirect"
+    ? "Abre la busqueda equivalente del proveedor; la disponibilidad puede variar."
+    : "Abrir proveedor"
 
   const handleQuotation = async () => {
     if (!offer || !request || !quoteKey) return
@@ -230,9 +234,9 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
         )}
         <div className="flex items-center justify-end gap-1.5">
           {purchasePath && (
-            <Button size="sm" variant="secondary" onClick={handlePurchasePath}>
+            <Button size="sm" variant="secondary" title={purchasePathActionTitle} onClick={handlePurchasePath}>
               <AppIcon name="externalLink" />
-              Abrir
+              {purchasePathActionLabel}
             </Button>
           )}
           <Button size="sm" onClick={handleQuotation} disabled={loading || !canQuote}>

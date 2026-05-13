@@ -169,7 +169,7 @@ const RESULTS_LAYOUT_COLUMNS = [
   "links",
 ] as const satisfies readonly ResultsLayoutColumnKey[];
 
-const SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS = COMPLETED_SEARCH_SESSION_TTL_MS;
+const SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS = 30 * 60 * 1000;
 const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
   const raw = Number(process.env.SEARCH_REVALIDATION_CACHE_TTL_MS ?? SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS);
   return Number.isFinite(raw) && raw >= 0

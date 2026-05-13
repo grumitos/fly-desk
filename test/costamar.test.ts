@@ -2505,6 +2505,249 @@ test("searchLocalCostamarExact applies Costamar markups using the provider paylo
   }
 });
 
+test("searchLocalCostamarExact expands Costamar flight alternatives within a recommendation", async () => {
+  const previousFetch = global.fetch;
+  const request = {
+    providerId: "costamar",
+    tripType: "round-trip",
+    searchMode: "exact",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "MAD",
+        departureDate: "2026-06-01",
+        returnDate: "2026-06-08",
+      },
+    ],
+    passengers: {
+      adults: 1,
+      children: 0,
+      infants: 0,
+    },
+    cabin: "ECONOMY",
+    filters: {},
+    coverageMode: "core",
+    redirectMode: "best-effort",
+    currencyCode: "USD",
+    locale: "es-PE",
+    market: "PE",
+  } satisfies SearchRequest;
+
+  const flight = (
+    origin: string,
+    destination: string,
+    departureDateTime: string,
+    arrivalDateTime: string,
+    flightNumber: string,
+  ) => ({
+    departureAirport: { code: origin },
+    arrivalAirport: { code: destination },
+    departureDateTime,
+    arrivalDateTime,
+    elapsedTime: "0200",
+    flightNumber,
+    marketingAirline: { code: "AF", name: "Air France" },
+    operatingAirline: { code: "AF", name: "Air France" },
+    bookingClass: { code: "N" },
+    fareBasisCode: "NFLEX",
+    cabinType: "Y",
+  });
+
+  global.fetch = (async (input) => {
+    const url = String(input);
+
+    if (url === "https://costamar.com.pe/vuelos/api/engines/9990002223") {
+      return new Response(
+        JSON.stringify({
+          code: "9990002223",
+          profile: {
+            currencyCode: "USD",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (url === "https://costamar.com.pe/vuelos/api/flights/search") {
+      return new Response(
+        JSON.stringify({
+          status: 200,
+          data: [
+            {
+              id: "rec-options",
+              itinerary: [
+                {
+                  flights: [
+                    flight("LIM", "MAD", "2026-06-01T08:00:00-05:00", "2026-06-01T16:00:00+02:00", "100"),
+                    flight("LIM", "MAD", "2026-06-01T10:00:00-05:00", "2026-06-01T18:00:00+02:00", "102"),
+                  ],
+                },
+                {
+                  flights: [
+                    flight("MAD", "LIM", "2026-06-08T09:00:00+02:00", "2026-06-08T15:00:00-05:00", "101"),
+                    flight("MAD", "LIM", "2026-06-08T11:00:00+02:00", "2026-06-08T17:00:00-05:00", "103"),
+                  ],
+                },
+              ],
+              pricing: {
+                base: "700.00",
+                taxes: "250.00",
+                total: "950.00",
+                validatingAirline: "AF",
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await searchLocalCostamarExact(
+      request,
+      {
+        costamar: {
+          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+          terminalId: "9990002223",
+          token: "secret-token",
+          lang: "es",
+        },
+      },
+    );
+
+    assert.equal(result.offers.length, 4);
+    assert.deepEqual(
+      result.offers.map((offer) => [
+        offer.itineraries[0]?.segments[0]?.flightNumber,
+        offer.itineraries[1]?.segments[0]?.flightNumber,
+      ]).sort(),
+      [
+        ["100", "101"],
+        ["100", "103"],
+        ["102", "101"],
+        ["102", "103"],
+      ],
+    );
+  } finally {
+    global.fetch = previousFetch;
+  }
+});
+
+test("searchLocalCostamarExact expands one-way Costamar flight alternatives", async () => {
+  const previousFetch = global.fetch;
+  const request = {
+    providerId: "costamar",
+    tripType: "one-way",
+    searchMode: "exact",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "MAD",
+        departureDate: "2026-06-01",
+      },
+    ],
+    passengers: {
+      adults: 1,
+      children: 0,
+      infants: 0,
+    },
+    cabin: "ECONOMY",
+    filters: {},
+    coverageMode: "core",
+    redirectMode: "best-effort",
+    currencyCode: "USD",
+    locale: "es-PE",
+    market: "PE",
+  } satisfies SearchRequest;
+
+  const flight = (flightNumber: string) => ({
+    departureAirport: { code: "LIM" },
+    arrivalAirport: { code: "MAD" },
+    departureDateTime: `2026-06-01T${flightNumber === "100" ? "08" : "10"}:00:00-05:00`,
+    arrivalDateTime: `2026-06-01T${flightNumber === "100" ? "16" : "18"}:00:00+02:00`,
+    elapsedTime: "0200",
+    flightNumber,
+    marketingAirline: { code: "AF", name: "Air France" },
+    operatingAirline: { code: "AF", name: "Air France" },
+    bookingClass: { code: "N" },
+    fareBasisCode: "NFLEX",
+    cabinType: "Y",
+  });
+
+  global.fetch = (async (input) => {
+    const url = String(input);
+
+    if (url === "https://costamar.com.pe/vuelos/api/engines/9990002224") {
+      return new Response(
+        JSON.stringify({
+          code: "9990002224",
+          profile: {
+            currencyCode: "USD",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (url === "https://costamar.com.pe/vuelos/api/flights/search") {
+      return new Response(
+        JSON.stringify({
+          status: 200,
+          data: [
+            {
+              id: "rec-one-way-options",
+              itinerary: [
+                {
+                  flights: [
+                    flight("100"),
+                    flight("102"),
+                  ],
+                },
+              ],
+              pricing: {
+                base: "700.00",
+                taxes: "250.00",
+                total: "950.00",
+                validatingAirline: "AF",
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await searchLocalCostamarExact(
+      request,
+      {
+        costamar: {
+          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+          terminalId: "9990002224",
+          token: "secret-token",
+          lang: "es",
+        },
+      },
+    );
+
+    assert.equal(result.offers.length, 2);
+    assert.deepEqual(
+      result.offers.map((offer) => offer.itineraries[0]?.segments[0]?.flightNumber).sort(),
+      ["100", "102"],
+    );
+  } finally {
+    global.fetch = previousFetch;
+  }
+});
+
 test("createLocalCostamarMatrixDraft leaves only useful stay combinations active", () => {
   const draft = createLocalCostamarMatrixDraft(buildRequest(), {
     exactProvider: "costamar",
