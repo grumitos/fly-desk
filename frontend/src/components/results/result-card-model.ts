@@ -1,5 +1,5 @@
 import type { CanonicalOffer, Itinerary, Segment } from "@/types"
-import { normalizeAirlineDisplayName } from "@/lib/airline-names"
+import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
 import { providerDisplayName } from "@/lib/providers"
 
 type LayoverItem = {
@@ -93,21 +93,27 @@ function carrierDisplayParts(offer: CanonicalOffer) {
       ?? offer.airline
       ?? "",
   ).trim()
-  const rawName = [
+  const rawNames = [
     segment?.marketingCarrierName,
     offer.airline,
     segment?.operatingCarrierName,
-  ].find((value) => typeof value === "string" && value.trim())
-  const normalizedName = normalizeAirlineDisplayName(rawName)
-  const name = normalizedName && normalizedName.toUpperCase() !== code.toUpperCase()
-    ? normalizedName
-    : ""
+  ]
+  const rawName = rawNames.find((value) => typeof value === "string" && value.trim())
+  const name = resolveAirlineDisplayName({
+    names: rawNames,
+    codes: [
+      code,
+      offer.validatingCarrier,
+      segment?.marketingCarrier,
+      segment?.operatingCarrier,
+    ],
+  })
   const operatedBy = operatingCopy(offer, new Set([code, name, rawName].map((value) => String(value ?? "").trim().toUpperCase())))
 
   return {
     code,
     name,
-    display: name || code || "Aerolínea",
+    display: name || "Aerolínea",
     operatedBy,
   }
 }

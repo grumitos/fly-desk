@@ -9,7 +9,7 @@ import type {
   SearchJobResponse,
   SortMode,
 } from "@/types"
-import { normalizeAirlineDisplayName } from "@/lib/airline-names"
+import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
 import { filterLocationSuggestions, normalizeLocationSearchText, normalizeLocationSuggestions } from "@/lib/locations"
 
 const API_BASE = ""
@@ -599,15 +599,20 @@ function offerAirlineCode(offer: Record<string, unknown>, segment?: Record<strin
 
 function offerAirlineDisplayName(offer: Record<string, unknown>, segment?: Record<string, unknown>): string {
   const code = offerAirlineCode(offer, segment)
-  const rawName = [
-    segment?.marketingCarrierName,
-    offer.airline,
-    segment?.operatingCarrierName,
-  ].find((value) => typeof value === "string" && value.trim())
-  const name = normalizeAirlineDisplayName(rawName)
-  return name && name.toUpperCase() !== code.toUpperCase()
-    ? name
-    : code
+  return resolveAirlineDisplayName({
+    names: [
+      segment?.marketingCarrierName,
+      offer.airline,
+      segment?.operatingCarrierName,
+    ],
+    codes: [
+      code,
+      offer.validatingCarrier,
+      segment?.marketingCarrier,
+      segment?.operatingCarrier,
+    ],
+    fallback: code,
+  })
 }
 
 function durationLabel(minutes: unknown): string {

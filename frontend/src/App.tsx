@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useSearch } from "@/hooks/useSearch"
-import { normalizeAirlineDisplayName } from "@/lib/airline-names"
+import { resolveAirlineDisplayName } from "@/lib/airline-names"
 import {
   readSharedSearchFromText,
   readSharedSearchFromUrl,
@@ -596,22 +596,26 @@ function airlineFilterLabel(offer: CanonicalOffer): string {
   const segments = (offer.itineraries ?? []).flatMap((itinerary) => itinerary.segments ?? [])
   const segment = airlineNameSegmentForCode(segments, codeToken)
     ?? segments.find((candidate) => candidate.marketingCarrierName || candidate.operatingCarrierName)
-  const rawName = [
-    segment?.marketingCarrier && airlineToken(segment.marketingCarrier) === codeToken
-      ? segment.marketingCarrierName
-      : undefined,
-    segment?.operatingCarrier && airlineToken(segment.operatingCarrier) === codeToken
-      ? segment.operatingCarrierName
-      : undefined,
-    segment?.marketingCarrierName,
-    offer.airline,
-    segment?.operatingCarrierName,
-  ].find((value) => typeof value === "string" && value.trim())
-  const normalizedName = normalizeAirlineDisplayName(rawName)
-
-  return normalizedName && normalizedName.toUpperCase() !== codeToken
-    ? normalizedName
-    : code || normalizedName || "Aerolínea"
+  return resolveAirlineDisplayName({
+    names: [
+      segment?.marketingCarrier && airlineToken(segment.marketingCarrier) === codeToken
+        ? segment.marketingCarrierName
+        : undefined,
+      segment?.operatingCarrier && airlineToken(segment.operatingCarrier) === codeToken
+        ? segment.operatingCarrierName
+        : undefined,
+      segment?.marketingCarrierName,
+      offer.airline,
+      segment?.operatingCarrierName,
+    ],
+    codes: [
+      code,
+      offer.validatingCarrier,
+      segment?.marketingCarrier,
+      segment?.operatingCarrier,
+    ],
+    fallback: "Aerolínea",
+  })
 }
 
 function airlineNameSegmentForCode(segments: Segment[], codeToken: string): Segment | undefined {

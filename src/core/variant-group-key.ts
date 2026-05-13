@@ -42,6 +42,8 @@ function timeOfIso(iso: unknown): string {
 
 function segmentCarrierMatchToken(segment: Segment): string {
   return airlineNameMatchKey(segment.marketingCarrierName || segment.operatingCarrierName)
+    || airlineNameMatchKey(segment.marketingCarrier)
+    || airlineNameMatchKey(segment.operatingCarrier)
     || normalizeToken(segment.marketingCarrier);
 }
 
@@ -52,7 +54,8 @@ function carrierMatchToken(input: VariantGroupKeyInput): string {
 
   return firstNamedSegment
     ? segmentCarrierMatchToken(firstNamedSegment)
-    : normalizeToken(input.mainCarrier || input.validatingCarrier);
+    : airlineNameMatchKey(input.mainCarrier || input.validatingCarrier)
+      || normalizeToken(input.mainCarrier || input.validatingCarrier);
 }
 
 function normalizedFlightNumber(segment: Segment): string {

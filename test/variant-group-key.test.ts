@@ -143,6 +143,45 @@ test("flexible variant keys match normalized airline names across carrier code v
   assert.equal(first, second);
 });
 
+test("flexible variant keys match centralized carrier code aliases without names", () => {
+  const withCarrier = (carrier: string): Itinerary[] =>
+    buildItineraries("2026-05-10", "2026-05-17").map((itinerary) => ({
+      ...itinerary,
+      segments: itinerary.segments.map((segment) => ({
+        ...segment,
+        marketingCarrier: carrier,
+        marketingCarrierName: undefined,
+        flightNumber: `${carrier}${segment.flightNumber.replace(/^LA/, "")}`,
+      })),
+    }));
+
+  const first = buildFlexibleVariantGroupKey({
+    mainCarrier: "JA",
+    validatingCarrier: "JA",
+    totalAmount: 512,
+    currencyCode: "USD",
+    itineraries: withCarrier("JA"),
+    baggage: {
+      carryOnIncluded: true,
+      checkedIncluded: true,
+    },
+  });
+
+  const second = buildFlexibleVariantGroupKey({
+    mainCarrier: "JZ",
+    validatingCarrier: "JZ",
+    totalAmount: 512,
+    currencyCode: "USD",
+    itineraries: withCarrier("JZ"),
+    baggage: {
+      carryOnIncluded: true,
+      checkedIncluded: true,
+    },
+  });
+
+  assert.equal(first, second);
+});
+
 test("flexible variant keys split direct flights and stopover flights", () => {
   const direct = buildFlexibleVariantGroupKey({
     mainCarrier: "LA",

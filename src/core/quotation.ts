@@ -1,18 +1,6 @@
 import { CanonicalOffer, Itinerary, SearchRequest, Segment } from "./types";
 import { cityNameForIataCode, normalizeIataCode, stripAllAirportsLabel } from "./location-display";
-import { normalizeAirlineDisplayName } from "./airline-names";
-
-const CARRIER_NAME_FALLBACKS: Record<string, string> = {
-  AC: "Air Canada",
-  AR: "Aerolíneas Argentinas",
-  AV: "Avianca",
-  IB: "Iberia",
-  LA: "LATAM",
-  LP: "LATAM Perú",
-  OB: "Boliviana de Aviación",
-  PU: "Plus Ultra",
-  UX: "Air Europa",
-};
+import { resolveAirlineDisplayName } from "./airline-names";
 
 export interface QuotationRenderOptions {
   timeZone?: string;
@@ -138,14 +126,6 @@ function titleCase(value?: string): string {
     .join(" ");
 }
 
-function normalizedComparisonText(value?: string): string {
-  return String(value ?? "")
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .trim();
-}
-
 function firstSegment(itinerary?: Itinerary): Segment | undefined {
   return itinerary?.segments?.[0];
 }
@@ -156,19 +136,12 @@ function lastSegment(itinerary?: Itinerary): Segment | undefined {
 }
 
 function carrierDisplayNameFromSegment(segment?: Segment): string {
-  const carrierCode = segment?.marketingCarrier ?? segment?.operatingCarrier ?? "";
-  const fallback = CARRIER_NAME_FALLBACKS[carrierCode] ?? (carrierCode || "Aerolínea por confirmar");
   const rawName = segment?.marketingCarrierName || segment?.operatingCarrierName;
-  if (rawName) {
-    const titled = normalizeAirlineDisplayName(titleCase(rawName));
-    if (fallback && normalizedComparisonText(titled) === normalizedComparisonText(fallback)) {
-      return fallback;
-    }
-
-    return titled;
-  }
-
-  return fallback;
+  return resolveAirlineDisplayName({
+    names: rawName ? [titleCase(rawName)] : [],
+    codes: [segment?.marketingCarrier, segment?.operatingCarrier],
+    fallback: "Aerolínea por confirmar",
+  });
 }
 
 function collectCarrierDisplayNames(offer: CanonicalOffer): string[] {
@@ -185,8 +158,10 @@ function collectCarrierDisplayNames(offer: CanonicalOffer): string[] {
     });
   });
 
-  const fallbackCode = offer.mainCarrier ?? offer.validatingCarrier ?? "";
-  const fallbackName = CARRIER_NAME_FALLBACKS[fallbackCode] ?? (fallbackCode || "Aerolínea por confirmar");
+  const fallbackName = resolveAirlineDisplayName({
+    codes: [offer.mainCarrier, offer.validatingCarrier],
+    fallback: "Aerolínea por confirmar",
+  });
   if (names.length === 0 && fallbackName && !seen.has(fallbackName)) {
     names.push(fallbackName);
   }
