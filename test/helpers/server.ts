@@ -151,7 +151,12 @@ async function listenOnExternalBunServer(): Promise<ServerHandle> {
 }
 
 async function listenOnTestServer(): Promise<ServerHandle> {
-  return process.env.FLY_DESK_TEST_SERVER_MODE === "in-process"
+  const configuredMode = process.env.FLY_DESK_TEST_SERVER_MODE?.trim();
+  const shouldUseInProcess = configuredMode
+    ? configuredMode === "in-process"
+    : Boolean((process.versions as Record<string, string | undefined>).bun);
+
+  return shouldUseInProcess
     ? listenOnInProcessBunServer()
     : listenOnExternalBunServer();
 }
