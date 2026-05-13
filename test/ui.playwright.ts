@@ -5,21 +5,15 @@ import { openDesktop, withDesktopPage } from "./helpers/ui.ts";
 import { buildOffer } from "./helpers/ui-fixtures.ts";
 
 async function waitForPressed(button: Locator): Promise<void> {
-  await button.evaluate((element) => new Promise<void>((resolve) => {
-    const finish = () => requestAnimationFrame(() => resolve());
-    if (element.getAttribute("aria-pressed") === "true") {
-      finish();
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (await button.getAttribute("aria-pressed") === "true") {
       return;
     }
 
-    const observer = new MutationObserver(() => {
-      if (element.getAttribute("aria-pressed") === "true") {
-        observer.disconnect();
-        finish();
-      }
-    });
-    observer.observe(element, { attributeFilter: ["aria-pressed"], attributes: true });
-  }));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  assert.equal(await button.getAttribute("aria-pressed"), "true");
 }
 
 async function clickSegment(button: Locator): Promise<void> {
@@ -28,35 +22,38 @@ async function clickSegment(button: Locator): Promise<void> {
 }
 
 async function waitForStableIndicator(indicator: Locator): Promise<void> {
-  await indicator.evaluate((element) => new Promise<void>((resolve) => {
-    let previous: { width: number; x: number } | undefined;
-    let stableFrames = 0;
+  let previous: { width: number; x: number } | undefined;
+  let stableFrames = 0;
 
-    const sample = () => {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const current = await indicator.evaluate((element) => {
       const style = getComputedStyle(element);
       const matrix = new DOMMatrixReadOnly(style.transform);
-      const current = {
+      return {
         width: Number.parseFloat(style.width),
         x: matrix.m41,
       };
+    });
 
-      stableFrames = previous
-        && Math.abs(previous.width - current.width) <= 0.01
-        && Math.abs(previous.x - current.x) <= 0.01
-        ? stableFrames + 1
-        : 0;
-      previous = current;
+    if (!Number.isFinite(current.width) || !Number.isFinite(current.x)) {
+      throw new Error(`Segmented indicator has invalid geometry: ${JSON.stringify(current)}`);
+    }
 
-      if (stableFrames >= 2) {
-        resolve();
-        return;
-      }
+    stableFrames = previous
+      && Math.abs(previous.width - current.width) <= 0.01
+      && Math.abs(previous.x - current.x) <= 0.01
+      ? stableFrames + 1
+      : 0;
+    previous = current;
 
-      requestAnimationFrame(sample);
-    };
+    if (stableFrames >= 2) {
+      return;
+    }
 
-    requestAnimationFrame(sample);
-  }));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  throw new Error("Segmented indicator did not settle before the timeout.");
 }
 
 async function waitForLocationFieldsClosed(
@@ -73,6 +70,13 @@ async function waitForLocationFieldsClosed(
       && destination.getAttribute("aria-expanded") === "false"
       && document.querySelectorAll('[role="listbox"]').length === 0;
   }, expected);
+}
+
+async function waitForFontsReady(page: Page): Promise<void> {
+  await page.waitForFunction(() => document.fonts.status === "loaded", null, {
+    polling: 100,
+    timeout: 5000,
+  }).catch(() => undefined);
 }
 
 test("current React shell exposes the primary search controls", async () => {
@@ -262,7 +266,7 @@ test("segmented hover keeps the shared indicator stable and theme hover inverts 
         ?.querySelector<HTMLElement>(".fd-segmented-indicator");
       return indicator && getComputedStyle(indicator).opacity === "1";
     });
-    await page.evaluate(() => document.fonts.ready);
+    await waitForFontsReady(page);
     await waitForPressed(page.getByRole("button", { name: "Exacto" }));
     await waitForStableIndicator(modeIndicator);
 
