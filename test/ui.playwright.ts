@@ -1900,6 +1900,112 @@ test("result filters refine loaded offers without restarting the search", async 
   }, { autoOpen: false });
 });
 
+test("empty local filter results do not blame a provider that already reported no flights", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let searchRequests = 0;
+    const offers = [
+      buildOffer({
+        id: "costamar-carry-on-only",
+        origin: "TPP",
+        destination: "LIM",
+        mainCarrier: "H2",
+        validatingCarrier: "H2",
+        airline: "Sky Airline",
+        baggage: {
+          carryOnIncluded: true,
+          checkedIncluded: false,
+          description: "Solo equipaje de mano",
+        },
+        purchasePaths: [
+          {
+            provider: "costamar",
+            type: "search-redirect",
+            label: "Costamar",
+            url: "https://example.test/costamar",
+          },
+        ],
+        itineraries: [
+          {
+            direction: "outbound",
+            durationMinutes: 80,
+            stops: 0,
+            segments: [
+              {
+                flightNumber: "H2 123",
+                marketingCarrier: "H2",
+                marketingCarrierName: "Sky Airline",
+                origin: "TPP",
+                destination: "LIM",
+                departureAt: "2026-05-13T14:00:00Z",
+                arrivalAt: "2026-05-13T15:20:00Z",
+              },
+            ],
+          },
+        ],
+      }),
+    ];
+
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      searchRequests += 1;
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "filtered-empty-provider-warning",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers,
+          allOffers: offers,
+          searchMeta: {
+            requestedAt: "2026-05-13T18:16:23.838Z",
+            completedAt: "2026-05-13T18:16:23.838Z",
+            providersUsed: ["agil-local", "costamar"],
+            warnings: ["Agil returned no offers for this search."],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: ["Agil returned no offers for this search."],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=TPP&destination=LIM&departure=2026-05-13&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+    await page.getByTestId("result-card").first().waitFor();
+    await page.getByText("Agilsmart sin vuelos").waitFor();
+
+    await page.getByRole("switch", { name: "Incluye equipaje" }).click();
+    await page.getByText("No hay búsquedas que coincidan").waitFor();
+
+    assert.equal(await page.getByTestId("result-card").count(), 0);
+    assert.equal(await page.getByText("Agilsmart no devolvió vuelos").count(), 0);
+    assert.equal(await page.getByText("Agilsmart sin vuelos").count(), 0);
+    assert.equal(await page.getByText("1 aviso").count(), 1);
+    assert.equal(searchRequests, 1);
+  }, { autoOpen: false });
+});
+
 test("empty exact results identify providers that reported no flights", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.route("**/api/locations**", async (route) => {
