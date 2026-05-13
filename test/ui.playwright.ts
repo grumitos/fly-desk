@@ -1330,7 +1330,8 @@ test("paste accepts desktop search config JSON and sends the same exact backend 
     assert.equal(request.passengers?.adults, 1);
     assert.equal(request.filters?.maxStops, 1);
     await page.getByText("Cache revalidando").waitFor();
-    await page.getByText(/LIM -> BIO · 1 oferta/).waitFor();
+    await page.getByText("1 vuelo").waitFor();
+    await page.getByText("LIM - BIO").waitFor();
   }, { autoOpen: false });
 });
 

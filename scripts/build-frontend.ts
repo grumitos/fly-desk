@@ -2,8 +2,10 @@ import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import tailwind from "bun-plugin-tailwind";
 
-const rootDir = process.cwd();
-const frontendDir = resolve(rootDir, "frontend");
+const cwd = process.cwd();
+const isFrontendWorkspace =
+  existsSync(join(cwd, "index.html")) && existsSync(join(cwd, "src", "main.tsx"));
+const frontendDir = isFrontendWorkspace ? cwd : resolve(cwd, "frontend");
 const distDir = join(frontendDir, "dist");
 const publicDir = join(frontendDir, "public");
 const templatePath = join(frontendDir, "index.html");

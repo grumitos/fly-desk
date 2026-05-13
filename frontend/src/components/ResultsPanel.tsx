@@ -101,9 +101,9 @@ function ResultsPanelBase({
   const summaryLabel = isMigration
     ? `${results?.migrationMonths?.length ?? 8} meses · ${offers.length} con tarifa${pendingMigrationMonths ? ` · ${pendingMigrationMonths} buscando` : ""}`
     : resultsSummaryLabel(offers.length, loading, Boolean(results))
-  const statusItems: ResultStatusItem[] = [
+  const maybeStatusItems: Array<ResultStatusItem | null> = [
     isRevalidatingCachedSearch
-      ? { key: "cache", label: "Cache en revision", icon: <AppIcon name="clock" className="h-3.5 w-3.5" /> }
+      ? { key: "cache", label: "Cache revalidando", icon: <AppIcon name="clock" className="h-3.5 w-3.5" /> }
       : null,
     loading
       ? { key: "loading", label: "Buscando", icon: <AppIcon name="loading" spin className="h-3.5 w-3.5" /> }
@@ -123,7 +123,8 @@ function ResultsPanelBase({
         tone: "warning",
       }
       : null,
-  ].filter((item): item is ResultStatusItem => Boolean(item))
+  ]
+  const statusItems = maybeStatusItems.filter((item): item is ResultStatusItem => Boolean(item))
   const layoutEditor = useResultsLayoutEditor()
   const savedResultsLayout = useSavedResultsLayout(!layoutEditor.enabled)
   const activeResultsLayout = layoutEditor.enabled

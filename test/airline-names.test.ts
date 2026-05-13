@@ -48,6 +48,11 @@ test("normalizeAirlineDisplayName centralizes known carrier code display names",
   assert.equal(normalizeAirlineDisplayName("H2"), "Sky");
 });
 
+test("normalizeAirlineDisplayName centralizes known carrier name variants", () => {
+  assert.equal(normalizeAirlineDisplayName("Plus Ultra Lineas Aereas"), "Plus Ultra");
+  assert.equal(normalizeAirlineDisplayName("Delta Air Lines"), "Delta");
+});
+
 test("resolveAirlineDisplayName prefers normalized names and falls back to normalized codes", () => {
   assert.equal(resolveAirlineDisplayName({
     names: ["LAN Peru"],
