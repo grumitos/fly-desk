@@ -68,7 +68,7 @@ function formatCommercialTime(iso?: string, timeZone?: string): string {
   return hour && minute && dayPeriod ? `${hour}:${minute} ${dayPeriod}` : iso;
 }
 
-function formatCommercialSchedule(iso?: string, timeZone?: string): string {
+function formatCommercialEndpointSchedule(iso?: string, timeZone?: string): string {
   if (!iso) {
     return "Fecha por confirmar";
   }
@@ -77,7 +77,12 @@ function formatCommercialSchedule(iso?: string, timeZone?: string): string {
     return formatCommercialDate(iso, timeZone);
   }
 
-  return `${formatCommercialDate(iso, timeZone)} a las ${formatCommercialTime(iso, timeZone)}`;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+
+  return `${formatCommercialDate(iso, timeZone)} · ${formatCommercialTime(iso, timeZone)}`;
 }
 
 function isDateOnly(value: string): boolean {
@@ -381,25 +386,25 @@ function buildRestrictionsSummary(): string[] {
   ];
 }
 
-function buildCommercialScheduleLine(
+function buildCommercialScheduleLines(
   label: string,
   itinerary: Itinerary | undefined,
   options: QuotationRenderOptions,
-): string {
+): string[] {
   const departureSegment = firstSegment(itinerary);
   const arrivalSegment = lastSegment(itinerary);
   const originCode = normalizeIataCode(departureSegment?.origin);
   const destinationCode = normalizeIataCode(arrivalSegment?.destination);
-  const departureSchedule = formatCommercialSchedule(departureSegment?.departureAt, options.timeZone);
+  const departureSchedule = formatCommercialEndpointSchedule(departureSegment?.departureAt, options.timeZone);
   const departureText = originCode ? `${originCode} · ${departureSchedule}` : departureSchedule;
+  const lines = [label, departureText];
 
   if (arrivalSegment?.arrivalAt) {
-    const arrivalSchedule = formatCommercialSchedule(arrivalSegment.arrivalAt, options.timeZone);
-    const arrivalText = destinationCode ? `${destinationCode} · ${arrivalSchedule}` : arrivalSchedule;
-    return `${label}: ${departureText} → ${arrivalText}`;
+    const arrivalSchedule = formatCommercialEndpointSchedule(arrivalSegment.arrivalAt, options.timeZone);
+    lines.push(destinationCode ? `${destinationCode} · ${arrivalSchedule}` : arrivalSchedule);
   }
 
-  return `${label}: ${departureText}`;
+  return lines;
 }
 
 function itineraryStopCodes(itinerary: Itinerary | undefined): string[] {
@@ -488,6 +493,10 @@ function buildCommercialPriceLines(
   return lines;
 }
 
+function stripFinalLinePeriod(line: string): string {
+  return line.replace(/\.$/, "");
+}
+
 function buildCommercialQuotationText(
   offer: CanonicalOffer,
   request: SearchRequest,
@@ -506,8 +515,9 @@ function buildCommercialQuotationText(
     "",
     `✈️ Ruta: ${routeSummary(offer, request)}`,
     `✈️ ${carrierNames.length > 1 ? "Aerolíneas" : "Aerolínea"}: ${carrierDisplayName(offer)}`,
-    buildCommercialScheduleLine("🛫 Horario ida", outbound, options),
   ].filter((line): line is string => Boolean(line));
+
+  lines.push(...buildCommercialScheduleLines("🛫 IDA", outbound, options));
 
   const outboundStopsLine = buildCommercialStopsLine("🔁 Escalas ida", outbound);
   if (outboundStopsLine) {
@@ -515,7 +525,8 @@ function buildCommercialQuotationText(
   }
 
   if (inbound) {
-    lines.push(buildCommercialScheduleLine("🛬 Horario retorno", inbound, options));
+    lines.push("");
+    lines.push(...buildCommercialScheduleLines("🛬 RETORNO", inbound, options));
     const inboundStopsLine = buildCommercialStopsLine("🔁 Escalas retorno", inbound);
     if (inboundStopsLine) {
       lines.push(inboundStopsLine);
@@ -539,7 +550,7 @@ function buildCommercialQuotationText(
   lines.push("💵 PRECIO:");
   priceLines.forEach((line) => lines.push(line));
 
-  return lines.join("\n");
+  return lines.map(stripFinalLinePeriod).join("\n");
 }
 
 export function buildCommercialQuotation(

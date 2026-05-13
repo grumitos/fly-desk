@@ -109,14 +109,15 @@ test("commercial quotation lists multiple airlines and moves missing baggage to 
   assert.match(text, /COTIZACIÓN BOLETO AÉREO ✈️/);
   assert.match(text, /✈️ Ruta: Lima \(LIM\) - Buenos Aires \(BUE\) - Lima \(LIM\)/);
   assert.match(text, /✈️ Aerolíneas: Aerolíneas Argentinas \+ LATAM/);
-  assert.match(text, /🛫 Horario ida: LIM · 11 abril a las 02:45 am → AEP · 11 abril a las 09:05 am/);
-  assert.match(text, /🛬 Horario retorno: AEP · 10 mayo a las 10:35 pm → LIM · 11 mayo a las 01:30 am/);
+  assert.match(text, /🛫 IDA\nLIM · 11 abril · 02:45 am\nAEP · 11 abril · 09:05 am/);
+  assert.match(text, /🛬 RETORNO\nAEP · 10 mayo · 10:35 pm\nLIM · 11 mayo · 01:30 am/);
   assert.doesNotMatch(text, /🔁 Escalas ida: Sin escalas/);
   assert.doesNotMatch(text, /🔁 Escalas retorno: Sin escalas/);
   assert.match(text, /✅ INCLUYE\n\* Boleto de ida y vuelta\n\* Equipaje incluido: mochila o artículo personal y maleta de mano/);
   assert.match(text, /🚫 NO INCLUYE\n\* Maleta de bodega/);
-  assert.match(text, /📋 CONDICIONES\n- Reembolsos no permitidos después de emitir\.\n\* Cambios de nombre no permitidos\.\n\* Cambios de fecha y ruta sujetos a condiciones de la tarifa\./);
-  assert.match(text, /💵 PRECIO:\nUS\$ 1,799 por adulto\.\nS\/ 6,329 aprox\. por adulto\./);
+  assert.match(text, /📋 CONDICIONES\n- Reembolsos no permitidos después de emitir\n\* Cambios de nombre no permitidos\n\* Cambios de fecha y ruta sujetos a condiciones de la tarifa/);
+  assert.match(text, /💵 PRECIO:\nUS\$ 1,799 por adulto\nS\/ 6,329 aprox\. por adulto/);
+  assert.deepEqual(text.split("\n").filter((line) => line.endsWith(".")), []);
   assert.doesNotMatch(text, /Sin Maleta Facturada/);
   assert.doesNotMatch(text, /DETALLE TECNICO/);
   assert.doesNotMatch(text, /\[Aquí no se coloca nada de momento, el agente decide\]/);
@@ -250,10 +251,10 @@ test("commercial quotation includes layover cities and checked baggage weight wh
     timeZone: "UTC",
   });
 
-  assert.match(text, /🛫 Horario ida: LIM · 20 mayo a las 08:00 pm → BIO · 21 mayo a las 11:00 am/);
+  assert.match(text, /🛫 IDA\nLIM · 20 mayo · 08:00 pm\nBIO · 21 mayo · 11:00 am/);
   assert.match(text, /🔁 Escalas ida: 1 escala en MAD/);
   assert.match(text, /Equipaje incluido: mochila o artículo personal, maleta de mano y 1 maleta de bodega de 23kg/);
-  assert.match(text, /💵 PRECIO:\nUS\$ 512 por adulto\./);
+  assert.match(text, /💵 PRECIO:\nUS\$ 512 por adulto/);
 });
 
 test("commercial quotation includes soles under the dollars line when an exchange rate exists", () => {
@@ -262,8 +263,8 @@ test("commercial quotation includes soles under the dollars line when an exchang
     usdToPenRate: 3.61,
   });
 
-  assert.match(text, /US\$ 512 por adulto\./);
-  assert.match(text, /S\/ 1,848\.32 aprox\. por adulto\./);
+  assert.match(text, /US\$ 512 por adulto/);
+  assert.match(text, /S\/ 1,848\.32 aprox\. por adulto/);
 });
 
 test("commercial quotation does not include soles when LIM is not a route endpoint", () => {
@@ -301,7 +302,7 @@ test("commercial quotation does not include soles when LIM is not a route endpoi
     usdToPenRate: 3.61,
   });
 
-  assert.match(text, /US\$ 512 por adulto\./);
+  assert.match(text, /US\$ 512 por adulto/);
   assert.doesNotMatch(text, /S\//);
 });
 
