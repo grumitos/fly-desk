@@ -207,6 +207,68 @@ test("groupExactProviderOffers matches flights with normalized airline names", (
   );
 });
 
+test("groupExactProviderOffers matches centralized carrier code aliases without names", () => {
+  const codedItineraries = (provider: ProviderId, carrier: string): CanonicalOffer["itineraries"] => [
+    {
+      id: `${provider}-outbound`,
+      direction: "outbound",
+      durationMinutes: 86,
+      stops: 0,
+      layoverMinutes: [],
+      segments: [
+        {
+          id: `${provider}-outbound-segment`,
+          marketingCarrier: carrier,
+          flightNumber: `${carrier} 7031`,
+          origin: "LIM",
+          destination: "CUZ",
+          departureAt: "2026-10-01T11:45:00",
+          arrivalAt: "2026-10-01T13:11:00",
+          durationMinutes: 86,
+        },
+      ],
+    },
+    {
+      id: `${provider}-inbound`,
+      direction: "inbound",
+      durationMinutes: 93,
+      stops: 0,
+      layoverMinutes: [],
+      segments: [
+        {
+          id: `${provider}-inbound-segment`,
+          marketingCarrier: carrier,
+          flightNumber: `${carrier} 7032`,
+          origin: "CUZ",
+          destination: "LIM",
+          departureAt: "2026-10-04T12:42:00",
+          arrivalAt: "2026-10-04T14:15:00",
+          durationMinutes: 93,
+        },
+      ],
+    },
+  ];
+
+  const grouped = groupExactProviderOffers([
+    buildOffer("agil-local", {
+      mainCarrier: "JA",
+      validatingCarrier: "JA",
+      origin: "LIM",
+      destination: "CUZ",
+      itineraries: codedItineraries("agil-local", "JA"),
+    }),
+    buildOffer("costamar", {
+      mainCarrier: "JZ",
+      validatingCarrier: "JZ",
+      origin: "LIM",
+      destination: "CUZ",
+      itineraries: codedItineraries("costamar", "JZ"),
+    }),
+  ]);
+
+  assert.equal(grouped.length, 1);
+});
+
 test("materializeSearchResponse returns grouped provider duplicates", () => {
   const response = materializeSearchResponse(
     {

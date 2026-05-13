@@ -17,6 +17,8 @@ function normalizeAmount(value: unknown): string {
 
 function segmentCarrierMatchToken(segment: Segment): string {
   return airlineNameMatchKey(segment.marketingCarrierName || segment.operatingCarrierName)
+    || airlineNameMatchKey(segment.marketingCarrier)
+    || airlineNameMatchKey(segment.operatingCarrier)
     || normalizeToken(segment.marketingCarrier);
 }
 
@@ -26,7 +28,8 @@ function offerCarrierMatchToken(offer: CanonicalOffer): string {
     .find((segment) => segment.marketingCarrierName || segment.operatingCarrierName);
   return firstNamedSegment
     ? segmentCarrierMatchToken(firstNamedSegment)
-    : normalizeToken(offer.mainCarrier || offer.validatingCarrier);
+    : airlineNameMatchKey(offer.mainCarrier || offer.validatingCarrier)
+      || normalizeToken(offer.mainCarrier || offer.validatingCarrier);
 }
 
 function normalizedFlightNumber(segment: Segment): string {
