@@ -1886,6 +1886,54 @@ function parseAgilNumericValue(value: unknown): number | undefined {
   return undefined;
 }
 
+function hasAgilCarryDescription(info: AgilBaggageInfo | undefined): boolean {
+  const descriptions = [
+    info?.cabina?.descripcion1,
+    info?.descripcion1,
+  ];
+
+  return descriptions.some((description) =>
+    typeof description === "string" && /equipaje\s+de\s+mano|maleta\s+de\s+mano|cabina|carry|hand/i.test(description)
+  );
+}
+
+function hasAgilBaggageSignal(info: AgilBaggageInfo | undefined): boolean {
+  return Boolean(
+    info
+      && (
+        info.piezas !== undefined
+        || info.descripcion1
+        || info.cabina
+      ),
+  );
+}
+
+function resolveAgilCarryOnIncluded(info: AgilBaggageInfo | undefined): boolean | undefined {
+  if (!info) {
+    return undefined;
+  }
+
+  const cabinPieces = parseAgilNumericValue(info.cabina?.piezas);
+  if (typeof cabinPieces === "number") {
+    return cabinPieces > 0;
+  }
+
+  if (hasAgilCarryDescription(info)) {
+    return true;
+  }
+
+  return hasAgilBaggageSignal(info) ? false : undefined;
+}
+
+function combineIncludedFlags(values: Array<boolean | undefined>): boolean | undefined {
+  const known = values.filter((value): value is boolean => typeof value === "boolean");
+  if (known.length === 0) {
+    return undefined;
+  }
+
+  return known.every(Boolean);
+}
+
 function segmentCarrierCode(flight: AgilFlightSegment, fallbackCarrier?: string): string {
   return flight.marketingAirline?.code
     ?? flight.operatingAirline?.code
@@ -1962,30 +2010,29 @@ function normalizeJourneyCandidates(
 
 function buildBaggageSummary(...infos: Array<AgilBaggageInfo | undefined>): BaggageSummary | undefined {
   const checkedBags = minimumNumber(infos.map((info) => parseAgilNumericValue(info?.piezas)));
-  const cabinPieces = minimumNumber(infos.map((info) => parseAgilNumericValue(info?.cabina?.piezas)));
-  const hasCarryDescription = infos.some((info) => {
-    const description = info?.cabina?.descripcion1 ?? info?.descripcion1;
-    return typeof description === "string" && /equipaje\s+de\s+mano|maleta\s+de\s+mano|cabina|carry|hand/i.test(description);
-  });
+  const carryOnIncluded = combineIncludedFlags(infos.map(resolveAgilCarryOnIncluded));
 
-  if (checkedBags === undefined && cabinPieces === undefined && !hasCarryDescription) {
+  if (checkedBags === undefined && carryOnIncluded === undefined && !infos.some(hasAgilBaggageSignal)) {
     return undefined;
   }
 
-  const carryOnIncluded = typeof cabinPieces === "number"
-    ? cabinPieces > 0
-    : hasCarryDescription
-      ? true
-      : undefined;
   const checkedIncluded = typeof checkedBags === "number" ? checkedBags > 0 : undefined;
 
   let description = "";
-  if (checkedIncluded) {
+  if (carryOnIncluded && checkedIncluded) {
     description = checkedBags === 1
       ? "Equipaje de mano y 1 maleta facturada"
       : `Equipaje de mano y ${checkedBags} maletas facturadas`;
   } else if (carryOnIncluded) {
     description = "Equipaje de mano incluido";
+  } else if (checkedIncluded) {
+    description = checkedBags === 1
+      ? "1 maleta facturada"
+      : `${checkedBags} maletas facturadas`;
+  } else if (carryOnIncluded === false && checkedIncluded === false) {
+    description = "Sin equipaje incluido";
+  } else if (carryOnIncluded === false) {
+    description = "Sin equipaje de mano";
   } else if (typeof checkedBags === "number" && checkedBags === 0) {
     description = "Sin maleta facturada";
   }
@@ -2284,10 +2331,7 @@ function computeAgilBreakdownTotal(fareBreakDowns: AgilFareBreakdown[]): number 
     const quantity = Math.max(1, Math.trunc(parseProviderAmount(breakdown.passengerType?.quantity) ?? 1));
     const fareTotal = parseProviderAmount(passengerFare.totalFare)
       ?? ((parseProviderAmount(passengerFare.baseFare) ?? 0) + (parseProviderAmount(passengerFare.taxes) ?? 0));
-    const passengerTotal = fareTotal
-      + (parseProviderAmount(passengerFare.feeNMV) ?? 0)
-      + (parseProviderAmount(passengerFare.feePTA) ?? 0)
-      - (parseProviderAmount(passengerFare.dsctoTaxes) ?? 0);
+    const passengerTotal = fareTotal - (parseProviderAmount(passengerFare.dsctoTaxes) ?? 0);
 
     return passengerTotal > 0
       ? sum + (passengerTotal * quantity)

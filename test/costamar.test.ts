@@ -30,7 +30,7 @@ import {
   resolveCostamarProviderContext,
   resolveUsableCostamarBrandedToken,
 } from "../src/provider-context";
-import type { SearchRequest } from "../src/core/types";
+import type { CanonicalOffer, SearchRequest } from "../src/core/types";
 import { generateTotpCode, generateTotpCodeWithMetadata, totpCanSubmitSafely } from "../src/totp";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -509,7 +509,6 @@ test("keeps Costamar range searches lighter than matrix fan-out by default", () 
   assert.ok(COSTAMAR_CONCURRENCY.matrixCell >= COSTAMAR_CONCURRENCY.matrixMinimum);
   assert.ok(COSTAMAR_CONCURRENCY.rangeSearch >= COSTAMAR_CONCURRENCY.rangeMinimum);
   assert.ok(COSTAMAR_CONCURRENCY.rangeSearch < COSTAMAR_CONCURRENCY.matrixCell);
-  assert.ok(COSTAMAR_CONCURRENCY.markup >= 2);
 });
 
 test("resolveCostamarProviderContext can recover the freshest token from Chrome sessions", () => {
@@ -1423,6 +1422,41 @@ test("mapCostamarRecommendationToOffer keeps checked baggage disabled when Costa
   assert.equal(normalized.offer?.baggage?.checkedBags, undefined);
 });
 
+test("mapCostamarRecommendationToOffer keeps carry-on disabled when Costamar reports zero hand pieces", () => {
+  const recommendation = buildRecommendation();
+  const firstFlight = recommendation.itinerary?.[0]?.flights?.[0];
+  if (!firstFlight) {
+    throw new Error("Test fixture must include at least one flight.");
+  }
+
+  firstFlight.baggage = {
+    description: "BAGG DYN",
+    pieces: "0",
+  };
+  firstFlight.handBaggage = {
+    description: "HAND DYN",
+    pieces: "0",
+  };
+
+  const normalized = mapCostamarRecommendationToOffer(
+    recommendation,
+    buildExactRequest(),
+    {
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: "secret-token",
+      lang: "es",
+    },
+    buildEngine(),
+  );
+
+  assert.ok(normalized.offer);
+  assert.equal(normalized.offer?.baggage?.carryOnIncluded, false);
+  assert.equal(normalized.offer?.baggage?.checkedIncluded, false);
+  assert.equal(normalized.offer?.baggage?.checkedBags, undefined);
+});
+
 test("buildCostamarSearchBody matches the live booking frontend payload shape", () => {
   const request = buildRequest();
   request.searchMode = "exact";
@@ -1709,7 +1743,7 @@ test("mapCostamarRecommendationToOffer parses formatted money strings", () => {
   assert.equal(normalized.offer?.price.taxes?.amount, 301.16);
 });
 
-test("searchLocalCostamarExact does not subtract search discounts twice when applying markups", async () => {
+test("searchLocalCostamarExact keeps the Costamar search total without applying markups", async () => {
   const previousFetch = global.fetch;
   const request = buildExactRequest();
 
@@ -1755,21 +1789,7 @@ test("searchLocalCostamarExact does not subtract search discounts twice when app
     }
 
     if (url === "https://costamar.com.pe/vuelos/api/flights/markups/apply") {
-      return new Response(
-        JSON.stringify({
-          apply: true,
-          markupsApplied: [
-            {
-              amount: {
-                value: "10.00",
-                percentage: false,
-                perBooking: true,
-              },
-            },
-          ],
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
+      throw new Error("Costamar markup endpoint should not be called for displayed search totals.");
     }
 
     throw new Error(`Unexpected fetch url: ${url}`);
@@ -1787,7 +1807,7 @@ test("searchLocalCostamarExact does not subtract search discounts twice when app
     });
 
     assert.equal(result.offers.length, 1);
-    assert.equal(result.offers[0]?.price.total.amount, 960);
+    assert.equal(result.offers[0]?.price.total.amount, 950);
   } finally {
     global.fetch = previousFetch;
   }
@@ -2327,7 +2347,7 @@ test("searchLocalCostamarExact prefers a fresher manual Costamar token on every 
   }
 });
 
-test("searchLocalCostamarExact applies Costamar markups using the provider payload shape", async () => {
+test("searchLocalCostamarExact does not add Costamar markup fees to displayed prices", async () => {
   const previousFetch = global.fetch;
   const request = {
     providerId: "costamar",
@@ -2443,39 +2463,7 @@ test("searchLocalCostamarExact applies Costamar markups using the provider paylo
     }
 
     if (url === "https://costamar.com.pe/vuelos/api/flights/markups/apply") {
-      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
-      assert.equal(body.routeType, "INTERNATIONAL");
-      assert.equal(body.fareType, "PUBLISHED");
-      assert.deepEqual(body.passengersType, ["ADT"]);
-      assert.equal(Array.isArray(body.locations), true);
-      assert.equal(Array.isArray(body.flights), true);
-
-      const flights = body.flights as Array<Record<string, unknown>>;
-      assert.equal(flights.length, 2);
-      assert.deepEqual(flights.map((flight) => flight.refNumber), [0, 1]);
-      assert.deepEqual(
-        flights.map((flight) => (flight.segments as Array<Record<string, unknown>>)[0]?.bookingClass),
-        ["S", "S"],
-      );
-
-      return new Response(
-        JSON.stringify({
-          apply: true,
-          markupsApplied: [
-            {
-              amount: {
-                value: "11.80",
-                percentage: false,
-                appliesToBase: true,
-                perPassenger: false,
-                perBooking: false,
-                passengersType: ["ADT", "CHD", "INF"],
-              },
-            },
-          ],
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
+      throw new Error("Costamar markup endpoint should not be called for displayed search totals.");
     }
 
     throw new Error(`Unexpected fetch url: ${url}`);
@@ -2496,7 +2484,7 @@ test("searchLocalCostamarExact applies Costamar markups using the provider paylo
     );
 
     assert.equal(result.offers.length, 1);
-    assert.equal(result.offers[0]?.price.total.amount, 1036.56);
+    assert.equal(result.offers[0]?.price.total.amount, 1001.16);
     assert.equal(result.offers[0]?.itineraries[0]?.durationMinutes, 226);
     assert.equal(result.offers[0]?.itineraries[1]?.durationMinutes, 219);
     assert.equal(result.warnings.length, 0);
@@ -2505,41 +2493,29 @@ test("searchLocalCostamarExact applies Costamar markups using the provider paylo
   }
 });
 
-test("searchLocalCostamarExact expands Costamar flight alternatives within a recommendation", async () => {
-  const previousFetch = global.fetch;
-  const request = {
-    providerId: "costamar",
-    tripType: "round-trip",
-    searchMode: "exact",
+function buildCostamarAlternativeRequest(tripType: "one-way" | "round-trip"): SearchRequest {
+  return {
+    ...buildExactRequest(),
+    tripType,
     legs: [
       {
         origin: "LIM",
         destination: "MAD",
         departureDate: "2026-06-01",
-        returnDate: "2026-06-08",
+        ...(tripType === "round-trip" ? { returnDate: "2026-06-08" } : {}),
       },
     ],
-    passengers: {
-      adults: 1,
-      children: 0,
-      infants: 0,
-    },
-    cabin: "ECONOMY",
-    filters: {},
-    coverageMode: "core",
-    redirectMode: "best-effort",
-    currencyCode: "USD",
-    locale: "es-PE",
-    market: "PE",
-  } satisfies SearchRequest;
+  };
+}
 
-  const flight = (
-    origin: string,
-    destination: string,
-    departureDateTime: string,
-    arrivalDateTime: string,
-    flightNumber: string,
-  ) => ({
+function buildCostamarAlternativeFlight(
+  origin: string,
+  destination: string,
+  departureDateTime: string,
+  arrivalDateTime: string,
+  flightNumber: string,
+) {
+  return {
     departureAirport: { code: origin },
     arrivalAirport: { code: destination },
     departureDateTime,
@@ -2551,15 +2527,89 @@ test("searchLocalCostamarExact expands Costamar flight alternatives within a rec
     bookingClass: { code: "N" },
     fareBasisCode: "NFLEX",
     cabinType: "Y",
-  });
+  };
+}
+
+function buildCostamarRecommendationWithAlternatives(tripType: "one-way" | "round-trip") {
+  return {
+    id: tripType === "round-trip" ? "rec-options" : "rec-one-way-options",
+    itinerary: [
+      {
+        flights: [
+          buildCostamarAlternativeFlight(
+            "LIM",
+            "MAD",
+            "2026-06-01T08:00:00-05:00",
+            "2026-06-01T16:00:00+02:00",
+            "100",
+          ),
+          buildCostamarAlternativeFlight(
+            "LIM",
+            "MAD",
+            "2026-06-01T10:00:00-05:00",
+            "2026-06-01T18:00:00+02:00",
+            "102",
+          ),
+        ],
+      },
+      ...(tripType === "round-trip"
+        ? [
+          {
+            flights: [
+              buildCostamarAlternativeFlight(
+                "MAD",
+                "LIM",
+                "2026-06-08T09:00:00+02:00",
+                "2026-06-08T15:00:00-05:00",
+                "101",
+              ),
+              buildCostamarAlternativeFlight(
+                "MAD",
+                "LIM",
+                "2026-06-08T11:00:00+02:00",
+                "2026-06-08T17:00:00-05:00",
+                "103",
+              ),
+            ],
+          },
+        ]
+        : []),
+    ],
+    pricing: {
+      base: "700.00",
+      taxes: "250.00",
+      total: "950.00",
+      validatingAirline: "AF",
+    },
+  };
+}
+
+function buildCostamarAlternativeContext(terminalId: string) {
+  return {
+    costamar: {
+      apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId,
+      token: "secret-token",
+      lang: "es",
+    },
+  };
+}
+
+async function withMockedCostamarExactSearch<T>(
+  terminalId: string,
+  recommendation: unknown,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previousFetch = global.fetch;
 
   global.fetch = (async (input) => {
     const url = String(input);
 
-    if (url === "https://costamar.com.pe/vuelos/api/engines/9990002223") {
+    if (url === `https://costamar.com.pe/vuelos/api/engines/${terminalId}`) {
       return new Response(
         JSON.stringify({
-          code: "9990002223",
+          code: terminalId,
           profile: {
             currencyCode: "USD",
           },
@@ -2572,31 +2622,7 @@ test("searchLocalCostamarExact expands Costamar flight alternatives within a rec
       return new Response(
         JSON.stringify({
           status: 200,
-          data: [
-            {
-              id: "rec-options",
-              itinerary: [
-                {
-                  flights: [
-                    flight("LIM", "MAD", "2026-06-01T08:00:00-05:00", "2026-06-01T16:00:00+02:00", "100"),
-                    flight("LIM", "MAD", "2026-06-01T10:00:00-05:00", "2026-06-01T18:00:00+02:00", "102"),
-                  ],
-                },
-                {
-                  flights: [
-                    flight("MAD", "LIM", "2026-06-08T09:00:00+02:00", "2026-06-08T15:00:00-05:00", "101"),
-                    flight("MAD", "LIM", "2026-06-08T11:00:00+02:00", "2026-06-08T17:00:00-05:00", "103"),
-                  ],
-                },
-              ],
-              pricing: {
-                base: "700.00",
-                taxes: "250.00",
-                total: "950.00",
-                validatingAirline: "AF",
-              },
-            },
-          ],
+          data: [recommendation],
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
@@ -2606,145 +2632,52 @@ test("searchLocalCostamarExact expands Costamar flight alternatives within a rec
   }) as typeof fetch;
 
   try {
-    const result = await searchLocalCostamarExact(
-      request,
-      {
-        costamar: {
-          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
-          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
-          terminalId: "9990002223",
-          token: "secret-token",
-          lang: "es",
-        },
-      },
-    );
+    return await run();
+  } finally {
+    global.fetch = previousFetch;
+  }
+}
 
-    assert.equal(result.offers.length, 4);
-    assert.deepEqual(
-      result.offers.map((offer) => [
-        offer.itineraries[0]?.segments[0]?.flightNumber,
-        offer.itineraries[1]?.segments[0]?.flightNumber,
-      ]).sort(),
-      [
+function offerFlightNumbers(offer: CanonicalOffer): Array<string | undefined> {
+  return offer.itineraries.map((itinerary) => itinerary.segments[0]?.flightNumber);
+}
+
+test("searchLocalCostamarExact expands Costamar flight alternatives", async () => {
+  const scenarios = [
+    {
+      name: "round-trip",
+      terminalId: "9990002223",
+      request: buildCostamarAlternativeRequest("round-trip"),
+      recommendation: buildCostamarRecommendationWithAlternatives("round-trip"),
+      expected: [
         ["100", "101"],
         ["100", "103"],
         ["102", "101"],
         ["102", "103"],
       ],
-    );
-  } finally {
-    global.fetch = previousFetch;
-  }
-});
-
-test("searchLocalCostamarExact expands one-way Costamar flight alternatives", async () => {
-  const previousFetch = global.fetch;
-  const request = {
-    providerId: "costamar",
-    tripType: "one-way",
-    searchMode: "exact",
-    legs: [
-      {
-        origin: "LIM",
-        destination: "MAD",
-        departureDate: "2026-06-01",
-      },
-    ],
-    passengers: {
-      adults: 1,
-      children: 0,
-      infants: 0,
     },
-    cabin: "ECONOMY",
-    filters: {},
-    coverageMode: "core",
-    redirectMode: "best-effort",
-    currencyCode: "USD",
-    locale: "es-PE",
-    market: "PE",
-  } satisfies SearchRequest;
+    {
+      name: "one-way",
+      terminalId: "9990002224",
+      request: buildCostamarAlternativeRequest("one-way"),
+      recommendation: buildCostamarRecommendationWithAlternatives("one-way"),
+      expected: [
+        ["100"],
+        ["102"],
+      ],
+    },
+  ];
 
-  const flight = (flightNumber: string) => ({
-    departureAirport: { code: "LIM" },
-    arrivalAirport: { code: "MAD" },
-    departureDateTime: `2026-06-01T${flightNumber === "100" ? "08" : "10"}:00:00-05:00`,
-    arrivalDateTime: `2026-06-01T${flightNumber === "100" ? "16" : "18"}:00:00+02:00`,
-    elapsedTime: "0200",
-    flightNumber,
-    marketingAirline: { code: "AF", name: "Air France" },
-    operatingAirline: { code: "AF", name: "Air France" },
-    bookingClass: { code: "N" },
-    fareBasisCode: "NFLEX",
-    cabinType: "Y",
-  });
-
-  global.fetch = (async (input) => {
-    const url = String(input);
-
-    if (url === "https://costamar.com.pe/vuelos/api/engines/9990002224") {
-      return new Response(
-        JSON.stringify({
-          code: "9990002224",
-          profile: {
-            currencyCode: "USD",
-          },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
+  for (const scenario of scenarios) {
+    await withMockedCostamarExactSearch(scenario.terminalId, scenario.recommendation, async () => {
+      const result = await searchLocalCostamarExact(
+        scenario.request,
+        buildCostamarAlternativeContext(scenario.terminalId),
       );
-    }
 
-    if (url === "https://costamar.com.pe/vuelos/api/flights/search") {
-      return new Response(
-        JSON.stringify({
-          status: 200,
-          data: [
-            {
-              id: "rec-one-way-options",
-              itinerary: [
-                {
-                  flights: [
-                    flight("100"),
-                    flight("102"),
-                  ],
-                },
-              ],
-              pricing: {
-                base: "700.00",
-                taxes: "250.00",
-                total: "950.00",
-                validatingAirline: "AF",
-              },
-            },
-          ],
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
-    }
-
-    throw new Error(`Unexpected fetch url: ${url}`);
-  }) as typeof fetch;
-
-  try {
-    const result = await searchLocalCostamarExact(
-      request,
-      {
-        costamar: {
-          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
-          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
-          terminalId: "9990002224",
-          token: "secret-token",
-          lang: "es",
-        },
-      },
-    );
-
-    assert.equal(result.offers.length, 2);
-    assert.deepEqual(
-      result.offers.map((offer) => offer.itineraries[0]?.segments[0]?.flightNumber).sort(),
-      ["100", "102"],
-    );
-  } finally {
-    global.fetch = previousFetch;
+      assert.equal(result.offers.length, scenario.expected.length, scenario.name);
+      assert.deepEqual(result.offers.map(offerFlightNumbers).sort(), scenario.expected, scenario.name);
+    });
   }
 });
 
