@@ -2389,22 +2389,6 @@ function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): Canon
     group.esOnline ? "online" : "",
   ].filter(Boolean);
 
-  const leg = request.legs[0];
-  const outbound = outboundCandidates[0];
-  const inbound = request.tripType === "round-trip"
-    ? inboundCandidates[0]
-    : undefined;
-  const itineraries = inbound
-    ? [outbound.itinerary, inbound.itinerary]
-    : [outbound.itinerary];
-  const maxStops = typeof request.filters.maxStops === "number"
-    ? Math.max(0, request.filters.maxStops)
-    : undefined;
-  if (typeof maxStops === "number" && maxStopsAcrossItineraries(itineraries) > maxStops) {
-    return [];
-  }
-  const baggage = buildBaggageSummary(outbound.baggage, inbound?.baggage);
-  const mainCarrier = outbound.itinerary.segments[0]?.marketingCarrier ?? validatingCarrier;
   const price = {
     total: {
       amount: totalAmount,
@@ -2413,86 +2397,106 @@ function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): Canon
     base: buildMoney(baseAmount > 0 ? Number(baseAmount.toFixed(2)) : undefined, currencyCode),
     taxes: buildMoney(taxesAmount > 0 ? Number(taxesAmount.toFixed(2)) : undefined, currencyCode),
   };
+  const leg = request.legs[0];
+  const maxStops = typeof request.filters.maxStops === "number"
+    ? Math.max(0, request.filters.maxStops)
+    : undefined;
+  const candidatePairs = request.tripType === "round-trip"
+    ? outboundCandidates.flatMap((outbound) => inboundCandidates.map((inbound) => ({ outbound, inbound })))
+    : outboundCandidates.map((outbound) => ({ outbound, inbound: undefined }));
 
-  const offer: CanonicalOffer = {
-    id: "",
-    signature: "",
-    providerSource: "agil-local",
-    providerOfferRef: [
-      group.id ?? "group",
-      outbound.key,
-      inbound?.key ?? "ow",
-    ].join(":"),
-    tripType: request.tripType,
-    validatingCarrier,
-    mainCarrier,
-    origin: leg.origin,
-    destination: leg.destination,
-    itineraries,
-    price,
-    usdToPenRate,
-    baggage,
-    fareMeta: {
-      lastTicketingDate: parseLimitDate(group.pricingInfo?.itinTotalFare?.limitDate),
-      seatsRemaining: minimumNumber([outbound.seatsRemaining, inbound?.seatsRemaining]),
-    },
-    priceConfidence: "live",
-    priceStatus: "unverified",
-    purchasePaths: [
-      ...buildPurchasePaths(
-        buildOfferSearchRequest(
-          request,
-          itineraries,
-          leg.origin,
-          leg.destination,
-          inbound ? "round-trip" : "one-way",
-        ),
-      ),
-      {
-        id: "agil-reference",
-        type: "manual-reference",
-        provider: "agil-local",
-        label: "Referencia de oferta",
-        precision: "manual",
-        score: 0.6,
-        requiresNewTab: false,
-        commercialMode: "manual",
-        state: "manual",
-        referenceText: buildManualReferenceText(
-          itineraries,
-          validatingCarrier,
-          totalAmount,
-          currencyCode,
-        ),
+  return candidatePairs.flatMap(({ outbound, inbound }) => {
+    const itineraries = inbound
+      ? [outbound.itinerary, inbound.itinerary]
+      : [outbound.itinerary];
+    if (typeof maxStops === "number" && maxStopsAcrossItineraries(itineraries) > maxStops) {
+      return [];
+    }
+
+    const baggage = buildBaggageSummary(outbound.baggage, inbound?.baggage);
+    const mainCarrier = outbound.itinerary.segments[0]?.marketingCarrier ?? validatingCarrier;
+    const offer: CanonicalOffer = {
+      id: "",
+      signature: "",
+      providerSource: "agil-local",
+      providerOfferRef: [
+        group.id ?? "group",
+        outbound.key,
+        inbound?.key ?? "ow",
+      ].join(":"),
+      tripType: request.tripType,
+      validatingCarrier,
+      mainCarrier,
+      origin: leg.origin,
+      destination: leg.destination,
+      itineraries,
+      price,
+      usdToPenRate,
+      baggage,
+      fareMeta: {
+        lastTicketingDate: parseLimitDate(group.pricingInfo?.itinTotalFare?.limitDate),
+        seatsRemaining: minimumNumber([outbound.seatsRemaining, inbound?.seatsRemaining]),
       },
-    ],
-    comparisonMetrics: {
-      totalDurationMinutes: 0,
-      totalStops: 0,
-      baggageScore: 0,
-      purchasePathScore: 0,
-    },
-    tags,
-    warnings: [],
-    rawRefs: {
-      agilGroupId: group.id,
-      gdsId: group.gds?.idGDS,
-      webSessionId: group.gds?.webSessionID,
-      officeId: group.gds?.officeId,
-      iata: group.gds?.iata,
-    },
-  };
+      priceConfidence: "live",
+      priceStatus: "unverified",
+      purchasePaths: [
+        ...buildPurchasePaths(
+          buildOfferSearchRequest(
+            request,
+            itineraries,
+            leg.origin,
+            leg.destination,
+            inbound ? "round-trip" : "one-way",
+          ),
+        ),
+        {
+          id: "agil-reference",
+          type: "manual-reference",
+          provider: "agil-local",
+          label: "Referencia de oferta",
+          precision: "manual",
+          score: 0.6,
+          requiresNewTab: false,
+          commercialMode: "manual",
+          state: "manual",
+          referenceText: buildManualReferenceText(
+            itineraries,
+            validatingCarrier,
+            totalAmount,
+            currencyCode,
+          ),
+        },
+      ],
+      comparisonMetrics: {
+        totalDurationMinutes: 0,
+        totalStops: 0,
+        baggageScore: 0,
+        purchasePathScore: 0,
+      },
+      tags,
+      warnings: [],
+      rawRefs: {
+        agilGroupId: group.id,
+        outboundKey: outbound.key,
+        inboundKey: inbound?.key,
+        gdsId: group.gds?.idGDS,
+        webSessionId: group.gds?.webSessionID,
+        officeId: group.gds?.officeId,
+        iata: group.gds?.iata,
+      },
+    };
 
-  offer.signature = buildOfferSignature(offer);
-  offer.id = buildStableOfferId(
-    offer.signature,
-    offer.price.total.amount,
-    offer.price.total.currencyCode,
-    baggage,
-    tags,
-  );
+    offer.signature = buildOfferSignature(offer);
+    offer.id = buildStableOfferId(
+      offer.signature,
+      offer.price.total.amount,
+      offer.price.total.currencyCode,
+      baggage,
+      tags,
+    );
 
-  return [offer];
+    return [offer];
+  });
 }
 
 function buildAgilMatrixVariantKey(offer: CanonicalOffer): string {

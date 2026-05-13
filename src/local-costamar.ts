@@ -2956,6 +2956,53 @@ function normalizeItinerary(
   };
 }
 
+function costamarRecommendationStableId(recommendation: CostamarRecommendation): string {
+  return String(recommendation.id ?? sha1Hex(JSON.stringify(recommendation))).trim() || "recommendation";
+}
+
+function expandCostamarRecommendationFlightOptions(
+  recommendation: CostamarRecommendation,
+  request: SearchRequest,
+): CostamarRecommendation[] {
+  const journeys = asArray(recommendation.itinerary);
+  const journeyCount = request.tripType === "round-trip" ? 2 : 1;
+  const relevantJourneys = journeys.slice(0, journeyCount);
+  if (relevantJourneys.length < journeyCount) {
+    return [recommendation];
+  }
+
+  const optionsByJourney = relevantJourneys.map((journey) =>
+    asArray(journey.flights).map((flight, index) => ({ flight, index })),
+  );
+  if (optionsByJourney.some((options) => options.length === 0)) {
+    return [recommendation];
+  }
+  if (optionsByJourney.every((options) => options.length === 1)) {
+    return [recommendation];
+  }
+
+  const baseId = costamarRecommendationStableId(recommendation);
+  const variants: Array<Array<{ flight: CostamarFlight; index: number }>> = [[]];
+  for (const options of optionsByJourney) {
+    const next: Array<Array<{ flight: CostamarFlight; index: number }>> = [];
+    for (const prefix of variants) {
+      for (const option of options) {
+        next.push([...prefix, option]);
+      }
+    }
+    variants.splice(0, variants.length, ...next);
+  }
+
+  return variants.map((variant) => ({
+    ...recommendation,
+    id: `${baseId}:${variant.map((option) => option.index).join("-")}`,
+    itinerary: relevantJourneys.map((journey, index) => ({
+      ...journey,
+      flights: [variant[index].flight],
+    })),
+  }));
+}
+
 function costamarRedirectVerification(
   state: CostamarRedirectState,
   verified: boolean,
@@ -3622,7 +3669,10 @@ async function searchRecommendations(
 
   const responseWarning = buildCostamarSearchWarning(payload);
   const recommendations = responseWarning ? [] : asArray(payload.data);
-  const mapped = await mapConcurrent(recommendations, COSTAMAR_CONCURRENCY.markup, async (recommendation) => {
+  const recommendationVariants = recommendations.flatMap((recommendation) =>
+    expandCostamarRecommendationFlightOptions(recommendation, request),
+  );
+  const mapped = await mapConcurrent(recommendationVariants, COSTAMAR_CONCURRENCY.markup, async (recommendation) => {
     const normalized = mapCostamarRecommendationToOffer(
       recommendation,
       request,

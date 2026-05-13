@@ -22,6 +22,7 @@ import {
   sameAgilSessionIdentity,
   resetAgilApimSubscriptionKeyCacheForTests,
   setAgilSessionForTests,
+  searchLocalAgilExact,
   shouldReuseAgilSession,
   suggestLocalAgilLocations,
   extractAgilUsdToPenRate,
@@ -502,6 +503,299 @@ test("Agil exchange rate parsing preserves four decimal rates", () => {
   } as never);
 
   assert.equal(rate, 3.7531);
+});
+
+test("Agil exact search expands outbound and inbound candidates inside a group", async () => {
+  const previousFetch = global.fetch;
+  const previousKey = process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+  const request: SearchRequest = {
+    tripType: "round-trip",
+    searchMode: "exact",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "MAD",
+        departureDate: "2026-05-21",
+        returnDate: "2026-05-28",
+      },
+    ],
+    passengers: {
+      adults: 1,
+      children: 0,
+      infants: 0,
+    },
+    cabin: "ECONOMY",
+    filters: {},
+    coverageMode: "core",
+    redirectMode: "best-effort",
+    currencyCode: "USD",
+    locale: "es-PE",
+    market: "PE",
+  };
+  const option = (
+    segmentId: number,
+    origin: string,
+    destination: string,
+    departureDateTime: string,
+    arrivalDateTime: string,
+    flightNumber: number,
+  ) => ({
+    segmentId,
+    startDateTime: departureDateTime,
+    endDateTime: arrivalDateTime,
+    stops: 0,
+    flightDuration: "0200",
+    flightSegments: [
+      {
+        flightNumber,
+        departureDateTime,
+        arrivalDateTime,
+        elapsedTime: "0200",
+        seatsRemaining: 4,
+        departureAirport: { code: origin, name: origin },
+        arrivalAirport: { code: destination, name: destination },
+        marketingAirline: { code: "UX", name: "Air Europa" },
+        operatingAirline: { code: "UX", name: "Air Europa" },
+      },
+    ],
+  });
+  const agilGroup = {
+    id: "agil-options",
+    display: true,
+    airline: { code: "UX", name: "Air Europa" },
+    departure: [
+      {
+        segments: [
+          option(10, "LIM", "MAD", "2026-05-21T08:00:00", "2026-05-21T16:00:00", 100),
+          option(12, "LIM", "MAD", "2026-05-21T10:00:00", "2026-05-21T18:00:00", 102),
+        ],
+      },
+    ],
+    returns: [
+      {
+        segments: [
+          option(11, "MAD", "LIM", "2026-05-28T09:00:00", "2026-05-28T15:00:00", 101),
+          option(13, "MAD", "LIM", "2026-05-28T11:00:00", "2026-05-28T17:00:00", 103),
+        ],
+      },
+    ],
+    pricingInfo: {
+      totalFare: 950,
+      itinTotalFare: {
+        validatingCarrier: "UX",
+        fareBreakDowns: [
+          {
+            passengerType: { quantity: 1 },
+            passengerFare: {
+              baseFare: 700,
+              taxes: 250,
+              totalFare: 950,
+              feeNMV: 0,
+              feePTA: 0,
+              dsctoTaxes: 0,
+            },
+          },
+        ],
+      },
+      tipoCambio: {
+        code: "USD",
+        rate: 3.7531,
+      },
+    },
+  };
+
+  resetAgilSessionCacheForTests();
+  resetAgilApimSubscriptionKeyCacheForTests();
+  process.env.AGIL_APIM_SUBSCRIPTION_KEY = "test-subscription-key";
+  setAgilSessionForTests();
+  global.fetch = (async (input, init) => {
+    const url = String(input);
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("Ocp-Apim-Subscription-Key"), "test-subscription-key");
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/start-search") {
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/search") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { gds?: number };
+      return new Response(JSON.stringify({
+        groups: body.gds === 0 ? [agilGroup] : [],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await searchLocalAgilExact(request);
+
+    assert.equal(result.offers.length, 4);
+    assert.deepEqual(
+      result.offers.map((offer) => [
+        offer.itineraries[0]?.segments[0]?.flightNumber,
+        offer.itineraries[1]?.segments[0]?.flightNumber,
+      ]).sort(),
+      [
+        ["100", "101"],
+        ["100", "103"],
+        ["102", "101"],
+        ["102", "103"],
+      ],
+    );
+  } finally {
+    global.fetch = previousFetch;
+    resetAgilSessionCacheForTests();
+    resetAgilApimSubscriptionKeyCacheForTests();
+    if (previousKey === undefined) {
+      delete process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+    } else {
+      process.env.AGIL_APIM_SUBSCRIPTION_KEY = previousKey;
+    }
+  }
+});
+
+test("Agil exact search expands one-way candidates inside a group", async () => {
+  const previousFetch = global.fetch;
+  const previousKey = process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+  const request: SearchRequest = {
+    tripType: "one-way",
+    searchMode: "exact",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "MAD",
+        departureDate: "2026-05-21",
+      },
+    ],
+    passengers: {
+      adults: 1,
+      children: 0,
+      infants: 0,
+    },
+    cabin: "ECONOMY",
+    filters: {},
+    coverageMode: "core",
+    redirectMode: "best-effort",
+    currencyCode: "USD",
+    locale: "es-PE",
+    market: "PE",
+  };
+  const option = (
+    segmentId: number,
+    departureDateTime: string,
+    arrivalDateTime: string,
+    flightNumber: number,
+  ) => ({
+    segmentId,
+    startDateTime: departureDateTime,
+    endDateTime: arrivalDateTime,
+    stops: 0,
+    flightDuration: "0200",
+    flightSegments: [
+      {
+        flightNumber,
+        departureDateTime,
+        arrivalDateTime,
+        elapsedTime: "0200",
+        seatsRemaining: 4,
+        departureAirport: { code: "LIM", name: "Lima" },
+        arrivalAirport: { code: "MAD", name: "Madrid" },
+        marketingAirline: { code: "UX", name: "Air Europa" },
+        operatingAirline: { code: "UX", name: "Air Europa" },
+      },
+    ],
+  });
+  const agilGroup = {
+    id: "agil-one-way-options",
+    display: true,
+    airline: { code: "UX", name: "Air Europa" },
+    departure: [
+      {
+        segments: [
+          option(10, "2026-05-21T08:00:00", "2026-05-21T16:00:00", 100),
+          option(12, "2026-05-21T10:00:00", "2026-05-21T18:00:00", 102),
+        ],
+      },
+    ],
+    pricingInfo: {
+      totalFare: 950,
+      itinTotalFare: {
+        validatingCarrier: "UX",
+        fareBreakDowns: [
+          {
+            passengerType: { quantity: 1 },
+            passengerFare: {
+              baseFare: 700,
+              taxes: 250,
+              totalFare: 950,
+              feeNMV: 0,
+              feePTA: 0,
+              dsctoTaxes: 0,
+            },
+          },
+        ],
+      },
+      tipoCambio: {
+        code: "USD",
+        rate: 3.7531,
+      },
+    },
+  };
+
+  resetAgilSessionCacheForTests();
+  resetAgilApimSubscriptionKeyCacheForTests();
+  process.env.AGIL_APIM_SUBSCRIPTION_KEY = "test-subscription-key";
+  setAgilSessionForTests();
+  global.fetch = (async (input, init) => {
+    const url = String(input);
+    const headers = new Headers(init?.headers);
+    assert.equal(headers.get("Ocp-Apim-Subscription-Key"), "test-subscription-key");
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/start-search") {
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/search") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { gds?: number };
+      return new Response(JSON.stringify({
+        groups: body.gds === 0 ? [agilGroup] : [],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await searchLocalAgilExact(request);
+
+    assert.equal(result.offers.length, 2);
+    assert.deepEqual(
+      result.offers.map((offer) => offer.itineraries[0]?.segments[0]?.flightNumber).sort(),
+      ["100", "102"],
+    );
+  } finally {
+    global.fetch = previousFetch;
+    resetAgilSessionCacheForTests();
+    resetAgilApimSubscriptionKeyCacheForTests();
+    if (previousKey === undefined) {
+      delete process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+    } else {
+      process.env.AGIL_APIM_SUBSCRIPTION_KEY = previousKey;
+    }
+  }
 });
 
 test("Agil matrix cells include the canonical offer schedules", async () => {

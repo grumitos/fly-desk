@@ -125,9 +125,9 @@ export function ResultCard({
             <button
               key={`${action.path.provider}-${action.path.type}-${action.url}`}
               type="button"
-              aria-label={`Abrir ${action.badge.label}`}
+              aria-label={purchaseActionLabel(action)}
               className="fd-result-card__provider-action"
-              title={`Abrir ${action.badge.label}`}
+              title={purchaseActionTitle(action)}
               onClick={(event) => handleProviderOpen(event, action)}
               onKeyDown={(event) => event.stopPropagation()}
             >
@@ -159,6 +159,18 @@ function providerPurchaseActions(offer: CanonicalOffer): ProviderAction[] {
       badge: providerBadgeForId(path.provider),
     }]
   })
+}
+
+function purchaseActionLabel(action: ProviderAction): string {
+  return action.path.type === "search-redirect"
+    ? `Buscar en ${action.badge.label}`
+    : `Abrir ${action.badge.label}`
+}
+
+function purchaseActionTitle(action: ProviderAction): string {
+  return action.path.type === "search-redirect"
+    ? `Buscar en ${action.badge.label}: abre la busqueda equivalente y puede mostrar disponibilidad actualizada.`
+    : `Abrir ${action.badge.label}`
 }
 
 function ItinerarySchedule({ summary }: { summary: ResultJourneySummary }) {

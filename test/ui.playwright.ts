@@ -1688,8 +1688,8 @@ test("grouped provider offer renders Agilsmart and Costamar external links verti
     await card.waitFor();
     const actions = card.locator(".fd-result-card__provider-action");
     assert.equal(await actions.count(), 2);
-    await card.getByRole("button", { name: "Abrir Agilsmart" }).waitFor();
-    await card.getByRole("button", { name: "Abrir Costamar" }).waitFor();
+    await card.getByRole("button", { name: "Buscar Agilsmart" }).waitFor();
+    await card.getByRole("button", { name: "Buscar Costamar" }).waitFor();
 
     const layout = await actions.evaluateAll((elements) => elements.map((element) => {
       const rect = element.getBoundingClientRect();
@@ -1707,19 +1707,57 @@ test("grouped provider offer renders Agilsmart and Costamar external links verti
 test("result filters refine loaded offers without restarting the search", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let searchRequests = 0;
-    const offers = ["P01", "P02", "P03", "P04"].map((carrier, index) => buildOffer({
-      id: `local-filter-offer-${carrier}`,
-      origin: "LIM",
-      destination: "BIO",
-      mainCarrier: carrier,
-      validatingCarrier: carrier,
-      airline: carrier,
-      price: {
-        total: { amount: 620 + index, currencyCode: "USD" },
-        base: { amount: 520 + index, currencyCode: "USD" },
-        taxes: { amount: 100, currencyCode: "USD" },
-      },
-    }));
+    const offers = ["H2", "P02", "P03", "P04"].map((carrier, index) => {
+      const carrierName = carrier === "H2" ? "Sky Airline" : undefined;
+
+      return buildOffer({
+        id: `local-filter-offer-${carrier}`,
+        origin: "LIM",
+        destination: "BIO",
+        mainCarrier: carrier,
+        validatingCarrier: carrier,
+        airline: carrier,
+        price: {
+          total: { amount: 620 + index, currencyCode: "USD" },
+          base: { amount: 520 + index, currencyCode: "USD" },
+          taxes: { amount: 100, currencyCode: "USD" },
+        },
+        itineraries: [
+          {
+            direction: "outbound",
+            durationMinutes: 480,
+            stops: 0,
+            segments: [
+              {
+                flightNumber: `${carrier} 123`,
+                marketingCarrier: carrier,
+                marketingCarrierName: carrierName,
+                origin: "LIM",
+                destination: "BIO",
+                departureAt: "2026-06-08T14:00:00Z",
+                arrivalAt: "2026-06-08T22:00:00Z",
+              },
+            ],
+          },
+          {
+            direction: "inbound",
+            durationMinutes: 470,
+            stops: 0,
+            segments: [
+              {
+                flightNumber: `${carrier} 456`,
+                marketingCarrier: carrier,
+                marketingCarrierName: carrierName,
+                origin: "BIO",
+                destination: "LIM",
+                departureAt: "2026-06-20T15:00:00Z",
+                arrivalAt: "2026-06-20T22:50:00Z",
+              },
+            ],
+          },
+        ],
+      });
+    });
 
     await page.setViewportSize({ width: 1440, height: 760 });
     await page.route("**/api/locations**", async (route) => {
@@ -1771,14 +1809,15 @@ test("result filters refine loaded offers without restarting the search", async 
     ]);
     await page.getByTestId("result-card").first().waitFor();
 
-    await page.getByRole("checkbox", { name: "P01" }).click();
+    await page.getByRole("checkbox", { name: "Sky" }).click();
     await page.waitForFunction(() => document.querySelectorAll('[data-testid="result-card"]').length === 1);
 
     assert.equal(searchRequests, 1);
     assert.equal(await page.getByRole("button", { name: "Buscar" }).isVisible(), true);
     assert.equal(await page.getByRole("button", { name: "Detener búsqueda" }).count(), 0);
     assert.equal(await page.getByText("Actualizando").count(), 0);
-    assert.equal(await page.getByTestId("result-card").filter({ hasText: "P01" }).count(), 1);
+    assert.equal(await page.getByRole("checkbox", { name: "H2" }).count(), 0);
+    assert.equal(await page.getByTestId("result-card").filter({ hasText: "Sky" }).count(), 1);
 
     const airlineListScroll = await page.locator(".fd-scrollbar-hidden").evaluateAll((nodes) =>
       nodes.some((node) => getComputedStyle(node).scrollbarWidth === "none"),

@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useSearch } from "@/hooks/useSearch"
+import { normalizeAirlineDisplayName } from "@/lib/airline-names"
 import {
   readSharedSearchFromText,
   readSharedSearchFromUrl,
@@ -17,7 +18,7 @@ import {
   writeSharedSearchToUrl,
   type SharedSearchState,
 } from "@/lib/search-share"
-import type { CanonicalOffer, SearchJobResponse, SearchRequest, SortMode } from "@/types"
+import type { CanonicalOffer, SearchJobResponse, SearchRequest, Segment, SortMode } from "@/types"
 
 type Filters = {
   nonStop?: boolean
@@ -89,7 +90,7 @@ export default function App() {
   const allAirlines = useMemo(() => {
     const options = new Map<string, AirlineFilterOption>()
     candidateOffers.forEach((offer) => {
-      const label = offer.airline || airlineFilterCode(offer) || "Aerolínea"
+      const label = airlineFilterLabel(offer)
       const codes = airlineFilterCodes(offer)
       const id = label.toLocaleUpperCase("es-PE")
       const current = options.get(id) ?? { id, label, codes: [], count: 0 }
@@ -580,8 +581,45 @@ function ChoiceRow({ label, active, onClick }: { label: string; active: boolean;
   )
 }
 
+function airlineToken(value: unknown): string {
+  return String(value ?? "").trim().toUpperCase()
+}
+
 function airlineFilterCode(offer: CanonicalOffer): string {
   return String(offer.mainCarrier ?? offer.validatingCarrier ?? "").trim()
+}
+
+function airlineFilterLabel(offer: CanonicalOffer): string {
+  const code = airlineFilterCode(offer)
+  const codeToken = airlineToken(code)
+  const segments = (offer.itineraries ?? []).flatMap((itinerary) => itinerary.segments ?? [])
+  const segment = airlineNameSegmentForCode(segments, codeToken)
+    ?? segments.find((candidate) => candidate.marketingCarrierName || candidate.operatingCarrierName)
+  const rawName = [
+    segment?.marketingCarrier && airlineToken(segment.marketingCarrier) === codeToken
+      ? segment.marketingCarrierName
+      : undefined,
+    segment?.operatingCarrier && airlineToken(segment.operatingCarrier) === codeToken
+      ? segment.operatingCarrierName
+      : undefined,
+    segment?.marketingCarrierName,
+    offer.airline,
+    segment?.operatingCarrierName,
+  ].find((value) => typeof value === "string" && value.trim())
+  const normalizedName = normalizeAirlineDisplayName(rawName)
+
+  return normalizedName && normalizedName.toUpperCase() !== codeToken
+    ? normalizedName
+    : code || normalizedName || "Aerolínea"
+}
+
+function airlineNameSegmentForCode(segments: Segment[], codeToken: string): Segment | undefined {
+  if (!codeToken) return undefined
+
+  return segments.find((segment) => (
+    (airlineToken(segment.marketingCarrier) === codeToken && Boolean(segment.marketingCarrierName?.trim())) ||
+    (airlineToken(segment.operatingCarrier) === codeToken && Boolean(segment.operatingCarrierName?.trim()))
+  ))
 }
 
 function airlineFilterCodes(offer: CanonicalOffer): string[] {
