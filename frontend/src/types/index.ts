@@ -1,15 +1,29 @@
-export interface LocationSuggestion {
-  code: string
-  city: string
-  country: string
-  countryCode?: string
-  cityCode?: string
-  searchType?: string
+import type {
+  BaggageSummary as CoreBaggageSummary,
+  CanonicalOffer as CoreCanonicalOffer,
+  ComparisonMetrics as CoreComparisonMetrics,
+  FareMeta as CoreFareMeta,
+  Itinerary as CoreItinerary,
+  LocationSuggestion as CoreLocationSuggestion,
+  MatrixCell as CoreMatrixCell,
+  ProviderDiagnostics as CoreProviderDiagnostics,
+  ProviderId,
+  PurchasePath as CorePurchasePath,
+  RedirectVerification as CoreRedirectVerification,
+  SearchMode,
+  SearchRequest as CoreSearchRequest,
+  SearchResponse as CoreSearchResponse,
+  Segment as CoreSegment,
+} from "../../../src/core/types"
+
+type OpenString<T extends string> = T | (string & {})
+
+export type LocationSuggestion = CoreLocationSuggestion & {
   providerId?: string
   providerIds?: string[]
-  label: string
 }
 
+// Frontend-only: flat form/share state converted to the core SearchRequest in lib/api.ts.
 export interface SearchRequest {
   origin: string
   destination: string
@@ -20,12 +34,12 @@ export interface SearchRequest {
   returnStart?: string
   returnEnd?: string
   stayNights?: number
-  tripType: "round-trip" | "one-way"
+  tripType: Extract<CoreSearchRequest["tripType"], "round-trip" | "one-way">
   adults: number
   children: number
   infants: number
-  searchMode: "exact" | "stay-range" | "roundtrip-grid" | "month-view"
-  flexibleMode?: "exact-stay" | "fixed-ranges"
+  searchMode: SearchMode
+  flexibleMode?: CoreSearchRequest["flexibleMode"]
   nonStop?: boolean
   maxStopsFilter?: string
   maxLayoverMinutes?: string
@@ -36,92 +50,50 @@ export interface SearchRequest {
   sortMode?: string
 }
 
-export interface Segment {
-  id?: string
-  marketingCarrier?: string
-  marketingCarrierName?: string
-  operatingCarrier?: string
-  operatingCarrierName?: string
-  flightNumber?: string
-  origin: string
-  originName?: string
-  destination: string
-  destinationName?: string
-  departureAt: string
-  arrivalAt: string
-  durationMinutes?: number
-  originTerminal?: string
-  destinationTerminal?: string
-}
+export type Segment = Partial<CoreSegment> & Pick<CoreSegment, "origin" | "destination" | "departureAt" | "arrivalAt">
 
-export interface Itinerary {
-  id?: string
-  direction: "outbound" | "inbound" | "multi"
-  durationMinutes?: number
-  stops?: number
-  layoverMinutes?: number[]
+export type Itinerary = Partial<Omit<CoreItinerary, "segments">> & {
+  direction: CoreItinerary["direction"]
   segments: Segment[]
 }
 
-export interface BaggageSummary {
-  carryOnIncluded?: boolean
-  checkedIncluded?: boolean
-  checkedBags?: number
-  description?: string
+export type BaggageSummary = CoreBaggageSummary
+
+export type FareMeta = CoreFareMeta
+
+export type RedirectVerification = Omit<CoreRedirectVerification, "provider"> & {
+  provider: OpenString<ProviderId>
 }
 
-export interface FareMeta {
-  lastTicketingDate?: string
-  seatsRemaining?: number
-  refundable?: boolean
-  changeable?: boolean
-  co2Kg?: number
-}
-
-export interface PurchasePath {
-  id: string
-  type: string
-  provider: string
-  label: string
-  url?: string
-  precision: "exact-offer" | "exact-search" | "broad-search" | "manual"
-  score: number
-  requiresNewTab: boolean
-  commercialMode: string
-  state: string
-  referenceText?: string
-  expiresAt?: string
+export type PurchasePath = Omit<
+  CorePurchasePath,
+  "commercialMode" | "provider" | "redirectVerification" | "state" | "type"
+> & {
+  type: OpenString<CorePurchasePath["type"]>
+  provider: OpenString<ProviderId>
+  commercialMode: OpenString<CorePurchasePath["commercialMode"]>
+  state: OpenString<CorePurchasePath["state"]>
   redirectVerification?: RedirectVerification
 }
 
-export interface RedirectVerification {
-  provider: string
-  state:
-    | "missing"
-    | "cached_unverified"
-    | "near_expiry"
-    | "refreshing"
-    | "fresh_unverified"
-    | "verified"
-    | "refresh_failed"
-    | "blocked"
-  verified: boolean
-  reason?: string
-  checkedAt?: string
-}
+export type ComparisonMetrics = Partial<CoreComparisonMetrics>
 
-export interface ComparisonMetrics {
-  totalDurationMinutes?: number
-  totalStops?: number
-  baggageScore?: number
-  purchasePathScore?: number
-}
-
-export interface CanonicalOffer {
+// Frontend-only facade: core offer plus normalized display fields used by result cards.
+export type CanonicalOffer = Partial<Omit<
+  CoreCanonicalOffer,
+  | "comparisonMetrics"
+  | "itineraries"
+  | "price"
+  | "priceConfidence"
+  | "priceStatus"
+  | "providerSource"
+  | "purchasePaths"
+  | "redirectVerification"
+>> & {
   id: string
   sourceOfferId?: string
   sourceSearchJobId?: string
-  providerSource: string
+  providerSource: OpenString<ProviderId>
   airline: string
   origin?: string
   destination?: string
@@ -139,20 +111,17 @@ export interface CanonicalOffer {
   baggageLabel?: string
   hasCheckedBaggage?: boolean
   fareMeta?: FareMeta
-  priceConfidence?: string
-  priceStatus?: string
+  priceConfidence?: OpenString<CoreCanonicalOffer["priceConfidence"]>
+  priceStatus?: OpenString<CoreCanonicalOffer["priceStatus"]>
   purchasePaths?: PurchasePath[]
   redirectVerification?: RedirectVerification
   comparisonMetrics?: ComparisonMetrics
   tags?: string[]
   warnings?: string[]
-  price: {
-    total: { amount: number; currencyCode: string }
-    base?: { amount: number; currencyCode: string }
-    taxes?: { amount: number; currencyCode: string }
-  }
+  price: CoreCanonicalOffer["price"]
 }
 
+// Frontend-only: month-view aggregation produced in the browser from search jobs.
 export interface MigrationMonthSummary {
   key: string
   label: string
@@ -166,22 +135,25 @@ export interface MigrationMonthSummary {
   status: "loading" | "available" | "partial" | "empty" | "error"
 }
 
-export interface SearchResponse {
+export type SearchMeta = Omit<CoreSearchResponse["searchMeta"], "providersUsed" | "searchState"> & {
+  providersUsed: Array<OpenString<ProviderId>>
+  searchState: OpenString<CoreSearchResponse["searchMeta"]["searchState"]>
+}
+
+export type ProviderMeta = Omit<CoreSearchResponse["providerMeta"], "coverageMode" | "exactProvider" | "redirectProvider"> & {
+  exactProvider: OpenString<ProviderId>
+  redirectProvider?: OpenString<ProviderId>
+  coverageMode: OpenString<CoreSearchResponse["providerMeta"]["coverageMode"]>
+}
+
+export interface SearchResponse extends Omit<
+  CoreSearchResponse,
+  "allOffers" | "matrix" | "offers" | "providerDiagnostics" | "providerMeta" | "searchMeta"
+> {
   offers: CanonicalOffer[]
   allOffers?: CanonicalOffer[]
-  searchMeta: {
-    requestedAt: string
-    completedAt: string
-    providersUsed: string[]
-    warnings: string[]
-    partial: boolean
-    searchState: string
-  }
-  providerMeta: {
-    exactProvider: string
-    coverageMode: string
-  }
-  warnings: string[]
+  searchMeta: SearchMeta
+  providerMeta: ProviderMeta
   providerDiagnostics?: ProviderDiagnostics[]
 }
 
@@ -190,52 +162,33 @@ export interface SearchJobResponse extends SearchResponse {
   searchComplete: boolean
   searchStatus: string
   revision: number
-  sortMode: string
+  sortMode: SortMode
   request: SearchRequest
   migrationMonths?: MigrationMonthSummary[]
   diagnosticLog?: string[]
   unchanged?: boolean
 }
 
-export interface ProviderDiagnosticEvent {
-  name: string
-  at: string
-  elapsedMs?: number
-  detail?: string
+export type ProviderDiagnosticEvent = CoreProviderDiagnostics["events"][number]
+
+export type ProviderDiagnostics = Omit<CoreProviderDiagnostics, "providerId"> & {
+  providerId: OpenString<ProviderId>
 }
 
-export interface ProviderDiagnostics {
-  providerId: string
-  kind: "exact" | "range" | "matrix"
-  status: "queued" | "running" | "completed" | "failed"
-  events: ProviderDiagnosticEvent[]
-  offers?: number
-  warningCount?: number
-  error?: string
-}
-
-export interface MatrixCell {
-  key: string
-  departureDate: string
-  returnDate?: string
-  stayNights?: number
-  price?: {
-    amount: number
-    currencyCode: string
-  }
-  variantKey?: string
-  confidence: string
-  providerSource: string
-  selectable: boolean
-  requiresRequery: boolean
-  stateCode: string
-  tooltip?: string
+export interface MatrixCell extends Omit<
+  CoreMatrixCell,
+  "confidence" | "derivedRequest" | "offer" | "providerSource" | "purchasePaths" | "stateCode"
+> {
+  confidence: OpenString<CoreMatrixCell["confidence"]>
+  providerSource: OpenString<ProviderId>
+  stateCode: OpenString<CoreMatrixCell["stateCode"]>
   purchasePaths?: PurchasePath[]
   offer?: CanonicalOffer
 }
 
 export type SortMode = "cheapest" | "fastest"
 
+// Frontend-only: persisted result table layout, unrelated to the backend search contract.
 export type ResultsLayoutColumnKey =
   | "carrier"
   | "dates"

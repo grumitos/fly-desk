@@ -20,6 +20,10 @@ const AIRLINE_CODE_DISPLAY_NAMES: Record<string, string> = {
   UX: "Air Europa",
   XL: "LATAM",
 };
+const AIRLINE_NAME_VARIANT_DISPLAY_NAMES: Record<string, string> = {
+  DELTAAIRLINES: "Delta",
+  PLUSULTRALINEASAEREAS: "Plus Ultra",
+};
 const LATAM_VARIANT_QUALIFIERS = new Set([
   "AIRLINE",
   "AIRLINES",
@@ -113,6 +117,11 @@ function applyKnownAirlineStyle(value: string): string {
   const codeDisplayName = AIRLINE_CODE_DISPLAY_NAMES[comparableText(value)];
   if (codeDisplayName) {
     return codeDisplayName;
+  }
+
+  const nameVariantDisplayName = AIRLINE_NAME_VARIANT_DISPLAY_NAMES[comparableText(value)];
+  if (nameVariantDisplayName) {
+    return nameVariantDisplayName;
   }
 
   if (isLatamVariant(value)) {
