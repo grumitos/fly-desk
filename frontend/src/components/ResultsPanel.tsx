@@ -13,7 +13,6 @@ import {
 } from "react"
 import { ResultCard } from "@/components/results/ResultCard"
 import { AppIcon } from "@/components/ui/app-icon"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-control"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -56,6 +55,7 @@ const DEFAULT_RESULTS_COLUMN_LAYOUT = Object.fromEntries(
 
 interface ResultsPanelProps {
   results: SearchJobResponse | null
+  unfilteredOfferCount: number
   loading: boolean
   sort: SortMode
   onSort: (s: SortMode) => void
@@ -63,8 +63,17 @@ interface ResultsPanelProps {
   selectedOfferId?: string
 }
 
+type ResultStatusItem = {
+  key: string
+  label: string
+  icon: ReactNode
+  title?: string
+  tone?: "muted" | "warning"
+}
+
 function ResultsPanelBase({
   results,
+  unfilteredOfferCount,
   loading,
   sort,
   onSort,
@@ -75,21 +84,46 @@ function ResultsPanelBase({
   const meta = results?.searchMeta
   const isMigration = results?.request.searchMode === "month-view" || Boolean(results?.migrationMonths?.length)
   const isCancelled = results?.searchStatus === "cancelled"
-  const routeLabel = results?.request ? `${results.request.origin} -> ${results.request.destination}` : "Sin consulta"
   const warnings = uniqueWarnings([...(results?.warnings ?? []), ...(meta?.warnings ?? [])])
-  const noFlightIssues = useMemo(() => providerNoFlightIssues(warnings), [warnings])
+  const actionableWarnings = useMemo(() => warnings.filter(isActionableWarning), [warnings])
+  const noFlightIssues = useMemo(() => providerNoFlightIssues(actionableWarnings), [actionableWarnings])
+  const filteredEmpty = isFilteredEmptyState(results, offers, unfilteredOfferCount)
+  const emphasizedNoFlightIssues = filteredEmpty ? [] : noFlightIssues
   const warningDelayElapsed = useWarningDelayElapsed(results, loading)
   const displayedWarnings = shouldDelayWarnings(results, loading, noFlightIssues.length)
-    ? warningDelayElapsed ? warnings : []
-    : warnings
+    ? warningDelayElapsed ? actionableWarnings : []
+    : actionableWarnings
   const warningSummary = displayedWarnings.length > 0
-    ? warningSummaryLabel(displayedWarnings, noFlightIssues)
+    ? warningSummaryLabel(displayedWarnings, emphasizedNoFlightIssues)
     : null
   const isRevalidatingCachedSearch = meta?.searchState === "search_cached"
   const pendingMigrationMonths = results?.migrationMonths?.filter((month) => month.status === "loading" || month.status === "partial").length ?? 0
   const summaryLabel = isMigration
     ? `${results?.migrationMonths?.length ?? 8} meses · ${offers.length} con tarifa${pendingMigrationMonths ? ` · ${pendingMigrationMonths} buscando` : ""}`
-    : `${offers.length} oferta${offers.length === 1 ? "" : "s"}`
+    : resultsSummaryLabel(offers.length, loading, Boolean(results))
+  const statusItems: ResultStatusItem[] = [
+    isRevalidatingCachedSearch
+      ? { key: "cache", label: "Cache en revision", icon: <AppIcon name="clock" className="h-3.5 w-3.5" /> }
+      : null,
+    loading
+      ? { key: "loading", label: "Buscando", icon: <AppIcon name="loading" spin className="h-3.5 w-3.5" /> }
+      : null,
+    isCancelled && !loading
+      ? { key: "cancelled", label: "Detenida", icon: <AppIcon name="x" className="h-3.5 w-3.5" /> }
+      : null,
+    meta?.partial && !loading
+      ? { key: "partial", label: "Parcial", icon: <AppIcon name="clock" className="h-3.5 w-3.5" /> }
+      : null,
+    warningSummary
+      ? {
+        key: "warnings",
+        label: warningSummary,
+        icon: <AppIcon name="alert" className="h-3.5 w-3.5" />,
+        title: displayedWarnings.join("\n"),
+        tone: "warning",
+      }
+      : null,
+  ].filter((item): item is ResultStatusItem => Boolean(item))
   const layoutEditor = useResultsLayoutEditor()
   const savedResultsLayout = useSavedResultsLayout(!layoutEditor.enabled)
   const activeResultsLayout = layoutEditor.enabled
@@ -100,23 +134,12 @@ function ResultsPanelBase({
   return (
     <section className="fd-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden" aria-busy={loading}>
       <div className="fd-panel-header">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
+            <div>
               <h2 className="fd-panel-title">{isMigration ? "Vuelo migratorio" : "Resultados"}</h2>
-              {isRevalidatingCachedSearch && <Badge variant="warning">Cache revalidando</Badge>}
-              {loading && <Badge variant="warning">Actualizando</Badge>}
-              {isCancelled && !loading && <Badge variant="warning">Detenida</Badge>}
-              {meta?.partial && !loading && <Badge variant="warning">Parcial</Badge>}
-              {warningSummary && (
-                <Badge variant="warning" title={displayedWarnings.join("\n")}>
-                  {warningSummary}
-                </Badge>
-              )}
             </div>
-            <p className="fd-panel-subtitle">
-              {routeLabel} · {summaryLabel}
-            </p>
+            <ResultMetaLine summary={summaryLabel} items={statusItems} />
           </div>
 
           {!isMigration && (
@@ -158,7 +181,8 @@ function ResultsPanelBase({
         results,
         offers,
         isCancelled,
-        noFlightIssues,
+        noFlightIssues: emphasizedNoFlightIssues,
+        filteredEmpty,
         selectedOfferId,
         onSelectOffer,
         layoutEditorEnabled: layoutEditor.enabled,
@@ -174,11 +198,60 @@ function ResultsPanelBase({
   )
 }
 
+function ResultMetaLine({ summary, items }: { summary: string; items: ResultStatusItem[] }) {
+  if (!summary && items.length === 0) return null
+
+  const warningItems = items.filter((item) => item.key === "warnings")
+  const statusItems = items.filter((item) => item.key !== "warnings")
+
+  return (
+    <div
+      aria-live="polite"
+      className="fd-panel-subtitle mt-0.5 flex min-w-0 max-w-full items-center gap-2 overflow-hidden"
+    >
+      {statusItems.map((item, index) => (
+        <span
+          key={item.key}
+          title={item.title}
+          className={cn(
+            "inline-flex min-w-0 items-center gap-1",
+            index > 0 && "before:text-muted-foreground before:content-['·']",
+            item.tone === "warning" && "text-warning-soft-foreground",
+          )}
+        >
+          {item.icon}
+          <span className="truncate">{item.label}</span>
+        </span>
+      ))}
+      {summary && (
+        <span className={cn("shrink-0", statusItems.length > 0 && "before:mr-2 before:text-muted-foreground before:content-['·']")}>
+          {summary}
+        </span>
+      )}
+      {warningItems.map((item) => (
+        <span
+          key={item.key}
+          title={item.title}
+          className={cn(
+            "inline-flex min-w-0 items-center gap-1",
+            (summary || statusItems.length > 0) && "before:text-muted-foreground before:content-['·']",
+            item.tone === "warning" && "text-warning-soft-foreground",
+          )}
+        >
+          {item.icon}
+          <span className="truncate">{item.label}</span>
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function renderBody({
   loading,
   results,
   offers,
   noFlightIssues,
+  filteredEmpty,
   isCancelled,
   selectedOfferId,
   onSelectOffer,
@@ -196,6 +269,7 @@ function renderBody({
   offers: CanonicalOffer[]
   isCancelled: boolean
   noFlightIssues: ProviderNoFlightIssue[]
+  filteredEmpty: boolean
   selectedOfferId?: string
   onSelectOffer: (offer: CanonicalOffer) => void
   layoutEditorEnabled: boolean
@@ -259,7 +333,7 @@ function renderBody({
   }
 
   if (!loading && results && offers.length === 0) {
-    const emptyModel = emptySearchModel(noFlightIssues)
+    const emptyModel = emptySearchModel(noFlightIssues, filteredEmpty)
 
     return (
       <EmptyState
@@ -856,13 +930,13 @@ function ResultsPagination({
   return (
     <nav
       aria-label="Paginación de resultados"
-      className="mt-2 flex shrink-0 items-center justify-between gap-2 border-t border-border/80 px-1 pb-0.5 pt-2"
+      className="mt-2 grid shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-t border-border/80 px-1 pb-0.5 pt-2"
       data-testid="results-pagination"
     >
-      <p className="min-w-[6.25rem] pl-1 text-xs font-semibold text-muted-foreground">
+      <p className="col-start-2 min-w-0 text-center text-xs font-semibold text-muted-foreground">
         {startIndex + 1}-{endIndex} de {totalCount}
       </p>
-      <div className="flex min-w-0 items-center justify-end gap-1">
+      <div className="col-start-3 flex min-w-0 items-center justify-end gap-1">
         <Button
           aria-label="Primera página"
           className="h-7 w-7 rounded-md"
@@ -936,6 +1010,16 @@ function ResultsPagination({
       </div>
     </nav>
   )
+}
+
+function resultsSummaryLabel(totalCount: number, loading: boolean, hasResults: boolean) {
+  if (totalCount > 0) return resultsTotalLabel(totalCount)
+  if (loading) return ""
+  return hasResults ? "Sin vuelos visibles" : "Sin consulta"
+}
+
+function resultsTotalLabel(totalCount: number) {
+  return `${totalCount} vuelo${totalCount === 1 ? "" : "s"}`
 }
 
 function MigrationMonthGrid({
@@ -1029,6 +1113,30 @@ function uniqueWarnings(messages: string[]) {
   return Array.from(new Set(messages.map((message) => message.trim()).filter(Boolean)))
 }
 
+function isActionableWarning(message: string) {
+  return !isOperationalWarning(message)
+}
+
+function isOperationalWarning(message: string) {
+  const normalized = normalizeWarningText(message)
+
+  if (normalized.includes("resultados cacheados") && normalized.includes("actualiz")) return true
+  if (normalized.includes("consultando") && normalized.includes("resultados se iran agregando")) return true
+  if (normalized.includes("matrix loading") && normalized.includes("parallel")) return true
+  if (normalized.includes("search cancelled by user")) return true
+  if (normalized.includes("busqueda detenida por el usuario")) return true
+  if (normalized.includes("search stopped because the page was refreshed")) return true
+
+  return false
+}
+
+function normalizeWarningText(message: string) {
+  return message
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+}
+
 function useWarningDelayElapsed(results: SearchJobResponse | null, loading: boolean) {
   const [elapsedKey, setElapsedKey] = useState<string | null>(null)
   const jobId = results?.searchJobId
@@ -1083,7 +1191,14 @@ function providerNoFlightIssues(warnings: string[]): ProviderNoFlightIssue[] {
   return issues
 }
 
-function emptySearchModel(noFlightIssues: ProviderNoFlightIssue[]) {
+function emptySearchModel(noFlightIssues: ProviderNoFlightIssue[], filteredEmpty: boolean) {
+  if (filteredEmpty) {
+    return {
+      title: "No hay búsquedas que coincidan",
+      body: "Ajusta filtros de equipaje, escalas o aerolíneas para volver a incluir resultados.",
+    }
+  }
+
   if (noFlightIssues.length > 0) {
     const providers = providerSentence(noFlightIssues.map((issue) => issue.provider))
     return {
@@ -1106,6 +1221,17 @@ function providerSentence(providers: string[]) {
   if (providers.length === 0) return "Los proveedores"
   if (providers.length === 1) return providers[0]
   return `${providers.slice(0, -1).join(", ")} y ${providers[providers.length - 1]}`
+}
+
+function isFilteredEmptyState(
+  results: SearchJobResponse | null,
+  offers: CanonicalOffer[],
+  unfilteredOfferCount: number,
+) {
+  if (!results || offers.length > 0) return false
+
+  const retainedOfferCount = results.allOffers?.length ?? 0
+  return unfilteredOfferCount > 0 || retainedOfferCount > 0
 }
 
 function warningSummaryLabel(warnings: string[], noFlightIssues: ProviderNoFlightIssue[]) {

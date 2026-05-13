@@ -387,6 +387,7 @@ export default function App() {
                 <div className={`${mobilePanel === "results" ? "block" : "hidden"} min-h-0 xl:block`}>
                   <ResultsPanel
                     results={filteredResults}
+                    unfilteredOfferCount={candidateOffers.length}
                     loading={loading}
                     sort={sortMode}
                     onSort={handleSort}
@@ -447,12 +448,10 @@ const FiltersPanel = memo(function FiltersPanel({
 }) {
   return (
     <aside className="fd-panel flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="fd-panel-header flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <div>
-            <h2 className="fd-panel-title">Filtros</h2>
-            <p className="fd-panel-subtitle">Refina sin perder contexto</p>
-          </div>
+      <div className="fd-panel-header flex min-w-0 items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h2 className="fd-panel-title">Filtros</h2>
+          <p className="fd-panel-subtitle">Ajusta resultados</p>
         </div>
         {hasFilters && (
           <Button
@@ -460,7 +459,9 @@ const FiltersPanel = memo(function FiltersPanel({
             variant="ghost"
             size="sm"
             onClick={onClear}
-            className="h-7 px-2 text-xs text-primary"
+            className="h-7 shrink-0 px-2 text-xs text-primary"
+            aria-label="Limpiar filtros"
+            title="Limpiar filtros"
           >
             <AppIcon name="x" />
             Limpiar

@@ -88,7 +88,7 @@ export function TopBar({
   }, [theme])
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur">
+    <header className="fd-topbar">
       <div className="mx-auto grid min-h-11 max-w-[1560px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 py-1.5 sm:px-4">
         <div className="flex min-w-0 items-center gap-2 justify-self-start">
           <a

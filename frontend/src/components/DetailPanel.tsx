@@ -1,5 +1,4 @@
 import { useState } from "react"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { AppIcon } from "@/components/ui/app-icon"
 import { fetchQuotation } from "@/lib/api"
@@ -164,15 +163,11 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
         </div>
 
         <section className="border-b border-border pb-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-bold">Condiciones</span>
-            </div>
-            <Badge variant={offer.stops === 0 ? "success" : offer.stops === 1 ? "warning" : "secondary"}>
-              {offer.stops === 0 ? "Directo" : `${offer.stops} escala${offer.stops > 1 ? "s" : ""}`}
-            </Badge>
+          <div className="mb-2">
+            <span className="text-sm font-bold">Condiciones</span>
           </div>
           <div className="space-y-1 text-sm text-muted-foreground">
+            <p>Escalas: <span className="font-medium text-foreground">{stopsLabel(offer.stops)}</span></p>
             <p>Equipaje: <span className="font-medium text-foreground">{offer.baggageLabel || "Consultar"}</span></p>
             <p>Cambios: <span className="font-medium text-foreground">{booleanLabel(offer.fareMeta?.changeable)}</span></p>
             <p>Reembolso: <span className="font-medium text-foreground">{booleanLabel(offer.fareMeta?.refundable)}</span></p>
@@ -199,7 +194,7 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
             <div className="flex items-center justify-between gap-2">
               <div>
                 <div className="fd-label">Cotización</div>
-                <p className="text-xs text-muted-foreground">Texto comercial para enviar al cliente</p>
+                <p className="text-xs text-muted-foreground">Listo para copiar</p>
               </div>
               <Button
                 type="button"
@@ -319,6 +314,11 @@ function booleanLabel(value?: boolean) {
   if (value === true) return "Permitido"
   if (value === false) return "No permitido"
   return "Consultar"
+}
+
+function stopsLabel(stops: number) {
+  if (stops <= 0) return "Directo"
+  return `${stops} escala${stops === 1 ? "" : "s"}`
 }
 
 function priceConfidenceLabel(value: string) {

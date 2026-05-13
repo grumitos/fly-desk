@@ -248,6 +248,27 @@
     color: var(--fd-theme-toggle-hover-fg) !important;
   }
 
+  .fd-topbar {
+    --fd-topbar-fade: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+    @apply sticky top-0 z-50 bg-card/95 backdrop-blur-md;
+    box-shadow: 0 24px 44px -40px var(--fd-topbar-fade);
+  }
+
+  .dark .fd-topbar {
+    --fd-topbar-fade: rgb(0 0 0 / 42%);
+  }
+
+  .fd-topbar::after {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+    top: 100%;
+    height: 1.375rem;
+    pointer-events: none;
+    background: linear-gradient(to bottom, var(--fd-topbar-fade), color-mix(in srgb, var(--fd-topbar-fade) 35%, transparent) 42%, transparent);
+    opacity: 0.16;
+  }
+
   .fd-search-stage {
     --fd-search-idle-optical-offset: -0.75rem;
     display: grid;
