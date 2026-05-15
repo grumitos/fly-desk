@@ -1,23 +1,25 @@
 # Deploy Railway
 
-## Estado real
+## Estado Real
 
-El proceso Bun actual se puede construir y arrancar en Railway, pero la funcionalidad completa de busqueda no esta lista para un deploy remoto fiel al entorno local.
+El proceso Bun actual se puede construir y arrancar en Railway, pero Fly Desk sigue siendo local-first. Un deploy remoto sirve para shell, healthcheck y API parcial; no equivale al entorno local completo.
 
 Motivo principal:
 
-- la integracion activa con Agil depende de una sesion local de Chrome o Edge
-- esa sesion se extrae desde el filesystem del usuario y `localStorage`
+- Agil depende de una sesion local de Chrome o Edge
+- esa sesion se extrae desde el filesystem del usuario, storage del navegador y, cuando aplica, DevTools
 - ese mecanismo no existe de forma equivalente dentro de un contenedor remoto
+- la UI empaquetada no inyecta automaticamente `FLY_DESK_API_TOKEN` para clientes publicos
 
-## Lo que si funciona en Railway
+## Lo Que Si Funciona
 
-- build frontend con Bun
+- instalacion con Bun
+- build frontend con `Bun.build`
 - servidor Bun en un solo proceso
-- serving de UI y API
+- serving de UI estatica y API tecnica
 - lectura de `PORT`
 - override explicito de `HOST`
-- healthcheck
+- healthcheck `/api/health`
 
 Comandos:
 
@@ -26,32 +28,48 @@ Comandos:
 - start: `bun run start`
 - healthcheck: `/api/health`
 
-Variables minimas para un deploy remoto:
+Variables minimas:
 
 - `HOST=0.0.0.0`
 - `PORT` provisto por Railway
+- `FLY_DESK_API_TOKEN=<token>` si se exponen endpoints operativos a clientes no loopback
 
 Importante:
 
 - localmente Fly Desk escucha en `127.0.0.1` por defecto
-- en Railway hay que forzar `HOST=0.0.0.0` o el contenedor no quedara expuesto
+- en Railway hay que forzar `HOST=0.0.0.0`
+- `/api/health` no requiere token
+- busqueda, matriz, cotizacion, autocomplete y redirects requieren localhost o token valido
 
-## Lo que no debe asumirse
+## Seguridad De Instalacion
+
+El deploy debe usar Bun, no npm ni pnpm:
+
+- `bun.lock` es el lockfile fuente
+- `bunfig.toml` desactiva lifecycle scripts de dependencias
+- `bunfig.toml` filtra versiones npm publicadas hace menos de 3 dias
+- `.npmrc` solo existe como guardrail para instalaciones accidentales con npm/pnpm
+
+Si un paquete nuevo necesita ejecutar scripts de instalacion, debe aprobarse explicitamente con `trustedDependencies` y revisarse como cambio de supply chain.
+
+## Lo Que No Debe Asumirse
 
 No debe asumirse que un deploy remoto hoy pueda:
 
 - reutilizar la sesion local de Agil
 - hacer busquedas reales contra Agil igual que en localhost
 - mantener el mismo flujo end-to-end sin una estrategia nueva de autenticacion/sesion
+- servir una UI publica sin resolver como entregar credenciales/API token de forma segura
 
-## Para que quede listo de verdad
+## Para Que Quede Listo De Verdad
 
 Hace falta resolver al menos:
 
 1. una fuente remota de autenticacion o sesion para Agil, o reemplazar Agil como provider directo
-2. persistencia externa para jobs y redirects si se quiere robustez multi-instancia
-3. estrategia segura para secretos/configuracion
+2. una forma segura de entregar `FLY_DESK_API_TOKEN` o un esquema de auth equivalente a la UI remota
+3. persistencia externa para jobs y redirects si se quiere robustez multi-instancia
+4. estrategia segura para secretos/configuracion
 
-## Conclusión
+## Conclusion
 
-Railway sigue siendo una opcion natural para el servidor Bun, pero hoy sirve mejor como destino de shell/API parcial que como deploy totalmente funcional de la integracion local con Agil.
+Railway sigue siendo una opcion natural para el servidor Bun, pero hoy sirve mejor como destino de shell, healthcheck y API parcial que como deploy totalmente funcional de la integracion local con Agil.

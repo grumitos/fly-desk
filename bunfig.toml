@@ -1,6 +1,8 @@
 [install]
+# Supply-chain hardening: keep dependency lifecycle scripts disabled and avoid
+# very new package versions during installs unless a package is deliberately exempted.
 ignoreScripts = true
-minimumReleaseAge = 86400
+minimumReleaseAge = 259200
 
 [serve.static]
 plugins = ["bun-plugin-tailwind"]
