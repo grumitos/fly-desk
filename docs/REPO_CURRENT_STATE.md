@@ -1,271 +1,165 @@
 # Estado Actual de la Repo
 
-Fecha de corte: 2026-04-25
+Fecha de corte: 2026-05-15
 
 ## Resumen
 
-Fly Desk es hoy una aplicacion local-first para agentes de viajes, con frontend React compilado por Bun y backend Bun, conectada a Agil mediante reutilizacion de sesion local del navegador y a Costamar mediante contexto controlado por entorno.
+Fly Desk es una aplicacion local-first para agentes de viajes. El runtime activo es Bun-only: Bun instala dependencias, ejecuta el backend, compila la UI React, sirve el BFF HTTP y usa `bun:sqlite` para caches locales.
 
-El repo no versiona artefactos generados de build:
+El repo no versiona artefactos generados:
 
 - `dist/` esta ignorado
 - `frontend/dist/` esta ignorado
 - `output/` esta ignorado
-- no se versionan bundles minificados ni capturas de smoke locales
+- `config/results-layout.json` puede generarse localmente desde el layout editor y no debe tratarse como estado fuente
 
-## Estado funcional vigente
+## Producto Vigente
 
-### Busqueda y producto en React
+### UI React
 
 - busqueda exacta
-- busqueda flexible: solo ida por rango y ida/vuelta por matriz exact-stay
-- busqueda migratoria mensual: 8 meses desde el mes actual, agregando la mejor tarifa mensual
+- busqueda flexible de solo ida via rango `stay-range`
+- busqueda flexible ida/vuelta via `/api/matrix`, normalizada a lista de resultados
+- busqueda migratoria mensual: 8 meses desde el mes actual
 - autocomplete de origen y destino
-- filtros visibles de escalas, tiempo maximo de escala, equipaje y aerolineas
-- lista de resultados con advertencias del backend
-- panel lateral de detalle con precio, equipaje, condiciones, advertencias, rutas de compra y cotizacion
-- `quotation`
-- purchase paths y apertura del flujo equivalente cuando aplica
+- filtros de escalas, tiempo maximo de escala, equipaje y aerolineas
+- resultados paginados con advertencias del backend
+- panel lateral con precio, equipaje, condiciones, rutas de compra y cotizacion
+- ajuste persistente de columnas bajo `?layoutEditor=1` o `?layout=editor`
 
-La UI React no debe mostrar controles simulados. Busqueda flexible y migratorio mensual estan conectados en React; multidestino permanece fuera de la interfaz.
+La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz visible:
 
-### Feedback de carga
+- multidestino
+- vista calendario/matriz dedicada
+- `reprice`
 
-- busqueda exacta: placeholder inline en el area de resultados
-- polling de busqueda: badge `Actualizando` en resultados
-- resultados parciales: badge `Parcial` y advertencias del backend
-- `quotation`: estado de carga dentro del panel de detalle
+### Feedback De Carga
 
-## Cambios estructurales ya consolidados
+- busqueda exacta: placeholder inline en resultados
+- polling y revalidacion: badge `Actualizando`
+- resultados parciales: badge `Parcial` y advertencias agregadas
+- cotizacion: estado de carga dentro del panel de detalle
 
-### Runtime y seguridad local-first
+## Runtime, Seguridad Y Dependencias
+
+### Local-First
 
 - el servidor escucha en `127.0.0.1` por defecto
-- `HOST` queda como override explicito para despliegues no locales
-- Costamar ya no acepta hosts o base URLs por request
-- `COSTAMAR_API_BASE_URL` y `COSTAMAR_BRAND_BASE_URL` quedan restringidas a hosts aprobados
-- el endpoint de apertura local de browser solo funciona desde loopback
+- `HOST` es un override explicito para despliegues no locales
+- endpoints operativos desde clientes no loopback requieren `FLY_DESK_API_TOKEN`
+- diagnosticos, layout de resultados, estado de token Costamar y apertura local de browser son loopback-only
+- la politica de fechas es movil: `minSearchDate = hoy`, `maxSearchDate = hoy + SEARCH_MAX_FUTURE_DAYS`
+- las estadias ida/vuelta se limitan a 90 noches
 
-### Politica compartida de fechas
+### Supply Chain
 
-- se elimino la validacion fija atada a `2026`
-- la politica actual es movil:
-  - `minSearchDate = hoy`
-  - `maxSearchDate = hoy + 365 dias`
-- `SEARCH_MAX_FUTURE_DAYS` permite ajustar la ventana
-- el backend embebe esa config al frontend en el HTML inicial
-- frontend y backend validan con la misma regla
+- package manager soportado: Bun (`packageManager: "bun@1.3.13"`)
+- lockfile vigente: `bun.lock`
+- `bunfig.toml` desactiva lifecycle scripts durante instalacion y filtra versiones publicadas hace menos de 3 dias
+- `.npmrc` define `ignore-scripts=true` como proteccion para instalaciones accidentales con npm/pnpm
+- no se adopta pnpm como flujo normal porque el repo es Bun-only y no hay `pnpm-lock.yaml`
+- el grafo actual no usa paquetes `@tanstack/*`
+- cualquier dependencia que necesite scripts de instalacion debe aprobarse con `trustedDependencies` y una nota en el cambio
+- `tools/sync-env-from-example.ps1` permite reordenar `.env` local desde `.env.example` sin imprimir valores secretos
 
-### Limpieza core y providers
+### Providers
 
-- ya no existe fallback hardcodeado para `AGIL_APIM_SUBSCRIPTION_KEY`
-- la key de Agil solo se resuelve desde entorno y falla en el camino live real
-- helpers compartidos de matriz y concurrencia viven en `src/core/matrix.ts`
-- derivacion de requests flexibles vive en `src/core/flexible-search.ts`
-- router, Agil y Costamar usan esos helpers compartidos
+- Agil usa sesion local de navegador y subscription key desde entorno o recuperada desde el bundle Agil
+- Costamar usa contexto controlado por entorno, allowlist de hosts y warm-up B2B opcional
+- Costamar no acepta hosts/base URLs por request
+- el prewarm silencioso de providers esta activo por defecto y puede apagarse con `FLY_DESK_PROVIDER_PREWARM=0`
 
-### Frontend
-
-- `frontend/src/main.tsx` monta la app React
-- `frontend/src/App.tsx` compone el workspace operacional
-- `frontend/src/components/` contiene topbar, shell de busqueda, resultados, detalle y componentes UI
-- `frontend/src/hooks/` concentra busqueda/polling y autocomplete
-- `frontend/src/index.css` define tokens, layout y tema claro/oscuro
-- `scripts/build-frontend.ts` genera `frontend/dist` con `Bun.build`
-- el backend Bun sirve el build generado en `frontend/dist`
-
-### Launchers
-
-- el acceso directo usa puerto fijo `32123`
-- el launcher persiste estado y logs en `.launcher/`
-- el cierre espera la liberacion real del puerto
-- los `.vbs` esperan a que abrir o cerrar termine para evitar carreras
-- si encuentra una instancia sana, la reutiliza
-- si encuentra una instancia huerfana propia, intenta limpiarla antes de relanzar
-
-## Estructura funcional vigente
+## Estructura Funcional
 
 ### Frontend
 
-- `frontend/index.html`
-  - shell HTML/React usado por el build Bun
-- `frontend/src/main.tsx`
-  - entrypoint React
-- `frontend/src/App.tsx`
-  - composicion principal, filtros y seleccion de ofertas
-- `frontend/src/components/`
-  - `TopBar`, `SearchShell`, `ResultsPanel`, `DetailPanel` y componentes UI
-- `frontend/src/hooks/`
-  - `useSearch` y `useAutocomplete`
-- `frontend/src/lib/api.ts`
-  - `getJson`, `postJson`, busqueda, polling, autocomplete y cotizacion
-- `frontend/src/index.css`
-  - tokens, layout, componentes, overlays y estados visuales
+- `frontend/index.html`: shell HTML/React usado por el build Bun
+- `frontend/public/`: favicon y assets estaticos copiados a `frontend/dist`
+- `frontend/src/main.tsx`: entrypoint React
+- `frontend/src/App.tsx`: composicion principal, filtros, seleccion y layout responsive
+- `frontend/src/components/`: `TopBar`, `SearchShell`, `ResultsPanel`, `DetailPanel` y componentes UI
+- `frontend/src/components/results/`: `ResultCard`, modelo de tarjeta, CSS y layout editor
+- `frontend/src/hooks/`: `useSearch` y `useAutocomplete`
+- `frontend/src/lib/api.ts`: cliente HTTP, busqueda/polling, matriz, migratorio, autocomplete, layout y cotizacion
+- `frontend/src/index.css`: tokens, layout, tema claro/oscuro y estados visuales
+- `scripts/build-frontend.ts`: build con `Bun.build`, `bun-plugin-tailwind` y copia de `frontend/public`
 
 ### Backend
 
-- `src/server.ts`
-  - serving de `frontend/dist`
-  - inyeccion de config runtime en `index.html`
-- `src/http-router.ts`
-  - `/api/health`
-  - `/api/costamar/token-status`
-  - `/api/agil/locations`
-  - `/api/costamar/locations`
-  - `/api/locations`
-  - `/api/local/open-url`
-  - `/api/search`
-  - `/api/search/:jobId`
-  - `/api/matrix`
-  - `/api/matrix/:jobId`
-  - `/api/quotation`
-  - `/r/:id`
-- `src/search-date-policy.ts`
-  - ventana movil de fechas
-  - config publica embebida al frontend
-- `src/provider-context.ts`
-  - normalizacion de contexto de Costamar
-  - allowlist de URLs
-  - recovery de sesion branded desde Chrome
-  - extraccion via Chrome DevTools Protocol (CDP)
-  - verificacion live de token (`verifyCostamarTokenLive`)
-  - endpoint de estado de token (`getCostamarTokenStatus`)
-- `src/local-agil.ts`
-  - sesion local
-  - refresh token
-  - exact
-  - range
-  - matrix
-  - deep links
-- `src/local-costamar.ts`
-  - autocomplete
-  - exact
-  - range
-  - matrix
-  - branded links
-- `src/core/flexible-search.ts`
-  - helpers de derivacion de requests
-- `src/core/matrix.ts`
-  - `buildMatrixConfidenceSummary`
-  - `prioritizeMatrixLoadingCells`
-  - `mapConcurrent`
-- `src/session-store.ts`
-  - jobs en memoria
-  - redirects
-  - purchase paths
+- `src/server.ts`: `Bun.serve`, serving de `frontend/dist`, headers, limite de body e inyeccion de config runtime
+- `src/http-router.ts`: rutas HTTP, auth loopback/token, jobs, matriz, cotizacion, redirects, diagnosticos y layout
+- `src/http-quotation-snapshot.ts`: normalizacion de snapshots de cotizacion
+- `src/search-date-policy.ts`: ventana movil de fechas y config publica embebida
+- `src/provider-context.ts`: contexto Costamar, allowlist, recovery desde Chrome/CDP y estado live de token
+- `src/local-agil.ts`: sesion local, refresh token, exact/range/matrix, pricing y deep links
+- `src/local-costamar.ts`: autocomplete, exact/range/matrix, branded links y warm-up B2B
+- `src/providers/costamar/search-payloads.ts`: payloads Costamar
+- `src/core/`: normalizacion, matriz, grouping, ranking, cotizacion y tipos compartidos
+- `src/search-worker-client.ts` y `src/search-worker.ts`: procesos hijos Bun para busquedas pesadas de proveedor
+- `src/session-store.ts`: jobs vivos, SQLite local, migracion JSON legada, redirects y purchase paths
+- `src/location-suggestion-cache.ts`: cache SQLite de autocomplete con TTL
 
-### Launchers para usuario final
+### Launchers
 
 - `Abrir Fly Desk.vbs`
-- `Cerrar Fly Desk.vbs`
 - `tools/launch-fly-desk.cmd`
 - `tools/start-fly-desk.ps1`
 - `tools/stop-fly-desk.cmd`
 - `tools/stop-fly-desk.ps1`
 
-## Pruebas vigentes
+Comportamiento actual:
 
-### Suite automatica
+- usa el puerto fijo `32123`
+- antes de reutilizar o relanzar, chequea Git con cache local
+- si hay un commit remoto nuevo y el working tree esta limpio, ejecuta `git pull --ff-only`
+- si encuentra una instancia sana, la reutiliza
+- si encuentra una instancia huerfana propia, intenta limpiarla antes de relanzar
+- si `node_modules/` no existe, ejecuta `bun install --frozen-lockfile`
+- si `frontend/dist/` esta ausente o vieja, ejecuta `bun run build`
+- persiste estado y logs en `.launcher/`
 
-- `test/config.test.ts`
-- `test/provider-context.test.ts`
-- `test/search-date-policy.test.ts`
-- `test/http-router.test.ts`
-- `test/filtering.test.ts`
-- `test/local-agil.test.ts`
-- `test/costamar.test.ts`
-- `test/matrix-core.test.ts`
-- `test/session-store.test.ts`
-- `test/theme-css.test.ts`
-- `test/ui.test.ts`
-- `test/variant-group-key.test.ts`
+## Pruebas
 
-Helpers y fixtures de test:
+Comandos principales:
 
-- `test/helpers/server.ts`
-- `test/helpers/ui.ts`
-- `test/helpers/ui-fixtures.ts`
+- `bun install --frozen-lockfile`
+- `bun run typecheck`
+- `bun run lint`
+- `bun run build`
+- `bun run test`
+
+La suite vive en `test/**/*.test.ts`; los helpers compartidos estan en `test/helpers/`. No se mantiene una lista manual de archivos de test para evitar que este documento quede desfasado cuando la suite crece.
 
 Cobertura importante actual:
 
 - bind por defecto a loopback y override por `HOST`
+- token API para clientes no loopback
+- endpoints loopback-only
 - validacion compartida de fechas con ventana movil
-- endurecimiento de contexto de Costamar
-- key requerida para Agil live
-- helpers compartidos de matriz
-- shell de busqueda y orden del formulario
-- smoke de `exacto/flexible/migratorio` con `ida/ida-vuelta`
-- tema claro y oscuro
-- calendario custom
-- autocomplete anclado
-- matriz flexible y paso a exacto
-- provider links y feedback de sesion faltante
-- launcher de abrir/cerrar sobre `32123`
+- contexto Costamar endurecido
+- key requerida o recuperable para Agil live
+- workers Bun y bypass con `FLY_DESK_SEARCH_WORKER_PROCESSES=0`
+- persistencia SQLite y migracion JSON legada de sesiones/autocomplete
+- layout persistente de resultados
+- rail de busqueda, filtros, tema, autocomplete, provider links y cotizacion
 
-### Verificacion reciente
+Nota de QA: `test/helpers/server.ts` fija `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1` durante tests HTTP para validar contratos inmediatos sin dejar jobs progresivos vivos. El runtime normal no define esa variable.
 
-Comandos:
+## Documentacion Vigente
 
-- `bun run typecheck`
-- `bun run lint`
-- `bun run build`
-- `bun test test/**/*.test.ts`
+- `README.md`
+- `frontend/README.md`
+- `docs/REPO_CURRENT_STATE.md`
+- `docs/DEPLOY_RAILWAY.md`
+- `docs/FRONTEND_IDENTITY.md`
 
-Resultado al 25 de abril de 2026:
+No se mantienen planes de migracion ni auditorias historicas como documentacion viva. El historial Git conserva ese contexto si hace falta recuperarlo.
 
-- typecheck en verde
-- lint frontend en verde via script raiz
-- build frontend/backend en verde
-- suite automatica en verde: `168/168`
-- `test/helpers/server.ts` desactiva jobs progresivos de fondo durante tests HTTP con `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1`; esto evita handles vivos en Windows y no cambia el runtime normal
+## Deuda Tecnica Vigente
 
-
-## Deuda tecnica vigente
-
-- `frontend/src/App.tsx` concentra composicion, filtros y seleccion; conviene seguir extrayendo verticalmente si crece
-- `src/local-agil.ts` sigue concentrando mucha logica de sesion, cliente y mapping
-- el store sigue siendo en memoria; no hay persistencia externa para jobs
-- `bun run lint` delega al ESLint real del frontend
-- el deploy remoto completo sigue bloqueado por la dependencia de sesion local de navegador para Agil
-- la extraccion de token Costamar por CDP requiere que Chrome se lance con `--remote-debugging-port`; sin ese flag, se depende de archivos de sesion que Chrome puede no tener desbloqueados
+- `frontend/src/App.tsx` todavia concentra bastante composicion, filtros y seleccion
+- `src/local-agil.ts` concentra sesion, cliente, pricing y mapping
+- `src/local-costamar.ts` concentra automatizacion B2B, cliente, mapping y redirects
+- la persistencia es SQLite local; no hay store externo para multi-instancia
+- el deploy remoto completo sigue bloqueado por la dependencia de sesion local de navegador para Agil y por la falta de inyeccion de token API en la UI publica
 - la busqueda migratoria lanza 8 jobs de rango con concurrencia limitada, lo cual debe vigilarse si sube el volumen de uso
-
-## Cambios del 25 de abril de 2026
-
-### Frontend React/Bun activo
-
-- `src/server.ts` sirve `frontend/dist`
-- `bun run build` compila el frontend con `scripts/build-frontend.ts`
-- `bun run lint` delega a `bun run --filter './frontend' lint`
-- `docs/FRONTEND_IDENTITY.md` define la identidad visual actual
-
-### Endurecimiento posterior a auditoria
-
-- el polling de busqueda sigue activo cuando el backend responde `unchanged` sin estado final
-- el autocomplete ignora respuestas obsoletas fuera de orden
-- los controles custom de autocomplete y pasajeros tienen semantica accesible adicional
-- el servidor emite headers basicos de hardening en respuestas propias
-- JSON invalido se reporta como 400 en lugar de 500
-- `frontend/src/lib/api.ts` adapta el contrato React simple al payload BFF real (`request` + `sortMode`) y normaliza la respuesta para la UI actual
-- los smoke tests de UI apuntan al shell React/Bun vigente, no al DOM legacy de `public/`
-
-## Cambios del 9 de abril de 2026
-
-### Extraccion de token Costamar via CDP
-
-- nueva funcion `readCostamarCandidatesViaCDP()` en `provider-context.ts`
-- lee `DevToolsActivePort` del directorio de usuario de Chrome
-- conecta al protocolo CDP para listar pestanas abiertas
-- extrae tokens de URLs de Costamar visibles en pestanas
-- se integra al pipeline existente: file-based -> CDP -> fallback profiles
-- requiere Chrome con `--remote-debugging-port` habilitado
-
-### Verificacion y estado de token
-
-- `getCostamarTokenStatus()`: devuelve estado completo del token (terminal, usable, expiracion, minutos restantes)
-- `verifyCostamarTokenLive()`: verificacion async via API de Costamar (`GET /engines/:terminalId`)
-- nuevo endpoint `GET /api/costamar/token-status` con parametro opcional `?verify=true`
-
-### Modo de busqueda migratoria
-
-React vuelve a exponer `Migratorio` como flujo real. Usa origen y destino, arma 8 rangos mensuales contando el mes actual, consulta cada mes como `stay-range` con concurrencia limitada y conserva la sesion original de cada oferta para cotizacion.
