@@ -21,13 +21,18 @@ const SEARCH_FIELD_CONTROL_CLASS = "fd-control flex h-[52px] w-full items-center
 const SEARCH_FIELD_VALUE_CLASS = "h-4 min-w-0 flex-1 truncate text-sm font-semibold leading-4"
 const SEARCH_MAX_FUTURE_DAYS_FALLBACK = 365
 const MAX_STAY_NIGHTS = 90
+const MAX_PASSENGERS = 9
+const MAX_CHILDREN = 8
+const TOPBAR_CONTROLS_MEDIA_QUERY = "(min-width: 768px)"
 
 type SearchModeControl = "exact" | "flexible" | "migration"
+type SearchTouchedField = "origin" | "destination" | "departureDate" | "returnDate" | "passengers"
 
 interface SearchShellProps {
   onSearch: (req: SearchRequest, sort?: SortMode) => void
   onCancelSearch?: () => void
   loading: boolean
+  loadingLabel?: string
   controlsPlacement?: "inline" | "topbar"
   syncedRequest?: SearchRequest | null
   resetToken?: number
@@ -38,6 +43,7 @@ export function SearchShell({
   onSearch,
   onCancelSearch,
   loading,
+  loadingLabel = "Buscando",
   controlsPlacement = "inline",
   syncedRequest = null,
   resetToken = 0,
@@ -55,16 +61,18 @@ export function SearchShell({
   const [infants, setInfants] = useState(0)
   const [paxOpen, setPaxOpen] = useState(false)
   const lastResetTokenRef = useRef(resetToken)
-  const [touched, setTouched] = useState<Record<"origin" | "destination" | "departureDate" | "returnDate", boolean>>({
+  const [touched, setTouched] = useState<Record<SearchTouchedField, boolean>>({
     origin: false,
     destination: false,
     departureDate: false,
     returnDate: false,
+    passengers: false,
   })
   const datePolicy = useMemo(() => getRuntimeSearchDatePolicy(), [])
-  const returnMinDate = maxIsoDate(datePolicy.minSearchDate, departureDate || datePolicy.minSearchDate)
-  const endDateMaxDate = mode === "exact" && trip === "round-trip" && departureDate
-    ? minIsoDate(datePolicy.maxSearchDate, addDays(departureDate, MAX_STAY_NIGHTS))
+  const validDepartureDate = isIsoDate(departureDate) ? departureDate : ""
+  const returnMinDate = maxIsoDate(datePolicy.minSearchDate, validDepartureDate || datePolicy.minSearchDate)
+  const endDateMaxDate = mode === "exact" && trip === "round-trip" && validDepartureDate
+    ? minIsoDate(datePolicy.maxSearchDate, addDays(validDepartureDate, MAX_STAY_NIGHTS))
     : datePolicy.maxSearchDate
   const departureLabel = mode === "flexible" ? "Salida desde" : "Salida"
   const endDateLabel = mode === "flexible" ? "Salida hasta" : "Regreso"
@@ -73,6 +81,7 @@ export function SearchShell({
     "grid grid-cols-1 gap-1.5 transition-[grid-template-columns] duration-200 ease-out",
     "lg:grid-cols-[minmax(150px,1.2fr)_34px_minmax(150px,1.2fr)_minmax(128px,.85fr)_minmax(128px,.85fr)_minmax(144px,.9fr)_124px]",
   )
+  const canUseTopbarControls = useCanUseTopbarControls()
 
   const origin = useAutocomplete("origin", (suggestion) => setOriginCode(suggestion.code))
   const destination = useAutocomplete("destination", (suggestion) => setDestCode(suggestion.code))
@@ -99,15 +108,23 @@ export function SearchShell({
       setDepartureDate(dateStartFromSearchRequest(syncedRequest))
       setReturnDate(dateEndFromSearchRequest(syncedRequest))
       setStayNights(clampStayNights(syncedRequest.stayNights ?? 7))
-      const nextAdults = clampInteger(syncedRequest.adults, 1, 9, 1)
+      const nextAdults = clampInteger(syncedRequest.adults, 1, MAX_PASSENGERS, 1)
+      const nextChildren = clampInteger(syncedRequest.children, 0, Math.max(0, MAX_PASSENGERS - nextAdults), 0)
+      const nextInfants = clampInteger(
+        syncedRequest.infants,
+        0,
+        Math.min(nextAdults, Math.max(0, MAX_PASSENGERS - nextAdults - nextChildren)),
+        0,
+      )
       setAdults(nextAdults)
-      setChildren(clampInteger(syncedRequest.children, 0, 8, 0))
-      setInfants(clampInteger(syncedRequest.infants, 0, nextAdults, 0))
+      setChildren(nextChildren)
+      setInfants(nextInfants)
       setTouched({
         origin: false,
         destination: false,
         departureDate: false,
         returnDate: false,
+        passengers: false,
       })
       void resolveOriginQuery()
       void resolveDestinationQuery()
@@ -138,6 +155,7 @@ export function SearchShell({
         destination: false,
         departureDate: false,
         returnDate: false,
+        passengers: false,
       })
       onSearchConfigDraftChange?.(null)
     })
@@ -146,9 +164,25 @@ export function SearchShell({
   }, [onSearchConfigDraftChange, resetToken, setDestinationQuery, setOriginQuery])
 
   const updateAdults = (nextAdults: number) => {
-    const clampedAdults = Math.max(1, Math.min(nextAdults, 9))
+    const clampedAdults = Math.max(1, Math.min(nextAdults, MAX_PASSENGERS))
+    const clampedChildren = Math.min(children, Math.max(0, MAX_PASSENGERS - clampedAdults))
+    const clampedInfants = Math.min(infants, clampedAdults, Math.max(0, MAX_PASSENGERS - clampedAdults - clampedChildren))
     setAdults(clampedAdults)
-    setInfants((current) => Math.min(current, clampedAdults))
+    setChildren(clampedChildren)
+    setInfants(clampedInfants)
+    setTouched((current) => ({ ...current, passengers: true }))
+  }
+
+  const updateChildren = (nextChildren: number) => {
+    const clampedChildren = Math.max(0, Math.min(nextChildren, MAX_CHILDREN, MAX_PASSENGERS - adults))
+    setChildren(clampedChildren)
+    setInfants((current) => Math.min(current, adults, Math.max(0, MAX_PASSENGERS - adults - clampedChildren)))
+    setTouched((current) => ({ ...current, passengers: true }))
+  }
+
+  const updateInfants = (nextInfants: number) => {
+    setInfants(Math.max(0, Math.min(nextInfants, adults, MAX_PASSENGERS - adults - children)))
+    setTouched((current) => ({ ...current, passengers: true }))
   }
 
   const handleDepartureDateChange = (nextDate: string) => {
@@ -203,6 +237,9 @@ export function SearchShell({
     destinationValue: destination.query,
     departureDate,
     returnDate,
+    adults,
+    children,
+    infants,
     trip,
     mode,
     minDepartureDate: datePolicy.minSearchDate,
@@ -301,6 +338,7 @@ export function SearchShell({
       destination: true,
       departureDate: mode !== "migration",
       returnDate: mode !== "migration" && (trip === "round-trip" || mode === "flexible"),
+      passengers: true,
     })
 
     if (hasBlockingValidationError(validation)) {
@@ -320,6 +358,9 @@ export function SearchShell({
       destinationValue: resolvedRequest.destination,
       departureDate,
       returnDate,
+      adults,
+      children,
+      infants,
       trip,
       mode,
       minDepartureDate: datePolicy.minSearchDate,
@@ -335,11 +376,21 @@ export function SearchShell({
   }
 
   const passengerTotal = adults + children + infants
+  const passengerSlotsRemaining = Math.max(0, MAX_PASSENGERS - passengerTotal)
+  const visibleOriginError = touched.origin ? validation.origin : undefined
+  const visibleDestinationError = touched.destination ? validation.destination : undefined
+  const visibleDepartureDateError = !dateFieldsDisabled && (touched.departureDate || Boolean(departureDate && !isIsoDate(departureDate)))
+    ? validation.departureDate
+    : undefined
+  const visibleReturnDateError = !dateFieldsDisabled && (mode !== "exact" || trip !== "one-way") && (touched.returnDate || Boolean(returnDate && !isIsoDate(returnDate)))
+    ? validation.returnDate
+    : undefined
+  const visiblePassengerError = touched.passengers ? validation.passengers : undefined
   const tripTabs: { key: typeof trip; label: string; icon: AppIconName }[] = [
     { key: "round-trip", label: "Ida y vuelta", icon: "roundTrip" },
     { key: "one-way", label: "Solo ida", icon: "oneWay" },
   ]
-  const topbarControlsTarget = controlsPlacement === "topbar"
+  const topbarControlsTarget = controlsPlacement === "topbar" && canUseTopbarControls
     ? document.getElementById(TOPBAR_SEARCH_CONTROLS_ID)
     : null
   const shouldPortalControls = Boolean(topbarControlsTarget)
@@ -394,7 +445,8 @@ export function SearchShell({
                 setOriginCode(suggestion.code)
                 setTouched((current) => ({ ...current, origin: true }))
               }}
-              invalid={touched.origin && Boolean(validation.origin)}
+              invalid={Boolean(visibleOriginError)}
+              helperText={visibleOriginError}
             />
 
           <div className="hidden items-center justify-center lg:flex">
@@ -435,7 +487,8 @@ export function SearchShell({
               setDestCode(suggestion.code)
               setTouched((current) => ({ ...current, destination: true }))
             }}
-            invalid={touched.destination && Boolean(validation.destination)}
+            invalid={Boolean(visibleDestinationError)}
+            helperText={visibleDestinationError}
           />
 
           <DateField
@@ -449,7 +502,8 @@ export function SearchShell({
               handleDepartureDateChange(value)
               setTouched((current) => ({ ...current, departureDate: true }))
             }}
-            invalid={!dateFieldsDisabled && touched.departureDate && Boolean(validation.departureDate)}
+            invalid={Boolean(visibleDepartureDateError)}
+            helperText={visibleDepartureDateError}
             onTouch={() => setTouched((current) => ({ ...current, departureDate: true }))}
           />
           <DateField
@@ -463,11 +517,18 @@ export function SearchShell({
               handleReturnDateChange(value)
               setTouched((current) => ({ ...current, returnDate: true }))
             }}
-            invalid={!dateFieldsDisabled && (mode !== "exact" || trip !== "one-way") ? touched.returnDate && Boolean(validation.returnDate) : false}
+            invalid={Boolean(visibleReturnDateError)}
+            helperText={visibleReturnDateError}
             onTouch={() => setTouched((current) => ({ ...current, returnDate: true }))}
           />
 
-          <Popover open={paxOpen} onOpenChange={setPaxOpen}>
+          <Popover
+            open={paxOpen}
+            onOpenChange={(nextOpen) => {
+              setPaxOpen(nextOpen)
+              if (nextOpen) setTouched((current) => ({ ...current, passengers: true }))
+            }}
+          >
             <div className="relative">
               <label className="fd-label pointer-events-none absolute left-3 top-2.5 z-10">Pasajeros</label>
               <PopoverTrigger asChild>
@@ -476,7 +537,13 @@ export function SearchShell({
                   aria-label="Seleccionar pasajeros"
                   aria-expanded={paxOpen}
                   aria-haspopup="dialog"
-                  className={`${SEARCH_FIELD_CONTROL_CLASS} justify-start text-left hover:bg-accent/60`}
+                  aria-invalid={Boolean(visiblePassengerError)}
+                  aria-describedby={visiblePassengerError ? "passengers-helper" : undefined}
+                  className={cn(
+                    SEARCH_FIELD_CONTROL_CLASS,
+                    "justify-start text-left hover:bg-accent/60",
+                    visiblePassengerError && "fd-control-invalid",
+                  )}
                 >
                   <AppIcon name="passengers" className="text-muted-foreground" />
                   <span className={SEARCH_FIELD_VALUE_CLASS}>
@@ -487,10 +554,18 @@ export function SearchShell({
               </PopoverTrigger>
 
               <PopoverContent align="end" className="w-72">
-                <PaxRow label="Adultos" detail="12+ años" value={adults} onInc={() => updateAdults(adults + 1)} onDec={() => updateAdults(adults - 1)} decDisabled={adults <= 1} incDisabled={adults >= 9} />
-                <PaxRow label="Niños" detail="2-11 años" value={children} onInc={() => setChildren((v) => Math.min(v + 1, 8))} onDec={() => setChildren((v) => Math.max(v - 1, 0))} decDisabled={children <= 0} incDisabled={children >= 8} />
-                <PaxRow label="Bebés" detail="Menos de 2 años" value={infants} onInc={() => setInfants((v) => Math.min(v + 1, adults))} onDec={() => setInfants((v) => Math.max(v - 1, 0))} decDisabled={infants <= 0} incDisabled={infants >= adults} />
+                <PaxRow label="Adultos" detail="12+ años" value={adults} onInc={() => updateAdults(adults + 1)} onDec={() => updateAdults(adults - 1)} decDisabled={adults <= 1} incDisabled={adults >= MAX_PASSENGERS || passengerSlotsRemaining <= 0} />
+                <PaxRow label="Niños" detail="2-11 años" value={children} onInc={() => updateChildren(children + 1)} onDec={() => updateChildren(children - 1)} decDisabled={children <= 0} incDisabled={children >= MAX_CHILDREN || passengerSlotsRemaining <= 0} />
+                <PaxRow label="Bebés" detail="Menos de 2 años" value={infants} onInc={() => updateInfants(infants + 1)} onDec={() => updateInfants(infants - 1)} decDisabled={infants <= 0} incDisabled={infants >= adults || passengerSlotsRemaining <= 0} />
+                <p className="px-2 pt-1 text-xs font-medium text-muted-foreground">
+                  Máximo {MAX_PASSENGERS} pasajeros por búsqueda.
+                </p>
               </PopoverContent>
+              {visiblePassengerError && (
+                <p id="passengers-helper" className="fd-control-helper" role="alert">
+                  {visiblePassengerError}
+                </p>
+              )}
             </div>
           </Popover>
 
@@ -505,6 +580,7 @@ export function SearchShell({
               : undefined}
             aria-label={loading ? "Detener búsqueda" : "Buscar"}
             title={loading ? "Detener búsqueda" : undefined}
+            disabled={!loading && hasValidationError}
             className={cn(
               "h-[52px] rounded-lg text-sm",
               loading && "group border border-primary/40 hover:border-destructive hover:bg-destructive hover:text-destructive-foreground",
@@ -517,7 +593,7 @@ export function SearchShell({
                   <AppIcon name="x" className="absolute opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
                 </span>
                 <span className="relative inline-grid min-w-16">
-                  <span className="transition-opacity duration-150 group-hover:opacity-0">Buscando</span>
+                  <span className="transition-opacity duration-150 group-hover:opacity-0">{loadingLabel}</span>
                   <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-150 group-hover:opacity-100">
                     Detener
                   </span>
@@ -621,6 +697,22 @@ function SearchModeControls({
   )
 }
 
+function useCanUseTopbarControls() {
+  const [canUseTopbarControls, setCanUseTopbarControls] = useState(() => (
+    typeof window === "undefined" ? false : window.matchMedia(TOPBAR_CONTROLS_MEDIA_QUERY).matches
+  ))
+
+  useEffect(() => {
+    const query = window.matchMedia(TOPBAR_CONTROLS_MEDIA_QUERY)
+    const update = () => setCanUseTopbarControls(query.matches)
+    update()
+    query.addEventListener("change", update)
+    return () => query.removeEventListener("change", update)
+  }, [])
+
+  return canUseTopbarControls
+}
+
 function LocationField({
   label,
   value,
@@ -637,6 +729,7 @@ function LocationField({
   onChange,
   onSelect,
   invalid = false,
+  helperText,
 }: {
   label: string
   value: string
@@ -653,6 +746,7 @@ function LocationField({
   onChange: (value: string) => void
   onSelect: (suggestion: LocationSuggestion) => void
   invalid?: boolean
+  helperText?: string
 }) {
   const fieldId = `location-${label.toLowerCase()}`
   const listboxId = `${fieldId}-suggestions`
@@ -715,6 +809,7 @@ function LocationField({
           aria-label={label}
           aria-autocomplete="list"
           aria-controls={listboxId}
+          aria-describedby={helperText ? `${fieldId}-helper` : undefined}
           aria-expanded={open && suggestions.length > 0}
           aria-activedescendant={activeOptionId}
           aria-invalid={invalid}
@@ -732,6 +827,11 @@ function LocationField({
           className={`${SEARCH_FIELD_VALUE_CLASS} bg-transparent text-foreground outline-none placeholder:text-muted-foreground/60`}
         />
       </div>
+      {helperText && (
+        <p id={`${fieldId}-helper`} className="fd-control-helper" role="alert">
+          {helperText}
+        </p>
+      )}
       {listboxTarget && shouldShowListbox && listboxStyle ? createPortal(
         <div
           id={listboxId}
@@ -787,6 +887,7 @@ function DateField({
   disabledLabel = "No aplica",
   onChange,
   invalid = false,
+  helperText,
   onTouch,
 }: {
   label: string
@@ -797,6 +898,7 @@ function DateField({
   disabledLabel?: string
   onChange: (value: string) => void
   invalid?: boolean
+  helperText?: string
   onTouch?: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -832,6 +934,7 @@ function DateField({
           <button
             type="button"
             aria-labelledby={`${fieldId}-label`}
+            aria-describedby={helperText ? `${fieldId}-helper` : undefined}
             aria-expanded={disabled ? false : open}
             aria-invalid={invalid}
             disabled={disabled}
@@ -848,6 +951,11 @@ function DateField({
             </span>
           </button>
         </PopoverTrigger>
+        {helperText && (
+          <p id={`${fieldId}-helper`} className="fd-control-helper" role="alert">
+            {helperText}
+          </p>
+        )}
 
         <PopoverContent
           align="start"
@@ -1059,6 +1167,9 @@ interface SearchValidationInput {
   destinationValue: string
   departureDate: string
   returnDate: string
+  adults: number
+  children: number
+  infants: number
   trip: "round-trip" | "one-way"
   mode: SearchModeControl
   minDepartureDate: string
@@ -1072,6 +1183,7 @@ interface SearchValidationState {
   destination?: string
   departureDate?: string
   returnDate?: string
+  passengers?: string
 }
 
 function buildSearchValidation(input: SearchValidationInput): SearchValidationState {
@@ -1089,6 +1201,19 @@ function buildSearchValidation(input: SearchValidationInput): SearchValidationSt
     state.destination = "El destino debe ser diferente al origen."
   }
 
+  const passengerTotal = input.adults + input.children + input.infants
+  if (!Number.isInteger(input.adults) || input.adults < 1) {
+    state.passengers = "Debe viajar al menos un adulto."
+  } else if (!Number.isInteger(input.children) || input.children < 0 || input.children > MAX_CHILDREN) {
+    state.passengers = `La cantidad de niños debe estar entre 0 y ${MAX_CHILDREN}.`
+  } else if (!Number.isInteger(input.infants) || input.infants < 0) {
+    state.passengers = "La cantidad de bebés debe ser válida."
+  } else if (input.infants > input.adults) {
+    state.passengers = "La cantidad de bebés no puede superar la de adultos."
+  } else if (passengerTotal > MAX_PASSENGERS) {
+    state.passengers = `La búsqueda admite hasta ${MAX_PASSENGERS} pasajeros.`
+  }
+
   if (input.mode === "migration") {
     return state
   }
@@ -1097,6 +1222,8 @@ function buildSearchValidation(input: SearchValidationInput): SearchValidationSt
     state.departureDate = input.mode === "flexible"
       ? "Selecciona el inicio del rango."
       : "Selecciona una fecha de salida."
+  } else if (!isIsoDate(input.departureDate)) {
+    state.departureDate = "Fecha inválida."
   } else if (input.departureDate < input.minDepartureDate) {
     state.departureDate = `Debe ser igual o posterior a ${formatDateLabel(input.minDepartureDate)}.`
   } else if (input.maxDate && input.departureDate > input.maxDate) {
@@ -1106,7 +1233,9 @@ function buildSearchValidation(input: SearchValidationInput): SearchValidationSt
   if (input.mode === "flexible") {
     if (!input.returnDate) {
       state.returnDate = "Selecciona el fin del rango."
-    } else if (input.departureDate && input.returnDate < input.departureDate) {
+    } else if (!isIsoDate(input.returnDate)) {
+      state.returnDate = "Fecha inválida."
+    } else if (isIsoDate(input.departureDate) && input.returnDate < input.departureDate) {
       state.returnDate = "El fin debe ser igual o posterior al inicio."
     } else if (input.returnDate < input.minReturnDate) {
       state.returnDate = `Debe ser igual o posterior a ${formatDateLabel(input.minReturnDate)}.`
@@ -1116,9 +1245,11 @@ function buildSearchValidation(input: SearchValidationInput): SearchValidationSt
   } else if (input.trip === "round-trip") {
     if (!input.returnDate) {
       state.returnDate = "Selecciona una fecha de regreso."
+    } else if (!isIsoDate(input.returnDate)) {
+      state.returnDate = "Fecha inválida."
     } else if (input.returnDate < input.minReturnDate) {
       state.returnDate = `Debe ser igual o posterior a ${formatDateLabel(input.minReturnDate)}.`
-    } else if (input.departureDate && diffDays(input.departureDate, input.returnDate) > input.maxStayNights) {
+    } else if (isIsoDate(input.departureDate) && diffDays(input.departureDate, input.returnDate) > input.maxStayNights) {
       state.returnDate = `La estadía máxima es de ${input.maxStayNights} noches.`
     } else if (input.maxDate && input.returnDate > input.maxDate) {
       state.returnDate = `Debe ser igual o anterior a ${formatDateLabel(input.maxDate)}.`
@@ -1129,7 +1260,7 @@ function buildSearchValidation(input: SearchValidationInput): SearchValidationSt
 }
 
 function hasBlockingValidationError(state: SearchValidationState) {
-  return Boolean(state.origin || state.destination || state.departureDate || state.returnDate)
+  return Boolean(state.origin || state.destination || state.departureDate || state.returnDate || state.passengers)
 }
 
 function normalizeLocationCandidate(value: string) {
@@ -1151,6 +1282,7 @@ function clampIsoDate(value: string, minDate: string, maxDate?: string) {
 }
 
 function formatDateLabel(value: string) {
+  if (!isIsoDate(value)) return "Fecha inválida"
   return DATE_LABEL_FORMATTER.format(new Date(`${value}T00:00:00Z`)).replace(".", "")
 }
 

@@ -269,6 +269,9 @@ export default function App() {
     selectedAirlines.length > 0
   const shouldShowWorkspace = workspaceReady || Boolean(results) || loading || resultsLayoutEditorActive
   const isSearchIdle = !shouldShowWorkspace
+  const loadingLabel = loading && results && results.offers.length > 0
+    ? isMigrationResults(results) ? "Parcial" : "Actualizando"
+    : "Buscando"
 
   useLayoutEffect(() => {
     const frame = searchFrameRef.current
@@ -328,6 +331,7 @@ export default function App() {
             <SearchShell
               onSearch={handleSearch}
               loading={loading}
+              loadingLabel={loadingLabel}
               onCancelSearch={cancel}
               controlsPlacement={shouldShowWorkspace ? "topbar" : "inline"}
               syncedRequest={lastRequest ?? initialSharedRequest}

@@ -151,6 +151,31 @@
   cursor: default;
 }
 
+@media (max-width: 767px) {
+  .fd-results-layout-editor {
+    gap: 0.46rem;
+    margin: 0 0.55rem 0.1rem;
+    padding: 0.55rem;
+  }
+
+  .fd-results-layout-editor__header {
+    align-items: center;
+  }
+
+  .fd-results-layout-editor__status {
+    display: none;
+  }
+
+  .fd-results-layout-column {
+    gap: 0.28rem;
+    padding: 0.34rem 0.4rem;
+  }
+
+  .fd-results-layout-column__skeleton {
+    display: none;
+  }
+}
+
 .fd-result-card {
   --fd-result-accent: var(--color-primary);
   --fd-result-card-edge-padding: 0.92rem;
@@ -251,6 +276,12 @@
 
 .fd-result-card--layout-guide:hover {
   transform: none;
+}
+
+@media (max-width: 767px) {
+  .fd-result-card--layout-guide {
+    display: none;
+  }
 }
 
 .fd-result-card__schedules[data-trip-type="one-way"] {
@@ -452,6 +483,29 @@
   font-weight: 700;
 }
 
+.fd-result-card__redirect-status {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.18;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fd-result-card__redirect-status--verified {
+  color: var(--color-success-foreground, var(--color-primary));
+}
+
+.fd-result-card__redirect-status--pending {
+  color: var(--color-warning-soft-foreground);
+}
+
+.fd-result-card__redirect-status--blocked {
+  color: var(--color-destructive);
+}
+
 .fd-result-card__provider {
   justify-items: end;
 }
@@ -556,7 +610,8 @@
 .fd-result-card--compact .fd-result-card__micro-label,
 .fd-result-card--compact .fd-result-card__stops,
 .fd-result-card--compact .fd-result-card__layover,
-.fd-result-card--compact .fd-result-card__price-meta {
+.fd-result-card--compact .fd-result-card__price-meta,
+.fd-result-card--compact .fd-result-card__redirect-status {
   font-size: 0.7rem;
 }
 
@@ -621,6 +676,11 @@
 
 .fd-migration-month-card--error {
   border-color: color-mix(in srgb, var(--color-destructive) 42%, var(--color-border));
+}
+
+.fd-migration-month-card--cancelled {
+  border-color: color-mix(in srgb, var(--color-muted-foreground) 34%, var(--color-border));
+  color: var(--color-muted-foreground);
 }
 
 .fd-migration-month-card__status {

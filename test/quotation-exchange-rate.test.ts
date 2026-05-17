@@ -7,7 +7,9 @@ import type { SearchRequest } from "../src/core/types";
 import {
   buildQuotationRateLookupRequest,
   fetchExternalUsdToPenRate,
+  fetchExternalUsdToPenRateInfo,
   resolveQuotationUsdToPenRate,
+  resolveQuotationUsdToPenRateInfo,
   resolveStandaloneUsdToPenRate,
   resetQuotationUsdToPenRateCacheForTests,
   warmQuotationUsdToPenRate,
@@ -176,6 +178,37 @@ test("resolveQuotationUsdToPenRate reuses the rate already present in the sessio
   assert.equal(lookupCalls, 0);
 });
 
+test("resolveQuotationUsdToPenRateInfo includes source metadata for a reused session rate", async () => {
+  resetQuotationUsdToPenRateCacheForTests();
+
+  const quotedOffer = buildOffer({
+    id: "offer-costamar",
+    providerSource: "costamar",
+    tripType: "round-trip",
+  });
+  const session = buildSession({
+    offers: [
+      quotedOffer,
+      buildOffer({
+        id: "offer-agil",
+        providerSource: "agil-local",
+        tripType: "round-trip",
+        usdToPenRate: 3.61,
+      }),
+    ],
+  });
+
+  const rateInfo = await resolveQuotationUsdToPenRateInfo(session, quotedOffer, {
+    now: new Date("2026-04-07T15:00:00.000Z"),
+  });
+
+  assert.deepEqual(rateInfo, {
+    rate: 3.61,
+    sourceLabel: "Agil",
+    date: "2026-04-07",
+  });
+});
+
 test("resolveQuotationUsdToPenRate refreshes the cache on a new Lima day", async () => {
   resetQuotationUsdToPenRateCacheForTests();
 
@@ -263,7 +296,9 @@ test("fetchExternalUsdToPenRate reads SUNAT daily rate payloads", async () => {
   const previousFetch = globalThis.fetch;
   const previousUrl = process.env.FLY_DESK_QUOTATION_RATE_URL;
   process.env.FLY_DESK_QUOTATION_RATE_URL = "https://example.test/tipo-cambio.json";
+  let fetchCalls = 0;
   globalThis.fetch = (async (url: string | URL | Request) => {
+    fetchCalls += 1;
     assert.equal(String(url), "https://example.test/tipo-cambio.json");
     return new Response(JSON.stringify({
       fecha: "2026-05-05",
@@ -279,7 +314,13 @@ test("fetchExternalUsdToPenRate reads SUNAT daily rate payloads", async () => {
   }) as typeof fetch;
 
   try {
+    assert.deepEqual(await fetchExternalUsdToPenRateInfo(), {
+      rate: 3.517,
+      sourceLabel: "SUNAT",
+      date: "2026-05-05",
+    });
     assert.equal(await fetchExternalUsdToPenRate(), 3.517);
+    assert.equal(fetchCalls, 2);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousUrl === undefined) {

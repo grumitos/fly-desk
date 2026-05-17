@@ -867,7 +867,7 @@ test("autocomplete resolves an exact location match and closes suggestions", asy
 
     assert.equal(await origin.inputValue(), "lim");
 
-    await page.getByRole("button", { name: "Buscar" }).focus();
+    await page.getByRole("combobox", { name: "Destino" }).focus();
     await page.waitForFunction(() => {
       const input = document.querySelector<HTMLInputElement>('[aria-label="Origen"]');
       return input?.value === "LIM - Lima, Perú";
@@ -904,7 +904,24 @@ test("passenger steppers have accessible icon-only labels", async () => {
   });
 });
 
-test("search fields show invalid outline without helper text", async () => {
+test("passenger steppers cap the UI at nine travelers", async () => {
+  await withDesktopPage(async ({ page }) => {
+    await page.getByRole("button", { name: "Seleccionar pasajeros" }).click();
+    const addAdults = page.getByRole("button", { name: "Agregar adultos" });
+
+    for (let index = 0; index < 8; index += 1) {
+      await addAdults.click();
+    }
+
+    assert.equal(await page.getByRole("button", { name: "Seleccionar pasajeros" }).innerText(), "9 pasajeros");
+    assert.equal(await addAdults.isDisabled(), true);
+    assert.equal(await page.getByRole("button", { name: "Agregar niños" }).isDisabled(), true);
+    assert.equal(await page.getByRole("button", { name: "Agregar bebés" }).isDisabled(), true);
+    assert.equal(await page.getByText("Máximo 9 pasajeros por búsqueda.").count(), 1);
+  });
+});
+
+test("search fields show invalid outline and inline helper text", async () => {
   await withDesktopPage(async ({ page }) => {
     const origin = page.getByRole("combobox", { name: "Origen" });
 
@@ -913,16 +930,38 @@ test("search fields show invalid outline without helper text", async () => {
 
     await assert.equal(await origin.getAttribute("aria-invalid"), "true");
     assert.match(await origin.locator("xpath=..").getAttribute("class") ?? "", /fd-control-invalid/);
-    await assert.equal(await page.getByText("Ingresa un origen válido.").count(), 0);
+    await assert.equal(await page.getByText("Ingresa un origen válido.").count(), 1);
 
     await page.getByRole("button", { name: "Flexible" }).click();
     await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
     await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
-    await page.getByRole("button", { name: "Buscar" }).click();
+    await assert.equal(await page.getByRole("button", { name: "Buscar" }).isDisabled(), true);
+    await page.getByRole("button", { name: "Salida desde" }).click();
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Salida hasta" }).click();
+    await page.keyboard.press("Escape");
 
     await assert.equal(await page.getByRole("button", { name: "Salida desde" }).getAttribute("aria-invalid"), "true");
-    await assert.equal(await page.getByText("Selecciona el inicio del rango.").count(), 0);
-    await assert.equal(await page.getByText("Selecciona el fin del rango.").count(), 0);
+    await assert.equal(await page.getByText("Selecciona el inicio del rango.").count(), 1);
+    await assert.equal(await page.getByText("Selecciona el fin del rango.").count(), 1);
+  });
+});
+
+test("invalid shared dates do not roll over in the search form", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-06-31&return=2026-07-10&adults=1&children=0&infants=0`, {
+      waitUntil: "domcontentloaded",
+    });
+
+    const departureButton = page.getByRole("button", { name: "Salida" });
+    await page.waitForFunction(() => {
+      const button = document.querySelector('[aria-labelledby="date-salida-label"]');
+      return button?.textContent?.includes("Fecha inválida");
+    });
+    await assert.equal(await departureButton.innerText(), "Fecha inválida");
+    await assert.equal(await departureButton.getAttribute("aria-invalid"), "true");
+    await assert.equal(await page.getByRole("button", { name: "Buscar" }).isDisabled(), true);
+    await assert.equal(await page.getByText("Fecha inválida.").count(), 1);
   });
 });
 
@@ -1331,7 +1370,7 @@ test("paste accepts desktop search config JSON and sends the same exact backend 
     assert.equal(request.filters?.maxStops, 1);
     await page.getByText("Cache revalidando").waitFor();
     await page.getByText("1 vuelo").waitFor();
-    await page.getByText("LIM - BIO").waitFor();
+    await page.getByText("LIM - MAD - BIO").waitFor();
   }, { autoOpen: false });
 });
 
@@ -2364,6 +2403,69 @@ test("migratory search sends monthly stay-range requests", async () => {
     assert.equal(firstLeg?.departureStart, "2026-03-31");
     assert.equal(firstLeg?.departureEnd, "2026-03-31");
     assert.equal(firstLeg?.returnDate, undefined);
+  });
+});
+
+test("mobile workspace keeps search modes inline instead of crowding the topbar", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/results-layout", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ layout: null }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      const offer = buildOffer({ id: "mobile-layout-offer", origin: "LIM", destination: "MIA" });
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "mobile-layout-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers: [offer],
+          allOffers: [offer],
+          searchMeta: {
+            requestedAt: "2026-03-31T00:00:00.000Z",
+            completedAt: "2026-03-31T00:00:00.000Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?layout=editor&mode=exact&trip=one-way&origin=LIM&destination=MIA&departure=2026-06-08&adults=1&children=0&infants=0`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await page.getByTestId("result-card").waitFor();
+
+    assert.equal(await page.getByTestId("topbar-search-controls").getByRole("button", { name: "Exacto" }).count(), 0);
+    assert.equal(await page.locator("main").getByRole("button", { name: "Exacto" }).count(), 1);
+    assert.equal(await page.locator(".fd-result-card--layout-guide").evaluate((element) => getComputedStyle(element).display), "none");
+    const editorHeight = await page.locator(".fd-results-layout-editor").evaluate((element) => element.getBoundingClientRect().height);
+    assert.ok(editorHeight <= 96, `mobile layout editor is too tall: ${editorHeight}`);
   });
 });
 

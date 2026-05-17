@@ -426,6 +426,14 @@
     @apply border-destructive bg-destructive-soft shadow-[0_0_0_1px_color-mix(in_srgb,var(--color-destructive)_24%,transparent)] hover:border-destructive focus-within:ring-destructive focus-visible:ring-destructive;
   }
 
+  .fd-control-helper {
+    margin: 0.25rem 0 0;
+    color: var(--color-destructive);
+    font-size: 0.72rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
   .fd-label {
     @apply text-[10px] font-bold uppercase leading-none text-muted-foreground;
     letter-spacing: 0;

@@ -97,16 +97,20 @@ function ResultsPanelBase({
     ? warningSummaryLabel(displayedWarnings, emphasizedNoFlightIssues)
     : null
   const isRevalidatingCachedSearch = meta?.searchState === "search_cached"
+  const hasUsableOffers = offers.length > 0
   const pendingMigrationMonths = results?.migrationMonths?.filter((month) => month.status === "loading" || month.status === "partial").length ?? 0
   const summaryLabel = isMigration
     ? `${results?.migrationMonths?.length ?? 8} meses · ${offers.length} con tarifa${pendingMigrationMonths ? ` · ${pendingMigrationMonths} buscando` : ""}`
     : resultsSummaryLabel(offers.length, loading, Boolean(results))
+  const loadingStatusLabel = isMigration && hasUsableOffers
+    ? "Parcial"
+    : hasUsableOffers ? "Actualizando" : "Buscando"
   const maybeStatusItems: Array<ResultStatusItem | null> = [
     isRevalidatingCachedSearch
       ? { key: "cache", label: "Cache revalidando", icon: <AppIcon name="clock" className="h-3.5 w-3.5" /> }
       : null,
     loading
-      ? { key: "loading", label: "Buscando", icon: <AppIcon name="loading" spin className="h-3.5 w-3.5" /> }
+      ? { key: "loading", label: loadingStatusLabel, icon: <AppIcon name="loading" spin className="h-3.5 w-3.5" /> }
       : null,
     isCancelled && !loading
       ? { key: "cancelled", label: "Detenida", icon: <AppIcon name="x" className="h-3.5 w-3.5" /> }
@@ -444,13 +448,6 @@ function PaginatedResultsList({
           )}
           style={layoutStyle}
         >
-          {layoutEditorEnabled && layoutEditorReady && (
-            <ResultsLayoutGuideCard
-              columns={layoutColumns}
-              saving={layoutEditorSaving}
-              onBoundaryResize={onLayoutBoundaryResize}
-            />
-          )}
           {pageOffers.map((offer) => (
             <ResultCard
               key={offer.id}
@@ -460,6 +457,13 @@ function PaginatedResultsList({
               onSelect={onSelectOffer}
             />
           ))}
+          {layoutEditorEnabled && layoutEditorReady && (
+            <ResultsLayoutGuideCard
+              columns={layoutColumns}
+              saving={layoutEditorSaving}
+              onBoundaryResize={onLayoutBoundaryResize}
+            />
+          )}
         </div>
       </div>
 
@@ -1064,10 +1068,11 @@ function MigrationMonthGrid({
 function MigrationEmptyMonthCard({ month }: { month: DisplayMigrationMonth }) {
   const loading = month.status === "loading"
   const error = month.status === "error"
+  const cancelled = month.status === "cancelled"
 
   return (
     <article
-      className={`fd-migration-month-card${loading ? " fd-migration-month-card--loading" : ""}${error ? " fd-migration-month-card--error" : ""}`}
+      className={`fd-migration-month-card${loading ? " fd-migration-month-card--loading" : ""}${error ? " fd-migration-month-card--error" : ""}${cancelled ? " fd-migration-month-card--cancelled" : ""}`}
       data-testid="migration-month-card"
     >
       <span className="fd-result-card__eyebrow">{month.label}</span>
@@ -1075,7 +1080,9 @@ function MigrationEmptyMonthCard({ month }: { month: DisplayMigrationMonth }) {
         <p className="fd-migration-month-card__title">
           {loading
             ? "Buscando..."
-            : month.filtered ? "Sin tarifa con filtros" : "Sin tarifa disponible"}
+            : cancelled
+              ? "No consultado"
+              : month.filtered ? "Sin tarifa con filtros" : "Sin tarifa disponible"}
         </p>
         <p className="fd-migration-month-card__meta">
           {formatDateRange(month.departureStart, month.departureEnd)}
@@ -1085,8 +1092,10 @@ function MigrationEmptyMonthCard({ month }: { month: DisplayMigrationMonth }) {
         {loading
           ? "Consultando el precio más bajo disponible para este mes."
           : month.filtered
-          ? "Ajusta directo, equipaje o aerolínea para volver a incluir este mes."
-          : month.warnings?.[0] ?? "No hubo una oferta disponible para este mes."}
+            ? "Ajusta directo, equipaje o aerolínea para volver a incluir este mes."
+            : cancelled
+              ? month.warnings?.[0] ?? "Búsqueda detenida antes de consultar este mes."
+              : month.warnings?.[0] ?? "No hubo una oferta disponible para este mes."}
       </p>
     </article>
   )
