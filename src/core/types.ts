@@ -217,6 +217,12 @@ export interface Money {
   currencyCode: string;
 }
 
+export interface QuotationUsdToPenRateInfo {
+  rate: number;
+  sourceLabel: string;
+  date: string;
+}
+
 export interface Segment {
   id: string;
   marketingCarrier: string;

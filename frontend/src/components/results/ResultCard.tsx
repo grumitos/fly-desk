@@ -37,6 +37,7 @@ export function ResultCard({
     ...model.journeys.map((journey) => journey.schedule),
     model.route,
     model.duration,
+    model.costamarRedirect?.label,
     model.price.combinedLabel,
   ]
     .filter(Boolean)
@@ -111,6 +112,17 @@ export function ResultCard({
       <div className="fd-result-card__price">
         <span className="fd-result-card__price-total" title={model.price.totalLabel}>{model.price.totalLabel}</span>
         {model.price.perPersonLabel && <span className="fd-result-card__price-meta">{model.price.perPersonLabel} por persona</span>}
+        {model.costamarRedirect && (
+          <span
+            className={cn(
+              "fd-result-card__redirect-status",
+              `fd-result-card__redirect-status--${model.costamarRedirect.tone}`,
+            )}
+            title={model.costamarRedirect.title}
+          >
+            {model.costamarRedirect.label}
+          </span>
+        )}
       </div>
 
       <div

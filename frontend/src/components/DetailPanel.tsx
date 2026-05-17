@@ -2,6 +2,7 @@ import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { AppIcon } from "@/components/ui/app-icon"
 import { fetchQuotation } from "@/lib/api"
+import { buildOfferDetailSummary, formatOfferDate } from "@/lib/offer-display"
 import { bestPurchasePath, normalizeSafePurchaseUrl } from "@/lib/purchase-path"
 import { providerDisplayName } from "@/lib/providers"
 import type { CanonicalOffer, SearchRequest, Segment } from "@/types"
@@ -34,6 +35,7 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
   const purchasePathActionTitle = purchasePath?.type === "search-redirect"
     ? "Abre la busqueda equivalente del proveedor; la disponibilidad puede variar."
     : "Abrir proveedor"
+  const detail = offer ? buildOfferDetailSummary(offer) : null
 
   const handleQuotation = async () => {
     if (!offer || !request || !quoteKey) return
@@ -156,10 +158,10 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
         <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 border-y border-border py-3">
           <InfoTile label="Proveedor" value={providerDisplayName(offer.providerSource)} />
           <InfoTile label="Duración" value={offer.duration || "-"} />
-          <InfoTile label="Salida" value={fmtDateTime(offer.departureDate)} />
-          <InfoTile label="Regreso" value={offer.returnDate ? fmtDateTime(offer.returnDate) : "No aplica"} />
+          <InfoTile label="Salida" value={detail?.departureDateTime ?? "-"} />
+          <InfoTile label="Regreso" value={detail?.returnDateTime ?? "No aplica"} />
           <InfoTile label="Asientos" value={offer.fareMeta?.seatsRemaining ? `${offer.fareMeta.seatsRemaining}` : "Consultar"} />
-          <InfoTile label="Emisión" value={offer.fareMeta?.lastTicketingDate ? fmtDate(offer.fareMeta.lastTicketingDate) : "Consultar"} />
+          <InfoTile label="Emisión" value={offer.fareMeta?.lastTicketingDate ? formatOfferDate(offer.fareMeta.lastTicketingDate) : "Consultar"} />
         </div>
 
         <section className="border-b border-border pb-3">
@@ -167,11 +169,11 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
             <span className="text-sm font-bold">Condiciones</span>
           </div>
           <div className="space-y-1 text-sm text-muted-foreground">
-            <p>Escalas: <span className="font-medium text-foreground">{stopsLabel(offer.stops)}</span></p>
-            <p>Equipaje: <span className="font-medium text-foreground">{offer.baggageLabel || "Consultar"}</span></p>
+            <p>Escalas: <span className="font-medium text-foreground">{detail?.stopsLabel ?? "Consultar"}</span></p>
+            <p>Equipaje: <span className="font-medium text-foreground">{detail?.baggageLabel ?? "Consultar"}</span></p>
             <p>Cambios: <span className="font-medium text-foreground">{booleanLabel(offer.fareMeta?.changeable)}</span></p>
             <p>Reembolso: <span className="font-medium text-foreground">{booleanLabel(offer.fareMeta?.refundable)}</span></p>
-            {offer.stopMeta && <p>Ruta: <span className="font-medium text-foreground">{offer.stopMeta}</span></p>}
+            <p>Ruta: <span className="font-medium text-foreground">{detail?.routeLabel ?? offer.stopMeta ?? "Consultar"}</span></p>
           </div>
         </section>
 
@@ -282,43 +284,10 @@ function flightCodeLabel(segment: Segment) {
   return flightNumber
 }
 
-function fmtDateTime(value?: string) {
-  if (!value) return "-"
-  try {
-    return new Date(value).toLocaleString("es-PE", {
-      day: "2-digit",
-      month: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    })
-  } catch {
-    return value
-  }
-}
-
-function fmtDate(value?: string) {
-  if (!value) return "-"
-  try {
-    return new Date(value).toLocaleDateString("es-PE", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    })
-  } catch {
-    return value
-  }
-}
-
 function booleanLabel(value?: boolean) {
   if (value === true) return "Permitido"
   if (value === false) return "No permitido"
   return "Consultar"
-}
-
-function stopsLabel(stops: number) {
-  if (stops <= 0) return "Directo"
-  return `${stops} escala${stops === 1 ? "" : "s"}`
 }
 
 function priceConfidenceLabel(value: string) {

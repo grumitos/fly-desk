@@ -77,21 +77,7 @@ export function useSearch() {
     if (showFeedback) {
       setError(null)
       setStatusMessage(CANCELLED_SEARCH_MESSAGE)
-      setResults((current) => current
-        ? {
-            ...current,
-            searchComplete: true,
-            searchStatus: "cancelled",
-            searchMeta: {
-              ...current.searchMeta,
-              completedAt: new Date().toISOString(),
-              partial: current.offers.length > 0,
-              searchState: "search_cancelled",
-              warnings: uniqueStrings([...current.searchMeta.warnings, "Búsqueda detenida por el usuario."]),
-            },
-            warnings: uniqueStrings([...current.warnings, "Búsqueda detenida por el usuario."]),
-          }
-        : current)
+      setResults((current) => finalizeCancelledResults(current))
       appendDiagnosticLog("Búsqueda detenida por el usuario")
     }
 
@@ -238,6 +224,56 @@ export function useSearch() {
   }, [cancelActiveJobs])
 
   return { results, loading, error, statusMessage, diagnosticLog, runSearch, cancel, reset }
+}
+
+function finalizeCancelledResults(current: SearchJobResponse | null): SearchJobResponse | null {
+  if (!current) return current
+
+  const hasOffers = current.offers.length > 0
+  const hasMigrationMonths = Boolean(current.migrationMonths?.length)
+  const cancelledWarnings = hasMigrationMonths
+    ? [
+        ...current.warnings,
+        hasOffers
+          ? "Búsqueda migratoria detenida. Se conservan los meses consultados con tarifa."
+          : "Búsqueda migratoria detenida antes de encontrar tarifas.",
+      ]
+    : [...current.warnings, "Búsqueda detenida por el usuario."]
+
+  return {
+    ...current,
+    searchComplete: true,
+    searchStatus: "cancelled",
+    migrationMonths: current.migrationMonths?.map((month) => {
+      if (month.status !== "loading" && month.status !== "partial") return month
+      if (month.offer) {
+        return {
+          ...month,
+          status: "available" as const,
+          warnings: uniqueStrings([...(month.warnings ?? []), "Mes conservado tras detener la búsqueda."]),
+        }
+      }
+
+      return {
+        ...month,
+        status: "cancelled" as const,
+        warnings: uniqueStrings([...(month.warnings ?? []), "Búsqueda detenida antes de consultar este mes."]),
+      }
+    }),
+    searchMeta: {
+      ...current.searchMeta,
+      completedAt: new Date().toISOString(),
+      partial: hasOffers || hasMigrationMonths,
+      searchState: "search_cancelled",
+      warnings: uniqueStrings([
+        ...current.searchMeta.warnings,
+        hasMigrationMonths
+          ? "Búsqueda migratoria detenida por el usuario."
+          : "Búsqueda detenida por el usuario.",
+      ]),
+    },
+    warnings: uniqueStrings(cancelledWarnings),
+  }
 }
 
 function uniqueStrings(values: Array<string | undefined>): string[] {

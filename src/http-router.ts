@@ -32,6 +32,7 @@ import {
   createLocalAgilMatrixDraft,
   resolveLocalAgilMatrixProgressive,
   resolveLocalAgilRangeProgressive,
+  resolveAgilChromeLaunchOptions,
   suggestLocalAgilLocations,
 } from "./local-agil";
 import {
@@ -55,7 +56,7 @@ import {
   resolveUsableCostamarBrandedToken,
   verifyCostamarTokenLive,
 } from "./provider-context";
-import { resolveQuotationUsdToPenRate, resolveStandaloneUsdToPenRate } from "./quotation-exchange-rate";
+import { resolveQuotationUsdToPenRateInfo, resolveStandaloneUsdToPenRateInfo } from "./quotation-exchange-rate";
 import { limitSearchResponseForPagination } from "./search-limits";
 import { normalizeQuotationOfferSnapshot, normalizeQuotationRequestSnapshot } from "./http-quotation-snapshot";
 import { runProviderMatrixInWorker, runProviderSearchInWorker } from "./search-worker-client";
@@ -93,6 +94,14 @@ type ResultsLayoutColumnKey =
 interface LocalOpenPayload {
   url?: string;
   preferredBrowser?: "chrome" | "default";
+}
+
+type LocalOpenUrlOpener = typeof openUrlLocally;
+
+let localOpenUrlOpener: LocalOpenUrlOpener = openUrlLocally;
+
+export function setLocalOpenUrlOpenerForTests(opener?: LocalOpenUrlOpener): void {
+  localOpenUrlOpener = opener ?? openUrlLocally;
 }
 
 interface ResultsLayoutPayload {
@@ -446,6 +455,31 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
   </body>
 </html>`, {
     status: 409,
+    headers: {
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+function localBrowserOpenedResponse(targetUrl: string, launcher: string): Response {
+  const escapedUrl = escapeHtml(targetUrl);
+  const escapedLauncher = escapeHtml(launcher);
+
+  return html(`<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Abriendo proveedor</title>
+  </head>
+  <body>
+    <main>
+      <h1>Abriendo proveedor</h1>
+      <p>Fly Desk envio esta busqueda al navegador local (${escapedLauncher}).</p>
+      <p><a href="${escapedUrl}" rel="noreferrer">Abrir manualmente</a></p>
+    </main>
+  </body>
+</html>`, {
     headers: {
       "Cache-Control": "no-store",
     },
@@ -2013,9 +2047,11 @@ export async function routeRequest(request: Request): Promise<Response> {
       return json({ error: "Unsupported URL for local browser launch." }, { status: 400 });
     }
 
-    const launcher = await openUrlLocally(
+    const preferredBrowser = payload.preferredBrowser === "default" ? "default" : "chrome";
+    const launcher = await localOpenUrlOpener(
       targetUrl.toString(),
-      payload.preferredBrowser === "default" ? "default" : "chrome",
+      preferredBrowser,
+      preferredBrowser === "chrome" ? resolveAgilChromeLaunchOptions() : undefined,
     );
 
     return json({
@@ -2104,6 +2140,23 @@ export async function routeRequest(request: Request): Promise<Response> {
 
     if (resolved.path.url) {
       let location = resolved.path.url;
+
+      if (
+        resolved.path.provider === "agil-local" &&
+        resolved.path.type === "search-redirect" &&
+        url.searchParams.get("open") === "local"
+      ) {
+        try {
+          const launcher = await localOpenUrlOpener(
+            location,
+            "chrome",
+            resolveAgilChromeLaunchOptions(),
+          );
+          return localBrowserOpenedResponse(location, launcher.launcher);
+        } catch {
+          // Fall back to the normal redirect when the local browser handoff fails.
+        }
+      }
 
       if (resolved.path.provider === "costamar" && resolved.path.type === "search-redirect") {
         const searchSession = runtime.sessions.getSession(resolved.sessionId);
@@ -2198,16 +2251,16 @@ export async function routeRequest(request: Request): Promise<Response> {
       return json({ errors: ["Session or offer not found."] }, { status: 404 });
     }
 
-    const usdToPenRate = shouldIncludePenQuotationPrice(offer, requestSnapshot)
+    const usdToPenRateInfo = shouldIncludePenQuotationPrice(offer, requestSnapshot)
       ? session
-        ? await resolveQuotationUsdToPenRate(session, offer)
-        : await resolveStandaloneUsdToPenRate(offer)
+        ? await resolveQuotationUsdToPenRateInfo(session, offer)
+        : await resolveStandaloneUsdToPenRateInfo(offer)
       : undefined;
 
     return json({
       searchSessionId: payload.searchSessionId,
       offer,
-      commercialText: buildCommercialQuotation(offer, requestSnapshot, { usdToPenRate }),
+      commercialText: buildCommercialQuotation(offer, requestSnapshot, { usdToPenRateInfo }),
     });
   }
 

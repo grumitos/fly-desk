@@ -20,7 +20,7 @@ import {
   resetCostamarWarmupStateForTests,
   setCostamarWarmupGeneratorForTests,
 } from "../src/local-costamar";
-import { routeRequest } from "../src/http-router";
+import { routeRequest, setLocalOpenUrlOpenerForTests } from "../src/http-router";
 import { getRuntime } from "../src/runtime";
 import { withServer } from "./helpers/server";
 
@@ -268,6 +268,7 @@ test("quotation uses the stored exact offer when the selected result belongs to 
     assert.match(payload.commercialText ?? "", /COTIZACIÓN BOLETO AÉREO/);
     assert.match(payload.commercialText ?? "", /US\$ 1,234 por adulto/);
     assert.match(payload.commercialText ?? "", /S\/ 4,319 aprox\. por adulto/);
+    assert.match(payload.commercialText ?? "", /Tipo de cambio: 1 USD = S\/ 3\.5000 · Fuente: Agil · Fecha: \d{4}-\d{2}-\d{2}/);
   });
 });
 
@@ -306,6 +307,7 @@ test("quotation can use the displayed flexible result snapshot without re-queryi
     assert.match(payload.commercialText ?? "", /Lima \(LIM\) - Madrid \(MAD\) - Lima \(LIM\)/);
     assert.match(payload.commercialText ?? "", /US\$ 498 por adulto/);
     assert.match(payload.commercialText ?? "", /S\/ 1,743 aprox\. por adulto/);
+    assert.match(payload.commercialText ?? "", /Tipo de cambio: 1 USD = S\/ 3\.5000 · Fuente: Agil · Fecha: \d{4}-\d{2}-\d{2}/);
     assert.match(payload.commercialText ?? "", /🛫 IDA\nLIM · 01 junio/);
   });
 });
@@ -1046,6 +1048,102 @@ test("costamar matrix redirects refresh the stored token with the matrix job pro
     }
 
     rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("agil search redirect uses local Chrome handoff when requested", async () => {
+  const previousUserDataDir = process.env.AGIL_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.AGIL_CHROME_PROFILE;
+  process.env.AGIL_CHROME_USER_DATA_DIR = "C:\\Users\\agent\\Chrome";
+  process.env.AGIL_CHROME_PROFILE = "Profile 4";
+  const opened: Array<{
+    targetUrl: string;
+    preferredBrowser: string;
+    userDataDir?: string;
+    profileDirectory?: string;
+  }> = [];
+
+  setLocalOpenUrlOpenerForTests(async (targetUrl, preferredBrowser, chromeOptions) => {
+    opened.push({
+      targetUrl,
+      preferredBrowser,
+      userDataDir: chromeOptions?.userDataDir,
+      profileDirectory: chromeOptions?.profileDirectory,
+    });
+    return { launcher: "chrome" };
+  });
+
+  try {
+    const runtime = getRuntime();
+    const agilUrl = "https://www.agilsmart.com/home-user/flight-result?origin=LIM&destination=MIA";
+    const agilOffer: CanonicalOffer = {
+      ...buildCostamarOffer(agilUrl),
+      id: "offer-agil-local",
+      providerSource: "agil-local",
+      purchasePaths: [
+        {
+          id: "agil-path",
+          type: "search-redirect",
+          provider: "agil-local",
+          label: "Buscar en Agil",
+          url: agilUrl,
+          precision: "exact-search",
+          score: 0.9,
+          requiresNewTab: true,
+          commercialMode: "provider",
+          state: "search_redirect",
+        },
+      ],
+    };
+    const job = runtime.sessions.createSearchJob({
+      request: {
+        ...buildCostamarRequest(),
+        providerId: "agil-local",
+      },
+      offers: [agilOffer],
+      allOffers: [agilOffer],
+      searchMeta: {
+        ...buildSearchMeta(),
+        providersUsed: ["agil-local"],
+      },
+      providerMeta: {
+        ...buildProviderMeta(),
+        exactProvider: "agil-local",
+      },
+      warnings: [],
+      sortMode: "cheapest",
+      status: "completed",
+    });
+    const redirectPath = runtime.sessions.getSession(job.id)?.offers[0]?.purchasePaths[0]?.url;
+
+    assert.ok(redirectPath?.endsWith("?open=local"));
+    const response = await routeRequest(new Request(`http://127.0.0.1:32123${redirectPath}`, {
+      headers: {
+        "x-flydesk-client-loopback": "1",
+      },
+    }));
+
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /Abriendo proveedor/);
+    assert.deepEqual(opened, [{
+      targetUrl: agilUrl,
+      preferredBrowser: "chrome",
+      userDataDir: "C:\\Users\\agent\\Chrome",
+      profileDirectory: "Profile 4",
+    }]);
+  } finally {
+    setLocalOpenUrlOpenerForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.AGIL_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.AGIL_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.AGIL_CHROME_PROFILE;
+    } else {
+      process.env.AGIL_CHROME_PROFILE = previousProfile;
+    }
   }
 });
 

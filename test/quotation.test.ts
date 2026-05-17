@@ -260,11 +260,16 @@ test("commercial quotation includes layover cities and checked baggage weight wh
 test("commercial quotation includes soles under the dollars line when an exchange rate exists", () => {
   const text = buildCommercialQuotation(buildOffer(), buildRequest(), {
     timeZone: "UTC",
-    usdToPenRate: 3.61,
+    usdToPenRateInfo: {
+      rate: 3.61,
+      sourceLabel: "Agil",
+      date: "2026-04-07",
+    },
   });
 
   assert.match(text, /US\$ 512 por adulto/);
   assert.match(text, /S\/ 1,848\.32 aprox\. por adulto/);
+  assert.match(text, /Tipo de cambio: 1 USD = S\/ 3\.6100 · Fuente: Agil · Fecha: 2026-04-07/);
 });
 
 test("commercial quotation does not include soles when LIM is not a route endpoint", () => {
@@ -299,11 +304,16 @@ test("commercial quotation does not include soles when LIM is not a route endpoi
     ],
   }), request, {
     timeZone: "UTC",
-    usdToPenRate: 3.61,
+    usdToPenRateInfo: {
+      rate: 3.61,
+      sourceLabel: "Agil",
+      date: "2026-04-07",
+    },
   });
 
   assert.match(text, /US\$ 512 por adulto/);
   assert.doesNotMatch(text, /S\//);
+  assert.doesNotMatch(text, /Tipo de cambio:/);
 });
 
 test("commercial quotation omits all-airports labels from the route summary", () => {

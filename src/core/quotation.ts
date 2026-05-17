@@ -1,10 +1,11 @@
-import { CanonicalOffer, Itinerary, SearchRequest, Segment } from "./types";
+import { CanonicalOffer, Itinerary, QuotationUsdToPenRateInfo, SearchRequest, Segment } from "./types";
 import { cityNameForIataCode, normalizeIataCode, stripAllAirportsLabel } from "./location-display";
 import { resolveAirlineDisplayName } from "./airline-names";
 
 export interface QuotationRenderOptions {
   timeZone?: string;
   usdToPenRate?: number;
+  usdToPenRateInfo?: QuotationUsdToPenRateInfo;
 }
 
 function formatCommercialDate(iso?: string, timeZone?: string): string {
@@ -111,6 +112,42 @@ function formatCommercialPenTotalLine(label: string, amount: number | undefined)
   return amount === undefined
     ? `${label}: S/ `
     : `${label}: S/ ${formatQuotationAmount(amount)}`;
+}
+
+function normalizeCommercialUsdToPenRate(rate: number | undefined): number | undefined {
+  return typeof rate === "number" && Number.isFinite(rate) && rate > 0
+    ? rate
+    : undefined;
+}
+
+function formatCommercialExchangeRateAmount(rate: number): string {
+  return new Intl.NumberFormat("es-PE", {
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 4,
+  }).format(rate);
+}
+
+function formatCommercialExchangeRateLine(rateInfo: QuotationUsdToPenRateInfo | undefined): string | undefined {
+  const rate = normalizeCommercialUsdToPenRate(rateInfo?.rate);
+  const sourceLabel = String(rateInfo?.sourceLabel ?? "").trim();
+  const date = String(rateInfo?.date ?? "").trim();
+
+  if (rate === undefined || !sourceLabel || !date) {
+    return undefined;
+  }
+
+  return `Tipo de cambio: 1 USD = S/ ${formatCommercialExchangeRateAmount(rate)} · Fuente: ${sourceLabel} · Fecha: ${date}`;
+}
+
+function appendCommercialExchangeRateLine(
+  lines: string[],
+  rateInfo: QuotationUsdToPenRateInfo | undefined,
+): string[] {
+  const exchangeRateLine = formatCommercialExchangeRateLine(rateInfo);
+  if (exchangeRateLine) {
+    lines.push(exchangeRateLine);
+  }
+  return lines;
 }
 
 function titleCase(value?: string): string {
@@ -421,11 +458,13 @@ function buildCommercialPriceLines(
 ): string[] {
   const currencyCode = String(offer.price.total.currencyCode ?? "").trim().toUpperCase();
   const totalAmount = offer.price.total.amount;
+  const rateInfoRate = normalizeCommercialUsdToPenRate(options.usdToPenRateInfo?.rate);
+  const legacyRate = normalizeCommercialUsdToPenRate(options.usdToPenRate);
   const usdToPenRate = shouldIncludePenQuotationPrice(offer, request)
-    && typeof options.usdToPenRate === "number"
-    && Number.isFinite(options.usdToPenRate)
-    && options.usdToPenRate > 0
-    ? options.usdToPenRate
+    ? rateInfoRate ?? legacyRate
+    : undefined;
+  const usdToPenRateInfo = usdToPenRate !== undefined && rateInfoRate !== undefined && options.usdToPenRateInfo
+    ? { ...options.usdToPenRateInfo, rate: rateInfoRate }
     : undefined;
   const adults = request.passengers.adults;
   const children = request.passengers.children;
@@ -454,7 +493,7 @@ function buildCommercialPriceLines(
       }
     }
 
-    return lines;
+    return appendCommercialExchangeRateLine(lines, usdToPenRateInfo);
   }
 
   const lines = [
@@ -465,7 +504,7 @@ function buildCommercialPriceLines(
     lines.push(formatCommercialPenTotalLine("Total aprox.", totalAmount * usdToPenRate));
   }
 
-  return lines;
+  return appendCommercialExchangeRateLine(lines, usdToPenRateInfo);
 }
 
 function stripFinalLinePeriod(line: string): string {

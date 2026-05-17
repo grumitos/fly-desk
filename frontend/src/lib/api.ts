@@ -11,6 +11,14 @@ import type {
 } from "@/types"
 import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
 import { filterLocationSuggestions, normalizeLocationSearchText, normalizeLocationSuggestions } from "@/lib/locations"
+import {
+  firstSegmentForItinerary,
+  formatOfferBaggageLabel,
+  itineraryRouteLabel,
+  lastSegmentForItinerary,
+  primaryItineraryForOffer,
+  returnItineraryForOffer,
+} from "@/lib/offer-display"
 
 const API_BASE = ""
 const MIGRATION_MONTH_COUNT = 8
@@ -85,7 +93,9 @@ function translateApiMessage(message: string): string {
     "Infants cannot exceed adults.": "La cantidad de bebés no puede superar la de adultos.",
     "Passenger count cannot exceed 9.": "La búsqueda admite hasta 9 pasajeros.",
     "Departure date is required for exact search.": "Selecciona una fecha de salida.",
+    "Departure date must be a valid ISO date (YYYY-MM-DD).": "La fecha de salida no es válida.",
     "Return date is required for round-trip exact search.": "Selecciona una fecha de regreso.",
+    "Return date must be a valid ISO date (YYYY-MM-DD).": "La fecha de regreso no es válida.",
     "Return date must be after departure date.": "La fecha de regreso debe ser posterior a la salida.",
     "Stay length cannot exceed 90 nights.": "La estadía máxima es de 90 noches.",
     "Departure range is required for matrix search.": "Selecciona un rango de salida.",
@@ -559,14 +569,6 @@ export function fromBackendRequest(request: BackendSearchRequest | undefined): S
   }
 }
 
-function firstSegment(offer: Record<string, unknown>, direction: "outbound" | "inbound") {
-  const itineraries = Array.isArray(offer.itineraries) ? offer.itineraries as Array<Record<string, unknown>> : []
-  const itinerary = itineraries.find((item) => item.direction === direction)
-    ?? (direction === "outbound" ? itineraries[0] : itineraries[1])
-  const segments = Array.isArray(itinerary?.segments) ? itinerary.segments as Array<Record<string, unknown>> : []
-  return segments[0]
-}
-
 function normalizeOfferItineraries(value: unknown): CanonicalOffer["itineraries"] | undefined {
   if (!Array.isArray(value)) return undefined
 
@@ -658,28 +660,18 @@ function itineraryStopsFromOffer(offer: Record<string, unknown>): number | undef
   const itineraries = Array.isArray(offer.itineraries) ? offer.itineraries as Array<Record<string, unknown>> : []
   if (!itineraries.length) return undefined
 
+  let foundStops = false
   return itineraries.reduce((sum, itinerary) => {
     const direct = finiteNumber(itinerary.stops)
-    if (direct !== undefined && direct >= 0) return sum + direct
-
     const segments = Array.isArray(itinerary.segments) ? itinerary.segments : []
-    return sum + Math.max(0, segments.length - 1)
-  }, 0)
-}
-
-function baggageLabel(baggage: unknown): string | undefined {
-  if (!baggage) return undefined
-  if (typeof baggage === "string") return baggage
-  if (typeof baggage !== "object") return undefined
-
-  const value = baggage as CanonicalOffer["baggage"]
-  const parts: string[] = []
-  if (value?.carryOnIncluded) parts.push("Cabina")
-  if (value?.checkedIncluded) {
-    parts.push(value.checkedBags && value.checkedBags > 1 ? `${value.checkedBags} maletas` : "Bodega")
-  }
-  if (!parts.length && value?.description) return value.description
-  return parts.length ? parts.join(" + ") : undefined
+    const segmentStops = segments.length > 0 ? Math.max(0, segments.length - 1) : undefined
+    const resolved = direct !== undefined && direct >= 0
+      ? Math.max(direct, segmentStops ?? 0)
+      : segmentStops
+    if (resolved === undefined) return sum
+    foundStops = true
+    return sum + resolved
+  }, 0) || (foundStops ? 0 : undefined)
 }
 
 function hasCheckedBaggage(baggage: unknown): boolean {
@@ -700,8 +692,12 @@ function normalizeOffer(input: unknown): CanonicalOffer {
   const metrics = offer.comparisonMetrics && typeof offer.comparisonMetrics === "object"
     ? offer.comparisonMetrics as Record<string, unknown>
     : {}
-  const outbound = firstSegment(offerWithNormalizedNames, "outbound")
-  const inbound = firstSegment(offerWithNormalizedNames, "inbound")
+  const itineraryOffer = offerWithNormalizedNames as Pick<CanonicalOffer, "itineraries">
+  const outboundItinerary = primaryItineraryForOffer(itineraryOffer)
+  const inboundItinerary = returnItineraryForOffer(itineraryOffer)
+  const outbound = firstSegmentForItinerary(outboundItinerary)
+  const outboundLast = lastSegmentForItinerary(outboundItinerary)
+  const inbound = firstSegmentForItinerary(inboundItinerary)
   const price = offer.price && typeof offer.price === "object"
     ? offer.price as CanonicalOffer["price"]
     : { total: { amount: 0, currencyCode: "USD" } }
@@ -710,8 +706,8 @@ function normalizeOffer(input: unknown): CanonicalOffer {
     : undefined
   const totalDurationMinutes = positiveNumber(metrics.totalDurationMinutes)
     ?? itineraryDurationMinutesFromOffer(offer)
-  const totalStops = finiteNumber(metrics.totalStops)
-    ?? itineraryStopsFromOffer(offer)
+  const totalStops = itineraryStopsFromOffer(offerWithNormalizedNames)
+    ?? finiteNumber(metrics.totalStops)
     ?? finiteNumber(offer.stops)
     ?? 0
   const comparisonMetrics = {
@@ -728,16 +724,19 @@ function normalizeOffer(input: unknown): CanonicalOffer {
     providerSource: String(offer.providerSource ?? ""),
     airline: offerAirlineDisplayName(offerWithNormalizedNames, outbound),
     itineraries,
-    origin: typeof offer.origin === "string" ? offer.origin : String(outbound?.origin ?? ""),
-    destination: typeof offer.destination === "string" ? offer.destination : String(outbound?.destination ?? ""),
+    origin: typeof outbound?.origin === "string" ? outbound.origin : String(offer.origin ?? ""),
+    destination: typeof outboundLast?.destination === "string" ? outboundLast.destination : String(offer.destination ?? ""),
     departureDate: String(outbound?.departureAt ?? offer.departureDate ?? ""),
-    arrivalDate: typeof outbound?.arrivalAt === "string" ? outbound.arrivalAt : undefined,
+    arrivalDate: typeof outboundLast?.arrivalAt === "string" ? outboundLast.arrivalAt : undefined,
     returnDate: typeof inbound?.departureAt === "string" ? inbound.departureAt : offer.returnDate as string | undefined,
     duration: durationLabel(totalDurationMinutes),
     stops: totalStops,
-    stopMeta: `${String(outbound?.origin ?? "")} -> ${String(outbound?.destination ?? "")}`,
+    stopMeta: itineraryRouteLabel(outboundItinerary, {
+      origin: offer.origin,
+      destination: offer.destination,
+    }),
     baggage: typeof offer.baggage === "object" && offer.baggage ? offer.baggage as CanonicalOffer["baggage"] : undefined,
-    baggageLabel: baggageLabel(offer.baggage),
+    baggageLabel: formatOfferBaggageLabel(offer.baggage),
     hasCheckedBaggage: hasCheckedBaggage(offer.baggage),
     comparisonMetrics,
     warnings,

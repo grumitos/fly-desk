@@ -5,8 +5,13 @@ export interface ChromeLaunchOptions {
   profileDirectory?: string;
 }
 
-interface OpenUrlResult {
+export interface OpenUrlResult {
   launcher: "chrome" | "default";
+}
+
+export interface BrowserLaunchInvocation {
+  command: string;
+  args: string[];
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
@@ -39,17 +44,30 @@ function spawnDetached(command: string, args: string[]): void {
   child.unref();
 }
 
-async function openWithDefaultBrowser(targetUrl: string): Promise<void> {
-  switch (process.platform) {
+function buildDefaultBrowserLaunchInvocation(
+  targetUrl: string,
+  platform: typeof process.platform = process.platform,
+): BrowserLaunchInvocation {
+  switch (platform) {
     case "win32":
-      spawnDetached("cmd.exe", ["/c", "start", "", targetUrl]);
-      return;
+      return { command: "rundll32.exe", args: ["url.dll,FileProtocolHandler", targetUrl] };
     case "darwin":
-      spawnDetached("open", [targetUrl]);
-      return;
+      return { command: "open", args: [targetUrl] };
     default:
-      spawnDetached("xdg-open", [targetUrl]);
+      return { command: "xdg-open", args: [targetUrl] };
   }
+}
+
+export function buildDefaultBrowserLaunchInvocationForTests(
+  targetUrl: string,
+  platform: typeof process.platform = process.platform,
+): BrowserLaunchInvocation {
+  return buildDefaultBrowserLaunchInvocation(targetUrl, platform);
+}
+
+async function openWithDefaultBrowser(targetUrl: string): Promise<void> {
+  const invocation = buildDefaultBrowserLaunchInvocation(targetUrl);
+  spawnDetached(invocation.command, invocation.args);
 }
 
 function buildChromeLaunchArgs(targetUrl: string, options?: ChromeLaunchOptions): string[] {

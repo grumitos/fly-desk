@@ -132,7 +132,7 @@ export interface MigrationMonthSummary {
   offers?: CanonicalOffer[]
   filtered?: boolean
   warnings?: string[]
-  status: "loading" | "available" | "partial" | "empty" | "error"
+  status: "loading" | "available" | "partial" | "empty" | "error" | "cancelled"
 }
 
 export type SearchMeta = Omit<CoreSearchResponse["searchMeta"], "providersUsed" | "searchState"> & {

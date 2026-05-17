@@ -1,11 +1,18 @@
-import type { CanonicalOffer, Itinerary, Segment } from "@/types"
+import type { CanonicalOffer, Itinerary, RedirectVerification } from "@/types"
 import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
+import {
+  diffDaysIso,
+  formatDateCompact,
+  formatJourneyDuration,
+  itineraryRouteLabel,
+  isoDatePart,
+  layoverItemsForOffer,
+  primaryItineraryForOffer,
+  returnItineraryForOffer,
+  stopsCountForOffer,
+  timeOfIso,
+} from "@/lib/offer-display"
 import { providerDisplayName } from "@/lib/providers"
-
-type LayoverItem = {
-  city: string
-  minutes: number
-}
 
 export type ResultJourneySummary = {
   label: "Ida" | "Vuelta"
@@ -18,6 +25,12 @@ export type ResultJourneySummary = {
   arrivalTime: string
   departureDateLabel: string
   arrivalDayOffset: number
+}
+
+export type ResultRedirectStatus = {
+  label: string
+  title: string
+  tone: "verified" | "pending" | "blocked"
 }
 
 export type ResultCardModel = {
@@ -46,6 +59,7 @@ export type ResultCardModel = {
     shortLabel: string
     icon: string
   }
+  costamarRedirect?: ResultRedirectStatus
   tripType: "one-way" | "round-trip"
 }
 
@@ -69,19 +83,9 @@ export function buildResultCardModel(
     stops: stopsSummary(offer),
     price: priceLabels(offer.price?.total, passengerCount),
     provider: providerBadge(offer),
+    costamarRedirect: costamarRedirectStatus(offer),
     tripType: inboundSummary ? "round-trip" : "one-way",
   }
-}
-
-function primaryItineraryForOffer(offer: CanonicalOffer) {
-  return offer.itineraries?.find((itinerary) => itinerary.direction === "outbound")
-    ?? offer.itineraries?.[0]
-    ?? null
-}
-
-function returnItineraryForOffer(offer: CanonicalOffer) {
-  return offer.itineraries?.find((itinerary) => itinerary.direction === "inbound")
-    ?? null
 }
 
 function carrierDisplayParts(offer: CanonicalOffer) {
@@ -163,7 +167,7 @@ function itineraryWindowSummary(itinerary: Itinerary | null, offer: CanonicalOff
     label,
     origin,
     destination,
-    route: [origin, destination].filter(Boolean).join(" - ") || "Ruta por confirmar",
+    route: itineraryRouteLabel(itinerary, { origin, destination }),
     schedule: hasKnownSchedule ? `${departureTime} - ${arrivalTime}` : "Horario por confirmar",
     hasKnownSchedule,
     departureTime,
@@ -188,21 +192,8 @@ function journeyDurationLabel(offer: CanonicalOffer) {
   return offer.duration || "-"
 }
 
-function formatJourneyDuration(minutes: number) {
-  const total = Math.round(minutes)
-  const days = Math.floor(total / 1440)
-  const hours = Math.floor((total % 1440) / 60)
-  const mins = total % 60
-  const parts: string[] = []
-
-  if (days > 0) parts.push(`${days}d`)
-  if (hours > 0 || days > 0) parts.push(`${hours}h`)
-  parts.push(`${mins}m`)
-  return parts.join(" ")
-}
-
 function stopsSummary(offer: CanonicalOffer) {
-  const stops = offer.comparisonMetrics?.totalStops ?? offer.stops
+  const stops = stopsCountForOffer(offer)
   const layovers = layoverItemsForOffer(offer)
 
   if (stops === 0) {
@@ -231,45 +222,6 @@ function stopsSummary(offer: CanonicalOffer) {
   }
 }
 
-function layoverItemsForOffer(offer: CanonicalOffer): LayoverItem[] {
-  return (offer.itineraries ?? []).flatMap((itinerary) => layoverItemsForItinerary(itinerary))
-}
-
-function layoverItemsForItinerary(itinerary: Itinerary): LayoverItem[] {
-  if (itinerary.segments.length < 2) return []
-
-  return itinerary.segments.slice(0, -1).flatMap((segment, index) => {
-    const next = itinerary.segments[index + 1]
-    const minutes = computeLayoverMinutes(segment, next)
-    if (!Number.isFinite(minutes) || minutes <= 0) return []
-
-    return {
-      city: cityLabel(segment.destinationName || segment.destination || "Escala"),
-      minutes,
-    }
-  })
-}
-
-function computeLayoverMinutes(current: Segment, next?: Segment) {
-  if (!current.arrivalAt || !next?.departureAt) return 0
-  const currentMs = new Date(current.arrivalAt).getTime()
-  const nextMs = new Date(next.departureAt).getTime()
-  if (!Number.isFinite(currentMs) || !Number.isFinite(nextMs) || nextMs <= currentMs) return 0
-  return Math.round((nextMs - currentMs) / 60000)
-}
-
-function cityLabel(value = "") {
-  const normalized = String(value).trim()
-  if (!normalized) return ""
-
-  return normalized
-    .toLowerCase()
-    .split(/[\s-]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ")
-}
-
 function priceLabels(
   money: CanonicalOffer["price"]["total"] | undefined,
   passengerCount: number,
@@ -293,6 +245,45 @@ function priceLabels(
     perPersonLabel,
     combinedLabel: perPersonLabel ? `${totalLabel} · ${perPersonLabel}` : totalLabel,
   }
+}
+
+function costamarRedirectStatus(offer: CanonicalOffer): ResultRedirectStatus | undefined {
+  const verification = resolveCostamarRedirectVerification(offer)
+  if (!verification) return undefined
+
+  if (verification.verified) {
+    return {
+      label: "Redirect verificado",
+      title: "El enlace de Costamar fue validado antes de mostrar la oferta.",
+      tone: "verified",
+    }
+  }
+
+  if (verification.state === "blocked") {
+    return {
+      label: "Redirect bloqueado",
+      title: verification.reason || "Costamar no devolvió un redirect usable para esta búsqueda.",
+      tone: "blocked",
+    }
+  }
+
+  return {
+    label: "Redirect pendiente",
+    title: verification.reason || "Fly Desk mostrará el enlace de Costamar, pero aún no está validado.",
+    tone: "pending",
+  }
+}
+
+function resolveCostamarRedirectVerification(offer: CanonicalOffer): RedirectVerification | undefined {
+  if (/costamar/i.test(String(offer.providerSource ?? "")) && offer.redirectVerification) {
+    return offer.redirectVerification
+  }
+
+  return offer.purchasePaths?.find((path) =>
+    /costamar/i.test(String(path.provider ?? "")) &&
+    path.type === "search-redirect" &&
+    path.redirectVerification
+  )?.redirectVerification
 }
 
 function formatMoney(money: CanonicalOffer["price"]["total"]) {
@@ -339,39 +330,4 @@ export function providerBadgeForId(providerId?: string): ResultProviderBadge {
     shortLabel: label.slice(0, 2).toUpperCase(),
     icon: "",
   }
-}
-
-function timeOfIso(value?: string) {
-  if (!value) return ""
-  const trimmed = value.trim()
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return ""
-  if (trimmed.includes("T") && trimmed.length >= 16) return trimmed.slice(11, 16)
-
-  const parsed = new Date(trimmed)
-  if (Number.isNaN(parsed.getTime())) return ""
-  return parsed.toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hour12: false })
-}
-
-function isoDatePart(value?: string) {
-  if (!value) return ""
-  if (/^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10)
-
-  const parsed = new Date(value)
-  if (Number.isNaN(parsed.getTime())) return ""
-  return parsed.toISOString().slice(0, 10)
-}
-
-function formatDateCompact(iso?: string) {
-  const value = isoDatePart(iso)
-  if (!value) return "-"
-
-  const [year, month, day] = value.split("-")
-  if (!year || !month || !day) return value
-  return `${day}/${month}`
-}
-
-function diffDaysIso(from: string, to: string) {
-  const fromMs = Date.UTC(Number(from.slice(0, 4)), Number(from.slice(5, 7)) - 1, Number(from.slice(8, 10)))
-  const toMs = Date.UTC(Number(to.slice(0, 4)), Number(to.slice(5, 7)) - 1, Number(to.slice(8, 10)))
-  return Math.round((toMs - fromMs) / 86400000)
 }

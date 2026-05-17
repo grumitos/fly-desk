@@ -7,6 +7,7 @@ import {
   removePathWithRetries,
   unregisterActiveTempArtifact,
 } from "./temp-artifacts";
+import type { ChromeLaunchOptions } from "./local-browser";
 import {
   resolveMatrixCellConcurrency,
   resolveProviderSubrequestConcurrency,
@@ -612,8 +613,19 @@ function readAgilChromeUserDataDirCandidates(): string[] {
   return candidates;
 }
 
+export function resolveAgilChromeLaunchOptions(): ChromeLaunchOptions {
+  const userDataDir = readAgilChromeUserDataDirCandidates()[0]
+    ?? join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
+  const profileDirectory = process.env.AGIL_CHROME_PROFILE?.trim() || undefined;
+
+  return {
+    ...(userDataDir ? { userDataDir } : {}),
+    ...(profileDirectory ? { profileDirectory } : {}),
+  };
+}
+
 function resolveBrowserUserDataDir(): string {
-  return readAgilChromeUserDataDirCandidates()[0]
+  return resolveAgilChromeLaunchOptions().userDataDir
     ?? join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 }
 

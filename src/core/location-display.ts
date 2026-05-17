@@ -14,6 +14,7 @@ const IATA_CITY_NAME_FALLBACKS: Record<string, string> = {
   MIA: "Miami",
   MVD: "Montevideo",
   PEM: "Puerto Maldonado",
+  PTY: "Ciudad de Panama",
   SCL: "Santiago",
   TPP: "Tarapoto",
   UIO: "Quito",
