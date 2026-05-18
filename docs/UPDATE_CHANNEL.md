@@ -2,13 +2,14 @@
 
 Este documento define como publicar una version de Fly Desk y como debe recibirla una instalacion de cliente final. La regla principal es simple: el cliente no usa Git, no inicia sesion en GitHub y no guarda credenciales del mantenedor.
 
-El plan implementable vive en [`../AUTOUPDATE_PLAN.md`](../AUTOUPDATE_PLAN.md) y el runbook operativo vive en [`../AUTOUPDATE_RUNBOOK.md`](../AUTOUPDATE_RUNBOOK.md).
+El plan implementable vive en [`../AUTOUPDATE_PLAN.md`](../AUTOUPDATE_PLAN.md), el runbook operativo vive en [`../AUTOUPDATE_RUNBOOK.md`](../AUTOUPDATE_RUNBOOK.md), y el flujo seguro con VPS vive en [`../VPS_UPDATE_CHANNEL.md`](../VPS_UPDATE_CHANNEL.md).
 
 ## Modelo
 
 - El codigo fuente vive en el repo privado `grumitos/fly-desk`.
 - El cliente final recibe un paquete instalable, no el repo.
-- El paquete se publica en un canal de updates con `latest.json` y un `.zip`.
+- El paquete se publica en el VPS de updates con `latest.json` y un `.zip`.
+- Cada instalacion de cliente usa su propio token de update.
 - El launcher local consulta el manifiesto, descarga el zip, valida SHA-256 y activa una release bajo `app/releases/<version>/`.
 - La carpeta y el acceso directo se mantienen: `C:\fly-desk` y `Abrir Fly Desk.vbs`.
 
@@ -46,7 +47,7 @@ Formato esperado de `latest.json`:
   "publishedAt": "2026-05-18T00:00:00Z",
   "package": {
     "platform": "windows-x64",
-    "url": "https://github.com/grumitos/fly-desk-updates/releases/download/v0.2.0/fly-desk-windows-x64-v0.2.0.zip",
+    "url": "https://updates.example.com/fly-desk/releases/0.2.0/fly-desk-windows-x64-v0.2.0.zip",
     "sha256": "64 lowercase hex characters",
     "sizeBytes": 12345678
   },
@@ -117,10 +118,12 @@ bun run test
 
 3. Generar el paquete de release.
 4. Calcular SHA-256 del zip.
-5. Publicar el zip en el canal de updates.
+5. Subir el zip al VPS de updates.
 6. Publicar o actualizar `latest.json`.
-7. Descargar el manifiesto publicado y verificar que apunta al zip nuevo.
-8. Probar una instalacion limpia o temporal antes de avisar al cliente.
+7. Descargar el manifiesto desde el VPS usando un token de prueba.
+8. Descargar el zip desde el VPS usando el mismo token.
+9. Verificar SHA-256.
+10. Probar una instalacion limpia o temporal antes de avisar al cliente.
 
 ## Flujo De Recepcion
 
@@ -129,9 +132,9 @@ Cuando el cliente abre Fly Desk:
 1. `Abrir Fly Desk.vbs` ejecuta el bootstrap `tools/start-fly-desk.ps1`.
 2. El bootstrap lee `app/current.json`.
 3. El bootstrap ejecuta el updater salvo que `FLY_DESK_SKIP_SELF_UPDATE=1`.
-4. El updater descarga `latest.json`.
+4. El updater descarga `latest.json` desde el VPS usando `X-FlyDesk-Update-Token`.
 5. Si la version remota no es mayor, abre la app local.
-6. Si hay version nueva, descarga el zip.
+6. Si hay version nueva, descarga el zip desde el VPS usando el mismo token.
 7. Verifica SHA-256.
 8. Extrae en staging bajo `.launcher/`.
 9. Valida `release.json`, `bin/fly-desk.exe` y `frontend/dist/index.html`.
@@ -165,12 +168,14 @@ Para saber remotamente que una actualizacion llego correctamente, no basta con s
 
 Si una version mala ya fue publicada, el emisor debe publicar una version mayor que corrija el problema. No se debe modificar silenciosamente el zip de una version ya publicada.
 
-## Primer Canal Recomendado
+## Canal Recomendado Con VPS
 
 Para empezar:
 
 - repo privado de source: `grumitos/fly-desk`
-- repo publico de updates: `grumitos/fly-desk-updates`
-- manifest publico: `https://raw.githubusercontent.com/grumitos/fly-desk-updates/main/latest.json`
+- GitHub Actions construye y sube el zip al VPS
+- manifest privado via VPS: `https://updates.example.com/fly-desk/latest.json`
+- zip privado via VPS: `https://updates.example.com/fly-desk/releases/<version>/<zip>`
+- receipts via VPS: `https://updates.example.com/fly-desk/receipts`
 
-Si luego se necesita restringir descargas, se mantiene el mismo contrato y se cambia solo la fuente del `url`: un endpoint propio puede validar licencia y devolver una URL temporal.
+El repo publico de updates queda como fallback, no como flujo preferido. Si se usa fallback publico, el contrato no cambia; solo cambian `package.url` y `receipts.url`.

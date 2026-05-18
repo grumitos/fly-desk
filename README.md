@@ -165,6 +165,7 @@ rg -n "\]\([^)]*\.md\)" README.md docs frontend/README.md
 
 - [`AUTOUPDATE_PLAN.md`](./AUTOUPDATE_PLAN.md): plan compacto de implementacion del autoupdater para cliente final
 - [`AUTOUPDATE_RUNBOOK.md`](./AUTOUPDATE_RUNBOOK.md): runbook de publicacion, monitoreo, fallback y rollback de updates
+- [`VPS_UPDATE_CHANNEL.md`](./VPS_UPDATE_CHANNEL.md): contrato seguro de updates via VPS, tokens por cliente y receipts
 - [`docs/REPO_CURRENT_STATE.md`](./docs/REPO_CURRENT_STATE.md): estado funcional y tecnico actual
 - [`docs/DEPLOY_RAILWAY.md`](./docs/DEPLOY_RAILWAY.md): limites y requisitos de despliegue remoto
 - [`docs/FRONTEND_IDENTITY.md`](./docs/FRONTEND_IDENTITY.md): identidad visual y reglas UI React
