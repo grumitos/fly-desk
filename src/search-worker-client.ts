@@ -44,12 +44,17 @@ interface WorkerHandle {
   kill: () => void;
 }
 
+interface SearchWorkerCommand {
+  command: string;
+  args: string[];
+}
+
 function searchWorkerProcessesEnabled(): boolean {
   return process.env.FLY_DESK_SEARCH_WORKER_PROCESSES !== "0";
 }
 
-function resolveWorkerPath(): string | undefined {
-  const workerPath = join(process.cwd(), "src", "search-worker.ts");
+function resolveWorkerPath(cwd = process.cwd()): string | undefined {
+  const workerPath = join(cwd, "src", "search-worker.ts");
   return existsSync(workerPath) ? workerPath : undefined;
 }
 
@@ -58,6 +63,10 @@ interface BunExecutableResolverOptions {
   execPath?: string;
   platform?: NodeJS.Platform;
   exists?: (path: string) => boolean;
+}
+
+interface SearchWorkerCommandResolverOptions extends BunExecutableResolverOptions {
+  cwd?: string;
 }
 
 function normalizeExecutableCandidate(value: string | undefined): string | undefined {
@@ -108,6 +117,54 @@ function resolveBunExecutable(options: BunExecutableResolverOptions = {}): strin
 
 export function resolveSearchWorkerBunExecutableForTests(options: BunExecutableResolverOptions): string {
   return resolveBunExecutable(options);
+}
+
+function resolvePackagedWorkerExecutable(
+  env: Record<string, string | undefined>,
+  pathExists: (path: string) => boolean,
+): string | undefined {
+  const explicitExecutable = normalizeExecutableCandidate(env.FLY_DESK_EXECUTABLE_PATH);
+  if (explicitExecutable && pathExists(explicitExecutable)) {
+    return explicitExecutable;
+  }
+
+  const releaseDir = normalizeExecutableCandidate(env.FLY_DESK_RELEASE_DIR);
+  if (!releaseDir) {
+    return undefined;
+  }
+
+  const releaseExecutable = join(releaseDir, "bin", "fly-desk.exe");
+  return pathExists(releaseExecutable) ? releaseExecutable : undefined;
+}
+
+function resolveSearchWorkerCommand(
+  options: SearchWorkerCommandResolverOptions = {},
+): SearchWorkerCommand | undefined {
+  const env = options.env ?? process.env;
+  const pathExists = options.exists ?? existsSync;
+  const packagedExecutable = resolvePackagedWorkerExecutable(env, pathExists);
+  if (packagedExecutable) {
+    return {
+      command: packagedExecutable,
+      args: ["--fly-desk-worker"],
+    };
+  }
+
+  const workerPath = resolveWorkerPath(options.cwd);
+  if (!workerPath) {
+    return undefined;
+  }
+
+  return {
+    command: resolveBunExecutable(options),
+    args: [workerPath],
+  };
+}
+
+export function resolveSearchWorkerCommandForTests(
+  options: SearchWorkerCommandResolverOptions,
+): SearchWorkerCommand | undefined {
+  return resolveSearchWorkerCommand(options);
 }
 
 function rejectWithWorkerError(message: Extract<ProviderSearchWorkerMessage, { type: "error" }>): Error {
@@ -168,18 +225,17 @@ function runInWorker(
   onMessage: (message: ProviderSearchWorkerMessage, child: WorkerHandle) => void,
   shouldContinue?: () => boolean,
 ): Promise<ProviderSearchWorkerMessage> {
-  const workerPath = resolveWorkerPath();
-  if (!searchWorkerProcessesEnabled() || !workerPath) {
+  const workerCommand = resolveSearchWorkerCommand();
+  if (!searchWorkerProcessesEnabled() || !workerCommand) {
     return Promise.reject(new Error("Search worker processes are disabled or unavailable."));
   }
 
   return new Promise((resolve, reject) => {
-    const bunExecutable = resolveBunExecutable();
-    const child = Bun.spawn([bunExecutable, workerPath], {
+    const child = Bun.spawn([workerCommand.command, ...workerCommand.args], {
       cwd: process.cwd(),
       env: {
         ...process.env,
-        BUN_EXECUTABLE_PATH: bunExecutable,
+        BUN_EXECUTABLE_PATH: workerCommand.command,
         FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS: "1",
       },
       stdin: "pipe",

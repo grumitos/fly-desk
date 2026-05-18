@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SearchRequest } from "../src/core/types";
 import {
+  resolveSearchWorkerCommandForTests,
   resolveSearchWorkerBunExecutableForTests,
   runProviderSearchInWorker,
 } from "../src/search-worker-client";
@@ -20,6 +21,8 @@ const ENV_KEYS = [
   "CHROME_USER_DATA_DIR",
   "COSTAMAR_CHROME_USER_DATA_DIR",
   "FLY_DESK_SEARCH_WORKER_PROCESSES",
+  "FLY_DESK_EXECUTABLE_PATH",
+  "FLY_DESK_RELEASE_DIR",
   "LOCALAPPDATA",
 ] as const;
 
@@ -94,6 +97,25 @@ test("search workers resolve Bun instead of inheriting a Node executable", () =>
   });
 
   assert.equal(resolved, expectedBunPath);
+});
+
+test("search workers use the packaged executable in release mode", () => {
+  const releaseDir = "C:\\fly-desk\\app\\releases\\0.3.0";
+  const executablePath = join(releaseDir, "bin", "fly-desk.exe");
+
+  const command = resolveSearchWorkerCommandForTests({
+    env: {
+      FLY_DESK_RELEASE_DIR: releaseDir,
+      FLY_DESK_EXECUTABLE_PATH: executablePath,
+    },
+    cwd: "C:\\fly-desk",
+    exists: (path) => path === executablePath,
+  });
+
+  assert.deepEqual(command, {
+    command: executablePath,
+    args: ["--fly-desk-worker"],
+  });
 });
 
 test("provider search workers surface provider errors after starting under Bun", async () => {

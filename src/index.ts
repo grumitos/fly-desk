@@ -10,6 +10,7 @@ import {
 import { startProviderPrewarmLoop } from "./provider-prewarm";
 
 const STARTUP_BACKGROUND_TASK_DELAY_MS = 10_000;
+const WORKER_MODE_FLAG = "--fly-desk-worker";
 
 async function main() {
   const startupStart = startPerfTimer();
@@ -96,4 +97,8 @@ async function main() {
   providerPrewarmStartTimer.unref?.();
 }
 
-void main();
+if (process.argv.includes(WORKER_MODE_FLAG)) {
+  await import("./search-worker");
+} else {
+  void main();
+}
