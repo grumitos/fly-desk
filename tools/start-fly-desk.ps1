@@ -11,6 +11,10 @@ $script:RuntimeDir = Join-Path $script:ProjectRoot ".launcher"
 $script:LogsDir = Join-Path $script:RuntimeDir "logs"
 $script:StateFile = Join-Path $script:RuntimeDir "state.json"
 $script:LauncherLog = Join-Path $script:LogsDir "launcher.log"
+$script:ReceiptsDir = Join-Path $script:RuntimeDir "receipts"
+$script:PendingReceiptsDir = Join-Path $script:ReceiptsDir "pending"
+$script:SentReceiptsDir = Join-Path $script:ReceiptsDir "sent"
+$script:BootstrapVersion = "1.0.0"
 $script:LauncherPort = if ($env:FLY_DESK_LAUNCHER_PORT) { [int]$env:FLY_DESK_LAUNCHER_PORT } else { 32123 }
 $script:ServerOutLog = ""
 $script:ServerErrLog = ""
@@ -67,6 +71,8 @@ function Ensure-Directory {
 function Ensure-RuntimeDir {
   Ensure-Directory -Path $script:RuntimeDir
   Ensure-Directory -Path $script:LogsDir
+  Ensure-Directory -Path $script:PendingReceiptsDir
+  Ensure-Directory -Path $script:SentReceiptsDir
 }
 
 function Write-JsonFile {
@@ -83,6 +89,79 @@ function Write-JsonFile {
   $json = $Value | ConvertTo-Json
   $encoding = New-Object System.Text.UTF8Encoding -ArgumentList $false
   [System.IO.File]::WriteAllText($Path, $json, $encoding)
+}
+
+function Get-PropertyValue {
+  param(
+    $Object,
+    [string]$Name,
+    $Fallback = ""
+  )
+
+  if (-not $Object) {
+    return $Fallback
+  }
+
+  if (@($Object.PSObject.Properties | ForEach-Object { $_.Name }) -contains $Name) {
+    return $Object.$Name
+  }
+
+  return $Fallback
+}
+
+function Get-OrCreateInstallId {
+  Ensure-RuntimeDir
+  $installIdPath = Join-Path $script:RuntimeDir "install-id.json"
+  if (Test-Path -LiteralPath $installIdPath) {
+    try {
+      $existing = Get-Content -LiteralPath $installIdPath -Raw | ConvertFrom-Json
+      $installId = ([string](Get-PropertyValue -Object $existing -Name "installId")).Trim()
+      if ($installId) {
+        return $installId
+      }
+    } catch {
+    }
+  }
+
+  $installId = [guid]::NewGuid().ToString()
+  Write-JsonFile -Path $installIdPath -Value ([pscustomobject]@{
+    installId = $installId
+    createdAt = (Get-Date).ToUniversalTime().ToString("o")
+  })
+
+  return $installId
+}
+
+function Write-Receipt {
+  param(
+    [string]$EventType,
+    [string]$Version,
+    [string]$PreviousVersion = "",
+    [string]$ReleaseId = "",
+    [string]$Status = "success",
+    [string]$ErrorCode = ""
+  )
+
+  Ensure-RuntimeDir
+  $eventId = [guid]::NewGuid().ToString()
+  $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ")
+  $receiptPath = Join-Path $script:PendingReceiptsDir "$stamp-$eventId.json"
+
+  Write-JsonFile -Path $receiptPath -Value ([pscustomobject]@{
+    appId = "fly-desk"
+    installId = Get-OrCreateInstallId
+    eventId = $eventId
+    eventType = $EventType
+    version = $Version
+    previousVersion = $PreviousVersion
+    releaseId = $ReleaseId
+    bootstrapVersion = $script:BootstrapVersion
+    occurredAt = (Get-Date).ToUniversalTime().ToString("o")
+    status = $Status
+    errorCode = $ErrorCode
+  })
+
+  return $receiptPath
 }
 
 function Write-LauncherLog {
@@ -328,6 +407,7 @@ function Save-LastKnownGood {
     releaseDir = [string]$Release.releaseDir
     healthCheckedAt = (Get-Date).ToUniversalTime().ToString("o")
   })
+  [void](Write-Receipt -EventType "health_ok" -Version ([string]$Release.version) -Status "success")
 }
 
 function Read-LastKnownGoodRelease {
@@ -716,6 +796,7 @@ function Start-AndValidateRelease {
     Fail-Launcher "Fly Desk intento volver a $($fallbackRelease.version), pero tampoco respondio correctamente. Revisa:`n$script:ServerOutLog`n$script:ServerErrLog"
   }
 
+  [void](Write-Receipt -EventType "rolled_back" -Version ([string]$fallbackRelease.version) -PreviousVersion ([string]$Release.version) -Status "success")
   Save-LastKnownGood -Release $fallbackRelease
   Save-State `
     -Port $Port `
