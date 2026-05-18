@@ -166,6 +166,7 @@ rg -n "\]\([^)]*\.md\)" README.md docs frontend/README.md
 - [`docs/REPO_CURRENT_STATE.md`](./docs/REPO_CURRENT_STATE.md): estado funcional y tecnico actual
 - [`docs/DEPLOY_RAILWAY.md`](./docs/DEPLOY_RAILWAY.md): limites y requisitos de despliegue remoto
 - [`docs/FRONTEND_IDENTITY.md`](./docs/FRONTEND_IDENTITY.md): identidad visual y reglas UI React
+- [`docs/UPDATE_CHANNEL.md`](./docs/UPDATE_CHANNEL.md): contrato entre publicacion de releases y autoupdate de cliente final
 - [`frontend/README.md`](./frontend/README.md): notas breves del workspace frontend
 
 ## Deploy
