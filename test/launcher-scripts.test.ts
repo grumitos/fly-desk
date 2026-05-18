@@ -49,6 +49,12 @@ function powershellQuote(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
+function sha256File(path: string): string {
+  const hasher = new Bun.CryptoHasher("sha256");
+  hasher.update(readFileSync(path));
+  return hasher.digest("hex");
+}
+
 function runPowerShell(script: string, env: Record<string, string>): string {
   const result = Bun.spawnSync([
     "powershell.exe",
@@ -72,6 +78,33 @@ function runPowerShell(script: string, env: Record<string, string>): string {
     `${result.stdout.toString()}\n${result.stderr.toString()}`,
   );
   return result.stdout.toString().trim();
+}
+
+function createReleaseZip(version: string): { zipPath: string; sha256: string; sizeBytes: number } {
+  const packageRoot = mkdtempSync(join(tmpdir(), "flydesk-release-package-"));
+  tempRoots.push(packageRoot);
+  const releaseRoot = join(packageRoot, "fly-desk-release");
+  mkdirSync(join(releaseRoot, "bin"), { recursive: true });
+  mkdirSync(join(releaseRoot, "frontend", "dist"), { recursive: true });
+  writeFileSync(join(releaseRoot, "bin", "fly-desk.exe"), `fake executable ${version}`);
+  writeFileSync(join(releaseRoot, "frontend", "dist", "index.html"), "<title>Fly Desk</title>");
+  writeFileSync(join(releaseRoot, "release.json"), JSON.stringify({
+    schemaVersion: 1,
+    appId: "fly-desk",
+    version,
+    platform: "windows-x64",
+  }));
+
+  const zipPath = join(packageRoot, `fly-desk-windows-x64-v${version}.zip`);
+  runPowerShell(
+    `Compress-Archive -LiteralPath ${powershellQuote(releaseRoot)} -DestinationPath ${powershellQuote(zipPath)} -Force`,
+    {},
+  );
+  return {
+    zipPath,
+    sha256: sha256File(zipPath),
+    sizeBytes: readFileSync(zipPath).byteLength,
+  };
 }
 
 test("launcher resolves current side-by-side release and release-mode environment", () => {
@@ -275,4 +308,91 @@ test("launcher retries the last-known-good release when the active release fails
   assert.equal(payload.currentVersion, "0.3.0");
   assert.equal(payload.startedVersions, "0.4.0,0.3.0");
   assert.equal(payload.stoppedPids, "4040");
+});
+
+test("updater installs a newer manifest package after hash and release validation", () => {
+  const installRoot = makeInstallRoot();
+  const packageZip = createReleaseZip("0.4.0");
+  const scriptPath = join(process.cwd(), "tools", "update-fly-desk.ps1");
+  const output = runPowerShell(
+    [
+      `. ${powershellQuote(scriptPath)}`,
+      `$manifest = [pscustomobject]@{`,
+      `  schemaVersion = 1`,
+      `  appId = 'fly-desk'`,
+      `  channel = 'stable'`,
+      `  version = '0.4.0'`,
+      `  releaseId = 'test-v0.4.0'`,
+      `  minimumBootstrapVersion = '1.0.0'`,
+      `  package = [pscustomobject]@{`,
+      `    platform = 'windows-x64'`,
+      `    url = ${powershellQuote(packageZip.zipPath)}`,
+      `    sha256 = '${packageZip.sha256}'`,
+      `    sizeBytes = ${packageZip.sizeBytes}`,
+      `  }`,
+      `}`,
+      `$installed = Install-ManifestUpdate -Manifest $manifest`,
+      `$current = Get-Content -LiteralPath (Join-Path ${powershellQuote(installRoot)} 'app/current.json') -Raw | ConvertFrom-Json`,
+      `[pscustomobject]@{`,
+      `  installedVersion = $installed.version`,
+      `  currentVersion = $current.version`,
+      `  releaseDir = $current.releaseDir`,
+      `  releaseExists = Test-Path -LiteralPath (Join-Path ${powershellQuote(installRoot)} 'app/releases/0.4.0/release.json')`,
+      `  stagingExists = Test-Path -LiteralPath (Join-Path ${powershellQuote(installRoot)} '.launcher/staging/0.4.0')`,
+      `} | ConvertTo-Json -Compress`,
+    ].join("\n"),
+    {
+      FLY_DESK_INSTALL_ROOT: installRoot,
+      FLY_DESK_UPDATER_IMPORT_ONLY: "1",
+    },
+  );
+
+  const payload = JSON.parse(output);
+  assert.equal(payload.installedVersion, "0.4.0");
+  assert.equal(payload.currentVersion, "0.4.0");
+  assert.equal(payload.releaseDir, join(installRoot, "app", "releases", "0.4.0"));
+  assert.equal(payload.releaseExists, true);
+  assert.equal(payload.stagingExists, false);
+});
+
+test("updater rejects hash mismatch without changing current.json", () => {
+  const installRoot = makeInstallRoot();
+  const packageZip = createReleaseZip("0.4.0");
+  const scriptPath = join(process.cwd(), "tools", "update-fly-desk.ps1");
+  const output = runPowerShell(
+    [
+      `. ${powershellQuote(scriptPath)}`,
+      `$manifest = [pscustomobject]@{`,
+      `  schemaVersion = 1`,
+      `  appId = 'fly-desk'`,
+      `  channel = 'stable'`,
+      `  version = '0.4.0'`,
+      `  releaseId = 'test-v0.4.0'`,
+      `  minimumBootstrapVersion = '1.0.0'`,
+      `  package = [pscustomobject]@{`,
+      `    platform = 'windows-x64'`,
+      `    url = ${powershellQuote(packageZip.zipPath)}`,
+      `    sha256 = '0000000000000000000000000000000000000000000000000000000000000000'`,
+      `    sizeBytes = ${packageZip.sizeBytes}`,
+      `  }`,
+      `}`,
+      `$errorCode = ''`,
+      `try { Install-ManifestUpdate -Manifest $manifest | Out-Null } catch { $errorCode = $_.Exception.Message }`,
+      `$current = Get-Content -LiteralPath (Join-Path ${powershellQuote(installRoot)} 'app/current.json') -Raw | ConvertFrom-Json`,
+      `[pscustomobject]@{`,
+      `  error = $errorCode`,
+      `  currentVersion = $current.version`,
+      `  releaseExists = Test-Path -LiteralPath (Join-Path ${powershellQuote(installRoot)} 'app/releases/0.4.0')`,
+      `} | ConvertTo-Json -Compress`,
+    ].join("\n"),
+    {
+      FLY_DESK_INSTALL_ROOT: installRoot,
+      FLY_DESK_UPDATER_IMPORT_ONLY: "1",
+    },
+  );
+
+  const payload = JSON.parse(output);
+  assert.match(payload.error, /hash/i);
+  assert.equal(payload.currentVersion, "0.3.0");
+  assert.equal(payload.releaseExists, false);
 });

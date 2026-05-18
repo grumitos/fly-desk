@@ -9,6 +9,7 @@ $script:ProjectRoot = if ($env:FLY_DESK_INSTALL_ROOT) {
 $script:RuntimeDir = Join-Path $script:ProjectRoot ".launcher"
 $script:LogsDir = Join-Path $script:RuntimeDir "logs"
 $script:UpdaterLog = Join-Path $script:LogsDir "updater.log"
+$script:BootstrapVersion = "1.0.0"
 
 function Test-EnabledFlag {
   param([string]$Value)
@@ -74,6 +75,199 @@ function Write-JsonFile {
   $json = $Value | ConvertTo-Json
   $encoding = New-Object System.Text.UTF8Encoding -ArgumentList $false
   [System.IO.File]::WriteAllText($Path, $json, $encoding)
+}
+
+function Get-CurrentReleaseVersion {
+  $currentPath = Join-Path $script:ProjectRoot "app\current.json"
+  if (-not (Test-Path -LiteralPath $currentPath)) {
+    return "0.0.0"
+  }
+
+  try {
+    $current = Read-JsonFile -Path $currentPath
+    $version = ([string]$current.version).Trim()
+    if ($version) {
+      return $version
+    }
+  } catch {
+  }
+
+  return "0.0.0"
+}
+
+function Compare-SemVer {
+  param(
+    [string]$Left,
+    [string]$Right
+  )
+
+  $leftMain = ([string]$Left).Split("-", 2)[0]
+  $rightMain = ([string]$Right).Split("-", 2)[0]
+  $leftParts = @($leftMain.Split(".") | ForEach-Object { [int]$_ })
+  $rightParts = @($rightMain.Split(".") | ForEach-Object { [int]$_ })
+  $length = [Math]::Max($leftParts.Count, $rightParts.Count)
+
+  for ($index = 0; $index -lt $length; $index += 1) {
+    $leftValue = if ($index -lt $leftParts.Count) { $leftParts[$index] } else { 0 }
+    $rightValue = if ($index -lt $rightParts.Count) { $rightParts[$index] } else { 0 }
+    if ($leftValue -lt $rightValue) {
+      return -1
+    }
+    if ($leftValue -gt $rightValue) {
+      return 1
+    }
+  }
+
+  return 0
+}
+
+function Assert-Manifest {
+  param(
+    $Manifest,
+    [string]$LocalVersion = (Get-CurrentReleaseVersion)
+  )
+
+  if ([int]$Manifest.schemaVersion -ne 1) {
+    throw "manifest_invalid_schema"
+  }
+
+  if ([string]$Manifest.appId -ne "fly-desk") {
+    throw "manifest_invalid_app"
+  }
+
+  $version = ([string]$Manifest.version).Trim()
+  if (-not $version) {
+    throw "manifest_missing_version"
+  }
+
+  if ((Compare-SemVer -Left $version -Right $LocalVersion) -le 0) {
+    throw "manifest_no_newer_version"
+  }
+
+  $minimumBootstrapVersion = ([string]$Manifest.minimumBootstrapVersion).Trim()
+  if ($minimumBootstrapVersion -and (Compare-SemVer -Left $minimumBootstrapVersion -Right $script:BootstrapVersion) -gt 0) {
+    throw "manifest_requires_newer_bootstrap"
+  }
+
+  if ([string]$Manifest.package.platform -ne "windows-x64") {
+    throw "manifest_invalid_platform"
+  }
+
+  if (-not ([string]$Manifest.package.url).Trim()) {
+    throw "manifest_missing_package_url"
+  }
+
+  $sha256 = ([string]$Manifest.package.sha256).Trim()
+  if ($sha256 -notmatch "^[a-f0-9]{64}$") {
+    throw "manifest_invalid_package_hash"
+  }
+
+  return $true
+}
+
+function Get-UpdateClientConfig {
+  $configPath = Join-Path $script:RuntimeDir "update-client.json"
+  $config = if (Test-Path -LiteralPath $configPath) {
+    Read-JsonFile -Path $configPath
+  } else {
+    [pscustomobject]@{}
+  }
+
+  $propertyNames = @($config.PSObject.Properties | ForEach-Object { $_.Name })
+  $baseUrlValue = if ($propertyNames -contains "baseUrl") { [string]$config.baseUrl } else { "" }
+  $channelValue = if ($propertyNames -contains "channel") { [string]$config.channel } else { "" }
+  $tokenValue = if ($propertyNames -contains "token") { [string]$config.token } else { "" }
+  $baseUrl = if ($env:FLY_DESK_UPDATE_BASE_URL) { $env:FLY_DESK_UPDATE_BASE_URL } else { $baseUrlValue }
+  $channel = if ($env:FLY_DESK_UPDATE_CHANNEL) { $env:FLY_DESK_UPDATE_CHANNEL } else { $channelValue }
+  $token = if ($env:FLY_DESK_UPDATE_TOKEN) { $env:FLY_DESK_UPDATE_TOKEN } else { $tokenValue }
+
+  return [pscustomobject]@{
+    baseUrl = $baseUrl.TrimEnd("/")
+    channel = if ($channel) { $channel } else { "stable" }
+    token = $token
+  }
+}
+
+function New-UpdateHeaders {
+  param($ClientConfig)
+
+  if (-not $ClientConfig -or -not [string]$ClientConfig.token) {
+    return @{}
+  }
+
+  return @{
+    "X-FlyDesk-Update-Token" = [string]$ClientConfig.token
+  }
+}
+
+function Read-Manifest {
+  param($ClientConfig = (Get-UpdateClientConfig))
+
+  if (-not $ClientConfig.baseUrl) {
+    throw "manifest_unavailable"
+  }
+
+  $manifestUrl = "$($ClientConfig.baseUrl)/latest.json"
+  return Invoke-RestMethod -Uri $manifestUrl -Headers (New-UpdateHeaders -ClientConfig $ClientConfig)
+}
+
+function Download-Package {
+  param(
+    $Manifest,
+    $ClientConfig = (Get-UpdateClientConfig)
+  )
+
+  Ensure-UpdaterDirs
+  $version = [string]$Manifest.version
+  $downloadPath = Join-Path $script:RuntimeDir "downloads\fly-desk-windows-x64-v$version.zip"
+  Remove-Item -LiteralPath $downloadPath -Force -ErrorAction SilentlyContinue
+
+  $url = ([string]$Manifest.package.url).Trim()
+  if ($url -match "^https?://") {
+    Invoke-WebRequest -Uri $url -Headers (New-UpdateHeaders -ClientConfig $ClientConfig) -OutFile $downloadPath | Out-Null
+  } elseif ($url -match "^file://") {
+    $sourcePath = [System.Uri]::new($url).LocalPath
+    Copy-Item -LiteralPath $sourcePath -Destination $downloadPath
+  } else {
+    Copy-Item -LiteralPath $url -Destination $downloadPath
+  }
+
+  return $downloadPath
+}
+
+function Assert-PackageHash {
+  param(
+    [string]$PackagePath,
+    [string]$ExpectedSha256
+  )
+
+  $actual = (Get-FileHash -LiteralPath $PackagePath -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($actual -ne $ExpectedSha256) {
+    Remove-Item -LiteralPath $PackagePath -Force -ErrorAction SilentlyContinue
+    throw "hash_mismatch"
+  }
+
+  return $true
+}
+
+function Expand-PackageToStaging {
+  param(
+    [string]$PackagePath,
+    [string]$Version
+  )
+
+  Ensure-UpdaterDirs
+  $stagingRoot = Join-Path $script:RuntimeDir "staging\$Version"
+  Remove-Item -LiteralPath $stagingRoot -Recurse -Force -ErrorAction SilentlyContinue
+  Ensure-Directory -Path $stagingRoot
+  Expand-Archive -LiteralPath $PackagePath -DestinationPath $stagingRoot -Force
+
+  $releaseDir = Join-Path $stagingRoot "fly-desk-release"
+  if (-not (Test-Path -LiteralPath $releaseDir)) {
+    throw "package_invalid"
+  }
+
+  return $releaseDir
 }
 
 function Validate-StagedRelease {
@@ -206,6 +400,35 @@ function Activate-StagedRelease {
   }
 }
 
+function Install-ManifestUpdate {
+  param(
+    $Manifest,
+    $ClientConfig = (Get-UpdateClientConfig)
+  )
+
+  $localVersion = Get-CurrentReleaseVersion
+  [void](Assert-Manifest -Manifest $Manifest -LocalVersion $localVersion)
+  $version = [string]$Manifest.version
+  $packagePath = ""
+  $stagedReleaseDir = ""
+
+  try {
+    $packagePath = Download-Package -Manifest $Manifest -ClientConfig $ClientConfig
+    [void](Assert-PackageHash -PackagePath $packagePath -ExpectedSha256 ([string]$Manifest.package.sha256))
+    $stagedReleaseDir = Expand-PackageToStaging -PackagePath $packagePath -Version $version
+    $activated = Activate-StagedRelease -Version $version -StagedReleaseDir $stagedReleaseDir
+    Remove-Item -LiteralPath (Join-Path $script:RuntimeDir "staging\$version") -Recurse -Force -ErrorAction SilentlyContinue
+    return $activated
+  } catch {
+    if ($stagedReleaseDir) {
+      Remove-Item -LiteralPath (Split-Path -Parent $stagedReleaseDir) -Recurse -Force -ErrorAction SilentlyContinue
+    } else {
+      Remove-Item -LiteralPath (Join-Path $script:RuntimeDir "staging\$version") -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    throw
+  }
+}
+
 function Invoke-FlyDeskUpdate {
   Ensure-UpdaterDirs
 
@@ -220,7 +443,14 @@ function Invoke-FlyDeskUpdate {
     return
   }
 
-  Write-UpdaterLog "Remote update checks are not enabled in this phase; local release remains unchanged."
+  try {
+    $clientConfig = Get-UpdateClientConfig
+    $manifest = Read-Manifest -ClientConfig $clientConfig
+    Install-ManifestUpdate -Manifest $manifest -ClientConfig $clientConfig | Out-Null
+  } catch {
+    $message = if ($_.Exception) { $_.Exception.Message } else { "$_" }
+    Write-UpdaterLog "Update check failed; keeping current local release. $message"
+  }
 }
 
 if ($MyInvocation.InvocationName -ne "." -and -not (Test-EnabledFlag -Value $env:FLY_DESK_UPDATER_IMPORT_ONLY)) {
