@@ -1,0 +1,175 @@
+name: Fly Desk Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: VPS update channel to publish.
+        required: true
+        default: stable
+      release_id:
+        description: Optional releaseId for latest.json.
+        required: false
+        default: ""
+      notes:
+        description: Optional support-facing release note.
+        required: false
+        default: ""
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      FLY_DESK_PLATFORM: windows-x64
+      FLY_DESK_REMOTE_ROOT: /srv/fly-desk-updates
+      FLY_DESK_REMOTE_RELEASES: /srv/fly-desk-updates/releases
+      FLY_DESK_REMOTE_CHANNELS: /srv/fly-desk-updates/channels
+      FLY_DESK_CHANNEL: ${{ inputs.channel }}
+      FLY_DESK_RELEASE_ID: ${{ inputs.release_id }}
+      FLY_DESK_RELEASE_NOTES: ${{ inputs.notes }}
+      FLY_DESK_UPDATE_BASE_URL: ${{ secrets.FLY_DESK_UPDATE_BASE_URL }}
+      FLY_DESK_UPDATE_TOKEN: ${{ secrets.FLY_DESK_UPDATE_TOKEN }}
+      FLY_DESK_VPS_HOST: ${{ secrets.FLY_DESK_VPS_HOST }}
+      FLY_DESK_VPS_USER: ${{ secrets.FLY_DESK_VPS_USER }}
+      FLY_DESK_VPS_SSH_KEY: ${{ secrets.FLY_DESK_VPS_SSH_KEY }}
+
+    steps:
+      - name: Checkout private source
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - name: Install dependencies
+        shell: pwsh
+        run: bun install --frozen-lockfile
+
+      - name: Verify source
+        shell: pwsh
+        run: |
+          bun run typecheck
+          bun run lint
+          bun run test
+
+      - name: Build release package
+        shell: pwsh
+        run: |
+          bun run build:frontend
+          bun run build:exe
+          bun run package:release
+
+      - name: Generate latest.json
+        id: meta
+        shell: pwsh
+        run: |
+          foreach ($name in @(
+            "FLY_DESK_UPDATE_BASE_URL",
+            "FLY_DESK_UPDATE_TOKEN",
+            "FLY_DESK_VPS_HOST",
+            "FLY_DESK_VPS_USER",
+            "FLY_DESK_VPS_SSH_KEY"
+          )) {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+              throw "Missing required secret or environment value: $name"
+            }
+          }
+
+          $package = Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json
+          $version = [string]$package.version
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "package.json is missing version"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:FLY_DESK_CHANNEL) -or $env:FLY_DESK_CHANNEL -notmatch "^[a-z0-9._-]+$") {
+            throw "Invalid Fly Desk update channel: $env:FLY_DESK_CHANNEL"
+          }
+
+          $zipName = "fly-desk-windows-x64-v$version.zip"
+          $zipPath = Join-Path $PWD "artifacts\release\$zipName"
+          if (-not (Test-Path -LiteralPath $zipPath)) {
+            throw "Missing release zip: $zipPath"
+          }
+
+          $baseUrl = $env:FLY_DESK_UPDATE_BASE_URL.TrimEnd("/")
+          $publishedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $releaseId = $env:FLY_DESK_RELEASE_ID
+          if ([string]::IsNullOrWhiteSpace($releaseId)) {
+            $releaseId = "$publishedAt-v$version"
+          }
+
+          $manifest = [ordered]@{
+            schemaVersion = 1
+            appId = "fly-desk"
+            channel = $env:FLY_DESK_CHANNEL
+            version = $version
+            releaseId = $releaseId
+            publishedAt = $publishedAt
+            minimumBootstrapVersion = "1.0.0"
+            package = [ordered]@{
+              platform = $env:FLY_DESK_PLATFORM
+              url = "$baseUrl/releases/$version/$zipName"
+              sha256 = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+              sizeBytes = (Get-Item -LiteralPath $zipPath).Length
+            }
+            receipts = [ordered]@{
+              enabled = $true
+              url = "$baseUrl/receipts"
+            }
+            notes = $env:FLY_DESK_RELEASE_NOTES
+          }
+
+          $manifestPath = Join-Path $PWD "artifacts\release\latest.json"
+          $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -Encoding utf8
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "zip_name=$zipName" >> $env:GITHUB_OUTPUT
+          "zip_path=$zipPath" >> $env:GITHUB_OUTPUT
+          "manifest_path=$manifestPath" >> $env:GITHUB_OUTPUT
+
+      - name: Configure VPS SSH key
+        id: ssh
+        shell: pwsh
+        run: |
+          $sshDir = Join-Path $env:USERPROFILE ".ssh"
+          New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
+          $keyPath = Join-Path $sshDir "fly-desk-vps"
+          $keyText = $env:FLY_DESK_VPS_SSH_KEY.Replace("`r`n", "`n").Trim() + "`n"
+          $encoding = New-Object System.Text.UTF8Encoding -ArgumentList $false
+          [System.IO.File]::WriteAllText($keyPath, $keyText, $encoding)
+          icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
+          "key_path=$keyPath" >> $env:GITHUB_OUTPUT
+
+      - name: Upload zip and manifest to VPS
+        shell: pwsh
+        run: |
+          $target = "$env:FLY_DESK_VPS_USER@$env:FLY_DESK_VPS_HOST"
+          $sshKey = "${{ steps.ssh.outputs.key_path }}"
+          $version = "${{ steps.meta.outputs.version }}"
+          $zipName = "${{ steps.meta.outputs.zip_name }}"
+          $zipPath = "${{ steps.meta.outputs.zip_path }}"
+          $manifestPath = "${{ steps.meta.outputs.manifest_path }}"
+          $remoteReleaseDir = "$env:FLY_DESK_REMOTE_RELEASES/$version"
+          $remoteChannelDir = "$env:FLY_DESK_REMOTE_CHANNELS/$env:FLY_DESK_CHANNEL"
+
+          ssh -i $sshKey -o StrictHostKeyChecking=accept-new $target "mkdir -p '$remoteReleaseDir' '$remoteChannelDir'"
+          scp -i $sshKey -o StrictHostKeyChecking=accept-new $zipPath "${target}:$remoteReleaseDir/$zipName"
+          scp -i $sshKey -o StrictHostKeyChecking=accept-new $manifestPath "${target}:$remoteChannelDir/latest.json.tmp"
+          ssh -i $sshKey -o StrictHostKeyChecking=accept-new $target "mv '$remoteChannelDir/latest.json.tmp' '$remoteChannelDir/latest.json'"
+
+      - name: Verify VPS manifest
+        shell: pwsh
+        run: |
+          $headers = @{
+            "X-FlyDesk-Update-Token" = $env:FLY_DESK_UPDATE_TOKEN
+          }
+          $baseUrl = $env:FLY_DESK_UPDATE_BASE_URL.TrimEnd("/")
+          $manifest = Invoke-RestMethod -Uri "$baseUrl/latest.json" -Headers $headers
+          if ([string]$manifest.version -ne "${{ steps.meta.outputs.version }}") {
+            throw "VPS manifest version $($manifest.version) did not match ${{ steps.meta.outputs.version }}"
+          }
+          if ([string]$manifest.package.sha256 -notmatch "^[a-f0-9]{64}$") {
+            throw "VPS manifest has an invalid package hash"
+          }
