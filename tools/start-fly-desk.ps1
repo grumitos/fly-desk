@@ -69,6 +69,22 @@ function Ensure-RuntimeDir {
   Ensure-Directory -Path $script:LogsDir
 }
 
+function Write-JsonFile {
+  param(
+    [string]$Path,
+    $Value
+  )
+
+  $parent = Split-Path -Parent $Path
+  if ($parent) {
+    Ensure-Directory -Path $parent
+  }
+
+  $json = $Value | ConvertTo-Json
+  $encoding = New-Object System.Text.UTF8Encoding -ArgumentList $false
+  [System.IO.File]::WriteAllText($Path, $json, $encoding)
+}
+
 function Write-LauncherLog {
   param([string]$Message)
 
@@ -244,6 +260,10 @@ function Get-CurrentFilePath {
   return Join-Path $script:ProjectRoot "app\current.json"
 }
 
+function Get-LastKnownGoodFilePath {
+  return Join-Path $script:RuntimeDir "last-known-good.json"
+}
+
 function Test-ReleaseModeAvailable {
   return Test-Path -LiteralPath (Get-CurrentFilePath)
 }
@@ -297,6 +317,76 @@ function Get-ActiveRelease {
     executablePath = $executablePath
     publicDir = $publicDir
   }
+}
+
+function Save-LastKnownGood {
+  param($Release)
+
+  Ensure-RuntimeDir
+  Write-JsonFile -Path (Get-LastKnownGoodFilePath) -Value ([pscustomobject]@{
+    version = [string]$Release.version
+    releaseDir = [string]$Release.releaseDir
+    healthCheckedAt = (Get-Date).ToUniversalTime().ToString("o")
+  })
+}
+
+function Read-LastKnownGoodRelease {
+  $lastKnownGoodPath = Get-LastKnownGoodFilePath
+  if (-not (Test-Path -LiteralPath $lastKnownGoodPath)) {
+    return $null
+  }
+
+  try {
+    $good = Get-Content -LiteralPath $lastKnownGoodPath -Raw | ConvertFrom-Json
+    $version = ([string]$good.version).Trim()
+    $releaseDir = ([string]$good.releaseDir).Trim()
+    if (-not $version -or -not $releaseDir) {
+      return $null
+    }
+
+    $releaseDir = [System.IO.Path]::GetFullPath($releaseDir)
+    $executablePath = Join-Path $releaseDir "bin\fly-desk.exe"
+    $publicDir = Join-Path $releaseDir "frontend\dist"
+    if (-not (Test-Path -LiteralPath (Join-Path $releaseDir "release.json")) `
+      -or -not (Test-Path -LiteralPath $executablePath) `
+      -or -not (Test-Path -LiteralPath (Join-Path $publicDir "index.html"))) {
+      return $null
+    }
+
+    return [pscustomobject]@{
+      version = $version
+      releaseDir = $releaseDir
+      executablePath = $executablePath
+      publicDir = $publicDir
+    }
+  } catch {
+    Write-LauncherLog "last-known-good.json was invalid and will be ignored: $($_.Exception.Message)"
+    return $null
+  }
+}
+
+function Restore-CurrentToRelease {
+  param($Release)
+
+  $appDir = Join-Path $script:ProjectRoot "app"
+  Ensure-Directory -Path $appDir
+  Write-JsonFile -Path (Get-CurrentFilePath) -Value ([pscustomobject]@{
+    version = [string]$Release.version
+    releaseDir = [string]$Release.releaseDir
+    activatedAt = (Get-Date).ToUniversalTime().ToString("o")
+  })
+}
+
+function Test-CanRollbackRelease {
+  param($FailedRelease)
+
+  $good = Read-LastKnownGoodRelease
+  if (-not $good) {
+    return $false
+  }
+
+  return [string]$good.version -ne [string]$FailedRelease.version `
+    -or [string]$good.releaseDir -ne [string]$FailedRelease.releaseDir
 }
 
 function New-ReleaseEnvironment {
@@ -566,6 +656,83 @@ function Start-ReleaseServerProcess {
   return $process.Id
 }
 
+function Start-AndValidateRelease {
+  param(
+    $Release,
+    [int]$Port
+  )
+
+  $serverProcessId = Start-ReleaseServerProcess -Release $Release -Port $Port
+  Save-State `
+    -Port $Port `
+    -ProcessId $serverProcessId `
+    -Mode "release" `
+    -Version $Release.version `
+    -ReleaseDir $Release.releaseDir `
+    -StdOutLog $script:ServerOutLog `
+    -StdErrLog $script:ServerErrLog
+
+  if (Wait-ForServer -Port $Port -ProcessId $serverProcessId) {
+    Save-LastKnownGood -Release $Release
+    Save-State `
+      -Port $Port `
+      -ProcessId $serverProcessId `
+      -Mode "release" `
+      -Version $Release.version `
+      -ReleaseDir $Release.releaseDir `
+      -StdOutLog $script:ServerOutLog `
+      -StdErrLog $script:ServerErrLog
+
+    return [pscustomobject]@{
+      processId = $serverProcessId
+      release = $Release
+      rolledBack = $false
+    }
+  }
+
+  Stop-ProcessTree -ProcessId $serverProcessId
+  Clear-State
+
+  if (-not (Test-CanRollbackRelease -FailedRelease $Release)) {
+    Fail-Launcher "Fly Desk no respondio correctamente en http://127.0.0.1:$Port/. Revisa:`n$script:ServerOutLog`n$script:ServerErrLog"
+  }
+
+  $fallbackRelease = Read-LastKnownGoodRelease
+  Restore-CurrentToRelease -Release $fallbackRelease
+  Write-LauncherLog "Release $($Release.version) failed health; rolling back to $($fallbackRelease.version)."
+  $fallbackProcessId = Start-ReleaseServerProcess -Release $fallbackRelease -Port $Port
+  Save-State `
+    -Port $Port `
+    -ProcessId $fallbackProcessId `
+    -Mode "release" `
+    -Version $fallbackRelease.version `
+    -ReleaseDir $fallbackRelease.releaseDir `
+    -StdOutLog $script:ServerOutLog `
+    -StdErrLog $script:ServerErrLog
+
+  if (-not (Wait-ForServer -Port $Port -ProcessId $fallbackProcessId)) {
+    Stop-ProcessTree -ProcessId $fallbackProcessId
+    Clear-State
+    Fail-Launcher "Fly Desk intento volver a $($fallbackRelease.version), pero tampoco respondio correctamente. Revisa:`n$script:ServerOutLog`n$script:ServerErrLog"
+  }
+
+  Save-LastKnownGood -Release $fallbackRelease
+  Save-State `
+    -Port $Port `
+    -ProcessId $fallbackProcessId `
+    -Mode "release" `
+    -Version $fallbackRelease.version `
+    -ReleaseDir $fallbackRelease.releaseDir `
+    -StdOutLog $script:ServerOutLog `
+    -StdErrLog $script:ServerErrLog
+
+  return [pscustomobject]@{
+    processId = $fallbackProcessId
+    release = $fallbackRelease
+    rolledBack = $true
+  }
+}
+
 function Start-DevServerProcess {
   param(
     [string]$BunPath,
@@ -636,35 +803,30 @@ function Invoke-FlyDeskLauncher {
     }
 
     Clear-State
-    $serverProcessId = if ($mode -eq "release") {
-      Start-ReleaseServerProcess -Release $release -Port $script:LauncherPort
+    if ($mode -eq "release") {
+      [void](Start-AndValidateRelease -Release $release -Port $script:LauncherPort)
     } else {
-      Start-DevServerProcess -BunPath $bunPath -Port $script:LauncherPort
+      $serverProcessId = Start-DevServerProcess -BunPath $bunPath -Port $script:LauncherPort
+      Save-State `
+        -Port $script:LauncherPort `
+        -ProcessId $serverProcessId `
+        -Mode $mode `
+        -StdOutLog $script:ServerOutLog `
+        -StdErrLog $script:ServerErrLog
+
+      if (-not (Wait-ForServer -Port $script:LauncherPort -ProcessId $serverProcessId)) {
+        Stop-ProcessTree -ProcessId $serverProcessId
+        Clear-State
+        Fail-Launcher "Fly Desk no respondio correctamente en http://127.0.0.1:$script:LauncherPort/. Revisa:`n$script:ServerOutLog`n$script:ServerErrLog"
+      }
+
+      Save-State `
+        -Port $script:LauncherPort `
+        -ProcessId $serverProcessId `
+        -Mode $mode `
+        -StdOutLog $script:ServerOutLog `
+        -StdErrLog $script:ServerErrLog
     }
-
-    Save-State `
-      -Port $script:LauncherPort `
-      -ProcessId $serverProcessId `
-      -Mode $mode `
-      -Version $(if ($release) { $release.version } else { "" }) `
-      -ReleaseDir $(if ($release) { $release.releaseDir } else { "" }) `
-      -StdOutLog $script:ServerOutLog `
-      -StdErrLog $script:ServerErrLog
-
-    if (-not (Wait-ForServer -Port $script:LauncherPort -ProcessId $serverProcessId)) {
-      Stop-ProcessTree -ProcessId $serverProcessId
-      Clear-State
-      Fail-Launcher "Fly Desk no respondio correctamente en http://127.0.0.1:$script:LauncherPort/. Revisa:`n$script:ServerOutLog`n$script:ServerErrLog"
-    }
-
-    Save-State `
-      -Port $script:LauncherPort `
-      -ProcessId $serverProcessId `
-      -Mode $mode `
-      -Version $(if ($release) { $release.version } else { "" }) `
-      -ReleaseDir $(if ($release) { $release.releaseDir } else { "" }) `
-      -StdOutLog $script:ServerOutLog `
-      -StdErrLog $script:ServerErrLog
 
     Open-AppInBrowser -Port $script:LauncherPort
     Write-LauncherLog "Launcher completed."

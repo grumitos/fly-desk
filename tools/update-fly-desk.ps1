@@ -60,6 +60,22 @@ function Read-JsonFile {
   }
 }
 
+function Write-JsonFile {
+  param(
+    [string]$Path,
+    $Value
+  )
+
+  $parent = Split-Path -Parent $Path
+  if ($parent) {
+    Ensure-Directory -Path $parent
+  }
+
+  $json = $Value | ConvertTo-Json
+  $encoding = New-Object System.Text.UTF8Encoding -ArgumentList $false
+  [System.IO.File]::WriteAllText($Path, $json, $encoding)
+}
+
 function Validate-StagedRelease {
   param(
     [string]$Version,
@@ -112,11 +128,56 @@ function Write-CurrentRelease {
 
   $appDir = Join-Path $script:ProjectRoot "app"
   Ensure-Directory -Path $appDir
-  [pscustomobject]@{
+  Write-JsonFile -Path (Join-Path $appDir "current.json") -Value ([pscustomobject]@{
     version = $Version
     releaseDir = $ReleaseDir
     activatedAt = (Get-Date).ToUniversalTime().ToString("o")
-  } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $appDir "current.json") -Encoding UTF8
+  })
+}
+
+function Get-LastKnownGoodFilePath {
+  return Join-Path $script:RuntimeDir "last-known-good.json"
+}
+
+function Read-LastKnownGood {
+  $lastKnownGoodPath = Get-LastKnownGoodFilePath
+  if (-not (Test-Path -LiteralPath $lastKnownGoodPath)) {
+    throw "Missing last-known-good.json."
+  }
+
+  $good = Read-JsonFile -Path $lastKnownGoodPath
+  $version = ([string]$good.version).Trim()
+  $releaseDir = ([string]$good.releaseDir).Trim()
+  if (-not $version -or -not $releaseDir) {
+    throw "last-known-good.json is missing version or releaseDir."
+  }
+
+  $releaseDir = [System.IO.Path]::GetFullPath($releaseDir)
+  if (-not (Test-Path -LiteralPath (Join-Path $releaseDir "release.json"))) {
+    throw "Last known good release is missing release.json: $releaseDir"
+  }
+
+  if (-not (Test-Path -LiteralPath (Join-Path $releaseDir "bin\fly-desk.exe"))) {
+    throw "Last known good release is missing executable: $releaseDir"
+  }
+
+  if (-not (Test-Path -LiteralPath (Join-Path $releaseDir "frontend\dist\index.html"))) {
+    throw "Last known good release is missing frontend index: $releaseDir"
+  }
+
+  return [pscustomobject]@{
+    version = $version
+    releaseDir = $releaseDir
+  }
+}
+
+function Rollback-ToLastKnownGood {
+  Ensure-UpdaterDirs
+  $good = Read-LastKnownGood
+  Write-CurrentRelease -Version $good.version -ReleaseDir $good.releaseDir
+  Write-UpdaterLog "Rolled back current release pointer to $($good.version) at $($good.releaseDir)."
+
+  return $good
 }
 
 function Activate-StagedRelease {
