@@ -4,7 +4,6 @@ import { routeRequest } from "./http-router";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import { getPublicRuntimeConfig } from "./search-date-policy";
 
-const publicDir = path.resolve(process.cwd(), "frontend", "dist");
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 const DEFAULT_SERVER_IDLE_TIMEOUT_SECONDS = 120;
 const MAX_SERVER_IDLE_TIMEOUT_SECONDS = 255;
@@ -105,6 +104,14 @@ function staticAssetHeaders(contentType: string, immutable: boolean): Record<str
   );
 }
 
+export function resolveServerPublicDir(
+  env: Record<string, string | undefined> = process.env,
+  cwd = process.cwd(),
+): string {
+  const explicitPublicDir = env.FLY_DESK_PUBLIC_DIR?.trim();
+  return path.resolve(explicitPublicDir || path.join(cwd, "frontend", "dist"));
+}
+
 async function serveStaticFile(filePath: string, immutable: boolean): Promise<Response> {
   const file = Bun.file(filePath);
   const contentType = file.type || contentTypeForExtension(path.extname(filePath));
@@ -121,6 +128,7 @@ async function resolvePublicAsset(pathname: string): Promise<string | undefined>
     return undefined;
   }
 
+  const publicDir = resolveServerPublicDir();
   const filePath = path.resolve(publicDir, normalizedPath);
   if (!filePath.startsWith(`${publicDir}${path.sep}`) && filePath !== publicDir) {
     return undefined;
@@ -138,6 +146,7 @@ function escapeInlineScriptJson(value: string): string {
 }
 
 async function serveIndexHtml(): Promise<Response> {
+  const publicDir = resolveServerPublicDir();
   const filePath = path.join(publicDir, "index.html");
   const template = await Bun.file(filePath).text();
   const runtimeConfig = escapeInlineScriptJson(JSON.stringify(getPublicRuntimeConfig()));
