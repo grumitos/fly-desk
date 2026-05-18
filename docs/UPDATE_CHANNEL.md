@@ -2,12 +2,14 @@
 
 Este documento define como publicar una version de Fly Desk y como debe recibirla una instalacion de cliente final. La regla principal es simple: el cliente no usa Git, no inicia sesion en GitHub y no guarda credenciales del mantenedor.
 
+El plan implementable vive en [`../AUTOUPDATE_PLAN.md`](../AUTOUPDATE_PLAN.md) y el runbook operativo vive en [`../AUTOUPDATE_RUNBOOK.md`](../AUTOUPDATE_RUNBOOK.md).
+
 ## Modelo
 
 - El codigo fuente vive en el repo privado `grumitos/fly-desk`.
 - El cliente final recibe un paquete instalable, no el repo.
 - El paquete se publica en un canal de updates con `latest.json` y un `.zip`.
-- El launcher local consulta el manifiesto, descarga el zip, valida SHA-256 y actualiza la carpeta local.
+- El launcher local consulta el manifiesto, descarga el zip, valida SHA-256 y activa una release bajo `app/releases/<version>/`.
 - La carpeta y el acceso directo se mantienen: `C:\fly-desk` y `Abrir Fly Desk.vbs`.
 
 ## Contrato Envio-Recepcion
@@ -23,11 +25,13 @@ Quien recibe una version solo debe aceptar el zip si:
 
 - `latest.json` usa `schemaVersion: 1`
 - `appId` es `fly-desk`
-- `platforms.windows-x64.url` apunta al zip correcto
-- `platforms.windows-x64.sha256` coincide con el archivo descargado
+- `package.platform` es `windows-x64`
+- `package.url` apunta al zip correcto
+- `package.sha256` coincide con el archivo descargado
 - `version` es mayor que la version local
 - el zip contiene `release.json`
 - el zip contiene los archivos minimos de runtime
+- la release nueva responde `/api/health` antes de quedar como ultima version buena
 
 ## Manifiesto
 
@@ -40,28 +44,27 @@ Formato esperado de `latest.json`:
   "channel": "stable",
   "version": "0.2.0",
   "publishedAt": "2026-05-18T00:00:00Z",
-  "platforms": {
-    "windows-x64": {
-      "url": "https://github.com/grumitos/fly-desk-updates/releases/download/v0.2.0/fly-desk-windows-x64-v0.2.0.zip",
-      "sha256": "64 lowercase hex characters",
-      "sizeBytes": 12345678
-    }
+  "package": {
+    "platform": "windows-x64",
+    "url": "https://github.com/grumitos/fly-desk-updates/releases/download/v0.2.0/fly-desk-windows-x64-v0.2.0.zip",
+    "sha256": "64 lowercase hex characters",
+    "sizeBytes": 12345678
   },
-  "minimumLauncherVersion": "1.0.0",
+  "receipts": {
+    "enabled": true,
+    "url": "https://updates.example.com/fly-desk/receipts"
+  },
+  "minimumBootstrapVersion": "1.0.0",
   "notes": "Resumen corto para soporte."
 }
 ```
 
 ## Contenido Del Zip
 
-El zip debe extraer una carpeta raiz `fly-desk/`:
+El zip debe extraer una carpeta raiz `fly-desk-release/` que luego el updater mueve a `app/releases/<version>/`:
 
 ```text
-fly-desk/
-  Abrir Fly Desk.vbs
-  Cerrar Fly Desk.vbs
-  Abrir Fly Desk.ico
-  VERSION
+fly-desk-release/
   release.json
   bin/
     fly-desk.exe
@@ -69,10 +72,6 @@ fly-desk/
     dist/
       index.html
       assets/
-  tools/
-    start-fly-desk.ps1
-    stop-fly-desk.ps1
-    update-fly-desk.ps1
 ```
 
 El zip no debe incluir:
@@ -85,6 +84,9 @@ test/
 node_modules/
 output/
 .launcher/
+tools/
+Abrir Fly Desk.vbs
+Cerrar Fly Desk.vbs
 ```
 
 ## Archivos Locales Que Se Conservan
@@ -96,6 +98,7 @@ El receptor debe conservar estos paths en la maquina del cliente:
 .launcher/
 output/
 artifacts/
+app/releases/<version anterior>/
 ```
 
 Estos archivos pertenecen a la instalacion local, no al paquete publicado.
@@ -123,33 +126,42 @@ bun run test
 
 Cuando el cliente abre Fly Desk:
 
-1. `Abrir Fly Desk.vbs` ejecuta `tools/start-fly-desk.ps1`.
-2. El launcher detecta si la instalacion tiene `release.json`.
-3. Si es instalacion de cliente final, ejecuta el updater.
+1. `Abrir Fly Desk.vbs` ejecuta el bootstrap `tools/start-fly-desk.ps1`.
+2. El bootstrap lee `app/current.json`.
+3. El bootstrap ejecuta el updater salvo que `FLY_DESK_SKIP_SELF_UPDATE=1`.
 4. El updater descarga `latest.json`.
 5. Si la version remota no es mayor, abre la app local.
 6. Si hay version nueva, descarga el zip.
 7. Verifica SHA-256.
-8. Detiene Fly Desk si esta corriendo.
-9. Extrae en staging bajo `.launcher/`.
-10. Reemplaza solo archivos de runtime.
-11. Conserva `.env`, caches, logs y estado local.
-12. Relanza Fly Desk.
+8. Extrae en staging bajo `.launcher/`.
+9. Valida `release.json`, `bin/fly-desk.exe` y `frontend/dist/index.html`.
+10. Mueve la release a `app/releases/<version>/`.
+11. Cambia `app/current.json`.
+12. Arranca la nueva version y espera `/api/health`.
+13. Si responde sano, actualiza `.launcher/last-known-good.json`.
+14. Si falla, restaura `app/current.json` a la ultima version buena.
+15. Envia o encola un receipt de resultado.
 
 ## Compatibilidad
 
 Para no romper instalaciones existentes:
 
 - cambios al formato de `latest.json` requieren incrementar `schemaVersion`
-- cambios obligatorios del launcher requieren subir `minimumLauncherVersion`
+- cambios obligatorios del bootstrap requieren subir `minimumBootstrapVersion`
 - el updater debe tratar campos desconocidos como opcionales
 - el emisor nunca debe publicar un zip cuyo contenido no coincida con el SHA-256 del manifiesto
 - el receptor nunca debe instalar un zip sin hash valido
 - una version publicada no debe reutilizarse con otro zip distinto
 
-## Rollback
+## Rollback Y Receipts
 
-Antes de reemplazar archivos, el receptor debe crear un backup local en `.launcher/backup-before-<version>`. Si el reemplazo falla, restaura ese backup y abre la version anterior.
+El rollback debe ser por puntero:
+
+- `app/current.json` apunta a la version activa
+- `.launcher/last-known-good.json` apunta a la ultima version que paso `/api/health`
+- si la nueva version falla, el updater vuelve a apuntar `current.json` a `last-known-good.json`
+
+Para saber remotamente que una actualizacion llego correctamente, no basta con saber que el zip se descargo. El updater debe enviar un receipt `health_ok` despues de que la version nueva responda `/api/health`. Si no hay red, guarda el receipt en `.launcher/receipts/pending/` y lo reintenta al proximo arranque.
 
 Si una version mala ya fue publicada, el emisor debe publicar una version mayor que corrija el problema. No se debe modificar silenciosamente el zip de una version ya publicada.
 
