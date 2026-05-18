@@ -4,9 +4,9 @@
 
 **Goal:** Ship Fly Desk to final clients as a local folder with the same shortcut, while updates arrive without Git, GitHub login, or maintainer credentials on the client's computer.
 
-**Architecture:** Use a stable local bootstrap launcher plus side-by-side release directories. The updater downloads a public or licensed manifest, verifies the zip by SHA-256, stages the release, flips a local `current` pointer only after validation, starts the new version, confirms `/api/health`, and rolls back to the last known good release on failure. Optional remote receipts report whether an update was downloaded, activated, healthy, failed, or rolled back.
+**Architecture:** Use a stable local bootstrap launcher plus side-by-side release directories. The preferred update channel is a VPS gateway: GitHub Actions uploads release zips and manifests to the VPS, and each client authenticates with its own update token. The updater downloads the manifest and zip over HTTPS, verifies SHA-256, stages the release, flips a local `current` pointer only after validation, starts the new version, confirms `/api/health`, and rolls back to the last known good release on failure. Remote receipts report whether an update was downloaded, activated, healthy, failed, or rolled back.
 
-**Tech Stack:** PowerShell bootstrap/updater, Bun compiled Windows executable, GitHub Actions release packaging, public update manifest, optional HTTPS receipt endpoint.
+**Tech Stack:** PowerShell bootstrap/updater, Bun compiled Windows executable, GitHub Actions release packaging, VPS HTTPS update gateway, per-client update tokens, receipt endpoint.
 
 ---
 
@@ -26,6 +26,9 @@
 
 5. **Remote delivery confirmation requires receipts.**
    GitHub download counts are not enough. The client updater must POST a small update receipt after health succeeds. If offline, it queues the receipt locally and retries on future launches.
+
+6. **Use the VPS as the preferred channel when available.**
+   The public GitHub release repo remains a fallback, but the secure operating model is private source repo -> GitHub Actions -> VPS -> authenticated client updater.
 
 ## Local Install Layout
 
@@ -53,6 +56,7 @@ C:\fly-desk\
   .launcher\
     state.json
     update-lock
+    update-client.json
     last-known-good.json
     downloads\
     staging\
@@ -116,7 +120,7 @@ Bootstrap files can ship with the first installer bundle, but normal app release
   "minimumBootstrapVersion": "1.0.0",
   "package": {
     "platform": "windows-x64",
-    "url": "https://github.com/grumitos/fly-desk-updates/releases/download/v0.3.0/fly-desk-windows-x64-v0.3.0.zip",
+    "url": "https://updates.example.com/fly-desk/releases/0.3.0/fly-desk-windows-x64-v0.3.0.zip",
     "sha256": "64 lowercase hex characters",
     "sizeBytes": 12345678
   },
@@ -138,6 +142,34 @@ The updater must reject the manifest when:
 - `minimumBootstrapVersion` is greater than local bootstrap version
 
 Unknown fields are ignored.
+
+## VPS Update Channel
+
+The client updater reads update connection settings from `.launcher/update-client.json`, with environment variables allowed as support overrides.
+
+`.launcher/update-client.json`:
+
+```json
+{
+  "baseUrl": "https://updates.example.com/fly-desk",
+  "channel": "stable",
+  "token": "per-client random token"
+}
+```
+
+Every request to the VPS must include:
+
+```text
+X-FlyDesk-Update-Token: <token>
+```
+
+Required VPS endpoints:
+
+- `GET /fly-desk/latest.json`
+- `GET /fly-desk/releases/<version>/<zip>`
+- `POST /fly-desk/receipts`
+
+The VPS stores client tokens hashed server-side. Revoking one client disables future updates for that installation without affecting the app already installed on that machine.
 
 ## Local State
 
@@ -308,24 +340,28 @@ Implement functions:
 - `Rollback-ToLastKnownGood`
 - `Prune-OldReleases`
 
-### Task 6: Remote Receipts Endpoint
+### Task 6: VPS Update Gateway And Receipts
 
 Files:
 
-- Create `docs/UPDATE_RECEIPTS_ENDPOINT.md` or add endpoint notes to the runbook
-- Optional next phase: create a Cloudflare Worker or small HTTPS endpoint
+- Create or deploy the VPS update gateway outside this repo.
+- Document the gateway in `VPS_UPDATE_CHANNEL.md`.
 
-Minimum endpoint contract:
+Minimum gateway contract:
 
+- `GET /fly-desk/latest.json`
+- `GET /fly-desk/releases/<version>/<zip>`
 - `POST /fly-desk/receipts`
+- Require `X-FlyDesk-Update-Token` on every endpoint
 - Accept JSON receipt events
 - Return HTTP 202 for accepted receipts
+- Return HTTP 401 or 403 for revoked clients
 - Rate-limit by IP and `installId`
 - Store `installId`, `eventType`, `version`, `releaseId`, `occurredAt`, `status`, `errorCode`
 
 No secrets, `.env` values, provider credentials, passenger data, search data, or browser paths are sent.
 
-### Task 7: GitHub Release Workflow
+### Task 7: GitHub Release Workflow To VPS
 
 Files:
 
@@ -338,8 +374,10 @@ Workflow:
 3. Compile `bin/fly-desk.exe`.
 4. Build release zip.
 5. Compute SHA-256.
-6. Publish zip to update channel.
-7. Update `latest.json`.
+6. Upload zip to the VPS release directory.
+7. Upload `latest.json.tmp` to the VPS.
+8. Atomically move `latest.json.tmp` to the stable channel manifest.
+9. Check the VPS manifest URL with an update token.
 
 ### Task 8: End-To-End Verification
 
@@ -351,11 +389,13 @@ Required smoke tests:
 4. Broken release rolls back to previous version.
 5. Offline receipt queue persists and flushes on a future launch.
 6. Hash mismatch never changes `current.json`.
+7. Revoked token cannot fetch manifest or zip, but the existing local app still launches.
 
 ## Acceptance Criteria
 
 - Client can open the same shortcut after update.
 - Client machine does not require Git, GitHub CLI, or GitHub credentials.
+- Client downloads updates from the VPS using only its own update token.
 - Local `.env`, `output/`, `.launcher/`, and caches survive updates.
 - A failed update does not destroy the last working version.
 - Maintainer can identify remote success by `health_ok` receipt.
