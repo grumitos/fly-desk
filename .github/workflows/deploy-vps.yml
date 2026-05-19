@@ -44,6 +44,7 @@ env:
   VPS_USER: ${{ secrets.FLY_DESK_VPS_USER }}
   VPS_PORT: ${{ secrets.FLY_DESK_VPS_PORT }}
   VPS_SSH_KEY: ${{ secrets.FLY_DESK_VPS_SSH_KEY }}
+  VPS_SSH_KEY_B64: ${{ secrets.FLY_DESK_VPS_SSH_KEY_B64 }}
 
 jobs:
   deploy:
@@ -119,14 +120,19 @@ jobs:
       - name: Configure SSH
         run: |
           set -euo pipefail
-          if [ -z "${VPS_HOST}" ] || [ -z "${VPS_USER}" ] || [ -z "${VPS_SSH_KEY}" ]; then
+          if [ -z "${VPS_HOST}" ] || [ -z "${VPS_USER}" ] || { [ -z "${VPS_SSH_KEY}" ] && [ -z "${VPS_SSH_KEY_B64}" ]; }; then
             echo "Required VPS SSH secrets are not configured."
             exit 1
           fi
           port="${VPS_PORT:-22}"
           install -m 700 -d ~/.ssh
-          printf '%s' "${VPS_SSH_KEY}" > ~/.ssh/fly_desk_vps_key
+          if [ -n "${VPS_SSH_KEY_B64}" ]; then
+            printf '%s' "${VPS_SSH_KEY_B64}" | base64 -d > ~/.ssh/fly_desk_vps_key
+          else
+            printf '%s\n' "${VPS_SSH_KEY}" | tr -d '\r' > ~/.ssh/fly_desk_vps_key
+          fi
           chmod 600 ~/.ssh/fly_desk_vps_key
+          ssh-keygen -y -f ~/.ssh/fly_desk_vps_key >/dev/null
           ssh-keyscan -p "$port" "$VPS_HOST" >> ~/.ssh/known_hosts
 
       - name: Upload release package
