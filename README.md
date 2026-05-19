@@ -148,7 +148,7 @@ rg -n "\]\([^)]*\.md\)" README.md docs frontend/README.md
 
 ## CI
 
-GitHub Actions ejecuta `.github/workflows/ci.yml` en PRs, pushes a `main` y manualmente. El gate usa Bun con lockfile congelado, instala Chromium para la suite Playwright y corre `typecheck`, `lint` si esta configurado, `test` y `build`.
+GitHub Actions ejecuta `.github/workflows/ci.yml` en PRs, pushes a `main` y manualmente. El gate usa Bun con lockfile congelado, instala Node 26 para la suite UI `node --test`, instala Chromium para Playwright y corre `typecheck`, `lint` si esta configurado, `build` para assets de test, `test` y un `build` final.
 
 ## Documentacion Vigente
 

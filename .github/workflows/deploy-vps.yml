@@ -58,6 +58,11 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -80,6 +85,9 @@ jobs:
           else
             echo "No lint script configured; skipping."
           fi
+
+      - name: Build frontend for tests
+        run: bun run build
 
       - name: Test
         run: bun run test
