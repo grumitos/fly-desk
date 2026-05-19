@@ -3,7 +3,7 @@ import type { Server as BunServer } from "bun";
 import { routeRequest } from "./http-router";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import { getPublicRuntimeConfig } from "./search-date-policy";
-import { hasValidWebSession, isWebAuthEnabled, renderLoginPage } from "./web-auth";
+import { hasValidWebSession, isWebAuthEnabled, renderLoginPage, resolveWebTheme } from "./web-auth";
 
 const publicDir = path.resolve(process.cwd(), "frontend", "dist");
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
@@ -245,7 +245,7 @@ async function routeServerRequest(request: Request, server: BunServer<undefined>
     const error = loginUrl.searchParams.get("error")
       ? "Password invalido."
       : undefined;
-    return new Response(renderLoginPage(error), {
+    return new Response(renderLoginPage(error, resolveWebTheme(request)), {
       status: 200,
       headers: noStoreHeaders("text/html; charset=utf-8"),
     });
