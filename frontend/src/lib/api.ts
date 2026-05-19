@@ -115,6 +115,7 @@ function translateApiMessage(message: string): string {
     "Purchase path is unavailable.": "El enlace de compra ya no está disponible.",
     "Not found": "No encontrado.",
     "Invalid JSON payload.": "La solicitud enviada no es válida.",
+    "Authentication required.": "Inicia sesión para continuar.",
     "AGIL_TOKEN_EXPIRED": "La sesión de Agil venció. Vuelve a iniciar sesión en Agil e intenta nuevamente.",
     "Agil exact search.": "Búsqueda exacta en Agil.",
     "Agil returned no live result for this combination.": "Agil no devolvió una tarifa disponible para esta combinación.",

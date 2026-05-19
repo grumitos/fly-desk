@@ -3,6 +3,7 @@ import type { Server as BunServer } from "bun";
 import { routeRequest } from "./http-router";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import { getPublicRuntimeConfig } from "./search-date-policy";
+import { hasValidWebSession, isWebAuthEnabled, renderLoginPage } from "./web-auth";
 
 const publicDir = path.resolve(process.cwd(), "frontend", "dist");
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
@@ -92,6 +93,16 @@ function responseHeaders(contentType: string, cacheControl: string): Record<stri
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
   };
+}
+
+function redirect(location: string, status = 302): Response {
+  return new Response(null, {
+    status,
+    headers: {
+      Location: location,
+      "Cache-Control": "no-store",
+    },
+  });
 }
 
 function noStoreHeaders(contentType: string): Record<string, string> {
@@ -220,6 +231,34 @@ async function proxyToRouter(request: Request, server: BunServer<undefined>): Pr
 
 async function routeServerRequest(request: Request, server: BunServer<undefined>): Promise<Response> {
   const pathname = new URL(request.url).pathname;
+
+  if (request.method === "GET" && pathname === "/login") {
+    if (!isWebAuthEnabled()) {
+      return redirect("/");
+    }
+
+    if (hasValidWebSession(request)) {
+      return redirect("/");
+    }
+
+    const loginUrl = new URL(request.url);
+    const error = loginUrl.searchParams.get("error")
+      ? "Password invalido."
+      : undefined;
+    return new Response(renderLoginPage(error), {
+      status: 200,
+      headers: noStoreHeaders("text/html; charset=utf-8"),
+    });
+  }
+
+  if (
+    isWebAuthEnabled()
+    && request.method === "GET"
+    && (pathname === "/" || pathname === "/index.html")
+    && !hasValidWebSession(request)
+  ) {
+    return redirect("/login");
+  }
 
   if (request.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
     return serveIndexHtml();
