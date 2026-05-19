@@ -1,0 +1,342 @@
+name: Deploy VPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Deploy a new revision or roll back to an existing release.
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - rollback
+      ref:
+        description: Git ref to deploy when mode is deploy.
+        required: true
+        default: main
+        type: string
+      rollback_sha:
+        description: Existing release SHA to activate when mode is rollback.
+        required: false
+        type: string
+      public_smoke_url:
+        description: Public URL to smoke after the VPS restart.
+        required: true
+        default: https://fly-desk.pages.dev/login
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fly-desk-vps-deploy
+  cancel-in-progress: false
+
+env:
+  DEPLOY_PATH: ${{ vars.FLY_DESK_DEPLOY_PATH || '/opt/fly-desk' }}
+  RELEASE_ROOT: ${{ vars.FLY_DESK_RELEASE_ROOT || '/opt/apps/fly-desk/releases' }}
+  BUN_BIN: ${{ vars.FLY_DESK_BUN_BIN || '/home/deploy/.bun/bin/bun' }}
+  SERVICE_NAME: ${{ vars.FLY_DESK_SERVICE || 'fly-desk.service' }}
+  CHROME_SERVICE_NAME: ${{ vars.FLY_DESK_CHROME_SERVICE || 'fly-desk-chrome.service' }}
+  LOCAL_SMOKE_URL: ${{ vars.FLY_DESK_LOCAL_SMOKE_URL || 'http://127.0.0.1:32123/api/health' }}
+  VPS_HOST: ${{ secrets.FLY_DESK_VPS_HOST }}
+  VPS_USER: ${{ secrets.FLY_DESK_VPS_USER }}
+  VPS_PORT: ${{ secrets.FLY_DESK_VPS_PORT }}
+  VPS_SSH_KEY: ${{ secrets.FLY_DESK_VPS_SSH_KEY }}
+
+jobs:
+  deploy:
+    name: Deploy revision
+    if: ${{ inputs.mode == 'deploy' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: bun run playwright install --with-deps chromium
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint if configured
+        run: |
+          set -euo pipefail
+          if bun -e "const pkg = await Bun.file('package.json').json(); process.exit(pkg.scripts?.lint ? 0 : 1)"; then
+            bun run lint
+          else
+            echo "No lint script configured; skipping."
+          fi
+
+      - name: Test
+        run: bun run test
+
+      - name: Build
+        run: bun run build
+
+      - name: Resolve revision
+        id: revision
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "package=fly-desk-$sha.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Create release package
+        run: |
+          set -euo pipefail
+          tar \
+            --exclude-vcs \
+            --exclude='./node_modules' \
+            --exclude='./frontend/node_modules' \
+            --exclude='./output' \
+            --exclude='./playwright-report' \
+            --exclude='./test-results' \
+            -czf "${{ steps.revision.outputs.package }}" .
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          if [ -z "${VPS_HOST}" ] || [ -z "${VPS_USER}" ] || [ -z "${VPS_SSH_KEY}" ]; then
+            echo "Required VPS SSH secrets are not configured."
+            exit 1
+          fi
+          port="${VPS_PORT:-22}"
+          install -m 700 -d ~/.ssh
+          printf '%s' "${VPS_SSH_KEY}" > ~/.ssh/fly_desk_vps_key
+          chmod 600 ~/.ssh/fly_desk_vps_key
+          ssh-keyscan -p "$port" "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload release package
+        run: |
+          set -euo pipefail
+          port="${VPS_PORT:-22}"
+          scp -P "$port" -i ~/.ssh/fly_desk_vps_key \
+            "${{ steps.revision.outputs.package }}" \
+            "$VPS_USER@$VPS_HOST:/tmp/${{ steps.revision.outputs.package }}"
+
+      - name: Activate revision on VPS
+        run: |
+          set -euo pipefail
+          port="${VPS_PORT:-22}"
+          ssh -p "$port" -i ~/.ssh/fly_desk_vps_key "$VPS_USER@$VPS_HOST" \
+            bash -s -- \
+            "${{ steps.revision.outputs.sha }}" \
+            "/tmp/${{ steps.revision.outputs.package }}" \
+            "$DEPLOY_PATH" \
+            "$RELEASE_ROOT" \
+            "$BUN_BIN" \
+            "$SERVICE_NAME" \
+            "$CHROME_SERVICE_NAME" \
+            "$LOCAL_SMOKE_URL" <<'REMOTE'
+          set -euo pipefail
+
+          target_sha="$1"
+          package_path="$2"
+          deploy_path="$3"
+          release_root="$4"
+          bun_bin="$5"
+          service_name="$6"
+          chrome_service_name="$7"
+          local_smoke_url="$8"
+
+          if ! printf '%s' "$target_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Invalid target SHA."
+            exit 1
+          fi
+          case "$deploy_path" in ""|"/"|"/opt"|"/opt/") echo "Refusing unsafe deploy path."; exit 1;; esac
+          case "$release_root" in ""|"/"|"/opt"|"/opt/") echo "Refusing unsafe release root."; exit 1;; esac
+          if [ ! -f "$package_path" ]; then
+            echo "Release package was not uploaded."
+            exit 1
+          fi
+          if ! command -v rsync >/dev/null 2>&1; then
+            echo "rsync is required on the VPS."
+            exit 1
+          fi
+          if [ ! -x "$bun_bin" ]; then
+            echo "Configured Bun binary is not executable."
+            exit 1
+          fi
+
+          sudo_cmd=""
+          if [ "$(id -u)" -ne 0 ]; then
+            sudo_cmd="sudo"
+          fi
+
+          chrome_was_active=0
+          if systemctl is-active --quiet "$chrome_service_name"; then
+            chrome_was_active=1
+          fi
+
+          release_dir="$release_root/$target_sha"
+          remote_user="$(id -un)"
+          remote_group="$(id -gn)"
+
+          $sudo_cmd mkdir -p "$release_root" "$deploy_path"
+          $sudo_cmd rm -rf -- "$release_dir"
+          $sudo_cmd mkdir -p "$release_dir"
+          $sudo_cmd tar -xzf "$package_path" -C "$release_dir"
+          $sudo_cmd chown -R "$remote_user:$remote_group" "$release_dir"
+
+          cd "$release_dir"
+          "$bun_bin" install --frozen-lockfile
+          printf '%s\n' "$target_sha" > REVISION
+
+          if [ -L "$deploy_path" ]; then
+            $sudo_cmd ln -sfn "$release_dir" "$deploy_path"
+          else
+            $sudo_cmd rsync -a --delete "$release_dir"/ "$deploy_path"/
+            $sudo_cmd chown -R "$remote_user:$remote_group" "$deploy_path"
+          fi
+
+          actual_revision="$(cat "$deploy_path/REVISION")"
+          if [ "$actual_revision" != "$target_sha" ]; then
+            echo "REVISION does not match deployed SHA."
+            exit 1
+          fi
+
+          $sudo_cmd systemctl restart "$service_name"
+
+          if [ "$chrome_was_active" -eq 1 ]; then
+            systemctl is-active --quiet "$chrome_service_name"
+          fi
+
+          curl -fsS --max-time 10 "$local_smoke_url" > /dev/null
+          rm -f -- "$package_path"
+          echo "Deployed revision $target_sha."
+          REMOTE
+
+      - name: Public smoke
+        run: |
+          set -euo pipefail
+          status="$(curl -sS -o /dev/null -w "%{http_code}" --location --retry 5 --retry-delay 5 --max-time 20 "${{ inputs.public_smoke_url }}")"
+          if [ "$status" != "200" ]; then
+            echo "Public smoke failed with HTTP $status."
+            exit 1
+          fi
+          echo "Public smoke returned HTTP $status."
+
+  rollback:
+    name: Roll back revision
+    if: ${{ inputs.mode == 'rollback' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Validate rollback input
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "${{ inputs.rollback_sha }}" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "rollback_sha must be a 40-character Git SHA."
+            exit 1
+          fi
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          if [ -z "${VPS_HOST}" ] || [ -z "${VPS_USER}" ] || [ -z "${VPS_SSH_KEY}" ]; then
+            echo "Required VPS SSH secrets are not configured."
+            exit 1
+          fi
+          port="${VPS_PORT:-22}"
+          install -m 700 -d ~/.ssh
+          printf '%s' "${VPS_SSH_KEY}" > ~/.ssh/fly_desk_vps_key
+          chmod 600 ~/.ssh/fly_desk_vps_key
+          ssh-keyscan -p "$port" "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Activate previous release on VPS
+        run: |
+          set -euo pipefail
+          port="${VPS_PORT:-22}"
+          ssh -p "$port" -i ~/.ssh/fly_desk_vps_key "$VPS_USER@$VPS_HOST" \
+            bash -s -- \
+            "${{ inputs.rollback_sha }}" \
+            "$DEPLOY_PATH" \
+            "$RELEASE_ROOT" \
+            "$SERVICE_NAME" \
+            "$CHROME_SERVICE_NAME" \
+            "$LOCAL_SMOKE_URL" <<'REMOTE'
+          set -euo pipefail
+
+          target_sha="$1"
+          deploy_path="$2"
+          release_root="$3"
+          service_name="$4"
+          chrome_service_name="$5"
+          local_smoke_url="$6"
+
+          if ! printf '%s' "$target_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Invalid rollback SHA."
+            exit 1
+          fi
+          case "$deploy_path" in ""|"/"|"/opt"|"/opt/") echo "Refusing unsafe deploy path."; exit 1;; esac
+          case "$release_root" in ""|"/"|"/opt"|"/opt/") echo "Refusing unsafe release root."; exit 1;; esac
+          if ! command -v rsync >/dev/null 2>&1; then
+            echo "rsync is required on the VPS."
+            exit 1
+          fi
+
+          release_dir="$release_root/$target_sha"
+          if [ ! -d "$release_dir" ]; then
+            echo "Requested release does not exist on the VPS."
+            exit 1
+          fi
+
+          sudo_cmd=""
+          if [ "$(id -u)" -ne 0 ]; then
+            sudo_cmd="sudo"
+          fi
+
+          chrome_was_active=0
+          if systemctl is-active --quiet "$chrome_service_name"; then
+            chrome_was_active=1
+          fi
+
+          if [ -L "$deploy_path" ]; then
+            $sudo_cmd ln -sfn "$release_dir" "$deploy_path"
+          else
+            $sudo_cmd rsync -a --delete "$release_dir"/ "$deploy_path"/
+            $sudo_cmd chown -R "$(id -un):$(id -gn)" "$deploy_path"
+          fi
+
+          printf '%s\n' "$target_sha" | $sudo_cmd tee "$deploy_path/REVISION" > /dev/null
+
+          actual_revision="$(cat "$deploy_path/REVISION")"
+          if [ "$actual_revision" != "$target_sha" ]; then
+            echo "REVISION does not match rollback SHA."
+            exit 1
+          fi
+
+          $sudo_cmd systemctl restart "$service_name"
+
+          if [ "$chrome_was_active" -eq 1 ]; then
+            systemctl is-active --quiet "$chrome_service_name"
+          fi
+
+          curl -fsS --max-time 10 "$local_smoke_url" > /dev/null
+          echo "Rolled back to revision $target_sha."
+          REMOTE
+
+      - name: Public smoke
+        run: |
+          set -euo pipefail
+          status="$(curl -sS -o /dev/null -w "%{http_code}" --location --retry 5 --retry-delay 5 --max-time 20 "${{ inputs.public_smoke_url }}")"
+          if [ "$status" != "200" ]; then
+            echo "Public smoke failed with HTTP $status."
+            exit 1
+          fi
+          echo "Public smoke returned HTTP $status."
