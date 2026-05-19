@@ -696,6 +696,45 @@ async function resolveChromeDevToolsBrowserWsEndpointFromPort(port: number): Pro
   }
 }
 
+async function resolveAgilBrowserDevToolsWsEndpoint(endpoint: string): Promise<string | undefined> {
+  const normalized = endpoint.trim();
+  if (normalized.startsWith("ws://") || normalized.startsWith("wss://")) {
+    return normalized;
+  }
+
+  let versionUrl: URL;
+  try {
+    const parsed = new URL(normalized);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return undefined;
+    }
+    versionUrl = new URL("/json/version", parsed);
+  } catch {
+    return undefined;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), resolveAgilBrowserConnectTimeoutMs());
+
+  try {
+    const response = await fetch(versionUrl, {
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const payload = await response.json() as { webSocketDebuggerUrl?: unknown };
+    return typeof payload.webSocketDebuggerUrl === "string"
+      ? payload.webSocketDebuggerUrl
+      : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function readRunningChromeDevToolsBrowserWsEndpoints(): Promise<string[]> {
   const endpoints: string[] = [];
   const seen = new Set<string>();
@@ -1484,6 +1523,16 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
       failures.push(`connected browser: ${detail}`);
     } finally {
       await disconnectBrowser(browser);
+    }
+
+    const devToolsEndpoint = await resolveAgilBrowserDevToolsWsEndpoint(browserEndpoint);
+    if (devToolsEndpoint) {
+      try {
+        return await readAgilStorageSnapshotFromDevToolsEndpoint(devToolsEndpoint);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
+        failures.push(`connected browser direct CDP: ${detail}`);
+      }
     }
   }
 

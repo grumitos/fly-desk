@@ -561,11 +561,7 @@ export function SearchShell({
                   Máximo {MAX_PASSENGERS} pasajeros por búsqueda.
                 </p>
               </PopoverContent>
-              {visiblePassengerError && (
-                <p id="passengers-helper" className="fd-control-helper" role="alert">
-                  {visiblePassengerError}
-                </p>
-              )}
+              <ControlHelper id="passengers-helper" text={visiblePassengerError} />
             </div>
           </Popover>
 
@@ -827,11 +823,7 @@ function LocationField({
           className={`${SEARCH_FIELD_VALUE_CLASS} bg-transparent text-foreground outline-none placeholder:text-muted-foreground/60`}
         />
       </div>
-      {helperText && (
-        <p id={`${fieldId}-helper`} className="fd-control-helper" role="alert">
-          {helperText}
-        </p>
-      )}
+      <ControlHelper id={`${fieldId}-helper`} text={helperText} />
       {listboxTarget && shouldShowListbox && listboxStyle ? createPortal(
         <div
           id={listboxId}
@@ -951,11 +943,7 @@ function DateField({
             </span>
           </button>
         </PopoverTrigger>
-        {helperText && (
-          <p id={`${fieldId}-helper`} className="fd-control-helper" role="alert">
-            {helperText}
-          </p>
-        )}
+        <ControlHelper id={`${fieldId}-helper`} text={helperText} />
 
         <PopoverContent
           align="start"
@@ -984,6 +972,15 @@ function DateField({
         </PopoverContent>
       </div>
     </Popover>
+  )
+}
+
+function ControlHelper({ id, text }: { id: string; text?: string }) {
+  const hasText = Boolean(text)
+  return (
+    <p id={id} className="fd-control-helper" role={hasText ? "alert" : undefined} aria-hidden={hasText ? undefined : true}>
+      {text}
+    </p>
   )
 }
 

@@ -427,6 +427,88 @@ test("accepts non-loopback location requests with a valid api token", { concurre
   }
 });
 
+test("web auth cookie allows API access when loopback trust is disabled", { concurrency: false }, async () => {
+  const previousWebAuth = process.env.FLY_DESK_WEB_AUTH;
+  const previousTrustLoopback = process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
+  const previousWebPassword = process.env.FLY_DESK_WEB_PASSWORD;
+  const previousSessionSecret = process.env.FLY_DESK_WEB_SESSION_SECRET;
+  const previousCookieSecure = process.env.FLY_DESK_COOKIE_SECURE;
+
+  process.env.FLY_DESK_WEB_AUTH = "1";
+  process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = "0";
+  process.env.FLY_DESK_WEB_PASSWORD = "test-password";
+  process.env.FLY_DESK_WEB_SESSION_SECRET = "test-session-secret-32-characters-minimum";
+  process.env.FLY_DESK_COOKIE_SECURE = "1";
+
+  try {
+    const denied = await routeRequest(new Request("https://fly-desk.local/api/locations?q=", {
+      method: "GET",
+      headers: {
+        "x-flydesk-client-loopback": "1",
+      },
+    }));
+
+    assert.equal(denied.status, 401);
+
+    const login = await routeRequest(new Request("https://fly-desk.local/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ password: "test-password" }).toString(),
+    }));
+
+    assert.equal(login.status, 303);
+    const cookie = login.headers.get("set-cookie");
+    assert.match(cookie ?? "", /flydesk_session=/);
+    assert.match(cookie ?? "", /HttpOnly/);
+    assert.match(cookie ?? "", /Secure/);
+
+    const accepted = await routeRequest(new Request("https://fly-desk.local/api/locations?q=", {
+      method: "GET",
+      headers: {
+        "x-flydesk-client-loopback": "0",
+        Cookie: cookie ?? "",
+      },
+    }));
+
+    assert.equal(accepted.status, 200);
+    const payload = await accepted.json() as { query?: string; suggestions?: unknown[] };
+    assert.equal(payload.query, "");
+    assert.deepEqual(payload.suggestions, []);
+  } finally {
+    if (previousWebAuth === undefined) {
+      delete process.env.FLY_DESK_WEB_AUTH;
+    } else {
+      process.env.FLY_DESK_WEB_AUTH = previousWebAuth;
+    }
+
+    if (previousTrustLoopback === undefined) {
+      delete process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
+    } else {
+      process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = previousTrustLoopback;
+    }
+
+    if (previousWebPassword === undefined) {
+      delete process.env.FLY_DESK_WEB_PASSWORD;
+    } else {
+      process.env.FLY_DESK_WEB_PASSWORD = previousWebPassword;
+    }
+
+    if (previousSessionSecret === undefined) {
+      delete process.env.FLY_DESK_WEB_SESSION_SECRET;
+    } else {
+      process.env.FLY_DESK_WEB_SESSION_SECRET = previousSessionSecret;
+    }
+
+    if (previousCookieSecure === undefined) {
+      delete process.env.FLY_DESK_COOKIE_SECURE;
+    } else {
+      process.env.FLY_DESK_COOKIE_SECURE = previousCookieSecure;
+    }
+  }
+});
+
 test("rejects non-loopback purchase path redirects without a valid api token", { concurrency: false }, async () => {
   const previousApiToken = process.env.FLY_DESK_API_TOKEN;
   process.env.FLY_DESK_API_TOKEN = "test-token";
