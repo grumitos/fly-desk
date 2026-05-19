@@ -97,6 +97,8 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 
 `COSTAMAR_B2B_TOTP_SECRET` acepta Base32, `otpauth://...`, `otpauth-migration://...` y JSON con `totpUri`; Fly Desk genera el OTP, no guardes codigos temporales.
 
+En el VPS actual, produccion usa `FLY_DESK_SEARCH_WORKER_PROCESSES=0`: Costamar B2B fue validado con la busqueda en el proceso principal. Si se reactiva el aislamiento por workers, repetir QA externo antes de darlo por estable.
+
 ### Secretos
 
 `.env` no se versiona. Para generar el hash del password web:

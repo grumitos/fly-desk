@@ -28,7 +28,7 @@ FLY_DESK_WEB_PASSWORD_HASH=scrypt:...
 FLY_DESK_WEB_SESSION_SECRET=<32+ random chars>
 FLY_DESK_TRUST_LOOPBACK_CLIENT=0
 FLY_DESK_COOKIE_SECURE=1
-FLY_DESK_SEARCH_WORKER_PROCESSES=1
+FLY_DESK_SEARCH_WORKER_PROCESSES=0
 FLY_DESK_PROVIDER_PREWARM=1
 FLY_DESK_SESSION_DB_PATH=/var/lib/fly-desk/fly-desk-cache.sqlite
 FLY_DESK_LOCATION_SUGGESTION_DB_PATH=/var/lib/fly-desk/location-suggestion-cache.sqlite
@@ -41,6 +41,8 @@ FLY_DESK_WEB_PASSWORD='<password>' bun run auth:hash
 ```
 
 No guardes `FLY_DESK_WEB_PASSWORD`; usa solo `FLY_DESK_WEB_PASSWORD_HASH` en el entorno final.
+
+El despliegue VPS actual mantiene `FLY_DESK_SEARCH_WORKER_PROCESSES=0`. Costamar B2B fue validado en produccion con busqueda en el proceso principal; no reactives workers para busquedas sin repetir QA externo sobre `https://fly-desk.pages.dev/api/search`.
 
 ## systemd
 
@@ -120,6 +122,19 @@ curl -fsS http://127.0.0.1:9222/json/version
 ```
 
 Estado actual: Chrome CDP ya queda persistente en el VPS; Agil todavia requiere cargar o validar una sesion real dentro de ese perfil. Si Agil no mantiene sesion estable en el VPS, el plan de rollback funcional es mantener Fly Desk web central y dejar un agente local minimo solo para Agil.
+
+## Costamar
+
+Costamar usa las credenciales B2B y TOTP desde `/etc/fly-desk.env`. Para migrar secretos desde un entorno local, no reemplaces el archivo completo en bruto: preserva las variables propias del VPS (`HOST`, `PORT`, auth web, rutas SQLite y rutas Linux de Chrome) y fusiona solo credenciales y claves de integraciones.
+
+QA actual:
+
+```bash
+systemctl is-active fly-desk
+grep -E '^FLY_DESK_SEARCH_WORKER_PROCESSES=' /etc/fly-desk.env
+```
+
+La busqueda externa LIM-MIA round-trip 2026-07-01 a 2026-07-08 devolvio ofertas en `https://fly-desk.pages.dev/` con `FLY_DESK_SEARCH_WORKER_PROCESSES=0`.
 
 ## Healthcheck
 

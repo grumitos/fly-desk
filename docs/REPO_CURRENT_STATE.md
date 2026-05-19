@@ -71,6 +71,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - Costamar usa contexto controlado por entorno, allowlist de hosts y warm-up B2B opcional
 - Costamar no acepta hosts/base URLs por request
 - el prewarm silencioso de providers esta activo por defecto y puede apagarse con `FLY_DESK_PROVIDER_PREWARM=0`
+- el VPS actual ejecuta busquedas en el proceso principal con `FLY_DESK_SEARCH_WORKER_PROCESSES=0`; Costamar B2B fue validado asi en produccion
 
 ## Estructura Funcional
 
@@ -154,4 +155,5 @@ No se mantienen planes de migracion ni auditorias historicas como documentacion 
 - `src/local-costamar.ts` concentra automatizacion B2B, cliente, mapping y redirects
 - la persistencia es SQLite local; no hay store externo para multi-instancia
 - Chrome CDP persistente ya queda cubierto por `fly-desk-chrome.service`; Agil aun necesita una sesion real valida en ese perfil del VPS
+- revisar antes de reactivar workers de busqueda en VPS: Costamar B2B ya responde por produccion con workers desactivados
 - la busqueda migratoria lanza 8 jobs de rango con concurrencia limitada, lo cual debe vigilarse si sube el volumen de uso
