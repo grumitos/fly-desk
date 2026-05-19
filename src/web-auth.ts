@@ -257,17 +257,14 @@ export function renderLoginPage(error?: string, theme: WebTheme = DEFAULT_WEB_TH
         color-scheme: light;
         --background: #f8f8f6;
         --foreground: #121212;
-        --surface: #ffffff;
-        --surface-soft: #efeeeb;
+        --field-background: #ffffff;
         --muted: #7b7974;
         --border: #1f1f1e26;
         --input: #1f1f1e26;
         --primary: #d97757;
         --primary-foreground: #ffffff;
         --danger: #7a2e18;
-        --danger-soft: #d977571f;
         --ring: #2977d6;
-        --shadow: 0 18px 42px rgba(31, 31, 30, 0.08);
         --keyboard-shift: 0px;
         font-family: Inter, "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         background: var(--background);
@@ -277,15 +274,12 @@ export function renderLoginPage(error?: string, theme: WebTheme = DEFAULT_WEB_TH
         color-scheme: dark;
         --background: #1f1f1e;
         --foreground: #f8f8f6;
-        --surface: #1f1e1b;
-        --surface-soft: #2c2c2a;
+        --field-background: #2c2c2a;
         --muted: #97958c;
         --border: #e2e1da26;
         --input: #e2e1da26;
         --danger: #f2c3b3;
-        --danger-soft: #d9775726;
         --ring: #3886e5;
-        --shadow: 0 20px 48px rgba(0, 0, 0, 0.24);
       }
       *, *::before, *::after { box-sizing: border-box; }
       html, body { width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; }
@@ -308,22 +302,22 @@ export function renderLoginPage(error?: string, theme: WebTheme = DEFAULT_WEB_TH
         -webkit-font-smoothing: antialiased;
       }
       main {
-        width: min(100%, 376px);
+        width: min(100%, 344px);
         max-height: 100%;
         display: grid;
-        gap: 18px;
+        gap: 20px;
+        justify-items: stretch;
         transform: translateY(calc(var(--keyboard-shift) * -1));
         transition: transform 220ms ease;
       }
       .brand {
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        display: grid;
+        justify-items: center;
         gap: 10px;
       }
       .brand-icon {
-        width: 32px;
-        height: 32px;
+        width: 34px;
+        height: 34px;
         color: var(--primary);
       }
       h1 {
@@ -336,29 +330,49 @@ export function renderLoginPage(error?: string, theme: WebTheme = DEFAULT_WEB_TH
       form {
         display: grid;
         gap: 12px;
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        background: var(--surface);
-        padding: 16px;
-        box-shadow: var(--shadow);
+        width: 100%;
       }
-      label {
-        display: grid;
-        gap: 8px;
+      .field {
+        position: relative;
+        display: block;
+      }
+      .floating-label {
+        position: absolute;
+        left: 12px;
+        top: 50%;
+        transform: translateY(-50%);
         color: var(--muted);
+        pointer-events: none;
+        transition:
+          color 160ms ease,
+          font-size 160ms ease,
+          font-weight 160ms ease,
+          top 160ms ease,
+          transform 160ms ease;
+        font-size: 13px;
+        font-weight: 500;
+        line-height: 1;
+      }
+      .field:focus-within .floating-label,
+      .field input:-webkit-autofill + .floating-label,
+      .field input:not(:placeholder-shown) + .floating-label {
+        top: 8px;
+        transform: none;
         font-size: 11px;
         font-weight: 600;
-        line-height: 1;
         text-transform: uppercase;
+      }
+      .field:focus-within .floating-label {
+        color: var(--foreground);
       }
       input {
         width: 100%;
-        height: 44px;
+        height: 48px;
         border: 1px solid var(--input);
         border-radius: 8px;
-        background: var(--background);
+        background: var(--field-background);
         color: var(--foreground);
-        padding: 0 12px;
+        padding: 17px 12px 5px;
         font: inherit;
         font-size: 14px;
       }
@@ -382,18 +396,15 @@ export function renderLoginPage(error?: string, theme: WebTheme = DEFAULT_WEB_TH
       button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
       .error {
         margin: 0;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        background: var(--danger-soft);
+        border-left: 2px solid var(--primary);
         color: var(--danger);
-        padding: 10px 12px;
+        padding: 2px 0 2px 10px;
         font-size: 13px;
         line-height: 1.4;
       }
       @media (max-height: 440px) {
-        main { gap: 12px; }
-        form { padding: 12px; }
-        .brand-icon { width: 28px; height: 28px; }
+        main { gap: 14px; }
+        .brand-icon { width: 30px; height: 30px; }
         h1 { font-size: 20px; }
       }
       @media (prefers-reduced-motion: reduce) {
@@ -403,17 +414,17 @@ export function renderLoginPage(error?: string, theme: WebTheme = DEFAULT_WEB_TH
   </head>
   <body>
     <main>
-      ${errorMarkup}
+      <div class="brand" aria-label="Fly Desk">
+        <svg class="brand-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" d="M21.96 3.05c.76-.3 1.51.42 1.25 1.19l-5.36 15.7c-.26.77-1.24.98-1.79.38l-4.2-4.57-2.45 3.43c-.47.66-1.5.44-1.67-.36l-1.02-4.9-4.52-1.5c-.84-.28-.88-1.46-.05-1.78l19.81-7.59ZM19.46 6.45l-10.3 6.2 3.25 1.07 7.05-7.27Zm-5.94 8.62 2.86 3.13 2.75-8.12-5.61 4.99Z"/>
+        </svg>
+        <h1>Fly Desk</h1>
+      </div>
       <form method="post" action="/login">
-        <div class="brand" aria-label="Fly Desk">
-          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path fill="currentColor" fill-rule="evenodd" clip-rule="evenodd" d="M21.96 3.05c.76-.3 1.51.42 1.25 1.19l-5.36 15.7c-.26.77-1.24.98-1.79.38l-4.2-4.57-2.45 3.43c-.47.66-1.5.44-1.67-.36l-1.02-4.9-4.52-1.5c-.84-.28-.88-1.46-.05-1.78l19.81-7.59ZM19.46 6.45l-10.3 6.2 3.25 1.07 7.05-7.27Zm-5.94 8.62 2.86 3.13 2.75-8.12-5.61 4.99Z"/>
-          </svg>
-          <h1>Fly Desk</h1>
-        </div>
-        <label>
-          Contraseña
-          <input name="password" type="password" autocomplete="current-password" required autofocus>
+        ${errorMarkup}
+        <label class="field" for="password">
+          <input id="password" name="password" type="password" autocomplete="current-password" placeholder=" " required autofocus>
+          <span class="floating-label">Contraseña</span>
         </label>
         <button type="submit">Entrar</button>
       </form>
