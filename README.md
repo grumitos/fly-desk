@@ -33,7 +33,7 @@ No estan expuestos en la UI React actual:
 ## Runtime Y Seguridad
 
 - El servidor escucha en `127.0.0.1` por defecto.
-- En produccion debe quedar detras de Caddy/Nginx y mantener `HOST=127.0.0.1`.
+- En produccion debe quedar detras de Caddy y mantener `HOST=127.0.0.1`.
 - `FLY_DESK_WEB_AUTH=1` activa login web con cookie httpOnly.
 - `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` es obligatorio cuando hay reverse proxy local.
 - Los endpoints operativos aceptan cookie web valida o `FLY_DESK_API_TOKEN`.
@@ -159,7 +159,7 @@ La app se despliega como servicio Bun privado detras de Caddy:
 - `FLY_DESK_WEB_AUTH=1`
 - `FLY_DESK_TRUST_LOOPBACK_CLIENT=0`
 - `FLY_DESK_COOKIE_SECURE=1`
-- Agil depende de una sesion persistente de Chrome disponible en el host
+- Agil usa `fly-desk-chrome.service` con Chrome CDP en `127.0.0.1:9222`; todavia requiere una sesion Agil valida en ese perfil
 - Costamar es mas portable, pero sus flujos de sesion siguen pensados para uso controlado
 
 Para mas detalle, ver [`docs/DEPLOY_VPS.md`](./docs/DEPLOY_VPS.md).
