@@ -153,5 +153,5 @@ No se mantienen planes de migracion ni auditorias historicas como documentacion 
 - `src/local-agil.ts` concentra sesion, cliente, pricing y mapping
 - `src/local-costamar.ts` concentra automatizacion B2B, cliente, mapping y redirects
 - la persistencia es SQLite local; no hay store externo para multi-instancia
-- el deploy remoto completo sigue condicionado por validar Chrome persistente para Agil en el VPS
+- Chrome CDP persistente ya queda cubierto por `fly-desk-chrome.service`; Agil aun necesita una sesion real valida en ese perfil del VPS
 - la busqueda migratoria lanza 8 jobs de rango con concurrencia limitada, lo cual debe vigilarse si sube el volumen de uso

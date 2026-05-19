@@ -9,6 +9,7 @@ Esta rama prepara Fly Desk como web privada alojada en un VPS:
 - Caddy publica HTTPS y hace reverse proxy al puerto local.
 - La UI usa cookie httpOnly firmada, no tokens expuestos al browser.
 - `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` evita que el proxy local convierta trafico publico en "localhost confiable".
+- Despliegue actual: `https://fly-desk.pages.dev/` publica un Worker de Cloudflare Pages que proxyfica al origen privado `fly-desk-origin.yasmiau.com` sin mostrar `yasmiau.com` al usuario.
 
 ## Build
 
@@ -80,7 +81,7 @@ fly-desk.example.com {
 
 ## Agilsmart
 
-El bloqueo principal sigue siendo operativo: Agil necesita una sesion persistente de Chrome disponible en el VPS. La configuracion Linux esperada:
+Agil necesita una sesion persistente de Chrome disponible en el VPS. La configuracion Linux activa:
 
 ```dotenv
 AGIL_CHROME_EXECUTABLE=/usr/bin/google-chrome
@@ -89,7 +90,36 @@ AGIL_CHROME_PROFILE=Default
 AGIL_BROWSER_URL=http://127.0.0.1:9222
 ```
 
-Si Agil no mantiene sesion estable en el VPS, el plan de rollback funcional es mantener Fly Desk web central y dejar un agente local minimo solo para Agil.
+Servicio systemd activo:
+
+```ini
+[Unit]
+Description=Fly Desk Chrome CDP
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=deploy
+Group=deploy
+Environment=HOME=/home/deploy
+ExecStart=/usr/bin/google-chrome --headless=new --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 --user-data-dir=/var/lib/fly-desk/chrome --profile-directory=Default --no-first-run --no-default-browser-check --disable-dev-shm-usage --disable-gpu --no-sandbox --window-size=1440,1000 about:blank
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Verificacion:
+
+```bash
+systemctl is-active fly-desk-chrome
+curl -fsS http://127.0.0.1:9222/json/version
+```
+
+Estado actual: Chrome CDP ya queda persistente en el VPS; Agil todavia requiere cargar o validar una sesion real dentro de ese perfil. Si Agil no mantiene sesion estable en el VPS, el plan de rollback funcional es mantener Fly Desk web central y dejar un agente local minimo solo para Agil.
 
 ## Healthcheck
 
