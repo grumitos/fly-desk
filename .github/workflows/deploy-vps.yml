@@ -230,7 +230,16 @@ jobs:
             systemctl is-active --quiet "$chrome_service_name"
           fi
 
-          curl -fsS --max-time 10 "$local_smoke_url" > /dev/null
+          for attempt in $(seq 1 10); do
+            if curl -fsS --max-time 10 "$local_smoke_url" > /dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 10 ]; then
+              echo "Local smoke failed after restart."
+              exit 1
+            fi
+            sleep 2
+          done
           rm -f -- "$package_path"
           echo "Deployed revision $target_sha."
           REMOTE
