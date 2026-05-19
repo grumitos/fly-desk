@@ -29,11 +29,12 @@ bun install --frozen-lockfile
 bun run playwright install --with-deps chromium
 bun run typecheck
 bun run lint # solo si existe script lint
+bun run build # genera frontend/dist para tests HTTP/UI
 bun run test
 bun run build
 ```
 
-El repo fija Bun en `packageManager` y el workflow usa la misma linea de runtime. Bun recomienda `oven-sh/setup-bun@v2` para GitHub Actions y `bun install --frozen-lockfile` para instalaciones reproducibles con `bun.lock`.
+El repo fija Bun en `packageManager` y el workflow usa la misma linea de runtime. Bun recomienda `oven-sh/setup-bun@v2` para GitHub Actions y `bun install --frozen-lockfile` para instalaciones reproducibles con `bun.lock`. Node 26 se instala solo para ejecutar la suite UI que usa `node --test` sobre TypeScript.
 
 ## Deploy GitHub Actions
 
@@ -64,7 +65,7 @@ Flujo de `deploy`:
 
 1. Checkout del ref.
 2. `bun install --frozen-lockfile`.
-3. `bun run typecheck`, `bun run lint` si existe, `bun run test`, `bun run build`.
+3. `bun run typecheck`, `bun run lint` si existe, `bun run build` para assets de test, `bun run test` y `bun run build` final.
 4. Empaquetado del arbol fuente y `frontend/dist`, excluyendo `.git`, `node_modules`, `output` y reportes locales.
 5. Upload por SSH al VPS.
 6. Extraccion en `/opt/apps/fly-desk/releases/<sha>`.
