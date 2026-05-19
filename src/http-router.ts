@@ -63,6 +63,15 @@ import { runProviderMatrixInWorker, runProviderSearchInWorker } from "./search-w
 import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
 import { logPerfSpan, startPerfTimer } from "./perf";
+import {
+  clearWebSessionCookie,
+  createWebSessionCookie,
+  getWebAuthConfigError,
+  hasValidWebSession,
+  isWebAuthEnabled,
+  shouldTrustLoopbackClient,
+  verifyWebPassword,
+} from "./web-auth";
 import { type SearchJobRecord } from "./session-store";
 import {
   appendProviderDiagnosticEvent,
@@ -923,7 +932,7 @@ function mergeLocationSuggestions(
 }
 
 function isTrustedLocalRequest(request: Request): boolean {
-  return request.headers.get("x-flydesk-client-loopback") === "1";
+  return shouldTrustLoopbackClient() && request.headers.get("x-flydesk-client-loopback") === "1";
 }
 
 function resolveConfiguredApiAccessToken(): string | undefined {
@@ -966,15 +975,125 @@ function isTrustedApiRequest(request: Request): boolean {
     return true;
   }
 
+  if (hasValidWebSession(request)) {
+    return true;
+  }
+
   const token = resolveConfiguredApiAccessToken();
   return token ? hasValidApiAccessToken(request, token) : false;
 }
 
 function apiAuthRequiredResponse(): Response {
+  if (isWebAuthEnabled()) {
+    return json(
+      { error: "Authentication required." },
+      {
+        status: 401,
+        headers: {
+          "Cache-Control": "no-store",
+        },
+      },
+    );
+  }
+
   return json(
     { error: "This endpoint requires localhost access or a valid API token." },
     { status: 403 },
   );
+}
+
+async function readLoginPassword(request: Request): Promise<string> {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    const payload = await request.json() as { password?: unknown };
+    return typeof payload.password === "string" ? payload.password : "";
+  }
+
+  if (contentType.includes("application/x-www-form-urlencoded")) {
+    const form = new URLSearchParams(await request.text());
+    return form.get("password") ?? "";
+  }
+
+  return "";
+}
+
+async function handleWebLogin(request: Request, options: { jsonResponse?: boolean } = {}): Promise<Response> {
+  if (!isWebAuthEnabled()) {
+    return json({ error: "Web authentication is disabled." }, { status: 404 });
+  }
+
+  const configError = getWebAuthConfigError();
+  if (configError) {
+    return json(
+      { error: "Web authentication is not configured." },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
+  const password = await readLoginPassword(request);
+  const verification = verifyWebPassword(password);
+  if (!verification.ok) {
+    if (options.jsonResponse) {
+      return json(
+        { error: "Invalid password." },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
+    }
+
+    return new Response(null, {
+      status: 303,
+      headers: {
+        Location: "/login?error=1",
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
+  const sessionCookie = createWebSessionCookie(request);
+  if (options.jsonResponse) {
+    return json(
+      { ok: true },
+      {
+        headers: {
+          "Cache-Control": "no-store",
+          "Set-Cookie": sessionCookie,
+        },
+      },
+    );
+  }
+
+  return new Response(null, {
+    status: 303,
+    headers: {
+      Location: "/",
+      "Cache-Control": "no-store",
+      "Set-Cookie": sessionCookie,
+    },
+  });
+}
+
+function handleWebLogout(request: Request, options: { jsonResponse?: boolean } = {}): Response {
+  const cookie = clearWebSessionCookie(request);
+  if (options.jsonResponse) {
+    return json(
+      { ok: true },
+      {
+        headers: {
+          "Cache-Control": "no-store",
+          "Set-Cookie": cookie,
+        },
+      },
+    );
+  }
+
+  return new Response(null, {
+    status: 303,
+    headers: {
+      Location: "/login",
+      "Cache-Control": "no-store",
+      "Set-Cookie": cookie,
+    },
+  });
 }
 
 function validateLocalOpenUrl(input: string): URL | undefined {
@@ -1901,12 +2020,39 @@ async function handleMatrixRequest(
 }
 
 export async function routeRequest(request: Request): Promise<Response> {
-  const runtime = getRuntime();
   const url = new URL(request.url);
+
+  if (request.method === "POST" && url.pathname === "/login") {
+    return handleWebLogin(request);
+  }
+
+  if (request.method === "POST" && url.pathname === "/logout") {
+    return handleWebLogout(request);
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/auth/login") {
+    return handleWebLogin(request, { jsonResponse: true });
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/auth/logout") {
+    return handleWebLogout(request, { jsonResponse: true });
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/auth/session") {
+    return json(
+      {
+        webAuthEnabled: isWebAuthEnabled(),
+        authenticated: hasValidWebSession(request),
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  }
 
   if (request.method === "GET" && url.pathname === "/api/health") {
     return json({ ok: true });
   }
+
+  const runtime = getRuntime();
 
   if (request.method === "GET" && url.pathname === "/api/diagnostics") {
     if (!isTrustedLocalRequest(request)) {
@@ -1924,8 +2070,8 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "GET" && url.pathname === "/api/results-layout") {
-    if (!isTrustedLocalRequest(request)) {
-      return json({ error: "This layout endpoint is only available on localhost." }, { status: 403 });
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
     }
 
     const layout = await readResultsLayoutFile();
@@ -1933,8 +2079,8 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "POST" && url.pathname === "/api/results-layout") {
-    if (!isTrustedLocalRequest(request)) {
-      return json({ error: "This layout endpoint is only available on localhost." }, { status: 403 });
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
     }
 
     const payload = await readPayload<ResultsLayoutPayload>(request);

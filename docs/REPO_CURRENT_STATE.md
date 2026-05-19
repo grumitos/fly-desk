@@ -1,10 +1,10 @@
 # Estado Actual de la Repo
 
-Fecha de corte: 2026-05-15
+Fecha de corte: 2026-05-19
 
 ## Resumen
 
-Fly Desk es una aplicacion local-first para agentes de viajes. El runtime activo es Bun-only: Bun instala dependencias, ejecuta el backend, compila la UI React, sirve el BFF HTTP y usa `bun:sqlite` para caches locales.
+Fly Desk es una aplicacion web privada para agentes de viajes. El runtime activo es Bun-only: Bun instala dependencias, ejecuta el backend, compila la UI React, sirve el BFF HTTP y usa `bun:sqlite` para caches locales o de VPS.
 
 El repo no versiona artefactos generados:
 
@@ -42,12 +42,15 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 
 ## Runtime, Seguridad Y Dependencias
 
-### Local-First
+### Web Privada
 
 - el servidor escucha en `127.0.0.1` por defecto
-- `HOST` es un override explicito para despliegues no locales
-- endpoints operativos desde clientes no loopback requieren `FLY_DESK_API_TOKEN`
-- diagnosticos, layout de resultados, estado de token Costamar y apertura local de browser son loopback-only
+- en produccion queda detras de Caddy y mantiene `HOST=127.0.0.1`
+- `FLY_DESK_WEB_AUTH=1` activa login web con cookie httpOnly firmada
+- `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` es obligatorio cuando hay reverse proxy local
+- endpoints operativos aceptan cookie web valida o `FLY_DESK_API_TOKEN`
+- diagnosticos, estado de token Costamar y apertura local de browser son loopback-only
+- layout de resultados acepta auth web porque es una preferencia de la app
 - la politica de fechas es movil: `minSearchDate = hoy`, `maxSearchDate = hoy + SEARCH_MAX_FUTURE_DAYS`
 - las estadias ida/vuelta se limitan a 90 noches
 
@@ -60,14 +63,15 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - no se adopta pnpm como flujo normal porque el repo es Bun-only y no hay `pnpm-lock.yaml`
 - el grafo actual no usa paquetes `@tanstack/*`
 - cualquier dependencia que necesite scripts de instalacion debe aprobarse con `trustedDependencies` y una nota en el cambio
-- `tools/sync-env-from-example.ps1` permite reordenar `.env` local desde `.env.example` sin imprimir valores secretos
+- no hay launchers Windows ni scripts de autoupdate local en esta rama web
 
 ### Providers
 
-- Agil usa sesion local de navegador y subscription key desde entorno o recuperada desde el bundle Agil
+- Agil usa sesion persistente de Chrome y subscription key desde entorno o recuperada desde el bundle Agil
 - Costamar usa contexto controlado por entorno, allowlist de hosts y warm-up B2B opcional
 - Costamar no acepta hosts/base URLs por request
 - el prewarm silencioso de providers esta activo por defecto y puede apagarse con `FLY_DESK_PROVIDER_PREWARM=0`
+- el VPS actual ejecuta busquedas en el proceso principal con `FLY_DESK_SEARCH_WORKER_PROCESSES=0`; Costamar B2B fue validado asi en produccion
 
 ## Estructura Funcional
 
@@ -87,7 +91,8 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 ### Backend
 
 - `src/server.ts`: `Bun.serve`, serving de `frontend/dist`, headers, limite de body e inyeccion de config runtime
-- `src/http-router.ts`: rutas HTTP, auth loopback/token, jobs, matriz, cotizacion, redirects, diagnosticos y layout
+- `src/http-router.ts`: rutas HTTP, auth web/loopback/token, jobs, matriz, cotizacion, redirects, diagnosticos y layout
+- `src/web-auth.ts`: password web, cookie firmada y validacion de sesion
 - `src/http-quotation-snapshot.ts`: normalizacion de snapshots de cotizacion
 - `src/search-date-policy.ts`: ventana movil de fechas y config publica embebida
 - `src/provider-context.ts`: contexto Costamar, allowlist, recovery desde Chrome/CDP y estado live de token
@@ -99,24 +104,11 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `src/session-store.ts`: jobs vivos, SQLite local, migracion JSON legada, redirects y purchase paths
 - `src/location-suggestion-cache.ts`: cache SQLite de autocomplete con TTL
 
-### Launchers
+### Operacion
 
-- `Abrir Fly Desk.vbs`
-- `tools/launch-fly-desk.cmd`
-- `tools/start-fly-desk.ps1`
-- `tools/stop-fly-desk.cmd`
-- `tools/stop-fly-desk.ps1`
-
-Comportamiento actual:
-
-- usa el puerto fijo `32123`
-- antes de reutilizar o relanzar, chequea Git con cache local
-- si hay un commit remoto nuevo y el working tree esta limpio, ejecuta `git pull --ff-only`
-- si encuentra una instancia sana, la reutiliza
-- si encuentra una instancia huerfana propia, intenta limpiarla antes de relanzar
-- si `node_modules/` no existe, ejecuta `bun install --frozen-lockfile`
-- si `frontend/dist/` esta ausente o vieja, ejecuta `bun run build`
-- persiste estado y logs en `.launcher/`
+- `scripts/build-frontend.ts`: build frontend
+- `scripts/generate-web-password-hash.ts`: genera hash scrypt para `FLY_DESK_WEB_PASSWORD_HASH`
+- `docs/DEPLOY_VPS.md`: systemd, Caddy, variables y rollback
 
 ## Pruebas
 
@@ -133,6 +125,7 @@ La suite vive en `test/**/*.test.ts`; los helpers compartidos estan en `test/hel
 Cobertura importante actual:
 
 - bind por defecto a loopback y override por `HOST`
+- auth web con cookie firmada y loopback deshabilitable
 - token API para clientes no loopback
 - endpoints loopback-only
 - validacion compartida de fechas con ventana movil
@@ -150,7 +143,7 @@ Nota de QA: `test/helpers/server.ts` fija `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JO
 - `README.md`
 - `frontend/README.md`
 - `docs/REPO_CURRENT_STATE.md`
-- `docs/DEPLOY_RAILWAY.md`
+- `docs/DEPLOY_VPS.md`
 - `docs/FRONTEND_IDENTITY.md`
 
 No se mantienen planes de migracion ni auditorias historicas como documentacion viva. El historial Git conserva ese contexto si hace falta recuperarlo.
@@ -161,5 +154,6 @@ No se mantienen planes de migracion ni auditorias historicas como documentacion 
 - `src/local-agil.ts` concentra sesion, cliente, pricing y mapping
 - `src/local-costamar.ts` concentra automatizacion B2B, cliente, mapping y redirects
 - la persistencia es SQLite local; no hay store externo para multi-instancia
-- el deploy remoto completo sigue bloqueado por la dependencia de sesion local de navegador para Agil y por la falta de inyeccion de token API en la UI publica
+- Chrome CDP persistente ya queda cubierto por `fly-desk-chrome.service`; Agil aun necesita una sesion real valida en ese perfil del VPS
+- revisar antes de reactivar workers de busqueda en VPS: Costamar B2B ya responde por produccion con workers desactivados
 - la busqueda migratoria lanza 8 jobs de rango con concurrencia limitada, lo cual debe vigilarse si sube el volumen de uso

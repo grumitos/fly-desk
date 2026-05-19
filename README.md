@@ -1,14 +1,15 @@
 # Fly Desk
 
-Workspace local para busqueda, comparacion y cotizacion aerea orientado a agentes de viajes.
+Workspace web privado para busqueda, comparacion y cotizacion aerea orientado a agentes de viajes.
 
-Fly Desk es una app local-first Bun-only:
+Fly Desk es una app Bun-only preparada para VPS:
 
 - servidor Bun (`Bun.serve`) que sirve UI y API en el mismo proceso
 - frontend React desktop en `frontend/`, compilado con `Bun.build` y servido desde `frontend/dist`
-- integracion local con Agil reutilizando sesion real de navegador
+- autenticacion web con cookie httpOnly firmada
+- integracion con Agil reutilizando una sesion real de Chrome cuando el host la tenga disponible
 - integracion con Costamar usando contexto controlado por entorno y warm-up B2B cuando aplica
-- caches locales con `bun:sqlite` para sesiones completadas, matriz, purchase paths y autocomplete
+- caches SQLite con `bun:sqlite` para sesiones completadas, matriz, purchase paths y autocomplete
 
 ## Alcance Actual
 
@@ -32,9 +33,11 @@ No estan expuestos en la UI React actual:
 ## Runtime Y Seguridad
 
 - El servidor escucha en `127.0.0.1` por defecto.
-- `HOST=0.0.0.0` es un override explicito para despliegues no locales.
-- Los endpoints operativos desde clientes no loopback requieren `FLY_DESK_API_TOKEN`.
-- Diagnosticos, layout de resultados, estado de token Costamar y apertura local de browser son superficies loopback-only.
+- En produccion debe quedar detras de Caddy y mantener `HOST=127.0.0.1`.
+- `FLY_DESK_WEB_AUTH=1` activa login web con cookie httpOnly.
+- `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` es obligatorio cuando hay reverse proxy local.
+- Los endpoints operativos aceptan cookie web valida o `FLY_DESK_API_TOKEN`.
+- Diagnosticos, estado de token Costamar y apertura local de browser siguen siendo superficies loopback-only.
 - La ventana normal de fechas es movil: `hoy` a `hoy + SEARCH_MAX_FUTURE_DAYS`; ida/vuelta se limita a 90 noches.
 - Costamar no acepta `apiBaseUrl` ni `brandBaseUrl` por request; las bases salen de entorno y pasan por allowlist.
 - Agil depende de sesion local de navegador y de una subscription key resuelta desde entorno o desde el bundle Agil.
@@ -67,7 +70,8 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 ### Backend
 
 - `src/server.ts`: servidor HTTP Bun, headers, limite de body y serving de `frontend/dist`
-- `src/http-router.ts`: BFF HTTP y rutas loopback/token
+- `src/http-router.ts`: BFF HTTP, rutas auth, API y superficies loopback/token
+- `src/web-auth.ts`: password web, cookie firmada y validacion de sesion
 - `src/http-quotation-snapshot.ts`: normalizacion de snapshots para cotizacion
 - `src/search-date-policy.ts`: politica compartida de fechas y config publica embebida
 - `src/provider-context.ts`: contexto Costamar, allowlist, recovery de Chrome/CDP y estado live
@@ -84,6 +88,7 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 `.env.example` es la referencia operativa de variables. Las mas comunes:
 
 - Runtime/API: `HOST`, `PORT`, `FLY_DESK_API_TOKEN`, `FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS`
+- Auth web: `FLY_DESK_WEB_AUTH`, `FLY_DESK_WEB_PASSWORD_HASH`, `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_TRUST_LOOPBACK_CLIENT`
 - Busqueda/cache: `SEARCH_MAX_FUTURE_DAYS`, `SEARCH_REVALIDATION_CACHE_TTL_MS`, `SEARCH_COMPLETED_SESSION_TTL_MS`, `FLY_DESK_SESSION_DB_PATH`, `FLY_DESK_LOCATION_SUGGESTION_DB_PATH`
 - Workers/prewarm: `FLY_DESK_SEARCH_WORKER_PROCESSES`, `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS`, `FLY_DESK_PROVIDER_PREWARM`
 - Agil: `AGIL_APIM_SUBSCRIPTION_KEY`, `AGIL_CHROME_USER_DATA_DIR`, `AGIL_CHROME_PROFILE`, `AGIL_BROWSER_URL`, `AGIL_HTTP_TIMEOUT_MS`
@@ -92,21 +97,22 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 
 `COSTAMAR_B2B_TOTP_SECRET` acepta Base32, `otpauth://...`, `otpauth-migration://...` y JSON con `totpUri`; Fly Desk genera el OTP, no guardes codigos temporales.
 
-### `.env` Local
+En el VPS actual, produccion usa `FLY_DESK_SEARCH_WORKER_PROCESSES=0`: Costamar B2B fue validado con la busqueda en el proceso principal. Si se reactiva el aislamiento por workers, repetir QA externo antes de darlo por estable.
 
-`.env` no se versiona. Para alinear tu archivo local con la estructura de `.env.example` sin imprimir secretos:
+### Secretos
 
-```powershell
-tools/sync-env-from-example.ps1
-tools/sync-env-from-example.ps1 -Write
+`.env` no se versiona. Para generar el hash del password web:
+
+```bash
+FLY_DESK_WEB_PASSWORD='<password>' bun run auth:hash
 ```
 
-El script preserva los valores actuales por clave, crea un backup `.env.bak-*` antes de escribir y deja al final las claves locales que no existen en `.env.example`.
+Usa el resultado como `FLY_DESK_WEB_PASSWORD_HASH` y no guardes `FLY_DESK_WEB_PASSWORD` en el entorno final.
 
 Para trabajar en otro equipo, no mandes `.env` en texto plano por chat, correo ni commits. En la practica:
 
-- guarda secretos duraderos en un password manager o secret manager: `AGIL_APIM_SUBSCRIPTION_KEY`, credenciales `COSTAMAR_B2B_*`, TOTP/otpauth y `FLY_DESK_API_TOKEN` si aplica
-- recrea por maquina las rutas locales de Chrome y caches (`*_CHROME_USER_DATA_DIR`, `output/cache`, layout local)
+- guarda secretos duraderos en un password manager o secret manager: `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_WEB_PASSWORD_HASH`, `AGIL_APIM_SUBSCRIPTION_KEY`, credenciales `COSTAMAR_B2B_*`, TOTP/otpauth y `FLY_DESK_API_TOKEN` si aplica
+- recrea por host las rutas de Chrome y caches (`*_CHROME_USER_DATA_DIR`, `output/cache` o `/var/lib/fly-desk`)
 - evita trasladar tokens de sesion como `COSTAMAR_TOKEN`; normalmente conviene regenerarlos con login/warm-up en la maquina nueva
 - si necesitas mover el archivo completo, usa un archivo cifrado para ti mismo (por ejemplo un adjunto seguro del password manager, SOPS/age o GPG), no un `.env` plano
 
@@ -115,32 +121,11 @@ Para trabajar en otro equipo, no mandes `.env` en texto plano por chat, correo n
 - `bun run dev`
 - `bun run build`
 - `bun run start`
+- `bun run auth:hash`
 - `bun run typecheck`
 - `bun run lint`
 - `bun run test`
 - `bun run demo`
-
-## Arranque Con Un Clic
-
-Entradas para abrir y cerrar la app sin terminal:
-
-- [`Abrir Fly Desk.vbs`](./Abrir%20Fly%20Desk.vbs)
-- `tools/launch-fly-desk.cmd`
-- `tools/start-fly-desk.ps1`
-- `tools/stop-fly-desk.cmd`
-- `tools/stop-fly-desk.ps1`
-
-Comportamiento actual del launcher:
-
-- usa el puerto fijo `32123`
-- antes de reutilizar o relanzar, chequea Git con cache local
-- si hay un commit remoto nuevo y el working tree esta limpio, ejecuta `git pull --ff-only`
-- si Fly Desk ya esta sano en ese puerto, reutiliza la instancia
-- si encuentra una instancia huerfana propia, intenta limpiarla antes de relanzar
-- si `node_modules/` no existe, ejecuta `bun install --frozen-lockfile`
-- si `frontend/dist/` esta ausente o vieja, ejecuta `bun run build`
-- persiste estado y logs en `.launcher/`
-- los `.vbs` esperan a que abrir o cerrar termine
 
 ## Verificacion
 
@@ -164,16 +149,19 @@ rg -n "\]\([^)]*\.md\)" README.md docs frontend/README.md
 ## Documentacion Vigente
 
 - [`docs/REPO_CURRENT_STATE.md`](./docs/REPO_CURRENT_STATE.md): estado funcional y tecnico actual
-- [`docs/DEPLOY_RAILWAY.md`](./docs/DEPLOY_RAILWAY.md): limites y requisitos de despliegue remoto
+- [`docs/DEPLOY_VPS.md`](./docs/DEPLOY_VPS.md): despliegue VPS con systemd y Caddy
 - [`docs/FRONTEND_IDENTITY.md`](./docs/FRONTEND_IDENTITY.md): identidad visual y reglas UI React
 - [`frontend/README.md`](./frontend/README.md): notas breves del workspace frontend
 
 ## Deploy
 
-La app se puede construir y arrancar en hosts con Bun, pero el comportamiento completo sigue siendo local-first:
+La app se despliega como servicio Bun privado detras de Caddy:
 
-- Agil depende de una sesion local de navegador
+- `HOST=127.0.0.1`
+- `FLY_DESK_WEB_AUTH=1`
+- `FLY_DESK_TRUST_LOOPBACK_CLIENT=0`
+- `FLY_DESK_COOKIE_SECURE=1`
+- Agil usa `fly-desk-chrome.service` con Chrome CDP en `127.0.0.1:9222`; todavia requiere una sesion Agil valida en ese perfil
 - Costamar es mas portable, pero sus flujos de sesion siguen pensados para uso controlado
-- la UI remota necesita una estrategia explicita para enviar `FLY_DESK_API_TOKEN`
 
-Para mas detalle, ver [`docs/DEPLOY_RAILWAY.md`](./docs/DEPLOY_RAILWAY.md).
+Para mas detalle, ver [`docs/DEPLOY_VPS.md`](./docs/DEPLOY_VPS.md).

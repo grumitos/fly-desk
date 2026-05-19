@@ -23,9 +23,11 @@ function getInitialTheme(): "light" | "dark" {
 
 function syncTheme(theme: "light" | "dark") {
   document.documentElement.classList.toggle("dark", theme === "dark")
+  document.documentElement.dataset.theme = theme
 
   try {
     localStorage.setItem("flydesk-theme", theme)
+    document.cookie = `flydesk_theme=${theme}; Path=/; Max-Age=31536000; SameSite=Lax`
   } catch {
     return
   }
