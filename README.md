@@ -146,6 +146,10 @@ git diff --check
 rg -n "\]\([^)]*\.md\)" README.md docs frontend/README.md
 ```
 
+## CI
+
+GitHub Actions ejecuta `.github/workflows/ci.yml` en PRs, pushes a `main` y manualmente. El gate usa Bun con lockfile congelado, instala Chromium para la suite Playwright y corre `typecheck`, `lint` si esta configurado, `test` y `build`.
+
 ## Documentacion Vigente
 
 - [`docs/REPO_CURRENT_STATE.md`](./docs/REPO_CURRENT_STATE.md): estado funcional y tecnico actual
@@ -165,3 +169,5 @@ La app se despliega como servicio Bun privado detras de Caddy:
 - Costamar es mas portable, pero sus flujos de sesion siguen pensados para uso controlado
 
 Para mas detalle, ver [`docs/DEPLOY_VPS.md`](./docs/DEPLOY_VPS.md).
+
+El deploy repetible vive en `.github/workflows/deploy-vps.yml` como workflow manual con modos `deploy` y `rollback`. Cada deploy escribe `REVISION` con el SHA activado, reinicia solo `fly-desk.service`, conserva `fly-desk-chrome.service` y ejecuta smoke local y publico. Los secretos SSH y valores de infraestructura se configuran en GitHub Secrets/Variables, no en el repo.

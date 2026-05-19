@@ -109,6 +109,8 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `scripts/build-frontend.ts`: build frontend
 - `scripts/generate-web-password-hash.ts`: genera hash scrypt para `FLY_DESK_WEB_PASSWORD_HASH`
 - `docs/DEPLOY_VPS.md`: systemd, Caddy, variables y rollback
+- `.github/workflows/ci.yml`: CI Bun para typecheck, lint, test y build
+- `.github/workflows/deploy-vps.yml`: deploy manual y rollback por SHA/release al VPS
 
 ## Pruebas
 
@@ -145,6 +147,12 @@ Nota de QA: `test/helpers/server.ts` fija `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JO
 - `docs/REPO_CURRENT_STATE.md`
 - `docs/DEPLOY_VPS.md`
 - `docs/FRONTEND_IDENTITY.md`
+
+## Estado De Ramas Y Produccion
+
+`main` contiene la migracion web VPS desde `codex/web-vps-migration`. El `REVISION` validado en el VPS antes del merge fue `d70cd1b0636fc8339a53c90d8b6f6e587e9cd6cf`; la rama tambien incluia un ajuste posterior de layout de login. La linea queda marcada con un merge commit porque el cambio reemplaza una version local temprana por una app web privada en VPS.
+
+El deploy repetible debe escribir el SHA desplegado en `/opt/fly-desk/REVISION` y verificarlo despues de reiniciar `fly-desk.service`.
 
 No se mantienen planes de migracion ni auditorias historicas como documentacion viva. El historial Git conserva ese contexto si hace falta recuperarlo.
 

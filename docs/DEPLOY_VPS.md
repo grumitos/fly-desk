@@ -9,7 +9,7 @@ Esta rama prepara Fly Desk como web privada alojada en un VPS:
 - Caddy publica HTTPS y hace reverse proxy al puerto local.
 - La UI usa cookie httpOnly firmada, no tokens expuestos al browser.
 - `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` evita que el proxy local convierta trafico publico en "localhost confiable".
-- Despliegue actual: `https://fly-desk.pages.dev/` publica un Worker de Cloudflare Pages que proxyfica al origen privado `fly-desk-origin.yasmiau.com` sin mostrar `yasmiau.com` al usuario.
+- Despliegue actual: `https://fly-desk.pages.dev/` publica un Worker de Cloudflare Pages que proxyfica al origen privado configurado fuera del repo.
 
 ## Build
 
@@ -17,6 +17,66 @@ Esta rama prepara Fly Desk como web privada alojada en un VPS:
 bun install --frozen-lockfile
 bun run build
 ```
+
+## CI
+
+El workflow `.github/workflows/ci.yml` corre en `pull_request`, `push` a `main` y `workflow_dispatch`.
+
+Pasos:
+
+```bash
+bun install --frozen-lockfile
+bun run playwright install --with-deps chromium
+bun run typecheck
+bun run lint # solo si existe script lint
+bun run test
+bun run build
+```
+
+El repo fija Bun en `packageManager` y el workflow usa la misma linea de runtime. Bun recomienda `oven-sh/setup-bun@v2` para GitHub Actions y `bun install --frozen-lockfile` para instalaciones reproducibles con `bun.lock`.
+
+## Deploy GitHub Actions
+
+El workflow `.github/workflows/deploy-vps.yml` es manual (`workflow_dispatch`) y tiene dos modos:
+
+- `deploy`: valida, compila y empaqueta el `ref` indicado.
+- `rollback`: reactiva un release ya existente por SHA.
+
+Secrets requeridos:
+
+- `FLY_DESK_VPS_HOST`
+- `FLY_DESK_VPS_USER`
+- `FLY_DESK_VPS_SSH_KEY`
+- `FLY_DESK_VPS_PORT` opcional; default `22`
+
+Variables opcionales de repo:
+
+- `FLY_DESK_DEPLOY_PATH`; default `/opt/fly-desk`
+- `FLY_DESK_RELEASE_ROOT`; default `/opt/apps/fly-desk/releases`
+- `FLY_DESK_BUN_BIN`; default `/home/deploy/.bun/bin/bun`
+- `FLY_DESK_SERVICE`; default `fly-desk.service`
+- `FLY_DESK_CHROME_SERVICE`; default `fly-desk-chrome.service`
+- `FLY_DESK_LOCAL_SMOKE_URL`; default `http://127.0.0.1:32123/api/health`
+
+El usuario SSH debe poder escribir en las rutas de deploy y ejecutar `systemctl restart fly-desk.service` sin prompt interactivo. No debe necesitar permisos para reiniciar `fly-desk-chrome.service`.
+
+Flujo de `deploy`:
+
+1. Checkout del ref.
+2. `bun install --frozen-lockfile`.
+3. `bun run typecheck`, `bun run lint` si existe, `bun run test`, `bun run build`.
+4. Empaquetado del arbol fuente y `frontend/dist`, excluyendo `.git`, `node_modules`, `output` y reportes locales.
+5. Upload por SSH al VPS.
+6. Extraccion en `/opt/apps/fly-desk/releases/<sha>`.
+7. `bun install --frozen-lockfile` dentro del release.
+8. Escritura de `REVISION` con el SHA.
+9. Activacion hacia `/opt/fly-desk`.
+10. Reinicio de `fly-desk.service`.
+11. Verificacion de que `fly-desk-chrome.service` sigue activo si lo estaba antes.
+12. Smoke local contra `127.0.0.1:32123`.
+13. Smoke publico contra `https://fly-desk.pages.dev/login`.
+
+El workflow no toca Caddy ni cambia unidades systemd. Solo reinicia `fly-desk.service`.
 
 ## Variables Minimas
 
@@ -134,7 +194,7 @@ systemctl is-active fly-desk
 grep -E '^FLY_DESK_SEARCH_WORKER_PROCESSES=' /etc/fly-desk.env
 ```
 
-La busqueda externa LIM-MIA round-trip 2026-07-01 a 2026-07-08 devolvio ofertas en `https://fly-desk.pages.dev/` con `FLY_DESK_SEARCH_WORKER_PROCESSES=0`.
+Una busqueda externa de prueba devolvio ofertas en `https://fly-desk.pages.dev/` con `FLY_DESK_SEARCH_WORKER_PROCESSES=0`.
 
 ## Healthcheck
 
@@ -144,7 +204,23 @@ curl -fsS http://127.0.0.1:32123/api/health
 
 ## Rollback
 
-1. Restaurar el proxy anterior.
-2. Detener `fly-desk.service`.
-3. Conservar `/var/lib/fly-desk` para no perder cache/sesiones.
-4. Volver a publicar la pagina Cloudflare Pages de staging si el dominio final no esta listo.
+Rollback por release:
+
+1. Abrir `Deploy VPS` en GitHub Actions.
+2. Elegir `mode=rollback`.
+3. Indicar un `rollback_sha` que exista en `/opt/apps/fly-desk/releases/<sha>`.
+4. El workflow reactiva ese release, reescribe `/opt/fly-desk/REVISION`, reinicia `fly-desk.service` y repite los smokes.
+
+Rollback manual si GitHub Actions no esta disponible:
+
+```bash
+sha=<sha-a-restaurar>
+release=/opt/apps/fly-desk/releases/$sha
+test -d "$release"
+rsync -a --delete "$release"/ /opt/fly-desk/
+printf '%s\n' "$sha" > /opt/fly-desk/REVISION
+systemctl restart fly-desk.service
+curl -fsS http://127.0.0.1:32123/api/health > /dev/null
+```
+
+Conserva `/var/lib/fly-desk` para no perder cache/sesiones. No reinicies `fly-desk-chrome.service` salvo que el cambio lo requiera de forma explicita.
