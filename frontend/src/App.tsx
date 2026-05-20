@@ -319,7 +319,7 @@ export default function App() {
         <PlainLogView lines={diagnosticLog} />
       ) : (
         <main
-          className={`fd-search-stage mx-auto min-h-0 w-full max-w-[1560px] flex-1 px-2.5 sm:px-4 ${
+          className={`fd-search-stage fd-app-width mx-auto min-h-0 w-full flex-1 px-2.5 sm:px-4 ${
             isSearchIdle ? "fd-search-stage-idle" : "fd-search-stage-active"
           }`}
         >
