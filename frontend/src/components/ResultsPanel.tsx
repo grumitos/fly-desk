@@ -95,7 +95,10 @@ function ResultsPanelBase({
   const meta = results?.searchMeta
   const isMigration = results?.request.searchMode === "month-view" || Boolean(results?.migrationMonths?.length)
   const isCancelled = results?.searchStatus === "cancelled"
-  const warnings = uniqueWarnings([...(results?.warnings ?? []), ...(meta?.warnings ?? [])])
+  const warnings = useMemo(
+    () => uniqueWarnings([...(results?.warnings ?? []), ...(meta?.warnings ?? [])]),
+    [results?.warnings, meta?.warnings],
+  )
   const actionableWarnings = useMemo(() => warnings.filter(isActionableWarning), [warnings])
   const noFlightIssues = useMemo(() => providerNoFlightIssues(actionableWarnings), [actionableWarnings])
   const filteredEmpty = isFilteredEmptyState(results, offers, unfilteredOfferCount)

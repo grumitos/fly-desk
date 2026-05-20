@@ -3,9 +3,21 @@ import { SearchOrchestrator } from "./core/orchestrator";
 import { buildCommercialQuotation } from "./core/quotation";
 import { SearchRequest } from "./core/types";
 
+function localIsoDateAfter(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
 async function main() {
   const provider = new LocalAgilProvider();
   const orchestrator = new SearchOrchestrator([provider]);
+  const departureDate = localIsoDateAfter(14);
+  const returnDate = localIsoDateAfter(21);
 
   const request: SearchRequest = {
     tripType: "round-trip",
@@ -14,8 +26,8 @@ async function main() {
       {
         origin: "MAD",
         destination: "PAR",
-        departureDate: "2026-04-15",
-        returnDate: "2026-04-22",
+        departureDate,
+        returnDate,
       },
     ],
     passengers: {
