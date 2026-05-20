@@ -43,6 +43,8 @@ export interface SearchRequest {
   nonStop?: boolean
   maxStopsFilter?: string
   maxLayoverMinutes?: string
+  carryOnRequired?: boolean
+  checkedBaggageRequired?: boolean
   baggageRequired?: boolean
   includedAirlineCodes?: string[]
   maxResults?: number

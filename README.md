@@ -153,7 +153,7 @@ GitHub Actions ejecuta `.github/workflows/ci.yml` en PRs, pushes a `main` y manu
 ## Documentacion Vigente
 
 - [`docs/REPO_CURRENT_STATE.md`](./docs/REPO_CURRENT_STATE.md): estado funcional y tecnico actual
-- [`docs/DEPLOY_VPS.md`](./docs/DEPLOY_VPS.md): despliegue VPS con systemd y Caddy
+- [`docs/DEPLOY_APP.md`](./docs/DEPLOY_APP.md): deploy y rollback de app Fly Desk
 - [`docs/FRONTEND_IDENTITY.md`](./docs/FRONTEND_IDENTITY.md): identidad visual y reglas UI React
 - [`frontend/README.md`](./frontend/README.md): notas breves del workspace frontend
 
@@ -168,9 +168,9 @@ La app se despliega como servicio Bun privado detras de Caddy:
 - Agil usa `fly-desk-chrome.service` con Chrome CDP en `127.0.0.1:9222`; todavia requiere una sesion Agil valida en ese perfil
 - Costamar es mas portable, pero sus flujos de sesion siguen pensados para uso controlado
 
-Para mas detalle, ver [`docs/DEPLOY_VPS.md`](./docs/DEPLOY_VPS.md).
+Para mas detalle, ver [`docs/DEPLOY_APP.md`](./docs/DEPLOY_APP.md).
 
-La fuente vigente de Caddy, systemd compartido, rollback de Caddy y plan de plataforma es `grumitos/vps-platform` (`D:\Dev\vps-platform`). Este repo mantiene el codigo de la app y el deploy de `fly-desk`.
+La fuente vigente de Caddy, systemd compartido, rollback de Caddy y plan de plataforma es `grumitos/vps-platform` (`D:\Dev\VPS\vps-platform`). Este repo mantiene el codigo de la app y el deploy de `fly-desk`.
 
 El deploy repetible vive en `.github/workflows/deploy-vps.yml` como workflow manual con modos `deploy` y `rollback`. Cada deploy escribe `REVISION` con el SHA activado, reinicia solo `fly-desk.service`, conserva `fly-desk-chrome.service` y ejecuta smoke local y publico. Los secretos SSH y valores de infraestructura se configuran en GitHub Secrets/Variables, no en el repo.
 

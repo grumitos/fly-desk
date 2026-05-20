@@ -103,7 +103,11 @@ export function applySearchFilters(
       return false;
     }
 
-    if (filters.baggageRequired && !offer.baggage?.checkedIncluded) {
+    if (filters.carryOnRequired && offer.baggage?.carryOnIncluded !== true) {
+      return false;
+    }
+
+    if ((filters.checkedBaggageRequired || filters.baggageRequired) && offer.baggage?.checkedIncluded !== true) {
       return false;
     }
 

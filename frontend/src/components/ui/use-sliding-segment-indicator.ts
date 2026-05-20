@@ -36,7 +36,7 @@ export function useSlidingSegmentIndicator<T extends HTMLElement>({
 
     const containerRect = container.getBoundingClientRect()
     const itemRect = element.getBoundingClientRect()
-    const overlapPx = 1
+    const overlapPx = 0
     const left = Math.max(0, itemRect.left - containerRect.left - overlapPx)
     const right = Math.min(containerRect.width, itemRect.right - containerRect.left + overlapPx)
 

@@ -29,6 +29,8 @@ const SHARED_SEARCH_QUERY_PARAMS = [
   "nonStop",
   "maxStops",
   "maxLayover",
+  "carryOn",
+  "checkedBaggage",
   "baggage",
   "airlines",
   "airline",
@@ -173,6 +175,8 @@ function readReadableSharedSearchFromUrl(url: URL): SharedSearchState | null {
     nonStop: boolParam(params, "nonStop") || maxStops === "0",
     maxStopsFilter: maxStops && maxStops !== "0" ? maxStops : undefined,
     maxLayoverMinutes: optionalString(params.get("maxLayover")),
+    carryOnRequired: boolParam(params, "carryOn"),
+    checkedBaggageRequired: boolParam(params, "checkedBaggage") || boolParam(params, "baggage"),
     baggageRequired: boolParam(params, "baggage"),
     includedAirlineCodes: includedAirlineCodes.length ? includedAirlineCodes : undefined,
     maxResults: numberValue(params.get("maxResults")),
@@ -213,12 +217,11 @@ function writeReadableSharedSearchParams(url: URL, request: SearchRequest, sortM
   if (request.nonStop) setReadableParam(url, "nonStop", 1)
   if (request.maxStopsFilter && !request.nonStop) setReadableParam(url, "maxStops", request.maxStopsFilter)
   if (request.maxLayoverMinutes) setReadableParam(url, "maxLayover", request.maxLayoverMinutes)
-  if (request.baggageRequired) setReadableParam(url, "baggage", 1)
+  if (request.carryOnRequired) setReadableParam(url, "carryOn", 1)
+  if (request.checkedBaggageRequired ?? request.baggageRequired) setReadableParam(url, "checkedBaggage", 1)
   if (request.includedAirlineCodes?.length) {
     setReadableParam(url, "airlines", request.includedAirlineCodes.map((code) => code.toUpperCase()).join(","))
   }
-  setReadableParam(url, "maxResults", request.maxResults)
-  if (request.compactAllOffers) setReadableParam(url, "compact", 1)
 }
 
 function setReadableParam(url: URL, key: string, value: string | number | undefined) {
@@ -271,6 +274,8 @@ function normalizeFrontendRequest(value: unknown): SearchRequest | null {
     nonStop: request.nonStop === true,
     maxStopsFilter: optionalString(request.maxStopsFilter),
     maxLayoverMinutes: optionalString(request.maxLayoverMinutes),
+    carryOnRequired: request.carryOnRequired === true,
+    checkedBaggageRequired: request.checkedBaggageRequired === true || request.baggageRequired === true,
     baggageRequired: request.baggageRequired === true,
     includedAirlineCodes: Array.isArray(request.includedAirlineCodes)
       ? request.includedAirlineCodes.map(stringValue).filter(Boolean)

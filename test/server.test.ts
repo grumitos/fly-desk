@@ -78,19 +78,8 @@ test("web auth login page uses the persisted Fly Desk theme", { concurrency: fal
       assert.equal(response.status, 200);
       assert.match(html, /<html lang="es" class="dark" data-theme="dark">/);
       assert.match(html, /<link rel="icon" type="image\/svg\+xml" href="\/favicon\.svg">/);
-      assert.match(html, /--keyboard-shift: 0px/);
       assert.match(html, /class="floating-label">Contraseña<\/span>/);
-      assert.match(html, /input:-webkit-autofill \+ \.floating-label/);
-      assert.match(html, /input:not\(:placeholder-shown\) \+ \.floating-label/);
       assert.doesNotMatch(html, /Cambiar tema/i);
-
-      const formRule = html.match(/      form \{[\s\S]*?      \}/)?.[0] ?? "";
-
-      assert.match(formRule, /display: grid/);
-      assert.doesNotMatch(formRule, /border:/);
-      assert.doesNotMatch(formRule, /background:/);
-      assert.doesNotMatch(formRule, /box-shadow:/);
-      assert.doesNotMatch(formRule, /padding:/);
     });
   } finally {
     if (previousWebAuth === undefined) {

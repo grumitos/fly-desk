@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 import { logPerfSpan, startPerfTimer } from "./perf";
-import { LIST_SEARCH_RESULT_LIMIT } from "./search-limits";
 import {
   CanonicalOffer,
   MatrixCell,
@@ -16,12 +15,6 @@ import {
 } from "./core/types";
 
 const COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
-const PERSISTED_SEARCH_JOB_ALL_OFFERS_LIMIT = (() => {
-  const raw = Number(process.env.SEARCH_PERSISTED_JOB_ALL_OFFERS_LIMIT ?? LIST_SEARCH_RESULT_LIMIT);
-  return Number.isFinite(raw) && raw > 0
-    ? Math.trunc(raw)
-    : LIST_SEARCH_RESULT_LIMIT;
-})();
 export const COMPLETED_SEARCH_SESSION_TTL_MS = (() => {
   const raw = Number(process.env.SEARCH_COMPLETED_SESSION_TTL_MS ?? COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS);
   return Number.isFinite(raw) && raw >= 0
@@ -265,8 +258,19 @@ function normalizeProviderContextForSearchCache(
 
 function normalizeSearchRequestForSearchCache(request: SearchRequest): SearchRequest {
   const next = cloneJson(request);
-  if (next.filters?.compactAllOffers !== true) {
+  if (next.filters) {
+    delete next.filters.maxResults;
     delete next.filters.compactAllOffers;
+    const checkedBaggageRequired = next.filters.checkedBaggageRequired === true || next.filters.baggageRequired === true;
+    if (checkedBaggageRequired) {
+      next.filters.checkedBaggageRequired = true;
+    } else {
+      delete next.filters.checkedBaggageRequired;
+    }
+    if (next.filters.carryOnRequired !== true) {
+      delete next.filters.carryOnRequired;
+    }
+    delete next.filters.baggageRequired;
   }
   return next;
 }
@@ -338,8 +342,6 @@ function redactSearchJobForPersistence(job: SearchJobRecord): SearchJobRecord {
 
   return {
     ...next,
-    offers: next.offers.slice(0, PERSISTED_SEARCH_JOB_ALL_OFFERS_LIMIT),
-    allOffers: next.allOffers.slice(0, PERSISTED_SEARCH_JOB_ALL_OFFERS_LIMIT),
     providerContext: redactProviderContextForPersistence(job.providerContext),
   };
 }

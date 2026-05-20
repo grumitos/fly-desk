@@ -1,5 +1,5 @@
 const segmentedControlClassName =
-  "inline-flex h-8 items-stretch overflow-hidden rounded-lg border border-input bg-secondary transition-[background-color,border-color,opacity,filter] duration-200 ease-out"
+  "inline-flex h-8 items-stretch overflow-hidden rounded-lg border border-input bg-secondary transition-[background-color,border-color,opacity,filter] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]"
 
 const segmentedItemBaseClassName =
   "relative z-10 inline-flex h-full min-h-8 transform-gpu items-center justify-center gap-1.5 px-3 text-xs font-semibold transition-[color,transform,opacity,filter] duration-150 focus-visible:relative focus-visible:z-10 focus-visible:outline-none focus-visible:ring-0 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-45 disabled:active:scale-100"

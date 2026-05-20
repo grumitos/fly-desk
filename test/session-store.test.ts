@@ -13,6 +13,10 @@ import type {
   SearchRequest,
 } from "../src/core/types";
 
+test("completed search result cache ttl is four hours", () => {
+  assert.equal(COMPLETED_SEARCH_SESSION_TTL_MS, 4 * 60 * 60 * 1000);
+});
+
 function getSql<T>(db: Database, sql: string, ...params: any[]): T | undefined {
   const statement = db.prepare(sql);
   try {
@@ -412,7 +416,7 @@ test("findRecentCompletedSearchJob reuses the latest compatible completed search
   assert.equal(reused?.id, completedJob.id);
 });
 
-test("findRecentCompletedSearchJob treats compactAllOffers false as the default cache key", () => {
+test("findRecentCompletedSearchJob ignores legacy result-cap flags in the cache key", () => {
   const store = new SearchSessionStore();
   const request = buildRequest();
   const offer = buildOffer("offer-compact-default", "https://cached.example/default");
@@ -446,16 +450,17 @@ test("findRecentCompletedSearchJob treats compactAllOffers false as the default 
     ...buildRequest(),
     filters: {
       ...buildRequest().filters,
+      maxResults: 25,
       compactAllOffers: true,
     },
   };
-  const notReused = store.findRecentCompletedSearchJob({
+  const reusedCompact = store.findRecentCompletedSearchJob({
     request: compactRequest,
     providerIds: ["agil-local"],
     sortMode: "cheapest",
     maxAgeMs: 10 * 60 * 1000,
   });
-  assert.equal(notReused, undefined);
+  assert.equal(reusedCompact?.id, completedJob.id);
 });
 
 test("findRecentCompletedSearchJob ignores expired or incompatible completed searches", () => {
@@ -635,6 +640,38 @@ test("search session store persists completed searches and matrix jobs in sqlite
   assert.equal(restoredRunning, undefined);
   assert.ok(restoredPathId);
   assert.ok(secondStore.resolvePurchasePath(restoredPathId!));
+  secondStore.close();
+
+  rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test("search session store persists completed search jobs without truncating offers", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-unbounded-"));
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const request = buildRequest();
+  const offers = Array.from({ length: 390 }, (_, index) =>
+    buildOffer(`offer-${index + 1}`, `https://persisted.example/search/${index + 1}`),
+  );
+
+  const firstStore = new SearchSessionStore({ dbPath });
+  const job = firstStore.createSearchJob({
+    request,
+    offers,
+    allOffers: offers,
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  firstStore.close();
+
+  const secondStore = new SearchSessionStore({ dbPath });
+  const restored = secondStore.getSearchJob(job.id);
+
+  assert.equal(restored?.offers.length, 390);
+  assert.equal(restored?.allOffers.length, 390);
+  assert.equal(restored?.allOffers[389]?.id, "offer-390");
   secondStore.close();
 
   rmSync(tempRoot, { recursive: true, force: true });

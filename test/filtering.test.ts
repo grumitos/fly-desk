@@ -71,7 +71,7 @@ function buildOneStopItinerary(
   };
 }
 
-function buildFilterOffer(id: string, layoverMinutes: number) {
+function buildFilterOffer(id: string, layoverMinutes: number, overrides: Record<string, unknown> = {}) {
   return {
     id,
     signature: id,
@@ -108,6 +108,7 @@ function buildFilterOffer(id: string, layoverMinutes: number) {
     },
     tags: [],
     warnings: [],
+    ...overrides,
   } as any;
 }
 
@@ -154,4 +155,67 @@ test("applySearchFilters does not apply a hidden maxStops limit when none is con
   const filtered = applySearchFilters([roundTrip], {});
 
   assert.deepEqual(filtered.map((offer) => offer.id), ["round-trip-no-limit"]);
+});
+
+test("applySearchFilters can require carry-on baggage independently", () => {
+  const carryOnly = buildFilterOffer("carry-only", 120, {
+    baggage: {
+      carryOnIncluded: true,
+      checkedIncluded: false,
+    },
+  });
+  const checkedOnly = buildFilterOffer("checked-only", 120, {
+    baggage: {
+      carryOnIncluded: false,
+      checkedIncluded: true,
+    },
+  });
+
+  const filtered = applySearchFilters([carryOnly, checkedOnly], {
+    carryOnRequired: true,
+  });
+
+  assert.deepEqual(filtered.map((offer) => offer.id), ["carry-only"]);
+});
+
+test("applySearchFilters can require checked baggage independently", () => {
+  const carryOnly = buildFilterOffer("carry-only", 120, {
+    baggage: {
+      carryOnIncluded: true,
+      checkedIncluded: false,
+    },
+  });
+  const checkedOnly = buildFilterOffer("checked-only", 120, {
+    baggage: {
+      carryOnIncluded: false,
+      checkedIncluded: true,
+    },
+  });
+
+  const filtered = applySearchFilters([carryOnly, checkedOnly], {
+    checkedBaggageRequired: true,
+  });
+
+  assert.deepEqual(filtered.map((offer) => offer.id), ["checked-only"]);
+});
+
+test("applySearchFilters keeps legacy baggageRequired as checked baggage", () => {
+  const carryOnly = buildFilterOffer("carry-only", 120, {
+    baggage: {
+      carryOnIncluded: true,
+      checkedIncluded: false,
+    },
+  });
+  const checkedOnly = buildFilterOffer("checked-only", 120, {
+    baggage: {
+      carryOnIncluded: false,
+      checkedIncluded: true,
+    },
+  });
+
+  const filtered = applySearchFilters([carryOnly, checkedOnly], {
+    baggageRequired: true,
+  });
+
+  assert.deepEqual(filtered.map((offer) => offer.id), ["checked-only"]);
 });

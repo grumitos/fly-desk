@@ -6,6 +6,10 @@ import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { LocationSuggestionCacheStore, LOCATION_SUGGESTION_CACHE_TTL_MS } from "../src/location-suggestion-cache";
 
+test("location suggestion cache remains the seven-day autocomplete exception", () => {
+  assert.equal(LOCATION_SUGGESTION_CACHE_TTL_MS, 7 * 24 * 60 * 60 * 1000);
+});
+
 function runSql(db: Database, sql: string, ...params: any[]): void {
   const statement = db.prepare(sql);
   try {
