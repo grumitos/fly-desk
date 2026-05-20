@@ -184,8 +184,7 @@ test("Costamar card model communicates redirect verification status", () => {
     title: "El enlace de Costamar fue validado antes de mostrar la oferta.",
     tone: "verified",
   });
-  assert.equal(pending.costamarRedirect?.label, "Redirect pendiente");
-  assert.equal(pending.costamarRedirect?.title, "Validación en curso");
+  assert.equal(pending.costamarRedirect, undefined);
   assert.equal(blocked.costamarRedirect?.label, "Redirect bloqueado");
   assert.equal(blocked.costamarRedirect?.title, "Token vencido");
 });

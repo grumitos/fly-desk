@@ -329,11 +329,8 @@ function redactStoredPurchasePathForPersistence(entry: StoredPurchasePath): Stor
   };
 }
 
-function publicPurchasePathUrl(path: PurchasePath, purchasePathId: string): string {
-  const baseUrl = `/r/${purchasePathId}`;
-  return path.provider === "agil-local" && path.type === "search-redirect"
-    ? `${baseUrl}?open=local`
-    : baseUrl;
+function publicPurchasePathUrl(purchasePathId: string): string {
+  return `/r/${purchasePathId}`;
 }
 
 function redactSearchJobForPersistence(job: SearchJobRecord): SearchJobRecord {
@@ -922,7 +919,7 @@ export class SearchSessionStore {
       return {
         ...rawPath,
         id: purchasePathId,
-        url: publicPurchasePathUrl(rawPath, purchasePathId),
+        url: publicPurchasePathUrl(purchasePathId),
       };
     });
 

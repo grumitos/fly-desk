@@ -20,7 +20,7 @@ import {
   resetCostamarWarmupStateForTests,
   setCostamarWarmupGeneratorForTests,
 } from "../src/local-costamar";
-import { routeRequest, setLocalOpenUrlOpenerForTests } from "../src/http-router";
+import { routeRequest } from "../src/http-router";
 import { getRuntime } from "../src/runtime";
 import { withServer } from "./helpers/server";
 
@@ -1133,100 +1133,61 @@ test("costamar matrix redirects refresh the stored token with the matrix job pro
   }
 });
 
-test("agil search redirect uses local Chrome handoff when requested", async () => {
-  const previousUserDataDir = process.env.AGIL_CHROME_USER_DATA_DIR;
-  const previousProfile = process.env.AGIL_CHROME_PROFILE;
-  process.env.AGIL_CHROME_USER_DATA_DIR = "C:\\Users\\agent\\Chrome";
-  process.env.AGIL_CHROME_PROFILE = "Profile 4";
-  const opened: Array<{
-    targetUrl: string;
-    preferredBrowser: string;
-    userDataDir?: string;
-    profileDirectory?: string;
-  }> = [];
-
-  setLocalOpenUrlOpenerForTests(async (targetUrl, preferredBrowser, chromeOptions) => {
-    opened.push({
-      targetUrl,
-      preferredBrowser,
-      userDataDir: chromeOptions?.userDataDir,
-      profileDirectory: chromeOptions?.profileDirectory,
-    });
-    return { launcher: "chrome" };
+test("agil search redirect returns the provider URL without local handoff page", async () => {
+  const runtime = getRuntime();
+  const agilUrl = "https://www.agilsmart.com/home-user/flight-result?origin=LIM&destination=MIA";
+  const agilOffer: CanonicalOffer = {
+    ...buildCostamarOffer(agilUrl),
+    id: "offer-agil-local",
+    providerSource: "agil-local",
+    purchasePaths: [
+      {
+        id: "agil-path",
+        type: "search-redirect",
+        provider: "agil-local",
+        label: "Buscar en Agil",
+        url: agilUrl,
+        precision: "exact-search",
+        score: 0.9,
+        requiresNewTab: true,
+        commercialMode: "provider",
+        state: "search_redirect",
+      },
+    ],
+  };
+  const job = runtime.sessions.createSearchJob({
+    request: {
+      ...buildCostamarRequest(),
+      providerId: "agil-local",
+    },
+    offers: [agilOffer],
+    allOffers: [agilOffer],
+    searchMeta: {
+      ...buildSearchMeta(),
+      providersUsed: ["agil-local"],
+    },
+    providerMeta: {
+      ...buildProviderMeta(),
+      exactProvider: "agil-local",
+    },
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
   });
+  const redirectPath = runtime.sessions.getSession(job.id)?.offers[0]?.purchasePaths[0]?.url;
 
-  try {
-    const runtime = getRuntime();
-    const agilUrl = "https://www.agilsmart.com/home-user/flight-result?origin=LIM&destination=MIA";
-    const agilOffer: CanonicalOffer = {
-      ...buildCostamarOffer(agilUrl),
-      id: "offer-agil-local",
-      providerSource: "agil-local",
-      purchasePaths: [
-        {
-          id: "agil-path",
-          type: "search-redirect",
-          provider: "agil-local",
-          label: "Buscar en Agil",
-          url: agilUrl,
-          precision: "exact-search",
-          score: 0.9,
-          requiresNewTab: true,
-          commercialMode: "provider",
-          state: "search_redirect",
-        },
-      ],
-    };
-    const job = runtime.sessions.createSearchJob({
-      request: {
-        ...buildCostamarRequest(),
-        providerId: "agil-local",
-      },
-      offers: [agilOffer],
-      allOffers: [agilOffer],
-      searchMeta: {
-        ...buildSearchMeta(),
-        providersUsed: ["agil-local"],
-      },
-      providerMeta: {
-        ...buildProviderMeta(),
-        exactProvider: "agil-local",
-      },
-      warnings: [],
-      sortMode: "cheapest",
-      status: "completed",
-    });
-    const redirectPath = runtime.sessions.getSession(job.id)?.offers[0]?.purchasePaths[0]?.url;
+  assert.ok(redirectPath);
+  assert.equal(redirectPath.includes("open=local"), false);
 
-    assert.ok(redirectPath?.endsWith("?open=local"));
-    const response = await routeRequest(new Request(`http://127.0.0.1:32123${redirectPath}`, {
-      headers: {
-        "x-flydesk-client-loopback": "1",
-      },
-    }));
+  const response = await routeRequest(new Request(`http://127.0.0.1:32123${redirectPath}?open=local`, {
+    headers: {
+      "x-flydesk-client-loopback": "1",
+    },
+  }));
 
-    assert.equal(response.status, 200);
-    assert.match(await response.text(), /Abriendo proveedor/);
-    assert.deepEqual(opened, [{
-      targetUrl: agilUrl,
-      preferredBrowser: "chrome",
-      userDataDir: "C:\\Users\\agent\\Chrome",
-      profileDirectory: "Profile 4",
-    }]);
-  } finally {
-    setLocalOpenUrlOpenerForTests();
-    if (previousUserDataDir === undefined) {
-      delete process.env.AGIL_CHROME_USER_DATA_DIR;
-    } else {
-      process.env.AGIL_CHROME_USER_DATA_DIR = previousUserDataDir;
-    }
-
-    if (previousProfile === undefined) {
-      delete process.env.AGIL_CHROME_PROFILE;
-    } else {
-      process.env.AGIL_CHROME_PROFILE = previousProfile;
-    }
-  }
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get("Location"), agilUrl);
+  assert.doesNotMatch(await response.text(), /Abriendo proveedor|Abrir manualmente/);
 });
 
 test("costamar redirect blocks locally when no fresh token is available", async () => {

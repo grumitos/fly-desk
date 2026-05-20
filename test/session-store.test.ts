@@ -326,7 +326,7 @@ test("matrix jobs rewrite and refresh purchase path ids for flexible cells", () 
 
   const firstPathId = job.cells[0]?.purchasePaths?.[0]?.id;
   assert.ok(firstPathId);
-  assert.equal(job.cells[0]?.purchasePaths?.[0]?.url, `/r/${firstPathId}?open=local`);
+  assert.equal(job.cells[0]?.purchasePaths?.[0]?.url, `/r/${firstPathId}`);
   assert.ok(store.resolvePurchasePath(firstPathId));
 
   const updated = store.updateMatrixJob(job.id, (current) => ({
