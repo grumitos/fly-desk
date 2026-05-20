@@ -212,3 +212,42 @@ test("Agil card model does not show Costamar redirect status", () => {
 
   assert.equal(buildResultCardModel(offer, 1).costamarRedirect, undefined);
 });
+
+test("Agil grouped card keeps Agil badge and hides Costamar redirect status", () => {
+  const verification = redirectVerification(false, "pending", "Validación en curso");
+  const offer = {
+    ...costamarCardOffer(verification),
+    id: "agil-grouped-offer",
+    providerSource: "agil-local",
+    redirectVerification: undefined,
+    purchasePaths: [
+      {
+        id: "path-agil",
+        provider: "agil-local",
+        type: "search-redirect",
+        label: "Buscar en Agil",
+        url: "/r/path-agil",
+        precision: "search-equivalent",
+        state: "available",
+        commercialMode: "redirect",
+      },
+      {
+        id: "path-costamar",
+        provider: "costamar",
+        type: "search-redirect",
+        label: "Buscar en Costamar",
+        url: "https://app.costamar.com/search",
+        precision: "search-equivalent",
+        state: "available",
+        commercialMode: "redirect",
+        redirectVerification: verification,
+      },
+    ],
+  } as CanonicalOffer;
+
+  const model = buildResultCardModel(offer, 1);
+
+  assert.equal(model.provider.label, "Agilsmart");
+  assert.equal(model.provider.shortLabel, "AG");
+  assert.equal(model.costamarRedirect, undefined);
+});
