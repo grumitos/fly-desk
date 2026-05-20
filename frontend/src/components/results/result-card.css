@@ -3,12 +3,12 @@
 }
 
 .fd-results-list--fixed-layout {
-  --fd-result-col-carrier: minmax(0, var(--fd-results-col-carrier, 112fr));
-  --fd-result-col-dates: minmax(0, var(--fd-results-col-dates, 314fr));
-  --fd-result-col-duration: minmax(0, var(--fd-results-col-duration, 98fr));
-  --fd-result-col-stops: minmax(0, var(--fd-results-col-stops, 147fr));
-  --fd-result-col-price: minmax(0, var(--fd-results-col-price, 124fr));
-  --fd-result-col-links: minmax(0, var(--fd-results-col-links, 44fr));
+  --fd-result-col-carrier: minmax(0, var(--fd-results-col-carrier, 139fr));
+  --fd-result-col-dates: minmax(0, var(--fd-results-col-dates, 389fr));
+  --fd-result-col-duration: minmax(0, var(--fd-results-col-duration, 121fr));
+  --fd-result-col-stops: minmax(0, var(--fd-results-col-stops, 182fr));
+  --fd-result-col-price: minmax(0, var(--fd-results-col-price, 154fr));
+  --fd-result-col-links: minmax(0, var(--fd-results-col-links, 54fr));
   width: 100%;
   min-width: 0;
 }
