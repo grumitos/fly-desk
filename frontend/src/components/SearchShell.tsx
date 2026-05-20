@@ -83,8 +83,8 @@ export function SearchShell({
   )
   const canUseTopbarControls = useCanUseTopbarControls()
 
-  const origin = useAutocomplete("origin", (suggestion) => setOriginCode(suggestion.code))
-  const destination = useAutocomplete("destination", (suggestion) => setDestCode(suggestion.code))
+  const origin = useAutocomplete((suggestion) => setOriginCode(suggestion.code))
+  const destination = useAutocomplete((suggestion) => setDestCode(suggestion.code))
   const setOriginQuery = origin.setQuery
   const setDestinationQuery = destination.setQuery
   const resolveOriginQuery = origin.resolveCurrentQuery

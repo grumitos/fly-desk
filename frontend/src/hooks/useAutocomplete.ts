@@ -7,12 +7,7 @@ interface UpdateQueryOptions {
   showSuggestions?: boolean
 }
 
-export function useAutocomplete(
-  field: "origin" | "destination",
-  onResolved?: (suggestion: LocationSuggestion) => void
-) {
-  void field
-
+export function useAutocomplete(onResolved?: (suggestion: LocationSuggestion) => void) {
   const [query, setQuery] = useState("")
   const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([])
   const [open, setOpen] = useState(false)

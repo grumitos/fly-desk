@@ -24,7 +24,9 @@ const API_BASE = ""
 const MIGRATION_MONTH_COUNT = 8
 const MIGRATION_CONCURRENT_REQUESTS = 2
 const MIGRATION_POLL_INTERVAL_MS = 900
-const MIGRATION_MONTH_LEGACY_RESULT_HINT = 25
+const MIGRATION_MONTH_RESULT_HINT = 25
+const LOCATION_SUGGESTION_CACHE_LIMIT = 100
+const LOCATION_SUGGESTION_POOL_LIMIT = 500
 const MIGRATION_MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
   month: "long",
   year: "numeric",
@@ -385,7 +387,14 @@ export async function suggestLocations(query: string, limit = 8): Promise<Locati
 export function getCachedLocationSuggestions(query: string, limit = 8): LocationSuggestion[] {
   if (query.trim().length < 1) return []
   const key = locationSuggestionCacheKey(query, limit)
-  return locationSuggestionCache.get(key) ?? filterLocationSuggestions(query, [...locationSuggestionPool.values()], limit)
+  const cached = locationSuggestionCache.get(key)
+  if (cached) {
+    locationSuggestionCache.delete(key)
+    locationSuggestionCache.set(key, cached)
+    return cached
+  }
+
+  return filterLocationSuggestions(query, [...locationSuggestionPool.values()], limit)
 }
 
 export async function getResultsLayout(options: RequestOptions = {}): Promise<ResultsLayout | null> {
@@ -407,10 +416,23 @@ export async function saveResultsLayout(
 
 function rememberLocationSuggestions(query: string, limit: number, suggestions: LocationSuggestion[]) {
   const key = locationSuggestionCacheKey(query, limit)
+  locationSuggestionCache.delete(key)
   locationSuggestionCache.set(key, suggestions)
+  trimOldestEntries(locationSuggestionCache, LOCATION_SUGGESTION_CACHE_LIMIT)
 
   for (const suggestion of suggestions) {
-    locationSuggestionPool.set(locationSuggestionCacheId(suggestion), suggestion)
+    const id = locationSuggestionCacheId(suggestion)
+    locationSuggestionPool.delete(id)
+    locationSuggestionPool.set(id, suggestion)
+  }
+  trimOldestEntries(locationSuggestionPool, LOCATION_SUGGESTION_POOL_LIMIT)
+}
+
+function trimOldestEntries<K, V>(map: Map<K, V>, limit: number) {
+  while (map.size > limit) {
+    const oldestKey = map.keys().next().value
+    if (oldestKey === undefined) return
+    map.delete(oldestKey)
   }
 }
 
@@ -919,17 +941,22 @@ function migrationRequestForMonth(request: SearchRequest, range: MigrationMonthR
     returnEnd: undefined,
     flexibleMode: undefined,
     stayNights: undefined,
-    maxResults: MIGRATION_MONTH_LEGACY_RESULT_HINT,
+    maxResults: MIGRATION_MONTH_RESULT_HINT,
     compactAllOffers: true,
   }
 }
 
 function cheapestOffer(offers: CanonicalOffer[]): CanonicalOffer | undefined {
-  return [...offers].sort((left, right) =>
-    offerAmount(left) - offerAmount(right)
-      || (left.comparisonMetrics?.totalDurationMinutes ?? Number.POSITIVE_INFINITY)
-        - (right.comparisonMetrics?.totalDurationMinutes ?? Number.POSITIVE_INFINITY)
-  )[0]
+  return offers.reduce<CanonicalOffer | undefined>((best, offer) => {
+    if (!best) return offer
+    return compareOfferPriceAndDuration(offer, best) < 0 ? offer : best
+  }, undefined)
+}
+
+function compareOfferPriceAndDuration(left: CanonicalOffer, right: CanonicalOffer) {
+  return offerAmount(left) - offerAmount(right)
+    || (left.comparisonMetrics?.totalDurationMinutes ?? Number.POSITIVE_INFINITY)
+      - (right.comparisonMetrics?.totalDurationMinutes ?? Number.POSITIVE_INFINITY)
 }
 
 function normalizeMigrationOffer(offer: CanonicalOffer, range: MigrationMonthRange, job: SearchJobResponse): CanonicalOffer {

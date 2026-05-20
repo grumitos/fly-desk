@@ -270,6 +270,7 @@ test("groupExactProviderOffers matches centralized carrier code aliases without 
 });
 
 test("materializeSearchResponse returns grouped provider duplicates", () => {
+  const requestedAt = "2026-06-15T10:00:00.000Z";
   const response = materializeSearchResponse(
     {
       providerId: "agil-local",
@@ -306,10 +307,12 @@ test("materializeSearchResponse returns grouped provider duplicates", () => {
       warnings: [],
       partial: false,
     },
+    requestedAt,
   );
 
   assert.equal(response.offers.length, 1);
   assert.equal(response.allOffers?.length, 1);
+  assert.equal(response.searchMeta.requestedAt, requestedAt);
   assert.deepEqual(
     response.offers[0].purchasePaths.map((path) => path.provider),
     ["agil-local", "costamar"],

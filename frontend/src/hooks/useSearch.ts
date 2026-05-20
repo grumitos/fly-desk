@@ -185,6 +185,7 @@ export function useSearch() {
               }
 
               appendDiagnosticLog("Error durante actualización", diagnosticLogFromError(err))
+              setStatusMessage(userMessageFromError(err))
               setLoading(false)
               abortControllerRef.current = null
             }

@@ -44,6 +44,7 @@ export function materializeSearchResponse(
   sortMode: "cheapest" | "fastest",
   exactProviderId: ProviderId,
   exactResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean },
+  startedAt = new Date().toISOString(),
 ): SearchResponse {
   let offers = groupExactProviderOffers(exactResult.offers);
 
@@ -56,7 +57,7 @@ export function materializeSearchResponse(
     offers,
     allOffers,
     searchMeta: buildSearchMeta(
-      new Date().toISOString(),
+      startedAt,
       [exactProviderId],
       exactResult.warnings,
       exactResult.partial,
@@ -100,6 +101,7 @@ export class SearchOrchestrator {
     sortMode: "cheapest" | "fastest" = "cheapest",
     options?: SearchExecutionOptions,
   ): Promise<SearchResponse> {
+    const startedAt = new Date().toISOString();
     const provider = this.resolveProvider(options?.providerId ?? request.providerId);
     const exactResult = await provider.searchExact(request, options);
     return materializeSearchResponse(
@@ -107,6 +109,7 @@ export class SearchOrchestrator {
       sortMode,
       provider.id,
       exactResult,
+      startedAt,
     );
   }
 

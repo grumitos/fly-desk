@@ -61,7 +61,7 @@ export default function App() {
   const [initialSharedSearch] = useState<SharedSearchState | null>(() => readInitialSharedSearch())
   const initialSharedRequest = initialSharedSearch?.request ?? null
   const [sortMode, setSortMode] = useState<SortMode>(() => initialSharedSearch?.sortMode ?? DEFAULT_SORT_MODE)
-  const [selectedOffer, setSelectedOffer] = useState<CanonicalOffer | null>(null)
+  const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null)
   const [lastRequest, setLastRequest] = useState<SearchRequest | null>(null)
   const [workspaceReady, setWorkspaceReady] = useState(false)
   const [filters, setFilters] = useState<Filters>(() => filtersFromRequest(initialSharedSearch?.request))
@@ -141,12 +141,13 @@ export default function App() {
 
   const visibleSelectedOffer = useMemo(() => {
     if (!filteredResults) return null
-    if (selectedOffer && filteredResults.offers.some((offer) => offer.id === selectedOffer.id)) {
-      return selectedOffer
+    if (selectedOfferId) {
+      const currentOffer = filteredResults.offers.find((offer) => offer.id === selectedOfferId)
+      if (currentOffer) return currentOffer
     }
 
     return isMigrationResults(filteredResults) ? filteredResults.offers[0] ?? null : null
-  }, [filteredResults, selectedOffer])
+  }, [filteredResults, selectedOfferId])
 
   const handleSearch = useCallback(
     (request: SearchRequest, sort?: SortMode) => {
@@ -159,7 +160,7 @@ export default function App() {
       }
       const nextSort = sort ?? defaultSortForRequest()
       setClipboardError(null)
-      setSelectedOffer(null)
+      setSelectedOfferId(null)
       setSortMode(nextSort)
       setWorkspaceReady(false)
       setSearchDraft(merged)
@@ -188,7 +189,7 @@ export default function App() {
       selectedAirlinesRef.current = sharedSearch.request.includedAirlineCodes ?? []
       sortModeRef.current = sharedSearch.sortMode
       setClipboardError(null)
-      setSelectedOffer(null)
+      setSelectedOfferId(null)
       setWorkspaceReady(false)
       setSortMode(sharedSearch.sortMode)
       setFilters(nextFilters)
@@ -199,6 +200,11 @@ export default function App() {
     } catch {
       setClipboardError("No se pudo leer el portapapeles. Revisa el permiso del navegador e intenta nuevamente.")
     }
+  }, [])
+
+  const handleSelectOffer = useCallback((offer: CanonicalOffer) => {
+    setSelectedOfferId(offer.id)
+    setMobilePanel("detail")
   }, [])
 
   const handleCopySearchConfig = useCallback(async () => {
@@ -424,10 +430,7 @@ export default function App() {
                     loading={loading}
                     sort={sortMode}
                     onSort={handleSort}
-                    onSelectOffer={(offer) => {
-                      setSelectedOffer(offer)
-                      setMobilePanel("detail")
-                    }}
+                    onSelectOffer={handleSelectOffer}
                     selectedOfferId={visibleSelectedOffer?.id}
                   />
                 </div>
@@ -824,10 +827,12 @@ function defaultSortForRequest(): SortMode {
 }
 
 function cheapestOfferForMonth(offers: CanonicalOffer[]) {
-  return [...offers].sort((left, right) =>
-    compareNumber(priceAmount(left), priceAmount(right))
-      || compareNumber(totalDurationForDisplay(left), totalDurationForDisplay(right)),
-  )[0]
+  return offers.reduce<CanonicalOffer | undefined>((best, offer) => {
+    if (!best) return offer
+    const compared = compareNumber(priceAmount(offer), priceAmount(best))
+      || compareNumber(totalDurationForDisplay(offer), totalDurationForDisplay(best))
+    return compared < 0 ? offer : best
+  }, undefined)
 }
 
 function sortOffersForDisplay(offers: CanonicalOffer[], sortMode: SortMode): CanonicalOffer[] {

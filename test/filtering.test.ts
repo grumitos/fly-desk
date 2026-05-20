@@ -1,8 +1,9 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { applySearchFilters } from "../src/core/filtering";
+import type { CanonicalOffer, Itinerary } from "../src/core/types";
 
-function buildDirectItinerary(id: string, direction: "outbound" | "inbound", origin: string, destination: string, departureAt: string, durationMinutes: number) {
+function buildDirectItinerary(id: string, direction: "outbound" | "inbound", origin: string, destination: string, departureAt: string, durationMinutes: number): Itinerary {
   const arrivalAt = new Date(Date.parse(departureAt) + durationMinutes * 60000).toISOString();
   return {
     id: `${id}-${direction}`,
@@ -33,7 +34,7 @@ function buildOneStopItinerary(
   destination: string,
   departureAt: string,
   layoverMinutes: number,
-) {
+): Itinerary {
   const firstDuration = 240;
   const secondDuration = 240;
   const firstArrival = new Date(Date.parse(departureAt) + firstDuration * 60000).toISOString();
@@ -71,7 +72,7 @@ function buildOneStopItinerary(
   };
 }
 
-function buildFilterOffer(id: string, layoverMinutes: number, overrides: Record<string, unknown> = {}) {
+function buildFilterOffer(id: string, layoverMinutes: number, overrides: Partial<CanonicalOffer> = {}): CanonicalOffer {
   return {
     id,
     signature: id,
@@ -109,10 +110,10 @@ function buildFilterOffer(id: string, layoverMinutes: number, overrides: Record<
     tags: [],
     warnings: [],
     ...overrides,
-  } as any;
+  };
 }
 
-function buildRoundTripWithOneStopEachWay(id: string) {
+function buildRoundTripWithOneStopEachWay(id: string): CanonicalOffer {
   return {
     ...buildFilterOffer(id, 120),
     itineraries: [
@@ -125,7 +126,7 @@ function buildRoundTripWithOneStopEachWay(id: string) {
       baggageScore: 2,
       purchasePathScore: 0,
     },
-  } as any;
+  };
 }
 
 test("applySearchFilters rejects offers whose longest layover exceeds the configured limit", () => {
