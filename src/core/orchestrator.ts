@@ -52,10 +52,6 @@ export function materializeSearchResponse(
   const allOffers = offers;
   offers = applySearchFilters(allOffers, request.filters);
 
-  if (typeof request.filters.maxResults === "number") {
-    offers = offers.slice(0, request.filters.maxResults);
-  }
-
   return {
     offers,
     allOffers,

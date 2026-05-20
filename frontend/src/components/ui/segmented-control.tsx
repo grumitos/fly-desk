@@ -47,6 +47,8 @@ function SegmentButton({
   type = "button",
   ...props
 }: SegmentButtonProps) {
+  const visuallyActive = active && !disabled
+
   return (
     <button
       type={type}
@@ -54,7 +56,7 @@ function SegmentButton({
       disabled={disabled}
       className={cn(
         segmentedItemBaseClassName,
-        active ? segmentedItemActiveClassName : segmentedItemInactiveClassName,
+        visuallyActive ? segmentedItemActiveClassName : segmentedItemInactiveClassName,
         className,
       )}
       {...props}

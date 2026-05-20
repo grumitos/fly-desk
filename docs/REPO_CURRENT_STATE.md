@@ -1,6 +1,6 @@
 # Estado Actual de la Repo
 
-Fecha de corte: 2026-05-19
+Fecha de corte: 2026-05-20
 
 ## Resumen
 
@@ -109,11 +109,11 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 
 - `scripts/build-frontend.ts`: build frontend
 - `scripts/generate-web-password-hash.ts`: genera hash scrypt para `FLY_DESK_WEB_PASSWORD_HASH`
-- `docs/DEPLOY_VPS.md`: systemd, Caddy, variables y rollback
+- `docs/DEPLOY_APP.md`: deploy y rollback de app
 - `.github/workflows/ci.yml`: CI Bun para typecheck, lint, test y build
 - `.github/workflows/deploy-vps.yml`: deploy manual y rollback por SHA/release al VPS
 
-La infraestructura compartida del VPS ya no vive en este repo: Caddy, systemd, rollback de Caddy y plan de plataforma se mantienen en `grumitos/vps-platform` (`D:\Dev\vps-platform`). Este repo conserva app, CI, deploy de revision y rollback de release.
+La infraestructura compartida del VPS ya no vive en este repo: Caddy, systemd, rollback de Caddy y plan de plataforma se mantienen en `grumitos/vps-platform` (`D:\Dev\VPS\vps-platform`). Este repo conserva app, CI, deploy de revision y rollback de release.
 
 ## Pruebas
 
@@ -148,14 +148,14 @@ Nota de QA: `test/helpers/server.ts` fija `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JO
 - `README.md`
 - `frontend/README.md`
 - `docs/REPO_CURRENT_STATE.md`
-- `docs/DEPLOY_VPS.md`
+- `docs/DEPLOY_APP.md`
 - `docs/FRONTEND_IDENTITY.md`
 
-## Estado De Ramas Y Produccion
+## Estado De Deploy
 
-`main` contiene la migracion web VPS desde `codex/web-vps-migration`. El `REVISION` validado en el VPS antes del merge fue `d70cd1b0636fc8339a53c90d8b6f6e587e9cd6cf`; la rama tambien incluia un ajuste posterior de layout de login. La linea queda marcada con un merge commit porque el cambio reemplaza una version local temprana por una app web privada en VPS.
+`main` es la linea de producto y despliegue. El deploy repetible escribe el SHA activado en `/opt/fly-desk/REVISION` y lo verifica despues de reiniciar `fly-desk.service`.
 
-El deploy repetible debe escribir el SHA desplegado en `/opt/fly-desk/REVISION` y verificarlo despues de reiniciar `fly-desk.service`.
+Las revisiones desplegadas y el inventario de servicios vivos se mantienen en `D:\Dev\VPS\vps-platform\docs\INVENTORY.md`. Este repo no mantiene SHAs productivos como estado vivo para evitar drift documental.
 
 No se mantienen planes de migracion ni auditorias historicas como documentacion viva. El historial Git conserva ese contexto si hace falta recuperarlo.
 

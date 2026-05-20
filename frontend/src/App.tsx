@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import { DetailPanel } from "@/components/DetailPanel"
 import { ResultsPanel } from "@/components/ResultsPanel"
 import { SearchShell } from "@/components/SearchShell"
@@ -24,7 +24,8 @@ type Filters = {
   nonStop?: boolean
   maxStopsFilter?: string
   maxLayoverMinutes?: string
-  baggageRequired?: boolean
+  carryOnRequired?: boolean
+  checkedBaggageRequired?: boolean
 }
 
 type AirlineFilterOption = {
@@ -34,7 +35,26 @@ type AirlineFilterOption = {
   count: number
 }
 
+type StopFilterValue = "any" | "1" | "2+"
+type LayoverFilterValue = "120" | "240" | "360" | "any"
+type FilterSliderStep<T extends string> = {
+  value: T
+  label: string
+  valueLabel: string
+}
+
 const DEFAULT_SORT_MODE: SortMode = "cheapest"
+const STOP_FILTER_STEPS: FilterSliderStep<StopFilterValue>[] = [
+  { value: "any", label: "Cualq.", valueLabel: "Cualquiera" },
+  { value: "1", label: "Hasta 1", valueLabel: "Hasta 1 escala" },
+  { value: "2+", label: "2+", valueLabel: "2+ escalas" },
+]
+const LAYOVER_FILTER_STEPS: FilterSliderStep<LayoverFilterValue>[] = [
+  { value: "120", label: "2 h", valueLabel: "Hasta 2 h" },
+  { value: "240", label: "4 h", valueLabel: "Hasta 4 h" },
+  { value: "360", label: "6 h", valueLabel: "Hasta 6 h" },
+  { value: "any", label: "Sin límite", valueLabel: "Sin límite" },
+]
 
 export default function App() {
   const { results, loading, error, statusMessage, diagnosticLog, runSearch, cancel } = useSearch()
@@ -131,7 +151,12 @@ export default function App() {
   const handleSearch = useCallback(
     (request: SearchRequest, sort?: SortMode) => {
       pendingSearchFrameRectRef.current = searchFrameRef.current?.getBoundingClientRect() ?? null
-      const merged = { ...request, ...filtersRef.current, includedAirlineCodes: selectedAirlinesRef.current }
+      const merged = {
+        ...request,
+        ...filtersRef.current,
+        baggageRequired: undefined,
+        includedAirlineCodes: selectedAirlinesRef.current,
+      }
       const nextSort = sort ?? defaultSortForRequest()
       setClipboardError(null)
       setSelectedOffer(null)
@@ -183,6 +208,7 @@ export default function App() {
     const request = {
       ...draft,
       ...filtersRef.current,
+      baggageRequired: undefined,
       includedAirlineCodes: selectedAirlinesRef.current.length ? selectedAirlinesRef.current : undefined,
     }
 
@@ -213,7 +239,7 @@ export default function App() {
       filtersRef.current = merged
       setFilters(merged)
       if (lastRequest) {
-        const nextRequest = { ...lastRequest, ...merged, includedAirlineCodes: selectedAirlines }
+        const nextRequest = { ...lastRequest, ...merged, baggageRequired: undefined, includedAirlineCodes: selectedAirlines }
         setLastRequest(nextRequest)
         writeSharedSearchToUrl(nextRequest, sortMode)
       }
@@ -232,6 +258,8 @@ export default function App() {
         nonStop: undefined,
         maxStopsFilter: undefined,
         maxLayoverMinutes: undefined,
+        carryOnRequired: undefined,
+        checkedBaggageRequired: undefined,
         baggageRequired: undefined,
         includedAirlineCodes: undefined,
       }
@@ -255,7 +283,7 @@ export default function App() {
     selectedAirlinesRef.current = nextAirlines
     setSelectedAirlines(nextAirlines)
     if (lastRequest) {
-      const nextRequest = { ...lastRequest, ...filters, includedAirlineCodes: nextAirlines }
+      const nextRequest = { ...lastRequest, ...filters, baggageRequired: undefined, includedAirlineCodes: nextAirlines }
       setLastRequest(nextRequest)
       writeSharedSearchToUrl(nextRequest, sortMode)
     }
@@ -265,7 +293,8 @@ export default function App() {
     Boolean(filters.nonStop) ||
     Boolean(filters.maxStopsFilter) ||
     Boolean(filters.maxLayoverMinutes) ||
-    Boolean(filters.baggageRequired) ||
+    Boolean(filters.carryOnRequired) ||
+    Boolean(filters.checkedBaggageRequired) ||
     selectedAirlines.length > 0
   const shouldShowWorkspace = workspaceReady || Boolean(results) || loading || resultsLayoutEditorActive
   const isSearchIdle = !shouldShowWorkspace
@@ -295,8 +324,8 @@ export default function App() {
         { transform: "translate3d(0, 0, 0)", width: `${nextRect.width}px` },
       ],
       {
-        duration: 240,
-        easing: "cubic-bezier(0.4, 0, 0.2, 1)",
+        duration: 180,
+        easing: "cubic-bezier(0.22, 1, 0.36, 1)",
       }
     )
   }, [isSearchIdle])
@@ -475,55 +504,34 @@ const FiltersPanel = memo(function FiltersPanel({
 
       <div className="fd-scrollbar min-h-0 flex-1 overflow-auto p-2.5">
         <FilterGroup title="Escalas">
-          <SwitchRow
-            label="Solo directos"
-            checked={Boolean(filters.nonStop)}
-            onChange={(checked) => onFilterChange({ nonStop: checked ? true : undefined, maxStopsFilter: undefined })}
+          <StopsFilterControl
+            filters={filters}
+            onFilterChange={onFilterChange}
           />
-          <ChoiceRow
-            label="Hasta 1 escala"
-            active={filters.maxStopsFilter === "1"}
-            onClick={() => onFilterChange({ maxStopsFilter: filters.maxStopsFilter === "1" ? undefined : "1", nonStop: undefined })}
-          />
-          <ChoiceRow
-            label="2+ escalas"
-            active={filters.maxStopsFilter === "2+"}
-            onClick={() => onFilterChange({ maxStopsFilter: filters.maxStopsFilter === "2+" ? undefined : "2+", nonStop: undefined })}
-          />
-        </FilterGroup>
-
-        <FilterGroup title="Tiempo de escala">
-          <ChoiceRow
-            label="Hasta 2 h"
-            active={filters.maxLayoverMinutes === "120"}
-            onClick={() => onFilterChange({ maxLayoverMinutes: filters.maxLayoverMinutes === "120" ? undefined : "120" })}
-          />
-          <ChoiceRow
-            label="Hasta 4 h"
-            active={filters.maxLayoverMinutes === "240"}
-            onClick={() => onFilterChange({ maxLayoverMinutes: filters.maxLayoverMinutes === "240" ? undefined : "240" })}
-          />
-          <ChoiceRow
-            label="Hasta 6 h"
-            active={filters.maxLayoverMinutes === "360"}
-            onClick={() => onFilterChange({ maxLayoverMinutes: filters.maxLayoverMinutes === "360" ? undefined : "360" })}
+          <FilterSlider
+            label="Escala máxima"
+            value={layoverFilterValue(filters)}
+            steps={LAYOVER_FILTER_STEPS}
+            onChange={(value) => onFilterChange({ maxLayoverMinutes: value === "any" ? undefined : value })}
           />
         </FilterGroup>
 
         <FilterGroup title="Equipaje">
           <SwitchRow
-            label="Incluye equipaje"
-            checked={Boolean(filters.baggageRequired)}
-            onChange={(checked) => onFilterChange({ baggageRequired: checked ? true : undefined })}
+            label="Equipaje de mano"
+            checked={Boolean(filters.carryOnRequired)}
+            onChange={(checked) => onFilterChange({ carryOnRequired: checked ? true : undefined })}
+          />
+          <SwitchRow
+            label="Maleta de bodega"
+            ariaLabel="Incluye equipaje: maleta de bodega"
+            checked={Boolean(filters.checkedBaggageRequired)}
+            onChange={(checked) => onFilterChange({ checkedBaggageRequired: checked ? true : undefined })}
           />
         </FilterGroup>
 
-        <FilterGroup title="Aerolíneas">
-          {allAirlines.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border bg-secondary/60 px-3 py-4 text-center text-xs text-muted-foreground">
-              Aparecerán al tener resultados.
-            </div>
-          ) : (
+        {allAirlines.length > 0 && (
+          <FilterGroup title="Aerolíneas">
             <div className="fd-scrollbar-hidden max-h-64 space-y-1 overflow-auto pr-1">
               {allAirlines.map((airline) => (
                 <label
@@ -544,8 +552,8 @@ const FiltersPanel = memo(function FiltersPanel({
                 </label>
               ))}
             </div>
-          )}
-        </FilterGroup>
+          </FilterGroup>
+        )}
       </div>
     </aside>
   )
@@ -560,30 +568,137 @@ function FilterGroup({ title, children }: { title: string; children: ReactNode }
   )
 }
 
-function SwitchRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
+function StopsFilterControl({
+  filters,
+  onFilterChange,
+}: {
+  filters: Filters
+  onFilterChange: (next: Partial<Filters>) => void
+}) {
+  const direct = Boolean(filters.nonStop)
+
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-sm transition-colors duration-150 hover:bg-muted">
-      <span>{label}</span>
-      <Switch checked={checked} onCheckedChange={onChange} aria-label={label} />
+    <div className="fd-filter-constraint">
+      <div className="fd-filter-constraint__head">
+        <span className="fd-filter-constraint__label">Solo directos</span>
+        <Switch
+          checked={direct}
+          onCheckedChange={(checked) => onFilterChange({
+            nonStop: checked ? true : undefined,
+            maxStopsFilter: checked ? undefined : filters.maxStopsFilter,
+          })}
+          aria-label="Solo directos"
+        />
+      </div>
+      <FilterSlider
+        label="Resto de escalas"
+        value={stopFilterValue(filters)}
+        steps={STOP_FILTER_STEPS}
+        disabled={direct}
+        onChange={(value) => onFilterChange({
+          nonStop: undefined,
+          maxStopsFilter: value === "any" ? undefined : value,
+        })}
+      />
     </div>
   )
 }
 
-function ChoiceRow({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function FilterSlider<T extends string>({
+  label,
+  value,
+  steps,
+  disabled = false,
+  onChange,
+}: {
+  label: string
+  value: T
+  steps: FilterSliderStep<T>[]
+  disabled?: boolean
+  onChange: (value: T) => void
+}) {
+  const currentIndex = Math.max(0, steps.findIndex((step) => step.value === value))
+  const currentStep = steps[currentIndex] ?? steps[0]
+  const progress = steps.length <= 1 ? 0 : (currentIndex / (steps.length - 1)) * 100
+  const neutral = value === "any"
+  const controlId = `filter-slider-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
+
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`flex w-full transform-gpu items-center justify-between rounded-lg px-2 py-1.5 text-sm transition-[background-color,color,transform] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.995] ${
-        active ? "fd-selected-passive" : "hover:bg-muted"
-      }`}
+    <div
+      className={`fd-filter-slider ${neutral ? "is-neutral" : ""} ${disabled ? "is-disabled" : ""}`}
+      style={{
+        "--fd-filter-slider-progress": `${progress}%`,
+        "--fd-filter-slider-steps": steps.length,
+      } as CSSProperties}
     >
-      {label}
-      <span className={`h-2 w-2 rounded-full ${active ? "bg-foreground" : "bg-border"}`} />
-    </Button>
+      <div className="fd-filter-slider__head">
+        <label htmlFor={controlId} className="fd-filter-slider__label">{label}</label>
+        <span className="fd-filter-slider__value">{currentStep?.valueLabel}</span>
+      </div>
+      <input
+        id={controlId}
+        type="range"
+        min={0}
+        max={Math.max(0, steps.length - 1)}
+        step={1}
+        value={currentIndex}
+        disabled={disabled}
+        aria-label={label}
+        aria-valuetext={currentStep?.valueLabel}
+        className="fd-filter-slider__range"
+        onChange={(event) => {
+          const next = steps[Number(event.currentTarget.value)]
+          if (next) onChange(next.value)
+        }}
+      />
+      <div className="fd-filter-slider__marks" aria-hidden="true">
+        {steps.map((step) => (
+          <span
+            key={step.value}
+            className={`fd-filter-slider__mark ${step.value === value ? "is-active" : ""}`}
+          >
+            {step.label}
+          </span>
+        ))}
+      </div>
+    </div>
   )
+}
+
+function SwitchRow({
+  label,
+  ariaLabel,
+  checked,
+  onChange,
+}: {
+  label: string
+  ariaLabel?: string
+  checked: boolean
+  onChange: (checked: boolean) => void
+}) {
+  return (
+    <div className={`flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-sm transition-colors duration-150 hover:bg-muted ${checked ? "font-semibold" : "font-normal"}`}>
+      <span>{label}</span>
+      <Switch checked={checked} onCheckedChange={onChange} aria-label={ariaLabel ?? label} />
+    </div>
+  )
+}
+
+function stopFilterValue(filters: Filters): StopFilterValue {
+  if (filters.maxStopsFilter === "1" || filters.maxStopsFilter === "2+") return filters.maxStopsFilter
+  return "any"
+}
+
+function layoverFilterValue(filters: Filters): LayoverFilterValue {
+  if (
+    filters.maxLayoverMinutes === "120" ||
+    filters.maxLayoverMinutes === "240" ||
+    filters.maxLayoverMinutes === "360"
+  ) {
+    return filters.maxLayoverMinutes
+  }
+
+  return "any"
 }
 
 function airlineToken(value: unknown): string {
@@ -669,7 +784,8 @@ function applyClientFilters(offers: CanonicalOffer[], filters: Filters, selected
     const maxMinutes = Number(filters.maxLayoverMinutes)
     list = list.filter((offer) => maxLayoverForOffer(offer) <= maxMinutes)
   }
-  if (filters.baggageRequired) list = list.filter((offer) => offer.hasCheckedBaggage)
+  if (filters.carryOnRequired) list = list.filter((offer) => offer.baggage?.carryOnIncluded === true)
+  if (filters.checkedBaggageRequired) list = list.filter((offer) => offer.baggage?.checkedIncluded === true)
   if (selectedAirlines.length > 0) list = list.filter((offer) => offerMatchesSelectedAirlines(offer, selectedAirlines))
   return list
 }
@@ -809,6 +925,7 @@ function filtersFromRequest(request: SearchRequest | null | undefined): Filters 
     nonStop: request.nonStop,
     maxStopsFilter: request.maxStopsFilter,
     maxLayoverMinutes: request.maxLayoverMinutes,
-    baggageRequired: request.baggageRequired,
+    carryOnRequired: request.carryOnRequired,
+    checkedBaggageRequired: request.checkedBaggageRequired ?? request.baggageRequired,
   }
 }

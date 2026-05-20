@@ -1,5 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict"
+import { suggestLocations } from "../frontend/src/lib/api"
 import { filterLocationSuggestions, findLocationSuggestionMatch, normalizeLocationSuggestion } from "../frontend/src/lib/locations"
 import { rankLocationSuggestions as rankBackendLocationSuggestions } from "../src/location-suggestions"
 
@@ -73,4 +74,61 @@ test("location suggestions prefer IATA prefix, then city prefix, then country pr
     rankBackendLocationSuggestions("li", suggestions, 8).map((suggestion) => suggestion.code),
     ["LIM", "LIS", "MEX"],
   )
+})
+
+test("country prefixes with enough signal surface country airports without IATA noise", () => {
+  const suggestions = [
+    normalizeLocationSuggestion({ code: "ESP", city: "Stroudsburg-Pocono", country: "Estados Unidos", countryCode: "US", label: "ESP - Stroudsburg-Pocono, Estados Unidos" }),
+    normalizeLocationSuggestion({ code: "ACE", city: "Arrecife", country: "España", countryCode: "ES", label: "ACE - Arrecife, España" }),
+    normalizeLocationSuggestion({ code: "BCN", city: "Barcelona", country: "España", countryCode: "ES", label: "BCN - Barcelona, España" }),
+  ]
+
+  assert.deepEqual(
+    filterLocationSuggestions("espa", suggestions, 8).map((suggestion) => suggestion.code),
+    ["ACE", "BCN"],
+  )
+})
+
+test("backend location ranking expands country codes into country-name matches", () => {
+  const suggestions = [
+    { code: "MAD", city: "Madrid", country: "ES", countryCode: "ES", label: "Todos los aeropuertos, Madrid, España (MAD)" },
+    { code: "ESB", city: "Ankara", country: "TR", countryCode: "TR", label: "Aeropuerto Internacional Esenboga, Ankara, Turquía (ESB)" },
+    { code: "BCN", city: "Barcelona", country: "ES", countryCode: "ES", label: "Todos los aeropuertos, Barcelona, España (BCN)" },
+  ]
+
+  assert.deepEqual(
+    rankBackendLocationSuggestions("espa", suggestions, 8).map((suggestion) => suggestion.code),
+    ["MAD", "BCN"],
+  )
+})
+
+test("suggestLocations uses the combined provider autocomplete endpoint", async () => {
+  const previousFetch = globalThis.fetch
+  let requestedUrl = ""
+
+  globalThis.fetch = (async (input) => {
+    requestedUrl = typeof input === "string" || input instanceof URL
+      ? String(input)
+      : input.url
+
+    return new Response(JSON.stringify({
+      suggestions: [
+        { code: "BUE", city: "Buenos Aires", country: "Argentina", countryCode: "AR", label: "BUE - Buenos Aires, Argentina" },
+      ],
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })
+  }) as typeof fetch
+
+  try {
+    const suggestions = await suggestLocations("argen")
+    const url = new URL(requestedUrl, "http://localhost")
+
+    assert.equal(url.pathname, "/api/locations")
+    assert.equal(url.searchParams.get("providerId"), null)
+    assert.deepEqual(suggestions.map((suggestion) => suggestion.code), ["BUE"])
+  } finally {
+    globalThis.fetch = previousFetch
+  }
 })

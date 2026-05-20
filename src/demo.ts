@@ -26,7 +26,6 @@ async function main() {
     cabin: "ECONOMY",
     filters: {
       nonStop: true,
-      maxResults: 25,
     },
     coverageMode: "core",
     redirectMode: "best-effort",

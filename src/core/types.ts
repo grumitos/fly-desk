@@ -139,6 +139,8 @@ export interface SearchFilters {
   maxDepartureMinutes?: number;
   minArrivalMinutes?: number;
   maxArrivalMinutes?: number;
+  carryOnRequired?: boolean;
+  checkedBaggageRequired?: boolean;
   baggageRequired?: boolean;
   verifiedOnly?: boolean;
   exactPurchasePathOnly?: boolean;

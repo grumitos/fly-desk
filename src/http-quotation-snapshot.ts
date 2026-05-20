@@ -116,6 +116,8 @@ export function normalizeQuotationRequestSnapshot(input: unknown, offerInput?: u
       maxDepartureMinutes: quotationNumberValue(rawFilters?.maxDepartureMinutes),
       minArrivalMinutes: quotationNumberValue(rawFilters?.minArrivalMinutes),
       maxArrivalMinutes: quotationNumberValue(rawFilters?.maxArrivalMinutes),
+      carryOnRequired: quotationBoolValue(rawFilters?.carryOnRequired),
+      checkedBaggageRequired: quotationBoolValue(rawFilters?.checkedBaggageRequired),
       baggageRequired: quotationBoolValue(rawFilters?.baggageRequired),
       verifiedOnly: quotationBoolValue(rawFilters?.verifiedOnly),
       exactPurchasePathOnly: quotationBoolValue(rawFilters?.exactPurchasePathOnly),

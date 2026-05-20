@@ -78,7 +78,7 @@ export function SearchShell({
   const endDateLabel = mode === "flexible" ? "Salida hasta" : "Regreso"
   const dateFieldsDisabled = mode === "migration"
   const searchGridClassName = cn(
-    "grid grid-cols-1 gap-1.5 transition-[grid-template-columns] duration-200 ease-out",
+    "fd-search-grid grid grid-cols-2 gap-1.5 transition-[grid-template-columns,max-width] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]",
     "lg:grid-cols-[minmax(150px,1.2fr)_34px_minmax(150px,1.2fr)_minmax(128px,.85fr)_minmax(128px,.85fr)_minmax(144px,.9fr)_124px]",
   )
   const canUseTopbarControls = useCanUseTopbarControls()
@@ -412,7 +412,7 @@ export function SearchShell({
       {topbarControlsTarget ? createPortal(searchControls, topbarControlsTarget) : null}
       <section className="overflow-visible" aria-busy={loading}>
         {!shouldPortalControls && (
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="fd-search-controls-row mb-2 flex flex-wrap items-center justify-between gap-2">
             {searchControls}
           </div>
         )}
@@ -631,31 +631,34 @@ function SearchModeControls({
 }) {
   const flexibleControlsActive = mode === "flexible"
   const tripControlsDisabled = mode === "migration"
-  const displayedTrip = tripControlsDisabled ? "one-way" : trip
+  const displayedTrip: "round-trip" | "one-way" = tripControlsDisabled ? "one-way" : trip
 
   return (
     <div
       className={cn(
         "flex min-w-0 flex-wrap items-center gap-2",
-        topbar && "max-w-[calc(100vw-11rem)] justify-center",
+        topbar ? "max-w-[calc(100vw-11rem)] justify-center" : "w-full sm:w-auto",
       )}
     >
-      <SegmentedControl>
+      <SegmentedControl className={cn(!topbar && "flex min-w-0 flex-1 basis-full sm:inline-flex sm:flex-none sm:basis-auto")}>
         <SegmentButton
           active={mode === "exact"}
           onClick={() => onModeChange("exact")}
+          className={cn(!topbar && "flex-1 px-2 sm:flex-none sm:px-3")}
         >
           Exacto
         </SegmentButton>
         <SegmentButton
           active={mode === "flexible"}
           onClick={() => onModeChange("flexible")}
+          className={cn(!topbar && "flex-1 px-2 sm:flex-none sm:px-3")}
         >
           Flexible
         </SegmentButton>
         <SegmentButton
           active={mode === "migration"}
           onClick={() => onModeChange("migration")}
+          className={cn(!topbar && "flex-1 px-2 sm:flex-none sm:px-3")}
         >
           Migratorio
         </SegmentButton>
@@ -665,6 +668,7 @@ function SearchModeControls({
         aria-hidden={!flexibleControlsActive}
         className={cn(
           "fd-inline-reveal min-w-0",
+          !topbar && "flex-[1_1_100%] sm:flex-none",
           flexibleControlsActive ? "fd-inline-reveal-open" : "fd-inline-reveal-closed",
         )}
       >
@@ -673,16 +677,21 @@ function SearchModeControls({
           onStayNightsChange={onStayNightsChange}
           disabled={!flexibleControlsActive}
           stayNightsDisabled={trip !== "round-trip"}
+          stretch={!topbar}
         />
       </div>
 
-      <SegmentedControl disabled={tripControlsDisabled}>
+      <SegmentedControl
+        disabled={tripControlsDisabled}
+        className={cn(!topbar && "flex min-w-0 flex-1 basis-full sm:inline-flex sm:flex-none sm:basis-auto")}
+      >
         {tripTabs.map((item) => (
           <SegmentButton
             key={item.key}
             active={displayedTrip === item.key}
             disabled={tripControlsDisabled}
             onClick={() => onTripChange(item.key)}
+            className={cn(!topbar && "flex-1 px-2 sm:flex-none sm:px-3")}
           >
             <AppIcon name={item.icon} />
             {item.label}
@@ -918,7 +927,7 @@ function DateField({
         setOpen(nextOpen)
       }}
     >
-      <div className={cn("relative transition-[opacity,filter,transform] duration-200 ease-out", disabled && "fd-disabled-section")}>
+      <div className={cn("relative transition-[opacity,filter,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]", disabled && "fd-disabled-section")}>
         <label id={`${fieldId}-label`} className="fd-label pointer-events-none absolute left-3 top-2.5 z-10">
           <AnimatedDateLabel label={label} />
         </label>
@@ -976,9 +985,10 @@ function DateField({
 }
 
 function ControlHelper({ id, text }: { id: string; text?: string }) {
-  const hasText = Boolean(text)
+  if (!text) return null
+
   return (
-    <p id={id} className="fd-control-helper" role={hasText ? "alert" : undefined} aria-hidden={hasText ? undefined : true}>
+    <p id={id} className="fd-control-helper" role="alert">
       {text}
     </p>
   )
@@ -1006,22 +1016,25 @@ function FlexibleOptionsBar({
   onStayNightsChange,
   disabled = false,
   stayNightsDisabled,
+  stretch = false,
 }: {
   stayNights: number
   onStayNightsChange: (value: number) => void
   disabled?: boolean
   stayNightsDisabled: boolean
+  stretch?: boolean
 }) {
   const stayControlsDisabled = disabled || stayNightsDisabled
 
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-2">
+    <div className={cn("flex min-w-0 flex-wrap items-center gap-2", stretch && "w-full sm:w-auto")}>
       <div
         role="group"
         aria-disabled={stayControlsDisabled}
         aria-labelledby="flexible-stay-nights-label"
         className={cn(
-          "inline-flex h-8 items-center overflow-hidden rounded-lg border border-input bg-secondary p-0.5 transition-[background-color,border-color,opacity,filter,transform] duration-200 ease-out",
+          "inline-flex h-8 items-center overflow-hidden rounded-lg border border-input bg-secondary p-0.5 transition-[background-color,border-color,opacity,filter,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]",
+          stretch && "w-full justify-between sm:w-auto sm:justify-start",
           stayControlsDisabled && "fd-control-disabled-section",
         )}
       >

@@ -25,8 +25,9 @@ Extracted light colors:
 - Muted text: `#7b7974`
 - Surfaces: `#f8f8f6`, `#efeeeb`, `#ffffff`
 - Borders and soft states: `#1f1f1e26`, `#1f1f1e4d`, `#7b797426`, `#7b797466`
+- Product accent surface: `#e9e8e3`
 - Brand accent: `#d97757`
-- Focus/link blue: `#2977d6`
+- Focus ring: `#d97757`
 
 Extracted dark colors:
 
@@ -34,8 +35,9 @@ Extracted dark colors:
 - Muted text: `#c3c2b7`, `#97958c`
 - Surfaces: `#1f1f1e`, `#2c2c2a`, `#121212`, `#000000`
 - Borders and soft states: `#e2e1da26`, `#e2e1da4d`, `#97958c26`, `#97958c66`
+- Product accent surface: `#121212`
 - Brand accent: `#d97757`
-- Focus/link blue: `#3886e5`
+- Focus ring: `#d97757`
 
 | Token | Light | Dark | Use |
 | --- | --- | --- | --- |
@@ -49,13 +51,13 @@ Extracted dark colors:
 | `border` / `input` | `#1f1f1e26` | `#e2e1da26` | Dividers and control edges |
 | `primary` | `#d97757` | `#d97757` | Main action and selection |
 | `primary-foreground` | `#ffffff` | `#ffffff` | Text on primary action |
-| `accent-soft` | `#7b797426` | `#97958c26` | Hover, selected, and badges without saturated fills |
+| `accent` | `#e9e8e3` | `#121212` | Topbar, hover, selected, passive badges, and filled segmented surfaces |
 | `success` | `#373734` | `#c3c2b7` | Ready, direct, complete |
 | `warning` | `#d97757` | `#d97757` | Pending, one stop, attention |
 | `destructive` / `danger` | `#d97757` | `#d97757` | Error or blocked state |
-| `ring` / `focus` | `#2977d6` | `#3886e5` | Visible keyboard focus |
+| `ring` / `focus` | `#d97757` | `#d97757` | Visible keyboard focus |
 
-Selection and hover states must use the extracted neutral translucent colors (`#7b797426` or `#97958c26`) unless the control is an intentional CTA. Do not reintroduce full orange fills for passive highlight, table row selection, badges, or hover surfaces.
+Selection and hover states must use `accent` or neutral translucent mixes unless the control is an intentional CTA. Do not reintroduce full orange fills for passive highlight, table row selection, badges, or hover surfaces.
 Solid orange surfaces must use white foreground text/icons for contrast and legibility.
 
 ## Typography

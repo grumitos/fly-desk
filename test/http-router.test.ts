@@ -20,7 +20,7 @@ import {
   resetCostamarWarmupStateForTests,
   setCostamarWarmupGeneratorForTests,
 } from "../src/local-costamar";
-import { routeRequest } from "../src/http-router";
+import { routeRequest, SEARCH_REVALIDATION_CACHE_TTL_MS } from "../src/http-router";
 import { getRuntime } from "../src/runtime";
 import { withServer } from "./helpers/server";
 
@@ -161,6 +161,10 @@ function buildCostamarOffer(url: string): CanonicalOffer {
     warnings: [],
   };
 }
+
+test("search revalidation cache ttl is four hours", () => {
+  assert.equal(SEARCH_REVALIDATION_CACHE_TTL_MS, 4 * 60 * 60 * 1000);
+});
 
 function buildCostamarMatrixCell(url: string): MatrixCell {
   const offer = buildCostamarOffer(url);
@@ -1880,7 +1884,7 @@ test("one-way stay-range preserves omitted maxResults and night bounds", async (
   });
 });
 
-test("exact searches preserve omitted maxResults so page-based caps can be supplied by the client", async () => {
+test("exact searches preserve omitted maxResults in the public request", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/search`, {
       method: "POST",

@@ -9,24 +9,91 @@ function normalizeLocationSearchText(value: unknown): string {
     .trim();
 }
 
+let regionDisplayNames: Intl.DisplayNames | null | undefined;
+
+function countryNameFromCode(code: unknown): string {
+  const normalizedCode = String(code ?? "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(normalizedCode)) {
+    return "";
+  }
+
+  if (regionDisplayNames === undefined) {
+    try {
+      regionDisplayNames = new Intl.DisplayNames(["es"], { type: "region" });
+    } catch {
+      regionDisplayNames = null;
+    }
+  }
+
+  return String(regionDisplayNames?.of(normalizedCode) ?? "").trim();
+}
+
+function compactLength(value: string): number {
+  return value.replace(/\s+/g, "").length;
+}
+
+function countrySearchTexts(suggestion: LocationSuggestion): string[] {
+  return Array.from(new Set([
+    normalizeLocationSearchText(suggestion.country),
+    normalizeLocationSearchText(suggestion.countryCode),
+    normalizeLocationSearchText(countryNameFromCode(suggestion.countryCode)),
+  ].filter(Boolean)));
+}
+
+function bestPrefixCoverage(query: string, candidates: string[]): number | undefined {
+  const queryLength = compactLength(query);
+  if (queryLength === 0) {
+    return undefined;
+  }
+
+  let best: number | undefined;
+  for (const candidate of candidates) {
+    if (!candidate.startsWith(query)) {
+      continue;
+    }
+
+    const candidateLength = compactLength(candidate);
+    if (candidateLength === 0) {
+      continue;
+    }
+
+    const coverage = queryLength / candidateLength;
+    best = best === undefined ? coverage : Math.max(best, coverage);
+  }
+
+  return best;
+}
+
 function rankLocationSuggestion(input: string, suggestion: LocationSuggestion, index: number): number | undefined {
   const query = normalizeLocationSearchText(input);
   if (!query) {
     return undefined;
   }
 
+  const queryLength = compactLength(query);
   const code = normalizeLocationSearchText(suggestion.code);
   const city = normalizeLocationSearchText(suggestion.city);
-  const country = normalizeLocationSearchText(suggestion.country);
   const cityCountry = normalizeLocationSearchText([suggestion.city, suggestion.country].filter(Boolean).join(" "));
+  const countryCoverage = bestPrefixCoverage(query, countrySearchTexts(suggestion));
+  const countryIsExact = countryCoverage === 1;
+  const countryHasEnoughSignal = queryLength >= 4 && (countryCoverage ?? 0) >= 0.5;
 
-  if (code.startsWith(query)) {
+  if (queryLength <= 3 && code.startsWith(query)) {
     return (code === query ? -10 : 0) + index / 1000;
+  }
+  if (city === query || cityCountry === query) {
+    return 20 + index / 1000;
+  }
+  if (countryIsExact) {
+    return 40 + index / 1000;
+  }
+  if (countryHasEnoughSignal) {
+    return 60 + index / 1000;
   }
   if (city.startsWith(query) || cityCountry.startsWith(query)) {
     return 100 + index / 1000;
   }
-  if (country.startsWith(query)) {
+  if (countryCoverage !== undefined) {
     return 200 + index / 1000;
   }
 

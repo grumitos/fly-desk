@@ -12,6 +12,13 @@ import {
   type ReactNode,
 } from "react"
 import { ResultCard } from "@/components/results/ResultCard"
+import {
+  buildResultListItems,
+  countOffersInResultItems,
+  resultListItemContainsOffer,
+  type ResultListItem,
+  type ResultOfferGroup,
+} from "@/components/results/result-groups"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
 import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-control"
@@ -202,6 +209,7 @@ function ResultsPanelBase({
         onLayoutColumnsMeasured: layoutEditor.initializeFromMeasuredColumns,
         resultsLayout: activeResultsLayout,
         resultsLayoutLoading,
+        cached: isRevalidatingCachedSearch,
       })}
     </section>
   )
@@ -272,6 +280,7 @@ function renderBody({
   onLayoutColumnsMeasured,
   resultsLayout,
   resultsLayoutLoading,
+  cached,
 }: {
   loading: boolean
   results: SearchJobResponse | null
@@ -289,6 +298,7 @@ function renderBody({
   onLayoutColumnsMeasured: (columns: ResultsColumnLayout) => void
   resultsLayout: ResultsColumnLayout | null
   resultsLayoutLoading: boolean
+  cached: boolean
 }) {
   if (!results && !loading) {
     return (
@@ -322,23 +332,11 @@ function renderBody({
   }
 
   if (resultsLayoutLoading && offers.length > 0) {
-    return (
-      <div className="flex-1 space-y-2.5 overflow-hidden p-3">
-        {Array.from({ length: Math.min(Math.max(offers.length, 1), RESULTS_PAGE_SIZE_FALLBACK) }).map((_, index) => (
-          <Skeleton key={index} className="h-[104px] w-full" />
-        ))}
-      </div>
-    )
+    return <ResultsLoadingSkeleton rows={Math.max(offers.length, RESULTS_PAGE_SIZE_FALLBACK)} />
   }
 
   if (loading && offers.length === 0) {
-    return (
-      <div className="flex-1 space-y-2.5 overflow-hidden p-3">
-        {Array.from({ length: RESULTS_PAGE_SIZE_FALLBACK }).map((_, index) => (
-          <Skeleton key={index} className="h-[104px] w-full" />
-        ))}
-      </div>
-    )
+    return <ResultsLoadingSkeleton />
   }
 
   if (!loading && results && offers.length === 0) {
@@ -366,7 +364,20 @@ function renderBody({
       onLayoutBoundaryResize={onLayoutBoundaryResize}
       onLayoutColumnsMeasured={onLayoutColumnsMeasured}
       resultsLayout={resultsLayout}
+      cached={cached}
     />
+  )
+}
+
+function ResultsLoadingSkeleton({ rows = RESULTS_PAGE_SIZE_MAX }: { rows?: number }) {
+  const rowCount = Math.max(1, Math.min(rows, RESULTS_PAGE_SIZE_MAX))
+
+  return (
+    <div className="grid min-h-0 flex-1 auto-rows-[104px] gap-2.5 overflow-hidden p-3" aria-hidden="true">
+      {Array.from({ length: rowCount }).map((_, index) => (
+        <Skeleton key={index} className="h-full w-full" />
+      ))}
+    </div>
   )
 }
 
@@ -382,6 +393,7 @@ function PaginatedResultsList({
   onLayoutBoundaryResize,
   onLayoutColumnsMeasured,
   resultsLayout,
+  cached,
 }: {
   offers: CanonicalOffer[]
   passengerCount: number
@@ -394,31 +406,35 @@ function PaginatedResultsList({
   onLayoutBoundaryResize: (leftKey: ResultsLayoutColumnKey, rightKey: ResultsLayoutColumnKey, delta: number) => void
   onLayoutColumnsMeasured: (columns: ResultsColumnLayout) => void
   resultsLayout: ResultsColumnLayout | null
+  cached: boolean
 }) {
-  const { pageSize, viewportRef } = useAdaptiveResultsPageSize(offers.length)
+  const resultItems = useMemo(() => buildResultListItems(offers), [offers])
+  const { pageSize, viewportRef } = useAdaptiveResultsPageSize(resultItems.length)
   const listRef = useRef<HTMLDivElement | null>(null)
   const layoutStyle = useMemo(() => (
     resultsLayout ? resultsLayoutStyleVars(resultsLayout) : undefined
   ), [resultsLayout])
-  const pageKey = useMemo(() => offerPaginationKey(offers), [offers])
+  const pageKey = useMemo(() => resultItemsPaginationKey(resultItems), [resultItems])
   const [pageState, setPageState] = useState({ key: "", index: 0 })
-  const pageCount = Math.max(1, Math.ceil(offers.length / pageSize))
+  const pageCount = Math.max(1, Math.ceil(resultItems.length / pageSize))
   const selectedPageIndex = useMemo(() => {
     if (!selectedOfferId) return
 
-    const selectedIndex = offers.findIndex((offer) => offer.id === selectedOfferId)
+    const selectedIndex = resultItems.findIndex((item) => resultListItemContainsOffer(item, selectedOfferId))
     if (selectedIndex < 0) return
 
     return Math.floor(selectedIndex / pageSize)
-  }, [offers, pageSize, selectedOfferId])
+  }, [pageSize, resultItems, selectedOfferId])
 
   const requestedPageIndex = pageState.key === pageKey
     ? pageState.index
     : selectedPageIndex ?? 0
   const safePageIndex = Math.max(0, Math.min(requestedPageIndex, pageCount - 1))
   const startIndex = safePageIndex * pageSize
-  const pageOffers = offers.slice(startIndex, startIndex + pageSize)
-  const endIndex = startIndex + pageOffers.length
+  const pageItems = resultItems.slice(startIndex, startIndex + pageSize)
+  const offersBeforePage = countOffersInResultItems(resultItems.slice(0, startIndex))
+  const pageOfferCount = countOffersInResultItems(pageItems)
+  const endIndex = offersBeforePage + pageOfferCount
   const handlePageChange = (nextPageIndex: number) => {
     setPageState({
       key: pageKey,
@@ -427,13 +443,13 @@ function PaginatedResultsList({
   }
 
   useLayoutEffect(() => {
-    if (!layoutEditorEnabled || resultsLayout || pageOffers.length === 0) return
+    if (!layoutEditorEnabled || resultsLayout || pageItems.length === 0) return
 
     const measured = measureCurrentResultCardColumns(listRef.current)
     if (measured) {
       onLayoutColumnsMeasured(measured)
     }
-  }, [layoutEditorEnabled, onLayoutColumnsMeasured, pageOffers.length, resultsLayout])
+  }, [layoutEditorEnabled, onLayoutColumnsMeasured, pageItems.length, resultsLayout])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-2.5" data-testid="results-page-shell">
@@ -445,21 +461,33 @@ function PaginatedResultsList({
         data-testid="results-page-body"
       >
         <div
+          key={pageKey}
           ref={listRef}
           className={cn(
             "fd-results-list grid content-start gap-2.5 pt-1",
             resultsLayout && "fd-results-list--fixed-layout",
+            cached && "fd-results-list--cached",
           )}
           style={layoutStyle}
         >
-          {pageOffers.map((offer) => (
-            <ResultCard
-              key={offer.id}
-              offer={offer}
-              selected={selectedOfferId === offer.id}
-              passengerCount={passengerCount}
-              onSelect={onSelectOffer}
-            />
+          {pageItems.map((item) => (
+            item.type === "group" ? (
+              <ResultOfferGroupCard
+                key={item.id}
+                group={item.group}
+                selectedOfferId={selectedOfferId}
+                passengerCount={passengerCount}
+                onSelectOffer={onSelectOffer}
+              />
+            ) : (
+              <ResultCard
+                key={item.id}
+                offer={item.offer}
+                selected={selectedOfferId === item.offer.id}
+                passengerCount={passengerCount}
+                onSelect={onSelectOffer}
+              />
+            )
           ))}
           {layoutEditorEnabled && layoutEditorReady && (
             <ResultsLayoutGuideCard
@@ -476,13 +504,55 @@ function PaginatedResultsList({
           endIndex={endIndex}
           pageCount={pageCount}
           pageIndex={safePageIndex}
-          startIndex={startIndex}
+          startIndex={offersBeforePage}
           totalCount={offers.length}
           onPageChange={handlePageChange}
         />
       )}
     </div>
   )
+}
+
+function ResultOfferGroupCard({
+  group,
+  selectedOfferId,
+  passengerCount,
+  onSelectOffer,
+}: {
+  group: ResultOfferGroup
+  selectedOfferId?: string
+  passengerCount: number
+  onSelectOffer: (offer: CanonicalOffer) => void
+}) {
+  return (
+    <section
+      className="fd-result-group"
+      aria-label={`${group.providerLabel}: ${resultGroupTitle(group.offers.length)}`}
+      data-testid="result-offer-group"
+    >
+      <div className="fd-result-group__header">
+        <span className="fd-result-group__title">{resultGroupTitle(group.offers.length)}</span>
+        <span className="fd-result-group__meta">{group.providerLabel}</span>
+      </div>
+      <div className="fd-result-group__stack">
+        {group.offers.map((offer) => (
+          <ResultCard
+            key={offer.id}
+            offer={offer}
+            selected={selectedOfferId === offer.id}
+            passengerCount={passengerCount}
+            onSelect={onSelectOffer}
+          />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function resultGroupTitle(count: number) {
+  return count === 1
+    ? "1 horario"
+    : `${count} horarios al mismo precio`
 }
 
 function ResultsLayoutEditor({
@@ -1300,7 +1370,7 @@ function useAdaptiveResultsPageSize(itemCount: number) {
       const list = node.querySelector<HTMLElement>(".fd-results-list")
       const availableHeight = Math.max(0, node.clientHeight - RESULTS_LIST_TOP_INSET_PX)
       const measuredCards = list
-        ? Array.from(list.querySelectorAll<HTMLElement>(".fd-result-card:not(.fd-result-card--layout-guide)"))
+        ? Array.from(list.querySelectorAll<HTMLElement>(".fd-result-group, .fd-result-card:not(.fd-result-card--layout-guide)"))
         : []
       const listStyle = list ? window.getComputedStyle(list) : null
       const measuredGap = listStyle
@@ -1353,17 +1423,17 @@ function useAdaptiveResultsPageSize(itemCount: number) {
   return { pageSize, viewportRef }
 }
 
-function offerPaginationKey(offers: CanonicalOffer[]) {
-  if (offers.length === 0) return "empty"
-  if (offers.length <= 6) return offers.map((offer) => offer.id).join("|")
+function resultItemsPaginationKey(items: ResultListItem[]) {
+  if (items.length === 0) return "empty"
+  if (items.length <= 6) return items.map((item) => item.id).join("|")
 
-  const middleIndex = Math.floor(offers.length / 2)
+  const middleIndex = Math.floor(items.length / 2)
   return [
-    offers.length,
-    offers[0]?.id,
-    offers[1]?.id,
-    offers[middleIndex]?.id,
-    offers[offers.length - 1]?.id,
+    items.length,
+    items[0]?.id,
+    items[1]?.id,
+    items[middleIndex]?.id,
+    items[items.length - 1]?.id,
   ].join("|")
 }
 

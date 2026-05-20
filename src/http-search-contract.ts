@@ -140,8 +140,6 @@ function normalizeRequest(
       includedAirlineCodes: stringList(filters.includedAirlineCodes),
       excludedAirlineCodes: stringList(filters.excludedAirlineCodes),
       maxPrice: numberValue(filters.maxPrice),
-      maxResults: numberValue(filters.maxResults),
-      compactAllOffers: booleanValue(filters.compactAllOffers, false),
       maxTotalDurationMinutes: numberValue(filters.maxTotalDurationMinutes),
       maxLayoverMinutes: numberValue(filters.maxLayoverMinutes),
       maxStops: numberValue(filters.maxStops),
@@ -149,6 +147,8 @@ function normalizeRequest(
       maxDepartureMinutes: numberValue(filters.maxDepartureMinutes),
       minArrivalMinutes: numberValue(filters.minArrivalMinutes),
       maxArrivalMinutes: numberValue(filters.maxArrivalMinutes),
+      carryOnRequired: booleanValue(filters.carryOnRequired, false),
+      checkedBaggageRequired: booleanValue(filters.checkedBaggageRequired, false),
       baggageRequired: booleanValue(filters.baggageRequired, false),
       verifiedOnly: booleanValue(filters.verifiedOnly, false),
       exactPurchasePathOnly: booleanValue(filters.exactPurchasePathOnly, false),
@@ -315,7 +315,6 @@ function isExtendedOneWayMonthScan(request: SearchRequest): boolean {
   const leg = request.legs[0];
   return request.tripType === "one-way"
     && request.searchMode === "stay-range"
-    && request.filters.compactAllOffers === true
     && !leg.returnDate
     && !leg.returnStart
     && !leg.returnEnd;

@@ -24,8 +24,7 @@ const API_BASE = ""
 const MIGRATION_MONTH_COUNT = 8
 const MIGRATION_CONCURRENT_REQUESTS = 2
 const MIGRATION_POLL_INTERVAL_MS = 900
-const MIGRATION_POLL_LIMIT = 90
-const MIGRATION_MONTH_RESULT_LIMIT = 25
+const MIGRATION_MONTH_LEGACY_RESULT_HINT = 25
 const MIGRATION_MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
   month: "long",
   year: "numeric",
@@ -375,7 +374,7 @@ async function getJson<T>(url: string, options: RequestOptions = {}): Promise<T>
 export async function suggestLocations(query: string, limit = 8): Promise<LocationSuggestion[]> {
   if (query.trim().length < 1) return []
   const data = await getJson<{ suggestions: LocationSuggestion[] }>(
-    `${API_BASE}/api/locations?q=${encodeURIComponent(query)}&limit=${limit}&providerId=costamar`
+    `${API_BASE}/api/locations?q=${encodeURIComponent(query)}&limit=${limit}`
   )
   const suggestions = normalizeLocationSuggestions(data.suggestions)
   const rankedSuggestions = filterLocationSuggestions(query, suggestions, limit)
@@ -451,6 +450,8 @@ export type BackendSearchRequest = {
   }
   filters?: {
     nonStop?: boolean
+    carryOnRequired?: boolean
+    checkedBaggageRequired?: boolean
     baggageRequired?: boolean
     maxStops?: number
     maxLayoverMinutes?: number
@@ -528,7 +529,9 @@ export function toBackendPayload(request: SearchRequest, sortMode: SortMode): Ba
       },
       filters: {
         nonStop: Boolean(request.nonStop),
-        baggageRequired: Boolean(request.baggageRequired),
+        carryOnRequired: Boolean(request.carryOnRequired),
+        checkedBaggageRequired: Boolean(request.checkedBaggageRequired ?? request.baggageRequired),
+        baggageRequired: Boolean(request.checkedBaggageRequired ?? request.baggageRequired),
         maxStops,
         maxLayoverMinutes: request.maxLayoverMinutes ? Number(request.maxLayoverMinutes) : undefined,
         includedAirlineCodes: request.includedAirlineCodes?.length ? request.includedAirlineCodes : undefined,
@@ -562,6 +565,8 @@ export function fromBackendRequest(request: BackendSearchRequest | undefined): S
     flexibleMode: request?.flexibleMode,
     nonStop: request?.filters?.nonStop,
     maxStopsFilter: typeof request?.filters?.maxStops === "number" ? String(request.filters.maxStops) : undefined,
+    carryOnRequired: request?.filters?.carryOnRequired,
+    checkedBaggageRequired: request?.filters?.checkedBaggageRequired ?? request?.filters?.baggageRequired,
     baggageRequired: request?.filters?.baggageRequired,
     maxLayoverMinutes: request?.filters?.maxLayoverMinutes?.toString(),
     includedAirlineCodes: request?.filters?.includedAirlineCodes,
@@ -914,7 +919,7 @@ function migrationRequestForMonth(request: SearchRequest, range: MigrationMonthR
     returnEnd: undefined,
     flexibleMode: undefined,
     stayNights: undefined,
-    maxResults: MIGRATION_MONTH_RESULT_LIMIT,
+    maxResults: MIGRATION_MONTH_LEGACY_RESULT_HINT,
     compactAllOffers: true,
   }
 }
@@ -1166,7 +1171,7 @@ export async function startMigrationSearch(
         let job = await startSearch(migrationRequestForMonth(request, range), "cheapest", options)
         let lastRevision = job.revision
 
-        for (let attempt = 0; attempt <= MIGRATION_POLL_LIMIT; attempt += 1) {
+        while (true) {
           const offers = normalizeMigrationOffers(job, range)
           const offer = cheapestOffer(offers)
           monthResults[index] = {
@@ -1183,7 +1188,7 @@ export async function startMigrationSearch(
           }
           emitProgress()
 
-          if (job.searchComplete || attempt === MIGRATION_POLL_LIMIT) break
+          if (job.searchComplete) break
 
           await delay(MIGRATION_POLL_INTERVAL_MS, options.signal)
           const polled = await pollSearch(job.searchJobId, lastRevision, options)

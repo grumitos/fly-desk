@@ -57,7 +57,6 @@ import {
   verifyCostamarTokenLive,
 } from "./provider-context";
 import { resolveQuotationUsdToPenRateInfo, resolveStandaloneUsdToPenRateInfo } from "./quotation-exchange-rate";
-import { limitSearchResponseForPagination } from "./search-limits";
 import { normalizeQuotationOfferSnapshot, normalizeQuotationRequestSnapshot } from "./http-quotation-snapshot";
 import { runProviderMatrixInWorker, runProviderSearchInWorker } from "./search-worker-client";
 import { collectTempArtifactDiagnostics } from "./temp-artifacts";
@@ -197,8 +196,8 @@ const RESULTS_LAYOUT_TARGET_TOTAL = RESULTS_LAYOUT_COLUMNS.reduce(
   0,
 );
 
-const SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS = 30 * 60 * 1000;
-const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
+export const SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
+export const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
   const raw = Number(process.env.SEARCH_REVALIDATION_CACHE_TTL_MS ?? SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS);
   return Number.isFinite(raw) && raw >= 0
     ? raw
@@ -1627,23 +1626,22 @@ async function handleSearchRequest(
       providerIds,
       providerStates,
     );
-    const limited = limitSearchResponseForPagination(normalizedRequest, materialized);
 
     runtime.sessions.updateSearchJob(job.id, (current) => ({
       ...current,
       ...(current.status === "cancelled"
         ? {}
         : {
-            offers: limited.offers,
-            allOffers: limited.allOffers ?? limited.offers,
+            offers: materialized.offers,
+            allOffers: materialized.allOffers ?? materialized.offers,
             searchMeta: {
-              ...limited.searchMeta,
+              ...materialized.searchMeta,
               requestedAt: current.searchMeta.requestedAt,
-              partial: limited.searchMeta.partial,
-              searchState: limited.searchMeta.searchState,
+              partial: materialized.searchMeta.partial,
+              searchState: materialized.searchMeta.searchState,
             },
-            providerMeta: limited.providerMeta,
-            warnings: limited.warnings,
+            providerMeta: materialized.providerMeta,
+            warnings: materialized.warnings,
             status,
             error: undefined,
           }),
