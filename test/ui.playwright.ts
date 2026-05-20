@@ -1792,12 +1792,12 @@ test("normal results wait for saved column layout before drawing cards", async (
 
     assert.deepEqual(layout, {
       fixed: true,
-      carrier: "117fr",
-      dates: "260fr",
-      duration: "94fr",
-      stops: "145fr",
-      price: "127fr",
-      links: "40fr",
+      carrier: "155fr",
+      dates: "345fr",
+      duration: "125fr",
+      stops: "192fr",
+      price: "169fr",
+      links: "53fr",
     });
   }, { autoOpen: false });
 });

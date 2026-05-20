@@ -2323,12 +2323,12 @@ test("results layout endpoints persist and read back the saved column widths loc
   const layoutFile = join(process.cwd(), "config", "results-layout.json");
   const previousLayout = existsSync(layoutFile) ? readFileSync(layoutFile, "utf8") : null;
   const columns = {
-    carrier: 208,
-    dates: 136,
-    duration: 148,
-    stops: 192,
-    price: 236,
-    links: 84,
+    carrier: 172,
+    dates: 318,
+    duration: 126,
+    stops: 184,
+    price: 189,
+    links: 50,
   };
 
   try {
@@ -2360,7 +2360,7 @@ test("results layout endpoints persist and read back the saved column widths loc
       };
 
       assert.equal(savePayload.ok, true);
-      assert.equal(savePayload.layout?.version, 1);
+      assert.equal(savePayload.layout?.version, 2);
       assert.deepEqual(savePayload.layout?.columns, columns);
       assert.match(savePayload.layout?.savedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
 
@@ -2379,6 +2379,64 @@ test("results layout endpoints persist and read back the saved column widths loc
     } else {
       mkdirSync(join(process.cwd(), "config"), { recursive: true });
       writeFileSync(layoutFile, previousLayout, "utf8");
+    }
+  }
+});
+
+test("results layout endpoint migrates legacy column widths to the current result width", async () => {
+  const layoutFile = join(process.cwd(), "config", "results-layout.json");
+  const previousLayout = existsSync(layoutFile) ? readFileSync(layoutFile, "utf8") : null;
+
+  try {
+    mkdirSync(join(process.cwd(), "config"), { recursive: true });
+    writeFileSync(layoutFile, JSON.stringify({
+      version: 1,
+      savedAt: "2026-05-19T23:11:00.000Z",
+      columns: {
+        carrier: 112,
+        dates: 314,
+        duration: 98,
+        stops: 147,
+        price: 124,
+        links: 44,
+      },
+    }, null, 2));
+
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/results-layout`);
+      assert.equal(response.status, 200);
+      const payload = await response.json() as {
+        layout?: {
+          version?: number;
+          savedAt?: string;
+          columns?: Record<string, number>;
+        } | null;
+      };
+
+      assert.equal(payload.layout?.version, 2);
+      assert.equal(payload.layout?.savedAt, "2026-05-19T23:11:00.000Z");
+      assert.deepEqual(payload.layout?.columns, {
+        carrier: 139,
+        dates: 389,
+        duration: 121,
+        stops: 182,
+        price: 154,
+        links: 54,
+      });
+
+      const migratedFile = JSON.parse(readFileSync(layoutFile, "utf8")) as {
+        version?: number;
+        columns?: Record<string, number>;
+      };
+      assert.equal(migratedFile.version, 2);
+      assert.deepEqual(migratedFile.columns, payload.layout?.columns);
+    });
+  } finally {
+    if (previousLayout === null) {
+      rmSync(layoutFile, { force: true });
+    } else {
+      mkdirSync(join(process.cwd(), "config"), { recursive: true });
+      writeFileSync(layoutFile, previousLayout);
     }
   }
 });

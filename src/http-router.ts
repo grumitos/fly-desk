@@ -184,6 +184,18 @@ const RESULTS_LAYOUT_COLUMNS = [
   "price",
   "links",
 ] as const satisfies readonly ResultsLayoutColumnKey[];
+const RESULTS_LAYOUT_DEFAULT_COLUMNS = {
+  carrier: 139,
+  dates: 389,
+  duration: 121,
+  stops: 182,
+  price: 154,
+  links: 54,
+} as const satisfies Record<ResultsLayoutColumnKey, number>;
+const RESULTS_LAYOUT_TARGET_TOTAL = RESULTS_LAYOUT_COLUMNS.reduce(
+  (sum, key) => sum + RESULTS_LAYOUT_DEFAULT_COLUMNS[key],
+  0,
+);
 
 const SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS = 30 * 60 * 1000;
 const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
@@ -213,7 +225,7 @@ function cachedBackgroundSearchStartDelayMs(): number {
 }
 
 const RESULTS_LAYOUT_FILE = path.resolve(__dirname, "..", "config", "results-layout.json");
-const RESULTS_LAYOUT_VERSION = 1;
+const RESULTS_LAYOUT_VERSION = 2;
 
 function shouldRunBackgroundSearchJobs(): boolean {
   return process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS !== "1";
@@ -309,7 +321,7 @@ function applyProviderDiagnosticSummary(
   });
 }
 
-function normalizeResultsLayoutColumns(
+function readRawResultsLayoutColumns(
   input: Partial<Record<ResultsLayoutColumnKey, unknown>> | undefined,
 ): Record<ResultsLayoutColumnKey, number> | undefined {
   if (!input || typeof input !== "object") {
@@ -332,6 +344,46 @@ function normalizeResultsLayoutColumns(
     : undefined;
 }
 
+function scaleResultsLayoutColumns(
+  columns: Record<ResultsLayoutColumnKey, number>,
+): Record<ResultsLayoutColumnKey, number> {
+  const total = RESULTS_LAYOUT_COLUMNS.reduce((sum, key) => sum + Math.max(0, columns[key]), 0);
+  if (total <= 0) {
+    return { ...RESULTS_LAYOUT_DEFAULT_COLUMNS };
+  }
+
+  const scaled = RESULTS_LAYOUT_COLUMNS.map((key) => {
+    const exact = Math.max(0, columns[key]) / total * RESULTS_LAYOUT_TARGET_TOTAL;
+    const floor = Math.floor(exact);
+    return { key, floor, fraction: exact - floor };
+  });
+  let remainder = RESULTS_LAYOUT_TARGET_TOTAL - scaled.reduce((sum, entry) => sum + entry.floor, 0);
+  const byFraction = [...scaled].sort((left, right) => right.fraction - left.fraction);
+  for (const entry of byFraction) {
+    if (remainder <= 0) {
+      break;
+    }
+    entry.floor += 1;
+    remainder -= 1;
+  }
+
+  return Object.fromEntries(scaled.map((entry) => [entry.key, entry.floor])) as Record<ResultsLayoutColumnKey, number>;
+}
+
+function normalizeResultsLayoutColumns(
+  input: Partial<Record<ResultsLayoutColumnKey, unknown>> | undefined,
+): Record<ResultsLayoutColumnKey, number> | undefined {
+  const rawColumns = readRawResultsLayoutColumns(input);
+  return rawColumns ? scaleResultsLayoutColumns(rawColumns) : undefined;
+}
+
+function resultsLayoutColumnsEqual(
+  left: Record<ResultsLayoutColumnKey, number>,
+  right: Record<ResultsLayoutColumnKey, number>,
+): boolean {
+  return RESULTS_LAYOUT_COLUMNS.every((key) => left[key] === right[key]);
+}
+
 async function readResultsLayoutFile(): Promise<{
   version: number;
   savedAt: string;
@@ -344,16 +396,28 @@ async function readResultsLayoutFile(): Promise<{
       savedAt?: unknown;
       columns?: Partial<Record<ResultsLayoutColumnKey, unknown>>;
     };
-    const columns = normalizeResultsLayoutColumns(parsed?.columns);
+    const rawColumns = readRawResultsLayoutColumns(parsed?.columns);
+    if (!rawColumns) {
+      return null;
+    }
+
+    const columns = scaleResultsLayoutColumns(rawColumns);
     if (!columns) {
       return null;
     }
 
-    return {
+    const savedAt = typeof parsed?.savedAt === "string" ? parsed.savedAt : "";
+    const layout = {
       version: RESULTS_LAYOUT_VERSION,
-      savedAt: typeof parsed?.savedAt === "string" ? parsed.savedAt : "",
+      savedAt,
       columns,
     };
+
+    if (parsed?.version !== RESULTS_LAYOUT_VERSION || !resultsLayoutColumnsEqual(rawColumns, columns)) {
+      await writeResultsLayoutFile(columns, savedAt);
+    }
+
+    return layout;
   } catch {
     return null;
   }
@@ -361,15 +425,17 @@ async function readResultsLayoutFile(): Promise<{
 
 async function writeResultsLayoutFile(
   columns: Record<ResultsLayoutColumnKey, number>,
+  savedAt = new Date().toISOString(),
 ): Promise<{
   version: number;
   savedAt: string;
   columns: Record<ResultsLayoutColumnKey, number>;
 }> {
+  const normalizedColumns = scaleResultsLayoutColumns(columns);
   const payload = {
     version: RESULTS_LAYOUT_VERSION,
-    savedAt: new Date().toISOString(),
-    columns,
+    savedAt,
+    columns: normalizedColumns,
   };
 
   await mkdir(path.dirname(RESULTS_LAYOUT_FILE), { recursive: true });

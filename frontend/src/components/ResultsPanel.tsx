@@ -38,12 +38,12 @@ const RESULTS_EXTRA_ROW_MIN_BLANK_PX = 28
 const RESULTS_LAYOUT_FILE_HINT = "config/results-layout.json"
 const RESULTS_LAYOUT_RESIZE_STEP_PX = 8
 const RESULTS_COLUMN_DEFINITIONS = [
-  { key: "carrier", label: "Aerolínea", defaultWidth: 112 },
-  { key: "dates", label: "Fechas", defaultWidth: 314 },
-  { key: "duration", label: "Duración", defaultWidth: 98 },
-  { key: "stops", label: "Escalas", defaultWidth: 147 },
-  { key: "price", label: "Precio", defaultWidth: 124 },
-  { key: "links", label: "Proveedor", defaultWidth: 44 },
+  { key: "carrier", label: "Aerolínea", defaultWidth: 139 },
+  { key: "dates", label: "Fechas", defaultWidth: 389 },
+  { key: "duration", label: "Duración", defaultWidth: 121 },
+  { key: "stops", label: "Escalas", defaultWidth: 182 },
+  { key: "price", label: "Precio", defaultWidth: 154 },
+  { key: "links", label: "Proveedor", defaultWidth: 54 },
 ] as const satisfies ReadonlyArray<{
   key: ResultsLayoutColumnKey
   label: string
@@ -52,6 +52,10 @@ const RESULTS_COLUMN_DEFINITIONS = [
 const DEFAULT_RESULTS_COLUMN_LAYOUT = Object.fromEntries(
   RESULTS_COLUMN_DEFINITIONS.map((column) => [column.key, column.defaultWidth]),
 ) as ResultsColumnLayout
+const RESULTS_LAYOUT_TARGET_TOTAL = RESULTS_COLUMN_DEFINITIONS.reduce(
+  (sum, column) => sum + column.defaultWidth,
+  0,
+)
 
 interface ResultsPanelProps {
   results: SearchJobResponse | null
@@ -832,12 +836,40 @@ function nextResultsLayoutColumnKey(key: ResultsLayoutColumnKey): ResultsLayoutC
 }
 
 function normalizeResultsLayoutColumns(columns: ResultsColumnLayout): ResultsColumnLayout {
-  return Object.fromEntries(
+  const rawColumns = Object.fromEntries(
     RESULTS_COLUMN_DEFINITIONS.map((definition) => [
       definition.key,
       normalizeResultsLayoutColumn(definition, columns[definition.key]),
     ]),
   ) as ResultsColumnLayout
+
+  return scaleResultsLayoutColumns(rawColumns)
+}
+
+function scaleResultsLayoutColumns(columns: ResultsColumnLayout): ResultsColumnLayout {
+  const total = RESULTS_COLUMN_DEFINITIONS.reduce((sum, column) => (
+    sum + Math.max(0, columns[column.key])
+  ), 0)
+  if (total <= 0) return DEFAULT_RESULTS_COLUMN_LAYOUT
+
+  const scaled = RESULTS_COLUMN_DEFINITIONS.map((column) => {
+    const exact = Math.max(0, columns[column.key]) / total * RESULTS_LAYOUT_TARGET_TOTAL
+    const floor = Math.floor(exact)
+    return {
+      key: column.key,
+      floor,
+      fraction: exact - floor,
+    }
+  })
+  let remainder = RESULTS_LAYOUT_TARGET_TOTAL - scaled.reduce((sum, entry) => sum + entry.floor, 0)
+  const byFraction = [...scaled].sort((left, right) => right.fraction - left.fraction)
+  for (const entry of byFraction) {
+    if (remainder <= 0) break
+    entry.floor += 1
+    remainder -= 1
+  }
+
+  return Object.fromEntries(scaled.map((entry) => [entry.key, entry.floor])) as ResultsColumnLayout
 }
 
 function measureCurrentResultCardColumns(list: HTMLDivElement | null): ResultsColumnLayout | null {
