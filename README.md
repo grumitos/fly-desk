@@ -173,3 +173,5 @@ Para mas detalle, ver [`docs/DEPLOY_VPS.md`](./docs/DEPLOY_VPS.md).
 La fuente vigente de Caddy, systemd compartido, rollback de Caddy y plan de plataforma es `grumitos/vps-platform` (`D:\Dev\vps-platform`). Este repo mantiene el codigo de la app y el deploy de `fly-desk`.
 
 El deploy repetible vive en `.github/workflows/deploy-vps.yml` como workflow manual con modos `deploy` y `rollback`. Cada deploy escribe `REVISION` con el SHA activado, reinicia solo `fly-desk.service`, conserva `fly-desk-chrome.service` y ejecuta smoke local y publico. Los secretos SSH y valores de infraestructura se configuran en GitHub Secrets/Variables, no en el repo.
+
+El smoke publico puede devolver `403` desde runners o clientes fuera de Peru cuando la restriccion regional de `vps-platform` esta activa. Esa restriccion cubre `/login` y la app antes de llegar a Fly Desk; el smoke local del VPS sigue siendo el indicador operativo principal.

@@ -10,6 +10,8 @@ Esta rama prepara Fly Desk como web privada alojada en un VPS:
 - La UI usa cookie httpOnly firmada, no tokens expuestos al browser.
 - `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` evita que el proxy local convierta trafico publico en "localhost confiable".
 - Despliegue actual: `https://fly-desk.pages.dev/` publica un Worker de Cloudflare Pages que proxyfica al origen privado configurado fuera del repo.
+- Caddy restringe `/login` y el resto del acceso publico de Fly Desk a Peru (`CF-IPCountry=PE`) desde `grumitos/vps-platform`; clientes/runners fuera de Peru pueden recibir `403` antes de llegar a la app.
+- El mantenimiento diario de plataforma no es un control de acceso: no invalida cookies web y conserva `fly-desk-chrome.service`. Si se necesita endurecer fuerza bruta sobre login, configurarlo como regla Cloudflare/WAF o rate limit de `POST /login` además de la auth propia de la app.
 
 La fuente vigente de Caddy, systemd compartido, rollback de Caddy y plan de plataforma es `grumitos/vps-platform` (`D:\Dev\vps-platform`). Este documento queda como runbook de app: build, deploy de revision, rollback de release y variables propias de Fly Desk.
 
@@ -77,7 +79,7 @@ Flujo de `deploy`:
 10. Reinicio de `fly-desk.service`.
 11. Verificacion de que `fly-desk-chrome.service` sigue activo si lo estaba antes.
 12. Smoke local contra `127.0.0.1:32123`.
-13. Smoke publico contra `https://fly-desk.pages.dev/login`.
+13. Smoke publico contra `https://fly-desk.pages.dev/login`; acepta `200` desde Peru o `403` desde runners fuera de Peru cuando la restriccion regional esta activa.
 
 El workflow no toca Caddy ni cambia unidades systemd. Solo reinicia `fly-desk.service`. Si cambia el contrato de Caddy o de unidades systemd, hacerlo desde `grumitos/vps-platform`.
 
