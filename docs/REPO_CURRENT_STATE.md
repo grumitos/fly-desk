@@ -51,6 +51,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - endpoints operativos aceptan cookie web valida o `FLY_DESK_API_TOKEN`
 - diagnosticos, estado de token Costamar y apertura local de browser son loopback-only
 - layout de resultados acepta auth web porque es una preferencia de la app
+- la restriccion publica por pais vive en `grumitos/vps-platform`: Caddy bloquea `/login` y el resto de la app fuera de Peru antes de llegar a Fly Desk
 - la politica de fechas es movil: `minSearchDate = hoy`, `maxSearchDate = hoy + SEARCH_MAX_FUTURE_DAYS`
 - las estadias ida/vuelta se limitan a 90 noches
 
