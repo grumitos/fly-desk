@@ -112,6 +112,8 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `.github/workflows/ci.yml`: CI Bun para typecheck, lint, test y build
 - `.github/workflows/deploy-vps.yml`: deploy manual y rollback por SHA/release al VPS
 
+La infraestructura compartida del VPS ya no vive en este repo: Caddy, systemd, rollback de Caddy y plan de plataforma se mantienen en `grumitos/vps-platform` (`D:\Dev\vps-platform`). Este repo conserva app, CI, deploy de revision y rollback de release.
+
 ## Pruebas
 
 Comandos principales:
