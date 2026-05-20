@@ -165,7 +165,7 @@ test("idle search form transitions smoothly into the workspace layout", async ()
       };
     });
 
-    assert.ok(idleBounds.width <= 1190, JSON.stringify(idleBounds));
+    assert.ok(idleBounds.width >= 1220 && idleBounds.width <= 1260, JSON.stringify(idleBounds));
     assert.ok(Math.abs(idleBounds.left - idleBounds.right) <= 24, JSON.stringify(idleBounds));
     assert.ok(idleBounds.centerOffset !== null && idleBounds.centerOffset <= 0 && idleBounds.centerOffset >= -24, JSON.stringify(idleBounds));
 
@@ -244,6 +244,91 @@ test("idle search form transitions smoothly into the workspace layout", async ()
       transitionSamples.some((sample) => sample.top < idleBounds.top - 24 && sample.top > workspaceBounds.top + 24),
       JSON.stringify({ idleBounds, workspaceBounds, transitionSamples }),
     );
+  }, { autoOpen: false });
+});
+
+test("wide desktop shell uses half of the leftover viewport width", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      const offer = buildOffer({ id: "wide-layout-offer", origin: "LIM", destination: "MIA" });
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "wide-layout-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers: [offer],
+          allOffers: [offer],
+          searchMeta: {
+            requestedAt: "2026-03-31T00:00:00.000Z",
+            completedAt: "2026-03-31T00:00:00.000Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+
+    const idleBounds = await page.evaluate(() => {
+      const frame = document.querySelector<HTMLElement>('[data-testid="search-shell-frame"]')?.getBoundingClientRect();
+      const topbar = document.querySelector<HTMLElement>(".fd-topbar > div")?.getBoundingClientRect();
+      return {
+        frameWidth: Math.round(frame?.width ?? 0),
+        topbarWidth: Math.round(topbar?.width ?? 0),
+      };
+    });
+
+    assert.equal(idleBounds.topbarWidth, 1760, JSON.stringify(idleBounds));
+    assert.ok(idleBounds.frameWidth >= 1720 && idleBounds.frameWidth <= 1736, JSON.stringify(idleBounds));
+
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+    await page.getByTestId("result-card").waitFor();
+
+    const workspaceBounds = await page.evaluate(() => {
+      const frame = document.querySelector<HTMLElement>('[data-testid="search-shell-frame"]')?.getBoundingClientRect();
+      const grid = document.querySelector<HTMLElement>(".fd-workspace-enter")?.getBoundingClientRect();
+      const card = document.querySelector<HTMLElement>('[data-testid="result-card"]')?.getBoundingClientRect();
+      const topbar = document.querySelector<HTMLElement>(".fd-topbar > div")?.getBoundingClientRect();
+      return {
+        cardWidth: Math.round(card?.width ?? 0),
+        frameWidth: Math.round(frame?.width ?? 0),
+        gridWidth: Math.round(grid?.width ?? 0),
+        topbarWidth: Math.round(topbar?.width ?? 0),
+      };
+    });
+
+    assert.equal(workspaceBounds.topbarWidth, 1760, JSON.stringify(workspaceBounds));
+    assert.ok(workspaceBounds.frameWidth >= 1720 && workspaceBounds.frameWidth <= 1736, JSON.stringify(workspaceBounds));
+    assert.ok(workspaceBounds.gridWidth >= 1720 && workspaceBounds.gridWidth <= 1736, JSON.stringify(workspaceBounds));
+    assert.ok(workspaceBounds.cardWidth >= 1120 && workspaceBounds.cardWidth <= 1144, JSON.stringify(workspaceBounds));
   }, { autoOpen: false });
 });
 

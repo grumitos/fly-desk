@@ -91,7 +91,7 @@ export function TopBar({
 
   return (
     <header className="fd-topbar">
-      <div className="mx-auto grid min-h-11 max-w-[1560px] grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 py-1.5 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:px-4">
+      <div className="fd-app-width mx-auto grid min-h-11 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 py-1.5 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:px-4">
         <div className="flex min-w-0 items-center gap-2 justify-self-start">
           <a
             href={homeHref}
