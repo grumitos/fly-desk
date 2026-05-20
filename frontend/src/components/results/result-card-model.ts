@@ -267,11 +267,7 @@ function costamarRedirectStatus(offer: CanonicalOffer): ResultRedirectStatus | u
     }
   }
 
-  return {
-    label: "Redirect pendiente",
-    title: verification.reason || "Fly Desk mostrará el enlace de Costamar, pero aún no está validado.",
-    tone: "pending",
-  }
+  return undefined
 }
 
 function resolveCostamarRedirectVerification(offer: CanonicalOffer): RedirectVerification | undefined {

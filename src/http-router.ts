@@ -470,31 +470,6 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
   });
 }
 
-function localBrowserOpenedResponse(targetUrl: string, launcher: string): Response {
-  const escapedUrl = escapeHtml(targetUrl);
-  const escapedLauncher = escapeHtml(launcher);
-
-  return html(`<!doctype html>
-<html lang="es">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Abriendo proveedor</title>
-  </head>
-  <body>
-    <main>
-      <h1>Abriendo proveedor</h1>
-      <p>Fly Desk envio esta busqueda al navegador local (${escapedLauncher}).</p>
-      <p><a href="${escapedUrl}" rel="noreferrer">Abrir manualmente</a></p>
-    </main>
-  </body>
-</html>`, {
-    headers: {
-      "Cache-Control": "no-store",
-    },
-  });
-}
-
 function costamarRedirectTotalTimeoutMs(): number {
   const configured = Number(
     process.env.COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS ?? DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS,
@@ -2286,23 +2261,6 @@ export async function routeRequest(request: Request): Promise<Response> {
 
     if (resolved.path.url) {
       let location = resolved.path.url;
-
-      if (
-        resolved.path.provider === "agil-local" &&
-        resolved.path.type === "search-redirect" &&
-        url.searchParams.get("open") === "local"
-      ) {
-        try {
-          const launcher = await localOpenUrlOpener(
-            location,
-            "chrome",
-            resolveAgilChromeLaunchOptions(),
-          );
-          return localBrowserOpenedResponse(location, launcher.launcher);
-        } catch {
-          // Fall back to the normal redirect when the local browser handoff fails.
-        }
-      }
 
       if (resolved.path.provider === "costamar" && resolved.path.type === "search-redirect") {
         const searchSession = runtime.sessions.getSession(resolved.sessionId);
