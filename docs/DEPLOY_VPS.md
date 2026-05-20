@@ -11,6 +11,8 @@ Esta rama prepara Fly Desk como web privada alojada en un VPS:
 - `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` evita que el proxy local convierta trafico publico en "localhost confiable".
 - Despliegue actual: `https://fly-desk.pages.dev/` publica un Worker de Cloudflare Pages que proxyfica al origen privado configurado fuera del repo.
 
+La fuente vigente de Caddy, systemd compartido, rollback de Caddy y plan de plataforma es `grumitos/vps-platform` (`D:\Dev\vps-platform`). Este documento queda como runbook de app: build, deploy de revision, rollback de release y variables propias de Fly Desk.
+
 ## Build
 
 ```bash
@@ -77,7 +79,7 @@ Flujo de `deploy`:
 12. Smoke local contra `127.0.0.1:32123`.
 13. Smoke publico contra `https://fly-desk.pages.dev/login`.
 
-El workflow no toca Caddy ni cambia unidades systemd. Solo reinicia `fly-desk.service`.
+El workflow no toca Caddy ni cambia unidades systemd. Solo reinicia `fly-desk.service`. Si cambia el contrato de Caddy o de unidades systemd, hacerlo desde `grumitos/vps-platform`.
 
 ## Variables Minimas
 
@@ -107,7 +109,7 @@ El despliegue VPS actual mantiene `FLY_DESK_SEARCH_WORKER_PROCESSES=0`. Costamar
 
 ## systemd
 
-Ejemplo de unidad:
+Referencia historica de unidad. La fuente vigente esta en `grumitos/vps-platform/systemd`.
 
 ```ini
 [Unit]
@@ -131,7 +133,7 @@ WantedBy=multi-user.target
 
 ## Caddy
 
-Ejemplo de sitio:
+Referencia historica de sitio. La fuente vigente esta en `grumitos/vps-platform/caddy`.
 
 ```caddyfile
 fly-desk.example.com {
