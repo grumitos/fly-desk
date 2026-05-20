@@ -275,7 +275,11 @@ function costamarRedirectStatus(offer: CanonicalOffer): ResultRedirectStatus | u
 }
 
 function resolveCostamarRedirectVerification(offer: CanonicalOffer): RedirectVerification | undefined {
-  if (/costamar/i.test(String(offer.providerSource ?? "")) && offer.redirectVerification) {
+  if (!/costamar/i.test(String(offer.providerSource ?? ""))) {
+    return undefined
+  }
+
+  if (offer.redirectVerification) {
     return offer.redirectVerification
   }
 
@@ -294,17 +298,22 @@ function formatMoney(money: CanonicalOffer["price"]["total"]) {
 }
 
 function providerBadge(offer: CanonicalOffer) {
-  const candidates = [
-    offer.providerSource,
-    ...(offer.purchasePaths ?? []).map((path) => path.provider),
-  ].filter(Boolean)
-  const providerId = candidates.find((candidate) => /costamar/i.test(candidate))
-    ? "costamar"
-    : candidates.find((candidate) => /agil/i.test(candidate))
-      ? "agil-local"
-      : ""
+  const primaryProviderId = normalizedProviderId(offer.providerSource)
+  if (primaryProviderId) {
+    return providerBadgeForId(primaryProviderId)
+  }
 
-  return providerBadgeForId(providerId || candidates[0])
+  const fallbackProviderId = normalizedProviderId(offer.purchasePaths?.find((path) => path.provider)?.provider)
+  return providerBadgeForId(fallbackProviderId)
+}
+
+function normalizedProviderId(providerId?: string) {
+  const value = String(providerId ?? "").trim()
+  if (!value) return undefined
+  if (/costamar/i.test(value)) return "costamar"
+  if (/agil/i.test(value)) return "agil-local"
+
+  return value
 }
 
 export function providerBadgeForId(providerId?: string): ResultProviderBadge {
