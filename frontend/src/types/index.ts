@@ -49,6 +49,7 @@ export interface SearchRequest {
   includedAirlineCodes?: string[]
   maxResults?: number
   compactAllOffers?: boolean
+  migrationMonths?: string[]
   sortMode?: string
 }
 

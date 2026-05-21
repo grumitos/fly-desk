@@ -34,6 +34,8 @@ const SHARED_SEARCH_QUERY_PARAMS = [
   "baggage",
   "airlines",
   "airline",
+  "months",
+  "month",
   "maxResults",
   "compact",
 ]
@@ -155,6 +157,12 @@ function readReadableSharedSearchFromUrl(url: URL): SharedSearchState | null {
   ]
     .map((code) => code.trim().toUpperCase())
     .filter(Boolean)
+  const migrationMonths = [
+    ...params.getAll("month"),
+    ...(optionalString(params.get("months")) ?? "").split(","),
+  ]
+    .map((month) => month.trim())
+    .filter(isMonthKey)
 
   const request: SearchRequest = {
     origin,
@@ -179,6 +187,7 @@ function readReadableSharedSearchFromUrl(url: URL): SharedSearchState | null {
     checkedBaggageRequired: boolParam(params, "checkedBaggage") || boolParam(params, "baggage"),
     baggageRequired: boolParam(params, "baggage"),
     includedAirlineCodes: includedAirlineCodes.length ? includedAirlineCodes : undefined,
+    migrationMonths: migrationMonths.length ? Array.from(new Set(migrationMonths)) : undefined,
     maxResults: numberValue(params.get("maxResults")),
     compactAllOffers: boolParam(params, "compact"),
   }
@@ -221,6 +230,9 @@ function writeReadableSharedSearchParams(url: URL, request: SearchRequest, sortM
   if (request.checkedBaggageRequired ?? request.baggageRequired) setReadableParam(url, "checkedBaggage", 1)
   if (request.includedAirlineCodes?.length) {
     setReadableParam(url, "airlines", request.includedAirlineCodes.map((code) => code.toUpperCase()).join(","))
+  }
+  if (request.searchMode === "month-view" && request.migrationMonths?.length) {
+    setReadableParam(url, "months", request.migrationMonths.join(","))
   }
 }
 
@@ -280,6 +292,9 @@ function normalizeFrontendRequest(value: unknown): SearchRequest | null {
     includedAirlineCodes: Array.isArray(request.includedAirlineCodes)
       ? request.includedAirlineCodes.map(stringValue).filter(Boolean)
       : undefined,
+    migrationMonths: Array.isArray(request.migrationMonths)
+      ? Array.from(new Set(request.migrationMonths.map(stringValue).filter(isMonthKey)))
+      : undefined,
     maxResults: numberValue(request.maxResults),
     compactAllOffers: request.compactAllOffers === true,
     sortMode: optionalString(request.sortMode),
@@ -330,6 +345,10 @@ function numberValue(value: unknown) {
 function boolParam(params: URLSearchParams, key: string) {
   const value = stringValue(params.get(key)).toLowerCase()
   return value === "1" || value === "true" || value === "yes"
+}
+
+function isMonthKey(value: string) {
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(value)
 }
 
 function sharedModeForRequest(request: SearchRequest): SharedSearchMode {

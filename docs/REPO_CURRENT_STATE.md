@@ -20,7 +20,7 @@ El repo no versiona artefactos generados:
 - busqueda exacta
 - busqueda flexible de solo ida via rango `stay-range`
 - busqueda flexible ida/vuelta via `/api/matrix`, normalizada a lista de resultados
-- busqueda migratoria mensual: 8 meses desde el mes actual
+- busqueda migratoria mensual: selector de meses hasta fin del año actual y fan-out solo para meses marcados
 - autocomplete de origen y destino
 - filtros de escalas, tiempo maximo de escala, equipaje y aerolineas
 - resultados paginados con advertencias del backend
@@ -167,4 +167,4 @@ No se mantienen planes de migracion ni auditorias historicas como documentacion 
 - la persistencia es SQLite local; no hay store externo para multi-instancia
 - Chrome CDP persistente ya queda cubierto por `fly-desk-chrome.service`; Agil aun necesita una sesion real valida en ese perfil del VPS
 - revisar antes de reactivar workers de busqueda en VPS: Costamar B2B ya responde por produccion con workers desactivados
-- la busqueda migratoria lanza 8 jobs de rango con concurrencia limitada, lo cual debe vigilarse si sube el volumen de uso
+- la busqueda migratoria lanza jobs de rango por mes seleccionado con concurrencia limitada, lo cual debe vigilarse si sube el volumen de uso

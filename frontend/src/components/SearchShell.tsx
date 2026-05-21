@@ -3,6 +3,7 @@ import { createPortal } from "react-dom"
 import { es } from "react-day-picker/locale"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-control"
 import { TOPBAR_SEARCH_CONTROLS_ID } from "@/components/TopBar"
@@ -17,6 +18,12 @@ const DATE_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
   year: "numeric",
   timeZone: "UTC",
 })
+const MIGRATION_MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
+  month: "long",
+  year: "numeric",
+  timeZone: "UTC",
+})
+const LEGACY_DEFAULT_MIGRATION_MONTH_COUNT = 8
 const SEARCH_FIELD_CONTROL_CLASS = "fd-control flex h-[52px] w-full items-center gap-2 px-3 pt-4"
 const SEARCH_FIELD_VALUE_CLASS = "h-4 min-w-0 flex-1 truncate text-sm font-semibold leading-4"
 const SEARCH_MAX_FUTURE_DAYS_FALLBACK = 365
@@ -26,7 +33,12 @@ const MAX_CHILDREN = 8
 const TOPBAR_CONTROLS_MEDIA_QUERY = "(min-width: 768px)"
 
 type SearchModeControl = "exact" | "flexible" | "migration"
-type SearchTouchedField = "origin" | "destination" | "departureDate" | "returnDate" | "passengers"
+type SearchTouchedField = "origin" | "destination" | "departureDate" | "returnDate" | "passengers" | "migrationMonths"
+type MigrationMonthOption = {
+  key: string
+  label: string
+  shortLabel: string
+}
 
 interface SearchShellProps {
   onSearch: (req: SearchRequest, sort?: SortMode) => void
@@ -60,6 +72,16 @@ export function SearchShell({
   const [children, setChildren] = useState(0)
   const [infants, setInfants] = useState(0)
   const [paxOpen, setPaxOpen] = useState(false)
+  const datePolicy = useMemo(() => getRuntimeSearchDatePolicy(), [])
+  const migrationMonthOptions = useMemo(
+    () => buildMigrationMonthOptions(datePolicy.minSearchDate),
+    [datePolicy.minSearchDate],
+  )
+  const defaultMigrationMonths = useMemo(
+    () => defaultMigrationMonthSelection(migrationMonthOptions),
+    [migrationMonthOptions],
+  )
+  const [selectedMigrationMonths, setSelectedMigrationMonths] = useState<string[]>(() => defaultMigrationMonths)
   const lastResetTokenRef = useRef(resetToken)
   const [touched, setTouched] = useState<Record<SearchTouchedField, boolean>>({
     origin: false,
@@ -67,8 +89,8 @@ export function SearchShell({
     departureDate: false,
     returnDate: false,
     passengers: false,
+    migrationMonths: false,
   })
-  const datePolicy = useMemo(() => getRuntimeSearchDatePolicy(), [])
   const validDepartureDate = isIsoDate(departureDate) ? departureDate : ""
   const returnMinDate = maxIsoDate(datePolicy.minSearchDate, validDepartureDate || datePolicy.minSearchDate)
   const endDateMaxDate = mode === "exact" && trip === "round-trip" && validDepartureDate
@@ -108,6 +130,7 @@ export function SearchShell({
       setDepartureDate(dateStartFromSearchRequest(syncedRequest))
       setReturnDate(dateEndFromSearchRequest(syncedRequest))
       setStayNights(clampStayNights(syncedRequest.stayNights ?? 7))
+      setSelectedMigrationMonths(resolveMigrationMonthSelection(syncedRequest.migrationMonths, migrationMonthOptions))
       const nextAdults = clampInteger(syncedRequest.adults, 1, MAX_PASSENGERS, 1)
       const nextChildren = clampInteger(syncedRequest.children, 0, Math.max(0, MAX_PASSENGERS - nextAdults), 0)
       const nextInfants = clampInteger(
@@ -125,12 +148,13 @@ export function SearchShell({
         departureDate: false,
         returnDate: false,
         passengers: false,
+        migrationMonths: false,
       })
       void resolveOriginQuery()
       void resolveDestinationQuery()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [resolveDestinationQuery, resolveOriginQuery, setDestinationQuery, setOriginQuery, syncedRequest])
+  }, [migrationMonthOptions, resolveDestinationQuery, resolveOriginQuery, setDestinationQuery, setOriginQuery, syncedRequest])
 
   useEffect(() => {
     if (resetToken === lastResetTokenRef.current) return
@@ -146,6 +170,7 @@ export function SearchShell({
       setDepartureDate("")
       setReturnDate("")
       setStayNights(7)
+      setSelectedMigrationMonths(defaultMigrationMonths)
       setAdults(1)
       setChildren(0)
       setInfants(0)
@@ -156,12 +181,13 @@ export function SearchShell({
         departureDate: false,
         returnDate: false,
         passengers: false,
+        migrationMonths: false,
       })
       onSearchConfigDraftChange?.(null)
     })
 
     return () => window.cancelAnimationFrame(frame)
-  }, [onSearchConfigDraftChange, resetToken, setDestinationQuery, setOriginQuery])
+  }, [defaultMigrationMonths, onSearchConfigDraftChange, resetToken, setDestinationQuery, setOriginQuery])
 
   const updateAdults = (nextAdults: number) => {
     const clampedAdults = Math.max(1, Math.min(nextAdults, MAX_PASSENGERS))
@@ -218,11 +244,35 @@ export function SearchShell({
 
   const handleModeChange = (nextMode: SearchModeControl) => {
     setMode(nextMode)
+    if (nextMode === "migration") {
+      setSelectedMigrationMonths((current) => current.length ? current : defaultMigrationMonths)
+    }
     setTouched((current) => ({
       ...current,
       departureDate: false,
       returnDate: false,
+      migrationMonths: false,
     }))
+  }
+
+  const setMigrationMonthChecked = (key: string, checked: boolean) => {
+    setSelectedMigrationMonths((current) => {
+      const next = checked
+        ? uniqueMonthKeys([...current, key])
+        : current.filter((month) => month !== key)
+      return orderMigrationMonths(next, migrationMonthOptions)
+    })
+    setTouched((current) => ({ ...current, migrationMonths: true }))
+  }
+
+  const selectAllMigrationMonths = () => {
+    setSelectedMigrationMonths(migrationMonthOptions.map((month) => month.key))
+    setTouched((current) => ({ ...current, migrationMonths: true }))
+  }
+
+  const clearMigrationMonths = () => {
+    setSelectedMigrationMonths([])
+    setTouched((current) => ({ ...current, migrationMonths: true }))
   }
 
   const swapRoute = () => {
@@ -242,6 +292,7 @@ export function SearchShell({
     infants,
     trip,
     mode,
+    migrationMonths: selectedMigrationMonths,
     minDepartureDate: datePolicy.minSearchDate,
     maxDate: datePolicy.maxSearchDate,
     minReturnDate: returnMinDate,
@@ -269,6 +320,7 @@ export function SearchShell({
       adults,
       children,
       infants,
+      migrationMonths: mode === "migration" ? selectedMigrationMonths : undefined,
       searchMode: mode === "migration"
         ? "month-view"
         : mode === "flexible"
@@ -286,6 +338,7 @@ export function SearchShell({
     infants,
     mode,
     returnDate,
+    selectedMigrationMonths,
     stayNights,
     trip,
   ])
@@ -321,6 +374,7 @@ export function SearchShell({
     origin.query,
     originCode,
     returnDate,
+    selectedMigrationMonths,
     stayNights,
     trip,
   ])
@@ -339,6 +393,7 @@ export function SearchShell({
       departureDate: mode !== "migration",
       returnDate: mode !== "migration" && (trip === "round-trip" || mode === "flexible"),
       passengers: true,
+      migrationMonths: mode === "migration",
     })
 
     if (hasBlockingValidationError(validation)) {
@@ -363,6 +418,7 @@ export function SearchShell({
       infants,
       trip,
       mode,
+      migrationMonths: selectedMigrationMonths,
       minDepartureDate: datePolicy.minSearchDate,
       maxDate: datePolicy.maxSearchDate,
       minReturnDate: returnMinDate,
@@ -386,6 +442,9 @@ export function SearchShell({
     ? validation.returnDate
     : undefined
   const visiblePassengerError = touched.passengers ? validation.passengers : undefined
+  const visibleMigrationMonthsError = mode === "migration" && touched.migrationMonths
+    ? validation.migrationMonths
+    : undefined
   const tripTabs: { key: typeof trip; label: string; icon: AppIconName }[] = [
     { key: "round-trip", label: "Ida y vuelta", icon: "roundTrip" },
     { key: "one-way", label: "Solo ida", icon: "oneWay" },
@@ -415,6 +474,18 @@ export function SearchShell({
           <div className="fd-search-controls-row mb-2 flex flex-wrap items-center justify-between gap-2">
             {searchControls}
           </div>
+        )}
+
+        {mode === "migration" && (
+          <MigrationMonthSelector
+            months={migrationMonthOptions}
+            selectedMonths={selectedMigrationMonths}
+            invalid={Boolean(visibleMigrationMonthsError)}
+            helperText={visibleMigrationMonthsError}
+            onMonthCheckedChange={setMigrationMonthChecked}
+            onSelectAll={selectAllMigrationMonths}
+            onClear={clearMigrationMonths}
+          />
         )}
 
         <form onSubmit={handleSubmit}>
@@ -698,6 +769,88 @@ function SearchModeControls({
           </SegmentButton>
         ))}
       </SegmentedControl>
+    </div>
+  )
+}
+
+function MigrationMonthSelector({
+  months,
+  selectedMonths,
+  invalid,
+  helperText,
+  onMonthCheckedChange,
+  onSelectAll,
+  onClear,
+}: {
+  months: MigrationMonthOption[]
+  selectedMonths: string[]
+  invalid?: boolean
+  helperText?: string
+  onMonthCheckedChange: (key: string, checked: boolean) => void
+  onSelectAll: () => void
+  onClear: () => void
+}) {
+  const selectedSet = new Set(selectedMonths)
+  const helperId = "migration-months-helper"
+
+  return (
+    <div
+      className={cn(
+        "fd-control mb-2 h-auto flex-col items-stretch gap-2 px-3 py-2",
+        invalid && "fd-control-invalid",
+      )}
+      aria-invalid={invalid}
+      aria-describedby={helperText ? helperId : undefined}
+    >
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <AppIcon name="calendar" className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <p className="fd-label static leading-none">Meses</p>
+            <p className="truncate text-xs font-semibold text-muted-foreground">
+              {selectedMonths.length} seleccionado{selectedMonths.length === 1 ? "" : "s"}
+            </p>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onSelectAll}>
+            <AppIcon name="check" />
+            Todos
+          </Button>
+          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onClear}>
+            <AppIcon name="x" />
+            Limpiar
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Meses del migratorio">
+        {months.map((month) => {
+          const checked = selectedSet.has(month.key)
+          const fieldId = `migration-month-${month.key}`
+
+          return (
+            <div
+              key={month.key}
+              className={cn(
+                "inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-secondary/45 px-2 text-xs font-semibold transition-colors",
+                checked && "border-primary/50 bg-accent text-accent-foreground",
+              )}
+            >
+              <Checkbox
+                id={fieldId}
+                checked={checked}
+                aria-label={`Consultar ${month.label}`}
+                onCheckedChange={(nextChecked) => onMonthCheckedChange(month.key, nextChecked === true)}
+              />
+              <label htmlFor={fieldId} className="cursor-pointer whitespace-nowrap">
+                {month.shortLabel}
+              </label>
+            </div>
+          )
+        })}
+      </div>
+      <ControlHelper id={helperId} text={helperText} />
     </div>
   )
 }
@@ -1172,6 +1325,52 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
   return Math.max(min, Math.min(max, numeric))
 }
 
+function buildMigrationMonthOptions(startIso: string): MigrationMonthOption[] {
+  const start = isIsoDate(startIso) ? startIso : localDateToIso(new Date())
+  const [year, month] = start.split("-").map(Number)
+
+  return Array.from({ length: Math.max(0, 13 - month) }, (_, index) => {
+    const key = `${year}-${String(month + index).padStart(2, "0")}`
+    const label = formatMigrationMonthLabel(key)
+    return {
+      key,
+      label,
+      shortLabel: label.replace(/\s+de\s+/i, " "),
+    }
+  })
+}
+
+function defaultMigrationMonthSelection(options: MigrationMonthOption[]) {
+  return options.slice(0, LEGACY_DEFAULT_MIGRATION_MONTH_COUNT).map((month) => month.key)
+}
+
+function resolveMigrationMonthSelection(values: string[] | undefined, options: MigrationMonthOption[]) {
+  const fallback = defaultMigrationMonthSelection(options)
+  if (!values?.length) return fallback
+
+  const allowed = new Set(options.map((month) => month.key))
+  const selected = orderMigrationMonths(uniqueMonthKeys(values.filter((month) => allowed.has(month))), options)
+  return selected.length ? selected : fallback
+}
+
+function uniqueMonthKeys(values: string[]) {
+  return Array.from(new Set(values.filter(isMigrationMonthKey)))
+}
+
+function orderMigrationMonths(values: string[], options: MigrationMonthOption[]) {
+  const selected = new Set(values)
+  return options.map((month) => month.key).filter((key) => selected.has(key))
+}
+
+function isMigrationMonthKey(value: string) {
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(value)
+}
+
+function formatMigrationMonthLabel(monthValue: string) {
+  const label = MIGRATION_MONTH_LABEL_FORMATTER.format(new Date(`${monthValue}-01T00:00:00Z`))
+  return label.charAt(0).toUpperCase() + label.slice(1)
+}
+
 interface SearchValidationInput {
   originValue: string
   destinationValue: string
@@ -1182,6 +1381,7 @@ interface SearchValidationInput {
   infants: number
   trip: "round-trip" | "one-way"
   mode: SearchModeControl
+  migrationMonths: string[]
   minDepartureDate: string
   minReturnDate: string
   maxStayNights: number
@@ -1194,6 +1394,7 @@ interface SearchValidationState {
   departureDate?: string
   returnDate?: string
   passengers?: string
+  migrationMonths?: string
 }
 
 function buildSearchValidation(input: SearchValidationInput): SearchValidationState {
@@ -1225,6 +1426,9 @@ function buildSearchValidation(input: SearchValidationInput): SearchValidationSt
   }
 
   if (input.mode === "migration") {
+    if (input.migrationMonths.length === 0) {
+      state.migrationMonths = "Selecciona al menos un mes."
+    }
     return state
   }
 
@@ -1270,7 +1474,7 @@ function buildSearchValidation(input: SearchValidationInput): SearchValidationSt
 }
 
 function hasBlockingValidationError(state: SearchValidationState) {
-  return Boolean(state.origin || state.destination || state.departureDate || state.returnDate || state.passengers)
+  return Boolean(state.origin || state.destination || state.departureDate || state.returnDate || state.passengers || state.migrationMonths)
 }
 
 function normalizeLocationCandidate(value: string) {
