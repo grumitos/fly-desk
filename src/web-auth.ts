@@ -26,7 +26,7 @@ export function isWebAuthEnabled(): boolean {
 }
 
 export function shouldTrustLoopbackClient(): boolean {
-  return readEnv("FLY_DESK_TRUST_LOOPBACK_CLIENT") !== "0";
+  return readEnv("FLY_DESK_TRUST_LOOPBACK_CLIENT") === "1";
 }
 
 function resolveWebSessionSecret(): string | undefined {
