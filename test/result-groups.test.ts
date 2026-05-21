@@ -96,7 +96,12 @@ function offer({
 test("groups native Agil variants with the same fare", () => {
   const items = buildResultListItems([
     offer({ id: "agil-am", rawRefs: { agilGroupId: "G-100" } }),
-    offer({ id: "agil-pm", rawRefs: { agilGroupId: "G-100" } }),
+    offer({
+      id: "agil-pm",
+      rawRefs: { agilGroupId: "G-100" },
+      inboundDeparture: "2026-06-20T13:05:00-05:00",
+      inboundArrival: "2026-06-20T21:10:00-05:00",
+    }),
     offer({ id: "solo", rawRefs: { agilGroupId: "G-200" } }),
   ])
 
@@ -153,6 +158,8 @@ test("groups Costamar recommendation variants by recommendation base", () => {
       id: "costamar-2",
       providerSource: "costamar",
       rawRefs: { recommendationId: "REC-7:1" },
+      inboundDeparture: "2026-06-20T13:05:00-05:00",
+      inboundArrival: "2026-06-20T21:10:00-05:00",
     }),
   ])
 
@@ -173,6 +180,17 @@ test("keeps native variants with different prices as separate offers", () => {
   assert.deepEqual(items.map((item) => item.type), ["offer", "offer"])
 })
 
+test("collapses native variants with no visible differences", () => {
+  const items = buildResultListItems([
+    offer({ id: "duplicate-1", rawRefs: { agilGroupId: "G-350" } }),
+    offer({ id: "duplicate-2", rawRefs: { agilGroupId: "G-350" } }),
+  ])
+
+  assert.equal(items.length, 1)
+  assert.equal(items[0]?.type, "offer")
+  assert.equal(items[0]?.id, "duplicate-1")
+})
+
 test("keeps exact provider matches inside the native schedule group", () => {
   const items = buildResultListItems([
     offer({
@@ -180,7 +198,12 @@ test("keeps exact provider matches inside the native schedule group", () => {
       rawRefs: { agilGroupId: "G-400" },
       purchaseProviders: ["agil-local", "costamar"],
     }),
-    offer({ id: "agil-later", rawRefs: { agilGroupId: "G-400" } }),
+    offer({
+      id: "agil-later",
+      rawRefs: { agilGroupId: "G-400" },
+      inboundDeparture: "2026-06-20T13:05:00-05:00",
+      inboundArrival: "2026-06-20T21:10:00-05:00",
+    }),
   ])
 
   assert.equal(items.length, 1)

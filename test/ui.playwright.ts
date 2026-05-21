@@ -1722,7 +1722,7 @@ test("exact results paginate visible offers with hidden minimal result scroll", 
   }, { autoOpen: false });
 });
 
-test("grouped result variants show only schedule differences", async () => {
+test("grouped result variants align changed values with the primary card columns", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 1180, height: 700 });
     await page.route("**/api/locations**", async (route) => {
@@ -1734,13 +1734,17 @@ test("grouped result variants show only schedule differences", async () => {
     });
     await page.route("**/api/search", async (route) => {
       const payload = route.request().postDataJSON() as Record<string, unknown>;
-      const groupedOffer = (id: string, returnDeparture: string, returnArrival: string) => buildOffer({
+      const groupedOffer = (id: string, returnDeparture: string, returnArrival: string, totalDurationMinutes = 480) => buildOffer({
         id,
         providerSource: "costamar",
         airline: "KLM",
         mainCarrier: "KL",
         validatingCarrier: "KL",
         rawRefs: { recommendationId: "REC-compact:0" },
+        comparisonMetrics: {
+          totalDurationMinutes,
+          totalStops: 1,
+        },
         price: {
           total: { amount: 1361.14, currencyCode: "USD" },
           base: { amount: 1120, currencyCode: "USD" },
@@ -1791,7 +1795,7 @@ test("grouped result variants show only schedule differences", async () => {
       const offers = [
         groupedOffer("late-return", "2026-06-04T20:30:00+02:00", "2026-06-05T15:25:00-05:00"),
         groupedOffer("early-return", "2026-06-04T06:00:00+02:00", "2026-06-04T15:25:00-05:00"),
-        groupedOffer("mid-return", "2026-06-04T13:05:00+02:00", "2026-06-05T15:25:00-05:00"),
+        groupedOffer("mid-return", "2026-06-04T13:05:00+02:00", "2026-06-05T15:25:00-05:00", 1040),
       ];
 
       await route.fulfill({
@@ -1836,12 +1840,49 @@ test("grouped result variants show only schedule differences", async () => {
     await group.waitFor();
     assert.equal(await group.getByTestId("result-card").count(), 1);
     assert.equal(await group.getByTestId("result-variant-card").count(), 2);
+    assert.equal(await group.locator(".fd-result-group__title").innerText(), "3 horarios");
+    assert.doesNotMatch(await group.locator(".fd-result-group__header").innerText(), /al mismo precio/i);
 
     const variants = group.getByTestId("result-variant-card");
     const variantText = await variants.allInnerTexts();
-    assert.match(variantText[0] ?? "", /Vuelta\s+13:05 - 15:25\+1/);
-    assert.match(variantText[1] ?? "", /Vuelta\s+20:30 - 15:25\+1/);
-    assert.doesNotMatch(variantText.join(" "), /KLM|Costamar|USD|Equipaje|04\/06/);
+    assert.match(variantText[0] ?? "", /13:05\s*-\s*15:25\s*\+1/);
+    assert.match(variantText[0] ?? "", /17h 20m/);
+    assert.match(variantText[1] ?? "", /20:30\s*-\s*15:25\s*\+1/);
+    assert.doesNotMatch(variantText.join(" "), /KLM|Costamar|USD|Equipaje|04\/06|Vuelta|Duraci[oó]n|Escalas/);
+
+    const alignment = await group.evaluate((element) => {
+      const rectOf = (selector: string) => {
+        const node = element.querySelector<HTMLElement>(selector);
+        if (!node) throw new Error(`Missing ${selector}`);
+        const rect = node.getBoundingClientRect();
+        return { left: Math.round(rect.left), width: Math.round(rect.width) };
+      };
+
+      return {
+        primarySchedules: rectOf(".fd-result-card .fd-result-card__schedules"),
+        variantSchedules: rectOf(".fd-result-variant-card .fd-result-variant-card__schedules"),
+        primaryJourney: rectOf(".fd-result-card .fd-result-card__journey"),
+        variantJourney: rectOf(".fd-result-variant-card .fd-result-variant-card__journey"),
+      };
+    });
+    assert.ok(Math.abs(alignment.primarySchedules.left - alignment.variantSchedules.left) <= 1, JSON.stringify(alignment));
+    assert.ok(Math.abs(alignment.primaryJourney.left - alignment.variantJourney.left) <= 1, JSON.stringify(alignment));
+
+    const baseStyles = await group.evaluate((element) => {
+      const primary = element.querySelector<HTMLElement>(".fd-result-card");
+      const variant = element.querySelector<HTMLElement>(".fd-result-variant-card");
+      if (!primary || !variant) throw new Error("Missing grouped cards");
+      return {
+        primaryBackgroundImage: getComputedStyle(primary).backgroundImage,
+        variantBackgroundImage: getComputedStyle(variant).backgroundImage,
+      };
+    });
+    assert.equal(baseStyles.primaryBackgroundImage, "none");
+    assert.equal(baseStyles.variantBackgroundImage, "none");
+
+    await variants.first().click();
+    assert.match(await group.getAttribute("class") ?? "", /is-selected/);
+    assert.equal(await variants.first().getAttribute("aria-pressed"), "true");
   }, { autoOpen: false });
 });
 

@@ -1,4 +1,5 @@
 import type { CanonicalOffer } from "@/types"
+import { buildResultCardModel, type ResultJourneySummary } from "./result-card-model"
 
 export type ResultListItem =
   | { type: "offer"; id: string; offer: CanonicalOffer; offerCount: 1 }
@@ -75,15 +76,21 @@ export function buildResultListItems(offers: CanonicalOffer[]): ResultListItem[]
     const bucket = buckets.get(key)
     if (!bucket) return [{ type: "offer", id: offer.id, offer, offerCount: 1 }]
 
+    const visibleOffers = uniqueVisibleGroupOffers(sortGroupOffersBySchedule(bucket.offers))
+    if (visibleOffers.length <= 1) {
+      const visibleOffer = visibleOffers[0] ?? offer
+      return [{ type: "offer", id: visibleOffer.id, offer: visibleOffer, offerCount: 1 }]
+    }
+
     return [{
       type: "group",
       id: bucket.id,
-      offerCount: bucket.offers.length,
+      offerCount: visibleOffers.length,
       group: {
         id: bucket.id,
         key: bucket.key,
         providerLabel: bucket.providerLabel,
-        offers: sortGroupOffersBySchedule(bucket.offers),
+        offers: visibleOffers,
       },
     }]
   })
@@ -251,6 +258,41 @@ function sortGroupOffersBySchedule(offers: CanonicalOffer[]): CanonicalOffer[] {
       return compared !== 0 ? compared : left.index - right.index
     })
     .map((item) => item.offer)
+}
+
+function uniqueVisibleGroupOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
+  const seen = new Set<string>()
+  const visibleOffers: CanonicalOffer[] = []
+
+  for (const offer of offers) {
+    const signature = offerVisibleVariantSignature(offer)
+    if (seen.has(signature)) continue
+
+    seen.add(signature)
+    visibleOffers.push(offer)
+  }
+
+  return visibleOffers
+}
+
+function offerVisibleVariantSignature(offer: CanonicalOffer): string {
+  const model = buildResultCardModel(offer, 1)
+  return [
+    model.journeys.map(journeyVisibleScheduleSignature).join(";"),
+    model.duration,
+    model.stops.label,
+    model.stops.layoverLabel,
+  ].join("|")
+}
+
+function journeyVisibleScheduleSignature(journey: ResultJourneySummary): string {
+  return [
+    journey.label,
+    journey.hasKnownSchedule,
+    journey.departureTime,
+    journey.arrivalTime,
+    journey.arrivalDayOffset,
+  ].join(":")
 }
 
 function compareScheduleSignature(left: CanonicalOffer, right: CanonicalOffer): number {
