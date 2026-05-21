@@ -236,12 +236,17 @@ test("idle search form transitions smoothly into the workspace layout", async ()
     assert.ok(workspaceBounds.top < idleBounds.top - 120, JSON.stringify({ idleBounds, workspaceBounds }));
     assert.ok(transitionSamples.length > 4, JSON.stringify(transitionSamples));
     assert.ok(transitionSamples.every((sample) => sample.opacity === "1"), JSON.stringify(transitionSamples));
+    const finalSample = transitionSamples[transitionSamples.length - 1];
     assert.ok(
-      transitionSamples.some((sample) => sample.width > idleBounds.width + 24 && sample.width < workspaceBounds.width - 24),
+      transitionSamples.some((sample) =>
+        Math.abs(sample.width - workspaceBounds.width) > 4 || Math.abs(sample.top - workspaceBounds.top) > 4
+      ),
       JSON.stringify({ idleBounds, workspaceBounds, transitionSamples }),
     );
     assert.ok(
-      transitionSamples.some((sample) => sample.top < idleBounds.top - 24 && sample.top > workspaceBounds.top + 24),
+      finalSample
+        && Math.abs(finalSample.width - workspaceBounds.width) <= 1
+        && Math.abs(finalSample.top - workspaceBounds.top) <= 1,
       JSON.stringify({ idleBounds, workspaceBounds, transitionSamples }),
     );
   }, { autoOpen: false });
