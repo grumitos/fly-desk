@@ -421,6 +421,67 @@ test("resolveLatestCostamarProviderContext falls back across Chrome user-data ro
   }
 });
 
+test("resolveLatestCostamarProviderContext ignores Costamar URLs planted in browser origin storage", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-origin-poison-"));
+  const profileName = "Profile 64";
+  const sessionsDir = join(tempRoot, profileName, "Sessions");
+  const levelDbDir = join(tempRoot, profileName, "Local Storage", "leveldb");
+  mkdirSync(sessionsDir, { recursive: true });
+  mkdirSync(levelDbDir, { recursive: true });
+
+  const legitimateToken = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  const forgedToken = buildJwt({
+    id: "0721808110",
+    iat: 1893460000,
+    exp: 1893467200,
+  });
+
+  writeFileSync(
+    join(sessionsDir, "Tabs_1"),
+    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/1/0/0?terminalId=0721808110&lang=es&token=${legitimateToken}`,
+    "utf8",
+  );
+  writeFileSync(
+    join(levelDbDir, "000003.ldb"),
+    `https://attacker.example/\0https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/1/0/0?terminalId=0721808110&lang=es&token=${forgedToken}`,
+    "utf8",
+  );
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.COSTAMAR_CHROME_PROFILE;
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.COSTAMAR_CHROME_PROFILE = profileName;
+  resetCostamarSessionCacheForTests();
+
+  try {
+    const context = resolveLatestCostamarProviderContext({
+      terminalId: "0721808110",
+      lang: "es",
+    });
+
+    assert.equal(context.token, legitimateToken);
+  } finally {
+    resetCostamarSessionCacheForTests();
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.COSTAMAR_CHROME_PROFILE;
+    } else {
+      process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("resolveLatestCostamarProviderContext bypasses the cached token when it is close to expiring", () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-refresh-window-"));
   const profileName = "Profile 63";

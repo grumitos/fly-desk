@@ -224,6 +224,9 @@ test("idle search form transitions smoothly into the workspace layout", async ()
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
     await page.locator(".fd-workspace-enter").waitFor({ state: "visible" });
+    await page.getByTestId("search-shell-frame").evaluate(async (frame) => {
+      await Promise.all(frame.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
+    });
     const layoutAnimations = await page.evaluate(() => {
       type LayoutAnimationSnapshot = {
         keyframes: Array<{ properties: string[]; transform: string; width: string }>;

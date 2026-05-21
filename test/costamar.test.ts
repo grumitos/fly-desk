@@ -7,6 +7,8 @@ import {
   buildCostamarBrandedSearchUrl,
   buildCostamarSearchBody,
   buildCostamarSearchWarning,
+  cleanupTemporaryCostamarChromeProfileForTests,
+  collectCostamarCandidatesFromPageForTests,
   COSTAMAR_CONCURRENCY,
   createLocalCostamarMatrixDraft,
   detectCostamarB2bAuthChallenge,
@@ -15,6 +17,7 @@ import {
   resetCostamarWarmupStateForTests,
   resolveCostamarRedirectForRequest,
   searchLocalCostamarExact,
+  prepareTemporaryCostamarChromeProfileForTests,
   setCostamarWarmupGeneratorForTests,
   setCostamarWarmupOpenerForTests,
   shouldWarnCostamarRedirectUnavailable,
@@ -32,7 +35,7 @@ import {
 } from "../src/provider-context";
 import type { CanonicalOffer, SearchRequest } from "../src/core/types";
 import { generateTotpCode, generateTotpCodeWithMetadata, totpCanSubmitSafely } from "../src/totp";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -562,7 +565,7 @@ test("resolveCostamarProviderContext can recover the freshest token from Chrome 
   }
 });
 
-test("resolveCostamarProviderContext can recover a token from encoded Chrome session storage", () => {
+test("resolveCostamarProviderContext ignores encoded Costamar URLs from Chrome session storage", () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-session-storage-"));
   const profileName = "Profile 41";
   const sessionStorageDir = join(tempRoot, profileName, "Session Storage");
@@ -597,7 +600,7 @@ test("resolveCostamarProviderContext can recover a token from encoded Chrome ses
     });
 
     assert.equal(context.terminalId, "0721808110");
-    assert.equal(context.token, token);
+    assert.equal(context.token, "");
   } finally {
     resetCostamarSessionCacheForTests();
     if (previousUserDataDir === undefined) {
@@ -942,7 +945,7 @@ test("resolveLatestCostamarProviderContext can recover the freshest token from C
   }
 });
 
-test("resolveLatestCostamarProviderContext can recover the freshest token from Chrome session storage", () => {
+test("resolveLatestCostamarProviderContext ignores Costamar URLs from Chrome session storage", () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-storage-"));
   const profileName = "Profile 42";
   const storageDir = join(tempRoot, profileName, "Session Storage");
@@ -975,7 +978,7 @@ test("resolveLatestCostamarProviderContext can recover the freshest token from C
     });
 
     assert.equal(context.terminalId, "0721808110");
-    assert.equal(context.token, token);
+    assert.equal(context.token, "");
   } finally {
     resetCostamarSessionCacheForTests();
     if (previousUserDataDir === undefined) {
@@ -1499,49 +1502,44 @@ test("buildCostamarSearchBody matches the live booking frontend payload shape", 
   });
 });
 
-test("buildCostamarSearchBody skips expired branded validation tokens", () => {
+test("buildCostamarSearchBody requires a branded validation token", () => {
   const request = buildRequest();
   request.searchMode = "exact";
   request.legs[0].departureDate = "2026-06-01";
   request.legs[0].returnDate = "2026-06-08";
 
-  const payload = buildCostamarSearchBody(request, {
-    apiBaseUrl: "https://costamar.example/api",
-    brandBaseUrl: "https://booking.clickandbook.com/vuelos",
-    terminalId: "0721808110",
-    token: buildJwt({
-      id: "0721808110",
-      iat: 1700000000,
-      exp: 1700003600,
+  assert.throws(
+    () => buildCostamarSearchBody(request, {
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: "",
+      lang: "es",
     }),
-    lang: "es",
-  });
+    /Costamar token is required\./,
+  );
+});
 
-  assert.deepEqual(payload, {
-    flightType: "RT",
-    terminalId: "0721808110",
-    itinerary: [
-      {
-        origin: "LIM",
-        destination: "MAD",
-        date: "20260601",
-      },
-      {
-        origin: "MAD",
-        destination: "LIM",
-        date: "20260608",
-      },
-    ],
-    passengers: {
-      adults: 1,
-      children: 1,
-      infants: 1,
-    },
-    startDate: "2026-06-01T05:00:00.000Z",
-    endDate: "2026-06-08T05:00:00.000Z",
-    hasValidationToken: false,
-    flexible: false,
-  });
+test("buildCostamarSearchBody rejects expired branded validation tokens", () => {
+  const request = buildRequest();
+  request.searchMode = "exact";
+  request.legs[0].departureDate = "2026-06-01";
+  request.legs[0].returnDate = "2026-06-08";
+
+  assert.throws(
+    () => buildCostamarSearchBody(request, {
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: buildJwt({
+        id: "0721808110",
+        iat: 1700000000,
+        exp: 1700003600,
+      }),
+      lang: "es",
+    }),
+    /Costamar token is required\./,
+  );
 });
 
 test("buildCostamarB2bWarmupPayload matches the real flights form contract", () => {
@@ -1635,49 +1633,26 @@ test("buildCostamarB2bWarmupPayload keeps round-trip dates and rejects unsupport
   }), undefined);
 });
 
-test("buildCostamarSearchBody skips tokens that belong to another terminal", () => {
+test("buildCostamarSearchBody rejects tokens that belong to another terminal", () => {
   const request = buildRequest();
   request.searchMode = "exact";
   request.legs[0].departureDate = "2026-06-01";
   request.legs[0].returnDate = "2026-06-08";
 
-  const payload = buildCostamarSearchBody(request, {
-    apiBaseUrl: "https://costamar.example/api",
-    brandBaseUrl: "https://booking.clickandbook.com/vuelos",
-    terminalId: "0721808110",
-    token: buildJwt({
-      id: "9999999999",
-      iat: 1893456000,
-      exp: 1893459600,
+  assert.throws(
+    () => buildCostamarSearchBody(request, {
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: buildJwt({
+        id: "9999999999",
+        iat: 1893456000,
+        exp: 1893459600,
+      }),
+      lang: "es",
     }),
-    lang: "es",
-  });
-
-  assert.deepEqual(payload, {
-    flightType: "RT",
-    terminalId: "0721808110",
-    itinerary: [
-      {
-        origin: "LIM",
-        destination: "MAD",
-        date: "20260601",
-      },
-      {
-        origin: "MAD",
-        destination: "LIM",
-        date: "20260608",
-      },
-    ],
-    passengers: {
-      adults: 1,
-      children: 1,
-      infants: 1,
-    },
-    startDate: "2026-06-01T05:00:00.000Z",
-    endDate: "2026-06-08T05:00:00.000Z",
-    hasValidationToken: false,
-    flexible: false,
-  });
+    /Costamar token is required\./,
+  );
 });
 
 test("buildCostamarSearchWarning exposes token failures clearly", () => {
@@ -1694,6 +1669,78 @@ test("buildCostamarSearchWarning exposes token failures clearly", () => {
     "Costamar rejected this search (403): Agency mismatch",
   );
   assert.equal(buildCostamarSearchWarning({ status: 200, data: [] }), undefined);
+});
+
+test("Costamar temporary Chrome profile staging is private and avoids broad storage copies", async () => {
+  const sourceRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-source-profile-"));
+  const profileName = "Profile 77";
+  mkdirSync(join(sourceRoot, profileName, "Network"), { recursive: true });
+  mkdirSync(join(sourceRoot, profileName, "Local Storage", "leveldb"), { recursive: true });
+  mkdirSync(join(sourceRoot, profileName, "Session Storage"), { recursive: true });
+  mkdirSync(join(sourceRoot, profileName, "IndexedDB"), { recursive: true });
+  mkdirSync(join(sourceRoot, profileName, "Service Worker"), { recursive: true });
+  mkdirSync(join(sourceRoot, profileName, "Sessions"), { recursive: true });
+  writeFileSync(join(sourceRoot, "Local State"), "local-state", "utf8");
+  writeFileSync(join(sourceRoot, profileName, "Preferences"), "preferences", "utf8");
+  writeFileSync(join(sourceRoot, profileName, "Secure Preferences"), "secure-preferences", "utf8");
+  writeFileSync(join(sourceRoot, profileName, "Network", "Cookies"), "cookie-store", "utf8");
+  writeFileSync(join(sourceRoot, profileName, "Local Storage", "leveldb", "000001.log"), "local-storage", "utf8");
+  writeFileSync(join(sourceRoot, profileName, "Session Storage", "000002.log"), "session-storage", "utf8");
+  writeFileSync(join(sourceRoot, profileName, "IndexedDB", "000003.ldb"), "indexed-db", "utf8");
+  writeFileSync(join(sourceRoot, profileName, "Service Worker", "ScriptCache"), "worker-cache", "utf8");
+  writeFileSync(join(sourceRoot, profileName, "Sessions", "Tabs_1"), "session-tabs", "utf8");
+
+  const previousUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = sourceRoot;
+
+  const tempProfile = prepareTemporaryCostamarChromeProfileForTests(profileName, { cloneSourceProfile: true });
+
+  try {
+    assert.equal(existsSync(join(tempProfile, "Local State")), true);
+    assert.equal(existsSync(join(tempProfile, profileName, "Preferences")), true);
+    assert.equal(existsSync(join(tempProfile, profileName, "Network", "Cookies")), true);
+    assert.equal(existsSync(join(tempProfile, profileName, "Secure Preferences")), false);
+    assert.equal(existsSync(join(tempProfile, profileName, "Local Storage")), false);
+    assert.equal(existsSync(join(tempProfile, profileName, "Session Storage")), false);
+    assert.equal(existsSync(join(tempProfile, profileName, "IndexedDB")), false);
+    assert.equal(existsSync(join(tempProfile, profileName, "Service Worker")), false);
+    assert.equal(existsSync(join(tempProfile, profileName, "Sessions")), false);
+
+    if (process.platform !== "win32") {
+      assert.equal(statSync(tempProfile).mode & 0o777, 0o700);
+      assert.equal(statSync(join(tempProfile, "Local State")).mode & 0o777, 0o600);
+      assert.equal(statSync(join(tempProfile, profileName, "Network", "Cookies")).mode & 0o777, 0o600);
+    }
+  } finally {
+    await cleanupTemporaryCostamarChromeProfileForTests(tempProfile);
+    if (previousUserDataDir === undefined) {
+      delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.COSTAMAR_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+    rmSync(sourceRoot, { recursive: true, force: true });
+  }
+});
+
+test("Costamar live browser collection skips unrelated tabs", async () => {
+  let evaluated = false;
+  const candidates = await collectCostamarCandidatesFromPageForTests({
+    url: () => "https://private.example.test/inbox",
+    evaluate: async () => {
+      evaluated = true;
+      return JSON.stringify({
+        href: "https://private.example.test/inbox",
+        html: "",
+        localStorage: [
+          "token=https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/1/0/0?terminalId=0721808110&token=fake.token.value",
+        ],
+        sessionStorage: [],
+      });
+    },
+  });
+
+  assert.equal(evaluated, false);
+  assert.equal(candidates.length, 0);
 });
 
 test("mapCostamarRecommendationToOffer keeps USD as the offer currency for quotation math", () => {
@@ -1810,6 +1857,63 @@ test("searchLocalCostamarExact keeps the Costamar search total without applying 
     assert.equal(result.offers[0]?.price.total.amount, 950);
   } finally {
     global.fetch = previousFetch;
+  }
+});
+
+test("searchLocalCostamarExact does not retry token-protected searches without a token", async () => {
+  const previousFetch = global.fetch;
+  const request = buildExactRequest();
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  const searchBodies: Array<{ token?: string; hasValidationToken?: boolean }> = [];
+
+  global.fetch = (async (input, init) => {
+    const url = String(input);
+
+    if (url === "https://costamar.com.pe/vuelos/api/engines/0721808110") {
+      return new Response(
+        JSON.stringify(buildEngine()),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (url === "https://costamar.com.pe/vuelos/api/flights/search") {
+      searchBodies.push(JSON.parse(String(init?.body ?? "{}")));
+      return new Response(
+        JSON.stringify({
+          status: 401,
+          data: [],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await searchLocalCostamarExact(request, {
+      costamar: {
+        apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+        brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+        terminalId: "0721808110",
+        token,
+        lang: "es",
+      },
+    });
+
+    assert.equal(searchBodies.length, 1);
+    assert.equal(searchBodies[0]?.token, token);
+    assert.equal(searchBodies[0]?.hasValidationToken, true);
+    assert.equal(result.offers.length, 0);
+    assert.ok(result.warnings.some((warning) => /branded token is invalid/i.test(warning)));
+  } finally {
+    global.fetch = previousFetch;
+    resetCostamarWarmupStateForTests();
+    resetCostamarSessionCacheForTests();
   }
 });
 
@@ -2127,6 +2231,49 @@ test("resolveCostamarRedirectForRequest separates redirect verification from loc
     assert.equal(blocked.redirectVerification.verified, false);
     assert.equal(blocked.redirectVerification.state, "blocked");
     assert.equal(shouldWarnCostamarRedirectUnavailable(1, blocked.redirectVerification), true);
+  } finally {
+    global.fetch = previousFetch;
+    resetCostamarWarmupStateForTests();
+  }
+});
+
+test("resolveCostamarRedirectForRequest live-validates a fresh token before forced warmup", async () => {
+  const previousFetch = global.fetch;
+  const request = buildExactRequest();
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  const context = {
+    apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+    brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+    terminalId: "0721808110",
+    token,
+    lang: "es",
+  };
+  let warmupCalls = 0;
+
+  try {
+    global.fetch = (async () => new Response("<html>flight results</html>", { status: 200 })) as typeof fetch;
+    resetCostamarWarmupStateForTests();
+    setCostamarWarmupGeneratorForTests(async (_request, seedContext) => {
+      warmupCalls += 1;
+      return seedContext;
+    });
+
+    const resolution = await resolveCostamarRedirectForRequest(request, context, {
+      validateLive: true,
+      forceOnUnverified: true,
+    });
+
+    assert.equal(resolution.redirectVerification.verified, true);
+    assert.equal(resolution.redirectVerification.state, "verified");
+    assert.equal(warmupCalls, 0);
+    assert.deepEqual(
+      resolution.diagnostics?.steps.map((step) => step.name),
+      ["live-validation"],
+    );
   } finally {
     global.fetch = previousFetch;
     resetCostamarWarmupStateForTests();

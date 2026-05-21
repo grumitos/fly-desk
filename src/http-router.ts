@@ -56,8 +56,7 @@ import {
   resolveUsableCostamarBrandedToken,
   verifyCostamarTokenLive,
 } from "./provider-context";
-import { resolveQuotationUsdToPenRateInfo, resolveStandaloneUsdToPenRateInfo } from "./quotation-exchange-rate";
-import { normalizeQuotationOfferSnapshot, normalizeQuotationRequestSnapshot } from "./http-quotation-snapshot";
+import { resolveQuotationUsdToPenRateInfo } from "./quotation-exchange-rate";
 import { runProviderMatrixInWorker, runProviderSearchInWorker } from "./search-worker-client";
 import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
@@ -68,10 +67,11 @@ import {
   getWebAuthConfigError,
   hasValidWebSession,
   isWebAuthEnabled,
+  shouldTrustReverseProxyLoopbackClient,
   shouldTrustLoopbackClient,
   verifyWebPassword,
 } from "./web-auth";
-import { type SearchJobRecord } from "./session-store";
+import { type MatrixJobRecord, type SearchJobRecord } from "./session-store";
 import {
   appendProviderDiagnosticEvent,
   cloneProviderDiagnostics,
@@ -87,8 +87,6 @@ interface SessionPayload {
 
 interface QuotationPayload extends SessionPayload {
   offerId?: string;
-  offer?: unknown;
-  request?: unknown;
 }
 
 type ResultsLayoutColumnKey =
@@ -105,11 +103,27 @@ interface LocalOpenPayload {
 }
 
 type LocalOpenUrlOpener = typeof openUrlLocally;
+interface QuotationSource {
+  sessionId: string;
+  offerId: string;
+  request: SearchRequest;
+  providerContext?: ProviderContext;
+  offer: CanonicalOffer;
+  kind: "search" | "matrix";
+  cellKey?: string;
+}
+
+type QuotationOfferValidator = (source: QuotationSource) => Promise<CanonicalOffer | undefined>;
 
 let localOpenUrlOpener: LocalOpenUrlOpener = openUrlLocally;
+let quotationOfferValidatorOverride: QuotationOfferValidator | undefined;
 
 export function setLocalOpenUrlOpenerForTests(opener?: LocalOpenUrlOpener): void {
   localOpenUrlOpener = opener ?? openUrlLocally;
+}
+
+export function setQuotationOfferValidatorForTests(validator?: QuotationOfferValidator): void {
+  quotationOfferValidatorOverride = validator;
 }
 
 interface ResultsLayoutPayload {
@@ -856,6 +870,20 @@ function shouldUseSearchWorkerProcesses(): boolean {
   return process.env.FLY_DESK_SEARCH_WORKER_PROCESSES !== "0";
 }
 
+function shouldContinueProviderWork(shouldContinue: (() => boolean) | undefined): boolean {
+  try {
+    return shouldContinue ? shouldContinue() : true;
+  } catch {
+    return false;
+  }
+}
+
+function assertProviderWorkStillRunning(shouldContinue: (() => boolean) | undefined): void {
+  if (!shouldContinueProviderWork(shouldContinue)) {
+    throw new Error("Search worker cancelled.");
+  }
+}
+
 async function resolveProviderSearchProgressive(
   providerId: ProviderId,
   request: SearchRequest,
@@ -879,11 +907,22 @@ async function resolveProviderSearchProgressive(
   }
 
   const adapter = getProgressiveAdapter(providerId);
+  const guardedOnProgress = (result: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
+    if (!shouldContinueProviderWork(shouldContinue)) {
+      return false;
+    }
+
+    const keepGoing = onProgress(result);
+    return keepGoing !== false && shouldContinueProviderWork(shouldContinue);
+  };
   const run = async () => {
+    assertProviderWorkStillRunning(shouldContinue);
     recordProviderDiagnosticEvent("provider_started");
-    return kind === "range"
-      ? adapter.resolveRangeProgressive(request, providerContext, onProgress)
-      : adapter.resolveExactProgressive(request, providerContext, onProgress);
+    const result = await (kind === "range"
+      ? adapter.resolveRangeProgressive(request, providerContext, guardedOnProgress)
+      : adapter.resolveExactProgressive(request, providerContext, guardedOnProgress));
+    assertProviderWorkStillRunning(shouldContinue);
+    return result;
   };
 
   return diagnostics
@@ -914,13 +953,23 @@ async function resolveProviderMatrixProgressive(
   }
 
   const run = async () => {
+    assertProviderWorkStillRunning(shouldContinue);
     recordProviderDiagnosticEvent("provider_started");
-    return getProgressiveAdapter(providerId).resolveMatrixProgressive(
+    const result = await getProgressiveAdapter(providerId).resolveMatrixProgressive(
       request,
       providerContext,
       draft,
-      onCellResolved,
+      (cell) => {
+        if (!shouldContinueProviderWork(shouldContinue)) {
+          return false;
+        }
+
+        const keepGoing = onCellResolved(cell);
+        return keepGoing !== false && shouldContinueProviderWork(shouldContinue);
+      },
     );
+    assertProviderWorkStillRunning(shouldContinue);
+    return result;
   };
 
   return diagnostics
@@ -972,7 +1021,23 @@ function mergeLocationSuggestions(
 }
 
 function isTrustedLocalRequest(request: Request): boolean {
-  return shouldTrustLoopbackClient() && request.headers.get("x-flydesk-client-loopback") === "1";
+  if (!shouldTrustLoopbackClient() || request.headers.get("x-flydesk-client-loopback") !== "1") {
+    return false;
+  }
+
+  if (hasForwardedClientMarker(request) && !shouldTrustReverseProxyLoopbackClient()) {
+    return false;
+  }
+
+  return true;
+}
+
+function hasForwardedClientMarker(request: Request): boolean {
+  return Boolean(
+    request.headers.get("x-forwarded-for")?.trim()
+      || request.headers.get("forwarded")?.trim()
+      || request.headers.get("x-real-ip")?.trim(),
+  );
 }
 
 function resolveConfiguredApiAccessToken(): string | undefined {
@@ -1021,6 +1086,346 @@ function isTrustedApiRequest(request: Request): boolean {
 
   const token = resolveConfiguredApiAccessToken();
   return token ? hasValidApiAccessToken(request, token) : false;
+}
+
+function isOfferValidatedForQuotation(offer: CanonicalOffer): boolean {
+  return offer.priceConfidence === "validated" && offer.priceStatus === "verified";
+}
+
+function offerFirstSegment(offer: CanonicalOffer): CanonicalOffer["itineraries"][number]["segments"][number] | undefined {
+  const outbound = offer.itineraries.find((itinerary) => itinerary.direction === "outbound") ?? offer.itineraries[0];
+  return outbound?.segments[0];
+}
+
+function offerInboundFirstSegment(offer: CanonicalOffer): CanonicalOffer["itineraries"][number]["segments"][number] | undefined {
+  return offer.itineraries.find((itinerary) => itinerary.direction === "inbound")?.segments[0];
+}
+
+function offerDepartureDay(offer: CanonicalOffer): string | undefined {
+  return offerFirstSegment(offer)?.departureAt?.slice(0, 10);
+}
+
+function offerReturnDay(offer: CanonicalOffer): string | undefined {
+  return offerInboundFirstSegment(offer)?.departureAt?.slice(0, 10);
+}
+
+function buildExactRequestFromOffer(baseRequest: SearchRequest, offer: CanonicalOffer): SearchRequest | undefined {
+  const departureDate = offerDepartureDay(offer);
+  const returnDate = offer.tripType === "round-trip" ? offerReturnDay(offer) : undefined;
+  const baseLeg = baseRequest.legs[0];
+
+  if (!departureDate || !baseLeg) {
+    return undefined;
+  }
+
+  if (offer.tripType === "round-trip" && !returnDate) {
+    return undefined;
+  }
+
+  return {
+    ...baseRequest,
+    providerId: offer.providerSource,
+    tripType: offer.tripType,
+    searchMode: "exact",
+    legs: [
+      {
+        origin: baseLeg.origin ?? offer.origin,
+        destination: baseLeg.destination ?? offer.destination,
+        originLabel: baseLeg.originLabel,
+        destinationLabel: baseLeg.destinationLabel,
+        departureDate,
+        returnDate: offer.tripType === "round-trip" ? returnDate : undefined,
+      },
+    ],
+    filters: {
+      ...baseRequest.filters,
+      maxResults: Math.max(10, baseRequest.filters.maxResults ?? 10),
+      compactAllOffers: true,
+    },
+  };
+}
+
+function buildExactRequestFromMatrixCell(baseRequest: SearchRequest, cell: MatrixCell): SearchRequest | undefined {
+  if (cell.derivedRequest) {
+    return {
+      ...cell.derivedRequest,
+      providerId: cell.providerSource,
+      searchMode: "exact",
+    };
+  }
+
+  const baseLeg = baseRequest.legs[0];
+  if (!baseLeg || !cell.departureDate) {
+    return undefined;
+  }
+
+  if (baseRequest.tripType === "round-trip" && !cell.returnDate) {
+    return undefined;
+  }
+
+  return {
+    ...baseRequest,
+    providerId: cell.providerSource,
+    searchMode: "exact",
+    legs: [
+      {
+        origin: baseLeg.origin,
+        destination: baseLeg.destination,
+        originLabel: baseLeg.originLabel,
+        destinationLabel: baseLeg.destinationLabel,
+        departureDate: cell.departureDate,
+        returnDate: baseRequest.tripType === "round-trip" ? cell.returnDate : undefined,
+      },
+    ],
+    filters: {
+      ...baseRequest.filters,
+      maxResults: Math.max(10, baseRequest.filters.maxResults ?? 10),
+      compactAllOffers: true,
+    },
+  };
+}
+
+function buildSyntheticMatrixOffer(cell: MatrixCell, request: SearchRequest): CanonicalOffer | undefined {
+  if (!cell.price) {
+    return undefined;
+  }
+
+  const leg = request.legs[0];
+  if (!leg) {
+    return undefined;
+  }
+
+  const departureAt = `${cell.departureDate}T00:00:00.000Z`;
+  const returnAt = cell.returnDate ? `${cell.returnDate}T00:00:00.000Z` : undefined;
+  const itineraries: CanonicalOffer["itineraries"] = [
+    {
+      id: `${cell.key}-outbound`,
+      direction: "outbound",
+      durationMinutes: 0,
+      stops: 0,
+      layoverMinutes: [],
+      segments: [
+        {
+          id: `${cell.key}-outbound-segment`,
+          marketingCarrier: "",
+          flightNumber: "",
+          origin: leg.origin,
+          destination: leg.destination,
+          departureAt,
+          arrivalAt: departureAt,
+          durationMinutes: 0,
+        },
+      ],
+    },
+  ];
+
+  if (request.tripType === "round-trip" && returnAt) {
+    itineraries.push({
+      id: `${cell.key}-inbound`,
+      direction: "inbound",
+      durationMinutes: 0,
+      stops: 0,
+      layoverMinutes: [],
+      segments: [
+        {
+          id: `${cell.key}-inbound-segment`,
+          marketingCarrier: "",
+          flightNumber: "",
+          origin: leg.destination,
+          destination: leg.origin,
+          departureAt: returnAt,
+          arrivalAt: returnAt,
+          durationMinutes: 0,
+        },
+      ],
+    });
+  }
+
+  return {
+    id: cell.key,
+    signature: cell.key,
+    providerSource: cell.providerSource,
+    providerOfferRef: cell.key,
+    tripType: request.tripType,
+    origin: leg.origin,
+    destination: leg.destination,
+    itineraries,
+    price: {
+      total: cell.price,
+    },
+    priceConfidence: cell.confidence === "validated" || cell.confidence === "live" || cell.confidence === "indicative" || cell.confidence === "stale"
+      ? cell.confidence
+      : "indicative",
+    priceStatus: cell.confidence === "validated" ? "verified" : "unverified",
+    purchasePaths: cell.purchasePaths ?? [],
+    comparisonMetrics: {
+      totalDurationMinutes: 0,
+      totalStops: 0,
+      baggageScore: 0,
+      purchasePathScore: 0,
+    },
+    tags: [],
+    warnings: cell.tooltip ? [cell.tooltip] : [],
+  };
+}
+
+function resolveSearchQuotationSource(
+  runtime: ReturnType<typeof getRuntime>,
+  sessionId: string,
+  offerId: string,
+): QuotationSource | undefined {
+  const session = runtime.sessions.getSession(sessionId);
+  const offer = session ? runtime.sessions.getOffer(sessionId, offerId) : undefined;
+
+  if (!session || !offer) {
+    return undefined;
+  }
+
+  return {
+    sessionId,
+    offerId,
+    request: session.request,
+    providerContext: session.providerContext,
+    offer,
+    kind: "search",
+  };
+}
+
+function resolveMatrixQuotationSource(
+  runtime: ReturnType<typeof getRuntime>,
+  sessionId: string,
+  offerId: string,
+): QuotationSource | undefined {
+  const job = runtime.sessions.getMatrixJob(sessionId);
+  const cell = job?.cells.find((candidate) => candidate.key === offerId || candidate.offer?.id === offerId);
+  if (!job || !cell) {
+    return undefined;
+  }
+
+  const request = buildExactRequestFromMatrixCell(job.request, cell);
+  const offer = cell.offer ?? (request ? buildSyntheticMatrixOffer(cell, request) : undefined);
+  if (!request || !offer) {
+    return undefined;
+  }
+
+  return {
+    sessionId,
+    offerId,
+    request,
+    providerContext: job.providerContext,
+    offer,
+    kind: "matrix",
+    cellKey: cell.key,
+  };
+}
+
+function resolveQuotationSource(
+  runtime: ReturnType<typeof getRuntime>,
+  sessionId: string,
+  offerId: string,
+): QuotationSource | undefined {
+  return resolveSearchQuotationSource(runtime, sessionId, offerId)
+    ?? resolveMatrixQuotationSource(runtime, sessionId, offerId);
+}
+
+function quotationCandidateScore(candidate: CanonicalOffer, original: CanonicalOffer): number {
+  let score = 0;
+  if (candidate.id === original.id) score += 100;
+  if (candidate.providerOfferRef && candidate.providerOfferRef === original.providerOfferRef) score += 80;
+  if (candidate.signature && candidate.signature === original.signature) score += 60;
+  if ((candidate.validatingCarrier ?? candidate.mainCarrier) === (original.validatingCarrier ?? original.mainCarrier)) score += 30;
+  if (candidate.origin === original.origin && candidate.destination === original.destination) score += 20;
+  if (offerDepartureDay(candidate) === offerDepartureDay(original)) score += 20;
+  if (offerReturnDay(candidate) === offerReturnDay(original)) score += 10;
+  return score;
+}
+
+function pickQuotationValidationOffer(
+  offers: CanonicalOffer[],
+  original: CanonicalOffer,
+): CanonicalOffer | undefined {
+  return offers
+    .filter((candidate) => candidate.providerSource === original.providerSource)
+    .filter((candidate) => candidate.origin === original.origin && candidate.destination === original.destination)
+    .filter((candidate) => offerDepartureDay(candidate) === offerDepartureDay(original))
+    .filter((candidate) => original.tripType !== "round-trip" || offerReturnDay(candidate) === offerReturnDay(original))
+    .sort((left, right) => quotationCandidateScore(right, original) - quotationCandidateScore(left, original)
+      || left.price.total.amount - right.price.total.amount)[0];
+}
+
+function markOfferValidatedForQuotation(offer: CanonicalOffer): CanonicalOffer {
+  return {
+    ...offer,
+    priceConfidence: "validated",
+    priceStatus: "verified",
+    priceVerifiedAt: new Date().toISOString(),
+  };
+}
+
+async function validateQuotationOfferAgainstProvider(source: QuotationSource): Promise<CanonicalOffer | undefined> {
+  if (source.offer.providerSource === "costamar" && !source.providerContext?.costamar) {
+    return undefined;
+  }
+
+  const validationRequest = buildExactRequestFromOffer(source.request, source.offer);
+  if (!validationRequest) {
+    return undefined;
+  }
+
+  const result = await resolveProviderSearchProgressive(
+    source.offer.providerSource,
+    validationRequest,
+    source.providerContext,
+    () => true,
+    undefined,
+    undefined,
+    undefined,
+  );
+  const matched = pickQuotationValidationOffer(result.offers, source.offer);
+  return matched ? markOfferValidatedForQuotation(matched) : undefined;
+}
+
+async function resolveValidatedQuotationOffer(source: QuotationSource): Promise<CanonicalOffer | undefined> {
+  if (isOfferValidatedForQuotation(source.offer)) {
+    return source.offer;
+  }
+
+  const validator = quotationOfferValidatorOverride ?? validateQuotationOfferAgainstProvider;
+  const validated = await validator(source);
+  return validated ? markOfferValidatedForQuotation(validated) : undefined;
+}
+
+function storeValidatedQuotationOffer(
+  runtime: ReturnType<typeof getRuntime>,
+  source: QuotationSource,
+  validatedOffer: CanonicalOffer,
+): CanonicalOffer {
+  if (source.kind === "search") {
+    return runtime.sessions.updateOffer(source.sessionId, validatedOffer) ?? validatedOffer;
+  }
+
+  if (!source.cellKey) {
+    return validatedOffer;
+  }
+
+  const updated = runtime.sessions.updateMatrixJob(source.sessionId, (current: MatrixJobRecord) => ({
+    ...current,
+    cells: current.cells.map((cell) => cell.key === source.cellKey
+      ? {
+          ...cell,
+          price: validatedOffer.price.total,
+          confidence: "validated",
+          selectable: true,
+          requiresRequery: false,
+          stateCode: "ok",
+          providerSource: validatedOffer.providerSource,
+          purchasePaths: validatedOffer.purchasePaths,
+          offer: validatedOffer,
+        }
+      : cell),
+  }));
+
+  return updated?.cells.find((cell) => cell.key === source.cellKey)?.offer ?? validatedOffer;
 }
 
 function apiAuthRequiredResponse(): Response {
@@ -1554,13 +1959,17 @@ function shouldBuildCostamarProviderContext(providerIds: ProviderId[]): boolean 
 function buildInitialProviderContext(
   providerIds: ProviderId[],
   payload: SearchPayload | undefined,
+  explicitProviderId?: ProviderId,
 ): ProviderContext | undefined {
   if (!shouldBuildCostamarProviderContext(providerIds)) {
     return undefined;
   }
 
+  const costamarContext = normalizeCostamarProviderContext(payload?.providerConfig?.costamar);
   return {
-    costamar: normalizeCostamarProviderContext(payload?.providerConfig?.costamar),
+    costamar: explicitProviderId === "costamar" && !payload?.providerConfig?.costamar?.token
+      ? { ...costamarContext, token: "" }
+      : costamarContext,
   };
 }
 
@@ -1576,7 +1985,7 @@ async function handleSearchRequest(
     return json({ errors: requestErrors }, { status: 400 });
   }
 
-  const providerContext = buildInitialProviderContext(contract.providerIds, payload);
+  const providerContext = buildInitialProviderContext(contract.providerIds, payload, contract.explicitProviderId);
   const errors = validateSearchContract(contract, providerContext);
   if (errors.length > 0) {
     return json({ errors }, { status: 400 });
@@ -1816,7 +2225,7 @@ async function handleMatrixRequest(
     return json({ errors: requestErrors }, { status: 400 });
   }
 
-  const providerContext = buildInitialProviderContext(contract.providerIds, payload);
+  const providerContext = buildInitialProviderContext(contract.providerIds, payload, contract.explicitProviderId);
   const errors = validateSearchContract(contract, providerContext);
   if (errors.length > 0) {
     return json({ errors }, { status: 400 });
@@ -2404,31 +2813,30 @@ export async function routeRequest(request: Request): Promise<Response> {
 
     const payload = await readPayload<QuotationPayload>(request);
 
-    const session = payload.searchSessionId ? runtime.sessions.getSession(payload.searchSessionId) : undefined;
-    const storedOffer = session && payload.offerId
-      ? runtime.sessions.getOffer(payload.searchSessionId as string, payload.offerId)
-      : undefined;
-    const snapshotRequest = normalizeQuotationRequestSnapshot(payload.request, payload.offer);
-    const requestSnapshot = session?.request ?? snapshotRequest;
-    const offerSnapshot = !storedOffer && requestSnapshot
-      ? normalizeQuotationOfferSnapshot(payload.offer, requestSnapshot)
-      : undefined;
-    const offer = storedOffer ?? offerSnapshot;
+    if (!payload.searchSessionId || !payload.offerId) {
+      return json({ errors: ["searchSessionId and offerId are required."] }, { status: 400 });
+    }
 
-    if (!requestSnapshot || !offer) {
+    const source = resolveQuotationSource(runtime, payload.searchSessionId, payload.offerId);
+    if (!source) {
       return json({ errors: ["Session or offer not found."] }, { status: 404 });
     }
 
-    const usdToPenRateInfo = shouldIncludePenQuotationPrice(offer, requestSnapshot)
-      ? session
-        ? await resolveQuotationUsdToPenRateInfo(session, offer)
-        : await resolveStandaloneUsdToPenRateInfo(offer)
+    const validatedOffer = await resolveValidatedQuotationOffer(source);
+    if (!validatedOffer) {
+      return json({ errors: ["Selected offer could not be validated for quotation."] }, { status: 409 });
+    }
+
+    const offer = storeValidatedQuotationOffer(runtime, source, validatedOffer);
+    const searchSession = runtime.sessions.getSession(source.sessionId);
+    const usdToPenRateInfo = shouldIncludePenQuotationPrice(offer, source.request) && searchSession
+      ? await resolveQuotationUsdToPenRateInfo(searchSession, offer)
       : undefined;
 
     return json({
-      searchSessionId: payload.searchSessionId,
+      searchSessionId: source.sessionId,
       offer,
-      commercialText: buildCommercialQuotation(offer, requestSnapshot, { usdToPenRateInfo }),
+      commercialText: buildCommercialQuotation(offer, source.request, { usdToPenRateInfo }),
     });
   }
 

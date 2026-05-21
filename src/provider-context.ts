@@ -466,6 +466,17 @@ function decodeEmbeddedUrl(raw: string): string {
   return current;
 }
 
+function isCostamarBrandedCandidateUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:"
+      && parsed.hostname.toLowerCase() === "booking.clickandbook.com"
+      && /^\/vuelos\/b\//i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
 export function extractCostamarSessionCandidates(
   text: string,
   source = "session",
@@ -482,6 +493,10 @@ export function extractCostamarSessionCandidates(
 
     try {
       const parsed = new URL(sanitized);
+      if (!isCostamarBrandedCandidateUrl(parsed.toString())) {
+        continue;
+      }
+
       const token = sanitizeCostamarToken(parsed.searchParams.get("token")?.trim() ?? "");
       const terminalId = parsed.searchParams.get("terminalId")?.trim() ?? "";
       if (!token || !terminalId || !costamarTokenMatchesTerminal(token, terminalId)) {
@@ -767,8 +782,6 @@ function collectCostamarSessionCandidatesFromChromeProfiles(
     candidates.push(
       ...readCostamarCandidatesFromChromeArtifact(userDataDir, profileName, "History"),
       ...readCostamarCandidatesFromChromeArtifact(userDataDir, profileName, "Favicons"),
-      ...readCostamarCandidatesFromChromeArtifactDirectory(userDataDir, profileName, "Session Storage"),
-      ...readCostamarCandidatesFromChromeArtifactDirectory(userDataDir, profileName, join("Local Storage", "leveldb")),
     );
   }
 
@@ -825,7 +838,7 @@ function readCostamarCandidatesViaCDP(userDataDir: string): CostamarSessionCandi
     const candidates: CostamarSessionCandidate[] = [];
     for (const tab of tabs) {
       const url = typeof tab?.url === "string" ? tab.url : "";
-      if (url) {
+      if (url && isCostamarBrandedCandidateUrl(url)) {
         candidates.push(...extractCostamarSessionCandidates(url, "cdp"));
       }
     }

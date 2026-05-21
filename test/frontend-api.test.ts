@@ -1,6 +1,6 @@
 import { afterEach, test } from "bun:test";
 import assert from "node:assert/strict";
-import { startMigrationSearch, type BackendSearchPayload } from "../frontend/src/lib/api";
+import { startMigrationSearch, startSearch, type BackendSearchPayload } from "../frontend/src/lib/api";
 import type { SearchRequest } from "../frontend/src/types";
 
 const originalFetch = globalThis.fetch;
@@ -24,6 +24,22 @@ function buildMonthViewRequest(): SearchRequest {
     market: "PE",
     maxResults: 25,
     compactAllOffers: true,
+  };
+}
+
+function buildExactRequest(): SearchRequest {
+  return {
+    origin: "LIM",
+    destination: "MIA",
+    departureDate: "2026-06-15",
+    tripType: "one-way",
+    adults: 1,
+    children: 0,
+    infants: 0,
+    searchMode: "exact",
+    currencyCode: "USD",
+    locale: "es-PE",
+    market: "PE",
   };
 }
 
@@ -193,4 +209,74 @@ test("migration month with Agil offers suppresses child no-flight warnings", asy
   assert.equal(result.offers.length, 1);
   assert.equal(result.warnings.some((warning) => /Agil.*vuelos/i.test(warning)), false);
   assert.equal(result.migrationMonths?.[0]?.warnings?.some((warning) => /Agil.*vuelos/i.test(warning)), false);
+});
+
+test("frontend diagnostic logs redact raw provider secrets before UI exposure", async () => {
+  globalThis.fetch = ((input: RequestInfo | URL) => {
+    assert.equal(String(input), "/api/search");
+
+    return Promise.resolve(new Response(JSON.stringify({
+      searchJobId: "job-redaction",
+      searchComplete: true,
+      searchStatus: "completed",
+      revision: 1,
+      sortMode: "cheapest",
+      request: {
+        tripType: "one-way",
+        searchMode: "exact",
+        legs: [{ origin: "LIM", destination: "MIA", departureDate: "2026-06-15" }],
+        passengers: { adults: 1, children: 0, infants: 0 },
+        filters: {},
+        coverageMode: "core",
+        redirectMode: "none",
+        currencyCode: "USD",
+        locale: "es-PE",
+        market: "PE",
+      },
+      offers: [],
+      allOffers: [],
+      searchMeta: {
+        requestedAt: "2026-06-01T00:00:00.000Z",
+        completedAt: "2026-06-01T00:00:00.000Z",
+        providersUsed: ["agil-local"],
+        warnings: [
+          "AGIL_APIM_SUBSCRIPTION_KEY=sk_raw_SECRET_123 localStorage.jwt=jwt_SECRET_456",
+        ],
+        partial: false,
+        searchState: "search_live",
+      },
+      providerMeta: {
+        exactProvider: "agil-local",
+        coverageMode: "core",
+      },
+      providerDiagnostics: [{
+        providerId: "agil-local",
+        kind: "exact",
+        status: "failed",
+        startedAt: "2026-06-01T00:00:00.000Z",
+        completedAt: "2026-06-01T00:00:01.000Z",
+        durationMs: 1000,
+        warningCount: 1,
+        error: "Bearer bearer_SECRET_789 Cookie=session_SECRET_abc",
+        events: [{
+          name: "browser_storage",
+          elapsedMs: 10,
+          detail: "C:\\Users\\agent\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 7 token=token_SECRET_def",
+        }],
+      }],
+      warnings: [
+        "Authorization: Bearer auth_SECRET_ghi COSTAMAR_B2B_PASSWORD=pass_SECRET_jkl",
+      ],
+      diagnosticLog: [],
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+  }) as typeof fetch;
+
+  const result = await startSearch(buildExactRequest(), "cheapest");
+  const logText = (result.diagnosticLog ?? []).join("\n");
+
+  assert.doesNotMatch(logText, /sk_raw_SECRET|jwt_SECRET|bearer_SECRET|session_SECRET|token_SECRET|auth_SECRET|pass_SECRET|Profile 7/);
+  assert.match(logText, /redactado/i);
 });

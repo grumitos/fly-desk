@@ -1,6 +1,6 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Browser, BrowserContext, Page } from "playwright";
 import {
   removePathWithRetries,
@@ -282,6 +282,9 @@ const COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS = Math.max(
 const COSTAMAR_REDIRECT_VERIFY_FAILURE_PATTERN =
   /login|iniciar\s+sesi[oó]n|auth|otp|captcha|expired|expirad|invalid|inv[aá]lid|unauthorized|forbidden/i;
 const COSTAMAR_B2B_KEYSTROKE_DELAY_MS = 35;
+const COSTAMAR_PAGE_SNAPSHOT_HTML_MAX_CHARS = 64 * 1024;
+const COSTAMAR_PAGE_STORAGE_MAX_ENTRIES = 50;
+const COSTAMAR_PAGE_STORAGE_VALUE_MAX_CHARS = 4096;
 const DEFAULT_COSTAMAR_B2B_BASE_URL = "https://b2b.clickandbook.com/lang/es/b2b";
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 
@@ -760,19 +763,45 @@ async function connectToLiveCostamarBrowserContext(): Promise<{
   return pendingLiveCostamarBrowserConnection;
 }
 
+function applyPrivateMode(path: string, mode: number): void {
+  if (process.platform === "win32") {
+    return;
+  }
+
+  try {
+    chmodSync(path, mode);
+  } catch {
+    // Best-effort on filesystems that do not support POSIX modes.
+  }
+}
+
+function mkdirPrivate(path: string): void {
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  applyPrivateMode(path, 0o700);
+}
+
 function copyPathSafe(source: string, destination: string): void {
   try {
-    const stats = statSync(source);
+    const stats = lstatSync(source);
+    if (stats.isSymbolicLink()) {
+      return;
+    }
+
     if (stats.isDirectory()) {
-      mkdirSync(destination, { recursive: true });
+      mkdirPrivate(destination);
       readdirSync(source, { withFileTypes: true }).forEach((entry) => {
         copyPathSafe(join(source, entry.name), join(destination, entry.name));
       });
       return;
     }
 
-    mkdirSync(join(destination, ".."), { recursive: true });
-    copyFileSync(source, destination);
+    if (!stats.isFile()) {
+      return;
+    }
+
+    mkdirPrivate(dirname(destination));
+    writeFileSync(destination, readFileSync(source), { mode: 0o600 });
+    applyPrivateMode(destination, 0o600);
   } catch {
     // Ignore locked or transient browser artifacts while cloning the profile.
   }
@@ -793,8 +822,8 @@ function prepareTemporaryCostamarChromeProfile(
   options: { cloneSourceProfile?: boolean } = {},
 ): string {
   const sourceRoot = resolveCostamarChromeLaunchOptions().userDataDir || DEFAULT_CHROME_USER_DATA_DIR;
-  const tempRoot = join(tmpdir(), `travel_quote_foundation_costamar_browser_${crypto.randomUUID()}`);
-  mkdirSync(join(tempRoot, profileName), { recursive: true });
+  const tempRoot = mkdtempSync(join(tmpdir(), "travel_quote_foundation_costamar_browser_"));
+  mkdirPrivate(join(tempRoot, profileName));
   registerActiveTempArtifact(tempRoot);
 
   if (!options.cloneSourceProfile) {
@@ -804,16 +833,8 @@ function prepareTemporaryCostamarChromeProfile(
   [
     "Local State",
     join(profileName, "Preferences"),
-    join(profileName, "Secure Preferences"),
-    join(profileName, "Network"),
+    join(profileName, "Network", "Cookies"),
     join(profileName, "Cookies"),
-    join(profileName, "Local Storage"),
-    join(profileName, "Session Storage"),
-    join(profileName, "IndexedDB"),
-    join(profileName, "WebStorage"),
-    join(profileName, "Storage"),
-    join(profileName, "Service Worker"),
-    join(profileName, "Sessions"),
   ].forEach((relativePath) => {
     const source = join(sourceRoot, relativePath);
     if (existsSync(source)) {
@@ -822,6 +843,18 @@ function prepareTemporaryCostamarChromeProfile(
   });
 
   return tempRoot;
+}
+
+export function prepareTemporaryCostamarChromeProfileForTests(
+  profileName: string,
+  options: { cloneSourceProfile?: boolean } = {},
+): string {
+  return prepareTemporaryCostamarChromeProfile(profileName, options);
+}
+
+export async function cleanupTemporaryCostamarChromeProfileForTests(tempRoot: string): Promise<void> {
+  await removePathWithRetries(tempRoot, 6, 250);
+  unregisterActiveTempArtifact(tempRoot);
 }
 
 function readSetCookieHeaders(headers: Headers): string[] {
@@ -1038,6 +1071,33 @@ function collectCostamarCandidatesFromText(
   });
 }
 
+function isCostamarBrowserUrlAllowed(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") {
+      return false;
+    }
+
+    const allowedHosts = new Set([
+      "booking.clickandbook.com",
+      new URL(resolveCostamarB2bBaseUrl()).hostname.toLowerCase(),
+    ]);
+    return allowedHosts.has(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function collectCostamarCandidatesFromBrowserUrl(
+  pool: Map<string, CostamarSessionCandidate>,
+  url: string,
+  source: string,
+): void {
+  if (isCostamarBrowserUrlAllowed(url)) {
+    collectCostamarCandidatesFromText(pool, url, source);
+  }
+}
+
 function pickUsableCostamarCandidate(
   pool: Map<string, CostamarSessionCandidate>,
   terminalId: string | undefined,
@@ -1061,16 +1121,30 @@ function observeCostamarPage(
   sourcePrefix: string,
 ): void {
   page.on("request", (request) => {
-    collectCostamarCandidatesFromText(pool, request.url(), `${sourcePrefix}:request`);
+    collectCostamarCandidatesFromBrowserUrl(pool, request.url(), `${sourcePrefix}:request`);
   });
   page.on("response", (response) => {
-    collectCostamarCandidatesFromText(pool, response.url(), `${sourcePrefix}:response`);
+    collectCostamarCandidatesFromBrowserUrl(pool, response.url(), `${sourcePrefix}:response`);
   });
   page.on("framenavigated", (frame) => {
     if (frame === page.mainFrame()) {
-      collectCostamarCandidatesFromText(pool, frame.url(), `${sourcePrefix}:frame`);
+      collectCostamarCandidatesFromBrowserUrl(pool, frame.url(), `${sourcePrefix}:frame`);
     }
   });
+}
+
+function observeCostamarControlledPage(
+  page: Page,
+  pool: Map<string, CostamarSessionCandidate>,
+  sourcePrefix: string,
+  observedPages: Set<Page>,
+): void {
+  if (observedPages.has(page)) {
+    return;
+  }
+
+  observedPages.add(page);
+  observeCostamarPage(page, pool, sourcePrefix);
 }
 
 async function collectCostamarCandidatesFromPage(
@@ -1078,25 +1152,50 @@ async function collectCostamarCandidatesFromPage(
   pool: Map<string, CostamarSessionCandidate>,
   sourcePrefix: string,
 ): Promise<void> {
-  collectCostamarCandidatesFromText(pool, page.url(), `${sourcePrefix}:url`);
+  const pageUrl = page.url();
+  if (!isCostamarBrowserUrlAllowed(pageUrl)) {
+    return;
+  }
+
+  collectCostamarCandidatesFromText(pool, pageUrl, `${sourcePrefix}:url`);
 
   try {
-    const snapshot = await page.evaluate(() => JSON.stringify({
-      href: window.location.href,
-      html: document.documentElement?.outerHTML ?? "",
-      localStorage: Array.from({ length: localStorage.length }, (_, index) => {
-        const key = localStorage.key(index) ?? "";
-        return `${key}=${localStorage.getItem(key) ?? ""}`;
-      }),
-      sessionStorage: Array.from({ length: sessionStorage.length }, (_, index) => {
-        const key = sessionStorage.key(index) ?? "";
-        return `${key}=${sessionStorage.getItem(key) ?? ""}`;
-      }),
-    }));
+    const snapshot = await page.evaluate((limits) => {
+      const clip = (value: string, maxChars: number) => value.length > maxChars
+        ? value.slice(0, maxChars)
+        : value;
+      const readStorage = (storage: Storage) => {
+        const entries: string[] = [];
+        for (let index = 0; index < Math.min(storage.length, limits.maxStorageEntries); index += 1) {
+          const key = storage.key(index) ?? "";
+          entries.push(`${clip(key, 256)}=${clip(storage.getItem(key) ?? "", limits.maxStorageValueChars)}`);
+        }
+        return entries;
+      };
+
+      return JSON.stringify({
+        href: window.location.href,
+        html: clip(document.documentElement?.outerHTML ?? "", limits.maxHtmlChars),
+        localStorage: readStorage(localStorage),
+        sessionStorage: readStorage(sessionStorage),
+      });
+    }, {
+      maxHtmlChars: COSTAMAR_PAGE_SNAPSHOT_HTML_MAX_CHARS,
+      maxStorageEntries: COSTAMAR_PAGE_STORAGE_MAX_ENTRIES,
+      maxStorageValueChars: COSTAMAR_PAGE_STORAGE_VALUE_MAX_CHARS,
+    });
     collectCostamarCandidatesFromText(pool, snapshot, `${sourcePrefix}:snapshot`);
   } catch {
     // Ignore pages that are not script-accessible yet.
   }
+}
+
+export async function collectCostamarCandidatesFromPageForTests(
+  page: Pick<Page, "url" | "evaluate">,
+): Promise<CostamarSessionCandidate[]> {
+  const pool = new Map<string, CostamarSessionCandidate>();
+  await collectCostamarCandidatesFromPage(page as Page, pool, "test");
+  return [...pool.values()];
 }
 
 function observeCostamarBrowserPages(
@@ -1106,12 +1205,11 @@ function observeCostamarBrowserPages(
   observedPages: Set<Page>,
 ): void {
   context.pages().forEach((page, index) => {
-    if (observedPages.has(page)) {
+    if (observedPages.has(page) || !isCostamarBrowserUrlAllowed(page.url())) {
       return;
     }
 
-    observedPages.add(page);
-    observeCostamarPage(page, pool, `${sourcePrefix}:${index}`);
+    observeCostamarControlledPage(page, pool, `${sourcePrefix}:${index}`, observedPages);
   });
 }
 
@@ -1267,6 +1365,7 @@ async function submitCostamarB2bFlightSearch(
     return undefined;
   }
 
+  observeCostamarControlledPage(page, pool, `${sourcePrefix}:observed`, observedPages);
   observeCostamarBrowserPages(page.context(), pool, `${sourcePrefix}:observed`, observedPages);
   await collectCostamarCandidatesFromPage(page, pool, `${sourcePrefix}:ready`);
 
@@ -1754,7 +1853,7 @@ async function generateCostamarRedirectContextViaB2B(
         );
         closeLivePage = true;
 
-        observeCostamarBrowserPages(liveSession.context, pool, "live-b2b", observedPages);
+        observeCostamarControlledPage(livePage, pool, "live-b2b", observedPages);
         const hasLiveSession = await withCostamarB2bTimeout(
           ensureCostamarB2bSession(livePage),
           warmupTimeoutMs,
@@ -1841,6 +1940,7 @@ async function generateCostamarRedirectContextViaB2B(
       warmupTimeoutMs,
       "Costamar isolated page creation",
     );
+    observeCostamarControlledPage(sessionPage, pool, "b2b", observedPages);
     observeCostamarBrowserPages(browserContext, pool, "b2b", observedPages);
     const hasSession = await withCostamarB2bTimeout(
       ensureCostamarB2bSession(sessionPage),
@@ -1890,6 +1990,7 @@ async function generateCostamarRedirectContextViaB2B(
       warmupTimeoutMs,
       "Costamar branded search page creation",
     );
+    observeCostamarControlledPage(searchPage, pool, "search", observedPages);
     observeCostamarBrowserPages(browserContext, pool, "search", observedPages);
     await withCostamarB2bTimeout(
       searchPage.goto(searchUrl, {
@@ -2581,6 +2682,9 @@ function ensureCostamarCredentials(context: CostamarProviderContext): void {
   if (!context.terminalId) {
     throw new Error("Costamar terminalId is required.");
   }
+  if (!resolveUsableCostamarBrandedToken(context.token, context.terminalId)) {
+    throw new Error("Costamar token is required.");
+  }
 }
 
 async function fetchCostamar(
@@ -2973,12 +3077,11 @@ export async function resolveCostamarRedirectForRequest(
   lastCostamarWarmupDiagnostics = diagnostics;
 
   const shouldRefresh = options.force
-    || redirectStateRequiresRefresh(redirectVerification.state)
-    || (options.forceOnUnverified && !redirectVerification.verified);
+    || redirectStateRequiresRefresh(redirectVerification.state);
 
   if (shouldRefresh) {
     recordCostamarWarmupStep(diagnostics, "refresh-start", true, redirectVerification.reason);
-    const warmed = await warmCostamarRedirectContext(request, context, { force: options.force || options.forceOnUnverified });
+    const warmed = await warmCostamarRedirectContext(request, context, { force: options.force });
     context = warmed;
     const refreshedVerification = costamarRedirectVerificationFromContext(context);
     const inspection = inspectCostamarBrandedToken(context.token, context.terminalId);
@@ -3232,13 +3335,6 @@ async function searchRecommendations(
     && (payload.status === 401 || payload.status === 402)
   ) {
     tokenSearchRejected = true;
-    const fallbackPayload = await search({
-      ...context,
-      token: "",
-    });
-    if (typeof fallbackPayload.status !== "number" || fallbackPayload.status < 400) {
-      payload = fallbackPayload;
-    }
   }
 
   if (tokenSearchRejected) {
@@ -3248,6 +3344,15 @@ async function searchRecommendations(
     });
     redirectContext = forcedRedirect.context;
     redirectVerification = forcedRedirect.redirectVerification;
+    const refreshedToken = resolveUsableCostamarBrandedToken(redirectContext.token, redirectContext.terminalId);
+    if (refreshedToken && refreshedToken !== context.token) {
+      payload = await search({
+        ...context,
+        terminalId: redirectContext.terminalId,
+        token: refreshedToken,
+        lang: redirectContext.lang,
+      });
+    }
   }
 
   const responseWarning = buildCostamarSearchWarning(payload);

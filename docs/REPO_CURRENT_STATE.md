@@ -48,6 +48,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - en produccion queda detras de Caddy y mantiene `HOST=127.0.0.1`
 - `FLY_DESK_WEB_AUTH=1` activa login web con cookie httpOnly firmada
 - `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` es obligatorio cuando hay reverse proxy local
+- `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK=1` solo debe usarse si el proxy local tambien bloquea o autentica rutas local-only; por defecto las solicitudes con `x-forwarded-for`, `forwarded` o `x-real-ip` no heredan confianza loopback
 - endpoints operativos aceptan cookie web valida o `FLY_DESK_API_TOKEN`
 - diagnosticos, estado de token Costamar y apertura local de browser son loopback-only
 - layout de resultados acepta auth web porque es una preferencia de la app
@@ -72,7 +73,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - Costamar usa contexto controlado por entorno, allowlist de hosts y warm-up B2B opcional
 - Costamar no acepta hosts/base URLs por request
 - el prewarm silencioso de providers esta activo por defecto y puede apagarse con `FLY_DESK_PROVIDER_PREWARM=0`
-- el VPS actual ejecuta busquedas en el proceso principal con `FLY_DESK_SEARCH_WORKER_PROCESSES=0`; Costamar B2B fue validado asi en produccion
+- las busquedas de proveedor deben ejecutarse aisladas con `FLY_DESK_SEARCH_WORKER_PROCESSES=1` en produccion; `0` queda como excepcion temporal de QA y requiere repetir QA externo antes de cambiar conteos de workers o warm-up
 
 ## Estructura Funcional
 
@@ -94,7 +95,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `src/server.ts`: `Bun.serve`, serving de `frontend/dist`, headers, limite de body e inyeccion de config runtime
 - `src/http-router.ts`: rutas HTTP, auth web/loopback/token, jobs, matriz, cotizacion, redirects, diagnosticos y layout
 - `src/web-auth.ts`: password web, cookie firmada y validacion de sesion
-- `src/http-quotation-snapshot.ts`: normalizacion de snapshots de cotizacion
+- `src/core/quotation.ts`: render de cotizaciones a partir de ofertas almacenadas y validadas del lado servidor
 - `src/search-date-policy.ts`: ventana movil de fechas y config publica embebida
 - `src/provider-context.ts`: contexto Costamar, allowlist, recovery desde Chrome/CDP y estado live de token
 - `src/local-agil.ts`: sesion local, refresh token, exact/range/matrix, pricing y deep links
@@ -136,7 +137,7 @@ Cobertura importante actual:
 - validacion compartida de fechas con ventana movil
 - contexto Costamar endurecido
 - key requerida o recuperable para Agil live
-- workers Bun y bypass con `FLY_DESK_SEARCH_WORKER_PROCESSES=0`
+- workers Bun habilitados por defecto para aislar busquedas pesadas de proveedor
 - persistencia SQLite y migracion JSON legada de sesiones/autocomplete
 - layout persistente de resultados
 - rail de busqueda, filtros, tema, autocomplete, provider links y cotizacion
@@ -166,5 +167,5 @@ No se mantienen planes de migracion ni auditorias historicas como documentacion 
 - `src/local-costamar.ts` concentra automatizacion B2B, cliente, mapping y redirects
 - la persistencia es SQLite local; no hay store externo para multi-instancia
 - Chrome CDP persistente ya queda cubierto por `fly-desk-chrome.service`; Agil aun necesita una sesion real valida en ese perfil del VPS
-- revisar antes de reactivar workers de busqueda en VPS: Costamar B2B ya responde por produccion con workers desactivados
+- repetir QA externo antes de cambiar `FLY_DESK_SEARCH_WORKER_PROCESSES` o warm-up de providers en VPS
 - la busqueda migratoria lanza jobs de rango por mes seleccionado con concurrencia limitada, lo cual debe vigilarse si sube el volumen de uso
