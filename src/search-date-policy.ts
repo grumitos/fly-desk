@@ -57,7 +57,7 @@ export function resolveSearchMaxFutureDays(): number {
 
 export function resolveSearchTodayIso(now = new Date()): string {
   const override = process.env[SEARCH_TODAY_OVERRIDE_ENV]?.trim();
-  if (override && isIsoDateString(override)) {
+  if (process.env.NODE_ENV === "test" && override && isIsoDateString(override)) {
     return override;
   }
 

@@ -4,8 +4,32 @@ import {
   addDaysIso,
   getSearchDatePolicy,
   isIsoDateString,
+  resolveSearchTodayIso,
   validateSearchDateInPolicy,
 } from "../src/search-date-policy";
+
+function withEnv<T>(values: Record<string, string | undefined>, run: () => T): T {
+  const previous = new Map(Object.keys(values).map((key) => [key, process.env[key]]));
+  try {
+    for (const [key, value] of Object.entries(values)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+
+    return run();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
 
 test("getSearchDatePolicy uses a rolling 365-day window by default", () => {
   const policy = getSearchDatePolicy(new Date("2026-03-31T12:00:00.000Z"));
@@ -28,6 +52,20 @@ test("validateSearchDateInPolicy rejects impossible calendar dates without rollo
   assert.deepEqual(
     validateSearchDateInPolicy("Departure date", "2026-06-31", policy),
     ["Departure date must be a valid ISO date (YYYY-MM-DD)."],
+  );
+});
+
+test("SEARCH_TODAY_OVERRIDE is honored only in test mode", () => {
+  assert.equal(
+    withEnv({ NODE_ENV: "test", SEARCH_TODAY_OVERRIDE: "2026-03-31" }, () =>
+      resolveSearchTodayIso(new Date("2026-05-21T12:00:00.000Z"))),
+    "2026-03-31",
+  );
+
+  assert.equal(
+    withEnv({ NODE_ENV: "production", SEARCH_TODAY_OVERRIDE: "2026-03-31" }, () =>
+      resolveSearchTodayIso(new Date("2026-05-21T12:00:00.000Z"))),
+    "2026-05-21",
   );
 });
 
