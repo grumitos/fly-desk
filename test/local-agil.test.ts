@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,7 +11,11 @@ import {
   extractAgilChromeDebugPortsFromCommandLinesForTests,
   extractAgilChromeUserDataDirsFromCommandLinesForTests,
   extractAgilBrowserStorageSnapshotForTests,
+  cleanupTemporaryAgilChromeProfileForTests,
+  isAgilRawChromeStorageFileScanEnabledForTests,
+  isAgilTemporaryChromeStorageFallbackEnabledForTests,
   parseAgilApimSubscriptionKeyFromFrontendBundle,
+  prepareTemporaryAgilChromeProfileForTests,
   parseAgilRefreshTokenPayload,
   parseAgilSessionData,
   readAgilChromeProfileCandidatesForTests,
@@ -28,6 +32,14 @@ import {
   extractAgilUsdToPenRate,
 } from "../src/local-agil";
 import type { SearchRequest } from "../src/core/types";
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
 
 test("reads Agil session storage after DOM content is ready without waiting for network idle", async () => {
   const calls: Array<{ kind: string; args: unknown[] }> = [];
@@ -212,6 +224,82 @@ test("Agil can resolve an active Chrome DevTools browser endpoint from a user da
   }
 });
 
+test("Agil temporary Chrome storage fallback is opt-in", () => {
+  const previous = process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK;
+
+  try {
+    delete process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK;
+    assert.equal(isAgilTemporaryChromeStorageFallbackEnabledForTests(), false);
+
+    process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK = "1";
+    assert.equal(isAgilTemporaryChromeStorageFallbackEnabledForTests(), true);
+
+    process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK = "0";
+    assert.equal(isAgilTemporaryChromeStorageFallbackEnabledForTests(), false);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK;
+    } else {
+      process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK = previous;
+    }
+  }
+});
+
+test("Agil raw Chrome storage file scanning is opt-in", () => {
+  const previous = process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN;
+
+  try {
+    delete process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN;
+    assert.equal(isAgilRawChromeStorageFileScanEnabledForTests(), false);
+
+    process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN = "1";
+    assert.equal(isAgilRawChromeStorageFileScanEnabledForTests(), true);
+
+    process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN = "0";
+    assert.equal(isAgilRawChromeStorageFileScanEnabledForTests(), false);
+  } finally {
+    if (previous === undefined) {
+      delete process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN;
+    } else {
+      process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN = previous;
+    }
+  }
+});
+
+test("Agil temporary Chrome profile staging is private and copies only minimal storage", async () => {
+  const sourceRoot = mkdtempSync(join(tmpdir(), "flydesk-agil-source-profile-"));
+  const profileName = "Profile 42";
+  mkdirSync(join(sourceRoot, profileName, "Local Storage", "leveldb"), { recursive: true });
+  mkdirSync(join(sourceRoot, profileName, "Session Storage"), { recursive: true });
+  writeFileSync(join(sourceRoot, "Local State"), "local-state", "utf8");
+  writeFileSync(join(sourceRoot, profileName, "Preferences"), "preferences", "utf8");
+  writeFileSync(join(sourceRoot, profileName, "Secure Preferences"), "secure-preferences", "utf8");
+  writeFileSync(join(sourceRoot, profileName, "Local Storage", "leveldb", "000001.log"), "agil-storage", "utf8");
+  writeFileSync(join(sourceRoot, profileName, "Session Storage", "000002.log"), "session-storage", "utf8");
+
+  const tempProfile = prepareTemporaryAgilChromeProfileForTests(sourceRoot, profileName);
+
+  try {
+    assert.equal(existsSync(join(tempProfile, "Local State")), true);
+    assert.equal(existsSync(join(tempProfile, profileName, "Preferences")), true);
+    assert.equal(existsSync(join(tempProfile, profileName, "Local Storage", "leveldb", "000001.log")), true);
+    assert.equal(existsSync(join(tempProfile, profileName, "Secure Preferences")), false);
+    assert.equal(existsSync(join(tempProfile, profileName, "Session Storage")), false);
+
+    if (process.platform !== "win32") {
+      assert.equal(statSync(tempProfile).mode & 0o777, 0o700);
+      assert.equal(statSync(join(tempProfile, "Local State")).mode & 0o777, 0o600);
+      assert.equal(
+        statSync(join(tempProfile, profileName, "Local Storage", "leveldb", "000001.log")).mode & 0o777,
+        0o600,
+      );
+    }
+  } finally {
+    await cleanupTemporaryAgilChromeProfileForTests(tempProfile);
+    rmSync(sourceRoot, { recursive: true, force: true });
+  }
+});
+
 test("Agil session extraction keeps the configured profile when cross-profile scan is disabled", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-agil-storage-freshness-"));
   const staleProfile = "Profile 40";
@@ -270,12 +358,22 @@ test("Agil session extraction keeps the configured profile when cross-profile sc
   const previousBrowserWsEndpoint = process.env.AGIL_BROWSER_WS_ENDPOINT;
   const previousProcessDiscovery = process.env.AGIL_CHROME_PROCESS_DISCOVERY;
   const previousScanAllProfiles = process.env.AGIL_SCAN_ALL_CHROME_PROFILES;
+  const previousRawFileScan = process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN;
+  const previousTempFallback = process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK;
+  const previousChromeUserDataDir = process.env.CHROME_USER_DATA_DIR;
+  const previousCostamarChromeUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousLocalAppData = process.env.LOCALAPPDATA;
   process.env.AGIL_CHROME_USER_DATA_DIR = tempRoot;
   process.env.AGIL_CHROME_PROFILE = staleProfile;
   process.env.AGIL_CHROME_PROCESS_DISCOVERY = "0";
   process.env.AGIL_SCAN_ALL_CHROME_PROFILES = "0";
+  process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN = "1";
+  process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK = "0";
+  process.env.LOCALAPPDATA = join(tempRoot, "isolated-localappdata");
   delete process.env.AGIL_BROWSER_URL;
   delete process.env.AGIL_BROWSER_WS_ENDPOINT;
+  delete process.env.CHROME_USER_DATA_DIR;
+  delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
 
   try {
     const snapshot = await extractAgilBrowserStorageSnapshotForTests();
@@ -321,6 +419,12 @@ test("Agil session extraction keeps the configured profile when cross-profile sc
     } else {
       process.env.AGIL_SCAN_ALL_CHROME_PROFILES = previousScanAllProfiles;
     }
+
+    restoreEnv("AGIL_RAW_CHROME_STORAGE_FILE_SCAN", previousRawFileScan);
+    restoreEnv("AGIL_TEMP_CHROME_STORAGE_FALLBACK", previousTempFallback);
+    restoreEnv("CHROME_USER_DATA_DIR", previousChromeUserDataDir);
+    restoreEnv("COSTAMAR_CHROME_USER_DATA_DIR", previousCostamarChromeUserDataDir);
+    restoreEnv("LOCALAPPDATA", previousLocalAppData);
 
     rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -383,12 +487,22 @@ test("Agil session extraction ignores non-Agil origin storage in the configured 
   const previousBrowserWsEndpoint = process.env.AGIL_BROWSER_WS_ENDPOINT;
   const previousProcessDiscovery = process.env.AGIL_CHROME_PROCESS_DISCOVERY;
   const previousScanAllProfiles = process.env.AGIL_SCAN_ALL_CHROME_PROFILES;
+  const previousRawFileScan = process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN;
+  const previousTempFallback = process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK;
+  const previousChromeUserDataDir = process.env.CHROME_USER_DATA_DIR;
+  const previousCostamarChromeUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousLocalAppData = process.env.LOCALAPPDATA;
   process.env.AGIL_CHROME_USER_DATA_DIR = tempRoot;
   process.env.AGIL_CHROME_PROFILE = profileName;
   process.env.AGIL_CHROME_PROCESS_DISCOVERY = "0";
   process.env.AGIL_SCAN_ALL_CHROME_PROFILES = "0";
+  process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN = "1";
+  process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK = "0";
+  process.env.LOCALAPPDATA = join(tempRoot, "isolated-localappdata");
   delete process.env.AGIL_BROWSER_URL;
   delete process.env.AGIL_BROWSER_WS_ENDPOINT;
+  delete process.env.CHROME_USER_DATA_DIR;
+  delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
 
   try {
     const snapshot = await extractAgilBrowserStorageSnapshotForTests();
@@ -435,6 +549,101 @@ test("Agil session extraction ignores non-Agil origin storage in the configured 
       process.env.AGIL_SCAN_ALL_CHROME_PROFILES = previousScanAllProfiles;
     }
 
+    restoreEnv("AGIL_RAW_CHROME_STORAGE_FILE_SCAN", previousRawFileScan);
+    restoreEnv("AGIL_TEMP_CHROME_STORAGE_FALLBACK", previousTempFallback);
+    restoreEnv("CHROME_USER_DATA_DIR", previousChromeUserDataDir);
+    restoreEnv("COSTAMAR_CHROME_USER_DATA_DIR", previousCostamarChromeUserDataDir);
+    restoreEnv("LOCALAPPDATA", previousLocalAppData);
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("Agil default extraction ignores planted arbitrary-origin raw storage with Agil-looking keys", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-agil-storage-planted-"));
+  const profileName = "Profile 40";
+  const storageDir = join(tempRoot, profileName, "Local Storage", "leveldb");
+  mkdirSync(storageDir, { recursive: true });
+  writeFileSync(
+    join(tempRoot, "Local State"),
+    JSON.stringify({
+      profile: {
+        last_used: profileName,
+        last_active_profiles: [profileName],
+        info_cache: {
+          [profileName]: {},
+        },
+      },
+    }),
+    "utf8",
+  );
+
+  const tokenPayload = Buffer.from(JSON.stringify({ exp: 1893459600 })).toString("base64url");
+  const plantedToken = `header.${tokenPayload}.signature`;
+  const plantedUserData = Buffer.from(JSON.stringify({
+    Usuario: {
+      CodigoUsuario: 9999,
+    },
+    Cliente: {
+      Vendedor: {
+        CodigoVendedor: "EVIL",
+      },
+    },
+  })).toString("base64");
+  const plantedIp = Buffer.from("9.9.9.9").toString("base64");
+  writeFileSync(
+    join(storageDir, "000001.log"),
+    [
+      "https://attacker.example/app",
+      "attacker-controlled-value",
+      "https://www.agilsmart.com/home-user",
+      `tokenSearchFlight ${plantedToken}`,
+      `user_data ${plantedUserData}`,
+      `ip ${plantedIp}`,
+    ].join("\0"),
+    "utf8",
+  );
+
+  const previousUserDataDir = process.env.AGIL_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.AGIL_CHROME_PROFILE;
+  const previousBrowserUrl = process.env.AGIL_BROWSER_URL;
+  const previousBrowserWsEndpoint = process.env.AGIL_BROWSER_WS_ENDPOINT;
+  const previousProcessDiscovery = process.env.AGIL_CHROME_PROCESS_DISCOVERY;
+  const previousScanAllProfiles = process.env.AGIL_SCAN_ALL_CHROME_PROFILES;
+  const previousRawFileScan = process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN;
+  const previousTempFallback = process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK;
+  const previousChromeUserDataDir = process.env.CHROME_USER_DATA_DIR;
+  const previousCostamarChromeUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousLocalAppData = process.env.LOCALAPPDATA;
+  process.env.AGIL_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.AGIL_CHROME_PROFILE = profileName;
+  process.env.AGIL_CHROME_PROCESS_DISCOVERY = "0";
+  process.env.AGIL_SCAN_ALL_CHROME_PROFILES = "0";
+  process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK = "0";
+  process.env.LOCALAPPDATA = join(tempRoot, "isolated-localappdata");
+  delete process.env.AGIL_BROWSER_URL;
+  delete process.env.AGIL_BROWSER_WS_ENDPOINT;
+  delete process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN;
+  delete process.env.CHROME_USER_DATA_DIR;
+  delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+
+  try {
+    await assert.rejects(
+      () => extractAgilBrowserStorageSnapshotForTests(),
+      /Unable to extract Agil session from Chrome profiles/,
+    );
+  } finally {
+    restoreEnv("AGIL_CHROME_USER_DATA_DIR", previousUserDataDir);
+    restoreEnv("AGIL_CHROME_PROFILE", previousProfile);
+    restoreEnv("AGIL_BROWSER_URL", previousBrowserUrl);
+    restoreEnv("AGIL_BROWSER_WS_ENDPOINT", previousBrowserWsEndpoint);
+    restoreEnv("AGIL_CHROME_PROCESS_DISCOVERY", previousProcessDiscovery);
+    restoreEnv("AGIL_SCAN_ALL_CHROME_PROFILES", previousScanAllProfiles);
+    restoreEnv("AGIL_RAW_CHROME_STORAGE_FILE_SCAN", previousRawFileScan);
+    restoreEnv("AGIL_TEMP_CHROME_STORAGE_FALLBACK", previousTempFallback);
+    restoreEnv("CHROME_USER_DATA_DIR", previousChromeUserDataDir);
+    restoreEnv("COSTAMAR_CHROME_USER_DATA_DIR", previousCostamarChromeUserDataDir);
+    restoreEnv("LOCALAPPDATA", previousLocalAppData);
     rmSync(tempRoot, { recursive: true, force: true });
   }
 });

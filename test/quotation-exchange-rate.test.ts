@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SearchRequest } from "../src/core/types";
@@ -272,6 +272,47 @@ test("resolveQuotationUsdToPenRate falls back to an external daily rate when Agi
 
   assert.equal(rate, 3.517);
   assert.equal(externalCalls, 1);
+});
+
+test("resolveQuotationUsdToPenRate ignores the legacy predictable tmp cache path", async () => {
+  const previousCachePath = process.env.FLY_DESK_QUOTATION_RATE_CACHE_PATH;
+  delete process.env.FLY_DESK_QUOTATION_RATE_CACHE_PATH;
+  const legacyTmpCachePath = join(tmpdir(), "flydesk-quotation-usd-pen-rate.json");
+  resetQuotationUsdToPenRateCacheForTests();
+  writeFileSync(legacyTmpCachePath, JSON.stringify({
+    day: "2026-04-07",
+    rate: 7.6543,
+  }), "utf8");
+
+  try {
+    const offer = buildOffer({
+      providerSource: "costamar",
+      tripType: "round-trip",
+    });
+    const session = buildSession({
+      offers: [offer],
+    });
+    let lookupCalls = 0;
+
+    const rate = await resolveQuotationUsdToPenRate(session, offer, {
+      now: new Date("2026-04-07T15:00:00.000Z"),
+      searchRate: async () => {
+        lookupCalls += 1;
+        return 3.6123;
+      },
+    });
+
+    assert.equal(rate, 3.6123);
+    assert.equal(lookupCalls, 1);
+  } finally {
+    rmSync(legacyTmpCachePath, { force: true });
+    resetQuotationUsdToPenRateCacheForTests();
+    if (previousCachePath === undefined) {
+      delete process.env.FLY_DESK_QUOTATION_RATE_CACHE_PATH;
+    } else {
+      process.env.FLY_DESK_QUOTATION_RATE_CACHE_PATH = previousCachePath;
+    }
+  }
 });
 
 test("resolveStandaloneUsdToPenRate uses the selected offer rate before an external lookup", async () => {

@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { resolveServerIdleTimeoutSeconds } from "../src/server";
+import { handleRequest, resolveServerIdleTimeoutSeconds } from "../src/server";
 import { withServer } from "./helpers/server";
 
 test("server idle timeout defaults above Bun's short request timeout", () => {
@@ -9,6 +9,20 @@ test("server idle timeout defaults above Bun's short request timeout", () => {
   assert.equal(resolveServerIdleTimeoutSeconds("999"), 255);
   assert.equal(resolveServerIdleTimeoutSeconds("0"), 0);
   assert.equal(resolveServerIdleTimeoutSeconds("45"), 45);
+});
+
+test("malformed request URLs are handled with a controlled bad request response", async () => {
+  const request = {
+    url: "http://[",
+    method: "GET",
+    headers: new Headers(),
+  } as Request;
+
+  const response = await handleRequest(request, {} as never);
+  const payload = await response.json() as { error?: string };
+
+  assert.equal(response.status, 400);
+  assert.match(payload.error ?? "", /malformed request url/i);
 });
 
 test("web auth redirects the app shell to login before serving frontend assets", { concurrency: false }, async () => {

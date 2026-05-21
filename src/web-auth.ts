@@ -29,6 +29,10 @@ export function shouldTrustLoopbackClient(): boolean {
   return readEnv("FLY_DESK_TRUST_LOOPBACK_CLIENT") === "1";
 }
 
+export function shouldTrustReverseProxyLoopbackClient(): boolean {
+  return readEnv("FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK") === "1";
+}
+
 function resolveWebSessionSecret(): string | undefined {
   return readEnv("FLY_DESK_WEB_SESSION_SECRET");
 }

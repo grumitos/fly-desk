@@ -30,7 +30,7 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
   const flightCodes = offer ? offerFlightCodes(offer) : []
   const activePathFeedback = pathFeedback && pathFeedback.offerId === offer?.id ? pathFeedback.message : null
   const loading = Boolean(quoteKey && loadingKey === quoteKey)
-  const canQuote = Boolean(offer && request && quoteKey)
+  const canQuote = Boolean(offer && request && quoteKey && quoteSearchJobId && quoteOfferId)
   const purchasePathActionLabel = purchasePath?.type === "search-redirect" ? "Buscar" : "Abrir"
   const purchasePathActionTitle = purchasePath?.type === "search-redirect"
     ? "Abre la busqueda equivalente del proveedor; la disponibilidad puede variar."
@@ -38,14 +38,12 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
   const detail = offer ? buildOfferDetailSummary(offer) : null
 
   const handleQuotation = async () => {
-    if (!offer || !request || !quoteKey) return
+    if (!offer || !request || !quoteKey || !quoteSearchJobId || !quoteOfferId) return
     setLoadingKey(quoteKey)
     try {
       const result = await fetchQuotation({
         searchSessionId: quoteSearchJobId,
         offerId: quoteOfferId,
-        offer,
-        request,
       })
       setQuotation({ key: quoteKey, text: result.commercialText })
     } catch {

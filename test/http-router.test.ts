@@ -20,7 +20,7 @@ import {
   resetCostamarWarmupStateForTests,
   setCostamarWarmupGeneratorForTests,
 } from "../src/local-costamar";
-import { routeRequest, SEARCH_REVALIDATION_CACHE_TTL_MS } from "../src/http-router";
+import { routeRequest, SEARCH_REVALIDATION_CACHE_TTL_MS, setQuotationOfferValidatorForTests } from "../src/http-router";
 import { getRuntime } from "../src/runtime";
 import { withServer } from "./helpers/server";
 
@@ -252,7 +252,11 @@ async function withLoopbackTrustForTests<T>(run: () => Promise<T>): Promise<T> {
 
 test("quotation uses the stored exact offer when the selected result belongs to a search job", async () => {
   const runtime = getRuntime();
-  const offer = buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0");
+  const offer = {
+    ...buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0"),
+    priceConfidence: "validated" as const,
+    priceStatus: "verified" as const,
+  };
   const searchMeta = buildSearchMeta();
   const now = new Date().toISOString();
   const job = runtime.sessions.createSearchJob({
@@ -291,7 +295,7 @@ test("quotation uses the stored exact offer when the selected result belongs to 
   });
 });
 
-test("quotation can use the displayed flexible result snapshot without re-querying a search job", async () => {
+test("quotation rejects client-supplied offer snapshots without a stored server offer", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/quotation`, {
       method: "POST",
@@ -321,14 +325,149 @@ test("quotation can use the displayed flexible result snapshot without re-queryi
       }),
     });
 
-    assert.equal(response.status, 200);
-    const payload = await response.json() as { commercialText?: string };
-    assert.match(payload.commercialText ?? "", /Lima \(LIM\) - Madrid \(MAD\) - Lima \(LIM\)/);
-    assert.match(payload.commercialText ?? "", /US\$ 498 por adulto/);
-    assert.match(payload.commercialText ?? "", /S\/ 1,743 aprox\. por adulto/);
-    assert.match(payload.commercialText ?? "", /Tipo de cambio: 1 USD = S\/ 3\.5000 · Fuente: Agil · Fecha: \d{4}-\d{2}-\d{2}/);
-    assert.match(payload.commercialText ?? "", /🛫 IDA\nLIM · 01 junio/);
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { errors?: string[] };
+    assert.ok(payload.errors?.includes("searchSessionId and offerId are required."));
   });
+});
+
+test("quotation rejects forged snapshots when the session offer id does not exist", async () => {
+  const runtime = getRuntime();
+  const storedOffer = {
+    ...buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0"),
+    priceConfidence: "validated" as const,
+    priceStatus: "verified" as const,
+  };
+  const job = runtime.sessions.createSearchJob({
+    request: buildCostamarRequest(),
+    offers: [storedOffer],
+    allOffers: [storedOffer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/quotation`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        searchSessionId: job.id,
+        offerId: "attacker-offer",
+        offer: {
+          id: "attacker-offer",
+          providerSource: "costamar",
+          airline: "Bogus Air",
+          origin: "LIM",
+          destination: "MAD",
+          departureDate: "2026-06-01",
+          returnDate: "2026-06-08",
+          price: { total: { amount: 33.3, currencyCode: "USD" } },
+          usdToPenRate: 7.7,
+        },
+        request: buildCostamarRequest(),
+      }),
+    });
+
+    assert.equal(response.status, 404);
+    const payload = await response.json() as { errors?: string[] };
+    assert.ok(payload.errors?.includes("Session or offer not found."));
+  });
+});
+
+test("quotation refuses cached offers that have not been provider validated", async () => {
+  const runtime = getRuntime();
+  const offer = buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0");
+  const job = runtime.sessions.createSearchJob({
+    request: buildCostamarRequest(),
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/quotation`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        searchSessionId: job.id,
+        offerId: offer.id,
+      }),
+    });
+
+    assert.equal(response.status, 409);
+    const payload = await response.json() as { errors?: string[] };
+    assert.ok(payload.errors?.includes("Selected offer could not be validated for quotation."));
+  });
+});
+
+test("quotation validates an unverified stored offer before rendering", { concurrency: false }, async () => {
+  const runtime = getRuntime();
+  const offer = buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0");
+  const job = runtime.sessions.createSearchJob({
+    request: buildCostamarRequest(),
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  let validatorCalls = 0;
+
+  setQuotationOfferValidatorForTests(async (source) => {
+    validatorCalls += 1;
+    assert.equal(source.sessionId, job.id);
+    assert.equal(source.offer.id, offer.id);
+    return {
+      ...source.offer,
+      price: {
+        ...source.offer.price,
+        total: {
+          amount: 1500,
+          currencyCode: "USD",
+        },
+      },
+      priceConfidence: "validated",
+      priceStatus: "verified",
+    };
+  });
+
+  try {
+    const response = await withLoopbackTrustForTests(() =>
+      routeRequest(new Request("http://127.0.0.1:32123/api/quotation", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-flydesk-client-loopback": "1",
+        },
+        body: JSON.stringify({
+          searchSessionId: job.id,
+          offerId: offer.id,
+        }),
+      }))
+    );
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { commercialText?: string; offer?: CanonicalOffer };
+    assert.equal(validatorCalls, 1);
+    assert.equal(payload.offer?.price.total.amount, 1500);
+    assert.match(payload.commercialText ?? "", /US\$ 1,500 por adulto/);
+    assert.equal(runtime.sessions.getOffer(job.id, offer.id)?.priceStatus, "verified");
+  } finally {
+    setQuotationOfferValidatorForTests();
+  }
 });
 
 test("rejects exact searches when origin and destination are omitted", async () => {
@@ -442,6 +581,42 @@ test("accepts non-loopback location requests with a valid api token", { concurre
       delete process.env.FLY_DESK_API_TOKEN;
     } else {
       process.env.FLY_DESK_API_TOKEN = previousApiToken;
+    }
+  }
+});
+
+test("loopback trust does not authorize forwarded proxy clients unless proxy loopback trust is explicit", { concurrency: false }, async () => {
+  const previousTrustLoopback = process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
+  const previousProxyTrust = process.env.FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK;
+  process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = "1";
+  delete process.env.FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK;
+
+  try {
+    const forwarded = new Request("http://fly-desk.local/api/diagnostics", {
+      method: "GET",
+      headers: {
+        "x-flydesk-client-loopback": "1",
+        "x-forwarded-for": "203.0.113.77",
+      },
+    });
+
+    const denied = await routeRequest(forwarded);
+    assert.equal(denied.status, 403);
+
+    process.env.FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK = "1";
+    const accepted = await routeRequest(forwarded);
+    assert.equal(accepted.status, 200);
+  } finally {
+    if (previousTrustLoopback === undefined) {
+      delete process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
+    } else {
+      process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = previousTrustLoopback;
+    }
+
+    if (previousProxyTrust === undefined) {
+      delete process.env.FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK;
+    } else {
+      process.env.FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK = previousProxyTrust;
     }
   }
 });
@@ -1592,7 +1767,7 @@ test("costamar search keeps provider token out of the public job response", asyn
   });
 });
 
-test("explicit costamar search accepts a terminal without token", async () => {
+test("explicit costamar search rejects a terminal without token", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/search`, {
       method: "POST",
@@ -1629,18 +1804,13 @@ test("explicit costamar search accepts a terminal without token", async () => {
       }),
     });
 
-    assert.equal(response.status, 200);
-    const payload = await response.json() as {
-      request?: { providerId?: string };
-      providerMeta?: { exactProvider?: string };
-    };
-
-    assert.equal(payload.request?.providerId, "costamar");
-    assert.equal(payload.providerMeta?.exactProvider, "costamar");
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { errors?: string[] };
+    assert.ok(payload.errors?.some((message) => message.includes("Costamar token is required.")));
   });
 });
 
-test("explicit costamar search falls back to the default terminal when none is provided", async () => {
+test("explicit costamar search rejects missing token even when the terminal defaults", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/search`, {
       method: "POST",
@@ -1669,14 +1839,9 @@ test("explicit costamar search falls back to the default terminal when none is p
       }),
     });
 
-    assert.equal(response.status, 200);
-    const payload = await response.json() as {
-      request?: { providerId?: string };
-      providerMeta?: { exactProvider?: string };
-    };
-
-    assert.equal(payload.request?.providerId, "costamar");
-    assert.equal(payload.providerMeta?.exactProvider, "costamar");
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { errors?: string[] };
+    assert.ok(payload.errors?.some((message) => message.includes("Costamar token is required.")));
   });
 });
 
@@ -1875,6 +2040,50 @@ test("default matrix ignores providerId nested inside the request payload", asyn
   });
 });
 
+test("explicit costamar matrix rejects a terminal without token", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/matrix`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        providerId: "costamar",
+        providerConfig: {
+          costamar: {
+            terminalId: "0721808110",
+          },
+        },
+        request: {
+          tripType: "round-trip",
+          searchMode: "roundtrip-grid",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MAD",
+              departureStart: "2026-06-01",
+              departureEnd: "2026-06-03",
+              returnStart: "2026-06-08",
+              returnEnd: "2026-06-10",
+              minNights: 7,
+              maxNights: 7,
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { errors?: string[] };
+    assert.ok(payload.errors?.some((message) => message.includes("Costamar token is required.")));
+  });
+});
+
 test("explicit costamar matrix keeps the provider override in derived requests", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/matrix`, {
@@ -1887,6 +2096,11 @@ test("explicit costamar matrix keeps the provider override in derived requests",
         providerConfig: {
           costamar: {
             terminalId: "0721808110",
+            token: buildJwt({
+              id: "0721808110",
+              iat: 1893456000,
+              exp: 1893459600,
+            }),
           },
         },
         request: {
@@ -1935,6 +2149,16 @@ test("one-way stay-range preserves omitted maxResults and night bounds", async (
       },
       body: JSON.stringify({
         providerId: "costamar",
+        providerConfig: {
+          costamar: {
+            terminalId: "0721808110",
+            token: buildJwt({
+              id: "0721808110",
+              iat: 1893456000,
+              exp: 1893459600,
+            }),
+          },
+        },
         request: {
           tripType: "one-way",
           searchMode: "stay-range",

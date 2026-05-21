@@ -221,6 +221,14 @@ function isLoopbackRemoteAddress(value: string | undefined): boolean {
     || normalized === "::ffff:127.0.0.1";
 }
 
+function parseRequestUrl(request: Request): URL {
+  try {
+    return new URL(request.url);
+  } catch {
+    throw new BadRequestError("Malformed request URL.");
+  }
+}
+
 async function proxyToRouter(request: Request, server: BunServer<undefined>): Promise<Response> {
   const body = await readBody(request);
   const headers = new Headers();
@@ -262,8 +270,8 @@ async function proxyToRouter(request: Request, server: BunServer<undefined>): Pr
   return webResponse;
 }
 
-async function routeServerRequest(request: Request, server: BunServer<undefined>): Promise<Response> {
-  const pathname = new URL(request.url).pathname;
+async function routeServerRequest(request: Request, server: BunServer<undefined>, url: URL): Promise<Response> {
+  const pathname = url.pathname;
 
   if (request.method === "GET" && pathname === "/login") {
     if (!isWebAuthEnabled()) {
@@ -313,11 +321,13 @@ async function routeServerRequest(request: Request, server: BunServer<undefined>
 
 export async function handleRequest(request: Request, server: BunServer<undefined>): Promise<Response> {
   const requestStart = startPerfTimer();
-  const pathname = new URL(request.url).pathname;
+  let pathname = "<malformed>";
   let status = 500;
 
   try {
-    const response = await routeServerRequest(request, server);
+    const url = parseRequestUrl(request);
+    pathname = url.pathname;
+    const response = await routeServerRequest(request, server, url);
     status = response.status;
     return response;
   } catch (error) {

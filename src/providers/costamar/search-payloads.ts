@@ -138,6 +138,9 @@ export function buildCostamarSearchBody(
   }
 
   const validationToken = resolveUsableCostamarBrandedToken(context.token, context.terminalId);
+  if (!validationToken) {
+    throw new Error("Costamar token is required.");
+  }
 
   return {
     flightType: request.tripType === "one-way" ? "OW" : "RT",
@@ -150,8 +153,8 @@ export function buildCostamarSearchBody(
     },
     startDate: toCostamarDayStart(leg.departureDate),
     endDate: toCostamarDayStart(request.tripType === "round-trip" ? leg.returnDate : leg.departureDate),
-    ...(validationToken ? { token: validationToken } : {}),
-    hasValidationToken: Boolean(validationToken),
+    token: validationToken,
+    hasValidationToken: true,
     flexible,
   };
 }

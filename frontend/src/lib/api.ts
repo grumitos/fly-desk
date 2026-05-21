@@ -203,6 +203,19 @@ function stripAnsi(value: string) {
   return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "")
 }
 
+function redactDiagnosticMessage(message: string): string {
+  return stripAnsi(message)
+    .replace(/otpauth(?:-migration)?:\/\/[^\s,;]+/gi, "otpauth://[redactado]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redactado]")
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[jwt redactado]")
+    .replace(/[A-Za-z]:\\[^\n\r;]*(?:Chrome|User Data|Profile|Local State)[^\n\r;]*/gi, "[ruta local redactada]")
+    .replace(/\/(?:Users|home)\/[^\n\r;]*(?:Chrome|User Data|Profile|Local State)[^\n\r;]*/gi, "[ruta local redactada]")
+    .replace(
+      /((?:AGIL_APIM_SUBSCRIPTION_KEY|COSTAMAR_TOKEN|COSTAMAR_B2B_PASSWORD|COSTAMAR_B2B_TOTP_SECRET|COSTAMAR_B2B_TOTP_URI|FLY_DESK_API_TOKEN|FLY_DESK_WEB_SESSION_SECRET|Authorization|Cookie|Set-Cookie|X-Api-Key|api[-_]?key|subscription[-_]?key|localStorage(?:\.[A-Za-z0-9_-]+)?|sessionStorage(?:\.[A-Za-z0-9_-]+)?|token|secret|password|passwd|pwd|totp|otp))(\s*[:=]\s*)(["']?)([^"',;\s]+)/gi,
+      "$1$2$3[redactado]",
+    )
+}
+
 function uniqueStrings(values: Array<string | undefined>) {
   return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))))
 }
@@ -231,7 +244,7 @@ function apiRawMessages(data: unknown): string[] {
 function toDiagnosticLines(messages: string[]): string[] {
   return uniqueStrings(
     messages.flatMap((message) => (
-      stripAnsi(message)
+      redactDiagnosticMessage(message)
         .split(/\n+/)
         .map((line) => line.trim())
     )),
@@ -1290,17 +1303,11 @@ export async function startMigrationSearch(
 }
 
 export async function fetchQuotation(input: {
-  searchSessionId?: string
-  offerId?: string
-  offer: CanonicalOffer
-  request: SearchRequest
+  searchSessionId: string
+  offerId: string
 }) {
   return postJson<{ commercialText: string; offer: unknown }>(`${API_BASE}/api/quotation`, {
     searchSessionId: input.searchSessionId,
     offerId: input.offerId,
-    offer: input.offer,
-    request: toBackendPayload(input.request, input.request.sortMode === "cheapest" || input.request.sortMode === "fastest"
-      ? input.request.sortMode
-      : "cheapest").request,
   })
 }

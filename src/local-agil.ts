@@ -1,5 +1,5 @@
-import { readFileSync, mkdirSync, cpSync, existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, lstatSync, readFileSync, mkdirSync, mkdtempSync, existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Browser, BrowserContext, Page } from "playwright";
 import {
@@ -987,8 +987,21 @@ async function readAgilStorageSnapshotFromDevToolsEndpoint(endpoint: string): Pr
 }
 
 function temporaryChromeStorageFallbackEnabled(): boolean {
-  const value = String(process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK ?? "1").trim().toLowerCase();
-  return value !== "0" && value !== "false" && value !== "no" && value !== "off";
+  const value = String(process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK ?? "0").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+export function isAgilTemporaryChromeStorageFallbackEnabledForTests(): boolean {
+  return temporaryChromeStorageFallbackEnabled();
+}
+
+function rawChromeStorageFileScanEnabled(): boolean {
+  const value = String(process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN ?? "0").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+export function isAgilRawChromeStorageFileScanEnabledForTests(): boolean {
+  return rawChromeStorageFileScanEnabled();
 }
 
 function readChromeProfileName(userDataDir = resolveBrowserUserDataDir()): string {
@@ -1088,19 +1101,61 @@ function resolveAgilSmartAddress(): string | undefined {
   return undefined;
 }
 
+function applyPrivateMode(path: string, mode: number): void {
+  if (process.platform === "win32") {
+    return;
+  }
+
+  try {
+    chmodSync(path, mode);
+  } catch {
+    // Best-effort on filesystems that do not support POSIX modes.
+  }
+}
+
+function mkdirPrivate(path: string): void {
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  applyPrivateMode(path, 0o700);
+}
+
+function copyPathPrivate(source: string, destination: string): void {
+  try {
+    const stats = lstatSync(source);
+    if (stats.isSymbolicLink()) {
+      return;
+    }
+
+    if (stats.isDirectory()) {
+      mkdirPrivate(destination);
+      readdirSync(source, { withFileTypes: true }).forEach((entry) => {
+        copyPathPrivate(join(source, entry.name), join(destination, entry.name));
+      });
+      return;
+    }
+
+    if (!stats.isFile()) {
+      return;
+    }
+
+    mkdirPrivate(dirname(destination));
+    writeFileSync(destination, readFileSync(source), { mode: 0o600 });
+    applyPrivateMode(destination, 0o600);
+  } catch {
+    // Ignore locked or transient browser artifacts while cloning the profile.
+  }
+}
+
 function prepareTemporaryChromeProfile(userDataDir: string, profileName: string): string {
   const sourceRoot = userDataDir;
-  const tempRoot = join(tmpdir(), `travel_quote_foundation_agil_${crypto.randomUUID()}`);
+  const tempRoot = mkdtempSync(join(tmpdir(), "travel_quote_foundation_agil_"));
   const profileRoot = join(tempRoot, profileName);
-  mkdirSync(profileRoot, { recursive: true });
+  mkdirPrivate(profileRoot);
   registerActiveTempArtifact(tempRoot);
 
   const items = [
     "Local State",
     join(profileName, "Preferences"),
-    join(profileName, "Secure Preferences"),
     join(profileName, "Local Storage"),
-    join(profileName, "Session Storage"),
   ];
 
   for (const relativePath of items) {
@@ -1110,11 +1165,19 @@ function prepareTemporaryChromeProfile(userDataDir: string, profileName: string)
     }
 
     const destination = join(tempRoot, relativePath);
-    mkdirSync(join(destination, ".."), { recursive: true });
-    cpSync(source, destination, { recursive: true, force: true });
+    copyPathPrivate(source, destination);
   }
 
   return tempRoot;
+}
+
+export function prepareTemporaryAgilChromeProfileForTests(userDataDir: string, profileName: string): string {
+  return prepareTemporaryChromeProfile(userDataDir, profileName);
+}
+
+export async function cleanupTemporaryAgilChromeProfileForTests(userDataDir: string): Promise<void> {
+  await removePathWithRetries(userDataDir, 6, 250);
+  unregisterActiveTempArtifact(userDataDir);
 }
 
 function launchChromeForCdp(userDataDir: string, profileName: string, port: number): Bun.NullSubprocess {
@@ -1122,6 +1185,7 @@ function launchChromeForCdp(userDataDir: string, profileName: string, port: numb
   const args = [
     `--user-data-dir=${userDataDir}`,
     `--profile-directory=${profileName}`,
+    "--remote-debugging-address=127.0.0.1",
     `--remote-debugging-port=${port}`,
     "--no-first-run",
     "--no-default-browser-check",
@@ -1603,30 +1667,34 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
     }
   }
 
-  for (const userDataDir of userDataDirs) {
-    const fileCandidates: AgilStorageSnapshotCandidate[] = [];
-    const profileCandidates = readChromeProfileCandidates(userDataDir);
-    const profileNames = shouldScanAllChromeProfilesForAgilStorage()
-      ? profileCandidates
-      : profileCandidates.slice(0, 1);
-    try {
-      for (const profileName of profileNames) {
-        try {
-          fileCandidates.push(readAgilStorageSnapshotFromProfileFiles(userDataDir, profileName));
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
-          failures.push(`${profileName} files: ${detail}`);
+  if (rawChromeStorageFileScanEnabled()) {
+    for (const userDataDir of userDataDirs) {
+      const fileCandidates: AgilStorageSnapshotCandidate[] = [];
+      const profileCandidates = readChromeProfileCandidates(userDataDir);
+      const profileNames = shouldScanAllChromeProfilesForAgilStorage()
+        ? profileCandidates
+        : profileCandidates.slice(0, 1);
+      try {
+        for (const profileName of profileNames) {
+          try {
+            fileCandidates.push(readAgilStorageSnapshotFromProfileFiles(userDataDir, profileName));
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
+            failures.push(`${profileName} files: ${detail}`);
+          }
         }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
+        failures.push(`${userDataDir}: ${detail}`);
       }
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
-      failures.push(`${userDataDir}: ${detail}`);
-    }
 
-    const bestFileCandidate = pickBestAgilStorageSnapshotCandidate(fileCandidates);
-    if (bestFileCandidate) {
-      return bestFileCandidate.snapshot;
+      const bestFileCandidate = pickBestAgilStorageSnapshotCandidate(fileCandidates);
+      if (bestFileCandidate) {
+        return bestFileCandidate.snapshot;
+      }
     }
+  } else {
+    failures.push("raw Chrome storage file scan: disabled");
   }
 
   if (!temporaryChromeStorageFallbackEnabled()) {

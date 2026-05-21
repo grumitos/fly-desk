@@ -13,6 +13,7 @@ import {
   SearchRequest,
   TripType,
 } from "./core/types";
+import { resolveUsableCostamarBrandedToken } from "./provider-context";
 import { getSearchDatePolicy, validateSearchDateInPolicy } from "./search-date-policy";
 
 export type SortMode = "cheapest" | "fastest";
@@ -388,6 +389,9 @@ function validateProviderContext(
   const context = providerContext?.costamar;
   if (!context?.terminalId) {
     errors.push("Costamar terminalId is required.");
+  }
+  if (!resolveUsableCostamarBrandedToken(context?.token, context?.terminalId)) {
+    errors.push("Costamar token is required.");
   }
 
   return errors;

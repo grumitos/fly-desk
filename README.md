@@ -36,6 +36,7 @@ No estan expuestos en la UI React actual:
 - En produccion debe quedar detras de Caddy y mantener `HOST=127.0.0.1`.
 - `FLY_DESK_WEB_AUTH=1` activa login web con cookie httpOnly.
 - `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` es obligatorio cuando hay reverse proxy local.
+- Si se habilita `FLY_DESK_TRUST_LOOPBACK_CLIENT=1` para uso local directo, las solicitudes con cabeceras de proxy (`x-forwarded-for`, `forwarded`, `x-real-ip`) no se tratan como locales salvo que tambien se configure deliberadamente `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK=1`.
 - Los endpoints operativos aceptan cookie web valida o `FLY_DESK_API_TOKEN`.
 - Diagnosticos, estado de token Costamar y apertura local de browser siguen siendo superficies loopback-only.
 - La ventana normal de fechas es movil: `hoy` a `hoy + SEARCH_MAX_FUTURE_DAYS`; ida/vuelta se limita a 90 noches.
@@ -72,7 +73,6 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 - `src/server.ts`: servidor HTTP Bun, headers, limite de body y serving de `frontend/dist`
 - `src/http-router.ts`: BFF HTTP, rutas auth, API y superficies loopback/token
 - `src/web-auth.ts`: password web, cookie firmada y validacion de sesion
-- `src/http-quotation-snapshot.ts`: normalizacion de snapshots para cotizacion
 - `src/search-date-policy.ts`: politica compartida de fechas y config publica embebida
 - `src/provider-context.ts`: contexto Costamar, allowlist, recovery de Chrome/CDP y estado live
 - `src/local-agil.ts`: sesion local, exact/range/matrix, pricing y deep links Agil
@@ -88,16 +88,17 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 `.env.example` es la referencia operativa de variables. Las mas comunes:
 
 - Runtime/API: `HOST`, `PORT`, `FLY_DESK_API_TOKEN`, `FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS`
-- Auth web: `FLY_DESK_WEB_AUTH`, `FLY_DESK_WEB_PASSWORD_HASH`, `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_TRUST_LOOPBACK_CLIENT`
+- Auth web: `FLY_DESK_WEB_AUTH`, `FLY_DESK_WEB_PASSWORD_HASH`, `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_TRUST_LOOPBACK_CLIENT`, `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK`
 - Busqueda/cache: `SEARCH_MAX_FUTURE_DAYS`, `SEARCH_REVALIDATION_CACHE_TTL_MS`, `SEARCH_COMPLETED_SESSION_TTL_MS`, `FLY_DESK_SESSION_DB_PATH`, `FLY_DESK_LOCATION_SUGGESTION_DB_PATH`
+- App data: `FLY_DESK_APP_DATA_DIR`, `FLY_DESK_QUOTATION_RATE_CACHE_PATH`
 - Workers/prewarm: `FLY_DESK_SEARCH_WORKER_PROCESSES`, `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS`, `FLY_DESK_PROVIDER_PREWARM`
-- Agil: `AGIL_APIM_SUBSCRIPTION_KEY`, `AGIL_CHROME_USER_DATA_DIR`, `AGIL_CHROME_PROFILE`, `AGIL_BROWSER_URL`, `AGIL_HTTP_TIMEOUT_MS`
+- Agil: `AGIL_APIM_SUBSCRIPTION_KEY`, `AGIL_CHROME_USER_DATA_DIR`, `AGIL_CHROME_PROFILE`, `AGIL_BROWSER_URL`, `AGIL_RAW_CHROME_STORAGE_FILE_SCAN`, `AGIL_TEMP_CHROME_STORAGE_FALLBACK`, `AGIL_HTTP_TIMEOUT_MS`
 - Costamar: `COSTAMAR_API_BASE_URL`, `COSTAMAR_BRAND_BASE_URL`, `COSTAMAR_AIR_API_BASE_URL`, `COSTAMAR_TERMINAL_ID`, `COSTAMAR_TOKEN`
 - Costamar B2B: `COSTAMAR_B2B_EMAIL`, `COSTAMAR_B2B_PASSWORD`, `COSTAMAR_B2B_TOTP_SECRET`, `COSTAMAR_B2B_TOTP_URI`, `COSTAMAR_B2B_AUTOMATION_ENABLED`, `COSTAMAR_SESSION_WARMUP_ENABLED`
 
 `COSTAMAR_B2B_TOTP_SECRET` acepta Base32, `otpauth://...`, `otpauth-migration://...` y JSON con `totpUri`; Fly Desk genera el OTP, no guardes codigos temporales.
 
-En el VPS actual, produccion usa `FLY_DESK_SEARCH_WORKER_PROCESSES=0`: Costamar B2B fue validado con la busqueda en el proceso principal. Si se reactiva el aislamiento por workers, repetir QA externo antes de darlo por estable.
+Produccion debe mantener `FLY_DESK_SEARCH_WORKER_PROCESSES=1` salvo una excepcion temporal de QA. Si se cambia el conteo de workers o warm-up, repetir QA externo antes de darlo por estable.
 
 ### Secretos
 
@@ -164,6 +165,7 @@ La app se despliega como servicio Bun privado detras de Caddy:
 - `HOST=127.0.0.1`
 - `FLY_DESK_WEB_AUTH=1`
 - `FLY_DESK_TRUST_LOOPBACK_CLIENT=0`
+- `FLY_DESK_SEARCH_WORKER_PROCESSES=1`
 - `FLY_DESK_COOKIE_SECURE=1`
 - Agil usa `fly-desk-chrome.service` con Chrome CDP en `127.0.0.1:9222`; todavia requiere una sesion Agil valida en ese perfil
 - Costamar es mas portable, pero sus flujos de sesion siguen pensados para uso controlado

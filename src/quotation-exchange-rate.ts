@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { CanonicalOffer, QuotationUsdToPenRateInfo, SearchRequest } from "./core/types";
 import { resolveLocalAgilUsdToPenRate } from "./local-agil";
@@ -30,7 +31,21 @@ let persistedUsdToPenRateLoaded = false;
 
 function resolveQuotationUsdToPenRateCachePath(): string {
   const explicitPath = process.env.FLY_DESK_QUOTATION_RATE_CACHE_PATH?.trim();
-  return explicitPath || join(tmpdir(), "flydesk-quotation-usd-pen-rate.json");
+  if (explicitPath) {
+    return explicitPath;
+  }
+
+  const sessionDbPath = process.env.FLY_DESK_SESSION_DB_PATH?.trim();
+  if (sessionDbPath) {
+    return join(dirname(sessionDbPath), "quotation-usd-pen-rate.json");
+  }
+
+  const appDataRoot = process.env.FLY_DESK_APP_DATA_DIR?.trim()
+    || process.env.XDG_STATE_HOME?.trim()
+    || process.env.LOCALAPPDATA?.trim()
+    || process.env.APPDATA?.trim()
+    || join(homedir(), ".local", "state");
+  return join(appDataRoot, "fly-desk", "quotation-usd-pen-rate.json");
 }
 
 function resolveLimaDay(now = new Date()): string {
@@ -128,6 +143,22 @@ function loadPersistedUsdToPenRate(): void {
       return;
     }
 
+    const stat = lstatSync(cachePath);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      return;
+    }
+
+    if (process.platform !== "win32") {
+      const currentUid = process.getuid?.();
+      if (typeof currentUid === "number" && stat.uid !== currentUid) {
+        return;
+      }
+
+      if ((stat.mode & 0o022) !== 0) {
+        return;
+      }
+    }
+
     const parsed = JSON.parse(readFileSync(cachePath, "utf8")) as {
       day?: unknown;
       rate?: unknown;
@@ -159,15 +190,14 @@ function persistUsdToPenRateCache(): void {
 
   try {
     const cachePath = resolveQuotationUsdToPenRateCachePath();
-    const tempPath = `${cachePath}.${process.pid}.${Date.now()}.tmp`;
+    const tempPath = join(dirname(cachePath), `.quotation-usd-pen-rate.${process.pid}.${randomUUID()}.tmp`);
     mkdirSync(dirname(cachePath), { recursive: true });
-    writeFileSync(tempPath, JSON.stringify(cachedUsdToPenRate), "utf8");
-    try {
-      renameSync(tempPath, cachePath);
-    } catch {
-      rmSync(cachePath, { force: true });
-      renameSync(tempPath, cachePath);
-    }
+    writeFileSync(tempPath, JSON.stringify(cachedUsdToPenRate), {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    renameSync(tempPath, cachePath);
     rmSync(tempPath, { force: true });
   } catch {
     // Ignore persistence failures and keep the in-memory cache usable.
