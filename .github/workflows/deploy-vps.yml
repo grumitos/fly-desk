@@ -245,9 +245,15 @@ jobs:
           REMOTE
 
       - name: Public smoke
+        env:
+          PUBLIC_SMOKE_URL_INPUT: ${{ inputs.public_smoke_url }}
         run: |
           set -euo pipefail
-          status="$(curl -sS -o /dev/null -w "%{http_code}" --location --retry 5 --retry-delay 5 --max-time 20 "${{ inputs.public_smoke_url }}")"
+          if ! printf '%s' "$PUBLIC_SMOKE_URL_INPUT" | grep -Eq '^https?://[^[:space:]]+$'; then
+            echo "public_smoke_url must be a valid http(s) URL without spaces."
+            exit 1
+          fi
+          status="$(curl -sS -o /dev/null -w "%{http_code}" --location --retry 5 --retry-delay 5 --max-time 20 "$PUBLIC_SMOKE_URL_INPUT")"
           case "$status" in
             200) ;;
             403)
@@ -268,9 +274,11 @@ jobs:
 
     steps:
       - name: Validate rollback input
+        env:
+          ROLLBACK_SHA_INPUT: ${{ inputs.rollback_sha }}
         run: |
           set -euo pipefail
-          if ! printf '%s' "${{ inputs.rollback_sha }}" | grep -Eq '^[0-9a-f]{40}$'; then
+          if ! printf '%s' "$ROLLBACK_SHA_INPUT" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "rollback_sha must be a 40-character Git SHA."
             exit 1
           fi
@@ -289,12 +297,14 @@ jobs:
           ssh-keyscan -p "$port" "$VPS_HOST" >> ~/.ssh/known_hosts
 
       - name: Activate previous release on VPS
+        env:
+          ROLLBACK_SHA_INPUT: ${{ inputs.rollback_sha }}
         run: |
           set -euo pipefail
           port="${VPS_PORT:-22}"
           ssh -p "$port" -i ~/.ssh/fly_desk_vps_key "$VPS_USER@$VPS_HOST" \
             bash -s -- \
-            "${{ inputs.rollback_sha }}" \
+            "$ROLLBACK_SHA_INPUT" \
             "$DEPLOY_PATH" \
             "$RELEASE_ROOT" \
             "$SERVICE_NAME" \
@@ -362,9 +372,15 @@ jobs:
           REMOTE
 
       - name: Public smoke
+        env:
+          PUBLIC_SMOKE_URL_INPUT: ${{ inputs.public_smoke_url }}
         run: |
           set -euo pipefail
-          status="$(curl -sS -o /dev/null -w "%{http_code}" --location --retry 5 --retry-delay 5 --max-time 20 "${{ inputs.public_smoke_url }}")"
+          if ! printf '%s' "$PUBLIC_SMOKE_URL_INPUT" | grep -Eq '^https?://[^[:space:]]+$'; then
+            echo "public_smoke_url must be a valid http(s) URL without spaces."
+            exit 1
+          fi
+          status="$(curl -sS -o /dev/null -w "%{http_code}" --location --retry 5 --retry-delay 5 --max-time 20 "$PUBLIC_SMOKE_URL_INPUT")"
           case "$status" in
             200) ;;
             403)

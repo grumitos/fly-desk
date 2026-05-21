@@ -164,15 +164,21 @@ async function listenOnTestServer(): Promise<ServerHandle> {
 export async function withServer<T>(run: (baseUrl: string) => Promise<T>): Promise<T> {
   const previousSearchTodayOverride = process.env.SEARCH_TODAY_OVERRIDE;
   const previousBackgroundSearchJobs = process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS;
+  const previousTrustLoopbackClient = process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
   process.env.SEARCH_TODAY_OVERRIDE = previousSearchTodayOverride ?? "2026-03-31";
   process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS = "1";
-  const server = await listenOnTestServer();
+  if (previousTrustLoopbackClient === undefined) {
+    process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = "1";
+  }
+
+  let server: ServerHandle | undefined;
 
   try {
+    server = await listenOnTestServer();
     return await run(server.baseUrl);
   } finally {
     try {
-      await server.stop();
+      await server?.stop();
     } finally {
       if (previousSearchTodayOverride === undefined) {
         delete process.env.SEARCH_TODAY_OVERRIDE;
@@ -184,6 +190,12 @@ export async function withServer<T>(run: (baseUrl: string) => Promise<T>): Promi
         delete process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS;
       } else {
         process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS = previousBackgroundSearchJobs;
+      }
+
+      if (previousTrustLoopbackClient === undefined) {
+        delete process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
+      } else {
+        process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = previousTrustLoopbackClient;
       }
     }
   }

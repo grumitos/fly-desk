@@ -256,6 +256,28 @@ function normalizeProviderContextForSearchCache(
   };
 }
 
+function hasCompatibleCostamarSearchCacheToken(
+  requestedContext: ProviderContext | undefined,
+  candidateContext: ProviderContext | undefined,
+): boolean {
+  const requestedCostamar = requestedContext?.costamar;
+  const candidateCostamar = candidateContext?.costamar;
+  if (!requestedCostamar && !candidateCostamar) {
+    return true;
+  }
+  if (!requestedCostamar || !candidateCostamar) {
+    return false;
+  }
+
+  const requested = String(requestedCostamar.token ?? "").trim();
+  const candidate = String(candidateCostamar.token ?? "").trim();
+  if (!requested || !candidate) {
+    return false;
+  }
+
+  return requested === candidate;
+}
+
 function normalizeSearchRequestForSearchCache(request: SearchRequest): SearchRequest {
   const next = cloneJson(request);
   if (next.filters) {
@@ -543,6 +565,10 @@ export class SearchSessionStore {
         normalizeProviderContextForSearchCache(candidate.providerContext),
       );
       if (candidateContextKey !== providerContextKey) {
+        continue;
+      }
+
+      if (!hasCompatibleCostamarSearchCacheToken(input.providerContext, candidate.providerContext)) {
         continue;
       }
 
