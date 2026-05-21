@@ -235,6 +235,21 @@ async function withAcceptedCostamarRedirectValidation<T>(run: () => Promise<T>):
   }
 }
 
+async function withLoopbackTrustForTests<T>(run: () => Promise<T>): Promise<T> {
+  const previousTrustLoopback = process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
+  process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = "1";
+
+  try {
+    return await run();
+  } finally {
+    if (previousTrustLoopback === undefined) {
+      delete process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
+    } else {
+      process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = previousTrustLoopback;
+    }
+  }
+}
+
 test("quotation uses the stored exact offer when the selected result belongs to a search job", async () => {
   const runtime = getRuntime();
   const offer = buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0");
@@ -963,11 +978,13 @@ test("costamar redirect returns a controlled block when refresh hangs", async ()
     const redirectPath = session?.offers[0]?.purchasePaths[0]?.url;
     assert.ok(redirectPath);
 
-    const response = await routeRequest(new Request(`http://127.0.0.1:32123${redirectPath}`, {
-      headers: {
-        "x-flydesk-client-loopback": "1",
-      },
-    }));
+    const response = await withLoopbackTrustForTests(() =>
+      routeRequest(new Request(`http://127.0.0.1:32123${redirectPath}`, {
+        headers: {
+          "x-flydesk-client-loopback": "1",
+        },
+      }))
+    );
 
     assert.equal(response.status, 409);
     const body = await response.text();
@@ -1183,11 +1200,13 @@ test("agil search redirect returns the provider URL without local handoff page",
   assert.ok(redirectPath);
   assert.equal(redirectPath.includes("open=local"), false);
 
-  const response = await routeRequest(new Request(`http://127.0.0.1:32123${redirectPath}?open=local`, {
-    headers: {
-      "x-flydesk-client-loopback": "1",
-    },
-  }));
+  const response = await withLoopbackTrustForTests(() =>
+    routeRequest(new Request(`http://127.0.0.1:32123${redirectPath}?open=local`, {
+      headers: {
+        "x-flydesk-client-loopback": "1",
+      },
+    }))
+  );
 
   assert.equal(response.status, 302);
   assert.equal(response.headers.get("Location"), agilUrl);
@@ -1446,6 +1465,43 @@ test("rejects flexible exact-stay searches longer than 90 nights", async () => {
     assert.equal(response.status, 400);
     const payload = await response.json() as { errors?: string[] };
     assert.ok(payload.errors?.some((message) => message.includes("Stay length cannot exceed 90 nights.")));
+  });
+});
+
+test("rejects fixed-ranges matrix searches with too many combinations", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/matrix`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        request: {
+          tripType: "round-trip",
+          searchMode: "roundtrip-grid",
+          flexibleMode: "fixed-ranges",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MIA",
+              departureStart: "2026-06-01",
+              departureEnd: "2026-12-31",
+              returnStart: "2026-06-02",
+              returnEnd: "2026-12-31",
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { errors?: string[] };
+    assert.ok(payload.errors?.some((message) => message.includes("Round-trip matrix search cannot exceed 5000 combinations.")));
   });
 });
 
@@ -2206,7 +2262,7 @@ test("search endpoint serves cached results first for the same config while reva
     status: "completed",
   });
 
-  const previewCacheHit = runtime.sessions.findRecentCompletedSearchJob({
+  const mismatchedTokenCacheHit = runtime.sessions.findRecentCompletedSearchJob({
     request,
     providerContext: buildProviderContext("costamar", {
       costamar: {
@@ -2214,6 +2270,23 @@ test("search endpoint serves cached results first for the same config while reva
         brandBaseUrl: "https://booking.clickandbook.com/vuelos",
         terminalId,
         token: refreshToken,
+        lang: "es",
+      },
+    }),
+    providerIds: ["costamar"],
+    sortMode: "cheapest",
+    maxAgeMs: 5 * 60 * 1000,
+  });
+  assert.equal(mismatchedTokenCacheHit, undefined);
+
+  const previewCacheHit = runtime.sessions.findRecentCompletedSearchJob({
+    request,
+    providerContext: buildProviderContext("costamar", {
+      costamar: {
+        apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+        brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+        terminalId,
+        token: seededToken,
         lang: "es",
       },
     }),
@@ -2236,7 +2309,7 @@ test("search endpoint serves cached results first for the same config while reva
             apiBaseUrl: "https://costamar.com.pe/vuelos/api",
             brandBaseUrl: "https://booking.clickandbook.com/vuelos",
             terminalId,
-            token: refreshToken,
+            token: seededToken,
             lang: "es",
           },
         },

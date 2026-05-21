@@ -35,6 +35,49 @@ export interface PreparedSearchContract {
 }
 
 const MAX_STAY_NIGHTS = 90;
+const MAX_ROUNDTRIP_GRID_COMBINATIONS = 5000;
+
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+function parseIsoDateToUtcDay(dateValue: string): number | undefined {
+  const value = Date.parse(`${dateValue}T00:00:00.000Z`);
+  return Number.isFinite(value) ? Math.floor(value / DAY_IN_MS) : undefined;
+}
+
+function estimateRoundTripGridCombinations(
+  departureStart: string,
+  departureEnd: string,
+  returnStart: string,
+  returnEnd: string,
+): number | undefined {
+  const departureStartDay = parseIsoDateToUtcDay(departureStart);
+  const departureEndDay = parseIsoDateToUtcDay(departureEnd);
+  const returnStartDay = parseIsoDateToUtcDay(returnStart);
+  const returnEndDay = parseIsoDateToUtcDay(returnEnd);
+
+  if (
+    departureStartDay === undefined
+    || departureEndDay === undefined
+    || returnStartDay === undefined
+    || returnEndDay === undefined
+  ) {
+    return undefined;
+  }
+
+  if (departureEndDay < departureStartDay || returnEndDay < returnStartDay) {
+    return 0;
+  }
+
+  let combinations = 0;
+  for (let departureDay = departureStartDay; departureDay <= departureEndDay; departureDay += 1) {
+    const minReturnDay = Math.max(returnStartDay, departureDay + 1);
+    if (minReturnDay <= returnEndDay) {
+      combinations += (returnEndDay - minReturnDay) + 1;
+    }
+  }
+
+  return combinations;
+}
 
 function stringValue(input: unknown, fallback = ""): string {
   return typeof input === "string" ? input.trim() : fallback;
@@ -277,6 +320,30 @@ function validateRequest(request: SearchRequest): string[] {
       && (leg.stayNights as number) > MAX_STAY_NIGHTS
     ) {
       errors.push(`Stay length cannot exceed ${MAX_STAY_NIGHTS} nights.`);
+    }
+
+    if (
+      request.tripType === "round-trip"
+      && flexibleRoundTripMode === "fixed-ranges"
+      && leg.departureStart
+      && leg.departureEnd
+      && leg.returnStart
+      && leg.returnEnd
+    ) {
+      const estimatedCombinations = estimateRoundTripGridCombinations(
+        leg.departureStart,
+        leg.departureEnd,
+        leg.returnStart,
+        leg.returnEnd,
+      );
+      if (
+        typeof estimatedCombinations === "number"
+        && estimatedCombinations > MAX_ROUNDTRIP_GRID_COMBINATIONS
+      ) {
+        errors.push(
+          `Round-trip matrix search cannot exceed ${MAX_ROUNDTRIP_GRID_COMBINATIONS} combinations. Narrow the departure or return ranges.`,
+        );
+      }
     }
   }
 
