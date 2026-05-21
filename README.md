@@ -16,7 +16,7 @@ Fly Desk es una app Bun-only preparada para VPS:
 - busqueda exacta
 - busqueda flexible de solo ida por rango
 - busqueda flexible ida/vuelta via `/api/matrix`, normalizada como lista de resultados
-- busqueda migratoria mensual de 8 meses desde el mes actual
+- busqueda migratoria mensual con meses seleccionables hasta fin del año actual
 - autocomplete de origen y destino
 - filtros visibles de escalas, tiempo maximo de escala, equipaje y aerolineas
 - lista de resultados paginada con advertencias del backend

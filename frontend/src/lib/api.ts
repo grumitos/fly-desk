@@ -777,9 +777,35 @@ function rawOfferWarnings(input: unknown): string[] {
   return Array.isArray(offer.warnings) ? offer.warnings.map((warning) => String(warning)) : []
 }
 
+function noOffersWarningProvider(message: string): "agil-local" | "costamar" | null {
+  const normalized = stripAnsi(message).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+  if (/^agil returned no offers/i.test(message) || normalized.includes("agil no devolvio vuelos")) return "agil-local"
+  if (/^costamar returned no offers/i.test(message) || normalized.includes("costamar no devolvio vuelos")) return "costamar"
+  return null
+}
+
+function filterNoOfferWarningsWhenProviderHasOffers(messages: string[], offers: CanonicalOffer[]): string[] {
+  if (messages.length === 0 || offers.length === 0) return messages
+
+  const providersWithOffers = new Set(offers.map((offer) => offer.providerSource))
+  return messages.filter((message) => {
+    const provider = noOffersWarningProvider(message)
+    return !provider || !providersWithOffers.has(provider)
+  })
+}
+
 function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
-  const rawWarnings = (data.warnings ?? []).map((warning) => String(warning))
-  const rawMetaWarnings = (data.searchMeta?.warnings ?? []).map((warning) => String(warning))
+  const offers = (data.offers ?? []).map(normalizeOffer)
+  const allOffers = (data.allOffers ?? []).map(normalizeOffer)
+  const offerScope = allOffers.length ? allOffers : offers
+  const rawWarnings = filterNoOfferWarningsWhenProviderHasOffers(
+    (data.warnings ?? []).map((warning) => String(warning)),
+    offerScope,
+  )
+  const rawMetaWarnings = filterNoOfferWarningsWhenProviderHasOffers(
+    (data.searchMeta?.warnings ?? []).map((warning) => String(warning)),
+    offerScope,
+  )
   const rawWarningsFromOffers = [...(data.offers ?? []), ...(data.allOffers ?? [])].flatMap(rawOfferWarnings)
   const warnings = rawWarnings.map((warning) => translateApiMessage(warning))
   const searchMeta = data.searchMeta
@@ -794,8 +820,8 @@ function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
     searchMeta,
     warnings,
     request: fromBackendRequest(data.request),
-    offers: (data.offers ?? []).map(normalizeOffer),
-    allOffers: (data.allOffers ?? []).map(normalizeOffer),
+    offers,
+    allOffers,
     diagnosticLog: toDiagnosticLines([
       ...rawWarnings,
       ...rawMetaWarnings,
@@ -910,14 +936,21 @@ function normalizeMatrixJob(data: BackendMatrixJobResponse, sortMode: SortMode):
   }
 }
 
-function migrationMonthRanges(startIso: string | undefined, count = MIGRATION_MONTH_COUNT): MigrationMonthRange[] {
+function migrationMonthRanges(startIso: string | undefined, selectedMonthKeys?: string[]): MigrationMonthRange[] {
   const firstSearchDate = isIsoDate(startIso) ? startIso : todayIso()
   const firstMonth = firstSearchDate.slice(0, 7)
+  const lastMonth = `${firstSearchDate.slice(0, 4)}-12`
+  const monthKeys = selectedMonthKeys === undefined
+    ? Array.from({ length: MIGRATION_MONTH_COUNT }, (_, index) => addMonths(firstMonth, index))
+    : selectedMonthKeys
+        .map((key) => key.trim())
+        .filter((key, index, values) => isMigrationMonthKey(key) && values.indexOf(key) === index)
+        .filter((key) => key >= firstMonth && key <= lastMonth)
+        .sort()
 
-  return Array.from({ length: count }, (_, index) => {
-    const key = addMonths(firstMonth, index)
+  return monthKeys.map((key) => {
     const monthStart = `${key}-01`
-    const departureStart = index === 0 ? maxIsoDate(monthStart, firstSearchDate) : monthStart
+    const departureStart = key === firstMonth ? maxIsoDate(monthStart, firstSearchDate) : monthStart
 
     return {
       key,
@@ -926,6 +959,10 @@ function migrationMonthRanges(startIso: string | undefined, count = MIGRATION_MO
       departureEnd: monthEndIso(key),
     }
   }).filter((range) => range.departureStart <= range.departureEnd)
+}
+
+function isMigrationMonthKey(value: string): boolean {
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(value)
 }
 
 function migrationRequestForMonth(request: SearchRequest, range: MigrationMonthRange): SearchRequest {
@@ -1125,7 +1162,7 @@ export async function startMigrationSearch(
   options: SearchRequestOptions = {}
 ): Promise<SearchJobResponse> {
   const requestedAt = new Date().toISOString()
-  const ranges = migrationMonthRanges(request.departureStart ?? request.departureDate)
+  const ranges = migrationMonthRanges(request.departureStart ?? request.departureDate, request.migrationMonths)
   const monthResults: MigrationMonthWorkResult[] = ranges.map((range) => ({
     range,
     offers: [],
@@ -1146,7 +1183,12 @@ export async function startMigrationSearch(
     }
     const hasPendingMonth = monthResults.some((result) => !result.complete)
     const monthlyWarnings = searchComplete && selectedOffers.length === 0
-      ? uniqueStrings([...warnings, "Migratorio no encontró tarifas disponibles en los próximos 8 meses."])
+      ? uniqueStrings([
+          ...warnings,
+          ranges.length === 1
+            ? "Migratorio no encontró tarifas disponibles en el mes seleccionado."
+            : "Migratorio no encontró tarifas disponibles en los meses seleccionados.",
+        ])
       : warnings
 
     return {
