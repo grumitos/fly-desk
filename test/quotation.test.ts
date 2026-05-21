@@ -109,6 +109,8 @@ test("commercial quotation lists multiple airlines and moves missing baggage to 
   assert.match(text, /COTIZACIÓN BOLETO AÉREO ✈️/);
   assert.match(text, /✈️ Ruta: Lima \(LIM\) - Buenos Aires \(BUE\) - Lima \(LIM\)/);
   assert.match(text, /✈️ Aerolíneas: Aerolíneas Argentinas \+ LATAM/);
+  assert.match(text, /COTIZACIÓN BOLETO AÉREO ✈️\n\n✈️ Ruta:/);
+  assert.match(text, /Aerolíneas: Aerolíneas Argentinas \+ LATAM\n\n🛫 IDA/);
   assert.match(text, /🛫 IDA\nLIM · 11 abril · 02:45 am\nAEP · 11 abril · 09:05 am/);
   assert.match(text, /🛬 RETORNO\nAEP · 10 mayo · 10:35 pm\nLIM · 11 mayo · 01:30 am/);
   assert.doesNotMatch(text, /🔁 Escalas ida: Sin escalas/);
@@ -116,7 +118,8 @@ test("commercial quotation lists multiple airlines and moves missing baggage to 
   assert.match(text, /✅ INCLUYE\n\* Boleto de ida y vuelta\n\* Equipaje incluido: mochila o artículo personal y maleta de mano/);
   assert.match(text, /🚫 NO INCLUYE\n\* Maleta de bodega/);
   assert.match(text, /📋 CONDICIONES\n- Reembolsos no permitidos después de emitir\n\* Cambios de nombre no permitidos\n\* Cambios de fecha y ruta sujetos a condiciones de la tarifa/);
-  assert.match(text, /💵 PRECIO:\nUS\$ 1,799 por adulto\nS\/ 6,329 aprox\. por adulto/);
+  assert.match(text, /💵 PRECIO:\nUS\$ 1,799 por adulto/);
+  assert.doesNotMatch(text, /S\/|aprox|Tipo de cambio|Fuente|Fecha/);
   assert.deepEqual(text.split("\n").filter((line) => line.endsWith(".")), []);
   assert.doesNotMatch(text, /Sin Maleta Facturada/);
   assert.doesNotMatch(text, /DETALLE TECNICO/);
@@ -257,8 +260,54 @@ test("commercial quotation includes layover cities and checked baggage weight wh
   assert.match(text, /💵 PRECIO:\nUS\$ 512 por adulto/);
 });
 
-test("commercial quotation includes soles under the dollars line when an exchange rate exists", () => {
-  const text = buildCommercialQuotation(buildOffer(), buildRequest(), {
+test("domestic commercial quotation uses soles only when an exchange rate exists", () => {
+  const request = buildRequest();
+  request.legs[0] = {
+    ...request.legs[0],
+    origin: "LIM",
+    destination: "CUZ",
+    originLabel: "LIM - Lima, Perú",
+    destinationLabel: "CUZ - Cusco, Perú",
+  };
+
+  const text = buildCommercialQuotation(buildOffer({
+    origin: "LIM",
+    destination: "CUZ",
+    itineraries: [
+      {
+        direction: "outbound",
+        durationMinutes: 85,
+        stops: 0,
+        segments: [
+          {
+            flightNumber: "JA 7031",
+            marketingCarrier: "JA",
+            origin: "LIM",
+            destination: "CUZ",
+            departureAt: "2026-10-01T11:45:00Z",
+            arrivalAt: "2026-10-01T13:11:00Z",
+            durationMinutes: 86,
+          },
+        ],
+      },
+      {
+        direction: "inbound",
+        durationMinutes: 93,
+        stops: 0,
+        segments: [
+          {
+            flightNumber: "JA 7032",
+            marketingCarrier: "JA",
+            origin: "CUZ",
+            destination: "LIM",
+            departureAt: "2026-10-04T12:42:00Z",
+            arrivalAt: "2026-10-04T14:15:00Z",
+            durationMinutes: 93,
+          },
+        ],
+      },
+    ],
+  }), request, {
     timeZone: "UTC",
     usdToPenRateInfo: {
       rate: 3.61,
@@ -267,12 +316,11 @@ test("commercial quotation includes soles under the dollars line when an exchang
     },
   });
 
-  assert.match(text, /US\$ 512 por adulto/);
-  assert.match(text, /S\/ 1,848\.32 aprox\. por adulto/);
-  assert.match(text, /Tipo de cambio: 1 USD = S\/ 3\.6100 · Fuente: Agil · Fecha: 2026-04-07/);
+  assert.match(text, /S\/ 1,848\.32 por adulto/);
+  assert.doesNotMatch(text, /US\$|aprox|Tipo de cambio|Fuente|Fecha/);
 });
 
-test("commercial quotation does not include soles when LIM is not a route endpoint", () => {
+test("international commercial quotation uses dollars only even when an exchange rate exists", () => {
   const request = buildRequest();
   request.legs[0] = {
     ...request.legs[0],
@@ -313,7 +361,43 @@ test("commercial quotation does not include soles when LIM is not a route endpoi
 
   assert.match(text, /US\$ 512 por adulto/);
   assert.doesNotMatch(text, /S\//);
-  assert.doesNotMatch(text, /Tipo de cambio:/);
+  assert.doesNotMatch(text, /aprox|Tipo de cambio|Fuente|Fecha/);
+});
+
+test("multi-passenger commercial quotation keeps per-person price above total", () => {
+  const request = buildRequest();
+  request.passengers = {
+    adults: 1,
+    children: 1,
+    infants: 1,
+  };
+
+  const text = buildCommercialQuotation(buildOffer({
+    price: {
+      total: {
+        amount: 1361.14,
+        currencyCode: "USD",
+      },
+      base: {
+        amount: 1120,
+        currencyCode: "USD",
+      },
+      taxes: {
+        amount: 241.14,
+        currencyCode: "USD",
+      },
+    },
+  }), request, {
+    timeZone: "UTC",
+    usdToPenRateInfo: {
+      rate: 3.61,
+      sourceLabel: "Agil",
+      date: "2026-04-07",
+    },
+  });
+
+  assert.match(text, /💵 PRECIO:\nUS\$ 453\.71 por adulto\nTotal: US\$ 1,361\.14/);
+  assert.doesNotMatch(text, /S\/|aprox|Tipo de cambio|Fuente|Fecha/);
 });
 
 test("commercial quotation omits all-airports labels from the route summary", () => {
