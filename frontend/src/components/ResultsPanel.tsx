@@ -11,7 +11,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react"
-import { ResultCard } from "@/components/results/ResultCard"
+import { ResultCard, ResultScheduleTime } from "@/components/results/ResultCard"
 import { buildResultCardModel, type ResultCardModel, type ResultJourneySummary } from "@/components/results/result-card-model"
 import {
   buildResultListItems,
@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button"
 import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-control"
 import { Skeleton } from "@/components/ui/skeleton"
 import { getResultsLayout, saveResultsLayout } from "@/lib/api"
+import { resultsLayoutEditorEnabledFromUrl, resultsLayoutPersistenceEnabled } from "@/lib/results-layout-editor"
 import { cn } from "@/lib/utils"
 import type {
   CanonicalOffer,
@@ -47,10 +48,10 @@ const RESULTS_LAYOUT_FILE_HINT = "config/results-layout.json"
 const RESULTS_LAYOUT_RESIZE_STEP_PX = 8
 const RESULTS_COLUMN_DEFINITIONS = [
   { key: "carrier", label: "Aerolínea", defaultWidth: 139 },
-  { key: "dates", label: "Fechas", defaultWidth: 389 },
-  { key: "duration", label: "Duración", defaultWidth: 121 },
-  { key: "stops", label: "Escalas", defaultWidth: 182 },
-  { key: "price", label: "Precio", defaultWidth: 154 },
+  { key: "dates", label: "Fechas", defaultWidth: 371 },
+  { key: "duration", label: "Duración", defaultWidth: 205 },
+  { key: "stops", label: "Escalas", defaultWidth: 140 },
+  { key: "price", label: "Precio", defaultWidth: 130 },
   { key: "links", label: "Proveedor", defaultWidth: 54 },
 ] as const satisfies ReadonlyArray<{
   key: ResultsLayoutColumnKey
@@ -144,8 +145,9 @@ function ResultsPanelBase({
       : null,
   ]
   const statusItems = maybeStatusItems.filter((item): item is ResultStatusItem => Boolean(item))
+  const layoutPersistenceEnabled = useMemo(() => resultsLayoutPersistenceEnabled(), [])
   const layoutEditor = useResultsLayoutEditor()
-  const savedResultsLayout = useSavedResultsLayout(!layoutEditor.enabled)
+  const savedResultsLayout = useSavedResultsLayout(!layoutEditor.enabled && layoutPersistenceEnabled)
   const activeResultsLayout = layoutEditor.enabled
     ? layoutEditor.initialized ? layoutEditor.columns : null
     : savedResultsLayout.columns ?? DEFAULT_RESULTS_COLUMN_LAYOUT
@@ -184,18 +186,6 @@ function ResultsPanelBase({
 
       </div>
 
-      {layoutEditor.enabled && (
-        <ResultsLayoutEditor
-          error={layoutEditor.error}
-          ready={layoutEditor.initialized}
-          loading={layoutEditor.loading}
-          savedAt={layoutEditor.savedAt}
-          saving={layoutEditor.saving}
-          onReset={layoutEditor.reset}
-          onSave={layoutEditor.save}
-        />
-      )}
-
       {renderBody({
         loading,
         results,
@@ -208,9 +198,14 @@ function ResultsPanelBase({
         layoutEditorEnabled: layoutEditor.enabled,
         layoutEditorReady: layoutEditor.initialized,
         layoutEditorSaving: layoutEditor.saving,
+        layoutEditorError: layoutEditor.error,
+        layoutEditorLoading: layoutEditor.loading,
+        layoutEditorSavedAt: layoutEditor.savedAt,
         layoutColumns: layoutEditor.columns,
         onLayoutBoundaryResize: layoutEditor.resizeColumnBoundary,
         onLayoutColumnsMeasured: layoutEditor.initializeFromMeasuredColumns,
+        onLayoutReset: layoutEditor.reset,
+        onLayoutSave: layoutEditor.save,
         resultsLayout: activeResultsLayout,
         resultsLayoutLoading,
         cached: isRevalidatingCachedSearch,
@@ -279,9 +274,14 @@ function renderBody({
   layoutEditorEnabled,
   layoutEditorReady,
   layoutEditorSaving,
+  layoutEditorError,
+  layoutEditorLoading,
+  layoutEditorSavedAt,
   layoutColumns,
   onLayoutBoundaryResize,
   onLayoutColumnsMeasured,
+  onLayoutReset,
+  onLayoutSave,
   resultsLayout,
   resultsLayoutLoading,
   cached,
@@ -297,9 +297,14 @@ function renderBody({
   layoutEditorEnabled: boolean
   layoutEditorReady: boolean
   layoutEditorSaving: boolean
+  layoutEditorError: string
+  layoutEditorLoading: boolean
+  layoutEditorSavedAt: string
   layoutColumns: ResultsColumnLayout
   onLayoutBoundaryResize: (leftKey: ResultsLayoutColumnKey, rightKey: ResultsLayoutColumnKey, delta: number) => void
   onLayoutColumnsMeasured: (columns: ResultsColumnLayout) => void
+  onLayoutReset: () => void
+  onLayoutSave: () => void
   resultsLayout: ResultsColumnLayout | null
   resultsLayoutLoading: boolean
   cached: boolean
@@ -364,9 +369,14 @@ function renderBody({
       layoutEditorEnabled={layoutEditorEnabled}
       layoutEditorReady={layoutEditorReady}
       layoutEditorSaving={layoutEditorSaving}
+      layoutEditorError={layoutEditorError}
+      layoutEditorLoading={layoutEditorLoading}
+      layoutEditorSavedAt={layoutEditorSavedAt}
       layoutColumns={layoutColumns}
       onLayoutBoundaryResize={onLayoutBoundaryResize}
       onLayoutColumnsMeasured={onLayoutColumnsMeasured}
+      onLayoutReset={onLayoutReset}
+      onLayoutSave={onLayoutSave}
       resultsLayout={resultsLayout}
       cached={cached}
     />
@@ -377,10 +387,12 @@ function ResultsLoadingSkeleton({ rows = RESULTS_PAGE_SIZE_MAX }: { rows?: numbe
   const rowCount = Math.max(1, Math.min(rows, RESULTS_PAGE_SIZE_MAX))
 
   return (
-    <div className="grid min-h-0 flex-1 auto-rows-[104px] gap-2.5 overflow-hidden p-3" aria-hidden="true">
-      {Array.from({ length: rowCount }).map((_, index) => (
-        <Skeleton key={index} className="h-full w-full" />
-      ))}
+    <div className="min-h-0 flex-1 overflow-hidden p-3" aria-hidden="true" data-testid="results-loading-skeleton">
+      <div className="grid h-full auto-rows-[104px] gap-2.5 overflow-hidden">
+        {Array.from({ length: rowCount }).map((_, index) => (
+          <Skeleton key={index} className="h-full w-full" />
+        ))}
+      </div>
     </div>
   )
 }
@@ -393,9 +405,14 @@ function PaginatedResultsList({
   layoutEditorEnabled,
   layoutEditorReady,
   layoutEditorSaving,
+  layoutEditorError,
+  layoutEditorLoading,
+  layoutEditorSavedAt,
   layoutColumns,
   onLayoutBoundaryResize,
   onLayoutColumnsMeasured,
+  onLayoutReset,
+  onLayoutSave,
   resultsLayout,
   cached,
 }: {
@@ -406,14 +423,23 @@ function PaginatedResultsList({
   layoutEditorEnabled: boolean
   layoutEditorReady: boolean
   layoutEditorSaving: boolean
+  layoutEditorError: string
+  layoutEditorLoading: boolean
+  layoutEditorSavedAt: string
   layoutColumns: ResultsColumnLayout
   onLayoutBoundaryResize: (leftKey: ResultsLayoutColumnKey, rightKey: ResultsLayoutColumnKey, delta: number) => void
   onLayoutColumnsMeasured: (columns: ResultsColumnLayout) => void
+  onLayoutReset: () => void
+  onLayoutSave: () => void
   resultsLayout: ResultsColumnLayout | null
   cached: boolean
 }) {
   const resultItems = useMemo(() => buildResultListItems(offers), [offers])
-  const { pageCapacity, viewportRef } = useAdaptiveResultsPageCapacity(resultItems.length)
+  const layoutGuideVisible = layoutEditorEnabled && layoutEditorReady
+  const { pageCapacity, viewportRef } = useAdaptiveResultsPageCapacity(
+    resultItems.length + (layoutGuideVisible ? 1 : 0),
+  )
+  const resultPageCapacity = Math.max(1, pageCapacity - (layoutGuideVisible ? 1 : 0))
   const listRef = useRef<HTMLDivElement | null>(null)
   const layoutStyle = useMemo(() => (
     resultsLayout ? resultsLayoutStyleVars(resultsLayout) : undefined
@@ -421,8 +447,8 @@ function PaginatedResultsList({
   const pageKey = useMemo(() => resultItemsPaginationKey(resultItems), [resultItems])
   const [pageState, setPageState] = useState({ key: "", index: 0 })
   const pages = useMemo(
-    () => paginateResultListItems(resultItems, pageCapacity),
-    [pageCapacity, resultItems],
+    () => paginateResultListItems(resultItems, resultPageCapacity),
+    [resultItems, resultPageCapacity],
   )
   const pageCount = Math.max(1, pages.length)
   const selectedPageIndex = useMemo(() => {
@@ -482,6 +508,19 @@ function PaginatedResultsList({
           )}
           style={layoutStyle}
         >
+          {layoutGuideVisible && (
+            <ResultsLayoutGuideCard
+              columns={layoutColumns}
+              error={layoutEditorError}
+              loading={layoutEditorLoading}
+              ready={layoutEditorReady}
+              savedAt={layoutEditorSavedAt}
+              saving={layoutEditorSaving}
+              onBoundaryResize={onLayoutBoundaryResize}
+              onReset={onLayoutReset}
+              onSave={onLayoutSave}
+            />
+          )}
           {pageItems.map((item) => (
             item.type === "group" ? (
               <ResultOfferGroupCard
@@ -501,13 +540,6 @@ function PaginatedResultsList({
               />
             )
           ))}
-          {layoutEditorEnabled && layoutEditorReady && (
-            <ResultsLayoutGuideCard
-              columns={layoutColumns}
-              saving={layoutEditorSaving}
-              onBoundaryResize={onLayoutBoundaryResize}
-            />
-          )}
         </div>
       </div>
 
@@ -713,89 +745,31 @@ function variantStopsSignature(model: ResultCardModel) {
 function VariantSchedule({ summary, visible }: { summary: ResultJourneySummary; visible: boolean }) {
   return (
     <div className={cn("fd-result-variant-card__schedule", !visible && "is-empty")} aria-hidden={!visible}>
-      {visible && (
-        <div className="fd-result-card__schedule-main">
-          {summary.hasKnownSchedule ? (
-            <>
-              <span>{summary.departureTime}</span>
-              <span className="fd-result-card__schedule-separator">-</span>
-              <span>{summary.arrivalTime}</span>
-              {summary.arrivalDayOffset > 0 && (
-                <span className="fd-result-card__schedule-offset">+{summary.arrivalDayOffset}</span>
-              )}
-            </>
-          ) : (
-            <span className="fd-result-card__schedule-unknown">Horario por confirmar</span>
-          )}
-        </div>
-      )}
+      {visible && <ResultScheduleTime summary={summary} />}
     </div>
-  )
-}
-
-function ResultsLayoutEditor({
-  error,
-  ready,
-  loading,
-  savedAt,
-  saving,
-  onReset,
-  onSave,
-}: {
-  error: string
-  ready: boolean
-  loading: boolean
-  savedAt: string
-  saving: boolean
-  onReset: () => void
-  onSave: () => void
-}) {
-  return (
-    <section className="fd-results-layout-editor" aria-label="Ajuste temporal de columnas">
-      <div className="fd-results-layout-editor__header">
-        <div className="min-w-0">
-          <h3 className="fd-results-layout-editor__title">Columnas</h3>
-          <p className="fd-results-layout-editor__status">
-            {resultsLayoutStatus({ error, loading, ready, savedAt, saving })}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <Button
-            aria-label="Restaurar anchos"
-            className="h-8 rounded-md"
-            disabled={!ready || saving}
-            size="sm"
-            type="button"
-            variant="secondary"
-            onClick={onReset}
-          >
-            Restaurar
-          </Button>
-          <Button
-            aria-label="Guardar layout"
-            className="h-8 rounded-md"
-            disabled={!ready || loading || saving}
-            size="sm"
-            type="button"
-            onClick={onSave}
-          >
-            {saving && <AppIcon name="loading" className="h-3.5 w-3.5 animate-spin" />}
-            Guardar
-          </Button>
-        </div>
-      </div>
-    </section>
   )
 }
 
 function ResultsLayoutGuideCard({
   columns,
+  error,
+  loading,
+  ready,
+  savedAt,
   saving,
   onBoundaryResize,
+  onReset,
+  onSave,
 }: {
   columns: ResultsColumnLayout
+  error: string
+  loading: boolean
+  ready: boolean
+  savedAt: string
   saving: boolean
   onBoundaryResize: (leftKey: ResultsLayoutColumnKey, rightKey: ResultsLayoutColumnKey, delta: number) => void
+  onReset: () => void
+  onSave: () => void
 }) {
   const dragRef = useRef<{
     leftKey: ResultsLayoutColumnKey
@@ -862,8 +836,41 @@ function ResultsLayoutGuideCard({
     <article
       className="fd-result-card fd-result-card--layout-guide"
       aria-label="Tarjeta guia para ajustar columnas"
+      data-testid="results-layout-guide"
       style={resultsLayoutStyleVars(columns)}
     >
+      <div className="fd-results-layout-guide__header">
+        <div className="min-w-0">
+          <h3 className="fd-results-layout-editor__title">Columnas</h3>
+          <p className="fd-results-layout-editor__status">
+            {resultsLayoutStatus({ error, loading, ready, savedAt, saving })}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            aria-label="Restaurar anchos"
+            className="h-8 rounded-md"
+            disabled={!ready || saving}
+            size="sm"
+            type="button"
+            variant="secondary"
+            onClick={onReset}
+          >
+            Restaurar
+          </Button>
+          <Button
+            aria-label="Guardar layout"
+            className="h-8 rounded-md"
+            disabled={!ready || loading || saving}
+            size="sm"
+            type="button"
+            onClick={onSave}
+          >
+            {saving && <AppIcon name="loading" className="h-3.5 w-3.5 animate-spin" />}
+            Guardar
+          </Button>
+        </div>
+      </div>
       {RESULTS_COLUMN_DEFINITIONS.map((column, index) => {
         const nextColumn = RESULTS_COLUMN_DEFINITIONS[index + 1]
 
@@ -1058,12 +1065,6 @@ function useSavedResultsLayout(enabled: boolean) {
   }, [enabled])
 
   return { columns, loading }
-}
-
-function resultsLayoutEditorEnabledFromUrl() {
-  const params = new URLSearchParams(window.location.search)
-  const raw = String(params.get("layoutEditor") || params.get("layout") || "").trim().toLowerCase()
-  return raw === "1" || raw === "true" || raw === "editor"
 }
 
 function normalizeResultsLayoutColumn(
