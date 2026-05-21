@@ -173,12 +173,45 @@ async function readBody(request: Request): Promise<ArrayBuffer | undefined> {
     throw new RequestBodyTooLargeError(MAX_REQUEST_BODY_BYTES);
   }
 
-  const body = await request.arrayBuffer();
-  if (body.byteLength > MAX_REQUEST_BODY_BYTES) {
-    throw new RequestBodyTooLargeError(MAX_REQUEST_BODY_BYTES);
+  if (!request.body) {
+    return undefined;
   }
 
-  return body.byteLength > 0 ? body : undefined;
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+
+    if (!value || value.byteLength === 0) {
+      continue;
+    }
+
+    totalBytes += value.byteLength;
+    if (totalBytes > MAX_REQUEST_BODY_BYTES) {
+      await reader.cancel();
+      throw new RequestBodyTooLargeError(MAX_REQUEST_BODY_BYTES);
+    }
+
+    chunks.push(value);
+  }
+
+  if (totalBytes === 0) {
+    return undefined;
+  }
+
+  const body = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return body.buffer;
 }
 
 function isLoopbackRemoteAddress(value: string | undefined): boolean {

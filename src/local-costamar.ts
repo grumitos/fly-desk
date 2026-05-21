@@ -2816,18 +2816,28 @@ function expandCostamarRecommendationFlightOptions(
   }
 
   const baseId = costamarRecommendationStableId(recommendation);
+  const maxVariants = Math.min(50, Math.max(1, Math.trunc(request.filters.maxResults ?? 50)));
   const variants: Array<Array<{ flight: CostamarFlight; index: number }>> = [[]];
   for (const options of optionsByJourney) {
     const next: Array<Array<{ flight: CostamarFlight; index: number }>> = [];
     for (const prefix of variants) {
       for (const option of options) {
         next.push([...prefix, option]);
+        if (next.length >= maxVariants) {
+          break;
+        }
+      }
+      if (next.length >= maxVariants) {
+        break;
       }
     }
     variants.splice(0, variants.length, ...next);
+    if (variants.length >= maxVariants) {
+      break;
+    }
   }
 
-  return variants.map((variant) => ({
+  return variants.slice(0, maxVariants).map((variant) => ({
     ...recommendation,
     id: `${baseId}:${variant.map((option) => option.index).join("-")}`,
     itinerary: relevantJourneys.map((journey, index) => ({

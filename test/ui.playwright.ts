@@ -169,86 +169,108 @@ test("idle search form transitions smoothly into the workspace layout", async ()
     assert.ok(Math.abs(idleBounds.left - idleBounds.right) <= 24, JSON.stringify(idleBounds));
     assert.ok(idleBounds.centerOffset !== null && idleBounds.centerOffset <= 0 && idleBounds.centerOffset >= -24, JSON.stringify(idleBounds));
 
-    const transitionSamplesPromise = page.evaluate((idle) =>
-      new Promise<Array<{ elapsed: number; opacity: string; top: number; width: number }>>((resolve) => {
-        const frame = document.querySelector('[data-testid="search-shell-frame"]');
-        if (!frame) {
-          resolve([]);
-          return;
+    await page.evaluate(() => {
+      type LayoutAnimationSnapshot = {
+        keyframes: Array<{ properties: string[]; transform: string; width: string }>;
+        options: { duration: number; easing: string };
+      };
+      type LayoutAnimationWindow = Window & typeof globalThis & {
+        __flyDeskLayoutAnimations?: LayoutAnimationSnapshot[];
+        __flyDeskOriginalAnimate?: typeof Element.prototype.animate;
+      };
+
+      const win = window as LayoutAnimationWindow;
+      win.__flyDeskLayoutAnimations = [];
+      win.__flyDeskOriginalAnimate ??= Element.prototype.animate;
+
+      Element.prototype.animate = function (
+        this: Element,
+        keyframes?: Keyframe[] | PropertyIndexedKeyframes | null,
+        options?: number | KeyframeAnimationOptions,
+      ): Animation {
+        if (this instanceof HTMLElement && this.dataset.testid === "search-shell-frame") {
+          const normalizedKeyframes = Array.isArray(keyframes)
+            ? keyframes.map((frame) => {
+              const record = frame as Record<string, unknown>;
+              return {
+                properties: Object.keys(record).sort(),
+                transform: String(record.transform ?? ""),
+                width: String(record.width ?? ""),
+              };
+            })
+            : [];
+          const normalizedOptions = typeof options === "object" && options !== null
+            ? {
+              duration: Number(options.duration ?? 0),
+              easing: String(options.easing ?? ""),
+            }
+            : {
+              duration: Number(options ?? 0),
+              easing: "",
+            };
+
+          win.__flyDeskLayoutAnimations?.push({
+            keyframes: normalizedKeyframes,
+            options: normalizedOptions,
+          });
         }
 
-        const samples: Array<{ elapsed: number; opacity: string; top: number; width: number }> = [];
-        const waitStartedAt = performance.now();
-        let transitionStartedAt: number | null = null;
-        const sample = () => {
-          const rect = frame.getBoundingClientRect();
-          const now = performance.now();
-          const hasStarted = Math.abs(rect.width - idle.width) > 1 || Math.abs(rect.top - idle.top) > 1;
-          if (hasStarted && transitionStartedAt === null) {
-            transitionStartedAt = now;
-          }
-
-          if (transitionStartedAt === null) {
-            if (now - waitStartedAt >= 2000) {
-              resolve(samples);
-              return;
-            }
-
-            requestAnimationFrame(sample);
-            return;
-          }
-
-          samples.push({
-            elapsed: now - transitionStartedAt,
-            opacity: getComputedStyle(frame).opacity,
-            top: rect.top,
-            width: rect.width,
-          });
-
-          if (now - transitionStartedAt >= 440) {
-            resolve(samples);
-            return;
-          }
-
-          requestAnimationFrame(sample);
-        };
-
-        requestAnimationFrame(sample);
-      }),
-    idleBounds) as Promise<Array<{ elapsed: number; opacity: string; top: number; width: number }>>;
+        return win.__flyDeskOriginalAnimate!.call(this, keyframes, options);
+      };
+    });
 
     await Promise.all([
       page.waitForResponse("**/api/search"),
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
     await page.locator(".fd-workspace-enter").waitFor({ state: "visible" });
-    const transitionSamples = await transitionSamplesPromise;
+    const layoutAnimations = await page.evaluate(() => {
+      type LayoutAnimationSnapshot = {
+        keyframes: Array<{ properties: string[]; transform: string; width: string }>;
+        options: { duration: number; easing: string };
+      };
+      type LayoutAnimationWindow = Window & typeof globalThis & {
+        __flyDeskLayoutAnimations?: LayoutAnimationSnapshot[];
+      };
+
+      return (window as LayoutAnimationWindow).__flyDeskLayoutAnimations ?? [];
+    });
 
     const workspaceBounds = await page.getByTestId("search-shell-frame").evaluate((frame) => {
       const rect = frame.getBoundingClientRect();
       return {
+        left: Math.round(rect.left),
         top: Math.round(rect.top),
         width: Math.round(rect.width),
+        opacity: getComputedStyle(frame).opacity,
       };
     });
 
     assert.ok(workspaceBounds.width > idleBounds.width + 120, JSON.stringify({ idleBounds, workspaceBounds }));
     assert.ok(workspaceBounds.top < idleBounds.top - 120, JSON.stringify({ idleBounds, workspaceBounds }));
-    assert.ok(transitionSamples.length > 4, JSON.stringify(transitionSamples));
-    assert.ok(transitionSamples.every((sample) => sample.opacity === "1"), JSON.stringify(transitionSamples));
-    const finalSample = transitionSamples[transitionSamples.length - 1];
-    assert.ok(
-      transitionSamples.some((sample) =>
-        Math.abs(sample.width - workspaceBounds.width) > 4 || Math.abs(sample.top - workspaceBounds.top) > 4
-      ),
-      JSON.stringify({ idleBounds, workspaceBounds, transitionSamples }),
-    );
-    assert.ok(
-      finalSample
-        && Math.abs(finalSample.width - workspaceBounds.width) <= 1
-        && Math.abs(finalSample.top - workspaceBounds.top) <= 1,
-      JSON.stringify({ idleBounds, workspaceBounds, transitionSamples }),
-    );
+    assert.equal(workspaceBounds.opacity, "1");
+
+    assert.equal(layoutAnimations.length, 1, JSON.stringify(layoutAnimations));
+    const [layoutAnimation] = layoutAnimations;
+    assert.equal(layoutAnimation.options.duration, 180);
+    assert.equal(layoutAnimation.options.easing, "cubic-bezier(0.22, 1, 0.36, 1)");
+    assert.equal(layoutAnimation.keyframes.length, 2, JSON.stringify(layoutAnimation));
+    assert.ok(layoutAnimation.keyframes.every((keyframe) => !keyframe.properties.includes("opacity")), JSON.stringify(layoutAnimation));
+
+    const [fromKeyframe, toKeyframe] = layoutAnimation.keyframes;
+    const fromWidth = Number.parseFloat(fromKeyframe.width);
+    const toWidth = Number.parseFloat(toKeyframe.width);
+    assert.ok(Math.abs(fromWidth - idleBounds.width) <= 1, JSON.stringify({ idleBounds, layoutAnimation }));
+    assert.ok(Math.abs(toWidth - workspaceBounds.width) <= 1, JSON.stringify({ workspaceBounds, layoutAnimation }));
+    assert.equal(toKeyframe.transform, "translate3d(0, 0, 0)");
+
+    const translateMatch = /^translate3d\((-?\d+(?:\.\d+)?)px, (-?\d+(?:\.\d+)?)px, 0\)$/.exec(fromKeyframe.transform);
+    assert.ok(translateMatch, JSON.stringify(layoutAnimation));
+    const [, deltaXText, deltaYText] = translateMatch;
+    const deltaX = Number.parseFloat(deltaXText);
+    const deltaY = Number.parseFloat(deltaYText);
+    assert.ok(Math.abs(deltaX - (idleBounds.left - workspaceBounds.left)) <= 2, JSON.stringify({ idleBounds, workspaceBounds, layoutAnimation }));
+    assert.ok(Math.abs(deltaY - (idleBounds.top - workspaceBounds.top)) <= 2, JSON.stringify({ idleBounds, workspaceBounds, layoutAnimation }));
   }, { autoOpen: false });
 });
 
