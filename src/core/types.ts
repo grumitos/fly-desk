@@ -312,6 +312,7 @@ export interface CanonicalOffer {
   priceConfidence: PriceConfidence;
   priceStatus: OfferPriceStatus;
   priceVerifiedAt?: string;
+  quotationPreparedAt?: string;
   purchasePaths: PurchasePath[];
   redirectVerification?: RedirectVerification;
   comparisonMetrics: ComparisonMetrics;

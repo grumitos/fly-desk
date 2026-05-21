@@ -277,6 +277,51 @@ test("idle search form transitions smoothly into the workspace layout", async ()
   }, { autoOpen: false });
 });
 
+test("search-level notices use the idle search controls width after a failed search", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 760 });
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      await route.abort("failed");
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-05-28&return=2026-06-04&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+
+    await page.getByRole("button", { name: "Buscar" }).click();
+    const notice = page.locator(".fd-search-alert");
+    await notice.filter({ hasText: "No se pudo conectar con Fly Desk. Intenta nuevamente." }).waitFor();
+    await notice.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
+    });
+
+    const noticeBounds = await notice.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const searchGrid = document.querySelector<HTMLElement>(".fd-search-grid")?.getBoundingClientRect();
+      const searchFrame = document.querySelector<HTMLElement>('[data-testid="search-shell-frame"]')?.getBoundingClientRect();
+      return {
+        left: Math.round(rect.left),
+        right: Math.round(window.innerWidth - rect.right),
+        searchFrameWidth: Math.round(searchFrame?.width ?? 0),
+        searchGridWidth: Math.round(searchGrid?.width ?? 0),
+        width: Math.round(rect.width),
+      };
+    });
+
+    assert.ok(Math.abs(noticeBounds.width - noticeBounds.searchGridWidth) <= 2, JSON.stringify(noticeBounds));
+    assert.ok(noticeBounds.searchFrameWidth > noticeBounds.width + 40, JSON.stringify(noticeBounds));
+    assert.ok(Math.abs(noticeBounds.left - noticeBounds.right) <= 24, JSON.stringify(noticeBounds));
+  }, { autoOpen: false });
+});
+
 test("wide desktop shell uses half of the leftover viewport width", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 1920, height: 1080 });
@@ -1845,9 +1890,9 @@ test("grouped result variants align changed values with the primary card columns
 
     const variants = group.getByTestId("result-variant-card");
     const variantText = await variants.allInnerTexts();
-    assert.match(variantText[0] ?? "", /13:05\s*-\s*15:25\s*\+1/);
-    assert.match(variantText[0] ?? "", /17h 20m/);
-    assert.match(variantText[1] ?? "", /20:30\s*-\s*15:25\s*\+1/);
+    assert.match(variantText[0] ?? "", /20:30\s*-\s*15:25\s*\+1/);
+    assert.match(variantText[1] ?? "", /13:05\s*-\s*15:25\s*\+1/);
+    assert.match(variantText[1] ?? "", /17h 20m/);
     assert.doesNotMatch(variantText.join(" "), /KLM|Costamar|USD|Equipaje|04\/06|Vuelta|Duraci[oó]n|Escalas/);
 
     const alignment = await group.evaluate((element) => {
@@ -1857,16 +1902,48 @@ test("grouped result variants align changed values with the primary card columns
         const rect = node.getBoundingClientRect();
         return { left: Math.round(rect.left), width: Math.round(rect.width) };
       };
+      const centerDelta = (container: HTMLElement, child: HTMLElement) => {
+        const containerRect = container.getBoundingClientRect();
+        const childRect = child.getBoundingClientRect();
+        return Math.abs(
+          (containerRect.left + containerRect.width / 2)
+          - (childRect.left + childRect.width / 2),
+        );
+      };
+      const scheduleCenterDeltas = Array.from(
+        element.querySelectorAll<HTMLElement>(
+          ".fd-result-card .fd-result-card__schedule, .fd-result-variant-card .fd-result-variant-card__schedule:not(.is-empty)",
+        ),
+      ).map((container) => {
+        const child = container.querySelector<HTMLElement>(".fd-result-card__schedule-main");
+        if (!child) throw new Error("Missing schedule main");
+        return centerDelta(container, child);
+      });
+      const journeyCenterDeltas = Array.from(
+        element.querySelectorAll<HTMLElement>(
+          ".fd-result-card .fd-result-card__journey, .fd-result-variant-card .fd-result-variant-card__journey",
+        ),
+      ).flatMap((container) => {
+        return Array.from(
+          container.querySelectorAll<HTMLElement>(
+            ".fd-result-card__journey-main, .fd-result-card__stops, .fd-result-card__layover",
+          ),
+        ).map((child) => centerDelta(container, child));
+      });
 
       return {
         primarySchedules: rectOf(".fd-result-card .fd-result-card__schedules"),
         variantSchedules: rectOf(".fd-result-variant-card .fd-result-variant-card__schedules"),
         primaryJourney: rectOf(".fd-result-card .fd-result-card__journey"),
         variantJourney: rectOf(".fd-result-variant-card .fd-result-variant-card__journey"),
+        scheduleCenterDeltas,
+        journeyCenterDeltas,
       };
     });
     assert.ok(Math.abs(alignment.primarySchedules.left - alignment.variantSchedules.left) <= 1, JSON.stringify(alignment));
     assert.ok(Math.abs(alignment.primaryJourney.left - alignment.variantJourney.left) <= 1, JSON.stringify(alignment));
+    assert.ok(alignment.scheduleCenterDeltas.every((delta: number) => delta <= 1), JSON.stringify(alignment));
+    assert.ok(alignment.journeyCenterDeltas.every((delta: number) => delta <= 1), JSON.stringify(alignment));
 
     const baseStyles = await group.evaluate((element) => {
       const primary = element.querySelector<HTMLElement>(".fd-result-card");
@@ -1975,6 +2052,18 @@ test("normal results wait for saved column layout before drawing cards", async (
     await page.locator('[data-testid="result-card"]').waitFor({ state: "detached" });
     await page.locator(".fd-skeleton").first().waitFor({ state: "visible" });
     assert.equal(await page.locator('[data-testid="result-card"]').count(), 0);
+    const skeletonPadding = await page.getByTestId("results-loading-skeleton").evaluate((element) => {
+      const grid = element.firstElementChild as HTMLElement | null;
+      if (!grid) throw new Error("Missing skeleton grid");
+      const rect = element.getBoundingClientRect();
+      const gridRect = grid.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      return {
+        bottomGap: Math.round(rect.bottom - gridRect.bottom),
+        paddingBottom: Math.round(Number.parseFloat(style.paddingBottom)),
+      };
+    });
+    assert.ok(skeletonPadding.bottomGap >= skeletonPadding.paddingBottom - 1, JSON.stringify(skeletonPadding));
 
     releaseLayout();
     await page.locator('[data-testid="result-card"]').waitFor({ state: "visible" });
@@ -2001,6 +2090,137 @@ test("normal results wait for saved column layout before drawing cards", async (
       price: "169fr",
       links: "53fr",
     });
+  }, { autoOpen: false });
+});
+
+test("layout editor guide renders as the first result card and resizes adjacent columns", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1180, height: 700 });
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/results-layout", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ layout: null }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      const offers = [
+        buildOffer({ id: "layout-guide-offer-1", origin: "LIM", destination: "MAD" }),
+        buildOffer({ id: "layout-guide-offer-2", origin: "LIM", destination: "MAD" }),
+      ];
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "layout-guide-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers,
+          allOffers: offers,
+          searchMeta: {
+            requestedAt: "2026-05-11T17:18:33.592Z",
+            completedAt: "2026-05-11T17:18:33.592Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?layout=editor&mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+
+    const guide = page.getByTestId("results-layout-guide");
+    await guide.waitFor({ state: "visible" });
+    const defaultLayout = await guide.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        carrier: style.getPropertyValue("--fd-results-col-carrier").trim(),
+        dates: style.getPropertyValue("--fd-results-col-dates").trim(),
+        duration: style.getPropertyValue("--fd-results-col-duration").trim(),
+        stops: style.getPropertyValue("--fd-results-col-stops").trim(),
+        price: style.getPropertyValue("--fd-results-col-price").trim(),
+        links: style.getPropertyValue("--fd-results-col-links").trim(),
+      };
+    });
+    assert.deepEqual(defaultLayout, {
+      carrier: "139fr",
+      dates: "371fr",
+      duration: "205fr",
+      stops: "140fr",
+      price: "130fr",
+      links: "54fr",
+    });
+    const order = await page.locator(".fd-results-list").evaluate((list) => {
+      const children = Array.from(list.children);
+      return children.slice(0, 2).map((child) => ({
+        guide: child.classList.contains("fd-result-card--layout-guide"),
+        result: child.getAttribute("data-testid") === "result-card",
+      }));
+    });
+    assert.deepEqual(order, [
+      { guide: true, result: false },
+      { guide: false, result: true },
+    ]);
+
+    const initialGeometry = await guide.evaluate((element) => {
+      const rectOf = (selector: string) => {
+        const node = element.querySelector<HTMLElement>(selector);
+        if (!node) throw new Error(`Missing ${selector}`);
+        const rect = node.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, width: rect.width };
+      };
+      const columns = Array.from(element.querySelectorAll<HTMLElement>(".fd-results-layout-column"))
+        .slice(0, 2)
+        .map((column) => {
+          const rect = column.getBoundingClientRect();
+          return { left: rect.left, right: rect.right, width: rect.width };
+        });
+      const firstHandle = rectOf(".fd-results-layout-column__handle");
+      return {
+        columns,
+        handleCenter: (firstHandle.left + firstHandle.right) / 2,
+        boundaryCenter: (columns[0].right + columns[1].left) / 2,
+      };
+    });
+    assert.ok(Math.abs(initialGeometry.handleCenter - initialGeometry.boundaryCenter) <= 1, JSON.stringify(initialGeometry));
+
+    await guide.locator(".fd-results-layout-column__handle").first().press("ArrowRight");
+
+    const resizedGeometry = await guide.evaluate((element) => {
+      return Array.from(element.querySelectorAll<HTMLElement>(".fd-results-layout-column"))
+        .slice(0, 2)
+        .map((column) => Math.round(column.getBoundingClientRect().width));
+    });
+    const initialWidths = initialGeometry.columns.map((column) => Math.round(column.width));
+    assert.ok(resizedGeometry[0] > initialWidths[0], JSON.stringify({ initialWidths, resizedGeometry }));
+    assert.ok(resizedGeometry[1] < initialWidths[1], JSON.stringify({ initialWidths, resizedGeometry }));
+    assert.ok(Math.abs((resizedGeometry[0] + resizedGeometry[1]) - (initialWidths[0] + initialWidths[1])) <= 1);
   }, { autoOpen: false });
 });
 
@@ -2102,6 +2322,248 @@ test("grouped provider offer renders Agilsmart and Costamar external links verti
     }));
     assert.ok(layout[1].top >= layout[0].bottom, JSON.stringify(layout));
     assert.ok(layout.every((item) => item.width <= 38), JSON.stringify(layout));
+  }, { autoOpen: false });
+});
+
+test("detail panel mirrors selected result content and omits unknown fare conditions", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1280, height: 760 });
+    await page.addInitScript(() => {
+      const originalExecCommand = document.execCommand.bind(document);
+      document.execCommand = ((command: string, showUI?: boolean, value?: string) => {
+        if (command === "copy") {
+          const activeElement = document.activeElement as HTMLTextAreaElement | null;
+          (window as unknown as { __flyDeskCopiedText?: string }).__flyDeskCopiedText = activeElement?.value ?? "";
+          return Boolean(activeElement?.value);
+        }
+        return originalExecCommand(command, showUI, value);
+      }) as typeof document.execCommand;
+
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async () => {
+            throw new DOMException("Clipboard blocked", "NotAllowedError");
+          },
+        },
+      });
+    });
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/quotation", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          commercialText: [
+            "Cotización de prueba",
+            ...Array.from({ length: 24 }, (_, index) => `Detalle operativo ${index + 1}`),
+          ].join("\n"),
+          offer: {},
+        }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      const offers = [
+        buildOffer({
+          id: "detail-panel-offer",
+          origin: "LIM",
+          destination: "MAD",
+          airline: "LATAM Airlines",
+          mainCarrier: "LA",
+          validatingCarrier: "LA",
+          providerSource: "agil-local",
+          comparisonMetrics: {
+            totalDurationMinutes: 495,
+            totalStops: 0,
+          },
+          baggage: {
+            carryOnIncluded: true,
+            checkedIncluded: false,
+            description: "Equipaje de mano incluido",
+          },
+          price: {
+            total: { amount: 812.35, currencyCode: "USD" },
+            base: { amount: 710, currencyCode: "USD" },
+            taxes: { amount: 102.35, currencyCode: "USD" },
+          },
+          itineraries: [
+            {
+              direction: "outbound",
+              durationMinutes: 495,
+              stops: 0,
+              segments: [
+                {
+                  flightNumber: "LA 2478",
+                  marketingCarrier: "LA",
+                  marketingCarrierName: "LATAM Airlines",
+                  origin: "LIM",
+                  destination: "MAD",
+                  departureAt: "2026-05-28T09:10:00-05:00",
+                  arrivalAt: "2026-05-28T17:25:00+02:00",
+                },
+              ],
+            },
+          ],
+        }),
+      ];
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "detail-panel-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers,
+          allOffers: offers,
+          searchMeta: {
+            requestedAt: "2026-05-21T10:12:58.582Z",
+            completedAt: "2026-05-21T10:12:58.582Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-05-28&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+
+    const quotationPrefetch = page.waitForResponse("**/api/quotation");
+    await page.getByTestId("result-card").click();
+    await page.getByRole("heading", { name: "Oferta seleccionada" }).waitFor();
+    await quotationPrefetch;
+
+    const selectedText = await page.evaluate(() => {
+      const heading = Array.from(document.querySelectorAll("h2"))
+        .find((node) => node.textContent?.trim() === "Oferta seleccionada");
+      return heading?.closest("section")?.textContent ?? "";
+    });
+    assert.match(selectedText, /LATAM/);
+    assert.match(selectedText, /Horario/);
+    assert.match(selectedText, /09:10/);
+    assert.match(selectedText, /17:25/);
+    assert.match(selectedText, /LIM - MAD/);
+    assert.equal(selectedText.match(/LIM - MAD/g)?.length, 1);
+    assert.match(selectedText, /8h 15m/);
+    assert.match(selectedText, /Directo/);
+    assert.match(selectedText, /Cabina/);
+    assert.match(selectedText, /Agilsmart/);
+    assert.match(selectedText, /USD 812\.35/);
+    assert.doesNotMatch(selectedText, /Cambios|Reembolso|Consultar/);
+
+    assert.equal(await page.getByTestId("quotation-text").count(), 0);
+
+    await page.getByRole("button", { name: "Cotizar" }).click();
+    await page.getByTestId("quotation-text").waitFor();
+    const quotedText = await page.evaluate(() => {
+      const heading = Array.from(document.querySelectorAll("h2"))
+        .find((node) => node.textContent?.trim() === "Oferta seleccionada");
+      return heading?.closest("section")?.textContent ?? "";
+    });
+    assert.match(quotedText, /Cotización/);
+    assert.match(quotedText, /Copiado/);
+    assert.doesNotMatch(quotedText, /Listo para copiar/);
+
+    await page.waitForFunction(() => (
+      (window as unknown as { __flyDeskCopiedText?: string }).__flyDeskCopiedText?.startsWith("Cotización de prueba")
+    ));
+    const copiedText = await page.evaluate(() => (
+      (window as unknown as { __flyDeskCopiedText?: string }).__flyDeskCopiedText
+    ));
+    assert.match(copiedText ?? "", /Detalle operativo 24/);
+    assert.ok(await page.getByRole("button", { name: "Copiado" }).count() >= 1);
+
+    const quotationGeometry = await page.getByTestId("quotation-text").evaluate((element) => {
+      const body = element.closest<HTMLElement>('[data-testid="detail-panel-body"]');
+      if (!body) throw new Error("Missing detail panel body");
+      const section = element.closest<HTMLElement>('[data-testid="quotation-section"]');
+      if (!section) throw new Error("Missing quotation section");
+      const offerInfo = body.querySelector<HTMLElement>('[data-testid="offer-detail-info"]');
+      if (!offerInfo) throw new Error("Missing offer detail info");
+      const offerSectionBorders = Array.from(offerInfo.children).map((child) => {
+        const childStyle = getComputedStyle(child);
+        return {
+          borderTop: Math.round(Number.parseFloat(childStyle.borderTopWidth)),
+          borderBottom: Math.round(Number.parseFloat(childStyle.borderBottomWidth)),
+        };
+      });
+      const sectionTitleGaps = Array.from(
+        body.querySelectorAll<HTMLElement>('[data-testid="offer-detail-info"] > section, [data-testid="quotation-section"]'),
+      ).flatMap((section) => {
+        const title = section.querySelector<HTMLElement>(".fd-label");
+        const content = section.children.item(1) as HTMLElement | null;
+        if (!title || !content) return [];
+        const titleRect = title.getBoundingClientRect();
+        const contentRect = content.getBoundingClientRect();
+        return [Math.round(contentRect.top - titleRect.bottom)];
+      });
+      const bodyRect = body.getBoundingClientRect();
+      const rect = element.getBoundingClientRect();
+      const bodyStyle = getComputedStyle(body);
+      const sectionStyle = getComputedStyle(section);
+      const offerInfoStyle = getComputedStyle(offerInfo);
+      return {
+        bottomGap: Math.round(bodyRect.bottom - rect.bottom),
+        expectedBottomGap: Math.round(Number.parseFloat(bodyStyle.paddingBottom) + Number.parseFloat(sectionStyle.paddingBottom)),
+        sectionPaddingTop: Math.round(Number.parseFloat(sectionStyle.paddingTop)),
+        sectionPaddingBottom: Math.round(Number.parseFloat(sectionStyle.paddingBottom)),
+        sectionBorderTop: Math.round(Number.parseFloat(sectionStyle.borderTopWidth)),
+        sectionBorderBottom: Math.round(Number.parseFloat(sectionStyle.borderBottomWidth)),
+        scrollsInside: element.scrollHeight > element.clientHeight,
+        offerInfoOverflowY: offerInfoStyle.overflowY,
+        offerInfoScrolls: offerInfo.scrollHeight > offerInfo.clientHeight,
+        offerSectionBorders,
+        sectionTitleGaps,
+      };
+    });
+    assert.ok(Math.abs(quotationGeometry.bottomGap - quotationGeometry.expectedBottomGap) <= 1, JSON.stringify(quotationGeometry));
+    assert.equal(quotationGeometry.sectionPaddingTop, quotationGeometry.sectionPaddingBottom, JSON.stringify(quotationGeometry));
+    assert.equal(quotationGeometry.sectionBorderTop, 1, JSON.stringify(quotationGeometry));
+    assert.equal(quotationGeometry.sectionBorderBottom, 0, JSON.stringify(quotationGeometry));
+    assert.ok(quotationGeometry.offerSectionBorders.length >= 4, JSON.stringify(quotationGeometry));
+    for (let index = 0; index < quotationGeometry.offerSectionBorders.length - 1; index += 1) {
+      const current = quotationGeometry.offerSectionBorders[index];
+      const next = quotationGeometry.offerSectionBorders[index + 1];
+      assert.equal(current.borderBottom + next.borderTop, 1, JSON.stringify(quotationGeometry));
+    }
+    assert.equal(
+      quotationGeometry.offerSectionBorders.at(-1)?.borderBottom ?? 0,
+      0,
+      JSON.stringify(quotationGeometry),
+    );
+    assert.ok(quotationGeometry.sectionTitleGaps.length >= 5, JSON.stringify(quotationGeometry));
+    assert.ok(
+      Math.max(...quotationGeometry.sectionTitleGaps) - Math.min(...quotationGeometry.sectionTitleGaps) <= 2,
+      JSON.stringify(quotationGeometry),
+    );
+    assert.equal(quotationGeometry.scrollsInside, true, JSON.stringify(quotationGeometry));
+    assert.notEqual(quotationGeometry.offerInfoOverflowY, "auto", JSON.stringify(quotationGeometry));
+    assert.notEqual(quotationGeometry.offerInfoOverflowY, "scroll", JSON.stringify(quotationGeometry));
+    assert.equal(quotationGeometry.offerInfoScrolls, false, JSON.stringify(quotationGeometry));
   }, { autoOpen: false });
 });
 
@@ -2322,7 +2784,13 @@ test("empty local filter results do not blame a provider that already reported n
     await page.getByTestId("result-card").first().waitFor();
     await page.getByText("Agilsmart sin vuelos").waitFor();
 
-    await page.getByRole("switch", { name: "Incluye equipaje" }).click();
+    await page.getByLabel("Equipaje incluido").evaluate((input) => {
+      const range = input as HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(range, "2");
+      range.dispatchEvent(new Event("input", { bubbles: true }));
+      range.dispatchEvent(new Event("change", { bubbles: true }));
+    });
     await page.getByText("No hay búsquedas que coincidan").waitFor();
 
     assert.equal(await page.getByTestId("result-card").count(), 0);
@@ -2755,8 +3223,7 @@ test("mobile workspace keeps search modes inline instead of crowding the topbar"
     assert.equal(await page.getByTestId("topbar-search-controls").getByRole("button", { name: "Exacto" }).count(), 0);
     assert.equal(await page.locator("main").getByRole("button", { name: "Exacto" }).count(), 1);
     assert.equal(await page.locator(".fd-result-card--layout-guide").evaluate((element) => getComputedStyle(element).display), "none");
-    const editorHeight = await page.locator(".fd-results-layout-editor").evaluate((element) => element.getBoundingClientRect().height);
-    assert.ok(editorHeight <= 96, `mobile layout editor is too tall: ${editorHeight}`);
+    assert.equal(await page.locator(".fd-results-layout-editor").count(), 0);
   });
 });
 
@@ -2893,7 +3360,13 @@ test("migratory search renders monthly progress and refilters each month locally
     assert.equal(await page.getByTestId("migration-month-card").count(), 8);
     assert.equal(await page.getByRole("button", { name: "Detener búsqueda" }).count(), 1);
 
-    await page.getByRole("switch", { name: "Solo directos" }).click();
+    await page.getByLabel("Escalas").evaluate((input) => {
+      const range = input as HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(range, "0");
+      range.dispatchEvent(new Event("input", { bubbles: true }));
+      range.dispatchEvent(new Event("change", { bubbles: true }));
+    });
     await migrationGrid.getByText("USD 150.00").waitFor();
     assert.equal(await migrationGrid.getByText("USD 90.00").count(), 0);
 
@@ -2964,6 +3437,131 @@ test("workspace panel tabs use the shared filled segmented style", async () => {
     assert.equal(await workspaceTabs.locator(".fd-segmented-indicator").count(), 1);
     assert.doesNotMatch(await page.getByRole("tab", { name: "Resultados" }).getAttribute("class") ?? "", /data-\[state=active\]:bg-card/);
   });
+});
+
+test("baggage filter uses one compact slider and maps checked baggage to carry-on too", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let submittedFilters: Record<string, unknown> | null = null;
+
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as {
+        request?: { filters?: Record<string, unknown> };
+        sortMode?: string;
+      };
+      submittedFilters = payload.request?.filters ?? null;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "baggage-slider-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers: [],
+          allOffers: [],
+          searchMeta: {
+            requestedAt: "2026-05-21T00:00:00.000Z",
+            completedAt: "2026-05-21T00:00:00.000Z",
+            providersUsed: [],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?layout=editor&mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-05-28&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+
+    const baggageInput = page.getByLabel("Equipaje incluido");
+    assert.equal(await baggageInput.getAttribute("type"), "range");
+    assert.equal(await page.getByRole("switch", { name: "Equipaje de mano" }).count(), 0);
+    assert.equal(await page.getByRole("switch", { name: "Maleta de bodega" }).count(), 0);
+
+    const baggageSlider = page.locator(".fd-filter-slider").filter({ has: baggageInput });
+    assert.equal(await baggageSlider.locator(".fd-filter-slider__value").innerText(), "Cualquiera");
+    const visibleSliderLabels = await page.locator(".fd-filter-slider__label").evaluateAll((labels) => (
+      labels.map((label) => label.textContent?.trim()).filter(Boolean)
+    ));
+    assert.deepEqual(visibleSliderLabels, ["Tipo", "Tiempo máximo", "Incluido"]);
+
+    await baggageInput.evaluate((input) => {
+      const range = input as HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(range, "2");
+      range.dispatchEvent(new Event("input", { bubbles: true }));
+      range.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    assert.equal(await baggageSlider.locator(".fd-filter-slider__value").innerText(), "Bodega");
+
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+    assert.equal(submittedFilters?.carryOnRequired, true);
+    assert.equal(submittedFilters?.checkedBaggageRequired, true);
+
+    const sliderStyle = await baggageSlider.evaluate((element) => {
+      const value = element.querySelector<HTMLElement>(".fd-filter-slider__value");
+      const visibleLabel = element.querySelector<HTMLElement>(".fd-filter-slider__label");
+      const head = element.querySelector<HTMLElement>(".fd-filter-slider__head");
+      if (!visibleLabel || !value || !head) throw new Error("Missing slider text");
+      return {
+        background: getComputedStyle(element).backgroundColor,
+        visibleLabel: visibleLabel.textContent?.trim(),
+        headJustify: getComputedStyle(head).justifyContent,
+        valueWeight: Number(getComputedStyle(value).fontWeight),
+      };
+    });
+    assert.equal(sliderStyle.background, "rgba(0, 0, 0, 0)");
+    assert.equal(sliderStyle.visibleLabel, "Incluido");
+    assert.equal(sliderStyle.headJustify, "space-between");
+    assert.ok(sliderStyle.valueWeight <= 500, JSON.stringify(sliderStyle));
+
+    const filterSectionTitleGaps = await page.locator("aside.fd-panel section").evaluateAll((sections) => {
+      return sections.flatMap((section) => {
+        const title = section.querySelector<HTMLElement>(".fd-label");
+        const content = section.children.item(1) as HTMLElement | null;
+        if (!title || !content) return [];
+        const titleRect = title.getBoundingClientRect();
+        const contentRect = content.getBoundingClientRect();
+        return [Math.round(contentRect.top - titleRect.bottom)];
+      });
+    });
+    assert.ok(filterSectionTitleGaps.length >= 2, JSON.stringify(filterSectionTitleGaps));
+    assert.ok(
+      Math.max(...filterSectionTitleGaps) - Math.min(...filterSectionTitleGaps) <= 2,
+      JSON.stringify(filterSectionTitleGaps),
+    );
+
+    const markPositions = await page.locator(".fd-filter-slider").evaluateAll((sliders) => {
+      return sliders.map((slider) => (
+        Array.from(slider.querySelectorAll<HTMLElement>(".fd-filter-slider__mark"))
+          .map((mark) => mark.style.getPropertyValue("--fd-filter-slider-mark-position"))
+      ));
+    });
+    for (const positions of markPositions) {
+      assert.equal(positions[0], "0%");
+      assert.equal(positions.at(-1), "100%");
+    }
+  }, { autoOpen: false });
 });
 
 test("location suggestions stay above workspace tabs after a search", async () => {

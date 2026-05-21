@@ -85,6 +85,7 @@
 }
 
 .fd-result-variant-card {
+  --fd-result-column-gap: clamp(0.48rem, 0.82vw, 0.75rem);
   display: grid;
   grid-template-columns:
     var(--fd-result-col-carrier, minmax(7rem, 1.05fr))
@@ -93,7 +94,7 @@
     var(--fd-result-col-stops, minmax(6.4rem, 0.82fr))
     var(--fd-result-col-price, minmax(6.8rem, 0.76fr))
     var(--fd-result-col-links, 2.5rem);
-  column-gap: clamp(0.48rem, 0.82vw, 0.75rem);
+  column-gap: var(--fd-result-column-gap);
   min-width: 0;
   min-height: 2.42rem;
   align-items: center;
@@ -134,6 +135,8 @@
 .fd-result-variant-card__schedules {
   align-items: center;
   column-gap: 0.82rem;
+  justify-items: center;
+  text-align: center;
 }
 
 .fd-result-variant-card__schedules[data-trip-type="one-way"] {
@@ -145,7 +148,9 @@
 }
 
 .fd-result-variant-card__schedule {
+  justify-items: center;
   min-height: 1.24rem;
+  text-align: center;
 }
 
 .fd-result-variant-card__schedule.is-empty {
@@ -248,12 +253,13 @@
 }
 
 .fd-results-layout-column {
+  --fd-results-layout-column-border-width: 1px;
   position: relative;
   display: grid;
   min-width: 0;
   gap: 0.42rem;
   padding: 0.46rem 0.5rem;
-  border: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+  border: var(--fd-results-layout-column-border-width) solid color-mix(in srgb, var(--color-border) 72%, transparent);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-card) 92%, var(--color-secondary));
 }
@@ -314,16 +320,17 @@
 .fd-results-layout-column__handle {
   position: absolute;
   top: -0.34rem;
-  right: -0.52rem;
   bottom: -0.34rem;
+  left: calc(100% + var(--fd-results-layout-column-border-width) + (var(--fd-result-column-gap) / 2));
   z-index: 1;
-  width: 0.82rem;
+  width: var(--fd-results-layout-handle-width, 0.82rem);
   margin: 0;
   padding: 0;
   border: 0;
   background: transparent;
   cursor: col-resize;
   touch-action: none;
+  transform: translateX(-50%);
 }
 
 .fd-results-layout-column__handle::after {
@@ -331,9 +338,10 @@
   top: 0.34rem;
   bottom: 0.34rem;
   left: 50%;
-  width: 2px;
+  width: 1px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--color-primary) 56%, var(--color-border));
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--color-primary) 28%, transparent);
   content: "";
   transform: translateX(-50%);
 }
@@ -375,6 +383,7 @@
 .fd-result-card {
   --fd-result-accent: var(--color-primary);
   --fd-result-card-edge-padding: 0.92rem;
+  --fd-result-column-gap: clamp(0.48rem, 0.82vw, 0.75rem);
   display: grid;
   grid-template-columns:
     var(--fd-result-col-carrier, minmax(7rem, 1.05fr))
@@ -383,7 +392,7 @@
     var(--fd-result-col-stops, minmax(6.4rem, 0.82fr))
     var(--fd-result-col-price, minmax(6.8rem, 0.76fr))
     var(--fd-result-col-links, 2.5rem);
-  column-gap: clamp(0.48rem, 0.82vw, 0.75rem);
+  column-gap: var(--fd-result-column-gap);
   row-gap: 0.54rem;
   align-items: center;
   width: 100%;
@@ -449,14 +458,28 @@
 .fd-result-card__schedules {
   align-items: start;
   column-gap: 0.82rem;
+  justify-items: center;
   row-gap: 0.34rem;
+  text-align: center;
 }
 
 .fd-result-card--layout-guide {
+  --fd-results-layout-handle-width: 0.82rem;
+  row-gap: 0.7rem;
+  align-items: stretch;
   border-style: dashed;
   background: color-mix(in srgb, var(--color-card) 84%, var(--color-secondary));
   box-shadow: none;
   cursor: default;
+}
+
+.fd-results-layout-guide__header {
+  display: flex;
+  grid-column: 1 / -1;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
 .fd-result-card--layout-guide:hover {
@@ -512,6 +535,8 @@
 .fd-result-card__schedule-main {
   display: inline-flex;
   align-items: baseline;
+  justify-content: center;
+  justify-self: center;
   min-width: 0;
   max-width: 100%;
   gap: 0.28rem;
@@ -520,6 +545,11 @@
   font-weight: 900;
   line-height: 1.02;
   white-space: nowrap;
+}
+
+.fd-result-card__schedule {
+  justify-items: center;
+  text-align: center;
 }
 
 .fd-result-card__schedule-separator {

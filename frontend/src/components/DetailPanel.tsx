@@ -1,8 +1,10 @@
-import { useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { buildResultCardModel, type ResultCardModel, type ResultJourneySummary } from "@/components/results/result-card-model"
 import { Button } from "@/components/ui/button"
 import { AppIcon } from "@/components/ui/app-icon"
+import { PanelSection, PanelSectionStack } from "@/components/ui/panel-section"
 import { fetchQuotation } from "@/lib/api"
-import { buildOfferDetailSummary, formatOfferDate } from "@/lib/offer-display"
+import { buildOfferDetailSummary, formatOfferDate, type OfferDetailSummary } from "@/lib/offer-display"
 import { bestPurchasePath, normalizeSafePurchaseUrl } from "@/lib/purchase-path"
 import { providerDisplayName } from "@/lib/providers"
 import type { CanonicalOffer, SearchRequest, Segment } from "@/types"
@@ -13,11 +15,19 @@ interface DetailPanelProps {
   searchJobId?: string
 }
 
+type QuotationState = {
+  key: string
+  text: string
+  error?: boolean
+}
+
 export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
-  const [quotation, setQuotation] = useState<{ key: string; text: string; error?: boolean } | null>(null)
+  const [quotation, setQuotation] = useState<QuotationState | null>(null)
   const [loadingKey, setLoadingKey] = useState<string | null>(null)
   const [copiedOfferKey, setCopiedOfferKey] = useState<string | null>(null)
   const [pathFeedback, setPathFeedback] = useState<{ offerId: string; message: string } | null>(null)
+  const pendingQuotationRef = useRef<{ key: string; promise: Promise<QuotationState> } | null>(null)
+  const preparedQuotationRef = useRef<QuotationState | null>(null)
 
   const quoteSearchJobId = offer?.sourceSearchJobId ?? searchJobId
   const quoteOfferId = offer?.sourceOfferId ?? offer?.id
@@ -36,34 +46,106 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
     ? "Abre la busqueda equivalente del proveedor; la disponibilidad puede variar."
     : "Abrir proveedor"
   const detail = offer ? buildOfferDetailSummary(offer) : null
+  const resultModel = offer ? buildResultCardModel(offer, passengerCountForRequest(request)) : null
+  const infoTiles = offer && detail && resultModel ? offerInfoTiles(offer, detail, resultModel) : []
+  const conditionRows = offer && detail && resultModel ? offerConditionRows(offer, detail, resultModel) : []
+
+  const markCopied = useCallback((key: string) => {
+    setCopiedOfferKey(key)
+    window.setTimeout(() => {
+      setCopiedOfferKey((current) => (current === key ? null : current))
+    }, 2000)
+  }, [])
+
+  const copyQuotationText = useCallback(async (key: string, text: string) => {
+    const copiedToClipboard = await writeClipboardText(text)
+    if (copiedToClipboard) {
+      markCopied(key)
+    }
+  }, [markCopied])
+
+  const requestQuotation = useCallback(async (options: { silent?: boolean } = {}) => {
+    if (!offer || !request || !quoteKey || !quoteSearchJobId || !quoteOfferId) return null
+    if (quotation?.key === quoteKey && !quotation.error) return quotation
+
+    const prepared = preparedQuotationRef.current
+    if (prepared?.key === quoteKey && !prepared.error) {
+      if (!options.silent) setQuotation(prepared)
+      return prepared
+    }
+
+    const pending = pendingQuotationRef.current
+    if (pending?.key === quoteKey) {
+      if (!options.silent) setLoadingKey(quoteKey)
+      try {
+        const result = await pending.promise
+        if (!result.error) {
+          if (options.silent) {
+            preparedQuotationRef.current = result
+          } else {
+            setQuotation(result)
+          }
+        } else if (!options.silent) {
+          setQuotation(result)
+        }
+        return result
+      } finally {
+        if (!options.silent) {
+          setLoadingKey((current) => (current === quoteKey ? null : current))
+        }
+      }
+    }
+
+    const promise = fetchQuotation({
+      searchSessionId: quoteSearchJobId,
+      offerId: quoteOfferId,
+    })
+      .then((result): QuotationState => ({ key: quoteKey, text: result.commercialText }))
+      .catch((): QuotationState => ({
+        key: quoteKey,
+        text: "No se pudo generar la cotización. Revisa la oferta o intenta nuevamente.",
+        error: true,
+      }))
+    pendingQuotationRef.current = { key: quoteKey, promise }
+    if (!options.silent) setLoadingKey(quoteKey)
+
+    try {
+      const result = await promise
+      if (!result.error && options.silent) {
+        preparedQuotationRef.current = result
+      } else if (!result.error || !options.silent) {
+        setQuotation(result)
+      }
+      return result
+    } finally {
+      if (pendingQuotationRef.current?.key === quoteKey) {
+        pendingQuotationRef.current = null
+      }
+      if (!options.silent) {
+        setLoadingKey((current) => (current === quoteKey ? null : current))
+      }
+    }
+  }, [offer, quoteKey, quoteOfferId, quoteSearchJobId, quotation, request])
+
+  useEffect(() => {
+    if (!canQuote || !quoteKey || activeQuotation || pendingQuotationRef.current?.key === quoteKey) return
+    void requestQuotation({ silent: true })
+  }, [activeQuotation, canQuote, quoteKey, requestQuotation])
 
   const handleQuotation = async () => {
-    if (!offer || !request || !quoteKey || !quoteSearchJobId || !quoteOfferId) return
-    setLoadingKey(quoteKey)
-    try {
-      const result = await fetchQuotation({
-        searchSessionId: quoteSearchJobId,
-        offerId: quoteOfferId,
-      })
-      setQuotation({ key: quoteKey, text: result.commercialText })
-    } catch {
-      setQuotation({ key: quoteKey, text: "No se pudo generar la cotización. Revisa la oferta o intenta nuevamente.", error: true })
-    } finally {
-      setLoadingKey((current) => (current === quoteKey ? null : current))
+    if (!quoteKey) return
+    const result = activeQuotation && !activeQuotation.error
+      ? activeQuotation
+      : await requestQuotation()
+
+    if (result && !result.error) {
+      await copyQuotationText(result.key, result.text)
     }
   }
 
   const copyToClipboard = async () => {
-    if (!offer || !activeQuotation || activeQuotation.error) return
-    try {
-      await navigator.clipboard.writeText(activeQuotation.text)
-      setCopiedOfferKey(quoteKey ?? null)
-      setTimeout(() => {
-        setCopiedOfferKey((current) => (current === quoteKey ? null : current))
-      }, 2000)
-    } catch {
-      return
-    }
+    if (!offer || !activeQuotation || activeQuotation.error || !quoteKey) return
+    await copyQuotationText(quoteKey, activeQuotation.text)
   }
 
   const handlePurchasePath = async () => {
@@ -119,28 +201,40 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h2 className="fd-panel-title">Oferta seleccionada</h2>
-            <p className="fd-panel-subtitle">{offer.airline}</p>
+            <p className="fd-panel-subtitle">{resultModel?.carrier.display ?? offer.airline}</p>
           </div>
         </div>
       </div>
 
-      <div className="fd-scrollbar min-h-0 flex-1 space-y-3 overflow-auto p-3">
-        <section>
-          <div className="fd-label mb-1">Precio</div>
-          <div className="font-mono text-xl font-bold">
-            {offer.price?.total?.currencyCode || "USD"}{" "}
-            {offer.price?.total?.amount?.toLocaleString("es-PE", { minimumFractionDigits: 2 }) || "-"}
-          </div>
-          <div className="text-xs text-muted-foreground">
-            Tarifa por adulto según proveedor
-            {offer.priceConfidence ? ` · ${priceConfidenceLabel(offer.priceConfidence)}` : ""}
-          </div>
-        </section>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3" data-testid="detail-panel-body">
+        <PanelSectionStack className="shrink-0" data-testid="offer-detail-info">
+          <PanelSection title="Precio">
+            <div className="font-mono text-xl font-bold">
+              {resultModel?.price.totalLabel ?? "-"}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {resultModel?.price.perPersonLabel ? `${resultModel.price.perPersonLabel} por persona` : "Tarifa por adulto según proveedor"}
+              {offer.priceConfidence ? ` · ${priceConfidenceLabel(offer.priceConfidence)}` : ""}
+              {resultModel?.costamarRedirect ? ` · ${resultModel.costamarRedirect.label}` : ""}
+            </div>
+          </PanelSection>
 
-        {flightCodes.length > 0 && (
-          <section className="border-b border-border pb-3">
-            <div className="fd-label mb-2">Numeros de vuelo</div>
-            <div className="flex flex-wrap gap-1.5" aria-label="Numeros de vuelo">
+          {resultModel && resultModel.journeys.length > 0 && (
+            <PanelSection title="Horario" contentClassName="space-y-1.5 text-sm">
+              {resultModel.journeys.map((journey) => (
+                <div key={journey.label} className="grid min-w-0 grid-cols-[3.25rem_minmax(0,1fr)] items-baseline gap-2">
+                  <span className="fd-label">{journey.label}</span>
+                  <div className="flex min-w-0 items-baseline justify-between gap-2">
+                    <span className="truncate font-mono font-semibold text-foreground">{offerScheduleLabel(journey)}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{offerScheduleDateLabel(journey)}</span>
+                  </div>
+                </div>
+              ))}
+            </PanelSection>
+          )}
+
+          {flightCodes.length > 0 && (
+            <PanelSection title="Números de vuelo" contentClassName="flex flex-wrap gap-1.5" aria-label="Números de vuelo">
               {flightCodes.map((code) => (
                 <span
                   key={code}
@@ -149,67 +243,65 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
                   {code}
                 </span>
               ))}
-            </div>
-          </section>
-        )}
+            </PanelSection>
+          )}
 
-        <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 border-y border-border py-3">
-          <InfoTile label="Proveedor" value={providerDisplayName(offer.providerSource)} />
-          <InfoTile label="Duración" value={offer.duration || "-"} />
-          <InfoTile label="Salida" value={detail?.departureDateTime ?? "-"} />
-          <InfoTile label="Regreso" value={detail?.returnDateTime ?? "No aplica"} />
-          <InfoTile label="Asientos" value={offer.fareMeta?.seatsRemaining ? `${offer.fareMeta.seatsRemaining}` : "Consultar"} />
-          <InfoTile label="Emisión" value={offer.fareMeta?.lastTicketingDate ? formatOfferDate(offer.fareMeta.lastTicketingDate) : "Consultar"} />
-        </div>
-
-        <section className="border-b border-border pb-3">
-          <div className="mb-2">
-            <span className="text-sm font-bold">Condiciones</span>
-          </div>
-          <div className="space-y-1 text-sm text-muted-foreground">
-            <p>Escalas: <span className="font-medium text-foreground">{detail?.stopsLabel ?? "Consultar"}</span></p>
-            <p>Equipaje: <span className="font-medium text-foreground">{detail?.baggageLabel ?? "Consultar"}</span></p>
-            <p>Cambios: <span className="font-medium text-foreground">{booleanLabel(offer.fareMeta?.changeable)}</span></p>
-            <p>Reembolso: <span className="font-medium text-foreground">{booleanLabel(offer.fareMeta?.refundable)}</span></p>
-            <p>Ruta: <span className="font-medium text-foreground">{detail?.routeLabel ?? offer.stopMeta ?? "Consultar"}</span></p>
-          </div>
-        </section>
-
-        {offer.warnings && offer.warnings.length > 0 && (
-          <section className="fd-popover-enter fd-alert fd-alert-warning text-xs font-medium">
-            <div className="mb-1 flex items-center gap-2 font-bold">
-              <AppIcon name="alert" />
-              Advertencias
-            </div>
-            <div className="space-y-1">
-              {offer.warnings.map((warning, index) => (
-                <p key={`${warning}-${index}`}>{warning}</p>
+          {infoTiles.length > 0 && (
+            <PanelSection contentClassName="grid grid-cols-2 gap-x-4 gap-y-2.5">
+              {infoTiles.map((item) => (
+                <InfoTile key={item.label} label={item.label} value={item.value} />
               ))}
-            </div>
-          </section>
-        )}
+            </PanelSection>
+          )}
+
+          {conditionRows.length > 0 && (
+            <PanelSection title="Condiciones" contentClassName="space-y-1 text-sm text-muted-foreground">
+              {conditionRows.map((item) => (
+                <p key={item.label}>{item.label}: <span className="font-medium text-foreground">{item.value}</span></p>
+              ))}
+            </PanelSection>
+          )}
+
+          {offer.warnings && offer.warnings.length > 0 && (
+            <PanelSection className="fd-popover-enter">
+              <div className="fd-alert fd-alert-warning text-xs font-medium">
+                <div className="mb-1 flex items-center gap-2 font-bold">
+                  <AppIcon name="alert" />
+                  Advertencias
+                </div>
+                <div className="space-y-1">
+                  {offer.warnings.map((warning, index) => (
+                    <p key={`${warning}-${index}`}>{warning}</p>
+                  ))}
+                </div>
+              </div>
+            </PanelSection>
+          )}
+        </PanelSectionStack>
 
         {activeQuotation && (
-          <section className="fd-popover-enter space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <div className="fd-label">Cotización</div>
-                <p className="text-xs text-muted-foreground">Listo para copiar</p>
-              </div>
+          <PanelSection
+            title="Cotización"
+            action={(
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 onClick={copyToClipboard}
                 disabled={Boolean(activeQuotation.error)}
-                className="h-8 px-2 text-xs text-primary"
+                className="h-5 px-1.5 text-[11px] leading-none text-primary"
               >
                 {copied ? <AppIcon name="check" /> : <AppIcon name="copy" />}
                 {copied ? "Copiado" : "Copiar"}
               </Button>
-            </div>
+            )}
+            className="fd-popover-enter flex min-h-0 flex-1 flex-col border-t border-border"
+            contentClassName="flex min-h-0 flex-1 flex-col"
+            data-testid="quotation-section"
+          >
             <pre
-              className={`fd-scrollbar max-h-64 overflow-auto rounded-xl border p-3 whitespace-pre-wrap font-mono text-xs leading-relaxed ${
+              data-testid="quotation-text"
+              className={`fd-scrollbar min-h-0 flex-1 overflow-auto rounded-xl border p-3 whitespace-pre-wrap font-mono text-xs leading-relaxed ${
                 activeQuotation.error
                   ? "border-destructive/50 bg-destructive-soft text-destructive-soft-foreground"
                   : "border-border bg-secondary/70 text-foreground"
@@ -217,7 +309,7 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
             >
               {activeQuotation.text}
             </pre>
-          </section>
+          </PanelSection>
         )}
       </div>
 
@@ -235,8 +327,8 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
             </Button>
           )}
           <Button size="sm" onClick={handleQuotation} disabled={loading || !canQuote}>
-            {loading ? <AppIcon name="loading" spin /> : <AppIcon name="clipboard" />}
-            {loading ? "Generando" : "Cotizar"}
+            {loading ? <AppIcon name="loading" spin /> : copied ? <AppIcon name="check" /> : <AppIcon name="clipboard" />}
+            {loading ? "Generando" : copied ? "Copiado" : "Cotizar"}
           </Button>
         </div>
       </div>
@@ -251,6 +343,96 @@ function PanelHeader({ title, subtitle }: { title: string; subtitle: string }) {
       <p className="fd-panel-subtitle">{subtitle}</p>
     </div>
   )
+}
+
+function passengerCountForRequest(request: SearchRequest | undefined) {
+  if (!request) return 1
+  const adults = Number.isFinite(request.adults) ? request.adults : 1
+  const children = Number.isFinite(request.children) ? request.children : 0
+  const infants = Number.isFinite(request.infants) ? request.infants : 0
+  return Math.max(1, adults + children + infants)
+}
+
+function offerInfoTiles(
+  offer: CanonicalOffer,
+  detail: OfferDetailSummary,
+  model: ResultCardModel,
+) {
+  return [
+    { label: "Proveedor", value: providerDisplayName(offer.providerSource) },
+    { label: "Ruta", value: model.route || detail.routeLabel },
+    { label: "Duración", value: model.duration },
+    model.carrier.operatedBy
+      ? { label: "Operado por", value: model.carrier.operatedBy.replace(/^\+\s*/, "") }
+      : null,
+    offer.fareMeta?.seatsRemaining
+      ? { label: "Asientos", value: `${offer.fareMeta.seatsRemaining}` }
+      : null,
+    offer.fareMeta?.lastTicketingDate
+      ? { label: "Emisión", value: formatOfferDate(offer.fareMeta.lastTicketingDate) }
+      : null,
+  ].filter((item): item is { label: string; value: string } => Boolean(item?.value && item.value !== "-"))
+}
+
+function offerConditionRows(
+  offer: CanonicalOffer,
+  detail: OfferDetailSummary,
+  model: ResultCardModel,
+) {
+  const changeLabel = booleanLabel(offer.fareMeta?.changeable)
+  const refundLabel = booleanLabel(offer.fareMeta?.refundable)
+
+  return [
+    { label: "Escalas", value: model.stops.label || detail.stopsLabel },
+    model.stops.layoverLabel ? { label: "Escala máxima", value: model.stops.layoverLabel } : null,
+    detail.baggageLabel && detail.baggageLabel !== "Consultar"
+      ? { label: "Equipaje", value: detail.baggageLabel }
+      : null,
+    changeLabel ? { label: "Cambios", value: changeLabel } : null,
+    refundLabel ? { label: "Reembolso", value: refundLabel } : null,
+  ].filter((item): item is { label: string; value: string } => Boolean(item?.value))
+}
+
+function offerScheduleLabel(journey: ResultJourneySummary) {
+  if (!journey.hasKnownSchedule) return journey.schedule
+  const arrivalOffset = journey.arrivalDayOffset > 0 ? ` +${journey.arrivalDayOffset}` : ""
+  return `${journey.departureTime} - ${journey.arrivalTime}${arrivalOffset}`
+}
+
+function offerScheduleDateLabel(journey: ResultJourneySummary) {
+  const prefix = `${journey.label} `
+  return journey.departureDateLabel.startsWith(prefix)
+    ? journey.departureDateLabel.slice(prefix.length)
+    : journey.departureDateLabel
+}
+
+async function writeClipboardText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    return fallbackCopyText(text)
+  }
+}
+
+function fallbackCopyText(text: string) {
+  const textarea = document.createElement("textarea")
+  textarea.value = text
+  textarea.setAttribute("readonly", "")
+  textarea.style.position = "fixed"
+  textarea.style.left = "-9999px"
+  textarea.style.top = "0"
+  document.body.append(textarea)
+  textarea.focus()
+  textarea.select()
+
+  try {
+    return document.execCommand("copy")
+  } catch {
+    return false
+  } finally {
+    textarea.remove()
+  }
 }
 
 function InfoTile({ label, value }: { label: string; value: string }) {
@@ -285,7 +467,7 @@ function flightCodeLabel(segment: Segment) {
 function booleanLabel(value?: boolean) {
   if (value === true) return "Permitido"
   if (value === false) return "No permitido"
-  return "Consultar"
+  return ""
 }
 
 function priceConfidenceLabel(value: string) {

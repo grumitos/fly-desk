@@ -18,6 +18,7 @@ function offer({
   outboundArrival = "2026-06-15T16:00:00-05:00",
   inboundDeparture = "2026-06-20T09:00:00-05:00",
   inboundArrival = "2026-06-20T15:00:00-05:00",
+  totalDurationMinutes,
 }: {
   id: string
   providerSource?: CanonicalOffer["providerSource"]
@@ -28,6 +29,7 @@ function offer({
   outboundArrival?: string
   inboundDeparture?: string
   inboundArrival?: string
+  totalDurationMinutes?: number
 }): CanonicalOffer {
   return {
     id,
@@ -47,6 +49,9 @@ function offer({
     price: {
       total: { amount, currencyCode: "USD" },
     },
+    comparisonMetrics: totalDurationMinutes !== undefined
+      ? { totalDurationMinutes, totalStops: 0 }
+      : undefined,
     itineraries: [
       {
         direction: "outbound",
@@ -144,6 +149,56 @@ test("orders grouped native variants by their changing schedules", () => {
   assert.deepEqual(
     items[0].group.offers.map((item) => item.id),
     ["early-return", "mid-return", "late-return"],
+  )
+})
+
+test("promotes the shortest grouped schedule as primary and sorts variants by duration", () => {
+  const items = buildResultListItems([
+    offer({
+      id: "early-slow",
+      rawRefs: { agilGroupId: "G-175" },
+      outboundDeparture: "2026-06-15T11:00:00-05:00",
+      outboundArrival: "2026-06-16T05:40:00+02:00",
+      inboundDeparture: "2026-06-20T00:05:00+02:00",
+      inboundArrival: "2026-06-20T05:30:00-05:00",
+      totalDurationMinutes: 1445,
+    }),
+    offer({
+      id: "early-mid",
+      rawRefs: { agilGroupId: "G-175" },
+      outboundDeparture: "2026-06-15T11:00:00-05:00",
+      outboundArrival: "2026-06-16T05:40:00+02:00",
+      inboundDeparture: "2026-06-20T01:45:00+02:00",
+      inboundArrival: "2026-06-20T06:30:00-05:00",
+      totalDurationMinutes: 1405,
+    }),
+    offer({
+      id: "late-fastest",
+      rawRefs: { agilGroupId: "G-175" },
+      outboundDeparture: "2026-06-15T20:00:00-05:00",
+      outboundArrival: "2026-06-16T14:20:00+02:00",
+      inboundDeparture: "2026-06-20T01:45:00+02:00",
+      inboundArrival: "2026-06-20T06:30:00-05:00",
+      totalDurationMinutes: 1385,
+    }),
+    offer({
+      id: "late-second",
+      rawRefs: { agilGroupId: "G-175" },
+      outboundDeparture: "2026-06-15T20:00:00-05:00",
+      outboundArrival: "2026-06-16T14:20:00+02:00",
+      inboundDeparture: "2026-06-20T13:20:00+02:00",
+      inboundArrival: "2026-06-20T18:20:00-05:00",
+      totalDurationMinutes: 1400,
+    }),
+  ])
+
+  assert.equal(items.length, 1)
+  assert.equal(items[0]?.type, "group")
+  if (items[0]?.type !== "group") throw new Error("Expected variants to be grouped")
+
+  assert.deepEqual(
+    items[0].group.offers.map((item) => item.id),
+    ["late-fastest", "late-second", "early-mid", "early-slow"],
   )
 })
 

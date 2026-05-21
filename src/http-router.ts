@@ -56,7 +56,7 @@ import {
   resolveUsableCostamarBrandedToken,
   verifyCostamarTokenLive,
 } from "./provider-context";
-import { resolveQuotationUsdToPenRateInfo } from "./quotation-exchange-rate";
+import { resolveQuotationUsdToPenRateInfo, warmQuotationUsdToPenRateInfo } from "./quotation-exchange-rate";
 import { runProviderMatrixInWorker, runProviderSearchInWorker } from "./search-worker-client";
 import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
@@ -199,10 +199,10 @@ const RESULTS_LAYOUT_COLUMNS = [
 ] as const satisfies readonly ResultsLayoutColumnKey[];
 const RESULTS_LAYOUT_DEFAULT_COLUMNS = {
   carrier: 139,
-  dates: 389,
-  duration: 121,
-  stops: 182,
-  price: 154,
+  dates: 371,
+  duration: 205,
+  stops: 140,
+  price: 130,
   links: 54,
 } as const satisfies Record<ResultsLayoutColumnKey, number>;
 const RESULTS_LAYOUT_TARGET_TOTAL = RESULTS_LAYOUT_COLUMNS.reduce(
@@ -1032,6 +1032,14 @@ function isTrustedLocalRequest(request: Request): boolean {
   return true;
 }
 
+function isTrustedDirectLocalRequest(request: Request): boolean {
+  if (!shouldTrustLoopbackClient() || request.headers.get("x-flydesk-client-loopback") !== "1") {
+    return false;
+  }
+
+  return !hasForwardedClientMarker(request);
+}
+
 function hasForwardedClientMarker(request: Request): boolean {
   return Boolean(
     request.headers.get("x-forwarded-for")?.trim()
@@ -1089,7 +1097,30 @@ function isTrustedApiRequest(request: Request): boolean {
 }
 
 function isOfferValidatedForQuotation(offer: CanonicalOffer): boolean {
-  return offer.priceConfidence === "validated" && offer.priceStatus === "verified";
+  return offer.priceConfidence === "validated" && offer.priceStatus === "verified"
+    || Boolean(offer.quotationPreparedAt);
+}
+
+function stripQuotationPreparation(offer: CanonicalOffer): CanonicalOffer {
+  if (!offer.quotationPreparedAt) {
+    return offer;
+  }
+
+  const next: CanonicalOffer = { ...offer };
+  delete next.quotationPreparedAt;
+  return next;
+}
+
+function scheduleQuotationWarmupForSearchJob(
+  runtime: ReturnType<typeof getRuntime>,
+  jobId: string,
+): void {
+  const session = runtime.sessions.getSession(jobId);
+  if (!session || session.offers.length === 0) {
+    return;
+  }
+
+  void warmQuotationUsdToPenRateInfo(session)?.catch(() => undefined);
 }
 
 function offerFirstSegment(offer: CanonicalOffer): CanonicalOffer["itineraries"][number]["segments"][number] | undefined {
@@ -1627,8 +1658,8 @@ function createCachedSearchDraftResponse(
   ]);
 
   return {
-    offers: cachedJob.offers,
-    allOffers: cachedJob.allOffers,
+    offers: cachedJob.offers.map(stripQuotationPreparation),
+    allOffers: cachedJob.allOffers.map(stripQuotationPreparation),
     searchMeta: {
       requestedAt: now,
       completedAt: now,
@@ -1863,7 +1894,8 @@ function createProviderSearchStates(
     providerIds.map((providerId) => [providerId, []]),
   );
 
-  for (const offer of cachedJob?.allOffers ?? []) {
+  for (const cachedOffer of cachedJob?.allOffers ?? []) {
+    const offer = stripQuotationPreparation(cachedOffer);
     const providerOffers = offersByProvider.get(offer.providerSource);
     if (!providerOffers) {
       continue;
@@ -2036,7 +2068,7 @@ async function handleSearchRequest(
       providerStates,
     );
 
-    runtime.sessions.updateSearchJob(job.id, (current) => ({
+    const updated = runtime.sessions.updateSearchJob(job.id, (current) => ({
       ...current,
       ...(current.status === "cancelled"
         ? {}
@@ -2055,6 +2087,9 @@ async function handleSearchRequest(
             error: undefined,
           }),
     }));
+    if (updated?.offers.length) {
+      scheduleQuotationWarmupForSearchJob(runtime, job.id);
+    }
     return materialized;
   };
 
@@ -2518,8 +2553,8 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "GET" && url.pathname === "/api/results-layout") {
-    if (!isTrustedApiRequest(request)) {
-      return apiAuthRequiredResponse();
+    if (!isTrustedDirectLocalRequest(request)) {
+      return json({ error: "This results layout endpoint is only available on localhost." }, { status: 403 });
     }
 
     const layout = await readResultsLayoutFile();
@@ -2527,8 +2562,8 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "POST" && url.pathname === "/api/results-layout") {
-    if (!isTrustedApiRequest(request)) {
-      return apiAuthRequiredResponse();
+    if (!isTrustedDirectLocalRequest(request)) {
+      return json({ error: "This results layout endpoint is only available on localhost." }, { status: 403 });
     }
 
     const payload = await readPayload<ResultsLayoutPayload>(request);

@@ -188,21 +188,27 @@ function purchaseActionTitle(action: ProviderAction): string {
 function ItinerarySchedule({ summary }: { summary: ResultJourneySummary }) {
   return (
     <div className="fd-result-card__schedule">
-      <div className="fd-result-card__schedule-main">
-        {summary.hasKnownSchedule ? (
-          <>
-            <span>{summary.departureTime}</span>
-            <span className="fd-result-card__schedule-separator">-</span>
-            <span>{summary.arrivalTime}</span>
-            {summary.arrivalDayOffset > 0 && (
-              <span className="fd-result-card__schedule-offset">+{summary.arrivalDayOffset}</span>
-            )}
-          </>
-        ) : (
-          <span className="fd-result-card__schedule-unknown">Horario por confirmar</span>
-        )}
-      </div>
+      <ResultScheduleTime summary={summary} />
       <span className="fd-result-card__meta">{summary.departureDateLabel}</span>
+    </div>
+  )
+}
+
+export function ResultScheduleTime({ summary }: { summary: ResultJourneySummary }) {
+  return (
+    <div className="fd-result-card__schedule-main">
+      {summary.hasKnownSchedule ? (
+        <>
+          <span>{summary.departureTime}</span>
+          <span className="fd-result-card__schedule-separator">-</span>
+          <span>{summary.arrivalTime}</span>
+          {summary.arrivalDayOffset > 0 && (
+            <span className="fd-result-card__schedule-offset">+{summary.arrivalDayOffset}</span>
+          )}
+        </>
+      ) : (
+        <span className="fd-result-card__schedule-unknown">Horario por confirmar</span>
+      )}
     </div>
   )
 }

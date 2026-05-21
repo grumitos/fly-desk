@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { DetailPanel } from "@/components/DetailPanel"
 import { ResultsPanel } from "@/components/ResultsPanel"
 import { SearchShell } from "@/components/SearchShell"
@@ -7,7 +7,8 @@ import { AppIcon } from "@/components/ui/app-icon"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Switch } from "@/components/ui/switch"
+import { FilterSlider, type FilterSliderStep } from "@/components/ui/filter-slider"
+import { PanelSection, PanelSectionStack } from "@/components/ui/panel-section"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useSearch } from "@/hooks/useSearch"
 import { resolveAirlineDisplayName } from "@/lib/airline-names"
@@ -18,6 +19,7 @@ import {
   writeSharedSearchToUrl,
   type SharedSearchState,
 } from "@/lib/search-share"
+import { resultsLayoutEditorEnabledFromUrl } from "@/lib/results-layout-editor"
 import type { CanonicalOffer, SearchJobResponse, SearchRequest, Segment, SortMode } from "@/types"
 
 type Filters = {
@@ -35,25 +37,27 @@ type AirlineFilterOption = {
   count: number
 }
 
-type StopFilterValue = "any" | "1" | "2+"
+type StopFilterValue = "direct" | "1" | "2+" | "any"
 type LayoverFilterValue = "120" | "240" | "360" | "any"
-type FilterSliderStep<T extends string> = {
-  value: T
-  label: string
-  valueLabel: string
-}
+type BaggageFilterValue = "any" | "carry" | "checked"
 
 const DEFAULT_SORT_MODE: SortMode = "cheapest"
 const STOP_FILTER_STEPS: FilterSliderStep<StopFilterValue>[] = [
-  { value: "any", label: "Cualq.", valueLabel: "Cualquiera" },
-  { value: "1", label: "Hasta 1", valueLabel: "Hasta 1 escala" },
+  { value: "direct", label: "Directo", valueLabel: "Directo" },
+  { value: "1", label: "1", valueLabel: "1 escala" },
   { value: "2+", label: "2+", valueLabel: "2+ escalas" },
+  { value: "any", label: "Todos", valueLabel: "Cualquiera" },
 ]
 const LAYOVER_FILTER_STEPS: FilterSliderStep<LayoverFilterValue>[] = [
-  { value: "120", label: "2 h", valueLabel: "Hasta 2 h" },
-  { value: "240", label: "4 h", valueLabel: "Hasta 4 h" },
-  { value: "360", label: "6 h", valueLabel: "Hasta 6 h" },
-  { value: "any", label: "Sin límite", valueLabel: "Sin límite" },
+  { value: "120", label: "2h", valueLabel: "Hasta 2 h" },
+  { value: "240", label: "4h", valueLabel: "Hasta 4 h" },
+  { value: "360", label: "6h", valueLabel: "Hasta 6 h" },
+  { value: "any", label: "8+", valueLabel: "8+ h" },
+]
+const BAGGAGE_FILTER_STEPS: FilterSliderStep<BaggageFilterValue>[] = [
+  { value: "any", label: "Todos", valueLabel: "Cualquiera" },
+  { value: "carry", label: "Mano", valueLabel: "De mano" },
+  { value: "checked", label: "Bodega", valueLabel: "Bodega" },
 ]
 
 export default function App() {
@@ -312,10 +316,16 @@ export default function App() {
     const frame = searchFrameRef.current
     if (!frame) return
 
+    if (isSearchIdle) {
+      searchLayoutAnimationRef.current?.cancel()
+      searchLayoutAnimationRef.current = null
+      pendingSearchFrameRectRef.current = null
+      return
+    }
+
     const previousRect = pendingSearchFrameRectRef.current
     pendingSearchFrameRectRef.current = null
     if (!previousRect) return
-    if (isSearchIdle) return
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
 
     const nextRect = frame.getBoundingClientRect()
@@ -376,7 +386,7 @@ export default function App() {
             {(clipboardError || error || statusMessage) && (
               <div
                 role="alert"
-                className={`fd-popover-enter fd-alert mt-2 flex items-start gap-2 font-medium ${
+                className={`fd-popover-enter fd-alert fd-search-alert mt-2 flex items-start gap-2 font-medium ${
                   clipboardError || error ? "fd-alert-error" : "fd-alert-warning"
                 }`}
               >
@@ -505,36 +515,36 @@ const FiltersPanel = memo(function FiltersPanel({
         )}
       </div>
 
-      <div className="fd-scrollbar min-h-0 flex-1 overflow-auto p-2.5">
-        <FilterGroup title="Escalas">
+      <PanelSectionStack className="fd-scrollbar min-h-0 flex-1 overflow-auto p-2.5">
+        <PanelSection title="Escalas" contentClassName="space-y-1.5">
           <StopsFilterControl
             filters={filters}
             onFilterChange={onFilterChange}
           />
           <FilterSlider
-            label="Escala máxima"
+            label="Tiempo máximo"
+            ariaLabel="Escala máxima"
             value={layoverFilterValue(filters)}
             steps={LAYOVER_FILTER_STEPS}
             onChange={(value) => onFilterChange({ maxLayoverMinutes: value === "any" ? undefined : value })}
           />
-        </FilterGroup>
+        </PanelSection>
 
-        <FilterGroup title="Equipaje">
-          <SwitchRow
-            label="Equipaje de mano"
-            checked={Boolean(filters.carryOnRequired)}
-            onChange={(checked) => onFilterChange({ carryOnRequired: checked ? true : undefined })}
+        <PanelSection title="Equipaje" contentClassName="space-y-1.5">
+          <FilterSlider
+            label="Incluido"
+            ariaLabel="Equipaje incluido"
+            value={baggageFilterValue(filters)}
+            steps={BAGGAGE_FILTER_STEPS}
+            onChange={(value) => onFilterChange({
+              carryOnRequired: value === "carry" || value === "checked" ? true : undefined,
+              checkedBaggageRequired: value === "checked" ? true : undefined,
+            })}
           />
-          <SwitchRow
-            label="Maleta de bodega"
-            ariaLabel="Incluye equipaje: maleta de bodega"
-            checked={Boolean(filters.checkedBaggageRequired)}
-            onChange={(checked) => onFilterChange({ checkedBaggageRequired: checked ? true : undefined })}
-          />
-        </FilterGroup>
+        </PanelSection>
 
         {allAirlines.length > 0 && (
-          <FilterGroup title="Aerolíneas">
+          <PanelSection title="Aerolíneas" contentClassName="space-y-1.5">
             <div className="fd-scrollbar-hidden max-h-64 space-y-1 overflow-auto pr-1">
               {allAirlines.map((airline) => (
                 <label
@@ -555,21 +565,12 @@ const FiltersPanel = memo(function FiltersPanel({
                 </label>
               ))}
             </div>
-          </FilterGroup>
+          </PanelSection>
         )}
-      </div>
+      </PanelSectionStack>
     </aside>
   )
 })
-
-function FilterGroup({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="border-t border-border py-2.5 first:border-t-0 first:pt-0 last:pb-0">
-      <h3 className="fd-label mb-2">{title}</h3>
-      <div className="space-y-1.5">{children}</div>
-    </section>
-  )
-}
 
 function StopsFilterControl({
   filters,
@@ -578,116 +579,24 @@ function StopsFilterControl({
   filters: Filters
   onFilterChange: (next: Partial<Filters>) => void
 }) {
-  const direct = Boolean(filters.nonStop)
-
   return (
     <div className="fd-filter-constraint">
-      <div className="fd-filter-constraint__head">
-        <span className="fd-filter-constraint__label">Solo directos</span>
-        <Switch
-          checked={direct}
-          onCheckedChange={(checked) => onFilterChange({
-            nonStop: checked ? true : undefined,
-            maxStopsFilter: checked ? undefined : filters.maxStopsFilter,
-          })}
-          aria-label="Solo directos"
-        />
-      </div>
       <FilterSlider
-        label="Resto de escalas"
+        label="Tipo"
+        ariaLabel="Escalas"
         value={stopFilterValue(filters)}
         steps={STOP_FILTER_STEPS}
-        disabled={direct}
         onChange={(value) => onFilterChange({
-          nonStop: undefined,
-          maxStopsFilter: value === "any" ? undefined : value,
+          nonStop: value === "direct" ? true : undefined,
+          maxStopsFilter: value === "1" || value === "2+" ? value : undefined,
         })}
       />
     </div>
   )
 }
 
-function FilterSlider<T extends string>({
-  label,
-  value,
-  steps,
-  disabled = false,
-  onChange,
-}: {
-  label: string
-  value: T
-  steps: FilterSliderStep<T>[]
-  disabled?: boolean
-  onChange: (value: T) => void
-}) {
-  const currentIndex = Math.max(0, steps.findIndex((step) => step.value === value))
-  const currentStep = steps[currentIndex] ?? steps[0]
-  const progress = steps.length <= 1 ? 0 : (currentIndex / (steps.length - 1)) * 100
-  const neutral = value === "any"
-  const controlId = `filter-slider-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`
-
-  return (
-    <div
-      className={`fd-filter-slider ${neutral ? "is-neutral" : ""} ${disabled ? "is-disabled" : ""}`}
-      style={{
-        "--fd-filter-slider-progress": `${progress}%`,
-        "--fd-filter-slider-steps": steps.length,
-      } as CSSProperties}
-    >
-      <div className="fd-filter-slider__head">
-        <label htmlFor={controlId} className="fd-filter-slider__label">{label}</label>
-        <span className="fd-filter-slider__value">{currentStep?.valueLabel}</span>
-      </div>
-      <input
-        id={controlId}
-        type="range"
-        min={0}
-        max={Math.max(0, steps.length - 1)}
-        step={1}
-        value={currentIndex}
-        disabled={disabled}
-        aria-label={label}
-        aria-valuetext={currentStep?.valueLabel}
-        className="fd-filter-slider__range"
-        onChange={(event) => {
-          const next = steps[Number(event.currentTarget.value)]
-          if (next) onChange(next.value)
-        }}
-      />
-      <div className="fd-filter-slider__marks" aria-hidden="true">
-        {steps.map((step) => (
-          <span
-            key={step.value}
-            className={`fd-filter-slider__mark ${step.value === value ? "is-active" : ""}`}
-          >
-            {step.label}
-          </span>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function SwitchRow({
-  label,
-  ariaLabel,
-  checked,
-  onChange,
-}: {
-  label: string
-  ariaLabel?: string
-  checked: boolean
-  onChange: (checked: boolean) => void
-}) {
-  return (
-    <div className={`flex items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-sm transition-colors duration-150 hover:bg-muted ${checked ? "font-semibold" : "font-normal"}`}>
-      <span>{label}</span>
-      <Switch checked={checked} onCheckedChange={onChange} aria-label={ariaLabel ?? label} />
-    </div>
-  )
-}
-
 function stopFilterValue(filters: Filters): StopFilterValue {
+  if (filters.nonStop) return "direct"
   if (filters.maxStopsFilter === "1" || filters.maxStopsFilter === "2+") return filters.maxStopsFilter
   return "any"
 }
@@ -701,6 +610,12 @@ function layoverFilterValue(filters: Filters): LayoverFilterValue {
     return filters.maxLayoverMinutes
   }
 
+  return "any"
+}
+
+function baggageFilterValue(filters: Filters): BaggageFilterValue {
+  if (filters.checkedBaggageRequired) return "checked"
+  if (filters.carryOnRequired) return "carry"
   return "any"
 }
 
@@ -915,12 +830,6 @@ function readInitialSharedSearch(): SharedSearchState | null {
   } catch {
     return null
   }
-}
-
-function resultsLayoutEditorEnabledFromUrl() {
-  const params = new URLSearchParams(window.location.search)
-  const raw = String(params.get("layoutEditor") || params.get("layout") || "").trim().toLowerCase()
-  return raw === "1" || raw === "true" || raw === "editor"
 }
 
 function filtersFromRequest(request: SearchRequest | null | undefined): Filters {

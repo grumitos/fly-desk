@@ -470,6 +470,53 @@ test("quotation validates an unverified stored offer before rendering", { concur
   }
 });
 
+test("quotation uses a prepared live result without provider revalidation", { concurrency: false }, async () => {
+  const runtime = getRuntime();
+  const offer = {
+    ...buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0"),
+    quotationPreparedAt: new Date().toISOString(),
+  };
+  const job = runtime.sessions.createSearchJob({
+    request: buildCostamarRequest(),
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  let validatorCalls = 0;
+
+  setQuotationOfferValidatorForTests(async () => {
+    validatorCalls += 1;
+    return undefined;
+  });
+
+  try {
+    const response = await withLoopbackTrustForTests(() =>
+      routeRequest(new Request("http://127.0.0.1:32123/api/quotation", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-flydesk-client-loopback": "1",
+        },
+        body: JSON.stringify({
+          searchSessionId: job.id,
+          offerId: offer.id,
+        }),
+      }))
+    );
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { commercialText?: string };
+    assert.equal(validatorCalls, 0);
+    assert.match(payload.commercialText ?? "", /COTIZACIÓN BOLETO AÉREO/);
+  } finally {
+    setQuotationOfferValidatorForTests();
+  }
+});
+
 test("rejects exact searches when origin and destination are omitted", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/search`, {
@@ -2715,6 +2762,57 @@ test("results layout endpoints persist and read back the saved column widths loc
     } else {
       mkdirSync(join(process.cwd(), "config"), { recursive: true });
       writeFileSync(layoutFile, previousLayout, "utf8");
+    }
+  }
+});
+
+test("results layout endpoints reject reverse-proxied clients even when loopback proxy trust is enabled", { concurrency: false }, async () => {
+  const previousTrustLoopback = process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
+  const previousProxyTrust = process.env.FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK;
+
+  process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = "1";
+  process.env.FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK = "1";
+
+  try {
+    const getResponse = await routeRequest(new Request("https://fly-desk.local/api/results-layout", {
+      method: "GET",
+      headers: {
+        "x-flydesk-client-loopback": "1",
+        "x-forwarded-for": "203.0.113.40",
+      },
+    }));
+    assert.equal(getResponse.status, 403);
+
+    const postResponse = await routeRequest(new Request("https://fly-desk.local/api/results-layout", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-flydesk-client-loopback": "1",
+        "x-forwarded-for": "203.0.113.40",
+      },
+      body: JSON.stringify({
+        columns: {
+          carrier: 172,
+          dates: 318,
+          duration: 126,
+          stops: 184,
+          price: 189,
+          links: 50,
+        },
+      }),
+    }));
+    assert.equal(postResponse.status, 403);
+  } finally {
+    if (previousTrustLoopback === undefined) {
+      delete process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
+    } else {
+      process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = previousTrustLoopback;
+    }
+
+    if (previousProxyTrust === undefined) {
+      delete process.env.FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK;
+    } else {
+      process.env.FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK = previousProxyTrust;
     }
   }
 });

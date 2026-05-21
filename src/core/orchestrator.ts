@@ -46,10 +46,15 @@ export function materializeSearchResponse(
   exactResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean },
   startedAt = new Date().toISOString(),
 ): SearchResponse {
+  const quotationPreparedAt = new Date().toISOString();
   let offers = groupExactProviderOffers(exactResult.offers);
 
   offers = enrichComparisonMetrics(offers);
   offers = sortOffers(offers, sortMode);
+  offers = offers.map((offer) => ({
+    ...offer,
+    quotationPreparedAt,
+  }));
   const allOffers = offers;
   offers = applySearchFilters(allOffers, request.filters);
 

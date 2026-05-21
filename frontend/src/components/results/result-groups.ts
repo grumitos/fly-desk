@@ -76,7 +76,7 @@ export function buildResultListItems(offers: CanonicalOffer[]): ResultListItem[]
     const bucket = buckets.get(key)
     if (!bucket) return [{ type: "offer", id: offer.id, offer, offerCount: 1 }]
 
-    const visibleOffers = uniqueVisibleGroupOffers(sortGroupOffersBySchedule(bucket.offers))
+    const visibleOffers = orderVisibleGroupOffers(bucket.offers)
     if (visibleOffers.length <= 1) {
       const visibleOffer = visibleOffers[0] ?? offer
       return [{ type: "offer", id: visibleOffer.id, offer: visibleOffer, offerCount: 1 }]
@@ -248,16 +248,46 @@ function baggageSignature(offer: CanonicalOffer): string {
   ].join(";")
 }
 
-function sortGroupOffersBySchedule(offers: CanonicalOffer[]): CanonicalOffer[] {
+function orderVisibleGroupOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
+  const visibleOffers = uniqueVisibleGroupOffers(sortGroupOffersByBestOption(offers))
+  const primary = visibleOffers[0]
+  if (!primary || visibleOffers.length <= 2) return visibleOffers
+
+  return [
+    primary,
+    ...sortGroupVariantOffers(primary, visibleOffers.slice(1)),
+  ]
+}
+
+function sortGroupOffersByBestOption(offers: CanonicalOffer[]): CanonicalOffer[] {
   if (offers.length <= 1) return offers
 
   return offers
     .map((offer, index) => ({ offer, index }))
     .sort((left, right) => {
-      const compared = compareScheduleSignature(left.offer, right.offer)
-      return compared !== 0 ? compared : left.index - right.index
+      return compareGroupOfferRank(left.offer, right.offer)
+        || left.index - right.index
     })
     .map((item) => item.offer)
+}
+
+function sortGroupVariantOffers(primary: CanonicalOffer, offers: CanonicalOffer[]): CanonicalOffer[] {
+  if (offers.length <= 1) return offers
+
+  return offers
+    .map((offer, index) => ({ offer, index }))
+    .sort((left, right) => {
+      return compareNumber(offerTotalDurationMinutes(left.offer), offerTotalDurationMinutes(right.offer))
+        || compareNumber(offerVariantDifferenceCount(primary, left.offer), offerVariantDifferenceCount(primary, right.offer))
+        || compareScheduleSignature(left.offer, right.offer)
+        || left.index - right.index
+    })
+    .map((item) => item.offer)
+}
+
+function compareGroupOfferRank(left: CanonicalOffer, right: CanonicalOffer): number {
+  return compareNumber(offerTotalDurationMinutes(left), offerTotalDurationMinutes(right))
+    || compareScheduleSignature(left, right)
 }
 
 function uniqueVisibleGroupOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
@@ -293,6 +323,59 @@ function journeyVisibleScheduleSignature(journey: ResultJourneySummary): string 
     journey.arrivalTime,
     journey.arrivalDayOffset,
   ].join(":")
+}
+
+function offerVariantDifferenceCount(primary: CanonicalOffer, variant: CanonicalOffer): number {
+  const primaryModel = buildResultCardModel(primary, 1)
+  const variantModel = buildResultCardModel(variant, 1)
+  const maxJourneys = Math.max(primaryModel.journeys.length, variantModel.journeys.length)
+  let count = 0
+
+  for (let index = 0; index < maxJourneys; index += 1) {
+    const primaryJourney = primaryModel.journeys[index]
+    const variantJourney = variantModel.journeys[index]
+    if (!primaryJourney || !variantJourney) {
+      count += 1
+      continue
+    }
+
+    if (
+      primaryJourney.hasKnownSchedule !== variantJourney.hasKnownSchedule
+      || primaryJourney.departureTime !== variantJourney.departureTime
+      || primaryJourney.arrivalTime !== variantJourney.arrivalTime
+      || primaryJourney.arrivalDayOffset !== variantJourney.arrivalDayOffset
+    ) {
+      count += 1
+    }
+  }
+
+  if (primaryModel.duration !== variantModel.duration) count += 1
+  if (primaryModel.stops.label !== variantModel.stops.label) count += 1
+  if (primaryModel.stops.layoverLabel !== variantModel.stops.layoverLabel) count += 1
+
+  return count
+}
+
+function offerTotalDurationMinutes(offer: CanonicalOffer): number {
+  const metricDuration = finiteNumber(offer.comparisonMetrics?.totalDurationMinutes)
+  if (metricDuration !== null) return metricDuration
+
+  const itineraryDuration = (offer.itineraries ?? [])
+    .map((itinerary) => finiteNumber(itinerary.durationMinutes) ?? 0)
+    .reduce((sum, minutes) => sum + minutes, 0)
+  if (itineraryDuration > 0) return itineraryDuration
+
+  return Number.POSITIVE_INFINITY
+}
+
+function finiteNumber(value: unknown): number | null {
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : null
+}
+
+function compareNumber(left: number, right: number): number {
+  if (left === right) return 0
+  return left < right ? -1 : 1
 }
 
 function compareScheduleSignature(left: CanonicalOffer, right: CanonicalOffer): number {

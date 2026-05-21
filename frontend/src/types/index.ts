@@ -118,6 +118,7 @@ export type CanonicalOffer = Partial<Omit<
   priceStatus?: OpenString<CoreCanonicalOffer["priceStatus"]>
   purchasePaths?: PurchasePath[]
   redirectVerification?: RedirectVerification
+  quotationPreparedAt?: string
   comparisonMetrics?: ComparisonMetrics
   tags?: string[]
   warnings?: string[]
