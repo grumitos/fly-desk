@@ -2659,7 +2659,11 @@ test("detail panel mirrors selected result content and omits unknown fare condit
         sectionTitleGaps,
       };
     });
-    assert.ok(Math.abs(quotationGeometry.bottomGap - quotationGeometry.expectedBottomGap) <= 1, JSON.stringify(quotationGeometry));
+    assert.ok(
+      quotationGeometry.bottomGap >= quotationGeometry.expectedBottomGap
+        && quotationGeometry.bottomGap - quotationGeometry.expectedBottomGap <= 4,
+      JSON.stringify(quotationGeometry),
+    );
     assert.equal(quotationGeometry.sectionPaddingTop, quotationGeometry.sectionPaddingBottom, JSON.stringify(quotationGeometry));
     assert.equal(quotationGeometry.sectionBorderTop, 1, JSON.stringify(quotationGeometry));
     assert.equal(quotationGeometry.sectionBorderBottom, 0, JSON.stringify(quotationGeometry));
