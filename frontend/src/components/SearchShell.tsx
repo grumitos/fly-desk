@@ -3,7 +3,6 @@ import { createPortal } from "react-dom"
 import { es } from "react-day-picker/locale"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-control"
 import { TOPBAR_SEARCH_CONTROLS_ID } from "@/components/TopBar"
@@ -23,6 +22,10 @@ const MIGRATION_MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
   year: "numeric",
   timeZone: "UTC",
 })
+const MIGRATION_MONTH_NAME_FORMATTER = new Intl.DateTimeFormat("es-PE", {
+  month: "long",
+  timeZone: "UTC",
+})
 const LEGACY_DEFAULT_MIGRATION_MONTH_COUNT = 8
 const SEARCH_FIELD_CONTROL_CLASS = "fd-control flex h-[52px] w-full items-center gap-2 px-3 pt-4"
 const SEARCH_FIELD_VALUE_CLASS = "h-4 min-w-0 flex-1 truncate text-sm font-semibold leading-4"
@@ -37,7 +40,9 @@ type SearchTouchedField = "origin" | "destination" | "departureDate" | "returnDa
 type MigrationMonthOption = {
   key: string
   label: string
+  monthLabel: string
   shortLabel: string
+  disabled: boolean
 }
 
 interface SearchShellProps {
@@ -82,6 +87,10 @@ export function SearchShell({
     [migrationMonthOptions],
   )
   const [selectedMigrationMonths, setSelectedMigrationMonths] = useState<string[]>(() => defaultMigrationMonths)
+  const migrationMonthRange = useMemo(
+    () => resolveMigrationMonthRange(selectedMigrationMonths, migrationMonthOptions),
+    [migrationMonthOptions, selectedMigrationMonths],
+  )
   const lastResetTokenRef = useRef(resetToken)
   const [touched, setTouched] = useState<Record<SearchTouchedField, boolean>>({
     origin: false,
@@ -96,9 +105,8 @@ export function SearchShell({
   const endDateMaxDate = mode === "exact" && trip === "round-trip" && validDepartureDate
     ? minIsoDate(datePolicy.maxSearchDate, addDays(validDepartureDate, MAX_STAY_NIGHTS))
     : datePolicy.maxSearchDate
-  const departureLabel = mode === "flexible" ? "Salida desde" : "Salida"
-  const endDateLabel = mode === "flexible" ? "Salida hasta" : "Regreso"
-  const dateFieldsDisabled = mode === "migration"
+  const departureLabel = mode === "migration" ? "Mes desde" : mode === "flexible" ? "Salida desde" : "Salida"
+  const endDateLabel = mode === "migration" ? "Mes hasta" : mode === "flexible" ? "Salida hasta" : "Regreso"
   const searchGridClassName = cn(
     "fd-search-grid grid grid-cols-2 gap-1.5 transition-[grid-template-columns,max-width] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]",
     "lg:grid-cols-[minmax(150px,1.2fr)_34px_minmax(150px,1.2fr)_minmax(128px,.85fr)_minmax(128px,.85fr)_minmax(144px,.9fr)_124px]",
@@ -255,23 +263,21 @@ export function SearchShell({
     }))
   }
 
-  const setMigrationMonthChecked = (key: string, checked: boolean) => {
+  const handleMigrationStartMonthChange = (key: string) => {
     setSelectedMigrationMonths((current) => {
-      const next = checked
-        ? uniqueMonthKeys([...current, key])
-        : current.filter((month) => month !== key)
-      return orderMigrationMonths(next, migrationMonthOptions)
+      const range = resolveMigrationMonthRange(current, migrationMonthOptions)
+      const end = range.end && key <= range.end ? range.end : key
+      return buildMigrationMonthRangeSelection(key, end, migrationMonthOptions)
     })
     setTouched((current) => ({ ...current, migrationMonths: true }))
   }
 
-  const selectAllMigrationMonths = () => {
-    setSelectedMigrationMonths(migrationMonthOptions.map((month) => month.key))
-    setTouched((current) => ({ ...current, migrationMonths: true }))
-  }
-
-  const clearMigrationMonths = () => {
-    setSelectedMigrationMonths([])
+  const handleMigrationEndMonthChange = (key: string) => {
+    setSelectedMigrationMonths((current) => {
+      const range = resolveMigrationMonthRange(current, migrationMonthOptions)
+      const start = range.start && key >= range.start ? range.start : key
+      return buildMigrationMonthRangeSelection(start, key, migrationMonthOptions)
+    })
     setTouched((current) => ({ ...current, migrationMonths: true }))
   }
 
@@ -435,10 +441,10 @@ export function SearchShell({
   const passengerSlotsRemaining = Math.max(0, MAX_PASSENGERS - passengerTotal)
   const visibleOriginError = touched.origin ? validation.origin : undefined
   const visibleDestinationError = touched.destination ? validation.destination : undefined
-  const visibleDepartureDateError = !dateFieldsDisabled && (touched.departureDate || Boolean(departureDate && !isIsoDate(departureDate)))
+  const visibleDepartureDateError = mode !== "migration" && (touched.departureDate || Boolean(departureDate && !isIsoDate(departureDate)))
     ? validation.departureDate
     : undefined
-  const visibleReturnDateError = !dateFieldsDisabled && (mode !== "exact" || trip !== "one-way") && (touched.returnDate || Boolean(returnDate && !isIsoDate(returnDate)))
+  const visibleReturnDateError = mode !== "migration" && (mode !== "exact" || trip !== "one-way") && (touched.returnDate || Boolean(returnDate && !isIsoDate(returnDate)))
     ? validation.returnDate
     : undefined
   const visiblePassengerError = touched.passengers ? validation.passengers : undefined
@@ -474,18 +480,6 @@ export function SearchShell({
           <div className="fd-search-controls-row mb-2 flex flex-wrap items-center justify-between gap-2">
             {searchControls}
           </div>
-        )}
-
-        {mode === "migration" && (
-          <MigrationMonthSelector
-            months={migrationMonthOptions}
-            selectedMonths={selectedMigrationMonths}
-            invalid={Boolean(visibleMigrationMonthsError)}
-            helperText={visibleMigrationMonthsError}
-            onMonthCheckedChange={setMigrationMonthChecked}
-            onSelectAll={selectAllMigrationMonths}
-            onClear={clearMigrationMonths}
-          />
         )}
 
         <form onSubmit={handleSubmit}>
@@ -562,36 +556,58 @@ export function SearchShell({
             helperText={visibleDestinationError}
           />
 
-          <DateField
-            label={departureLabel}
-            value={departureDate}
-            minDate={datePolicy.minSearchDate}
-            maxDate={datePolicy.maxSearchDate}
-            disabled={dateFieldsDisabled}
-            disabledLabel="No aplica"
-            onChange={(value) => {
-              handleDepartureDateChange(value)
-              setTouched((current) => ({ ...current, departureDate: true }))
-            }}
-            invalid={Boolean(visibleDepartureDateError)}
-            helperText={visibleDepartureDateError}
-            onTouch={() => setTouched((current) => ({ ...current, departureDate: true }))}
-          />
-          <DateField
-            label={endDateLabel}
-            value={returnDate}
-            minDate={returnMinDate}
-            maxDate={endDateMaxDate}
-            disabled={dateFieldsDisabled || (mode === "exact" && trip === "one-way")}
-            disabledLabel="No aplica"
-            onChange={(value) => {
-              handleReturnDateChange(value)
-              setTouched((current) => ({ ...current, returnDate: true }))
-            }}
-            invalid={Boolean(visibleReturnDateError)}
-            helperText={visibleReturnDateError}
-            onTouch={() => setTouched((current) => ({ ...current, returnDate: true }))}
-          />
+          {mode === "migration" ? (
+            <>
+              <MonthField
+                label={departureLabel}
+                value={migrationMonthRange.start}
+                months={migrationMonthOptions}
+                invalid={Boolean(visibleMigrationMonthsError)}
+                helperText={visibleMigrationMonthsError}
+                onChange={handleMigrationStartMonthChange}
+                onTouch={() => setTouched((current) => ({ ...current, migrationMonths: true }))}
+              />
+              <MonthField
+                label={endDateLabel}
+                value={migrationMonthRange.end}
+                months={migrationMonthOptions}
+                invalid={Boolean(visibleMigrationMonthsError)}
+                onChange={handleMigrationEndMonthChange}
+                onTouch={() => setTouched((current) => ({ ...current, migrationMonths: true }))}
+              />
+            </>
+          ) : (
+            <>
+              <DateField
+                label={departureLabel}
+                value={departureDate}
+                minDate={datePolicy.minSearchDate}
+                maxDate={datePolicy.maxSearchDate}
+                onChange={(value) => {
+                  handleDepartureDateChange(value)
+                  setTouched((current) => ({ ...current, departureDate: true }))
+                }}
+                invalid={Boolean(visibleDepartureDateError)}
+                helperText={visibleDepartureDateError}
+                onTouch={() => setTouched((current) => ({ ...current, departureDate: true }))}
+              />
+              <DateField
+                label={endDateLabel}
+                value={returnDate}
+                minDate={returnMinDate}
+                maxDate={endDateMaxDate}
+                disabled={mode === "exact" && trip === "one-way"}
+                disabledLabel="No aplica"
+                onChange={(value) => {
+                  handleReturnDateChange(value)
+                  setTouched((current) => ({ ...current, returnDate: true }))
+                }}
+                invalid={Boolean(visibleReturnDateError)}
+                helperText={visibleReturnDateError}
+                onTouch={() => setTouched((current) => ({ ...current, returnDate: true }))}
+              />
+            </>
+          )}
 
           <Popover
             open={paxOpen}
@@ -773,88 +789,6 @@ function SearchModeControls({
   )
 }
 
-function MigrationMonthSelector({
-  months,
-  selectedMonths,
-  invalid,
-  helperText,
-  onMonthCheckedChange,
-  onSelectAll,
-  onClear,
-}: {
-  months: MigrationMonthOption[]
-  selectedMonths: string[]
-  invalid?: boolean
-  helperText?: string
-  onMonthCheckedChange: (key: string, checked: boolean) => void
-  onSelectAll: () => void
-  onClear: () => void
-}) {
-  const selectedSet = new Set(selectedMonths)
-  const helperId = "migration-months-helper"
-
-  return (
-    <div
-      className={cn(
-        "fd-control mb-2 h-auto flex-col items-stretch gap-2 px-3 py-2",
-        invalid && "fd-control-invalid",
-      )}
-      aria-invalid={invalid}
-      aria-describedby={helperText ? helperId : undefined}
-    >
-      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <AppIcon name="calendar" className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <div className="min-w-0">
-            <p className="fd-label static leading-none">Meses</p>
-            <p className="truncate text-xs font-semibold text-muted-foreground">
-              {selectedMonths.length} seleccionado{selectedMonths.length === 1 ? "" : "s"}
-            </p>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onSelectAll}>
-            <AppIcon name="check" />
-            Todos
-          </Button>
-          <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onClear}>
-            <AppIcon name="x" />
-            Limpiar
-          </Button>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Meses del migratorio">
-        {months.map((month) => {
-          const checked = selectedSet.has(month.key)
-          const fieldId = `migration-month-${month.key}`
-
-          return (
-            <div
-              key={month.key}
-              className={cn(
-                "inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-secondary/45 px-2 text-xs font-semibold transition-colors",
-                checked && "border-primary/50 bg-accent text-accent-foreground",
-              )}
-            >
-              <Checkbox
-                id={fieldId}
-                checked={checked}
-                aria-label={`Consultar ${month.label}`}
-                onCheckedChange={(nextChecked) => onMonthCheckedChange(month.key, nextChecked === true)}
-              />
-              <label htmlFor={fieldId} className="cursor-pointer whitespace-nowrap">
-                {month.shortLabel}
-              </label>
-            </div>
-          )
-        })}
-      </div>
-      <ControlHelper id={helperId} text={helperText} />
-    </div>
-  )
-}
-
 function useCanUseTopbarControls() {
   const [canUseTopbarControls, setCanUseTopbarControls] = useState(() => (
     typeof window === "undefined" ? false : window.matchMedia(TOPBAR_CONTROLS_MEDIA_QUERY).matches
@@ -1030,6 +964,108 @@ function suggestionPlaceLabel(suggestion: LocationSuggestion): string {
   }
 
   return label || [suggestion.city, suggestion.country].filter(Boolean).join(", ")
+}
+
+function MonthField({
+  label,
+  value,
+  months,
+  onChange,
+  invalid = false,
+  helperText,
+  onTouch,
+}: {
+  label: string
+  value: string
+  months: MigrationMonthOption[]
+  onChange: (value: string) => void
+  invalid?: boolean
+  helperText?: string
+  onTouch?: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const fieldId = `month-${toDomId(label)}`
+  const selectedMonth = months.find((month) => month.key === value && !month.disabled)
+    ?? months.find((month) => !month.disabled)
+  const selectedLabel = selectedMonth?.shortLabel ?? "Seleccionar"
+  const yearLabel = months[0]?.key.slice(0, 4) ?? ""
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) onTouch?.()
+        setOpen(nextOpen)
+      }}
+    >
+      <div className="relative">
+        <label id={`${fieldId}-label`} className="fd-label pointer-events-none absolute left-3 top-2.5 z-10">
+          <AnimatedDateLabel label={label} />
+        </label>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            aria-labelledby={`${fieldId}-label`}
+            aria-describedby={helperText ? `${fieldId}-helper` : undefined}
+            aria-expanded={open}
+            aria-haspopup="dialog"
+            aria-invalid={invalid}
+            className={cn(
+              SEARCH_FIELD_CONTROL_CLASS,
+              "justify-start text-left hover:bg-accent/60",
+              invalid && "fd-control-invalid",
+            )}
+          >
+            <AppIcon name="calendar" className="text-muted-foreground" />
+            <span key={selectedLabel} className={`${SEARCH_FIELD_VALUE_CLASS} fd-field-value-swap ${selectedMonth ? "text-foreground" : "text-muted-foreground"}`}>
+              {selectedLabel}
+            </span>
+            <AppIcon name="chevronDown" className={`text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+          </button>
+        </PopoverTrigger>
+        <ControlHelper id={`${fieldId}-helper`} text={helperText} />
+
+        <PopoverContent
+          align="start"
+          className="w-[min(20rem,calc(100vw-2rem))]"
+          aria-label={`Calendario de ${label.toLowerCase()}`}
+        >
+          <div className="space-y-2 p-1">
+            <div className="flex h-8 items-center justify-center px-2">
+              <span className="text-sm font-bold">{yearLabel}</span>
+            </div>
+            <div className="grid grid-cols-3 gap-1.5" role="group" aria-label={`Meses de ${yearLabel}`}>
+              {months.map((month) => {
+                const selected = month.key === selectedMonth?.key
+
+                return (
+                  <Button
+                    key={month.key}
+                    type="button"
+                    variant="ghost"
+                    aria-label={`${month.label}${month.disabled ? " no disponible" : ""}`}
+                    aria-pressed={selected}
+                    disabled={month.disabled}
+                    onClick={() => {
+                      onChange(month.key)
+                      setOpen(false)
+                    }}
+                    className={cn(
+                      "h-10 w-full rounded-lg border border-transparent px-2 text-xs capitalize",
+                      selected && "fd-selected-passive",
+                      month.disabled && "text-muted-foreground/45 line-through hover:bg-transparent hover:text-muted-foreground/45",
+                    )}
+                  >
+                    {month.monthLabel}
+                  </Button>
+                )
+              })}
+            </div>
+          </div>
+        </PopoverContent>
+      </div>
+    </Popover>
+  )
 }
 
 function DateField({
@@ -1327,30 +1363,60 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
 
 function buildMigrationMonthOptions(startIso: string): MigrationMonthOption[] {
   const start = isIsoDate(startIso) ? startIso : localDateToIso(new Date())
-  const [year, month] = start.split("-").map(Number)
+  const [year, startMonth] = start.split("-").map(Number)
 
-  return Array.from({ length: Math.max(0, 13 - month) }, (_, index) => {
-    const key = `${year}-${String(month + index).padStart(2, "0")}`
+  return Array.from({ length: 12 }, (_, index) => {
+    const month = index + 1
+    const key = `${year}-${String(month).padStart(2, "0")}`
     const label = formatMigrationMonthLabel(key)
+    const monthLabel = formatMigrationMonthName(key)
     return {
       key,
       label,
+      monthLabel,
       shortLabel: label.replace(/\s+de\s+/i, " "),
+      disabled: month < startMonth,
     }
   })
 }
 
 function defaultMigrationMonthSelection(options: MigrationMonthOption[]) {
-  return options.slice(0, LEGACY_DEFAULT_MIGRATION_MONTH_COUNT).map((month) => month.key)
+  return options.filter((month) => !month.disabled).slice(0, LEGACY_DEFAULT_MIGRATION_MONTH_COUNT).map((month) => month.key)
 }
 
 function resolveMigrationMonthSelection(values: string[] | undefined, options: MigrationMonthOption[]) {
   const fallback = defaultMigrationMonthSelection(options)
   if (!values?.length) return fallback
 
-  const allowed = new Set(options.map((month) => month.key))
+  const allowed = new Set(options.filter((month) => !month.disabled).map((month) => month.key))
   const selected = orderMigrationMonths(uniqueMonthKeys(values.filter((month) => allowed.has(month))), options)
-  return selected.length ? selected : fallback
+  return selected.length ? buildMigrationMonthRangeSelection(selected[0], selected[selected.length - 1], options) : fallback
+}
+
+function resolveMigrationMonthRange(values: string[], options: MigrationMonthOption[]) {
+  const selected = resolveMigrationMonthSelection(values, options)
+  const fallback = defaultMigrationMonthSelection(options)
+  const normalized = selected.length ? selected : fallback
+  const start = normalized[0] ?? ""
+
+  return {
+    start,
+    end: normalized[normalized.length - 1] ?? start,
+  }
+}
+
+function buildMigrationMonthRangeSelection(start: string, end: string, options: MigrationMonthOption[]) {
+  const enabledKeys = options.filter((month) => !month.disabled).map((month) => month.key)
+  if (enabledKeys.length === 0) return []
+
+  const startIndex = enabledKeys.indexOf(start)
+  const endIndex = enabledKeys.indexOf(end)
+  const resolvedStartIndex = startIndex >= 0 ? startIndex : Math.max(0, endIndex)
+  const resolvedEndIndex = endIndex >= 0 ? endIndex : resolvedStartIndex
+  const from = Math.min(resolvedStartIndex, resolvedEndIndex)
+  const to = Math.max(resolvedStartIndex, resolvedEndIndex)
+
+  return enabledKeys.slice(from, to + 1)
 }
 
 function uniqueMonthKeys(values: string[]) {
@@ -1368,6 +1434,11 @@ function isMigrationMonthKey(value: string) {
 
 function formatMigrationMonthLabel(monthValue: string) {
   const label = MIGRATION_MONTH_LABEL_FORMATTER.format(new Date(`${monthValue}-01T00:00:00Z`))
+  return label.charAt(0).toUpperCase() + label.slice(1)
+}
+
+function formatMigrationMonthName(monthValue: string) {
+  const label = MIGRATION_MONTH_NAME_FORMATTER.format(new Date(`${monthValue}-01T00:00:00Z`))
   return label.charAt(0).toUpperCase() + label.slice(1)
 }
 

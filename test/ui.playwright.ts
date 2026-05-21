@@ -869,14 +869,22 @@ test("current React shell exposes flexible and migratory search modes", async ()
     await assert.equal(await migratory.isDisabled(), false);
 
     await migratory.click();
-    const departureField = page.getByRole("button", { name: "Salida", exact: true });
-    const returnField = page.getByRole("button", { name: "Regreso", exact: true });
-    await assert.equal(await departureField.count(), 1);
-    await assert.equal(await returnField.count(), 1);
-    await assert.equal(await departureField.isDisabled(), true);
-    await assert.equal(await returnField.isDisabled(), true);
-    assert.match(await departureField.innerText(), /No aplica/);
-    assert.match(await returnField.innerText(), /No aplica/);
+    const monthFromField = page.getByRole("button", { name: "Mes desde", exact: true });
+    const monthUntilField = page.getByRole("button", { name: "Mes hasta", exact: true });
+    await assert.equal(await monthFromField.count(), 1);
+    await assert.equal(await monthUntilField.count(), 1);
+    await assert.equal(await monthFromField.isDisabled(), false);
+    await assert.equal(await monthUntilField.isDisabled(), false);
+    assert.match(await monthFromField.innerText(), /Marzo 2026/);
+    assert.match(await monthUntilField.innerText(), /Octubre 2026/);
+    assert.doesNotMatch(await page.locator("body").innerText(), /MES(?:ES)?\s*[\r\n]+[0-9]+ seleccionado/i);
+
+    await monthFromField.click();
+    const monthCalendar = page.getByRole("dialog", { name: "Calendario de mes desde" });
+    await monthCalendar.waitFor();
+    await assert.equal(await monthCalendar.getByRole("button", { name: /Enero de 2026/i }).isDisabled(), true);
+    await assert.equal(await monthCalendar.getByRole("button", { name: /Febrero de 2026/i }).isDisabled(), true);
+    await assert.equal(await monthCalendar.getByRole("button", { name: /Marzo de 2026/i }).isDisabled(), false);
     await assert.equal(await page.getByRole("button", { name: "Ida y vuelta" }).isDisabled(), true);
     await assert.equal(await page.getByRole("button", { name: "Solo ida" }).isDisabled(), true);
     await assert.equal(await page.getByRole("button", { name: "Solo ida" }).getAttribute("aria-pressed"), "true");
@@ -2469,6 +2477,10 @@ test("migratory search sends monthly stay-range requests", async () => {
 
     await assert.equal(await migratory.isDisabled(), false);
     await migratory.click();
+    await page.getByRole("button", { name: "Mes desde", exact: true }).click();
+    await page.getByRole("dialog", { name: "Calendario de mes desde" }).getByRole("button", { name: /Mayo de 2026/i }).click();
+    await page.getByRole("button", { name: "Mes hasta", exact: true }).click();
+    await page.getByRole("dialog", { name: "Calendario de mes hasta" }).getByRole("button", { name: /Junio de 2026/i }).click();
     await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
     await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
     await Promise.all([
@@ -2492,7 +2504,7 @@ test("migratory search sends monthly stay-range requests", async () => {
     assert.ok(Math.abs(await topbarHeight() - flexibleTopbarHeight) <= 2);
     await clickSegment(topbarControls.getByRole("button", { name: "Migratorio" }));
     assert.ok(Math.abs(await topbarHeight() - flexibleTopbarHeight) <= 2);
-    assert.equal(await page.getByTestId("migration-month-card").count(), 8);
+    assert.equal(await page.getByTestId("migration-month-card").count(), 2);
     const migrationCard = page.getByTestId("migration-month-card").first();
     assert.equal(await migrationCard.locator(".fd-result-card__schedule").count(), 1);
     assert.equal(await migrationCard.locator(".fd-result-card__schedules").getAttribute("data-trip-type"), "one-way");
@@ -2500,9 +2512,9 @@ test("migratory search sends monthly stay-range requests", async () => {
     const bodyText = await page.locator("body").innerText();
     assert.doesNotMatch(bodyText, /\b00:00\b/);
     assert.match(bodyText, /14:00/);
-    assert.match(bodyText, /Marzo de 2026/i);
+    assert.match(bodyText, /Mayo de 2026/i);
 
-    assert.equal(payloads.length, 8);
+    assert.equal(payloads.length, 2);
     const firstRequest = payloads[0].request as {
       tripType?: string;
       searchMode?: string;
@@ -2515,8 +2527,8 @@ test("migratory search sends monthly stay-range requests", async () => {
     assert.equal(firstRequest.searchMode, "stay-range");
     assert.equal(firstRequest.filters?.maxResults, 25);
     assert.equal(firstRequest.filters?.compactAllOffers, true);
-    assert.equal(firstLeg?.departureStart, "2026-03-31");
-    assert.equal(firstLeg?.departureEnd, "2026-03-31");
+    assert.equal(firstLeg?.departureStart, "2026-05-01");
+    assert.equal(firstLeg?.departureEnd, "2026-05-31");
     assert.equal(firstLeg?.returnDate, undefined);
   });
 });
