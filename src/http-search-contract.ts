@@ -170,7 +170,6 @@ function validateRequest(request: SearchRequest): string[] {
   const errors: string[] = [];
   const datePolicy = getSearchDatePolicy();
   const flexibleRoundTripMode = resolveFlexibleRoundTripMode(request);
-  const enforceMaxSearchDate = !isExtendedOneWayMonthScan(request);
   const dateFields: Array<[string, string | undefined]> = [
     ["Departure date", leg.departureDate],
     ["Return date", leg.returnDate],
@@ -303,22 +302,12 @@ function validateRequest(request: SearchRequest): string[] {
   }
 
   dateFields.forEach(([label, value]) => {
-    errors.push(...validateSearchDateInPolicy(label, value, datePolicy, {
-      enforceMaxDate: enforceMaxSearchDate,
-    }));
+    errors.push(...validateSearchDateInPolicy(label, value, datePolicy));
   });
 
   return errors;
 }
 
-function isExtendedOneWayMonthScan(request: SearchRequest): boolean {
-  const leg = request.legs[0];
-  return request.tripType === "one-way"
-    && request.searchMode === "stay-range"
-    && !leg.returnDate
-    && !leg.returnStart
-    && !leg.returnEnd;
-}
 
 function validateProviderContext(
   providerId: ProviderId,
