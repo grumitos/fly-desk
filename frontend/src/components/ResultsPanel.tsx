@@ -12,9 +12,10 @@ import {
   type ReactNode,
 } from "react"
 import { ResultCard } from "@/components/results/ResultCard"
+import { buildResultCardModel, type ResultCardModel, type ResultJourneySummary } from "@/components/results/result-card-model"
 import {
   buildResultListItems,
-  countOffersInResultItems,
+  paginateResultListItems,
   resultListItemContainsOffer,
   type ResultListItem,
   type ResultOfferGroup,
@@ -412,32 +413,40 @@ function PaginatedResultsList({
   cached: boolean
 }) {
   const resultItems = useMemo(() => buildResultListItems(offers), [offers])
-  const { pageSize, viewportRef } = useAdaptiveResultsPageSize(resultItems.length)
+  const { pageCapacity, viewportRef } = useAdaptiveResultsPageCapacity(resultItems.length)
   const listRef = useRef<HTMLDivElement | null>(null)
   const layoutStyle = useMemo(() => (
     resultsLayout ? resultsLayoutStyleVars(resultsLayout) : undefined
   ), [resultsLayout])
   const pageKey = useMemo(() => resultItemsPaginationKey(resultItems), [resultItems])
   const [pageState, setPageState] = useState({ key: "", index: 0 })
-  const pageCount = Math.max(1, Math.ceil(resultItems.length / pageSize))
+  const pages = useMemo(
+    () => paginateResultListItems(resultItems, pageCapacity),
+    [pageCapacity, resultItems],
+  )
+  const pageCount = Math.max(1, pages.length)
   const selectedPageIndex = useMemo(() => {
     if (!selectedOfferId) return
 
     const selectedIndex = resultItems.findIndex((item) => resultListItemContainsOffer(item, selectedOfferId))
     if (selectedIndex < 0) return
 
-    return Math.floor(selectedIndex / pageSize)
-  }, [pageSize, resultItems, selectedOfferId])
+    return pages.findIndex((page) => page.items.some((item) => resultListItemContainsOffer(item, selectedOfferId)))
+  }, [pages, resultItems, selectedOfferId])
 
   const requestedPageIndex = pageState.key === pageKey
     ? pageState.index
     : selectedPageIndex ?? 0
   const safePageIndex = Math.max(0, Math.min(requestedPageIndex, pageCount - 1))
-  const startIndex = safePageIndex * pageSize
-  const pageItems = resultItems.slice(startIndex, startIndex + pageSize)
-  const offersBeforePage = countOffersInResultItems(resultItems.slice(0, startIndex))
-  const pageOfferCount = countOffersInResultItems(pageItems)
-  const endIndex = offersBeforePage + pageOfferCount
+  const currentPage = pages[safePageIndex] ?? pages[0] ?? {
+    items: [],
+    startOfferIndex: 0,
+    endOfferIndex: 0,
+    displayWeight: 0,
+  }
+  const pageItems = currentPage.items
+  const offersBeforePage = currentPage.startOfferIndex
+  const endIndex = currentPage.endOfferIndex
   const handlePageChange = (nextPageIndex: number) => {
     setPageState({
       key: pageKey,
@@ -527,6 +536,12 @@ function ResultOfferGroupCard({
   passengerCount: number
   onSelectOffer: (offer: CanonicalOffer) => void
 }) {
+  const primaryOffer = group.offers[0]
+  const variantOffers = group.offers.slice(1)
+  const primaryModel = primaryOffer ? buildResultCardModel(primaryOffer, passengerCount) : null
+
+  if (!primaryOffer || !primaryModel) return null
+
   return (
     <section
       className="fd-result-group"
@@ -538,17 +553,76 @@ function ResultOfferGroupCard({
         <span className="fd-result-group__meta">{group.providerLabel}</span>
       </div>
       <div className="fd-result-group__stack">
-        {group.offers.map((offer) => (
-          <ResultCard
-            key={offer.id}
-            offer={offer}
-            selected={selectedOfferId === offer.id}
-            passengerCount={passengerCount}
-            onSelect={onSelectOffer}
-          />
-        ))}
+        <ResultCard
+          offer={primaryOffer}
+          selected={selectedOfferId === primaryOffer.id}
+          passengerCount={passengerCount}
+          onSelect={onSelectOffer}
+        />
+        {variantOffers.length > 0 && (
+          <div className="fd-result-group__variants" aria-label="Horarios alternativos">
+            {variantOffers.map((offer) => (
+              <ResultVariantCard
+                key={offer.id}
+                offer={offer}
+                primaryModel={primaryModel}
+                selected={selectedOfferId === offer.id}
+                passengerCount={passengerCount}
+                onSelect={onSelectOffer}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </section>
+  )
+}
+
+function ResultVariantCard({
+  offer,
+  primaryModel,
+  selected,
+  passengerCount,
+  onSelect,
+}: {
+  offer: CanonicalOffer
+  primaryModel: ResultCardModel
+  selected: boolean
+  passengerCount: number
+  onSelect: (offer: CanonicalOffer) => void
+}) {
+  const model = buildResultCardModel(offer, passengerCount)
+  const diffs = resultVariantDiffs(primaryModel, model)
+  const label = [
+    selected ? "Horario seleccionado" : "Seleccionar horario",
+    ...diffs.map((diff) => `${diff.label} ${diff.value}`),
+  ].join(" - ")
+
+  return (
+    <article
+      role="button"
+      tabIndex={0}
+      aria-label={label}
+      aria-pressed={selected}
+      className={cn("fd-result-variant-card", selected && "is-selected")}
+      data-testid="result-variant-card"
+      onClick={() => onSelect(offer)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          onSelect(offer)
+        }
+      }}
+    >
+      <div className="fd-result-variant-card__diffs">
+        {diffs.map((diff) => (
+          <span key={diff.key} className="fd-result-variant-card__diff">
+            <span className="fd-result-variant-card__label">{diff.label}</span>
+            <span className="fd-result-variant-card__value">{diff.value}</span>
+          </span>
+        ))}
+      </div>
+    </article>
   )
 }
 
@@ -556,6 +630,70 @@ function resultGroupTitle(count: number) {
   return count === 1
     ? "1 horario"
     : `${count} horarios al mismo precio`
+}
+
+type ResultVariantDiff = {
+  key: string
+  label: string
+  value: string
+}
+
+function resultVariantDiffs(primary: ResultCardModel, variant: ResultCardModel): ResultVariantDiff[] {
+  const primaryJourneys = new Map(primary.journeys.map((journey) => [journey.label, journey]))
+  const diffs: ResultVariantDiff[] = []
+
+  variant.journeys.forEach((journey) => {
+    const primaryJourney = primaryJourneys.get(journey.label)
+    if (primaryJourney && journeyScheduleSignature(primaryJourney) === journeyScheduleSignature(journey)) {
+      return
+    }
+
+    diffs.push({
+      key: `schedule:${journey.label}`,
+      label: journey.label,
+      value: journeyScheduleValue(journey),
+    })
+  })
+
+  if (variant.duration !== primary.duration) {
+    diffs.push({
+      key: "duration",
+      label: "Duración",
+      value: variant.duration,
+    })
+  }
+
+  if (variant.stops.label !== primary.stops.label) {
+    diffs.push({
+      key: "stops",
+      label: "Escalas",
+      value: variant.stops.label,
+    })
+  }
+
+  if (diffs.length > 0) return diffs
+
+  return [{
+    key: "schedule",
+    label: "Horario",
+    value: "sin cambios visibles",
+  }]
+}
+
+function journeyScheduleSignature(journey: ResultJourneySummary) {
+  return [
+    journey.hasKnownSchedule,
+    journey.departureTime,
+    journey.arrivalTime,
+    journey.arrivalDayOffset,
+  ].join("|")
+}
+
+function journeyScheduleValue(journey: ResultJourneySummary) {
+  if (!journey.hasKnownSchedule) return "por confirmar"
+
+  const offset = journey.arrivalDayOffset > 0 ? `+${journey.arrivalDayOffset}` : ""
+  return `${journey.departureTime} - ${journey.arrivalTime}${offset}`
 }
 
 function ResultsLayoutEditor({
@@ -1359,9 +1497,9 @@ function warningSummaryLabel(warnings: string[], noFlightIssues: ProviderNoFligh
   return warnings.length === 1 ? "1 aviso" : `${warnings.length} avisos`
 }
 
-function useAdaptiveResultsPageSize(itemCount: number) {
+function useAdaptiveResultsPageCapacity(itemCount: number) {
   const viewportRef = useRef<HTMLDivElement | null>(null)
-  const [pageSize, setPageSize] = useState(RESULTS_PAGE_SIZE_FALLBACK)
+  const [pageCapacity, setPageCapacity] = useState(RESULTS_PAGE_SIZE_FALLBACK)
   const rowHeightRef = useRef(RESULTS_CARD_HEIGHT_ESTIMATE_PX)
 
   useLayoutEffect(() => {
@@ -1373,7 +1511,7 @@ function useAdaptiveResultsPageSize(itemCount: number) {
       const list = node.querySelector<HTMLElement>(".fd-results-list")
       const availableHeight = Math.max(0, node.clientHeight - RESULTS_LIST_TOP_INSET_PX)
       const measuredCards = list
-        ? Array.from(list.querySelectorAll<HTMLElement>(".fd-result-group, .fd-result-card:not(.fd-result-card--layout-guide)"))
+        ? Array.from(list.querySelectorAll<HTMLElement>(".fd-result-card:not(.fd-result-card--compact):not(.fd-result-card--layout-guide)"))
         : []
       const listStyle = list ? window.getComputedStyle(list) : null
       const measuredGap = listStyle
@@ -1392,12 +1530,12 @@ function useAdaptiveResultsPageSize(itemCount: number) {
       const usedHeight = fullyVisibleRows * rowHeight + Math.max(0, fullyVisibleRows - 1) * gap
       const blankHeight = availableHeight - usedHeight
       const shouldAddOverflowRow = blankHeight >= RESULTS_EXTRA_ROW_MIN_BLANK_PX && fullyVisibleRows < itemCount
-      const nextPageSize = Math.max(
+      const nextPageCapacity = Math.max(
         1,
         Math.min(itemCount, RESULTS_PAGE_SIZE_MAX, fullyVisibleRows + (shouldAddOverflowRow ? 1 : 0)),
       )
 
-      setPageSize((current) => current === nextPageSize ? current : nextPageSize)
+      setPageCapacity((current) => current === nextPageCapacity ? current : nextPageCapacity)
     }
     const scheduleUpdate = () => {
       window.cancelAnimationFrame(frame)
@@ -1423,7 +1561,7 @@ function useAdaptiveResultsPageSize(itemCount: number) {
     }
   }, [itemCount])
 
-  return { pageSize, viewportRef }
+  return { pageCapacity, viewportRef }
 }
 
 function resultItemsPaginationKey(items: ResultListItem[]) {

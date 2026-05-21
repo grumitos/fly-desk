@@ -1722,6 +1722,129 @@ test("exact results paginate visible offers with hidden minimal result scroll", 
   }, { autoOpen: false });
 });
 
+test("grouped result variants show only schedule differences", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1180, height: 700 });
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      const groupedOffer = (id: string, returnDeparture: string, returnArrival: string) => buildOffer({
+        id,
+        providerSource: "costamar",
+        airline: "KLM",
+        mainCarrier: "KL",
+        validatingCarrier: "KL",
+        rawRefs: { recommendationId: "REC-compact:0" },
+        price: {
+          total: { amount: 1361.14, currencyCode: "USD" },
+          base: { amount: 1120, currencyCode: "USD" },
+          taxes: { amount: 241.14, currencyCode: "USD" },
+        },
+        itineraries: [
+          {
+            direction: "outbound",
+            durationMinutes: 960,
+            stops: 1,
+            segments: [
+              {
+                flightNumber: "KL 744",
+                marketingCarrier: "KL",
+                origin: "LIM",
+                destination: "AMS",
+                departureAt: "2026-05-28T17:30:00-05:00",
+                arrivalAt: "2026-05-30T09:30:00+02:00",
+              },
+              {
+                flightNumber: "KL 1501",
+                marketingCarrier: "KL",
+                origin: "AMS",
+                destination: "MAD",
+                departureAt: "2026-05-30T11:00:00+02:00",
+                arrivalAt: "2026-05-30T13:30:00+02:00",
+              },
+            ],
+          },
+          {
+            direction: "inbound",
+            durationMinutes: 780,
+            stops: 1,
+            segments: [
+              {
+                flightNumber: "KL 1502",
+                marketingCarrier: "KL",
+                origin: "MAD",
+                destination: "AMS",
+                departureAt: returnDeparture,
+                arrivalAt: returnArrival,
+              },
+            ],
+          },
+        ],
+      });
+
+      const offers = [
+        groupedOffer("late-return", "2026-06-04T20:30:00+02:00", "2026-06-05T15:25:00-05:00"),
+        groupedOffer("early-return", "2026-06-04T06:00:00+02:00", "2026-06-04T15:25:00-05:00"),
+        groupedOffer("mid-return", "2026-06-04T13:05:00+02:00", "2026-06-05T15:25:00-05:00"),
+      ];
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "grouped-compact-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers,
+          allOffers: offers,
+          searchMeta: {
+            requestedAt: "2026-05-04T15:21:48.419Z",
+            completedAt: "2026-05-04T15:21:48.419Z",
+            providersUsed: ["costamar"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "costamar",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-05-28&return=2026-06-04&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+
+    const group = page.getByTestId("result-offer-group");
+    await group.waitFor();
+    assert.equal(await group.getByTestId("result-card").count(), 1);
+    assert.equal(await group.getByTestId("result-variant-card").count(), 2);
+
+    const variants = group.getByTestId("result-variant-card");
+    const variantText = await variants.allInnerTexts();
+    assert.match(variantText[0] ?? "", /Vuelta\s+13:05 - 15:25\+1/);
+    assert.match(variantText[1] ?? "", /Vuelta\s+20:30 - 15:25\+1/);
+    assert.doesNotMatch(variantText.join(" "), /KLM|Costamar|USD|Equipaje|04\/06/);
+  }, { autoOpen: false });
+});
+
 test("normal results wait for saved column layout before drawing cards", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 1180, height: 700 });

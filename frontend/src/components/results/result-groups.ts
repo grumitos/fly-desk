@@ -11,6 +11,13 @@ export interface ResultOfferGroup {
   offers: CanonicalOffer[]
 }
 
+export interface ResultListPage {
+  items: ResultListItem[]
+  startOfferIndex: number
+  endOfferIndex: number
+  displayWeight: number
+}
+
 type GroupBucket = ResultOfferGroup & {
   firstIndex: number
 }
@@ -76,7 +83,7 @@ export function buildResultListItems(offers: CanonicalOffer[]): ResultListItem[]
         id: bucket.id,
         key: bucket.key,
         providerLabel: bucket.providerLabel,
-        offers: bucket.offers,
+        offers: sortGroupOffersBySchedule(bucket.offers),
       },
     }]
   })
@@ -90,6 +97,68 @@ export function resultListItemContainsOffer(item: ResultListItem, offerId: strin
 
 export function countOffersInResultItems(items: ResultListItem[]): number {
   return items.reduce((total, item) => total + item.offerCount, 0)
+}
+
+export function paginateResultListItems(
+  items: ResultListItem[],
+  pageCapacity: number,
+): ResultListPage[] {
+  if (items.length === 0) {
+    return [{
+      items: [],
+      startOfferIndex: 0,
+      endOfferIndex: 0,
+      displayWeight: 0,
+    }]
+  }
+
+  const safeCapacity = Math.max(1, pageCapacity)
+  const pages: ResultListPage[] = []
+  let pageItems: ResultListItem[] = []
+  let pageWeight = 0
+  let offerCursor = 0
+  let pageStartOfferIndex = 0
+
+  for (const item of items) {
+    const itemWeight = resultListItemDisplayWeight(item)
+    const shouldStartNextPage = pageItems.length > 0 && pageWeight + itemWeight > safeCapacity
+
+    if (shouldStartNextPage) {
+      const offerCount = countOffersInResultItems(pageItems)
+      pages.push({
+        items: pageItems,
+        startOfferIndex: pageStartOfferIndex,
+        endOfferIndex: pageStartOfferIndex + offerCount,
+        displayWeight: pageWeight,
+      })
+      pageStartOfferIndex = offerCursor
+      pageItems = []
+      pageWeight = 0
+    }
+
+    pageItems.push(item)
+    pageWeight += itemWeight
+    offerCursor += item.offerCount
+  }
+
+  if (pageItems.length > 0) {
+    const offerCount = countOffersInResultItems(pageItems)
+    pages.push({
+      items: pageItems,
+      startOfferIndex: pageStartOfferIndex,
+      endOfferIndex: pageStartOfferIndex + offerCount,
+      displayWeight: pageWeight,
+    })
+  }
+
+  return pages
+}
+
+export function resultListItemDisplayWeight(item: ResultListItem): number {
+  if (item.type === "offer") return 1
+
+  const variantCount = Math.max(0, item.offerCount - 1)
+  return 1 + variantCount * 0.42
 }
 
 function offerNaturalGroupKey(offer: CanonicalOffer): string | null {
@@ -170,4 +239,46 @@ function baggageSignature(offer: CanonicalOffer): string {
     baggage.checkedIncluded === true ? "checked:yes" : baggage.checkedIncluded === false ? "checked:no" : "checked:unknown",
     `checkedBags:${baggage.checkedBags ?? "unknown"}`,
   ].join(";")
+}
+
+function sortGroupOffersBySchedule(offers: CanonicalOffer[]): CanonicalOffer[] {
+  if (offers.length <= 1) return offers
+
+  return offers
+    .map((offer, index) => ({ offer, index }))
+    .sort((left, right) => {
+      const compared = compareScheduleSignature(left.offer, right.offer)
+      return compared !== 0 ? compared : left.index - right.index
+    })
+    .map((item) => item.offer)
+}
+
+function compareScheduleSignature(left: CanonicalOffer, right: CanonicalOffer): number {
+  const leftSignature = offerScheduleSignature(left)
+  const rightSignature = offerScheduleSignature(right)
+
+  for (let index = 0; index < Math.max(leftSignature.length, rightSignature.length); index += 1) {
+    const leftPart = leftSignature[index] ?? ""
+    const rightPart = rightSignature[index] ?? ""
+    const compared = leftPart.localeCompare(rightPart)
+    if (compared !== 0) return compared
+  }
+
+  return 0
+}
+
+function offerScheduleSignature(offer: CanonicalOffer): string[] {
+  const itineraries = offer.itineraries ?? []
+
+  return ["outbound", "inbound"].flatMap((direction) => {
+    const itinerary = itineraries.find((item) => item.direction === direction)
+    const segments = itinerary?.segments ?? []
+    const first = segments[0]
+    const last = segments[segments.length - 1]
+
+    return [
+      first?.departureAt ?? (direction === "outbound" ? offer.departureDate : offer.returnDate) ?? "",
+      last?.arrivalAt ?? "",
+    ]
+  })
 }
