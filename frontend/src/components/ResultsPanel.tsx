@@ -539,17 +539,32 @@ function ResultOfferGroupCard({
   const primaryOffer = group.offers[0]
   const variantOffers = group.offers.slice(1)
   const primaryModel = primaryOffer ? buildResultCardModel(primaryOffer, passengerCount) : null
+  const visibleVariantOffers = primaryModel
+    ? variantOffers.filter((offer) => hasVisibleVariantDifference(primaryModel, buildResultCardModel(offer, passengerCount)))
+    : []
+  const groupSelected = group.offers.some((offer) => offer.id === selectedOfferId)
 
   if (!primaryOffer || !primaryModel) return null
 
+  if (visibleVariantOffers.length === 0) {
+    return (
+      <ResultCard
+        offer={primaryOffer}
+        selected={selectedOfferId === primaryOffer.id}
+        passengerCount={passengerCount}
+        onSelect={onSelectOffer}
+      />
+    )
+  }
+
   return (
     <section
-      className="fd-result-group"
-      aria-label={`${group.providerLabel}: ${resultGroupTitle(group.offers.length)}`}
+      className={cn("fd-result-group", groupSelected && "is-selected")}
+      aria-label={`${group.providerLabel}: ${resultGroupTitle(visibleVariantOffers.length + 1)}`}
       data-testid="result-offer-group"
     >
       <div className="fd-result-group__header">
-        <span className="fd-result-group__title">{resultGroupTitle(group.offers.length)}</span>
+        <span className="fd-result-group__title">{resultGroupTitle(visibleVariantOffers.length + 1)}</span>
         <span className="fd-result-group__meta">{group.providerLabel}</span>
       </div>
       <div className="fd-result-group__stack">
@@ -559,20 +574,18 @@ function ResultOfferGroupCard({
           passengerCount={passengerCount}
           onSelect={onSelectOffer}
         />
-        {variantOffers.length > 0 && (
-          <div className="fd-result-group__variants" aria-label="Horarios alternativos">
-            {variantOffers.map((offer) => (
-              <ResultVariantCard
-                key={offer.id}
-                offer={offer}
-                primaryModel={primaryModel}
-                selected={selectedOfferId === offer.id}
-                passengerCount={passengerCount}
-                onSelect={onSelectOffer}
-              />
-            ))}
-          </div>
-        )}
+        <div className="fd-result-group__variants" aria-label="Horarios alternativos">
+          {visibleVariantOffers.map((offer) => (
+            <ResultVariantCard
+              key={offer.id}
+              offer={offer}
+              primaryModel={primaryModel}
+              selected={selectedOfferId === offer.id}
+              passengerCount={passengerCount}
+              onSelect={onSelectOffer}
+            />
+          ))}
+        </div>
       </div>
     </section>
   )
@@ -592,11 +605,19 @@ function ResultVariantCard({
   onSelect: (offer: CanonicalOffer) => void
 }) {
   const model = buildResultCardModel(offer, passengerCount)
-  const diffs = resultVariantDiffs(primaryModel, model)
+  const scheduleCells = variantScheduleCells(primaryModel, model)
+  const durationChanged = model.duration !== primaryModel.duration
+  const stopsChanged = variantStopsSignature(model) !== variantStopsSignature(primaryModel)
   const label = [
     selected ? "Horario seleccionado" : "Seleccionar horario",
-    ...diffs.map((diff) => `${diff.label} ${diff.value}`),
-  ].join(" - ")
+    ...scheduleCells
+      .filter((cell) => cell.changed)
+      .map((cell) => `${cell.journey.label} ${journeyScheduleValue(cell.journey)}`),
+    durationChanged ? `Duracion ${model.duration}` : undefined,
+    stopsChanged ? `Escalas ${model.stops.label}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" - ")
 
   return (
     <article
@@ -614,14 +635,34 @@ function ResultVariantCard({
         }
       }}
     >
-      <div className="fd-result-variant-card__diffs">
-        {diffs.map((diff) => (
-          <span key={diff.key} className="fd-result-variant-card__diff">
-            <span className="fd-result-variant-card__label">{diff.label}</span>
-            <span className="fd-result-variant-card__value">{diff.value}</span>
-          </span>
+      <span className="fd-result-variant-card__empty" aria-hidden="true" />
+      <div className="fd-result-variant-card__schedules" data-trip-type={model.tripType}>
+        {scheduleCells.map((cell) => (
+          <VariantSchedule key={cell.journey.label} summary={cell.journey} visible={cell.changed} />
         ))}
       </div>
+      <span className="fd-result-variant-card__empty" aria-hidden="true" />
+      <div className="fd-result-variant-card__journey">
+        {durationChanged && (
+          <span className="fd-result-card__journey-main">{model.duration}</span>
+        )}
+        {stopsChanged && (
+          <span
+            className={cn(
+              "fd-result-card__stops",
+              model.stops.tone === "direct" && "fd-result-card__stops--direct",
+              model.stops.tone === "warning" && "fd-result-card__stops--warning",
+              model.stops.tone === "danger" && "fd-result-card__stops--danger",
+            )}
+            title={model.stops.title}
+          >
+            {model.stops.label}
+          </span>
+        )}
+        {stopsChanged && model.stops.layoverLabel && <span className="fd-result-card__layover">{model.stops.layoverLabel}</span>}
+      </div>
+      <span className="fd-result-variant-card__empty" aria-hidden="true" />
+      <span className="fd-result-variant-card__empty" aria-hidden="true" />
     </article>
   )
 }
@@ -629,55 +670,24 @@ function ResultVariantCard({
 function resultGroupTitle(count: number) {
   return count === 1
     ? "1 horario"
-    : `${count} horarios al mismo precio`
+    : `${count} horarios`
 }
 
-type ResultVariantDiff = {
-  key: string
-  label: string
-  value: string
+function hasVisibleVariantDifference(primary: ResultCardModel, variant: ResultCardModel): boolean {
+  return variantScheduleCells(primary, variant).some((cell) => cell.changed)
+    || variant.duration !== primary.duration
+    || variantStopsSignature(variant) !== variantStopsSignature(primary)
 }
 
-function resultVariantDiffs(primary: ResultCardModel, variant: ResultCardModel): ResultVariantDiff[] {
+function variantScheduleCells(primary: ResultCardModel, variant: ResultCardModel) {
   const primaryJourneys = new Map(primary.journeys.map((journey) => [journey.label, journey]))
-  const diffs: ResultVariantDiff[] = []
-
-  variant.journeys.forEach((journey) => {
+  return variant.journeys.map((journey) => {
     const primaryJourney = primaryJourneys.get(journey.label)
-    if (primaryJourney && journeyScheduleSignature(primaryJourney) === journeyScheduleSignature(journey)) {
-      return
+    return {
+      journey,
+      changed: !primaryJourney || journeyScheduleSignature(primaryJourney) !== journeyScheduleSignature(journey),
     }
-
-    diffs.push({
-      key: `schedule:${journey.label}`,
-      label: journey.label,
-      value: journeyScheduleValue(journey),
-    })
   })
-
-  if (variant.duration !== primary.duration) {
-    diffs.push({
-      key: "duration",
-      label: "Duración",
-      value: variant.duration,
-    })
-  }
-
-  if (variant.stops.label !== primary.stops.label) {
-    diffs.push({
-      key: "stops",
-      label: "Escalas",
-      value: variant.stops.label,
-    })
-  }
-
-  if (diffs.length > 0) return diffs
-
-  return [{
-    key: "schedule",
-    label: "Horario",
-    value: "sin cambios visibles",
-  }]
 }
 
 function journeyScheduleSignature(journey: ResultJourneySummary) {
@@ -694,6 +704,33 @@ function journeyScheduleValue(journey: ResultJourneySummary) {
 
   const offset = journey.arrivalDayOffset > 0 ? `+${journey.arrivalDayOffset}` : ""
   return `${journey.departureTime} - ${journey.arrivalTime}${offset}`
+}
+
+function variantStopsSignature(model: ResultCardModel) {
+  return [model.stops.label, model.stops.layoverLabel].join("|")
+}
+
+function VariantSchedule({ summary, visible }: { summary: ResultJourneySummary; visible: boolean }) {
+  return (
+    <div className={cn("fd-result-variant-card__schedule", !visible && "is-empty")} aria-hidden={!visible}>
+      {visible && (
+        <div className="fd-result-card__schedule-main">
+          {summary.hasKnownSchedule ? (
+            <>
+              <span>{summary.departureTime}</span>
+              <span className="fd-result-card__schedule-separator">-</span>
+              <span>{summary.arrivalTime}</span>
+              {summary.arrivalDayOffset > 0 && (
+                <span className="fd-result-card__schedule-offset">+{summary.arrivalDayOffset}</span>
+              )}
+            </>
+          ) : (
+            <span className="fd-result-card__schedule-unknown">Horario por confirmar</span>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function ResultsLayoutEditor({
