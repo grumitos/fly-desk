@@ -212,7 +212,7 @@ test("Agil can resolve an active Chrome DevTools browser endpoint from a user da
   }
 });
 
-test("Agil session extraction prefers fresher Chrome storage over a stale configured profile", async () => {
+test("Agil session extraction keeps the configured profile when cross-profile scan is disabled", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-agil-storage-freshness-"));
   const staleProfile = "Profile 40";
   const freshProfile = "Profile 41";
@@ -224,6 +224,7 @@ test("Agil session extraction prefers fresher Chrome storage over a stale config
     ip: string,
     mtime: Date,
     token = "",
+    origin = "https://www.agilsmart.com/home-user",
   ) => {
     const storageDir = join(tempRoot, profileName, "Local Storage", "leveldb");
     mkdirSync(storageDir, { recursive: true });
@@ -239,7 +240,7 @@ test("Agil session extraction prefers fresher Chrome storage over a stale config
     })).toString("base64");
     const ipPayload = Buffer.from(ip).toString("base64");
     const filePath = join(storageDir, "000001.log");
-    writeFileSync(filePath, `tokenTravelC ${token} user_data ${userPayload} ip ${ipPayload}`, "utf8");
+    writeFileSync(filePath, `${origin}\0tokenTravelC ${token} user_data ${userPayload} ip ${ipPayload}`, "utf8");
     utimesSync(filePath, mtime, mtime);
   };
 
@@ -268,9 +269,11 @@ test("Agil session extraction prefers fresher Chrome storage over a stale config
   const previousBrowserUrl = process.env.AGIL_BROWSER_URL;
   const previousBrowserWsEndpoint = process.env.AGIL_BROWSER_WS_ENDPOINT;
   const previousProcessDiscovery = process.env.AGIL_CHROME_PROCESS_DISCOVERY;
+  const previousScanAllProfiles = process.env.AGIL_SCAN_ALL_CHROME_PROFILES;
   process.env.AGIL_CHROME_USER_DATA_DIR = tempRoot;
   process.env.AGIL_CHROME_PROFILE = staleProfile;
   process.env.AGIL_CHROME_PROCESS_DISCOVERY = "0";
+  process.env.AGIL_SCAN_ALL_CHROME_PROFILES = "0";
   delete process.env.AGIL_BROWSER_URL;
   delete process.env.AGIL_BROWSER_WS_ENDPOINT;
 
@@ -278,10 +281,10 @@ test("Agil session extraction prefers fresher Chrome storage over a stale config
     const snapshot = await extractAgilBrowserStorageSnapshotForTests();
     const session = parseAgilSessionData(snapshot);
 
-    assert.equal(session.userCode, 2222);
-    assert.equal(session.internalCode, "FRESH");
-    assert.equal(session.ip, "2.2.2.2");
-    assert.equal(session.token, freshToken);
+    assert.equal(session.userCode, 1111);
+    assert.equal(session.internalCode, "STALE");
+    assert.equal(session.ip, "1.1.1.1");
+    assert.equal(session.token, "");
   } finally {
     if (previousUserDataDir === undefined) {
       delete process.env.AGIL_CHROME_USER_DATA_DIR;
@@ -311,6 +314,125 @@ test("Agil session extraction prefers fresher Chrome storage over a stale config
       delete process.env.AGIL_CHROME_PROCESS_DISCOVERY;
     } else {
       process.env.AGIL_CHROME_PROCESS_DISCOVERY = previousProcessDiscovery;
+    }
+
+    if (previousScanAllProfiles === undefined) {
+      delete process.env.AGIL_SCAN_ALL_CHROME_PROFILES;
+    } else {
+      process.env.AGIL_SCAN_ALL_CHROME_PROFILES = previousScanAllProfiles;
+    }
+
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("Agil session extraction ignores non-Agil origin storage in the configured profile", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-agil-storage-origin-"));
+  const profileName = "Profile 40";
+  let fileCounter = 1;
+
+  const writeStorage = (
+    origin: string,
+    userCode: number,
+    internalCode: string,
+    ip: string,
+    mtime: Date,
+    token = "",
+  ) => {
+    const storageDir = join(tempRoot, profileName, "Local Storage", "leveldb");
+    mkdirSync(storageDir, { recursive: true });
+    const userPayload = Buffer.from(JSON.stringify({
+      Usuario: {
+        CodigoUsuario: userCode,
+      },
+      Cliente: {
+        Vendedor: {
+          CodigoVendedor: internalCode,
+        },
+      },
+    })).toString("base64");
+    const ipPayload = Buffer.from(ip).toString("base64");
+    const filePath = join(storageDir, `${String(fileCounter).padStart(6, "0")}.log`);
+    fileCounter += 1;
+    writeFileSync(filePath, `${origin}\0tokenTravelC ${token} user_data ${userPayload} ip ${ipPayload}`, "utf8");
+    utimesSync(filePath, mtime, mtime);
+  };
+
+  writeFileSync(
+    join(tempRoot, "Local State"),
+    JSON.stringify({
+      profile: {
+        last_used: profileName,
+        last_active_profiles: [profileName],
+        info_cache: {
+          [profileName]: {},
+        },
+      },
+    }),
+    "utf8",
+  );
+
+  const tokenPayload = Buffer.from(JSON.stringify({ exp: 1893459600 })).toString("base64url");
+  const evilToken = `header.${tokenPayload}.signature`;
+  writeStorage("https://www.agilsmart.com/home-user", 1111, "AGIL", "1.1.1.1", new Date("2026-01-01T00:00:00Z"));
+  writeStorage("https://evil.example/", 9999, "EVIL", "9.9.9.9", new Date("2026-02-01T00:00:00Z"), evilToken);
+
+  const previousUserDataDir = process.env.AGIL_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.AGIL_CHROME_PROFILE;
+  const previousBrowserUrl = process.env.AGIL_BROWSER_URL;
+  const previousBrowserWsEndpoint = process.env.AGIL_BROWSER_WS_ENDPOINT;
+  const previousProcessDiscovery = process.env.AGIL_CHROME_PROCESS_DISCOVERY;
+  const previousScanAllProfiles = process.env.AGIL_SCAN_ALL_CHROME_PROFILES;
+  process.env.AGIL_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.AGIL_CHROME_PROFILE = profileName;
+  process.env.AGIL_CHROME_PROCESS_DISCOVERY = "0";
+  process.env.AGIL_SCAN_ALL_CHROME_PROFILES = "0";
+  delete process.env.AGIL_BROWSER_URL;
+  delete process.env.AGIL_BROWSER_WS_ENDPOINT;
+
+  try {
+    const snapshot = await extractAgilBrowserStorageSnapshotForTests();
+    const session = parseAgilSessionData(snapshot);
+
+    assert.equal(session.userCode, 1111);
+    assert.equal(session.internalCode, "AGIL");
+    assert.equal(session.ip, "1.1.1.1");
+    assert.equal(session.token, "");
+  } finally {
+    if (previousUserDataDir === undefined) {
+      delete process.env.AGIL_CHROME_USER_DATA_DIR;
+    } else {
+      process.env.AGIL_CHROME_USER_DATA_DIR = previousUserDataDir;
+    }
+
+    if (previousProfile === undefined) {
+      delete process.env.AGIL_CHROME_PROFILE;
+    } else {
+      process.env.AGIL_CHROME_PROFILE = previousProfile;
+    }
+
+    if (previousBrowserUrl === undefined) {
+      delete process.env.AGIL_BROWSER_URL;
+    } else {
+      process.env.AGIL_BROWSER_URL = previousBrowserUrl;
+    }
+
+    if (previousBrowserWsEndpoint === undefined) {
+      delete process.env.AGIL_BROWSER_WS_ENDPOINT;
+    } else {
+      process.env.AGIL_BROWSER_WS_ENDPOINT = previousBrowserWsEndpoint;
+    }
+
+    if (previousProcessDiscovery === undefined) {
+      delete process.env.AGIL_CHROME_PROCESS_DISCOVERY;
+    } else {
+      process.env.AGIL_CHROME_PROCESS_DISCOVERY = previousProcessDiscovery;
+    }
+
+    if (previousScanAllProfiles === undefined) {
+      delete process.env.AGIL_SCAN_ALL_CHROME_PROFILES;
+    } else {
+      process.env.AGIL_SCAN_ALL_CHROME_PROFILES = previousScanAllProfiles;
     }
 
     rmSync(tempRoot, { recursive: true, force: true });

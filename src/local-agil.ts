@@ -1048,6 +1048,11 @@ function readChromeProfileCandidates(userDataDir = resolveBrowserUserDataDir()):
   return candidates;
 }
 
+function shouldScanAllChromeProfilesForAgilStorage(): boolean {
+  const value = String(process.env.AGIL_SCAN_ALL_CHROME_PROFILES ?? "0").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
 export function readAgilChromeProfileCandidatesForTests(): string[] {
   return readChromeProfileCandidates();
 }
@@ -1317,6 +1322,36 @@ async function disconnectBrowser(browser: Browser | undefined): Promise<void> {
   }
 }
 
+const AGIL_STORAGE_ORIGIN_HOSTS = new Set(
+  AGIL_STORAGE_ORIGINS.map((origin) => new URL(origin).host.toLowerCase()),
+);
+const STORAGE_ORIGIN_PATTERN = /https?:\/\/[A-Za-z0-9.-]+(?::\d+)?(?:\/[^\s"'<>\\\x00]*)?/g;
+
+function isAgilStorageOrigin(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" && AGIL_STORAGE_ORIGIN_HOSTS.has(parsed.host.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function nearestStorageOriginBefore(text: string, index: number): string | undefined {
+  const prefix = text.slice(Math.max(0, index - 2048), index);
+  let latest: string | undefined;
+  let match: RegExpExecArray | null;
+  STORAGE_ORIGIN_PATTERN.lastIndex = 0;
+  while ((match = STORAGE_ORIGIN_PATTERN.exec(prefix)) !== null) {
+    latest = match[0];
+  }
+  return latest;
+}
+
+function isAgilStorageKeyOccurrence(text: string, index: number): boolean {
+  const origin = nearestStorageOriginBefore(text, index);
+  return Boolean(origin && isAgilStorageOrigin(origin));
+}
+
 function candidateTokensNearKey(text: string, key: string): string[] {
   const candidates: string[] = [];
   let cursor = 0;
@@ -1325,6 +1360,11 @@ function candidateTokensNearKey(text: string, key: string): string[] {
     const keyIndex = text.indexOf(key, cursor);
     if (keyIndex < 0) {
       break;
+    }
+
+    if (!isAgilStorageKeyOccurrence(text, keyIndex)) {
+      cursor = keyIndex + key.length;
+      continue;
     }
 
     const chunk = text.slice(keyIndex, Math.min(text.length, keyIndex + 12000));
@@ -1565,8 +1605,12 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
 
   for (const userDataDir of userDataDirs) {
     const fileCandidates: AgilStorageSnapshotCandidate[] = [];
+    const profileCandidates = readChromeProfileCandidates(userDataDir);
+    const profileNames = shouldScanAllChromeProfilesForAgilStorage()
+      ? profileCandidates
+      : profileCandidates.slice(0, 1);
     try {
-      for (const profileName of readChromeProfileCandidates(userDataDir)) {
+      for (const profileName of profileNames) {
         try {
           fileCandidates.push(readAgilStorageSnapshotFromProfileFiles(userDataDir, profileName));
         } catch (error) {
@@ -1590,7 +1634,11 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
   }
 
   for (const userDataDirRoot of userDataDirs) {
-    for (const profileName of readChromeProfileCandidates(userDataDirRoot)) {
+    const profileCandidates = readChromeProfileCandidates(userDataDirRoot);
+    const profileNames = shouldScanAllChromeProfilesForAgilStorage()
+      ? profileCandidates
+      : profileCandidates.slice(0, 1);
+    for (const profileName of profileNames) {
       if (!existsSync(join(userDataDirRoot, profileName))) {
         failures.push(`${profileName}: Chrome profile directory does not exist.`);
         continue;
@@ -2390,11 +2438,12 @@ function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): Canon
   const maxStops = typeof request.filters.maxStops === "number"
     ? Math.max(0, request.filters.maxStops)
     : undefined;
+  const maxVariants = Math.min(50, Math.max(1, Math.trunc(request.filters.maxResults ?? 50)));
   const candidatePairs = request.tripType === "round-trip"
     ? outboundCandidates.flatMap((outbound) => inboundCandidates.map((inbound) => ({ outbound, inbound })))
     : outboundCandidates.map((outbound) => ({ outbound, inbound: undefined }));
 
-  return candidatePairs.flatMap(({ outbound, inbound }) => {
+  return candidatePairs.slice(0, maxVariants).flatMap(({ outbound, inbound }) => {
     const itineraries = inbound
       ? [outbound.itinerary, inbound.itinerary]
       : [outbound.itinerary];

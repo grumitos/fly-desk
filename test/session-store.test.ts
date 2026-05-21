@@ -345,7 +345,7 @@ test("matrix jobs rewrite and refresh purchase path ids for flexible cells", () 
   assert.equal(store.resolvePurchasePath(refreshedPathId)?.path.url, "https://new.example/flexible");
 });
 
-test("findRecentCompletedSearchJob reuses the latest compatible completed search even when Costamar token changes", () => {
+test("findRecentCompletedSearchJob does not reuse completed Costamar searches when token changes", () => {
   const store = new SearchSessionStore();
   const request: SearchRequest = {
     ...buildRequest(),
@@ -413,7 +413,7 @@ test("findRecentCompletedSearchJob reuses the latest compatible completed search
     maxAgeMs: 10 * 60 * 1000,
   });
 
-  assert.equal(reused?.id, completedJob.id);
+  assert.equal(reused, undefined);
 });
 
 test("findRecentCompletedSearchJob ignores legacy result-cap flags in the cache key", () => {
