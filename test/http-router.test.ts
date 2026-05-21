@@ -1342,6 +1342,41 @@ test("rejects exact searches outside the rolling date window", async () => {
   });
 });
 
+
+
+test("rejects one-way stay-range searches outside the rolling date window", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        request: {
+          tripType: "one-way",
+          searchMode: "stay-range",
+          legs: [
+            {
+              origin: "LIM",
+              destination: "MAD",
+              departureStart: "2027-03-01",
+              departureEnd: "2027-04-01",
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+        },
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { errors?: string[] };
+    assert.ok(payload.errors?.some((message) => message.includes("Departure end must be on or before 2027-03-31.")));
+  });
+});
 test("rejects round-trip stays longer than 90 nights", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/search`, {
