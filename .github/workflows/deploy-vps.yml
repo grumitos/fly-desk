@@ -40,11 +40,6 @@ env:
   SERVICE_NAME: ${{ vars.FLY_DESK_SERVICE || 'fly-desk.service' }}
   CHROME_SERVICE_NAME: ${{ vars.FLY_DESK_CHROME_SERVICE || 'fly-desk-chrome.service' }}
   LOCAL_SMOKE_URL: ${{ vars.FLY_DESK_LOCAL_SMOKE_URL || 'http://127.0.0.1:32123/api/health' }}
-  VPS_HOST: ${{ secrets.FLY_DESK_VPS_HOST }}
-  VPS_USER: ${{ secrets.FLY_DESK_VPS_USER }}
-  VPS_PORT: ${{ secrets.FLY_DESK_VPS_PORT }}
-  VPS_SSH_KEY: ${{ secrets.FLY_DESK_VPS_SSH_KEY }}
-  VPS_SSH_KEY_B64: ${{ secrets.FLY_DESK_VPS_SSH_KEY_B64 }}
 
 jobs:
   deploy:
@@ -118,6 +113,12 @@ jobs:
             -czf "${{ steps.revision.outputs.package_path }}" .
 
       - name: Configure SSH
+        env:
+          VPS_HOST: ${{ secrets.FLY_DESK_VPS_HOST }}
+          VPS_USER: ${{ secrets.FLY_DESK_VPS_USER }}
+          VPS_PORT: ${{ secrets.FLY_DESK_VPS_PORT }}
+          VPS_SSH_KEY: ${{ secrets.FLY_DESK_VPS_SSH_KEY }}
+          VPS_SSH_KEY_B64: ${{ secrets.FLY_DESK_VPS_SSH_KEY_B64 }}
         run: |
           set -euo pipefail
           if [ -z "${VPS_HOST}" ] || [ -z "${VPS_USER}" ] || { [ -z "${VPS_SSH_KEY}" ] && [ -z "${VPS_SSH_KEY_B64}" ]; }; then
@@ -136,6 +137,10 @@ jobs:
           ssh-keyscan -p "$port" "$VPS_HOST" >> ~/.ssh/known_hosts
 
       - name: Upload release package
+        env:
+          VPS_HOST: ${{ secrets.FLY_DESK_VPS_HOST }}
+          VPS_USER: ${{ secrets.FLY_DESK_VPS_USER }}
+          VPS_PORT: ${{ secrets.FLY_DESK_VPS_PORT }}
         run: |
           set -euo pipefail
           port="${VPS_PORT:-22}"
@@ -144,6 +149,10 @@ jobs:
             "$VPS_USER@$VPS_HOST:/tmp/${{ steps.revision.outputs.package }}"
 
       - name: Activate revision on VPS
+        env:
+          VPS_HOST: ${{ secrets.FLY_DESK_VPS_HOST }}
+          VPS_USER: ${{ secrets.FLY_DESK_VPS_USER }}
+          VPS_PORT: ${{ secrets.FLY_DESK_VPS_PORT }}
         run: |
           set -euo pipefail
           port="${VPS_PORT:-22}"
@@ -276,6 +285,11 @@ jobs:
           fi
 
       - name: Configure SSH
+        env:
+          VPS_HOST: ${{ secrets.FLY_DESK_VPS_HOST }}
+          VPS_USER: ${{ secrets.FLY_DESK_VPS_USER }}
+          VPS_PORT: ${{ secrets.FLY_DESK_VPS_PORT }}
+          VPS_SSH_KEY: ${{ secrets.FLY_DESK_VPS_SSH_KEY }}
         run: |
           set -euo pipefail
           if [ -z "${VPS_HOST}" ] || [ -z "${VPS_USER}" ] || [ -z "${VPS_SSH_KEY}" ]; then
@@ -289,6 +303,10 @@ jobs:
           ssh-keyscan -p "$port" "$VPS_HOST" >> ~/.ssh/known_hosts
 
       - name: Activate previous release on VPS
+        env:
+          VPS_HOST: ${{ secrets.FLY_DESK_VPS_HOST }}
+          VPS_USER: ${{ secrets.FLY_DESK_VPS_USER }}
+          VPS_PORT: ${{ secrets.FLY_DESK_VPS_PORT }}
         run: |
           set -euo pipefail
           port="${VPS_PORT:-22}"
