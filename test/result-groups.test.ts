@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import {
   buildResultListItems,
   countOffersInResultItems,
+  paginateResultListItems,
   resultListItemContainsOffer,
 } from "../frontend/src/components/results/result-groups"
 import type { CanonicalOffer } from "../frontend/src/types"
@@ -13,12 +14,20 @@ function offer({
   amount = 500,
   rawRefs,
   purchaseProviders = [providerSource],
+  outboundDeparture = "2026-06-15T10:00:00-05:00",
+  outboundArrival = "2026-06-15T16:00:00-05:00",
+  inboundDeparture = "2026-06-20T09:00:00-05:00",
+  inboundArrival = "2026-06-20T15:00:00-05:00",
 }: {
   id: string
   providerSource?: CanonicalOffer["providerSource"]
   amount?: number
   rawRefs?: Record<string, unknown>
   purchaseProviders?: string[]
+  outboundDeparture?: string
+  outboundArrival?: string
+  inboundDeparture?: string
+  inboundArrival?: string
 }): CanonicalOffer {
   return {
     id,
@@ -38,6 +47,38 @@ function offer({
     price: {
       total: { amount, currencyCode: "USD" },
     },
+    itineraries: [
+      {
+        direction: "outbound",
+        durationMinutes: 360,
+        stops: 0,
+        segments: [
+          {
+            flightNumber: "LA 100",
+            marketingCarrier: "LA",
+            origin: "LIM",
+            destination: "MIA",
+            departureAt: outboundDeparture,
+            arrivalAt: outboundArrival,
+          },
+        ],
+      },
+      {
+        direction: "inbound",
+        durationMinutes: 360,
+        stops: 0,
+        segments: [
+          {
+            flightNumber: "LA 200",
+            marketingCarrier: "LA",
+            origin: "MIA",
+            destination: "LIM",
+            departureAt: inboundDeparture,
+            arrivalAt: inboundArrival,
+          },
+        ],
+      },
+    ],
     rawRefs,
     purchasePaths: purchaseProviders.map((provider, index) => ({
       id: `${id}-path-${index}`,
@@ -67,6 +108,38 @@ test("groups native Agil variants with the same fare", () => {
   assert.deepEqual(items[0].group.offers.map((item) => item.id), ["agil-am", "agil-pm"])
   assert.equal(countOffersInResultItems(items.slice(0, 1)), 2)
   assert.equal(resultListItemContainsOffer(items[0], "agil-pm"), true)
+})
+
+test("orders grouped native variants by their changing schedules", () => {
+  const items = buildResultListItems([
+    offer({
+      id: "late-return",
+      rawRefs: { agilGroupId: "G-150" },
+      inboundDeparture: "2026-06-20T20:30:00-05:00",
+      inboundArrival: "2026-06-21T15:25:00-05:00",
+    }),
+    offer({
+      id: "early-return",
+      rawRefs: { agilGroupId: "G-150" },
+      inboundDeparture: "2026-06-20T06:00:00-05:00",
+      inboundArrival: "2026-06-20T15:25:00-05:00",
+    }),
+    offer({
+      id: "mid-return",
+      rawRefs: { agilGroupId: "G-150" },
+      inboundDeparture: "2026-06-20T13:05:00-05:00",
+      inboundArrival: "2026-06-21T15:25:00-05:00",
+    }),
+  ])
+
+  assert.equal(items.length, 1)
+  assert.equal(items[0]?.type, "group")
+  if (items[0]?.type !== "group") throw new Error("Expected variants to be grouped")
+
+  assert.deepEqual(
+    items[0].group.offers.map((item) => item.id),
+    ["early-return", "mid-return", "late-return"],
+  )
 })
 
 test("groups Costamar recommendation variants by recommendation base", () => {
@@ -118,4 +191,35 @@ test("keeps exact provider matches inside the native schedule group", () => {
     items[0].group.offers[0]?.purchasePaths?.map((path) => path.provider),
     ["agil-local", "costamar"],
   )
+})
+
+test("paginates compact groups by visual weight instead of raw grouped height", () => {
+  const items = buildResultListItems([
+    offer({ id: "group-3", rawRefs: { agilGroupId: "G-500" } }),
+    offer({
+      id: "group-1",
+      rawRefs: { agilGroupId: "G-500" },
+      inboundDeparture: "2026-06-20T13:05:00-05:00",
+      inboundArrival: "2026-06-20T20:10:00-05:00",
+    }),
+    offer({
+      id: "group-2",
+      rawRefs: { agilGroupId: "G-500" },
+      inboundDeparture: "2026-06-20T09:15:00-05:00",
+      inboundArrival: "2026-06-20T18:30:00-05:00",
+    }),
+    offer({ id: "solo-1", rawRefs: { agilGroupId: "G-501" }, amount: 510 }),
+    offer({ id: "solo-2", rawRefs: { agilGroupId: "G-502" }, amount: 520 }),
+    offer({ id: "solo-3", rawRefs: { agilGroupId: "G-503" }, amount: 530 }),
+    offer({ id: "solo-4", rawRefs: { agilGroupId: "G-504" }, amount: 540 }),
+  ])
+
+  const pages = paginateResultListItems(items, 4)
+
+  assert.equal(pages.length, 2)
+  assert.equal(pages[0]?.items.length, 3)
+  assert.equal(pages[0]?.startOfferIndex, 0)
+  assert.equal(pages[0]?.endOfferIndex, 5)
+  assert.equal(pages[1]?.startOfferIndex, 5)
+  assert.equal(pages[1]?.endOfferIndex, 7)
 })
