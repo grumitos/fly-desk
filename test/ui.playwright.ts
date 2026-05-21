@@ -322,6 +322,125 @@ test("search-level notices use the idle search controls width after a failed sea
   }, { autoOpen: false });
 });
 
+test("repeated clipboard notice failures keep the workspace from remounting the alert", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1280, height: 760 });
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: {
+          writeText: async () => {
+            throw new DOMException("Clipboard blocked", "NotAllowedError");
+          },
+        },
+      });
+    });
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      const offer = buildOffer({ id: "clipboard-notice-offer", origin: "LIM", destination: "MAD" });
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "clipboard-notice-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers: [offer],
+          allOffers: [offer],
+          searchMeta: {
+            requestedAt: "2026-05-21T10:12:58.582Z",
+            completedAt: "2026-05-21T10:12:58.582Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-05-28&return=2026-06-04&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+    await page.getByTestId("result-card").waitFor();
+
+    const copyConfig = page.getByRole("button", { name: "Copiar configuración" });
+    await copyConfig.click();
+    const notice = page.locator(".fd-search-alert");
+    await notice.filter({ hasText: "No se pudo copiar la configuración. Revisa el permiso del navegador e intenta nuevamente." }).waitFor();
+    await notice.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
+    });
+
+    const before = await page.evaluate(() => {
+      const alert = document.querySelector<HTMLElement>(".fd-search-alert");
+      const workspace = document.querySelector<HTMLElement>(".fd-shell-workspace");
+      if (!alert || !workspace) throw new Error("Missing alert or workspace");
+      (window as unknown as { __flyDeskNoticeMutations: string[] }).__flyDeskNoticeMutations = [];
+      const observer = new MutationObserver((records) => {
+        const mutations = (window as unknown as { __flyDeskNoticeMutations: string[] }).__flyDeskNoticeMutations;
+        records.forEach((record) => {
+          record.removedNodes.forEach((node) => {
+            if (node instanceof HTMLElement && node.matches(".fd-search-alert")) mutations.push("removed");
+          });
+          record.addedNodes.forEach((node) => {
+            if (node instanceof HTMLElement && node.matches(".fd-search-alert")) mutations.push("added");
+          });
+        });
+      });
+      observer.observe(document.querySelector<HTMLElement>(".fd-search-stage") ?? document.body, {
+        childList: true,
+        subtree: true,
+      });
+      (window as unknown as { __flyDeskNoticeObserver: MutationObserver }).__flyDeskNoticeObserver = observer;
+      return {
+        alertTop: Math.round(alert.getBoundingClientRect().top),
+        workspaceTop: Math.round(workspace.getBoundingClientRect().top),
+      };
+    });
+
+    await copyConfig.click();
+    await copyConfig.click();
+    await page.waitForTimeout(120);
+
+    const after = await page.evaluate(() => {
+      const alert = document.querySelector<HTMLElement>(".fd-search-alert");
+      const workspace = document.querySelector<HTMLElement>(".fd-shell-workspace");
+      if (!alert || !workspace) throw new Error("Missing alert or workspace after retries");
+      const mutations = (window as unknown as { __flyDeskNoticeMutations: string[] }).__flyDeskNoticeMutations;
+      (window as unknown as { __flyDeskNoticeObserver?: MutationObserver }).__flyDeskNoticeObserver?.disconnect();
+      return {
+        alertTop: Math.round(alert.getBoundingClientRect().top),
+        workspaceTop: Math.round(workspace.getBoundingClientRect().top),
+        mutations,
+      };
+    });
+
+    assert.deepEqual(after.mutations, []);
+    assert.ok(Math.abs(after.alertTop - before.alertTop) <= 1, JSON.stringify({ before, after }));
+    assert.ok(Math.abs(after.workspaceTop - before.workspaceTop) <= 1, JSON.stringify({ before, after }));
+  }, { autoOpen: false });
+});
+
 test("wide desktop shell uses half of the leftover viewport width", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 1920, height: 1080 });

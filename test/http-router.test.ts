@@ -290,8 +290,7 @@ test("quotation uses the stored exact offer when the selected result belongs to 
     const payload = await response.json() as { commercialText?: string };
     assert.match(payload.commercialText ?? "", /COTIZACIÓN BOLETO AÉREO/);
     assert.match(payload.commercialText ?? "", /US\$ 1,234 por adulto/);
-    assert.match(payload.commercialText ?? "", /S\/ 4,319 aprox\. por adulto/);
-    assert.match(payload.commercialText ?? "", /Tipo de cambio: 1 USD = S\/ 3\.5000 · Fuente: Agil · Fecha: \d{4}-\d{2}-\d{2}/);
+    assert.doesNotMatch(payload.commercialText ?? "", /S\/|aprox|Tipo de cambio|Fuente:|Fecha:/);
   });
 });
 

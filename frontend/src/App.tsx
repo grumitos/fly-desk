@@ -223,8 +223,8 @@ export default function App() {
     }
 
     try {
-      setClipboardError(null)
       await writeSharedSearchToClipboard(request, sortModeRef.current)
+      setClipboardError(null)
     } catch {
       setClipboardError("No se pudo copiar la configuración. Revisa el permiso del navegador e intenta nuevamente.")
     }
