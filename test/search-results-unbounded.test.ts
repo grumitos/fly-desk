@@ -81,3 +81,21 @@ test("search materialization keeps every provider result even when legacy cap fi
   assert.equal(response.allOffers?.length, 14);
   assert.equal(response.offers[13]?.providerOfferRef, "ref-14");
 });
+
+test("search materialization does not mark unverified offers as quote-ready", () => {
+  const response = materializeSearchResponse(
+    buildRequest(),
+    "cheapest",
+    "agil-local",
+    {
+      offers: [buildOffer(1)],
+      warnings: [],
+      partial: false,
+    },
+  );
+
+  assert.equal(response.offers[0]?.priceConfidence, "live");
+  assert.equal(response.offers[0]?.priceStatus, "unverified");
+  assert.equal(response.offers[0]?.quotationPreparedAt, undefined);
+  assert.equal(response.allOffers?.[0]?.quotationPreparedAt, undefined);
+});

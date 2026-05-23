@@ -364,7 +364,43 @@ test("international commercial quotation uses dollars only even when an exchange
   assert.doesNotMatch(text, /aprox|Tipo de cambio|Fuente|Fecha/);
 });
 
-test("multi-passenger commercial quotation keeps per-person price above total", () => {
+test("adult-only multi-passenger commercial quotation keeps per-adult price above total", () => {
+  const request = buildRequest();
+  request.passengers = {
+    adults: 3,
+    children: 0,
+    infants: 0,
+  };
+
+  const text = buildCommercialQuotation(buildOffer({
+    price: {
+      total: {
+        amount: 1361.14,
+        currencyCode: "USD",
+      },
+      base: {
+        amount: 1120,
+        currencyCode: "USD",
+      },
+      taxes: {
+        amount: 241.14,
+        currencyCode: "USD",
+      },
+    },
+  }), request, {
+    timeZone: "UTC",
+    usdToPenRateInfo: {
+      rate: 3.61,
+      sourceLabel: "Agil",
+      date: "2026-04-07",
+    },
+  });
+
+  assert.match(text, /💵 PRECIO:\nUS\$ 453\.71 por adulto\nTotal: US\$ 1,361\.14/);
+  assert.doesNotMatch(text, /S\/|aprox|Tipo de cambio|Fuente|Fecha/);
+});
+
+test("mixed-passenger commercial quotation shows total instead of average adult fare", () => {
   const request = buildRequest();
   request.passengers = {
     adults: 1,
@@ -396,7 +432,8 @@ test("multi-passenger commercial quotation keeps per-person price above total", 
     },
   });
 
-  assert.match(text, /💵 PRECIO:\nUS\$ 453\.71 por adulto\nTotal: US\$ 1,361\.14/);
+  assert.match(text, /💵 PRECIO:\nTotal: US\$ 1,361\.14/);
+  assert.doesNotMatch(text, /US\$ 453\.71 por adulto|por adulto\nTotal: US\$ 1,361\.14/);
   assert.doesNotMatch(text, /S\/|aprox|Tipo de cambio|Fuente|Fecha/);
 });
 
