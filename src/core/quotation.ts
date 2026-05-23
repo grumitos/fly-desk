@@ -483,23 +483,28 @@ function buildCommercialPriceLines(
   const legacyRate = normalizeCommercialUsdToPenRate(options.usdToPenRate);
   const usdToPenRate = rateInfoRate ?? legacyRate;
   const domesticPeru = isPeruDomesticQuotation(offer, request);
-  const passengerCount = Math.max(
-    1,
-    Math.round(
-      (Number.isFinite(request.passengers.adults) ? request.passengers.adults : 1)
-      + (Number.isFinite(request.passengers.children) ? request.passengers.children : 0)
-      + (Number.isFinite(request.passengers.infants) ? request.passengers.infants : 0),
-    ),
-  );
+  const adultCount = Math.max(1, Math.round(
+    Number.isFinite(request.passengers.adults) ? request.passengers.adults : 1,
+  ));
+  const childCount = Math.max(0, Math.round(
+    Number.isFinite(request.passengers.children) ? request.passengers.children : 0,
+  ));
+  const infantCount = Math.max(0, Math.round(
+    Number.isFinite(request.passengers.infants) ? request.passengers.infants : 0,
+  ));
   const target = domesticPeru
     ? domesticPenPrice(currencyCode, totalAmount, usdToPenRate)
     : internationalUsdPrice(currencyCode, totalAmount, usdToPenRate);
-  const perPassengerAmount = target.amount / passengerCount;
+  if (childCount > 0 || infantCount > 0) {
+    return [formatCommercialTotalLine("Total", target.prefix, target.amount)];
+  }
+
+  const perAdultAmount = target.amount / adultCount;
   const lines = [
-    formatCommercialPriceLine(target.prefix, perPassengerAmount, "por adulto"),
+    formatCommercialPriceLine(target.prefix, perAdultAmount, "por adulto"),
   ];
 
-  if (passengerCount > 1) {
+  if (adultCount > 1) {
     lines.push(formatCommercialTotalLine("Total", target.prefix, target.amount));
   }
 

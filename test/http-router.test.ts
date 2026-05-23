@@ -469,7 +469,7 @@ test("quotation validates an unverified stored offer before rendering", { concur
   }
 });
 
-test("quotation uses a prepared live result without provider revalidation", { concurrency: false }, async () => {
+test("quotation revalidates a prepared live result before rendering", { concurrency: false }, async () => {
   const runtime = getRuntime();
   const offer = {
     ...buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0"),
@@ -507,10 +507,10 @@ test("quotation uses a prepared live result without provider revalidation", { co
       }))
     );
 
-    assert.equal(response.status, 200);
-    const payload = await response.json() as { commercialText?: string };
-    assert.equal(validatorCalls, 0);
-    assert.match(payload.commercialText ?? "", /COTIZACIÓN BOLETO AÉREO/);
+    assert.equal(response.status, 409);
+    const payload = await response.json() as { errors?: string[] };
+    assert.equal(validatorCalls, 1);
+    assert.ok(payload.errors?.includes("Selected offer could not be validated for quotation."));
   } finally {
     setQuotationOfferValidatorForTests();
   }

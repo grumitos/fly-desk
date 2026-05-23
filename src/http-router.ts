@@ -1097,8 +1097,7 @@ function isTrustedApiRequest(request: Request): boolean {
 }
 
 function isOfferValidatedForQuotation(offer: CanonicalOffer): boolean {
-  return offer.priceConfidence === "validated" && offer.priceStatus === "verified"
-    || Boolean(offer.quotationPreparedAt);
+  return offer.priceConfidence === "validated" && offer.priceStatus === "verified";
 }
 
 function stripQuotationPreparation(offer: CanonicalOffer): CanonicalOffer {
