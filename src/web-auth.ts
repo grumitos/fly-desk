@@ -268,7 +268,7 @@ export function renderLoginPage(error?: string, theme: WebTheme = DEFAULT_WEB_TH
         --primary: #d97757;
         --primary-foreground: #ffffff;
         --danger: #7a2e18;
-        --ring: #2977d6;
+        --ring: #d97757;
         --keyboard-shift: 0px;
         font-family: Inter, "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         background: var(--background);
@@ -283,7 +283,7 @@ export function renderLoginPage(error?: string, theme: WebTheme = DEFAULT_WEB_TH
         --border: #e2e1da26;
         --input: #e2e1da26;
         --danger: #f2c3b3;
-        --ring: #3886e5;
+        --ring: #d97757;
       }
       *, *::before, *::after { box-sizing: border-box; }
       html, body { width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; }
@@ -379,10 +379,18 @@ export function renderLoginPage(error?: string, theme: WebTheme = DEFAULT_WEB_TH
         padding: 17px 12px 5px;
         font: inherit;
         font-size: 14px;
+        transition:
+          border-color 160ms ease,
+          box-shadow 160ms ease,
+          background-color 160ms ease;
+      }
+      .field:hover input {
+        border-color: color-mix(in srgb, var(--primary) 38%, var(--input));
       }
       input:focus {
         outline: 2px solid var(--ring);
         outline-offset: 2px;
+        border-color: color-mix(in srgb, var(--primary) 50%, var(--input));
       }
       button {
         height: 44px;

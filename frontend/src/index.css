@@ -710,6 +710,15 @@
     line-height: 1.2;
   }
 
+  .fd-location-usage-suggestions {
+    @apply mt-1 grid grid-cols-3 gap-1.5;
+  }
+
+  .fd-location-usage-card {
+    @apply flex h-8 min-w-0 items-center justify-center px-2 font-mono text-xs font-bold;
+    letter-spacing: 0;
+  }
+
   .fd-label {
     @apply text-[10px] font-bold uppercase leading-none text-muted-foreground;
     letter-spacing: 0;
