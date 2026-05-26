@@ -1172,6 +1172,62 @@ test("autocomplete resolves an exact location match and closes suggestions", asy
   }, { autoOpen: false });
 });
 
+test("frequent location suggestions resolve labels and collapse their own row", async () => {
+  await withDesktopPage(async ({ baseUrl, browser }) => {
+    const page = await browser.newPage();
+    const now = Date.now();
+    await page.route("**/api/locations**", async (route) => {
+      const url = new URL(route.request().url());
+      const query = url.searchParams.get("q") ?? "";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          query,
+          suggestions: [
+            { code: "LIM", city: "Lima", country: "PE", countryCode: "PE", label: "All airports: Lima, PE (LIM)" },
+          ],
+        }),
+      });
+    });
+    await page.addInitScript((payload) => {
+      window.localStorage.setItem("flydesk-location-usage-v1", JSON.stringify(payload));
+    }, {
+      version: 1,
+      entries: [
+        { role: "origin", code: "LIM", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
+        { role: "origin", code: "TPP", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
+        { role: "origin", code: "CUZ", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
+        { role: "destination", code: "MAD", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
+        { role: "destination", code: "MIA", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
+        { role: "destination", code: "BUE", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
+      ],
+    });
+
+    await openDesktop(page, baseUrl);
+    const exactPillBox = await page.getByRole("button", { name: "Exacto" }).boundingBox();
+    const firstSuggestionBox = await page.getByRole("button", { name: "Usar LIM como origen" }).boundingBox();
+    assert.ok(exactPillBox);
+    assert.ok(firstSuggestionBox);
+    assert.equal(Math.round(firstSuggestionBox.height), Math.round(exactPillBox.height));
+
+    const locationsResponse = page.waitForResponse("**/api/locations**");
+    await page.getByRole("button", { name: "Usar LIM como origen" }).click();
+    await locationsResponse;
+
+    const origin = page.getByRole("combobox", { name: "Origen" });
+    await page.waitForFunction(() => {
+      const input = document.querySelector<HTMLInputElement>('[aria-label="Origen"]');
+      return input?.value === "LIM - Lima, Perú";
+    });
+    await page.waitForTimeout(170);
+
+    assert.equal(await origin.inputValue(), "LIM - Lima, Perú");
+    assert.equal(await page.getByRole("button", { name: /como origen/ }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: /como destino/ }).count(), 3);
+  }, { autoOpen: false });
+});
+
 test("passenger steppers have accessible icon-only labels", async () => {
   await withDesktopPage(async ({ page }) => {
     await page.getByRole("button", { name: "Seleccionar pasajeros" }).click();

@@ -42,6 +42,7 @@ const TOPBAR_CONTROLS_MEDIA_QUERY = "(min-width: 768px)"
 
 type SearchModeControl = "exact" | "flexible" | "migration"
 type SearchTouchedField = "origin" | "destination" | "departureDate" | "returnDate" | "passengers" | "migrationMonths"
+type LocationUsageField = "origin" | "destination"
 type MigrationMonthOption = {
   key: string
   label: string
@@ -85,6 +86,14 @@ export function SearchShell({
   const [infants, setInfants] = useState(0)
   const [paxOpen, setPaxOpen] = useState(false)
   const [usageSuggestions, setUsageSuggestions] = useState<LocationUsageSuggestions>(() => getLocationUsageSuggestions())
+  const [hiddenUsageSuggestionFields, setHiddenUsageSuggestionFields] = useState<Record<LocationUsageField, boolean>>({
+    origin: false,
+    destination: false,
+  })
+  const [exitingUsageSuggestionFields, setExitingUsageSuggestionFields] = useState<Record<LocationUsageField, boolean>>({
+    origin: false,
+    destination: false,
+  })
   const datePolicy = useMemo(() => getRuntimeSearchDatePolicy(), [])
   const migrationMonthOptions = useMemo(
     () => buildMigrationMonthOptions(datePolicy.minSearchDate),
@@ -127,6 +136,16 @@ export function SearchShell({
   const setDestinationQuery = destination.setQuery
   const resolveOriginQuery = origin.resolveCurrentQuery
   const resolveDestinationQuery = destination.resolveCurrentQuery
+  const usageSuggestionExitTimersRef = useRef<Partial<Record<LocationUsageField, number>>>({})
+
+  useEffect(() => {
+    const timers = usageSuggestionExitTimersRef.current
+    return () => {
+      for (const timer of Object.values(timers)) {
+        if (timer) window.clearTimeout(timer)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (!syncedRequest) return
@@ -296,16 +315,45 @@ export function SearchShell({
     destination.setQuery(origin.query)
   }
 
-  const applyOriginUsageSuggestion = (code: string) => {
+  const clearUsageSuggestionExitTimer = (field: LocationUsageField) => {
+    const timer = usageSuggestionExitTimersRef.current[field]
+    if (timer) window.clearTimeout(timer)
+    delete usageSuggestionExitTimersRef.current[field]
+  }
+
+  const resetUsageSuggestionVisibility = () => {
+    clearUsageSuggestionExitTimer("origin")
+    clearUsageSuggestionExitTimer("destination")
+    setHiddenUsageSuggestionFields({ origin: false, destination: false })
+    setExitingUsageSuggestionFields({ origin: false, destination: false })
+  }
+
+  const hideUsageSuggestionField = (field: LocationUsageField) => {
+    clearUsageSuggestionExitTimer(field)
+    setExitingUsageSuggestionFields((current) => ({ ...current, [field]: true }))
+    usageSuggestionExitTimersRef.current[field] = window.setTimeout(() => {
+      setHiddenUsageSuggestionFields((current) => ({ ...current, [field]: true }))
+      setExitingUsageSuggestionFields((current) => ({ ...current, [field]: false }))
+      delete usageSuggestionExitTimersRef.current[field]
+    }, 150)
+  }
+
+  const applyOriginUsageSuggestion = async (code: string) => {
+    hideUsageSuggestionField("origin")
     setOriginCode(code)
     origin.setQuery(code)
     setTouched((current) => ({ ...current, origin: true }))
+    const resolved = await origin.resolveCurrentQuery()
+    if (resolved) setOriginCode(resolved.code)
   }
 
-  const applyDestinationUsageSuggestion = (code: string) => {
+  const applyDestinationUsageSuggestion = async (code: string) => {
+    hideUsageSuggestionField("destination")
     setDestCode(code)
     destination.setQuery(code)
     setTouched((current) => ({ ...current, destination: true }))
+    const resolved = await destination.resolveCurrentQuery()
+    if (resolved) setDestCode(resolved.code)
   }
 
   const validation = buildSearchValidation({
@@ -456,6 +504,7 @@ export function SearchShell({
 
     const nextRequest = buildRequest(resolvedRequest.origin, resolvedRequest.destination)
     setUsageSuggestions(recordLocationUsageFromSearch(nextRequest))
+    resetUsageSuggestionVisibility()
     onSearch(nextRequest)
   }
 
@@ -533,7 +582,8 @@ export function SearchShell({
                 setOriginCode(suggestion.code)
                 setTouched((current) => ({ ...current, origin: true }))
               }}
-              quickSuggestions={shouldShowUsageSuggestions && !origin.open ? usageSuggestions.origin : []}
+              quickSuggestions={shouldShowUsageSuggestions && !origin.open && !hiddenUsageSuggestionFields.origin ? usageSuggestions.origin : []}
+              quickSuggestionsExiting={exitingUsageSuggestionFields.origin}
               onQuickSuggestionSelect={applyOriginUsageSuggestion}
               invalid={Boolean(visibleOriginError)}
               helperText={visibleOriginError}
@@ -577,7 +627,8 @@ export function SearchShell({
               setDestCode(suggestion.code)
               setTouched((current) => ({ ...current, destination: true }))
             }}
-            quickSuggestions={shouldShowUsageSuggestions && !destination.open ? usageSuggestions.destination : []}
+            quickSuggestions={shouldShowUsageSuggestions && !destination.open && !hiddenUsageSuggestionFields.destination ? usageSuggestions.destination : []}
+            quickSuggestionsExiting={exitingUsageSuggestionFields.destination}
             onQuickSuggestionSelect={applyDestinationUsageSuggestion}
             invalid={Boolean(visibleDestinationError)}
             helperText={visibleDestinationError}
@@ -848,6 +899,7 @@ function LocationField({
   onChange,
   onSelect,
   quickSuggestions = [],
+  quickSuggestionsExiting = false,
   onQuickSuggestionSelect,
   invalid = false,
   helperText,
@@ -867,7 +919,8 @@ function LocationField({
   onChange: (value: string) => void
   onSelect: (suggestion: LocationSuggestion) => void
   quickSuggestions?: string[]
-  onQuickSuggestionSelect?: (code: string) => void
+  quickSuggestionsExiting?: boolean
+  onQuickSuggestionSelect?: (code: string) => void | Promise<void>
   invalid?: boolean
   helperText?: string
 }) {
@@ -951,22 +1004,13 @@ function LocationField({
         />
       </div>
       <ControlHelper id={`${fieldId}-helper`} text={helperText} />
-      {quickSuggestions.length > 0 && onQuickSuggestionSelect ? (
-        <div className="fd-location-usage-suggestions" aria-label={`Sugerencias frecuentes de ${label.toLowerCase()}`}>
-          {quickSuggestions.map((code) => (
-            <button
-              key={`${fieldId}-${code}`}
-              type="button"
-              className="fd-control fd-location-usage-card"
-              aria-label={`Usar ${code} como ${label.toLowerCase()}`}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => onQuickSuggestionSelect(code)}
-            >
-              {code}
-            </button>
-          ))}
-        </div>
-      ) : null}
+      <LocationUsageSuggestionRow
+        fieldId={fieldId}
+        label={label}
+        suggestions={quickSuggestions}
+        exiting={quickSuggestionsExiting}
+        onSelect={onQuickSuggestionSelect}
+      />
       {listboxTarget && shouldShowListbox && listboxStyle ? createPortal(
         <div
           id={listboxId}
@@ -997,6 +1041,46 @@ function LocationField({
         </div>,
         listboxTarget,
       ) : null}
+    </div>
+  )
+}
+
+function LocationUsageSuggestionRow({
+  fieldId,
+  label,
+  suggestions,
+  exiting,
+  onSelect,
+}: {
+  fieldId: string
+  label: string
+  suggestions: string[]
+  exiting: boolean
+  onSelect?: (code: string) => void | Promise<void>
+}) {
+  if (suggestions.length === 0 || !onSelect) {
+    return null
+  }
+
+  return (
+    <div
+      className={cn("fd-location-usage-suggestions", exiting && "fd-location-usage-suggestions-exit")}
+      aria-label={`Sugerencias frecuentes de ${label.toLowerCase()}`}
+    >
+      {suggestions.map((code) => (
+        <button
+          key={`${fieldId}-${code}`}
+          type="button"
+          className="fd-control fd-location-usage-card"
+          aria-label={`Usar ${code} como ${label.toLowerCase()}`}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            void onSelect(code)
+          }}
+        >
+          {code}
+        </button>
+      ))}
     </div>
   )
 }
