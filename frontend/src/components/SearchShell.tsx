@@ -8,6 +8,11 @@ import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-contr
 import { TOPBAR_SEARCH_CONTROLS_ID } from "@/components/TopBar"
 import { AppIcon, type AppIconName } from "@/components/ui/app-icon"
 import { useAutocomplete } from "@/hooks/useAutocomplete"
+import {
+  getLocationUsageSuggestions,
+  recordLocationUsageFromSearch,
+  type LocationUsageSuggestions,
+} from "@/lib/location-usage-suggestions"
 import { cn } from "@/lib/utils"
 import type { LocationSuggestion, SearchRequest, SortMode } from "@/types"
 
@@ -51,6 +56,7 @@ interface SearchShellProps {
   loading: boolean
   loadingLabel?: string
   controlsPlacement?: "inline" | "topbar"
+  showLocationUsageSuggestions?: boolean
   syncedRequest?: SearchRequest | null
   resetToken?: number
   onSearchConfigDraftChange?: (request: SearchRequest | null) => void
@@ -62,6 +68,7 @@ export function SearchShell({
   loading,
   loadingLabel = "Buscando",
   controlsPlacement = "inline",
+  showLocationUsageSuggestions = false,
   syncedRequest = null,
   resetToken = 0,
   onSearchConfigDraftChange,
@@ -77,6 +84,7 @@ export function SearchShell({
   const [children, setChildren] = useState(0)
   const [infants, setInfants] = useState(0)
   const [paxOpen, setPaxOpen] = useState(false)
+  const [usageSuggestions, setUsageSuggestions] = useState<LocationUsageSuggestions>(() => getLocationUsageSuggestions())
   const datePolicy = useMemo(() => getRuntimeSearchDatePolicy(), [])
   const migrationMonthOptions = useMemo(
     () => buildMigrationMonthOptions(datePolicy.minSearchDate),
@@ -288,6 +296,18 @@ export function SearchShell({
     destination.setQuery(origin.query)
   }
 
+  const applyOriginUsageSuggestion = (code: string) => {
+    setOriginCode(code)
+    origin.setQuery(code)
+    setTouched((current) => ({ ...current, origin: true }))
+  }
+
+  const applyDestinationUsageSuggestion = (code: string) => {
+    setDestCode(code)
+    destination.setQuery(code)
+    setTouched((current) => ({ ...current, destination: true }))
+  }
+
   const validation = buildSearchValidation({
     originValue: origin.query,
     destinationValue: destination.query,
@@ -434,7 +454,9 @@ export function SearchShell({
       return
     }
 
-    onSearch(buildRequest(resolvedRequest.origin, resolvedRequest.destination))
+    const nextRequest = buildRequest(resolvedRequest.origin, resolvedRequest.destination)
+    setUsageSuggestions(recordLocationUsageFromSearch(nextRequest))
+    onSearch(nextRequest)
   }
 
   const passengerTotal = adults + children + infants
@@ -448,6 +470,7 @@ export function SearchShell({
     ? validation.returnDate
     : undefined
   const visiblePassengerError = touched.passengers ? validation.passengers : undefined
+  const shouldShowUsageSuggestions = showLocationUsageSuggestions && !loading
   const visibleMigrationMonthsError = mode === "migration" && touched.migrationMonths
     ? validation.migrationMonths
     : undefined
@@ -510,6 +533,8 @@ export function SearchShell({
                 setOriginCode(suggestion.code)
                 setTouched((current) => ({ ...current, origin: true }))
               }}
+              quickSuggestions={shouldShowUsageSuggestions && !origin.open ? usageSuggestions.origin : []}
+              onQuickSuggestionSelect={applyOriginUsageSuggestion}
               invalid={Boolean(visibleOriginError)}
               helperText={visibleOriginError}
             />
@@ -552,6 +577,8 @@ export function SearchShell({
               setDestCode(suggestion.code)
               setTouched((current) => ({ ...current, destination: true }))
             }}
+            quickSuggestions={shouldShowUsageSuggestions && !destination.open ? usageSuggestions.destination : []}
+            onQuickSuggestionSelect={applyDestinationUsageSuggestion}
             invalid={Boolean(visibleDestinationError)}
             helperText={visibleDestinationError}
           />
@@ -820,6 +847,8 @@ function LocationField({
   onKeyDown,
   onChange,
   onSelect,
+  quickSuggestions = [],
+  onQuickSuggestionSelect,
   invalid = false,
   helperText,
 }: {
@@ -837,6 +866,8 @@ function LocationField({
   onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void
   onChange: (value: string) => void
   onSelect: (suggestion: LocationSuggestion) => void
+  quickSuggestions?: string[]
+  onQuickSuggestionSelect?: (code: string) => void
   invalid?: boolean
   helperText?: string
 }) {
@@ -920,6 +951,22 @@ function LocationField({
         />
       </div>
       <ControlHelper id={`${fieldId}-helper`} text={helperText} />
+      {quickSuggestions.length > 0 && onQuickSuggestionSelect ? (
+        <div className="fd-location-usage-suggestions" aria-label={`Sugerencias frecuentes de ${label.toLowerCase()}`}>
+          {quickSuggestions.map((code) => (
+            <button
+              key={`${fieldId}-${code}`}
+              type="button"
+              className="fd-control fd-location-usage-card"
+              aria-label={`Usar ${code} como ${label.toLowerCase()}`}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => onQuickSuggestionSelect(code)}
+            >
+              {code}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {listboxTarget && shouldShowListbox && listboxStyle ? createPortal(
         <div
           id={listboxId}

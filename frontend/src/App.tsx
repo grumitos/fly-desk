@@ -379,6 +379,7 @@ export default function App() {
               loadingLabel={loadingLabel}
               onCancelSearch={cancel}
               controlsPlacement={shouldShowWorkspace ? "topbar" : "inline"}
+              showLocationUsageSuggestions={isSearchIdle}
               syncedRequest={lastRequest ?? initialSharedRequest}
               onSearchConfigDraftChange={setSearchDraft}
             />
