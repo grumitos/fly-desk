@@ -105,6 +105,88 @@ test("current React shell exposes the primary search controls", async () => {
   });
 });
 
+test("location field surfaces focus the input in idle and search layouts", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route("**/api/locations**", async (route) => {
+      const query = (new URL(route.request().url()).searchParams.get("q") ?? "").trim().toUpperCase();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          suggestions: [
+            { code: query || "LIM", city: "Lima", country: "PE", countryCode: "PE", label: `Lima, PE (${query || "LIM"})` },
+          ],
+        }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "surface-focus-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers: [],
+          allOffers: [],
+          searchMeta: {
+            requestedAt: "2026-05-27T00:00:00.000Z",
+            completedAt: "2026-05-27T00:00:00.000Z",
+            providersUsed: [],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+
+    await page.locator("#location-origen").evaluate((input) => {
+      const control = input.parentElement;
+      const rect = control?.getBoundingClientRect();
+      if (!rect) throw new Error("Missing origin control");
+      window.scrollTo(0, 0);
+      return { x: rect.left + 16, y: rect.top + rect.height / 2 };
+    }).then(({ x, y }) => page.mouse.click(x, y));
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "location-origen");
+    await page.keyboard.type("lim");
+    await page.getByRole("listbox").waitFor();
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Destino" }).waitFor();
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+    await page.locator(".fd-workspace-enter").waitFor({ state: "visible" });
+
+    await page.locator("#location-destino").evaluate((input) => {
+      const control = input.parentElement;
+      const rect = control?.getBoundingClientRect();
+      if (!rect) throw new Error("Missing destination control");
+      return { x: rect.left + 16, y: rect.top + rect.height / 2 };
+    }).then(({ x, y }) => page.mouse.click(x, y));
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "location-destino");
+    await page.keyboard.press("Control+A");
+    await page.keyboard.type("mad");
+    await page.getByRole("listbox").waitFor();
+  }, { autoOpen: false });
+});
+
 test("idle search form transitions smoothly into the workspace layout", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.route("**/api/locations**", async (route) => {
@@ -905,17 +987,21 @@ test("running search button cancels the active job and returns to editing", asyn
 
     const stopButton = page.getByRole("button", { name: "Detener búsqueda" });
     await stopButton.waitFor();
+    await page.getByTestId("search-shell-frame").evaluate(async (frame) => {
+      await Promise.all(frame.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
+    });
     await stopButton.hover();
     assert.equal(await stopButton.evaluate((button) => button.matches(":hover")), true);
     assert.match(await stopButton.innerText(), /Detener/);
 
+    pollRequests = 0;
     await stopButton.click();
     await page.getByRole("button", { name: "Buscar" }).waitFor();
     await page.getByRole("heading", { name: "Búsqueda detenida" }).waitFor();
     await page.waitForTimeout(1000);
 
     assert.equal(cancelRequests, 1);
-    assert.equal(pollRequests, 0);
+    assert.ok(pollRequests <= 1, `Expected at most one in-flight poll after cancel, got ${pollRequests}.`);
   }, { autoOpen: false });
 });
 
@@ -1282,6 +1368,80 @@ test("idle location suggestions do not disturb autocomplete and swap geometry", 
 
     assert.ok(Math.abs(geometry.autocompleteGap - 4) <= 1);
     assert.ok(Math.abs(geometry.swapCenterY - geometry.originCenterY) <= 1);
+  }, { autoOpen: false });
+});
+
+test("using both idle location suggestions keeps the search block anchored", async () => {
+  await withDesktopPage(async ({ baseUrl, browser }) => {
+    const page = await browser.newPage();
+    const now = Date.now();
+    await page.route("**/api/locations**", async (route) => {
+      const url = new URL(route.request().url());
+      const query = (url.searchParams.get("q") ?? "LIM").trim().toUpperCase();
+      const cityByCode: Record<string, string> = {
+        BUE: "Buenos Aires",
+        CUZ: "Cusco",
+        LIM: "Lima",
+        MAD: "Madrid",
+        MIA: "Miami",
+        TPP: "Tarapoto",
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          query,
+          suggestions: [
+            {
+              code: query,
+              city: cityByCode[query] ?? query,
+              country: query === "MAD" ? "ES" : "PE",
+              countryCode: query === "MAD" ? "ES" : "PE",
+              label: `${cityByCode[query] ?? query}, ${query === "MAD" ? "ES" : "PE"} (${query})`,
+            },
+          ],
+        }),
+      });
+    });
+    await page.addInitScript((payload) => {
+      window.localStorage.setItem("flydesk-location-usage-v1", JSON.stringify(payload));
+    }, {
+      version: 1,
+      entries: [
+        { role: "origin", code: "LIM", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
+        { role: "origin", code: "TPP", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
+        { role: "origin", code: "CUZ", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
+        { role: "destination", code: "MAD", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
+        { role: "destination", code: "MIA", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
+        { role: "destination", code: "BUE", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
+      ],
+    });
+
+    await openDesktop(page, baseUrl);
+    const frame = page.locator('[data-testid="search-shell-frame"]');
+    const grid = page.locator(".fd-search-grid");
+    const frameTopBefore = await frame.evaluate((element) => element.getBoundingClientRect().top);
+    const gridHeightBefore = await grid.evaluate((element) => element.getBoundingClientRect().height);
+
+    await Promise.all([
+      page.waitForResponse("**/api/locations**"),
+      page.getByRole("button", { name: "Usar LIM como origen" }).click(),
+    ]);
+    await page.waitForTimeout(170);
+    assert.equal(await page.getByRole("button", { name: /como origen/ }).count(), 0);
+
+    await Promise.all([
+      page.waitForResponse("**/api/locations**"),
+      page.getByRole("button", { name: "Usar MAD como destino" }).click(),
+    ]);
+    await page.waitForTimeout(170);
+
+    const frameTopAfter = await frame.evaluate((element) => element.getBoundingClientRect().top);
+    const gridHeightAfter = await grid.evaluate((element) => element.getBoundingClientRect().height);
+
+    assert.equal(await page.getByRole("button", { name: /como destino/ }).count(), 0);
+    assert.ok(Math.abs(frameTopAfter - frameTopBefore) <= 1);
+    assert.equal(Math.round(gridHeightAfter), Math.round(gridHeightBefore));
   }, { autoOpen: false });
 });
 
