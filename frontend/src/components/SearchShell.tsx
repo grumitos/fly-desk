@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type RefObject } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type MouseEvent, type RefObject } from "react"
 import { createPortal } from "react-dom"
 import { es } from "react-day-picker/locale"
 import { Button } from "@/components/ui/button"
@@ -517,6 +517,8 @@ export function SearchShell({
   const visiblePassengerError = touched.passengers ? validation.passengers : undefined
   const shouldShowUsageSuggestions = showLocationUsageSuggestions && !loading
   const reserveIdleHelperSpace = shouldShowUsageSuggestions
+  const reserveOriginSuggestionSpace = shouldShowUsageSuggestions && usageSuggestions.origin.length > 0
+  const reserveDestinationSuggestionSpace = shouldShowUsageSuggestions && usageSuggestions.destination.length > 0
   const searchGridClassName = cn(
     "fd-search-grid grid grid-cols-2 gap-1.5 transition-[grid-template-columns,max-width] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]",
     "lg:grid-cols-[minmax(150px,1.2fr)_34px_minmax(150px,1.2fr)_minmax(128px,.85fr)_minmax(128px,.85fr)_minmax(144px,.9fr)_124px]",
@@ -587,6 +589,7 @@ export function SearchShell({
               quickSuggestionsExiting={exitingUsageSuggestionFields.origin}
               onQuickSuggestionSelect={applyOriginUsageSuggestion}
               reserveHelperSpace={reserveIdleHelperSpace}
+              reserveSuggestionSpace={reserveOriginSuggestionSpace}
               invalid={Boolean(visibleOriginError)}
               helperText={visibleOriginError}
             />
@@ -633,6 +636,7 @@ export function SearchShell({
             quickSuggestionsExiting={exitingUsageSuggestionFields.destination}
             onQuickSuggestionSelect={applyDestinationUsageSuggestion}
             reserveHelperSpace={reserveIdleHelperSpace}
+            reserveSuggestionSpace={reserveDestinationSuggestionSpace}
             invalid={Boolean(visibleDestinationError)}
             helperText={visibleDestinationError}
           />
@@ -909,6 +913,7 @@ function LocationField({
   quickSuggestionsExiting = false,
   onQuickSuggestionSelect,
   reserveHelperSpace = false,
+  reserveSuggestionSpace = false,
   invalid = false,
   helperText,
 }: {
@@ -930,6 +935,7 @@ function LocationField({
   quickSuggestionsExiting?: boolean
   onQuickSuggestionSelect?: (code: string) => void | Promise<void>
   reserveHelperSpace?: boolean
+  reserveSuggestionSpace?: boolean
   invalid?: boolean
   helperText?: string
 }) {
@@ -976,13 +982,34 @@ function LocationField({
     }
   }, [shouldShowListbox, suggestions.length, value])
 
+  const focusInputFromControl = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.target === inputRef.current) {
+      return
+    }
+
+    const alreadyFocused = document.activeElement === inputRef.current
+    inputRef.current?.focus()
+    if (alreadyFocused) {
+      onFocus()
+    }
+  }
+
   return (
-    <div ref={fieldRef} className={cn("relative", reserveHelperSpace && "fd-search-field-shell")}>
+    <div
+      ref={fieldRef}
+      className={cn(
+        "relative",
+        reserveHelperSpace && "fd-search-field-shell",
+        reserveSuggestionSpace && "fd-location-field-shell-reserve-suggestions",
+      )}
+    >
       <label htmlFor={fieldId} className="fd-label pointer-events-none absolute left-3 top-2.5 z-10">{label}</label>
       <div
         ref={controlRef}
+        onClick={focusInputFromControl}
         className={cn(
           SEARCH_FIELD_CONTROL_CLASS,
+          "cursor-text",
           invalid && "fd-control-invalid",
           roundedClass,
         )}

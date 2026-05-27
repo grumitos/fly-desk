@@ -340,6 +340,10 @@
     min-height: calc(52px + 1.125rem);
   }
 
+  .fd-location-field-shell-reserve-suggestions {
+    min-height: calc(52px + 2.25rem);
+  }
+
   .fd-route-swap-cell {
     align-self: start;
     padding-top: 0.625rem;
