@@ -1262,32 +1262,62 @@ test("frequent location suggestions resolve labels and collapse their own row", 
   await withDesktopPage(async ({ baseUrl, browser }) => {
     const page = await browser.newPage();
     const now = Date.now();
+    let locationRequestCount = 0;
     await page.route("**/api/locations**", async (route) => {
+      locationRequestCount += 1;
       const url = new URL(route.request().url());
-      const query = url.searchParams.get("q") ?? "";
+      const query = (url.searchParams.get("q") ?? "LIM").trim().toUpperCase();
+      const cityByCode: Record<string, string> = {
+        BUE: "Buenos Aires",
+        CUZ: "Cusco",
+        LIM: "Lima",
+        MAD: "Madrid",
+        MIA: "Miami",
+        TPP: "Tarapoto",
+      };
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
           query,
           suggestions: [
-            { code: "LIM", city: "Lima", country: "PE", countryCode: "PE", label: "All airports: Lima, PE (LIM)" },
+            {
+              code: query,
+              city: cityByCode[query] ?? query,
+              country: query === "MAD" ? "ES" : query === "MIA" ? "US" : query === "BUE" ? "AR" : "PE",
+              countryCode: query === "MAD" ? "ES" : query === "MIA" ? "US" : query === "BUE" ? "AR" : "PE",
+              label: `${cityByCode[query] ?? query}, ${query === "MAD" ? "ES" : query === "MIA" ? "US" : query === "BUE" ? "AR" : "PE"} (${query})`,
+            },
           ],
         }),
       });
     });
     await page.addInitScript((payload) => {
-      window.localStorage.setItem("flydesk-location-usage-v1", JSON.stringify(payload));
+      window.localStorage.setItem("flydesk-location-usage-v1", JSON.stringify(payload.usage));
+      window.localStorage.setItem("flydesk-location-suggestion-details-v1", JSON.stringify(payload.details));
     }, {
-      version: 1,
-      entries: [
-        { role: "origin", code: "LIM", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
-        { role: "origin", code: "TPP", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
-        { role: "origin", code: "CUZ", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
-        { role: "destination", code: "MAD", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
-        { role: "destination", code: "MIA", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
-        { role: "destination", code: "BUE", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
-      ],
+      usage: {
+        version: 1,
+        entries: [
+          { role: "origin", code: "LIM", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
+          { role: "origin", code: "TPP", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
+          { role: "origin", code: "CUZ", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
+          { role: "destination", code: "MAD", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
+          { role: "destination", code: "MIA", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
+          { role: "destination", code: "BUE", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
+        ],
+      },
+      details: {
+        version: 1,
+        suggestions: [
+          { code: "LIM", city: "Lima", country: "PE", countryCode: "PE", label: "All airports: Lima, PE (LIM)" },
+          { code: "TPP", city: "Tarapoto", country: "PE", countryCode: "PE", label: "Tarapoto, PE (TPP)" },
+          { code: "CUZ", city: "Cusco", country: "PE", countryCode: "PE", label: "Cusco, PE (CUZ)" },
+          { code: "MAD", city: "Madrid", country: "ES", countryCode: "ES", label: "Madrid, ES (MAD)" },
+          { code: "MIA", city: "Miami", country: "US", countryCode: "US", label: "Miami, US (MIA)" },
+          { code: "BUE", city: "Buenos Aires", country: "AR", countryCode: "AR", label: "Buenos Aires, AR (BUE)" },
+        ],
+      },
     });
 
     await openDesktop(page, baseUrl);
@@ -1297,9 +1327,7 @@ test("frequent location suggestions resolve labels and collapse their own row", 
     assert.ok(firstSuggestionBox);
     assert.equal(Math.round(firstSuggestionBox.height), Math.round(exactPillBox.height));
 
-    const locationsResponse = page.waitForResponse("**/api/locations**");
     await page.getByRole("button", { name: "Usar LIM como origen" }).click();
-    await locationsResponse;
 
     const origin = page.getByRole("combobox", { name: "Origen" });
     await page.waitForFunction(() => {
@@ -1311,6 +1339,7 @@ test("frequent location suggestions resolve labels and collapse their own row", 
     assert.equal(await origin.inputValue(), "LIM - Lima, Perú");
     assert.equal(await page.getByRole("button", { name: /como origen/ }).count(), 0);
     assert.equal(await page.getByRole("button", { name: /como destino/ }).count(), 3);
+    assert.equal(locationRequestCount, 0);
   }, { autoOpen: false });
 });
 
@@ -1423,17 +1452,19 @@ test("using both idle location suggestions keeps the search block anchored", asy
     const frameTopBefore = await frame.evaluate((element) => element.getBoundingClientRect().top);
     const gridHeightBefore = await grid.evaluate((element) => element.getBoundingClientRect().height);
 
-    await Promise.all([
-      page.waitForResponse("**/api/locations**"),
-      page.getByRole("button", { name: "Usar LIM como origen" }).click(),
-    ]);
+    await page.getByRole("button", { name: "Usar LIM como origen" }).click();
+    await page.waitForFunction(() => {
+      const input = document.querySelector<HTMLInputElement>('[aria-label="Origen"]');
+      return input?.value === "LIM - Lima, Perú";
+    });
     await page.waitForTimeout(170);
     assert.equal(await page.getByRole("button", { name: /como origen/ }).count(), 0);
 
-    await Promise.all([
-      page.waitForResponse("**/api/locations**"),
-      page.getByRole("button", { name: "Usar MAD como destino" }).click(),
-    ]);
+    await page.getByRole("button", { name: "Usar MAD como destino" }).click();
+    await page.waitForFunction(() => {
+      const input = document.querySelector<HTMLInputElement>('[aria-label="Destino"]');
+      return input?.value === "MAD - Madrid, España";
+    });
     await page.waitForTimeout(170);
 
     const frameTopAfter = await frame.evaluate((element) => element.getBoundingClientRect().top);

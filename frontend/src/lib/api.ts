@@ -10,7 +10,7 @@ import type {
   SortMode,
 } from "@/types"
 import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
-import { filterLocationSuggestions, normalizeLocationSearchText, normalizeLocationSuggestions } from "@/lib/locations"
+import { filterLocationSuggestions, findLocationSuggestionMatch, normalizeLocationSearchText, normalizeLocationSuggestions } from "@/lib/locations"
 import {
   firstSegmentForItinerary,
   formatOfferBaggageLabel,
@@ -27,6 +27,8 @@ const MIGRATION_POLL_INTERVAL_MS = 900
 const MIGRATION_MONTH_RESULT_HINT = 25
 const LOCATION_SUGGESTION_CACHE_LIMIT = 100
 const LOCATION_SUGGESTION_POOL_LIMIT = 500
+const LOCATION_SUGGESTION_DETAILS_STORAGE_KEY = "flydesk-location-suggestion-details-v1"
+const LOCATION_SUGGESTION_DETAILS_STORAGE_VERSION = 1
 const MIGRATION_MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
   month: "long",
   year: "numeric",
@@ -34,6 +36,18 @@ const MIGRATION_MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
 })
 const locationSuggestionCache = new Map<string, LocationSuggestion[]>()
 const locationSuggestionPool = new Map<string, LocationSuggestion>()
+let storedLocationSuggestionsLoaded = false
+
+type StorageLike = {
+  getItem: (key: string) => string | null
+  setItem: (key: string, value: string) => void
+  removeItem?: (key: string) => void
+}
+
+type StoredLocationSuggestionDetails = {
+  version: typeof LOCATION_SUGGESTION_DETAILS_STORAGE_VERSION
+  suggestions: LocationSuggestion[]
+}
 
 export class FlyDeskApiError extends Error {
   readonly diagnosticLog: string[]
@@ -399,6 +413,7 @@ export async function suggestLocations(query: string, limit = 8): Promise<Locati
 
 export function getCachedLocationSuggestions(query: string, limit = 8): LocationSuggestion[] {
   if (query.trim().length < 1) return []
+  loadStoredLocationSuggestionsIntoPool()
   const key = locationSuggestionCacheKey(query, limit)
   const cached = locationSuggestionCache.get(key)
   if (cached) {
@@ -408,6 +423,29 @@ export function getCachedLocationSuggestions(query: string, limit = 8): Location
   }
 
   return filterLocationSuggestions(query, [...locationSuggestionPool.values()], limit)
+}
+
+export async function warmLocationSuggestionDetails(codes: string[]): Promise<void> {
+  const uniqueCodes = Array.from(new Set(
+    codes
+      .map((code) => normalizeLocationSuggestionCode(code))
+      .filter((code): code is string => Boolean(code)),
+  ))
+
+  await Promise.allSettled(uniqueCodes.map(async (code) => {
+    const cached = getCachedLocationSuggestions(code)
+    if (findLocationSuggestionMatch(code, cached)) {
+      return
+    }
+
+    await suggestLocations(code)
+  }))
+}
+
+export function resetLocationSuggestionCachesForTests(): void {
+  locationSuggestionCache.clear()
+  locationSuggestionPool.clear()
+  storedLocationSuggestionsLoaded = false
 }
 
 export async function getResultsLayout(options: RequestOptions = {}): Promise<ResultsLayout | null> {
@@ -434,11 +472,89 @@ function rememberLocationSuggestions(query: string, limit: number, suggestions: 
   trimOldestEntries(locationSuggestionCache, LOCATION_SUGGESTION_CACHE_LIMIT)
 
   for (const suggestion of suggestions) {
-    const id = locationSuggestionCacheId(suggestion)
-    locationSuggestionPool.delete(id)
-    locationSuggestionPool.set(id, suggestion)
+    rememberLocationSuggestionInPool(suggestion)
   }
   trimOldestEntries(locationSuggestionPool, LOCATION_SUGGESTION_POOL_LIMIT)
+  persistLocationSuggestions(suggestions)
+}
+
+function rememberLocationSuggestionInPool(suggestion: LocationSuggestion) {
+  const id = locationSuggestionCacheId(suggestion)
+  if (!id) return
+
+  locationSuggestionPool.delete(id)
+  locationSuggestionPool.set(id, suggestion)
+}
+
+function loadStoredLocationSuggestionsIntoPool(): void {
+  if (storedLocationSuggestionsLoaded) return
+  storedLocationSuggestionsLoaded = true
+
+  for (const suggestion of readStoredLocationSuggestions()) {
+    rememberLocationSuggestionInPool(suggestion)
+  }
+  trimOldestEntries(locationSuggestionPool, LOCATION_SUGGESTION_POOL_LIMIT)
+}
+
+function persistLocationSuggestions(suggestions: LocationSuggestion[]): void {
+  if (suggestions.length === 0) return
+
+  const storage = resolveLocationSuggestionStorage()
+  if (!storage) return
+
+  const merged = new Map<string, LocationSuggestion>()
+  for (const suggestion of readStoredLocationSuggestions(storage)) {
+    const id = locationSuggestionCacheId(suggestion)
+    if (id) merged.set(id, suggestion)
+  }
+
+  for (const suggestion of normalizeLocationSuggestions(suggestions)) {
+    const id = locationSuggestionCacheId(suggestion)
+    if (!id) continue
+
+    merged.delete(id)
+    merged.set(id, suggestion)
+  }
+
+  try {
+    storage.setItem(LOCATION_SUGGESTION_DETAILS_STORAGE_KEY, JSON.stringify({
+      version: LOCATION_SUGGESTION_DETAILS_STORAGE_VERSION,
+      suggestions: [...merged.values()].slice(-LOCATION_SUGGESTION_POOL_LIMIT),
+    } satisfies StoredLocationSuggestionDetails))
+  } catch {
+    try {
+      storage.removeItem?.(LOCATION_SUGGESTION_DETAILS_STORAGE_KEY)
+    } catch {
+      // Location details are a non-critical speed-up cache.
+    }
+  }
+}
+
+function readStoredLocationSuggestions(storage = resolveLocationSuggestionStorage()): LocationSuggestion[] {
+  if (!storage) return []
+
+  try {
+    const parsed = JSON.parse(storage.getItem(LOCATION_SUGGESTION_DETAILS_STORAGE_KEY) ?? "") as Partial<StoredLocationSuggestionDetails>
+    if (parsed?.version !== LOCATION_SUGGESTION_DETAILS_STORAGE_VERSION || !Array.isArray(parsed.suggestions)) {
+      return []
+    }
+
+    return normalizeLocationSuggestions(parsed.suggestions)
+  } catch {
+    return []
+  }
+}
+
+function resolveLocationSuggestionStorage(): StorageLike | undefined {
+  try {
+    if (typeof window !== "undefined") {
+      return window.localStorage
+    }
+
+    return (globalThis as typeof globalThis & { localStorage?: StorageLike }).localStorage
+  } catch {
+    return undefined
+  }
 }
 
 function trimOldestEntries<K, V>(map: Map<K, V>, limit: number) {
@@ -451,6 +567,12 @@ function trimOldestEntries<K, V>(map: Map<K, V>, limit: number) {
 
 function locationSuggestionCacheKey(query: string, limit: number) {
   return `${normalizeLocationSearchText(query)}::${limit}`
+}
+
+function normalizeLocationSuggestionCode(value: unknown) {
+  const normalized = String(value ?? "").trim().toUpperCase()
+  const match = normalized.match(/^[A-Z]{3}/)
+  return match?.[0]
 }
 
 function locationSuggestionCacheId(suggestion: LocationSuggestion) {
