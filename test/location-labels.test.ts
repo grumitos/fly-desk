@@ -1,8 +1,59 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict"
-import { suggestLocations } from "../frontend/src/lib/api"
+import {
+  getCachedLocationSuggestions,
+  resetLocationSuggestionCachesForTests,
+  suggestLocations,
+  warmLocationSuggestionDetails,
+} from "../frontend/src/lib/api"
 import { filterLocationSuggestions, findLocationSuggestionMatch, normalizeLocationSuggestion } from "../frontend/src/lib/locations"
 import { rankLocationSuggestions as rankBackendLocationSuggestions } from "../src/location-suggestions"
+
+const LOCATION_SUGGESTION_DETAILS_STORAGE_KEY = "flydesk-location-suggestion-details-v1"
+
+class MemoryStorage {
+  private readonly values = new Map<string, string>()
+
+  getItem(key: string): string | null {
+    return this.values.get(key) ?? null
+  }
+
+  setItem(key: string, value: string): void {
+    this.values.set(key, value)
+  }
+
+  removeItem(key: string): void {
+    this.values.delete(key)
+  }
+}
+
+function installLocalStorage(storage: MemoryStorage): () => void {
+  const previousDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage")
+
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: storage,
+  })
+
+  return () => {
+    if (previousDescriptor) {
+      Object.defineProperty(globalThis, "localStorage", previousDescriptor)
+      return
+    }
+
+    delete (globalThis as typeof globalThis & { localStorage?: MemoryStorage }).localStorage
+  }
+}
+
+function apiLocationSuggestion(code: string, city: string, countryCode: string) {
+  return {
+    code,
+    city,
+    country: countryCode,
+    countryCode,
+    label: `All airports: ${city}, ${countryCode} (${code})`,
+  }
+}
 
 test("location labels use IATA - city, country and remove all-airports noise", () => {
   const suggestion = normalizeLocationSuggestion({
@@ -130,5 +181,84 @@ test("suggestLocations uses the combined provider autocomplete endpoint", async 
     assert.deepEqual(suggestions.map((suggestion) => suggestion.code), ["BUE"])
   } finally {
     globalThis.fetch = previousFetch
+    resetLocationSuggestionCachesForTests()
+  }
+})
+
+test("location suggestion details persist and resolve IATA without refetching", async () => {
+  const previousFetch = globalThis.fetch
+  const storage = new MemoryStorage()
+  const restoreLocalStorage = installLocalStorage(storage)
+
+  resetLocationSuggestionCachesForTests()
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    suggestions: [
+      apiLocationSuggestion("LIM", "Lima", "PE"),
+    ],
+  }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  })) as typeof fetch
+
+  try {
+    await suggestLocations("lim")
+    assert.match(storage.getItem(LOCATION_SUGGESTION_DETAILS_STORAGE_KEY) ?? "", /LIM/)
+
+    resetLocationSuggestionCachesForTests()
+    globalThis.fetch = (async () => {
+      throw new Error("location details should come from persistent cache")
+    }) as typeof fetch
+
+    const cached = getCachedLocationSuggestions("LIM")
+    assert.equal(findLocationSuggestionMatch("LIM", cached)?.label, "LIM - Lima, Perú")
+  } finally {
+    globalThis.fetch = previousFetch
+    resetLocationSuggestionCachesForTests()
+    restoreLocalStorage()
+  }
+})
+
+test("location suggestion detail prewarm skips cached IATAs and stores misses", async () => {
+  const previousFetch = globalThis.fetch
+  const storage = new MemoryStorage()
+  const restoreLocalStorage = installLocalStorage(storage)
+  const requestedQueries: string[] = []
+
+  storage.setItem(LOCATION_SUGGESTION_DETAILS_STORAGE_KEY, JSON.stringify({
+    version: 1,
+    suggestions: [
+      apiLocationSuggestion("LIM", "Lima", "PE"),
+    ],
+  }))
+
+  resetLocationSuggestionCachesForTests()
+  globalThis.fetch = (async (input) => {
+    const requestedUrl = typeof input === "string" || input instanceof URL
+      ? String(input)
+      : input.url
+    const url = new URL(requestedUrl, "http://localhost")
+    const query = (url.searchParams.get("q") ?? "").toUpperCase()
+    requestedQueries.push(query)
+
+    return new Response(JSON.stringify({
+      suggestions: [
+        apiLocationSuggestion(query, query === "MAD" ? "Madrid" : query, query === "MAD" ? "ES" : "PE"),
+      ],
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })
+  }) as typeof fetch
+
+  try {
+    await warmLocationSuggestionDetails(["lim", "LIM", "MAD", "12"])
+
+    assert.deepEqual(requestedQueries, ["MAD"])
+    assert.equal(findLocationSuggestionMatch("LIM", getCachedLocationSuggestions("lim"))?.label, "LIM - Lima, Perú")
+    assert.equal(findLocationSuggestionMatch("MAD", getCachedLocationSuggestions("mad"))?.label, "MAD - Madrid, España")
+  } finally {
+    globalThis.fetch = previousFetch
+    resetLocationSuggestionCachesForTests()
+    restoreLocalStorage()
   }
 })
