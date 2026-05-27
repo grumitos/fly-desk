@@ -336,6 +336,15 @@
     margin-inline: auto;
   }
 
+  .fd-search-field-shell {
+    min-height: calc(52px + 1.125rem);
+  }
+
+  .fd-route-swap-cell {
+    align-self: start;
+    padding-top: 0.625rem;
+  }
+
   .fd-shell-workspace {
     grid-row: 3;
     min-height: 0;

@@ -1228,6 +1228,85 @@ test("frequent location suggestions resolve labels and collapse their own row", 
   }, { autoOpen: false });
 });
 
+test("idle location suggestions do not disturb autocomplete and swap geometry", async () => {
+  await withDesktopPage(async ({ baseUrl, browser }) => {
+    const page = await browser.newPage();
+    const now = Date.now();
+    await page.route("**/api/locations**", async (route) => {
+      const url = new URL(route.request().url());
+      const query = url.searchParams.get("q") ?? "";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          query,
+          suggestions: [
+            { code: "LIM", city: "Lima", country: "PE", countryCode: "PE", label: "All airports: Lima, PE (LIM)" },
+            { code: "LVD", city: "Lime Village", country: "US", countryCode: "US", label: "Lime Village, US (LVD)" },
+          ],
+        }),
+      });
+    });
+    await page.addInitScript((payload) => {
+      window.localStorage.setItem("flydesk-location-usage-v1", JSON.stringify(payload));
+    }, {
+      version: 1,
+      entries: [
+        { role: "origin", code: "LIM", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
+        { role: "origin", code: "TPP", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
+        { role: "origin", code: "CUZ", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
+        { role: "destination", code: "MAD", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
+        { role: "destination", code: "MIA", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
+        { role: "destination", code: "BUE", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
+      ],
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.getByRole("combobox", { name: "Origen" }).fill("lim");
+    await page.getByRole("listbox").waitFor();
+
+    const geometry = await page.evaluate(() => {
+      const originControl = document.querySelector("#location-origen")?.parentElement?.getBoundingClientRect();
+      const listbox = document.querySelector('[role="listbox"]')?.getBoundingClientRect();
+      const swap = document.querySelector('button[aria-label="Intercambiar ruta"]')?.getBoundingClientRect();
+      if (!originControl || !listbox || !swap) {
+        throw new Error("Missing search geometry target");
+      }
+
+      return {
+        autocompleteGap: listbox.top - originControl.bottom,
+        originCenterY: originControl.top + originControl.height / 2,
+        swapCenterY: swap.top + swap.height / 2,
+      };
+    });
+
+    assert.ok(Math.abs(geometry.autocompleteGap - 4) <= 1);
+    assert.ok(Math.abs(geometry.swapCenterY - geometry.originCenterY) <= 1);
+  }, { autoOpen: false });
+});
+
+test("idle validation helpers keep the search block anchored", async () => {
+  await withDesktopPage(async ({ page }) => {
+    await page.evaluate(() => window.localStorage.removeItem("flydesk-location-usage-v1"));
+    await page.reload();
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+
+    const frameTopBefore = await page.locator('[data-testid="search-shell-frame"]').evaluate((element) =>
+      element.getBoundingClientRect().top,
+    );
+
+    await page.getByRole("combobox", { name: "Origen" }).focus();
+    await page.getByRole("combobox", { name: "Destino" }).focus();
+    await page.getByText("Ingresa un origen válido.").waitFor();
+
+    const frameTopAfter = await page.locator('[data-testid="search-shell-frame"]').evaluate((element) =>
+      element.getBoundingClientRect().top,
+    );
+
+    assert.ok(Math.abs(frameTopAfter - frameTopBefore) <= 1);
+  });
+});
+
 test("passenger steppers have accessible icon-only labels", async () => {
   await withDesktopPage(async ({ page }) => {
     await page.getByRole("button", { name: "Seleccionar pasajeros" }).click();
