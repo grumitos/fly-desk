@@ -1,6 +1,6 @@
 import { afterEach, test } from "bun:test";
 import assert from "node:assert/strict";
-import { startMigrationSearch, startSearch, type BackendSearchPayload } from "../frontend/src/lib/api";
+import { startMatrix, startMigrationSearch, startSearch, type BackendSearchPayload } from "../frontend/src/lib/api";
 import type { SearchRequest } from "../frontend/src/types";
 
 const originalFetch = globalThis.fetch;
@@ -279,4 +279,112 @@ test("frontend diagnostic logs redact raw provider secrets before UI exposure", 
 
   assert.doesNotMatch(logText, /sk_raw_SECRET|jwt_SECRET|bearer_SECRET|session_SECRET|token_SECRET|auth_SECRET|pass_SECRET|Profile 7/);
   assert.match(logText, /redactado/i);
+});
+
+test("matrix offer normalization suppresses provider status warnings in selected offers", async () => {
+  const request: SearchRequest = {
+    origin: "LIM",
+    destination: "MAD",
+    departureStart: "2026-07-01",
+    departureEnd: "2026-07-02",
+    returnStart: "2026-07-08",
+    returnEnd: "2026-07-09",
+    tripType: "round-trip",
+    adults: 1,
+    children: 0,
+    infants: 0,
+    searchMode: "roundtrip-grid",
+    flexibleMode: "fixed-ranges",
+  };
+
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    assert.equal(String(input), "/api/matrix");
+    const payload = JSON.parse(String(init?.body)) as BackendSearchPayload;
+
+    return Promise.resolve(new Response(JSON.stringify({
+      matrixJobId: "matrix-provider-status-warnings",
+      matrixComplete: true,
+      matrixStatus: "completed",
+      revision: 1,
+      request: payload.request,
+      searchMeta: {
+        requestedAt: "2026-06-01T00:00:00.000Z",
+        completedAt: "2026-06-01T00:00:00.000Z",
+        providersUsed: ["agil-local", "costamar"],
+        warnings: [],
+        partial: false,
+        searchState: "search_live",
+      },
+      providerMeta: {
+        exactProvider: "agil-local",
+        coverageMode: "core",
+      },
+      warnings: [],
+      recommendations: [],
+      cells: [
+        {
+          key: "agil-status",
+          departureDate: "2026-07-01",
+          returnDate: "2026-07-08",
+          stayNights: 7,
+          price: { amount: 650, currencyCode: "USD" },
+          confidence: "live",
+          providerSource: "agil-local",
+          selectable: true,
+          requiresRequery: false,
+          stateCode: "live",
+          tooltip: "Agil exact search. Cheapest validating carrier: LA.",
+        },
+        {
+          key: "costamar-status",
+          departureDate: "2026-07-02",
+          returnDate: "2026-07-09",
+          stayNights: 7,
+          price: { amount: 700, currencyCode: "USD" },
+          confidence: "live",
+          providerSource: "costamar",
+          selectable: true,
+          requiresRequery: false,
+          stateCode: "live",
+          tooltip: "Costamar live search.",
+        },
+        {
+          key: "costamar-real-warning",
+          departureDate: "2026-07-02",
+          returnDate: "2026-07-09",
+          stayNights: 7,
+          price: { amount: 710, currencyCode: "USD" },
+          confidence: "live",
+          providerSource: "costamar",
+          selectable: true,
+          requiresRequery: false,
+          stateCode: "live",
+          tooltip: "Costamar live search.",
+          offer: {
+            id: "costamar-offer-real-warning",
+            providerSource: "costamar",
+            airline: "LATAM",
+            departureDate: "2026-07-02",
+            returnDate: "2026-07-09",
+            duration: "11h",
+            stops: 0,
+            price: { total: { amount: 710, currencyCode: "USD" } },
+            warnings: ["Costamar live search.", "Costamar returned no offers for this search."],
+          },
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+  }) as typeof fetch;
+
+  const result = await startMatrix(request, "cheapest");
+
+  assert.equal(result.offers.length, 3);
+  assert.deepEqual(result.offers[0]?.warnings ?? [], []);
+  assert.equal(result.offers[0]?.baggageLabel, undefined);
+  assert.deepEqual(result.offers[1]?.warnings ?? [], []);
+  assert.equal(result.offers[1]?.baggageLabel, undefined);
+  assert.deepEqual(result.offers[2]?.warnings ?? [], ["Costamar no devolvió vuelos para esta búsqueda."]);
 });

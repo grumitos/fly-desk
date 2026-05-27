@@ -213,6 +213,44 @@ function translateApiMessage(message: string): string {
   return normalized ? "No se pudo completar la operación. Intenta nuevamente." : "Ocurrió un error inesperado."
 }
 
+function isRedundantOfferWarning(message: string): boolean {
+  const normalized = stripAnsi(message)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase()
+
+  return [
+    /^agil exact search(\.|$)/,
+    /^agil exact search with stop(\.|$)/,
+    /^agil stopover search(\.|$)/,
+    /^agil direct alt fare(\.|$)/,
+    /^costamar (exact|live) search(\.|$)/,
+    /^busqueda exacta en agil(\.|$| con escala)/,
+    /^busqueda en agil con escala(\.|$)/,
+    /^tarifa alternativa directa de agil(\.|$)/,
+    /^busqueda exacta en costamar(\.|$)/,
+    /^busqueda en vivo de costamar(\.|$)/,
+  ].some((pattern) => pattern.test(normalized))
+}
+
+function translatedOfferWarnings(input: unknown): string[] | undefined {
+  if (!Array.isArray(input)) return undefined
+
+  const warnings = uniqueStrings(input.map((warning) => translateApiMessage(String(warning))))
+    .filter((warning) => !isRedundantOfferWarning(warning))
+
+  return warnings.length ? warnings : undefined
+}
+
+function translatedMatrixTooltipWarning(tooltip: string | undefined): string | undefined {
+  if (!tooltip || isRedundantOfferWarning(tooltip)) return undefined
+
+  const translated = translateApiMessage(tooltip)
+  return isRedundantOfferWarning(translated) ? undefined : translated
+}
+
 function stripAnsi(value: string) {
   return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "")
 }
@@ -864,9 +902,7 @@ function normalizeOffer(input: unknown): CanonicalOffer {
   const price = offer.price && typeof offer.price === "object"
     ? offer.price as CanonicalOffer["price"]
     : { total: { amount: 0, currencyCode: "USD" } }
-  const warnings = Array.isArray(offer.warnings)
-    ? uniqueStrings(offer.warnings.map((warning) => translateApiMessage(String(warning))))
-    : undefined
+  const warnings = translatedOfferWarnings(offer.warnings)
   const totalDurationMinutes = positiveNumber(metrics.totalDurationMinutes)
     ?? itineraryDurationMinutesFromOffer(offer)
   const totalStops = itineraryStopsFromOffer(offerWithNormalizedNames)
@@ -969,7 +1005,7 @@ function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
 function normalizeMatrixOffer(cell: MatrixCell, request: SearchRequest): CanonicalOffer {
   const currencyCode = cell.price?.currencyCode ?? "USD"
   const amount = cell.price?.amount ?? 0
-  const tooltip = cell.tooltip ? translateApiMessage(cell.tooltip) : undefined
+  const tooltipWarning = translatedMatrixTooltipWarning(cell.tooltip)
 
   if (cell.offer) {
     const offer = normalizeOffer(cell.offer)
@@ -980,7 +1016,7 @@ function normalizeMatrixOffer(cell: MatrixCell, request: SearchRequest): Canonic
       purchasePaths: cell.purchasePaths ?? offer.purchasePaths,
       warnings: uniqueStrings([
         ...(offer.warnings ?? []),
-        ...(tooltip && !/live search|exact search/i.test(tooltip) ? [tooltip] : []),
+        ...(tooltipWarning ? [tooltipWarning] : []),
       ]),
     }
   }
@@ -999,11 +1035,11 @@ function normalizeMatrixOffer(cell: MatrixCell, request: SearchRequest): Canonic
     stopMeta: cell.returnDate
       ? `${cell.departureDate} -> ${cell.returnDate}`
       : cell.departureDate,
-    baggageLabel: tooltip,
+    baggageLabel: tooltipWarning,
     priceConfidence: cell.confidence,
     priceStatus: cell.confidence,
     purchasePaths: cell.purchasePaths,
-    warnings: tooltip ? [tooltip] : undefined,
+    warnings: tooltipWarning ? [tooltipWarning] : undefined,
     price: {
       total: {
         amount,
