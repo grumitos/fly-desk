@@ -124,10 +124,6 @@ export function SearchShell({
     : datePolicy.maxSearchDate
   const departureLabel = mode === "migration" ? "Mes desde" : mode === "flexible" ? "Salida desde" : "Salida"
   const endDateLabel = mode === "migration" ? "Mes hasta" : mode === "flexible" ? "Salida hasta" : "Regreso"
-  const searchGridClassName = cn(
-    "fd-search-grid grid grid-cols-2 gap-1.5 transition-[grid-template-columns,max-width] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]",
-    "lg:grid-cols-[minmax(150px,1.2fr)_34px_minmax(150px,1.2fr)_minmax(128px,.85fr)_minmax(128px,.85fr)_minmax(144px,.9fr)_124px]",
-  )
   const canUseTopbarControls = useCanUseTopbarControls()
 
   const origin = useAutocomplete((suggestion) => setOriginCode(suggestion.code))
@@ -520,6 +516,11 @@ export function SearchShell({
     : undefined
   const visiblePassengerError = touched.passengers ? validation.passengers : undefined
   const shouldShowUsageSuggestions = showLocationUsageSuggestions && !loading
+  const reserveIdleHelperSpace = shouldShowUsageSuggestions
+  const searchGridClassName = cn(
+    "fd-search-grid grid grid-cols-2 gap-1.5 transition-[grid-template-columns,max-width] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]",
+    "lg:grid-cols-[minmax(150px,1.2fr)_34px_minmax(150px,1.2fr)_minmax(128px,.85fr)_minmax(128px,.85fr)_minmax(144px,.9fr)_124px]",
+  )
   const visibleMigrationMonthsError = mode === "migration" && touched.migrationMonths
     ? validation.migrationMonths
     : undefined
@@ -585,11 +586,12 @@ export function SearchShell({
               quickSuggestions={shouldShowUsageSuggestions && !origin.open && !hiddenUsageSuggestionFields.origin ? usageSuggestions.origin : []}
               quickSuggestionsExiting={exitingUsageSuggestionFields.origin}
               onQuickSuggestionSelect={applyOriginUsageSuggestion}
+              reserveHelperSpace={reserveIdleHelperSpace}
               invalid={Boolean(visibleOriginError)}
               helperText={visibleOriginError}
             />
 
-          <div className="hidden items-center justify-center lg:flex">
+          <div className="fd-route-swap-cell hidden justify-center lg:flex">
             <Button
               type="button"
               variant="secondary"
@@ -630,6 +632,7 @@ export function SearchShell({
             quickSuggestions={shouldShowUsageSuggestions && !destination.open && !hiddenUsageSuggestionFields.destination ? usageSuggestions.destination : []}
             quickSuggestionsExiting={exitingUsageSuggestionFields.destination}
             onQuickSuggestionSelect={applyDestinationUsageSuggestion}
+            reserveHelperSpace={reserveIdleHelperSpace}
             invalid={Boolean(visibleDestinationError)}
             helperText={visibleDestinationError}
           />
@@ -644,6 +647,7 @@ export function SearchShell({
                 helperText={visibleMigrationMonthsError}
                 onChange={handleMigrationStartMonthChange}
                 onTouch={() => setTouched((current) => ({ ...current, migrationMonths: true }))}
+                reserveHelperSpace={reserveIdleHelperSpace}
               />
               <MonthField
                 label={endDateLabel}
@@ -652,6 +656,7 @@ export function SearchShell({
                 invalid={Boolean(visibleMigrationMonthsError)}
                 onChange={handleMigrationEndMonthChange}
                 onTouch={() => setTouched((current) => ({ ...current, migrationMonths: true }))}
+                reserveHelperSpace={reserveIdleHelperSpace}
               />
             </>
           ) : (
@@ -668,6 +673,7 @@ export function SearchShell({
                 invalid={Boolean(visibleDepartureDateError)}
                 helperText={visibleDepartureDateError}
                 onTouch={() => setTouched((current) => ({ ...current, departureDate: true }))}
+                reserveHelperSpace={reserveIdleHelperSpace}
               />
               <DateField
                 label={endDateLabel}
@@ -683,6 +689,7 @@ export function SearchShell({
                 invalid={Boolean(visibleReturnDateError)}
                 helperText={visibleReturnDateError}
                 onTouch={() => setTouched((current) => ({ ...current, returnDate: true }))}
+                reserveHelperSpace={reserveIdleHelperSpace}
               />
             </>
           )}
@@ -694,7 +701,7 @@ export function SearchShell({
               if (nextOpen) setTouched((current) => ({ ...current, passengers: true }))
             }}
           >
-            <div className="relative">
+            <div className={cn("relative", reserveIdleHelperSpace && "fd-search-field-shell")}>
               <label className="fd-label pointer-events-none absolute left-3 top-2.5 z-10">Pasajeros</label>
               <PopoverTrigger asChild>
                 <button
@@ -901,6 +908,7 @@ function LocationField({
   quickSuggestions = [],
   quickSuggestionsExiting = false,
   onQuickSuggestionSelect,
+  reserveHelperSpace = false,
   invalid = false,
   helperText,
 }: {
@@ -921,6 +929,7 @@ function LocationField({
   quickSuggestions?: string[]
   quickSuggestionsExiting?: boolean
   onQuickSuggestionSelect?: (code: string) => void | Promise<void>
+  reserveHelperSpace?: boolean
   invalid?: boolean
   helperText?: string
 }) {
@@ -930,6 +939,7 @@ function LocationField({
     ? `${listboxId}-${activeIndex}`
     : undefined
   const fieldRef = useRef<HTMLDivElement | null>(null)
+  const controlRef = useRef<HTMLDivElement | null>(null)
   const [listboxStyle, setListboxStyle] = useState<CSSProperties | null>(null)
   const shouldShowListbox = open && suggestions.length > 0
   const listboxTarget = typeof document === "undefined" ? null : document.body
@@ -938,7 +948,7 @@ function LocationField({
     if (!shouldShowListbox) return
 
     const updateListboxStyle = () => {
-      const rect = fieldRef.current?.getBoundingClientRect()
+      const rect = controlRef.current?.getBoundingClientRect() ?? fieldRef.current?.getBoundingClientRect()
       if (!rect) return
 
       setListboxStyle({
@@ -953,8 +963,8 @@ function LocationField({
 
     const frame = window.requestAnimationFrame(updateListboxStyle)
     const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateListboxStyle)
-    if (fieldRef.current) {
-      resizeObserver?.observe(fieldRef.current)
+    if (controlRef.current) {
+      resizeObserver?.observe(controlRef.current)
     }
     window.addEventListener("resize", updateListboxStyle)
     window.addEventListener("scroll", updateListboxStyle, true)
@@ -967,9 +977,10 @@ function LocationField({
   }, [shouldShowListbox, suggestions.length, value])
 
   return (
-    <div ref={fieldRef} className="relative">
+    <div ref={fieldRef} className={cn("relative", reserveHelperSpace && "fd-search-field-shell")}>
       <label htmlFor={fieldId} className="fd-label pointer-events-none absolute left-3 top-2.5 z-10">{label}</label>
       <div
+        ref={controlRef}
         className={cn(
           SEARCH_FIELD_CONTROL_CLASS,
           invalid && "fd-control-invalid",
@@ -1105,6 +1116,7 @@ function MonthField({
   invalid = false,
   helperText,
   onTouch,
+  reserveHelperSpace = false,
 }: {
   label: string
   value: string
@@ -1113,6 +1125,7 @@ function MonthField({
   invalid?: boolean
   helperText?: string
   onTouch?: () => void
+  reserveHelperSpace?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const fieldId = `month-${toDomId(label)}`
@@ -1129,7 +1142,7 @@ function MonthField({
         setOpen(nextOpen)
       }}
     >
-      <div className="relative">
+      <div className={cn("relative", reserveHelperSpace && "fd-search-field-shell")}>
         <label id={`${fieldId}-label`} className="fd-label pointer-events-none absolute left-3 top-2.5 z-10">
           <AnimatedDateLabel label={label} />
         </label>
@@ -1210,6 +1223,7 @@ function DateField({
   invalid = false,
   helperText,
   onTouch,
+  reserveHelperSpace = false,
 }: {
   label: string
   value: string
@@ -1221,6 +1235,7 @@ function DateField({
   invalid?: boolean
   helperText?: string
   onTouch?: () => void
+  reserveHelperSpace?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const fieldId = `date-${toDomId(label)}`
@@ -1247,7 +1262,11 @@ function DateField({
         setOpen(nextOpen)
       }}
     >
-      <div className={cn("relative transition-[opacity,filter,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]", disabled && "fd-disabled-section")}>
+      <div className={cn(
+        "relative transition-[opacity,filter,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]",
+        reserveHelperSpace && "fd-search-field-shell",
+        disabled && "fd-disabled-section",
+      )}>
         <label id={`${fieldId}-label`} className="fd-label pointer-events-none absolute left-3 top-2.5 z-10">
           <AnimatedDateLabel label={label} />
         </label>
