@@ -155,6 +155,7 @@ GitHub Actions ejecuta `.github/workflows/ci.yml` en PRs, pushes a `main` y manu
 
 - [`docs/REPO_CURRENT_STATE.md`](./docs/REPO_CURRENT_STATE.md): estado funcional y tecnico actual
 - [`docs/DEPLOY_APP.md`](./docs/DEPLOY_APP.md): deploy y rollback de app Fly Desk
+- [`docs/AGIL_SESSION_RECOVERY.md`](./docs/AGIL_SESSION_RECOVERY.md): recuperacion de sesion Agil en Chrome/CDP del VPS
 - [`docs/FRONTEND_IDENTITY.md`](./docs/FRONTEND_IDENTITY.md): identidad visual y reglas UI React
 - [`frontend/README.md`](./frontend/README.md): notas breves del workspace frontend
 
