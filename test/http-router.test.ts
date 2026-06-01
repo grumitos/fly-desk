@@ -1762,7 +1762,7 @@ test("accepts extended one-way month scans for migratory search beyond the norma
   });
 });
 
-test("costamar search keeps provider token out of the public job response", async () => {
+test("public search ignores provider override and keeps provider token out of the job response", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/search`, {
       method: "POST",
@@ -1804,16 +1804,18 @@ test("costamar search keeps provider token out of the public job response", asyn
     const payload = await response.json() as {
       request?: { providerId?: string };
       providerMeta?: { exactProvider?: string };
+      searchMeta?: { providersUsed?: string[] };
       warnings?: string[];
     };
 
-    assert.equal(payload.request?.providerId, "costamar");
-    assert.equal(payload.providerMeta?.exactProvider, "costamar");
+    assert.equal(payload.request?.providerId, undefined);
+    assert.equal(payload.providerMeta?.exactProvider, "agil-local");
+    assert.deepEqual(payload.searchMeta?.providersUsed, ["agil-local", "costamar"]);
     assert.equal(JSON.stringify(payload).includes("super-secret-token"), false);
   });
 });
 
-test("explicit costamar search rejects a terminal without token", async () => {
+test("public search cannot disable either provider with a top-level providerId", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/search`, {
       method: "POST",
@@ -1850,44 +1852,13 @@ test("explicit costamar search rejects a terminal without token", async () => {
       }),
     });
 
-    assert.equal(response.status, 400);
-    const payload = await response.json() as { errors?: string[] };
-    assert.ok(payload.errors?.some((message) => message.includes("Costamar token is required.")));
-  });
-});
-
-test("explicit costamar search rejects missing token even when the terminal defaults", async () => {
-  await withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/search`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        providerId: "costamar",
-        request: {
-          tripType: "round-trip",
-          searchMode: "exact",
-          legs: [
-            {
-              origin: "LIM",
-              destination: "MAD",
-              departureDate: "2026-06-01",
-              returnDate: "2026-06-08",
-            },
-          ],
-          passengers: {
-            adults: 1,
-            children: 0,
-            infants: 0,
-          },
-        },
-      }),
-    });
-
-    assert.equal(response.status, 400);
-    const payload = await response.json() as { errors?: string[] };
-    assert.ok(payload.errors?.some((message) => message.includes("Costamar token is required.")));
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      request?: { providerId?: string };
+      searchMeta?: { providersUsed?: string[] };
+    };
+    assert.equal(payload.request?.providerId, undefined);
+    assert.deepEqual(payload.searchMeta?.providersUsed, ["agil-local", "costamar"]);
   });
 });
 
@@ -2086,7 +2057,7 @@ test("default matrix ignores providerId nested inside the request payload", asyn
   });
 });
 
-test("explicit costamar matrix rejects a terminal without token", async () => {
+test("public matrix cannot disable either provider with a top-level providerId", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/matrix`, {
       method: "POST",
@@ -2124,13 +2095,17 @@ test("explicit costamar matrix rejects a terminal without token", async () => {
       }),
     });
 
-    assert.equal(response.status, 400);
-    const payload = await response.json() as { errors?: string[] };
-    assert.ok(payload.errors?.some((message) => message.includes("Costamar token is required.")));
+    assert.equal(response.status, 200);
+    const payload = await response.json() as {
+      request?: { providerId?: string };
+      searchMeta?: { providersUsed?: string[] };
+    };
+    assert.equal(payload.request?.providerId, undefined);
+    assert.deepEqual(payload.searchMeta?.providersUsed, ["agil-local", "costamar"]);
   });
 });
 
-test("explicit costamar matrix keeps the provider override in derived requests", async () => {
+test("public matrix ignores top-level providerId even when provider config is present", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/matrix`, {
       method: "POST",
@@ -2180,9 +2155,9 @@ test("explicit costamar matrix keeps the provider override in derived requests",
       searchMeta?: { providersUsed?: string[] };
     };
 
-    assert.equal(payload.request?.providerId, "costamar");
-    assert.equal(payload.cells?.[0]?.derivedRequest?.providerId, "costamar");
-    assert.deepEqual(payload.searchMeta?.providersUsed, ["costamar"]);
+    assert.equal(payload.request?.providerId, undefined);
+    assert.equal(payload.cells?.[0]?.derivedRequest?.providerId, undefined);
+    assert.deepEqual(payload.searchMeta?.providersUsed, ["agil-local", "costamar"]);
   });
 });
 
@@ -2232,13 +2207,16 @@ test("one-way stay-range preserves omitted maxResults and night bounds", async (
     assert.equal(response.status, 200);
     const payload = await response.json() as {
       request?: {
-        filters?: { maxResults?: number };
+        filters?: { exhaustiveResults?: boolean; maxResults?: number };
         legs?: Array<{ minNights?: number; maxNights?: number }>;
       };
+      searchMeta?: { providersUsed?: string[] };
       searchStatus?: string;
     };
 
     assert.equal(payload.searchStatus, "running");
+    assert.deepEqual(payload.searchMeta?.providersUsed, ["agil-local", "costamar"]);
+    assert.equal(payload.request?.filters?.exhaustiveResults, true);
     assert.equal(payload.request?.filters?.maxResults, undefined);
     assert.equal(payload.request?.legs?.[0]?.minNights, undefined);
     assert.equal(payload.request?.legs?.[0]?.maxNights, undefined);
@@ -2417,45 +2395,6 @@ test("search cancel from page refresh completes partial results so they remain c
   });
 });
 
-test("agil-local searches skip Costamar context scans", async () => {
-  resetCostamarSessionCacheForTests();
-
-  await withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/search`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        providerId: "agil-local",
-        request: {
-          tripType: "round-trip",
-          searchMode: "exact",
-          legs: [
-            {
-              origin: "LIM",
-              destination: "MAD",
-              departureDate: "2026-05-01",
-              returnDate: "2026-05-31",
-            },
-          ],
-          passengers: {
-            adults: 1,
-            children: 0,
-            infants: 0,
-          },
-          filters: {},
-        },
-      }),
-    });
-
-    assert.equal(response.status, 200);
-  });
-
-  assert.equal(getCostamarChromeSessionScanCountForTests(), 0);
-  resetCostamarSessionCacheForTests();
-});
-
 test("search endpoint serves cached results first for the same config while revalidating in background", async () => {
   const runtime = getRuntime();
   const terminalId = "9990001112";
@@ -2471,6 +2410,7 @@ test("search endpoint serves cached results first for the same config while reva
   });
   const request: SearchRequest = {
     ...buildCostamarRequest(),
+    providerId: undefined,
     legs: [
       {
         origin: "LIM",
@@ -2524,7 +2464,7 @@ test("search endpoint serves cached results first for the same config while reva
     allOffers: [cachedOffer],
     searchMeta: {
       ...buildSearchMeta(),
-      providersUsed: ["costamar"],
+      providersUsed: ["agil-local", "costamar"],
     },
     providerMeta: buildProviderMeta(),
     warnings: ["Snapshot cache listo"],
@@ -2543,7 +2483,7 @@ test("search endpoint serves cached results first for the same config while reva
         lang: "es",
       },
     }),
-    providerIds: ["costamar"],
+    providerIds: ["agil-local", "costamar"],
     sortMode: "cheapest",
     maxAgeMs: 5 * 60 * 1000,
   });
@@ -2560,7 +2500,7 @@ test("search endpoint serves cached results first for the same config while reva
         lang: "es",
       },
     }),
-    providerIds: ["costamar"],
+    providerIds: ["agil-local", "costamar"],
     sortMode: "cheapest",
     maxAgeMs: 5 * 60 * 1000,
   });

@@ -13,12 +13,12 @@ import {
   SearchRequest,
   TripType,
 } from "./core/types";
-import { resolveUsableCostamarBrandedToken } from "./provider-context";
 import { getSearchDatePolicy, validateSearchDateInPolicy } from "./search-date-policy";
 
 export type SortMode = "cheapest" | "fastest";
 
 export interface SearchPayload {
+  // Backward-compatible ignored input: public flight searches always aggregate both providers.
   providerId?: ProviderId;
   providerConfig?: ProviderConfigInput;
   request?: Partial<SearchRequest> & {
@@ -30,7 +30,6 @@ export interface SearchPayload {
 }
 
 export interface PreparedSearchContract {
-  explicitProviderId?: ProviderId;
   providerIds: ProviderId[];
   request: SearchRequest;
 }
@@ -109,12 +108,6 @@ function stringList(input: unknown): string[] | undefined {
   return values.length > 0 ? values : undefined;
 }
 
-function parseExplicitProviderId(value: unknown): ProviderId | undefined {
-  return value === "costamar" || value === "agil-local"
-    ? value
-    : undefined;
-}
-
 function normalizeTripType(input: unknown): TripType {
   if (input === "one-way" || input === "multi-city") {
     return input;
@@ -143,7 +136,6 @@ function normalizeCabin(input: unknown): Cabin {
 
 function normalizeRequest(
   input: SearchPayload["request"] | undefined,
-  providerId?: ProviderId,
 ): SearchRequest {
   const tripType = normalizeTripType(input?.tripType);
   const searchMode = normalizeSearchMode(input?.searchMode);
@@ -152,7 +144,6 @@ function normalizeRequest(
   const filters = input?.filters ?? {};
 
   const request: SearchRequest = {
-    providerId,
     tripType,
     searchMode,
     flexibleMode,
@@ -196,6 +187,7 @@ function normalizeRequest(
       baggageRequired: booleanValue(filters.baggageRequired, false),
       verifiedOnly: booleanValue(filters.verifiedOnly, false),
       exactPurchasePathOnly: booleanValue(filters.exactPurchasePathOnly, false),
+      exhaustiveResults: tripType === "one-way" && searchMode === "stay-range" ? true : undefined,
     },
     coverageMode: input?.coverageMode === "extended" ? "extended" : "core",
     redirectMode: input?.redirectMode === "none" || input?.redirectMode === "strict"
@@ -377,33 +369,7 @@ function validateRequest(request: SearchRequest): string[] {
 }
 
 
-function validateProviderContext(
-  providerId: ProviderId,
-  providerContext: ProviderContext | undefined,
-): string[] {
-  if (providerId !== "costamar") {
-    return [];
-  }
-
-  const errors: string[] = [];
-  const context = providerContext?.costamar;
-  if (!context?.terminalId) {
-    errors.push("Costamar terminalId is required.");
-  }
-  if (!resolveUsableCostamarBrandedToken(context?.token, context?.terminalId)) {
-    errors.push("Costamar token is required.");
-  }
-
-  return errors;
-}
-
-export function resolveSearchProviderIds(
-  explicitProviderId: ProviderId | undefined,
-): ProviderId[] {
-  if (explicitProviderId) {
-    return [explicitProviderId];
-  }
-
+export function resolveSearchProviderIds(): ProviderId[] {
   return ["agil-local", "costamar"];
 }
 
@@ -411,9 +377,8 @@ export function prepareSearchContract(
   payload: SearchPayload | undefined,
   options?: { forceRoundTripGrid?: boolean },
 ): PreparedSearchContract {
-  const explicitProviderId = parseExplicitProviderId(payload?.providerId);
-  const providerIds = resolveSearchProviderIds(explicitProviderId);
-  const normalizedRequest = normalizeRequest(payload?.request, explicitProviderId);
+  const providerIds = resolveSearchProviderIds();
+  const normalizedRequest = normalizeRequest(payload?.request);
   const request = options?.forceRoundTripGrid
     ? normalizeFlexibleRoundTripRequest({
       ...normalizedRequest,
@@ -422,7 +387,6 @@ export function prepareSearchContract(
     : normalizedRequest;
 
   return {
-    explicitProviderId,
     providerIds,
     request,
   };
@@ -430,15 +394,10 @@ export function prepareSearchContract(
 
 export function validateSearchContract(
   contract: PreparedSearchContract,
-  providerContext: ProviderContext | undefined,
-  options?: { skipProviderContext?: boolean },
+  _providerContext: ProviderContext | undefined,
+  _options?: { skipProviderContext?: boolean },
 ): string[] {
-  return [
-    ...validateRequest(contract.request),
-    ...(!options?.skipProviderContext && contract.explicitProviderId === "costamar"
-      ? validateProviderContext("costamar", providerContext)
-      : []),
-  ];
+  return validateRequest(contract.request);
 }
 
 export function resolveSortMode(mode: unknown): SortMode {

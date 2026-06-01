@@ -1,6 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { materializeSearchResponse } from "../src/core/orchestrator";
+import { retainOfferVariants } from "../src/core/provider-offer-variants";
 import type { CanonicalOffer, SearchRequest } from "../src/core/types";
 
 function buildRequest(): SearchRequest {
@@ -80,6 +81,61 @@ test("search materialization keeps every provider result even when legacy cap fi
   assert.equal(response.offers.length, 14);
   assert.equal(response.allOffers?.length, 14);
   assert.equal(response.offers[13]?.providerOfferRef, "ref-14");
+});
+
+test("provider adapters keep every variant even when legacy cap filters are present", () => {
+  const variants = Array.from({ length: 80 }, (_, index) => index + 1);
+
+  assert.equal(retainOfferVariants(variants, { exhaustiveResults: true }).length, 80);
+  assert.equal(retainOfferVariants(variants, {}).length, 80);
+  assert.equal(retainOfferVariants(variants, { maxResults: 25, compactAllOffers: true }).length, 80);
+});
+
+test("search filters narrow visible offers without removing retained provider results", () => {
+  const direct = buildOffer(1);
+  const stopover = {
+    ...buildOffer(2),
+    itineraries: [
+      {
+        id: "outbound-stopover",
+        direction: "outbound" as const,
+        durationMinutes: 360,
+        stops: 1,
+        segments: [
+          {
+            id: "segment-1",
+            origin: "LIM",
+            destination: "BOG",
+            departureAt: "2026-04-15T10:00:00Z",
+            arrivalAt: "2026-04-15T13:00:00Z",
+          },
+          {
+            id: "segment-2",
+            origin: "BOG",
+            destination: "MIA",
+            departureAt: "2026-04-15T14:00:00Z",
+            arrivalAt: "2026-04-15T17:00:00Z",
+          },
+        ],
+      },
+    ],
+  };
+  const request = buildRequest();
+  request.filters.maxStops = 0;
+
+  const response = materializeSearchResponse(
+    request,
+    "cheapest",
+    "agil-local",
+    {
+      offers: [direct, stopover],
+      warnings: [],
+      partial: false,
+    },
+  );
+
+  assert.equal(response.offers.length, 1);
+  assert.equal(response.allOffers?.length, 2);
 });
 
 test("search materialization does not mark unverified offers as quote-ready", () => {

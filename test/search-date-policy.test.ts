@@ -4,6 +4,7 @@ import {
   addDaysIso,
   getSearchDatePolicy,
   isIsoDateString,
+  resolveMigrationConcurrentMonths,
   resolveSearchTodayIso,
   validateSearchDateInPolicy,
 } from "../src/search-date-policy";
@@ -66,6 +67,25 @@ test("SEARCH_TODAY_OVERRIDE is honored only in test mode", () => {
     withEnv({ NODE_ENV: "production", SEARCH_TODAY_OVERRIDE: "2026-03-31" }, () =>
       resolveSearchTodayIso(new Date("2026-05-21T12:00:00.000Z"))),
     "2026-05-21",
+  );
+});
+
+test("migration monthly concurrency defaults to four and stays bounded", () => {
+  assert.equal(
+    withEnv({ FLY_DESK_MIGRATION_CONCURRENT_MONTHS: undefined }, resolveMigrationConcurrentMonths),
+    4,
+  );
+  assert.equal(
+    withEnv({ FLY_DESK_MIGRATION_CONCURRENT_MONTHS: "8" }, resolveMigrationConcurrentMonths),
+    8,
+  );
+  assert.equal(
+    withEnv({ FLY_DESK_MIGRATION_CONCURRENT_MONTHS: "0" }, resolveMigrationConcurrentMonths),
+    1,
+  );
+  assert.equal(
+    withEnv({ FLY_DESK_MIGRATION_CONCURRENT_MONTHS: "99" }, resolveMigrationConcurrentMonths),
+    12,
   );
 });
 

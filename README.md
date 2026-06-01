@@ -16,7 +16,8 @@ Fly Desk es una app Bun-only preparada para VPS:
 - busqueda exacta
 - busqueda flexible de solo ida por rango
 - busqueda flexible ida/vuelta via `/api/matrix`, normalizada como lista de resultados
-- busqueda migratoria mensual con meses seleccionables hasta fin del año actual
+- busqueda migratoria mensual exhaustiva: consulta cada dia de los meses seleccionados contra Agil y Costamar, sin filtros de tarifa, y procesa los meses en tandas
+- todas las busquedas esperan a Agil y Costamar y retienen sus resultados completos; la concurrencia regula solicitudes en lote, no recorta ofertas disponibles
 - autocomplete de origen y destino
 - filtros visibles de escalas, tiempo maximo de escala, equipaje y aerolineas
 - lista de resultados paginada con advertencias del backend
@@ -89,7 +90,7 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 
 - Runtime/API: `HOST`, `PORT`, `FLY_DESK_API_TOKEN`, `FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS`
 - Auth web: `FLY_DESK_WEB_AUTH`, `FLY_DESK_WEB_PASSWORD_HASH`, `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_TRUST_LOOPBACK_CLIENT`, `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK`
-- Busqueda/cache: `SEARCH_MAX_FUTURE_DAYS`, `SEARCH_REVALIDATION_CACHE_TTL_MS`, `SEARCH_COMPLETED_SESSION_TTL_MS`, `FLY_DESK_SESSION_DB_PATH`, `FLY_DESK_LOCATION_SUGGESTION_DB_PATH`
+- Busqueda/cache: `SEARCH_MAX_FUTURE_DAYS`, `SEARCH_REVALIDATION_CACHE_TTL_MS`, `SEARCH_COMPLETED_SESSION_TTL_MS`, `FLY_DESK_SESSION_DB_PATH`, `FLY_DESK_LOCATION_SUGGESTION_DB_PATH`, `FLY_DESK_MIGRATION_CONCURRENT_MONTHS`
 - App data: `FLY_DESK_APP_DATA_DIR`, `FLY_DESK_QUOTATION_RATE_CACHE_PATH`
 - Workers/prewarm: `FLY_DESK_SEARCH_WORKER_PROCESSES`, `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS`, `FLY_DESK_PROVIDER_PREWARM`
 - Agil: `AGIL_APIM_SUBSCRIPTION_KEY`, `AGIL_CHROME_USER_DATA_DIR`, `AGIL_CHROME_PROFILE`, `AGIL_BROWSER_URL`, `AGIL_RAW_CHROME_STORAGE_FILE_SCAN`, `AGIL_TEMP_CHROME_STORAGE_FALLBACK`, `AGIL_HTTP_TIMEOUT_MS`

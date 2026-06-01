@@ -92,7 +92,6 @@ mantenedor.
 
    ```json
    {
-     "providerId": "agil-local",
      "sortMode": "cheapest",
      "request": {
        "tripType": "one-way",
@@ -118,8 +117,9 @@ mantenedor.
    }
    ```
 
-   El criterio de exito es `agilOfferCount > 0` en la respuesta del job o en
-   `allOffers`.
+   La API publica siempre busca en Agil y Costamar. El criterio de exito de
+   esta recuperacion es encontrar al menos una oferta con
+   `providerSource = "agil-local"` en `allOffers`.
 
 10. Limpiar temporales:
 
