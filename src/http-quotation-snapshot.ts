@@ -110,6 +110,7 @@ export function normalizeQuotationRequestSnapshot(input: unknown, offerInput?: u
       currencyCode: quotationStringValue(rawFilters?.currencyCode),
       maxResults: quotationNumberValue(rawFilters?.maxResults),
       compactAllOffers: quotationBoolValue(rawFilters?.compactAllOffers),
+      exhaustiveResults: quotationBoolValue(rawFilters?.exhaustiveResults),
       maxTotalDurationMinutes: quotationNumberValue(rawFilters?.maxTotalDurationMinutes),
       maxLayoverMinutes: quotationNumberValue(rawFilters?.maxLayoverMinutes),
       minDepartureMinutes: quotationNumberValue(rawFilters?.minDepartureMinutes),

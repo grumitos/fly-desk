@@ -1,4 +1,6 @@
 export const DEFAULT_SEARCH_MAX_FUTURE_DAYS = 365;
+export const DEFAULT_MIGRATION_CONCURRENT_MONTHS = 4;
+export const MAX_MIGRATION_CONCURRENT_MONTHS = 12;
 export const SEARCH_TODAY_OVERRIDE_ENV = "SEARCH_TODAY_OVERRIDE";
 
 export interface SearchDatePolicy {
@@ -8,6 +10,7 @@ export interface SearchDatePolicy {
 }
 
 export interface PublicRuntimeConfig {
+  migrationConcurrentMonths: number;
   searchDatePolicy: SearchDatePolicy;
 }
 
@@ -75,6 +78,15 @@ export function getSearchDatePolicy(now = new Date()): SearchDatePolicy {
   };
 }
 
+export function resolveMigrationConcurrentMonths(): number {
+  const raw = Number(process.env.FLY_DESK_MIGRATION_CONCURRENT_MONTHS ?? DEFAULT_MIGRATION_CONCURRENT_MONTHS);
+  if (!Number.isFinite(raw)) {
+    return DEFAULT_MIGRATION_CONCURRENT_MONTHS;
+  }
+
+  return Math.min(MAX_MIGRATION_CONCURRENT_MONTHS, Math.max(1, Math.trunc(raw)));
+}
+
 export function validateSearchDateInPolicy(
   label: string,
   value: string | undefined,
@@ -102,6 +114,7 @@ export function validateSearchDateInPolicy(
 
 export function getPublicRuntimeConfig(now = new Date()): PublicRuntimeConfig {
   return {
+    migrationConcurrentMonths: resolveMigrationConcurrentMonths(),
     searchDatePolicy: getSearchDatePolicy(now),
   };
 }

@@ -9,6 +9,16 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
+async function waitFor(check: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for condition.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 function buildMonthViewRequest(): SearchRequest {
   return {
     origin: "LIM",
@@ -43,8 +53,17 @@ function buildExactRequest(): SearchRequest {
   };
 }
 
-test("migration month fan-out keeps each provider request lightweight", async () => {
+test("migration month fan-out keeps provider scans exhaustive", async () => {
   const payloads: BackendSearchPayload[] = [];
+  const request = {
+    ...buildMonthViewRequest(),
+    nonStop: true,
+    maxStopsFilter: "1",
+    carryOnRequired: true,
+    checkedBaggageRequired: true,
+    maxLayoverMinutes: "180",
+    includedAirlineCodes: ["LA"],
+  };
 
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -82,13 +101,20 @@ test("migration month fan-out keeps each provider request lightweight", async ()
     }));
   }) as typeof fetch;
 
-  await startMigrationSearch(buildMonthViewRequest(), "cheapest");
+  await startMigrationSearch(request, "cheapest");
 
   assert.equal(payloads.length, 8);
   for (const payload of payloads) {
     assert.equal(payload.request.tripType, "one-way");
     assert.equal(payload.request.searchMode, "stay-range");
-    assert.equal(payload.request.filters?.maxResults, 25);
+    assert.equal(payload.request.filters?.nonStop, false);
+    assert.equal(payload.request.filters?.maxStops, undefined);
+    assert.equal(payload.request.filters?.carryOnRequired, false);
+    assert.equal(payload.request.filters?.checkedBaggageRequired, false);
+    assert.equal(payload.request.filters?.baggageRequired, false);
+    assert.equal(payload.request.filters?.maxLayoverMinutes, undefined);
+    assert.equal(payload.request.filters?.includedAirlineCodes, undefined);
+    assert.equal(payload.request.filters?.maxResults, undefined);
     assert.equal(payload.request.filters?.compactAllOffers, true);
   }
 });
@@ -146,6 +172,66 @@ test("migration month fan-out uses explicitly selected months", async () => {
     "2026-07-31",
     "2026-09-30",
   ]);
+});
+
+test("migration month fan-out runs generous bounded batches", async () => {
+  const releases: Array<() => void> = [];
+  let activeRequests = 0;
+  let peakActiveRequests = 0;
+  const request = {
+    ...buildMonthViewRequest(),
+    migrationMonths: ["2026-06", "2026-07", "2026-08", "2026-09", "2026-10", "2026-11", "2026-12"],
+  };
+
+  globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+    const payload = JSON.parse(String(init?.body)) as BackendSearchPayload;
+    activeRequests += 1;
+    peakActiveRequests = Math.max(peakActiveRequests, activeRequests);
+
+    return new Promise<Response>((resolve) => {
+      releases.push(() => {
+        activeRequests -= 1;
+        resolve(new Response(JSON.stringify({
+          searchJobId: `job-${releases.length}`,
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers: [],
+          allOffers: [],
+          searchMeta: {
+            requestedAt: "2026-06-01T00:00:00.000Z",
+            completedAt: "2026-06-01T00:00:00.000Z",
+            providersUsed: ["agil-local", "costamar"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "agil-local",
+            coverageMode: "core",
+          },
+          warnings: [],
+          diagnosticLog: [],
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }));
+      });
+    });
+  }) as typeof fetch;
+
+  const pending = startMigrationSearch(request, "cheapest");
+  await waitFor(() => releases.length === 4);
+  assert.equal(peakActiveRequests, 4);
+
+  releases.slice(0, 4).forEach((release) => release());
+  await waitFor(() => releases.length === 7);
+  assert.equal(peakActiveRequests, 4);
+
+  releases.slice(4).forEach((release) => release());
+  await pending;
 });
 
 test("migration month with Agil offers suppresses child no-flight warnings", async () => {

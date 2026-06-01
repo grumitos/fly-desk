@@ -47,7 +47,7 @@ import {
   parseLimitDate,
 } from "./core/agil-normalization";
 import { buildFlexibleVariantGroupKey } from "./core/variant-group-key";
-import { maxStopsAcrossItineraries } from "./core/ranking";
+import { retainOfferVariants } from "./core/provider-offer-variants";
 import {
   ProviderSearchResult,
 } from "./core/provider";
@@ -2503,22 +2503,14 @@ function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): Canon
     taxes: buildMoney(taxesAmount > 0 ? Number(taxesAmount.toFixed(2)) : undefined, currencyCode),
   };
   const leg = request.legs[0];
-  const maxStops = typeof request.filters.maxStops === "number"
-    ? Math.max(0, request.filters.maxStops)
-    : undefined;
-  const maxVariants = Math.min(50, Math.max(1, Math.trunc(request.filters.maxResults ?? 50)));
-  const candidatePairs = request.tripType === "round-trip"
+  const candidatePairs: Array<{ outbound: ItineraryCandidate; inbound?: ItineraryCandidate }> = request.tripType === "round-trip"
     ? outboundCandidates.flatMap((outbound) => inboundCandidates.map((inbound) => ({ outbound, inbound })))
     : outboundCandidates.map((outbound) => ({ outbound, inbound: undefined }));
 
-  return candidatePairs.slice(0, maxVariants).flatMap(({ outbound, inbound }) => {
+  return retainOfferVariants(candidatePairs, request.filters).flatMap(({ outbound, inbound }) => {
     const itineraries = inbound
       ? [outbound.itinerary, inbound.itinerary]
       : [outbound.itinerary];
-    if (typeof maxStops === "number" && maxStopsAcrossItineraries(itineraries) > maxStops) {
-      return [];
-    }
-
     const baggage = buildBaggageSummary(outbound.baggage, inbound?.baggage);
     const mainCarrier = outbound.itinerary.segments[0]?.marketingCarrier ?? validatingCarrier;
     const offer: CanonicalOffer = {

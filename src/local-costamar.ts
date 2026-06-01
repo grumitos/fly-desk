@@ -27,7 +27,8 @@ import { buildOfferSignature } from "./core/offer-signature";
 import { parseProviderAmount } from "./core/provider-money";
 import { buildOfferVariantGroupKey } from "./core/variant-group-key";
 import { ProviderSearchResult } from "./core/provider";
-import { enrichComparisonMetrics, maxStopsAcrossItineraries, totalDuration } from "./core/ranking";
+import { enrichComparisonMetrics, totalDuration } from "./core/ranking";
+import { retainOfferVariants } from "./core/provider-offer-variants";
 import {
   BaggageSummary,
   CanonicalOffer,
@@ -2920,28 +2921,18 @@ function expandCostamarRecommendationFlightOptions(
   }
 
   const baseId = costamarRecommendationStableId(recommendation);
-  const maxVariants = Math.min(50, Math.max(1, Math.trunc(request.filters.maxResults ?? 50)));
   const variants: Array<Array<{ flight: CostamarFlight; index: number }>> = [[]];
   for (const options of optionsByJourney) {
     const next: Array<Array<{ flight: CostamarFlight; index: number }>> = [];
     for (const prefix of variants) {
       for (const option of options) {
         next.push([...prefix, option]);
-        if (next.length >= maxVariants) {
-          break;
-        }
-      }
-      if (next.length >= maxVariants) {
-        break;
       }
     }
     variants.splice(0, variants.length, ...next);
-    if (variants.length >= maxVariants) {
-      break;
-    }
   }
 
-  return variants.slice(0, maxVariants).map((variant) => ({
+  return retainOfferVariants(variants, request.filters).map((variant) => ({
     ...recommendation,
     id: `${baseId}:${variant.map((option) => option.index).join("-")}`,
     itinerary: relevantJourneys.map((journey, index) => ({
@@ -3214,13 +3205,6 @@ export function mapCostamarRecommendationToOffer(
   const itineraries = request.tripType === "round-trip"
     ? [outboundNormalized.itinerary, inboundNormalized.itinerary].filter((entry): entry is Itinerary => Boolean(entry))
     : [outboundNormalized.itinerary];
-  const maxStops = typeof request.filters.maxStops === "number"
-    ? Math.max(0, request.filters.maxStops)
-    : undefined;
-  if (typeof maxStops === "number" && maxStopsAcrossItineraries(itineraries) > maxStops) {
-    return { rawSegments: [] };
-  }
-
   const pricing = recommendation.pricing ?? {};
   const currencyCode = resolveCostamarOfferCurrencyCode(request, engine);
   const totalAmount = numberValue(pricing.total) ?? numberValue(pricing.totalAmount);

@@ -1990,7 +1990,6 @@ function shouldBuildCostamarProviderContext(providerIds: ProviderId[]): boolean 
 function buildInitialProviderContext(
   providerIds: ProviderId[],
   payload: SearchPayload | undefined,
-  explicitProviderId?: ProviderId,
 ): ProviderContext | undefined {
   if (!shouldBuildCostamarProviderContext(providerIds)) {
     return undefined;
@@ -1998,9 +1997,7 @@ function buildInitialProviderContext(
 
   const costamarContext = normalizeCostamarProviderContext(payload?.providerConfig?.costamar);
   return {
-    costamar: explicitProviderId === "costamar" && !payload?.providerConfig?.costamar?.token
-      ? { ...costamarContext, token: "" }
-      : costamarContext,
+    costamar: costamarContext,
   };
 }
 
@@ -2016,7 +2013,7 @@ async function handleSearchRequest(
     return json({ errors: requestErrors }, { status: 400 });
   }
 
-  const providerContext = buildInitialProviderContext(contract.providerIds, payload, contract.explicitProviderId);
+  const providerContext = buildInitialProviderContext(contract.providerIds, payload);
   const errors = validateSearchContract(contract, providerContext);
   if (errors.length > 0) {
     return json({ errors }, { status: 400 });
@@ -2259,7 +2256,7 @@ async function handleMatrixRequest(
     return json({ errors: requestErrors }, { status: 400 });
   }
 
-  const providerContext = buildInitialProviderContext(contract.providerIds, payload, contract.explicitProviderId);
+  const providerContext = buildInitialProviderContext(contract.providerIds, payload);
   const errors = validateSearchContract(contract, providerContext);
   if (errors.length > 0) {
     return json({ errors }, { status: 400 });
@@ -2634,7 +2631,7 @@ export async function routeRequest(request: Request): Promise<Response> {
     const rawProviderId = stringValue(url.searchParams.get("providerId"));
     const providerIds = rawProviderId
       ? [resolveProviderId(rawProviderId as ProviderId | undefined)]
-      : resolveSearchProviderIds(undefined);
+      : resolveSearchProviderIds();
 
     if (providerIds.length === 1) {
       const providerId = providerIds[0];

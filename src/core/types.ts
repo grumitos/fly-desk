@@ -133,6 +133,7 @@ export interface SearchFilters {
   currencyCode?: string;
   maxResults?: number;
   compactAllOffers?: boolean;
+  exhaustiveResults?: boolean;
   maxTotalDurationMinutes?: number;
   maxLayoverMinutes?: number;
   minDepartureMinutes?: number;

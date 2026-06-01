@@ -1379,6 +1379,11 @@ test("idle location suggestions do not disturb autocomplete and swap geometry", 
     await openDesktop(page, baseUrl);
     await page.getByRole("combobox", { name: "Origen" }).fill("lim");
     await page.getByRole("listbox").waitFor();
+    await page.waitForFunction(() => {
+      const originControl = document.querySelector("#location-origen")?.parentElement?.getBoundingClientRect();
+      const listbox = document.querySelector('[role="listbox"]')?.getBoundingClientRect();
+      return Boolean(originControl && listbox && Math.abs(listbox.top - originControl.bottom - 4) <= 1);
+    });
 
     const geometry = await page.evaluate(() => {
       const originControl = document.querySelector("#location-origen")?.parentElement?.getBoundingClientRect();
@@ -1395,7 +1400,10 @@ test("idle location suggestions do not disturb autocomplete and swap geometry", 
       };
     });
 
-    assert.ok(Math.abs(geometry.autocompleteGap - 4) <= 1);
+    assert.ok(
+      Math.abs(geometry.autocompleteGap - 4) <= 1,
+      `Expected autocomplete gap to settle at 4px, received ${geometry.autocompleteGap}px`,
+    );
     assert.ok(Math.abs(geometry.swapCenterY - geometry.originCenterY) <= 1);
   }, { autoOpen: false });
 });
@@ -3606,7 +3614,7 @@ test("migratory search sends monthly stay-range requests", async () => {
 
     assert.equal(firstRequest.tripType, "one-way");
     assert.equal(firstRequest.searchMode, "stay-range");
-    assert.equal(firstRequest.filters?.maxResults, 25);
+    assert.equal(firstRequest.filters?.maxResults, undefined);
     assert.equal(firstRequest.filters?.compactAllOffers, true);
     assert.equal(firstLeg?.departureStart, "2026-05-01");
     assert.equal(firstLeg?.departureEnd, "2026-05-31");

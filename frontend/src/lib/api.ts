@@ -22,9 +22,9 @@ import {
 
 const API_BASE = ""
 const MIGRATION_MONTH_COUNT = 8
-const MIGRATION_CONCURRENT_REQUESTS = 2
+const MIGRATION_CONCURRENT_REQUESTS_FALLBACK = 4
+const MIGRATION_CONCURRENT_REQUESTS_MAX = 12
 const MIGRATION_POLL_INTERVAL_MS = 900
-const MIGRATION_MONTH_RESULT_HINT = 25
 const LOCATION_SUGGESTION_CACHE_LIMIT = 100
 const LOCATION_SUGGESTION_POOL_LIMIT = 500
 const LOCATION_SUGGESTION_DETAILS_STORAGE_KEY = "flydesk-location-suggestion-details-v1"
@@ -1149,9 +1149,29 @@ function migrationRequestForMonth(request: SearchRequest, range: MigrationMonthR
     returnEnd: undefined,
     flexibleMode: undefined,
     stayNights: undefined,
-    maxResults: MIGRATION_MONTH_RESULT_HINT,
+    nonStop: false,
+    maxStopsFilter: undefined,
+    maxLayoverMinutes: undefined,
+    carryOnRequired: false,
+    checkedBaggageRequired: false,
+    baggageRequired: false,
+    includedAirlineCodes: undefined,
+    maxResults: undefined,
     compactAllOffers: true,
   }
+}
+
+function migrationConcurrentRequests() {
+  const runtime = typeof window === "undefined"
+    ? undefined
+    : (window as Window & {
+        __FLYDESK_RUNTIME__?: { migrationConcurrentMonths?: number }
+      }).__FLYDESK_RUNTIME__
+  const configured = Number(runtime?.migrationConcurrentMonths)
+
+  return Number.isFinite(configured)
+    ? Math.min(MIGRATION_CONCURRENT_REQUESTS_MAX, Math.max(1, Math.trunc(configured)))
+    : MIGRATION_CONCURRENT_REQUESTS_FALLBACK
 }
 
 function cheapestOffer(offers: CanonicalOffer[]): CanonicalOffer | undefined {
@@ -1404,7 +1424,7 @@ export async function startMigrationSearch(
 
   await runWithConcurrency(
     ranges,
-    MIGRATION_CONCURRENT_REQUESTS,
+    migrationConcurrentRequests(),
     async (range, index) => {
       try {
         throwIfAborted(options.signal)
