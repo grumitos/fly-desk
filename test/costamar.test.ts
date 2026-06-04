@@ -2244,6 +2244,14 @@ test("verifyCostamarRedirectCandidate verifies only branded redirects that do no
     assert.equal(accepted.verified, true);
     assert.equal(accepted.state, "verified");
 
+    global.fetch = (async () =>
+      new Response('<html><head><title>Click And Book Plus</title><meta name="author" content="Click And Book Plus"></head><body></body></html>', {
+        status: 200,
+      })) as typeof fetch;
+    const validShell = await verifyCostamarRedirectCandidate(request, context);
+    assert.equal(validShell.verified, true);
+    assert.equal(validShell.state, "verified");
+
     global.fetch = (async () => new Response("<html>login required</html>", { status: 200 })) as typeof fetch;
     const blocked = await verifyCostamarRedirectCandidate(request, context);
     assert.equal(blocked.verified, false);
