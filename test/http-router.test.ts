@@ -142,7 +142,7 @@ function buildCostamarOffer(url: string): CanonicalOffer {
         id: "offer-costamar-1-path",
         type: "search-redirect",
         provider: "costamar",
-        label: "Buscar en Costamar",
+        label: "Buscar en Click and Book Plus",
         url,
         precision: "exact-search",
         score: 0.9,
@@ -183,14 +183,14 @@ function buildCostamarMatrixCell(url: string): MatrixCell {
     selectable: true,
     requiresRequery: true,
     stateCode: "live",
-    tooltip: "Costamar live search.",
+    tooltip: "Click and Book Plus live search.",
     derivedRequest: buildCostamarRequest(),
     purchasePaths: [
       {
         id: "matrix-costamar-path",
         type: "search-redirect",
         provider: "costamar",
-        label: "Buscar en Costamar",
+        label: "Buscar en Click and Book Plus",
         url,
         precision: "exact-search",
         score: 0.9,
@@ -218,8 +218,8 @@ async function withAcceptedCostamarRedirectValidation<T>(run: () => Promise<T>):
     const url = typeof input === "string" || input instanceof URL
       ? String(input)
       : input.url;
-    if (url.startsWith("https://booking.clickandbook.com/")) {
-      return new Response("<html><body>Costamar search accepted</body></html>", {
+    if (url.startsWith("https://booking.clickandbook.com/") || url.startsWith("https://flights.zdev.tech/")) {
+      return new Response("<html><body>Click and Book Plus search accepted</body></html>", {
         status: 200,
         headers: { "Content-Type": "text/html; charset=utf-8" },
       });
@@ -1209,7 +1209,7 @@ test("costamar redirect returns a controlled block when refresh hangs", async ()
 
     assert.equal(response.status, 409);
     const body = await response.text();
-    assert.match(body, /Renueva la sesion de Costamar/i);
+    assert.match(body, /Renueva la sesion de Click and Book Plus/i);
     assert.match(body, /tardo mas de/i);
   } finally {
     resetCostamarWarmupStateForTests();
@@ -1486,7 +1486,7 @@ test("costamar redirect blocks locally when no fresh token is available", async 
       assert.equal(response.status, 409);
       assert.match(response.headers.get("content-type") ?? "", /text\/html/i);
       const body = await response.text();
-      assert.match(body, /Renueva la sesion de Costamar/i);
+      assert.match(body, /Renueva la sesion de Click and Book Plus/i);
       assert.match(body, /redirect verificado/i);
     });
   } finally {
@@ -2451,15 +2451,13 @@ test("search endpoint serves cached results first for the same config while reva
   };
   const cachedJob = runtime.sessions.createSearchJob({
     request,
-    providerContext: {
+    providerContext: buildProviderContext("costamar", {
       costamar: {
-        apiBaseUrl: "https://costamar.com.pe/vuelos/api",
-        brandBaseUrl: "https://booking.clickandbook.com/vuelos",
         terminalId,
         token: seededToken,
         lang: "es",
       },
-    },
+    }),
     offers: [cachedOffer],
     allOffers: [cachedOffer],
     searchMeta: {

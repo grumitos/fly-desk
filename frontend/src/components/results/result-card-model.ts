@@ -254,7 +254,7 @@ function costamarRedirectStatus(offer: CanonicalOffer): ResultRedirectStatus | u
   if (verification.verified) {
     return {
       label: "Redirect verificado",
-      title: "El enlace de Costamar fue validado antes de mostrar la oferta.",
+      title: "El enlace de Click and Book Plus fue validado antes de mostrar la oferta.",
       tone: "verified",
     }
   }
@@ -262,7 +262,7 @@ function costamarRedirectStatus(offer: CanonicalOffer): ResultRedirectStatus | u
   if (verification.state === "blocked") {
     return {
       label: "Redirect bloqueado",
-      title: verification.reason || "Costamar no devolvió un redirect usable para esta búsqueda.",
+      title: verification.reason || "Click and Book Plus no devolvió un redirect usable para esta búsqueda.",
       tone: "blocked",
     }
   }
@@ -316,7 +316,7 @@ export function providerBadgeForId(providerId?: string): ResultProviderBadge {
   if (providerId === "costamar") {
     return {
       label: providerDisplayName(providerId),
-      shortLabel: "CO",
+      shortLabel: "CB+",
       icon: "/assets/provider-icons/costamar-128.png",
     }
   }

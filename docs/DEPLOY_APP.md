@@ -59,7 +59,7 @@ Grupos principales:
 - Runtime/API: `HOST`, `PORT`, `FLY_DESK_API_TOKEN`.
 - Auth web: `FLY_DESK_WEB_AUTH`, `FLY_DESK_WEB_PASSWORD_HASH`, `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_TRUST_LOOPBACK_CLIENT`, `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK`, `FLY_DESK_COOKIE_SECURE`.
 - Busqueda/cache: `SEARCH_MAX_FUTURE_DAYS`, `FLY_DESK_SEARCH_WORKER_PROCESSES`, `FLY_DESK_MIGRATION_CONCURRENT_MONTHS`, `FLY_DESK_SESSION_DB_PATH`, `FLY_DESK_LOCATION_SUGGESTION_DB_PATH`, `FLY_DESK_APP_DATA_DIR`, `FLY_DESK_QUOTATION_RATE_CACHE_PATH`.
-- Providers: `AGIL_*`, `COSTAMAR_*`, `COSTAMAR_B2B_*`.
+- Providers: `AGIL_*`, `CBPLUS_*`, `CBPLUS_B2B_*`; `COSTAMAR_*` queda como fallback legacy donde aplique.
 
 Produccion debe mantener busquedas de proveedor aisladas con `FLY_DESK_SEARCH_WORKER_PROCESSES=1`. Usar `0` solo como excepcion temporal de QA; si se cambian workers o warm-up, repetir QA externo antes de darlo por estable.
 

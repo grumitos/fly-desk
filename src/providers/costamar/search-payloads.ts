@@ -43,14 +43,6 @@ function toCostamarB2bDisplayDate(dateIso?: string): string | undefined {
   return `${parts.day}/${parts.month}/${parts.year}`;
 }
 
-function toCostamarDayStart(dateIso?: string): string | undefined {
-  if (!dateIso) {
-    return undefined;
-  }
-
-  return new Date(`${dateIso}T00:00:00-05:00`).toISOString();
-}
-
 function toCompactDate(dateIso?: string): string | undefined {
   return dateIso ? dateIso.replaceAll("-", "") : undefined;
 }
@@ -114,47 +106,106 @@ export function buildCostamarSearchBody(
   const departureDate = toCompactDate(leg.departureDate);
   const returnDate = toCompactDate(leg.returnDate);
   if (!departureDate) {
-    throw new Error("Costamar exact search requires departureDate.");
+    throw new Error("Click and Book Plus exact search requires departureDate.");
   }
 
   const itinerary = [
     {
-      origin: leg.origin,
-      destination: leg.destination,
-      date: departureDate,
+      departureDateTime: {
+        value: departureDate,
+      },
+      originLocation: {
+        locationCode: leg.origin,
+      },
+      destinationLocation: {
+        locationCode: leg.destination,
+      },
     },
   ];
 
   if (request.tripType === "round-trip") {
     if (!returnDate) {
-      throw new Error("Costamar round-trip search requires returnDate.");
+      throw new Error("Click and Book Plus round-trip search requires returnDate.");
     }
 
     itinerary.push({
-      origin: leg.destination,
-      destination: leg.origin,
-      date: returnDate,
+      departureDateTime: {
+        value: returnDate,
+      },
+      originLocation: {
+        locationCode: leg.destination,
+      },
+      destinationLocation: {
+        locationCode: leg.origin,
+      },
     });
   }
 
   const validationToken = resolveUsableCostamarBrandedToken(context.token, context.terminalId);
   if (!validationToken) {
-    throw new Error("Costamar token is required.");
+    throw new Error("Click and Book Plus token is required.");
   }
 
-  return {
-    flightType: request.tripType === "one-way" ? "OW" : "RT",
-    terminalId: context.terminalId,
-    itinerary,
-    passengers: {
-      adults: request.passengers.adults,
-      children: request.passengers.children,
-      infants: request.passengers.infants,
+  const airTravelerAvail = [
+    {
+      airTraveler: {
+        passengerTypeQuantity: {
+          code: "ADT",
+          quantity: request.passengers.adults,
+        },
+      },
     },
-    startDate: toCostamarDayStart(leg.departureDate),
-    endDate: toCostamarDayStart(request.tripType === "round-trip" ? leg.returnDate : leg.departureDate),
+  ];
+  if (request.passengers.children > 0) {
+    airTravelerAvail.push({
+      airTraveler: {
+        passengerTypeQuantity: {
+          code: "CHD",
+          quantity: request.passengers.children,
+        },
+      },
+    });
+  }
+  if (request.passengers.infants > 0) {
+    airTravelerAvail.push({
+      airTraveler: {
+        passengerTypeQuantity: {
+          code: "INF",
+          quantity: request.passengers.infants,
+        },
+      },
+    });
+  }
+
+  const body: Record<string, unknown> = {
+    pos: {
+      source: [
+        {
+          requestorID: {
+            id: context.terminalId,
+            instance: crypto.randomUUID(),
+          },
+        },
+      ],
+    },
+    originDestinationInformation: itinerary,
+    travelPreferences: [],
+    travelerInfoSummary: {
+      airTravelerAvail,
+      priceRequestInformation: null,
+    },
+    isValidDates: true,
+    processingInfo: {
+      searchType: request.tripType === "one-way" ? "OW" : "RT",
+    },
     token: validationToken,
-    hasValidationToken: true,
-    flexible,
+    terminalId: context.terminalId,
   };
+
+  if (flexible) {
+    body.maxResponses = 3;
+    body.flexible = true;
+  }
+
+  return body;
 }

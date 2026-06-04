@@ -486,13 +486,13 @@ function escapeHtml(value: string): string {
 }
 
 function costamarRedirectBlockedResponse(reason?: string): Response {
-  const reasonText = reason?.trim() ? escapeHtml(reason.trim()) : "No se pudo validar ni renovar el redirect de Costamar.";
+  const reasonText = reason?.trim() ? escapeHtml(reason.trim()) : "No se pudo validar ni renovar el redirect de Click and Book Plus.";
   return html(`<!doctype html>
 <html lang="es">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Renueva la sesion de Costamar</title>
+    <title>Renueva la sesion de Click and Book Plus</title>
     <style>
       :root { color-scheme: light; }
       body {
@@ -534,10 +534,10 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
   <body>
     <main>
       <section>
-        <h1>Renueva la sesion de Costamar</h1>
-        <p>Fly Desk no encontro un redirect verificado para abrir esta busqueda en Costamar.</p>
+        <h1>Renueva la sesion de Click and Book Plus</h1>
+        <p>Fly Desk no encontro un redirect verificado para abrir esta busqueda en Click and Book Plus.</p>
         <p><strong>Motivo:</strong> ${reasonText}</p>
-        <p>Abre Costamar B2B/Chrome, confirma que la sesion este activa y vuelve a intentar desde Fly Desk.</p>
+        <p>Abre Click and Book Plus B2B/Chrome, confirma que la sesion este activa y vuelve a intentar desde Fly Desk.</p>
       </section>
     </main>
   </body>
@@ -551,7 +551,9 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
 
 function costamarRedirectTotalTimeoutMs(): number {
   const configured = Number(
-    process.env.COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS ?? DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS,
+    process.env.CBPLUS_REDIRECT_TOTAL_TIMEOUT_MS?.trim()
+      ?? process.env.COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS
+      ?? DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS,
   );
   if (!Number.isFinite(configured)) {
     return DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS;
@@ -572,7 +574,7 @@ async function withCostamarRedirectTotalTimeout<T>(promise: Promise<T>): Promise
       promise,
       new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(() => {
-          reject(new Error(`La validacion del redirect de Costamar tardo mas de ${timeoutMs}ms.`));
+          reject(new Error(`La validacion del redirect de Click and Book Plus tardo mas de ${timeoutMs}ms.`));
         }, timeoutMs);
         if (typeof timeout === "object" && timeout && "unref" in timeout) {
           (timeout as { unref: () => void }).unref();
@@ -605,9 +607,9 @@ function createSearchDraftResponse(
 ): SearchResponse {
   const requestedAt = new Date().toISOString();
   const warning = providerIds.length > 1
-    ? "Consultando Agil y Costamar. Los resultados se iran agregando."
+    ? "Consultando Agil y Click and Book Plus. Los resultados se iran agregando."
     : providerIds[0] === "costamar"
-      ? "Consultando Costamar. Los resultados se iran agregando."
+      ? "Consultando Click and Book Plus. Los resultados se iran agregando."
       : "Consultando Agil. Los resultados se iran agregando.";
 
   return {
@@ -2574,7 +2576,7 @@ export async function routeRequest(request: Request): Promise<Response> {
 
   if (request.method === "GET" && url.pathname === "/api/costamar/token-status") {
     if (!isTrustedLocalRequest(request)) {
-      return json({ error: "This Costamar token endpoint is only available on localhost." }, { status: 403 });
+      return json({ error: "This Click and Book Plus token endpoint is only available on localhost." }, { status: 403 });
     }
 
     const status = getCostamarTokenStatus();
@@ -2805,10 +2807,10 @@ export async function routeRequest(request: Request): Promise<Response> {
               canRedirect = true;
             }
           } else {
-            blockedReason = "No se pudo reconstruir la busqueda Costamar desde el purchase path.";
+            blockedReason = "No se pudo reconstruir la busqueda Click and Book Plus desde el purchase path.";
           }
         } catch (error) {
-          blockedReason = error instanceof Error ? error.message : "No se pudo validar el redirect de Costamar.";
+          blockedReason = error instanceof Error ? error.message : "No se pudo validar el redirect de Click and Book Plus.";
           canRedirect = false;
         }
 

@@ -160,6 +160,8 @@ export interface ProviderConfigInput {
 export interface CostamarProviderContext {
   apiBaseUrl: string;
   brandBaseUrl: string;
+  engineBaseUrl?: string;
+  markupBaseUrl?: string;
   terminalId: string;
   token: string;
   lang: string;

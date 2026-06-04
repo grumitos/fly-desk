@@ -181,6 +181,79 @@ interface CostamarSearchResponse {
   status?: number;
   data?: CostamarRecommendation[];
   message?: string;
+  pricedItineraries?: {
+    pricedItinerary?: CbPlusPricedItinerary | CbPlusPricedItinerary[];
+  };
+}
+
+interface CbPlusAirport {
+  locationCode?: string;
+  code?: string;
+  codeContext?: string;
+}
+
+interface CbPlusAirline {
+  code?: string;
+  companyShortName?: string;
+  name?: string;
+}
+
+interface CbPlusBookingClassAvail {
+  resBookDesigCode?: string;
+  code?: string;
+}
+
+interface CbPlusFlightSegment {
+  id?: string;
+  departureAirport?: CbPlusAirport;
+  arrivalAirport?: CbPlusAirport;
+  departureDateTime?: string | { value?: string };
+  arrivalDateTime?: string | { value?: string };
+  elapsedTime?: string | number;
+  marketingAirline?: CbPlusAirline;
+  operatingAirline?: CbPlusAirline;
+  flightNumber?: string | number;
+  fareBasisCode?: string;
+  bookingClass?: string | { code?: string };
+  bookingClassAvails?: Array<{
+    bookingClassAvail?: CbPlusBookingClassAvail | CbPlusBookingClassAvail[];
+  }>;
+  cabinType?: string;
+  tpaextensions?: unknown;
+  tpaExtensions?: unknown;
+  baggage?: unknown;
+  handBaggage?: unknown;
+}
+
+interface CbPlusOriginDestinationOption {
+  refNumber?: string | number;
+  rph?: string | number;
+  flightSegment?: CbPlusFlightSegment | CbPlusFlightSegment[];
+}
+
+interface CbPlusMoney {
+  amount?: string | number;
+  currencyCode?: string;
+  value?: string | number;
+}
+
+interface CbPlusPricedItinerary {
+  id?: string | number;
+  sequenceNumber?: string | number;
+  airItinerary?: {
+    originDestinationOptions?: {
+      originDestinationOption?: CbPlusOriginDestinationOption | CbPlusOriginDestinationOption[];
+    };
+  };
+  airItineraryPricingInfo?: Record<string, unknown>;
+  ticketingInfo?: {
+    pricingSystem?: {
+      code?: string;
+      codeContext?: string;
+      pseudoCityCode?: string;
+    };
+    pseudoCityCode?: string;
+  };
 }
 
 interface CostamarAutocompleteResponse {
@@ -267,18 +340,23 @@ interface CostamarRedirectResolution {
   warnings: string[];
 }
 
+function cbPlusEnv(primaryName: string, legacyName: string): string | undefined {
+  return process.env[primaryName]?.trim() || process.env[legacyName]?.trim() || undefined;
+}
+
 const COSTAMAR_HTTP_TIMEOUT_MS = Math.max(
   5000,
-  Number(process.env.COSTAMAR_HTTP_TIMEOUT_MS ?? 20000),
+  Number(cbPlusEnv("CBPLUS_HTTP_TIMEOUT_MS", "COSTAMAR_HTTP_TIMEOUT_MS") ?? 20000),
 );
-const COSTAMAR_AIR_API_BASE_URL = process.env.COSTAMAR_AIR_API_BASE_URL?.trim()
+const COSTAMAR_AIR_API_BASE_URL = process.env.CBPLUS_AIR_API_BASE_URL?.trim()
+  || process.env.COSTAMAR_AIR_API_BASE_URL?.trim()
   || "https://api-zneith.zdev.tech/api-air-0.1";
 const COSTAMAR_REDIRECT_SESSION_WARNING =
-  "Costamar redirect token is missing, expired, or incompatible with this terminal.";
+  "Click and Book Plus redirect token is missing, expired, or incompatible with this terminal.";
 const COSTAMAR_SESSION_WARMUP_POLL_MS = 500;
 const COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS = Math.max(
   1500,
-  Number(process.env.COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS ?? 6000),
+  Number(cbPlusEnv("CBPLUS_REDIRECT_VERIFY_TIMEOUT_MS", "COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS") ?? 6000),
 );
 const COSTAMAR_REDIRECT_VERIFY_FAILURE_PATTERN =
   /login|iniciar\s+sesi[oó]n|auth|otp|captcha|expired|expirad|invalid|inv[aá]lid|unauthorized|forbidden/i;
@@ -329,20 +407,20 @@ export const COSTAMAR_CONCURRENCY = Object.freeze({
     return SHARED_SEARCH_CONCURRENCY.rangeMinimum;
   },
   get matrixCell() {
-    return resolveMatrixCellConcurrency("COSTAMAR_MATRIX_CELL_CONCURRENCY");
+    return resolveMatrixCellConcurrency(["CBPLUS_MATRIX_CELL_CONCURRENCY", "COSTAMAR_MATRIX_CELL_CONCURRENCY"]);
   },
   get rangeSearch() {
-    return resolveRangeSearchConcurrency("COSTAMAR_RANGE_SEARCH_CONCURRENCY");
+    return resolveRangeSearchConcurrency(["CBPLUS_RANGE_SEARCH_CONCURRENCY", "COSTAMAR_RANGE_SEARCH_CONCURRENCY"]);
   },
   httpTimeoutMs: COSTAMAR_HTTP_TIMEOUT_MS,
 });
 const COSTAMAR_RANGE_DAY_RETRY_ATTEMPTS = Math.max(
   0,
-  Math.trunc(Number(process.env.COSTAMAR_RANGE_DAY_RETRY_ATTEMPTS ?? 1)) || 0,
+  Math.trunc(Number(cbPlusEnv("CBPLUS_RANGE_DAY_RETRY_ATTEMPTS", "COSTAMAR_RANGE_DAY_RETRY_ATTEMPTS") ?? 1)) || 0,
 );
 const COSTAMAR_RANGE_DAY_RETRY_DELAY_MS = Math.max(
   0,
-  Math.trunc(Number(process.env.COSTAMAR_RANGE_DAY_RETRY_DELAY_MS ?? 250)) || 0,
+  Math.trunc(Number(cbPlusEnv("CBPLUS_RANGE_DAY_RETRY_DELAY_MS", "COSTAMAR_RANGE_DAY_RETRY_DELAY_MS") ?? 250)) || 0,
 );
 const DEFAULT_COSTAMAR_PREWARM_ORIGIN = "LIM";
 const DEFAULT_COSTAMAR_PREWARM_DESTINATION = "CUZ";
@@ -356,21 +434,21 @@ const COSTAMAR_B2B_AUTH_FIELD_PATTERN =
   /otp|auth|token|verification|verify|code|pin|2fa|mfa/i;
 
 function costamarSessionWarmupEnabled(): boolean {
-  return String(process.env.COSTAMAR_SESSION_WARMUP_ENABLED ?? "1").trim() !== "0";
+  return String(cbPlusEnv("CBPLUS_SESSION_WARMUP_ENABLED", "COSTAMAR_SESSION_WARMUP_ENABLED") ?? "1").trim() !== "0";
 }
 
 function costamarSessionWarmupTimeoutMs(): number {
-  return Math.max(0, Number(process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS ?? 8000));
+  return Math.max(0, Number(cbPlusEnv("CBPLUS_SESSION_WARMUP_TIMEOUT_MS", "COSTAMAR_SESSION_WARMUP_TIMEOUT_MS") ?? 8000));
 }
 
 function costamarSessionWarmupOpenBrowserFallbackEnabled(): boolean {
-  return String(process.env.COSTAMAR_SESSION_WARMUP_OPEN_BROWSER_FALLBACK ?? "0").trim() !== "0";
+  return String(cbPlusEnv("CBPLUS_SESSION_WARMUP_OPEN_BROWSER_FALLBACK", "COSTAMAR_SESSION_WARMUP_OPEN_BROWSER_FALLBACK") ?? "0").trim() !== "0";
 }
 
 function costamarSessionWarmupCooldownMs(): number {
   return Math.max(
     costamarSessionWarmupTimeoutMs(),
-    Number(process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS ?? 30000),
+    Number(cbPlusEnv("CBPLUS_SESSION_WARMUP_COOLDOWN_MS", "COSTAMAR_SESSION_WARMUP_COOLDOWN_MS") ?? 30000),
   );
 }
 
@@ -379,12 +457,15 @@ function canWarmCostamarSession(request: SearchRequest): boolean {
 }
 
 function resolveCostamarChromeLaunchOptions(): { userDataDir?: string; profileDirectory?: string } {
-  const userDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR?.trim()
+  const userDataDir = process.env.CBPLUS_CHROME_USER_DATA_DIR?.trim()
+    || process.env.COSTAMAR_CHROME_USER_DATA_DIR?.trim()
+    || process.env.CBPLUS_AGENT_CHROME_USER_DATA_DIR?.trim()
     || process.env.COSTAMAR_AGENT_CHROME_USER_DATA_DIR?.trim()
     || process.env.AGIL_CHROME_USER_DATA_DIR?.trim()
     || DEFAULT_CHROME_USER_DATA_DIR
     || undefined;
-  const profileDirectory = process.env.COSTAMAR_CHROME_PROFILE?.trim()
+  const profileDirectory = process.env.CBPLUS_CHROME_PROFILE?.trim()
+    || process.env.COSTAMAR_CHROME_PROFILE?.trim()
     || process.env.AGIL_CHROME_PROFILE?.trim()
     || undefined;
 
@@ -399,7 +480,8 @@ function resolveCostamarChromeProfileName(): string {
 }
 
 function resolveCostamarChromeExecutable(): string {
-  const configured = process.env.COSTAMAR_CHROME_EXECUTABLE?.trim();
+  const configured = process.env.CBPLUS_CHROME_EXECUTABLE?.trim()
+    || process.env.COSTAMAR_CHROME_EXECUTABLE?.trim();
   if (configured && existsSync(configured)) {
     return configured;
   }
@@ -422,15 +504,20 @@ function resolveCostamarChromeExecutable(): string {
 }
 
 function resolveCostamarB2bBaseUrl(): string {
-  return process.env.COSTAMAR_B2B_BASE_URL?.trim() || DEFAULT_COSTAMAR_B2B_BASE_URL;
+  return process.env.CBPLUS_B2B_BASE_URL?.trim()
+    || process.env.COSTAMAR_B2B_BASE_URL?.trim()
+    || DEFAULT_COSTAMAR_B2B_BASE_URL;
 }
 
 function resolveCostamarB2bCredentials(): { email?: string; password?: string } {
-  const email = process.env.COSTAMAR_B2B_EMAIL?.trim()
+  const email = process.env.CBPLUS_B2B_EMAIL?.trim()
+    || process.env.COSTAMAR_B2B_EMAIL?.trim()
+    || process.env.CBPLUS_B2B_USERNAME?.trim()
     || process.env.COSTAMAR_B2B_USERNAME?.trim()
     || cachedInteractiveCostamarB2bCredentials.email?.trim()
     || undefined;
-  const password = process.env.COSTAMAR_B2B_PASSWORD?.trim()
+  const password = process.env.CBPLUS_B2B_PASSWORD?.trim()
+    || process.env.COSTAMAR_B2B_PASSWORD?.trim()
     || cachedInteractiveCostamarB2bCredentials.password?.trim()
     || undefined;
   return {
@@ -440,18 +527,20 @@ function resolveCostamarB2bCredentials(): { email?: string; password?: string } 
 }
 
 function costamarB2bPromptEnabled(): boolean {
-  return String(process.env.COSTAMAR_B2B_PROMPT_ENABLED ?? "1").trim() !== "0";
+  return String(cbPlusEnv("CBPLUS_B2B_PROMPT_ENABLED", "COSTAMAR_B2B_PROMPT_ENABLED") ?? "1").trim() !== "0";
 }
 
 function resolveCostamarB2bTotpSecret(): string | undefined {
-  const secret = process.env.COSTAMAR_B2B_TOTP_SECRET?.trim()
+  const secret = process.env.CBPLUS_B2B_TOTP_SECRET?.trim()
+    || process.env.COSTAMAR_B2B_TOTP_SECRET?.trim()
+    || process.env.CBPLUS_B2B_TOTP_URI?.trim()
     || process.env.COSTAMAR_B2B_TOTP_URI?.trim()
     || undefined;
   return secret || undefined;
 }
 
 function costamarB2bTotpMinRemainingSeconds(): number {
-  const configured = Number(process.env.COSTAMAR_B2B_TOTP_MIN_REMAINING_SECONDS ?? 5);
+  const configured = Number(cbPlusEnv("CBPLUS_B2B_TOTP_MIN_REMAINING_SECONDS", "COSTAMAR_B2B_TOTP_MIN_REMAINING_SECONDS") ?? 5);
   return Number.isFinite(configured) ? Math.max(0, Math.trunc(configured)) : 5;
 }
 
@@ -502,20 +591,20 @@ async function promptCostamarB2bViaTerminal(
 
   const response: CostamarB2bPromptResponse = {};
   if (request.email || request.password) {
-    console.log("\nCostamar B2B necesita credenciales para continuar.");
+    console.log("\nClick and Book Plus B2B necesita credenciales para continuar.");
   }
   if (request.authCode) {
-    console.log(`\nCostamar B2B necesita ${request.challengeLabel ?? "un código Auth / OTP"} para continuar.`);
+    console.log(`\nClick and Book Plus B2B necesita ${request.challengeLabel ?? "un código Auth / OTP"} para continuar.`);
   }
 
   if (request.email) {
-    response.email = await promptTerminalText("Email Costamar B2B: ");
+    response.email = await promptTerminalText("Email Click and Book Plus B2B: ");
   }
   if (request.password) {
-    response.password = await promptTerminalSecret("Password Costamar B2B: ");
+    response.password = await promptTerminalSecret("Password Click and Book Plus B2B: ");
   }
   if (request.authCode) {
-    response.authCode = await promptTerminalSecret(`${request.challengeLabel ?? "Código Auth / OTP de Costamar"}: `);
+    response.authCode = await promptTerminalSecret(`${request.challengeLabel ?? "Código Auth / OTP de Click and Book Plus"}: `);
   }
 
   return Object.keys(response).length > 0 ? response : undefined;
@@ -589,11 +678,11 @@ async function promptCostamarB2bAuthCode(challengeLabel?: string): Promise<strin
 }
 
 function costamarB2bAutomationEnabled(): boolean {
-  return String(process.env.COSTAMAR_B2B_AUTOMATION_ENABLED ?? "1").trim() !== "0";
+  return String(cbPlusEnv("CBPLUS_B2B_AUTOMATION_ENABLED", "COSTAMAR_B2B_AUTOMATION_ENABLED") ?? "1").trim() !== "0";
 }
 
 function costamarB2bAutomationAllowsSessionOnly(): boolean {
-  return String(process.env.COSTAMAR_B2B_AUTOMATION_ALLOW_SESSION_ONLY ?? "1").trim() !== "0";
+  return String(cbPlusEnv("CBPLUS_B2B_AUTOMATION_ALLOW_SESSION_ONLY", "COSTAMAR_B2B_AUTOMATION_ALLOW_SESSION_ONLY") ?? "1").trim() !== "0";
 }
 
 function canGenerateCostamarTokenViaB2B(): boolean {
@@ -612,19 +701,19 @@ function canGenerateCostamarTokenViaB2B(): boolean {
 function shouldUseLiveCostamarBrowserContext(): boolean {
   const credentials = resolveCostamarB2bCredentials();
   const defaultValue = credentials.email && credentials.password ? "0" : "1";
-  return String(process.env.COSTAMAR_B2B_USE_LIVE_BROWSER ?? defaultValue).trim() !== "0";
+  return String(cbPlusEnv("CBPLUS_B2B_USE_LIVE_BROWSER", "COSTAMAR_B2B_USE_LIVE_BROWSER") ?? defaultValue).trim() !== "0";
 }
 
 function costamarBrowserAutomationHeadless(): boolean {
-  return String(process.env.COSTAMAR_BROWSER_HEADLESS ?? "1").trim() !== "0";
+  return String(cbPlusEnv("CBPLUS_BROWSER_HEADLESS", "COSTAMAR_BROWSER_HEADLESS") ?? "1").trim() !== "0";
 }
 
 function costamarB2bDebugEnabled(): boolean {
-  return String(process.env.COSTAMAR_B2B_DEBUG ?? "0").trim() === "1";
+  return String(cbPlusEnv("CBPLUS_B2B_DEBUG", "COSTAMAR_B2B_DEBUG") ?? "0").trim() === "1";
 }
 
 function costamarB2bPlaywrightFallbackEnabled(): boolean {
-  return String(process.env.COSTAMAR_B2B_PLAYWRIGHT_FALLBACK_ENABLED ?? "0").trim() !== "0";
+  return String(cbPlusEnv("CBPLUS_B2B_PLAYWRIGHT_FALLBACK_ENABLED", "COSTAMAR_B2B_PLAYWRIGHT_FALLBACK_ENABLED") ?? "0").trim() !== "0";
 }
 
 function logCostamarB2bDebug(stage: string, detail?: unknown): void {
@@ -809,7 +898,7 @@ function copyPathSafe(source: string, destination: string): void {
 }
 
 function shouldCloneCostamarChromeProfileForIsolatedAutomation(): boolean {
-  const configured = process.env.COSTAMAR_B2B_CLONE_CHROME_PROFILE?.trim();
+  const configured = cbPlusEnv("CBPLUS_B2B_CLONE_CHROME_PROFILE", "COSTAMAR_B2B_CLONE_CHROME_PROFILE");
   if (configured) {
     return configured !== "0";
   }
@@ -1080,6 +1169,7 @@ function isCostamarBrowserUrlAllowed(url: string): boolean {
     }
 
     const allowedHosts = new Set([
+      "flights.zdev.tech",
       "booking.clickandbook.com",
       new URL(resolveCostamarB2bBaseUrl()).hostname.toLowerCase(),
     ]);
@@ -1218,7 +1308,7 @@ function buildCostamarSessionCandidateFromToken(
   token: string,
   terminalId: string,
   source: string,
-  brandBaseUrl = "https://booking.clickandbook.com/vuelos",
+  brandBaseUrl = "https://flights.zdev.tech/vuelos/pro",
 ): CostamarSessionCandidate | undefined {
   const syntheticUrl = `${brandBaseUrl.replace(/\/+$/, "")}/b/LIM/MAD/2026-01-01/1/0/0`
     + `?terminalId=${encodeURIComponent(terminalId)}&lang=es&token=${encodeURIComponent(token)}`;
@@ -1547,13 +1637,13 @@ function resolveCostamarB2bAuthChallengeLabel(text: string): string {
     return "Código del autenticador";
   }
   if (/otp/i.test(text)) {
-    return "Código OTP de Costamar";
+    return "Código OTP de Click and Book Plus";
   }
   if (/token/i.test(text)) {
-    return "Token de Costamar";
+    return "Token de Click and Book Plus";
   }
 
-  return "Código Auth / OTP de Costamar";
+  return "Código Auth / OTP de Click and Book Plus";
 }
 
 async function detectCostamarB2bAuthPrompt(page: Page): Promise<{
@@ -1728,7 +1818,7 @@ async function launchCostamarBrowserContext(): Promise<{
     : "";
   try {
     const playwright = await getPlaywright();
-    const configuredExecutable = process.env.COSTAMAR_CHROME_EXECUTABLE?.trim();
+    const configuredExecutable = cbPlusEnv("CBPLUS_CHROME_EXECUTABLE", "COSTAMAR_CHROME_EXECUTABLE");
     const executablePath = cloneSourceProfile
       ? resolveCostamarChromeExecutable()
       : configuredExecutable && existsSync(configuredExecutable)
@@ -1790,7 +1880,7 @@ async function launchCostamarBrowserContextWithin(timeoutMs: number): Promise<{
     return await withCostamarB2bTimeout(
       launchPromise,
       timeoutMs,
-      "Costamar isolated browser launch",
+      "Click and Book Plus isolated browser launch",
     );
   } catch (error) {
     void launchPromise.then(async (launched) => {
@@ -1843,14 +1933,14 @@ async function generateCostamarRedirectContextViaB2B(
       const liveSession = await withCostamarB2bTimeout(
         connectToLiveCostamarBrowserContext(),
         warmupTimeoutMs,
-        "Costamar live browser connection",
+        "Click and Book Plus live browser connection",
       );
       if (liveSession) {
         liveBrowser = liveSession.browser;
         livePage = await withCostamarB2bTimeout(
           liveSession.context.newPage(),
           warmupTimeoutMs,
-          "Costamar live page creation",
+          "Click and Book Plus live page creation",
         );
         closeLivePage = true;
 
@@ -1858,13 +1948,13 @@ async function generateCostamarRedirectContextViaB2B(
         const hasLiveSession = await withCostamarB2bTimeout(
           ensureCostamarB2bSession(livePage),
           warmupTimeoutMs,
-          "Costamar live B2B session",
+          "Click and Book Plus live B2B session",
         );
         logCostamarB2bDebug("live session resolved", { hasLiveSession });
         await withCostamarB2bTimeout(
           collectCostamarCandidatesFromPage(livePage, pool, "live-b2b"),
           warmupTimeoutMs,
-          "Costamar live token collection",
+          "Click and Book Plus live token collection",
         );
         if (hasLiveSession) {
           const generatedCandidate = await withCostamarB2bTimeout(
@@ -1877,7 +1967,7 @@ async function generateCostamarRedirectContextViaB2B(
               observedPages,
             ),
             warmupTimeoutMs,
-            "Costamar live B2B flight search",
+            "Click and Book Plus live B2B flight search",
           );
           logCostamarB2bDebug("live candidate", generatedCandidate
             ? { terminalId: generatedCandidate.terminalId, source: generatedCandidate.source }
@@ -1919,7 +2009,7 @@ async function generateCostamarRedirectContextViaB2B(
         await withCostamarB2bTimeout(
           livePage.close().catch(() => undefined),
           2000,
-          "Costamar live page close",
+          "Click and Book Plus live page close",
         ).catch(() => undefined);
       }
       if (resetLiveBrowserConnection) {
@@ -1939,20 +2029,20 @@ async function generateCostamarRedirectContextViaB2B(
     const sessionPage = browserContext.pages()[0] ?? await withCostamarB2bTimeout(
       browserContext.newPage(),
       warmupTimeoutMs,
-      "Costamar isolated page creation",
+      "Click and Book Plus isolated page creation",
     );
     observeCostamarControlledPage(sessionPage, pool, "b2b", observedPages);
     observeCostamarBrowserPages(browserContext, pool, "b2b", observedPages);
     const hasSession = await withCostamarB2bTimeout(
       ensureCostamarB2bSession(sessionPage),
       warmupTimeoutMs,
-      "Costamar isolated B2B session",
+      "Click and Book Plus isolated B2B session",
     );
     logCostamarB2bDebug("isolated session resolved", { hasSession, url: sessionPage.url() });
     await withCostamarB2bTimeout(
       collectCostamarCandidatesFromPage(sessionPage, pool, "b2b"),
       warmupTimeoutMs,
-      "Costamar isolated token collection",
+      "Click and Book Plus isolated token collection",
     );
     if (!hasSession) {
       return undefined;
@@ -1968,7 +2058,7 @@ async function generateCostamarRedirectContextViaB2B(
         observedPages,
       ),
       warmupTimeoutMs,
-      "Costamar isolated B2B flight search",
+      "Click and Book Plus isolated B2B flight search",
     );
     logCostamarB2bDebug("isolated candidate", generatedCandidate
       ? { terminalId: generatedCandidate.terminalId, source: generatedCandidate.source }
@@ -1989,7 +2079,7 @@ async function generateCostamarRedirectContextViaB2B(
     const searchPage = await withCostamarB2bTimeout(
       browserContext.newPage(),
       warmupTimeoutMs,
-      "Costamar branded search page creation",
+      "Click and Book Plus branded search page creation",
     );
     observeCostamarControlledPage(searchPage, pool, "search", observedPages);
     observeCostamarBrowserPages(browserContext, pool, "search", observedPages);
@@ -1999,7 +2089,7 @@ async function generateCostamarRedirectContextViaB2B(
         timeout: warmupTimeoutMs,
       }),
       warmupTimeoutMs,
-      "Costamar branded search navigation",
+      "Click and Book Plus branded search navigation",
     ).catch(() => undefined);
 
     const deadline = Date.now() + Math.max(2000, costamarSessionWarmupTimeoutMs());
@@ -2120,7 +2210,7 @@ async function closeCostamarBrowserContext(context: BrowserContext | undefined):
   await withCostamarB2bTimeout(
     context.close().catch(() => undefined),
     2000,
-    "Costamar browser context close",
+    "Click and Book Plus browser context close",
   ).catch(() => undefined);
 }
 
@@ -2136,7 +2226,7 @@ async function closeCostamarBrowser(browser: Browser | undefined): Promise<void>
   await withCostamarB2bTimeout(
     browser.close().catch(() => undefined),
     2000,
-    "Costamar browser close",
+    "Click and Book Plus browser close",
   ).catch(() => undefined);
 
   if (childProcess && childProcess.exitCode === null) {
@@ -2273,15 +2363,15 @@ export function resetCostamarWarmupStateForTests(): void {
   playwrightPromise = undefined;
 }
 
-function readPositiveIntegerEnv(name: string, fallback: number): number {
-  const parsed = Number(process.env[name] ?? fallback);
+function readPositiveIntegerEnv(primaryName: string, legacyName: string, fallback: number): number {
+  const parsed = Number(cbPlusEnv(primaryName, legacyName) ?? fallback);
   return Number.isFinite(parsed) && parsed > 0
     ? Math.trunc(parsed)
     : fallback;
 }
 
 function costamarProviderB2bPrewarmEnabled(): boolean {
-  return String(process.env.COSTAMAR_PROVIDER_B2B_PREWARM_ENABLED ?? "0").trim() !== "0";
+  return String(cbPlusEnv("CBPLUS_PROVIDER_B2B_PREWARM_ENABLED", "COSTAMAR_PROVIDER_B2B_PREWARM_ENABLED") ?? "0").trim() !== "0";
 }
 
 function addUtcDays(date: Date, days: number): Date {
@@ -2296,18 +2386,20 @@ function isoDate(date: Date): string {
 
 export function buildCostamarPrewarmRequest(now = new Date()): SearchRequest {
   const departureOffsetDays = readPositiveIntegerEnv(
+    "CBPLUS_PREWARM_DEPARTURE_OFFSET_DAYS",
     "COSTAMAR_PREWARM_DEPARTURE_OFFSET_DAYS",
     DEFAULT_COSTAMAR_PREWARM_DEPARTURE_OFFSET_DAYS,
   );
   const stayNights = readPositiveIntegerEnv(
+    "CBPLUS_PREWARM_STAY_NIGHTS",
     "COSTAMAR_PREWARM_STAY_NIGHTS",
     DEFAULT_COSTAMAR_PREWARM_STAY_NIGHTS,
   );
   const departureDate = addUtcDays(now, departureOffsetDays);
   const returnDate = addUtcDays(departureDate, stayNights);
-  const origin = process.env.COSTAMAR_PREWARM_ORIGIN?.trim().toUpperCase()
+  const origin = cbPlusEnv("CBPLUS_PREWARM_ORIGIN", "COSTAMAR_PREWARM_ORIGIN")?.toUpperCase()
     || DEFAULT_COSTAMAR_PREWARM_ORIGIN;
-  const destination = process.env.COSTAMAR_PREWARM_DESTINATION?.trim().toUpperCase()
+  const destination = cbPlusEnv("CBPLUS_PREWARM_DESTINATION", "COSTAMAR_PREWARM_DESTINATION")?.toUpperCase()
     || DEFAULT_COSTAMAR_PREWARM_DESTINATION;
 
   return {
@@ -2679,12 +2771,542 @@ function resolveCostamarOfferCurrencyCode(
   return engineCurrencyCode || "USD";
 }
 
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function firstRecordValue(value: unknown): Record<string, unknown> | undefined {
+  if (Array.isArray(value)) {
+    return recordValue(value[0]);
+  }
+
+  return recordValue(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    return stringValue(value[0]);
+  }
+
+  if (typeof value === "string") {
+    return value.trim() || undefined;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  const record = recordValue(value);
+  if (record) {
+    return stringValue(record.value ?? record.amount ?? record.code ?? record.locationCode);
+  }
+
+  return undefined;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function decodeCbPlusXmlText(value: string): string {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .trim();
+}
+
+function collectCbPlusXmlStrings(value: unknown, output: string[] = []): string[] {
+  if (typeof value === "string") {
+    if (value.includes("<")) {
+      output.push(value);
+    }
+    return output;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectCbPlusXmlStrings(entry, output));
+    return output;
+  }
+
+  const record = recordValue(value);
+  if (record) {
+    Object.values(record).forEach((entry) => collectCbPlusXmlStrings(entry, output));
+  }
+
+  return output;
+}
+
+function cbPlusXmlHasTag(xmlStrings: string[], tagNames: string[]): boolean {
+  return xmlStrings.some((xml) => tagNames.some((tagName) =>
+    new RegExp(`<(?:\\w+:)?${escapeRegex(tagName)}\\b`, "i").test(xml),
+  ));
+}
+
+function cbPlusXmlAttribute(
+  xmlStrings: string[],
+  tagNames: string[],
+  attributeNames: string[],
+): string | undefined {
+  for (const xml of xmlStrings) {
+    for (const tagName of tagNames) {
+      const tagMatch = xml.match(new RegExp(`<(?:\\w+:)?${escapeRegex(tagName)}\\b[^>]*>`, "i"))?.[0];
+      if (!tagMatch) {
+        continue;
+      }
+
+      for (const attributeName of attributeNames) {
+        const attributeMatch = tagMatch.match(
+          new RegExp(`\\b${escapeRegex(attributeName)}=["']([^"']+)["']`, "i"),
+        );
+        if (attributeMatch?.[1]) {
+          return decodeCbPlusXmlText(attributeMatch[1]);
+        }
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function cbPlusXmlTagValue(xmlStrings: string[], tagNames: string[]): string | undefined {
+  for (const xml of xmlStrings) {
+    for (const tagName of tagNames) {
+      const match = xml.match(
+        new RegExp(`<(?:\\w+:)?${escapeRegex(tagName)}\\b[^>]*>([\\s\\S]*?)<\\/(?:\\w+:)?${escapeRegex(tagName)}>`, "i"),
+      );
+      if (match?.[1]) {
+        return decodeCbPlusXmlText(match[1].replace(/<[^>]+>/g, " "));
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function cbPlusXmlNumber(
+  xmlStrings: string[],
+  tagNames: string[],
+  attributeNames: string[],
+): number | undefined {
+  return numberValue(
+    cbPlusXmlAttribute(xmlStrings, tagNames, attributeNames)
+      ?? cbPlusXmlTagValue(xmlStrings, attributeNames),
+  );
+}
+
+function buildCbPlusBaggageEntries(
+  segment: CbPlusFlightSegment,
+  scope: "checked" | "hand",
+): unknown[] {
+  const directEntries = baggageEntryList(scope === "hand" ? segment.handBaggage : segment.baggage);
+  if (directEntries.length > 0) {
+    return directEntries;
+  }
+
+  const xmlStrings = collectCbPlusXmlStrings(segment.tpaextensions ?? segment.tpaExtensions);
+  const tagNames = scope === "hand"
+    ? ["handBaggage", "handBaggageInformation", "carryOnBaggage", "cabinBaggage"]
+    : ["baggageInformation", "checkedBaggage", "holdBaggage", "baggage"];
+  if (!cbPlusXmlHasTag(xmlStrings, tagNames)) {
+    return [];
+  }
+
+  const quantity = cbPlusXmlNumber(xmlStrings, tagNames, ["pieces", "piece", "quantity", "qty", "amount"]);
+  const description = cbPlusXmlAttribute(xmlStrings, tagNames, ["description", "name", "text"])
+    ?? cbPlusXmlTagValue(xmlStrings, ["description", "name"]);
+
+  return [{
+    type: scope === "hand" ? "hand" : "checked",
+    pieces: quantity,
+    included: quantity === undefined ? true : quantity > 0,
+    description,
+  }];
+}
+
+function mapCbPlusAirport(airport: CbPlusAirport | undefined): CostamarAirport | undefined {
+  const code = stringValue(airport?.locationCode ?? airport?.code)?.toUpperCase();
+  if (!code) {
+    return undefined;
+  }
+
+  return {
+    code,
+    cityName: stringValue(airport?.codeContext),
+  };
+}
+
+function mapCbPlusAirline(airline: CbPlusAirline | undefined): CostamarAirline | undefined {
+  const code = stringValue(airline?.code)?.toUpperCase();
+  const name = stringValue(airline?.companyShortName ?? airline?.name);
+  if (!code && !name) {
+    return undefined;
+  }
+
+  return {
+    ...(code ? { code } : {}),
+    ...(name ? { name } : {}),
+  };
+}
+
+function cbPlusBookingClass(segment: CbPlusFlightSegment): string | { code?: string } | undefined {
+  if (segment.bookingClass) {
+    return segment.bookingClass;
+  }
+
+  for (const availability of asArray(segment.bookingClassAvails)) {
+    const bookingClass = asArray(availability.bookingClassAvail)[0];
+    const code = stringValue(bookingClass?.resBookDesigCode ?? bookingClass?.code);
+    if (code) {
+      return { code };
+    }
+  }
+
+  return undefined;
+}
+
+function cbPlusSegmentElapsedTime(segment: CbPlusFlightSegment | undefined): string | number | undefined {
+  if (!segment) {
+    return undefined;
+  }
+
+  const explicitElapsedTime = stringValue(segment.elapsedTime) ?? segment.elapsedTime;
+  if (explicitElapsedTime) {
+    return explicitElapsedTime;
+  }
+
+  return cbPlusXmlTagValue(
+    collectCbPlusXmlStrings(segment.tpaextensions ?? segment.tpaExtensions),
+    ["elapsedTime", "journeyDuration", "duration"],
+  );
+}
+
+function isCbPlusAggregateFlightSegment(
+  segment: CbPlusFlightSegment,
+  index: number,
+  allSegments: CbPlusFlightSegment[],
+): boolean {
+  if (stringValue(segment.flightNumber)) {
+    return false;
+  }
+
+  const xmlStrings = collectCbPlusXmlStrings(segment.tpaextensions ?? segment.tpaExtensions);
+  if (cbPlusXmlHasTag(xmlStrings, ["flightDetails", "offerInformation", "connectionLocationList", "brandedFare"])) {
+    return true;
+  }
+
+  return allSegments.length > 1
+    && index === allSegments.length - 1
+    && !segment.operatingAirline;
+}
+
+function cbPlusBrandedFareName(segment: CbPlusFlightSegment | undefined): string | undefined {
+  if (!segment) {
+    return undefined;
+  }
+
+  return cbPlusXmlAttribute(
+    collectCbPlusXmlStrings(segment.tpaextensions ?? segment.tpaExtensions),
+    ["brandedFare"],
+    ["brandName", "name", "brandID"],
+  );
+}
+
+function mapCbPlusSegmentToCostamarSegment(
+  segment: CbPlusFlightSegment,
+  fallbackId: string,
+): CostamarSegmentLike | undefined {
+  const departureAirport = mapCbPlusAirport(segment.departureAirport);
+  const arrivalAirport = mapCbPlusAirport(segment.arrivalAirport);
+  const departureDateTime = stringValue(segment.departureDateTime);
+  const arrivalDateTime = stringValue(segment.arrivalDateTime);
+  if (!departureAirport?.code || !arrivalAirport?.code || !departureDateTime || !arrivalDateTime) {
+    return undefined;
+  }
+
+  return {
+    id: stringValue(segment.id) ?? fallbackId,
+    departureAirport,
+    arrivalAirport,
+    departureDateTime,
+    arrivalDateTime,
+    elapsedTime: cbPlusSegmentElapsedTime(segment),
+    marketingAirline: mapCbPlusAirline(segment.marketingAirline),
+    operatingAirline: mapCbPlusAirline(segment.operatingAirline),
+    flightNumber: segment.flightNumber,
+    bookingClass: cbPlusBookingClass(segment),
+    fareBasisCode: stringValue(segment.fareBasisCode),
+    cabinType: stringValue(segment.cabinType),
+    baggage: buildCbPlusBaggageEntries(segment, "checked"),
+    handBaggage: buildCbPlusBaggageEntries(segment, "hand"),
+  };
+}
+
+function mapCbPlusOptionToCostamarFlight(
+  option: CbPlusOriginDestinationOption,
+  recommendationId: string,
+  optionIndex: number,
+): CostamarFlight | undefined {
+  const rawSegments = asArray(option.flightSegment);
+  const aggregateSegment = rawSegments.find((segment, segmentIndex) =>
+    isCbPlusAggregateFlightSegment(segment, segmentIndex, rawSegments));
+  const flightSegments = rawSegments.filter((segment, segmentIndex) =>
+    !isCbPlusAggregateFlightSegment(segment, segmentIndex, rawSegments));
+  const segments = flightSegments
+    .map((segment, segmentIndex) => mapCbPlusSegmentToCostamarSegment(
+      segment,
+      `${recommendationId}-${optionIndex}-${segmentIndex}`,
+    ))
+    .filter((segment): segment is CostamarSegmentLike => Boolean(segment));
+  if (segments.length === 0) {
+    return undefined;
+  }
+
+  const first = segments[0];
+  const last = segments[segments.length - 1];
+  const elapsedTime = cbPlusSegmentElapsedTime(aggregateSegment)
+    ?? parseDurationMinutes(undefined, first.departureDateTime, last.arrivalDateTime);
+  const brandedFareName = cbPlusBrandedFareName(aggregateSegment);
+
+  return {
+    id: `${recommendationId}-option-${String(option.refNumber ?? optionIndex)}-${String(option.rph ?? optionIndex)}`,
+    departureAirport: first.departureAirport,
+    arrivalAirport: last.arrivalAirport,
+    departureDateTime: first.departureDateTime,
+    arrivalDateTime: last.arrivalDateTime,
+    elapsedTime,
+    marketingAirline: first.marketingAirline,
+    operatingAirline: first.operatingAirline,
+    flightNumber: first.flightNumber,
+    bookingClass: first.bookingClass,
+    fareBasisCode: first.fareBasisCode,
+    cabinType: first.cabinType,
+    baggage: aggregateSegment ? buildCbPlusBaggageEntries(aggregateSegment, "checked") : first.baggage,
+    handBaggage: aggregateSegment ? buildCbPlusBaggageEntries(aggregateSegment, "hand") : first.handBaggage,
+    ...(brandedFareName ? { brandedFare: { name: brandedFareName } } : {}),
+    segments,
+  };
+}
+
+function cbPlusOptionJourneyKey(
+  option: CbPlusOriginDestinationOption,
+  request: SearchRequest,
+  optionIndex: number,
+): string {
+  const refNumber = stringValue(option.refNumber);
+  if (refNumber !== undefined) {
+    return refNumber;
+  }
+
+  if (request.tripType === "one-way") {
+    return "0";
+  }
+
+  const firstSegment = asArray(option.flightSegment)[0];
+  const origin = stringValue(firstSegment?.departureAirport?.locationCode ?? firstSegment?.departureAirport?.code)?.toUpperCase();
+  const destination = stringValue(firstSegment?.arrivalAirport?.locationCode ?? firstSegment?.arrivalAirport?.code)?.toUpperCase();
+  const leg = request.legs[0];
+  if (origin === leg.origin.toUpperCase() && destination !== leg.origin.toUpperCase()) {
+    return "0";
+  }
+  if (origin === leg.destination.toUpperCase() && destination !== leg.destination.toUpperCase()) {
+    return "1";
+  }
+
+  return String(optionIndex);
+}
+
+function cbPlusMoneyAmount(value: unknown): number | undefined {
+  if (Array.isArray(value)) {
+    return cbPlusMoneyAmount(value[0]);
+  }
+
+  const record = recordValue(value);
+  return numberValue(record ? record.amount ?? record.value : value);
+}
+
+function cbPlusAmountEntries(value: unknown): unknown[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => cbPlusAmountEntries(entry));
+  }
+
+  const record = recordValue(value);
+  if (!record) {
+    return [value];
+  }
+
+  if (record.amount !== undefined || record.value !== undefined) {
+    return [record];
+  }
+
+  return [
+    ...cbPlusAmountEntries(record.fee ?? record.fees),
+    ...cbPlusAmountEntries(record.discount ?? record.discounts),
+    ...cbPlusAmountEntries(record.tax ?? record.taxes),
+  ];
+}
+
+function cbPlusAdjustmentDescription(value: unknown): string {
+  const record = recordValue(value);
+  return String(
+    record?.description
+      ?? record?.name
+      ?? record?.code
+      ?? record?.type
+      ?? "",
+  ).trim();
+}
+
+function sumCbPlusAmounts(
+  value: unknown,
+  predicate: (entry: unknown) => boolean = () => true,
+): number {
+  return cbPlusAmountEntries(value)
+    .filter(predicate)
+    .reduce<number>((sum, entry) => sum + (cbPlusMoneyAmount(entry) ?? 0), 0);
+}
+
+function cbPlusRecordPath(root: Record<string, unknown>, ...keys: string[]): Record<string, unknown> | undefined {
+  for (const key of keys) {
+    const value = firstRecordValue(root[key]);
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function mapCbPlusPricing(pricedItinerary: CbPlusPricedItinerary): CostamarPricing {
+  const pricing = pricedItinerary.airItineraryPricingInfo ?? {};
+  const totalFareContainer = cbPlusRecordPath(
+    pricing,
+    "itinTotalFare",
+    "itineraryTotalFare",
+    "totalFare",
+    "total",
+  ) ?? pricing;
+  const baseFare = cbPlusRecordPath(totalFareContainer, "baseFare", "base");
+  const taxes = cbPlusRecordPath(totalFareContainer, "taxes", "tax");
+  const totalFare = cbPlusRecordPath(totalFareContainer, "totalFare", "equivFare")
+    ?? cbPlusRecordPath(pricing, "totalFare", "total");
+  const baseAmount = cbPlusMoneyAmount(baseFare);
+  const taxesAmount = cbPlusMoneyAmount(taxes);
+  const rawTotalAmount = cbPlusMoneyAmount(totalFare);
+  const feeSource = totalFareContainer.fees ?? pricing.fees;
+  const discountSource = totalFareContainer.discounts ?? pricing.discounts;
+  const feeTotal = sumCbPlusAmounts(feeSource);
+  const discountTotal = sumCbPlusAmounts(discountSource, (entry) => {
+    const description = cbPlusAdjustmentDescription(entry);
+    return !description || /discount|descuento|igv/i.test(description);
+  });
+  const subtotal = rawTotalAmount
+    ?? (baseAmount !== undefined || taxesAmount !== undefined
+      ? (baseAmount ?? 0) + (taxesAmount ?? 0)
+      : undefined);
+  const totalAmount = subtotal === undefined ? undefined : subtotal + feeTotal - discountTotal;
+  const pricingSystem = pricedItinerary.ticketingInfo?.pricingSystem;
+  const validatingAirline = stringValue(
+    pricing.validatingAirlineCode
+      ?? pricing.validatingAirline
+      ?? recordValue(pricing.validatingAirline)?.code,
+  );
+
+  return {
+    base: baseAmount,
+    taxes: taxesAmount,
+    total: totalAmount === undefined ? undefined : Number(totalAmount.toFixed(2)),
+    fees: feeSource,
+    discounts: discountSource,
+    source: stringValue(pricingSystem?.code),
+    fareQualifier: stringValue(pricing.fareQualifier ?? pricing.fareType),
+    validatingAirline,
+    totalAmount: totalAmount === undefined ? undefined : Number(totalAmount.toFixed(2)),
+  };
+}
+
+function mapCbPlusPricedItineraryToCostamarRecommendation(
+  pricedItinerary: CbPlusPricedItinerary,
+  index: number,
+  request: SearchRequest,
+): CostamarRecommendation | undefined {
+  const recommendationId = `cbplus-${stringValue(pricedItinerary.sequenceNumber ?? pricedItinerary.id) ?? index}`;
+  const options = asArray(
+    pricedItinerary.airItinerary?.originDestinationOptions?.originDestinationOption,
+  );
+  if (options.length === 0) {
+    return undefined;
+  }
+
+  const optionsByJourney = new Map<string, Array<{ option: CbPlusOriginDestinationOption; index: number }>>();
+  options.forEach((option, optionIndex) => {
+    const key = cbPlusOptionJourneyKey(option, request, optionIndex);
+    const group = optionsByJourney.get(key) ?? [];
+    group.push({ option, index: optionIndex });
+    optionsByJourney.set(key, group);
+  });
+
+  const journeyCount = request.tripType === "round-trip" ? 2 : 1;
+  const journeyKeys = [...optionsByJourney.keys()]
+    .sort((left, right) => (Number(left) || 0) - (Number(right) || 0))
+    .slice(0, journeyCount);
+  const itinerary = journeyKeys.map((key) => ({
+    flights: (optionsByJourney.get(key) ?? [])
+      .map(({ option, index: optionIndex }) =>
+        mapCbPlusOptionToCostamarFlight(option, recommendationId, optionIndex))
+      .filter((flight): flight is CostamarFlight => Boolean(flight)),
+  })).filter((journey) => journey.flights.length > 0);
+
+  if (itinerary.length < journeyCount) {
+    return undefined;
+  }
+
+  const pricingSystem = pricedItinerary.ticketingInfo?.pricingSystem;
+  return {
+    id: recommendationId,
+    itinerary,
+    pricing: mapCbPlusPricing(pricedItinerary),
+    pos: {
+      systemProviderCode: stringValue(pricingSystem?.code),
+      codeContext: stringValue(pricingSystem?.codeContext),
+      officeId: stringValue(pricingSystem?.pseudoCityCode ?? pricedItinerary.ticketingInfo?.pseudoCityCode),
+    },
+  };
+}
+
+function extractCostamarRecommendations(
+  payload: CostamarSearchResponse,
+  request: SearchRequest,
+): CostamarRecommendation[] {
+  const legacyRecommendations = asArray(payload.data);
+  if (legacyRecommendations.length > 0) {
+    return legacyRecommendations;
+  }
+
+  return asArray(payload.pricedItineraries?.pricedItinerary)
+    .map((pricedItinerary, index) => mapCbPlusPricedItineraryToCostamarRecommendation(
+      pricedItinerary,
+      index,
+      request,
+    ))
+    .filter((recommendation): recommendation is CostamarRecommendation => Boolean(recommendation));
+}
+
 function ensureCostamarCredentials(context: CostamarProviderContext): void {
   if (!context.terminalId) {
-    throw new Error("Costamar terminalId is required.");
+    throw new Error("Click and Book Plus terminalId is required.");
   }
   if (!resolveUsableCostamarBrandedToken(context.token, context.terminalId)) {
-    throw new Error("Costamar token is required.");
+    throw new Error("Click and Book Plus token is required.");
   }
 }
 
@@ -2704,6 +3326,9 @@ async function fetchCostamar(
       headers: {
         accept: "application/json, text/plain, */*",
         ...(init.body ? { "Content-Type": "application/json" } : {}),
+        "Client-Id": "1d3X65B.e92dCDJss315",
+        "Client-Name": "CBPLUS",
+        "Application-Name": "cbplus-app",
         ...(init.headers ?? {}),
       },
       signal: controller.signal,
@@ -2744,17 +3369,21 @@ async function fetchCostamarJson<T>(
 }
 
 async function getEngineMetadata(context: CostamarProviderContext): Promise<CostamarEngineMetadata> {
-  const cacheKey = `${context.apiBaseUrl}::${context.terminalId}`;
+  const engineBaseUrl = context.engineBaseUrl?.replace(/\/+$/, "") || context.apiBaseUrl;
+  const cacheKey = `${engineBaseUrl}::${context.terminalId}`;
   const cached = engineCache.get(cacheKey);
   if (cached) {
     return cached;
   }
 
   const request = fetchCostamarJson<CostamarEngineMetadata>(
-    context,
+    {
+      ...context,
+      apiBaseUrl: engineBaseUrl,
+    },
     `/engines/${encodeURIComponent(context.terminalId)}`,
     { method: "GET" },
-    "Costamar engine metadata",
+    "Click and Book Plus engine metadata",
   ).catch((error) => {
     engineCache.delete(cacheKey);
     throw error;
@@ -2772,18 +3401,18 @@ export function buildCostamarSearchWarning(payload: CostamarSearchResponse): str
 
   const message = payload.message?.trim();
   if (message) {
-    return `Costamar rejected this search (${status}): ${message}`;
+    return `Click and Book Plus rejected this search (${status}): ${message}`;
   }
 
   if (status === 401) {
-    return "Costamar rejected this search: the branded token is invalid, expired, or no longer belongs to this agency.";
+    return "Click and Book Plus rejected this search: the branded token is invalid, expired, or no longer belongs to this agency.";
   }
 
   if (status === 402) {
-    return "Costamar rejected this search: the validation token is missing for this branded flow.";
+    return "Click and Book Plus rejected this search: the validation token is missing for this branded flow.";
   }
 
-  return `Costamar rejected this search with status ${status}.`;
+  return `Click and Book Plus rejected this search with status ${status}.`;
 }
 
 function normalizeSegment(
@@ -2962,7 +3591,7 @@ function costamarRedirectVerificationFromContext(context: CostamarProviderContex
     return costamarRedirectVerification("missing", false, "No redirect token is available.");
   }
   if (!inspection.terminalMatches) {
-    return costamarRedirectVerification("blocked", false, "The redirect token belongs to another Costamar terminal.");
+    return costamarRedirectVerification("blocked", false, "The redirect token belongs to another Click and Book Plus terminal.");
   }
   if (inspection.expired) {
     return costamarRedirectVerification("missing", false, "The redirect token is expired.");
@@ -3048,10 +3677,10 @@ export function shouldWarnCostamarRedirectUnavailable(
 
 function buildCostamarRedirectWarning(verification: RedirectVerification): string {
   if (verification.state === "blocked") {
-    return `Costamar redirect is blocked: ${verification.reason ?? "token validation failed"}.`;
+    return `Click and Book Plus redirect is blocked: ${verification.reason ?? "token validation failed"}.`;
   }
   if (verification.state === "refresh_failed") {
-    return `Costamar redirect token refresh failed: ${verification.reason ?? "no usable token was captured"}.`;
+    return `Click and Book Plus redirect token refresh failed: ${verification.reason ?? "no usable token was captured"}.`;
   }
 
   return COSTAMAR_REDIRECT_SESSION_WARNING;
@@ -3126,7 +3755,7 @@ export function buildCostamarPurchasePaths(
       id: "costamar-search",
       type: "search-redirect",
       provider: "costamar",
-      label: "Buscar en Costamar",
+      label: "Buscar en Click and Book Plus",
       url: buildCostamarBrandedSearchUrl(request, context),
       precision: "exact-search",
       score: 0.9,
@@ -3304,12 +3933,12 @@ async function searchRecommendations(
   const engine = await getEngineMetadata(context);
   const search = (searchContext: CostamarProviderContext) => fetchCostamarJson<CostamarSearchResponse>(
     searchContext,
-    "/flights/search",
+    "/searchFlights",
     {
       method: "POST",
       body: JSON.stringify(buildCostamarSearchBody(request, searchContext, flexible)),
     },
-    "Costamar flight search",
+    "Click and Book Plus flight search",
   );
 
   let payload = await search(context);
@@ -3340,7 +3969,7 @@ async function searchRecommendations(
   }
 
   const responseWarning = buildCostamarSearchWarning(payload);
-  const recommendations = responseWarning ? [] : asArray(payload.data);
+  const recommendations = responseWarning ? [] : extractCostamarRecommendations(payload, request);
   const recommendationVariants = recommendations.flatMap((recommendation) =>
     expandCostamarRecommendationFlightOptions(recommendation, request),
   );
@@ -3366,7 +3995,7 @@ async function searchRecommendations(
   ]);
 
   if (offers.length === 0 && warnings.length === 0) {
-    warnings.push("Costamar returned no offers for this search.");
+    warnings.push("Click and Book Plus returned no offers for this search.");
   }
 
   return {
@@ -3397,8 +4026,8 @@ export function createLocalCostamarSearchDraft(
 ): SearchResponse {
   const requestedAt = new Date().toISOString();
   const warning = request.searchMode === "stay-range"
-    ? "Consultando Costamar en paralelo. Los resultados se iran agregando."
-    : "Consultando Costamar. Los resultados se iran agregando.";
+    ? "Consultando Click and Book Plus en paralelo. Los resultados se iran agregando."
+    : "Consultando Click and Book Plus. Los resultados se iran agregando.";
 
   return {
     offers: [],
@@ -3448,7 +4077,7 @@ export async function searchLocalCostamarRange(
       };
     } catch (error) {
       return {
-        error: error instanceof Error ? error.message : "Costamar range search failed.",
+        error: error instanceof Error ? error.message : "Click and Book Plus range search failed.",
       };
     }
   });
@@ -3462,7 +4091,7 @@ export async function searchLocalCostamarRange(
   );
 
   if (offers.length === 0 && warnings.length === 0) {
-    warnings.push("Costamar returned no offers for this date range.");
+    warnings.push("Click and Book Plus returned no offers for this date range.");
   }
 
   return {
@@ -3490,7 +4119,7 @@ export async function resolveLocalCostamarRangeProgressive(
       warnings.push(...result.warnings);
     } catch (error) {
       partial = true;
-      warnings.push(error instanceof Error ? error.message : "Costamar range search failed.");
+      warnings.push(error instanceof Error ? error.message : "Click and Book Plus range search failed.");
     }
 
     if (onUpdate?.({
@@ -3507,7 +4136,7 @@ export async function resolveLocalCostamarRangeProgressive(
   const offers = dedupeCostamarOffers(aggregatedOffers);
   const finalWarnings = uniqueStrings(warnings);
   if (offers.length === 0 && finalWarnings.length === 0) {
-    finalWarnings.push("Costamar returned no offers for this date range.");
+    finalWarnings.push("Click and Book Plus returned no offers for this date range.");
   }
 
   return {
@@ -3523,7 +4152,7 @@ export function createLocalCostamarMatrixDraft(
 ): MatrixResponse {
   const leg = request.legs[0];
   if (!leg.departureStart || !leg.departureEnd) {
-    throw new Error("Costamar matrix requires departureStart and departureEnd.");
+    throw new Error("Click and Book Plus matrix requires departureStart and departureEnd.");
   }
 
   const departures = enumerateRange(leg.departureStart, leg.departureEnd);
@@ -3546,7 +4175,7 @@ export function createLocalCostamarMatrixDraft(
         selectable: false,
         requiresRequery: true,
         stateCode: "ind" as const,
-        tooltip: "Consultando Costamar...",
+        tooltip: "Consultando Click and Book Plus...",
         derivedRequest: buildDerivedOneWayRequest(request, departureDate),
       } satisfies MatrixCell))
     : pairs.map(({ departureDate, returnDate }) => ({
@@ -3559,7 +4188,7 @@ export function createLocalCostamarMatrixDraft(
         selectable: false,
         requiresRequery: true,
         stateCode: "ind" as const,
-        tooltip: "Consultando Costamar...",
+        tooltip: "Consultando Click and Book Plus...",
         derivedRequest: buildDerivedRequest(request, departureDate, returnDate),
       } satisfies MatrixCell));
 
@@ -3568,19 +4197,19 @@ export function createLocalCostamarMatrixDraft(
     axes,
     confidenceSummary: buildMatrixConfidenceSummary(cells),
     recommendations: [
-      "Matrix loading from Costamar with useful date combinations only.",
-      "Only valid flexible combinations are materialized for Costamar.",
+      "Matrix loading from Click and Book Plus with useful date combinations only.",
+      "Only valid flexible combinations are materialized for Click and Book Plus.",
     ],
     searchMeta: {
       requestedAt,
       completedAt: requestedAt,
       providersUsed: ["costamar"],
-      warnings: ["Matrix loading from Costamar with useful date combinations only."],
+      warnings: ["Matrix loading from Click and Book Plus with useful date combinations only."],
       partial: true,
       searchState: "search_partial",
     },
     providerMeta,
-    warnings: ["Matrix loading from Costamar with useful date combinations only."],
+    warnings: ["Matrix loading from Click and Book Plus with useful date combinations only."],
   };
 }
 
@@ -3671,7 +4300,7 @@ function buildMatrixCellFromOffer(
     confidence: "live",
     selectable: true,
     stateCode: "live",
-    tooltip: "Costamar live search.",
+    tooltip: "Click and Book Plus live search.",
   };
 }
 
@@ -3735,7 +4364,7 @@ export async function resolveLocalCostamarMatrixProgressive(
             confidence: "unavailable" as const,
             selectable: false,
             stateCode: "chg" as const,
-            tooltip: "Costamar returned no live result for this combination.",
+            tooltip: "Click and Book Plus returned no live result for this combination.",
           } satisfies MatrixCell;
       if (onCellResolved?.(nextCell) === false) {
         stopRequested = true;
@@ -3749,8 +4378,8 @@ export async function resolveLocalCostamarMatrixProgressive(
         selectable: false,
         stateCode: "chg" as const,
         tooltip: error instanceof Error
-          ? `Costamar error: ${error.message}`
-          : "Costamar error while resolving this combination.",
+          ? `Click and Book Plus error: ${error.message}`
+          : "Click and Book Plus error while resolving this combination.",
       } satisfies MatrixCell;
       if (onCellResolved?.(nextCell) === false) {
         stopRequested = true;
@@ -3764,10 +4393,10 @@ export async function resolveLocalCostamarMatrixProgressive(
   const resolvedByKey = new Map(resolvedLoadingCells.map((cell) => [cell.key, cell]));
   const resolvedCells = seededCells.map((cell) => resolvedByKey.get(cell.key) ?? cell);
   const warnings = partial
-    ? ["Matrix finished with partial Costamar failures."]
+    ? ["Matrix finished with partial Click and Book Plus failures."]
     : [seeded.size > 0
-        ? "Matrix seeded from Costamar native flexible search and completed with exact searches."
-        : "Matrix built from Costamar exact searches over useful date combinations."];
+        ? "Matrix seeded from Click and Book Plus native flexible search and completed with exact searches."
+        : "Matrix built from Click and Book Plus exact searches over useful date combinations."];
 
   return {
     ...draft,
@@ -3776,8 +4405,8 @@ export async function resolveLocalCostamarMatrixProgressive(
     recommendations: [
       "Matrix keeps only useful date combinations based on the requested stay window.",
       seeded.size > 0
-        ? "Costamar native flexible search was used as a seed before exact lookups."
-        : "Selecting a cell runs a full Costamar exact search for offers.",
+        ? "Click and Book Plus native flexible search was used as a seed before exact lookups."
+        : "Selecting a cell runs a full Click and Book Plus exact search for offers.",
     ],
     searchMeta: {
       requestedAt: draft.searchMeta.requestedAt,
@@ -3846,7 +4475,7 @@ export async function suggestLocalCostamarLocations(
     );
 
     if (!response.ok) {
-      throw new Error(`Costamar location suggest failed: ${response.status} ${response.statusText}`);
+      throw new Error(`Click and Book Plus location suggest failed: ${response.status} ${response.statusText}`);
     }
 
     const payload = await response.json() as CostamarAutocompleteResponse;

@@ -12,6 +12,18 @@ function readIntegerEnv(name: string): number | undefined {
   return Math.trunc(parsed);
 }
 
+function readFirstIntegerEnv(names: string | readonly string[]): number | undefined {
+  const orderedNames = Array.isArray(names) ? names : [names];
+  for (const name of orderedNames) {
+    const value = readIntegerEnv(name);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
 function atLeast(value: number | undefined, minimum: number): number {
   return Math.max(minimum, Math.trunc(value ?? minimum));
 }
@@ -31,25 +43,25 @@ export const SHARED_SEARCH_CONCURRENCY = Object.freeze({
 });
 
 export function resolveProviderSubrequestConcurrency(
-  providerEnvName: string,
+  providerEnvName: string | readonly string[],
   providerDefault: number,
   minimum = 1,
 ): number {
   const sharedCap = atLeast(SHARED_SEARCH_CONCURRENCY.providerSubrequestDefault, minimum);
-  const providerValue = atLeast(readIntegerEnv(providerEnvName) ?? providerDefault, minimum);
+  const providerValue = atLeast(readFirstIntegerEnv(providerEnvName) ?? providerDefault, minimum);
   return Math.max(minimum, Math.min(providerValue, sharedCap));
 }
 
-export function resolveMatrixCellConcurrency(providerEnvName: string): number {
+export function resolveMatrixCellConcurrency(providerEnvName: string | readonly string[]): number {
   const minimum = SHARED_SEARCH_CONCURRENCY.matrixMinimum;
   const sharedCap = atLeast(SHARED_SEARCH_CONCURRENCY.matrixCellDefault, minimum);
-  const providerValue = atLeast(readIntegerEnv(providerEnvName) ?? sharedCap, minimum);
+  const providerValue = atLeast(readFirstIntegerEnv(providerEnvName) ?? sharedCap, minimum);
   return Math.max(minimum, Math.min(providerValue, sharedCap));
 }
 
-export function resolveRangeSearchConcurrency(providerEnvName: string): number {
+export function resolveRangeSearchConcurrency(providerEnvName: string | readonly string[]): number {
   const minimum = SHARED_SEARCH_CONCURRENCY.rangeMinimum;
   const sharedCap = atLeast(SHARED_SEARCH_CONCURRENCY.rangeSearchDefault, minimum);
-  const providerValue = atLeast(readIntegerEnv(providerEnvName) ?? sharedCap, minimum);
+  const providerValue = atLeast(readFirstIntegerEnv(providerEnvName) ?? sharedCap, minimum);
   return Math.max(minimum, Math.min(providerValue, sharedCap));
 }

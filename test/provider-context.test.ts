@@ -79,25 +79,27 @@ test("buildProviderContext ignores request-scoped Costamar base urls", () => {
 
   assert.equal(context?.costamar?.apiBaseUrl, DEFAULT_COSTAMAR_API_BASE_URL);
   assert.equal(context?.costamar?.brandBaseUrl, DEFAULT_COSTAMAR_BRAND_BASE_URL);
+  assert.equal(context?.costamar?.engineBaseUrl, "https://api-zneith.zdev.tech/api-engine");
+  assert.equal(context?.costamar?.markupBaseUrl, "https://commons-service-b-zneith.zdev.tech/markup-service");
   assert.equal(context?.costamar?.terminalId, "0721808110");
   assert.equal(context?.costamar?.token, "super-secret-token");
   assert.equal(context?.costamar?.lang, "es");
 });
 
 test("normalizeCostamarProviderContext rejects unapproved api hosts from env", () => {
-  const previous = process.env.COSTAMAR_API_BASE_URL;
-  process.env.COSTAMAR_API_BASE_URL = "https://example.com/vuelos/api";
+  const previous = process.env.CBPLUS_SEARCH_API_BASE_URL;
+  process.env.CBPLUS_SEARCH_API_BASE_URL = "https://example.com/v2";
 
   try {
     assert.throws(
       () => normalizeCostamarProviderContext(),
-      /COSTAMAR_API_BASE_URL must use https and an approved host\./,
+      /CBPLUS_SEARCH_API_BASE_URL must use https and an approved host\./,
     );
   } finally {
     if (previous === undefined) {
-      delete process.env.COSTAMAR_API_BASE_URL;
+      delete process.env.CBPLUS_SEARCH_API_BASE_URL;
     } else {
-      process.env.COSTAMAR_API_BASE_URL = previous;
+      process.env.CBPLUS_SEARCH_API_BASE_URL = previous;
     }
   }
 });
@@ -551,19 +553,19 @@ test("resolveLatestCostamarProviderContext bypasses the cached token when it is 
 });
 
 test("normalizeCostamarProviderContext rejects non-https brand urls from env", () => {
-  const previous = process.env.COSTAMAR_BRAND_BASE_URL;
-  process.env.COSTAMAR_BRAND_BASE_URL = "http://booking.clickandbook.com/vuelos";
+  const previous = process.env.CBPLUS_BRAND_BASE_URL;
+  process.env.CBPLUS_BRAND_BASE_URL = "http://flights.zdev.tech/vuelos/pro";
 
   try {
     assert.throws(
       () => normalizeCostamarProviderContext(),
-      /COSTAMAR_BRAND_BASE_URL must use https and an approved host\./,
+      /CBPLUS_BRAND_BASE_URL must use https and an approved host\./,
     );
   } finally {
     if (previous === undefined) {
-      delete process.env.COSTAMAR_BRAND_BASE_URL;
+      delete process.env.CBPLUS_BRAND_BASE_URL;
     } else {
-      process.env.COSTAMAR_BRAND_BASE_URL = previous;
+      process.env.CBPLUS_BRAND_BASE_URL = previous;
     }
   }
 });

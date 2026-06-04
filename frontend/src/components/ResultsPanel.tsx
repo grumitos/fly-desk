@@ -1458,7 +1458,7 @@ function shouldDelayWarnings(
 }
 
 type ProviderNoFlightIssue = {
-  provider: "Agilsmart" | "Costamar"
+  provider: "Agilsmart" | "Click and Book Plus"
   warning: string
 }
 
@@ -1470,8 +1470,8 @@ function providerNoFlightIssues(warnings: string[]): ProviderNoFlightIssue[] {
     const normalized = warning.toLowerCase()
     const provider = normalized.includes("agil no devolvió")
       ? "Agilsmart"
-      : normalized.includes("costamar no devolvió")
-        ? "Costamar"
+      : normalized.includes("costamar no devolvió") || normalized.includes("click and book plus no devolvió")
+        ? "Click and Book Plus"
         : null
 
     if (!provider || seen.has(provider)) continue
@@ -1529,7 +1529,7 @@ function warningSummaryLabel(warnings: string[], noFlightIssues: ProviderNoFligh
   if (noFlightIssues.length > 0) {
     return noFlightIssues.length === 1
       ? `${noFlightIssues[0].provider} sin vuelos`
-      : "Agilsmart y Costamar sin vuelos"
+      : "Agilsmart y Click and Book Plus sin vuelos"
   }
 
   return warnings.length === 1 ? "1 aviso" : `${warnings.length} avisos`

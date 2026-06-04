@@ -472,5 +472,5 @@ test("matrix offer normalization suppresses provider status warnings in selected
   assert.equal(result.offers[0]?.baggageLabel, undefined);
   assert.deepEqual(result.offers[1]?.warnings ?? [], []);
   assert.equal(result.offers[1]?.baggageLabel, undefined);
-  assert.deepEqual(result.offers[2]?.warnings ?? [], ["Costamar no devolvió vuelos para esta búsqueda."]);
+  assert.deepEqual(result.offers[2]?.warnings ?? [], ["Click and Book Plus no devolvió vuelos para esta búsqueda."]);
 });

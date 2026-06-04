@@ -198,7 +198,7 @@ function nativeGroupDescriptor(offer: CanonicalOffer): NativeGroupDescriptor | n
   if (recommendationId) {
     return {
       providerKey: "costamar",
-      providerLabel: "Costamar",
+      providerLabel: "Click and Book Plus",
       nativeId: costamarRecommendationBase(recommendationId),
     }
   }
@@ -207,7 +207,7 @@ function nativeGroupDescriptor(offer: CanonicalOffer): NativeGroupDescriptor | n
   if (pos && isCostamarOffer(offer)) {
     return {
       providerKey: "costamar",
-      providerLabel: "Costamar",
+      providerLabel: "Click and Book Plus",
       nativeId: `pos:${pos}`,
     }
   }

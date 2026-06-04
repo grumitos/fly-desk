@@ -222,7 +222,7 @@ test("groups Costamar recommendation variants by recommendation base", () => {
   assert.equal(items[0]?.type, "group")
   if (items[0]?.type !== "group") throw new Error("Expected Costamar variants to be grouped")
 
-  assert.equal(items[0].group.providerLabel, "Costamar")
+  assert.equal(items[0].group.providerLabel, "Click and Book Plus")
   assert.deepEqual(items[0].group.offers.map((item) => item.id), ["costamar-1", "costamar-2"])
 })
 
