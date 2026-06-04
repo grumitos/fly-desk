@@ -8,7 +8,7 @@ Fly Desk es una app Bun-only preparada para VPS:
 - frontend React desktop en `frontend/`, compilado con `Bun.build` y servido desde `frontend/dist`
 - autenticacion web con cookie httpOnly firmada
 - integracion con Agil reutilizando una sesion real de Chrome cuando el host la tenga disponible
-- integracion con Costamar usando contexto controlado por entorno y warm-up B2B cuando aplica
+- integracion con Click and Book Plus usando contexto controlado por entorno y warm-up B2B cuando aplica
 - caches SQLite con `bun:sqlite` para sesiones completadas, matriz, purchase paths y autocomplete
 
 ## Alcance Actual
@@ -16,8 +16,8 @@ Fly Desk es una app Bun-only preparada para VPS:
 - busqueda exacta
 - busqueda flexible de solo ida por rango
 - busqueda flexible ida/vuelta via `/api/matrix`, normalizada como lista de resultados
-- busqueda migratoria mensual exhaustiva: consulta cada dia de los meses seleccionados contra Agil y Costamar, sin filtros de tarifa, y procesa los meses en tandas
-- todas las busquedas esperan a Agil y Costamar y retienen sus resultados completos; la concurrencia regula solicitudes en lote, no recorta ofertas disponibles
+- busqueda migratoria mensual exhaustiva: consulta cada dia de los meses seleccionados contra Agil y Click and Book Plus, sin filtros de tarifa, y procesa los meses en tandas
+- todas las busquedas esperan a Agil y Click and Book Plus y retienen sus resultados completos; la concurrencia regula solicitudes en lote, no recorta ofertas disponibles
 - autocomplete de origen y destino
 - filtros visibles de escalas, tiempo maximo de escala, equipaje y aerolineas
 - lista de resultados paginada con advertencias del backend
@@ -39,9 +39,9 @@ No estan expuestos en la UI React actual:
 - `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` es obligatorio cuando hay reverse proxy local.
 - Si se habilita `FLY_DESK_TRUST_LOOPBACK_CLIENT=1` para uso local directo, las solicitudes con cabeceras de proxy (`x-forwarded-for`, `forwarded`, `x-real-ip`) no se tratan como locales salvo que tambien se configure deliberadamente `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK=1`.
 - Los endpoints operativos aceptan cookie web valida o `FLY_DESK_API_TOKEN`.
-- Diagnosticos, estado de token Costamar y apertura local de browser siguen siendo superficies loopback-only.
+- Diagnosticos, estado de token Click and Book Plus y apertura local de browser siguen siendo superficies loopback-only.
 - La ventana normal de fechas es movil: `hoy` a `hoy + SEARCH_MAX_FUTURE_DAYS`; ida/vuelta se limita a 90 noches.
-- Costamar no acepta `apiBaseUrl` ni `brandBaseUrl` por request; las bases salen de entorno y pasan por allowlist.
+- Click and Book Plus no acepta `apiBaseUrl` ni `brandBaseUrl` por request; las bases salen de entorno y pasan por allowlist.
 - Agil depende de sesion local de navegador y de una subscription key resuelta desde entorno o desde el bundle Agil.
 
 ## Dependencias
@@ -75,10 +75,10 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 - `src/http-router.ts`: BFF HTTP, rutas auth, API y superficies loopback/token
 - `src/web-auth.ts`: password web, cookie firmada y validacion de sesion
 - `src/search-date-policy.ts`: politica compartida de fechas y config publica embebida
-- `src/provider-context.ts`: contexto Costamar, allowlist, recovery de Chrome/CDP y estado live
+- `src/provider-context.ts`: contexto Click and Book Plus, allowlist, recovery de Chrome/CDP y estado live
 - `src/local-agil.ts`: sesion local, exact/range/matrix, pricing y deep links Agil
-- `src/local-costamar.ts`: cliente Costamar, exact/range/matrix, branded links y warm-up B2B
-- `src/providers/costamar/search-payloads.ts`: payloads Costamar
+- `src/local-costamar.ts`: cliente Click and Book Plus, exact/range/matrix, branded links y warm-up B2B
+- `src/providers/costamar/search-payloads.ts`: payloads Click and Book Plus; `costamar` se conserva como alias interno legacy
 - `src/core/`: normalizacion, matriz, grouping, ranking, cotizacion y contratos compartidos
 - `src/search-worker-client.ts` / `src/search-worker.ts`: procesos hijos Bun para aislar busquedas pesadas
 - `src/session-store.ts`: jobs vivos, SQLite local, migracion JSON legada, redirects y purchase paths
@@ -94,10 +94,10 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 - App data: `FLY_DESK_APP_DATA_DIR`, `FLY_DESK_QUOTATION_RATE_CACHE_PATH`
 - Workers/prewarm: `FLY_DESK_SEARCH_WORKER_PROCESSES`, `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS`, `FLY_DESK_PROVIDER_PREWARM`
 - Agil: `AGIL_APIM_SUBSCRIPTION_KEY`, `AGIL_CHROME_USER_DATA_DIR`, `AGIL_CHROME_PROFILE`, `AGIL_BROWSER_URL`, `AGIL_RAW_CHROME_STORAGE_FILE_SCAN`, `AGIL_TEMP_CHROME_STORAGE_FALLBACK`, `AGIL_HTTP_TIMEOUT_MS`
-- Costamar: `COSTAMAR_API_BASE_URL`, `COSTAMAR_BRAND_BASE_URL`, `COSTAMAR_AIR_API_BASE_URL`, `COSTAMAR_TERMINAL_ID`, `COSTAMAR_TOKEN`
-- Costamar B2B: `COSTAMAR_B2B_EMAIL`, `COSTAMAR_B2B_PASSWORD`, `COSTAMAR_B2B_TOTP_SECRET`, `COSTAMAR_B2B_TOTP_URI`, `COSTAMAR_B2B_AUTOMATION_ENABLED`, `COSTAMAR_SESSION_WARMUP_ENABLED`
+- Click and Book Plus: `CBPLUS_SEARCH_API_BASE_URL`, `CBPLUS_BRAND_BASE_URL`, `CBPLUS_ENGINE_API_BASE_URL`, `CBPLUS_MARKUP_API_BASE_URL`, `CBPLUS_AIR_API_BASE_URL`, `CBPLUS_TERMINAL_ID`, `CBPLUS_TOKEN`
+- Click and Book Plus B2B: `CBPLUS_B2B_EMAIL`, `CBPLUS_B2B_PASSWORD`, `CBPLUS_B2B_TOTP_SECRET`, `CBPLUS_B2B_TOTP_URI`, `CBPLUS_B2B_AUTOMATION_ENABLED`, `CBPLUS_SESSION_WARMUP_ENABLED`; las variables `COSTAMAR_*` equivalentes siguen funcionando como fallback legacy
 
-`COSTAMAR_B2B_TOTP_SECRET` acepta Base32, `otpauth://...`, `otpauth-migration://...` y JSON con `totpUri`; Fly Desk genera el OTP, no guardes codigos temporales.
+`CBPLUS_B2B_TOTP_SECRET` acepta Base32, `otpauth://...`, `otpauth-migration://...` y JSON con `totpUri`; Fly Desk genera el OTP, no guardes codigos temporales.
 
 Produccion debe mantener `FLY_DESK_SEARCH_WORKER_PROCESSES=1` salvo una excepcion temporal de QA. Si se cambia el conteo de workers o warm-up, repetir QA externo antes de darlo por estable.
 
@@ -113,9 +113,9 @@ Usa el resultado como `FLY_DESK_WEB_PASSWORD_HASH` y no guardes `FLY_DESK_WEB_PA
 
 Para trabajar en otro equipo, no mandes `.env` en texto plano por chat, correo ni commits. En la practica:
 
-- guarda secretos duraderos en un password manager o secret manager: `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_WEB_PASSWORD_HASH`, `AGIL_APIM_SUBSCRIPTION_KEY`, credenciales `COSTAMAR_B2B_*`, TOTP/otpauth y `FLY_DESK_API_TOKEN` si aplica
+- guarda secretos duraderos en un password manager o secret manager: `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_WEB_PASSWORD_HASH`, `AGIL_APIM_SUBSCRIPTION_KEY`, credenciales `CBPLUS_B2B_*`, TOTP/otpauth y `FLY_DESK_API_TOKEN` si aplica
 - recrea por host las rutas de Chrome y caches (`*_CHROME_USER_DATA_DIR`, `output/cache` o `/var/lib/fly-desk`)
-- evita trasladar tokens de sesion como `COSTAMAR_TOKEN`; normalmente conviene regenerarlos con login/warm-up en la maquina nueva
+- evita trasladar tokens de sesion como `CBPLUS_TOKEN`; normalmente conviene regenerarlos con login/warm-up en la maquina nueva
 - si necesitas mover el archivo completo, usa un archivo cifrado para ti mismo (por ejemplo un adjunto seguro del password manager, SOPS/age o GPG), no un `.env` plano
 
 ## Scripts
@@ -170,7 +170,7 @@ La app se despliega como servicio Bun privado detras de Caddy:
 - `FLY_DESK_SEARCH_WORKER_PROCESSES=1`
 - `FLY_DESK_COOKIE_SECURE=1`
 - Agil usa `fly-desk-chrome.service` con Chrome CDP en `127.0.0.1:9222`; todavia requiere una sesion Agil valida en ese perfil
-- Costamar es mas portable, pero sus flujos de sesion siguen pensados para uso controlado
+- Click and Book Plus es mas portable, pero sus flujos de sesion siguen pensados para uso controlado
 
 Para mas detalle, ver [`docs/DEPLOY_APP.md`](./docs/DEPLOY_APP.md).
 

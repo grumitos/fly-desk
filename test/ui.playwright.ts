@@ -2346,7 +2346,7 @@ test("grouped result variants align changed values with the primary card columns
     assert.match(variantText[0] ?? "", /20:30\s*-\s*15:25\s*\+1/);
     assert.match(variantText[1] ?? "", /13:05\s*-\s*15:25\s*\+1/);
     assert.match(variantText[1] ?? "", /17h 20m/);
-    assert.doesNotMatch(variantText.join(" "), /KLM|Costamar|USD|Equipaje|04\/06|Vuelta|Duraci[oó]n|Escalas/);
+    assert.doesNotMatch(variantText.join(" "), /KLM|Costamar|Click and Book|USD|Equipaje|04\/06|Vuelta|Duraci[oó]n|Escalas/);
 
     const alignment = await group.evaluate((element) => {
       const rectOf = (selector: string) => {
@@ -2677,7 +2677,7 @@ test("layout editor guide renders as the first result card and resizes adjacent 
   }, { autoOpen: false });
 });
 
-test("grouped provider offer renders Agilsmart and Costamar external links vertically", async () => {
+test("grouped provider offer renders Agilsmart and Click and Book Plus external links vertically", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 1180, height: 700 });
     await page.route("**/api/locations**", async (route) => {
@@ -2709,7 +2709,7 @@ test("grouped provider offer renders Agilsmart and Costamar external links verti
             id: "grouped-costamar-path",
             provider: "costamar",
             type: "search-redirect",
-            label: "Costamar",
+            label: "Click and Book Plus",
             url: "https://example.test/costamar",
             precision: "exact-search",
             score: 0.8,
@@ -2763,7 +2763,7 @@ test("grouped provider offer renders Agilsmart and Costamar external links verti
     const actions = card.locator(".fd-result-card__provider-action");
     assert.equal(await actions.count(), 2);
     await card.getByRole("button", { name: "Abrir Agilsmart" }).waitFor();
-    await card.getByRole("button", { name: "Buscar en Costamar" }).waitFor();
+    await card.getByRole("button", { name: "Buscar en Click and Book Plus" }).waitFor();
 
     const layout = await actions.evaluateAll((elements) => elements.map((element) => {
       const rect = element.getBoundingClientRect();
@@ -3166,7 +3166,7 @@ test("empty local filter results do not blame a provider that already reported n
           {
             provider: "costamar",
             type: "search-redirect",
-            label: "Costamar",
+            label: "Click and Book Plus",
             url: "https://example.test/costamar",
           },
         ],
@@ -3287,7 +3287,7 @@ test("empty exact results identify providers that reported no flights", async ()
             providersUsed: ["agil-local", "costamar"],
             warnings: [
               "Agil returned no offers for this search.",
-              "Costamar returned no offers for this search.",
+              "Click and Book Plus returned no offers for this search.",
             ],
             partial: false,
             searchState: "search_live",
@@ -3298,7 +3298,7 @@ test("empty exact results identify providers that reported no flights", async ()
           },
           warnings: [
             "Agil returned no offers for this search.",
-            "Costamar returned no offers for this search.",
+            "Click and Book Plus returned no offers for this search.",
           ],
         }),
       });
@@ -3314,7 +3314,7 @@ test("empty exact results identify providers that reported no flights", async ()
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
 
-    await page.getByText("Agilsmart y Costamar no devolvieron vuelos").waitFor();
+    await page.getByText("Agilsmart y Click and Book Plus no devolvieron vuelos").waitFor();
     await page.getByText("Los proveedores consultados informaron que no hay vuelos para esta combinación.").waitFor();
   }, { autoOpen: false });
 });

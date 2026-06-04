@@ -120,7 +120,8 @@ function translateApiMessage(message: string): string {
     "Return range is required for round-trip range search.": "Selecciona un rango de regreso.",
     "Departure range end must be on or after departure range start.": "El fin del rango de salida debe ser igual o posterior al inicio.",
     "Return range end must be on or after return range start.": "El fin del rango de regreso debe ser igual o posterior al inicio.",
-    "Costamar terminalId is required.": "Falta configurar el terminal de Costamar.",
+    "Costamar terminalId is required.": "Falta configurar el terminal de Click and Book Plus.",
+    "Click and Book Plus terminalId is required.": "Falta configurar el terminal de Click and Book Plus.",
     "A full results column layout is required.": "El layout de resultados está incompleto.",
     "searchSessionId and offerId are required.": "Falta la sesión de búsqueda o la oferta.",
     "Session or offer not found.": "No se encontró la sesión o la oferta.",
@@ -138,25 +139,35 @@ function translateApiMessage(message: string): string {
     "Agil exact search with stop.": "Búsqueda exacta en Agil con escala.",
     "Agil stopover search.": "Búsqueda en Agil con escala.",
     "Agil direct alt fare.": "Tarifa alternativa directa de Agil.",
-    "Costamar exact search.": "Búsqueda exacta en Costamar.",
-    "Costamar live search.": "Búsqueda en vivo de Costamar.",
-    "Costamar returned no live result for this combination.": "Costamar no devolvió una tarifa disponible para esta combinación.",
-    "Consultando Costamar...": "Consultando Costamar...",
+    "Costamar exact search.": "Búsqueda exacta en Click and Book Plus.",
+    "Costamar live search.": "Búsqueda en vivo de Click and Book Plus.",
+    "Click and Book Plus live search.": "Búsqueda en vivo de Click and Book Plus.",
+    "Costamar returned no live result for this combination.": "Click and Book Plus no devolvió una tarifa disponible para esta combinación.",
+    "Click and Book Plus returned no live result for this combination.": "Click and Book Plus no devolvió una tarifa disponible para esta combinación.",
+    "Consultando Costamar...": "Consultando Click and Book Plus...",
+    "Consultando Click and Book Plus...": "Consultando Click and Book Plus...",
     "Consultando Agil...": "Consultando Agil...",
-    "Consultando Agil y Costamar. Los resultados se iran agregando.": "Consultando Agil y Costamar. Los resultados se irán agregando.",
+    "Consultando Agil y Costamar. Los resultados se iran agregando.": "Consultando Agil y Click and Book Plus. Los resultados se irán agregando.",
+    "Consultando Agil y Click and Book Plus. Los resultados se iran agregando.": "Consultando Agil y Click and Book Plus. Los resultados se irán agregando.",
     "Consultando Agil. Los resultados se iran agregando.": "Consultando Agil. Los resultados se irán agregando.",
-    "Consultando Costamar. Los resultados se iran agregando.": "Consultando Costamar. Los resultados se irán agregando.",
+    "Consultando Costamar. Los resultados se iran agregando.": "Consultando Click and Book Plus. Los resultados se irán agregando.",
+    "Consultando Click and Book Plus. Los resultados se iran agregando.": "Consultando Click and Book Plus. Los resultados se irán agregando.",
     "Mostrando resultados cacheados mientras actualizamos en segundo plano.": "Mostrando resultados cacheados mientras actualizamos en segundo plano.",
     "Matrix loading from Agil in parallel.": "Agil está consultando la matriz.",
     "Matrix finished with partial Agil failures.": "Agil completó la matriz con resultados parciales.",
     "Matrix built from Agil exact searches in parallel.": "Matriz creada con búsquedas exactas de Agil.",
     "Selecting a cell runs a full Agil exact search for offers.": "Selecciona una fecha para ver las ofertas disponibles.",
-    "Matrix loading from Costamar with useful date combinations only.": "Costamar está consultando la matriz.",
-    "Matrix finished with partial Costamar failures.": "Costamar completó la matriz con resultados parciales.",
-    "Matrix seeded from Costamar native flexible search and completed with exact searches.": "Matriz creada con búsquedas de Costamar.",
-    "Matrix built from Costamar exact searches over useful date combinations.": "Matriz creada con búsquedas exactas de Costamar.",
+    "Matrix loading from Costamar with useful date combinations only.": "Click and Book Plus está consultando la matriz.",
+    "Matrix loading from Click and Book Plus with useful date combinations only.": "Click and Book Plus está consultando la matriz.",
+    "Matrix finished with partial Costamar failures.": "Click and Book Plus completó la matriz con resultados parciales.",
+    "Matrix finished with partial Click and Book Plus failures.": "Click and Book Plus completó la matriz con resultados parciales.",
+    "Matrix seeded from Costamar native flexible search and completed with exact searches.": "Matriz creada con búsquedas de Click and Book Plus.",
+    "Matrix seeded from Click and Book Plus native flexible search and completed with exact searches.": "Matriz creada con búsquedas de Click and Book Plus.",
+    "Matrix built from Costamar exact searches over useful date combinations.": "Matriz creada con búsquedas exactas de Click and Book Plus.",
+    "Matrix built from Click and Book Plus exact searches over useful date combinations.": "Matriz creada con búsquedas exactas de Click and Book Plus.",
     "Matrix keeps only useful date combinations based on the requested stay window.": "La matriz conserva las combinaciones útiles para la estadía solicitada.",
     "Selecting a cell runs a full Costamar exact search for offers.": "Selecciona una fecha para ver las ofertas disponibles.",
+    "Selecting a cell runs a full Click and Book Plus exact search for offers.": "Selecciona una fecha para ver las ofertas disponibles.",
     "Search cancelled by user.": "Búsqueda detenida por el usuario.",
   }
 
@@ -190,24 +201,24 @@ function translateApiMessage(message: string): string {
     return "Agil no devolvió vuelos para esta búsqueda."
   }
 
-  if (/^Costamar returned no offers/i.test(normalized)) {
-    return "Costamar no devolvió vuelos para esta búsqueda."
+  if (/^(Costamar|Click and Book Plus) returned no offers/i.test(normalized)) {
+    return "Click and Book Plus no devolvió vuelos para esta búsqueda."
   }
 
   if (/^Agil exact search/i.test(normalized)) {
     return "Búsqueda exacta en Agil."
   }
 
-  if (/^Costamar (exact|live) search/i.test(normalized)) {
-    return "Búsqueda en vivo de Costamar."
+  if (/^(Costamar|Click and Book Plus) (exact|live) search/i.test(normalized)) {
+    return "Búsqueda en vivo de Click and Book Plus."
   }
 
   if (/Agil/i.test(normalized) && /(failed|error|omitted|rejected|Internal Server Error|500|401|403|expired|session|sesión)/i.test(normalized)) {
     return "No se pudo consultar Agil. Verifica que la sesión esté activa e intenta nuevamente."
   }
 
-  if (/Costamar/i.test(normalized) && /(failed|error|token|auth|login|session|sesión|401|403|500|expired|challenge)/i.test(normalized)) {
-    return "No se pudo consultar Costamar. Verifica que la sesión esté activa e intenta nuevamente."
+  if (/(Costamar|Click and Book Plus)/i.test(normalized) && /(failed|error|token|auth|login|session|sesión|401|403|500|expired|challenge)/i.test(normalized)) {
+    return "No se pudo consultar Click and Book Plus. Verifica que la sesión esté activa e intenta nuevamente."
   }
 
   return normalized ? "No se pudo completar la operación. Intenta nuevamente." : "Ocurrió un error inesperado."
@@ -226,12 +237,12 @@ function isRedundantOfferWarning(message: string): boolean {
     /^agil exact search with stop(\.|$)/,
     /^agil stopover search(\.|$)/,
     /^agil direct alt fare(\.|$)/,
-    /^costamar (exact|live) search(\.|$)/,
+    /^(costamar|click and book plus) (exact|live) search(\.|$)/,
     /^busqueda exacta en agil(\.|$| con escala)/,
     /^busqueda en agil con escala(\.|$)/,
     /^tarifa alternativa directa de agil(\.|$)/,
-    /^busqueda exacta en costamar(\.|$)/,
-    /^busqueda en vivo de costamar(\.|$)/,
+    /^busqueda exacta en (costamar|click and book plus)(\.|$)/,
+    /^busqueda en vivo de (costamar|click and book plus)(\.|$)/,
   ].some((pattern) => pattern.test(normalized))
 }
 
@@ -263,7 +274,7 @@ function redactDiagnosticMessage(message: string): string {
     .replace(/[A-Za-z]:\\[^\n\r;]*(?:Chrome|User Data|Profile|Local State)[^\n\r;]*/gi, "[ruta local redactada]")
     .replace(/\/(?:Users|home)\/[^\n\r;]*(?:Chrome|User Data|Profile|Local State)[^\n\r;]*/gi, "[ruta local redactada]")
     .replace(
-      /((?:AGIL_APIM_SUBSCRIPTION_KEY|COSTAMAR_TOKEN|COSTAMAR_B2B_PASSWORD|COSTAMAR_B2B_TOTP_SECRET|COSTAMAR_B2B_TOTP_URI|FLY_DESK_API_TOKEN|FLY_DESK_WEB_SESSION_SECRET|Authorization|Cookie|Set-Cookie|X-Api-Key|api[-_]?key|subscription[-_]?key|localStorage(?:\.[A-Za-z0-9_-]+)?|sessionStorage(?:\.[A-Za-z0-9_-]+)?|token|secret|password|passwd|pwd|totp|otp))(\s*[:=]\s*)(["']?)([^"',;\s]+)/gi,
+      /((?:AGIL_APIM_SUBSCRIPTION_KEY|CBPLUS_TOKEN|CBPLUS_B2B_PASSWORD|CBPLUS_B2B_TOTP_SECRET|CBPLUS_B2B_TOTP_URI|COSTAMAR_TOKEN|COSTAMAR_B2B_PASSWORD|COSTAMAR_B2B_TOTP_SECRET|COSTAMAR_B2B_TOTP_URI|FLY_DESK_API_TOKEN|FLY_DESK_WEB_SESSION_SECRET|Authorization|Cookie|Set-Cookie|X-Api-Key|api[-_]?key|subscription[-_]?key|localStorage(?:\.[A-Za-z0-9_-]+)?|sessionStorage(?:\.[A-Za-z0-9_-]+)?|token|secret|password|passwd|pwd|totp|otp))(\s*[:=]\s*)(["']?)([^"',;\s]+)/gi,
       "$1$2$3[redactado]",
     )
 }
@@ -304,7 +315,7 @@ function toDiagnosticLines(messages: string[]): string[] {
 }
 
 function providerDiagnosticLabel(providerId: string): string {
-  return providerId === "costamar" ? "Costamar" : "Agilsmart"
+  return providerId === "costamar" ? "Click and Book Plus" : "Agilsmart"
 }
 
 function providerDiagnosticLines(
@@ -951,7 +962,11 @@ function rawOfferWarnings(input: unknown): string[] {
 function noOffersWarningProvider(message: string): "agil-local" | "costamar" | null {
   const normalized = stripAnsi(message).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
   if (/^agil returned no offers/i.test(message) || normalized.includes("agil no devolvio vuelos")) return "agil-local"
-  if (/^costamar returned no offers/i.test(message) || normalized.includes("costamar no devolvio vuelos")) return "costamar"
+  if (
+    /^(costamar|click and book plus) returned no offers/i.test(message)
+    || normalized.includes("costamar no devolvio vuelos")
+    || normalized.includes("click and book plus no devolvio vuelos")
+  ) return "costamar"
   return null
 }
 

@@ -3,7 +3,7 @@ import { airlineNameMatchKey } from "./airline-names";
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   "agil-local": "Agilsmart",
-  costamar: "Costamar",
+  costamar: "Click and Book Plus",
 };
 
 function normalizeToken(value: unknown): string {

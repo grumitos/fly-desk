@@ -160,7 +160,7 @@ function costamarCardOffer(verification: RedirectVerification): CanonicalOffer {
         id: "path-costamar",
         provider: "costamar",
         type: "search-redirect",
-        label: "Buscar en Costamar",
+        label: "Buscar en Click and Book Plus",
         url: "https://app.costamar.com/search",
         precision: "search-equivalent",
         state: "available",
@@ -181,7 +181,7 @@ test("Costamar card model communicates redirect verification status", () => {
 
   assert.deepEqual(verified.costamarRedirect, {
     label: "Redirect verificado",
-    title: "El enlace de Costamar fue validado antes de mostrar la oferta.",
+    title: "El enlace de Click and Book Plus fue validado antes de mostrar la oferta.",
     tone: "verified",
   });
   assert.equal(pending.costamarRedirect, undefined);
@@ -234,7 +234,7 @@ test("Agil grouped card keeps Agil badge and hides Costamar redirect status", ()
         id: "path-costamar",
         provider: "costamar",
         type: "search-redirect",
-        label: "Buscar en Costamar",
+        label: "Buscar en Click and Book Plus",
         url: "https://app.costamar.com/search",
         precision: "search-equivalent",
         state: "available",

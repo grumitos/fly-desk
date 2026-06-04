@@ -59,3 +59,30 @@ test("shared caps can be raised explicitly when a machine can handle more work",
     assert.equal(resolveRangeSearchConcurrency("AGIL_RANGE_SEARCH_CONCURRENCY"), 5);
   });
 });
+
+test("provider concurrency can read a preferred env name before a legacy fallback", () => {
+  withEnv({
+    SEARCH_PROVIDER_SUBREQUEST_CONCURRENCY: "10",
+    SEARCH_MATRIX_CELL_CONCURRENCY: "10",
+    SEARCH_RANGE_SEARCH_CONCURRENCY: "10",
+    CBPLUS_GDS_SEARCH_CONCURRENCY: "8",
+    COSTAMAR_GDS_SEARCH_CONCURRENCY: "3",
+    CBPLUS_MATRIX_CELL_CONCURRENCY: "7",
+    COSTAMAR_MATRIX_CELL_CONCURRENCY: "4",
+    CBPLUS_RANGE_SEARCH_CONCURRENCY: undefined,
+    COSTAMAR_RANGE_SEARCH_CONCURRENCY: "6",
+  }, () => {
+    assert.equal(
+      resolveProviderSubrequestConcurrency(["CBPLUS_GDS_SEARCH_CONCURRENCY", "COSTAMAR_GDS_SEARCH_CONCURRENCY"], 4),
+      8,
+    );
+    assert.equal(
+      resolveMatrixCellConcurrency(["CBPLUS_MATRIX_CELL_CONCURRENCY", "COSTAMAR_MATRIX_CELL_CONCURRENCY"]),
+      7,
+    );
+    assert.equal(
+      resolveRangeSearchConcurrency(["CBPLUS_RANGE_SEARCH_CONCURRENCY", "COSTAMAR_RANGE_SEARCH_CONCURRENCY"]),
+      6,
+    );
+  });
+});

@@ -50,7 +50,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` es obligatorio cuando hay reverse proxy local
 - `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK=1` solo debe usarse si el proxy local tambien bloquea o autentica rutas local-only; por defecto las solicitudes con `x-forwarded-for`, `forwarded` o `x-real-ip` no heredan confianza loopback
 - endpoints operativos aceptan cookie web valida o `FLY_DESK_API_TOKEN`
-- diagnosticos, estado de token Costamar y apertura local de browser son loopback-only
+- diagnosticos, estado de token Click and Book Plus y apertura local de browser son loopback-only
 - layout de resultados acepta auth web porque es una preferencia de la app
 - la restriccion publica por pais vive en `grumitos/vps-platform`: Caddy bloquea `/login` y el resto de la app fuera de Peru antes de llegar a Fly Desk
 - la politica de fechas es movil: `minSearchDate = hoy`, `maxSearchDate = hoy + SEARCH_MAX_FUTURE_DAYS`
@@ -70,11 +70,11 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 ### Providers
 
 - Agil usa sesion persistente de Chrome y subscription key desde entorno o recuperada desde el bundle Agil
-- Costamar usa contexto controlado por entorno, allowlist de hosts y warm-up B2B opcional
-- Costamar no acepta hosts/base URLs por request
+- Click and Book Plus usa contexto controlado por entorno, allowlist de hosts y warm-up B2B opcional
+- Click and Book Plus no acepta hosts/base URLs por request
 - el prewarm silencioso de providers esta activo por defecto y puede apagarse con `FLY_DESK_PROVIDER_PREWARM=0`
 - las busquedas de proveedor deben ejecutarse aisladas con `FLY_DESK_SEARCH_WORKER_PROCESSES=1` en produccion; `0` queda como excepcion temporal de QA y requiere repetir QA externo antes de cambiar conteos de workers o warm-up
-- toda busqueda publica espera a Agil y Costamar y retiene las ofertas completas devueltas por ambos; los filtros visibles se materializan sin recortar `allOffers`, y los limites de concurrencia solo regulan solicitudes en lote
+- toda busqueda publica espera a Agil y Click and Book Plus y retiene las ofertas completas devueltas por ambos; los filtros visibles se materializan sin recortar `allOffers`, y los limites de concurrencia solo regulan solicitudes en lote
 
 ## Estructura Funcional
 
@@ -98,10 +98,10 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `src/web-auth.ts`: password web, cookie firmada y validacion de sesion
 - `src/core/quotation.ts`: render de cotizaciones a partir de ofertas almacenadas y validadas del lado servidor
 - `src/search-date-policy.ts`: ventana movil de fechas y config publica embebida
-- `src/provider-context.ts`: contexto Costamar, allowlist, recovery desde Chrome/CDP y estado live de token
+- `src/provider-context.ts`: contexto Click and Book Plus, allowlist, recovery desde Chrome/CDP y estado live de token
 - `src/local-agil.ts`: sesion local, refresh token, exact/range/matrix, pricing y deep links
-- `src/local-costamar.ts`: autocomplete, exact/range/matrix, branded links y warm-up B2B
-- `src/providers/costamar/search-payloads.ts`: payloads Costamar
+- `src/local-costamar.ts`: autocomplete, exact/range/matrix, branded links y warm-up B2B de Click and Book Plus
+- `src/providers/costamar/search-payloads.ts`: payloads Click and Book Plus; `costamar` se conserva como alias interno legacy
 - `src/core/`: normalizacion, matriz, grouping, ranking, cotizacion y tipos compartidos
 - `src/search-worker-client.ts` y `src/search-worker.ts`: procesos hijos Bun para busquedas pesadas de proveedor
 - `src/session-store.ts`: jobs vivos, SQLite local, migracion JSON legada, redirects y purchase paths
@@ -136,7 +136,7 @@ Cobertura importante actual:
 - token API para clientes no loopback
 - endpoints loopback-only
 - validacion compartida de fechas con ventana movil
-- contexto Costamar endurecido
+- contexto Click and Book Plus endurecido
 - key requerida o recuperable para Agil live
 - workers Bun habilitados por defecto para aislar busquedas pesadas de proveedor
 - persistencia SQLite y migracion JSON legada de sesiones/autocomplete
@@ -165,8 +165,8 @@ No se mantienen planes de migracion ni auditorias historicas como documentacion 
 
 - `frontend/src/App.tsx` todavia concentra bastante composicion, filtros y seleccion
 - `src/local-agil.ts` concentra sesion, cliente, pricing y mapping
-- `src/local-costamar.ts` concentra automatizacion B2B, cliente, mapping y redirects
+- `src/local-costamar.ts` concentra automatizacion B2B, cliente, mapping y redirects de Click and Book Plus
 - la persistencia es SQLite local; no hay store externo para multi-instancia
 - Chrome CDP persistente ya queda cubierto por `fly-desk-chrome.service`; Agil aun necesita una sesion real valida en ese perfil del VPS
 - repetir QA externo antes de cambiar `FLY_DESK_SEARCH_WORKER_PROCESSES` o warm-up de providers en VPS
-- la busqueda migratoria consulta cada dia de cada mes seleccionado contra Agil y Costamar sin filtros de tarifa; procesa meses en tandas configurables con `FLY_DESK_MIGRATION_CONCURRENT_MONTHS` (default `4`), lo cual debe vigilarse si sube el volumen de uso
+- la busqueda migratoria consulta cada dia de cada mes seleccionado contra Agil y Click and Book Plus sin filtros de tarifa; procesa meses en tandas configurables con `FLY_DESK_MIGRATION_CONCURRENT_MONTHS` (default `4`), lo cual debe vigilarse si sube el volumen de uso

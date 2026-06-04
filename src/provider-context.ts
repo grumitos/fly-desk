@@ -9,24 +9,29 @@ import {
   ProviderId,
 } from "./core/types";
 
-export const DEFAULT_COSTAMAR_API_BASE_URL = "https://costamar.com.pe/vuelos/api";
-export const DEFAULT_COSTAMAR_BRAND_BASE_URL = "https://booking.clickandbook.com/vuelos";
+export const DEFAULT_COSTAMAR_API_BASE_URL = "https://air-search-service-zneith.zdev.tech/v2";
+export const DEFAULT_COSTAMAR_BRAND_BASE_URL = "https://flights.zdev.tech/vuelos/pro";
+export const DEFAULT_COSTAMAR_ENGINE_BASE_URL = "https://api-zneith.zdev.tech/api-engine";
+export const DEFAULT_COSTAMAR_MARKUP_BASE_URL = "https://commons-service-b-zneith.zdev.tech/markup-service";
 export const DEFAULT_COSTAMAR_TERMINAL_ID = "0721808110";
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 const COSTAMAR_SESSION_CACHE_TTL_MS = 30000;
 export const COSTAMAR_TOKEN_REFRESH_WINDOW_MS = 2 * 60 * 1000;
-const COSTAMAR_BRANDED_URL_REGEX = /https:\/\/booking\.clickandbook\.com\/vuelos\/b\/[^\s\x00?]+\?[^\s\x00]*/gi;
+const COSTAMAR_BRANDED_URL_REGEX =
+  /https:\/\/(?:booking\.clickandbook\.com\/vuelos|flights\.zdev\.tech\/vuelos\/pro)\/b\/[^\s\x00?]+\?[^\s\x00]*/gi;
 const COSTAMAR_BRANDED_URL_ENCODED_REGEX =
-  /https%(?:25)?3A%(?:25)?2F%(?:25)?2Fbooking\.clickandbook\.com%(?:25)?2Fvuelos%(?:25)?2Fb%(?:25)?2F[A-Za-z0-9%._~!$'()*+,;=:@/?&-]*/gi;
+  /https%(?:25)?3A%(?:25)?2F%(?:25)?2F(?:booking\.clickandbook\.com%(?:25)?2Fvuelos|flights\.zdev\.tech%(?:25)?2Fvuelos%(?:25)?2Fpro)%(?:25)?2Fb%(?:25)?2F[A-Za-z0-9%._~!$'()*+,;=:@/?&-]*/gi;
 const COSTAMAR_BRANDED_URL_ESCAPED_REGEX =
-  /https:\\\/\\\/booking\.clickandbook\.com\\\/vuelos\\\/b\\\/[A-Za-z0-9%._~!$'()*+,;=:@/?&=-]*/gi;
+  /https:\\\/\\\/(?:booking\.clickandbook\.com\\\/vuelos|flights\.zdev\.tech\\\/vuelos\\\/pro)\\\/b\\\/[A-Za-z0-9%._~!$'()*+,;=:@/?&=-]*/gi;
 const COSTAMAR_JWT_PREFIX_REGEX = /^([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/;
 const COSTAMAR_TOKEN_SAFE_PREFIX_REGEX = /^[A-Za-z0-9._-]+/;
 const COSTAMAR_SESSION_FILE_REGEX = /^(?:(?:Session|Tabs)_\d+|(?:Current|Last) (?:Session|Tabs))$/;
 const COSTAMAR_STORAGE_ARTIFACT_REGEX = /\.(?:ldb|log)$/i;
 const COSTAMAR_STORAGE_ARTIFACT_LIMIT = 12;
-const COSTAMAR_API_HOSTS = new Set(["costamar.com.pe"]);
-const COSTAMAR_BRAND_HOSTS = new Set(["booking.clickandbook.com"]);
+const COSTAMAR_API_HOSTS = new Set(["air-search-service-zneith.zdev.tech", "test-api-zneith.zdev.tech"]);
+const COSTAMAR_BRAND_HOSTS = new Set(["flights.zdev.tech"]);
+const COSTAMAR_ENGINE_HOSTS = new Set(["api-zneith.zdev.tech"]);
+const COSTAMAR_MARKUP_HOSTS = new Set(["commons-service-b-zneith.zdev.tech"]);
 
 interface CostamarSessionCandidate {
   terminalId: string;
@@ -66,7 +71,11 @@ const pendingCostamarProviderContextResolutions = new Map<string, Promise<Costam
 let costamarChromeSessionScanCountForTests = 0;
 
 function costamarCdpTabScanEnabled(): boolean {
-  return String(process.env.COSTAMAR_CDP_TAB_SCAN_ENABLED ?? "0").trim() !== "0";
+  return String(
+    process.env.CBPLUS_CDP_TAB_SCAN_ENABLED?.trim()
+      ?? process.env.COSTAMAR_CDP_TAB_SCAN_ENABLED
+      ?? "0",
+  ).trim() !== "0";
 }
 
 function stringOrFallback(value: string | undefined, fallback: string): string {
@@ -323,6 +332,8 @@ function readChromeUserDataDirCandidates(includeConfiguredOnly = false): string[
   const candidates: string[] = [];
   const seen = new Set<string>();
   const explicitCostamarUserDataDirs = [
+    process.env.CBPLUS_CHROME_USER_DATA_DIR?.trim(),
+    process.env.CBPLUS_AGENT_CHROME_USER_DATA_DIR?.trim(),
     process.env.COSTAMAR_CHROME_USER_DATA_DIR?.trim(),
     process.env.COSTAMAR_AGENT_CHROME_USER_DATA_DIR?.trim(),
   ].filter((value): value is string => Boolean(value));
@@ -354,7 +365,8 @@ function readChromeUserDataDirCandidates(includeConfiguredOnly = false): string[
 }
 
 function resolveConfiguredChromeProfile(): string | undefined {
-  const configured = process.env.COSTAMAR_CHROME_PROFILE?.trim()
+  const configured = process.env.CBPLUS_CHROME_PROFILE?.trim()
+    ?? process.env.COSTAMAR_CHROME_PROFILE?.trim()
     ?? process.env.AGIL_CHROME_PROFILE?.trim();
   return configured || undefined;
 }
@@ -469,8 +481,16 @@ function decodeEmbeddedUrl(raw: string): string {
 function isCostamarBrandedCandidateUrl(value: string): boolean {
   try {
     const parsed = new URL(value);
-    return parsed.protocol === "https:"
-      && parsed.hostname.toLowerCase() === "booking.clickandbook.com"
+    if (parsed.protocol !== "https:") {
+      return false;
+    }
+
+    const hostname = parsed.hostname.toLowerCase();
+    if (hostname === "flights.zdev.tech") {
+      return /^\/vuelos\/pro\/b\//i.test(parsed.pathname);
+    }
+
+    return hostname === "booking.clickandbook.com"
       && /^\/vuelos\/b\//i.test(parsed.pathname);
   } catch {
     return false;
@@ -968,27 +988,44 @@ export function resolveProviderId(providerId?: ProviderId): ProviderId {
 export function normalizeCostamarProviderContext(
   input?: CostamarProviderConfigInput,
 ): CostamarProviderContext {
-  const normalizedToken = sanitizeCostamarToken(input?.token ?? process.env.COSTAMAR_TOKEN ?? "");
+  const normalizedToken = sanitizeCostamarToken(
+    input?.token
+      ?? process.env.CBPLUS_TOKEN
+      ?? process.env.COSTAMAR_TOKEN
+      ?? "",
+  );
   return {
     apiBaseUrl: normalizeAllowedHttpsUrl(
-      process.env.COSTAMAR_API_BASE_URL,
+      process.env.CBPLUS_SEARCH_API_BASE_URL,
       DEFAULT_COSTAMAR_API_BASE_URL,
       COSTAMAR_API_HOSTS,
-      "COSTAMAR_API_BASE_URL",
+      "CBPLUS_SEARCH_API_BASE_URL",
     ),
     brandBaseUrl: normalizeAllowedHttpsUrl(
-      process.env.COSTAMAR_BRAND_BASE_URL,
+      process.env.CBPLUS_BRAND_BASE_URL,
       DEFAULT_COSTAMAR_BRAND_BASE_URL,
       COSTAMAR_BRAND_HOSTS,
-      "COSTAMAR_BRAND_BASE_URL",
+      "CBPLUS_BRAND_BASE_URL",
+    ),
+    engineBaseUrl: normalizeAllowedHttpsUrl(
+      process.env.CBPLUS_ENGINE_API_BASE_URL,
+      DEFAULT_COSTAMAR_ENGINE_BASE_URL,
+      COSTAMAR_ENGINE_HOSTS,
+      "CBPLUS_ENGINE_API_BASE_URL",
+    ),
+    markupBaseUrl: normalizeAllowedHttpsUrl(
+      process.env.CBPLUS_MARKUP_API_BASE_URL,
+      DEFAULT_COSTAMAR_MARKUP_BASE_URL,
+      COSTAMAR_MARKUP_HOSTS,
+      "CBPLUS_MARKUP_API_BASE_URL",
     ),
     terminalId: stringOrFallback(
-      input?.terminalId ?? process.env.COSTAMAR_TERMINAL_ID,
+      input?.terminalId ?? process.env.CBPLUS_TERMINAL_ID ?? process.env.COSTAMAR_TERMINAL_ID,
       DEFAULT_COSTAMAR_TERMINAL_ID,
     ),
     token: normalizedToken,
     lang: stringOrFallback(
-      input?.lang ?? process.env.COSTAMAR_LANG,
+      input?.lang ?? process.env.CBPLUS_LANG ?? process.env.COSTAMAR_LANG,
       "es",
     ),
   };
@@ -1145,8 +1182,9 @@ export async function verifyCostamarTokenLive(
   }
 
   try {
+    const engineBaseUrl = (ctx.engineBaseUrl ?? DEFAULT_COSTAMAR_ENGINE_BASE_URL).replace(/\/+$/, "");
     const response = await fetch(
-      `${ctx.apiBaseUrl}/engines/${encodeURIComponent(ctx.terminalId)}`,
+      `${engineBaseUrl}/engines/${encodeURIComponent(ctx.terminalId)}`,
       {
         headers: { accept: "application/json" },
         signal: AbortSignal.timeout(5000),

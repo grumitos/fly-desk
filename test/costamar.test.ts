@@ -237,8 +237,10 @@ test("buildProviderContext normalizes Costamar defaults and overrides", () => {
 
   assert.deepEqual(context, {
     costamar: {
-      apiBaseUrl: "https://costamar.com.pe/vuelos/api",
-      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      apiBaseUrl: "https://air-search-service-zneith.zdev.tech/v2",
+      brandBaseUrl: "https://flights.zdev.tech/vuelos/pro",
+      engineBaseUrl: "https://api-zneith.zdev.tech/api-engine",
+      markupBaseUrl: "https://commons-service-b-zneith.zdev.tech/markup-service",
       terminalId: "0721808110",
       token: "secret-token",
       lang: "es",
@@ -281,8 +283,8 @@ test("extractCostamarSessionCandidates reads branded urls from Chrome session te
     exp: 1774726884,
   });
   const text = [
-    `https://booking.clickandbook.com/vuelos/b/LIM/PEM/2026-03-31/1/0/0?terminalId=0721808110&token=${older}`,
-    `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/1/1?terminalId=0721808110&lang=es&token=${newer}`,
+    `https://flights.zdev.tech/vuelos/pro/b/LIM/PEM/2026-03-31/1/0/0?terminalId=0721808110&token=${older}`,
+    `https://flights.zdev.tech/vuelos/pro/b/LIM/MAD/2026-06-01/2026-06-08/1/1/1?terminalId=0721808110&lang=es&token=${newer}`,
   ].join("\n");
 
   const candidates = extractCostamarSessionCandidates(text, "test");
@@ -1060,8 +1062,10 @@ test("buildCostamarBrandedSearchUrl keeps the branded round-trip path shape", ()
   request.legs[0].returnDate = "2026-06-08";
 
   const url = buildCostamarBrandedSearchUrl(request, {
-    apiBaseUrl: "https://costamar.example/api",
-    brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+    apiBaseUrl: "https://air-search-service-zneith.zdev.tech/v2",
+    brandBaseUrl: "https://flights.zdev.tech/vuelos/pro",
+    engineBaseUrl: "https://api-zneith.zdev.tech/api-engine",
+    markupBaseUrl: "https://commons-service-b-zneith.zdev.tech/markup-service",
     terminalId: "0721808110",
     token: "secret-token",
     lang: "es",
@@ -1070,7 +1074,7 @@ test("buildCostamarBrandedSearchUrl keeps the branded round-trip path shape", ()
   const parsed = new URL(url);
   assert.equal(
     parsed.pathname,
-    "/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/1/1",
+    "/vuelos/pro/b/LIM/MAD/2026-06-01/2026-06-08/1/1/1",
   );
   assert.equal(parsed.searchParams.get("terminalId"), "0721808110");
   assert.equal(parsed.searchParams.get("lang"), "es");
@@ -1467,38 +1471,92 @@ test("buildCostamarSearchBody matches the live booking frontend payload shape", 
   request.legs[0].returnDate = "2026-06-08";
 
   const payload = buildCostamarSearchBody(request, {
-    apiBaseUrl: "https://costamar.example/api",
-    brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+    apiBaseUrl: "https://air-search-service-zneith.zdev.tech/v2",
+    brandBaseUrl: "https://flights.zdev.tech/vuelos/pro",
+    engineBaseUrl: "https://api-zneith.zdev.tech/api-engine",
+    markupBaseUrl: "https://commons-service-b-zneith.zdev.tech/markup-service",
     terminalId: "0721808110",
     token: "secret-token",
     lang: "es",
   });
 
+  const pos = payload.pos as { source?: Array<{ requestorID?: { instance?: string } }> };
+  assert.equal(typeof pos.source?.[0]?.requestorID?.instance, "string");
+  if (pos.source?.[0]?.requestorID) {
+    pos.source[0].requestorID.instance = "__dynamic__";
+  }
+
   assert.deepEqual(payload, {
-    flightType: "RT",
-    terminalId: "0721808110",
-    itinerary: [
+    pos: {
+      source: [
+        {
+          requestorID: {
+            id: "0721808110",
+            instance: "__dynamic__",
+          },
+        },
+      ],
+    },
+    originDestinationInformation: [
       {
-        origin: "LIM",
-        destination: "MAD",
-        date: "20260601",
+        departureDateTime: {
+          value: "20260601",
+        },
+        originLocation: {
+          locationCode: "LIM",
+        },
+        destinationLocation: {
+          locationCode: "MAD",
+        },
       },
       {
-        origin: "MAD",
-        destination: "LIM",
-        date: "20260608",
+        departureDateTime: {
+          value: "20260608",
+        },
+        originLocation: {
+          locationCode: "MAD",
+        },
+        destinationLocation: {
+          locationCode: "LIM",
+        },
       },
     ],
-    passengers: {
-      adults: 1,
-      children: 1,
-      infants: 1,
+    travelPreferences: [],
+    travelerInfoSummary: {
+      airTravelerAvail: [
+        {
+          airTraveler: {
+            passengerTypeQuantity: {
+              code: "ADT",
+              quantity: 1,
+            },
+          },
+        },
+        {
+          airTraveler: {
+            passengerTypeQuantity: {
+              code: "CHD",
+              quantity: 1,
+            },
+          },
+        },
+        {
+          airTraveler: {
+            passengerTypeQuantity: {
+              code: "INF",
+              quantity: 1,
+            },
+          },
+        },
+      ],
+      priceRequestInformation: null,
     },
-    startDate: "2026-06-01T05:00:00.000Z",
-    endDate: "2026-06-08T05:00:00.000Z",
+    isValidDates: true,
+    processingInfo: {
+      searchType: "RT",
+    },
     token: "secret-token",
-    hasValidationToken: true,
-    flexible: false,
+    terminalId: "0721808110",
   });
 });
 
@@ -1516,7 +1574,7 @@ test("buildCostamarSearchBody requires a branded validation token", () => {
       token: "",
       lang: "es",
     }),
-    /Costamar token is required\./,
+    /Click and Book Plus token is required\./,
   );
 });
 
@@ -1538,7 +1596,7 @@ test("buildCostamarSearchBody rejects expired branded validation tokens", () => 
       }),
       lang: "es",
     }),
-    /Costamar token is required\./,
+    /Click and Book Plus token is required\./,
   );
 });
 
@@ -1651,22 +1709,22 @@ test("buildCostamarSearchBody rejects tokens that belong to another terminal", (
       }),
       lang: "es",
     }),
-    /Costamar token is required\./,
+    /Click and Book Plus token is required\./,
   );
 });
 
 test("buildCostamarSearchWarning exposes token failures clearly", () => {
   assert.equal(
     buildCostamarSearchWarning({ status: 401, data: [] }),
-    "Costamar rejected this search: the branded token is invalid, expired, or no longer belongs to this agency.",
+    "Click and Book Plus rejected this search: the branded token is invalid, expired, or no longer belongs to this agency.",
   );
   assert.equal(
     buildCostamarSearchWarning({ status: 402, data: [] }),
-    "Costamar rejected this search: the validation token is missing for this branded flow.",
+    "Click and Book Plus rejected this search: the validation token is missing for this branded flow.",
   );
   assert.equal(
     buildCostamarSearchWarning({ status: 403, data: [], message: "Agency mismatch" }),
-    "Costamar rejected this search (403): Agency mismatch",
+    "Click and Book Plus rejected this search (403): Agency mismatch",
   );
   assert.equal(buildCostamarSearchWarning({ status: 200, data: [] }), undefined);
 });
@@ -1797,7 +1855,7 @@ test("searchLocalCostamarExact keeps the Costamar search total without applying 
   global.fetch = (async (input) => {
     const url = String(input);
 
-    if (url === "https://costamar.com.pe/vuelos/api/engines/0721808110") {
+    if (url === "https://api-zneith.zdev.tech/api-engine/engines/0721808110") {
       return new Response(
         JSON.stringify({
           code: "0721808110",
@@ -1810,7 +1868,7 @@ test("searchLocalCostamarExact keeps the Costamar search total without applying 
       );
     }
 
-    if (url === "https://costamar.com.pe/vuelos/api/flights/search") {
+    if (url === "https://air-search-service-zneith.zdev.tech/v2/searchFlights") {
       return new Response(
         JSON.stringify({
           status: 200,
@@ -1835,8 +1893,8 @@ test("searchLocalCostamarExact keeps the Costamar search total without applying 
       );
     }
 
-    if (url === "https://costamar.com.pe/vuelos/api/flights/markups/apply") {
-      throw new Error("Costamar markup endpoint should not be called for displayed search totals.");
+    if (url === "https://commons-service-b-zneith.zdev.tech/markup-service/markups/apply") {
+      throw new Error("Click and Book Plus markup endpoint should not be called for displayed search totals.");
     }
 
     throw new Error(`Unexpected fetch url: ${url}`);
@@ -1862,25 +1920,26 @@ test("searchLocalCostamarExact keeps the Costamar search total without applying 
 
 test("searchLocalCostamarExact does not retry token-protected searches without a token", async () => {
   const previousFetch = global.fetch;
+  const terminalId = "9990004440";
   const request = buildExactRequest();
   const token = buildJwt({
-    id: "0721808110",
+    id: terminalId,
     iat: 1893456000,
     exp: 1893459600,
   });
-  const searchBodies: Array<{ token?: string; hasValidationToken?: boolean }> = [];
+  const searchBodies: Array<{ token?: string }> = [];
 
   global.fetch = (async (input, init) => {
     const url = String(input);
 
-    if (url === "https://costamar.com.pe/vuelos/api/engines/0721808110") {
+    if (url === `https://api-zneith.zdev.tech/api-engine/engines/${terminalId}`) {
       return new Response(
         JSON.stringify(buildEngine()),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }
 
-    if (url === "https://costamar.com.pe/vuelos/api/flights/search") {
+    if (url === "https://air-search-service-zneith.zdev.tech/v2/searchFlights") {
       searchBodies.push(JSON.parse(String(init?.body ?? "{}")));
       return new Response(
         JSON.stringify({
@@ -1899,7 +1958,7 @@ test("searchLocalCostamarExact does not retry token-protected searches without a
       costamar: {
         apiBaseUrl: "https://costamar.com.pe/vuelos/api",
         brandBaseUrl: "https://booking.clickandbook.com/vuelos",
-        terminalId: "0721808110",
+        terminalId,
         token,
         lang: "es",
       },
@@ -1907,7 +1966,6 @@ test("searchLocalCostamarExact does not retry token-protected searches without a
 
     assert.equal(searchBodies.length, 1);
     assert.equal(searchBodies[0]?.token, token);
-    assert.equal(searchBodies[0]?.hasValidationToken, true);
     assert.equal(result.offers.length, 0);
     assert.ok(result.warnings.some((warning) => /branded token is invalid/i.test(warning)));
   } finally {
@@ -2005,14 +2063,14 @@ test("searchLocalCostamarExact can warm a missing branded token from a seeded Ch
   global.fetch = (async (input, init) => {
     const url = String(input);
 
-    if (url === "https://costamar.com.pe/vuelos/api/engines/0721808110") {
+    if (url === "https://api-zneith.zdev.tech/api-engine/engines/0721808110") {
       return new Response(
         JSON.stringify(buildEngine()),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }
 
-    if (url === "https://costamar.com.pe/vuelos/api/flights/search") {
+    if (url === "https://air-search-service-zneith.zdev.tech/v2/searchFlights") {
       const body = JSON.parse(String(init?.body ?? "{}")) as { token?: string };
       assert.equal(body.token, freshToken);
 
@@ -2025,7 +2083,7 @@ test("searchLocalCostamarExact can warm a missing branded token from a seeded Ch
       );
     }
 
-    if (url === "https://costamar.com.pe/vuelos/api/flights/markups/apply") {
+    if (url === "https://commons-service-b-zneith.zdev.tech/markup-service/markups/apply") {
       return new Response(
         JSON.stringify({
           apply: false,
@@ -2312,14 +2370,14 @@ test("searchLocalCostamarExact reuses a token generated by the B2B warm-up flow"
   global.fetch = (async (input, init) => {
     const url = String(input);
 
-    if (url === "https://costamar.com.pe/vuelos/api/engines/0721808110") {
+    if (url === "https://api-zneith.zdev.tech/api-engine/engines/0721808110") {
       return new Response(
         JSON.stringify(buildEngine()),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }
 
-    if (url === "https://costamar.com.pe/vuelos/api/flights/search") {
+    if (url === "https://air-search-service-zneith.zdev.tech/v2/searchFlights") {
       const body = JSON.parse(String(init?.body ?? "{}")) as { token?: string };
       assert.equal(body.token, freshToken);
 
@@ -2332,7 +2390,7 @@ test("searchLocalCostamarExact reuses a token generated by the B2B warm-up flow"
       );
     }
 
-    if (url === "https://costamar.com.pe/vuelos/api/flights/markups/apply") {
+    if (url === "https://commons-service-b-zneith.zdev.tech/markup-service/markups/apply") {
       return new Response(
         JSON.stringify({
           apply: false,
@@ -2422,14 +2480,14 @@ test("searchLocalCostamarExact prefers a fresher manual Costamar token on every 
   global.fetch = (async (input, init) => {
     const url = String(input);
 
-    if (url === "https://costamar.com.pe/vuelos/api/engines/0721808110") {
+    if (url === "https://api-zneith.zdev.tech/api-engine/engines/0721808110") {
       return new Response(
         JSON.stringify(buildEngine()),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }
 
-    if (url === "https://costamar.com.pe/vuelos/api/flights/search") {
+    if (url === "https://air-search-service-zneith.zdev.tech/v2/searchFlights") {
       const body = JSON.parse(String(init?.body ?? "{}")) as { token?: string };
       assert.equal(body.token, freshToken);
 
@@ -2442,7 +2500,7 @@ test("searchLocalCostamarExact prefers a fresher manual Costamar token on every 
       );
     }
 
-    if (url === "https://costamar.com.pe/vuelos/api/flights/markups/apply") {
+    if (url === "https://commons-service-b-zneith.zdev.tech/markup-service/markups/apply") {
       return new Response(
         JSON.stringify({
           apply: false,
@@ -2525,7 +2583,7 @@ test("searchLocalCostamarExact does not add Costamar markup fees to displayed pr
   global.fetch = (async (input, init) => {
     const url = String(input);
 
-    if (url === "https://costamar.com.pe/vuelos/api/engines/0721808110") {
+    if (url === "https://api-zneith.zdev.tech/api-engine/engines/0721808110") {
       return new Response(
         JSON.stringify({
           code: "0721808110",
@@ -2538,7 +2596,7 @@ test("searchLocalCostamarExact does not add Costamar markup fees to displayed pr
       );
     }
 
-    if (url === "https://costamar.com.pe/vuelos/api/flights/search") {
+    if (url === "https://air-search-service-zneith.zdev.tech/v2/searchFlights") {
       return new Response(
         JSON.stringify({
           status: 200,
@@ -2609,8 +2667,8 @@ test("searchLocalCostamarExact does not add Costamar markup fees to displayed pr
       );
     }
 
-    if (url === "https://costamar.com.pe/vuelos/api/flights/markups/apply") {
-      throw new Error("Costamar markup endpoint should not be called for displayed search totals.");
+    if (url === "https://commons-service-b-zneith.zdev.tech/markup-service/markups/apply") {
+      throw new Error("Click and Book Plus markup endpoint should not be called for displayed search totals.");
     }
 
     throw new Error(`Unexpected fetch url: ${url}`);
@@ -2637,6 +2695,205 @@ test("searchLocalCostamarExact does not add Costamar markup fees to displayed pr
     assert.equal(result.warnings.length, 0);
   } finally {
     global.fetch = previousFetch;
+  }
+});
+
+test("searchLocalCostamarExact maps Click and Book Plus priced itineraries, alternatives and redirect links", async () => {
+  const previousFetch = global.fetch;
+  const terminalId = "9990003330";
+  const request = {
+    ...buildExactRequest(),
+    tripType: "round-trip",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "MAD",
+        departureDate: "2026-06-17",
+        returnDate: "2026-06-24",
+      },
+    ],
+  } satisfies SearchRequest;
+
+  const segment = (
+    origin: string,
+    destination: string,
+    departureDateTime: string,
+    arrivalDateTime: string,
+    flightNumber: string,
+  ) => ({
+    departureAirport: { locationCode: origin, codeContext: origin === "LIM" ? "Lima" : "Madrid" },
+    arrivalAirport: { locationCode: destination, codeContext: destination === "MAD" ? "Madrid" : "Lima" },
+    departureDateTime,
+    arrivalDateTime,
+    elapsedTime: "0200",
+    flightNumber,
+    marketingAirline: { code: "AV", companyShortName: "Avianca" },
+    operatingAirline: { code: "AV", companyShortName: "Avianca" },
+    bookingClassAvails: [
+      {
+        bookingClassAvail: [
+          {
+            resBookDesigCode: "S",
+          },
+        ],
+      },
+    ],
+    fareBasisCode: "SPLUS",
+    cabinType: "Y",
+    tpaextensions: {
+      any: [
+        '<baggageInformation pieces="1" description="1 maleta"/>',
+        '<handBaggage pieces="1" description="1 equipaje de mano"/>',
+      ],
+    },
+  });
+  const aggregateSegment = (
+    origin: string,
+    destination: string,
+    departureDateTime: string,
+    arrivalDateTime: string,
+  ) => ({
+    departureAirport: { locationCode: origin, codeContext: origin === "LIM" ? "Lima" : "Madrid" },
+    arrivalAirport: { locationCode: destination, codeContext: destination === "MAD" ? "Madrid" : "Lima" },
+    departureDateTime,
+    arrivalDateTime,
+    marketingAirline: { code: "AV", companyShortName: "Avianca" },
+    tpaextensions: {
+      any: [
+        '<flightDetails><elapsedTime>0200</elapsedTime><brandedFare brandName="Plus"/><baggageInformationList><baggageInformation pieces="1" description="1 maleta"/></baggageInformationList><handBaggage pieces="1" description="1 equipaje de mano"/></flightDetails>',
+      ],
+    },
+  });
+
+  global.fetch = (async (input, init) => {
+    const url = String(input);
+
+    if (url === `https://api-zneith.zdev.tech/api-engine/engines/${terminalId}`) {
+      return new Response(
+        JSON.stringify({
+          code: terminalId,
+          profile: {
+            id: "profile-cbplus",
+            currencyCode: "USD",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (url === "https://air-search-service-zneith.zdev.tech/v2/searchFlights") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      assert.equal(body.terminalId, terminalId);
+      assert.equal(body.token, "secret-token");
+      return new Response(
+        JSON.stringify({
+          pricedItineraries: {
+            pricedItinerary: [
+              {
+                sequenceNumber: "1",
+                airItinerary: {
+                  originDestinationOptions: {
+                    originDestinationOption: [
+                      {
+                        refNumber: 0,
+                        rph: 1,
+                        flightSegment: [
+                          segment("LIM", "MAD", "2026-06-17T08:00:00-05:00", "2026-06-17T16:00:00+02:00", "100"),
+                          aggregateSegment("LIM", "MAD", "2026-06-17T08:00:00-05:00", "2026-06-17T16:00:00+02:00"),
+                        ],
+                      },
+                      {
+                        refNumber: 0,
+                        rph: 2,
+                        flightSegment: [
+                          segment("LIM", "MAD", "2026-06-17T10:00:00-05:00", "2026-06-17T18:00:00+02:00", "102"),
+                          aggregateSegment("LIM", "MAD", "2026-06-17T10:00:00-05:00", "2026-06-17T18:00:00+02:00"),
+                        ],
+                      },
+                      {
+                        refNumber: 1,
+                        rph: 3,
+                        flightSegment: [
+                          segment("MAD", "LIM", "2026-06-24T09:00:00+02:00", "2026-06-24T15:00:00-05:00", "101"),
+                          aggregateSegment("MAD", "LIM", "2026-06-24T09:00:00+02:00", "2026-06-24T15:00:00-05:00"),
+                        ],
+                      },
+                    ],
+                  },
+                },
+                airItineraryPricingInfo: {
+                  itinTotalFare: [
+                    {
+                      baseFare: { amount: "800.00", currencyCode: "USD" },
+                      taxes: { amount: "350.00", currencyCode: "USD" },
+                      totalFare: { amount: "1150.00", currencyCode: "USD" },
+                      fees: {
+                        fee: [{ amount: "17.87", description: "SERVICE" }],
+                      },
+                      discounts: {
+                        discount: [{ amount: "10.00", description: "DISCOUNT" }],
+                      },
+                    },
+                  ],
+                  validatingAirlineCode: "AV",
+                },
+                ticketingInfo: {
+                  pricingSystem: {
+                    code: "108",
+                    codeContext: "CBPLUS",
+                  },
+                  pseudoCityCode: "LIM",
+                },
+              },
+            ],
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await searchLocalCostamarExact(request, {
+      costamar: {
+        apiBaseUrl: "https://air-search-service-zneith.zdev.tech/v2",
+        brandBaseUrl: "https://flights.zdev.tech/vuelos/pro",
+        engineBaseUrl: "https://api-zneith.zdev.tech/api-engine",
+        markupBaseUrl: "https://commons-service-b-zneith.zdev.tech/markup-service",
+        terminalId,
+        token: "secret-token",
+        lang: "es",
+      },
+    });
+
+    assert.equal(result.offers.length, 2);
+    assert.deepEqual(
+      result.offers.map((offer) => offer.itineraries.map((itinerary) => itinerary.segments[0]?.flightNumber)).sort(),
+      [
+        ["100", "101"],
+        ["102", "101"],
+      ],
+    );
+    assert.equal(result.offers[0]?.price.total.amount, 1157.87);
+    assert.equal(result.offers[0]?.price.base?.amount, 800);
+    assert.equal(result.offers[0]?.price.taxes?.amount, 350);
+    assert.equal(result.offers[0]?.itineraries[0]?.segments.length, 1);
+    assert.equal(result.offers[0]?.itineraries[1]?.segments.length, 1);
+    assert.equal(result.offers[0]?.baggage?.checkedBags, 1);
+    assert.equal(result.offers[0]?.baggage?.carryOnIncluded, true);
+    assert.equal(result.offers[0]?.purchasePaths[0]?.label, "Buscar en Click and Book Plus");
+    assert.equal(result.offers[0]?.purchasePaths[0]?.url.startsWith(
+      `https://flights.zdev.tech/vuelos/pro/b/LIM/MAD/2026-06-17/2026-06-24/1/0/0?`,
+    ), true);
+    assert.equal(new URL(result.offers[0]?.purchasePaths[0]?.url ?? "").searchParams.get("terminalId"), terminalId);
+    assert.equal(new URL(result.offers[0]?.purchasePaths[0]?.url ?? "").searchParams.get("token"), "secret-token");
+    assert.equal(result.warnings.length, 0);
+  } finally {
+    global.fetch = previousFetch;
+    resetCostamarWarmupStateForTests();
+    resetCostamarSessionCacheForTests();
   }
 });
 
@@ -2753,7 +3010,7 @@ async function withMockedCostamarExactSearch<T>(
   global.fetch = (async (input) => {
     const url = String(input);
 
-    if (url === `https://costamar.com.pe/vuelos/api/engines/${terminalId}`) {
+    if (url === `https://api-zneith.zdev.tech/api-engine/engines/${terminalId}`) {
       return new Response(
         JSON.stringify({
           code: terminalId,
@@ -2765,7 +3022,7 @@ async function withMockedCostamarExactSearch<T>(
       );
     }
 
-    if (url === "https://costamar.com.pe/vuelos/api/flights/search") {
+    if (url === "https://air-search-service-zneith.zdev.tech/v2/searchFlights") {
       return new Response(
         JSON.stringify({
           status: 200,

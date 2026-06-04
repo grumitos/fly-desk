@@ -117,7 +117,7 @@ mantenedor.
    }
    ```
 
-   La API publica siempre busca en Agil y Costamar. El criterio de exito de
+   La API publica siempre busca en Agil y Click and Book Plus. El criterio de exito de
    esta recuperacion es encontrar al menos una oferta con
    `providerSource = "agil-local"` en `allOffers`.
 

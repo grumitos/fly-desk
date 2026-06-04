@@ -20,7 +20,7 @@ function buildProviderMeta(request: SearchRequest, exactProviderId: ProviderId):
 }
 
 function providerDisplayName(providerId: ProviderId): string {
-  return providerId === "costamar" ? "Costamar" : "Agilsmart";
+  return providerId === "costamar" ? "Click and Book Plus" : "Agilsmart";
 }
 
 export function buildSearchMeta(
