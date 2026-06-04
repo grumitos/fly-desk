@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { COMPLETED_SEARCH_SESSION_TTL_MS, SearchSessionStore } from "../src/session-store";
+import { SEARCH_CACHE_VERSION } from "../src/core/types";
 import type {
   CanonicalOffer,
   MatrixCell,
@@ -461,6 +462,34 @@ test("findRecentCompletedSearchJob ignores legacy result-cap flags in the cache 
     maxAgeMs: 10 * 60 * 1000,
   });
   assert.equal(reusedCompact?.id, completedJob.id);
+});
+
+test("findRecentCompletedSearchJob ignores completed searches from a previous cache version", () => {
+  const store = new SearchSessionStore();
+  const request = buildRequest();
+  const offer = buildOffer("offer-legacy-cache", "https://cached.example/legacy");
+  const completedJob = store.createSearchJob({
+    request,
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+
+  assert.equal(completedJob.searchMeta.cacheVersion, SEARCH_CACHE_VERSION);
+  delete completedJob.searchMeta.cacheVersion;
+
+  const reused = store.findRecentCompletedSearchJob({
+    request,
+    providerIds: ["agil-local"],
+    sortMode: "cheapest",
+    maxAgeMs: 10 * 60 * 1000,
+  });
+
+  assert.equal(reused, undefined);
 });
 
 test("findRecentCompletedSearchJob ignores expired or incompatible completed searches", () => {

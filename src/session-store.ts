@@ -10,6 +10,7 @@ import {
   ProviderId,
   ProviderMeta,
   PurchasePath,
+  SEARCH_CACHE_VERSION,
   SearchMeta,
   SearchRequest,
 } from "./core/types";
@@ -21,6 +22,17 @@ export const COMPLETED_SEARCH_SESSION_TTL_MS = (() => {
     ? raw
     : COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS;
 })();
+
+function withCurrentSearchCacheVersion(searchMeta: SearchMeta): SearchMeta {
+  return {
+    ...searchMeta,
+    cacheVersion: SEARCH_CACHE_VERSION,
+  };
+}
+
+function hasCurrentSearchCacheVersion(searchMeta: SearchMeta): boolean {
+  return searchMeta.cacheVersion === SEARCH_CACHE_VERSION;
+}
 
 type SearchJobStatus = "running" | "completed" | "failed" | "cancelled";
 
@@ -495,10 +507,10 @@ export class SearchSessionStore {
       updatedAt: timestamp,
       lastAccessedAt: timestamp,
       revision: 1,
-      searchMeta: {
+      searchMeta: withCurrentSearchCacheVersion({
         ...input.searchMeta,
         searchSessionId: id,
-      },
+      }),
     };
 
     this.searchJobs.set(id, record);
@@ -546,6 +558,10 @@ export class SearchSessionStore {
 
     for (const candidate of this.searchJobs.values()) {
       if (candidate.status !== "completed") {
+        continue;
+      }
+
+      if (!hasCurrentSearchCacheVersion(candidate.searchMeta)) {
         continue;
       }
 
@@ -615,10 +631,10 @@ export class SearchSessionStore {
       updatedAt: timestamp,
       lastAccessedAt: timestamp,
       revision: current.revision,
-      searchMeta: {
+      searchMeta: withCurrentSearchCacheVersion({
         ...updated.searchMeta,
         searchSessionId: current.id,
-      },
+      }),
     };
     const hasChanged = serializeForComparison(this.searchJobSnapshot(base))
       !== serializeForComparison(this.searchJobSnapshot(current));
@@ -704,10 +720,10 @@ export class SearchSessionStore {
       updatedAt: timestamp,
       lastAccessedAt: timestamp,
       revision: 1,
-      searchMeta: {
+      searchMeta: withCurrentSearchCacheVersion({
         ...input.searchMeta,
         searchSessionId: id,
-      },
+      }),
     };
 
     this.matrixJobs.set(id, record);
@@ -746,10 +762,10 @@ export class SearchSessionStore {
       updatedAt: timestamp,
       lastAccessedAt: timestamp,
       revision: current.revision,
-      searchMeta: {
+      searchMeta: withCurrentSearchCacheVersion({
         ...updated.searchMeta,
         searchSessionId: current.id,
-      },
+      }),
     };
     const hasChanged = serializeForComparison(this.matrixJobSnapshot(base))
       !== serializeForComparison(this.matrixJobSnapshot(current));
@@ -996,10 +1012,10 @@ export class SearchSessionStore {
       id: job.id,
       request: job.request,
       providerContext: job.providerContext,
-      searchMeta: {
+      searchMeta: withCurrentSearchCacheVersion({
         ...job.searchMeta,
         searchSessionId: job.id,
-      },
+      }),
       providerMeta: job.providerMeta,
       warnings: [...job.warnings],
       providerDiagnostics: job.providerDiagnostics,
