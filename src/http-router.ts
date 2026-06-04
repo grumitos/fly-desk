@@ -495,25 +495,31 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
     <title>Renueva la sesion de Click and Book Plus</title>
     <style>
       :root { color-scheme: light; }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        min-height: 100%;
+      }
       body {
         margin: 0;
+        min-height: 100dvh;
+        overflow: hidden;
+        display: grid;
+        place-items: center;
+        padding: 20px;
         font-family: "Segoe UI", Arial, sans-serif;
-        background: linear-gradient(160deg, #f8f0e2, #fffaf1);
+        background: #f8f8f6;
         color: #2d2a26;
       }
       main {
+        width: min(560px, 100%);
         max-width: 560px;
-        margin: 0 auto;
-        min-height: 100vh;
-        display: grid;
-        align-content: center;
-        gap: 16px;
-        padding: 32px 20px;
       }
       section {
         background: rgba(255, 255, 255, 0.92);
         border: 1px solid rgba(112, 77, 31, 0.12);
-        border-radius: 20px;
+        border-radius: 12px;
         padding: 24px;
         box-shadow: 0 20px 45px rgba(88, 59, 24, 0.08);
       }
@@ -528,6 +534,17 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
       }
       p:last-child {
         margin-bottom: 0;
+      }
+      @media (max-width: 480px) {
+        body {
+          padding: 16px;
+        }
+        section {
+          padding: 20px;
+        }
+        h1 {
+          font-size: 24px;
+        }
       }
     </style>
   </head>

@@ -1210,6 +1210,8 @@ test("costamar redirect returns a controlled block when refresh hangs", async ()
     assert.equal(response.status, 409);
     const body = await response.text();
     assert.match(body, /Renueva la sesion de Click and Book Plus/i);
+    assert.match(body, /overflow:\s*hidden/i);
+    assert.match(body, /place-items:\s*center/i);
     assert.match(body, /tardo mas de/i);
   } finally {
     resetCostamarWarmupStateForTests();

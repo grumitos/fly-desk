@@ -359,7 +359,7 @@ const COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS = Math.max(
   Number(cbPlusEnv("CBPLUS_REDIRECT_VERIFY_TIMEOUT_MS", "COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS") ?? 6000),
 );
 const COSTAMAR_REDIRECT_VERIFY_FAILURE_PATTERN =
-  /login|iniciar\s+sesi[oó]n|auth|otp|captcha|expired|expirad|invalid|inv[aá]lid|unauthorized|forbidden/i;
+  /login|iniciar\s+sesi[oó]n|google\s+authenticator|auth(?:entication|orization)?\s*(?:required|failed|failure|error)|(?:required|failed|failure|error)\s+auth(?:entication|orization)?|otp|captcha|expired|expirad|invalid|inv[aá]lid|unauthorized|forbidden/i;
 const COSTAMAR_B2B_KEYSTROKE_DELAY_MS = 35;
 const COSTAMAR_PAGE_SNAPSHOT_HTML_MAX_CHARS = 64 * 1024;
 const COSTAMAR_PAGE_STORAGE_MAX_ENTRIES = 50;
