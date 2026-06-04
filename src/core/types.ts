@@ -16,6 +16,8 @@ export type SearchState =
   | "search_cancelled"
   | "search_failed";
 
+export const SEARCH_CACHE_VERSION = 2;
+
 export type PriceConfidence =
   | "indicative"
   | "live"
@@ -349,6 +351,7 @@ export interface SearchMeta {
   warnings: string[];
   partial: boolean;
   searchState: SearchState;
+  cacheVersion?: number;
   searchSessionId?: string;
 }
 

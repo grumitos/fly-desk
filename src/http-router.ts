@@ -14,6 +14,8 @@ import {
   ProviderDiagnostics,
   ProviderContext,
   ProviderId,
+  SEARCH_CACHE_VERSION,
+  SearchMeta,
   SearchRequest,
   SearchResponse,
 } from "./core/types";
@@ -618,6 +620,13 @@ function integerParam(input: string | null, fallback: number, min: number, max: 
   return Math.min(max, Math.max(min, Math.trunc(parsed)));
 }
 
+function currentSearchMeta(searchMeta: SearchMeta): SearchMeta {
+  return {
+    ...searchMeta,
+    cacheVersion: SEARCH_CACHE_VERSION,
+  };
+}
+
 function createSearchDraftResponse(
   request: SearchRequest,
   providerIds: ProviderId[],
@@ -632,14 +641,14 @@ function createSearchDraftResponse(
   return {
     offers: [],
     allOffers: [],
-    searchMeta: {
+    searchMeta: currentSearchMeta({
       requestedAt,
       completedAt: requestedAt,
       providersUsed: providerIds,
       warnings: [warning],
       partial: true,
       searchState: "search_partial",
-    },
+    }),
     providerMeta: {
       exactProvider: providerIds[0],
       coverageMode: request.coverageMode,
@@ -819,14 +828,14 @@ function materializeAggregatedMatrixResponse(
     },
     confidenceSummary: buildMatrixConfidenceSummary(cells),
     recommendations,
-    searchMeta: {
+    searchMeta: currentSearchMeta({
       requestedAt: new Date().toISOString(),
       completedAt: new Date().toISOString(),
       providersUsed: providerIds,
       warnings,
       partial,
       searchState: partial ? "search_partial" : "search_live",
-    },
+    }),
     providerMeta: {
       exactProvider: providerIds[0],
       coverageMode: request.coverageMode,
@@ -870,13 +879,13 @@ function materializeFailedMatrixResponse(
     ...response,
     cells,
     confidenceSummary: buildMatrixConfidenceSummary(cells),
-    searchMeta: {
+    searchMeta: currentSearchMeta({
       ...response.searchMeta,
       completedAt: new Date().toISOString(),
       warnings,
       partial: true,
       searchState: "search_partial",
-    },
+    }),
     warnings,
   };
 }
@@ -1678,14 +1687,14 @@ function createCachedSearchDraftResponse(
   return {
     offers: cachedJob.offers.map(stripQuotationPreparation),
     allOffers: cachedJob.allOffers.map(stripQuotationPreparation),
-    searchMeta: {
+    searchMeta: currentSearchMeta({
       requestedAt: now,
       completedAt: now,
       providersUsed: providerIds,
       warnings,
       partial: true,
       searchState: "search_cached",
-    },
+    }),
     providerMeta: {
       exactProvider: providerIds[0],
       coverageMode: request.coverageMode,
@@ -2090,12 +2099,12 @@ async function handleSearchRequest(
         : {
             offers: materialized.offers,
             allOffers: materialized.allOffers ?? materialized.offers,
-            searchMeta: {
+            searchMeta: currentSearchMeta({
               ...materialized.searchMeta,
               requestedAt: current.searchMeta.requestedAt,
               partial: materialized.searchMeta.partial,
               searchState: materialized.searchMeta.searchState,
-            },
+            }),
             providerMeta: materialized.providerMeta,
             warnings: materialized.warnings,
             status,
@@ -2338,11 +2347,11 @@ async function handleMatrixRequest(
             axes: materialized.axes,
             confidenceSummary: materialized.confidenceSummary,
             recommendations: materialized.recommendations,
-            searchMeta: {
+            searchMeta: currentSearchMeta({
               ...materialized.searchMeta,
               requestedAt: current.searchMeta.requestedAt,
               searchSessionId: current.id,
-            },
+            }),
             providerMeta: materialized.providerMeta,
             warnings: materialized.warnings,
             status,

@@ -7,6 +7,7 @@ import {
   MatrixResponse,
   ProviderId,
   ProviderMeta,
+  SEARCH_CACHE_VERSION,
   SearchMeta,
   SearchRequest,
   SearchResponse,
@@ -36,6 +37,7 @@ export function buildSearchMeta(
     warnings,
     partial,
     searchState: partial ? "search_partial" : "search_live",
+    cacheVersion: SEARCH_CACHE_VERSION,
   };
 }
 
