@@ -1845,11 +1845,14 @@ export function shouldReuseAgilSession(
     && now - session.capturedAtMs < AGIL_SESSION_REVALIDATE_MS;
 }
 
-async function loadAgilSession(now: number): Promise<AgilSessionData> {
+async function loadAgilSession(
+  now: number,
+  options: { forceRefresh?: boolean } = {},
+): Promise<AgilSessionData> {
   const extracted = parseAgilSessionData(await extractBrowserStorageSnapshot());
 
   if (cachedSession && sameAgilSessionIdentity(cachedSession, extracted)) {
-    if (cachedSession.expiresAtMs - now > AGIL_SESSION_EXPIRY_BUFFER_MS) {
+    if (!options.forceRefresh && cachedSession.expiresAtMs - now > AGIL_SESSION_EXPIRY_BUFFER_MS) {
       cachedSession = {
         ...cachedSession,
         capturedAtMs: now,
@@ -1903,7 +1906,15 @@ export function setAgilSessionForTests(overrides: {
 }
 
 export async function prewarmLocalAgilSession(): Promise<void> {
-  await getAgilSession();
+  const now = Date.now();
+  if (!pendingSessionPromise) {
+    pendingSessionPromise = loadAgilSession(now, { forceRefresh: true })
+      .finally(() => {
+        pendingSessionPromise = undefined;
+      });
+  }
+
+  await pendingSessionPromise;
 }
 
 function cabinToAgilClass(cabin: SearchRequest["cabin"]): number {

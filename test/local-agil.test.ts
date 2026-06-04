@@ -18,6 +18,7 @@ import {
   prepareTemporaryAgilChromeProfileForTests,
   parseAgilRefreshTokenPayload,
   parseAgilSessionData,
+  prewarmLocalAgilSession,
   readAgilChromeProfileCandidatesForTests,
   readAgilStorageSnapshotFromPage,
   resetAgilSessionCacheForTests,
@@ -143,6 +144,126 @@ test("Agil session identity changes when the browser switches account or seller"
     internalCode: "WXYZ",
     ip: "1.2.3.4",
   }), false);
+});
+
+test("Agil provider prewarm forces a token refresh even when the cached session is fresh", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-agil-prewarm-refresh-"));
+  const profileName = "Profile 40";
+  const storageDir = join(tempRoot, profileName, "Local Storage", "leveldb");
+  mkdirSync(storageDir, { recursive: true });
+  writeFileSync(
+    join(tempRoot, "Local State"),
+    JSON.stringify({
+      profile: {
+        last_used: profileName,
+        last_active_profiles: [profileName],
+        info_cache: {
+          [profileName]: {},
+        },
+      },
+    }),
+    "utf8",
+  );
+
+  const userPayload = Buffer.from(JSON.stringify({
+    Usuario: {
+      CodigoUsuario: 1234,
+    },
+    Cliente: {
+      Vendedor: {
+        CodigoVendedor: "ABCD",
+      },
+    },
+  })).toString("base64");
+  const ipPayload = Buffer.from("1.2.3.4").toString("base64");
+  writeFileSync(
+    join(storageDir, "000001.log"),
+    `https://www.agilsmart.com/home-user\0tokenTravelC stale-token user_data ${userPayload} ip ${ipPayload}`,
+    "utf8",
+  );
+
+  const previousFetch = global.fetch;
+  const previousKey = process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+  const previousUserDataDir = process.env.AGIL_CHROME_USER_DATA_DIR;
+  const previousProfile = process.env.AGIL_CHROME_PROFILE;
+  const previousBrowserUrl = process.env.AGIL_BROWSER_URL;
+  const previousBrowserWsEndpoint = process.env.AGIL_BROWSER_WS_ENDPOINT;
+  const previousProcessDiscovery = process.env.AGIL_CHROME_PROCESS_DISCOVERY;
+  const previousScanAllProfiles = process.env.AGIL_SCAN_ALL_CHROME_PROFILES;
+  const previousRawFileScan = process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN;
+  const previousTempFallback = process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK;
+  const previousChromeUserDataDir = process.env.CHROME_USER_DATA_DIR;
+  const previousCostamarChromeUserDataDir = process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  const previousLocalAppData = process.env.LOCALAPPDATA;
+  const refreshedTokenPayload = Buffer.from(JSON.stringify({ exp: 1893459600 })).toString("base64url");
+  const refreshedToken = `header.${refreshedTokenPayload}.signature`;
+  let refreshCalls = 0;
+
+  resetAgilSessionCacheForTests();
+  resetAgilApimSubscriptionKeyCacheForTests();
+  setAgilSessionForTests({
+    token: "cached-token",
+    expiresAtMs: Date.now() + 60 * 60 * 1000,
+    userCode: 1234,
+    internalCode: "ABCD",
+    ip: "1.2.3.4",
+    capturedAtMs: Date.now(),
+  });
+  process.env.AGIL_APIM_SUBSCRIPTION_KEY = "test-subscription-key";
+  process.env.AGIL_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.AGIL_CHROME_PROFILE = profileName;
+  process.env.AGIL_CHROME_PROCESS_DISCOVERY = "0";
+  process.env.AGIL_SCAN_ALL_CHROME_PROFILES = "0";
+  process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN = "1";
+  process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK = "0";
+  process.env.LOCALAPPDATA = join(tempRoot, "isolated-localappdata");
+  delete process.env.AGIL_BROWSER_URL;
+  delete process.env.AGIL_BROWSER_WS_ENDPOINT;
+  delete process.env.CHROME_USER_DATA_DIR;
+  delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+
+  global.fetch = (async (input, init) => {
+    const url = String(input);
+    const headers = new Headers(init?.headers);
+    assert.equal(url, "https://motorvuelos.expertiatravel.com/auth/api/auth/token");
+    assert.equal(headers.get("Ocp-Apim-Subscription-Key"), "test-subscription-key");
+    const body = JSON.parse(String(init?.body ?? "{}")) as {
+      caller?: { fromIP?: string };
+      userCode?: number;
+      internalCode?: string;
+    };
+    assert.equal(body.caller?.fromIP, "1.2.3.4");
+    assert.equal(body.userCode, 1234);
+    assert.equal(body.internalCode, "ABCD");
+    refreshCalls += 1;
+    return new Response(JSON.stringify({ token: refreshedToken }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  try {
+    await prewarmLocalAgilSession();
+
+    assert.equal(refreshCalls, 1);
+  } finally {
+    global.fetch = previousFetch;
+    resetAgilSessionCacheForTests();
+    resetAgilApimSubscriptionKeyCacheForTests();
+    restoreEnv("AGIL_APIM_SUBSCRIPTION_KEY", previousKey);
+    restoreEnv("AGIL_CHROME_USER_DATA_DIR", previousUserDataDir);
+    restoreEnv("AGIL_CHROME_PROFILE", previousProfile);
+    restoreEnv("AGIL_BROWSER_URL", previousBrowserUrl);
+    restoreEnv("AGIL_BROWSER_WS_ENDPOINT", previousBrowserWsEndpoint);
+    restoreEnv("AGIL_CHROME_PROCESS_DISCOVERY", previousProcessDiscovery);
+    restoreEnv("AGIL_SCAN_ALL_CHROME_PROFILES", previousScanAllProfiles);
+    restoreEnv("AGIL_RAW_CHROME_STORAGE_FILE_SCAN", previousRawFileScan);
+    restoreEnv("AGIL_TEMP_CHROME_STORAGE_FALLBACK", previousTempFallback);
+    restoreEnv("CHROME_USER_DATA_DIR", previousChromeUserDataDir);
+    restoreEnv("COSTAMAR_CHROME_USER_DATA_DIR", previousCostamarChromeUserDataDir);
+    restoreEnv("LOCALAPPDATA", previousLocalAppData);
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("Agil profile discovery tries the configured Chrome profile before automatic profiles", () => {
