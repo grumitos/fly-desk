@@ -184,6 +184,7 @@ test("Costamar card model communicates redirect verification status", () => {
     title: "El enlace de Click and Book Plus fue validado antes de mostrar la oferta.",
     tone: "verified",
   });
+  assert.equal(verified.provider.icon, "/assets/provider-icons/click-and-book-plus-128.png");
   assert.equal(pending.costamarRedirect, undefined);
   assert.equal(blocked.costamarRedirect?.label, "Redirect bloqueado");
   assert.equal(blocked.costamarRedirect?.title, "Token vencido");
