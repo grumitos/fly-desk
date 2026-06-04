@@ -308,9 +308,7 @@ export default function App() {
     selectedAirlines.length > 0
   const shouldShowWorkspace = workspaceReady || Boolean(results) || loading || resultsLayoutEditorActive
   const isSearchIdle = !shouldShowWorkspace
-  const loadingLabel = loading && results && results.offers.length > 0
-    ? isMigrationResults(results) ? "Parcial" : "Actualizando"
-    : "Buscando"
+  const loadingLabel = "Buscando"
 
   useLayoutEffect(() => {
     const frame = searchFrameRef.current

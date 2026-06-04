@@ -317,7 +317,7 @@ export function providerBadgeForId(providerId?: string): ResultProviderBadge {
     return {
       label: providerDisplayName(providerId),
       shortLabel: "CB+",
-      icon: "/assets/provider-icons/costamar-128.png",
+      icon: "/assets/provider-icons/click-and-book-plus-128.png",
     }
   }
 
