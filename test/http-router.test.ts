@@ -2821,12 +2821,16 @@ test("diagnostics endpoint exposes loopback-only runtime counters", async () => 
     const payload = await response.json() as {
       ok?: boolean;
       memoryUsage?: { rss?: number };
+      searchAdmission?: { capacityUnits?: number; activeUnits?: number; queuedCount?: number };
       sessions?: { counts?: { searchJobs?: number; purchasePaths?: number } };
       tempArtifacts?: { totals?: { count?: number } };
     };
 
     assert.equal(payload.ok, true);
     assert.equal(typeof payload.memoryUsage?.rss, "number");
+    assert.equal(typeof payload.searchAdmission?.capacityUnits, "number");
+    assert.equal(typeof payload.searchAdmission?.activeUnits, "number");
+    assert.equal(typeof payload.searchAdmission?.queuedCount, "number");
     assert.equal(typeof payload.sessions?.counts?.searchJobs, "number");
     assert.equal(typeof payload.sessions?.counts?.purchasePaths, "number");
     assert.equal(typeof payload.tempArtifacts?.totals?.count, "number");

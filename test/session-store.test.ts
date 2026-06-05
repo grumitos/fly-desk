@@ -218,6 +218,79 @@ function readSqliteCounts(dbPath: string): { searchJobs: number; matrixJobs: num
   }
 }
 
+test("cancelRunningJobs preserves partial cacheable results during shutdown", () => {
+  const store = new SearchSessionStore();
+  const message = "Search stopped because Fly Desk was restarted.";
+  const partialOffer = buildOffer("partial-offer", "https://provider.example/partial");
+  const partialSearch = store.createSearchJob({
+    request: buildRequest(),
+    offers: [partialOffer],
+    allOffers: [partialOffer],
+    searchMeta: {
+      ...buildSearchMeta(),
+      partial: true,
+      searchState: "search_partial",
+    },
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+  const emptySearch = store.createSearchJob({
+    request: buildRequest(),
+    offers: [],
+    allOffers: [],
+    searchMeta: {
+      ...buildSearchMeta(),
+      partial: true,
+      searchState: "search_partial",
+    },
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+  const partialMatrix = store.createMatrixJob({
+    request: buildRequest(),
+    cells: [buildMatrixCell("2026-04-15_2026-04-22", "https://provider.example/matrix")],
+    axes: {
+      departureDates: ["2026-04-15"],
+      returnDates: ["2026-04-22"],
+    },
+    confidenceSummary: { live: 1 },
+    recommendations: [],
+    searchMeta: {
+      ...buildSearchMeta(),
+      partial: true,
+      searchState: "search_partial",
+    },
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    status: "running",
+  });
+
+  const summary = store.cancelRunningJobs(message, { cachePartial: true });
+
+  assert.deepEqual(summary, { searchJobs: 2, matrixJobs: 1 });
+  const cachedSearch = store.getSearchJob(partialSearch.id);
+  assert.equal(cachedSearch?.status, "completed");
+  assert.equal(cachedSearch?.searchMeta.searchState, "search_partial");
+  assert.equal(cachedSearch?.error, undefined);
+  assert.ok(cachedSearch?.warnings.includes(message));
+  assert.match(cachedSearch?.offers[0]?.purchasePaths[0]?.url ?? "", /^\/r\//);
+
+  const cancelledSearch = store.getSearchJob(emptySearch.id);
+  assert.equal(cancelledSearch?.status, "cancelled");
+  assert.equal(cancelledSearch?.searchMeta.searchState, "search_cancelled");
+  assert.equal(cancelledSearch?.error, message);
+
+  const cachedMatrix = store.getMatrixJob(partialMatrix.id);
+  assert.equal(cachedMatrix?.status, "completed");
+  assert.equal(cachedMatrix?.searchMeta.searchState, "search_partial");
+  assert.equal(cachedMatrix?.error, undefined);
+  assert.ok(cachedMatrix?.warnings.includes(message));
+});
+
 test("search job refresh preserves stable purchase path ids when the underlying path did not change", () => {
   const store = new SearchSessionStore();
   const request = buildRequest();
