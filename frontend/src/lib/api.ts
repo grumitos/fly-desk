@@ -169,6 +169,7 @@ function translateApiMessage(message: string): string {
     "Selecting a cell runs a full Costamar exact search for offers.": "Selecciona una fecha para ver las ofertas disponibles.",
     "Selecting a cell runs a full Click and Book Plus exact search for offers.": "Selecciona una fecha para ver las ofertas disponibles.",
     "Search cancelled by user.": "Búsqueda detenida por el usuario.",
+    "Search stopped because Fly Desk was restarted.": "Búsqueda detenida por reinicio de Fly Desk.",
   }
 
   if (exact[normalized]) return exact[normalized]

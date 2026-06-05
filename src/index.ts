@@ -10,6 +10,12 @@ import {
 import { startProviderPrewarmLoop } from "./provider-prewarm";
 
 const STARTUP_BACKGROUND_TASK_DELAY_MS = 10_000;
+const SHUTDOWN_CANCELLED_WARNING = "Search stopped because Fly Desk was restarted.";
+const SHUTDOWN_CANCEL_GRACE_MS = 1_000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function main() {
   const startupStart = startPerfTimer();
@@ -57,6 +63,14 @@ async function main() {
     }
 
     shuttingDown = true;
+    const cancelled = runtime.sessions.cancelRunningJobs(SHUTDOWN_CANCELLED_WARNING, { cachePartial: true });
+    runtime.searchAdmission.dispose(SHUTDOWN_CANCELLED_WARNING);
+    if (cancelled.searchJobs > 0 || cancelled.matrixJobs > 0) {
+      console.warn(
+        `Fly Desk shutdown cancelled active jobs: search=${cancelled.searchJobs} matrix=${cancelled.matrixJobs}`,
+      );
+      await delay(SHUTDOWN_CANCEL_GRACE_MS);
+    }
     clearInterval(maintenanceHandle);
     if (startupCleanupTimer) {
       clearTimeout(startupCleanupTimer);

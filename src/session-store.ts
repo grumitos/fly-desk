@@ -147,6 +147,11 @@ interface StoreDiagnostics {
   };
 }
 
+export interface CancelRunningJobsSummary {
+  searchJobs: number;
+  matrixJobs: number;
+}
+
 interface PurgeSummary {
   searchJobs: number;
   matrixJobs: number;
@@ -808,6 +813,36 @@ export class SearchSessionStore {
         },
       };
     });
+  }
+
+  cancelRunningJobs(
+    message = "Search cancelled by user.",
+    options: { cachePartial?: boolean } = {},
+  ): CancelRunningJobsSummary {
+    let searchJobs = 0;
+    let matrixJobs = 0;
+
+    const runningSearchJobIds = [...this.searchJobs.values()]
+      .filter((job) => job.status === "running")
+      .map((job) => job.id);
+    for (const jobId of runningSearchJobIds) {
+      const updated = this.cancelSearchJob(jobId, message, options);
+      if (updated && updated.status !== "running") {
+        searchJobs += 1;
+      }
+    }
+
+    const runningMatrixJobIds = [...this.matrixJobs.values()]
+      .filter((job) => job.status === "running")
+      .map((job) => job.id);
+    for (const jobId of runningMatrixJobIds) {
+      const updated = this.cancelMatrixJob(jobId, message, options);
+      if (updated && updated.status !== "running") {
+        matrixJobs += 1;
+      }
+    }
+
+    return { searchJobs, matrixJobs };
   }
 
   purgeExpired(nowMs = Date.now()): PurgeSummary {

@@ -4,11 +4,13 @@ import { LocalAgilProvider } from "./core/agil-provider";
 import { LocalCostamarProvider } from "./core/costamar-provider";
 import { SearchOrchestrator } from "./core/orchestrator";
 import { LocationSuggestionCacheStore } from "./location-suggestion-cache";
+import { SearchAdmissionController } from "./search-admission";
 import { SearchSessionStore } from "./session-store";
 
 export interface RuntimeServices {
   orchestrator: SearchOrchestrator;
   locationSuggestions: LocationSuggestionCacheStore;
+  searchAdmission: SearchAdmissionController;
   sessions: SearchSessionStore;
 }
 
@@ -52,6 +54,7 @@ export function getRuntime(): RuntimeServices {
         "location-suggestion-cache.json",
       ),
     }),
+    searchAdmission: new SearchAdmissionController(),
     sessions: new SearchSessionStore({
       dbPath: resolvePersistPath(
         "FLY_DESK_SESSION_DB_PATH",

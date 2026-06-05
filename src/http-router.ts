@@ -59,6 +59,7 @@ import {
   verifyCostamarTokenLive,
 } from "./provider-context";
 import { resolveQuotationUsdToPenRateInfo, warmQuotationUsdToPenRateInfo } from "./quotation-exchange-rate";
+import { SearchAdmissionError, type SearchAdmissionKind } from "./search-admission";
 import { runProviderMatrixInWorker, runProviderSearchInWorker } from "./search-worker-client";
 import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
@@ -1979,6 +1980,116 @@ function isMatrixJobRunning(runtime: ReturnType<typeof getRuntime>, jobId: strin
   return runtime.sessions.getMatrixJob(jobId)?.status === "running";
 }
 
+function searchAdmissionKindForRequest(request: SearchRequest): SearchAdmissionKind {
+  return request.searchMode === "exact" ? "exact" : "range";
+}
+
+function searchAdmissionErrorMessage(error: unknown): string {
+  if (error instanceof SearchAdmissionError) {
+    switch (error.code) {
+      case "queue-full":
+        return "La cola de busquedas esta llena. Intenta nuevamente en unos minutos.";
+      case "queue-timeout":
+        return "La busqueda espero demasiado por capacidad disponible.";
+      case "cancelled":
+        return "La busqueda fue cancelada antes de iniciar.";
+    }
+  }
+
+  return error instanceof Error ? error.message : "No se pudo iniciar la busqueda.";
+}
+
+function admissionFailedProviderDiagnostics(
+  entries: ProviderDiagnostics[] | undefined,
+  providerIds: ProviderId[],
+  message: string,
+): ProviderDiagnostics[] {
+  return providerIds.reduce((current, providerId) => {
+    const withEvent = applyProviderDiagnosticEvent(
+      current,
+      providerId,
+      { name: "admission_failed", detail: message, at: new Date().toISOString() },
+      "failed",
+    );
+    return applyProviderDiagnosticSummary(withEvent, providerId, "failed", {
+      offers: 0,
+      warningCount: 1,
+      error: message,
+    });
+  }, cloneProviderDiagnosticsList(entries));
+}
+
+function failSearchJobForAdmission(
+  runtime: ReturnType<typeof getRuntime>,
+  jobId: string,
+  providerIds: ProviderId[],
+  error: unknown,
+): void {
+  const message = searchAdmissionErrorMessage(error);
+  runtime.sessions.updateSearchJob(jobId, (current) => {
+    if (current.status !== "running") {
+      return current;
+    }
+
+    const warnings = uniqueStrings([...current.warnings, message]);
+    return {
+      ...current,
+      status: "failed",
+      error: message,
+      warnings,
+      providerDiagnostics: admissionFailedProviderDiagnostics(current.providerDiagnostics, providerIds, message),
+      searchMeta: currentSearchMeta({
+        ...current.searchMeta,
+        completedAt: new Date().toISOString(),
+        warnings: uniqueStrings([...(current.searchMeta.warnings ?? []), message]),
+        partial: current.offers.length > 0 || current.allOffers.length > 0 || current.searchMeta.partial,
+        searchState: "search_failed",
+      }),
+    };
+  });
+}
+
+function failMatrixJobForAdmission(
+  runtime: ReturnType<typeof getRuntime>,
+  jobId: string,
+  providerIds: ProviderId[],
+  error: unknown,
+): void {
+  const message = searchAdmissionErrorMessage(error);
+  runtime.sessions.updateMatrixJob(jobId, (current) => {
+    if (current.status !== "running") {
+      return current;
+    }
+
+    const warnings = uniqueStrings([...current.warnings, message]);
+    const cells = current.cells.map((cell) => cell.confidence === "loading"
+      ? {
+          ...cell,
+          confidence: "unavailable" as const,
+          selectable: false,
+          stateCode: "chg" as const,
+          tooltip: message,
+        }
+      : cell);
+    return {
+      ...current,
+      status: "failed",
+      error: message,
+      warnings,
+      cells,
+      confidenceSummary: buildMatrixConfidenceSummary(cells),
+      providerDiagnostics: admissionFailedProviderDiagnostics(current.providerDiagnostics, providerIds, message),
+      searchMeta: currentSearchMeta({
+        ...current.searchMeta,
+        completedAt: new Date().toISOString(),
+        warnings: uniqueStrings([...(current.searchMeta.warnings ?? []), message]),
+        partial: true,
+        searchState: "search_failed",
+      }),
+    };
+  });
+}
+
 function shouldCachePartialCancellation(url: URL): boolean {
   return url.searchParams.get("cachePartial") === "1";
 }
@@ -2119,151 +2230,167 @@ async function handleSearchRequest(
 
   if (shouldRunBackgroundSearchJobs()) {
     scheduleBackgroundSearchJob(() => {
-      if (!isSearchJobRunning(runtime, job.id)) {
-        return;
-      }
-
-      const failedProviderIds = new Set<ProviderId>();
-      const resolvers = providerIds.map(async (providerId) => {
-        const providerStart = startPerfTimer();
-        const providerDiagnosticSeed = providerDiagnostics.find((entry) => entry.providerId === providerId);
-        const recordProviderEvent = (
-          event: ProviderDiagnosticEvent | string,
-          status: ProviderDiagnostics["status"] = "running",
-        ) => {
-          runtime.sessions.updateSearchJob(job.id, (current) => ({
-            ...current,
-            providerDiagnostics: applyProviderDiagnosticEvent(
-              current.providerDiagnostics,
-              providerId,
-              event,
-              status,
-            ),
-          }));
-        };
-        const recordProviderSummary = (
-          status: ProviderDiagnostics["status"],
-          summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "error">,
-        ) => {
-          runtime.sessions.updateSearchJob(job.id, (current) => ({
-            ...current,
-            providerDiagnostics: applyProviderDiagnosticSummary(
-              current.providerDiagnostics,
-              providerId,
-              status,
-              summary,
-            ),
-          }));
-        };
-        let firstProgressReported = false;
-        const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
-          if (!isSearchJobRunning(runtime, job.id)) {
-            return false;
-          }
-
-          if (!firstProgressReported) {
-            firstProgressReported = true;
-            recordProviderEvent("first_progress");
-          }
-
-          providerStates.set(providerId, {
-            offers: partialResult.offers,
-            warnings: partialResult.warnings,
-            partial: true,
-            completed: false,
-          });
-          syncSearchJob("running");
-          return isSearchJobRunning(runtime, job.id);
-        };
-
-        try {
+      void runtime.searchAdmission.run(
+        {
+          kind: searchAdmissionKindForRequest(normalizedRequest),
+          jobId: job.id,
+          shouldContinue: () => isSearchJobRunning(runtime, job.id),
+        },
+        async () => {
           if (!isSearchJobRunning(runtime, job.id)) {
             return;
           }
 
-          if (shouldUseSearchWorkerProcesses()) {
-            recordProviderEvent("worker_spawned");
-          }
+          const failedProviderIds = new Set<ProviderId>();
+          const resolvers = providerIds.map(async (providerId) => {
+            const providerStart = startPerfTimer();
+            const providerDiagnosticSeed = providerDiagnostics.find((entry) => entry.providerId === providerId);
+            const recordProviderEvent = (
+              event: ProviderDiagnosticEvent | string,
+              status: ProviderDiagnostics["status"] = "running",
+            ) => {
+              runtime.sessions.updateSearchJob(job.id, (current) => ({
+                ...current,
+                providerDiagnostics: applyProviderDiagnosticEvent(
+                  current.providerDiagnostics,
+                  providerId,
+                  event,
+                  status,
+                ),
+              }));
+            };
+            const recordProviderSummary = (
+              status: ProviderDiagnostics["status"],
+              summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "error">,
+            ) => {
+              runtime.sessions.updateSearchJob(job.id, (current) => ({
+                ...current,
+                providerDiagnostics: applyProviderDiagnosticSummary(
+                  current.providerDiagnostics,
+                  providerId,
+                  status,
+                  summary,
+                ),
+              }));
+            };
+            let firstProgressReported = false;
+            const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
+              if (!isSearchJobRunning(runtime, job.id)) {
+                return false;
+              }
 
-          const result = await resolveProviderSearchProgressive(
-            providerId,
-            normalizedRequest,
-            providerContext,
-            onProgress,
-            providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
-            (event) => recordProviderEvent(event),
-            () => isSearchJobRunning(runtime, job.id),
-          );
+              if (!firstProgressReported) {
+                firstProgressReported = true;
+                recordProviderEvent("first_progress");
+              }
+
+              providerStates.set(providerId, {
+                offers: partialResult.offers,
+                warnings: partialResult.warnings,
+                partial: true,
+                completed: false,
+              });
+              syncSearchJob("running");
+              return isSearchJobRunning(runtime, job.id);
+            };
+
+            try {
+              if (!isSearchJobRunning(runtime, job.id)) {
+                return;
+              }
+
+              if (shouldUseSearchWorkerProcesses()) {
+                recordProviderEvent("worker_spawned");
+              }
+
+              const result = await resolveProviderSearchProgressive(
+                providerId,
+                normalizedRequest,
+                providerContext,
+                onProgress,
+                providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
+                (event) => recordProviderEvent(event),
+                () => isSearchJobRunning(runtime, job.id),
+              );
+              if (!isSearchJobRunning(runtime, job.id)) {
+                return;
+              }
+
+              providerStates.set(providerId, {
+                offers: result.offers,
+                warnings: result.warnings,
+                partial: result.partial,
+                completed: true,
+              });
+              logPerfSpan("search.provider", providerStart, {
+                jobId: job.id,
+                providerId,
+                status: "completed",
+                offers: result.offers.length,
+                partial: result.partial,
+              });
+              recordProviderEvent("completed", "completed");
+              recordProviderSummary("completed", {
+                offers: result.offers.length,
+                warningCount: result.warnings.length,
+              });
+              syncSearchJob("running");
+            } catch (error) {
+              if (!isSearchJobRunning(runtime, job.id)) {
+                return;
+              }
+
+              providerStates.set(providerId, {
+                offers: [],
+                warnings: [
+                  error instanceof Error ? error.message : "Search job failed.",
+                ],
+                partial: true,
+                completed: true,
+              });
+              failedProviderIds.add(providerId);
+              recordProviderEvent("failed", "failed");
+              recordProviderSummary("failed", {
+                offers: 0,
+                warningCount: 1,
+                error: error instanceof Error ? error.message : "Search job failed.",
+              });
+              logPerfSpan("search.provider", providerStart, {
+                jobId: job.id,
+                providerId,
+                status: "failed",
+                error: error instanceof Error ? error.name : "Error",
+              });
+            }
+          });
+
+          const settled = await Promise.allSettled(resolvers);
           if (!isSearchJobRunning(runtime, job.id)) {
+            logPerfSpan("search.job", requestStart, {
+              jobId: job.id,
+              status: runtime.sessions.getSearchJob(job.id)?.status ?? "missing",
+              providers: providerIds.join(","),
+            });
             return;
           }
 
-          providerStates.set(providerId, {
-            offers: result.offers,
-            warnings: result.warnings,
-            partial: result.partial,
-            completed: true,
-          });
-          logPerfSpan("search.provider", providerStart, {
-            jobId: job.id,
-            providerId,
-            status: "completed",
-            offers: result.offers.length,
-            partial: result.partial,
-          });
-          recordProviderEvent("completed", "completed");
-          recordProviderSummary("completed", {
-            offers: result.offers.length,
-            warningCount: result.warnings.length,
-          });
-          syncSearchJob("running");
-        } catch (error) {
-          if (!isSearchJobRunning(runtime, job.id)) {
-            return;
-          }
-
-          providerStates.set(providerId, {
-            offers: [],
-            warnings: [
-              error instanceof Error ? error.message : "Search job failed.",
-            ],
-            partial: true,
-            completed: true,
-          });
-          failedProviderIds.add(providerId);
-          recordProviderEvent("failed", "failed");
-          recordProviderSummary("failed", {
-            offers: 0,
-            warningCount: 1,
-            error: error instanceof Error ? error.message : "Search job failed.",
-          });
-          logPerfSpan("search.provider", providerStart, {
-            jobId: job.id,
-            providerId,
-            status: "failed",
-            error: error instanceof Error ? error.name : "Error",
-          });
-        }
-      });
-
-      void Promise.allSettled(resolvers).then((settled) => {
-        if (!isSearchJobRunning(runtime, job.id)) {
+          const materialized = syncSearchJob("completed");
           logPerfSpan("search.job", requestStart, {
             jobId: job.id,
-            status: runtime.sessions.getSearchJob(job.id)?.status ?? "missing",
+            status: "completed",
             providers: providerIds.join(","),
+            failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
+            offers: materialized.offers.length,
+            partial: materialized.searchMeta.partial,
           });
-          return;
-        }
-
-        const materialized = syncSearchJob("completed");
+        },
+      ).catch((error) => {
+        failSearchJobForAdmission(runtime, job.id, providerIds, error);
         logPerfSpan("search.job", requestStart, {
           jobId: job.id,
-          status: "completed",
+          status: runtime.sessions.getSearchJob(job.id)?.status ?? "missing",
           providers: providerIds.join(","),
-          failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
-          offers: materialized.offers.length,
-          partial: materialized.searchMeta.partial,
+          admissionError: error instanceof Error ? error.name : "Error",
         });
       });
     }, cacheSeedJob ? cachedBackgroundSearchStartDelayMs() : backgroundSearchStartDelayMs());
@@ -2364,12 +2491,19 @@ async function handleMatrixRequest(
 
   if (shouldRunBackgroundSearchJobs()) {
     scheduleBackgroundSearchJob(() => {
-      if (!isMatrixJobRunning(runtime, job.id)) {
-        return;
-      }
+      void runtime.searchAdmission.run(
+        {
+          kind: "matrix",
+          jobId: job.id,
+          shouldContinue: () => isMatrixJobRunning(runtime, job.id),
+        },
+        async () => {
+          if (!isMatrixJobRunning(runtime, job.id)) {
+            return;
+          }
 
-      const failedProviderIds = new Set<ProviderId>();
-      const resolvers = providerIds.map(async (providerId) => {
+          const failedProviderIds = new Set<ProviderId>();
+          const resolvers = providerIds.map(async (providerId) => {
         const providerStart = startPerfTimer();
         const providerDiagnosticSeed = providerDiagnostics.find((entry) => entry.providerId === providerId);
         const recordProviderEvent = (
@@ -2500,24 +2634,33 @@ async function handleMatrixRequest(
         }
       });
 
-      void Promise.allSettled(resolvers).then((settled) => {
-        if (!isMatrixJobRunning(runtime, job.id)) {
+          const settled = await Promise.allSettled(resolvers);
+          if (!isMatrixJobRunning(runtime, job.id)) {
+            logPerfSpan("matrix.job", requestStart, {
+              jobId: job.id,
+              status: runtime.sessions.getMatrixJob(job.id)?.status ?? "missing",
+              providers: providerIds.join(","),
+            });
+            return;
+          }
+
+          const materialized = syncMatrixJob("completed");
           logPerfSpan("matrix.job", requestStart, {
             jobId: job.id,
-            status: runtime.sessions.getMatrixJob(job.id)?.status ?? "missing",
+            status: "completed",
             providers: providerIds.join(","),
+            failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
+            cells: materialized.cells.length,
+            partial: materialized.searchMeta.partial,
           });
-          return;
-        }
-
-        const materialized = syncMatrixJob("completed");
+        },
+      ).catch((error) => {
+        failMatrixJobForAdmission(runtime, job.id, providerIds, error);
         logPerfSpan("matrix.job", requestStart, {
           jobId: job.id,
-          status: "completed",
+          status: runtime.sessions.getMatrixJob(job.id)?.status ?? "missing",
           providers: providerIds.join(","),
-          failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
-          cells: materialized.cells.length,
-          partial: materialized.searchMeta.partial,
+          admissionError: error instanceof Error ? error.name : "Error",
         });
       });
     }, backgroundSearchStartDelayMs());
@@ -2571,6 +2714,7 @@ export async function routeRequest(request: Request): Promise<Response> {
       generatedAt: new Date().toISOString(),
       memoryUsage: process.memoryUsage(),
       locationSuggestions: runtime.locationSuggestions.getDiagnostics(),
+      searchAdmission: runtime.searchAdmission.getDiagnostics(),
       sessions: runtime.sessions.getDiagnostics(),
       tempArtifacts: collectTempArtifactDiagnostics(),
     });

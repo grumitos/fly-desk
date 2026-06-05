@@ -75,6 +75,10 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - el prewarm silencioso de providers esta activo por defecto y puede apagarse con `FLY_DESK_PROVIDER_PREWARM=0`
 - las busquedas de proveedor deben ejecutarse aisladas con `FLY_DESK_SEARCH_WORKER_PROCESSES=1` en produccion; `0` queda como excepcion temporal de QA y requiere repetir QA externo antes de cambiar conteos de workers o warm-up
 - toda busqueda publica espera a Agil y Click and Book Plus y retiene las ofertas completas devueltas por ambos; los filtros visibles se materializan sin recortar `allOffers`, y los limites de concurrencia solo regulan solicitudes en lote
+- la admision global de busquedas usa unidades de capacidad: presupuesto default `4`, exacta `1`, rango `2`, matriz `2`, cola default `8` y timeout default `120000ms`
+- la capacidad se libera solo cuando termina el trabajo de proveedores; la cache de sesiones y purchase paths queda en `src/session-store.ts` hasta su TTL operativo
+- cancelar desde la UI, cerrar la pestaña o detener ordenadamente el proceso cambia el job remoto a cancelado; en `pagehide`/`beforeunload` y shutdown se pide cache parcial para conservar lo ya resuelto y detener workers en el VPS
+- los enlaces externos siguen pasando por `/r/<id>` como cache local de purchase paths; Agil redirige sin pagina intermedia, mientras Click and Book Plus conserva validacion/refresh de token antes del `302`
 
 ## Estructura Funcional
 
