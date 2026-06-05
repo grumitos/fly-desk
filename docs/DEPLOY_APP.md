@@ -15,6 +15,10 @@ Este documento cubre solo el deploy de Fly Desk. Caddy, systemd compartido, fire
 
 El deploy rutinario reinicia solo `fly-desk.service`, escribe `REVISION`, conserva `fly-desk-chrome.service` y no cambia Caddy ni unidades systemd.
 
+## Plataforma publica
+
+`https://fly-desk.pages.dev/`, Cloudflare Pages, bindings de Pages, geofence publico, Caddy y secretos operativos compartidos se operan desde `grumitos/vps-platform`. Para cambios en esa capa, usar los runbooks de plataforma (`docs/FLY_DESK_PAGES.md` y `docs/LOCAL_SECRET_STORE.md`) y no agregar procedimientos de acceso ni valores a este repo.
+
 ## Build y tests
 
 ```bash
