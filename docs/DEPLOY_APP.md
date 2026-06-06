@@ -9,11 +9,13 @@ Este documento cubre solo el deploy de Fly Desk. Caddy, systemd compartido, fire
 - App remota: `/opt/fly-desk`.
 - Releases remotos: `/opt/apps/fly-desk/releases/<sha>`.
 - Servicio app: `fly-desk.service`.
+- Servicio redirects: `fly-desk-redirect.service` cuando la plataforma lo instala.
 - Servicio Chrome/CDP: `fly-desk-chrome.service`.
 - Healthcheck local: `http://127.0.0.1:32123/api/health`.
+- Healthcheck local redirects: `http://127.0.0.1:32124/api/health`.
 - Cara publica: `https://fly-desk.pages.dev/`.
 
-El deploy rutinario reinicia solo `fly-desk.service`, escribe `REVISION`, conserva `fly-desk-chrome.service` y no cambia Caddy ni unidades systemd.
+El deploy rutinario reinicia `fly-desk.service`, escribe `REVISION`, conserva `fly-desk-chrome.service` y no cambia Caddy ni unidades systemd. Si `fly-desk-redirect.service` ya existe en el VPS, tambien lo reinicia y valida su healthcheck local para que `/r/*` use la misma revision.
 
 ## Plataforma publica
 
@@ -52,7 +54,9 @@ Variables opcionales de repo:
 - `FLY_DESK_BUN_BIN`; default `/home/deploy/.bun/bin/bun`
 - `FLY_DESK_SERVICE`; default `fly-desk.service`
 - `FLY_DESK_CHROME_SERVICE`; default `fly-desk-chrome.service`
+- `FLY_DESK_REDIRECT_SERVICE`; default `fly-desk-redirect.service`
 - `FLY_DESK_LOCAL_SMOKE_URL`; default `http://127.0.0.1:32123/api/health`
+- `FLY_DESK_REDIRECT_LOCAL_SMOKE_URL`; default `http://127.0.0.1:32124/api/health`
 
 ## Configuracion minima de app
 
@@ -60,7 +64,7 @@ Variables opcionales de repo:
 
 Grupos principales:
 
-- Runtime/API: `HOST`, `PORT`, `FLY_DESK_API_TOKEN`.
+- Runtime/API: `HOST`, `PORT`, `FLY_DESK_API_TOKEN`, `FLY_DESK_REDIRECT_HOST`, `FLY_DESK_REDIRECT_PORT`, `FLY_DESK_REDIRECT_CACHE_LOOKUP_TIMEOUT_MS`.
 - Auth web: `FLY_DESK_WEB_AUTH`, `FLY_DESK_WEB_PASSWORD_HASH`, `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_TRUST_LOOPBACK_CLIENT`, `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK`, `FLY_DESK_COOKIE_SECURE`.
 - Busqueda/cache: `SEARCH_MAX_FUTURE_DAYS`, `FLY_DESK_SEARCH_WORKER_PROCESSES`, `FLY_DESK_MIGRATION_CONCURRENT_MONTHS`, `FLY_DESK_SESSION_DB_PATH`, `FLY_DESK_LOCATION_SUGGESTION_DB_PATH`, `FLY_DESK_APP_DATA_DIR`, `FLY_DESK_QUOTATION_RATE_CACHE_PATH`.
 - Providers: `AGIL_*`, `CBPLUS_*`, `CBPLUS_B2B_*`; `COSTAMAR_*` queda como fallback legacy donde aplique.
@@ -74,7 +78,7 @@ Desde GitHub Actions:
 1. Abrir `Deploy VPS`.
 2. Elegir `mode=rollback`.
 3. Indicar un `rollback_sha` que exista en `/opt/apps/fly-desk/releases/<sha>`.
-4. Revisar que el workflow reactive el release, reescriba `REVISION`, reinicie `fly-desk.service` y pase smokes.
+4. Revisar que el workflow reactive el release, reescriba `REVISION`, reinicie `fly-desk.service`, reinicie `fly-desk-redirect.service` si existe y pase smokes.
 
 Rollback manual si GitHub Actions no esta disponible:
 
@@ -85,6 +89,10 @@ test -d "$release"
 rsync -a --delete "$release"/ /opt/fly-desk/
 printf '%s\n' "$sha" > /opt/fly-desk/REVISION
 systemctl restart fly-desk.service
+if systemctl cat fly-desk-redirect.service >/dev/null 2>&1; then
+  systemctl restart fly-desk-redirect.service
+  curl -fsS http://127.0.0.1:32124/api/health > /dev/null
+fi
 curl -fsS http://127.0.0.1:32123/api/health > /dev/null
 ```
 

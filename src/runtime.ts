@@ -1,9 +1,9 @@
-import { join } from "node:path";
 import { loadRuntimeConfig } from "./config";
 import { LocalAgilProvider } from "./core/agil-provider";
 import { LocalCostamarProvider } from "./core/costamar-provider";
 import { SearchOrchestrator } from "./core/orchestrator";
 import { LocationSuggestionCacheStore } from "./location-suggestion-cache";
+import { resolvePersistPath } from "./runtime-paths";
 import { SearchAdmissionController } from "./search-admission";
 import { SearchSessionStore } from "./session-store";
 
@@ -15,23 +15,6 @@ export interface RuntimeServices {
 }
 
 let runtime: RuntimeServices | undefined;
-
-function isTestProcess(): boolean {
-  return process.env.NODE_ENV === "test";
-}
-
-function resolvePersistPath(envKey: string, defaultFileName: string): string | undefined {
-  const explicit = process.env[envKey]?.trim();
-  if (explicit) {
-    return explicit;
-  }
-
-  if (isTestProcess()) {
-    return undefined;
-  }
-
-  return join(process.cwd(), "output", "cache", defaultFileName);
-}
 
 export function getRuntime(): RuntimeServices {
   if (runtime) {

@@ -79,6 +79,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - la capacidad se libera solo cuando termina el trabajo de proveedores; la cache de sesiones y purchase paths queda en `src/session-store.ts` hasta su TTL operativo
 - cancelar desde la UI, cerrar la pestaña o detener ordenadamente el proceso cambia el job remoto a cancelado; en `pagehide`/`beforeunload` y shutdown se pide cache parcial para conservar lo ya resuelto y detener workers en el VPS
 - los enlaces externos siguen pasando por `/r/<id>` como cache local de purchase paths; Agil redirige sin pagina intermedia, mientras Click and Book Plus conserva validacion/refresh de token antes del `302`
+- en produccion `/r/*` puede resolverse desde `fly-desk-redirect.service`, un proceso Bun separado que lee la misma SQLite de sesiones y mantiene la misma autenticacion web/API antes de abrir proveedor
 
 ## Estructura Funcional
 
@@ -98,6 +99,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 ### Backend
 
 - `src/server.ts`: `Bun.serve`, serving de `frontend/dist`, headers, limite de body e inyeccion de config runtime
+- `src/redirect-service.ts` y `src/redirect-index.ts`: resolver dedicado de `/r/<id>` desde cache SQLite para no depender del runtime principal en clicks a proveedores
 - `src/http-router.ts`: rutas HTTP, auth web/loopback/token, jobs, matriz, cotizacion, redirects, diagnosticos y layout
 - `src/web-auth.ts`: password web, cookie firmada y validacion de sesion
 - `src/core/quotation.ts`: render de cotizaciones a partir de ofertas almacenadas y validadas del lado servidor
@@ -117,7 +119,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `scripts/generate-web-password-hash.ts`: genera hash scrypt para `FLY_DESK_WEB_PASSWORD_HASH`
 - `docs/DEPLOY_APP.md`: deploy y rollback de app
 - `.github/workflows/ci.yml`: CI Bun para typecheck, lint, test y build
-- `.github/workflows/deploy-vps.yml`: deploy manual y rollback por SHA/release al VPS
+- `.github/workflows/deploy-vps.yml`: deploy manual y rollback por SHA/release al VPS; reinicia `fly-desk-redirect.service` si la plataforma ya lo instalo
 
 La infraestructura compartida del VPS ya no vive en este repo: Caddy, systemd, rollback de Caddy y plan de plataforma se mantienen en `grumitos/vps-platform` (`D:\Dev\VPS\vps-platform`). Este repo conserva app, CI, deploy de revision y rollback de release.
 
@@ -159,7 +161,7 @@ Nota de QA: `test/helpers/server.ts` fija `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JO
 
 ## Estado De Deploy
 
-`main` es la linea de producto y despliegue. El deploy repetible escribe el SHA activado en `/opt/fly-desk/REVISION` y lo verifica despues de reiniciar `fly-desk.service`.
+`main` es la linea de producto y despliegue. El deploy repetible escribe el SHA activado en `/opt/fly-desk/REVISION` y lo verifica despues de reiniciar `fly-desk.service`. Si la plataforma ya instalo `fly-desk-redirect.service`, el mismo deploy lo reinicia y valida `http://127.0.0.1:32124/api/health`.
 
 Las revisiones desplegadas y el inventario de servicios vivos se mantienen en `D:\Dev\VPS\vps-platform\docs\INVENTORY.md`. Este repo no mantiene SHAs productivos como estado vivo para evitar drift documental.
 
