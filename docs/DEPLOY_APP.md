@@ -75,6 +75,10 @@ Grupos principales:
 
 Produccion debe mantener busquedas de proveedor delegadas al runner dedicado cuando la plataforma instala `fly-desk-search.service`, y dentro de ese runner mantener `FLY_DESK_SEARCH_WORKER_PROCESSES=1`. Usar `0` solo como excepcion temporal de QA; si se cambian workers, runner o warm-up, repetir QA externo antes de darlo por estable.
 
+No configurar `FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS` por debajo del default operativo. El proxy web hacia el runner aplica un piso defensivo para evitar abortos inmediatos, pero un valor bajo en produccion sigue siendo mala senal operativa: polling con muchas ofertas debe tener margen suficiente sin bloquear el proceso web.
+
+Despues de un deploy que toque busquedas, cancelacion, proxy al runner o redirects, ejecutar en `grumitos/vps-platform` el workflow `Fly Desk Production Smoke`. Es el gate productivo que valida health local web/search/redirect, una busqueda completada, enlaces Agil y Click and Book Plus resueltos por `/r/*`, cancelacion de una segunda busqueda y servicios activos al final.
+
 ## Rollback
 
 Desde GitHub Actions:
