@@ -187,6 +187,7 @@ export async function maybeProxySearchServiceRequest(
   }
   if (apiToken) {
     headers.set("x-flydesk-api-token", apiToken);
+    headers.set("authorization", `Bearer ${apiToken}`);
   }
   headers.set(SEARCH_SERVICE_PROXY_HEADER, "1");
 

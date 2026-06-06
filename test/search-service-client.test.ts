@@ -92,6 +92,7 @@ test("search service proxy forwards search requests to the configured runner", a
     assert.equal(forwardedHeaders.get("content-type"), "application/json");
     assert.equal(forwardedHeaders.get("cookie"), "flydesk_session=test");
     assert.equal(forwardedHeaders.get("x-flydesk-api-token"), "test-api-token");
+    assert.equal(forwardedHeaders.get("authorization"), "Bearer test-api-token");
     assert.equal(forwardedHeaders.get("x-flydesk-search-proxy"), "1");
   } finally {
     restoreEnv();
@@ -123,7 +124,9 @@ test("search service proxy uses an internal token fallback when explicit api tok
     });
 
     assert.equal(response?.status, 200);
-    assert.equal(forwardedHeaders.get("x-flydesk-api-token"), resolveSearchServiceProxyApiToken());
+    const expectedToken = resolveSearchServiceProxyApiToken();
+    assert.equal(forwardedHeaders.get("x-flydesk-api-token"), expectedToken);
+    assert.equal(forwardedHeaders.get("authorization"), `Bearer ${expectedToken}`);
   } finally {
     restoreEnv();
   }
