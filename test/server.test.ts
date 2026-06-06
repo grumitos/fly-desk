@@ -25,6 +25,52 @@ test("malformed request URLs are handled with a controlled bad request response"
   assert.match(payload.error ?? "", /malformed request url/i);
 });
 
+test("server accepts bearer API tokens after filtering internal x-flydesk headers", { concurrency: false }, async () => {
+  const previousApiToken = process.env.FLY_DESK_API_TOKEN;
+  const previousWebAuth = process.env.FLY_DESK_WEB_AUTH;
+  const previousTrustLoopback = process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
+
+  process.env.FLY_DESK_API_TOKEN = "server-api-token";
+  process.env.FLY_DESK_WEB_AUTH = "0";
+  process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = "0";
+
+  try {
+    await withServer(async (baseUrl) => {
+      const stripped = await fetch(`${baseUrl}/api/locations?q=`, {
+        headers: {
+          "x-flydesk-api-token": "server-api-token",
+        },
+      });
+      assert.equal(stripped.status, 403);
+
+      const accepted = await fetch(`${baseUrl}/api/locations?q=`, {
+        headers: {
+          Authorization: "Bearer server-api-token",
+        },
+      });
+      assert.equal(accepted.status, 200);
+    });
+  } finally {
+    if (previousApiToken === undefined) {
+      delete process.env.FLY_DESK_API_TOKEN;
+    } else {
+      process.env.FLY_DESK_API_TOKEN = previousApiToken;
+    }
+
+    if (previousWebAuth === undefined) {
+      delete process.env.FLY_DESK_WEB_AUTH;
+    } else {
+      process.env.FLY_DESK_WEB_AUTH = previousWebAuth;
+    }
+
+    if (previousTrustLoopback === undefined) {
+      delete process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
+    } else {
+      process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = previousTrustLoopback;
+    }
+  }
+});
+
 test("web auth redirects the app shell to login before serving frontend assets", { concurrency: false }, async () => {
   const previousWebAuth = process.env.FLY_DESK_WEB_AUTH;
   const previousTrustLoopback = process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
