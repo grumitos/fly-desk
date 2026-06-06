@@ -1,5 +1,6 @@
 const SEARCH_SERVICE_PROXY_HEADER = "x-flydesk-search-proxy";
 const DEFAULT_SEARCH_SERVICE_TIMEOUT_MS = 15_000;
+const MIN_ENV_SEARCH_SERVICE_TIMEOUT_MS = 1_000;
 const MAX_SEARCH_SERVICE_TIMEOUT_MS = 60_000;
 
 type FetchImpl = typeof fetch;
@@ -127,7 +128,7 @@ function resolveSearchServiceTimeoutMs(input?: number): number {
   return numberFromEnv(
     "FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS",
     DEFAULT_SEARCH_SERVICE_TIMEOUT_MS,
-    1,
+    MIN_ENV_SEARCH_SERVICE_TIMEOUT_MS,
     MAX_SEARCH_SERVICE_TIMEOUT_MS,
   );
 }

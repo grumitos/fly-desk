@@ -154,3 +154,40 @@ test("search service proxy returns a safe unavailable response when the runner r
     restoreEnv();
   }
 });
+
+test("search service proxy clamps env timeout to avoid immediate production aborts", async () => {
+  const restoreEnv = overrideEnv({
+    FLY_DESK_API_TOKEN: "test-api-token",
+    FLY_DESK_SEARCH_SERVICE_API_TOKEN: undefined,
+    FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS: "1",
+  });
+
+  try {
+    const request = new Request("http://fly-desk.test/api/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ route: "LIM-MAD" }),
+    });
+    let aborted = false;
+    const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
+      serviceUrl: "http://127.0.0.1:32125",
+      fetchImpl: async (_input, init) => {
+        const signal = init?.signal as AbortSignal | undefined;
+        signal?.addEventListener("abort", () => {
+          aborted = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(signal?.aborted, false);
+        return Response.json({ ok: true });
+      },
+    });
+
+    assert.equal(aborted, false);
+    assert.equal(response?.status, 200);
+    assert.deepEqual(await response?.json(), { ok: true });
+  } finally {
+    restoreEnv();
+  }
+});
