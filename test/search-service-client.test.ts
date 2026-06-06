@@ -1,0 +1,117 @@
+import assert from "node:assert/strict";
+import {
+  isSearchServiceRoute,
+  maybeProxySearchServiceRequest,
+  resolveSearchServiceBaseUrl,
+} from "../src/search-service-client";
+
+function overrideEnv(values: Record<string, string | undefined>): () => void {
+  const previous = new Map<string, string | undefined>();
+
+  for (const [key, value] of Object.entries(values)) {
+    previous.set(key, process.env[key]);
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  return () => {
+    for (const [key, value] of previous) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  };
+}
+
+test("search service base URL only accepts loopback HTTP targets", () => {
+  assert.equal(resolveSearchServiceBaseUrl("https://127.0.0.1:32125"), undefined);
+  assert.equal(resolveSearchServiceBaseUrl("http://example.com:32125"), undefined);
+  assert.equal(resolveSearchServiceBaseUrl("not-a-url"), undefined);
+  assert.equal(resolveSearchServiceBaseUrl("http://127.0.0.1:32125")?.toString(), "http://127.0.0.1:32125/");
+  assert.equal(resolveSearchServiceBaseUrl("http://localhost:32125/search")?.toString(), "http://localhost:32125/search");
+});
+
+test("search service route detection is limited to search and matrix job routes", () => {
+  assert.equal(isSearchServiceRoute("POST", "/api/search"), true);
+  assert.equal(isSearchServiceRoute("GET", "/api/search/job-1"), true);
+  assert.equal(isSearchServiceRoute("POST", "/api/search/job-1/cancel"), true);
+  assert.equal(isSearchServiceRoute("POST", "/api/matrix"), true);
+  assert.equal(isSearchServiceRoute("GET", "/api/matrix/job-1"), true);
+  assert.equal(isSearchServiceRoute("POST", "/api/matrix/job-1/cancel"), true);
+
+  assert.equal(isSearchServiceRoute("GET", "/api/health"), false);
+  assert.equal(isSearchServiceRoute("GET", "/api/locations"), false);
+  assert.equal(isSearchServiceRoute("POST", "/api/auth/login"), false);
+  assert.equal(isSearchServiceRoute("GET", "/r/path-id"), false);
+});
+
+test("search service proxy forwards search requests to the configured runner", async () => {
+  const restoreEnv = overrideEnv({
+    FLY_DESK_API_TOKEN: "test-api-token",
+    FLY_DESK_SEARCH_SERVICE_API_TOKEN: undefined,
+  });
+
+  try {
+    let forwardedUrl = "";
+    let forwardedMethod = "";
+    let forwardedBody = "";
+    let forwardedHeaders = new Headers();
+    const request = new Request("http://fly-desk.test/api/search?sinceRevision=4", {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Cookie": "flydesk_session=test",
+      },
+      body: JSON.stringify({ route: "LIM-MAD" }),
+    });
+    const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
+      serviceUrl: "http://127.0.0.1:32125",
+      timeoutMs: 1_000,
+      fetchImpl: async (input, init) => {
+        forwardedUrl = String(input);
+        forwardedMethod = String(init?.method ?? "");
+        forwardedHeaders = new Headers(init?.headers);
+        forwardedBody = await new Response(init?.body).text();
+        return Response.json({ ok: true }, { status: 202 });
+      },
+    });
+
+    assert.equal(response?.status, 202);
+    assert.deepEqual(await response?.json(), { ok: true });
+    assert.equal(forwardedUrl, "http://127.0.0.1:32125/api/search?sinceRevision=4");
+    assert.equal(forwardedMethod, "POST");
+    assert.equal(forwardedBody, "{\"route\":\"LIM-MAD\"}");
+    assert.equal(forwardedHeaders.get("accept"), "application/json");
+    assert.equal(forwardedHeaders.get("content-type"), "application/json");
+    assert.equal(forwardedHeaders.get("cookie"), "flydesk_session=test");
+    assert.equal(forwardedHeaders.get("x-flydesk-api-token"), "test-api-token");
+    assert.equal(forwardedHeaders.get("x-flydesk-search-proxy"), "1");
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("search service proxy skips already proxied requests", async () => {
+  const request = new Request("http://fly-desk.test/api/search", {
+    method: "POST",
+    headers: {
+      "x-flydesk-search-proxy": "1",
+    },
+    body: "{}",
+  });
+
+  const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
+    serviceUrl: "http://127.0.0.1:32125",
+    fetchImpl: async () => {
+      throw new Error("proxy loop should not call fetch");
+    },
+  });
+
+  assert.equal(response, undefined);
+});

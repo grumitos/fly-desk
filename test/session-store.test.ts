@@ -675,7 +675,7 @@ test("completed jobs and their purchase paths expire after the idle ttl, while r
   assert.ok(store.resolvePurchasePath(runningPathId!));
 });
 
-test("search session store persists completed searches and matrix jobs in sqlite", async () => {
+test("search session store persists completed cache and running redirect snapshots in sqlite", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-persist-"));
   const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
   const request = buildRequest();
@@ -727,9 +727,9 @@ test("search session store persists completed searches and matrix jobs in sqlite
   firstStore.close();
 
   const counts = readSqliteCounts(dbPath);
-  assert.equal(counts.searchJobs, 1);
+  assert.equal(counts.searchJobs, 2);
   assert.equal(counts.matrixJobs, 1);
-  assert.equal(counts.purchasePaths, 2);
+  assert.equal(counts.purchasePaths, 3);
 
   const secondStore = new SearchSessionStore({ dbPath });
   const restoredSearch = secondStore.getSearchJob(completedSearchJob.id);

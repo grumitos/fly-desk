@@ -11,8 +11,9 @@ mantenedor.
 - No copiar el perfil Chrome completo al repo ni dejar payloads en Git.
 - No reiniciar `fly-desk-chrome.service` salvo instruccion explicita; ese
   servicio mantiene el perfil Agil del VPS.
-- Si se reinicia algo despues de inyectar, reiniciar solo `fly-desk.service`
-  para limpiar cache de token en el proceso Bun.
+- Si se reinicia algo despues de inyectar, reiniciar `fly-desk-search.service`
+  cuando exista y luego `fly-desk.service`, para limpiar cache de token en los
+  procesos Bun sin tocar Chrome.
 - Borrar archivos temporales locales y remotos al terminar.
 
 ## Resumen del flujo
@@ -20,7 +21,7 @@ mantenedor.
 1. Confirmar que el VPS y los servicios estan activos:
 
    ```bash
-   systemctl is-active caddy video-downloader fly-desk fly-desk-chrome fly-desk-maintenance.timer
+   systemctl is-active caddy video-downloader fly-desk fly-desk-search fly-desk-chrome fly-desk-maintenance.timer
    curl -fsS http://127.0.0.1:32123/api/health
    curl -fsS http://127.0.0.1:9222/json/version >/dev/null
    ```
@@ -76,11 +77,17 @@ mantenedor.
 
    Ademas, confirmar que el storage remoto tiene token, `user_data` e `ip`.
 
-8. Reiniciar solo la app para descartar cache de sesion anterior:
+8. Reiniciar solo Fly Desk app/runner para descartar cache de sesion anterior:
 
    ```bash
+   if systemctl cat fly-desk-search.service >/dev/null 2>&1; then
+     sudo systemctl restart fly-desk-search.service
+   fi
    sudo systemctl restart fly-desk.service
    systemctl is-active fly-desk.service fly-desk-chrome.service
+   if systemctl cat fly-desk-search.service >/dev/null 2>&1; then
+     systemctl is-active fly-desk-search.service
+   fi
    ```
 
 9. Ejecutar una busqueda desde el propio VPS contra Fly Desk. Si no hay
@@ -138,7 +145,7 @@ Al cerrar la recuperacion, reportar solo hechos no sensibles:
 - cantidad de cookies inyectadas
 - cantidad de origenes de storage aplicados
 - redireccion remota a `/home-user`
-- estado de `fly-desk.service` y `fly-desk-chrome.service`
+- estado de `fly-desk.service`, `fly-desk-search.service` si existe, y `fly-desk-chrome.service`
 - resumen del smoke, por ejemplo `agilOfferCount=228`
 
 No reportar valores de cookies, tokens, storage, headers, passwords ni contenido

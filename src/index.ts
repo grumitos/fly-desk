@@ -8,6 +8,7 @@ import {
   TEMP_ARTIFACT_SWEEP_MIN_AGE_MS,
 } from "./temp-artifacts";
 import { startProviderPrewarmLoop } from "./provider-prewarm";
+import { isSearchServiceDelegationConfigured } from "./search-service-client";
 
 const STARTUP_BACKGROUND_TASK_DELAY_MS = 10_000;
 const SHUTDOWN_CANCELLED_WARNING = "Search stopped because Fly Desk was restarted.";
@@ -103,11 +104,13 @@ async function main() {
     runTempCleanup("startup.tempCleanup");
   }, STARTUP_BACKGROUND_TASK_DELAY_MS);
   startupCleanupTimer.unref?.();
-  providerPrewarmStartTimer = setTimeout(() => {
-    providerPrewarmStartTimer = undefined;
-    providerPrewarmHandle = startProviderPrewarmLoop();
-  }, STARTUP_BACKGROUND_TASK_DELAY_MS);
-  providerPrewarmStartTimer.unref?.();
+  if (!isSearchServiceDelegationConfigured()) {
+    providerPrewarmStartTimer = setTimeout(() => {
+      providerPrewarmStartTimer = undefined;
+      providerPrewarmHandle = startProviderPrewarmLoop();
+    }, STARTUP_BACKGROUND_TASK_DELAY_MS);
+    providerPrewarmStartTimer.unref?.();
+  }
 }
 
 void main();

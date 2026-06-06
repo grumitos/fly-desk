@@ -73,7 +73,8 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - Click and Book Plus usa contexto controlado por entorno, allowlist de hosts y warm-up B2B opcional
 - Click and Book Plus no acepta hosts/base URLs por request
 - el prewarm silencioso de providers esta activo por defecto y puede apagarse con `FLY_DESK_PROVIDER_PREWARM=0`
-- las busquedas de proveedor deben ejecutarse aisladas con `FLY_DESK_SEARCH_WORKER_PROCESSES=1` en produccion; `0` queda como excepcion temporal de QA y requiere repetir QA externo antes de cambiar conteos de workers o warm-up
+- las busquedas de proveedor deben ejecutarse en el runner dedicado cuando `FLY_DESK_SEARCH_SERVICE_URL` esta configurado; dentro del runner, `FLY_DESK_SEARCH_WORKER_PROCESSES=1` mantiene proveedores en procesos hijos
+- `FLY_DESK_SEARCH_WORKER_PROCESSES=0` queda como excepcion temporal de QA y requiere repetir QA externo antes de cambiar conteos de workers, runner o warm-up
 - toda busqueda publica espera a Agil y Click and Book Plus y retiene las ofertas completas devueltas por ambos; los filtros visibles se materializan sin recortar `allOffers`, y los limites de concurrencia solo regulan solicitudes en lote
 - la admision global de busquedas usa unidades de capacidad: presupuesto default `4`, exacta `1`, rango `2`, matriz `2`, cola default `8` y timeout default `120000ms`
 - la capacidad se libera solo cuando termina el trabajo de proveedores; la cache de sesiones y purchase paths queda en `src/session-store.ts` hasta su TTL operativo
@@ -109,7 +110,8 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `src/local-costamar.ts`: autocomplete, exact/range/matrix, branded links y warm-up B2B de Click and Book Plus
 - `src/providers/costamar/search-payloads.ts`: payloads Click and Book Plus; `costamar` se conserva como alias interno legacy
 - `src/core/`: normalizacion, matriz, grouping, ranking, cotizacion y tipos compartidos
-- `src/search-worker-client.ts` y `src/search-worker.ts`: procesos hijos Bun para busquedas pesadas de proveedor
+- `src/search-service-client.ts`: proxy loopback de busquedas/matriz/polling/cancelacion hacia `fly-desk-search.service`
+- `src/search-worker-client.ts` y `src/search-worker.ts`: procesos hijos Bun para busquedas pesadas de proveedor dentro del runner
 - `src/session-store.ts`: jobs vivos, SQLite local, migracion JSON legada, redirects y purchase paths
 - `src/location-suggestion-cache.ts`: cache SQLite de autocomplete con TTL
 
@@ -119,7 +121,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `scripts/generate-web-password-hash.ts`: genera hash scrypt para `FLY_DESK_WEB_PASSWORD_HASH`
 - `docs/DEPLOY_APP.md`: deploy y rollback de app
 - `.github/workflows/ci.yml`: CI Bun para typecheck, lint, test y build
-- `.github/workflows/deploy-vps.yml`: deploy manual y rollback por SHA/release al VPS; reinicia `fly-desk-redirect.service` si la plataforma ya lo instalo
+- `.github/workflows/deploy-vps.yml`: deploy manual y rollback por SHA/release al VPS; reinicia `fly-desk-search.service` y `fly-desk-redirect.service` si la plataforma ya los instalo
 
 La infraestructura compartida del VPS ya no vive en este repo: Caddy, systemd, rollback de Caddy y plan de plataforma se mantienen en `grumitos/vps-platform` (`D:\Dev\VPS\vps-platform`). Este repo conserva app, CI, deploy de revision y rollback de release.
 
@@ -161,7 +163,7 @@ Nota de QA: `test/helpers/server.ts` fija `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JO
 
 ## Estado De Deploy
 
-`main` es la linea de producto y despliegue. El deploy repetible escribe el SHA activado en `/opt/fly-desk/REVISION` y lo verifica despues de reiniciar `fly-desk.service`. Si la plataforma ya instalo `fly-desk-redirect.service`, el mismo deploy lo reinicia y valida `http://127.0.0.1:32124/api/health`.
+`main` es la linea de producto y despliegue. El deploy repetible escribe el SHA activado en `/opt/fly-desk/REVISION` y lo verifica despues de reiniciar `fly-desk.service`. Si la plataforma ya instalo `fly-desk-search.service` o `fly-desk-redirect.service`, el mismo deploy los reinicia y valida sus healthchecks locales.
 
 Las revisiones desplegadas y el inventario de servicios vivos se mantienen en `D:\Dev\VPS\vps-platform\docs\INVENTORY.md`. Este repo no mantiene SHAs productivos como estado vivo para evitar drift documental.
 

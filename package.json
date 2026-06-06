@@ -14,6 +14,7 @@
     "build": "bun run build:frontend",
     "build:frontend": "bun scripts/build-frontend.ts",
     "start": "bun src/index.ts",
+    "start:search": "bun src/index.ts",
     "start:redirect": "bun src/redirect-index.ts",
     "auth:hash": "bun scripts/generate-web-password-hash.ts",
     "typecheck": "tsc --noEmit && bun run --filter './frontend' typecheck",
