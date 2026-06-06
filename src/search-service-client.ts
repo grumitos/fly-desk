@@ -95,6 +95,30 @@ function responseHeadersFromProxy(response: Response): Headers {
   return headers;
 }
 
+function summarizeProxyError(error: unknown): string {
+  const raw = error instanceof Error
+    ? `${error.name}: ${error.message}`
+    : String(error);
+  return raw
+    .replace(/[A-Za-z0-9_-]{24,}/g, "[redacted]")
+    .slice(0, 240);
+}
+
+function logSearchServiceProxyFailure(
+  error: unknown,
+  target: URL,
+  request: Request,
+  hasApiToken: boolean,
+): void {
+  console.warn("Fly Desk search service proxy failed", {
+    method: request.method,
+    path: target.pathname,
+    target: target.origin,
+    apiTokenConfigured: hasApiToken,
+    error: summarizeProxyError(error),
+  });
+}
+
 function resolveSearchServiceTimeoutMs(input?: number): number {
   if (typeof input === "number" && Number.isFinite(input)) {
     return Math.max(1, Math.min(MAX_SEARCH_SERVICE_TIMEOUT_MS, Math.trunc(input)));
@@ -148,6 +172,7 @@ export async function maybeProxySearchServiceRequest(
   const cookie = request.headers.get("cookie");
   const apiToken = process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN?.trim()
     || process.env.FLY_DESK_API_TOKEN?.trim();
+  const hasApiToken = Boolean(apiToken);
 
   if (contentType) {
     headers.set("content-type", contentType);
@@ -177,12 +202,14 @@ export async function maybeProxySearchServiceRequest(
       signal: controller.signal,
     });
 
-    return new Response(response.body, {
+    const responseBody = await response.arrayBuffer();
+    return new Response(responseBody, {
       status: response.status,
       statusText: response.statusText,
       headers: responseHeadersFromProxy(response),
     });
-  } catch {
+  } catch (error) {
+    logSearchServiceProxyFailure(error, target, request, hasApiToken);
     return searchServiceUnavailableResponse();
   } finally {
     clearTimeout(timeout);
