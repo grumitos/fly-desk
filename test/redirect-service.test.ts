@@ -246,6 +246,79 @@ test("redirect service resolves Agil purchase paths from SQLite without the main
   });
 });
 
+test("redirect service resolves visible running Agil purchase paths from SQLite", async () => {
+  await withTempDb(async (dbPath) => {
+    const restoreEnv = overrideEnv({ FLY_DESK_API_TOKEN: "redirect-test-token" });
+
+    try {
+      const agilUrl = "https://www.agilsmart.com/home-user/flight-result?origin=LIM&destination=MAD";
+      const offer = buildOffer("agil-local", agilUrl);
+      const store = new SearchSessionStore({ dbPath });
+      const job = store.createSearchJob({
+        request: buildRequest("agil-local"),
+        offers: [offer],
+        allOffers: [offer],
+        searchMeta: buildSearchMeta("agil-local"),
+        providerMeta: buildProviderMeta("agil-local"),
+        warnings: [],
+        sortMode: "cheapest",
+        status: "running",
+      });
+      const redirectPath = store.getSession(job.id)?.offers[0]?.purchasePaths[0]?.url;
+      store.close();
+
+      assert.ok(redirectPath);
+
+      const response = await routeRedirectRequest(
+        authenticatedRedirectRequest(`http://127.0.0.1:32124${redirectPath}`),
+        { dbPath, cacheLookupTimeoutMs: 0 },
+      );
+
+      assert.equal(response.status, 302);
+      assert.equal(response.headers.get("Location"), agilUrl);
+    } finally {
+      restoreEnv();
+    }
+  });
+});
+
+test("redirect service keeps partial cached links after a running search is cancelled", async () => {
+  await withTempDb(async (dbPath) => {
+    const restoreEnv = overrideEnv({ FLY_DESK_API_TOKEN: "redirect-test-token" });
+
+    try {
+      const agilUrl = "https://www.agilsmart.com/home-user/flight-result?origin=LIM&destination=MAD";
+      const offer = buildOffer("agil-local", agilUrl);
+      const store = new SearchSessionStore({ dbPath });
+      const job = store.createSearchJob({
+        request: buildRequest("agil-local"),
+        offers: [offer],
+        allOffers: [offer],
+        searchMeta: buildSearchMeta("agil-local"),
+        providerMeta: buildProviderMeta("agil-local"),
+        warnings: [],
+        sortMode: "cheapest",
+        status: "running",
+      });
+      const redirectPath = store.getSession(job.id)?.offers[0]?.purchasePaths[0]?.url;
+      store.cancelSearchJob(job.id, "cancelled by test", { cachePartial: true });
+      store.close();
+
+      assert.ok(redirectPath);
+
+      const response = await routeRedirectRequest(
+        authenticatedRedirectRequest(`http://127.0.0.1:32124${redirectPath}`),
+        { dbPath, cacheLookupTimeoutMs: 0 },
+      );
+
+      assert.equal(response.status, 302);
+      assert.equal(response.headers.get("Location"), agilUrl);
+    } finally {
+      restoreEnv();
+    }
+  });
+});
+
 test("redirect service keeps Costamar token validation outside the main runtime", async () => {
   await withTempDb(async (dbPath) => {
     const emptyChromeDir = join(dbPath, "..", "chrome-empty");

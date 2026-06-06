@@ -4,7 +4,8 @@ Workspace web privado para busqueda, comparacion y cotizacion aerea orientado a 
 
 Fly Desk es una app Bun-only preparada para VPS:
 
-- servidor Bun (`Bun.serve`) que sirve UI y API en el mismo proceso
+- servidor Bun (`Bun.serve`) que sirve UI y API web privadas
+- proceso Bun dedicado opcional para ejecutar busquedas en loopback y aislar carga de proveedores del login/UI
 - proceso Bun dedicado opcional para resolver `/r/<id>` desde la cache SQLite sin cargar el runtime principal
 - frontend React desktop en `frontend/`, compilado con `Bun.build` y servido desde `frontend/dist`
 - autenticacion web con cookie httpOnly firmada
@@ -44,7 +45,8 @@ No estan expuestos en la UI React actual:
 - La ventana normal de fechas es movil: `hoy` a `hoy + SEARCH_MAX_FUTURE_DAYS`; ida/vuelta se limita a 90 noches.
 - Click and Book Plus no acepta `apiBaseUrl` ni `brandBaseUrl` por request; las bases salen de entorno y pasan por allowlist.
 - Agil depende de sesion local de navegador y de una subscription key resuelta desde entorno o desde el bundle Agil.
-- Las busquedas pasan por admision por unidades: presupuesto default `4`, exactas cuestan `1`, rangos y matrices cuestan `2`. Asi se admiten dos busquedas pesadas simultaneas y el exceso queda en cola con timeout.
+- En produccion, `fly-desk.service` puede delegar `/api/search`, `/api/matrix`, polling y cancelacion a `fly-desk-search.service` mediante `FLY_DESK_SEARCH_SERVICE_URL`; ese runner queda en loopback y ejecuta proveedores/workers.
+- Las busquedas pasan por admision por unidades en el runner: presupuesto default `4`, exactas cuestan `1`, rangos y matrices cuestan `2`. Asi se admiten dos busquedas pesadas simultaneas y el exceso queda en cola con timeout.
 - El boton `Detener busqueda`, el cierre/navegacion de pestaña y el shutdown ordenado del proceso cancelan jobs remotos. En cierre de pestaña y shutdown se usa cache parcial para conservar resultados y purchase paths ya materializados.
 - Los purchase paths publicos se sirven como `/r/<id>` para conservar cache y no persistir enlaces sensibles en la UI. Agil responde con `302` directo al proveedor; Click and Book Plus mantiene el handoff local para validar o refrescar el token antes de abrir el enlace externo.
 - En produccion, plataforma puede enrutar `/r/*` a `fly-desk-redirect.service`, un proceso Bun separado que lee `FLY_DESK_SESSION_DB_PATH` y conserva la misma autenticacion web/API antes de responder.
@@ -86,6 +88,7 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 - `src/local-costamar.ts`: cliente Click and Book Plus, exact/range/matrix, branded links y warm-up B2B
 - `src/providers/costamar/search-payloads.ts`: payloads Click and Book Plus; `costamar` se conserva como alias interno legacy
 - `src/core/`: normalizacion, matriz, grouping, ranking, cotizacion y contratos compartidos
+- `src/search-service-client.ts`: delegacion loopback opcional de rutas de busqueda hacia el runner dedicado
 - `src/search-worker-client.ts` / `src/search-worker.ts`: procesos hijos Bun para aislar busquedas pesadas
 - `src/session-store.ts`: jobs vivos, SQLite local, migracion JSON legada, redirects y purchase paths
 - `src/location-suggestion-cache.ts`: cache SQLite de autocomplete
@@ -94,7 +97,7 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 
 `.env.example` es la referencia operativa de variables. Las mas comunes:
 
-- Runtime/API: `HOST`, `PORT`, `FLY_DESK_API_TOKEN`, `FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS`, `FLY_DESK_REDIRECT_HOST`, `FLY_DESK_REDIRECT_PORT`, `FLY_DESK_REDIRECT_CACHE_LOOKUP_TIMEOUT_MS`
+- Runtime/API: `HOST`, `PORT`, `FLY_DESK_API_TOKEN`, `FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS`, `FLY_DESK_SEARCH_SERVICE_URL`, `FLY_DESK_SEARCH_SERVICE_API_TOKEN`, `FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS`, `FLY_DESK_REDIRECT_HOST`, `FLY_DESK_REDIRECT_PORT`, `FLY_DESK_REDIRECT_CACHE_LOOKUP_TIMEOUT_MS`
 - Auth web: `FLY_DESK_WEB_AUTH`, `FLY_DESK_WEB_PASSWORD_HASH`, `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_TRUST_LOOPBACK_CLIENT`, `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK`
 - Busqueda/cache: `SEARCH_MAX_FUTURE_DAYS`, `SEARCH_REVALIDATION_CACHE_TTL_MS`, `SEARCH_COMPLETED_SESSION_TTL_MS`, `FLY_DESK_SESSION_DB_PATH`, `FLY_DESK_LOCATION_SUGGESTION_DB_PATH`, `FLY_DESK_MIGRATION_CONCURRENT_MONTHS`, `FLY_DESK_SEARCH_CAPACITY_UNITS`, `FLY_DESK_SEARCH_EXACT_COST_UNITS`, `FLY_DESK_SEARCH_RANGE_COST_UNITS`, `FLY_DESK_SEARCH_MATRIX_COST_UNITS`, `FLY_DESK_SEARCH_MAX_QUEUED`, `FLY_DESK_SEARCH_QUEUE_TIMEOUT_MS`
 - App data: `FLY_DESK_APP_DATA_DIR`, `FLY_DESK_QUOTATION_RATE_CACHE_PATH`
@@ -129,6 +132,7 @@ Para trabajar en otro equipo, no mandes `.env` en texto plano por chat, correo n
 - `bun run dev`
 - `bun run build`
 - `bun run start`
+- `bun run start:search`
 - `bun run start:redirect`
 - `bun run auth:hash`
 - `bun run typecheck`
@@ -175,6 +179,7 @@ La app se despliega como servicio Bun privado detras de Caddy:
 - `FLY_DESK_WEB_AUTH=1`
 - `FLY_DESK_TRUST_LOOPBACK_CLIENT=0`
 - `FLY_DESK_SEARCH_WORKER_PROCESSES=1`
+- `FLY_DESK_SEARCH_SERVICE_URL` apunta al runner dedicado cuando la plataforma instala `fly-desk-search.service`
 - `FLY_DESK_COOKIE_SECURE=1`
 - Agil usa `fly-desk-chrome.service` con Chrome CDP en `127.0.0.1:9222`; todavia requiere una sesion Agil valida en ese perfil
 - Click and Book Plus es mas portable, pero sus flujos de sesion siguen pensados para uso controlado
@@ -183,6 +188,6 @@ Para mas detalle, ver [`docs/DEPLOY_APP.md`](./docs/DEPLOY_APP.md).
 
 La fuente vigente de Caddy, systemd compartido, rollback de Caddy y plan de plataforma es `grumitos/vps-platform` (`D:\Dev\VPS\vps-platform`). Este repo mantiene el codigo de la app y el deploy de `fly-desk`.
 
-El deploy repetible vive en `.github/workflows/deploy-vps.yml` como workflow manual con modos `deploy` y `rollback`. Cada deploy escribe `REVISION` con el SHA activado, reinicia `fly-desk.service`, reinicia `fly-desk-redirect.service` si ya existe, conserva `fly-desk-chrome.service` y ejecuta smoke local y publico. Los secretos SSH y valores de infraestructura se configuran en GitHub Secrets/Variables, no en el repo.
+El deploy repetible vive en `.github/workflows/deploy-vps.yml` como workflow manual con modos `deploy` y `rollback`. Cada deploy escribe `REVISION` con el SHA activado, reinicia `fly-desk.service`, reinicia `fly-desk-search.service` y `fly-desk-redirect.service` si ya existen, conserva `fly-desk-chrome.service` y ejecuta smoke local y publico. Los secretos SSH y valores de infraestructura se configuran en GitHub Secrets/Variables, no en el repo.
 
 El smoke publico puede devolver `403` desde runners o clientes fuera de Peru cuando la restriccion regional de `vps-platform` esta activa. Esa restriccion cubre `/login` y la app antes de llegar a Fly Desk; el smoke local del VPS sigue siendo el indicador operativo principal.

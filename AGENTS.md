@@ -8,7 +8,7 @@ Guia para agentes que trabajen en Fly Desk.
 2. No imprimas ni guardes secretos. Esto incluye `.env`, cookies, tokens, passwords, TOTP/otpauth, subscription keys, API tokens y sesiones de navegador.
 3. Este repo cambia producto, backend, frontend, CI y deploy propio de Fly Desk. Caddy, systemd compartido, firewall, certificados, geofence y mantenimiento diario pertenecen a `D:\Dev\VPS\vps-platform`.
 4. El package manager soportado es Bun. No agregar `package-lock.json`, `pnpm-lock.yaml` ni `yarn.lock`.
-5. El deploy de app debe reiniciar solo `fly-desk.service` y conservar `fly-desk-chrome.service` salvo instruccion explicita.
+5. El deploy de app debe reiniciar `fly-desk.service`, reiniciar `fly-desk-search.service` y `fly-desk-redirect.service` si existen, y conservar `fly-desk-chrome.service` salvo instruccion explicita.
 6. Cloudflare Pages, bindings de Pages, geofence publico y secretos operativos compartidos pertenecen a `vps-platform`; no resolverlos ni documentarlos desde este repo.
 
 ## Verificacion

@@ -60,6 +60,7 @@ import {
 } from "./provider-context";
 import { resolveQuotationUsdToPenRateInfo, warmQuotationUsdToPenRateInfo } from "./quotation-exchange-rate";
 import { SearchAdmissionError, type SearchAdmissionKind } from "./search-admission";
+import { maybeProxySearchServiceRequest } from "./search-service-client";
 import { runProviderMatrixInWorker, runProviderSearchInWorker } from "./search-worker-client";
 import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
@@ -2700,6 +2701,11 @@ export async function routeRequest(request: Request): Promise<Response> {
 
   if (request.method === "GET" && url.pathname === "/api/health") {
     return json({ ok: true });
+  }
+
+  const searchServiceResponse = await maybeProxySearchServiceRequest(request, url);
+  if (searchServiceResponse) {
+    return searchServiceResponse;
   }
 
   const runtime = getRuntime();

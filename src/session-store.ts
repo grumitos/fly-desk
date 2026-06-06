@@ -1202,11 +1202,11 @@ export class SearchSessionStore {
 
   private buildPersistencePayload(): PersistedSearchSessionStore {
     const searchJobs = [...this.searchJobs.values()]
-      .filter((job) => job.status === "completed")
+      .filter((job) => job.status === "completed" || job.status === "running")
       .map(redactSearchJobForPersistence)
       .sort((left, right) => left.id.localeCompare(right.id));
     const matrixJobs = [...this.matrixJobs.values()]
-      .filter((job) => job.status === "completed")
+      .filter((job) => job.status === "completed" || job.status === "running")
       .map(redactMatrixJobForPersistence)
       .sort((left, right) => left.id.localeCompare(right.id));
     const activeSessionIds = new Set<string>([
