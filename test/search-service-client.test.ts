@@ -244,7 +244,7 @@ test("search service proxy clamps env timeout to avoid immediate production abor
         signal?.addEventListener("abort", () => {
           aborted = true;
         });
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        await new Promise((resolve) => setTimeout(resolve, 1_100));
         assert.equal(signal?.aborted, false);
         return Response.json({ ok: true });
       },
