@@ -77,6 +77,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `FLY_DESK_SEARCH_WORKER_PROCESSES=0` queda como excepcion temporal de QA y requiere repetir QA externo antes de cambiar conteos de workers, runner o warm-up
 - toda busqueda publica espera a Agil y Click and Book Plus y retiene las ofertas completas devueltas por ambos; los filtros visibles se materializan sin recortar `allOffers`, y los limites de concurrencia solo regulan solicitudes en lote
 - la admision global de busquedas usa unidades de capacidad: presupuesto default `4`, exacta `1`, rango `2`, matriz `2`, cola default `8` y timeout default `120000ms`
+- el proxy web hacia el runner de busquedas mantiene un piso de timeout igual al default operativo; no usar valores menores en produccion porque polling con muchas ofertas puede necesitar mas de un segundo
 - la capacidad se libera solo cuando termina el trabajo de proveedores; la cache de sesiones y purchase paths queda en `src/session-store.ts` hasta su TTL operativo
 - cancelar desde la UI, cerrar la pestaña o detener ordenadamente el proceso cambia el job remoto a cancelado; en `pagehide`/`beforeunload` y shutdown se pide cache parcial para conservar lo ya resuelto y detener workers en el VPS
 - los enlaces externos siguen pasando por `/r/<id>` como cache local de purchase paths; Agil redirige sin pagina intermedia, mientras Click and Book Plus conserva validacion/refresh de token antes del `302`
@@ -124,6 +125,8 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `.github/workflows/deploy-vps.yml`: deploy manual y rollback por SHA/release al VPS; reinicia `fly-desk-search.service` y `fly-desk-redirect.service` si la plataforma ya los instalo
 
 La infraestructura compartida del VPS ya no vive en este repo: Caddy, systemd, rollback de Caddy y plan de plataforma se mantienen en `grumitos/vps-platform` (`D:\Dev\VPS\vps-platform`). Este repo conserva app, CI, deploy de revision y rollback de release.
+
+Despues de un deploy de app que toque busquedas, cancelacion o redirects, cerrar la verificacion con `Fly Desk Production Smoke` en `vps-platform`. Ese workflow valida health local de web/search/redirect, busqueda completada, `/r/*` para Agil y Click and Book Plus, cancelacion de una segunda busqueda y servicios activos.
 
 ## Pruebas
 
