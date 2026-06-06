@@ -1,3 +1,5 @@
+import { resolveSearchServiceProxyApiToken } from "./service-auth";
+
 const SEARCH_SERVICE_PROXY_HEADER = "x-flydesk-search-proxy";
 const DEFAULT_SEARCH_SERVICE_TIMEOUT_MS = 15_000;
 const MIN_ENV_SEARCH_SERVICE_TIMEOUT_MS = 1_000;
@@ -171,8 +173,7 @@ export async function maybeProxySearchServiceRequest(
   const contentType = request.headers.get("content-type");
   const accept = request.headers.get("accept");
   const cookie = request.headers.get("cookie");
-  const apiToken = process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN?.trim()
-    || process.env.FLY_DESK_API_TOKEN?.trim();
+  const apiToken = resolveSearchServiceProxyApiToken();
   const hasApiToken = Boolean(apiToken);
 
   if (contentType) {

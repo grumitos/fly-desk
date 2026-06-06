@@ -21,6 +21,7 @@ import {
   setCostamarWarmupGeneratorForTests,
 } from "../src/local-costamar";
 import { routeRequest, SEARCH_REVALIDATION_CACHE_TTL_MS, setQuotationOfferValidatorForTests } from "../src/http-router";
+import { resolveSearchServiceProxyApiToken } from "../src/service-auth";
 import { getRuntime } from "../src/runtime";
 import { withServer } from "./helpers/server";
 
@@ -627,6 +628,50 @@ test("accepts non-loopback location requests with a valid api token", { concurre
       delete process.env.FLY_DESK_API_TOKEN;
     } else {
       process.env.FLY_DESK_API_TOKEN = previousApiToken;
+    }
+  }
+});
+
+test("accepts non-loopback location requests with the internal search service token", { concurrency: false }, async () => {
+  const previousApiToken = process.env.FLY_DESK_API_TOKEN;
+  const previousSearchToken = process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN;
+  const previousSessionSecret = process.env.FLY_DESK_WEB_SESSION_SECRET;
+  delete process.env.FLY_DESK_API_TOKEN;
+  delete process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN;
+  process.env.FLY_DESK_WEB_SESSION_SECRET = "test-session-secret-32-characters-minimum";
+
+  try {
+    const internalToken = resolveSearchServiceProxyApiToken();
+    assert.ok(internalToken);
+    const response = await routeRequest(new Request("http://fly-desk.local/api/locations?q=", {
+      method: "GET",
+      headers: {
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": internalToken,
+      },
+    }));
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { query?: string; suggestions?: unknown[] };
+    assert.equal(payload.query, "");
+    assert.deepEqual(payload.suggestions, []);
+  } finally {
+    if (previousApiToken === undefined) {
+      delete process.env.FLY_DESK_API_TOKEN;
+    } else {
+      process.env.FLY_DESK_API_TOKEN = previousApiToken;
+    }
+
+    if (previousSearchToken === undefined) {
+      delete process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN;
+    } else {
+      process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN = previousSearchToken;
+    }
+
+    if (previousSessionSecret === undefined) {
+      delete process.env.FLY_DESK_WEB_SESSION_SECRET;
+    } else {
+      process.env.FLY_DESK_WEB_SESSION_SECRET = previousSessionSecret;
     }
   }
 });

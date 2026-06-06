@@ -11,6 +11,7 @@ import {
   resolveUsableCostamarBrandedToken,
 } from "./provider-context";
 import { resolvePersistPath } from "./runtime-paths";
+import { resolveAcceptedApiAccessTokens } from "./service-auth";
 import { COMPLETED_SEARCH_SESSION_TTL_MS } from "./session-store";
 import {
   hasValidWebSession,
@@ -445,11 +446,6 @@ function isTrustedLocalRequest(request: Request): boolean {
   return true;
 }
 
-function resolveConfiguredApiAccessToken(): string | undefined {
-  const configured = String(process.env.FLY_DESK_API_TOKEN ?? "").trim();
-  return configured || undefined;
-}
-
 function resolveProvidedApiAccessToken(request: Request): string | undefined {
   const tokenHeader = String(request.headers.get("x-flydesk-api-token") ?? "").trim();
   if (tokenHeader) {
@@ -465,19 +461,22 @@ function resolveProvidedApiAccessToken(request: Request): string | undefined {
   return undefined;
 }
 
-function hasValidApiAccessToken(request: Request, expectedToken: string): boolean {
+function hasValidApiAccessToken(request: Request, expectedTokens: readonly string[]): boolean {
   const providedToken = resolveProvidedApiAccessToken(request);
   if (!providedToken) {
     return false;
   }
 
-  const expected = Buffer.from(expectedToken, "utf8");
   const provided = Buffer.from(providedToken, "utf8");
-  if (expected.length !== provided.length) {
-    return false;
-  }
 
-  return timingSafeEqual(expected, provided);
+  return expectedTokens.some((expectedToken) => {
+    const expected = Buffer.from(expectedToken, "utf8");
+    if (expected.length !== provided.length) {
+      return false;
+    }
+
+    return timingSafeEqual(expected, provided);
+  });
 }
 
 function isTrustedRedirectRequest(request: Request): boolean {
@@ -489,8 +488,8 @@ function isTrustedRedirectRequest(request: Request): boolean {
     return true;
   }
 
-  const token = resolveConfiguredApiAccessToken();
-  return token ? hasValidApiAccessToken(request, token) : false;
+  const tokens = resolveAcceptedApiAccessTokens();
+  return tokens.length > 0 ? hasValidApiAccessToken(request, tokens) : false;
 }
 
 function redirectAuthRequiredResponse(): Response {

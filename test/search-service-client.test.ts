@@ -4,6 +4,7 @@ import {
   maybeProxySearchServiceRequest,
   resolveSearchServiceBaseUrl,
 } from "../src/search-service-client";
+import { resolveSearchServiceProxyApiToken } from "../src/service-auth";
 
 function overrideEnv(values: Record<string, string | undefined>): () => void {
   const previous = new Map<string, string | undefined>();
@@ -92,6 +93,68 @@ test("search service proxy forwards search requests to the configured runner", a
     assert.equal(forwardedHeaders.get("cookie"), "flydesk_session=test");
     assert.equal(forwardedHeaders.get("x-flydesk-api-token"), "test-api-token");
     assert.equal(forwardedHeaders.get("x-flydesk-search-proxy"), "1");
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("search service proxy uses an internal token fallback when explicit api tokens are absent", async () => {
+  const restoreEnv = overrideEnv({
+    FLY_DESK_API_TOKEN: undefined,
+    FLY_DESK_SEARCH_SERVICE_API_TOKEN: undefined,
+    FLY_DESK_WEB_SESSION_SECRET: "test-session-secret-32-characters-minimum",
+  });
+
+  try {
+    let forwardedHeaders = new Headers();
+    const request = new Request("http://fly-desk.test/api/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+    const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
+      serviceUrl: "http://127.0.0.1:32125",
+      fetchImpl: async (_input, init) => {
+        forwardedHeaders = new Headers(init?.headers);
+        return Response.json({ ok: true });
+      },
+    });
+
+    assert.equal(response?.status, 200);
+    assert.equal(forwardedHeaders.get("x-flydesk-api-token"), resolveSearchServiceProxyApiToken());
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("search service proxy leaves api token absent without an explicit token or internal secret", async () => {
+  const restoreEnv = overrideEnv({
+    FLY_DESK_API_TOKEN: undefined,
+    FLY_DESK_SEARCH_SERVICE_API_TOKEN: undefined,
+    FLY_DESK_WEB_SESSION_SECRET: undefined,
+  });
+
+  try {
+    let forwardedHeaders = new Headers();
+    const request = new Request("http://fly-desk.test/api/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+    const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
+      serviceUrl: "http://127.0.0.1:32125",
+      fetchImpl: async (_input, init) => {
+        forwardedHeaders = new Headers(init?.headers);
+        return Response.json({ ok: true });
+      },
+    });
+
+    assert.equal(response?.status, 200);
+    assert.equal(forwardedHeaders.has("x-flydesk-api-token"), false);
   } finally {
     restoreEnv();
   }
