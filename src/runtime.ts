@@ -16,6 +16,10 @@ export interface RuntimeServices {
 
 let runtime: RuntimeServices | undefined;
 
+export function getRuntimeIfInitialized(): RuntimeServices | undefined {
+  return runtime;
+}
+
 export function getRuntime(): RuntimeServices {
   if (runtime) {
     return runtime;

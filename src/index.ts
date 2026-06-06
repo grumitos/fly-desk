@@ -1,5 +1,5 @@
 import { loadRuntimeConfig, resolveServerHost } from "./config";
-import { getRuntime } from "./runtime";
+import { getRuntime, getRuntimeIfInitialized, type RuntimeServices } from "./runtime";
 import { createServer } from "./server";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import {
@@ -21,9 +21,14 @@ function delay(ms: number): Promise<void> {
 async function main() {
   const startupStart = startPerfTimer();
   loadRuntimeConfig();
+  const delegatesSearch = isSearchServiceDelegationConfigured();
   const runtimeStart = startPerfTimer();
-  const runtime = getRuntime();
-  logPerfSpan("startup.runtime", runtimeStart);
+  const startupRuntime = delegatesSearch ? undefined : getRuntime();
+  if (startupRuntime) {
+    logPerfSpan("startup.runtime", runtimeStart);
+  } else {
+    logPerfSpan("startup.runtime.skipped", runtimeStart);
+  }
 
   const port = Number(process.env.PORT ?? "3000");
   const host = resolveServerHost();
@@ -48,9 +53,11 @@ async function main() {
         tempCleanupPromise = undefined;
       });
   };
+  const getActiveRuntime = (): RuntimeServices | undefined => startupRuntime ?? getRuntimeIfInitialized();
   const maintenanceHandle = setInterval(() => {
-    runtime.sessions.purgeExpired();
-    runtime.locationSuggestions.purgeExpired();
+    const activeRuntime = getActiveRuntime();
+    activeRuntime?.sessions.purgeExpired();
+    activeRuntime?.locationSuggestions.purgeExpired();
     runTempCleanup("periodic.tempCleanup", {
       olderThanMs: TEMP_ARTIFACT_SWEEP_MIN_AGE_MS,
     });
@@ -64,8 +71,10 @@ async function main() {
     }
 
     shuttingDown = true;
-    const cancelled = runtime.sessions.cancelRunningJobs(SHUTDOWN_CANCELLED_WARNING, { cachePartial: true });
-    runtime.searchAdmission.dispose(SHUTDOWN_CANCELLED_WARNING);
+    const activeRuntime = getActiveRuntime();
+    const cancelled = activeRuntime?.sessions.cancelRunningJobs(SHUTDOWN_CANCELLED_WARNING, { cachePartial: true })
+      ?? { searchJobs: 0, matrixJobs: 0 };
+    activeRuntime?.searchAdmission.dispose(SHUTDOWN_CANCELLED_WARNING);
     if (cancelled.searchJobs > 0 || cancelled.matrixJobs > 0) {
       console.warn(
         `Fly Desk shutdown cancelled active jobs: search=${cancelled.searchJobs} matrix=${cancelled.matrixJobs}`,
@@ -84,9 +93,9 @@ async function main() {
     }
     await server.stop();
     await tempCleanupPromise?.catch(() => undefined);
-    runtime.locationSuggestions.purgeExpired(Number.POSITIVE_INFINITY);
-    runtime.sessions.purgeExpired(Number.POSITIVE_INFINITY);
-    runtime.sessions.close();
+    activeRuntime?.locationSuggestions.purgeExpired(Number.POSITIVE_INFINITY);
+    activeRuntime?.sessions.purgeExpired(Number.POSITIVE_INFINITY);
+    activeRuntime?.sessions.close();
     await cleanupPrefixedTempArtifacts(undefined, { olderThanMs: 0 }).catch(() => undefined);
   };
 
@@ -104,7 +113,7 @@ async function main() {
     runTempCleanup("startup.tempCleanup");
   }, STARTUP_BACKGROUND_TASK_DELAY_MS);
   startupCleanupTimer.unref?.();
-  if (!isSearchServiceDelegationConfigured()) {
+  if (!delegatesSearch) {
     providerPrewarmStartTimer = setTimeout(() => {
       providerPrewarmStartTimer = undefined;
       providerPrewarmHandle = startProviderPrewarmLoop();
