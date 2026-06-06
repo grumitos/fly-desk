@@ -115,3 +115,42 @@ test("search service proxy skips already proxied requests", async () => {
 
   assert.equal(response, undefined);
 });
+
+test("search service proxy returns a safe unavailable response when the runner request fails", async () => {
+  const restoreEnv = overrideEnv({
+    FLY_DESK_API_TOKEN: "test-api-token-value",
+    FLY_DESK_SEARCH_SERVICE_API_TOKEN: undefined,
+  });
+  const originalWarn = console.warn;
+  const warnings: unknown[][] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+
+  try {
+    const request = new Request("http://fly-desk.test/api/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ route: "LIM-MAD" }),
+    });
+    const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
+      serviceUrl: "http://127.0.0.1:32125",
+      timeoutMs: 1_000,
+      fetchImpl: async () => {
+        throw new Error("connect ECONNREFUSED token-test-api-token-value");
+      },
+    });
+
+    assert.equal(response?.status, 503);
+    assert.deepEqual(await response?.json(), { error: "Search service is unavailable." });
+    assert.equal(warnings.length, 1);
+    const logged = JSON.stringify(warnings[0]);
+    assert.match(logged, /apiTokenConfigured/);
+    assert.doesNotMatch(logged, /test-api-token-value/);
+  } finally {
+    console.warn = originalWarn;
+    restoreEnv();
+  }
+});
