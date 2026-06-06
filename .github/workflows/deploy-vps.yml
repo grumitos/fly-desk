@@ -39,7 +39,9 @@ env:
   BUN_BIN: ${{ vars.FLY_DESK_BUN_BIN || '/home/deploy/.bun/bin/bun' }}
   SERVICE_NAME: ${{ vars.FLY_DESK_SERVICE || 'fly-desk.service' }}
   CHROME_SERVICE_NAME: ${{ vars.FLY_DESK_CHROME_SERVICE || 'fly-desk-chrome.service' }}
+  REDIRECT_SERVICE_NAME: ${{ vars.FLY_DESK_REDIRECT_SERVICE || 'fly-desk-redirect.service' }}
   LOCAL_SMOKE_URL: ${{ vars.FLY_DESK_LOCAL_SMOKE_URL || 'http://127.0.0.1:32123/api/health' }}
+  REDIRECT_LOCAL_SMOKE_URL: ${{ vars.FLY_DESK_REDIRECT_LOCAL_SMOKE_URL || 'http://127.0.0.1:32124/api/health' }}
 
 jobs:
   deploy:
@@ -165,7 +167,9 @@ jobs:
             "$BUN_BIN" \
             "$SERVICE_NAME" \
             "$CHROME_SERVICE_NAME" \
-            "$LOCAL_SMOKE_URL" <<'REMOTE'
+            "$LOCAL_SMOKE_URL" \
+            "$REDIRECT_SERVICE_NAME" \
+            "$REDIRECT_LOCAL_SMOKE_URL" <<'REMOTE'
           set -euo pipefail
 
           target_sha="$1"
@@ -176,6 +180,8 @@ jobs:
           service_name="$6"
           chrome_service_name="$7"
           local_smoke_url="$8"
+          redirect_service_name="$9"
+          redirect_local_smoke_url="${10}"
 
           if ! printf '%s' "$target_sha" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "Invalid target SHA."
@@ -204,6 +210,10 @@ jobs:
           chrome_was_active=0
           if systemctl is-active --quiet "$chrome_service_name"; then
             chrome_was_active=1
+          fi
+          redirect_unit_present=0
+          if systemctl cat "$redirect_service_name" >/dev/null 2>&1; then
+            redirect_unit_present=1
           fi
 
           release_dir="$release_root/$target_sha"
@@ -234,6 +244,9 @@ jobs:
           fi
 
           $sudo_cmd systemctl restart "$service_name"
+          if [ "$redirect_unit_present" -eq 1 ]; then
+            $sudo_cmd systemctl restart "$redirect_service_name"
+          fi
 
           if [ "$chrome_was_active" -eq 1 ]; then
             systemctl is-active --quiet "$chrome_service_name"
@@ -249,6 +262,18 @@ jobs:
             fi
             sleep 2
           done
+          if [ "$redirect_unit_present" -eq 1 ]; then
+            for attempt in $(seq 1 10); do
+              if curl -fsS --max-time 10 "$redirect_local_smoke_url" > /dev/null; then
+                break
+              fi
+              if [ "$attempt" -eq 10 ]; then
+                echo "Redirect local smoke failed after restart."
+                exit 1
+              fi
+              sleep 2
+            done
+          fi
           rm -f -- "$package_path"
           echo "Deployed revision $target_sha."
           REMOTE
@@ -326,7 +351,9 @@ jobs:
             "$RELEASE_ROOT" \
             "$SERVICE_NAME" \
             "$CHROME_SERVICE_NAME" \
-            "$LOCAL_SMOKE_URL" <<'REMOTE'
+            "$LOCAL_SMOKE_URL" \
+            "$REDIRECT_SERVICE_NAME" \
+            "$REDIRECT_LOCAL_SMOKE_URL" <<'REMOTE'
           set -euo pipefail
 
           target_sha="$1"
@@ -335,6 +362,8 @@ jobs:
           service_name="$4"
           chrome_service_name="$5"
           local_smoke_url="$6"
+          redirect_service_name="$7"
+          redirect_local_smoke_url="$8"
 
           if ! printf '%s' "$target_sha" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "Invalid rollback SHA."
@@ -362,6 +391,10 @@ jobs:
           if systemctl is-active --quiet "$chrome_service_name"; then
             chrome_was_active=1
           fi
+          redirect_unit_present=0
+          if systemctl cat "$redirect_service_name" >/dev/null 2>&1; then
+            redirect_unit_present=1
+          fi
 
           if [ -L "$deploy_path" ]; then
             $sudo_cmd ln -sfn "$release_dir" "$deploy_path"
@@ -379,12 +412,18 @@ jobs:
           fi
 
           $sudo_cmd systemctl restart "$service_name"
+          if [ "$redirect_unit_present" -eq 1 ]; then
+            $sudo_cmd systemctl restart "$redirect_service_name"
+          fi
 
           if [ "$chrome_was_active" -eq 1 ]; then
             systemctl is-active --quiet "$chrome_service_name"
           fi
 
           curl -fsS --max-time 10 "$local_smoke_url" > /dev/null
+          if [ "$redirect_unit_present" -eq 1 ]; then
+            curl -fsS --max-time 10 "$redirect_local_smoke_url" > /dev/null
+          fi
           echo "Rolled back to revision $target_sha."
           REMOTE
 
