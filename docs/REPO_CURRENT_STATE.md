@@ -22,6 +22,7 @@ El repo no versiona artefactos generados:
 - busqueda flexible ida/vuelta via `/api/matrix`, normalizada a lista de resultados
 - busqueda migratoria mensual: selector de meses hasta fin del año actual y fan-out solo para meses marcados
 - autocomplete de origen y destino
+- sugerencias frecuentes de origen/destino con ranking global persistido en el VPS
 - filtros de escalas, tiempo maximo de escala, equipaje y aerolineas
 - resultados paginados con advertencias del backend
 - panel lateral con precio, equipaje, condiciones, rutas de compra y cotizacion
@@ -95,6 +96,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `frontend/src/components/results/`: `ResultCard`, modelo de tarjeta, CSS y layout editor
 - `frontend/src/hooks/`: `useSearch` y `useAutocomplete`
 - `frontend/src/lib/api.ts`: cliente HTTP, busqueda/polling, matriz, migratorio, autocomplete, layout y cotizacion
+- `frontend/src/lib/location-usage-suggestions.ts`: cliente HTTP del ranking global de origen/destino frecuentes
 - `frontend/src/index.css`: tokens, layout, tema claro/oscuro y estados visuales
 - `scripts/build-frontend.ts`: build con `Bun.build`, `bun-plugin-tailwind` y copia de `frontend/public`
 
@@ -115,6 +117,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `src/search-worker-client.ts` y `src/search-worker.ts`: procesos hijos Bun para busquedas pesadas de proveedor dentro del runner
 - `src/session-store.ts`: jobs vivos, SQLite local, migracion JSON legada, redirects y purchase paths
 - `src/location-suggestion-cache.ts`: cache SQLite de autocomplete con TTL
+- `src/location-usage-store.ts`: ranking global SQLite de origen/destino frecuentes
 
 ### Operacion
 
@@ -151,6 +154,7 @@ Cobertura importante actual:
 - key requerida o recuperable para Agil live
 - workers Bun habilitados por defecto para aislar busquedas pesadas de proveedor
 - persistencia SQLite y migracion JSON legada de sesiones/autocomplete
+- ranking global de sugerencias frecuentes en servidor, no por `localStorage` de cada navegador
 - layout persistente de resultados
 - rail de busqueda, filtros, tema, autocomplete, provider links y cotizacion
 

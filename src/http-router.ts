@@ -2719,6 +2719,7 @@ export async function routeRequest(request: Request): Promise<Response> {
       generatedAt: new Date().toISOString(),
       memoryUsage: process.memoryUsage(),
       locationSuggestions: runtime.locationSuggestions.getDiagnostics(),
+      locationUsage: runtime.locationUsage.getDiagnostics(),
       searchAdmission: runtime.searchAdmission.getDiagnostics(),
       sessions: runtime.sessions.getDiagnostics(),
       tempArtifacts: collectTempArtifactDiagnostics(),
@@ -2836,6 +2837,25 @@ export async function routeRequest(request: Request): Promise<Response> {
 
     const suggestions = mergeLocationSuggestions(fulfilled, limit);
     return json({ query, providerIds, suggestions });
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/location-usage-suggestions") {
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
+    }
+
+    const limit = integerParam(url.searchParams.get("limit"), 3, 1, 20);
+    return json({ suggestions: runtime.locationUsage.getSuggestions(limit) });
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/location-usage-suggestions") {
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
+    }
+
+    const payload = await readPayload<{ origin?: unknown; destination?: unknown }>(request);
+    const limit = integerParam(url.searchParams.get("limit"), 3, 1, 20);
+    return json({ suggestions: runtime.locationUsage.recordFromSearch(payload, Date.now(), limit) });
   }
 
   if (request.method === "POST" && url.pathname === "/api/local/open-url") {

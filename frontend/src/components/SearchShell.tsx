@@ -10,6 +10,7 @@ import { AppIcon, type AppIconName } from "@/components/ui/app-icon"
 import { useAutocomplete } from "@/hooks/useAutocomplete"
 import { warmLocationSuggestionDetails } from "@/lib/api"
 import {
+  emptyLocationUsageSuggestions,
   getLocationUsageSuggestions,
   recordLocationUsageFromSearch,
   type LocationUsageSuggestions,
@@ -86,7 +87,7 @@ export function SearchShell({
   const [children, setChildren] = useState(0)
   const [infants, setInfants] = useState(0)
   const [paxOpen, setPaxOpen] = useState(false)
-  const [usageSuggestions, setUsageSuggestions] = useState<LocationUsageSuggestions>(() => getLocationUsageSuggestions())
+  const [usageSuggestions, setUsageSuggestions] = useState<LocationUsageSuggestions>(() => emptyLocationUsageSuggestions())
   const [hiddenUsageSuggestionFields, setHiddenUsageSuggestionFields] = useState<Record<LocationUsageField, boolean>>({
     origin: false,
     destination: false,
@@ -188,6 +189,25 @@ export function SearchShell({
     })
     return () => window.cancelAnimationFrame(frame)
   }, [migrationMonthOptions, resolveDestinationQuery, resolveOriginQuery, setDestinationQuery, setOriginQuery, syncedRequest])
+
+  useEffect(() => {
+    if (!showLocationUsageSuggestions || loading) return
+
+    const controller = new AbortController()
+    void getLocationUsageSuggestions({ signal: controller.signal })
+      .then((nextSuggestions) => {
+        if (!controller.signal.aborted) {
+          setUsageSuggestions(nextSuggestions)
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setUsageSuggestions(emptyLocationUsageSuggestions())
+        }
+      })
+
+    return () => controller.abort()
+  }, [loading, showLocationUsageSuggestions])
 
   useEffect(() => {
     if (!showLocationUsageSuggestions || loading) return
@@ -517,7 +537,9 @@ export function SearchShell({
     }
 
     const nextRequest = buildRequest(resolvedRequest.origin, resolvedRequest.destination)
-    setUsageSuggestions(recordLocationUsageFromSearch(nextRequest))
+    void recordLocationUsageFromSearch(nextRequest)
+      .then(setUsageSuggestions)
+      .catch(() => {})
     resetUsageSuggestionVisibility()
     onSearch(nextRequest)
   }
