@@ -79,6 +79,19 @@ async function waitForFontsReady(page: Page): Promise<void> {
   }).catch(() => undefined);
 }
 
+async function routeLocationUsageSuggestions(
+  page: Page,
+  suggestions: { origin: string[]; destination: string[] },
+): Promise<void> {
+  await page.route("**/api/location-usage-suggestions**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ suggestions }),
+    });
+  });
+}
+
 test("current React shell exposes the primary search controls", async () => {
   await withDesktopPage(async ({ page }) => {
     const controls = await page.evaluate(() => ({
@@ -1261,7 +1274,6 @@ test("autocomplete resolves an exact location match and closes suggestions", asy
 test("frequent location suggestions resolve labels and collapse their own row", async () => {
   await withDesktopPage(async ({ baseUrl, browser }) => {
     const page = await browser.newPage();
-    const now = Date.now();
     let locationRequestCount = 0;
     await page.route("**/api/locations**", async (route) => {
       locationRequestCount += 1;
@@ -1292,22 +1304,13 @@ test("frequent location suggestions resolve labels and collapse their own row", 
         }),
       });
     });
-    await page.addInitScript((payload) => {
-      window.localStorage.setItem("flydesk-location-usage-v1", JSON.stringify(payload.usage));
-      window.localStorage.setItem("flydesk-location-suggestion-details-v1", JSON.stringify(payload.details));
+    await routeLocationUsageSuggestions(page, {
+      origin: ["LIM", "TPP", "CUZ"],
+      destination: ["MAD", "MIA", "BUE"],
+    });
+    await page.addInitScript((details) => {
+      window.localStorage.setItem("flydesk-location-suggestion-details-v1", JSON.stringify(details));
     }, {
-      usage: {
-        version: 1,
-        entries: [
-          { role: "origin", code: "LIM", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
-          { role: "origin", code: "TPP", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
-          { role: "origin", code: "CUZ", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
-          { role: "destination", code: "MAD", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
-          { role: "destination", code: "MIA", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
-          { role: "destination", code: "BUE", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
-        ],
-      },
-      details: {
         version: 1,
         suggestions: [
           { code: "LIM", city: "Lima", country: "PE", countryCode: "PE", label: "All airports: Lima, PE (LIM)" },
@@ -1317,7 +1320,6 @@ test("frequent location suggestions resolve labels and collapse their own row", 
           { code: "MIA", city: "Miami", country: "US", countryCode: "US", label: "Miami, US (MIA)" },
           { code: "BUE", city: "Buenos Aires", country: "AR", countryCode: "AR", label: "Buenos Aires, AR (BUE)" },
         ],
-      },
     });
 
     await openDesktop(page, baseUrl);
@@ -1346,7 +1348,6 @@ test("frequent location suggestions resolve labels and collapse their own row", 
 test("idle location suggestions do not disturb autocomplete and swap geometry", async () => {
   await withDesktopPage(async ({ baseUrl, browser }) => {
     const page = await browser.newPage();
-    const now = Date.now();
     await page.route("**/api/locations**", async (route) => {
       const url = new URL(route.request().url());
       const query = url.searchParams.get("q") ?? "";
@@ -1362,18 +1363,9 @@ test("idle location suggestions do not disturb autocomplete and swap geometry", 
         }),
       });
     });
-    await page.addInitScript((payload) => {
-      window.localStorage.setItem("flydesk-location-usage-v1", JSON.stringify(payload));
-    }, {
-      version: 1,
-      entries: [
-        { role: "origin", code: "LIM", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
-        { role: "origin", code: "TPP", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
-        { role: "origin", code: "CUZ", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
-        { role: "destination", code: "MAD", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
-        { role: "destination", code: "MIA", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
-        { role: "destination", code: "BUE", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
-      ],
+    await routeLocationUsageSuggestions(page, {
+      origin: ["LIM", "TPP", "CUZ"],
+      destination: ["MAD", "MIA", "BUE"],
     });
 
     await openDesktop(page, baseUrl);
@@ -1411,7 +1403,6 @@ test("idle location suggestions do not disturb autocomplete and swap geometry", 
 test("using both idle location suggestions keeps the search block anchored", async () => {
   await withDesktopPage(async ({ baseUrl, browser }) => {
     const page = await browser.newPage();
-    const now = Date.now();
     await page.route("**/api/locations**", async (route) => {
       const url = new URL(route.request().url());
       const query = (url.searchParams.get("q") ?? "LIM").trim().toUpperCase();
@@ -1440,18 +1431,9 @@ test("using both idle location suggestions keeps the search block anchored", asy
         }),
       });
     });
-    await page.addInitScript((payload) => {
-      window.localStorage.setItem("flydesk-location-usage-v1", JSON.stringify(payload));
-    }, {
-      version: 1,
-      entries: [
-        { role: "origin", code: "LIM", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
-        { role: "origin", code: "TPP", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
-        { role: "origin", code: "CUZ", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
-        { role: "destination", code: "MAD", totalUses: 3, lastUsedAtMs: now, recentUsesMs: [now - 3000, now - 2000, now - 1000] },
-        { role: "destination", code: "MIA", totalUses: 2, lastUsedAtMs: now - 10_000, recentUsesMs: [now - 10_000, now - 9000] },
-        { role: "destination", code: "BUE", totalUses: 1, lastUsedAtMs: now - 20_000, recentUsesMs: [now - 20_000] },
-      ],
+    await routeLocationUsageSuggestions(page, {
+      origin: ["LIM", "TPP", "CUZ"],
+      destination: ["MAD", "MIA", "BUE"],
     });
 
     await openDesktop(page, baseUrl);
@@ -1486,7 +1468,7 @@ test("using both idle location suggestions keeps the search block anchored", asy
 
 test("idle validation helpers keep the search block anchored", async () => {
   await withDesktopPage(async ({ page }) => {
-    await page.evaluate(() => window.localStorage.removeItem("flydesk-location-usage-v1"));
+    await routeLocationUsageSuggestions(page, { origin: [], destination: [] });
     await page.reload();
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
 

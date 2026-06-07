@@ -11,7 +11,7 @@ Fly Desk es una app Bun-only preparada para VPS:
 - autenticacion web con cookie httpOnly firmada
 - integracion con Agil reutilizando una sesion real de Chrome cuando el host la tenga disponible
 - integracion con Click and Book Plus usando contexto controlado por entorno y warm-up B2B cuando aplica
-- caches SQLite con `bun:sqlite` para sesiones completadas, matriz, purchase paths y autocomplete
+- caches SQLite con `bun:sqlite` para sesiones completadas, matriz, purchase paths, autocomplete y ranking global de rutas frecuentes
 
 ## Alcance Actual
 
@@ -21,6 +21,7 @@ Fly Desk es una app Bun-only preparada para VPS:
 - busqueda migratoria mensual exhaustiva: consulta cada dia de los meses seleccionados contra Agil y Click and Book Plus, sin filtros de tarifa, y procesa los meses en tandas
 - todas las busquedas esperan a Agil y Click and Book Plus y retienen sus resultados completos; la concurrencia regula solicitudes en lote, no recorta ofertas disponibles
 - autocomplete de origen y destino
+- sugerencias frecuentes de origen/destino rankeadas globalmente desde el VPS
 - filtros visibles de escalas, tiempo maximo de escala, equipaje y aerolineas
 - lista de resultados paginada con advertencias del backend
 - panel lateral de detalle, condiciones, rutas de compra y `quotation`
@@ -93,6 +94,7 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 - `src/search-worker-client.ts` / `src/search-worker.ts`: procesos hijos Bun para aislar busquedas pesadas
 - `src/session-store.ts`: jobs vivos, SQLite local, migracion JSON legada, redirects y purchase paths
 - `src/location-suggestion-cache.ts`: cache SQLite de autocomplete
+- `src/location-usage-store.ts`: ranking global SQLite de origen/destino frecuentes
 
 ## Configuracion
 
@@ -100,7 +102,7 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 
 - Runtime/API: `HOST`, `PORT`, `FLY_DESK_API_TOKEN`, `FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS`, `FLY_DESK_SEARCH_SERVICE_URL`, `FLY_DESK_SEARCH_SERVICE_API_TOKEN`, `FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS`, `FLY_DESK_REDIRECT_HOST`, `FLY_DESK_REDIRECT_PORT`, `FLY_DESK_REDIRECT_CACHE_LOOKUP_TIMEOUT_MS`
 - Auth web: `FLY_DESK_WEB_AUTH`, `FLY_DESK_WEB_PASSWORD_HASH`, `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_TRUST_LOOPBACK_CLIENT`, `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK`
-- Busqueda/cache: `SEARCH_MAX_FUTURE_DAYS`, `SEARCH_REVALIDATION_CACHE_TTL_MS`, `SEARCH_COMPLETED_SESSION_TTL_MS`, `FLY_DESK_SESSION_DB_PATH`, `FLY_DESK_LOCATION_SUGGESTION_DB_PATH`, `FLY_DESK_MIGRATION_CONCURRENT_MONTHS`, `FLY_DESK_SEARCH_CAPACITY_UNITS`, `FLY_DESK_SEARCH_EXACT_COST_UNITS`, `FLY_DESK_SEARCH_RANGE_COST_UNITS`, `FLY_DESK_SEARCH_MATRIX_COST_UNITS`, `FLY_DESK_SEARCH_MAX_QUEUED`, `FLY_DESK_SEARCH_QUEUE_TIMEOUT_MS`
+- Busqueda/cache: `SEARCH_MAX_FUTURE_DAYS`, `SEARCH_REVALIDATION_CACHE_TTL_MS`, `SEARCH_COMPLETED_SESSION_TTL_MS`, `FLY_DESK_SESSION_DB_PATH`, `FLY_DESK_LOCATION_SUGGESTION_DB_PATH`, `FLY_DESK_LOCATION_USAGE_DB_PATH`, `FLY_DESK_MIGRATION_CONCURRENT_MONTHS`, `FLY_DESK_SEARCH_CAPACITY_UNITS`, `FLY_DESK_SEARCH_EXACT_COST_UNITS`, `FLY_DESK_SEARCH_RANGE_COST_UNITS`, `FLY_DESK_SEARCH_MATRIX_COST_UNITS`, `FLY_DESK_SEARCH_MAX_QUEUED`, `FLY_DESK_SEARCH_QUEUE_TIMEOUT_MS`
 - App data: `FLY_DESK_APP_DATA_DIR`, `FLY_DESK_QUOTATION_RATE_CACHE_PATH`
 - Workers/prewarm: `FLY_DESK_SEARCH_WORKER_PROCESSES`, `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS`, `FLY_DESK_PROVIDER_PREWARM`
 - Agil: `AGIL_APIM_SUBSCRIPTION_KEY`, `AGIL_CHROME_USER_DATA_DIR`, `AGIL_CHROME_PROFILE`, `AGIL_BROWSER_URL`, `AGIL_RAW_CHROME_STORAGE_FILE_SCAN`, `AGIL_TEMP_CHROME_STORAGE_FALLBACK`, `AGIL_HTTP_TIMEOUT_MS`

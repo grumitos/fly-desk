@@ -3,6 +3,7 @@ import { LocalAgilProvider } from "./core/agil-provider";
 import { LocalCostamarProvider } from "./core/costamar-provider";
 import { SearchOrchestrator } from "./core/orchestrator";
 import { LocationSuggestionCacheStore } from "./location-suggestion-cache";
+import { LocationUsageStore } from "./location-usage-store";
 import { resolvePersistPath } from "./runtime-paths";
 import { SearchAdmissionController } from "./search-admission";
 import { SearchSessionStore } from "./session-store";
@@ -10,6 +11,7 @@ import { SearchSessionStore } from "./session-store";
 export interface RuntimeServices {
   orchestrator: SearchOrchestrator;
   locationSuggestions: LocationSuggestionCacheStore;
+  locationUsage: LocationUsageStore;
   searchAdmission: SearchAdmissionController;
   sessions: SearchSessionStore;
 }
@@ -39,6 +41,12 @@ export function getRuntime(): RuntimeServices {
       legacyPersistPath: resolvePersistPath(
         "FLY_DESK_LOCATION_SUGGESTION_CACHE_PATH",
         "location-suggestion-cache.json",
+      ),
+    }),
+    locationUsage: new LocationUsageStore({
+      dbPath: resolvePersistPath(
+        "FLY_DESK_LOCATION_USAGE_DB_PATH",
+        "location-usage.sqlite",
       ),
     }),
     searchAdmission: new SearchAdmissionController(),

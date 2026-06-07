@@ -2,26 +2,9 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   getLocationUsageSuggestions,
-  LOCATION_USAGE_RECENT_WINDOW_MS,
   recordLocationUsageFromSearch,
 } from "../frontend/src/lib/location-usage-suggestions";
 import type { SearchRequest } from "../frontend/src/types";
-
-class MemoryStorage {
-  private readonly values = new Map<string, string>();
-
-  getItem(key: string): string | null {
-    return this.values.get(key) ?? null;
-  }
-
-  setItem(key: string, value: string): void {
-    this.values.set(key, value);
-  }
-
-  removeItem(key: string): void {
-    this.values.delete(key);
-  }
-}
 
 function buildSearchRequest(origin: string, destination: string): SearchRequest {
   return {
@@ -36,50 +19,61 @@ function buildSearchRequest(origin: string, destination: string): SearchRequest 
   };
 }
 
-test("location usage suggestions rank origin and destination independently", () => {
-  const storage = new MemoryStorage();
-  const nowMs = Date.UTC(2026, 4, 26, 12);
+test("location usage suggestions are read from the global API", async () => {
+  const calls: Array<{ input: string; init?: RequestInit }> = [];
+  const suggestions = await getLocationUsageSuggestions({
+    fetchImpl: async (input, init) => {
+      calls.push({ input, init });
+      return Response.json({
+        suggestions: {
+          origin: ["LIM", "lim", "12", "CUZ"],
+          destination: ["MAD", "BOG"],
+        },
+      });
+    },
+  });
 
-  recordLocationUsageFromSearch(buildSearchRequest("LIM", "MAD"), { storage, nowMs });
-  recordLocationUsageFromSearch(buildSearchRequest("LIM", "MAD"), { storage, nowMs: nowMs + 1 });
-  recordLocationUsageFromSearch(buildSearchRequest("TPP", "MIA"), { storage, nowMs: nowMs + 2 });
-  recordLocationUsageFromSearch(buildSearchRequest("CUZ", "BIO"), { storage, nowMs: nowMs + 3 });
-  recordLocationUsageFromSearch(buildSearchRequest("AQP", "SCL"), { storage, nowMs: nowMs + 4 });
-
-  const suggestions = getLocationUsageSuggestions({ storage, nowMs: nowMs + 5 });
-
-  assert.deepEqual(suggestions.origin, ["LIM", "AQP", "CUZ"]);
-  assert.deepEqual(suggestions.destination, ["MAD", "SCL", "BIO"]);
+  assert.equal(calls[0]?.input, "/api/location-usage-suggestions");
+  assert.equal(calls[0]?.init?.method, "GET");
+  assert.deepEqual(suggestions, {
+    origin: ["LIM", "CUZ"],
+    destination: ["MAD", "BOG"],
+  });
 });
 
-test("location usage suggestions keep older codes as fallback after the seven-day window", () => {
-  const storage = new MemoryStorage();
-  const nowMs = Date.UTC(2026, 4, 26, 12);
-  const oldMs = nowMs - LOCATION_USAGE_RECENT_WINDOW_MS - 60_000;
+test("recording location usage posts the search route to the global API", async () => {
+  const calls: Array<{ input: string; init?: RequestInit }> = [];
+  const suggestions = await recordLocationUsageFromSearch(buildSearchRequest("lim - Lima, Peru", "mad"), {
+    fetchImpl: async (input, init) => {
+      calls.push({ input, init });
+      return Response.json({
+        suggestions: {
+          origin: ["LIM"],
+          destination: ["MAD"],
+        },
+      });
+    },
+  });
 
-  recordLocationUsageFromSearch(buildSearchRequest("LIM", "MAD"), { storage, nowMs: oldMs });
-
-  assert.deepEqual(getLocationUsageSuggestions({ storage, nowMs }), {
+  assert.equal(calls[0]?.input, "/api/location-usage-suggestions");
+  assert.equal(calls[0]?.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(calls[0]?.init?.body)), {
+    origin: "lim - Lima, Peru",
+    destination: "mad",
+  });
+  assert.deepEqual(suggestions, {
     origin: ["LIM"],
     destination: ["MAD"],
   });
-
-  recordLocationUsageFromSearch(buildSearchRequest("CUZ", "BOG"), { storage, nowMs });
-
-  assert.deepEqual(getLocationUsageSuggestions({ storage, nowMs: nowMs + 1 }), {
-    origin: ["CUZ", "LIM"],
-    destination: ["BOG", "MAD"],
-  });
 });
 
-test("location usage suggestions normalize IATA prefixes and ignore invalid codes", () => {
-  const storage = new MemoryStorage();
-  const nowMs = Date.UTC(2026, 4, 26, 12);
+test("location usage client falls back to empty suggestions on API failure", async () => {
+  const suggestions = await getLocationUsageSuggestions({
+    fetchImpl: async () => new Response("nope", { status: 500 }),
+  });
 
-  recordLocationUsageFromSearch(buildSearchRequest("lim - Lima, Peru", "12"), { storage, nowMs });
-
-  assert.deepEqual(getLocationUsageSuggestions({ storage, nowMs: nowMs + 1 }), {
-    origin: ["LIM"],
+  assert.deepEqual(suggestions, {
+    origin: [],
     destination: [],
   });
 });

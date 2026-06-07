@@ -676,6 +676,67 @@ test("accepts non-loopback location requests with the internal search service to
   }
 });
 
+test("location usage suggestions are recorded and read from the global runtime store", { concurrency: false }, async () => {
+  const previousApiToken = process.env.FLY_DESK_API_TOKEN;
+  process.env.FLY_DESK_API_TOKEN = "test-token";
+  getRuntime().locationUsage.clearForTests();
+
+  try {
+    const first = await routeRequest(new Request("http://fly-desk.local/api/location-usage-suggestions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
+      },
+      body: JSON.stringify({ origin: "LIM", destination: "MAD" }),
+    }));
+    assert.equal(first.status, 200);
+
+    const second = await routeRequest(new Request("http://fly-desk.local/api/location-usage-suggestions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
+      },
+      body: JSON.stringify({ origin: "LIM", destination: "MAD" }),
+    }));
+    assert.equal(second.status, 200);
+
+    const third = await routeRequest(new Request("http://fly-desk.local/api/location-usage-suggestions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
+      },
+      body: JSON.stringify({ origin: "CUZ", destination: "BOG" }),
+    }));
+    assert.equal(third.status, 200);
+
+    const response = await routeRequest(new Request("http://fly-desk.local/api/location-usage-suggestions?limit=3", {
+      method: "GET",
+      headers: {
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
+      },
+    }));
+
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { suggestions?: { origin?: string[]; destination?: string[] } };
+    assert.deepEqual(payload.suggestions?.origin, ["LIM", "CUZ"]);
+    assert.deepEqual(payload.suggestions?.destination, ["MAD", "BOG"]);
+  } finally {
+    getRuntime().locationUsage.clearForTests();
+    if (previousApiToken === undefined) {
+      delete process.env.FLY_DESK_API_TOKEN;
+    } else {
+      process.env.FLY_DESK_API_TOKEN = previousApiToken;
+    }
+  }
+});
+
 test("loopback trust does not authorize forwarded proxy clients unless proxy loopback trust is explicit", { concurrency: false }, async () => {
   const previousTrustLoopback = process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
   const previousProxyTrust = process.env.FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK;
