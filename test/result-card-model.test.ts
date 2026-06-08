@@ -121,8 +121,29 @@ test("card and detail use the same full connecting route and stop label", () => 
 
   assert.equal(card.route, "LIM - PTY - MIA");
   assert.equal(detail.routeLabel, card.route);
-  assert.equal(card.stops.label, "1 escala · Ciudad de Panama");
+  assert.equal(card.stops.label, "1 escala · PTY");
   assert.equal(detail.stopsLabel, card.stops.label);
+});
+
+test("card model resolves square Click and Book airline logo assets by carrier IATA code", () => {
+  const offer = connectingOffer();
+  const card = buildResultCardModel({
+    ...offer,
+    airline: "LATAM Airlines",
+    mainCarrier: "LA",
+    validatingCarrier: "LA",
+    itineraries: offer.itineraries?.map((itinerary) => ({
+      ...itinerary,
+      segments: itinerary.segments.map((segment) => ({
+        ...segment,
+        marketingCarrier: "LA",
+        marketingCarrierName: "LATAM Airlines",
+      })),
+    })),
+  }, 1);
+
+  assert.equal(card.carrier.code, "LA");
+  assert.equal(card.carrier.logo, "/assets/airline-icons/LA.png");
 });
 
 test("detail display derives baggage and preserves provider-local ISO offset times", () => {

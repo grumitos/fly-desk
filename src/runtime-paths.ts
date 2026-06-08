@@ -14,5 +14,10 @@ export function resolvePersistPath(envKey: string, defaultFileName: string): str
     return undefined;
   }
 
+  const appDataDir = process.env.FLY_DESK_APP_DATA_DIR?.trim();
+  if (appDataDir) {
+    return join(appDataDir, defaultFileName);
+  }
+
   return join(process.cwd(), "output", "cache", defaultFileName);
 }

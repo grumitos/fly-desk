@@ -209,10 +209,10 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3" data-testid="detail-panel-body">
         <PanelSectionStack className="shrink-0" data-testid="offer-detail-info">
           <PanelSection title="Precio">
-            <div className="font-mono text-xl font-bold">
+            <div className="fd-offer-detail-price">
               {resultModel?.price.totalLabel ?? "-"}
             </div>
-            <div className="text-xs text-muted-foreground">
+            <div className="fd-offer-detail-meta">
               {resultModel?.price.perPersonLabel ? `${resultModel.price.perPersonLabel} por persona` : "Tarifa por adulto según proveedor"}
               {offer.priceConfidence ? ` · ${priceConfidenceLabel(offer.priceConfidence)}` : ""}
               {resultModel?.costamarRedirect ? ` · ${resultModel.costamarRedirect.label}` : ""}
@@ -220,13 +220,13 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
           </PanelSection>
 
           {resultModel && resultModel.journeys.length > 0 && (
-            <PanelSection title="Horario" contentClassName="space-y-1.5 text-sm">
+            <PanelSection title="Horario" contentClassName="space-y-1.5">
               {resultModel.journeys.map((journey) => (
-                <div key={journey.label} className="grid min-w-0 grid-cols-[3.25rem_minmax(0,1fr)] items-baseline gap-2">
+                <div key={journey.label} className="fd-offer-detail-row">
                   <span className="fd-label">{journey.label}</span>
                   <div className="flex min-w-0 items-baseline justify-between gap-2">
-                    <span className="truncate font-mono font-semibold text-foreground">{offerScheduleLabel(journey)}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">{offerScheduleDateLabel(journey)}</span>
+                    <span className="fd-offer-detail-data fd-offer-detail-data--mono">{offerScheduleLabel(journey)}</span>
+                    <span className="fd-offer-detail-meta shrink-0">{offerScheduleDateLabel(journey)}</span>
                   </div>
                 </div>
               ))}
@@ -238,7 +238,7 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
               {flightCodes.map((code) => (
                 <span
                   key={code}
-                  className="rounded-md border border-border bg-secondary px-2 py-1 font-mono text-xs font-bold text-foreground"
+                  className="fd-offer-flight-code"
                 >
                   {code}
                 </span>
@@ -247,7 +247,7 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
           )}
 
           {infoTiles.length > 0 && (
-            <PanelSection contentClassName="grid grid-cols-2 gap-x-4 gap-y-2.5">
+            <PanelSection contentClassName="fd-offer-info-grid">
               {infoTiles.map((item) => (
                 <InfoTile key={item.label} label={item.label} value={item.value} />
               ))}
@@ -255,9 +255,11 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
           )}
 
           {conditionRows.length > 0 && (
-            <PanelSection title="Condiciones" contentClassName="space-y-1 text-sm text-muted-foreground">
+            <PanelSection title="Condiciones" contentClassName="space-y-1">
               {conditionRows.map((item) => (
-                <p key={item.label}>{item.label}: <span className="font-medium text-foreground">{item.value}</span></p>
+                <p key={item.label} className="fd-offer-condition-row">
+                  {item.label}: <span className="font-semibold text-foreground">{item.value}</span>
+                </p>
               ))}
             </PanelSection>
           )}
@@ -437,9 +439,9 @@ function fallbackCopyText(text: string) {
 
 function InfoTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0">
+    <div className="fd-offer-info-tile">
       <div className="fd-label mb-1">{label}</div>
-      <div className="truncate text-sm font-semibold">{value}</div>
+      <div className="fd-offer-detail-data" title={value}>{value}</div>
     </div>
   )
 }

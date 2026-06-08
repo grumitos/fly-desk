@@ -1,4 +1,5 @@
 import type { CanonicalOffer, Itinerary, RedirectVerification } from "@/types"
+import { airlineLogoAssetPath } from "../../../../src/core/airline-assets"
 import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
 import {
   diffDaysIso,
@@ -38,6 +39,7 @@ export type ResultCardModel = {
     code: string
     name: string
     display: string
+    logo: string
     operatedBy: string
   }
   journeys: ResultJourneySummary[]
@@ -118,6 +120,7 @@ function carrierDisplayParts(offer: CanonicalOffer) {
     code,
     name,
     display: name || "Aerolínea",
+    logo: airlineLogoAssetPath(code),
     operatedBy,
   }
 }

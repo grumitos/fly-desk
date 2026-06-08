@@ -3,6 +3,7 @@
 }
 
 .fd-results-list--fixed-layout {
+  --fd-result-col-airline-logo: var(--fd-result-col-links, minmax(0, 54fr));
   --fd-result-col-carrier: minmax(0, var(--fd-results-col-carrier, 139fr));
   --fd-result-col-dates: minmax(0, var(--fd-results-col-dates, 389fr));
   --fd-result-col-duration: minmax(0, var(--fd-results-col-duration, 121fr));
@@ -88,6 +89,7 @@
   --fd-result-column-gap: clamp(0.48rem, 0.82vw, 0.75rem);
   display: grid;
   grid-template-columns:
+    var(--fd-result-col-airline-logo, var(--fd-result-col-links, 2.5rem))
     var(--fd-result-col-carrier, minmax(7rem, 1.05fr))
     var(--fd-result-col-dates, minmax(8.4rem, 1.15fr))
     var(--fd-result-col-duration, minmax(7.5rem, 1fr))
@@ -386,6 +388,7 @@
   --fd-result-column-gap: clamp(0.48rem, 0.82vw, 0.75rem);
   display: grid;
   grid-template-columns:
+    var(--fd-result-col-airline-logo, 2.5rem)
     var(--fd-result-col-carrier, minmax(7rem, 1.05fr))
     var(--fd-result-col-dates, minmax(8.4rem, 1.15fr))
     var(--fd-result-col-duration, minmax(7.5rem, 1fr))
@@ -434,6 +437,7 @@
 }
 
 .fd-result-card__airline,
+.fd-result-card__airline-logo,
 .fd-result-card__schedules,
 .fd-result-card__schedule,
 .fd-result-card__route,
@@ -453,6 +457,11 @@
 .fd-result-card__journey {
   justify-items: center;
   text-align: center;
+}
+
+.fd-result-card__airline-logo {
+  align-self: center;
+  justify-items: start;
 }
 
 .fd-result-card__schedules {
@@ -480,6 +489,22 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 0.75rem;
+}
+
+.fd-results-layout-column-spacer {
+  display: grid;
+  min-width: 0;
+  place-items: center;
+}
+
+.fd-results-layout-column-spacer::before {
+  display: block;
+  width: 1.72rem;
+  height: 1.72rem;
+  border: 1px dashed color-mix(in srgb, var(--color-border) 82%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-muted-foreground) 10%, transparent);
+  content: "";
 }
 
 .fd-result-card--layout-guide:hover {
@@ -746,6 +771,8 @@
   outline-offset: 2px;
 }
 
+.fd-result-card__airline-logo img,
+.fd-result-card__airline-logo span,
 .fd-result-card__provider img,
 .fd-result-card__provider span {
   display: grid;
@@ -754,6 +781,7 @@
   place-items: center;
 }
 
+.fd-result-card__airline-logo img,
 .fd-result-card__provider img {
   object-fit: contain;
 }
@@ -764,6 +792,7 @@
   height: 1.72rem;
 }
 
+.fd-result-card__airline-logo span,
 .fd-result-card__provider span {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -775,7 +804,7 @@
 }
 
 .fd-result-card--compact {
-  grid-template-columns: minmax(0, 1fr) 2.2rem;
+  grid-template-columns: 2.2rem minmax(0, 1fr) 2.2rem;
   align-items: start;
   min-height: 10.75rem;
   padding: 0.72rem;
@@ -798,12 +827,18 @@
 }
 
 .fd-result-card--compact .fd-result-card__airline {
-  grid-column: 1;
+  grid-column: 2;
   grid-row: 2;
 }
 
+.fd-result-card--compact .fd-result-card__airline-logo {
+  grid-column: 1;
+  grid-row: 2;
+  justify-items: start;
+}
+
 .fd-result-card--compact .fd-result-card__provider {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 2;
   align-self: start;
   justify-items: end;
@@ -848,6 +883,8 @@
   text-align: right;
 }
 
+.fd-result-card--compact .fd-result-card__airline-logo img,
+.fd-result-card--compact .fd-result-card__airline-logo span,
 .fd-result-card--compact .fd-result-card__provider img,
 .fd-result-card--compact .fd-result-card__provider span {
   width: 2rem;
@@ -993,17 +1030,40 @@
 
 @container (max-width: 740px) {
   .fd-result-card {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) 2.7rem;
+    grid-template-columns: 2.35rem repeat(2, minmax(0, 1fr)) 2.7rem;
     min-width: 0;
   }
 
   .fd-result-variant-card {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) 2.7rem;
+    grid-template-columns: 2.35rem repeat(2, minmax(0, 1fr)) 2.7rem;
   }
 
-  .fd-result-card__airline,
+  .fd-result-card__airline-logo {
+    grid-column: 1;
+  }
+
+  .fd-result-card__airline {
+    grid-column: 2;
+  }
+
+  .fd-result-card__schedules {
+    grid-column: 3;
+  }
+
+  .fd-result-card__provider {
+    grid-column: 4;
+  }
+
   .fd-result-card__route {
-    grid-column: span 1;
+    grid-column: 1 / span 2;
+  }
+
+  .fd-result-card__journey {
+    grid-column: 3;
+  }
+
+  .fd-result-card__price {
+    grid-column: 4;
   }
 
   .fd-result-card__price {
@@ -1013,7 +1073,7 @@
 
 @container (max-width: 620px) {
   .fd-result-card {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: 2.2rem minmax(0, 1fr) auto;
     align-items: start;
   }
 
@@ -1022,16 +1082,21 @@
     align-items: start;
   }
 
+  .fd-result-card__airline-logo {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
   .fd-result-card__airline,
   .fd-result-card__schedules,
   .fd-result-card__route,
   .fd-result-card__journey,
   .fd-result-card__price {
-    grid-column: 1;
+    grid-column: 2;
   }
 
   .fd-result-card__provider {
-    grid-column: 2;
+    grid-column: 3;
     grid-row: 1 / span 2;
   }
 
