@@ -2760,6 +2760,123 @@ test("grouped provider offer renders Agilsmart and Click and Book Plus external 
   }, { autoOpen: false });
 });
 
+test("result cards reserve matching airline and provider logo slots", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1180, height: 700 });
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      const offer = buildOffer({
+        id: "airline-logo-slot-offer",
+        airline: "LATAM Airlines",
+        mainCarrier: "LA",
+        validatingCarrier: "LA",
+        providerSource: "costamar",
+        purchasePaths: [
+          {
+            id: "logo-slot-costamar-path",
+            provider: "costamar",
+            type: "search-redirect",
+            label: "Click and Book Plus",
+            url: "https://example.test/costamar",
+            precision: "exact-search",
+            score: 0.8,
+            requiresNewTab: true,
+            commercialMode: "provider",
+            state: "search_redirect",
+          },
+        ],
+        itineraries: [
+          {
+            direction: "outbound",
+            durationMinutes: 480,
+            stops: 0,
+            segments: [
+              {
+                flightNumber: "LA 2478",
+                marketingCarrier: "LA",
+                marketingCarrierName: "LATAM Airlines",
+                origin: "LIM",
+                destination: "MAD",
+                departureAt: "2026-06-08T09:10:00-05:00",
+                arrivalAt: "2026-06-08T17:25:00+02:00",
+              },
+            ],
+          },
+        ],
+      });
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "airline-logo-slot-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers: [offer],
+          allOffers: [offer],
+          searchMeta: {
+            requestedAt: "2026-05-04T15:21:48.419Z",
+            completedAt: "2026-05-04T15:21:48.419Z",
+            providersUsed: ["costamar"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: {
+            exactProvider: "costamar",
+            coverageMode: "core",
+          },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-06-08&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+
+    const card = page.getByTestId("result-card").first();
+    await card.waitFor();
+    const airlineLogo = card.locator(".fd-result-card__airline-logo img");
+    await airlineLogo.waitFor();
+    assert.ok((await airlineLogo.getAttribute("src"))?.endsWith("/assets/airline-icons/LA.png"));
+
+    const geometry = await card.evaluate((element) => {
+      const rectOf = (selector: string) => {
+        const node = element.querySelector<HTMLElement>(selector);
+        if (!node) throw new Error(`Missing ${selector}`);
+        const rect = node.getBoundingClientRect();
+        return {
+          left: Math.round(rect.left),
+          width: Math.round(rect.width),
+        };
+      };
+
+      return {
+        airline: rectOf(".fd-result-card__airline-logo"),
+        provider: rectOf(".fd-result-card__provider"),
+      };
+    });
+    assert.ok(Math.abs(geometry.airline.width - geometry.provider.width) <= 2, JSON.stringify(geometry));
+    assert.ok(geometry.airline.left < geometry.provider.left, JSON.stringify(geometry));
+  }, { autoOpen: false });
+});
+
 test("detail panel mirrors selected result content and omits unknown fare conditions", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 1280, height: 760 });
@@ -2909,6 +3026,27 @@ test("detail panel mirrors selected result content and omits unknown fare condit
     assert.match(selectedText, /Agilsmart/);
     assert.match(selectedText, /USD 812\.35/);
     assert.doesNotMatch(selectedText, /Cambios|Reembolso|Consultar/);
+
+    const routeTypography = await page.getByTestId("offer-detail-info").evaluate((info) => {
+      const routeTile = Array.from(info.querySelectorAll<HTMLElement>(".fd-offer-info-tile"))
+        .find((tile) => tile.textContent?.includes("Ruta"));
+      const value = routeTile?.querySelector<HTMLElement>(".fd-offer-detail-data");
+      if (!value) throw new Error("Missing route detail value");
+      const style = getComputedStyle(value);
+      return {
+        className: value.className,
+        title: value.getAttribute("title"),
+        text: value.textContent?.trim() ?? "",
+        overflow: style.overflow,
+        textOverflow: style.textOverflow,
+        whiteSpace: style.whiteSpace,
+      };
+    });
+    assert.match(routeTypography.className, /fd-offer-detail-data/);
+    assert.equal(routeTypography.title, routeTypography.text);
+    assert.equal(routeTypography.overflow, "hidden", JSON.stringify(routeTypography));
+    assert.equal(routeTypography.textOverflow, "ellipsis", JSON.stringify(routeTypography));
+    assert.equal(routeTypography.whiteSpace, "nowrap", JSON.stringify(routeTypography));
 
     assert.equal(await page.getByTestId("quotation-text").count(), 0);
 

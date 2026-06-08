@@ -2140,6 +2140,21 @@ function buildInitialProviderContext(
   };
 }
 
+function recordLocationUsageForSearchRequest(
+  runtime: ReturnType<typeof getRuntime>,
+  request: SearchRequest,
+): void {
+  const firstLeg = request.legs[0];
+  if (!firstLeg) {
+    return;
+  }
+
+  runtime.locationUsage.recordFromSearch({
+    origin: firstLeg.origin,
+    destination: firstLeg.destination,
+  });
+}
+
 async function handleSearchRequest(
   runtime: ReturnType<typeof getRuntime>,
   request: Request,
@@ -2161,6 +2176,7 @@ async function handleSearchRequest(
   const sortMode = resolveSortMode(payload?.sortMode);
   const normalizedRequest = contract.request;
   const providerIds = contract.providerIds;
+  recordLocationUsageForSearchRequest(runtime, normalizedRequest);
   const diagnosticKind = providerDiagnosticKindForRequest(normalizedRequest);
   const providerDiagnostics = createProviderDiagnosticsForRun(providerIds, diagnosticKind);
   const cachedJob = runtime.sessions.findRecentCompletedSearchJob({
@@ -2419,6 +2435,7 @@ async function handleMatrixRequest(
 
   const normalizedRequest = contract.request;
   const providerIds = contract.providerIds;
+  recordLocationUsageForSearchRequest(runtime, normalizedRequest);
   const providerDiagnostics = createProviderDiagnosticsForRun(providerIds, "matrix");
   const providerStates = new Map<ProviderId, ProviderMatrixState>(
     providerIds.map((providerId) => {

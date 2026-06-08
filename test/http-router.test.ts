@@ -737,6 +737,48 @@ test("location usage suggestions are recorded and read from the global runtime s
   }
 });
 
+test("accepted searches record global location usage from the backend", { concurrency: false }, async () => {
+  const previousApiToken = process.env.FLY_DESK_API_TOKEN;
+  process.env.FLY_DESK_API_TOKEN = "test-token";
+  getRuntime().locationUsage.clearForTests();
+
+  try {
+    const request = buildCostamarRequest();
+    delete request.providerId;
+    request.legs[0] = {
+      ...request.legs[0],
+      departureDate: "2026-07-23",
+      returnDate: "2026-07-30",
+    };
+    const accepted = await routeRequest(new Request("http://fly-desk.local/api/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
+      },
+      body: JSON.stringify({
+        request,
+        sortMode: "cheapest",
+      }),
+    }));
+    assert.equal(accepted.status, 200);
+
+    const suggestions = getRuntime().locationUsage.getSuggestions(3);
+    assert.deepEqual(suggestions, {
+      origin: ["LIM"],
+      destination: ["MAD"],
+    });
+  } finally {
+    getRuntime().locationUsage.clearForTests();
+    if (previousApiToken === undefined) {
+      delete process.env.FLY_DESK_API_TOKEN;
+    } else {
+      process.env.FLY_DESK_API_TOKEN = previousApiToken;
+    }
+  }
+});
+
 test("loopback trust does not authorize forwarded proxy clients unless proxy loopback trust is explicit", { concurrency: false }, async () => {
   const previousTrustLoopback = process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
   const previousProxyTrust = process.env.FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK;

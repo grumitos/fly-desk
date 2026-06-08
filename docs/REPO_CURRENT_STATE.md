@@ -22,7 +22,7 @@ El repo no versiona artefactos generados:
 - busqueda flexible ida/vuelta via `/api/matrix`, normalizada a lista de resultados
 - busqueda migratoria mensual: selector de meses hasta fin del año actual y fan-out solo para meses marcados
 - autocomplete de origen y destino
-- sugerencias frecuentes de origen/destino con ranking global persistido en el VPS
+- sugerencias frecuentes de origen/destino con ranking global persistido en el VPS; el backend registra la ruta cuando acepta una busqueda
 - filtros de escalas, tiempo maximo de escala, equipaje y aerolineas
 - resultados paginados con advertencias del backend
 - panel lateral con precio, equipaje, condiciones, rutas de compra y cotizacion
@@ -118,6 +118,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `src/session-store.ts`: jobs vivos, SQLite local, migracion JSON legada, redirects y purchase paths
 - `src/location-suggestion-cache.ts`: cache SQLite de autocomplete con TTL
 - `src/location-usage-store.ts`: ranking global SQLite de origen/destino frecuentes
+- `src/runtime-paths.ts`: fallback persistente basado en `FLY_DESK_APP_DATA_DIR` para caches SQLite cuando no hay `*_DB_PATH` especifico
 
 ### Operacion
 
@@ -154,7 +155,7 @@ Cobertura importante actual:
 - key requerida o recuperable para Agil live
 - workers Bun habilitados por defecto para aislar busquedas pesadas de proveedor
 - persistencia SQLite y migracion JSON legada de sesiones/autocomplete
-- ranking global de sugerencias frecuentes en servidor, no por `localStorage` de cada navegador
+- ranking global de sugerencias frecuentes en servidor, no por `localStorage` de cada navegador; se registra desde `/api/search` y `/api/matrix`
 - layout persistente de resultados
 - rail de busqueda, filtros, tema, autocomplete, provider links y cotizacion
 

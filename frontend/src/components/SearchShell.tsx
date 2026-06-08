@@ -12,7 +12,6 @@ import { warmLocationSuggestionDetails } from "@/lib/api"
 import {
   emptyLocationUsageSuggestions,
   getLocationUsageSuggestions,
-  recordLocationUsageFromSearch,
   type LocationUsageSuggestions,
 } from "@/lib/location-usage-suggestions"
 import { cn } from "@/lib/utils"
@@ -537,9 +536,6 @@ export function SearchShell({
     }
 
     const nextRequest = buildRequest(resolvedRequest.origin, resolvedRequest.destination)
-    void recordLocationUsageFromSearch(nextRequest)
-      .then(setUsageSuggestions)
-      .catch(() => {})
     resetUsageSuggestionVisibility()
     onSearch(nextRequest)
   }

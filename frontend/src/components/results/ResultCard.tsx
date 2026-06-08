@@ -74,6 +74,8 @@ export function ResultCard({
     >
       {eyebrow && <span className="fd-result-card__eyebrow">{eyebrow}</span>}
 
+      <AirlineLogo carrier={model.carrier} />
+
       <div className="fd-result-card__airline">
         <span className="fd-result-card__airline-name" title={model.carrier.display}>{model.carrier.display}</span>
         {model.carrier.operatedBy && <span className="fd-result-card__meta">{model.carrier.operatedBy}</span>}
@@ -218,6 +220,18 @@ function ProviderBadge({ provider }: { provider: ResultCardModel["provider"] }) 
     <img src={provider.icon} alt="" aria-hidden="true" decoding="async" />
   ) : (
     <span>{provider.shortLabel}</span>
+  )
+}
+
+function AirlineLogo({ carrier }: { carrier: ResultCardModel["carrier"] }) {
+  return (
+    <div className="fd-result-card__airline-logo" title={carrier.display}>
+      {carrier.logo ? (
+        <img src={carrier.logo} alt="" aria-hidden="true" decoding="async" loading="lazy" />
+      ) : (
+        <span>{carrier.code || carrier.display.slice(0, 2).toUpperCase()}</span>
+      )}
+    </div>
   )
 }
 

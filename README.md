@@ -21,7 +21,7 @@ Fly Desk es una app Bun-only preparada para VPS:
 - busqueda migratoria mensual exhaustiva: consulta cada dia de los meses seleccionados contra Agil y Click and Book Plus, sin filtros de tarifa, y procesa los meses en tandas
 - todas las busquedas esperan a Agil y Click and Book Plus y retienen sus resultados completos; la concurrencia regula solicitudes en lote, no recorta ofertas disponibles
 - autocomplete de origen y destino
-- sugerencias frecuentes de origen/destino rankeadas globalmente desde el VPS
+- sugerencias frecuentes de origen/destino rankeadas globalmente desde el VPS y registradas por el backend al aceptar busquedas
 - filtros visibles de escalas, tiempo maximo de escala, equipaje y aerolineas
 - lista de resultados paginada con advertencias del backend
 - panel lateral de detalle, condiciones, rutas de compra y `quotation`
@@ -95,6 +95,7 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 - `src/session-store.ts`: jobs vivos, SQLite local, migracion JSON legada, redirects y purchase paths
 - `src/location-suggestion-cache.ts`: cache SQLite de autocomplete
 - `src/location-usage-store.ts`: ranking global SQLite de origen/destino frecuentes
+- `src/runtime-paths.ts`: resolucion de rutas persistentes; `FLY_DESK_APP_DATA_DIR` mantiene caches fuera del release cuando no hay override especifico
 
 ## Configuracion
 
@@ -126,7 +127,7 @@ Usa el resultado como `FLY_DESK_WEB_PASSWORD_HASH` y no guardes `FLY_DESK_WEB_PA
 Para trabajar en otro equipo, no mandes `.env` en texto plano por chat, correo ni commits. En la practica:
 
 - guarda secretos duraderos en un password manager o secret manager: `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_WEB_PASSWORD_HASH`, `AGIL_APIM_SUBSCRIPTION_KEY`, credenciales `CBPLUS_B2B_*`, TOTP/otpauth y `FLY_DESK_API_TOKEN` si aplica
-- recrea por host las rutas de Chrome y caches (`*_CHROME_USER_DATA_DIR`, `output/cache` o `/var/lib/fly-desk`)
+- recrea por host las rutas de Chrome y caches (`*_CHROME_USER_DATA_DIR` y `FLY_DESK_APP_DATA_DIR`; usar overrides `*_DB_PATH` solo si hace falta separar archivos)
 - evita trasladar tokens de sesion como `CBPLUS_TOKEN`; normalmente conviene regenerarlos con login/warm-up en la maquina nueva
 - si necesitas mover el archivo completo, usa un archivo cifrado para ti mismo (por ejemplo un adjunto seguro del password manager, SOPS/age o GPG), no un `.env` plano
 

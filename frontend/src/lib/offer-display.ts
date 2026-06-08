@@ -231,12 +231,11 @@ function stopsCountFromItinerary(itinerary: Itinerary): number | undefined {
 
 function stopCityLabel(segment: Segment): string {
   const code = routeLocationToken(segment.destination)
-  const fallback = cityNameForIataCode(code)
-  if (fallback) return fallback
+  if (code) return code
 
   const name = normalizeCityLabel(segment.destinationName)
   if (name && name.toUpperCase() !== code) return name
-  return code || "Ciudad por confirmar"
+  return cityNameForIataCode(code) || "Ciudad por confirmar"
 }
 
 function normalizeCityLabel(value: unknown): string {

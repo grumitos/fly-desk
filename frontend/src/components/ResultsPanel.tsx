@@ -668,6 +668,7 @@ function ResultVariantCard({
       }}
     >
       <span className="fd-result-variant-card__empty" aria-hidden="true" />
+      <span className="fd-result-variant-card__empty" aria-hidden="true" />
       <div className="fd-result-variant-card__schedules" data-trip-type={model.tripType}>
         {scheduleCells.map((cell) => (
           <VariantSchedule key={cell.journey.label} summary={cell.journey} visible={cell.changed} />
@@ -871,6 +872,7 @@ function ResultsLayoutGuideCard({
           </Button>
         </div>
       </div>
+      <div className="fd-results-layout-column-spacer" aria-hidden="true" />
       {RESULTS_COLUMN_DEFINITIONS.map((column, index) => {
         const nextColumn = RESULTS_COLUMN_DEFINITIONS[index + 1]
 
@@ -1132,10 +1134,12 @@ function measureCurrentResultCardColumns(list: HTMLDivElement | null): ResultsCo
 
   if (trackWidths.length < RESULTS_COLUMN_DEFINITIONS.length) return null
 
+  const editableTrackWidths = trackWidths.slice(trackWidths.length - RESULTS_COLUMN_DEFINITIONS.length)
+
   return Object.fromEntries(
     RESULTS_COLUMN_DEFINITIONS.map((definition, index) => [
       definition.key,
-      Math.round(trackWidths[index]),
+      Math.round(editableTrackWidths[index]),
     ]),
   ) as ResultsColumnLayout
 }
