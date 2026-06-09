@@ -304,6 +304,80 @@ test("migration month with Agil offers suppresses child no-flight warnings", asy
   assert.equal(result.migrationMonths?.[0]?.warnings?.some((warning) => /Agil.*vuelos/i.test(warning)), false);
 });
 
+test("migration month keeps the last available result when polling fails after progress", async () => {
+  const request = {
+    ...buildMonthViewRequest(),
+    migrationMonths: ["2026-07"],
+  };
+  const offer = {
+    id: "month-offer-1",
+    providerSource: "agil-local",
+    airline: "LATAM",
+    origin: "LIM",
+    destination: "MIA",
+    departureDate: "2026-07-14",
+    duration: "11h",
+    stops: 0,
+    price: {
+      total: {
+        amount: 512,
+        currencyCode: "USD",
+      },
+    },
+  };
+  let callCount = 0;
+
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    callCount += 1;
+
+    if (callCount === 1) {
+      assert.equal(String(input), "/api/search");
+      return Promise.resolve(new Response(JSON.stringify({
+        searchJobId: "month-progress-job",
+        searchComplete: false,
+        searchStatus: "running",
+        revision: 1,
+        sortMode: "cheapest",
+        request: JSON.parse(String(init?.body)).request,
+        offers: [offer],
+        allOffers: [offer],
+        searchMeta: {
+          requestedAt: "2026-06-01T00:00:00.000Z",
+          completedAt: "",
+          providersUsed: ["agil-local"],
+          warnings: [],
+          partial: true,
+          searchState: "search_partial",
+        },
+        providerMeta: {
+          exactProvider: "agil-local",
+          coverageMode: "core",
+        },
+        warnings: [],
+        diagnosticLog: [],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    }
+
+    if (callCount === 2) {
+      return Promise.reject(new Error("Temporary outage while polling the month scan."));
+    }
+
+    throw new Error(`Unexpected fetch call ${callCount}`);
+  }) as typeof fetch;
+
+  const result = await startMigrationSearch(request, "cheapest");
+
+  assert.equal(callCount, 2);
+  assert.equal(result.offers.length, 1);
+  assert.equal(result.offers[0]?.sourceOfferId, "month-offer-1");
+  assert.equal(result.migrationMonths?.[0]?.offer?.sourceOfferId, "month-offer-1");
+  assert.equal(result.migrationMonths?.[0]?.status, "error");
+  assert.match(result.warnings.join("\n"), /No se pudo conectar con Fly Desk|Temporary outage while polling/);
+});
+
 test("frontend diagnostic logs redact raw provider secrets before UI exposure", async () => {
   globalThis.fetch = ((input: RequestInfo | URL) => {
     assert.equal(String(input), "/api/search");
