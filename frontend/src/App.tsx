@@ -168,11 +168,11 @@ export default function App() {
       setSortMode(nextSort)
       setWorkspaceReady(false)
       setSearchDraft(merged)
+      setLastRequest(merged)
+      writeSharedSearchToUrl(merged, nextSort)
       void runSearch(merged, nextSort).then((started) => {
         if (started) {
-          setLastRequest(merged)
           setWorkspaceReady(true)
-          writeSharedSearchToUrl(merged, nextSort)
         }
       })
     },

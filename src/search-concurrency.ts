@@ -38,7 +38,7 @@ export const SHARED_SEARCH_CONCURRENCY = Object.freeze({
   },
   rangeMinimum: 2,
   get rangeSearchDefault() {
-    return atLeast(readIntegerEnv("SEARCH_RANGE_SEARCH_CONCURRENCY"), 4);
+    return atLeast(readIntegerEnv("SEARCH_RANGE_SEARCH_CONCURRENCY"), 2);
   },
 });
 

@@ -185,4 +185,4 @@ No se mantienen planes de migracion ni auditorias historicas como documentacion 
 - la persistencia es SQLite local; no hay store externo para multi-instancia
 - Chrome CDP persistente ya queda cubierto por `fly-desk-chrome.service`; Agil aun necesita una sesion real valida en ese perfil del VPS
 - repetir QA externo antes de cambiar `FLY_DESK_SEARCH_WORKER_PROCESSES` o warm-up de providers en VPS
-- la busqueda migratoria consulta cada dia de cada mes seleccionado contra Agil y Click and Book Plus sin filtros de tarifa; procesa meses en tandas configurables con `FLY_DESK_MIGRATION_CONCURRENT_MONTHS` (default `4`), lo cual debe vigilarse si sube el volumen de uso
+- la busqueda migratoria consulta cada dia de cada mes seleccionado contra Agil y Click and Book Plus sin filtros de tarifa; procesa meses en tandas configurables con `FLY_DESK_MIGRATION_CONCURRENT_MONTHS` (default `2`), lo cual debe vigilarse si sube el volumen de uso
