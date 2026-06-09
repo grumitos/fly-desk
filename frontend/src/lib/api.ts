@@ -1478,11 +1478,27 @@ export async function startMigrationSearch(
           throw error
         }
 
+        const previous = monthResults[index]
+        const preservedOffer = previous.offer ?? cheapestOffer(previous.offers)
+        const preservedOffers = previous.offers.length > 0
+          ? previous.offers
+          : preservedOffer
+            ? [preservedOffer]
+            : []
+
         monthResults[index] = {
           range,
-          offers: [],
-          warnings: [`${range.label}: ${userMessageFromError(error)}`],
-          diagnosticLog: diagnosticLogFromError(error).map((line) => `${range.label}: ${line}`),
+          job: previous.job,
+          offer: preservedOffer,
+          offers: preservedOffers,
+          warnings: uniqueStrings([
+            ...previous.warnings,
+            `${range.label}: ${userMessageFromError(error)}`,
+          ]),
+          diagnosticLog: toDiagnosticLines([
+            ...previous.diagnosticLog,
+            ...diagnosticLogFromError(error).map((line) => `${range.label}: ${line}`),
+          ]),
           complete: true,
           status: "error",
         }
