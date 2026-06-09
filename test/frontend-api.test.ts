@@ -223,14 +223,21 @@ test("migration month fan-out runs generous bounded batches", async () => {
   }) as typeof fetch;
 
   const pending = startMigrationSearch(request, "cheapest");
+  await waitFor(() => releases.length === 2);
+  assert.equal(peakActiveRequests, 2);
+
+  releases.slice(0, 2).forEach((release) => release());
   await waitFor(() => releases.length === 4);
-  assert.equal(peakActiveRequests, 4);
+  assert.equal(peakActiveRequests, 2);
 
-  releases.slice(0, 4).forEach((release) => release());
+  releases.slice(2, 4).forEach((release) => release());
+  await waitFor(() => releases.length === 6);
+  assert.equal(peakActiveRequests, 2);
+
+  releases.slice(4, 6).forEach((release) => release());
   await waitFor(() => releases.length === 7);
-  assert.equal(peakActiveRequests, 4);
 
-  releases.slice(4).forEach((release) => release());
+  releases.slice(6).forEach((release) => release());
   await pending;
 });
 

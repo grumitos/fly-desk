@@ -1354,6 +1354,22 @@ function MigrationEmptyMonthCard({ month }: { month: DisplayMigrationMonth }) {
   const loading = month.status === "loading"
   const error = month.status === "error"
   const cancelled = month.status === "cancelled"
+  const title = loading
+    ? "Buscando..."
+    : error
+      ? "Error al consultar"
+      : cancelled
+        ? "No consultado"
+        : month.filtered ? "Sin tarifa con filtros" : "Sin tarifa disponible"
+  const body = loading
+    ? "Consultando el precio más bajo disponible para este mes."
+    : error
+      ? month.warnings?.[0] ?? "La consulta de este mes no pudo completarse. Vuelve a intentarlo."
+      : month.filtered
+        ? "Ajusta directo, equipaje o aerolínea para volver a incluir este mes."
+        : cancelled
+          ? month.warnings?.[0] ?? "Búsqueda detenida antes de consultar este mes."
+          : month.warnings?.[0] ?? "No hubo una oferta disponible para este mes."
 
   return (
     <article
@@ -1362,26 +1378,12 @@ function MigrationEmptyMonthCard({ month }: { month: DisplayMigrationMonth }) {
     >
       <span className="fd-result-card__eyebrow">{month.label}</span>
       <div>
-        <p className="fd-migration-month-card__title">
-          {loading
-            ? "Buscando..."
-            : cancelled
-              ? "No consultado"
-              : month.filtered ? "Sin tarifa con filtros" : "Sin tarifa disponible"}
-        </p>
+        <p className="fd-migration-month-card__title">{title}</p>
         <p className="fd-migration-month-card__meta">
           {formatDateRange(month.departureStart, month.departureEnd)}
         </p>
       </div>
-      <p className="fd-migration-month-card__body">
-        {loading
-          ? "Consultando el precio más bajo disponible para este mes."
-          : month.filtered
-            ? "Ajusta directo, equipaje o aerolínea para volver a incluir este mes."
-            : cancelled
-              ? month.warnings?.[0] ?? "Búsqueda detenida antes de consultar este mes."
-              : month.warnings?.[0] ?? "No hubo una oferta disponible para este mes."}
-      </p>
+      <p className="fd-migration-month-card__body">{body}</p>
     </article>
   )
 }

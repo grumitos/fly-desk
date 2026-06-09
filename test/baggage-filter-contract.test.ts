@@ -1,7 +1,7 @@
 import { test } from "bun:test"
 import assert from "node:assert/strict"
 import { fromBackendRequest, toBackendPayload } from "../frontend/src/lib/api"
-import { readSharedSearchFromUrl } from "../frontend/src/lib/search-share"
+import { readSharedSearchFromUrl, writeSharedSearchToUrl } from "../frontend/src/lib/search-share"
 import type { SearchRequest } from "../frontend/src/types"
 
 function request(overrides: Partial<SearchRequest> = {}): SearchRequest {
@@ -61,4 +61,53 @@ test("readSharedSearchFromUrl treats legacy baggage query param as checked bagga
 
   assert.equal(state?.request.carryOnRequired, false)
   assert.equal(state?.request.checkedBaggageRequired, true)
+})
+
+test("writeSharedSearchToUrl emits migration mode and month range params", () => {
+  const globalWindow = globalThis as typeof globalThis & {
+    window?: {
+      history: {
+        replaceState: (_state: unknown, _title: string, url: string) => void
+      }
+      location: {
+        href: string
+      }
+    }
+  }
+  const originalWindow = globalWindow.window
+  const writtenUrls: string[] = []
+  globalWindow.window = {
+    location: {
+      href: "http://localhost/",
+    },
+    history: {
+      replaceState: (_state: unknown, _title: string, url: string) => {
+        writtenUrls.push(url)
+      },
+    },
+  }
+
+  try {
+    const wrote = writeSharedSearchToUrl(request({
+      tripType: "one-way",
+      searchMode: "month-view",
+      departureDate: undefined,
+      returnDate: undefined,
+      departureStart: "2026-06-01",
+      departureEnd: "2026-06-30",
+      migrationMonths: ["2026-06", "2026-07"],
+    }), "cheapest")
+
+    assert.equal(wrote, true)
+    assert.equal(writtenUrls.length, 1)
+
+    const updatedUrl = new URL(`http://localhost${writtenUrls[0] ?? ""}`)
+    assert.equal(updatedUrl.searchParams.get("mode"), "migration")
+    assert.equal(updatedUrl.searchParams.get("trip"), "one-way")
+    assert.equal(updatedUrl.searchParams.get("departureStart"), "2026-06-01")
+    assert.equal(updatedUrl.searchParams.get("departureEnd"), "2026-06-30")
+    assert.equal(updatedUrl.searchParams.get("months"), "2026-06,2026-07")
+  } finally {
+    globalWindow.window = originalWindow
+  }
 })

@@ -70,10 +70,10 @@ test("SEARCH_TODAY_OVERRIDE is honored only in test mode", () => {
   );
 });
 
-test("migration monthly concurrency defaults to four and stays bounded", () => {
+test("migration monthly concurrency defaults to two and stays bounded", () => {
   assert.equal(
     withEnv({ FLY_DESK_MIGRATION_CONCURRENT_MONTHS: undefined }, resolveMigrationConcurrentMonths),
-    4,
+    2,
   );
   assert.equal(
     withEnv({ FLY_DESK_MIGRATION_CONCURRENT_MONTHS: "8" }, resolveMigrationConcurrentMonths),

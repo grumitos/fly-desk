@@ -41,7 +41,7 @@ test("shared caps keep provider overrides from exceeding the default concurrency
   }, () => {
     assert.equal(resolveProviderSubrequestConcurrency("AGIL_GDS_SEARCH_CONCURRENCY", 4), 4);
     assert.equal(resolveMatrixCellConcurrency("AGIL_MATRIX_CELL_CONCURRENCY"), 6);
-    assert.equal(resolveRangeSearchConcurrency("AGIL_RANGE_SEARCH_CONCURRENCY"), 4);
+    assert.equal(resolveRangeSearchConcurrency("AGIL_RANGE_SEARCH_CONCURRENCY"), 2);
   });
 });
 
