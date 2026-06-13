@@ -1,4 +1,5 @@
 import { useId, type CSSProperties } from "react"
+import { Slider } from "@/components/ui/slider"
 
 export type FilterSliderStep<T extends string> = {
   value: T
@@ -42,19 +43,18 @@ export function FilterSlider<T extends string>({
         <label htmlFor={controlId} className={showLabel ? "fd-filter-slider__label" : "fd-sr-only"}>{label}</label>
         <span className="fd-filter-slider__value">{currentStep?.valueLabel}</span>
       </div>
-      <input
+      <Slider
         id={controlId}
-        type="range"
         min={0}
         max={Math.max(0, steps.length - 1)}
         step={1}
-        value={currentIndex}
+        value={[currentIndex]}
         disabled={disabled}
         aria-label={controlLabel}
         aria-valuetext={currentStep?.valueLabel}
         className="fd-filter-slider__range"
-        onChange={(event) => {
-          const next = steps[Number(event.currentTarget.value)]
+        onValueChange={([nextIndex]) => {
+          const next = steps[nextIndex ?? currentIndex]
           if (next) onChange(next.value)
         }}
       />

@@ -218,6 +218,15 @@ function readSqliteCounts(dbPath: string): { searchJobs: number; matrixJobs: num
   }
 }
 
+function readSqliteSavedAt(dbPath: string): string | undefined {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    return getSql<{ value: string }>(db, "SELECT value FROM cache_meta WHERE key = 'savedAt'")?.value;
+  } finally {
+    db.close();
+  }
+}
+
 test("cancelRunningJobs preserves partial cacheable results during shutdown", () => {
   const store = new SearchSessionStore();
   const message = "Search stopped because Fly Desk was restarted.";
@@ -775,6 +784,40 @@ test("search session store persists completed search jobs without truncating off
   assert.equal(restored?.allOffers.length, 390);
   assert.equal(restored?.allOffers[389]?.id, "offer-390");
   secondStore.close();
+
+  rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test("search session store avoids rewriting an unchanged sqlite snapshot after load", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-no-rewrite-"));
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const request = buildRequest();
+  const meta = buildSearchMeta();
+  const providerMeta = buildProviderMeta();
+
+  const firstStore = new SearchSessionStore({ dbPath });
+  const offer = buildOffer("offer-stable", "https://stable.example/search");
+  firstStore.createSearchJob({
+    request,
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: meta,
+    providerMeta,
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  firstStore.close();
+
+  const firstSavedAt = readSqliteSavedAt(dbPath);
+  assert.ok(firstSavedAt);
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const secondStore = new SearchSessionStore({ dbPath });
+  secondStore.close();
+
+  assert.equal(readSqliteSavedAt(dbPath), firstSavedAt);
 
   rmSync(tempRoot, { recursive: true, force: true });
 });

@@ -86,13 +86,7 @@ export function formatOfferStopsLabel(offer: CanonicalOffer): string {
   const stops = stopsCountForOffer(offer)
   if (stops <= 0) return "Directo"
 
-  const label = stops === 1 ? "1 escala" : `${stops} escalas`
-  const layovers = layoverItemsForOffer(offer)
-  if (layovers.length === 0) return label
-
-  const primaryCity = layovers[0]?.city || "Ciudad por confirmar"
-  const citySummary = layovers.length > 1 ? `${primaryCity} +${layovers.length - 1}` : primaryCity
-  return `${label} · ${citySummary}`
+  return stops === 1 ? "1 escala" : `${stops} escalas`
 }
 
 export function formatOfferBaggageLabel(baggage: unknown): string | undefined {

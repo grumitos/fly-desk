@@ -26,6 +26,7 @@ export function useSearch() {
   const abortRef = useRef(false)
   const abortControllerRef = useRef<AbortController | null>(null)
   const activeJobsRef = useRef<Map<string, ActiveJob>>(new Map())
+  const latestResultsRef = useRef<SearchJobResponse | null>(null)
   const runIdRef = useRef(0)
 
   const clearPoll = useCallback(() => {
@@ -77,7 +78,11 @@ export function useSearch() {
     if (showFeedback) {
       setError(null)
       setStatusMessage(CANCELLED_SEARCH_MESSAGE)
-      setResults((current) => finalizeCancelledResults(current))
+      setResults((current) => {
+        const next = finalizeCancelledResults(current ?? latestResultsRef.current)
+        latestResultsRef.current = next
+        return next
+      })
       appendDiagnosticLog("Búsqueda detenida por el usuario")
     }
 
@@ -123,6 +128,7 @@ export function useSearch() {
         appendDiagnosticLog(`Reconsulta ${request.origin} -> ${request.destination} (${sortMode})`)
       }
       if (!options.keepPreviousResults) {
+        latestResultsRef.current = null
         setResults(null)
       }
 
@@ -138,10 +144,12 @@ export function useSearch() {
             ...requestOptions,
             onMigrationProgress: (progressJob) => {
               if (!isCurrentRun()) return
+              latestResultsRef.current = progressJob
               setResults(progressJob)
             },
           })
           if (!isCurrentRun()) return false
+          latestResultsRef.current = job
           setResults(job)
           appendDiagnosticLog(`Migratorio finalizado: ${job.offers.length} oferta${job.offers.length === 1 ? "" : "s"}`, job.diagnosticLog)
           setLoading(false)
@@ -155,6 +163,7 @@ export function useSearch() {
           ? await startMatrix(request, sortMode, requestOptions)
           : await startSearch(request, sortMode, requestOptions)
         if (!isCurrentRun()) return false
+        latestResultsRef.current = job
         setResults(job)
         appendDiagnosticLog(`Respuesta inicial ${job.searchJobId}: ${job.searchStatus}`, job.diagnosticLog)
 
@@ -168,9 +177,11 @@ export function useSearch() {
                 : await pollSearch(job.searchJobId, lastRevision, { signal: abortController.signal })
               if (!isCurrentRun()) return
               if (!updated.unchanged) {
-                lastRevision = updated.revision
-                setResults(updated)
-                appendDiagnosticLog(`Actualización ${updated.searchJobId}: revisión ${updated.revision}`, updated.diagnosticLog)
+                const hydratedUpdate = hydrateSearchJobUpdate(updated, latestResultsRef.current)
+                lastRevision = hydratedUpdate.revision
+                latestResultsRef.current = hydratedUpdate
+                setResults(hydratedUpdate)
+                appendDiagnosticLog(`Actualización ${hydratedUpdate.searchJobId}: revisión ${hydratedUpdate.revision}`, hydratedUpdate.diagnosticLog)
               }
               if (!updated.searchComplete) {
                 pollRef.current = window.setTimeout(doPoll, POLL_INTERVAL_MS)
@@ -218,6 +229,7 @@ export function useSearch() {
 
   const reset = useCallback(() => {
     cancelActiveJobs({ showFeedback: false, setIdle: true })
+    latestResultsRef.current = null
     setResults(null)
     setError(null)
     setStatusMessage(null)
@@ -225,6 +237,31 @@ export function useSearch() {
   }, [cancelActiveJobs])
 
   return { results, loading, error, statusMessage, diagnosticLog, runSearch, cancel, reset }
+}
+
+function hydrateSearchJobUpdate(
+  next: SearchJobResponse,
+  previous: SearchJobResponse | null,
+): SearchJobResponse {
+  if (!previous) return next
+
+  return {
+    ...next,
+    request: isPlaceholderRequest(next.request) ? previous.request : next.request,
+    searchMeta: next.searchMeta ?? previous.searchMeta,
+    providerMeta: next.providerMeta ?? previous.providerMeta,
+  }
+}
+
+function isPlaceholderRequest(request: SearchRequest) {
+  return request.origin === ""
+    && request.destination === ""
+    && request.searchMode === "exact"
+    && request.tripType === "round-trip"
+    && !request.departureDate
+    && !request.departureStart
+    && !request.returnDate
+    && !request.returnStart
 }
 
 function finalizeCancelledResults(current: SearchJobResponse | null): SearchJobResponse | null {

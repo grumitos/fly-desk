@@ -30,7 +30,7 @@ export function PanelSection({
       {...props}
     >
       {(title || action) && (
-        <div className="mb-1.5 flex min-h-5 min-w-0 items-center justify-between gap-2">
+        <div className="mb-1 flex min-h-5 min-w-0 items-center justify-between gap-2">
           {title ? <h3 className="fd-label min-w-0 truncate">{title}</h3> : <span aria-hidden="true" />}
           {action}
         </div>

@@ -42,6 +42,7 @@ test("normalizeAirlineDisplayName groups LATAM, LAN, and TAM variants under LATA
 });
 
 test("normalizeAirlineDisplayName centralizes known carrier code display names", () => {
+  assert.equal(normalizeAirlineDisplayName("AM"), "Aeroméxico");
   assert.equal(normalizeAirlineDisplayName("IB"), "Iberia");
   assert.equal(normalizeAirlineDisplayName("JA"), "JetSmart");
   assert.equal(normalizeAirlineDisplayName("JZ"), "JetSmart");
@@ -49,6 +50,8 @@ test("normalizeAirlineDisplayName centralizes known carrier code display names",
 });
 
 test("normalizeAirlineDisplayName centralizes known carrier name variants", () => {
+  assert.equal(normalizeAirlineDisplayName("Aeromexico"), "Aeroméxico");
+  assert.equal(normalizeAirlineDisplayName("Aeroméxico"), "Aeroméxico");
   assert.equal(normalizeAirlineDisplayName("Plus Ultra Lineas Aereas"), "Plus Ultra");
   assert.equal(normalizeAirlineDisplayName("Delta Air Lines"), "Delta");
 });
@@ -83,4 +86,6 @@ test("airlineNameMatchKey treats styled airline variants as the same carrier", (
   assert.equal(airlineNameMatchKey("LATAM Airlines Brasil"), airlineNameMatchKey("LAN Peru"));
   assert.equal(airlineNameMatchKey("TAM Airlines"), airlineNameMatchKey("LA"));
   assert.equal(airlineNameMatchKey("JetSmart Airlines SpA"), airlineNameMatchKey("JZ"));
+  assert.equal(airlineNameMatchKey("Aeromexico"), airlineNameMatchKey("Aeroméxico"));
+  assert.equal(airlineNameMatchKey("Aeromexico"), airlineNameMatchKey("AM"));
 });
