@@ -4,6 +4,7 @@ const AIRLINE_CODE_DISPLAY_NAMES: Record<string, string> = {
   "4C": "LATAM",
   "4M": "LATAM",
   AC: "Air Canada",
+  AM: "Aeroméxico",
   AR: "Aerolíneas Argentinas",
   AV: "Avianca",
   H2: "Sky",
@@ -21,6 +22,7 @@ const AIRLINE_CODE_DISPLAY_NAMES: Record<string, string> = {
   XL: "LATAM",
 };
 const AIRLINE_NAME_VARIANT_DISPLAY_NAMES: Record<string, string> = {
+  AEROMEXICO: "Aeroméxico",
   DELTAAIRLINES: "Delta",
   PLUSULTRALINEASAEREAS: "Plus Ultra",
 };

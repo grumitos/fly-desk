@@ -2932,8 +2932,8 @@ test("detail panel mirrors selected result content and omits unknown fare condit
           validatingCarrier: "LA",
           providerSource: "agil-local",
           comparisonMetrics: {
-            totalDurationMinutes: 495,
-            totalStops: 0,
+            totalDurationMinutes: 890,
+            totalStops: 1,
           },
           baggage: {
             carryOnIncluded: true,
@@ -2948,17 +2948,29 @@ test("detail panel mirrors selected result content and omits unknown fare condit
           itineraries: [
             {
               direction: "outbound",
-              durationMinutes: 495,
-              stops: 0,
+              durationMinutes: 890,
+              stops: 1,
+              layoverMinutes: [155],
               segments: [
                 {
                   flightNumber: "LA 2478",
                   marketingCarrier: "LA",
                   marketingCarrierName: "LATAM Airlines",
                   origin: "LIM",
-                  destination: "MAD",
+                  destination: "CDG",
+                  destinationName: "París (Todos los aeropuertos)",
                   departureAt: "2026-05-28T09:10:00-05:00",
                   arrivalAt: "2026-05-28T17:25:00+02:00",
+                },
+                {
+                  flightNumber: "LA 806",
+                  marketingCarrier: "LA",
+                  marketingCarrierName: "LATAM Airlines",
+                  origin: "CDG",
+                  originName: "París (Todos los aeropuertos)",
+                  destination: "MAD",
+                  departureAt: "2026-05-28T20:00:00+02:00",
+                  arrivalAt: "2026-05-28T23:00:00+02:00",
                 },
               ],
             },
@@ -3017,11 +3029,14 @@ test("detail panel mirrors selected result content and omits unknown fare condit
     assert.match(selectedText, /LATAM/);
     assert.match(selectedText, /Horario/);
     assert.match(selectedText, /09:10/);
-    assert.match(selectedText, /17:25/);
-    assert.match(selectedText, /LIM - MAD/);
-    assert.equal(selectedText.match(/LIM - MAD/g)?.length, 1);
-    assert.match(selectedText, /8h 15m/);
-    assert.match(selectedText, /Directo/);
+    assert.match(selectedText, /23:00/);
+    assert.match(selectedText, /LIM - CDG - MAD/);
+    assert.equal(selectedText.match(/LIM - CDG - MAD/g)?.length, 1);
+    assert.equal(selectedText.match(/\bCDG\b/g)?.length, 1);
+    assert.match(selectedText, /14h 50m/);
+    assert.match(selectedText, /1 escala/);
+    assert.doesNotMatch(selectedText, /1 escala · CDG/);
+    assert.doesNotMatch(selectedText, /París \(Todos los aeropuertos\)/i);
     assert.match(selectedText, /Cabina/);
     assert.match(selectedText, /Agilsmart/);
     assert.match(selectedText, /USD 812\.35/);
@@ -3361,13 +3376,9 @@ test("empty local filter results do not blame a provider that already reported n
     await page.getByTestId("result-card").first().waitFor();
     await page.getByText("Agilsmart sin vuelos").waitFor();
 
-    await page.getByLabel("Equipaje incluido").evaluate((input) => {
-      const range = input as HTMLInputElement;
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      setter?.call(range, "2");
-      range.dispatchEvent(new Event("input", { bubbles: true }));
-      range.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    const baggageSliderControl = page.getByRole("slider", { name: "Equipaje incluido" });
+    await baggageSliderControl.focus();
+    await baggageSliderControl.press("End");
     await page.getByText("No hay búsquedas que coincidan").waitFor();
 
     assert.equal(await page.getByTestId("result-card").count(), 0);
@@ -3937,13 +3948,9 @@ test("migratory search renders monthly progress and refilters each month locally
     assert.equal(await page.getByTestId("migration-month-card").count(), 8);
     assert.equal(await page.getByRole("button", { name: "Detener búsqueda" }).count(), 1);
 
-    await page.getByLabel("Escalas").evaluate((input) => {
-      const range = input as HTMLInputElement;
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      setter?.call(range, "0");
-      range.dispatchEvent(new Event("input", { bubbles: true }));
-      range.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    const stopsSliderControl = page.getByRole("slider", { name: "Escalas" });
+    await stopsSliderControl.focus();
+    await stopsSliderControl.press("Home");
     await migrationGrid.getByText("USD 150.00").waitFor();
     assert.equal(await migrationGrid.getByText("USD 90.00").count(), 0);
 
@@ -4067,25 +4074,22 @@ test("baggage filter uses one compact slider and maps checked baggage to carry-o
     });
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
 
-    const baggageInput = page.getByLabel("Equipaje incluido");
-    assert.equal(await baggageInput.getAttribute("type"), "range");
+    const baggageSliderControl = page.getByRole("slider", { name: "Equipaje incluido" });
+    assert.equal(await baggageSliderControl.getAttribute("aria-valuemin"), "0");
+    assert.equal(await baggageSliderControl.getAttribute("aria-valuemax"), "2");
+    assert.equal(await baggageSliderControl.getAttribute("aria-valuenow"), "0");
     assert.equal(await page.getByRole("switch", { name: "Equipaje de mano" }).count(), 0);
     assert.equal(await page.getByRole("switch", { name: "Maleta de bodega" }).count(), 0);
 
-    const baggageSlider = page.locator(".fd-filter-slider").filter({ has: baggageInput });
+    const baggageSlider = page.locator(".fd-filter-slider").filter({ has: baggageSliderControl });
     assert.equal(await baggageSlider.locator(".fd-filter-slider__value").innerText(), "Cualquiera");
     const visibleSliderLabels = await page.locator(".fd-filter-slider__label").evaluateAll((labels) => (
       labels.map((label) => label.textContent?.trim()).filter(Boolean)
     ));
     assert.deepEqual(visibleSliderLabels, ["Tipo", "Tiempo máximo", "Incluido"]);
 
-    await baggageInput.evaluate((input) => {
-      const range = input as HTMLInputElement;
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      setter?.call(range, "2");
-      range.dispatchEvent(new Event("input", { bubbles: true }));
-      range.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await baggageSliderControl.focus();
+    await baggageSliderControl.press("End");
     assert.equal(await baggageSlider.locator(".fd-filter-slider__value").innerText(), "Bodega");
 
     await Promise.all([

@@ -114,7 +114,7 @@ test("search normalization keeps the final outbound destination and segment-deri
   }
 });
 
-test("card and detail use the same full connecting route and stop label", () => {
+test("detail keeps the full route separate from the stop conditions summary", () => {
   const offer = connectingOffer();
   const card = buildResultCardModel(offer, 1);
   const detail = buildOfferDetailSummary(offer);
@@ -122,7 +122,7 @@ test("card and detail use the same full connecting route and stop label", () => 
   assert.equal(card.route, "LIM - PTY - MIA");
   assert.equal(detail.routeLabel, card.route);
   assert.equal(card.stops.label, "1 escala · PTY");
-  assert.equal(detail.stopsLabel, card.stops.label);
+  assert.equal(detail.stopsLabel, "1 escala");
 });
 
 test("card model resolves square Click and Book airline logo assets by carrier IATA code", () => {

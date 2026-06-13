@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { buildResultCardModel, type ResultCardModel, type ResultJourneySummary } from "@/components/results/result-card-model"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { AppIcon } from "@/components/ui/app-icon"
 import { PanelSection, PanelSectionStack } from "@/components/ui/panel-section"
@@ -266,17 +267,17 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
 
           {offer.warnings && offer.warnings.length > 0 && (
             <PanelSection className="fd-popover-enter">
-              <div className="fd-alert fd-alert-warning text-xs font-medium">
-                <div className="mb-1 flex items-center gap-2 font-bold">
+              <Alert className="fd-alert fd-alert-warning text-xs font-medium">
+                <AlertTitle className="mb-1 flex items-center gap-2 font-bold">
                   <AppIcon name="alert" />
                   Advertencias
-                </div>
-                <div className="space-y-1">
+                </AlertTitle>
+                <AlertDescription className="space-y-1 text-current">
                   {offer.warnings.map((warning, index) => (
                     <p key={`${warning}-${index}`}>{warning}</p>
                   ))}
-                </div>
-              </div>
+                </AlertDescription>
+              </Alert>
             </PanelSection>
           )}
         </PanelSectionStack>
@@ -385,7 +386,7 @@ function offerConditionRows(
   const refundLabel = booleanLabel(offer.fareMeta?.refundable)
 
   return [
-    { label: "Escalas", value: model.stops.label || detail.stopsLabel },
+    { label: "Escalas", value: detail.stopsLabel || model.stops.label },
     model.stops.layoverLabel ? { label: "Escala máxima", value: model.stops.layoverLabel } : null,
     detail.baggageLabel && detail.baggageLabel !== "Consultar"
       ? { label: "Equipaje", value: detail.baggageLabel }

@@ -4,12 +4,14 @@ import { ResultsPanel } from "@/components/ResultsPanel"
 import { SearchShell } from "@/components/SearchShell"
 import { TopBar } from "@/components/TopBar"
 import { AppIcon } from "@/components/ui/app-icon"
+import { Alert } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { FilterSlider, type FilterSliderStep } from "@/components/ui/filter-slider"
 import { PanelSection, PanelSectionStack } from "@/components/ui/panel-section"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
 import { useSearch } from "@/hooks/useSearch"
 import { resolveAirlineDisplayName } from "@/lib/airline-names"
 import {
@@ -383,8 +385,7 @@ export default function App() {
             />
 
             {(clipboardError || error || statusMessage) && (
-              <div
-                role="alert"
+              <Alert
                 className={`fd-popover-enter fd-alert fd-search-alert mt-2 flex items-start gap-2 font-medium ${
                   clipboardError || error ? "fd-alert-error" : "fd-alert-warning"
                 }`}
@@ -397,7 +398,7 @@ export default function App() {
                     </p>
                   ))}
                 </div>
-              </div>
+              </Alert>
             )}
           </div>
 
@@ -463,12 +464,12 @@ function PlainLogView({ lines }: { lines: string[] }) {
 
   return (
     <main className="min-h-0 flex-1 bg-background">
-      <textarea
+      <Textarea
         aria-label="Registro de búsqueda"
         readOnly
         spellCheck={false}
         value={text}
-        className="fd-scrollbar h-full w-full resize-none border-0 bg-background p-4 font-mono text-xs leading-5 text-foreground outline-none"
+        className="fd-scrollbar h-full min-h-0 w-full resize-none rounded-none border-0 bg-background p-4 font-mono text-xs leading-5 text-foreground shadow-none outline-none focus-visible:ring-0"
       />
     </main>
   )

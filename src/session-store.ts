@@ -200,6 +200,10 @@ function persistenceComparisonPayload(payload: PersistedSearchSessionStore): Per
   };
 }
 
+function persistenceFingerprint(payload: PersistedSearchSessionStore): string {
+  return JSON.stringify(persistenceComparisonPayload(payload));
+}
+
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -1246,8 +1250,7 @@ export class SearchSessionStore {
     const persistStart = startPerfTimer();
     try {
       const payload = this.buildPersistencePayload();
-      const serialized = JSON.stringify(payload);
-      const serializedForComparison = JSON.stringify(persistenceComparisonPayload(payload));
+      const serializedForComparison = persistenceFingerprint(payload);
       if (serializedForComparison === this.lastPersistedPayload) {
         return true;
       }
@@ -1338,7 +1341,7 @@ export class SearchSessionStore {
         searchJobs: payload.searchJobs.length,
         matrixJobs: payload.matrixJobs.length,
         purchasePaths: payload.purchasePaths.length,
-        bytes: Buffer.byteLength(serialized, "utf8"),
+        bytes: safeJsonSize(payload),
       });
       return true;
     } catch {
@@ -1407,7 +1410,15 @@ export class SearchSessionStore {
     }
 
     this.lastPersistedPayload = "";
-    this.purgeExpired();
+    const purgeSummary = this.purgeExpired();
+    if (
+      purgeSummary.searchJobs === 0
+      && purgeSummary.matrixJobs === 0
+      && purgeSummary.sessions === 0
+      && purgeSummary.purchasePaths === 0
+    ) {
+      this.lastPersistedPayload = persistenceFingerprint(this.buildPersistencePayload());
+    }
   }
 
   private migrateLegacyJsonIfNeeded(): boolean {
