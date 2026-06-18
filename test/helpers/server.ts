@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createServer as createTcpServer } from "node:net";
 import { resolve } from "node:path";
+import { applyEnvironment } from "./environment.ts";
 
 const CHROMIUM_UNSAFE_PORTS = new Set([
   1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79,
@@ -11,7 +12,7 @@ const CHROMIUM_UNSAFE_PORTS = new Set([
   6669, 6697, 10080,
 ]);
 
-type ServerHandle = {
+export type ServerHandle = {
   baseUrl: string;
   stop: () => Promise<void>;
 };
@@ -161,42 +162,44 @@ async function listenOnTestServer(): Promise<ServerHandle> {
     : listenOnExternalBunServer();
 }
 
-export async function withServer<T>(run: (baseUrl: string) => Promise<T>): Promise<T> {
-  const previousSearchTodayOverride = process.env.SEARCH_TODAY_OVERRIDE;
-  const previousBackgroundSearchJobs = process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS;
-  const previousTrustLoopbackClient = process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
-  process.env.SEARCH_TODAY_OVERRIDE = previousSearchTodayOverride ?? "2026-03-31";
-  process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS = "1";
-  if (previousTrustLoopbackClient === undefined) {
-    process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = "1";
-  }
+export async function startTestServer(): Promise<ServerHandle> {
+  const restoreEnvironment = applyEnvironment({
+    SEARCH_TODAY_OVERRIDE: process.env.SEARCH_TODAY_OVERRIDE ?? "2026-03-31",
+    FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS: "1",
+    FLY_DESK_TRUST_LOOPBACK_CLIENT: process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT ?? "1",
+  });
 
-  let server: ServerHandle | undefined;
-
+  let server: ServerHandle;
   try {
     server = await listenOnTestServer();
+  } catch (error) {
+    restoreEnvironment();
+    throw error;
+  }
+
+  let stopped = false;
+  return {
+    baseUrl: server.baseUrl,
+    stop: async () => {
+      if (stopped) {
+        return;
+      }
+
+      stopped = true;
+      try {
+        await server.stop();
+      } finally {
+        restoreEnvironment();
+      }
+    },
+  };
+}
+
+export async function withServer<T>(run: (baseUrl: string) => Promise<T>): Promise<T> {
+  const server = await startTestServer();
+  try {
     return await run(server.baseUrl);
   } finally {
-    try {
-      await server?.stop();
-    } finally {
-      if (previousSearchTodayOverride === undefined) {
-        delete process.env.SEARCH_TODAY_OVERRIDE;
-      } else {
-        process.env.SEARCH_TODAY_OVERRIDE = previousSearchTodayOverride;
-      }
-
-      if (previousBackgroundSearchJobs === undefined) {
-        delete process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS;
-      } else {
-        process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS = previousBackgroundSearchJobs;
-      }
-
-      if (previousTrustLoopbackClient === undefined) {
-        delete process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
-      } else {
-        process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = previousTrustLoopbackClient;
-      }
-    }
+    await server.stop();
   }
 }
