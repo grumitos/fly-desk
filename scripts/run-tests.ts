@@ -1,31 +1,29 @@
-import { readdirSync } from "node:fs";
-import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import {
+  collectCoreTestFiles,
+  findUnclassifiedTestFiles,
+  type CoreTestSuite,
+} from "./test-files.ts";
 
-function collectTestFiles(dir: string): string[] {
-  const entries = readdirSync(dir, { withFileTypes: true });
-  const files: string[] = [];
+const requestedSuite = process.argv[2] ?? "core";
+const coverage = requestedSuite === "coverage";
+const suite = (coverage ? "core" : requestedSuite) as CoreTestSuite;
 
-  for (const entry of entries) {
-    const path = join(dir, entry.name);
-
-    if (entry.isDirectory()) {
-      files.push(...collectTestFiles(path));
-      continue;
-    }
-
-    if (entry.isFile() && entry.name.endsWith(".test.ts")) {
-      files.push(`./${path.replaceAll("\\", "/")}`);
-    }
-  }
-
-  return files;
+if (!["core", "integration", "unit"].includes(suite)) {
+  console.error(`Unknown test suite: ${requestedSuite}`);
+  process.exit(1);
 }
 
-const testFiles = collectTestFiles("test").sort();
+const unclassifiedFiles = findUnclassifiedTestFiles("test");
+if (unclassifiedFiles.length > 0) {
+  console.error(`Unclassified test files:\n${unclassifiedFiles.join("\n")}`);
+  process.exit(1);
+}
+
+const testFiles = collectCoreTestFiles("test", suite);
 
 if (testFiles.length === 0) {
-  console.error("No test files found under test/**/*.test.ts.");
+  console.error(`No ${suite} test files found under test/.`);
   process.exit(1);
 }
 
@@ -39,7 +37,13 @@ for (const [key, value] of Object.entries(process.env)) {
 
 env.NODE_ENV = "test";
 
-const result = spawnSync("bun", ["test", "--timeout=600000", ...testFiles], {
+const args = ["test", "--timeout=600000"];
+if (coverage) {
+  args.push("--coverage");
+}
+args.push(...testFiles);
+
+const result = spawnSync("bun", args, {
   env,
   stdio: "inherit",
 });
