@@ -94,7 +94,6 @@ async function main() {
     await server.stop();
     await tempCleanupPromise?.catch(() => undefined);
     activeRuntime?.locationSuggestions.purgeExpired(Number.POSITIVE_INFINITY);
-    activeRuntime?.sessions.purgeExpired(Number.POSITIVE_INFINITY);
     activeRuntime?.sessions.close();
     await cleanupPrefixedTempArtifacts(undefined, { olderThanMs: 0 }).catch(() => undefined);
   };

@@ -2219,25 +2219,26 @@ async function handleSearchRequest(
       providerStates,
     );
 
-    const updated = runtime.sessions.updateSearchJob(job.id, (current) => ({
-      ...current,
-      ...(current.status === "cancelled"
-        ? {}
-        : {
-            offers: materialized.offers,
-            allOffers: materialized.allOffers ?? materialized.offers,
-            searchMeta: currentSearchMeta({
-              ...materialized.searchMeta,
-              requestedAt: current.searchMeta.requestedAt,
-              partial: materialized.searchMeta.partial,
-              searchState: materialized.searchMeta.searchState,
-            }),
-            providerMeta: materialized.providerMeta,
-            warnings: materialized.warnings,
-            status,
-            error: undefined,
-          }),
-    }));
+    const updated = runtime.sessions.updateSearchJob(job.id, (current) => {
+      if (current.status === "cancelled") {
+        return current;
+      }
+      return {
+        ...current,
+        offers: materialized.offers,
+        allOffers: materialized.allOffers ?? materialized.offers,
+        searchMeta: currentSearchMeta({
+          ...materialized.searchMeta,
+          requestedAt: current.searchMeta.requestedAt,
+          partial: materialized.searchMeta.partial,
+          searchState: materialized.searchMeta.searchState,
+        }),
+        providerMeta: materialized.providerMeta,
+        warnings: materialized.warnings,
+        status,
+        error: undefined,
+      };
+    });
     if (updated?.offers.length) {
       scheduleQuotationWarmupForSearchJob(runtime, job.id);
     }
@@ -2482,26 +2483,27 @@ async function handleMatrixRequest(
       providerStates,
     );
 
-    runtime.sessions.updateMatrixJob(job.id, (current) => ({
-      ...current,
-      ...(current.status === "cancelled"
-        ? {}
-        : {
-            cells: materialized.cells,
-            axes: materialized.axes,
-            confidenceSummary: materialized.confidenceSummary,
-            recommendations: materialized.recommendations,
-            searchMeta: currentSearchMeta({
-              ...materialized.searchMeta,
-              requestedAt: current.searchMeta.requestedAt,
-              searchSessionId: current.id,
-            }),
-            providerMeta: materialized.providerMeta,
-            warnings: materialized.warnings,
-            status,
-            error: undefined,
-          }),
-    }));
+    runtime.sessions.updateMatrixJob(job.id, (current) => {
+      if (current.status === "cancelled") {
+        return current;
+      }
+      return {
+        ...current,
+        cells: materialized.cells,
+        axes: materialized.axes,
+        confidenceSummary: materialized.confidenceSummary,
+        recommendations: materialized.recommendations,
+        searchMeta: currentSearchMeta({
+          ...materialized.searchMeta,
+          requestedAt: current.searchMeta.requestedAt,
+          searchSessionId: current.id,
+        }),
+        providerMeta: materialized.providerMeta,
+        warnings: materialized.warnings,
+        status,
+        error: undefined,
+      };
+    });
 
     return materialized;
   };
