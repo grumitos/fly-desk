@@ -1,7 +1,15 @@
 import { test } from "bun:test"
 import assert from "node:assert/strict"
 import { fromBackendRequest, toBackendPayload } from "../frontend/src/lib/api"
-import { readSharedSearchFromUrl, writeSharedSearchToUrl } from "../frontend/src/lib/search-share"
+import {
+  clearSharedSearchFromUrl,
+  decodeSharedSearchPayload,
+  readSharedSearchFromText,
+  readSharedSearchFromUrl,
+  serializeSharedSearchPayload,
+  writeSharedSearchToClipboard,
+  writeSharedSearchToUrl,
+} from "../frontend/src/lib/search-share"
 import type { SearchRequest } from "../frontend/src/types"
 
 function request(overrides: Partial<SearchRequest> = {}): SearchRequest {
@@ -109,5 +117,70 @@ test("writeSharedSearchToUrl emits migration mode and month range params", () =>
     assert.equal(updatedUrl.searchParams.get("months"), "2026-06,2026-07")
   } finally {
     globalWindow.window = originalWindow
+  }
+})
+
+test("shared search payload round-trips through text and base64url formats", () => {
+  const searchRequest = request()
+  const serialized = serializeSharedSearchPayload(searchRequest, "fastest")
+  const encoded = Buffer.from(serialized).toString("base64url")
+  const fromText = readSharedSearchFromText(serialized)
+
+  assert.equal(fromText?.request.origin, searchRequest.origin)
+  assert.equal(fromText?.request.destination, searchRequest.destination)
+  assert.equal(fromText?.request.departureDate, searchRequest.departureDate)
+  assert.equal(fromText?.request.returnDate, searchRequest.returnDate)
+  assert.equal(fromText?.sortMode, "fastest")
+  assert.deepEqual(decodeSharedSearchPayload(encoded), fromText)
+  assert.equal(decodeSharedSearchPayload("not-json"), null)
+})
+
+test("shared search URL cleanup removes only Fly Desk search parameters", () => {
+  const globalWindow = globalThis as typeof globalThis & {
+    window?: {
+      history: {
+        replaceState: (_state: unknown, _title: string, url: string) => void
+      }
+      location: {
+        href: string
+      }
+    }
+  }
+  const originalWindow = globalWindow.window
+  let replacedUrl = ""
+  globalWindow.window = {
+    location: {
+      href: "https://fly-desk.test/?origin=LIM&destination=MIA&keep=1#results",
+    },
+    history: {
+      replaceState: (_state: unknown, _title: string, url: string) => {
+        replacedUrl = url
+      },
+    },
+  }
+
+  try {
+    assert.equal(clearSharedSearchFromUrl(), true)
+    assert.equal(replacedUrl, "/?keep=1#results")
+  } finally {
+    globalWindow.window = originalWindow
+  }
+})
+
+test("clipboard sharing reports unavailable browser support", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator")
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: {},
+  })
+
+  try {
+    assert.equal(await writeSharedSearchToClipboard(request(), "cheapest"), false)
+  } finally {
+    if (descriptor) {
+      Object.defineProperty(globalThis, "navigator", descriptor)
+    } else {
+      delete (globalThis as { navigator?: unknown }).navigator
+    }
   }
 })

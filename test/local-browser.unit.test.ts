@@ -16,3 +16,16 @@ test("Windows default browser launch keeps the target URL as a single argument",
     ],
   });
 });
+
+test("default browser launch uses the platform-native opener", () => {
+  const targetUrl = "https://fly-desk.test/search";
+
+  assert.deepEqual(buildDefaultBrowserLaunchInvocationForTests(targetUrl, "darwin"), {
+    command: "open",
+    args: [targetUrl],
+  });
+  assert.deepEqual(buildDefaultBrowserLaunchInvocationForTests(targetUrl, "linux"), {
+    command: "xdg-open",
+    args: [targetUrl],
+  });
+});
