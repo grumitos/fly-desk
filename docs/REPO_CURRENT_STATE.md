@@ -141,8 +141,15 @@ Comandos principales:
 - `bun run lint`
 - `bun run build`
 - `bun run test`
+- `bun run test:unit`
+- `bun run test:integration`
+- `bun run test:ui`
+- `bun run test:coverage`
 
-La suite vive en `test/**/*.test.ts`; los helpers compartidos estan en `test/helpers/`. No se mantiene una lista manual de archivos de test para evitar que este documento quede desfasado cuando la suite crece.
+Las suites Bun usan sufijos `.unit.test.ts` y `.integration.test.ts`; la UI modular vive en
+`test/ui/` y se registra desde `test/ui.playwright.ts`. Los helpers compartidos estan en
+`test/helpers/`. La suite UI reutiliza servidor y Chromium, pero crea un contexto aislado por caso.
+Ver `docs/TESTING.md`.
 
 Cobertura importante actual:
 

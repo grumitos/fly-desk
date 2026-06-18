@@ -142,6 +142,11 @@ Para trabajar en otro equipo, no mandes `.env` en texto plano por chat, correo n
 - `bun run typecheck`
 - `bun run lint`
 - `bun run test`
+- `bun run test:unit`
+- `bun run test:integration`
+- `bun run test:core`
+- `bun run test:ui`
+- `bun run test:coverage`
 - `bun run demo`
 
 ## Verificacion
@@ -165,7 +170,10 @@ rg -n "\]\([^)]*\.md\)" README.md docs frontend/README.md
 
 ## CI
 
-GitHub Actions ejecuta `.github/workflows/ci.yml` en PRs, pushes a `main` y manualmente. El gate usa Bun con lockfile congelado, instala Node 26 para la suite UI `node --test`, instala Chromium para Playwright y corre `typecheck`, `lint` si esta configurado, `build` para assets de test, `test` y un `build` final.
+GitHub Actions ejecuta `.github/workflows/ci.yml` en PRs, pushes a `main` y manualmente. El gate
+separa core y UI en jobs paralelos: core ejecuta typecheck, lint, build y pruebas Bun; UI instala
+Chromium, compila el frontend y ejecuta los flujos de navegador. Los fallos UI publican capturas
+como artefactos.
 
 ## Documentacion Vigente
 
@@ -173,6 +181,7 @@ GitHub Actions ejecuta `.github/workflows/ci.yml` en PRs, pushes a `main` y manu
 - [`docs/DEPLOY_APP.md`](./docs/DEPLOY_APP.md): deploy y rollback de app Fly Desk
 - [`docs/AGIL_SESSION_RECOVERY.md`](./docs/AGIL_SESSION_RECOVERY.md): recuperacion de sesion Agil en Chrome/CDP del VPS
 - [`docs/FRONTEND_IDENTITY.md`](./docs/FRONTEND_IDENTITY.md): identidad visual y reglas UI React
+- [`docs/TESTING.md`](./docs/TESTING.md): clasificacion, ejecucion y criterios de relevancia de pruebas
 - [`frontend/README.md`](./frontend/README.md): notas breves del workspace frontend
 
 ## Deploy
