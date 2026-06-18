@@ -227,6 +227,50 @@ function readSqliteSavedAt(dbPath: string): string | undefined {
   }
 }
 
+function installSearchJobWriteAudit(dbPath: string): void {
+  const db = new Database(dbPath);
+  try {
+    db.exec(`
+      CREATE TABLE search_job_write_audit (
+        operation TEXT NOT NULL,
+        id TEXT NOT NULL
+      );
+
+      CREATE TRIGGER audit_search_job_insert
+      AFTER INSERT ON search_jobs
+      BEGIN
+        INSERT INTO search_job_write_audit (operation, id) VALUES ('insert', NEW.id);
+      END;
+
+      CREATE TRIGGER audit_search_job_update
+      AFTER UPDATE ON search_jobs
+      BEGIN
+        INSERT INTO search_job_write_audit (operation, id) VALUES ('update', NEW.id);
+      END;
+
+      CREATE TRIGGER audit_search_job_delete
+      AFTER DELETE ON search_jobs
+      BEGIN
+        INSERT INTO search_job_write_audit (operation, id) VALUES ('delete', OLD.id);
+      END;
+    `);
+  } finally {
+    db.close();
+  }
+}
+
+function readSearchJobWriteAudit(dbPath: string): Array<{ operation: string; id: string }> {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    return allSql<{ operation: string; id: string }>(
+      db,
+      "SELECT operation, id FROM search_job_write_audit ORDER BY rowid",
+    );
+  } finally {
+    db.close();
+  }
+}
+
 test("cancelRunningJobs preserves partial cacheable results during shutdown", () => {
   const store = new SearchSessionStore();
   const message = "Search stopped because Fly Desk was restarted.";
@@ -298,6 +342,41 @@ test("cancelRunningJobs preserves partial cacheable results during shutdown", ()
   assert.equal(cachedMatrix?.searchMeta.searchState, "search_partial");
   assert.equal(cachedMatrix?.error, undefined);
   assert.ok(cachedMatrix?.warnings.includes(message));
+});
+
+test("partial cacheable results survive a shutdown persistence cycle", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-shutdown-"));
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const firstStore = new SearchSessionStore({ dbPath });
+  const partialOffer = buildOffer("shutdown-partial", "https://provider.example/shutdown-partial");
+  const search = firstStore.createSearchJob({
+    request: buildRequest(),
+    offers: [partialOffer],
+    allOffers: [partialOffer],
+    searchMeta: {
+      ...buildSearchMeta(),
+      partial: true,
+      searchState: "search_partial",
+    },
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+
+  firstStore.cancelRunningJobs("Search stopped because Fly Desk was restarted.", {
+    cachePartial: true,
+  });
+  firstStore.close();
+
+  const secondStore = new SearchSessionStore({ dbPath });
+  const restored = secondStore.getSearchJob(search.id);
+  assert.equal(restored?.status, "completed");
+  assert.equal(restored?.searchMeta.searchState, "search_partial");
+  assert.equal(restored?.offers.length, 1);
+  secondStore.close();
+
+  rmSync(tempRoot, { recursive: true, force: true });
 });
 
 test("search job refresh preserves stable purchase path ids when the underlying path did not change", () => {
@@ -818,6 +897,51 @@ test("search session store avoids rewriting an unchanged sqlite snapshot after l
   secondStore.close();
 
   assert.equal(readSqliteSavedAt(dbPath), firstSavedAt);
+
+  rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test("search session store only writes the search job that changed", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-incremental-"));
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const firstStore = new SearchSessionStore({ dbPath });
+  const changedJob = firstStore.createSearchJob({
+    request: buildRequest(),
+    offers: [buildOffer("offer-changed", "https://changed.example/search")],
+    allOffers: [buildOffer("offer-changed", "https://changed.example/search")],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  const untouchedJob = firstStore.createSearchJob({
+    request: buildRequest(),
+    offers: [buildOffer("offer-untouched", "https://untouched.example/search")],
+    allOffers: [buildOffer("offer-untouched", "https://untouched.example/search")],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  firstStore.close();
+  installSearchJobWriteAudit(dbPath);
+
+  const secondStore = new SearchSessionStore({ dbPath });
+  secondStore.updateSearchJob(changedJob.id, (current) => ({
+    ...current,
+    warnings: ["updated"],
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  secondStore.close();
+
+  assert.deepEqual(readSearchJobWriteAudit(dbPath), [
+    { operation: "update", id: changedJob.id },
+  ]);
+  const verificationStore = new SearchSessionStore({ dbPath });
+  assert.ok(verificationStore.getSearchJob(untouchedJob.id));
+  verificationStore.close();
 
   rmSync(tempRoot, { recursive: true, force: true });
 });
