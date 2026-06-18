@@ -81,7 +81,11 @@ export async function startDesktopTestHarness(): Promise<void> {
   const server = await startTestServer();
 
   try {
-    const browser = await chromium.launch({ headless: true });
+    const browserChannel = process.env.FLY_DESK_TEST_BROWSER_CHANNEL?.trim() || undefined;
+    const browser = await chromium.launch({
+      channel: browserChannel,
+      headless: true,
+    });
     desktopHarness = {
       baseUrl: server.baseUrl,
       browser,

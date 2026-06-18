@@ -32,8 +32,8 @@ test("search controls preserve accessible behavior through shadcn primitives", a
     const exactMode = page.getByRole("button", { name: "Exacto" });
     const flexibleMode = page.getByRole("button", { name: "Flexible" });
     await exactMode.focus();
-    await page.keyboard.press("ArrowRight");
-    assert.equal(await flexibleMode.evaluate((button) => document.activeElement === button), true);
+    await exactMode.press("ArrowRight");
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === "Flexible");
     await page.keyboard.press("Space");
     await waitForPressed(flexibleMode);
 

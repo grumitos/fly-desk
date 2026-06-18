@@ -66,9 +66,6 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Install Playwright Chromium
-        run: bun run playwright install --with-deps chromium
-
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
@@ -91,6 +88,8 @@ jobs:
 
       - name: Test
         run: bun run test
+        env:
+          FLY_DESK_TEST_BROWSER_CHANNEL: chrome
 
       - name: Resolve revision
         id: revision
