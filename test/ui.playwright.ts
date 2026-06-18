@@ -1,8 +1,16 @@
-import { test } from "node:test";
+import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import type { Locator, Page, Route } from "playwright";
-import { openDesktop, withDesktopPage } from "./helpers/ui.ts";
+import {
+  openDesktop,
+  startDesktopTestHarness,
+  stopDesktopTestHarness,
+  withDesktopPage,
+} from "./helpers/ui.ts";
 import { buildOffer } from "./helpers/ui-fixtures.ts";
+
+before(startDesktopTestHarness);
+after(stopDesktopTestHarness);
 
 async function waitForPressed(button: Locator): Promise<void> {
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -1224,8 +1232,7 @@ test("one-way flexible search keeps stay controls visible but disabled", async (
 });
 
 test("autocomplete uses combobox, listbox, and option semantics", async () => {
-  await withDesktopPage(async ({ baseUrl, browser }) => {
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
     await page.route("**/api/locations**", async (route) => {
       await route.fulfill({
         status: 200,
@@ -1269,8 +1276,7 @@ test("autocomplete uses combobox, listbox, and option semantics", async () => {
 });
 
 test("autocomplete resolves an exact location match and closes suggestions", async () => {
-  await withDesktopPage(async ({ baseUrl, browser }) => {
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
     await page.route("**/api/locations**", async (route) => {
       await route.fulfill({
         status: 200,
@@ -1310,8 +1316,7 @@ test("autocomplete resolves an exact location match and closes suggestions", asy
 });
 
 test("frequent location suggestions resolve labels and collapse their own row", async () => {
-  await withDesktopPage(async ({ baseUrl, browser }) => {
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
     let locationRequestCount = 0;
     await page.route("**/api/locations**", async (route) => {
       locationRequestCount += 1;
@@ -1384,8 +1389,7 @@ test("frequent location suggestions resolve labels and collapse their own row", 
 });
 
 test("idle location suggestions do not disturb autocomplete and swap geometry", async () => {
-  await withDesktopPage(async ({ baseUrl, browser }) => {
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
     await page.route("**/api/locations**", async (route) => {
       const url = new URL(route.request().url());
       const query = url.searchParams.get("q") ?? "";
@@ -1439,8 +1443,7 @@ test("idle location suggestions do not disturb autocomplete and swap geometry", 
 });
 
 test("using both idle location suggestions keeps the search block anchored", async () => {
-  await withDesktopPage(async ({ baseUrl, browser }) => {
-    const page = await browser.newPage();
+  await withDesktopPage(async ({ baseUrl, page }) => {
     await page.route("**/api/locations**", async (route) => {
       const url = new URL(route.request().url());
       const query = (url.searchParams.get("q") ?? "LIM").trim().toUpperCase();
@@ -1697,9 +1700,8 @@ test("one-way flexible search sends the selected stay-range payload without hidd
 });
 
 test("search URL stores the payload and reopens it without auto-searching", async () => {
-  await withDesktopPage(async ({ baseUrl, browser }) => {
+  await withDesktopPage(async ({ baseUrl, context, page }) => {
     const payloads: Record<string, unknown>[] = [];
-    const page = await browser.newPage();
     const routeLocations = async (route: Route) => {
       await route.fulfill({
         status: 200,
@@ -1779,7 +1781,7 @@ test("search URL stores the payload and reopens it without auto-searching", asyn
     assert.equal(sharedUrl.searchParams.get("children"), "0");
     assert.equal(sharedUrl.searchParams.get("infants"), "0");
 
-    const replayPage = await browser.newPage();
+    const replayPage = await context.newPage();
     await replayPage.route("**/api/locations**", routeLocations);
     await replayPage.route("**/api/search", routeSearch);
 
