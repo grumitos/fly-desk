@@ -13,8 +13,13 @@ import {
   resetCostamarSessionCacheForTests,
   resolveLatestCostamarProviderContext,
 } from "../src/provider-context";
-import { startProviderPrewarmLoop } from "../src/provider-prewarm";
+import {
+  providerPrewarmEnabled,
+  providerPrewarmIntervalMs,
+  startProviderPrewarmLoop,
+} from "../src/provider-prewarm";
 import type { SearchRequest } from "../src/core/types";
+import { applyEnvironment } from "./helpers/environment.ts";
 
 function buildJwt(payload: Record<string, unknown>): string {
   const encode = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value))
@@ -155,15 +160,27 @@ test("Costamar prewarm refreshes an expired token through the B2B warm-up genera
 });
 
 test("provider prewarm loop can be disabled", () => {
-  const previous = process.env.FLY_DESK_PROVIDER_PREWARM;
-  process.env.FLY_DESK_PROVIDER_PREWARM = "0";
+  const restoreEnvironment = applyEnvironment({
+    FLY_DESK_PROVIDER_PREWARM: "0",
+  });
   try {
     assert.equal(startProviderPrewarmLoop(), undefined);
   } finally {
-    if (previous === undefined) {
-      delete process.env.FLY_DESK_PROVIDER_PREWARM;
-    } else {
-      process.env.FLY_DESK_PROVIDER_PREWARM = previous;
-    }
+    restoreEnvironment();
+  }
+});
+
+test("provider prewarm settings use safe defaults and reject invalid intervals", () => {
+  const restoreEnvironment = applyEnvironment({
+    FLY_DESK_PROVIDER_PREWARM: undefined,
+    FLY_DESK_PROVIDER_PREWARM_INTERVAL_MS: "not-a-number",
+  });
+  try {
+    assert.equal(providerPrewarmEnabled(), true);
+    assert.equal(providerPrewarmIntervalMs(), 10 * 60 * 1000);
+    process.env.FLY_DESK_PROVIDER_PREWARM_INTERVAL_MS = "1234.9";
+    assert.equal(providerPrewarmIntervalMs(), 1234);
+  } finally {
+    restoreEnvironment();
   }
 });
