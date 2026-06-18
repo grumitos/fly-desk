@@ -55,7 +55,7 @@ jobs:
   ui:
     name: Browser UI gate
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -74,14 +74,13 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Install Playwright Chromium
-        run: bun run playwright install --with-deps chromium
-
       - name: Build
         run: bun run build
 
       - name: UI tests
         run: bun run test:ui
+        env:
+          FLY_DESK_TEST_BROWSER_CHANNEL: chrome
 
       - name: Upload UI failure artifacts
         if: failure()

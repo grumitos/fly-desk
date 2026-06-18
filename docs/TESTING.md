@@ -20,6 +20,10 @@ Los archivos Bun deben terminar en `.unit.test.ts` o `.integration.test.ts`. El 
 `test/ui/`. La suite levanta una instancia del servidor y una de Chromium. Cada caso recibe un
 `BrowserContext` nuevo para aislar cookies, storage, rutas y paginas.
 
+En GitHub Actions se usa el canal `chrome` incluido en la imagen oficial del runner mediante
+`FLY_DESK_TEST_BROWSER_CHANNEL=chrome`; localmente, al no definirlo, Playwright usa su Chromium
+instalado. Esto evita descargar un navegador completo en cada job.
+
 Las pruebas UI deben priorizar:
 
 - roles, nombres accesibles y navegacion por teclado
