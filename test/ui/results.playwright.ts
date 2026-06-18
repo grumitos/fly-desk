@@ -1,16 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Page, Route } from "playwright";
-import { openDesktop, withDesktopPage } from "../helpers/ui.ts";
+import { withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
-import {
-  clickSegment,
-  routeLocationUsageSuggestions,
-  waitForFontsReady,
-  waitForLocationFieldsClosed,
-  waitForPressed,
-  waitForStableIndicator,
-} from "./support.ts";
 
 test("topbar brand opens the current instance root without hardcoding the port", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
