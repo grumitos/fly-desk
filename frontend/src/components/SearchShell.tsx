@@ -2,7 +2,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { createPortal } from "react-dom"
 import { es } from "react-day-picker/locale"
 import { Button } from "@/components/ui/button"
+import { ButtonGroup, ButtonGroupText } from "@/components/ui/button-group"
 import { Calendar } from "@/components/ui/calendar"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
+import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-control"
 import { TOPBAR_SEARCH_CONTROLS_ID } from "@/components/TopBar"
@@ -741,11 +744,12 @@ export function SearchShell({
               if (nextOpen) setTouched((current) => ({ ...current, passengers: true }))
             }}
           >
-            <div className={cn("relative", reserveIdleHelperSpace && "fd-search-field-shell")}>
-              <label className="fd-label pointer-events-none absolute left-3 top-2.5 z-10">Pasajeros</label>
+            <Field className={cn("relative", reserveIdleHelperSpace && "fd-search-field-shell")}>
+              <FieldLabel className="pointer-events-none absolute left-3 top-2.5 z-10">Pasajeros</FieldLabel>
               <PopoverTrigger asChild>
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
                   aria-label="Seleccionar pasajeros"
                   aria-expanded={paxOpen}
                   aria-haspopup="dialog"
@@ -753,7 +757,7 @@ export function SearchShell({
                   aria-describedby={visiblePassengerError ? "passengers-helper" : undefined}
                   className={cn(
                     SEARCH_FIELD_CONTROL_CLASS,
-                    "justify-start text-left hover:bg-accent/60",
+                    "justify-start p-0 px-3 pt-4 text-left hover:bg-accent/60",
                     visiblePassengerError && "fd-control-invalid",
                   )}
                 >
@@ -762,7 +766,7 @@ export function SearchShell({
                     {passengerTotal} pasajero{passengerTotal > 1 ? "s" : ""}
                   </span>
                   <AppIcon name="chevronDown" className={`text-muted-foreground transition-transform ${paxOpen ? "rotate-180" : ""}`} />
-                </button>
+                </Button>
               </PopoverTrigger>
 
               <PopoverContent align="end" className="w-72">
@@ -774,7 +778,7 @@ export function SearchShell({
                 </p>
               </PopoverContent>
               <ControlHelper id="passengers-helper" text={visiblePassengerError} />
-            </div>
+            </Field>
           </Popover>
 
           <Button
@@ -852,24 +856,27 @@ function SearchModeControls({
         topbar ? "max-w-[calc(100vw-11rem)] justify-center" : "w-full sm:w-auto",
       )}
     >
-      <SegmentedControl className={cn(!topbar && "flex min-w-0 flex-1 basis-full sm:inline-flex sm:flex-none sm:basis-auto")}>
+      <SegmentedControl
+        value={mode}
+        onValueChange={(value) => {
+          if (value === "exact" || value === "flexible" || value === "migration") onModeChange(value)
+        }}
+        className={cn(!topbar && "flex min-w-0 flex-1 basis-full sm:inline-flex sm:flex-none sm:basis-auto")}
+      >
         <SegmentButton
-          active={mode === "exact"}
-          onClick={() => onModeChange("exact")}
+          value="exact"
           className={cn(!topbar && "flex-1 px-2 sm:flex-none sm:px-3")}
         >
           Exacto
         </SegmentButton>
         <SegmentButton
-          active={mode === "flexible"}
-          onClick={() => onModeChange("flexible")}
+          value="flexible"
           className={cn(!topbar && "flex-1 px-2 sm:flex-none sm:px-3")}
         >
           Flexible
         </SegmentButton>
         <SegmentButton
-          active={mode === "migration"}
-          onClick={() => onModeChange("migration")}
+          value="migration"
           className={cn(!topbar && "flex-1 px-2 sm:flex-none sm:px-3")}
         >
           Migratorio
@@ -894,15 +901,18 @@ function SearchModeControls({
       </div>
 
       <SegmentedControl
+        value={displayedTrip}
+        onValueChange={(value) => {
+          if (value === "round-trip" || value === "one-way") onTripChange(value)
+        }}
         disabled={tripControlsDisabled}
         className={cn(!topbar && "flex min-w-0 flex-1 basis-full sm:inline-flex sm:flex-none sm:basis-auto")}
       >
         {tripTabs.map((item) => (
           <SegmentButton
             key={item.key}
-            active={displayedTrip === item.key}
+            value={item.key}
             disabled={tripControlsDisabled}
-            onClick={() => onTripChange(item.key)}
             className={cn(!topbar && "flex-1 px-2 sm:flex-none sm:px-3")}
           >
             <AppIcon name={item.icon} />
@@ -1031,7 +1041,7 @@ function LocationField({
   }
 
   return (
-    <div
+    <Field
       ref={fieldRef}
       className={cn(
         "relative",
@@ -1039,7 +1049,7 @@ function LocationField({
         reserveSuggestionSpace && "fd-location-field-shell-reserve-suggestions",
       )}
     >
-      <label htmlFor={fieldId} className="fd-label pointer-events-none absolute left-3 top-2.5 z-10">{label}</label>
+      <FieldLabel htmlFor={fieldId} className="pointer-events-none absolute left-3 top-2.5 z-10">{label}</FieldLabel>
       <div
         ref={controlRef}
         onClick={focusInputFromControl}
@@ -1053,7 +1063,7 @@ function LocationField({
         {icon && (
           <AppIcon name={icon} className="pointer-events-none text-muted-foreground" />
         )}
-        <input
+        <Input
           id={fieldId}
           ref={inputRef}
           aria-label={label}
@@ -1074,7 +1084,7 @@ function LocationField({
           }}
           onKeyDown={onKeyDown}
           placeholder={placeholder}
-          className={`${SEARCH_FIELD_VALUE_CLASS} bg-transparent text-foreground outline-none placeholder:text-muted-foreground/60`}
+          className={`${SEARCH_FIELD_VALUE_CLASS} w-auto rounded-none border-0 bg-transparent p-0 text-foreground shadow-none outline-none placeholder:text-muted-foreground/60 focus-visible:border-0 focus-visible:ring-0`}
         />
       </div>
       <ControlHelper id={`${fieldId}-helper`} text={helperText} />
@@ -1115,7 +1125,7 @@ function LocationField({
         </div>,
         listboxTarget,
       ) : null}
-    </div>
+    </Field>
   )
 }
 
@@ -1142,9 +1152,10 @@ function LocationUsageSuggestionRow({
       aria-label={`Sugerencias frecuentes de ${label.toLowerCase()}`}
     >
       {suggestions.map((code) => (
-        <button
+        <Button
           key={`${fieldId}-${code}`}
           type="button"
+          variant="outline"
           className="fd-control fd-location-usage-card"
           aria-label={`Usar ${code} como ${label.toLowerCase()}`}
           onMouseDown={(event) => event.preventDefault()}
@@ -1153,7 +1164,7 @@ function LocationUsageSuggestionRow({
           }}
         >
           {code}
-        </button>
+        </Button>
       ))}
     </div>
   )
@@ -1205,13 +1216,14 @@ function MonthField({
         setOpen(nextOpen)
       }}
     >
-      <div className={cn("relative", reserveHelperSpace && "fd-search-field-shell")}>
-        <label id={`${fieldId}-label`} className="fd-label pointer-events-none absolute left-3 top-2.5 z-10">
+      <Field className={cn("relative", reserveHelperSpace && "fd-search-field-shell")}>
+        <FieldLabel id={`${fieldId}-label`} className="pointer-events-none absolute left-3 top-2.5 z-10">
           <AnimatedDateLabel label={label} />
-        </label>
+        </FieldLabel>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
             aria-labelledby={`${fieldId}-label`}
             aria-describedby={helperText ? `${fieldId}-helper` : undefined}
             aria-expanded={open}
@@ -1219,7 +1231,7 @@ function MonthField({
             aria-invalid={invalid}
             className={cn(
               SEARCH_FIELD_CONTROL_CLASS,
-              "justify-start text-left hover:bg-accent/60",
+              "justify-start p-0 px-3 pt-4 text-left hover:bg-accent/60",
               invalid && "fd-control-invalid",
             )}
           >
@@ -1228,7 +1240,7 @@ function MonthField({
               {selectedLabel}
             </span>
             <AppIcon name="chevronDown" className={`text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
-          </button>
+          </Button>
         </PopoverTrigger>
         <ControlHelper id={`${fieldId}-helper`} text={helperText} />
 
@@ -1270,7 +1282,7 @@ function MonthField({
             </div>
           </div>
         </PopoverContent>
-      </div>
+      </Field>
     </Popover>
   )
 }
@@ -1325,17 +1337,18 @@ function DateField({
         setOpen(nextOpen)
       }}
     >
-      <div className={cn(
+      <Field className={cn(
         "relative transition-[opacity,filter,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]",
         reserveHelperSpace && "fd-search-field-shell",
         disabled && "fd-disabled-section",
       )}>
-        <label id={`${fieldId}-label`} className="fd-label pointer-events-none absolute left-3 top-2.5 z-10">
+        <FieldLabel id={`${fieldId}-label`} className="pointer-events-none absolute left-3 top-2.5 z-10">
           <AnimatedDateLabel label={label} />
-        </label>
+        </FieldLabel>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
+            variant="ghost"
             aria-labelledby={`${fieldId}-label`}
             aria-describedby={helperText ? `${fieldId}-helper` : undefined}
             aria-expanded={disabled ? false : open}
@@ -1343,7 +1356,7 @@ function DateField({
             disabled={disabled}
             className={cn(
               SEARCH_FIELD_CONTROL_CLASS,
-              "justify-start text-left hover:bg-accent/60",
+              "justify-start p-0 px-3 pt-4 text-left hover:bg-accent/60",
               disabled && "fd-control-disabled-section hover:bg-secondary",
               invalid && "fd-control-invalid",
             )}
@@ -1352,7 +1365,7 @@ function DateField({
             <span key={selectedLabel} className={`${SEARCH_FIELD_VALUE_CLASS} fd-field-value-swap ${!disabled && value ? "text-foreground" : "text-muted-foreground"}`}>
               {selectedLabel}
             </span>
-          </button>
+          </Button>
         </PopoverTrigger>
         <ControlHelper id={`${fieldId}-helper`} text={helperText} />
 
@@ -1381,7 +1394,7 @@ function DateField({
             }}
           />
         </PopoverContent>
-      </div>
+      </Field>
     </Popover>
   )
 }
@@ -1389,11 +1402,7 @@ function DateField({
 function ControlHelper({ id, text }: { id: string; text?: string }) {
   if (!text) return null
 
-  return (
-    <p id={id} className="fd-control-helper" role="alert">
-      {text}
-    </p>
-  )
+  return <FieldError id={id}>{text}</FieldError>
 }
 
 function AnimatedDateLabel({ label }: { label: string }) {
@@ -1430,8 +1439,7 @@ function FlexibleOptionsBar({
 
   return (
     <div className={cn("flex min-w-0 flex-wrap items-center gap-2", stretch && "w-full sm:w-auto")}>
-      <div
-        role="group"
+      <ButtonGroup
         aria-disabled={stayControlsDisabled}
         aria-labelledby="flexible-stay-nights-label"
         className={cn(
@@ -1440,9 +1448,9 @@ function FlexibleOptionsBar({
           stayControlsDisabled && "fd-control-disabled-section",
         )}
       >
-        <span id="flexible-stay-nights-label" className="px-2 text-xs font-semibold text-muted-foreground">
+        <ButtonGroupText id="flexible-stay-nights-label" className="px-2 text-xs font-semibold text-muted-foreground">
           Estadía
-        </span>
+        </ButtonGroupText>
         <Button
           type="button"
           variant="ghost"
@@ -1454,9 +1462,9 @@ function FlexibleOptionsBar({
         >
           <AppIcon name="minus" />
         </Button>
-        <span className={cn("min-w-14 px-1 text-center text-xs font-semibold transition-colors duration-150", stayControlsDisabled ? "text-muted-foreground" : "text-foreground")}>
+        <ButtonGroupText className={cn("min-w-14 px-1 text-center text-xs font-semibold transition-colors duration-150", stayControlsDisabled ? "text-muted-foreground" : "text-foreground")}>
           {stayNights} noche{stayNights === 1 ? "" : "s"}
-        </span>
+        </ButtonGroupText>
         <Button
           type="button"
           variant="ghost"
@@ -1468,7 +1476,7 @@ function FlexibleOptionsBar({
         >
           <AppIcon name="plus" />
         </Button>
-      </div>
+      </ButtonGroup>
     </div>
   )
 }
@@ -1496,15 +1504,15 @@ function PaxRow({
         <div className="text-sm font-semibold">{label}</div>
         <div className="text-xs text-muted-foreground">{detail}</div>
       </div>
-      <div className="flex items-center gap-2">
+      <ButtonGroup className="gap-2">
         <Button type="button" variant="outline" size="icon" onClick={onDec} disabled={decDisabled} aria-label={`Quitar ${label.toLowerCase()}`} className="fd-control h-8 w-8">
           <AppIcon name="minus" />
         </Button>
-        <span className="w-6 text-center font-mono text-sm font-bold">{value}</span>
+        <ButtonGroupText className="w-6 text-center font-mono text-sm font-bold">{value}</ButtonGroupText>
         <Button type="button" variant="outline" size="icon" onClick={onInc} disabled={incDisabled} aria-label={`Agregar ${label.toLowerCase()}`} className="fd-control h-8 w-8">
           <AppIcon name="plus" />
         </Button>
-      </div>
+      </ButtonGroup>
     </div>
   )
 }

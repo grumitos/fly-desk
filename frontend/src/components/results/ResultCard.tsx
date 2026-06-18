@@ -1,5 +1,7 @@
 import type { MouseEvent } from "react"
 import { Backpack, Luggage } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { bestPurchasePathsByProvider, normalizeSafePurchaseUrl } from "@/lib/purchase-path"
 import type { CanonicalOffer, PurchasePath } from "@/types"
@@ -136,17 +138,22 @@ export function ResultCard({
       >
         {providerActions.length > 0 ? (
           providerActions.map((action) => (
-            <button
-              key={`${action.path.provider}-${action.path.type}-${action.url}`}
-              type="button"
-              aria-label={purchaseActionLabel(action)}
-              className="fd-result-card__provider-action"
-              title={purchaseActionTitle(action)}
-              onClick={(event) => handleProviderOpen(event, action)}
-              onKeyDown={(event) => event.stopPropagation()}
-            >
-              <ProviderBadge provider={action.badge} />
-            </button>
+            <Tooltip key={`${action.path.provider}-${action.path.type}-${action.url}`}>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={purchaseActionLabel(action)}
+                  className="fd-result-card__provider-action h-auto w-auto rounded-none p-0 hover:bg-transparent focus-visible:ring-0 active:scale-100"
+                  onClick={(event) => handleProviderOpen(event, action)}
+                  onKeyDown={(event) => event.stopPropagation()}
+                >
+                  <ProviderBadge provider={action.badge} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="left">{purchaseActionTitle(action)}</TooltipContent>
+            </Tooltip>
           ))
         ) : (
           <ProviderBadge provider={model.provider} />

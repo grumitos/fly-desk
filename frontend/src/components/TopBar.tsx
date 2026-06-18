@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from "react"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
 import { segmentedControlClassName } from "@/components/ui/segmented-control-classes"
 import { SlidingSegmentIndicator } from "@/components/ui/sliding-segment-indicator"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useSlidingSegmentIndicator } from "@/components/ui/use-sliding-segment-indicator"
 import { cn } from "@/lib/utils"
 
@@ -43,17 +44,49 @@ function ThemeToggle({
   const nextTheme = theme === "dark" ? "light" : "dark"
 
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      onClick={() => setTheme(nextTheme)}
-      aria-label="Cambiar tema"
-      aria-pressed={theme === "dark"}
-      className={`${TOPBAR_ICON_BUTTON_CLASS} fd-theme-toggle`}
-    >
-      <AppIcon name={theme === "dark" ? "sun" : "moon"} />
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={() => setTheme(nextTheme)}
+          aria-label="Cambiar tema"
+          aria-pressed={theme === "dark"}
+          className={`${TOPBAR_ICON_BUTTON_CLASS} fd-theme-toggle`}
+        >
+          <AppIcon name={theme === "dark" ? "sun" : "moon"} />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{`Cambiar a tema ${nextTheme === "dark" ? "oscuro" : "claro"}`}</TooltipContent>
+    </Tooltip>
+  )
+}
+
+function IconButtonTooltip({
+  children,
+  disabled = false,
+  label,
+}: {
+  children: ReactElement
+  disabled?: boolean
+  label: string
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        {disabled ? (
+          <span
+            className="inline-flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            tabIndex={0}
+            aria-label={label}
+          >
+            {children}
+          </span>
+        ) : children}
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -114,29 +147,34 @@ export function TopBar({
 
         <div className="flex items-center gap-1.5 justify-self-end">
           <TopBarIconGroup>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={onCopySearchConfig}
+            <IconButtonTooltip
               disabled={copySearchDisabled}
-              aria-label="Copiar configuración"
-              title={copySearchDisabled ? "Completa una búsqueda para copiar la configuración" : "Copiar configuración"}
-              className={TOPBAR_ICON_BUTTON_CLASS}
+              label={copySearchDisabled ? "Completa una búsqueda para copiar la configuración" : "Copiar configuración"}
             >
-              <AppIcon name="copy" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={onPasteSearchConfig}
-              aria-label="Pegar configuración"
-              title="Pegar configuración"
-              className={TOPBAR_ICON_BUTTON_CLASS}
-            >
-              <AppIcon name="clipboard" />
-            </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={onCopySearchConfig}
+                disabled={copySearchDisabled}
+                aria-label="Copiar configuración"
+                className={TOPBAR_ICON_BUTTON_CLASS}
+              >
+                <AppIcon name="copy" />
+              </Button>
+            </IconButtonTooltip>
+            <IconButtonTooltip label="Pegar configuración">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={onPasteSearchConfig}
+                aria-label="Pegar configuración"
+                className={TOPBAR_ICON_BUTTON_CLASS}
+              >
+                <AppIcon name="clipboard" />
+              </Button>
+            </IconButtonTooltip>
           </TopBarIconGroup>
           <TopBarIconGroup>
             <ThemeToggle theme={theme} setTheme={setTheme} />

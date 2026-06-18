@@ -178,18 +178,22 @@ function ResultsPanelBase({
           </div>
 
           {!isMigration && (
-            <SegmentedControl aria-label="Orden de resultados">
+            <SegmentedControl
+              aria-label="Orden de resultados"
+              value={sort}
+              onValueChange={(value) => {
+                if (value === "cheapest" || value === "fastest") onSort(value)
+              }}
+            >
               <SegmentButton
-                active={sort === "cheapest"}
+                value="cheapest"
                 aria-label="Ordenar por precio"
-                onClick={() => onSort("cheapest")}
               >
                 Precio
               </SegmentButton>
               <SegmentButton
-                active={sort === "fastest"}
+                value="fastest"
                 aria-label="Ordenar por duración"
-                onClick={() => onSort("fastest")}
               >
                 Duración
               </SegmentButton>

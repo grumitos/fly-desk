@@ -1,26 +1,46 @@
-import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react"
 import {
   segmentedControlClassName,
-  segmentedItemActiveClassName,
   segmentedItemBaseClassName,
-  segmentedItemInactiveClassName,
+  segmentedItemDataStateClassName,
 } from "@/components/ui/segmented-control-classes"
 import { SlidingSegmentIndicator } from "@/components/ui/sliding-segment-indicator"
+import {
+  ToggleGroup,
+  ToggleGroupItem,
+  type ToggleGroupMultipleProps,
+} from "@/components/ui/toggle-group"
 import { useSlidingSegmentIndicator } from "@/components/ui/use-sliding-segment-indicator"
 import { cn } from "@/lib/utils"
 
-interface SegmentedControlProps extends HTMLAttributes<HTMLDivElement> {
-  children: ReactNode
-  disabled?: boolean
+type SegmentedControlProps = Omit<
+  ToggleGroupMultipleProps,
+  "defaultValue" | "onValueChange" | "type" | "value"
+> & {
+  onValueChange?: (value: string) => void
+  value: string
 }
 
-function SegmentedControl({ children, disabled = false, className, ...props }: SegmentedControlProps) {
+function SegmentedControl({
+  children,
+  disabled = false,
+  className,
+  onValueChange,
+  value,
+  ...props
+}: SegmentedControlProps) {
   const { containerRef, indicatorStyle } = useSlidingSegmentIndicator<HTMLDivElement>()
 
   return (
-    <div
+    <ToggleGroup
       ref={containerRef}
+      type="multiple"
+      value={[value]}
+      onValueChange={(values) => {
+        const nextValue = values.find((candidate) => candidate !== value)
+        if (nextValue) onValueChange?.(nextValue)
+      }}
       aria-disabled={disabled}
+      disabled={disabled}
       className={cn(
         "fd-segmented-control",
         segmentedControlClassName,
@@ -31,38 +51,20 @@ function SegmentedControl({ children, disabled = false, className, ...props }: S
     >
       <SlidingSegmentIndicator style={indicatorStyle} />
       {children}
-    </div>
+    </ToggleGroup>
   )
 }
 
-interface SegmentButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  active: boolean
-}
-
-function SegmentButton({
-  active,
-  disabled,
-  className,
-  children,
-  type = "button",
-  ...props
-}: SegmentButtonProps) {
-  const visuallyActive = active && !disabled
-
+function SegmentButton({ className, ...props }: React.ComponentProps<typeof ToggleGroupItem>) {
   return (
-    <button
-      type={type}
-      aria-pressed={active}
-      disabled={disabled}
+    <ToggleGroupItem
       className={cn(
         segmentedItemBaseClassName,
-        visuallyActive ? segmentedItemActiveClassName : segmentedItemInactiveClassName,
+        segmentedItemDataStateClassName,
         className,
       )}
       {...props}
-    >
-      {children}
-    </button>
+    />
   )
 }
 

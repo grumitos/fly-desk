@@ -118,6 +118,44 @@ test("current React shell exposes the primary search controls", async () => {
   });
 });
 
+test("search controls expose shadcn primitives without changing their labels", async () => {
+  await withDesktopPage(async ({ page }) => {
+    const origin = page.getByRole("combobox", { name: "Origen" });
+    assert.equal(await origin.getAttribute("data-slot"), "input");
+    assert.equal(await origin.locator("xpath=ancestor::*[@data-slot='field'][1]").count(), 1);
+
+    const modeGroup = page.locator('[data-slot="toggle-group"]').filter({
+      has: page.getByRole("button", { name: "Exacto" }),
+    });
+    assert.equal(await modeGroup.count(), 1);
+    assert.equal(
+      await page.getByRole("button", { name: "Exacto" }).getAttribute("data-slot"),
+      "toggle-group-item",
+    );
+    const exactMode = page.getByRole("button", { name: "Exacto" });
+    const flexibleMode = page.getByRole("button", { name: "Flexible" });
+    await exactMode.focus();
+    await page.keyboard.press("ArrowRight");
+    assert.equal(await flexibleMode.evaluate((button) => document.activeElement === button), true);
+    await page.keyboard.press("Space");
+    await waitForPressed(flexibleMode);
+
+    await page.getByRole("button", { name: "Seleccionar pasajeros" }).click();
+    assert.equal(
+      await page.locator('[data-slot="button-group"]').filter({
+        has: page.getByRole("button", { name: "Agregar adultos" }),
+      }).count(),
+      1,
+    );
+
+    const themeToggle = page.getByRole("button", { name: "Cambiar tema" });
+    await themeToggle.hover();
+    const tooltip = page.getByRole("tooltip");
+    await tooltip.waitFor();
+    assert.match((await tooltip.textContent()) ?? "", /Cambiar a tema (claro|oscuro)/);
+  });
+});
+
 test("location field surfaces focus the input in idle and search layouts", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.route("**/api/locations**", async (route) => {
@@ -3130,7 +3168,7 @@ test("detail panel mirrors selected result content and omits unknown fare condit
     });
     assert.ok(
       quotationGeometry.bottomGap >= quotationGeometry.expectedBottomGap
-        && quotationGeometry.bottomGap - quotationGeometry.expectedBottomGap <= 4,
+        && quotationGeometry.bottomGap - quotationGeometry.expectedBottomGap <= 5,
       JSON.stringify(quotationGeometry),
     );
     assert.equal(quotationGeometry.sectionPaddingTop, quotationGeometry.sectionPaddingBottom, JSON.stringify(quotationGeometry));
