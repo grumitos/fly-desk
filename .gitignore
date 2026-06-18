@@ -12,6 +12,7 @@ dist/
 .playwright-cli/
 .superpowers/
 output/
+test-results/
 
 .server.out.log
 .server.err.log

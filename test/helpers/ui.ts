@@ -4,6 +4,8 @@ import {
   type BrowserContext,
   type Page,
 } from "playwright";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { cleanupPrefixedTempArtifacts, TEMP_ARTIFACT_SWEEP_MIN_AGE_MS } from "../../src/temp-artifacts.ts";
 import { startTestServer, type ServerHandle } from "./server.ts";
 
@@ -59,6 +61,12 @@ export async function withDesktopPage<T>(
     }
 
     return await run({ baseUrl, context, page });
+  } catch (error) {
+    const failureDir = join(process.cwd(), "test-results", "ui");
+    mkdirSync(failureDir, { recursive: true });
+    const screenshotPath = join(failureDir, `failure-${Date.now()}.png`);
+    await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined);
+    throw error;
   } finally {
     await context.close();
   }

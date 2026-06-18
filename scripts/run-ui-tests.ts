@@ -2,7 +2,12 @@ import { spawnSync } from "node:child_process";
 
 const result = spawnSync(
   "node",
-  ["--test", "--test-reporter=spec", "test/ui.playwright.ts"],
+  [
+    "--test",
+    "--test-reporter=spec",
+    ...process.argv.slice(2),
+    "test/ui.playwright.ts",
+  ],
   {
     env: {
       ...process.env,
