@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -189,20 +189,6 @@ function buildMatrixCell(key: string, url: string): MatrixCell {
       },
     ],
   };
-}
-
-function readSqlitePayloadText(dbPath: string): string {
-  const db = new Database(dbPath, { readonly: true });
-  try {
-    const rows = [
-      ...allSql<{ payload: string }>(db, "SELECT payload FROM search_jobs ORDER BY id"),
-      ...allSql<{ payload: string }>(db, "SELECT payload FROM matrix_jobs ORDER BY id"),
-      ...allSql<{ payload: string }>(db, "SELECT payload FROM purchase_paths ORDER BY id"),
-    ];
-    return rows.map((row) => row.payload).join("\n");
-  } finally {
-    db.close();
-  }
 }
 
 function readSqliteCounts(dbPath: string): { searchJobs: number; matrixJobs: number; purchasePaths: number } {
@@ -578,53 +564,6 @@ test("findRecentCompletedSearchJob does not reuse completed Costamar searches wh
   assert.equal(reused, undefined);
 });
 
-test("findRecentCompletedSearchJob ignores legacy result-cap flags in the cache key", () => {
-  const store = new SearchSessionStore();
-  const request = buildRequest();
-  const offer = buildOffer("offer-compact-default", "https://cached.example/default");
-  const completedJob = store.createSearchJob({
-    request,
-    offers: [offer],
-    allOffers: [offer],
-    searchMeta: buildSearchMeta(),
-    providerMeta: buildProviderMeta(),
-    warnings: [],
-    sortMode: "cheapest",
-    status: "completed",
-  });
-
-  const requestWithDefaultFlag: SearchRequest = {
-    ...buildRequest(),
-    filters: {
-      ...buildRequest().filters,
-      compactAllOffers: false,
-    },
-  };
-  const reused = store.findRecentCompletedSearchJob({
-    request: requestWithDefaultFlag,
-    providerIds: ["agil-local"],
-    sortMode: "cheapest",
-    maxAgeMs: 10 * 60 * 1000,
-  });
-  assert.equal(reused?.id, completedJob.id);
-
-  const compactRequest: SearchRequest = {
-    ...buildRequest(),
-    filters: {
-      ...buildRequest().filters,
-      maxResults: 25,
-      compactAllOffers: true,
-    },
-  };
-  const reusedCompact = store.findRecentCompletedSearchJob({
-    request: compactRequest,
-    providerIds: ["agil-local"],
-    sortMode: "cheapest",
-    maxAgeMs: 10 * 60 * 1000,
-  });
-  assert.equal(reusedCompact?.id, completedJob.id);
-});
-
 test("findRecentCompletedSearchJob ignores completed searches from a previous cache version", () => {
   const store = new SearchSessionStore();
   const request = buildRequest();
@@ -942,92 +881,6 @@ test("search session store only writes the search job that changed", async () =>
   const verificationStore = new SearchSessionStore({ dbPath });
   assert.ok(verificationStore.getSearchJob(untouchedJob.id));
   verificationStore.close();
-
-  rmSync(tempRoot, { recursive: true, force: true });
-});
-
-test("search session store migrates legacy json to sqlite and redacts Costamar tokens", () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-migrate-"));
-  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
-  const legacyPersistPath = join(tempRoot, "search-session-store.json");
-  const request: SearchRequest = {
-    ...buildRequest(),
-    providerId: "costamar",
-    tripType: "round-trip",
-    legs: [
-      {
-        origin: "LIM",
-        destination: "MAD",
-        departureDate: "2026-06-01",
-        returnDate: "2026-06-08",
-      },
-    ],
-  };
-  const secretToken = "legacy-secret-token";
-  const costamarUrl = `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${secretToken}`;
-  const baseOffer = buildOffer("offer-costamar", costamarUrl);
-  const costamarOffer: CanonicalOffer = {
-    ...baseOffer,
-    providerSource: "costamar",
-    purchasePaths: baseOffer.purchasePaths.map((path) => ({
-      ...path,
-      provider: "costamar",
-      label: "Buscar en Costamar",
-    })),
-  };
-  const transientStore = new SearchSessionStore();
-  const completedJob = transientStore.createSearchJob({
-    request,
-    providerContext: {
-      costamar: {
-        apiBaseUrl: "https://costamar.com.pe/vuelos/api",
-        brandBaseUrl: "https://booking.clickandbook.com/vuelos",
-        terminalId: "0721808110",
-        token: secretToken,
-        lang: "es",
-      },
-    },
-    offers: [costamarOffer],
-    allOffers: [costamarOffer],
-    searchMeta: {
-      ...buildSearchMeta(),
-      providersUsed: ["costamar"],
-    },
-    providerMeta: {
-      exactProvider: "costamar",
-      coverageMode: "core",
-    },
-    warnings: [],
-    sortMode: "cheapest",
-    status: "completed",
-  });
-  const purchasePathId = completedJob.allOffers[0]?.purchasePaths[0]?.id;
-  assert.ok(purchasePathId);
-  const storedPath = transientStore.resolvePurchasePath(purchasePathId);
-  assert.ok(storedPath);
-
-  writeFileSync(legacyPersistPath, JSON.stringify({
-    version: 1,
-    savedAt: new Date().toISOString(),
-    searchJobs: [completedJob],
-    matrixJobs: [],
-    purchasePaths: [storedPath],
-  }), "utf8");
-
-  const migratedStore = new SearchSessionStore({ dbPath, legacyPersistPath });
-  const restoredJob = migratedStore.getSearchJob(completedJob.id);
-  const restoredPath = migratedStore.resolvePurchasePath(purchasePathId);
-  const persistedPayloads = readSqlitePayloadText(dbPath);
-
-  assert.equal(existsSync(legacyPersistPath), false);
-  assert.ok(restoredJob);
-  assert.notEqual(restoredJob.providerContext?.costamar?.token, secretToken);
-  assert.ok(restoredPath?.path.url);
-  assert.equal(restoredPath.path.url.includes(secretToken), false);
-  assert.equal(restoredPath.path.url.includes("token="), false);
-  assert.equal(persistedPayloads.includes(secretToken), false);
-  assert.equal(persistedPayloads.includes("token="), false);
-  migratedStore.close();
 
   rmSync(tempRoot, { recursive: true, force: true });
 });

@@ -663,8 +663,6 @@ export type BackendSearchRequest = {
     maxStops?: number
     maxLayoverMinutes?: number
     includedAirlineCodes?: string[]
-    maxResults?: number
-    compactAllOffers?: boolean
   }
   currencyCode?: string
   locale?: string
@@ -742,8 +740,6 @@ export function toBackendPayload(request: SearchRequest, sortMode: SortMode): Ba
         maxStops,
         maxLayoverMinutes: request.maxLayoverMinutes ? Number(request.maxLayoverMinutes) : undefined,
         includedAirlineCodes: request.includedAirlineCodes?.length ? request.includedAirlineCodes : undefined,
-        maxResults: request.maxResults,
-        compactAllOffers: request.compactAllOffers,
       },
       currencyCode: "USD",
       locale: "es-PE",
@@ -777,8 +773,6 @@ export function fromBackendRequest(request: BackendSearchRequest | undefined): S
     baggageRequired: request?.filters?.baggageRequired,
     maxLayoverMinutes: request?.filters?.maxLayoverMinutes?.toString(),
     includedAirlineCodes: request?.filters?.includedAirlineCodes,
-    maxResults: request?.filters?.maxResults,
-    compactAllOffers: request?.filters?.compactAllOffers,
   }
 }
 
@@ -1172,8 +1166,6 @@ function migrationRequestForMonth(request: SearchRequest, range: MigrationMonthR
     checkedBaggageRequired: false,
     baggageRequired: false,
     includedAirlineCodes: undefined,
-    maxResults: undefined,
-    compactAllOffers: true,
   }
 }
 

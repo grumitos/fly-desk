@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 import { LocationSuggestion, ProviderId } from "./core/types";
@@ -19,17 +19,6 @@ interface CacheKeyParts {
   limit: number;
 }
 
-interface PersistedLocationSuggestionCache {
-  version: 1;
-  savedAt: string;
-  entries: Array<{
-    key: string;
-    suggestions: LocationSuggestion[];
-    expiresAtMs: number;
-    touchedAtMs: number;
-  }>;
-}
-
 interface SqliteLocationSuggestionRow {
   key: string;
   session_id: string;
@@ -40,8 +29,6 @@ interface SqliteLocationSuggestionRow {
 
 interface LocationSuggestionCacheStoreOptions {
   dbPath?: string;
-  legacyPersistPath?: string;
-  persistPath?: string;
 }
 
 function cloneSuggestions(suggestions: ReadonlyArray<LocationSuggestion>): LocationSuggestion[] {
@@ -83,15 +70,6 @@ function runSql(db: Database, sql: string, ...params: any[]): void {
   }
 }
 
-function getSql<T>(db: Database, sql: string, ...params: any[]): T | undefined {
-  const statement = db.prepare(sql);
-  try {
-    return statement.get(...params) as T | undefined;
-  } finally {
-    statement.finalize();
-  }
-}
-
 function allSql<T>(db: Database, sql: string, ...params: any[]): T[] {
   const statement = db.prepare(sql);
   try {
@@ -106,13 +84,11 @@ export class LocationSuggestionCacheStore {
   private readonly inflight = new Map<string, Promise<LocationSuggestion[]>>();
   private readonly sessionKeys = new Map<string, Set<string>>();
   private readonly dbPath: string | undefined;
-  private readonly legacyPersistPath: string | undefined;
   private readonly db: Database | undefined;
   private bootstrapping = false;
 
   constructor(options?: LocationSuggestionCacheStoreOptions) {
     this.dbPath = options?.dbPath?.trim() || undefined;
-    this.legacyPersistPath = options?.legacyPersistPath?.trim() || options?.persistPath?.trim() || undefined;
 
     if (this.dbPath) {
       mkdirSync(dirname(this.dbPath), { recursive: true });
@@ -290,64 +266,12 @@ export class LocationSuggestionCacheStore {
     try {
       this.bootstrapping = true;
       runSql(this.db, "DELETE FROM location_suggestions WHERE expires_at_ms <= ?", Date.now());
-      const migrated = this.migrateLegacyJsonIfNeeded();
-      if (!migrated) {
-        this.loadSqlitePayload();
-      }
+      this.loadSqlitePayload();
     } finally {
       this.bootstrapping = false;
     }
 
     this.purgeExpired();
-  }
-
-  private migrateLegacyJsonIfNeeded(): boolean {
-    if (!this.db || !this.legacyPersistPath || !existsSync(this.legacyPersistPath) || this.databaseHasRows()) {
-      return false;
-    }
-
-    const parsed = this.readLegacyJsonPayload();
-    if (!parsed) {
-      return false;
-    }
-
-    this.loadLegacyPayload(parsed);
-    this.persistAllEntries();
-
-    try {
-      rmSync(this.legacyPersistPath, { force: true });
-    } catch {
-      // Keep the imported SQLite cache even if the old JSON file cannot be removed.
-    }
-    return true;
-  }
-
-  private readLegacyJsonPayload(): PersistedLocationSuggestionCache | undefined {
-    if (!this.legacyPersistPath) {
-      return undefined;
-    }
-
-    try {
-      const parsed = JSON.parse(readFileSync(this.legacyPersistPath, "utf8")) as PersistedLocationSuggestionCache;
-      if (parsed?.version !== 1 || !Array.isArray(parsed.entries)) {
-        return undefined;
-      }
-      return parsed;
-    } catch {
-      return undefined;
-    }
-  }
-
-  private databaseHasRows(): boolean {
-    if (!this.db) {
-      return false;
-    }
-
-    const row = getSql<{ total?: number }>(
-      this.db,
-      "SELECT COUNT(*) AS total FROM location_suggestions",
-    );
-    return Number(row?.total ?? 0) > 0;
   }
 
   private loadSqlitePayload(): void {
@@ -373,30 +297,6 @@ export class LocationSuggestionCacheStore {
         touchedAtMs: Number(row.touched_at_ms),
       });
       this.trackKey(row.session_id, row.key);
-    }
-  }
-
-  private loadLegacyPayload(parsed: PersistedLocationSuggestionCache): void {
-    const nowMs = Date.now();
-    for (const entry of parsed.entries) {
-      const key = String(entry?.key ?? "").trim();
-      if (!key || !Array.isArray(entry?.suggestions)) {
-        continue;
-      }
-
-      const expiresAtMs = Number(entry.expiresAtMs);
-      const touchedAtMs = Number(entry.touchedAtMs);
-      if (!Number.isFinite(expiresAtMs) || !Number.isFinite(touchedAtMs) || expiresAtMs <= nowMs) {
-        continue;
-      }
-
-      const sessionId = key.split("::", 1)[0] ?? "anonymous";
-      this.entries.set(key, {
-        suggestions: cloneSuggestions(entry.suggestions),
-        expiresAtMs,
-        touchedAtMs,
-      });
-      this.trackKey(sessionId, key);
     }
   }
 
@@ -443,52 +343,4 @@ export class LocationSuggestionCacheStore {
     );
   }
 
-  private persistAllEntries(): void {
-    if (!this.db) {
-      return;
-    }
-
-    const db = this.db;
-    const insert = db.prepare(`
-      INSERT INTO location_suggestions (
-        key,
-        session_id,
-        provider_id,
-        query,
-        limit_value,
-        expires_at_ms,
-        touched_at_ms,
-        payload
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(key) DO UPDATE SET
-        session_id = excluded.session_id,
-        provider_id = excluded.provider_id,
-        query = excluded.query,
-        limit_value = excluded.limit_value,
-        expires_at_ms = excluded.expires_at_ms,
-        touched_at_ms = excluded.touched_at_ms,
-        payload = excluded.payload
-    `);
-    try {
-      const write = db.transaction(() => {
-        for (const [key, entry] of this.entries) {
-          const [sessionId = "anonymous", providerId = "costamar", rawLimit = "8", query = ""] = key.split("::");
-          insert.run(
-            key,
-            sessionId,
-            providerId,
-            query,
-            Math.max(1, Math.trunc(Number(rawLimit) || 8)),
-            entry.expiresAtMs,
-            entry.touchedAtMs,
-            JSON.stringify(entry.suggestions),
-          );
-        }
-      });
-
-      write();
-    } finally {
-      insert.finalize();
-    }
-  }
 }

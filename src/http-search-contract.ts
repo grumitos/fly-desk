@@ -187,7 +187,6 @@ function normalizeRequest(
       baggageRequired: booleanValue(filters.baggageRequired, false),
       verifiedOnly: booleanValue(filters.verifiedOnly, false),
       exactPurchasePathOnly: booleanValue(filters.exactPurchasePathOnly, false),
-      exhaustiveResults: tripType === "one-way" && searchMode === "stay-range" ? true : undefined,
     },
     coverageMode: input?.coverageMode === "extended" ? "extended" : "core",
     redirectMode: input?.redirectMode === "none" || input?.redirectMode === "strict"

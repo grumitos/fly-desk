@@ -115,7 +115,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `src/core/`: normalizacion, matriz, grouping, ranking, cotizacion y tipos compartidos
 - `src/search-service-client.ts`: proxy loopback de busquedas/matriz/polling/cancelacion hacia `fly-desk-search.service`
 - `src/search-worker-client.ts` y `src/search-worker.ts`: procesos hijos Bun para busquedas pesadas de proveedor dentro del runner
-- `src/session-store.ts`: jobs vivos, SQLite local, migracion JSON legada, redirects y purchase paths
+- `src/session-store.ts`: jobs vivos, SQLite local, redirects y purchase paths
 - `src/location-suggestion-cache.ts`: cache SQLite de autocomplete con TTL
 - `src/location-usage-store.ts`: ranking global SQLite de origen/destino frecuentes
 - `src/runtime-paths.ts`: fallback persistente basado en `FLY_DESK_APP_DATA_DIR` para caches SQLite cuando no hay `*_DB_PATH` especifico
@@ -161,7 +161,7 @@ Cobertura importante actual:
 - contexto Click and Book Plus endurecido
 - key requerida o recuperable para Agil live
 - workers Bun habilitados por defecto para aislar busquedas pesadas de proveedor
-- persistencia SQLite y migracion JSON legada de sesiones/autocomplete
+- persistencia SQLite de sesiones/autocomplete
 - ranking global de sugerencias frecuentes en servidor, no por `localStorage` de cada navegador; se registra desde `/api/search` y `/api/matrix`
 - layout persistente de resultados
 - rail de busqueda, filtros, tema, autocomplete, provider links y cotizacion

@@ -1,6 +1,5 @@
 import {
   ProviderExecutionContext,
-  ProviderCapabilities,
   ProviderMatrixResult,
   ProviderSearchResult,
   SearchProvider,
@@ -14,15 +13,6 @@ import {
 
 export class LocalCostamarProvider implements SearchProvider {
   id = "costamar" as const;
-
-  capabilities: ProviderCapabilities = {
-    exactSearch: true,
-    flexibleDates: true,
-    deeplinks: false,
-    searchRedirects: true,
-    calendarRedirects: false,
-    multiCity: false,
-  };
 
   async searchExact(
     request: SearchRequest,

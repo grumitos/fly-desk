@@ -10,15 +10,6 @@ import {
   SearchRequest,
 } from "./types";
 
-export interface ProviderCapabilities {
-  exactSearch: boolean;
-  flexibleDates: boolean;
-  deeplinks: boolean;
-  searchRedirects: boolean;
-  calendarRedirects: boolean;
-  multiCity: boolean;
-}
-
 export interface ProviderSearchResult {
   offers: CanonicalOffer[];
   warnings: string[];
@@ -42,7 +33,6 @@ export interface ProviderExecutionContext {
 
 export interface SearchProvider {
   id: ProviderId;
-  capabilities: ProviderCapabilities;
   searchExact(
     request: SearchRequest,
     context?: ProviderExecutionContext,

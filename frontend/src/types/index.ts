@@ -47,8 +47,6 @@ export interface SearchRequest {
   checkedBaggageRequired?: boolean
   baggageRequired?: boolean
   includedAirlineCodes?: string[]
-  maxResults?: number
-  compactAllOffers?: boolean
   migrationMonths?: string[]
   sortMode?: string
 }

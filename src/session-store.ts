@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 import { logPerfSpan, startPerfTimer } from "./perf";
@@ -159,18 +159,8 @@ interface PurgeSummary {
   purchasePaths: number;
 }
 
-interface PersistedSearchSessionStore {
-  version: 1;
-  savedAt: string;
-  searchJobs: SearchJobRecord[];
-  matrixJobs: MatrixJobRecord[];
-  purchasePaths: StoredPurchasePath[];
-}
-
 interface SearchSessionStoreOptions {
   dbPath?: string;
-  legacyPersistPath?: string;
-  persistPath?: string;
 }
 
 interface SqlitePayloadRow {
@@ -297,8 +287,6 @@ function hasCompatibleCostamarSearchCacheToken(
 function normalizeSearchRequestForSearchCache(request: SearchRequest): SearchRequest {
   const next = cloneJson(request);
   if (next.filters) {
-    delete next.filters.maxResults;
-    delete next.filters.compactAllOffers;
     const checkedBaggageRequired = next.filters.checkedBaggageRequired === true || next.filters.baggageRequired === true;
     if (checkedBaggageRequired) {
       next.filters.checkedBaggageRequired = true;
@@ -422,7 +410,6 @@ export class SearchSessionStore {
   private readonly matrixJobs = new Map<string, MatrixJobRecord>();
   private readonly searchJobs = new Map<string, SearchJobRecord>();
   private readonly db: Database | undefined;
-  private readonly legacyPersistPath: string | undefined;
   private readonly persistedSearchJobs = new Map<string, PersistedEntryState>();
   private readonly persistedMatrixJobs = new Map<string, PersistedEntryState>();
   private readonly persistedPurchasePaths = new Map<string, PersistedEntryState>();
@@ -431,9 +418,6 @@ export class SearchSessionStore {
 
   constructor(options?: SearchSessionStoreOptions) {
     const dbPath = options?.dbPath?.trim() || undefined;
-    this.legacyPersistPath = options?.legacyPersistPath?.trim()
-      || options?.persistPath?.trim()
-      || undefined;
 
     if (dbPath) {
       mkdirSync(dirname(dbPath), { recursive: true });
@@ -1502,70 +1486,13 @@ export class SearchSessionStore {
   private loadPersisted(): void {
     try {
       this.bootstrapping = true;
-      const migrated = this.migrateLegacyJsonIfNeeded();
-      if (!migrated) {
-        this.loadSqlitePayload();
-      }
+      this.loadSqlitePayload();
     } finally {
       this.bootstrapping = false;
     }
 
     this.purgeExpired();
     this.persistNow();
-  }
-
-  private migrateLegacyJsonIfNeeded(): boolean {
-    if (!this.db || !this.legacyPersistPath || !existsSync(this.legacyPersistPath) || this.databaseHasRows()) {
-      return false;
-    }
-
-    const parsed = this.readLegacyJsonPayload();
-    if (!parsed) {
-      return false;
-    }
-
-    this.loadPersistencePayload(parsed);
-    if (!this.persistNow()) {
-      return false;
-    }
-
-    try {
-      rmSync(this.legacyPersistPath, { force: true });
-    } catch {
-      // Keep the imported SQLite cache even if the old JSON file cannot be removed.
-    }
-    return true;
-  }
-
-  private readLegacyJsonPayload(): PersistedSearchSessionStore | undefined {
-    if (!this.legacyPersistPath) {
-      return undefined;
-    }
-
-    try {
-      const parsed = JSON.parse(readFileSync(this.legacyPersistPath, "utf8")) as PersistedSearchSessionStore;
-      if (parsed?.version !== 1) {
-        return undefined;
-      }
-      return parsed;
-    } catch {
-      // Ignore malformed files and continue with an empty store.
-      return undefined;
-    }
-  }
-
-  private databaseHasRows(): boolean {
-    if (!this.db) {
-      return false;
-    }
-
-    const row = getSql<{ total?: number }>(this.db, `
-      SELECT
-        (SELECT COUNT(*) FROM search_jobs)
-        + (SELECT COUNT(*) FROM matrix_jobs)
-        + (SELECT COUNT(*) FROM purchase_paths) AS total
-    `);
-    return Number(row?.total ?? 0) > 0;
   }
 
   private loadSqlitePayload(): void {
@@ -1637,25 +1564,17 @@ export class SearchSessionStore {
       })
       .filter((path): path is StoredPurchasePath => Boolean(path));
 
-    this.loadPersistencePayload({
-      version: 1,
-      savedAt: "",
-      searchJobs: parsedSearchJobs,
-      matrixJobs: parsedMatrixJobs,
-      purchasePaths: parsedPurchasePaths,
-    });
+    this.loadPersistencePayload(parsedSearchJobs, parsedMatrixJobs, parsedPurchasePaths);
   }
 
-  private loadPersistencePayload(parsed: PersistedSearchSessionStore): void {
-    const searchJobs = Array.isArray(parsed.searchJobs)
-      ? parsed.searchJobs.map(redactSearchJobForPersistence)
-      : [];
-    const matrixJobs = Array.isArray(parsed.matrixJobs)
-      ? parsed.matrixJobs.map(redactMatrixJobForPersistence)
-      : [];
-    const purchasePaths = Array.isArray(parsed.purchasePaths)
-      ? parsed.purchasePaths.map(redactStoredPurchasePathForPersistence)
-      : [];
+  private loadPersistencePayload(
+    searchJobsInput: SearchJobRecord[],
+    matrixJobsInput: MatrixJobRecord[],
+    purchasePathsInput: StoredPurchasePath[],
+  ): void {
+    const searchJobs = searchJobsInput.map(redactSearchJobForPersistence);
+    const matrixJobs = matrixJobsInput.map(redactMatrixJobForPersistence);
+    const purchasePaths = purchasePathsInput.map(redactStoredPurchasePathForPersistence);
 
     searchJobs
       .filter((job) => job?.status === "completed" && typeof job?.id === "string")

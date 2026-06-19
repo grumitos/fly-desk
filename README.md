@@ -92,7 +92,7 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 - `src/core/`: normalizacion, matriz, grouping, ranking, cotizacion y contratos compartidos
 - `src/search-service-client.ts`: delegacion loopback opcional de rutas de busqueda hacia el runner dedicado
 - `src/search-worker-client.ts` / `src/search-worker.ts`: procesos hijos Bun para aislar busquedas pesadas
-- `src/session-store.ts`: jobs vivos, SQLite local, migracion JSON legada, redirects y purchase paths
+- `src/session-store.ts`: jobs vivos, SQLite local, redirects y purchase paths
 - `src/location-suggestion-cache.ts`: cache SQLite de autocomplete
 - `src/location-usage-store.ts`: ranking global SQLite de origen/destino frecuentes
 - `src/runtime-paths.ts`: resolucion de rutas persistentes; `FLY_DESK_APP_DATA_DIR` mantiene caches fuera del release cuando no hay override especifico

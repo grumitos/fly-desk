@@ -37,9 +37,7 @@ export function buildMatrixResponse(overrides: Record<string, unknown> = {}) {
         infants: 0,
       },
       cabin: "ECONOMY",
-      filters: {
-        maxResults: 25,
-      },
+      filters: {},
       coverageMode: "core",
       redirectMode: "best-effort",
       currencyCode: "USD",
@@ -75,9 +73,7 @@ export function buildMatrixResponse(overrides: Record<string, unknown> = {}) {
             infants: 0,
           },
           cabin: "ECONOMY",
-          filters: {
-            maxResults: 25,
-          },
+          filters: {},
           coverageMode: "core",
           redirectMode: "best-effort",
           currencyCode: "USD",

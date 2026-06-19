@@ -11,8 +11,8 @@ Fly Desk separa las pruebas por recursos consumidos y por el tipo de contrato qu
 - `bun run test:coverage`: cobertura de las suites Bun. La cobertura del navegador no se mezcla con este reporte.
 - `bun run test`: gate completo de core y UI.
 
-Los archivos Bun deben terminar en `.unit.test.ts` o `.integration.test.ts`. El guard
-`test/test-files.unit.test.ts` falla si aparece un `.test.ts` sin clasificar.
+Los archivos Bun deben terminar en `.unit.test.ts` o `.integration.test.ts`; los scripts filtran
+esos sufijos directamente con `bun test`.
 
 ## Suite UI
 

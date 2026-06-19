@@ -51,14 +51,6 @@ test("SearchOrchestrator uses the default provider and forwards execution contex
   let receivedContext: ProviderExecutionContext | undefined;
   const provider: SearchProvider = {
     id: "agil-local",
-    capabilities: {
-      exactSearch: true,
-      flexibleDates: false,
-      deeplinks: false,
-      searchRedirects: true,
-      calendarRedirects: false,
-      multiCity: false,
-    },
     async searchExact(_request, context) {
       receivedContext = context;
       return { offers: [], warnings: ["provider warning"], partial: true };
@@ -82,14 +74,6 @@ test("SearchOrchestrator lets explicit execution options override the request pr
   const called: string[] = [];
   const provider = (id: SearchProvider["id"]): SearchProvider => ({
     id,
-    capabilities: {
-      exactSearch: true,
-      flexibleDates: false,
-      deeplinks: false,
-      searchRedirects: true,
-      calendarRedirects: false,
-      multiCity: false,
-    },
     async searchExact() {
       called.push(id);
       return { offers: [], warnings: [], partial: false };
@@ -111,14 +95,6 @@ test("SearchOrchestrator lets explicit execution options override the request pr
 test("SearchOrchestrator rejects missing providers and unsupported matrix searches", async () => {
   const exactOnly: SearchProvider = {
     id: "agil-local",
-    capabilities: {
-      exactSearch: true,
-      flexibleDates: false,
-      deeplinks: false,
-      searchRedirects: true,
-      calendarRedirects: false,
-      multiCity: false,
-    },
     async searchExact() {
       return { offers: [], warnings: [], partial: false };
     },
@@ -135,14 +111,6 @@ test("SearchOrchestrator rejects missing providers and unsupported matrix search
 test("SearchOrchestrator builds unique matrix axes and confidence counts", async () => {
   const provider: SearchProvider = {
     id: "costamar",
-    capabilities: {
-      exactSearch: true,
-      flexibleDates: true,
-      deeplinks: false,
-      searchRedirects: true,
-      calendarRedirects: false,
-      multiCity: false,
-    },
     async searchExact() {
       return { offers: [], warnings: [], partial: false };
     },

@@ -38,10 +38,6 @@ export function getRuntime(): RuntimeServices {
         "FLY_DESK_LOCATION_SUGGESTION_DB_PATH",
         "location-suggestion-cache.sqlite",
       ),
-      legacyPersistPath: resolvePersistPath(
-        "FLY_DESK_LOCATION_SUGGESTION_CACHE_PATH",
-        "location-suggestion-cache.json",
-      ),
     }),
     locationUsage: new LocationUsageStore({
       dbPath: resolvePersistPath(
@@ -54,10 +50,6 @@ export function getRuntime(): RuntimeServices {
       dbPath: resolvePersistPath(
         "FLY_DESK_SESSION_DB_PATH",
         "fly-desk-cache.sqlite",
-      ),
-      legacyPersistPath: resolvePersistPath(
-        "FLY_DESK_SEARCH_SESSION_STORE_PATH",
-        "search-session-store.json",
       ),
     }),
   };
