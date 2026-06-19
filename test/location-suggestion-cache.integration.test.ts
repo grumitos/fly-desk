@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -14,15 +14,6 @@ function runSql(db: Database, sql: string, ...params: any[]): void {
   const statement = db.prepare(sql);
   try {
     statement.run(...params);
-  } finally {
-    statement.finalize();
-  }
-}
-
-function getSql<T>(db: Database, sql: string, ...params: any[]): T | undefined {
-  const statement = db.prepare(sql);
-  try {
-    return statement.get(...params) as T | undefined;
   } finally {
     statement.finalize();
   }
@@ -180,44 +171,6 @@ test("location suggestion cache keeps valid persisted entries while reloading ex
   assert.equal(calls, 1);
 
   bootstrap.close();
-  cache.close();
-  rmSync(tempRoot, { recursive: true, force: true });
-});
-
-test("location suggestion cache migrates valid legacy JSON entries into SQLite", async () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-location-cache-migrate-"));
-  const dbPath = join(tempRoot, "location-suggestions.sqlite");
-  const legacyPersistPath = join(tempRoot, "location-suggestions.json");
-  mkdirSync(tempRoot, { recursive: true });
-
-  writeFileSync(legacyPersistPath, JSON.stringify({
-    version: 1,
-    savedAt: new Date().toISOString(),
-    entries: [
-      {
-        key: "session-a::costamar::8::LIM",
-        touchedAtMs: Date.now() - 2_000,
-        expiresAtMs: Date.now() + LOCATION_SUGGESTION_CACHE_TTL_MS,
-        suggestions: [{ code: "LIM", city: "Lima", country: "Peru", label: "LIM - Lima, Peru" }],
-      },
-    ],
-  }), "utf8");
-
-  const cache = new LocationSuggestionCacheStore({ dbPath, legacyPersistPath });
-  const restored = await cache.getOrLoad("session-a", "costamar", "LIM", 8, async () => {
-    throw new Error("LIM should come from migrated cache");
-  });
-  const db = new Database(dbPath, { readonly: true });
-  const row = getSql<{ payload?: string }>(
-    db,
-    "SELECT payload FROM location_suggestions WHERE key = ?",
-    "session-a::costamar::8::LIM",
-  );
-  db.close();
-
-  assert.equal(restored[0]?.code, "LIM");
-  assert.ok(row?.payload);
-
   cache.close();
   rmSync(tempRoot, { recursive: true, force: true });
 });

@@ -34,6 +34,9 @@ function buildMonthViewRequest(): SearchRequest {
     market: "PE",
     maxResults: 25,
     compactAllOffers: true,
+  } as SearchRequest & {
+    maxResults: number;
+    compactAllOffers: boolean;
   };
 }
 
@@ -114,8 +117,8 @@ test("migration month fan-out keeps provider scans exhaustive", async () => {
     assert.equal(payload.request.filters?.baggageRequired, false);
     assert.equal(payload.request.filters?.maxLayoverMinutes, undefined);
     assert.equal(payload.request.filters?.includedAirlineCodes, undefined);
-    assert.equal(payload.request.filters?.maxResults, undefined);
-    assert.equal(payload.request.filters?.compactAllOffers, true);
+    assert.equal(Object.hasOwn(payload.request.filters ?? {}, "maxResults"), false);
+    assert.equal(Object.hasOwn(payload.request.filters ?? {}, "compactAllOffers"), false);
   }
 });
 

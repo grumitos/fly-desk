@@ -133,9 +133,6 @@ export interface SearchFilters {
   excludedAirlineCodes?: string[];
   maxPrice?: number;
   currencyCode?: string;
-  maxResults?: number;
-  compactAllOffers?: boolean;
-  exhaustiveResults?: boolean;
   maxTotalDurationMinutes?: number;
   maxLayoverMinutes?: number;
   minDepartureMinutes?: number;

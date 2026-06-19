@@ -1,7 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { materializeSearchResponse } from "../src/core/orchestrator";
-import { retainOfferVariants } from "../src/core/provider-offer-variants";
 import type { CanonicalOffer, SearchRequest } from "../src/core/types";
 
 function buildRequest(): SearchRequest {
@@ -22,10 +21,7 @@ function buildRequest(): SearchRequest {
       infants: 0,
     },
     cabin: "ECONOMY",
-    filters: {
-      maxResults: 5,
-      compactAllOffers: true,
-    },
+    filters: {},
     coverageMode: "core",
     redirectMode: "best-effort",
     currencyCode: "USD",
@@ -66,7 +62,7 @@ function buildOffer(index: number): CanonicalOffer {
   };
 }
 
-test("search materialization keeps every provider result even when legacy cap filters are present", () => {
+test("search materialization keeps every provider result", () => {
   const response = materializeSearchResponse(
     buildRequest(),
     "cheapest",
@@ -81,14 +77,6 @@ test("search materialization keeps every provider result even when legacy cap fi
   assert.equal(response.offers.length, 14);
   assert.equal(response.allOffers?.length, 14);
   assert.equal(response.offers[13]?.providerOfferRef, "ref-14");
-});
-
-test("provider adapters keep every variant even when legacy cap filters are present", () => {
-  const variants = Array.from({ length: 80 }, (_, index) => index + 1);
-
-  assert.equal(retainOfferVariants(variants, { exhaustiveResults: true }).length, 80);
-  assert.equal(retainOfferVariants(variants, {}).length, 80);
-  assert.equal(retainOfferVariants(variants, { maxResults: 25, compactAllOffers: true }).length, 80);
 });
 
 test("search filters narrow visible offers without removing retained provider results", () => {

@@ -47,7 +47,6 @@ import {
   parseLimitDate,
 } from "./core/agil-normalization";
 import { buildFlexibleVariantGroupKey } from "./core/variant-group-key";
-import { retainOfferVariants } from "./core/provider-offer-variants";
 import {
   ProviderSearchResult,
 } from "./core/provider";
@@ -2518,7 +2517,7 @@ function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): Canon
     ? outboundCandidates.flatMap((outbound) => inboundCandidates.map((inbound) => ({ outbound, inbound })))
     : outboundCandidates.map((outbound) => ({ outbound, inbound: undefined }));
 
-  return retainOfferVariants(candidatePairs, request.filters).flatMap(({ outbound, inbound }) => {
+  return candidatePairs.flatMap(({ outbound, inbound }) => {
     const itineraries = inbound
       ? [outbound.itinerary, inbound.itinerary]
       : [outbound.itinerary];

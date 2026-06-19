@@ -1901,9 +1901,7 @@ test("accepts extended one-way month scans for migratory search beyond the norma
             children: 0,
             infants: 0,
           },
-          filters: {
-            compactAllOffers: true,
-          },
+          filters: {},
         },
       }),
     });
@@ -2311,7 +2309,7 @@ test("public matrix ignores top-level providerId even when provider config is pr
   });
 });
 
-test("one-way stay-range preserves omitted maxResults and night bounds", async () => {
+test("one-way stay-range omits legacy result-cap fields and preserves night bounds", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/search`, {
       method: "POST",
@@ -2349,6 +2347,9 @@ test("one-way stay-range preserves omitted maxResults and night bounds", async (
           filters: {
             nonStop: false,
             baggageRequired: false,
+            maxResults: 25,
+            compactAllOffers: true,
+            exhaustiveResults: true,
           },
         },
       }),
@@ -2357,7 +2358,7 @@ test("one-way stay-range preserves omitted maxResults and night bounds", async (
     assert.equal(response.status, 200);
     const payload = await response.json() as {
       request?: {
-        filters?: { exhaustiveResults?: boolean; maxResults?: number };
+        filters?: Record<string, unknown>;
         legs?: Array<{ minNights?: number; maxNights?: number }>;
       };
       searchMeta?: { providersUsed?: string[] };
@@ -2366,14 +2367,15 @@ test("one-way stay-range preserves omitted maxResults and night bounds", async (
 
     assert.equal(payload.searchStatus, "running");
     assert.deepEqual(payload.searchMeta?.providersUsed, ["agil-local", "costamar"]);
-    assert.equal(payload.request?.filters?.exhaustiveResults, true);
-    assert.equal(payload.request?.filters?.maxResults, undefined);
+    assert.equal(Object.hasOwn(payload.request?.filters ?? {}, "exhaustiveResults"), false);
+    assert.equal(Object.hasOwn(payload.request?.filters ?? {}, "maxResults"), false);
+    assert.equal(Object.hasOwn(payload.request?.filters ?? {}, "compactAllOffers"), false);
     assert.equal(payload.request?.legs?.[0]?.minNights, undefined);
     assert.equal(payload.request?.legs?.[0]?.maxNights, undefined);
   });
 });
 
-test("exact searches preserve omitted maxResults in the public request", async () => {
+test("exact searches omit legacy result-cap fields in the public request", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/search`, {
       method: "POST",
@@ -2400,6 +2402,9 @@ test("exact searches preserve omitted maxResults in the public request", async (
           filters: {
             nonStop: false,
             baggageRequired: false,
+            maxResults: 25,
+            compactAllOffers: true,
+            exhaustiveResults: true,
           },
         },
       }),
@@ -2408,13 +2413,15 @@ test("exact searches preserve omitted maxResults in the public request", async (
     assert.equal(response.status, 200);
     const payload = await response.json() as {
       request?: {
-        filters?: { maxResults?: number };
+        filters?: Record<string, unknown>;
       };
       searchStatus?: string;
     };
 
     assert.equal(payload.searchStatus, "running");
-    assert.equal(payload.request?.filters?.maxResults, undefined);
+    assert.equal(Object.hasOwn(payload.request?.filters ?? {}, "maxResults"), false);
+    assert.equal(Object.hasOwn(payload.request?.filters ?? {}, "compactAllOffers"), false);
+    assert.equal(Object.hasOwn(payload.request?.filters ?? {}, "exhaustiveResults"), false);
   });
 });
 
@@ -2580,7 +2587,6 @@ test("search endpoint serves cached results first for the same config while reva
       includedAirlineCodes: undefined,
       excludedAirlineCodes: undefined,
       maxPrice: undefined,
-      maxResults: undefined,
       maxTotalDurationMinutes: undefined,
       maxLayoverMinutes: undefined,
       maxStops: undefined,

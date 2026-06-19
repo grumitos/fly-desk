@@ -36,8 +36,6 @@ const SHARED_SEARCH_QUERY_PARAMS = [
   "airline",
   "months",
   "month",
-  "maxResults",
-  "compact",
 ]
 
 type SharedSearchMode = "exact" | "flexible" | "migration"
@@ -131,7 +129,7 @@ export function serializeSharedSearchPayload(request: SearchRequest, sortMode: S
     sortMode,
     providerConfig: null,
     request: backendPayload.request,
-    frontendRequest: request,
+    frontendRequest: normalizeFrontendRequest(request),
   })
 }
 
@@ -188,8 +186,6 @@ function readReadableSharedSearchFromUrl(url: URL): SharedSearchState | null {
     baggageRequired: boolParam(params, "baggage"),
     includedAirlineCodes: includedAirlineCodes.length ? includedAirlineCodes : undefined,
     migrationMonths: migrationMonths.length ? Array.from(new Set(migrationMonths)) : undefined,
-    maxResults: numberValue(params.get("maxResults")),
-    compactAllOffers: boolParam(params, "compact"),
   }
 
   if (searchMode !== "roundtrip-grid") {
@@ -295,8 +291,6 @@ function normalizeFrontendRequest(value: unknown): SearchRequest | null {
     migrationMonths: Array.isArray(request.migrationMonths)
       ? Array.from(new Set(request.migrationMonths.map(stringValue).filter(isMonthKey)))
       : undefined,
-    maxResults: numberValue(request.maxResults),
-    compactAllOffers: request.compactAllOffers === true,
     sortMode: optionalString(request.sortMode),
   }
 }

@@ -1196,11 +1196,6 @@ function buildExactRequestFromOffer(baseRequest: SearchRequest, offer: Canonical
         returnDate: offer.tripType === "round-trip" ? returnDate : undefined,
       },
     ],
-    filters: {
-      ...baseRequest.filters,
-      maxResults: Math.max(10, baseRequest.filters.maxResults ?? 10),
-      compactAllOffers: true,
-    },
   };
 }
 
@@ -1236,11 +1231,6 @@ function buildExactRequestFromMatrixCell(baseRequest: SearchRequest, cell: Matri
         returnDate: baseRequest.tripType === "round-trip" ? cell.returnDate : undefined,
       },
     ],
-    filters: {
-      ...baseRequest.filters,
-      maxResults: Math.max(10, baseRequest.filters.maxResults ?? 10),
-      compactAllOffers: true,
-    },
   };
 }
 

@@ -28,7 +28,6 @@ import { parseProviderAmount } from "./core/provider-money";
 import { buildOfferVariantGroupKey } from "./core/variant-group-key";
 import { ProviderSearchResult } from "./core/provider";
 import { enrichComparisonMetrics, totalDuration } from "./core/ranking";
-import { retainOfferVariants } from "./core/provider-offer-variants";
 import {
   BaggageSummary,
   CanonicalOffer,
@@ -3561,7 +3560,7 @@ function expandCostamarRecommendationFlightOptions(
     variants.splice(0, variants.length, ...next);
   }
 
-  return retainOfferVariants(variants, request.filters).map((variant) => ({
+  return variants.map((variant) => ({
     ...recommendation,
     id: `${baseId}:${variant.map((option) => option.index).join("-")}`,
     itinerary: relevantJourneys.map((journey, index) => ({

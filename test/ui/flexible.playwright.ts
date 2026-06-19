@@ -300,8 +300,8 @@ test("migratory search sends monthly stay-range requests", async () => {
 
     assert.equal(firstRequest.tripType, "one-way");
     assert.equal(firstRequest.searchMode, "stay-range");
-    assert.equal(firstRequest.filters?.maxResults, undefined);
-    assert.equal(firstRequest.filters?.compactAllOffers, true);
+    assert.equal(Object.hasOwn(firstRequest.filters ?? {}, "maxResults"), false);
+    assert.equal(Object.hasOwn(firstRequest.filters ?? {}, "compactAllOffers"), false);
     assert.equal(firstLeg?.departureStart, "2026-05-01");
     assert.equal(firstLeg?.departureEnd, "2026-05-31");
     assert.equal(firstLeg?.returnDate, undefined);
