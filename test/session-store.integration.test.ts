@@ -774,6 +774,43 @@ test("search session store persists completed cache and running redirect snapsho
   rmSync(tempRoot, { recursive: true, force: true });
 });
 
+test("search session store prunes expired sqlite rows before loading their payloads", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-prune-before-load-"));
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const firstStore = new SearchSessionStore({ dbPath });
+  const offer = buildOffer("offer-expired", "https://expired.example/search");
+  const job = firstStore.createSearchJob({
+    request: buildRequest(),
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  firstStore.close();
+
+  const db = new Database(dbPath);
+  db.run(
+    "UPDATE search_jobs SET idle_at_ms = ? WHERE id = ?",
+    Date.now() - COMPLETED_SEARCH_SESSION_TTL_MS - 1,
+    job.id,
+  );
+  db.close(true);
+
+  const secondStore = new SearchSessionStore({ dbPath });
+  assert.equal(secondStore.getSearchJob(job.id), undefined);
+  secondStore.close();
+  assert.deepEqual(readSqliteCounts(dbPath), {
+    searchJobs: 0,
+    matrixJobs: 0,
+    purchasePaths: 0,
+  });
+
+  rmSync(tempRoot, { recursive: true, force: true });
+});
+
 test("search session store persists completed search jobs without truncating offers", () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-unbounded-"));
   const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
