@@ -1484,6 +1484,8 @@ export class SearchSessionStore {
   }
 
   private loadPersisted(): void {
+    const nowMs = Date.now();
+    this.pruneExpiredSqliteRows(nowMs);
     try {
       this.bootstrapping = true;
       this.loadSqlitePayload();
@@ -1491,8 +1493,37 @@ export class SearchSessionStore {
       this.bootstrapping = false;
     }
 
-    this.purgeExpired();
+    this.purgeExpired(nowMs);
     this.persistNow();
+  }
+
+  private pruneExpiredSqliteRows(nowMs: number): void {
+    if (!this.db) {
+      return;
+    }
+
+    const cutoffMs = nowMs - COMPLETED_SEARCH_SESSION_TTL_MS;
+    const db = this.db;
+    db.transaction(() => {
+      runSql(db, `
+        DELETE FROM purchase_paths
+        WHERE session_id IN (
+          SELECT id FROM search_jobs WHERE status != 'completed' OR idle_at_ms < ?
+          UNION
+          SELECT id FROM matrix_jobs WHERE status != 'completed' OR idle_at_ms < ?
+        )
+      `, cutoffMs, cutoffMs);
+      runSql(db, "DELETE FROM search_jobs WHERE status != 'completed' OR idle_at_ms < ?", cutoffMs);
+      runSql(db, "DELETE FROM matrix_jobs WHERE status != 'completed' OR idle_at_ms < ?", cutoffMs);
+      runSql(db, `
+        DELETE FROM purchase_paths
+        WHERE session_id NOT IN (
+          SELECT id FROM search_jobs
+          UNION
+          SELECT id FROM matrix_jobs
+        )
+      `);
+    })();
   }
 
   private loadSqlitePayload(): void {
