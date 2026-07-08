@@ -256,7 +256,8 @@ function translatedOfferWarnings(input: unknown): string[] | undefined {
   return warnings.length ? warnings : undefined
 }
 
-function translatedMatrixTooltipWarning(tooltip: string | undefined): string | undefined {
+function translatedMatrixTooltipWarning(tooltip: unknown): string | undefined {
+  if (typeof tooltip !== "string") return undefined
   if (!tooltip || isRedundantOfferWarning(tooltip)) return undefined
 
   const translated = translateApiMessage(tooltip)
@@ -1064,7 +1065,7 @@ function normalizeMatrixJob(data: BackendMatrixJobResponse, sortMode: SortMode):
   const rawWarnings = (data.warnings ?? []).map((warning) => String(warning))
   const rawMetaWarnings = (data.searchMeta?.warnings ?? []).map((warning) => String(warning))
   const rawError = data.error ? [data.error] : []
-  const rawCellTooltips = (data.cells ?? []).map((cell) => cell.tooltip).filter((tooltip): tooltip is string => Boolean(tooltip))
+  const rawCellTooltips = (data.cells ?? []).map((cell) => cell.tooltip).filter((tooltip): tooltip is string => typeof tooltip === "string" && Boolean(tooltip))
   const recommendations = (data.recommendations ?? []).map((recommendation) => translateApiMessage(recommendation))
   const warnings = [
     ...rawWarnings.map((warning) => translateApiMessage(warning)),

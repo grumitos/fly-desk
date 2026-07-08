@@ -434,6 +434,36 @@ function hasForwardedClientMarker(request: Request): boolean {
   );
 }
 
+function isLoopbackRemoteAddress(value: string | undefined): boolean {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "127.0.0.1"
+    || normalized === "::1"
+    || normalized === "::ffff:127.0.0.1";
+}
+
+export function requestWithServerTrustHeaders(request: Request, server: Pick<BunServer<undefined>, "requestIP">): Request {
+  const headers = new Headers();
+  request.headers.forEach((value, key) => {
+    if (!key.toLowerCase().startsWith("x-flydesk-")) {
+      headers.append(key, value);
+    }
+  });
+
+  const remoteAddress = server.requestIP(request)?.address;
+  headers.set("x-flydesk-client-loopback", isLoopbackRemoteAddress(remoteAddress) ? "1" : "0");
+  if (remoteAddress) {
+    headers.set("x-flydesk-client-address", remoteAddress);
+  }
+
+  const hasBody = request.method !== "GET" && request.method !== "HEAD";
+  return new Request(request.url, {
+    method: request.method,
+    headers,
+    body: hasBody ? request.body : undefined,
+    duplex: hasBody ? "half" : undefined,
+  } as RequestInit & { duplex?: "half" });
+}
+
 function isTrustedLocalRequest(request: Request): boolean {
   if (!shouldTrustLoopbackClient() || request.headers.get("x-flydesk-client-loopback") !== "1") {
     return false;
@@ -638,6 +668,6 @@ export function createRedirectServer(options: {
   return Bun.serve({
     port: options.port ?? resolveRedirectServerPort(),
     hostname: options.hostname ?? resolveRedirectServerHost(),
-    fetch: (request) => routeRedirectRequest(request, { dbPath: options.dbPath }),
+    fetch: (request, server) => routeRedirectRequest(requestWithServerTrustHeaders(request, server), { dbPath: options.dbPath }),
   });
 }

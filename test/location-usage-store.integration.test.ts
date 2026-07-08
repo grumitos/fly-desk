@@ -71,12 +71,14 @@ test("location usage store persists global ranking across process-like restarts"
     first.recordFromSearch(buildSearch("LIM", "MAD"), nowMs + 1);
     first.recordFromSearch(buildSearch("CUZ", "BOG"), nowMs + 2);
     first.close();
+    first.close();
 
     const second = new LocationUsageStore({ dbPath });
     assert.deepEqual(second.getSuggestions(3, nowMs + 3), {
       origin: ["LIM", "CUZ"],
       destination: ["MAD", "BOG"],
     });
+    second.close();
     second.close();
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });

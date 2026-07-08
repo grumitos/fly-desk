@@ -542,6 +542,19 @@ test("matrix offer normalization suppresses provider status warnings in selected
             warnings: ["Costamar live search.", "Costamar returned no offers for this search."],
           },
         },
+        {
+          key: "malformed-tooltip",
+          departureDate: "2026-07-02",
+          returnDate: "2026-07-09",
+          stayNights: 7,
+          price: { amount: 705, currencyCode: "USD" },
+          confidence: "live",
+          providerSource: "costamar",
+          selectable: true,
+          requiresRequery: false,
+          stateCode: "live",
+          tooltip: { message: "Costamar live search." },
+        },
       ],
     }), {
       status: 200,
@@ -550,11 +563,15 @@ test("matrix offer normalization suppresses provider status warnings in selected
   }) as typeof fetch;
 
   const result = await startMatrix(request, "cheapest");
+  const malformedTooltipOffer = result.offers.find((offer) => offer.id === "malformed-tooltip");
+  const realWarningOffer = result.offers.find((offer) => offer.id === "costamar-offer-real-warning");
 
-  assert.equal(result.offers.length, 3);
+  assert.equal(result.offers.length, 4);
   assert.deepEqual(result.offers[0]?.warnings ?? [], []);
   assert.equal(result.offers[0]?.baggageLabel, undefined);
   assert.deepEqual(result.offers[1]?.warnings ?? [], []);
   assert.equal(result.offers[1]?.baggageLabel, undefined);
-  assert.deepEqual(result.offers[2]?.warnings ?? [], ["Click and Book Plus no devolvió vuelos para esta búsqueda."]);
+  assert.deepEqual(malformedTooltipOffer?.warnings ?? [], []);
+  assert.equal(malformedTooltipOffer?.baggageLabel, undefined);
+  assert.deepEqual(realWarningOffer?.warnings ?? [], ["Click and Book Plus no devolvió vuelos para esta búsqueda."]);
 });
