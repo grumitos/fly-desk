@@ -1,6 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { materializeSearchResponse } from "../src/core/orchestrator";
+import { PROVIDER_OFFER_VARIANT_LIMIT, takeProviderOfferVariants } from "../src/core/provider-offer-limits";
 import type { CanonicalOffer, SearchRequest } from "../src/core/types";
 
 function buildRequest(): SearchRequest {
@@ -77,6 +78,13 @@ test("search materialization keeps every provider result", () => {
   assert.equal(response.offers.length, 14);
   assert.equal(response.allOffers?.length, 14);
   assert.equal(response.offers[13]?.providerOfferRef, "ref-14");
+});
+
+test("provider adapters cap variants before offer materialization", () => {
+  const variants = Array.from({ length: PROVIDER_OFFER_VARIANT_LIMIT + 30 }, (_, index) => index + 1);
+
+  assert.equal(takeProviderOfferVariants(variants).length, PROVIDER_OFFER_VARIANT_LIMIT);
+  assert.equal(takeProviderOfferVariants(variants)[PROVIDER_OFFER_VARIANT_LIMIT - 1], PROVIDER_OFFER_VARIANT_LIMIT);
 });
 
 test("search filters narrow visible offers without removing retained provider results", () => {

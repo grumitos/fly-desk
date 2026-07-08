@@ -46,6 +46,7 @@ import {
   parseIsoDiffMinutes,
   parseLimitDate,
 } from "./core/agil-normalization";
+import { PROVIDER_OFFER_VARIANT_LIMIT, takeProviderOfferVariants } from "./core/provider-offer-limits";
 import { buildFlexibleVariantGroupKey } from "./core/variant-group-key";
 import {
   ProviderSearchResult,
@@ -2513,11 +2514,23 @@ function mapGroupToOffers(group: AgilSearchGroup, request: SearchRequest): Canon
     taxes: buildMoney(taxesAmount > 0 ? Number(taxesAmount.toFixed(2)) : undefined, currencyCode),
   };
   const leg = request.legs[0];
-  const candidatePairs: Array<{ outbound: ItineraryCandidate; inbound?: ItineraryCandidate }> = request.tripType === "round-trip"
-    ? outboundCandidates.flatMap((outbound) => inboundCandidates.map((inbound) => ({ outbound, inbound })))
-    : outboundCandidates.map((outbound) => ({ outbound, inbound: undefined }));
+  const candidatePairs: Array<{ outbound: ItineraryCandidate; inbound?: ItineraryCandidate }> = [];
+  if (request.tripType === "round-trip") {
+    for (const outbound of outboundCandidates) {
+      for (const inbound of inboundCandidates) {
+        candidatePairs.push({ outbound, inbound });
+        if (candidatePairs.length >= PROVIDER_OFFER_VARIANT_LIMIT) break;
+      }
+      if (candidatePairs.length >= PROVIDER_OFFER_VARIANT_LIMIT) break;
+    }
+  } else {
+    for (const outbound of outboundCandidates) {
+      candidatePairs.push({ outbound, inbound: undefined });
+      if (candidatePairs.length >= PROVIDER_OFFER_VARIANT_LIMIT) break;
+    }
+  }
 
-  return candidatePairs.flatMap(({ outbound, inbound }) => {
+  return takeProviderOfferVariants(candidatePairs).flatMap(({ outbound, inbound }) => {
     const itineraries = inbound
       ? [outbound.itinerary, inbound.itinerary]
       : [outbound.itinerary];

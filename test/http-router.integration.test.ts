@@ -676,6 +676,49 @@ test("accepts non-loopback location requests with the internal search service to
   }
 });
 
+test("rejects unauthenticated search service proxy requests before injecting the runner token", { concurrency: false }, async () => {
+  const previousSearchUrl = process.env.FLY_DESK_SEARCH_SERVICE_URL;
+  const previousSearchToken = process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN;
+  const previousWebAuth = process.env.FLY_DESK_WEB_AUTH;
+  const previousPasswordHash = process.env.FLY_DESK_WEB_PASSWORD_HASH;
+  const previousSessionSecret = process.env.FLY_DESK_WEB_SESSION_SECRET;
+
+  process.env.FLY_DESK_SEARCH_SERVICE_URL = "http://127.0.0.1:32125";
+  process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN = "internal-runner-token";
+  process.env.FLY_DESK_WEB_AUTH = "1";
+  process.env.FLY_DESK_WEB_PASSWORD_HASH = "test-hash";
+  process.env.FLY_DESK_WEB_SESSION_SECRET = "test-session-secret-32-characters-minimum";
+
+  try {
+    const response = await routeRequest(new Request("http://fly-desk.local/api/search", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-flydesk-client-loopback": "0",
+      },
+      body: "{}",
+    }));
+
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: "Authentication required." });
+  } finally {
+    if (previousSearchUrl === undefined) delete process.env.FLY_DESK_SEARCH_SERVICE_URL;
+    else process.env.FLY_DESK_SEARCH_SERVICE_URL = previousSearchUrl;
+
+    if (previousSearchToken === undefined) delete process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN;
+    else process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN = previousSearchToken;
+
+    if (previousWebAuth === undefined) delete process.env.FLY_DESK_WEB_AUTH;
+    else process.env.FLY_DESK_WEB_AUTH = previousWebAuth;
+
+    if (previousPasswordHash === undefined) delete process.env.FLY_DESK_WEB_PASSWORD_HASH;
+    else process.env.FLY_DESK_WEB_PASSWORD_HASH = previousPasswordHash;
+
+    if (previousSessionSecret === undefined) delete process.env.FLY_DESK_WEB_SESSION_SECRET;
+    else process.env.FLY_DESK_WEB_SESSION_SECRET = previousSessionSecret;
+  }
+});
+
 test("location usage suggestions are recorded and read from the global runtime store", { concurrency: false }, async () => {
   const previousApiToken = process.env.FLY_DESK_API_TOKEN;
   process.env.FLY_DESK_API_TOKEN = "test-token";

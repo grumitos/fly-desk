@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CanonicalOffer, ProviderMeta, SearchMeta, SearchRequest } from "../src/core/types";
-import { routeRedirectRequest } from "../src/redirect-service";
+import { requestWithServerTrustHeaders, routeRedirectRequest } from "../src/redirect-service";
 import { SearchSessionStore } from "../src/session-store";
 import { resetCostamarSessionCacheForTests } from "../src/provider-context";
 import {
@@ -204,6 +204,34 @@ test("redirect service requires auth before reading purchase paths", async () =>
       { dbPath: "missing.sqlite", cacheLookupTimeoutMs: 0 },
     );
 
+    assert.equal(response.status, 403);
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("redirect service ignores forged loopback trust headers from non-loopback clients", async () => {
+  const restoreEnv = overrideEnv({
+    FLY_DESK_API_TOKEN: undefined,
+    FLY_DESK_WEB_AUTH: undefined,
+    FLY_DESK_TRUST_LOOPBACK_CLIENT: "1",
+    FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK: undefined,
+  });
+
+  try {
+    const request = requestWithServerTrustHeaders(
+      new Request("http://127.0.0.1:32124/r/unknown", {
+        headers: {
+          "x-flydesk-client-loopback": "1",
+        },
+      }),
+      {
+        requestIP: () => ({ address: "203.0.113.10", port: 54321, family: "IPv4" }),
+      },
+    );
+
+    assert.equal(request.headers.get("x-flydesk-client-loopback"), "0");
+    const response = await routeRedirectRequest(request, { dbPath: "missing.sqlite", cacheLookupTimeoutMs: 0 });
     assert.equal(response.status, 403);
   } finally {
     restoreEnv();

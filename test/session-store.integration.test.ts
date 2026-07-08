@@ -1,6 +1,6 @@
-import { test } from "bun:test";
+import { afterEach, test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -13,6 +13,15 @@ import type {
   SearchMeta,
   SearchRequest,
 } from "../src/core/types";
+
+const tempRootsForCleanup = new Set<string>();
+
+afterEach(() => {
+  for (const tempRoot of tempRootsForCleanup) {
+    rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    tempRootsForCleanup.delete(tempRoot);
+  }
+});
 
 test("completed search result cache ttl is four hours", () => {
   assert.equal(COMPLETED_SEARCH_SESSION_TTL_MS, 4 * 60 * 60 * 1000);
@@ -772,6 +781,103 @@ test("search session store persists completed cache and running redirect snapsho
   secondStore.close();
 
   rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test("search session store migrates and removes legacy json cache with redaction", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-legacy-"));
+  tempRootsForCleanup.add(tempRoot);
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const legacyPersistPath = join(tempRoot, "search-session-store.json");
+  const now = new Date().toISOString();
+  const legacySecret = "legacy-costamar-token-placeholder";
+  const offer = {
+    ...buildOffer("legacy-costamar-offer", `https://book.costamar.example/redirect?token=${legacySecret}&id=1`),
+    providerSource: "costamar" as const,
+    purchasePaths: [
+      {
+        id: "legacy-costamar-path",
+        type: "search-redirect" as const,
+        provider: "costamar" as const,
+        label: "Buscar en Click and Book Plus",
+        url: `https://book.costamar.example/redirect?token=${legacySecret}&id=1`,
+        precision: "exact-search" as const,
+        score: 0.9,
+        requiresNewTab: true,
+        commercialMode: "provider" as const,
+        state: "search_redirect" as const,
+      },
+    ],
+  };
+  const legacyJob = {
+    id: "legacy-search-job",
+    request: buildRequest(),
+    providerContext: {
+      costamar: {
+        apiBaseUrl: "https://api.costamar.example",
+        brandBaseUrl: "https://book.costamar.example",
+        terminalId: "TERM",
+        token: legacySecret,
+        lang: "es",
+      },
+    },
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    providerDiagnostics: [],
+    sortMode: "cheapest" as const,
+    status: "completed" as const,
+    createdAt: now,
+    updatedAt: now,
+    lastAccessedAt: now,
+    revision: 1,
+  };
+  const legacyPath = {
+    sessionId: legacyJob.id,
+    ownerId: offer.id,
+    path: offer.purchasePaths[0],
+    fingerprint: "legacy-fingerprint#0",
+    createdAt: now,
+    updatedAt: now,
+    lastAccessedAt: now,
+  };
+
+  writeFileSync(legacyPersistPath, JSON.stringify({
+    version: 1,
+    searchJobs: [legacyJob],
+    matrixJobs: [],
+    purchasePaths: [legacyPath],
+  }), "utf8");
+
+  const store = new SearchSessionStore({ dbPath, legacyPersistPath });
+  try {
+    assert.equal(existsSync(legacyPersistPath), false);
+    assert.ok(store.getSearchJob(legacyJob.id));
+  } finally {
+    store.close();
+  }
+
+  const persistedBytes = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]
+    .filter((path) => existsSync(path))
+    .map((path) => readFileSync(path));
+  assert.equal(persistedBytes.some((buffer) => buffer.includes(Buffer.from(legacySecret, "utf8"))), false);
+  assert.equal(persistedBytes.some((buffer) => buffer.includes(Buffer.from(`token=${legacySecret}`, "utf8"))), false);
+});
+
+test("search session store removes malformed legacy json cache", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-malformed-legacy-"));
+  tempRootsForCleanup.add(tempRoot);
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const legacyPersistPath = join(tempRoot, "search-session-store.json");
+  writeFileSync(legacyPersistPath, "{not-json", "utf8");
+
+  const store = new SearchSessionStore({ dbPath, legacyPersistPath });
+  try {
+    assert.equal(existsSync(legacyPersistPath), false);
+  } finally {
+    store.close();
+  }
 });
 
 test("search session store prunes expired sqlite rows before loading their payloads", () => {

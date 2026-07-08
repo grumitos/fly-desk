@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 import { logPerfSpan, startPerfTimer } from "./perf";
@@ -161,6 +161,14 @@ interface PurgeSummary {
 
 interface SearchSessionStoreOptions {
   dbPath?: string;
+  legacyPersistPath?: string;
+}
+
+interface LegacyPersistencePayload {
+  version?: number;
+  searchJobs?: SearchJobRecord[];
+  matrixJobs?: MatrixJobRecord[];
+  purchasePaths?: StoredPurchasePath[];
 }
 
 interface SqlitePayloadRow {
@@ -335,6 +343,21 @@ function redactPurchasePathForPersistence(path: PurchasePath): PurchasePath {
   return next;
 }
 
+function redactOfferForPersistence(offer: CanonicalOffer): CanonicalOffer {
+  return {
+    ...offer,
+    purchasePaths: offer.purchasePaths.map(redactPurchasePathForPersistence),
+  };
+}
+
+function redactMatrixCellForPersistence(cell: MatrixCell): MatrixCell {
+  return {
+    ...cell,
+    purchasePaths: cell.purchasePaths?.map(redactPurchasePathForPersistence),
+    offer: cell.offer ? redactOfferForPersistence(cell.offer) : undefined,
+  };
+}
+
 function redactStoredPurchasePathForPersistence(entry: StoredPurchasePath): StoredPurchasePath {
   const path = redactPurchasePathForPersistence(entry.path);
   const occurrence = entry.fingerprint.match(/#(\d+)$/)?.[1] ?? "0";
@@ -367,6 +390,8 @@ function redactSearchJobForPersistence(job: SearchJobRecord): SearchJobRecord {
   return {
     ...job,
     providerContext: redactProviderContextForPersistence(job.providerContext),
+    offers: job.offers.map(redactOfferForPersistence),
+    allOffers: job.allOffers.map(redactOfferForPersistence),
   };
 }
 
@@ -374,6 +399,7 @@ function redactMatrixJobForPersistence(job: MatrixJobRecord): MatrixJobRecord {
   return {
     ...job,
     providerContext: redactProviderContextForPersistence(job.providerContext),
+    cells: job.cells.map(redactMatrixCellForPersistence),
   };
 }
 
@@ -409,7 +435,8 @@ export class SearchSessionStore {
   private readonly ownerPurchasePathIds = new Map<string, Map<string, string>>();
   private readonly matrixJobs = new Map<string, MatrixJobRecord>();
   private readonly searchJobs = new Map<string, SearchJobRecord>();
-  private readonly db: Database | undefined;
+  private db: Database | undefined;
+  private readonly legacyPersistPath: string | undefined;
   private readonly persistedSearchJobs = new Map<string, PersistedEntryState>();
   private readonly persistedMatrixJobs = new Map<string, PersistedEntryState>();
   private readonly persistedPurchasePaths = new Map<string, PersistedEntryState>();
@@ -418,6 +445,7 @@ export class SearchSessionStore {
 
   constructor(options?: SearchSessionStoreOptions) {
     const dbPath = options?.dbPath?.trim() || undefined;
+    this.legacyPersistPath = options?.legacyPersistPath?.trim() || undefined;
 
     if (dbPath) {
       mkdirSync(dirname(dbPath), { recursive: true });
@@ -438,13 +466,15 @@ export class SearchSessionStore {
       this.persistTimer = undefined;
     }
     this.persistNow();
-    if (this.db) {
+    const db = this.db;
+    if (db) {
+      this.db = undefined;
       try {
-        this.db.run("PRAGMA wal_checkpoint(TRUNCATE);");
+        db.run("PRAGMA wal_checkpoint(TRUNCATE);");
       } catch {
         // Closing the database is still the important cleanup path.
       }
-      this.db.close(true);
+      db.close(true);
     }
   }
 
@@ -1486,15 +1516,50 @@ export class SearchSessionStore {
   private loadPersisted(): void {
     const nowMs = Date.now();
     this.pruneExpiredSqliteRows(nowMs);
+    const hadSqliteRows = this.hasSqlitePayloadRows();
     try {
       this.bootstrapping = true;
       this.loadSqlitePayload();
+      this.migrateLegacyPersistencePayload({ load: !hadSqliteRows });
     } finally {
       this.bootstrapping = false;
     }
 
     this.purgeExpired(nowMs);
     this.persistNow();
+  }
+
+  private hasSqlitePayloadRows(): boolean {
+    if (!this.db) {
+      return false;
+    }
+
+    return Boolean(
+      getSql<{ present: number }>(this.db, "SELECT 1 AS present FROM search_jobs LIMIT 1")
+        ?? getSql<{ present: number }>(this.db, "SELECT 1 AS present FROM matrix_jobs LIMIT 1")
+        ?? getSql<{ present: number }>(this.db, "SELECT 1 AS present FROM purchase_paths LIMIT 1"),
+    );
+  }
+
+  private migrateLegacyPersistencePayload(options: { load: boolean }): void {
+    if (!this.legacyPersistPath || !existsSync(this.legacyPersistPath)) {
+      return;
+    }
+
+    const parsed = parseJsonPayload<LegacyPersistencePayload>(readFileSync(this.legacyPersistPath, "utf8"));
+    if (!parsed) {
+      rmSync(this.legacyPersistPath, { force: true });
+      return;
+    }
+
+    if (options.load) {
+      this.loadPersistencePayload(
+        Array.isArray(parsed.searchJobs) ? parsed.searchJobs : [],
+        Array.isArray(parsed.matrixJobs) ? parsed.matrixJobs : [],
+        Array.isArray(parsed.purchasePaths) ? parsed.purchasePaths : [],
+      );
+    }
+    rmSync(this.legacyPersistPath, { force: true });
   }
 
   private pruneExpiredSqliteRows(nowMs: number): void {

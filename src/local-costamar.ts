@@ -25,6 +25,7 @@ import {
 } from "./core/matrix";
 import { buildOfferSignature } from "./core/offer-signature";
 import { parseProviderAmount } from "./core/provider-money";
+import { PROVIDER_OFFER_VARIANT_LIMIT, takeProviderOfferVariants } from "./core/provider-offer-limits";
 import { buildOfferVariantGroupKey } from "./core/variant-group-key";
 import { ProviderSearchResult } from "./core/provider";
 import { enrichComparisonMetrics, totalDuration } from "./core/ranking";
@@ -3549,18 +3550,20 @@ function expandCostamarRecommendationFlightOptions(
   }
 
   const baseId = costamarRecommendationStableId(recommendation);
-  const variants: Array<Array<{ flight: CostamarFlight; index: number }>> = [[]];
+  let variants: Array<Array<{ flight: CostamarFlight; index: number }>> = [[]];
   for (const options of optionsByJourney) {
     const next: Array<Array<{ flight: CostamarFlight; index: number }>> = [];
     for (const prefix of variants) {
       for (const option of options) {
         next.push([...prefix, option]);
+        if (next.length >= PROVIDER_OFFER_VARIANT_LIMIT) break;
       }
+      if (next.length >= PROVIDER_OFFER_VARIANT_LIMIT) break;
     }
-    variants.splice(0, variants.length, ...next);
+    variants = next;
   }
 
-  return variants.map((variant) => ({
+  return takeProviderOfferVariants(variants).map((variant) => ({
     ...recommendation,
     id: `${baseId}:${variant.map((option) => option.index).join("-")}`,
     itinerary: relevantJourneys.map((journey, index) => ({

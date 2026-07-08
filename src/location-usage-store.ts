@@ -168,6 +168,7 @@ export class LocationUsageStore {
   private entries = new Map<string, LocationUsageEntry>();
   private readonly dbPath: string | undefined;
   private readonly db: Database | undefined;
+  private closed = false;
 
   constructor(options?: LocationUsageStoreOptions) {
     this.dbPath = options?.dbPath?.trim() || undefined;
@@ -223,13 +224,14 @@ export class LocationUsageStore {
   }
 
   close(): void {
-    if (this.db) {
+    if (this.db && !this.closed) {
       try {
-        this.db.run("PRAGMA wal_checkpoint(TRUNCATE);");
+        runSql(this.db, "PRAGMA wal_checkpoint(TRUNCATE);");
       } catch {
         // Closing the database is still the important cleanup path.
       }
-      this.db.close(true);
+      this.db.close();
+      this.closed = true;
     }
   }
 
@@ -317,7 +319,7 @@ export class LocationUsageStore {
 
     try {
       const write = this.db.transaction(() => {
-        this.db?.run("DELETE FROM location_usage");
+        runSql(this.db!, "DELETE FROM location_usage");
         for (const entry of this.entries.values()) {
           insert.run(
             entry.role,
