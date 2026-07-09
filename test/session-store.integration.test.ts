@@ -917,6 +917,68 @@ test("search session store prunes expired sqlite rows before loading their paylo
   rmSync(tempRoot, { recursive: true, force: true });
 });
 
+test("search session store restores only the newest jobs that fit the persisted cache budget", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-budget-"));
+  tempRootsForCleanup.add(tempRoot);
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const firstStore = new SearchSessionStore({ dbPath });
+  const request = buildRequest();
+  const meta = buildSearchMeta();
+  const providerMeta = buildProviderMeta();
+
+  const jobs = ["oldest", "middle", "newest"].map((label) => {
+    const offer = buildOffer(`offer-${label}`, `https://${label}.example/search`);
+    const job = firstStore.createSearchJob({
+      request,
+      offers: [offer],
+      allOffers: [offer],
+      searchMeta: meta,
+      providerMeta,
+      warnings: [`${label}:${"x".repeat(4_096)}`],
+      sortMode: "cheapest",
+      status: "completed",
+    });
+    return {
+      job,
+      pathId: firstStore.getSession(job.id)?.offers[0]?.purchasePaths[0]?.id,
+    };
+  });
+  jobs.forEach(({ pathId }) => assert.ok(pathId));
+  firstStore.close();
+
+  const db = new Database(dbPath);
+  const nowMs = Date.now();
+  jobs.forEach(({ job }, index) => {
+    db.run("UPDATE search_jobs SET idle_at_ms = ? WHERE id = ?", nowMs - (jobs.length - index) * 1_000, job.id);
+  });
+  const payloadSizes = new Map(
+    db.query<{ id: string; bytes: number }, []>(
+      "SELECT id, length(CAST(payload AS BLOB)) AS bytes FROM search_jobs",
+    ).all().map((row) => [row.id, row.bytes]),
+  );
+  const restoreBudgetBytes = payloadSizes.get(jobs[1]!.job.id)! + payloadSizes.get(jobs[2]!.job.id)!;
+  db.close(true);
+
+  const secondStore = new SearchSessionStore({
+    dbPath,
+    persistedRestoreBudgetBytes: restoreBudgetBytes,
+  });
+  try {
+    assert.equal(secondStore.getSearchJob(jobs[0]!.job.id), undefined);
+    assert.ok(secondStore.getSearchJob(jobs[1]!.job.id));
+    assert.ok(secondStore.getSearchJob(jobs[2]!.job.id));
+    assert.equal(secondStore.resolvePurchasePath(jobs[0]!.pathId!), undefined);
+    assert.ok(secondStore.resolvePurchasePath(jobs[1]!.pathId!));
+    assert.ok(secondStore.resolvePurchasePath(jobs[2]!.pathId!));
+  } finally {
+    secondStore.close();
+  }
+
+  const counts = readSqliteCounts(dbPath);
+  assert.equal(counts.searchJobs, 2);
+  assert.equal(counts.purchasePaths, 2);
+});
+
 test("search session store persists completed search jobs without truncating offers", () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-unbounded-"));
   const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
