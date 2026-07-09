@@ -16,6 +16,7 @@ import {
 } from "./core/types";
 
 const COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
+const PERSISTED_SEARCH_CACHE_RESTORE_BUDGET_BYTES = 128 * 1024 * 1024;
 export const COMPLETED_SEARCH_SESSION_TTL_MS = (() => {
   const raw = Number(process.env.SEARCH_COMPLETED_SESSION_TTL_MS ?? COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS);
   return Number.isFinite(raw) && raw >= 0
@@ -162,6 +163,7 @@ interface PurgeSummary {
 interface SearchSessionStoreOptions {
   dbPath?: string;
   legacyPersistPath?: string;
+  persistedRestoreBudgetBytes?: number;
 }
 
 interface LegacyPersistencePayload {
@@ -174,6 +176,13 @@ interface LegacyPersistencePayload {
 interface SqlitePayloadRow {
   id: string;
   payload: string;
+}
+
+interface PersistedJobRestoreCandidate {
+  id: string;
+  kind: "matrix" | "search";
+  idleAtMs: number;
+  payloadBytes: number;
 }
 
 interface PersistedEntryState {
@@ -437,6 +446,7 @@ export class SearchSessionStore {
   private readonly searchJobs = new Map<string, SearchJobRecord>();
   private db: Database | undefined;
   private readonly legacyPersistPath: string | undefined;
+  private readonly persistedRestoreBudgetBytes: number;
   private readonly persistedSearchJobs = new Map<string, PersistedEntryState>();
   private readonly persistedMatrixJobs = new Map<string, PersistedEntryState>();
   private readonly persistedPurchasePaths = new Map<string, PersistedEntryState>();
@@ -446,6 +456,12 @@ export class SearchSessionStore {
   constructor(options?: SearchSessionStoreOptions) {
     const dbPath = options?.dbPath?.trim() || undefined;
     this.legacyPersistPath = options?.legacyPersistPath?.trim() || undefined;
+    const configuredRestoreBudgetBytes = options?.persistedRestoreBudgetBytes;
+    this.persistedRestoreBudgetBytes = typeof configuredRestoreBudgetBytes === "number"
+      && Number.isFinite(configuredRestoreBudgetBytes)
+      && configuredRestoreBudgetBytes >= 0
+      ? configuredRestoreBudgetBytes
+      : PERSISTED_SEARCH_CACHE_RESTORE_BUDGET_BYTES;
 
     if (dbPath) {
       mkdirSync(dirname(dbPath), { recursive: true });
@@ -1516,6 +1532,7 @@ export class SearchSessionStore {
   private loadPersisted(): void {
     const nowMs = Date.now();
     this.pruneExpiredSqliteRows(nowMs);
+    this.prunePersistedRowsToRestoreBudget();
     const hadSqliteRows = this.hasSqlitePayloadRows();
     try {
       this.bootstrapping = true;
@@ -1527,6 +1544,70 @@ export class SearchSessionStore {
 
     this.purgeExpired(nowMs);
     this.persistNow();
+  }
+
+  private prunePersistedRowsToRestoreBudget(): void {
+    if (!this.db) {
+      return;
+    }
+
+    const candidates = allSql<PersistedJobRestoreCandidate>(this.db, `
+      SELECT
+        id,
+        'search' AS kind,
+        idle_at_ms AS idleAtMs,
+        length(CAST(payload AS BLOB)) AS payloadBytes
+      FROM search_jobs
+      UNION ALL
+      SELECT
+        id,
+        'matrix' AS kind,
+        idle_at_ms AS idleAtMs,
+        length(CAST(payload AS BLOB)) AS payloadBytes
+      FROM matrix_jobs
+      ORDER BY idleAtMs DESC, kind ASC, id ASC
+    `);
+    let retainedBytes = 0;
+    const evicted = candidates.filter((candidate) => {
+      const payloadBytes = Math.max(0, Number(candidate.payloadBytes) || 0);
+      if (retainedBytes + payloadBytes > this.persistedRestoreBudgetBytes) {
+        return true;
+      }
+      retainedBytes += payloadBytes;
+      return false;
+    });
+    if (evicted.length === 0) {
+      return;
+    }
+
+    const db = this.db;
+    const deletePurchasePaths = db.prepare("DELETE FROM purchase_paths WHERE session_id = ?");
+    const deleteSearchJob = db.prepare("DELETE FROM search_jobs WHERE id = ?");
+    const deleteMatrixJob = db.prepare("DELETE FROM matrix_jobs WHERE id = ?");
+    try {
+      db.transaction(() => {
+        for (const candidate of evicted) {
+          deletePurchasePaths.run(candidate.id);
+          if (candidate.kind === "search") {
+            deleteSearchJob.run(candidate.id);
+          } else {
+            deleteMatrixJob.run(candidate.id);
+          }
+        }
+      })();
+    } finally {
+      deletePurchasePaths.finalize();
+      deleteSearchJob.finalize();
+      deleteMatrixJob.finalize();
+    }
+
+    const evictedBytes = evicted.reduce(
+      (total, candidate) => total + Math.max(0, Number(candidate.payloadBytes) || 0),
+      0,
+    );
+    console.warn(
+      `Fly Desk persisted cache restore budget evicted jobs: jobs=${evicted.length} payloadBytes=${evictedBytes} budgetBytes=${this.persistedRestoreBudgetBytes}`,
+    );
   }
 
   private hasSqlitePayloadRows(): boolean {
@@ -1546,19 +1627,22 @@ export class SearchSessionStore {
       return;
     }
 
+    if (!options.load) {
+      rmSync(this.legacyPersistPath, { force: true });
+      return;
+    }
+
     const parsed = parseJsonPayload<LegacyPersistencePayload>(readFileSync(this.legacyPersistPath, "utf8"));
     if (!parsed) {
       rmSync(this.legacyPersistPath, { force: true });
       return;
     }
 
-    if (options.load) {
-      this.loadPersistencePayload(
-        Array.isArray(parsed.searchJobs) ? parsed.searchJobs : [],
-        Array.isArray(parsed.matrixJobs) ? parsed.matrixJobs : [],
-        Array.isArray(parsed.purchasePaths) ? parsed.purchasePaths : [],
-      );
-    }
+    this.loadPersistencePayload(
+      Array.isArray(parsed.searchJobs) ? parsed.searchJobs : [],
+      Array.isArray(parsed.matrixJobs) ? parsed.matrixJobs : [],
+      Array.isArray(parsed.purchasePaths) ? parsed.purchasePaths : [],
+    );
     rmSync(this.legacyPersistPath, { force: true });
   }
 
