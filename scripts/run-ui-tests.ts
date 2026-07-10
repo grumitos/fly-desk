@@ -4,6 +4,7 @@ const result = spawnSync(
   "node",
   [
     "--test",
+    "--test-timeout=60000",
     "--test-reporter=spec",
     ...process.argv.slice(2),
     "test/ui.playwright.ts",

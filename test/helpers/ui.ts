@@ -54,13 +54,19 @@ export async function withDesktopPage<T>(
   const page = options?.createPage
     ? await options.createPage({ baseUrl, context })
     : await context.newPage();
+  const pageErrors: Error[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error));
 
   try {
     if (autoOpen) {
       await openDesktop(page, baseUrl);
     }
 
-    return await run({ baseUrl, context, page });
+    const result = await run({ baseUrl, context, page });
+    if (pageErrors.length > 0) {
+      throw new Error(`Uncaught browser error: ${pageErrors.map((error) => error.message).join(" | ")}`);
+    }
+    return result;
   } catch (error) {
     const failureDir = join(process.cwd(), "test-results", "ui");
     mkdirSync(failureDir, { recursive: true });
