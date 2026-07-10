@@ -37,13 +37,14 @@ test("search service base URL only accepts loopback HTTP targets", () => {
   assert.equal(resolveSearchServiceBaseUrl("http://localhost:32125/search")?.toString(), "http://localhost:32125/search");
 });
 
-test("search service route detection is limited to search and matrix job routes", () => {
+test("search service route detection includes quotation sessions owned by the runner", () => {
   assert.equal(isSearchServiceRoute("POST", "/api/search"), true);
   assert.equal(isSearchServiceRoute("GET", "/api/search/job-1"), true);
   assert.equal(isSearchServiceRoute("POST", "/api/search/job-1/cancel"), true);
   assert.equal(isSearchServiceRoute("POST", "/api/matrix"), true);
   assert.equal(isSearchServiceRoute("GET", "/api/matrix/job-1"), true);
   assert.equal(isSearchServiceRoute("POST", "/api/matrix/job-1/cancel"), true);
+  assert.equal(isSearchServiceRoute("POST", "/api/quotation"), true);
 
   assert.equal(isSearchServiceRoute("GET", "/api/health"), false);
   assert.equal(isSearchServiceRoute("GET", "/api/locations"), false);

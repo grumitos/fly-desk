@@ -24,6 +24,7 @@ type QuotationState = {
 
 export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
   const [quotation, setQuotation] = useState<QuotationState | null>(null)
+  const [migrationPlan, setMigrationPlan] = useState(false)
   const [loadingKey, setLoadingKey] = useState<string | null>(null)
   const [copiedOfferKey, setCopiedOfferKey] = useState<string | null>(null)
   const [pathFeedback, setPathFeedback] = useState<{ offerId: string; message: string } | null>(null)
@@ -33,7 +34,7 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
   const quoteSearchJobId = offer?.sourceSearchJobId ?? searchJobId
   const quoteOfferId = offer?.sourceOfferId ?? offer?.id
   const quoteKey = offer && request
-    ? `${quoteSearchJobId ?? "snapshot"}:${quoteOfferId ?? offer.id}:${request.origin}:${request.destination}:${request.departureDate ?? request.departureStart ?? ""}:${request.returnDate ?? request.returnStart ?? ""}`
+    ? `${quoteSearchJobId ?? "snapshot"}:${quoteOfferId ?? offer.id}:${request.origin}:${request.destination}:${request.departureDate ?? request.departureStart ?? ""}:${request.returnDate ?? request.returnStart ?? ""}:${migrationPlan ? "migration" : "standard"}`
     : undefined
   const activeQuotation = quotation && quotation.key === quoteKey ? quotation : null
   const copied = copiedOfferKey === quoteKey
@@ -100,6 +101,7 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
     const promise = fetchQuotation({
       searchSessionId: quoteSearchJobId,
       offerId: quoteOfferId,
+      migrationPlan,
     })
       .then((result): QuotationState => ({ key: quoteKey, text: result.commercialText }))
       .catch((): QuotationState => ({
@@ -126,7 +128,7 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
         setLoadingKey((current) => (current === quoteKey ? null : current))
       }
     }
-  }, [offer, quoteKey, quoteOfferId, quoteSearchJobId, quotation, request])
+  }, [migrationPlan, offer, quoteKey, quoteOfferId, quoteSearchJobId, quotation, request])
 
   useEffect(() => {
     if (!canQuote || !quoteKey || activeQuotation || pendingQuotationRef.current?.key === quoteKey) return
@@ -322,17 +324,32 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
             {activePathFeedback}
           </div>
         )}
-        <div className="flex items-center justify-end gap-1.5">
-          {purchasePath && (
-            <Button size="sm" variant="secondary" title={purchasePathActionTitle} onClick={handlePurchasePath}>
-              <AppIcon name="externalLink" />
-              {purchasePathActionLabel}
+        <div className="flex items-center justify-between gap-2">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={migrationPlan}
+            aria-label="Paquete migratorio"
+            onClick={() => setMigrationPlan((current) => !current)}
+            className="flex h-8 items-center gap-2 rounded-lg px-1.5 text-xs font-semibold text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <span className={`relative h-4 w-7 rounded-full transition-colors ${migrationPlan ? "bg-primary" : "bg-input"}`} aria-hidden="true">
+              <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${migrationPlan ? "translate-x-3.5" : "translate-x-0.5"}`} />
+            </span>
+            Migratorio
+          </button>
+          <div className="flex items-center gap-1.5">
+            {purchasePath && (
+              <Button size="sm" variant="secondary" title={purchasePathActionTitle} onClick={handlePurchasePath}>
+                <AppIcon name="externalLink" />
+                {purchasePathActionLabel}
+              </Button>
+            )}
+            <Button size="sm" onClick={handleQuotation} disabled={loading || !canQuote}>
+              {loading ? <AppIcon name="loading" spin /> : copied ? <AppIcon name="check" /> : <AppIcon name="clipboard" />}
+              {loading ? "Generando" : copied ? "Copiado" : "Cotizar"}
             </Button>
-          )}
-          <Button size="sm" onClick={handleQuotation} disabled={loading || !canQuote}>
-            {loading ? <AppIcon name="loading" spin /> : copied ? <AppIcon name="check" /> : <AppIcon name="clipboard" />}
-            {loading ? "Generando" : copied ? "Copiado" : "Cotizar"}
-          </Button>
+          </div>
         </div>
       </div>
     </section>

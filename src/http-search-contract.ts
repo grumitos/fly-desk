@@ -83,6 +83,11 @@ function stringValue(input: unknown, fallback = ""): string {
   return typeof input === "string" ? input.trim() : fallback;
 }
 
+function countryCodeValue(input: unknown): string | undefined {
+  const value = stringValue(input).toUpperCase();
+  return /^[A-Z]{2}$/.test(value) ? value : undefined;
+}
+
 function numberValue(input: unknown, fallback?: number): number | undefined {
   if (input === undefined || input === null || input === "") {
     return fallback;
@@ -153,6 +158,8 @@ function normalizeRequest(
         destination: stringValue(leg.destination).toUpperCase(),
         originLabel: stringValue(leg.originLabel),
         destinationLabel: stringValue(leg.destinationLabel),
+        originCountryCode: countryCodeValue(leg.originCountryCode),
+        destinationCountryCode: countryCodeValue(leg.destinationCountryCode),
         departureDate: stringValue(leg.departureDate),
         departureStart: stringValue(leg.departureStart),
         departureEnd: stringValue(leg.departureEnd),

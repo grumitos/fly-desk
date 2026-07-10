@@ -115,6 +115,8 @@ export interface SearchLeg {
   destination: string;
   originLabel?: string;
   destinationLabel?: string;
+  originCountryCode?: string;
+  destinationCountryCode?: string;
   departureDate?: string;
   departureStart?: string;
   departureEnd?: string;

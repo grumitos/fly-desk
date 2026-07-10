@@ -643,6 +643,10 @@ export type BackendSearchRequest = {
   legs?: Array<{
     origin?: string
     destination?: string
+    originLabel?: string
+    destinationLabel?: string
+    originCountryCode?: string
+    destinationCountryCode?: string
     departureDate?: string
     departureStart?: string
     departureEnd?: string
@@ -719,6 +723,10 @@ export function toBackendPayload(request: SearchRequest, sortMode: SortMode): Ba
         {
           origin: request.origin,
           destination: request.destination,
+          originLabel: request.originLabel,
+          destinationLabel: request.destinationLabel,
+          originCountryCode: request.originCountryCode,
+          destinationCountryCode: request.destinationCountryCode,
           departureDate: request.departureDate,
           departureStart: request.departureStart,
           departureEnd: request.departureEnd,
@@ -754,6 +762,10 @@ export function fromBackendRequest(request: BackendSearchRequest | undefined): S
   return {
     origin: leg.origin ?? "",
     destination: leg.destination ?? "",
+    originLabel: leg.originLabel,
+    destinationLabel: leg.destinationLabel,
+    originCountryCode: leg.originCountryCode,
+    destinationCountryCode: leg.destinationCountryCode,
     departureDate: leg.departureDate,
     departureStart: leg.departureStart,
     departureEnd: leg.departureEnd,
@@ -1121,7 +1133,7 @@ function normalizeMatrixJob(data: BackendMatrixJobResponse, sortMode: SortMode):
 function migrationMonthRanges(startIso: string | undefined, selectedMonthKeys?: string[]): MigrationMonthRange[] {
   const firstSearchDate = isIsoDate(startIso) ? startIso : todayIso()
   const firstMonth = firstSearchDate.slice(0, 7)
-  const lastMonth = `${firstSearchDate.slice(0, 4)}-12`
+  const lastMonth = addMonths(firstMonth, MIGRATION_MONTH_COUNT - 1)
   const monthKeys = selectedMonthKeys === undefined
     ? Array.from({ length: MIGRATION_MONTH_COUNT }, (_, index) => addMonths(firstMonth, index))
     : selectedMonthKeys
@@ -1129,6 +1141,7 @@ function migrationMonthRanges(startIso: string | undefined, selectedMonthKeys?: 
         .filter((key, index, values) => isMigrationMonthKey(key) && values.indexOf(key) === index)
         .filter((key) => key >= firstMonth && key <= lastMonth)
         .sort()
+        .slice(0, MIGRATION_MONTH_COUNT)
 
   return monthKeys.map((key) => {
     const monthStart = `${key}-01`
@@ -1508,9 +1521,11 @@ export async function startMigrationSearch(
 export async function fetchQuotation(input: {
   searchSessionId: string
   offerId: string
+  migrationPlan?: boolean
 }) {
   return postJson<{ commercialText: string; offer: unknown }>(`${API_BASE}/api/quotation`, {
     searchSessionId: input.searchSessionId,
     offerId: input.offerId,
+    migrationPlan: input.migrationPlan === true,
   })
 }

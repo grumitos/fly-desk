@@ -122,11 +122,21 @@ test("migration month fan-out keeps provider scans exhaustive", async () => {
   }
 });
 
-test("migration month fan-out uses explicitly selected months", async () => {
+test("migration month fan-out keeps eight explicitly selected months across years", async () => {
   const payloads: BackendSearchPayload[] = [];
   const request = {
     ...buildMonthViewRequest(),
-    migrationMonths: ["2026-07", "2026-09"],
+    departureDate: "2026-11-15",
+    migrationMonths: [
+      "2026-11",
+      "2026-12",
+      "2027-01",
+      "2027-02",
+      "2027-03",
+      "2027-04",
+      "2027-05",
+      "2027-06",
+    ],
   };
 
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -166,14 +176,26 @@ test("migration month fan-out uses explicitly selected months", async () => {
 
   await startMigrationSearch(request, "cheapest");
 
-  assert.equal(payloads.length, 2);
+  assert.equal(payloads.length, 8);
   assert.deepEqual(payloads.map((payload) => payload.request.legs?.[0]?.departureStart), [
-    "2026-07-01",
-    "2026-09-01",
+    "2026-11-15",
+    "2026-12-01",
+    "2027-01-01",
+    "2027-02-01",
+    "2027-03-01",
+    "2027-04-01",
+    "2027-05-01",
+    "2027-06-01",
   ]);
   assert.deepEqual(payloads.map((payload) => payload.request.legs?.[0]?.departureEnd), [
-    "2026-07-31",
-    "2026-09-30",
+    "2026-11-30",
+    "2026-12-31",
+    "2027-01-31",
+    "2027-02-28",
+    "2027-03-31",
+    "2027-04-30",
+    "2027-05-31",
+    "2027-06-30",
   ]);
 });
 

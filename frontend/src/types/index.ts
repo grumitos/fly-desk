@@ -27,6 +27,10 @@ export type LocationSuggestion = CoreLocationSuggestion & {
 export interface SearchRequest {
   origin: string
   destination: string
+  originLabel?: string
+  destinationLabel?: string
+  originCountryCode?: string
+  destinationCountryCode?: string
   departureDate?: string
   departureStart?: string
   departureEnd?: string

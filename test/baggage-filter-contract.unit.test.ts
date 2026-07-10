@@ -11,6 +11,7 @@ import {
   writeSharedSearchToUrl,
 } from "../frontend/src/lib/search-share"
 import type { SearchRequest } from "../frontend/src/types"
+import { prepareSearchContract } from "../src/http-search-contract"
 import { normalizeQuotationRequestSnapshot } from "../src/http-quotation-snapshot"
 
 function request(overrides: Partial<SearchRequest> = {}): SearchRequest {
@@ -37,6 +38,26 @@ test("toBackendPayload sends carry-on and checked baggage filters independently"
   assert.equal(payload.request.filters?.carryOnRequired, true)
   assert.equal(payload.request.filters?.checkedBaggageRequired, true)
   assert.equal(payload.request.filters?.baggageRequired, true)
+})
+
+test("quotation location metadata survives the frontend/backend request boundary", () => {
+  const payload = toBackendPayload(request({
+    originLabel: "LIM - Lima, Perú",
+    destinationLabel: "MAD - Madrid, España",
+    originCountryCode: "pe",
+    destinationCountryCode: "ES",
+  }), "cheapest")
+  const prepared = prepareSearchContract(payload)
+  const restored = fromBackendRequest(prepared.request)
+
+  assert.equal(restored.originLabel, "LIM - Lima, Perú")
+  assert.equal(restored.destinationLabel, "MAD - Madrid, España")
+  assert.equal(restored.originCountryCode, "PE")
+  assert.equal(restored.destinationCountryCode, "ES")
+
+  payload.request.legs[0]!.destinationCountryCode = "ESP"
+  const invalid = prepareSearchContract(payload)
+  assert.equal(invalid.request.legs[0]?.destinationCountryCode, undefined)
 })
 
 test("frontend contracts omit legacy result-cap fields", () => {

@@ -489,3 +489,138 @@ test("commercial quotation omits all-airports labels from the route summary", ()
   assert.match(text, /✈️ Ruta: Madrid \(MAD\) - Lima \(LIM\) - Madrid \(MAD\)/);
   assert.doesNotMatch(text, /Todos Los Aeropuertos|Todos los aeropuertos|todos los aeropuertos/);
 });
+
+test("migration package keeps the quotation structure and adds only its explicit differences", () => {
+  const request = buildRequest();
+  request.tripType = "one-way";
+  request.legs[0] = {
+    origin: "LIM",
+    destination: "MAD",
+    originLabel: "LIM - Lima, Perú",
+    destinationLabel: "MAD - Madrid, España",
+    destinationCountryCode: "ES",
+    departureDate: "2026-07-01",
+  };
+  const offer = buildOffer({
+    origin: "LIM",
+    destination: "MAD",
+    itineraries: [{
+      direction: "outbound",
+      durationMinutes: 660,
+      stops: 0,
+      segments: [{
+        flightNumber: "IB 6659",
+        marketingCarrier: "IB",
+        marketingCarrierName: "Iberia",
+        origin: "LIM",
+        originName: "Lima",
+        destination: "MAD",
+        destinationName: "Madrid",
+        departureAt: "2026-07-01T11:00:00-05:00",
+        arrivalAt: "2026-07-02T05:40:00+02:00",
+      }],
+    }],
+  });
+
+  const standard = buildCommercialQuotation(offer, request, { timeZone: "UTC" });
+  const migration = buildCommercialQuotation(offer, request, { timeZone: "UTC", migrationPlan: true });
+
+  assert.match(migration, /^PAQUETE MIGRATORIO MADRID 🇪🇸\n\n✈️ Ruta:/);
+  assert.match(migration, /✅ INCLUYE\n\* Boleto de ida \+ retorno de apoyo anulable/);
+  assert.match(migration, /\* Seguro de viaje Transitorio/);
+  assert.match(migration, /\* Reserva de Alojamiento Transitorio/);
+  assert.match(migration, /\* Itinerario completo/);
+  assert.match(migration, /\* Asesoría Integral/);
+  assert.match(migration, /\* Selección de asiento no permitida; la asignación es aleatoria/);
+  assert.doesNotMatch(migration, /\* Asiento según disponibilidad/);
+  assert.match(standard, /^COTIZACIÓN BOLETO AÉREO ✈️/);
+  assert.doesNotMatch(standard, /PAQUETE MIGRATORIO|retorno de apoyo|Seguro de viaje Transitorio|asignación es aleatoria/);
+
+  const normalizedMigration = migration
+    .replace(/^PAQUETE MIGRATORIO MADRID 🇪🇸/, "COTIZACIÓN BOLETO AÉREO ✈️")
+    .replace("* Boleto de ida + retorno de apoyo anulable", "* Boleto de solo ida")
+    .replace("* Check in online\n", "* Check in online\n* Asiento según disponibilidad\n")
+    .replace(/^\* (?:Seguro de viaje Transitorio|Reserva de Alojamiento Transitorio|Itinerario completo|Asesoría Integral)\n/gm, "")
+    .replace("\n* Selección de asiento no permitida; la asignación es aleatoria", "");
+  assert.equal(normalizedMigration, standard);
+
+  request.legs[0].destinationCountryCode = "ZZ";
+  const unknownCountry = buildCommercialQuotation(offer, request, { migrationPlan: true });
+  assert.match(unknownCountry, /^PAQUETE MIGRATORIO MADRID 🇪🇸/);
+  assert.doesNotMatch(unknownCountry, /🇿🇿/);
+
+  request.legs[0].destinationLabel = "MIA - Miami, Estados Unidos";
+  request.legs[0].destinationCountryCode = "US";
+  const inconsistentMetadata = buildCommercialQuotation(offer, request, { migrationPlan: true });
+  assert.match(inconsistentMetadata, /^PAQUETE MIGRATORIO MADRID 🇪🇸/);
+});
+
+test("migration package pairs known destination cities with their country flags", () => {
+  const cases = [
+    { code: "MAD", city: "Madrid", flag: "🇪🇸" },
+    { code: "MIA", city: "Miami", flag: "🇺🇸" },
+    { code: "BOG", city: "Bogota", flag: "🇨🇴" },
+  ];
+
+  for (const destination of cases) {
+    const request = buildRequest();
+    request.tripType = "one-way";
+    request.legs[0] = {
+      origin: "LIM",
+      destination: destination.code,
+      departureDate: "2026-07-01",
+    };
+    const offer = buildOffer({
+      origin: "LIM",
+      destination: destination.code,
+      itineraries: [{
+        direction: "outbound",
+        durationMinutes: 600,
+        stops: 0,
+        segments: [{
+          flightNumber: "LA 100",
+          marketingCarrier: "LA",
+          origin: "LIM",
+          destination: destination.code,
+          departureAt: "2026-07-01T11:00:00-05:00",
+          arrivalAt: "2026-07-02T05:00:00+02:00",
+        }],
+      }],
+    });
+
+    const text = buildCommercialQuotation(offer, request, { migrationPlan: true });
+    assert.match(text, new RegExp(`^PAQUETE MIGRATORIO ${destination.city.toUpperCase()} ${destination.flag}`));
+  }
+});
+
+test("migration package uses validated metadata for destinations outside the trusted IATA map", () => {
+  const request = buildRequest();
+  request.tripType = "one-way";
+  request.legs[0] = {
+    origin: "LIM",
+    destination: "NRT",
+    destinationLabel: "NRT - Tokio, Japón",
+    destinationCountryCode: "JP",
+    departureDate: "2026-07-01",
+  };
+  const offer = buildOffer({
+    origin: "LIM",
+    destination: "NRT",
+    itineraries: [{
+      direction: "outbound",
+      durationMinutes: 1_200,
+      stops: 0,
+      segments: [{
+        flightNumber: "LA 100",
+        marketingCarrier: "LA",
+        origin: "LIM",
+        destination: "NRT",
+        departureAt: "2026-07-01T11:00:00-05:00",
+        arrivalAt: "2026-07-02T18:00:00+09:00",
+      }],
+    }],
+  });
+
+  const text = buildCommercialQuotation(offer, request, { migrationPlan: true });
+  assert.match(text, /^PAQUETE MIGRATORIO TOKIO 🇯🇵/);
+});
