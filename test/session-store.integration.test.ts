@@ -927,7 +927,8 @@ test("search session store restores only the newest jobs that fit the persisted 
   const providerMeta = buildProviderMeta();
 
   const jobs = ["oldest", "middle", "newest"].map((label) => {
-    const offer = buildOffer(`offer-${label}`, `https://${label}.example/search`);
+    const pathPayload = label === "newest" ? `?payload=${"x".repeat(32_768)}` : "";
+    const offer = buildOffer(`offer-${label}`, `https://${label}.example/search${pathPayload}`);
     const job = firstStore.createSearchJob({
       request,
       offers: [offer],
@@ -953,7 +954,15 @@ test("search session store restores only the newest jobs that fit the persisted 
   });
   const payloadSizes = new Map(
     db.query<{ id: string; bytes: number }, []>(
-      "SELECT id, length(CAST(payload AS BLOB)) AS bytes FROM search_jobs",
+      `
+        SELECT
+          search_jobs.id,
+          length(CAST(search_jobs.payload AS BLOB))
+            + COALESCE(SUM(length(CAST(purchase_paths.payload AS BLOB))), 0) AS bytes
+        FROM search_jobs
+        LEFT JOIN purchase_paths ON purchase_paths.session_id = search_jobs.id
+        GROUP BY search_jobs.id
+      `,
     ).all().map((row) => [row.id, row.bytes]),
   );
   const restoreBudgetBytes = payloadSizes.get(jobs[1]!.job.id)! + payloadSizes.get(jobs[2]!.job.id)!;
@@ -977,6 +986,64 @@ test("search session store restores only the newest jobs that fit the persisted 
   const counts = readSqliteCounts(dbPath);
   assert.equal(counts.searchJobs, 2);
   assert.equal(counts.purchasePaths, 2);
+});
+
+test("persisted cache budget counts matrix purchase paths before restoring", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-matrix-budget-"));
+  tempRootsForCleanup.add(tempRoot);
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const firstStore = new SearchSessionStore({ dbPath });
+  const request = buildRequest();
+  const providerMeta = buildProviderMeta();
+  const searchJob = firstStore.createSearchJob({
+    request,
+    offers: [buildOffer("budget-search", "https://search.example/flexible")],
+    allOffers: [buildOffer("budget-search", "https://search.example/flexible")],
+    searchMeta: buildSearchMeta(),
+    providerMeta,
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  const matrixJob = firstStore.createMatrixJob({
+    request: { ...request, tripType: "round-trip", searchMode: "roundtrip-grid" },
+    cells: [buildMatrixCell("budget-matrix", `https://matrix.example/flexible?payload=${"x".repeat(64_000)}`)],
+    axes: { departureDates: ["2026-04-15"], returnDates: ["2026-04-22"] },
+    confidenceSummary: { live: 1 },
+    recommendations: [],
+    providerMeta,
+    searchMeta: buildSearchMeta(),
+    warnings: [],
+    status: "completed",
+  });
+  const matrixPathId = firstStore.getMatrixJob(matrixJob.id)?.cells[0]?.purchasePaths?.[0]?.id;
+  assert.ok(matrixPathId);
+  firstStore.close();
+
+  const db = new Database(dbPath);
+  const nowMs = Date.now();
+  db.run("UPDATE search_jobs SET idle_at_ms = ? WHERE id = ?", nowMs - 2_000, searchJob.id);
+  db.run("UPDATE matrix_jobs SET idle_at_ms = ? WHERE id = ?", nowMs - 1_000, matrixJob.id);
+  const searchBytes = getSql<{ bytes: number }>(db, "SELECT length(CAST(payload AS BLOB)) AS bytes FROM search_jobs WHERE id = ?", searchJob.id)!.bytes;
+  const matrixBytes = getSql<{ bytes: number }>(db, `
+    SELECT length(CAST(matrix_jobs.payload AS BLOB))
+      + COALESCE(SUM(length(CAST(purchase_paths.payload AS BLOB))), 0) AS bytes
+    FROM matrix_jobs
+    LEFT JOIN purchase_paths ON purchase_paths.session_id = matrix_jobs.id
+    WHERE matrix_jobs.id = ?
+    GROUP BY matrix_jobs.id
+  `, matrixJob.id)!.bytes;
+  db.close(true);
+  assert.ok(matrixBytes > searchBytes);
+
+  const secondStore = new SearchSessionStore({ dbPath, persistedRestoreBudgetBytes: matrixBytes - 1 });
+  try {
+    assert.ok(secondStore.getSearchJob(searchJob.id));
+    assert.equal(secondStore.getMatrixJob(matrixJob.id), undefined);
+    assert.equal(secondStore.resolvePurchasePath(matrixPathId!), undefined);
+  } finally {
+    secondStore.close();
+  }
 });
 
 test("search session store persists completed search jobs without truncating offers", () => {

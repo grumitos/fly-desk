@@ -1553,17 +1553,27 @@ export class SearchSessionStore {
 
     const candidates = allSql<PersistedJobRestoreCandidate>(this.db, `
       SELECT
-        id,
+        search_jobs.id,
         'search' AS kind,
-        idle_at_ms AS idleAtMs,
-        length(CAST(payload AS BLOB)) AS payloadBytes
+        search_jobs.idle_at_ms AS idleAtMs,
+        length(CAST(search_jobs.payload AS BLOB))
+          + COALESCE((
+            SELECT SUM(length(CAST(path.payload AS BLOB)))
+            FROM purchase_paths AS path
+            WHERE path.session_id = search_jobs.id
+          ), 0) AS payloadBytes
       FROM search_jobs
       UNION ALL
       SELECT
-        id,
+        matrix_jobs.id,
         'matrix' AS kind,
-        idle_at_ms AS idleAtMs,
-        length(CAST(payload AS BLOB)) AS payloadBytes
+        matrix_jobs.idle_at_ms AS idleAtMs,
+        length(CAST(matrix_jobs.payload AS BLOB))
+          + COALESCE((
+            SELECT SUM(length(CAST(path.payload AS BLOB)))
+            FROM purchase_paths AS path
+            WHERE path.session_id = matrix_jobs.id
+          ), 0) AS payloadBytes
       FROM matrix_jobs
       ORDER BY idleAtMs DESC, kind ASC, id ASC
     `);
