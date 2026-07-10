@@ -91,7 +91,7 @@ test("topbar brand opens the current instance root without hardcoding the port",
 
 test("exact results paginate visible offers with hidden minimal result scroll", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
-    await page.setViewportSize({ width: 1180, height: 700 });
+    await page.setViewportSize({ width: 1440, height: 700 });
     await page.route("**/api/locations**", async (route) => {
       await route.fulfill({
         status: 200,
@@ -226,6 +226,17 @@ test("exact results paginate visible offers with hidden minimal result scroll", 
     assert.match(await firstVisibleCard.locator(".fd-result-card__schedules").innerText(), /Ida/);
     assert.match(await firstVisibleCard.locator(".fd-result-card__schedules").innerText(), /Vuelta/);
     assert.doesNotMatch(await firstVisibleCard.locator(".fd-result-card__route").innerText(), /Vuelta/);
+    const scheduleMetrics = await firstVisibleCard.locator(".fd-result-card__schedule-main").evaluateAll(
+      (schedules) => schedules.map((schedule) => ({
+        clientWidth: schedule.clientWidth,
+        scrollWidth: schedule.scrollWidth,
+        text: schedule.textContent?.trim(),
+      })),
+    );
+    assert.ok(
+      scheduleMetrics.every((schedule) => schedule.scrollWidth <= schedule.clientWidth),
+      JSON.stringify(scheduleMetrics),
+    );
   }, { autoOpen: false });
 });
 
@@ -773,6 +784,55 @@ test("grouped provider offer renders Agilsmart and Click and Book Plus external 
     assert.equal(await actions.count(), 2);
     await card.getByRole("button", { name: "Abrir Agilsmart" }).waitFor();
     await card.getByRole("button", { name: "Buscar en Click and Book Plus" }).waitFor();
+
+    const selectAction = card.locator("button[aria-pressed]");
+    assert.equal(await selectAction.evaluate((element) => element.tagName), "BUTTON");
+    const selectLabel = await selectAction.getAttribute("aria-label") ?? "";
+    assert.match(selectLabel, /^Seleccionar oferta/);
+    for (const detail of [
+      "Ida 15/04",
+      "Vuelta 22/04",
+      "Directo",
+      "Cabina incluida",
+      "Bodega incluida",
+      "Agilsmart",
+      "Click and Book Plus",
+    ]) {
+      assert.ok(selectLabel.includes(detail), `${detail} missing from ${selectLabel}`);
+    }
+    assert.equal(await selectAction.getAttribute("title"), selectLabel);
+    assert.equal(await selectAction.locator("button").count(), 0);
+    assert.equal(await card.evaluate((element) => (
+      Array.from(element.querySelectorAll(".fd-result-card__provider-action"))
+        .every((action) => !element.querySelector("button[aria-pressed]")?.contains(action))
+    )), true);
+    assert.equal(await selectAction.getAttribute("aria-pressed"), "false");
+    await page.evaluate(() => {
+      const state = window as typeof window & { __providerOpen?: { url: string; target?: string; features?: string } };
+      state.open = ((url, target, features) => {
+        state.__providerOpen = { url: String(url), target, features };
+        return null;
+      }) as typeof window.open;
+    });
+    await card.getByRole("button", { name: "Abrir Agilsmart" }).click();
+    assert.deepEqual(await page.evaluate(() => (
+      window as typeof window & { __providerOpen?: { url: string; target?: string; features?: string } }
+    ).__providerOpen), {
+      url: "https://example.test/agil",
+      target: "_blank",
+      features: "noopener,noreferrer",
+    });
+    assert.equal(await selectAction.getAttribute("aria-pressed"), "false");
+    await page.keyboard.press("Shift+Tab");
+    assert.equal(await selectAction.evaluate((element) => document.activeElement === element), true);
+    const focusOutline = await selectAction.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { style: style.outlineStyle, width: Number.parseFloat(style.outlineWidth) };
+    });
+    assert.equal(focusOutline.style, "solid");
+    assert.ok(focusOutline.width >= 2, JSON.stringify(focusOutline));
+    await selectAction.press("Enter");
+    assert.equal(await selectAction.getAttribute("aria-pressed"), "true");
 
     const layout = await actions.evaluateAll((elements) => elements.map((element) => {
       const rect = element.getBoundingClientRect();

@@ -1,4 +1,3 @@
-import type { MouseEvent } from "react"
 import { Backpack, Luggage } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -33,20 +32,29 @@ export function ResultCard({
 }: ResultCardProps) {
   const model = buildResultCardModel(offer, passengerCount)
   const providerActions = providerPurchaseActions(offer)
+  const providerLabel = providerActions.map((action) => action.badge.label).join(" / ") || model.provider.label
   const rowLabel = [
     selected ? "Oferta seleccionada" : "Seleccionar oferta",
+    eyebrow,
     model.carrier.display,
-    ...model.journeys.map((journey) => journey.schedule),
+    model.carrier.operatedBy,
+    ...model.journeys.flatMap((journey) => [
+      `${journey.label}: ${journey.schedule}`,
+      journey.departureDateLabel,
+    ]),
     model.route,
+    `Equipaje: ${baggageLabel(offer)}`,
     model.duration,
+    model.stops.label,
+    model.stops.layoverLabel,
+    providerLabel,
     model.costamarRedirect?.label,
     model.price.combinedLabel,
   ]
     .filter(Boolean)
     .join(" - ")
 
-  const handleProviderOpen = (event: MouseEvent<HTMLButtonElement>, action: ProviderAction) => {
-    event.stopPropagation()
+  const handleProviderOpen = (action: ProviderAction) => {
     window.open(
       action.url,
       action.path.requiresNewTab ? "_blank" : "_self",
@@ -56,40 +64,38 @@ export function ResultCard({
 
   return (
     <article
-      role="button"
-      tabIndex={0}
-      aria-label={rowLabel}
-      aria-pressed={selected}
       data-testid={variant === "compact" ? "migration-month-card" : "result-card"}
       className={cn(
         "fd-result-card",
         variant === "compact" && "fd-result-card--compact",
         selected && "is-selected",
       )}
-      onClick={() => onSelect(offer)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault()
-          onSelect(offer)
-        }
-      }}
     >
-      {eyebrow && <span className="fd-result-card__eyebrow">{eyebrow}</span>}
+      <button
+        type="button"
+        className="fd-result-card__select-action"
+        aria-label={rowLabel}
+        aria-pressed={selected}
+        title={rowLabel}
+        onClick={() => onSelect(offer)}
+      />
+
+      {eyebrow && <span className="fd-result-card__eyebrow" aria-hidden="true">{eyebrow}</span>}
 
       <AirlineLogo carrier={model.carrier} />
 
-      <div className="fd-result-card__airline">
+      <div className="fd-result-card__airline" aria-hidden="true">
         <span className="fd-result-card__airline-name" title={model.carrier.display}>{model.carrier.display}</span>
         {model.carrier.operatedBy && <span className="fd-result-card__meta">{model.carrier.operatedBy}</span>}
       </div>
 
-      <div className="fd-result-card__schedules" data-trip-type={model.tripType}>
+      <div className="fd-result-card__schedules" data-trip-type={model.tripType} aria-hidden="true">
         {model.journeys.map((journey) => (
           <ItinerarySchedule key={journey.label} summary={journey} />
         ))}
       </div>
 
-      <div className="fd-result-card__route">
+      <div className="fd-result-card__route" aria-hidden="true">
         <span className="fd-result-card__route-main" title={model.route}>{model.route}</span>
         <span className="fd-result-card__route-baggage">
           <span className="fd-result-card__micro-label">Equipaje</span>
@@ -97,7 +103,7 @@ export function ResultCard({
         </span>
       </div>
 
-      <div className="fd-result-card__journey">
+      <div className="fd-result-card__journey" aria-hidden="true">
         <span className="fd-result-card__journey-main">{model.duration}</span>
         <span
           className={cn(
@@ -113,7 +119,7 @@ export function ResultCard({
         {model.stops.layoverLabel && <span className="fd-result-card__layover">{model.stops.layoverLabel}</span>}
       </div>
 
-      <div className="fd-result-card__price">
+      <div className="fd-result-card__price" aria-hidden="true">
         <span className="fd-result-card__price-total" title={model.price.totalLabel}>{model.price.totalLabel}</span>
         {model.price.perPersonLabel && <span className="fd-result-card__price-meta">{model.price.perPersonLabel} por persona</span>}
         {model.costamarRedirect && (
@@ -146,8 +152,7 @@ export function ResultCard({
                   size="icon"
                   aria-label={purchaseActionLabel(action)}
                   className="fd-result-card__provider-action h-auto w-auto rounded-none p-0 hover:bg-transparent focus-visible:ring-0 active:scale-100"
-                  onClick={(event) => handleProviderOpen(event, action)}
-                  onKeyDown={(event) => event.stopPropagation()}
+                  onClick={() => handleProviderOpen(action)}
                 >
                   <ProviderBadge provider={action.badge} />
                 </Button>
@@ -232,7 +237,7 @@ function ProviderBadge({ provider }: { provider: ResultCardModel["provider"] }) 
 
 function AirlineLogo({ carrier }: { carrier: ResultCardModel["carrier"] }) {
   return (
-    <div className="fd-result-card__airline-logo" title={carrier.display}>
+    <div className="fd-result-card__airline-logo" title={carrier.display} aria-hidden="true">
       {carrier.logo ? (
         <img src={carrier.logo} alt="" aria-hidden="true" decoding="async" loading="lazy" />
       ) : (
@@ -245,10 +250,7 @@ function AirlineLogo({ carrier }: { carrier: ResultCardModel["carrier"] }) {
 function BaggageIcons({ offer }: { offer: CanonicalOffer }) {
   const carryOn = offer.baggage?.carryOnIncluded === true
   const checked = offer.baggage?.checkedIncluded === true
-  const label = [
-    `Cabina ${carryOn ? "incluida" : "no incluida"}`,
-    `Bodega ${checked ? "incluida" : "no incluida"}`,
-  ].join(", ")
+  const label = baggageLabel(offer)
 
   return (
     <span className="fd-result-card__baggage-icons" aria-label={label}>
@@ -260,4 +262,11 @@ function BaggageIcons({ offer }: { offer: CanonicalOffer }) {
       </span>
     </span>
   )
+}
+
+function baggageLabel(offer: CanonicalOffer): string {
+  return [
+    `Cabina ${offer.baggage?.carryOnIncluded === true ? "incluida" : "no incluida"}`,
+    `Bodega ${offer.baggage?.checkedIncluded === true ? "incluida" : "no incluida"}`,
+  ].join(", ")
 }
