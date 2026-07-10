@@ -82,6 +82,8 @@ export function normalizeQuotationRequestSnapshot(input: unknown, offerInput?: u
         destination,
         originLabel: quotationStringValue(rawLeg.originLabel),
         destinationLabel: quotationStringValue(rawLeg.destinationLabel),
+        originCountryCode: quotationStringValue(rawLeg.originCountryCode)?.toUpperCase(),
+        destinationCountryCode: quotationStringValue(rawLeg.destinationCountryCode)?.toUpperCase(),
         departureDate: quotationStringValue(rawLeg.departureDate) ?? quotationStringValue(offer?.departureDate)?.slice(0, 10),
         departureStart: quotationStringValue(rawLeg.departureStart),
         departureEnd: quotationStringValue(rawLeg.departureEnd),

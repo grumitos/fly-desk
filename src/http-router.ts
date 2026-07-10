@@ -92,6 +92,7 @@ interface SessionPayload {
 
 interface QuotationPayload extends SessionPayload {
   offerId?: string;
+  migrationPlan?: boolean;
 }
 
 type ResultsLayoutColumnKey =
@@ -3077,7 +3078,10 @@ export async function routeRequest(request: Request): Promise<Response> {
     return json({
       searchSessionId: source.sessionId,
       offer,
-      commercialText: buildCommercialQuotation(offer, source.request, { usdToPenRateInfo }),
+      commercialText: buildCommercialQuotation(offer, source.request, {
+        usdToPenRateInfo,
+        migrationPlan: payload.migrationPlan === true,
+      }),
     });
   }
 

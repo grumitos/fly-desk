@@ -292,6 +292,19 @@ test("quotation uses the stored exact offer when the selected result belongs to 
     assert.match(payload.commercialText ?? "", /COTIZACIÓN BOLETO AÉREO/);
     assert.match(payload.commercialText ?? "", /US\$ 1,234 por adulto/);
     assert.doesNotMatch(payload.commercialText ?? "", /S\/|aprox|Tipo de cambio|Fuente:|Fecha:/);
+
+    const migrationResponse = await fetch(`${baseUrl}/api/quotation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        searchSessionId: job.id,
+        offerId: offer.id,
+        migrationPlan: true,
+      }),
+    });
+    assert.equal(migrationResponse.status, 200);
+    const migrationPayload = await migrationResponse.json() as { commercialText?: string };
+    assert.match(migrationPayload.commercialText ?? "", /^PAQUETE MIGRATORIO MADRID 🇪🇸/);
   });
 });
 
@@ -716,6 +729,50 @@ test("rejects unauthenticated search service proxy requests before injecting the
 
     if (previousSessionSecret === undefined) delete process.env.FLY_DESK_WEB_SESSION_SECRET;
     else process.env.FLY_DESK_WEB_SESSION_SECRET = previousSessionSecret;
+  }
+});
+
+test("quotation requests reach the runner that owns the selected search session", { concurrency: false }, async () => {
+  const previousSearchUrl = process.env.FLY_DESK_SEARCH_SERVICE_URL;
+  const previousSearchToken = process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN;
+  const previousFetch = global.fetch;
+  process.env.FLY_DESK_SEARCH_SERVICE_URL = "http://127.0.0.1:32125";
+  process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN = "internal-runner-token";
+
+  try {
+    global.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      assert.equal(String(input), "http://127.0.0.1:32125/api/quotation");
+      assert.equal(init?.method, "POST");
+      assert.equal(new Headers(init?.headers).get("authorization"), "Bearer internal-runner-token");
+      assert.deepEqual(JSON.parse(await new Response(init?.body).text()), {
+        searchSessionId: "runner-session",
+        offerId: "runner-offer",
+        migrationPlan: true,
+      });
+      return Response.json({ commercialText: "PAQUETE MIGRATORIO MADRID 🇪🇸", offer: {} });
+    }) as typeof fetch;
+
+    const response = await withLoopbackTrustForTests(() => routeRequest(new Request("http://127.0.0.1:32123/api/quotation", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-flydesk-client-loopback": "1",
+      },
+      body: JSON.stringify({
+        searchSessionId: "runner-session",
+        offerId: "runner-offer",
+        migrationPlan: true,
+      }),
+    })));
+
+    assert.equal(response.status, 200);
+    assert.equal((await response.json() as { commercialText?: string }).commercialText, "PAQUETE MIGRATORIO MADRID 🇪🇸");
+  } finally {
+    global.fetch = previousFetch;
+    if (previousSearchUrl === undefined) delete process.env.FLY_DESK_SEARCH_SERVICE_URL;
+    else process.env.FLY_DESK_SEARCH_SERVICE_URL = previousSearchUrl;
+    if (previousSearchToken === undefined) delete process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN;
+    else process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN = previousSearchToken;
   }
 });
 

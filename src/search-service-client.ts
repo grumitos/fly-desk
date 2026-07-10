@@ -65,6 +65,9 @@ export function isSearchServiceRoute(method: string, pathname: string): boolean 
   if (normalizedMethod === "POST" && pathname === "/api/matrix") {
     return true;
   }
+  if (normalizedMethod === "POST" && pathname === "/api/quotation") {
+    return true;
+  }
   if (normalizedMethod === "GET" && /^\/api\/search\/[^/]+$/.test(pathname)) {
     return true;
   }

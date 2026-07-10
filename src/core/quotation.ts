@@ -1,11 +1,12 @@
 import { CanonicalOffer, Itinerary, QuotationUsdToPenRateInfo, SearchRequest, Segment } from "./types";
-import { cityNameForIataCode, normalizeIataCode, stripAllAirportsLabel } from "./location-display";
+import { cityNameForIataCode, countryCodeForIataCode, normalizeIataCode, stripAllAirportsLabel } from "./location-display";
 import { resolveAirlineDisplayName } from "./airline-names";
 
 export interface QuotationRenderOptions {
   timeZone?: string;
   usdToPenRate?: number;
   usdToPenRateInfo?: QuotationUsdToPenRateInfo;
+  migrationPlan?: boolean;
 }
 
 const PERU_AIRPORT_CODES = new Set([
@@ -380,9 +381,11 @@ function buildCommercialBaggageInclusion(baggage?: CanonicalOffer["baggage"]): s
   return `Equipaje incluido: ${joinSpanishList(items)}`;
 }
 
-function buildCommercialInclusions(offer: CanonicalOffer, request: SearchRequest): string[] {
+function buildCommercialInclusions(offer: CanonicalOffer, request: SearchRequest, migrationPlan = false): string[] {
   const items = [
-    request.tripType === "round-trip"
+    migrationPlan
+      ? "Boleto de ida + retorno de apoyo anulable"
+      : request.tripType === "round-trip"
       ? "Boleto de ida y vuelta"
       : "Boleto de solo ida",
   ];
@@ -393,7 +396,14 @@ function buildCommercialInclusions(offer: CanonicalOffer, request: SearchRequest
   }
 
   items.push("Check in online");
-  items.push("Asiento según disponibilidad");
+  if (migrationPlan) {
+    items.push("Seguro de viaje Transitorio");
+    items.push("Reserva de Alojamiento Transitorio");
+    items.push("Itinerario completo");
+    items.push("Asesoría Integral");
+  } else {
+    items.push("Asiento según disponibilidad");
+  }
   return items;
 }
 
@@ -411,12 +421,41 @@ function buildCommercialExclusions(offer: CanonicalOffer): string[] {
   return items;
 }
 
-function buildRestrictionsSummary(): string[] {
-  return [
+function buildRestrictionsSummary(migrationPlan = false): string[] {
+  const items = [
     "Reembolsos no permitidos después de emitir.",
     "Cambios de nombre no permitidos.",
     "Cambios de fecha y ruta sujetos a condiciones de la tarifa.",
   ];
+  if (migrationPlan) {
+    items.push("Selección de asiento no permitida; la asignación es aleatoria.");
+  }
+  return items;
+}
+
+function flagEmoji(countryCode?: string): string {
+  const normalized = String(countryCode ?? "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(normalized)) {
+    return "🌍";
+  }
+  const regionName = new Intl.DisplayNames(["es"], { type: "region" }).of(normalized);
+  if (!regionName || regionName === normalized || /desconocid[ao]/i.test(regionName)) {
+    return "🌍";
+  }
+  return String.fromCodePoint(...[...normalized].map((letter) => letter.charCodeAt(0) + 127397));
+}
+
+function migrationPackageTitle(offer: CanonicalOffer, request: SearchRequest): string {
+  const outbound = offer.itineraries.find((itinerary) => itinerary.direction === "outbound") ?? offer.itineraries[0];
+  const leg = request.legs[0];
+  const destinationCode = normalizeIataCode(leg?.destination || offer.destination);
+  const city = cityNameForIataCode(destinationCode) || cityFromRequestOrName(
+    leg?.destinationLabel,
+    lastSegment(outbound)?.destinationName,
+    destinationCode,
+  );
+  const countryCode = countryCodeForIataCode(destinationCode) || leg?.destinationCountryCode;
+  return `PAQUETE MIGRATORIO ${city.toLocaleUpperCase("es-PE")} ${flagEmoji(countryCode)}`;
 }
 
 function buildCommercialScheduleLines(
@@ -555,13 +594,13 @@ function buildCommercialQuotationText(
   const outbound = offer.itineraries.find((itinerary) => itinerary.direction === "outbound") ?? offer.itineraries[0];
   const inbound = offer.itineraries.find((itinerary) => itinerary.direction === "inbound");
   const carrierNames = collectCarrierDisplayNames(offer);
-  const inclusions = buildCommercialInclusions(offer, request);
+  const inclusions = buildCommercialInclusions(offer, request, options.migrationPlan);
   const exclusions = buildCommercialExclusions(offer);
-  const restrictions = buildRestrictionsSummary();
+  const restrictions = buildRestrictionsSummary(options.migrationPlan);
   const priceLines = buildCommercialPriceLines(offer, request, options);
 
   const lines = [
-    "COTIZACIÓN BOLETO AÉREO ✈️",
+    options.migrationPlan ? migrationPackageTitle(offer, request) : "COTIZACIÓN BOLETO AÉREO ✈️",
     "",
     `✈️ Ruta: ${routeSummary(offer, request)}`,
     `✈️ ${carrierNames.length > 1 ? "Aerolíneas" : "Aerolínea"}: ${carrierDisplayName(offer)}`,

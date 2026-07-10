@@ -20,7 +20,7 @@ El repo no versiona artefactos generados:
 - busqueda exacta
 - busqueda flexible de solo ida via rango `stay-range`
 - busqueda flexible ida/vuelta via `/api/matrix`, normalizada a lista de resultados
-- busqueda migratoria mensual: selector de meses hasta fin del año actual y fan-out solo para meses marcados
+- busqueda migratoria mensual: selector de hasta ocho meses desde la fecha minima, incluso al cruzar de año, y fan-out solo para meses marcados
 - autocomplete de origen y destino
 - sugerencias frecuentes de origen/destino con ranking global persistido en el VPS; el backend registra la ruta cuando acepta una busqueda
 - filtros de escalas, tiempo maximo de escala, equipaje y aerolineas

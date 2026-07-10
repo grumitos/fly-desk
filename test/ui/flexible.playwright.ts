@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Page, Route } from "playwright";
-import { withDesktopPage } from "../helpers/ui.ts";
+import { openDesktop, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
 import { clickSegment } from "./support.ts";
 
@@ -184,15 +184,34 @@ test("round-trip flexible search sends matrix exact-stay payload", async () => {
 });
 
 test("migratory search sends monthly stay-range requests", async () => {
-  await withDesktopPage(async ({ page }) => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
     const payloads: Record<string, unknown>[] = [];
+    const quotationPayloads: Array<{ searchSessionId?: string; offerId?: string; migrationPlan?: boolean }> = [];
     const migratory = page.getByRole("button", { name: "Migratorio" });
 
+    await page.route(`${baseUrl}/`, async (route) => {
+      const response = await route.fetch();
+      const body = (await response.text())
+        .replace(/"minSearchDate":"[^"]+"/, '"minSearchDate":"2026-09-15"')
+        .replace(/"maxSearchDate":"[^"]+"/, '"maxSearchDate":"2027-09-15"');
+      await route.fulfill({ response, body });
+    });
+
     await page.route("**/api/locations**", async (route) => {
+      const query = new URL(route.request().url()).searchParams.get("q")?.trim().toUpperCase() ?? "";
+      const place = query === "MIA"
+        ? { city: "Miami", country: "Estados Unidos", countryCode: "US" }
+        : { city: "Lima", country: "Perú", countryCode: "PE" };
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ suggestions: [] }),
+        body: JSON.stringify({
+          suggestions: query ? [{
+            code: query,
+            ...place,
+            label: `${query} - ${place.city}, ${place.country}`,
+          }] : [],
+        }),
       });
     });
     await page.route("**/api/search", async (route) => {
@@ -212,8 +231,8 @@ test("migratory search sends monthly stay-range requests", async () => {
                       flightNumber: "LA 2011",
                       origin: "LIM",
                       destination: "MIA",
-                      departureAt: "2026-04-15T14:00:00Z",
-                      arrivalAt: "2026-04-15T15:20:00Z",
+                      departureAt: "2026-12-15T14:00:00Z",
+                      arrivalAt: "2026-12-15T15:20:00Z",
                     },
                   ],
                 },
@@ -249,13 +268,26 @@ test("migratory search sends monthly stay-range requests", async () => {
         }),
       });
     });
+    await page.route("**/api/quotation", async (route) => {
+      const payload = route.request().postDataJSON() as { searchSessionId?: string; offerId?: string; migrationPlan?: boolean };
+      quotationPayloads.push(payload);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          commercialText: payload.migrationPlan ? "PAQUETE MIGRATORIO MIAMI 🇺🇸" : "Cotización estándar",
+          offer: {},
+        }),
+      });
+    });
 
+    await openDesktop(page, baseUrl);
     await assert.equal(await migratory.isDisabled(), false);
     await migratory.click();
     await page.getByRole("button", { name: "Mes desde", exact: true }).click();
-    await page.getByRole("dialog", { name: "Calendario de mes desde" }).getByRole("button", { name: /Mayo de 2026/i }).click();
+    await page.getByRole("dialog", { name: "Calendario de mes desde" }).getByRole("button", { name: /Diciembre de 2026/i }).click();
     await page.getByRole("button", { name: "Mes hasta", exact: true }).click();
-    await page.getByRole("dialog", { name: "Calendario de mes hasta" }).getByRole("button", { name: /Junio de 2026/i }).click();
+    await page.getByRole("dialog", { name: "Calendario de mes hasta" }).getByRole("button", { name: /Enero de 2027/i }).click();
     await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
     await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
     await Promise.all([
@@ -284,10 +316,19 @@ test("migratory search sends monthly stay-range requests", async () => {
     assert.equal(await migrationCard.locator(".fd-result-card__schedule").count(), 1);
     assert.equal(await migrationCard.locator(".fd-result-card__schedules").getAttribute("data-trip-type"), "one-way");
     assert.doesNotMatch(await migrationCard.locator(".fd-result-card__schedules").innerText(), /Vuelta/);
+    const headerCenters = await migrationCard.evaluate((card) => {
+      const selectors = [".fd-result-card__airline-logo", ".fd-result-card__airline", ".fd-result-card__provider"];
+      return selectors.map((selector) => {
+        const rect = card.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
+        if (!rect) throw new Error(`Missing ${selector}`);
+        return rect.top + rect.height / 2;
+      });
+    });
+    assert.ok(Math.max(...headerCenters) - Math.min(...headerCenters) <= 2, JSON.stringify(headerCenters));
     const bodyText = await page.locator("body").innerText();
     assert.doesNotMatch(bodyText, /\b00:00\b/);
     assert.match(bodyText, /14:00/);
-    assert.match(bodyText, /Mayo de 2026/i);
+    assert.match(bodyText, /Diciembre de 2026/i);
 
     assert.equal(payloads.length, 2);
     const firstRequest = payloads[0].request as {
@@ -299,13 +340,34 @@ test("migratory search sends monthly stay-range requests", async () => {
     const firstLeg = firstRequest.legs?.[0];
 
     assert.equal(firstRequest.tripType, "one-way");
+    assert.equal(firstLeg?.originLabel, "LIM - Lima, Perú");
+    assert.equal(firstLeg?.destinationLabel, "MIA - Miami, Estados Unidos");
+    assert.equal(firstLeg?.originCountryCode, "PE");
+    assert.equal(firstLeg?.destinationCountryCode, "US");
     assert.equal(firstRequest.searchMode, "stay-range");
     assert.equal(Object.hasOwn(firstRequest.filters ?? {}, "maxResults"), false);
     assert.equal(Object.hasOwn(firstRequest.filters ?? {}, "compactAllOffers"), false);
-    assert.equal(firstLeg?.departureStart, "2026-05-01");
-    assert.equal(firstLeg?.departureEnd, "2026-05-31");
+    assert.equal(firstLeg?.departureStart, "2026-12-01");
+    assert.equal(firstLeg?.departureEnd, "2026-12-31");
     assert.equal(firstLeg?.returnDate, undefined);
-  });
+    const secondLeg = (payloads[1].request as { legs?: Array<Record<string, unknown>> }).legs?.[0];
+    assert.equal(secondLeg?.departureStart, "2027-01-01");
+    assert.equal(secondLeg?.departureEnd, "2027-01-31");
+
+    await migrationCard.click();
+    const migrationQuotationRequest = page.waitForRequest((request) => (
+      request.url().endsWith("/api/quotation")
+      && (request.postDataJSON() as { migrationPlan?: boolean }).migrationPlan === true
+    ));
+    await page.getByRole("switch", { name: "Paquete migratorio" }).click();
+    await migrationQuotationRequest;
+    const migratoryQuotation = quotationPayloads.find((payload) => payload.migrationPlan === true);
+    assert.deepEqual(migratoryQuotation, {
+      searchSessionId: "migration-month-1",
+      offerId: "migration-offer-1",
+      migrationPlan: true,
+    });
+  }, { autoOpen: false });
 });
 
 test("mobile workspace keeps search modes inline instead of crowding the topbar", async () => {
@@ -373,6 +435,8 @@ test("mobile workspace keeps search modes inline instead of crowding the topbar"
 test("migratory search renders monthly progress and refilters each month locally", async () => {
   await withDesktopPage(async ({ page }) => {
     let requestCount = 0;
+    let heldFirstPollRoute: Route | null = null;
+    let firstPayload: Record<string, unknown> | null = null;
     let heldSecondRoute: Route | null = null;
     let heldSecondPayload: Record<string, unknown> | null = null;
 
@@ -432,14 +496,15 @@ test("migratory search renders monthly progress and refilters each month locally
       payload: Record<string, unknown>,
       offers: unknown[],
       id: string,
+      complete = true,
     ) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
           searchJobId: id,
-          searchComplete: true,
-          searchStatus: "completed",
+          searchComplete: complete,
+          searchStatus: complete ? "completed" : "running",
           revision: 1,
           sortMode: "cheapest",
           request: payload.request,
@@ -469,14 +534,19 @@ test("migratory search renders monthly progress and refilters each month locally
         body: JSON.stringify({ suggestions: [] }),
       });
     });
-    await page.route("**/api/search", async (route) => {
+    await page.route("**/api/search**", async (route) => {
+      if (route.request().method() === "GET") {
+        heldFirstPollRoute = route;
+        return;
+      }
       requestCount += 1;
       const payload = route.request().postDataJSON() as Record<string, unknown>;
       if (requestCount === 1) {
+        firstPayload = payload;
         await fulfillSearch(route, payload, [
           migrationOffer("migration-cheapest-stop", 90, 1),
           migrationOffer("migration-direct", 150, 0),
-        ], "migration-progress-1");
+        ], "migration-progress-1", false);
         return;
       }
 
@@ -499,9 +569,17 @@ test("migratory search renders monthly progress and refilters each month locally
 
     const migrationGrid = page.locator(".fd-migration-grid");
     await migrationGrid.getByText("USD 90.00").waitFor();
-    await page.waitForFunction(() => document.querySelectorAll(".fd-migration-month-card--loading").length > 0);
+    await page.locator(".fd-migration-month-card__status").waitFor();
     assert.equal(await page.getByTestId("migration-month-card").count(), 8);
     assert.equal(await page.getByRole("button", { name: "Detener búsqueda" }).count(), 1);
+    const updatingCardShell = migrationGrid.getByText("USD 90.00", { exact: true }).locator("xpath=ancestor::article/..");
+    const footerGeometry = await updatingCardShell.evaluate((shell) => {
+      const price = shell.querySelector<HTMLElement>(".fd-result-card__price")?.getBoundingClientRect();
+      const status = shell.querySelector<HTMLElement>(".fd-migration-month-card__status")?.getBoundingClientRect();
+      if (!price || !status) throw new Error("Missing migration price or status");
+      return { priceBottom: price.bottom, statusTop: status.top };
+    });
+    assert.ok(footerGeometry.priceBottom + 4 <= footerGeometry.statusTop, JSON.stringify(footerGeometry));
 
     const stopsSliderControl = page.getByRole("slider", { name: "Escalas" });
     await stopsSliderControl.focus();
@@ -509,10 +587,23 @@ test("migratory search renders monthly progress and refilters each month locally
     await migrationGrid.getByText("USD 150.00").waitFor();
     assert.equal(await migrationGrid.getByText("USD 90.00").count(), 0);
 
-    if (heldSecondRoute && heldSecondPayload) {
-      await fulfillSearch(heldSecondRoute, heldSecondPayload, [], "migration-progress-2");
+    for (let attempt = 0; attempt < 40 && !heldFirstPollRoute; attempt += 1) {
+      await page.waitForTimeout(50);
     }
-    await page.waitForFunction(() => document.querySelector('button[aria-label="Buscar"]'));
+    assert.ok(heldFirstPollRoute, "Expected the first migration poll to be held");
+    assert.ok(firstPayload, "Expected the first migration request payload");
+    await fulfillSearch(heldFirstPollRoute, firstPayload, [
+        migrationOffer("migration-cheapest-stop", 90, 1),
+        migrationOffer("migration-direct", 150, 0),
+      ], "migration-progress-1");
+
+    assert.ok(heldSecondRoute, "Expected the second migration request to be held");
+    assert.ok(heldSecondPayload, "Expected the second migration request payload");
+    await fulfillSearch(heldSecondRoute, heldSecondPayload, [], "migration-progress-2");
+    await page.getByRole("button", { name: "Detener búsqueda" }).waitFor({ state: "hidden" });
+    const resumedSearchButton = page.locator('button[aria-label="Buscar"]:visible').first();
+    await resumedSearchButton.waitFor({ state: "visible" });
+    assert.equal(await resumedSearchButton.isEnabled(), true);
     assert.equal(requestCount, 8);
   });
 });

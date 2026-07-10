@@ -47,6 +47,7 @@ const TOPBAR_CONTROLS_MEDIA_QUERY = "(min-width: 768px)"
 type SearchModeControl = "exact" | "flexible" | "migration"
 type SearchTouchedField = "origin" | "destination" | "departureDate" | "returnDate" | "passengers" | "migrationMonths"
 type LocationUsageField = "origin" | "destination"
+type SearchLocationMeta = Partial<Pick<LocationSuggestion, "label" | "countryCode">>
 type MigrationMonthOption = {
   key: string
   label: string
@@ -82,6 +83,8 @@ export function SearchShell({
   const [trip, setTrip] = useState<"round-trip" | "one-way">("round-trip")
   const [originCode, setOriginCode] = useState("")
   const [destCode, setDestCode] = useState("")
+  const [originMeta, setOriginMeta] = useState<SearchLocationMeta>({})
+  const [destinationMeta, setDestinationMeta] = useState<SearchLocationMeta>({})
   const [departureDate, setDepartureDate] = useState("")
   const [returnDate, setReturnDate] = useState("")
   const [stayNights, setStayNights] = useState(7)
@@ -130,8 +133,14 @@ export function SearchShell({
   const endDateLabel = mode === "migration" ? "Mes hasta" : mode === "flexible" ? "Salida hasta" : "Regreso"
   const canUseTopbarControls = useCanUseTopbarControls()
 
-  const origin = useAutocomplete((suggestion) => setOriginCode(suggestion.code))
-  const destination = useAutocomplete((suggestion) => setDestCode(suggestion.code))
+  const origin = useAutocomplete((suggestion) => {
+    setOriginCode(suggestion.code)
+    setOriginMeta({ label: suggestion.label, countryCode: suggestion.countryCode })
+  })
+  const destination = useAutocomplete((suggestion) => {
+    setDestCode(suggestion.code)
+    setDestinationMeta({ label: suggestion.label, countryCode: suggestion.countryCode })
+  })
   const setOriginQuery = origin.setQuery
   const setDestinationQuery = destination.setQuery
   const resolveOriginQuery = origin.resolveCurrentQuery
@@ -161,6 +170,8 @@ export function SearchShell({
       setTrip(nextTrip)
       setOriginCode(nextOrigin)
       setDestCode(nextDestination)
+      setOriginMeta({ label: syncedRequest.originLabel, countryCode: syncedRequest.originCountryCode })
+      setDestinationMeta({ label: syncedRequest.destinationLabel, countryCode: syncedRequest.destinationCountryCode })
       setOriginQuery(nextOrigin)
       setDestinationQuery(nextDestination)
       setDepartureDate(dateStartFromSearchRequest(syncedRequest))
@@ -236,6 +247,8 @@ export function SearchShell({
       setTrip("round-trip")
       setOriginCode("")
       setDestCode("")
+      setOriginMeta({})
+      setDestinationMeta({})
       setOriginQuery("")
       setDestinationQuery("")
       setDepartureDate("")
@@ -347,6 +360,8 @@ export function SearchShell({
   const swapRoute = () => {
     setOriginCode(destCode)
     setDestCode(originCode)
+    setOriginMeta(destinationMeta)
+    setDestinationMeta(originMeta)
     origin.setQuery(destination.query)
     destination.setQuery(origin.query)
   }
@@ -422,6 +437,10 @@ export function SearchShell({
     return {
       origin,
       destination,
+      originLabel: originMeta.label,
+      destinationLabel: destinationMeta.label,
+      originCountryCode: originMeta.countryCode,
+      destinationCountryCode: destinationMeta.countryCode,
       departureDate: mode === "exact" ? departureDate || undefined : undefined,
       departureStart: flexibleDepartureStart,
       departureEnd: flexibleDepartureEnd,
@@ -447,10 +466,12 @@ export function SearchShell({
     departureDate,
     infants,
     mode,
+    originMeta,
     returnDate,
     selectedMigrationMonths,
     stayNights,
     trip,
+    destinationMeta,
   ])
 
   const hasValidationError = hasBlockingValidationError(validation)
@@ -538,7 +559,13 @@ export function SearchShell({
       return
     }
 
-    const nextRequest = buildRequest(resolvedRequest.origin, resolvedRequest.destination)
+    const nextRequest = {
+      ...buildRequest(resolvedRequest.origin, resolvedRequest.destination),
+      originLabel: resolvedOrigin?.label ?? originMeta.label,
+      destinationLabel: resolvedDestination?.label ?? destinationMeta.label,
+      originCountryCode: resolvedOrigin?.countryCode ?? originMeta.countryCode,
+      destinationCountryCode: resolvedDestination?.countryCode ?? destinationMeta.countryCode,
+    }
     resetUsageSuggestionVisibility()
     onSearch(nextRequest)
   }
@@ -617,6 +644,7 @@ export function SearchShell({
               onChange={(value) => {
                 origin.setQuery(value, { showSuggestions: true })
                 setOriginCode(value)
+                setOriginMeta({})
                 setTouched((current) => ({ ...current, origin: true }))
               }}
               onSelect={(suggestion) => {
@@ -664,6 +692,7 @@ export function SearchShell({
             onChange={(value) => {
               destination.setQuery(value, { showSuggestions: true })
               setDestCode(value)
+              setDestinationMeta({})
               setTouched((current) => ({ ...current, destination: true }))
             }}
             onSelect={(suggestion) => {
@@ -1206,7 +1235,7 @@ function MonthField({
   const selectedMonth = months.find((month) => month.key === value && !month.disabled)
     ?? months.find((month) => !month.disabled)
   const selectedLabel = selectedMonth?.shortLabel ?? "Seleccionar"
-  const yearLabel = months[0]?.key.slice(0, 4) ?? ""
+  const years = Array.from(new Set(months.map((month) => month.key.slice(0, 4))))
 
   return (
     <Popover
@@ -1249,37 +1278,41 @@ function MonthField({
           className="w-[min(20rem,calc(100vw-2rem))]"
           aria-label={`Calendario de ${label.toLowerCase()}`}
         >
-          <div className="space-y-2 p-1">
-            <div className="flex h-8 items-center justify-center px-2">
-              <span className="text-sm font-bold">{yearLabel}</span>
-            </div>
-            <div className="grid grid-cols-3 gap-1.5" role="group" aria-label={`Meses de ${yearLabel}`}>
-              {months.map((month) => {
-                const selected = month.key === selectedMonth?.key
+          <div className="space-y-3 p-1">
+            {years.map((year) => (
+              <div key={year} className="space-y-2">
+                <div className="flex h-8 items-center justify-center px-2">
+                  <span className="text-sm font-bold">{year}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5" role="group" aria-label={`Meses de ${year}`}>
+                  {months.filter((month) => month.key.startsWith(`${year}-`)).map((month) => {
+                    const selected = month.key === selectedMonth?.key
 
-                return (
-                  <Button
-                    key={month.key}
-                    type="button"
-                    variant="ghost"
-                    aria-label={`${month.label}${month.disabled ? " no disponible" : ""}`}
-                    aria-pressed={selected}
-                    disabled={month.disabled}
-                    onClick={() => {
-                      onChange(month.key)
-                      setOpen(false)
-                    }}
-                    className={cn(
-                      "h-10 w-full rounded-lg border border-transparent px-2 text-xs capitalize",
-                      selected && "fd-selected-passive",
-                      month.disabled && "text-muted-foreground/45 line-through hover:bg-transparent hover:text-muted-foreground/45",
-                    )}
-                  >
-                    {month.monthLabel}
-                  </Button>
-                )
-              })}
-            </div>
+                    return (
+                      <Button
+                        key={month.key}
+                        type="button"
+                        variant="ghost"
+                        aria-label={`${month.label}${month.disabled ? " no disponible" : ""}`}
+                        aria-pressed={selected}
+                        disabled={month.disabled}
+                        onClick={() => {
+                          onChange(month.key)
+                          setOpen(false)
+                        }}
+                        className={cn(
+                          "h-10 w-full rounded-lg border border-transparent px-2 text-xs capitalize",
+                          selected && "fd-selected-passive",
+                          month.disabled && "text-muted-foreground/45 line-through hover:bg-transparent hover:text-muted-foreground/45",
+                        )}
+                      >
+                        {month.monthLabel}
+                      </Button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         </PopoverContent>
       </Field>
@@ -1585,10 +1618,12 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
 function buildMigrationMonthOptions(startIso: string): MigrationMonthOption[] {
   const start = isIsoDate(startIso) ? startIso : localDateToIso(new Date())
   const [year, startMonth] = start.split("-").map(Number)
+  const lastMonthIndex = Math.max(11, startMonth + LEGACY_DEFAULT_MIGRATION_MONTH_COUNT - 2)
 
-  return Array.from({ length: 12 }, (_, index) => {
-    const month = index + 1
-    const key = `${year}-${String(month).padStart(2, "0")}`
+  return Array.from({ length: lastMonthIndex + 1 }, (_, index) => {
+    const optionYear = year + Math.floor(index / 12)
+    const month = index % 12 + 1
+    const key = `${optionYear}-${String(month).padStart(2, "0")}`
     const label = formatMigrationMonthLabel(key)
     const monthLabel = formatMigrationMonthName(key)
     return {
@@ -1596,7 +1631,7 @@ function buildMigrationMonthOptions(startIso: string): MigrationMonthOption[] {
       label,
       monthLabel,
       shortLabel: label.replace(/\s+de\s+/i, " "),
-      disabled: month < startMonth,
+      disabled: key < start.slice(0, 7),
     }
   })
 }

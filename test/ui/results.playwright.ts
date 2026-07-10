@@ -966,6 +966,11 @@ test("result cards reserve matching airline and provider logo slots", async () =
 
 test("detail panel mirrors selected result content and omits unknown fare conditions", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
+    const quotationPayloads: Array<{
+      searchSessionId?: string;
+      offerId?: string;
+      migrationPlan?: boolean;
+    }> = [];
     await page.setViewportSize({ width: 1280, height: 760 });
     await page.addInitScript(() => {
       const originalExecCommand = document.execCommand.bind(document);
@@ -995,12 +1000,21 @@ test("detail panel mirrors selected result content and omits unknown fare condit
       });
     });
     await page.route("**/api/quotation", async (route) => {
+      const payload = route.request().postDataJSON() as {
+        searchSessionId?: string;
+        offerId?: string;
+        migrationPlan?: boolean;
+      };
+      quotationPayloads.push(payload);
+      const heading = payload.migrationPlan
+        ? "PAQUETE MIGRATORIO MADRID 🇪🇸"
+        : "COTIZACIÓN BOLETO AÉREO ✈️";
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
           commercialText: [
-            "Cotización de prueba",
+            heading,
             ...Array.from({ length: 24 }, (_, index) => `Detalle operativo ${index + 1}`),
           ].join("\n"),
           offer: {},
@@ -1150,6 +1164,30 @@ test("detail panel mirrors selected result content and omits unknown fare condit
     assert.equal(routeTypography.textOverflow, "ellipsis", JSON.stringify(routeTypography));
     assert.equal(routeTypography.whiteSpace, "nowrap", JSON.stringify(routeTypography));
 
+    const migrationSwitch = page.getByRole("switch", { name: "Paquete migratorio" });
+    await migrationSwitch.waitFor();
+    assert.equal(await migrationSwitch.getAttribute("aria-checked"), "false");
+    assert.equal(await page.getByTestId("quotation-text").count(), 0);
+    await page.getByRole("button", { name: "Cotizar" }).click();
+    await page.getByTestId("quotation-text").waitFor();
+    await page.waitForFunction(() => (
+      (window as unknown as { __flyDeskCopiedText?: string }).__flyDeskCopiedText?.startsWith("COTIZACIÓN BOLETO AÉREO ✈️")
+    ));
+    assert.deepEqual(quotationPayloads[0], {
+      searchSessionId: "detail-panel-search",
+      offerId: "detail-panel-offer",
+      migrationPlan: false,
+    });
+
+    const migrationQuotationRequest = page.waitForRequest((request) => (
+      request.url().endsWith("/api/quotation")
+      && request.method() === "POST"
+      && (request.postDataJSON() as { migrationPlan?: boolean }).migrationPlan === true
+    ));
+    await migrationSwitch.click();
+    await migrationQuotationRequest;
+    assert.equal(await migrationSwitch.getAttribute("aria-checked"), "true");
+
     assert.equal(await page.getByTestId("quotation-text").count(), 0);
 
     await page.getByRole("button", { name: "Cotizar" }).click();
@@ -1164,7 +1202,7 @@ test("detail panel mirrors selected result content and omits unknown fare condit
     assert.doesNotMatch(quotedText, /Listo para copiar/);
 
     await page.waitForFunction(() => (
-      (window as unknown as { __flyDeskCopiedText?: string }).__flyDeskCopiedText?.startsWith("Cotización de prueba")
+      (window as unknown as { __flyDeskCopiedText?: string }).__flyDeskCopiedText?.startsWith("PAQUETE MIGRATORIO MADRID 🇪🇸")
     ));
     const copiedText = await page.evaluate(() => (
       (window as unknown as { __flyDeskCopiedText?: string }).__flyDeskCopiedText

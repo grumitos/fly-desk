@@ -1350,7 +1350,7 @@ function MigrationMonthGrid({
       <div className="fd-migration-grid pt-1">
         {months.map((month) => (
           month.offer ? (
-            <div key={month.key} className="relative min-w-0">
+            <div key={month.key} className={`relative min-w-0${month.status === "partial" ? " fd-migration-month-card--updating" : ""}`}>
               <ResultCard
                 offer={month.offer}
                 selected={selectedOfferId === month.offer.id}
