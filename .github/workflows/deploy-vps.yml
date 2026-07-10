@@ -119,9 +119,10 @@ jobs:
           VPS_PORT: ${{ secrets.FLY_DESK_VPS_PORT }}
           VPS_SSH_KEY: ${{ secrets.FLY_DESK_VPS_SSH_KEY }}
           VPS_SSH_KEY_B64: ${{ secrets.FLY_DESK_VPS_SSH_KEY_B64 }}
+          VPS_KNOWN_HOSTS: ${{ secrets.FLY_DESK_VPS_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          if [ -z "${VPS_HOST}" ] || [ -z "${VPS_USER}" ] || { [ -z "${VPS_SSH_KEY}" ] && [ -z "${VPS_SSH_KEY_B64}" ]; }; then
+          if [ -z "${VPS_HOST}" ] || [ -z "${VPS_USER}" ] || [ -z "${VPS_KNOWN_HOSTS}" ] || { [ -z "${VPS_SSH_KEY}" ] && [ -z "${VPS_SSH_KEY_B64}" ]; }; then
             echo "Required VPS SSH secrets are not configured."
             exit 1
           fi
@@ -134,7 +135,14 @@ jobs:
           fi
           chmod 600 ~/.ssh/fly_desk_vps_key
           ssh-keygen -y -f ~/.ssh/fly_desk_vps_key >/dev/null
-          ssh-keyscan -p "$port" "$VPS_HOST" >> ~/.ssh/known_hosts
+          printf '%s\n' "${VPS_KNOWN_HOSTS}" | tr -d '\r' > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          known_host="$VPS_HOST"
+          if [ "$port" != "22" ]; then known_host="[$VPS_HOST]:$port"; fi
+          if ! ssh-keygen -F "$known_host" -f ~/.ssh/known_hosts >/dev/null; then
+            echo "Pinned VPS host key does not match the configured host and port."
+            exit 1
+          fi
 
       - name: Upload release package
         env:
@@ -144,7 +152,7 @@ jobs:
         run: |
           set -euo pipefail
           port="${VPS_PORT:-22}"
-          scp -P "$port" -i ~/.ssh/fly_desk_vps_key \
+          scp -o StrictHostKeyChecking=yes -P "$port" -i ~/.ssh/fly_desk_vps_key \
             "${{ steps.revision.outputs.package_path }}" \
             "$VPS_USER@$VPS_HOST:/tmp/${{ steps.revision.outputs.package }}"
 
@@ -156,7 +164,7 @@ jobs:
         run: |
           set -euo pipefail
           port="${VPS_PORT:-22}"
-          ssh -p "$port" -i ~/.ssh/fly_desk_vps_key "$VPS_USER@$VPS_HOST" \
+          ssh -o StrictHostKeyChecking=yes -p "$port" -i ~/.ssh/fly_desk_vps_key "$VPS_USER@$VPS_HOST" \
             bash -s -- \
             "${{ steps.revision.outputs.sha }}" \
             "/tmp/${{ steps.revision.outputs.package }}" \
@@ -207,6 +215,18 @@ jobs:
           sudo_cmd=""
           if [ "$(id -u)" -ne 0 ]; then
             sudo_cmd="sudo"
+          fi
+
+          operation_lock_file="/run/fly-desk-operation.lock"
+          if ! command -v flock >/dev/null 2>&1; then
+            echo "flock is required for Fly Desk operation coordination."
+            exit 1
+          fi
+          $sudo_cmd touch "$operation_lock_file"
+          exec 9<"$operation_lock_file"
+          if ! flock -w 300 9; then
+            echo "Timed out waiting for the Fly Desk operation lock."
+            exit 1
           fi
 
           chrome_was_active=0
@@ -344,9 +364,10 @@ jobs:
           VPS_USER: ${{ secrets.FLY_DESK_VPS_USER }}
           VPS_PORT: ${{ secrets.FLY_DESK_VPS_PORT }}
           VPS_SSH_KEY: ${{ secrets.FLY_DESK_VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.FLY_DESK_VPS_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          if [ -z "${VPS_HOST}" ] || [ -z "${VPS_USER}" ] || [ -z "${VPS_SSH_KEY}" ]; then
+          if [ -z "${VPS_HOST}" ] || [ -z "${VPS_USER}" ] || [ -z "${VPS_SSH_KEY}" ] || [ -z "${VPS_KNOWN_HOSTS}" ]; then
             echo "Required VPS SSH secrets are not configured."
             exit 1
           fi
@@ -354,7 +375,15 @@ jobs:
           install -m 700 -d ~/.ssh
           printf '%s' "${VPS_SSH_KEY}" > ~/.ssh/fly_desk_vps_key
           chmod 600 ~/.ssh/fly_desk_vps_key
-          ssh-keyscan -p "$port" "$VPS_HOST" >> ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/fly_desk_vps_key >/dev/null
+          printf '%s\n' "${VPS_KNOWN_HOSTS}" | tr -d '\r' > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          known_host="$VPS_HOST"
+          if [ "$port" != "22" ]; then known_host="[$VPS_HOST]:$port"; fi
+          if ! ssh-keygen -F "$known_host" -f ~/.ssh/known_hosts >/dev/null; then
+            echo "Pinned VPS host key does not match the configured host and port."
+            exit 1
+          fi
 
       - name: Activate previous release on VPS
         env:
@@ -365,7 +394,7 @@ jobs:
         run: |
           set -euo pipefail
           port="${VPS_PORT:-22}"
-          ssh -p "$port" -i ~/.ssh/fly_desk_vps_key "$VPS_USER@$VPS_HOST" \
+          ssh -o StrictHostKeyChecking=yes -p "$port" -i ~/.ssh/fly_desk_vps_key "$VPS_USER@$VPS_HOST" \
             bash -s -- \
             "$ROLLBACK_SHA_INPUT" \
             "$DEPLOY_PATH" \
@@ -410,6 +439,18 @@ jobs:
           sudo_cmd=""
           if [ "$(id -u)" -ne 0 ]; then
             sudo_cmd="sudo"
+          fi
+
+          operation_lock_file="/run/fly-desk-operation.lock"
+          if ! command -v flock >/dev/null 2>&1; then
+            echo "flock is required for Fly Desk operation coordination."
+            exit 1
+          fi
+          $sudo_cmd touch "$operation_lock_file"
+          exec 9<"$operation_lock_file"
+          if ! flock -w 300 9; then
+            echo "Timed out waiting for the Fly Desk operation lock."
+            exit 1
           fi
 
           chrome_was_active=0

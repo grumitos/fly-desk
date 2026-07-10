@@ -47,6 +47,7 @@ Secrets requeridos:
 - `FLY_DESK_VPS_HOST`
 - `FLY_DESK_VPS_USER`
 - `FLY_DESK_VPS_SSH_KEY`
+- `FLY_DESK_VPS_KNOWN_HOSTS`: host key OpenSSH obtenida por un canal confiable; usar `[host]:puerto` si el puerto no es `22`.
 - `FLY_DESK_VPS_PORT` opcional; default `22`
 
 Variables opcionales de repo:
