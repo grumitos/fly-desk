@@ -24,7 +24,7 @@
     "test:unit": "bun test --timeout=600000 unit.test.ts",
     "test:integration": "bun test --timeout=600000 integration.test.ts",
     "test:core": "bun test --timeout=600000 unit.test.ts integration.test.ts",
-    "test:ui": "bun scripts/run-ui-tests.ts",
+    "test:ui": "bun run build:frontend && bun scripts/run-ui-tests.ts",
     "test:coverage": "bun test --timeout=600000 --coverage unit.test.ts integration.test.ts"
   },
   "devDependencies": {
