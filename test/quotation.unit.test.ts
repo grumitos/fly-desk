@@ -126,6 +126,39 @@ test("commercial quotation lists multiple airlines and moves missing baggage to 
   assert.doesNotMatch(text, /\[Aquí no se coloca nada de momento, el agente decide\]/);
 });
 
+test("commercial quotation preserves each provider segment wall-clock by default", () => {
+  const request = buildRequest();
+  request.tripType = "one-way";
+  request.legs[0] = {
+    origin: "LIM",
+    destination: "MAD",
+    originLabel: "LIM - Lima, Peru",
+    destinationLabel: "MAD - Madrid, España",
+    departureDate: "2026-06-01",
+  };
+
+  const text = buildCommercialQuotation(buildOffer({
+    origin: "LIM",
+    destination: "MAD",
+    itineraries: [{
+      direction: "outbound",
+      durationMinutes: 720,
+      stops: 0,
+      segments: [{
+        marketingCarrier: "IB",
+        flightNumber: "IB 6650",
+        origin: "LIM",
+        destination: "MAD",
+        departureAt: "2026-06-01T10:00:00-05:00",
+        arrivalAt: "2026-06-02T06:00:00+02:00",
+      }],
+    }],
+  }), request);
+
+  assert.match(text, /LIM · 01 junio · 10:00 am/);
+  assert.match(text, /MAD · 02 junio · 06:00 am/);
+});
+
 test("commercial quotation uses city names for IATA-only endpoints and omits direct-flight stop lines", () => {
   const request = buildRequest();
   request.legs[0] = {

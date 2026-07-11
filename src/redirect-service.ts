@@ -60,6 +60,12 @@ interface SqlJobRow extends SqlPayloadRow {
   idle_at_ms?: number;
 }
 
+interface SqlCompactJobRow {
+  idle_at_ms?: number;
+  request_key?: string;
+  provider_context_key?: string;
+}
+
 export interface RedirectServiceOptions {
   dbPath?: string;
   cacheLookupTimeoutMs?: number;
@@ -241,30 +247,61 @@ function readStoredRedirectRecord(dbPath: string, purchasePathId: string): Store
       return undefined;
     }
 
-    const searchJobRow = getSql<SqlJobRow>(
+    const searchJobRow = getSql<SqlCompactJobRow>(
       db,
-      "SELECT idle_at_ms, payload FROM search_jobs WHERE id = ? LIMIT 1",
+      "SELECT idle_at_ms, request_key, provider_context_key FROM search_jobs WHERE id = ? LIMIT 1",
       purchasePath.sessionId,
     );
-    if (searchJobRow?.payload) {
+    if (searchJobRow) {
+      const providerContext = parseJsonPayload<ProviderContext | null>(searchJobRow.provider_context_key);
       return {
         purchasePath,
-        job: parseJsonPayload<StoredJobPayload>(searchJobRow.payload),
+        job: {
+          id: purchasePath.sessionId,
+          request: parseJsonPayload<SearchRequest>(searchJobRow.request_key),
+          providerContext: providerContext ?? undefined,
+        },
         idleAtMs: Number(searchJobRow.idle_at_ms ?? 0) || undefined,
       };
     }
 
-    const matrixJobRow = getSql<SqlJobRow>(
-      db,
-      "SELECT idle_at_ms, payload FROM matrix_jobs WHERE id = ? LIMIT 1",
-      purchasePath.sessionId,
-    );
-    if (matrixJobRow?.payload) {
+    let matrixJobRow: SqlCompactJobRow | undefined;
+    let compactMatrixSchema = true;
+    try {
+      matrixJobRow = getSql<SqlCompactJobRow>(
+        db,
+        "SELECT idle_at_ms, request_key, provider_context_key FROM matrix_jobs WHERE id = ? LIMIT 1",
+        purchasePath.sessionId,
+      );
+    } catch {
+      compactMatrixSchema = false;
+    }
+    if (matrixJobRow?.request_key) {
+      const providerContext = parseJsonPayload<ProviderContext | null>(matrixJobRow.provider_context_key);
       return {
         purchasePath,
-        job: parseJsonPayload<StoredJobPayload>(matrixJobRow.payload),
+        job: {
+          id: purchasePath.sessionId,
+          request: parseJsonPayload<SearchRequest>(matrixJobRow.request_key),
+          providerContext: providerContext ?? undefined,
+        },
         idleAtMs: Number(matrixJobRow.idle_at_ms ?? 0) || undefined,
       };
+    }
+
+    if (matrixJobRow || !compactMatrixSchema) {
+      const legacyMatrixJobRow = getSql<SqlJobRow>(
+        db,
+        "SELECT idle_at_ms, payload FROM matrix_jobs WHERE id = ? LIMIT 1",
+        purchasePath.sessionId,
+      );
+      if (legacyMatrixJobRow?.payload) {
+        return {
+          purchasePath,
+          job: parseJsonPayload<StoredJobPayload>(legacyMatrixJobRow.payload),
+          idleAtMs: Number(legacyMatrixJobRow.idle_at_ms ?? 0) || undefined,
+        };
+      }
     }
 
     return undefined;

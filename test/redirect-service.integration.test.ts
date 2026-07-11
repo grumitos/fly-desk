@@ -1,9 +1,10 @@
-import { test } from "bun:test";
+import { spyOn, test } from "bun:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CanonicalOffer, ProviderMeta, SearchMeta, SearchRequest } from "../src/core/types";
+import { Database } from "bun:sqlite";
+import type { CanonicalOffer, MatrixCell, ProviderMeta, SearchMeta, SearchRequest } from "../src/core/types";
 import { requestWithServerTrustHeaders, routeRedirectRequest } from "../src/redirect-service";
 import { SearchSessionStore } from "../src/session-store";
 import { resetCostamarSessionCacheForTests } from "../src/provider-context";
@@ -149,6 +150,31 @@ function buildOffer(provider: "agil-local" | "costamar", url: string): Canonical
   };
 }
 
+function buildMatrixCell(
+  provider: "agil-local" | "costamar",
+  url: string,
+  raw: Record<string, unknown> = {},
+): MatrixCell {
+  const offer = buildOffer(provider, url);
+  offer.raw = raw;
+  return {
+    key: `${provider}-matrix-cell`,
+    departureDate: "2026-06-01",
+    returnDate: "2026-06-08",
+    stayNights: 7,
+    price: offer.price.total,
+    confidence: "live",
+    providerSource: provider,
+    selectable: true,
+    requiresRequery: false,
+    stateCode: "live",
+    tooltip: "Resultado exacto.",
+    derivedRequest: buildRequest(provider),
+    offer,
+    purchasePaths: offer.purchasePaths,
+  };
+}
+
 async function withTempDb<T>(run: (dbPath: string) => Promise<T> | T): Promise<T> {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-redirect-service-"));
   const dbPath = join(tempRoot, "cache.sqlite");
@@ -261,6 +287,187 @@ test("redirect service resolves Agil purchase paths from SQLite without the main
 
       assert.ok(redirectPath);
 
+      const response = await routeRedirectRequest(
+        authenticatedRedirectRequest(`http://127.0.0.1:32124${redirectPath}`),
+        { dbPath, cacheLookupTimeoutMs: 0 },
+      );
+
+      assert.equal(response.status, 302);
+      assert.equal(response.headers.get("Location"), agilUrl);
+    } finally {
+      restoreEnv();
+    }
+  });
+});
+
+test("redirect service does not parse the full search job payload", { concurrency: false }, async () => {
+  await withTempDb(async (dbPath) => {
+    const restoreEnv = overrideEnv({ FLY_DESK_API_TOKEN: "redirect-test-token" });
+    const marker = "redirect-must-not-parse-search-job-payload";
+
+    try {
+      const agilUrl = "https://www.agilsmart.com/home-user/flight-result?origin=LIM&destination=MAD";
+      const offer = buildOffer("agil-local", agilUrl);
+      offer.raw = { marker, ballast: "x".repeat(1_000_000) };
+      const store = new SearchSessionStore({ dbPath });
+      const job = store.createSearchJob({
+        request: buildRequest("agil-local"),
+        offers: [offer],
+        allOffers: [offer],
+        searchMeta: buildSearchMeta("agil-local"),
+        providerMeta: buildProviderMeta("agil-local"),
+        warnings: [],
+        sortMode: "cheapest",
+        status: "completed",
+      });
+      const redirectPath = store.getSession(job.id)?.offers[0]?.purchasePaths[0]?.url;
+      store.close();
+
+      assert.ok(redirectPath);
+
+      const parseSpy = spyOn(JSON, "parse");
+      try {
+        const response = await routeRedirectRequest(
+          authenticatedRedirectRequest(`http://127.0.0.1:32124${redirectPath}`),
+          { dbPath, cacheLookupTimeoutMs: 0 },
+        );
+
+        assert.equal(response.status, 302);
+        assert.equal(response.headers.get("Location"), agilUrl);
+        assert.equal(
+          parseSpy.mock.calls.some(([payload]) => typeof payload === "string" && payload.includes(marker)),
+          false,
+        );
+      } finally {
+        parseSpy.mockRestore();
+      }
+    } finally {
+      restoreEnv();
+    }
+  });
+});
+
+test("redirect service does not parse the full matrix job payload", { concurrency: false }, async () => {
+  await withTempDb(async (dbPath) => {
+    const restoreEnv = overrideEnv({ FLY_DESK_API_TOKEN: "redirect-test-token" });
+    const marker = "redirect-must-not-parse-matrix-job-payload";
+
+    try {
+      const agilUrl = "https://www.agilsmart.com/home-user/flight-result?origin=LIM&destination=MAD";
+      const store = new SearchSessionStore({ dbPath });
+      const job = store.createMatrixJob({
+        request: { ...buildRequest("agil-local"), searchMode: "roundtrip-grid" },
+        providerContext: {
+          costamar: {
+            apiBaseUrl: "https://costamar.example/api",
+            brandBaseUrl: "https://booking.example/vuelos",
+            terminalId: "matrix-terminal",
+            token: "matrix-ephemeral-token",
+            lang: "es",
+          },
+        },
+        cells: [buildMatrixCell("agil-local", agilUrl, {
+          marker,
+          ballast: "x".repeat(1_000_000),
+        })],
+        axes: {
+          departureDates: ["2026-06-01"],
+          returnDates: ["2026-06-08"],
+        },
+        confidenceSummary: { live: 1 },
+        recommendations: [],
+        providerMeta: buildProviderMeta("agil-local"),
+        searchMeta: buildSearchMeta("agil-local"),
+        warnings: [],
+        status: "completed",
+      });
+      const redirectPath = store.getMatrixJob(job.id)?.cells[0]?.purchasePaths?.[0]?.url;
+      store.close();
+
+      assert.ok(redirectPath);
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const persisted = db.query<{
+          compactBytes: number;
+          payloadBytes: number;
+          requestKey: string;
+          providerContextKey: string;
+        }, [string]>(`
+          SELECT
+            length(CAST(request_key AS BLOB))
+              + length(CAST(provider_context_key AS BLOB)) AS compactBytes,
+            length(CAST(payload AS BLOB)) AS payloadBytes,
+            request_key AS requestKey,
+            provider_context_key AS providerContextKey
+          FROM matrix_jobs
+          WHERE id = ?
+        `).get(job.id);
+        assert.ok((persisted?.payloadBytes ?? 0) > 1_000_000);
+        assert.ok((persisted?.compactBytes ?? Number.POSITIVE_INFINITY) < 4_096);
+        assert.match(persisted?.requestKey ?? "", /roundtrip-grid/);
+        assert.match(persisted?.providerContextKey ?? "", /matrix-terminal/);
+        assert.equal((persisted?.providerContextKey ?? "").includes("matrix-ephemeral-token"), false);
+      } finally {
+        db.close();
+      }
+
+      const parseSpy = spyOn(JSON, "parse");
+      try {
+        const response = await routeRedirectRequest(
+          authenticatedRedirectRequest(`http://127.0.0.1:32124${redirectPath}`),
+          { dbPath, cacheLookupTimeoutMs: 0 },
+        );
+
+        assert.equal(response.status, 302);
+        assert.equal(response.headers.get("Location"), agilUrl);
+        assert.equal(
+          parseSpy.mock.calls.some(([payload]) => typeof payload === "string" && payload.includes(marker)),
+          false,
+        );
+      } finally {
+        parseSpy.mockRestore();
+      }
+    } finally {
+      restoreEnv();
+    }
+  });
+});
+
+test("redirect service falls back to the payload for a legacy matrix row", async () => {
+  await withTempDb(async (dbPath) => {
+    const restoreEnv = overrideEnv({ FLY_DESK_API_TOKEN: "redirect-test-token" });
+
+    try {
+      const agilUrl = "https://www.agilsmart.com/home-user/flight-result?origin=LIM&destination=MAD";
+      const store = new SearchSessionStore({ dbPath });
+      const job = store.createMatrixJob({
+        request: { ...buildRequest("agil-local"), searchMode: "roundtrip-grid" },
+        cells: [buildMatrixCell("agil-local", agilUrl)],
+        axes: {
+          departureDates: ["2026-06-01"],
+          returnDates: ["2026-06-08"],
+        },
+        confidenceSummary: { live: 1 },
+        recommendations: [],
+        providerMeta: buildProviderMeta("agil-local"),
+        searchMeta: buildSearchMeta("agil-local"),
+        warnings: [],
+        status: "completed",
+      });
+      const redirectPath = store.getMatrixJob(job.id)?.cells[0]?.purchasePaths?.[0]?.url;
+      store.close();
+
+      const db = new Database(dbPath);
+      try {
+        db.run(
+          "UPDATE matrix_jobs SET request_key = NULL, provider_context_key = NULL WHERE id = ?",
+          job.id,
+        );
+      } finally {
+        db.close(true);
+      }
+
+      assert.ok(redirectPath);
       const response = await routeRedirectRequest(
         authenticatedRedirectRequest(`http://127.0.0.1:32124${redirectPath}`),
         { dbPath, cacheLookupTimeoutMs: 0 },

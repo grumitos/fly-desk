@@ -24,6 +24,7 @@ export type ProviderSearchWorkerProgress =
       offers: CanonicalOffer[];
       warnings: string[];
       partial: boolean;
+      incremental?: boolean;
     }
   | {
       id: string;

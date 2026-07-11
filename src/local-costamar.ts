@@ -4115,19 +4115,26 @@ export async function resolveLocalCostamarRangeProgressive(
   let stopRequested = false;
 
   await mapConcurrent(candidates, COSTAMAR_CONCURRENCY.rangeSearch, async (derivedRequest) => {
+    let progressOffers: CanonicalOffer[] = [];
+    let progressWarnings: string[] = [];
     try {
       const result = await searchLocalCostamarExactWithRetry(derivedRequest, providerContext);
       aggregatedOffers.push(...result.offers);
+      progressOffers = result.offers;
+      progressWarnings = result.warnings;
       warnings.push(...result.warnings);
     } catch (error) {
+      const warning = error instanceof Error ? error.message : "Click and Book Plus range search failed.";
       partial = true;
-      warnings.push(error instanceof Error ? error.message : "Click and Book Plus range search failed.");
+      warnings.push(warning);
+      progressWarnings = [warning];
     }
 
     if (onUpdate?.({
-      offers: dedupeCostamarOffers(aggregatedOffers),
-      warnings: uniqueStrings(warnings),
+      offers: progressOffers,
+      warnings: uniqueStrings(progressWarnings),
       partial: true,
+      incremental: true,
     }) === false) {
       stopRequested = true;
     }

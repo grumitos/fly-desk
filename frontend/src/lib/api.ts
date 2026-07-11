@@ -1517,15 +1517,3 @@ export async function startMigrationSearch(
   options.onMigrationProgress?.(finalJob)
   return finalJob
 }
-
-export async function fetchQuotation(input: {
-  searchSessionId: string
-  offerId: string
-  migrationPlan?: boolean
-}) {
-  return postJson<{ commercialText: string; offer: unknown }>(`${API_BASE}/api/quotation`, {
-    searchSessionId: input.searchSessionId,
-    offerId: input.offerId,
-    migrationPlan: input.migrationPlan === true,
-  })
-}

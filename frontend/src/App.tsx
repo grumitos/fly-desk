@@ -135,6 +135,10 @@ export default function App() {
     () => applyClientFilters(candidateOffers, filters, selectedAirlines),
     [candidateOffers, filters, selectedAirlines],
   )
+  const quotationUsdToPenRate = useMemo(
+    () => candidateOffers.map((offer) => offer.usdToPenRate).find(isUsableUsdToPenRate),
+    [candidateOffers],
+  )
 
   const filteredResults = useMemo(() => {
     if (!results) return null
@@ -446,7 +450,12 @@ export default function App() {
                 </div>
 
                 <div className={`${mobilePanel === "detail" ? "block" : "hidden"} min-h-0 xl:block`}>
-                  <DetailPanel offer={visibleSelectedOffer} request={filteredResults?.request} searchJobId={results?.searchJobId} />
+                  <DetailPanel
+                    offer={visibleSelectedOffer}
+                    request={filteredResults?.request}
+                    searchJobId={results?.searchJobId}
+                    usdToPenRate={quotationUsdToPenRate}
+                  />
                 </div>
               </div>
             </Tabs>
@@ -691,6 +700,10 @@ function maxLayoverForOffer(offer: CanonicalOffer): number {
   return (offer.itineraries ?? [])
     .flatMap((itinerary) => itinerary.layoverMinutes ?? [])
     .reduce((max, minutes) => Math.max(max, minutes), 0)
+}
+
+function isUsableUsdToPenRate(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 2 && value <= 8
 }
 
 function applyClientFilters(offers: CanonicalOffer[], filters: Filters, selectedAirlines: string[]) {

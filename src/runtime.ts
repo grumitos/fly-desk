@@ -17,9 +17,18 @@ export interface RuntimeServices {
 }
 
 let runtime: RuntimeServices | undefined;
+let sessionStore: SearchSessionStore | undefined;
 
 export function getRuntimeIfInitialized(): RuntimeServices | undefined {
   return runtime;
+}
+
+export function getSessionStoreIfInitialized(): SearchSessionStore | undefined {
+  return sessionStore;
+}
+
+export function maintainSessionStoreIfInitialized(): void {
+  sessionStore?.purgeExpired();
 }
 
 export function getRuntime(): RuntimeServices {
@@ -46,16 +55,19 @@ export function getRuntime(): RuntimeServices {
       ),
     }),
     searchAdmission: new SearchAdmissionController(),
-    sessions: new SearchSessionStore({
-      dbPath: resolvePersistPath(
-        "FLY_DESK_SESSION_DB_PATH",
-        "fly-desk-cache.sqlite",
-      ),
-      legacyPersistPath: resolvePersistPath(
-        "FLY_DESK_SEARCH_SESSION_STORE_PATH",
-        "search-session-store.json",
-      ),
-    }),
+    get sessions() {
+      sessionStore ??= new SearchSessionStore({
+        dbPath: resolvePersistPath(
+          "FLY_DESK_SESSION_DB_PATH",
+          "fly-desk-cache.sqlite",
+        ),
+        legacyPersistPath: resolvePersistPath(
+          "FLY_DESK_SEARCH_SESSION_STORE_PATH",
+          "search-session-store.json",
+        ),
+      });
+      return sessionStore;
+    },
   };
 
   return runtime;

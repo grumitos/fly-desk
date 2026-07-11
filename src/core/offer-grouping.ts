@@ -162,6 +162,8 @@ export function groupExactProviderOffers(offers: CanonicalOffer[]): CanonicalOff
     const groupTag = providerGroupTag(purchasePaths);
     grouped.set(key, {
       ...current,
+      quotationPreparedAt: current.quotationPreparedAt ?? offer.quotationPreparedAt,
+      usdToPenRate: current.usdToPenRate ?? offer.usdToPenRate,
       purchasePaths,
       tags: uniqueStrings([
         ...current.tags,

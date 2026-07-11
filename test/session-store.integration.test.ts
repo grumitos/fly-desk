@@ -4,11 +4,16 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import { COMPLETED_SEARCH_SESSION_TTL_MS, SearchSessionStore } from "../src/session-store";
+import {
+  COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS,
+  COMPLETED_SEARCH_SESSION_TTL_MS,
+  SearchSessionStore,
+} from "../src/session-store";
 import { SEARCH_CACHE_VERSION } from "../src/core/types";
 import type {
   CanonicalOffer,
   MatrixCell,
+  ProviderDiagnostics,
   ProviderMeta,
   SearchMeta,
   SearchRequest,
@@ -25,6 +30,35 @@ afterEach(() => {
 
 test("completed search result cache ttl is four hours", () => {
   assert.equal(COMPLETED_SEARCH_SESSION_TTL_MS, 4 * 60 * 60 * 1000);
+});
+
+test("search session store adds compact redirect columns to the legacy matrix schema", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-schema-"));
+  tempRootsForCleanup.add(tempRoot);
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const legacyDb = new Database(dbPath);
+  legacyDb.exec(`
+    CREATE TABLE matrix_jobs (
+      id TEXT PRIMARY KEY,
+      idle_at_ms INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      payload TEXT NOT NULL
+    );
+  `);
+  legacyDb.close(true);
+
+  const store = new SearchSessionStore({ dbPath });
+  store.close();
+
+  const migratedDb = new Database(dbPath, { readonly: true });
+  try {
+    const columns = allSql<{ name: string }>(migratedDb, "PRAGMA table_info(matrix_jobs)")
+      .map((column) => column.name);
+    assert.ok(columns.includes("request_key"));
+    assert.ok(columns.includes("provider_context_key"));
+  } finally {
+    migratedDb.close();
+  }
 });
 
 function getSql<T>(db: Database, sql: string, ...params: any[]): T | undefined {
@@ -213,6 +247,15 @@ function readSqliteCounts(dbPath: string): { searchJobs: number; matrixJobs: num
   }
 }
 
+function buildProviderDiagnostics(kind: ProviderDiagnostics["kind"]): ProviderDiagnostics[] {
+  return [{
+    providerId: "agil-local",
+    kind,
+    status: "running",
+    events: [{ name: "first_http_request", at: "2026-03-27T00:00:01.000Z" }],
+  }];
+}
+
 function readSqliteSavedAt(dbPath: string): string | undefined {
   const db = new Database(dbPath, { readonly: true });
   try {
@@ -316,7 +359,6 @@ test("cancelRunningJobs preserves partial cacheable results during shutdown", ()
     warnings: [],
     status: "running",
   });
-
   const summary = store.cancelRunningJobs(message, { cachePartial: true });
 
   assert.deepEqual(summary, { searchJobs: 2, matrixJobs: 1 });
@@ -409,6 +451,394 @@ test("search job refresh preserves stable purchase path ids when the underlying 
   assert.ok(refreshedPathId);
   assert.equal(refreshedPathId, firstPathId);
   assert.ok(store.resolvePurchasePath(firstPathId));
+});
+
+test("diagnostics-only updates are volatile and preserve result versions", () => {
+  const store = new SearchSessionStore();
+  const offer = buildOffer("offer-diagnostics", "https://provider.example/diagnostics");
+  const searchJob = store.createSearchJob({
+    request: buildRequest(),
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+  const matrixJob = store.createMatrixJob({
+    request: { ...buildRequest(), tripType: "round-trip", searchMode: "roundtrip-grid" },
+    cells: [buildMatrixCell("diagnostics-cell", "https://provider.example/matrix-diagnostics")],
+    axes: { departureDates: ["2026-04-15"], returnDates: ["2026-04-22"] },
+    confidenceSummary: { live: 1 },
+    recommendations: [],
+    providerMeta: buildProviderMeta(),
+    searchMeta: buildSearchMeta(),
+    warnings: [],
+    status: "running",
+  });
+  const searchVersion = {
+    revision: searchJob.revision,
+    updatedAt: searchJob.updatedAt,
+    lastAccessedAt: searchJob.lastAccessedAt,
+  };
+  const matrixVersion = {
+    revision: matrixJob.revision,
+    updatedAt: matrixJob.updatedAt,
+    lastAccessedAt: matrixJob.lastAccessedAt,
+  };
+
+  const updatedSearch = store.updateSearchJob(searchJob.id, (current) => ({
+    ...current,
+    providerDiagnostics: buildProviderDiagnostics("exact"),
+  }));
+  const updatedMatrix = store.updateMatrixJob(matrixJob.id, (current) => ({
+    ...current,
+    providerDiagnostics: buildProviderDiagnostics("matrix"),
+  }));
+
+  assert.strictEqual(updatedSearch?.offers, searchJob.offers);
+  assert.strictEqual(updatedSearch?.allOffers, searchJob.allOffers);
+  assert.equal(updatedSearch?.revision, searchVersion.revision);
+  assert.equal(updatedSearch?.updatedAt, searchVersion.updatedAt);
+  assert.equal(updatedSearch?.lastAccessedAt, searchVersion.lastAccessedAt);
+  assert.strictEqual(updatedMatrix?.cells, matrixJob.cells);
+  assert.equal(updatedMatrix?.revision, matrixVersion.revision);
+  assert.equal(updatedMatrix?.updatedAt, matrixVersion.updatedAt);
+  assert.equal(updatedMatrix?.lastAccessedAt, matrixVersion.lastAccessedAt);
+  assert.deepEqual(store.getSession(searchJob.id)?.providerDiagnostics, buildProviderDiagnostics("exact"));
+  assert.deepEqual(store.getMatrixJob(matrixJob.id)?.providerDiagnostics, buildProviderDiagnostics("matrix"));
+});
+
+test("diagnostics-only updates skip sqlite rewrites without hiding pending material changes", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-diagnostics-"));
+  tempRootsForCleanup.add(tempRoot);
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const firstStore = new SearchSessionStore({ dbPath });
+  const offer = buildOffer("offer-persisted-diagnostics", "https://provider.example/persisted-diagnostics");
+  const searchJob = firstStore.createSearchJob({
+    request: buildRequest(),
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  const matrixJob = firstStore.createMatrixJob({
+    request: { ...buildRequest(), tripType: "round-trip", searchMode: "roundtrip-grid" },
+    cells: [buildMatrixCell("persisted-diagnostics-cell", "https://provider.example/persisted-matrix")],
+    axes: { departureDates: ["2026-04-15"], returnDates: ["2026-04-22"] },
+    confidenceSummary: { live: 1 },
+    recommendations: [],
+    providerMeta: buildProviderMeta(),
+    searchMeta: buildSearchMeta(),
+    warnings: [],
+    status: "completed",
+  });
+  firstStore.close();
+
+  const savedAt = readSqliteSavedAt(dbPath);
+  assert.ok(savedAt);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  const secondStore = new SearchSessionStore({ dbPath });
+  try {
+    const searchDiagnostics = buildProviderDiagnostics("exact");
+    const matrixDiagnostics = buildProviderDiagnostics("matrix");
+    const updatedSearch = secondStore.updateSearchJob(searchJob.id, (current) => ({
+      ...current,
+      providerDiagnostics: searchDiagnostics,
+    }));
+    const updatedMatrix = secondStore.updateMatrixJob(matrixJob.id, (current) => ({
+      ...current,
+      providerDiagnostics: matrixDiagnostics,
+    }));
+
+    assert.equal(updatedSearch?.revision, searchJob.revision);
+    assert.equal(updatedMatrix?.revision, matrixJob.revision);
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    assert.equal(readSqliteSavedAt(dbPath), savedAt);
+
+    const materialSearch = secondStore.updateSearchJob(searchJob.id, (current) => ({
+      ...current,
+      warnings: ["persist-search"],
+    }));
+    const materialMatrix = secondStore.updateMatrixJob(matrixJob.id, (current) => ({
+      ...current,
+      warnings: ["persist-matrix"],
+    }));
+    assert.equal(materialSearch?.revision, searchJob.revision + 1);
+    assert.equal(materialMatrix?.revision, matrixJob.revision + 1);
+    assert.deepEqual(materialSearch?.providerDiagnostics, searchDiagnostics);
+    assert.deepEqual(materialMatrix?.providerDiagnostics, matrixDiagnostics);
+    await new Promise((resolve) => setTimeout(resolve, 260));
+  } finally {
+    secondStore.close();
+  }
+
+  const thirdStore = new SearchSessionStore({ dbPath });
+  try {
+    assert.deepEqual(thirdStore.getSearchJob(searchJob.id)?.warnings, ["persist-search"]);
+    assert.deepEqual(thirdStore.getMatrixJob(matrixJob.id)?.warnings, ["persist-matrix"]);
+    assert.deepEqual(thirdStore.getSearchJob(searchJob.id)?.providerDiagnostics, buildProviderDiagnostics("exact"));
+    assert.deepEqual(thirdStore.getMatrixJob(matrixJob.id)?.providerDiagnostics, buildProviderDiagnostics("matrix"));
+  } finally {
+    thirdStore.close();
+  }
+});
+
+test("material progress stays in memory until a durable final update persists it", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-memory-progress-"));
+  tempRootsForCleanup.add(tempRoot);
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const store = new SearchSessionStore({ dbPath });
+  const offer = buildOffer("memory-progress", "https://provider.example/memory-progress");
+  const searchJob = store.createSearchJob({
+    request: buildRequest(),
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+  const matrixJob = store.createMatrixJob({
+    request: { ...buildRequest(), tripType: "round-trip", searchMode: "roundtrip-grid" },
+    cells: [buildMatrixCell("memory-progress-cell", "https://provider.example/memory-progress-matrix")],
+    axes: { departureDates: ["2026-04-15"], returnDates: ["2026-04-22"] },
+    confidenceSummary: { live: 1 },
+    recommendations: [],
+    providerMeta: buildProviderMeta(),
+    searchMeta: buildSearchMeta(),
+    warnings: [],
+    status: "running",
+  });
+  const nextOffer = buildOffer("memory-progress-new", "https://provider.example/memory-progress-new");
+  const nextCell = buildMatrixCell("memory-progress-new-cell", "https://provider.example/memory-progress-matrix-new");
+  const readPersisted = () => {
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const search = getSql<{ payload: string }>(db, "SELECT payload FROM search_jobs WHERE id = ?", searchJob.id);
+      const matrix = getSql<{ payload: string }>(db, "SELECT payload FROM matrix_jobs WHERE id = ?", matrixJob.id);
+      const persistedSearch = search ? JSON.parse(search.payload) as {
+        status: string;
+        warnings: string[];
+        allOffers: CanonicalOffer[];
+      } : undefined;
+      const persistedMatrix = matrix ? JSON.parse(matrix.payload) as {
+        status: string;
+        warnings: string[];
+        cells: MatrixCell[];
+      } : undefined;
+      return {
+        search: persistedSearch ? {
+          status: persistedSearch.status,
+          warnings: persistedSearch.warnings,
+          offerIds: persistedSearch.allOffers.map((entry) => entry.id),
+        } : undefined,
+        matrix: persistedMatrix ? {
+          status: persistedMatrix.status,
+          warnings: persistedMatrix.warnings,
+          cellKeys: persistedMatrix.cells.map((entry) => entry.key),
+        } : undefined,
+      };
+    } finally {
+      db.close();
+    }
+  };
+
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    const savedAt = readSqliteSavedAt(dbPath);
+    assert.ok(savedAt);
+
+    const memorySearch = store.updateSearchJob(searchJob.id, (current) => ({
+      ...current,
+      offers: [nextOffer],
+      allOffers: [nextOffer],
+      warnings: ["memory-only-search"],
+    }), { persist: false });
+    const memoryMatrix = store.updateMatrixJob(matrixJob.id, (current) => ({
+      ...current,
+      cells: [nextCell],
+      warnings: ["memory-only-matrix"],
+    }), { persist: false });
+    assert.deepEqual(memorySearch?.warnings, ["memory-only-search"]);
+    assert.deepEqual(memoryMatrix?.warnings, ["memory-only-matrix"]);
+    assert.deepEqual(memorySearch?.allOffers.map((entry) => entry.id), [nextOffer.id]);
+    assert.deepEqual(memoryMatrix?.cells.map((entry) => entry.key), [nextCell.key]);
+
+    const unrelatedOffer = buildOffer("unrelated-durable", "https://provider.example/unrelated-durable");
+    store.createSearchJob({
+      request: { ...buildRequest(), currencyCode: "PEN" },
+      offers: [unrelatedOffer],
+      allOffers: [unrelatedOffer],
+      searchMeta: buildSearchMeta(),
+      providerMeta: buildProviderMeta(),
+      warnings: ["unrelated-durable"],
+      sortMode: "cheapest",
+      status: "completed",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    assert.notEqual(readSqliteSavedAt(dbPath), savedAt);
+    assert.deepEqual(readPersisted().search, {
+      status: "running",
+      warnings: [],
+      offerIds: [offer.id],
+    });
+    assert.deepEqual(readPersisted().matrix, {
+      status: "running",
+      warnings: [],
+      cellKeys: [matrixJob.cells[0]!.key],
+    });
+    const persistedPaths = new Database(dbPath, { readonly: true });
+    try {
+      const searchPathId = memorySearch?.offers[0]?.purchasePaths[0]?.id;
+      const matrixPathId = memoryMatrix?.cells[0]?.purchasePaths?.[0]?.id;
+      assert.ok(searchPathId);
+      assert.ok(matrixPathId);
+      assert.equal(
+        getSql<{ present: number }>(persistedPaths, "SELECT 1 AS present FROM purchase_paths WHERE id = ?", searchPathId!)?.present,
+        1,
+      );
+      assert.equal(
+        getSql<{ present: number }>(persistedPaths, "SELECT 1 AS present FROM purchase_paths WHERE id = ?", matrixPathId!)?.present,
+        1,
+      );
+    } finally {
+      persistedPaths.close();
+    }
+
+    store.updateSearchJob(searchJob.id, (current) => ({
+      ...current,
+      status: "completed",
+      warnings: [...current.warnings, "durable-final-search"],
+    }));
+    store.updateMatrixJob(matrixJob.id, (current) => ({
+      ...current,
+      status: "completed",
+      warnings: [...current.warnings, "durable-final-matrix"],
+    }));
+
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    assert.notEqual(readSqliteSavedAt(dbPath), savedAt);
+    assert.deepEqual(readPersisted().search, {
+      status: "completed",
+      warnings: ["memory-only-search", "durable-final-search"],
+      offerIds: [nextOffer.id],
+    });
+    assert.deepEqual(readPersisted().matrix, {
+      status: "completed",
+      warnings: ["memory-only-matrix", "durable-final-matrix"],
+      cellKeys: [nextCell.key],
+    });
+  } finally {
+    store.close();
+  }
+});
+
+test("memory-only progress is not captured by the job creation timer", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-deferred-create-"));
+  tempRootsForCleanup.add(tempRoot);
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const store = new SearchSessionStore({ dbPath });
+  const initialOffer = buildOffer("deferred-initial", "https://provider.example/deferred-initial");
+  const progressOffer = buildOffer("deferred-progress", "https://provider.example/deferred-progress");
+  const job = store.createSearchJob({
+    request: buildRequest(),
+    offers: [initialOffer],
+    allOffers: [initialOffer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+
+  try {
+    store.updateSearchJob(job.id, (current) => ({
+      ...current,
+      offers: [progressOffer],
+      allOffers: [progressOffer],
+    }), { persist: false });
+    await new Promise((resolve) => setTimeout(resolve, 260));
+
+    const beforeCommit = new Database(dbPath, { readonly: true });
+    try {
+      assert.equal(getSql<{ present: number }>(beforeCommit, "SELECT 1 AS present FROM search_jobs WHERE id = ?", job.id), null);
+    } finally {
+      beforeCommit.close();
+    }
+
+    store.updateSearchJob(job.id, (current) => current);
+    await new Promise((resolve) => setTimeout(resolve, 260));
+
+    const afterCommit = new Database(dbPath, { readonly: true });
+    try {
+      const row = getSql<{ payload: string }>(afterCommit, "SELECT payload FROM search_jobs WHERE id = ?", job.id);
+      assert.deepEqual(
+        (JSON.parse(row!.payload) as { allOffers: CanonicalOffer[] }).allOffers.map((offer) => offer.id),
+        [progressOffer.id],
+      );
+    } finally {
+      afterCommit.close();
+    }
+  } finally {
+    store.close();
+  }
+});
+
+test("matrix checkpoints persist result cells without empty placeholders", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-matrix-checkpoint-"));
+  tempRootsForCleanup.add(tempRoot);
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const store = new SearchSessionStore({ dbPath });
+  const resolved = buildMatrixCell("checkpoint-resolved", "https://provider.example/checkpoint-resolved");
+  const loading: MatrixCell = {
+    ...resolved,
+    key: "checkpoint-loading",
+    confidence: "loading",
+    price: undefined,
+    offer: undefined,
+    purchasePaths: [],
+    selectable: false,
+  };
+  const unavailable: MatrixCell = {
+    ...loading,
+    key: "checkpoint-unavailable",
+    confidence: "unavailable",
+  };
+  const job = store.createMatrixJob({
+    request: { ...buildRequest(), tripType: "round-trip", searchMode: "roundtrip-grid" },
+    cells: [resolved, loading, unavailable],
+    axes: { departureDates: [resolved.departureDate], returnDates: [resolved.returnDate!] },
+    confidenceSummary: { live: 1, loading: 1, unavailable: 1 },
+    recommendations: [],
+    providerMeta: buildProviderMeta(),
+    searchMeta: buildSearchMeta(),
+    warnings: [],
+    status: "running",
+  });
+
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const row = getSql<{ payload: string }>(db, "SELECT payload FROM matrix_jobs WHERE id = ?", job.id);
+      assert.deepEqual(
+        (JSON.parse(row!.payload) as { cells: MatrixCell[] }).cells.map((cell) => cell.key),
+        [resolved.key],
+      );
+    } finally {
+      db.close();
+    }
+  } finally {
+    store.close();
+  }
 });
 
 test("offer updates prune the previous purchase path ids for that offer", () => {
@@ -596,6 +1026,69 @@ test("findRecentCompletedSearchJob ignores completed searches from a previous ca
     providerIds: ["agil-local"],
     sortMode: "cheapest",
     maxAgeMs: 10 * 60 * 1000,
+  });
+
+  assert.equal(reused, undefined);
+});
+
+test("findRecentCompletedSearchJob expires prices from completedAt despite polling", () => {
+  const store = new SearchSessionStore();
+  const request = buildRequest();
+  const completedAtMs = Date.now() - 60_000;
+  const offer = buildOffer("offer-polled-cache", "https://cached.example/polled");
+  const job = store.createSearchJob({
+    request,
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: {
+      ...buildSearchMeta(),
+      completedAt: new Date(completedAtMs).toISOString(),
+    },
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+
+  assert.ok(store.getSearchJob(job.id));
+  assert.ok(store.getSession(job.id));
+  const reused = store.findRecentCompletedSearchJob({
+    request,
+    providerIds: ["agil-local"],
+    sortMode: "cheapest",
+    maxAgeMs: 30_000,
+    nowMs: completedAtMs + 60_000,
+  });
+
+  assert.equal(reused, undefined);
+});
+
+test("findRecentCompletedSearchJob uses updatedAt for legacy jobs without completedAt", () => {
+  const store = new SearchSessionStore();
+  const request = buildRequest();
+  const completedAtMs = Date.now() - 60_000;
+  const offer = buildOffer("offer-legacy-timestamp", "https://cached.example/legacy-timestamp");
+  const job = store.createSearchJob({
+    request,
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  delete (job.searchMeta as Partial<SearchMeta>).completedAt;
+  job.createdAt = new Date(completedAtMs - 1_000).toISOString();
+  job.updatedAt = new Date(completedAtMs).toISOString();
+
+  assert.ok(store.getSearchJob(job.id));
+  const reused = store.findRecentCompletedSearchJob({
+    request,
+    providerIds: ["agil-local"],
+    sortMode: "cheapest",
+    maxAgeMs: 30_000,
+    nowMs: completedAtMs + 60_000,
   });
 
   assert.equal(reused, undefined);
@@ -917,7 +1410,7 @@ test("search session store prunes expired sqlite rows before loading their paylo
   rmSync(tempRoot, { recursive: true, force: true });
 });
 
-test("search session store restores only the newest jobs that fit the persisted cache budget", () => {
+test("search session store hydrates only the newest jobs and keeps the rest available from disk", () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-budget-"));
   tempRootsForCleanup.add(tempRoot);
   const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
@@ -973,19 +1466,30 @@ test("search session store restores only the newest jobs that fit the persisted 
     persistedRestoreBudgetBytes: restoreBudgetBytes,
   });
   try {
-    assert.equal(secondStore.getSearchJob(jobs[0]!.job.id), undefined);
+    const diskOnlyJob = secondStore.getSearchJob(jobs[0]!.job.id);
+    assert.ok(diskOnlyJob);
     assert.ok(secondStore.getSearchJob(jobs[1]!.job.id));
     assert.ok(secondStore.getSearchJob(jobs[2]!.job.id));
-    assert.equal(secondStore.resolvePurchasePath(jobs[0]!.pathId!), undefined);
+    assert.equal(secondStore.getSession(jobs[0]!.job.id)?.offers[0]?.id, "offer-oldest");
+    assert.equal(secondStore.getOffer(jobs[0]!.job.id, "offer-oldest")?.id, "offer-oldest");
+    assert.equal(
+      secondStore.resolvePurchasePath(jobs[0]!.pathId!)?.path.url,
+      "https://oldest.example/search",
+    );
     assert.ok(secondStore.resolvePurchasePath(jobs[1]!.pathId!));
     assert.ok(secondStore.resolvePurchasePath(jobs[2]!.pathId!));
+    const residentCache = secondStore.getDiagnostics().residentCache;
+    assert.equal(residentCache.completedJobs, 2);
+    assert.equal(residentCache.diskOnlyJobs, 1);
+    assert.ok(residentCache.completedBytes > 0);
+    assert.ok(residentCache.diskOnlyBytes > 0);
   } finally {
     secondStore.close();
   }
 
   const counts = readSqliteCounts(dbPath);
-  assert.equal(counts.searchJobs, 2);
-  assert.equal(counts.purchasePaths, 2);
+  assert.equal(counts.searchJobs, 3);
+  assert.equal(counts.purchasePaths, 3);
 });
 
 test("persisted cache budget counts matrix purchase paths before restoring", () => {
@@ -1039,10 +1543,218 @@ test("persisted cache budget counts matrix purchase paths before restoring", () 
   const secondStore = new SearchSessionStore({ dbPath, persistedRestoreBudgetBytes: matrixBytes - 1 });
   try {
     assert.ok(secondStore.getSearchJob(searchJob.id));
-    assert.equal(secondStore.getMatrixJob(matrixJob.id), undefined);
-    assert.equal(secondStore.resolvePurchasePath(matrixPathId!), undefined);
+    assert.ok(secondStore.getMatrixJob(matrixJob.id));
+    assert.equal(secondStore.resolvePurchasePath(matrixPathId!)?.path.url.startsWith("https://matrix.example/flexible"), true);
+    const residentCache = secondStore.getDiagnostics().residentCache;
+    assert.equal(residentCache.completedJobs, 1);
+    assert.equal(residentCache.diskOnlyJobs, 1);
   } finally {
     secondStore.close();
+  }
+
+  assert.deepEqual(readSqliteCounts(dbPath), {
+    searchJobs: 1,
+    matrixJobs: 1,
+    purchasePaths: 2,
+  });
+});
+
+test("resident cache budget rechecks automatically when the completion grace expires", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-resident-timer-"));
+  tempRootsForCleanup.add(tempRoot);
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const store = new SearchSessionStore({ dbPath, completedResidentBudgetBytes: 0 });
+  const offer = buildOffer("resident-timer", "https://resident.example/timer");
+  store.createSearchJob({
+    request: buildRequest(),
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: {
+      ...buildSearchMeta(),
+      completedAt: new Date().toISOString(),
+    },
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    assert.equal(store.getDiagnostics().residentCache.completedJobs, 1);
+
+    const deadline = Date.now() + COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS + 2_000;
+    while (store.getDiagnostics().residentCache.completedJobs > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    assert.equal(store.getDiagnostics().residentCache.completedJobs, 0);
+    assert.equal(store.getDiagnostics().residentCache.diskOnlyJobs, 1);
+  } finally {
+    store.close();
+  }
+});
+
+test("resident cache budget keeps running and newly completed jobs, then evicts only completed memory", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-resident-grace-"));
+  tempRootsForCleanup.add(tempRoot);
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const store = new SearchSessionStore({
+    dbPath,
+    completedResidentBudgetBytes: 0,
+  });
+  const completedAtMs = Date.now();
+  const completedOffer = buildOffer("resident-completed", "https://resident.example/completed");
+  const runningOffer = buildOffer("resident-running", "https://resident.example/running");
+  const completed = store.createSearchJob({
+    request: buildRequest(),
+    offers: [completedOffer],
+    allOffers: [completedOffer],
+    searchMeta: {
+      ...buildSearchMeta(),
+      completedAt: new Date(completedAtMs).toISOString(),
+    },
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  const running = store.createSearchJob({
+    request: buildRequest(),
+    offers: [runningOffer],
+    allOffers: [runningOffer],
+    searchMeta: {
+      ...buildSearchMeta(),
+      completedAt: "",
+    },
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+  const matrix = store.createMatrixJob({
+    request: { ...buildRequest(), tripType: "round-trip", searchMode: "roundtrip-grid" },
+    cells: [buildMatrixCell("resident-matrix", "https://resident.example/matrix")],
+    axes: { departureDates: ["2026-04-15"], returnDates: ["2026-04-22"] },
+    confidenceSummary: { live: 1 },
+    recommendations: [],
+    providerMeta: buildProviderMeta(),
+    searchMeta: {
+      ...buildSearchMeta(),
+      completedAt: new Date(completedAtMs).toISOString(),
+    },
+    warnings: [],
+    status: "completed",
+  });
+  const completedPathId = completed.offers[0]?.purchasePaths[0]?.id;
+  const matrixPathId = matrix.cells[0]?.purchasePaths?.[0]?.id;
+  assert.ok(completedPathId);
+  assert.ok(matrixPathId);
+
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  store.enforceCompletedResidentBudget(completedAtMs + 4_999);
+  const completedBeforeEviction = store.getSearchJob(completed.id);
+  assert.ok(completedBeforeEviction);
+  assert.ok(store.getSearchJob(running.id));
+  const matrixBeforeEviction = store.getMatrixJob(matrix.id);
+  assert.ok(matrixBeforeEviction);
+  const completedIdleAtMs = Date.parse(completedBeforeEviction.lastAccessedAt);
+  const matrixIdleAtMs = Date.parse(matrixBeforeEviction.lastAccessedAt);
+
+  store.enforceCompletedResidentBudget(completedAtMs + 5_001);
+  assert.ok(store.getSearchJob(completed.id));
+  assert.ok(store.getSearchJob(running.id));
+  assert.ok(store.getMatrixJob(matrix.id));
+  assert.equal(store.resolvePurchasePath(completedPathId!)?.path.url, "https://resident.example/completed");
+  assert.equal(store.resolvePurchasePath(matrixPathId!)?.path.url, "https://resident.example/matrix");
+  assert.deepEqual(store.getRedirectContext(completed.id)?.request, buildRequest());
+  assert.equal(store.getRedirectContext(matrix.id)?.request.searchMode, "roundtrip-grid");
+  const residentDiagnostics = store.getDiagnostics().residentCache;
+  assert.equal(residentDiagnostics.budgetBytes, 0);
+  assert.equal(residentDiagnostics.completedJobs, 0);
+  assert.equal(residentDiagnostics.completedBytes, 0);
+  assert.equal(residentDiagnostics.diskOnlyJobs, 2);
+  assert.ok(residentDiagnostics.diskOnlyBytes > 0);
+  assert.deepEqual(readSqliteCounts(dbPath), {
+    searchJobs: 2,
+    matrixJobs: 1,
+    purchasePaths: 3,
+  });
+  store.purgeExpired(Math.max(completedIdleAtMs, matrixIdleAtMs) + COMPLETED_SEARCH_SESSION_TTL_MS + 1);
+  assert.equal(store.resolvePurchasePath(completedPathId!), undefined);
+  assert.equal(store.resolvePurchasePath(matrixPathId!), undefined);
+  assert.deepEqual(readSqliteCounts(dbPath), {
+    searchJobs: 1,
+    matrixJobs: 0,
+    purchasePaths: 1,
+  });
+  store.close();
+});
+
+test("resident cache evicts least recently used completed jobs without deleting persisted redirects", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-resident-lru-"));
+  tempRootsForCleanup.add(tempRoot);
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const firstStore = new SearchSessionStore({ dbPath });
+  const oldOffer = buildOffer("resident-old", "https://resident.example/old");
+  const recentOffer = buildOffer("resident-recent", "https://resident.example/recent");
+  const oldJob = firstStore.createSearchJob({
+    request: buildRequest(),
+    offers: [oldOffer],
+    allOffers: [oldOffer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const recentJob = firstStore.createSearchJob({
+    request: { ...buildRequest(), currencyCode: "PEN" },
+    offers: [recentOffer],
+    allOffers: [recentOffer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  const oldPathId = oldJob.offers[0]?.purchasePaths[0]?.id;
+  assert.ok(oldPathId);
+  firstStore.close();
+
+  const db = new Database(dbPath, { readonly: true });
+  const residentBudgetBytes = getSql<{ bytes: number }>(db, `
+    SELECT length(CAST(search_jobs.payload AS BLOB))
+      + COALESCE(SUM(length(CAST(purchase_paths.payload AS BLOB))), 0) AS bytes
+    FROM search_jobs
+    LEFT JOIN purchase_paths ON purchase_paths.session_id = search_jobs.id
+    WHERE search_jobs.id = ?
+    GROUP BY search_jobs.id
+  `, recentJob.id)!.bytes;
+  db.close();
+
+  const budgetedStore = new SearchSessionStore({ dbPath, completedResidentBudgetBytes: residentBudgetBytes });
+  budgetedStore.enforceCompletedResidentBudget(Date.now() + 5_001);
+  assert.ok(budgetedStore.getSearchJob(oldJob.id));
+  assert.ok(budgetedStore.getSearchJob(recentJob.id));
+  assert.equal(budgetedStore.getDiagnostics().residentCache.completedJobs, 1);
+  assert.equal(budgetedStore.getDiagnostics().residentCache.diskOnlyJobs, 1);
+  assert.equal(budgetedStore.resolvePurchasePath(oldPathId!)?.path.url, "https://resident.example/old");
+  assert.deepEqual(readSqliteCounts(dbPath), {
+    searchJobs: 2,
+    matrixJobs: 0,
+    purchasePaths: 2,
+  });
+  budgetedStore.close();
+
+  const reopenedStore = new SearchSessionStore({ dbPath });
+  try {
+    assert.ok(reopenedStore.getSearchJob(oldJob.id));
+    assert.ok(reopenedStore.getSearchJob(recentJob.id));
+    assert.equal(reopenedStore.resolvePurchasePath(oldPathId!)?.path.url, "https://resident.example/old");
+  } finally {
+    reopenedStore.close();
   }
 });
 

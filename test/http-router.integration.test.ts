@@ -7,10 +7,12 @@ import { join } from "node:path";
 import type {
   CanonicalOffer,
   MatrixCell,
+  MatrixResponse,
   ProviderMeta,
   SearchMeta,
   SearchRequest,
 } from "../src/core/types";
+import { buildCommercialQuotation } from "../src/core/quotation";
 import {
   buildProviderContext,
   getCostamarChromeSessionScanCountForTests,
@@ -20,7 +22,21 @@ import {
   resetCostamarWarmupStateForTests,
   setCostamarWarmupGeneratorForTests,
 } from "../src/local-costamar";
-import { routeRequest, SEARCH_REVALIDATION_CACHE_TTL_MS, setQuotationOfferValidatorForTests } from "../src/http-router";
+import {
+  buildMatrixCellIndex,
+  createTrailingProgressSync,
+  createSharedQuotationRateResolver,
+  materializeAggregatedMatrixResponse,
+  mergeProviderSearchProgress,
+  prepareOffersForQuotation,
+  resolveQuotationReadyOffers,
+  routeRequest,
+  SEARCH_REVALIDATION_CACHE_TTL_MS,
+  setQuotationOfferValidatorForTests,
+  shouldPersistProgressSnapshot,
+  updateMatrixDraftCell,
+} from "../src/http-router";
+import type { ProviderMatrixState } from "../src/http-router";
 import { resolveSearchServiceProxyApiToken } from "../src/service-auth";
 import { getRuntime } from "../src/runtime";
 import { withServer } from "./helpers/server";
@@ -30,6 +46,205 @@ function buildJwt(payload: Record<string, unknown>): string {
     .toString("base64url");
   return `${encode({ alg: "HS256", typ: "JWT" })}.${encode(payload)}.signature`;
 }
+
+test("range progress flushes geometric milestones without cumulative polling churn", async () => {
+  let syncs = 0;
+  const progress = createTrailingProgressSync("stay-range", () => {
+    syncs += 1;
+  }, 20);
+
+  progress.mark();
+  progress.mark();
+  assert.equal(syncs, 0);
+  await Bun.sleep(35);
+  assert.equal(syncs, 1);
+
+  progress.mark();
+  await Bun.sleep(35);
+  assert.equal(syncs, 1);
+
+  progress.mark();
+  await Bun.sleep(35);
+  assert.equal(syncs, 2);
+
+  progress.mark();
+  progress.mark();
+  progress.mark();
+  await Bun.sleep(35);
+  assert.equal(syncs, 2);
+
+  progress.mark();
+  await Bun.sleep(35);
+  assert.equal(syncs, 3);
+  progress.dispose();
+});
+
+test("exact progress stays hidden until a forced partial-cache flush", async () => {
+  let syncs = 0;
+  const progress = createTrailingProgressSync("exact", () => {
+    syncs += 1;
+  }, 10);
+
+  progress.mark();
+  await Bun.sleep(20);
+  assert.equal(syncs, 0);
+  progress.flush();
+  assert.equal(syncs, 1);
+
+  progress.mark();
+  progress.dispose();
+  progress.flush();
+  assert.equal(syncs, 1);
+});
+
+test("progress snapshots persist geometrically instead of rewriting every growing result set", () => {
+  assert.equal(shouldPersistProgressSnapshot(0, 0), false);
+  assert.equal(shouldPersistProgressSnapshot(0, 1), true);
+  assert.equal(shouldPersistProgressSnapshot(5, 9), false);
+  assert.equal(shouldPersistProgressSnapshot(5, 10), true);
+});
+
+test("five thousand progress callbacks publish only logarithmic full snapshots", () => {
+  let syncs = 0;
+  const progress = createTrailingProgressSync("roundtrip-grid", () => {
+    syncs += 1;
+  }, 0);
+
+  for (let index = 0; index < 5_000; index += 1) {
+    progress.mark();
+  }
+
+  assert.equal(syncs, 13);
+  progress.flush();
+  assert.equal(syncs, 14);
+  progress.dispose();
+});
+
+function buildTrackedMatrixState(
+  providerId: "agil-local" | "costamar",
+  cellCount: number,
+  onCellRead: () => void,
+): ProviderMatrixState {
+  const cells = Array.from({ length: cellCount }, (_, index): MatrixCell => ({
+    key: `cell-${index}`,
+    departureDate: "2026-06-01",
+    returnDate: "2026-06-08",
+    stayNights: 7,
+    confidence: "loading",
+    providerSource: providerId,
+    selectable: false,
+    requiresRequery: true,
+    stateCode: "ind",
+    tooltip: "Consultando...",
+    derivedRequest: buildCostamarRequest(),
+  }));
+  const cellIndex = buildMatrixCellIndex(cells);
+  const trackedCells = new Proxy(cells, {
+    get(target, property, receiver) {
+      if (typeof property === "string" && /^\d+$/.test(property)) {
+        onCellRead();
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const now = "2026-06-01T00:00:00.000Z";
+  const response: MatrixResponse = {
+    cells: trackedCells,
+    axes: { departureDates: ["2026-06-01"], returnDates: ["2026-06-08"] },
+    confidenceSummary: { loading: cellCount },
+    recommendations: [],
+    searchMeta: {
+      requestedAt: now,
+      completedAt: now,
+      providersUsed: [providerId],
+      warnings: [],
+      partial: true,
+      searchState: "search_partial",
+    },
+    providerMeta: { exactProvider: providerId, coverageMode: "core" },
+    warnings: [],
+  };
+  return { response, completed: false, cellIndex };
+}
+
+test("matrix cell progress updates one indexed slot without rescanning the draft", () => {
+  let cellReads = 0;
+  const state = buildTrackedMatrixState("agil-local", 2_000, () => {
+    cellReads += 1;
+  });
+  const replacement: MatrixCell = {
+    ...state.response.cells[1_500]!,
+    confidence: "live",
+    selectable: true,
+    stateCode: "live",
+  };
+  cellReads = 0;
+
+  const updated = updateMatrixDraftCell(state.response, replacement, state.cellIndex);
+  const updateReads = cellReads;
+
+  assert.strictEqual(updated, state.response);
+  assert.ok(updateReads <= 2, `Expected indexed update, observed ${updateReads} cell reads`);
+  assert.strictEqual(updated.cells[1_500], replacement);
+  assert.deepEqual(updated.confidenceSummary, { loading: 1_999, live: 1 });
+});
+
+test("matrix aggregation reads cells linearly through provider indexes", () => {
+  const cellCount = 1_000;
+  let cellReads = 0;
+  const providerIds = ["agil-local", "costamar"] as const;
+  const states = new Map(providerIds.map((providerId) => [
+    providerId,
+    buildTrackedMatrixState(providerId, cellCount, () => {
+      cellReads += 1;
+    }),
+  ]));
+  cellReads = 0;
+
+  const materialized = materializeAggregatedMatrixResponse(
+    buildCostamarRequest(),
+    [...providerIds],
+    states,
+  );
+
+  assert.equal(materialized.cells.length, cellCount);
+  assert.deepEqual(materialized.cells.slice(0, 3).map((cell) => cell.key), ["cell-0", "cell-1", "cell-2"]);
+  assert.ok(
+    cellReads <= cellCount * providerIds.length * 10,
+    `Expected linear aggregation, observed ${cellReads} cell reads`,
+  );
+});
+
+test("incremental provider progress appends deltas without retaining a cached snapshot", () => {
+  const cached = { ...buildCostamarOffer("https://cached.example/search"), id: "cached" };
+  const first = { ...buildCostamarOffer("https://first.example/search"), id: "first" };
+  const second = { ...buildCostamarOffer("https://second.example/search"), id: "second" };
+  const staleState = {
+    offers: [cached],
+    warnings: ["cached"],
+    partial: true,
+    completed: false,
+    fresh: false,
+  };
+
+  const freshState = mergeProviderSearchProgress(staleState, {
+    offers: [first],
+    warnings: ["first"],
+    partial: true,
+    incremental: true,
+  });
+  assert.notEqual(freshState, staleState);
+  assert.deepEqual(freshState.offers.map((offer) => offer.id), ["first"]);
+
+  const appendedState = mergeProviderSearchProgress(freshState, {
+    offers: [second],
+    warnings: ["second"],
+    partial: true,
+    incremental: true,
+  });
+  assert.equal(appendedState, freshState);
+  assert.deepEqual(appendedState.offers.map((offer) => offer.id), ["first", "second"]);
+});
 
 function buildCostamarRequest(): SearchRequest {
   return {
@@ -162,6 +377,115 @@ function buildCostamarOffer(url: string): CanonicalOffer {
     warnings: [],
   };
 }
+
+function buildDomesticCostamarOffer(): CanonicalOffer {
+  const offer = buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/CUZ/2026-06-01/2026-06-08/1/0/0");
+  return {
+    ...offer,
+    destination: "CUZ",
+    usdToPenRate: undefined,
+    itineraries: offer.itineraries.map((itinerary) => ({
+      ...itinerary,
+      segments: itinerary.segments.map((segment) => itinerary.direction === "outbound"
+        ? { ...segment, destination: "CUZ" }
+        : { ...segment, origin: "CUZ" }),
+    })),
+  };
+}
+
+function buildDomesticRequest(): SearchRequest {
+  const request = buildCostamarRequest();
+  return {
+    ...request,
+    legs: [{
+      ...request.legs[0]!,
+      destination: "CUZ",
+      originLabel: "LIM - Lima, Perú",
+      destinationLabel: "CUZ - Cusco, Perú",
+    }],
+  };
+}
+
+test("Costamar-only domestic offers resolve their quotation rate before publication", async () => {
+  const request = buildDomesticRequest();
+  const [offer] = await resolveQuotationReadyOffers(
+    request,
+    [buildDomesticCostamarOffer()],
+    async () => ({ rate: 3.61, sourceLabel: "SUNAT", date: "2026-06-01" }),
+  );
+
+  assert.equal(offer?.usdToPenRate, 3.61);
+  assert.ok(offer?.quotationPreparedAt);
+  const quotation = buildCommercialQuotation(offer!, request, { usdToPenRate: offer?.usdToPenRate, timeZone: "UTC" });
+  assert.match(quotation, /S\//);
+  assert.doesNotMatch(quotation, /US\$/);
+});
+
+test("quotation preparation propagates a sibling Agil rate", () => {
+  const request = buildDomesticRequest();
+  const costamar = buildDomesticCostamarOffer();
+  const agil = {
+    ...buildDomesticCostamarOffer(),
+    id: "offer-agil-domestic",
+    signature: "offer-agil-domestic-sig",
+    providerSource: "agil-local" as const,
+    usdToPenRate: 3.64,
+  };
+  const prepared = prepareOffersForQuotation(request, [costamar, agil]);
+  const matrixSelection = prepareOffersForQuotation(request, [costamar], [agil]);
+
+  assert.deepEqual(prepared.map((offer) => offer.usdToPenRate), [3.64, 3.64]);
+  assert.ok(prepared.every((offer) => offer.quotationPreparedAt));
+  assert.equal(matrixSelection[0]?.usdToPenRate, 3.64);
+  assert.ok(matrixSelection[0]?.quotationPreparedAt);
+});
+
+test("quotation preparation withholds readiness when required conversion cannot resolve", async () => {
+  const [offer] = await resolveQuotationReadyOffers(
+    buildDomesticRequest(),
+    [buildDomesticCostamarOffer()],
+    async () => undefined,
+  );
+
+  assert.equal(offer?.usdToPenRate, undefined);
+  assert.equal(offer?.quotationPreparedAt, undefined);
+
+  const internationalPen = {
+    ...buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0"),
+    price: { total: { amount: 4_500, currencyCode: "PEN" } },
+    usdToPenRate: undefined,
+  };
+  assert.equal(
+    prepareOffersForQuotation(buildCostamarRequest(), [internationalPen])[0]?.quotationPreparedAt,
+    undefined,
+  );
+
+  const [resolvedInternationalPen] = await resolveQuotationReadyOffers(
+    buildCostamarRequest(),
+    [internationalPen],
+    async () => ({ rate: 3.61, sourceLabel: "SUNAT", date: "2026-06-01" }),
+  );
+  assert.equal(resolvedInternationalPen?.usdToPenRate, 3.61);
+  assert.ok(resolvedInternationalPen?.quotationPreparedAt);
+});
+
+test("quotation rate prefetch gets at most one final retry after resolving undefined", async () => {
+  const offer = buildDomesticCostamarOffer();
+  let lookupCalls = 0;
+  const resolver = createSharedQuotationRateResolver(async () => {
+    lookupCalls += 1;
+    return undefined;
+  });
+
+  assert.equal(await resolver(offer), undefined);
+  const [firstFinalOffer] = await resolveQuotationReadyOffers(buildDomesticRequest(), [offer], resolver);
+  const [secondFinalOffer] = await resolveQuotationReadyOffers(buildDomesticRequest(), [offer], resolver);
+
+  assert.equal(lookupCalls, 2);
+  assert.equal(firstFinalOffer?.usdToPenRate, undefined);
+  assert.equal(firstFinalOffer?.quotationPreparedAt, undefined);
+  assert.equal(secondFinalOffer?.quotationPreparedAt, undefined);
+});
 
 test("search revalidation cache ttl is four hours", () => {
   assert.equal(SEARCH_REVALIDATION_CACHE_TTL_MS, 4 * 60 * 60 * 1000);
@@ -483,7 +807,7 @@ test("quotation validates an unverified stored offer before rendering", { concur
   }
 });
 
-test("quotation revalidates a prepared live result before rendering", { concurrency: false }, async () => {
+test("quotation renders a fresh search result without querying the provider again", { concurrency: false }, async () => {
   const runtime = getRuntime();
   const offer = {
     ...buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0"),
@@ -521,10 +845,11 @@ test("quotation revalidates a prepared live result before rendering", { concurre
       }))
     );
 
-    assert.equal(response.status, 409);
-    const payload = await response.json() as { errors?: string[] };
-    assert.equal(validatorCalls, 1);
-    assert.ok(payload.errors?.includes("Selected offer could not be validated for quotation."));
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { commercialText?: string; offer?: CanonicalOffer };
+    assert.equal(validatorCalls, 0);
+    assert.equal(payload.offer?.id, offer.id);
+    assert.match(payload.commercialText ?? "", /COTIZACIÓN BOLETO AÉREO/);
   } finally {
     setQuotationOfferValidatorForTests();
   }
@@ -2703,6 +3028,7 @@ test("search endpoint serves cached results first for the same config while reva
     ...buildCostamarOffer(
       `https://booking.clickandbook.com/vuelos/b/LIM/BCN/2026-06-04/2026-06-18/1/0/0?terminalId=${terminalId}&lang=es&token=${seededToken}`,
     ),
+    quotationPreparedAt: "2026-06-04T12:00:00.000Z",
     purchasePaths: [],
   };
   const cachedJob = runtime.sessions.createSearchJob({
@@ -2718,6 +3044,7 @@ test("search endpoint serves cached results first for the same config while reva
     allOffers: [cachedOffer],
     searchMeta: {
       ...buildSearchMeta(),
+      completedAt: new Date().toISOString(),
       providersUsed: ["agil-local", "costamar"],
     },
     providerMeta: buildProviderMeta(),
@@ -2789,7 +3116,7 @@ test("search endpoint serves cached results first for the same config while reva
       searchComplete?: boolean;
       searchMeta?: { searchState?: string; partial?: boolean };
       warnings?: string[];
-      offers?: Array<{ purchasePaths?: Array<{ provider?: string; type?: string; url?: string }> }>;
+      offers?: Array<{ quotationPreparedAt?: string; purchasePaths?: Array<{ provider?: string; type?: string; url?: string }> }>;
     };
 
     assert.equal(payload.searchStatus, "running");
@@ -2798,6 +3125,7 @@ test("search endpoint serves cached results first for the same config while reva
     assert.equal(payload.searchMeta?.searchState, "search_cached");
     assert.equal(payload.searchMeta?.partial, true);
     assert.ok((payload.offers?.length ?? 0) > 0);
+    assert.equal(payload.offers?.[0]?.quotationPreparedAt, undefined);
     const purchasePath = payload.offers?.[0]?.purchasePaths?.[0];
     assert.equal(purchasePath?.provider, "costamar");
     assert.equal(purchasePath?.type, "search-redirect");
@@ -2892,6 +3220,49 @@ test("matrix job polling returns a lightweight unchanged payload when revision h
     assert.equal(payload.matrixStatus, "running");
     assert.equal(payload.matrixComplete, false);
     assert.equal(payload.cells, undefined);
+  });
+});
+
+test("matrix polling omits cells without results from progressive payloads", async () => {
+  const runtime = getRuntime();
+  const resolved = buildCostamarMatrixCell(
+    "https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=test",
+  );
+  const loading: MatrixCell = {
+    ...resolved,
+    key: "matrix-loading-placeholder",
+    confidence: "loading",
+    price: undefined,
+    offer: undefined,
+    purchasePaths: [],
+    selectable: false,
+  };
+  const unavailable: MatrixCell = {
+    ...loading,
+    key: "matrix-unavailable-placeholder",
+    confidence: "unavailable",
+  };
+  const job = runtime.sessions.createMatrixJob({
+    request: {
+      ...buildCostamarRequest(),
+      searchMode: "roundtrip-grid",
+      flexibleMode: "exact-stay",
+    },
+    cells: [resolved, loading, unavailable],
+    axes: { departureDates: [resolved.departureDate], returnDates: [resolved.returnDate!] },
+    confidenceSummary: { live: 1, loading: 1, unavailable: 1 },
+    recommendations: [],
+    providerMeta: buildProviderMeta(),
+    searchMeta: buildSearchMeta(),
+    warnings: [],
+    status: "running",
+  });
+
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/matrix/${job.id}?sinceRevision=0`);
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { cells?: MatrixCell[] };
+    assert.deepEqual(payload.cells?.map((cell) => cell.key), [resolved.key]);
   });
 });
 

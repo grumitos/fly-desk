@@ -80,13 +80,14 @@ async function runProviderSearch(input: ProviderSearchWorkerRequest): Promise<Pr
       };
     }
 
-    const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
+    const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean; incremental?: boolean }) => {
       send({
         id: input.id,
         type: "search-progress",
         offers: partialResult.offers,
         warnings: partialResult.warnings,
         partial: partialResult.partial,
+        incremental: partialResult.incremental,
       });
       return true;
     };

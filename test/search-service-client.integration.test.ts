@@ -100,6 +100,77 @@ test("search service proxy forwards search requests to the configured runner", a
   }
 });
 
+test("search service proxy streams runner responses without buffering and strips hop-by-hop headers", async () => {
+  let arrayBufferCalls = 0;
+  const upstream = new Response("first\nsecond\n", {
+    status: 206,
+    statusText: "Partial Content",
+    headers: {
+      "Cache-Control": "no-store",
+      "Content-Type": "application/x-ndjson",
+      Connection: "keep-alive, X-Remove",
+      "Keep-Alive": "timeout=5",
+      "Transfer-Encoding": "chunked",
+      Upgrade: "websocket",
+      "X-Remove": "hidden",
+      "X-Runner-Trace": "trace-1",
+    },
+  });
+  Object.defineProperty(upstream, "arrayBuffer", {
+    value: async () => {
+      arrayBufferCalls += 1;
+      throw new Error("runner response must not be buffered");
+    },
+  });
+
+  const request = new Request("http://fly-desk.test/api/search/job-1");
+  const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
+    serviceUrl: "http://127.0.0.1:32125",
+    fetchImpl: async () => upstream,
+  });
+
+  assert.equal(response?.status, 206);
+  assert.equal(response?.statusText, "Partial Content");
+  assert.equal(response?.headers.get("cache-control"), "no-store");
+  assert.equal(response?.headers.get("content-type"), "application/x-ndjson");
+  assert.equal(response?.headers.get("x-runner-trace"), "trace-1");
+  assert.equal(response?.headers.has("connection"), false);
+  assert.equal(response?.headers.has("keep-alive"), false);
+  assert.equal(response?.headers.has("transfer-encoding"), false);
+  assert.equal(response?.headers.has("upgrade"), false);
+  assert.equal(response?.headers.has("x-remove"), false);
+  assert.equal(arrayBufferCalls, 0);
+  assert.equal(await response?.text(), "first\nsecond\n");
+});
+
+test("search service proxy keeps its timeout active while the runner body streams", async () => {
+  let bodyAborted = false;
+  let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const fallback = setTimeout(() => bodyController?.error(new Error("runner body was not aborted")), 100);
+  const request = new Request("http://fly-desk.test/api/search/job-1");
+
+  try {
+    const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
+      serviceUrl: "http://127.0.0.1:32125",
+      timeoutMs: 5,
+      fetchImpl: async (_input, init) => new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          bodyController = controller;
+          init?.signal?.addEventListener("abort", () => {
+            bodyAborted = true;
+            controller.error(init.signal?.reason);
+          }, { once: true });
+        },
+      })),
+    });
+
+    await assert.rejects(response!.text());
+    assert.equal(bodyAborted, true);
+  } finally {
+    clearTimeout(fallback);
+  }
+});
+
 test("search service proxy uses an internal token fallback when explicit api tokens are absent", async () => {
   const restoreEnv = overrideEnv({
     FLY_DESK_API_TOKEN: undefined,

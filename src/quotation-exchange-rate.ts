@@ -2,31 +2,30 @@ import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import type { CanonicalOffer, QuotationUsdToPenRateInfo, SearchRequest } from "./core/types";
-import { resolveLocalAgilUsdToPenRate } from "./local-agil";
-import type { SearchSessionRecord } from "./session-store";
+import type { CanonicalOffer, QuotationUsdToPenRateInfo } from "./core/types";
 
 interface ResolveQuotationUsdToPenRateOptions {
   now?: Date;
-  searchRate?: (request: SearchRequest) => Promise<number | undefined>;
   fetchExternalRate?: () => Promise<number | undefined>;
+}
+
+interface FetchExternalUsdToPenRateOptions {
+  fallbackDate?: string;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 }
 
 const AGIL_RATE_SOURCE_LABEL = "Agil";
 const EXTERNAL_RATE_SOURCE_LABEL = "SUNAT";
 const PERSISTED_RATE_SOURCE_LABEL = "Cache local";
+export const QUOTATION_RATE_TIMEOUT_DEFAULT_MS = 1_500;
+const QUOTATION_RATE_TIMEOUT_MAX_MS = 10_000;
 
 type CachedUsdToPenRateInfo = QuotationUsdToPenRateInfo & {
   day: string;
 };
 
 let cachedUsdToPenRate: CachedUsdToPenRateInfo | undefined;
-let pendingUsdToPenRateLookup:
-  | {
-    day: string;
-    promise: Promise<QuotationUsdToPenRateInfo | undefined>;
-  }
-  | undefined;
 let persistedUsdToPenRateLoaded = false;
 
 function resolveQuotationUsdToPenRateCachePath(): string {
@@ -94,6 +93,15 @@ function quotationRateUrl(): string {
     || "https://free.e-api.net.pe/tipo-cambio/today.json";
 }
 
+function quotationRateTimeoutMs(override?: number): number {
+  const configured = Number(override ?? process.env.FLY_DESK_QUOTATION_RATE_TIMEOUT_MS);
+  if (!Number.isFinite(configured) || configured <= 0) {
+    return QUOTATION_RATE_TIMEOUT_DEFAULT_MS;
+  }
+
+  return Math.min(QUOTATION_RATE_TIMEOUT_MAX_MS, Math.max(1, Math.trunc(configured)));
+}
+
 function pickExternalRateInfo(payload: unknown, fallbackDate: string): QuotationUsdToPenRateInfo | undefined {
   if (!payload || typeof payload !== "object") {
     return undefined;
@@ -113,18 +121,23 @@ function pickExternalRateInfo(payload: unknown, fallbackDate: string): Quotation
 }
 
 export async function fetchExternalUsdToPenRateInfo(
-  options: { fallbackDate?: string } = {},
+  options: FetchExternalUsdToPenRateOptions = {},
 ): Promise<QuotationUsdToPenRateInfo | undefined> {
-  const response = await fetch(quotationRateUrl(), {
-    headers: {
-      Accept: "application/json",
-    },
-  });
-  if (!response.ok) {
+  try {
+    const response = await (options.fetchImpl ?? fetch)(quotationRateUrl(), {
+      headers: {
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(quotationRateTimeoutMs(options.timeoutMs)),
+    });
+    if (!response.ok) {
+      return undefined;
+    }
+
+    return pickExternalRateInfo(await response.json(), options.fallbackDate ?? resolveLimaDay());
+  } catch {
     return undefined;
   }
-
-  return pickExternalRateInfo(await response.json(), options.fallbackDate ?? resolveLimaDay());
 }
 
 export async function fetchExternalUsdToPenRate(): Promise<number | undefined> {
@@ -214,161 +227,9 @@ function rememberUsdToPenRate(info: QuotationUsdToPenRateInfo, now: Date): Quota
   return cloneQuotationUsdToPenRateInfo(info);
 }
 
-function pickMostCommonUsdToPenRate(offers: CanonicalOffer[]): number | undefined {
-  const counts = new Map<number, number>();
-
-  offers.forEach((offer) => {
-    const rate = normalizePositiveRate(offer.usdToPenRate);
-    if (rate === undefined) {
-      return;
-    }
-
-    counts.set(rate, (counts.get(rate) ?? 0) + 1);
-  });
-
-  return [...counts.entries()]
-    .sort((left, right) => right[1] - left[1] || left[0] - right[0])[0]?.[0];
-}
-
-function sessionMatchesCurrentLimaDay(session: SearchSessionRecord, currentDay: string): boolean {
-  const observedAt = session.searchMeta.requestedAt || session.createdAt;
-  return resolveLimaDay(new Date(observedAt)) === currentDay;
-}
-
-function isUsdOffer(offer: CanonicalOffer): boolean {
-  return String(offer.price.total.currencyCode ?? "").trim().toUpperCase() === "USD";
-}
-
-export function buildQuotationRateLookupRequest(
-  baseRequest: SearchRequest,
-  offer: CanonicalOffer,
-): SearchRequest | undefined {
-  const tripType = offer.tripType === "round-trip"
-    ? "round-trip"
-    : offer.tripType === "one-way"
-      ? "one-way"
-      : undefined;
-  const outbound = offer.itineraries.find((itinerary) => itinerary.direction === "outbound") ?? offer.itineraries[0];
-  const inbound = offer.itineraries.find((itinerary) => itinerary.direction === "inbound");
-  const departureDate = outbound?.segments[0]?.departureAt?.slice(0, 10);
-  const returnDate = inbound?.segments[0]?.departureAt?.slice(0, 10);
-
-  if (!tripType || !departureDate) {
-    return undefined;
-  }
-
-  if (tripType === "round-trip" && !returnDate) {
-    return undefined;
-  }
-
-  return {
-    ...baseRequest,
-    providerId: "agil-local",
-    tripType,
-    searchMode: "exact",
-    legs: [
-      {
-        origin: baseRequest.legs[0]?.origin ?? offer.origin,
-        destination: baseRequest.legs[0]?.destination ?? offer.destination,
-        originLabel: baseRequest.legs[0]?.originLabel,
-        destinationLabel: baseRequest.legs[0]?.destinationLabel,
-        departureDate,
-        returnDate: tripType === "round-trip" ? returnDate : undefined,
-      },
-    ],
-  };
-}
-
-export async function resolveQuotationUsdToPenRateInfo(
-  session: SearchSessionRecord,
-  offer: CanonicalOffer,
-  options: ResolveQuotationUsdToPenRateOptions = {},
-): Promise<QuotationUsdToPenRateInfo | undefined> {
-  loadPersistedUsdToPenRate();
-
-  const now = options.now ?? new Date();
-  const currentDay = resolveLimaDay(now);
-
-  if (sessionMatchesCurrentLimaDay(session, currentDay)) {
-    const sessionRate = pickMostCommonUsdToPenRate(session.offers);
-    if (sessionRate !== undefined) {
-      const sessionRateInfo = buildQuotationUsdToPenRateInfo(sessionRate, AGIL_RATE_SOURCE_LABEL, currentDay);
-      return sessionRateInfo ? rememberUsdToPenRate(sessionRateInfo, now) : undefined;
-    }
-
-    const offerRateInfo = buildQuotationUsdToPenRateInfo(offer.usdToPenRate, AGIL_RATE_SOURCE_LABEL, currentDay);
-    if (offerRateInfo) {
-      return rememberUsdToPenRate(offerRateInfo, now);
-    }
-  }
-
-  if (cachedUsdToPenRate?.day === currentDay) {
-    return cloneQuotationUsdToPenRateInfo(cachedUsdToPenRate);
-  }
-
-  if (String(offer.price.total.currencyCode ?? "").trim().toUpperCase() !== "USD") {
-    return undefined;
-  }
-
-  const lookupRequest = buildQuotationRateLookupRequest(session.request, offer);
-  if (!lookupRequest) {
-    return undefined;
-  }
-
-  if (pendingUsdToPenRateLookup?.day === currentDay) {
-    return pendingUsdToPenRateLookup.promise;
-  }
-
-  const promise = (async () => {
-    try {
-      if (options.searchRate) {
-        const resolvedRateInfo = buildQuotationUsdToPenRateInfo(
-          await options.searchRate(lookupRequest),
-          AGIL_RATE_SOURCE_LABEL,
-          currentDay,
-        );
-        if (resolvedRateInfo) {
-          return rememberUsdToPenRate(resolvedRateInfo, now);
-        }
-      }
-
-      const externalRateInfo = options.fetchExternalRate
-        ? buildQuotationUsdToPenRateInfo(await options.fetchExternalRate(), EXTERNAL_RATE_SOURCE_LABEL, currentDay)
-        : await fetchExternalUsdToPenRateInfo({ fallbackDate: currentDay });
-      if (externalRateInfo) {
-        return rememberUsdToPenRate(externalRateInfo, now);
-      }
-
-      const resolvedRateInfo = buildQuotationUsdToPenRateInfo(
-        await resolveLocalAgilUsdToPenRate(lookupRequest),
-        AGIL_RATE_SOURCE_LABEL,
-        currentDay,
-      );
-      return resolvedRateInfo ? rememberUsdToPenRate(resolvedRateInfo, now) : undefined;
-    } catch {
-      return undefined;
-    }
-  })();
-
-  pendingUsdToPenRateLookup = {
-    day: currentDay,
-    promise,
-  };
-  void promise.finally(() => {
-    if (pendingUsdToPenRateLookup?.promise === promise) {
-      pendingUsdToPenRateLookup = undefined;
-    }
-  });
-
-  return promise;
-}
-
-export async function resolveQuotationUsdToPenRate(
-  session: SearchSessionRecord,
-  offer: CanonicalOffer,
-  options: ResolveQuotationUsdToPenRateOptions = {},
-): Promise<number | undefined> {
-  return (await resolveQuotationUsdToPenRateInfo(session, offer, options))?.rate;
+function supportsUsdToPenConversion(offer: CanonicalOffer): boolean {
+  const currencyCode = String(offer.price.total.currencyCode ?? "").trim().toUpperCase();
+  return currencyCode === "USD" || currencyCode === "PEN";
 }
 
 export async function resolveStandaloneUsdToPenRateInfo(
@@ -389,7 +250,7 @@ export async function resolveStandaloneUsdToPenRateInfo(
     return cloneQuotationUsdToPenRateInfo(cachedUsdToPenRate);
   }
 
-  if (!isUsdOffer(offer)) {
+  if (!supportsUsdToPenConversion(offer)) {
     return undefined;
   }
 
@@ -406,30 +267,10 @@ export async function resolveStandaloneUsdToPenRate(
   return (await resolveStandaloneUsdToPenRateInfo(offer, options))?.rate;
 }
 
-export function warmQuotationUsdToPenRate(
-  session: SearchSessionRecord,
-  options: ResolveQuotationUsdToPenRateOptions = {},
-): Promise<number | undefined> | undefined {
-  return warmQuotationUsdToPenRateInfo(session, options)?.then((rateInfo) => rateInfo?.rate);
-}
-
-export function warmQuotationUsdToPenRateInfo(
-  session: SearchSessionRecord,
-  options: ResolveQuotationUsdToPenRateOptions = {},
-): Promise<QuotationUsdToPenRateInfo | undefined> | undefined {
-  const offer = session.offers.find(isUsdOffer);
-  if (!offer) {
-    return undefined;
-  }
-
-  return resolveQuotationUsdToPenRateInfo(session, offer, options);
-}
-
 export function resetQuotationUsdToPenRateCacheForTests(
   options: { preservePersisted?: boolean } = {},
 ): void {
   cachedUsdToPenRate = undefined;
-  pendingUsdToPenRateLookup = undefined;
   persistedUsdToPenRateLoaded = false;
 
   if (!options.preservePersisted) {

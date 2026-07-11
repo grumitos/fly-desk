@@ -14,6 +14,7 @@ export interface ProviderSearchResult {
   offers: CanonicalOffer[];
   warnings: string[];
   partial: boolean;
+  incremental?: boolean;
 }
 
 export interface ProviderMatrixResult {

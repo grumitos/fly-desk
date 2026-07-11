@@ -20,11 +20,12 @@ Fly Desk es una app Bun-only preparada para VPS:
 - busqueda flexible ida/vuelta via `/api/matrix`, normalizada como lista de resultados
 - busqueda migratoria mensual exhaustiva: consulta cada dia de los meses seleccionados contra Agil y Click and Book Plus, sin filtros de tarifa, y procesa los meses en tandas
 - todas las busquedas esperan a Agil y Click and Book Plus y retienen sus resultados completos; la concurrencia regula solicitudes en lote, no recorta ofertas disponibles
+- la busqueda exacta publica un conjunto estable al terminar ambos proveedores; rango, matriz y migratorio envian deltas y publican milestones geometricos (1, 2, 4...) coalescidos durante 900 ms, mas el estado final, sin remontar tarjetas visibles
 - autocomplete de origen y destino
 - sugerencias frecuentes de origen/destino rankeadas globalmente desde el VPS y registradas por el backend al aceptar busquedas
 - filtros visibles de escalas, tiempo maximo de escala, equipaje y aerolineas
 - lista de resultados paginada con advertencias del backend
-- panel lateral de detalle, condiciones, rutas de compra y `quotation`
+- panel lateral de detalle, condiciones, rutas de compra y cotizacion local desde la oferta fresca; el switch migratorio modifica el texto al instante y no llama de nuevo al proveedor
 - ajuste persistente de ancho de columnas bajo `?layoutEditor=1` o `?layout=editor`
 
 No estan expuestos en la UI React actual:
@@ -47,9 +48,13 @@ No estan expuestos en la UI React actual:
 - Click and Book Plus no acepta `apiBaseUrl` ni `brandBaseUrl` por request; las bases salen de entorno y pasan por allowlist.
 - Agil depende de sesion local de navegador y de una subscription key resuelta desde entorno o desde el bundle Agil.
 - En produccion, `fly-desk.service` puede delegar `/api/search`, `/api/matrix`, polling y cancelacion a `fly-desk-search.service` mediante `FLY_DESK_SEARCH_SERVICE_URL`; ese runner queda en loopback y ejecuta proveedores/workers.
+- Con delegacion activa, el runtime web inicializa la cache de sesiones de forma perezosa: autocomplete y preferencias no restauran el estado pesado del runner.
 - Las busquedas pasan por admision por unidades en el runner: presupuesto default `4`, exactas cuestan `1`, rangos y matrices cuestan `2`. Asi se admiten dos busquedas pesadas simultaneas y el exceso queda en cola con timeout.
-- El proxy web hacia el runner usa un timeout bounded; no bajar `FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS` por debajo del default operativo, porque polling con muchas ofertas necesita margen suficiente para responder sin tirar la web.
-- El boton `Detener busqueda`, el cierre/navegacion de pestaña y el shutdown ordenado del proceso cancelan jobs remotos. En cierre de pestaña y shutdown se usa cache parcial para conservar resultados y purchase paths ya materializados.
+- La reutilizacion de precios expira desde `searchMeta.completedAt`; leer o hacer polling no renueva una tarifa. El TTL idle separado conserva sesiones y redirects operativos.
+- La cache completada residente usa un presupuesto combinado default de 128 MiB. El exceso LRU sale de RAM despues de una gracia corta, pero permanece en SQLite con sus `/r/<id>` hasta el TTL; las busquedas activas nunca se expulsan.
+- El progreso activo usa los mismos milestones geometricos para acotar snapshots de RAM/HTTP/SQLite; los purchase paths nuevos se persisten aparte para que `/r/<id>` funcione entre checkpoints, y todo estado terminal queda durable.
+- El proxy web hacia el runner transmite el body sin almacenarlo completo y mantiene un timeout bounded durante el stream; no bajar `FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS` por debajo del default operativo.
+- El boton `Detener busqueda`, el cierre/navegacion de pestaña y el shutdown ordenado del proceso cancelan jobs remotos. En cierre de pestaña y shutdown se materializa primero cualquier delta pendiente y se usa cache parcial para conservar resultados y purchase paths ya resueltos.
 - Los purchase paths publicos se sirven como `/r/<id>` para conservar cache y no persistir enlaces sensibles en la UI. Agil responde con `302` directo al proveedor; Click and Book Plus mantiene el handoff local para validar o refrescar el token antes de abrir el enlace externo.
 - En produccion, plataforma puede enrutar `/r/*` a `fly-desk-redirect.service`, un proceso Bun separado que lee `FLY_DESK_SESSION_DB_PATH` y conserva la misma autenticacion web/API antes de responder.
 
@@ -92,7 +97,7 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 - `src/core/`: normalizacion, matriz, grouping, ranking, cotizacion y contratos compartidos
 - `src/search-service-client.ts`: delegacion loopback opcional de rutas de busqueda hacia el runner dedicado
 - `src/search-worker-client.ts` / `src/search-worker.ts`: procesos hijos Bun para aislar busquedas pesadas
-- `src/session-store.ts`: jobs vivos, SQLite local, redirects y purchase paths
+- `src/session-store.ts`: jobs vivos, presupuesto residente, SQLite local, redirects y purchase paths
 - `src/location-suggestion-cache.ts`: cache SQLite de autocomplete
 - `src/location-usage-store.ts`: ranking global SQLite de origen/destino frecuentes
 - `src/runtime-paths.ts`: resolucion de rutas persistentes; `FLY_DESK_APP_DATA_DIR` mantiene caches fuera del release cuando no hay override especifico
@@ -103,7 +108,7 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 
 - Runtime/API: `HOST`, `PORT`, `FLY_DESK_API_TOKEN`, `FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS`, `FLY_DESK_SEARCH_SERVICE_URL`, `FLY_DESK_SEARCH_SERVICE_API_TOKEN`, `FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS`, `FLY_DESK_REDIRECT_HOST`, `FLY_DESK_REDIRECT_PORT`, `FLY_DESK_REDIRECT_CACHE_LOOKUP_TIMEOUT_MS`
 - Auth web: `FLY_DESK_WEB_AUTH`, `FLY_DESK_WEB_PASSWORD_HASH`, `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_TRUST_LOOPBACK_CLIENT`, `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK`
-- Busqueda/cache: `SEARCH_MAX_FUTURE_DAYS`, `SEARCH_REVALIDATION_CACHE_TTL_MS`, `SEARCH_COMPLETED_SESSION_TTL_MS`, `FLY_DESK_SESSION_DB_PATH`, `FLY_DESK_LOCATION_SUGGESTION_DB_PATH`, `FLY_DESK_LOCATION_USAGE_DB_PATH`, `FLY_DESK_MIGRATION_CONCURRENT_MONTHS`, `FLY_DESK_SEARCH_CAPACITY_UNITS`, `FLY_DESK_SEARCH_EXACT_COST_UNITS`, `FLY_DESK_SEARCH_RANGE_COST_UNITS`, `FLY_DESK_SEARCH_MATRIX_COST_UNITS`, `FLY_DESK_SEARCH_MAX_QUEUED`, `FLY_DESK_SEARCH_QUEUE_TIMEOUT_MS`
+- Busqueda/cache: `SEARCH_MAX_FUTURE_DAYS`, `SEARCH_REVALIDATION_CACHE_TTL_MS`, `SEARCH_COMPLETED_SESSION_TTL_MS`, `SEARCH_COMPLETED_SESSION_RESIDENT_BUDGET_BYTES`, `FLY_DESK_QUOTATION_RATE_TIMEOUT_MS`, `FLY_DESK_SESSION_DB_PATH`, `FLY_DESK_LOCATION_SUGGESTION_DB_PATH`, `FLY_DESK_LOCATION_USAGE_DB_PATH`, `FLY_DESK_MIGRATION_CONCURRENT_MONTHS`, `FLY_DESK_SEARCH_CAPACITY_UNITS`, `FLY_DESK_SEARCH_EXACT_COST_UNITS`, `FLY_DESK_SEARCH_RANGE_COST_UNITS`, `FLY_DESK_SEARCH_MATRIX_COST_UNITS`, `FLY_DESK_SEARCH_MAX_QUEUED`, `FLY_DESK_SEARCH_QUEUE_TIMEOUT_MS`
 - App data: `FLY_DESK_APP_DATA_DIR`, `FLY_DESK_QUOTATION_RATE_CACHE_PATH`
 - Workers/prewarm: `FLY_DESK_SEARCH_WORKER_PROCESSES`, `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS`, `FLY_DESK_PROVIDER_PREWARM`
 - Agil: `AGIL_APIM_SUBSCRIPTION_KEY`, `AGIL_CHROME_USER_DATA_DIR`, `AGIL_CHROME_PROFILE`, `AGIL_BROWSER_URL`, `AGIL_RAW_CHROME_STORAGE_FILE_SCAN`, `AGIL_TEMP_CHROME_STORAGE_FALLBACK`, `AGIL_HTTP_TIMEOUT_MS`
@@ -182,6 +187,7 @@ como artefactos.
 - [`docs/AGIL_SESSION_RECOVERY.md`](./docs/AGIL_SESSION_RECOVERY.md): recuperacion de sesion Agil en Chrome/CDP del VPS
 - [`docs/FRONTEND_IDENTITY.md`](./docs/FRONTEND_IDENTITY.md): identidad visual y reglas UI React
 - [`docs/TESTING.md`](./docs/TESTING.md): clasificacion, ejecucion y criterios de relevancia de pruebas
+- [`docs/superpowers/specs/2026-07-10-search-runtime-budget-design.md`](./docs/superpowers/specs/2026-07-10-search-runtime-budget-design.md): decisiones de fluidez, cotizacion local y presupuesto residente
 - [`frontend/README.md`](./frontend/README.md): notas breves del workspace frontend
 
 ## Deploy

@@ -1,5 +1,11 @@
 import { loadRuntimeConfig, resolveServerHost } from "./config";
-import { getRuntime, getRuntimeIfInitialized, type RuntimeServices } from "./runtime";
+import {
+  getRuntime,
+  getRuntimeIfInitialized,
+  getSessionStoreIfInitialized,
+  maintainSessionStoreIfInitialized,
+  type RuntimeServices,
+} from "./runtime";
 import { createServer } from "./server";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import {
@@ -9,8 +15,10 @@ import {
 } from "./temp-artifacts";
 import { startProviderPrewarmLoop } from "./provider-prewarm";
 import { isSearchServiceDelegationConfigured } from "./search-service-client";
+import { flushPendingProgressForShutdown } from "./http-router";
 
 const STARTUP_BACKGROUND_TASK_DELAY_MS = 10_000;
+const SESSION_MAINTENANCE_INTERVAL_MS = 60_000;
 const SHUTDOWN_CANCELLED_WARNING = "Search stopped because Fly Desk was restarted.";
 const SHUTDOWN_CANCEL_GRACE_MS = 1_000;
 
@@ -24,6 +32,7 @@ async function main() {
   const delegatesSearch = isSearchServiceDelegationConfigured();
   const runtimeStart = startPerfTimer();
   const startupRuntime = delegatesSearch ? undefined : getRuntime();
+  const startupSessions = startupRuntime?.sessions;
   if (startupRuntime) {
     logPerfSpan("startup.runtime", runtimeStart);
   } else {
@@ -54,9 +63,13 @@ async function main() {
       });
   };
   const getActiveRuntime = (): RuntimeServices | undefined => startupRuntime ?? getRuntimeIfInitialized();
+  const sessionMaintenanceHandle = setInterval(
+    maintainSessionStoreIfInitialized,
+    SESSION_MAINTENANCE_INTERVAL_MS,
+  );
+  sessionMaintenanceHandle.unref?.();
   const maintenanceHandle = setInterval(() => {
     const activeRuntime = getActiveRuntime();
-    activeRuntime?.sessions.purgeExpired();
     activeRuntime?.locationSuggestions.purgeExpired();
     runTempCleanup("periodic.tempCleanup", {
       olderThanMs: TEMP_ARTIFACT_SWEEP_MIN_AGE_MS,
@@ -72,7 +85,9 @@ async function main() {
 
     shuttingDown = true;
     const activeRuntime = getActiveRuntime();
-    const cancelled = activeRuntime?.sessions.cancelRunningJobs(SHUTDOWN_CANCELLED_WARNING, { cachePartial: true })
+    const activeSessions = startupSessions ?? getSessionStoreIfInitialized();
+    flushPendingProgressForShutdown();
+    const cancelled = activeSessions?.cancelRunningJobs(SHUTDOWN_CANCELLED_WARNING, { cachePartial: true })
       ?? { searchJobs: 0, matrixJobs: 0 };
     activeRuntime?.searchAdmission.dispose(SHUTDOWN_CANCELLED_WARNING);
     if (cancelled.searchJobs > 0 || cancelled.matrixJobs > 0) {
@@ -82,6 +97,7 @@ async function main() {
       await delay(SHUTDOWN_CANCEL_GRACE_MS);
     }
     clearInterval(maintenanceHandle);
+    clearInterval(sessionMaintenanceHandle);
     if (startupCleanupTimer) {
       clearTimeout(startupCleanupTimer);
     }
@@ -94,7 +110,7 @@ async function main() {
     await server.stop();
     await tempCleanupPromise?.catch(() => undefined);
     activeRuntime?.locationSuggestions.purgeExpired(Number.POSITIVE_INFINITY);
-    activeRuntime?.sessions.close();
+    activeSessions?.close();
     await cleanupPrefixedTempArtifacts(undefined, { olderThanMs: 0 }).catch(() => undefined);
   };
 
