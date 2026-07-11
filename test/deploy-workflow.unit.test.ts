@@ -19,6 +19,8 @@ test("deploy and rollback only invoke the fixed platform release wrapper", async
   assert.match(workflow, /sudo -n '\$RELEASE_WRAPPER' deploy '\$REVISION' '\$ARTIFACT_DIGEST'/);
   assert.match(workflow, /sudo -n '\$RELEASE_WRAPPER' rollback '\$REVISION'/);
   assert.match(workflow, /incoming\/\$APP_NAME\/\$REVISION/);
+  assert.equal(workflow.match(/readlink \/opt\/fly-desk/g)?.length, 2);
+  assert.doesNotMatch(workflow, /cat \/opt\/fly-desk\/REVISION/);
   assert.doesNotMatch(workflow, /bash -s --/);
   assert.doesNotMatch(workflow, /rsync -a --delete "\$release_dir"/);
 });

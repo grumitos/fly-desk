@@ -175,6 +175,13 @@ jobs:
           set -euo pipefail
           ssh vps-app "sudo -n '$RELEASE_WRAPPER' deploy '$REVISION' '$ARTIFACT_DIGEST'"
 
+      - name: Verify atomic pointer
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          ssh vps-app "test \"\$(readlink /opt/fly-desk)\" = '/opt/apps/fly-desk/releases/$REVISION'"
+
       - name: Public smoke
         env:
           PUBLIC_SMOKE_URL: ${{ inputs.public_smoke_url }}
@@ -250,6 +257,13 @@ jobs:
         run: |
           set -euo pipefail
           ssh vps-app "sudo -n '$RELEASE_WRAPPER' rollback '$REVISION'"
+
+      - name: Verify atomic pointer
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          ssh vps-app "test \"\$(readlink /opt/fly-desk)\" = '/opt/apps/fly-desk/releases/$REVISION'"
 
       - name: Public smoke
         env:
