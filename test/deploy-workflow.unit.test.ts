@@ -15,5 +15,8 @@ test("deploy and rollback coordinate with Fly Desk maintenance", async () => {
 
   assert.equal(workflow.match(/operation_lock_file="\/run\/fly-desk-operation\.lock"/g)?.length, 2);
   assert.equal(workflow.match(/command -v flock/g)?.length, 2);
+  assert.equal(workflow.match(/operation_lock_group="\$\(id -gn\)"/g)?.length, 2);
+  assert.equal(workflow.match(/chown "root:\$operation_lock_group"/g)?.length, 2);
+  assert.equal(workflow.match(/chmod 0640 "\$operation_lock_file"/g)?.length, 2);
   assert.equal(workflow.match(/flock -w 300 9/g)?.length, 2);
 });
