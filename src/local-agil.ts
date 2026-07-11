@@ -2899,26 +2899,6 @@ export async function searchLocalAgilExact(request: SearchRequest): Promise<Prov
   };
 }
 
-export async function resolveLocalAgilUsdToPenRate(request: SearchRequest): Promise<number | undefined> {
-  const session = await getAgilSession();
-  const outcome = await searchGroupsAcrossGds(session, request);
-  const rates = outcome.groups
-    .map((group) => extractAgilUsdToPenRate(group.pricingInfo, request.currencyCode))
-    .filter((rate): rate is number => typeof rate === "number" && Number.isFinite(rate) && rate > 0);
-
-  if (rates.length === 0) {
-    return undefined;
-  }
-
-  const counts = new Map<number, number>();
-  rates.forEach((rate) => {
-    counts.set(rate, (counts.get(rate) ?? 0) + 1);
-  });
-
-  return [...counts.entries()]
-    .sort((left, right) => right[1] - left[1] || left[0] - right[0])[0]?.[0];
-}
-
 export function createLocalAgilSearchDraft(
   request: SearchRequest,
   providerMeta: ProviderMeta,
@@ -3075,22 +3055,29 @@ export async function resolveLocalAgilRangeProgressive(
   let stopRequested = false;
 
   await mapConcurrent(candidates, AGIL_CONCURRENCY.rangeSearch, async (derivedRequest) => {
+    let progressOffers: CanonicalOffer[] = [];
+    let progressWarnings: string[] = [];
     try {
       const result = await searchLocalAgilExactWithRetry(derivedRequest);
       aggregatedOffers.push(...result.offers);
+      progressOffers = result.offers;
+      progressWarnings = result.warnings;
       if (result.partial) {
         partial = true;
       }
       warnings.push(...result.warnings);
     } catch (error) {
+      const warning = error instanceof Error ? error.message : "Agil range search failed.";
       partial = true;
-      warnings.push(error instanceof Error ? error.message : "Agil range search failed.");
+      warnings.push(warning);
+      progressWarnings = [warning];
     }
 
     if (onUpdate?.({
-      offers: dedupeAgilOffers(aggregatedOffers),
-      warnings: uniqueStrings([...warnings]),
+      offers: progressOffers,
+      warnings: uniqueStrings(progressWarnings),
       partial: true,
+      incremental: true,
     }) === false) {
       stopRequested = true;
     }

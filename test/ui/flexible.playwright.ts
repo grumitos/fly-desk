@@ -186,7 +186,7 @@ test("round-trip flexible search sends matrix exact-stay payload", async () => {
 test("migratory search sends monthly stay-range requests", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     const payloads: Record<string, unknown>[] = [];
-    const quotationPayloads: Array<{ searchSessionId?: string; offerId?: string; migrationPlan?: boolean }> = [];
+    let quotationRequests = 0;
     const migratory = page.getByRole("button", { name: "Migratorio" });
 
     await page.route(`${baseUrl}/`, async (route) => {
@@ -269,15 +269,11 @@ test("migratory search sends monthly stay-range requests", async () => {
       });
     });
     await page.route("**/api/quotation", async (route) => {
-      const payload = route.request().postDataJSON() as { searchSessionId?: string; offerId?: string; migrationPlan?: boolean };
-      quotationPayloads.push(payload);
+      quotationRequests += 1;
       await route.fulfill({
-        status: 200,
+        status: 500,
         contentType: "application/json",
-        body: JSON.stringify({
-          commercialText: payload.migrationPlan ? "PAQUETE MIGRATORIO MIAMI 🇺🇸" : "Cotización estándar",
-          offer: {},
-        }),
+        body: JSON.stringify({ error: "Quotation endpoint must not be used by the UI." }),
       });
     });
 
@@ -355,18 +351,9 @@ test("migratory search sends monthly stay-range requests", async () => {
     assert.equal(secondLeg?.departureEnd, "2027-01-31");
 
     await migrationCard.click();
-    const migrationQuotationRequest = page.waitForRequest((request) => (
-      request.url().endsWith("/api/quotation")
-      && (request.postDataJSON() as { migrationPlan?: boolean }).migrationPlan === true
-    ));
     await page.getByRole("switch", { name: "Paquete migratorio" }).click();
-    await migrationQuotationRequest;
-    const migratoryQuotation = quotationPayloads.find((payload) => payload.migrationPlan === true);
-    assert.deepEqual(migratoryQuotation, {
-      searchSessionId: "migration-month-1",
-      offerId: "migration-offer-1",
-      migrationPlan: true,
-    });
+    await page.waitForTimeout(100);
+    assert.equal(quotationRequests, 0);
   }, { autoOpen: false });
 });
 

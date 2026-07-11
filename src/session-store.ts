@@ -17,6 +17,8 @@ import {
 
 const COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
 const PERSISTED_SEARCH_CACHE_RESTORE_BUDGET_BYTES = 128 * 1024 * 1024;
+const COMPLETED_SEARCH_SESSION_RESIDENT_DEFAULT_BUDGET_BYTES = 128 * 1024 * 1024;
+export const COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS = 5_000;
 export const COMPLETED_SEARCH_SESSION_TTL_MS = (() => {
   const raw = Number(process.env.SEARCH_COMPLETED_SESSION_TTL_MS ?? COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS);
   return Number.isFinite(raw) && raw >= 0
@@ -126,6 +128,13 @@ export interface SearchJobRecord {
 interface StoreDiagnostics {
   generatedAt: string;
   ttlMs: number;
+  residentCache: {
+    budgetBytes: number;
+    completedJobs: number;
+    completedBytes: number;
+    diskOnlyJobs: number;
+    diskOnlyBytes: number;
+  };
   counts: {
     sessions: number;
     searchJobs: number;
@@ -164,6 +173,7 @@ interface SearchSessionStoreOptions {
   dbPath?: string;
   legacyPersistPath?: string;
   persistedRestoreBudgetBytes?: number;
+  completedResidentBudgetBytes?: number;
 }
 
 interface LegacyPersistencePayload {
@@ -190,8 +200,38 @@ interface PersistedEntryState {
   bytes: number;
 }
 
+interface ResidentJobCandidate {
+  id: string;
+  kind: "matrix" | "search";
+  bytes: number;
+  completedAtMs: number;
+  lastAccessedAtMs: number;
+}
+
+interface SqliteStoredRedirectRow {
+  payload: string;
+  idleAtMs: number;
+}
+
+interface SqliteStoredRedirectContextRow {
+  requestKey?: string;
+  providerContextKey?: string;
+  payload?: string;
+  idleAtMs: number;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function completedResidentBudgetBytes(configured?: number): number {
+  const configuredEnv = process.env.SEARCH_COMPLETED_SESSION_RESIDENT_BUDGET_BYTES?.trim();
+  const raw = configured ?? (configuredEnv
+    ? Number(configuredEnv)
+    : COMPLETED_SEARCH_SESSION_RESIDENT_DEFAULT_BUDGET_BYTES);
+  return Number.isFinite(raw) && raw >= 0
+    ? raw
+    : COMPLETED_SEARCH_SESSION_RESIDENT_DEFAULT_BUDGET_BYTES;
 }
 
 function serializeForComparison(value: unknown): string {
@@ -253,6 +293,20 @@ function resolveIdleTimestampMs(record: {
     Date.parse(record.updatedAt ?? "") || 0,
     Date.parse(record.lastAccessedAt ?? "") || 0,
   );
+}
+
+function resolveSearchCompletionTimestampMs(record: {
+  searchMeta?: Partial<Pick<SearchMeta, "completedAt">>;
+  updatedAt?: string;
+  createdAt?: string;
+}): number {
+  for (const value of [record.searchMeta?.completedAt, record.updatedAt, record.createdAt]) {
+    const timestamp = Date.parse(value ?? "");
+    if (Number.isFinite(timestamp)) {
+      return timestamp;
+    }
+  }
+  return 0;
 }
 
 function normalizeProviderContextForSearchCache(
@@ -367,6 +421,12 @@ function redactMatrixCellForPersistence(cell: MatrixCell): MatrixCell {
   };
 }
 
+function matrixCellHasPersistableResult(cell: MatrixCell): boolean {
+  return Boolean(cell.offer)
+    || typeof cell.price?.amount === "number"
+    || Boolean(cell.purchasePaths?.length);
+}
+
 function redactStoredPurchasePathForPersistence(entry: StoredPurchasePath): StoredPurchasePath {
   const path = redactPurchasePathForPersistence(entry.path);
   const occurrence = entry.fingerprint.match(/#(\d+)$/)?.[1] ?? "0";
@@ -408,7 +468,7 @@ function redactMatrixJobForPersistence(job: MatrixJobRecord): MatrixJobRecord {
   return {
     ...job,
     providerContext: redactProviderContextForPersistence(job.providerContext),
-    cells: job.cells.map(redactMatrixCellForPersistence),
+    cells: job.cells.filter(matrixCellHasPersistableResult).map(redactMatrixCellForPersistence),
   };
 }
 
@@ -426,6 +486,22 @@ function matrixJobPersistenceVersion(job: MatrixJobRecord): string {
 
 function purchasePathPersistenceVersion(entry: StoredPurchasePath): string {
   return `${entry.fingerprint}\u0000${entry.updatedAt}\u0000${entry.lastAccessedAt}`;
+}
+
+function onlyProviderDiagnosticsChanged(
+  current: SearchJobRecord | MatrixJobRecord,
+  updated: SearchJobRecord | MatrixJobRecord,
+): boolean {
+  if (current.providerDiagnostics === updated.providerDiagnostics) {
+    return false;
+  }
+
+  const currentRecord = current as unknown as Record<string, unknown>;
+  const updatedRecord = updated as unknown as Record<string, unknown>;
+  const currentKeys = Object.keys(currentRecord).filter((key) => key !== "providerDiagnostics");
+  const updatedKeys = Object.keys(updatedRecord).filter((key) => key !== "providerDiagnostics");
+  return currentKeys.length === updatedKeys.length
+    && currentKeys.every((key) => Object.hasOwn(updatedRecord, key) && currentRecord[key] === updatedRecord[key]);
 }
 
 function sumPersistedBytes(entries: Map<string, PersistedEntryState>): number {
@@ -447,10 +523,19 @@ export class SearchSessionStore {
   private db: Database | undefined;
   private readonly legacyPersistPath: string | undefined;
   private readonly persistedRestoreBudgetBytes: number;
+  private readonly completedResidentBudgetBytes: number;
   private readonly persistedSearchJobs = new Map<string, PersistedEntryState>();
   private readonly persistedMatrixJobs = new Map<string, PersistedEntryState>();
   private readonly persistedPurchasePaths = new Map<string, PersistedEntryState>();
+  private readonly deferredSearchJobs = new Set<string>();
+  private readonly deferredMatrixJobs = new Set<string>();
+  private readonly diskOnlySearchJobs = new Map<string, number>();
+  private readonly diskOnlyMatrixJobs = new Map<string, number>();
+  private readonly diskOnlyPurchasePathIds = new Set<string>();
+  private readonly diskOnlySessionPurchasePathIds = new Map<string, Set<string>>();
   private persistTimer: NodeJS.Timeout | undefined;
+  private residentBudgetTimer: NodeJS.Timeout | undefined;
+  private residentBudgetDueAt = 0;
   private bootstrapping = false;
 
   constructor(options?: SearchSessionStoreOptions) {
@@ -462,6 +547,9 @@ export class SearchSessionStore {
       && configuredRestoreBudgetBytes >= 0
       ? configuredRestoreBudgetBytes
       : PERSISTED_SEARCH_CACHE_RESTORE_BUDGET_BYTES;
+    this.completedResidentBudgetBytes = completedResidentBudgetBytes(
+      options?.completedResidentBudgetBytes,
+    );
 
     if (dbPath) {
       mkdirSync(dirname(dbPath), { recursive: true });
@@ -482,6 +570,11 @@ export class SearchSessionStore {
       this.persistTimer = undefined;
     }
     this.persistNow();
+    if (this.residentBudgetTimer) {
+      clearTimeout(this.residentBudgetTimer);
+      this.residentBudgetTimer = undefined;
+      this.residentBudgetDueAt = 0;
+    }
     const db = this.db;
     if (db) {
       this.db = undefined;
@@ -495,14 +588,16 @@ export class SearchSessionStore {
   }
 
   getSession(sessionId: string): SearchSessionRecord | undefined {
-    const job = this.searchJobs.get(sessionId);
-    const session = this.sessions.get(sessionId);
-    if (!job || !session) {
+    const residentJob = this.searchJobs.get(sessionId);
+    const job = residentJob ?? this.readPersistedSearchJob(sessionId);
+    if (!job) {
       return undefined;
     }
 
-    const touchedAt = this.touchSearchJob(job);
-    const updatedSession = this.touchSessionMetadata(sessionId, touchedAt) ?? session;
+    const session = this.sessions.get(sessionId);
+    const updatedSession = residentJob && session
+      ? this.touchSessionMetadata(sessionId, this.touchSearchJob(residentJob)) ?? session
+      : job;
     return {
       id: updatedSession.id,
       request: updatedSession.request,
@@ -526,13 +621,16 @@ export class SearchSessionStore {
   }
 
   getOffer(sessionId: string, offerId: string): CanonicalOffer | undefined {
-    const job = this.searchJobs.get(sessionId);
+    const residentJob = this.searchJobs.get(sessionId);
+    const job = residentJob ?? this.readPersistedSearchJob(sessionId);
     if (!job) {
       return undefined;
     }
 
-    const touchedAt = this.touchSearchJob(job);
-    this.touchSessionMetadata(sessionId, touchedAt);
+    if (residentJob) {
+      const touchedAt = this.touchSearchJob(residentJob);
+      this.touchSessionMetadata(sessionId, touchedAt);
+    }
     return job.allOffers.find((offer) => offer.id === offerId);
   }
 
@@ -584,7 +682,7 @@ export class SearchSessionStore {
   getSearchJob(jobId: string): SearchJobRecord | undefined {
     const job = this.searchJobs.get(jobId);
     if (!job) {
-      return undefined;
+      return this.readPersistedSearchJob(jobId);
     }
 
     const touchedAt = this.touchSearchJob(job);
@@ -612,7 +710,7 @@ export class SearchSessionStore {
     );
 
     let latest: SearchJobRecord | undefined;
-    let latestIdleTimestamp = 0;
+    let latestCompletionTimestamp = 0;
 
     for (const candidate of this.searchJobs.values()) {
       if (candidate.status !== "completed") {
@@ -646,14 +744,14 @@ export class SearchSessionStore {
         continue;
       }
 
-      const idleTimestamp = resolveIdleTimestampMs(candidate);
-      if ((nowMs - idleTimestamp) > input.maxAgeMs) {
+      const completionTimestamp = resolveSearchCompletionTimestampMs(candidate);
+      if ((nowMs - completionTimestamp) > input.maxAgeMs) {
         continue;
       }
 
-      if (!latest || idleTimestamp > latestIdleTimestamp) {
+      if (!latest || completionTimestamp > latestCompletionTimestamp) {
         latest = candidate;
-        latestIdleTimestamp = idleTimestamp;
+        latestCompletionTimestamp = completionTimestamp;
       }
     }
 
@@ -669,6 +767,7 @@ export class SearchSessionStore {
   updateSearchJob(
     jobId: string,
     updater: (current: SearchJobRecord) => SearchJobRecord,
+    options: { persist?: boolean } = {},
   ): SearchJobRecord | undefined {
     const current = this.searchJobs.get(jobId);
     if (!current) {
@@ -677,13 +776,30 @@ export class SearchSessionStore {
 
     const updated = updater(current);
     if (updated === current) {
+      if (options.persist !== false && this.deferredSearchJobs.delete(jobId)) {
+        this.schedulePersist();
+      }
       return current;
     }
 
+    if (onlyProviderDiagnosticsChanged(current, updated)) {
+      current.providerDiagnostics = updated.providerDiagnostics;
+      this.searchJobs.set(jobId, current);
+      this.syncSearchSessionMetadata(current);
+      return current;
+    }
+
+    const offersUnchanged = updated.offers === current.offers && updated.allOffers === current.allOffers;
     const timestamp = nowIso();
-    const rewrittenAllOffers = updated.allOffers.map((offer) => this.rewriteOfferPaths(jobId, offer));
-    const rewrittenOffersById = new Map(rewrittenAllOffers.map((offer) => [offer.id, offer] as const));
-    const rewrittenOffers = updated.offers.map((offer) => rewrittenOffersById.get(offer.id) ?? this.rewriteOfferPaths(jobId, offer));
+    const rewrittenAllOffers = offersUnchanged
+      ? current.allOffers
+      : updated.allOffers.map((offer) => this.rewriteOfferPaths(jobId, offer));
+    const rewrittenOffersById = offersUnchanged
+      ? undefined
+      : new Map(rewrittenAllOffers.map((offer) => [offer.id, offer] as const));
+    const rewrittenOffers = offersUnchanged
+      ? current.offers
+      : updated.offers.map((offer) => rewrittenOffersById?.get(offer.id) ?? this.rewriteOfferPaths(jobId, offer));
     const base: SearchJobRecord = {
       ...updated,
       id: current.id,
@@ -705,11 +821,19 @@ export class SearchSessionStore {
 
     this.searchJobs.set(jobId, next);
     this.syncSearchSessionMetadata(next);
-    this.pruneSessionOwners(jobId, new Set([
-      ...rewrittenAllOffers.map((offer) => offer.id),
-      ...rewrittenOffers.map((offer) => offer.id),
-    ]));
-    this.schedulePersist();
+    if (!offersUnchanged) {
+      this.pruneSessionOwners(jobId, new Set([
+        ...rewrittenAllOffers.map((offer) => offer.id),
+        ...rewrittenOffers.map((offer) => offer.id),
+      ]));
+    }
+    if (options.persist === false) {
+      this.deferredSearchJobs.add(jobId);
+      this.schedulePersist();
+    } else {
+      this.deferredSearchJobs.delete(jobId);
+      this.schedulePersist();
+    }
     return next;
   }
 
@@ -746,7 +870,7 @@ export class SearchSessionStore {
   resolvePurchasePath(purchasePathId: string): StoredPurchasePath | undefined {
     const stored = this.purchasePaths.get(purchasePathId);
     if (!stored) {
-      return undefined;
+      return this.readPersistedPurchasePath(purchasePathId);
     }
 
     if (!this.searchJobs.has(stored.sessionId) && !this.matrixJobs.has(stored.sessionId)) {
@@ -755,8 +879,13 @@ export class SearchSessionStore {
     }
 
     const timestamp = nowIso();
+    const persistedPath = this.persistedPurchasePaths.get(purchasePathId);
+    const previousPathVersion = purchasePathPersistenceVersion(stored);
     stored.lastAccessedAt = timestamp;
     this.purchasePaths.set(purchasePathId, stored);
+    if (persistedPath?.version === previousPathVersion) {
+      persistedPath.version = purchasePathPersistenceVersion(stored);
+    }
     const searchJob = this.searchJobs.get(stored.sessionId);
     if (searchJob) {
       this.touchSearchJob(searchJob, timestamp);
@@ -767,6 +896,81 @@ export class SearchSessionStore {
       this.touchMatrixJob(matrixJob, timestamp);
     }
     return stored;
+  }
+
+  getRedirectContext(sessionId: string): Pick<SearchSessionRecord, "providerContext" | "request"> | undefined {
+    const searchJob = this.searchJobs.get(sessionId);
+    if (searchJob) {
+      return {
+        request: searchJob.request,
+        providerContext: searchJob.providerContext,
+      };
+    }
+
+    const matrixJob = this.matrixJobs.get(sessionId);
+    if (matrixJob) {
+      return {
+        request: matrixJob.request,
+        providerContext: matrixJob.providerContext,
+      };
+    }
+
+    if (!this.db) {
+      return undefined;
+    }
+
+    const searchRow = getSql<SqliteStoredRedirectContextRow>(this.db, `
+      SELECT
+        request_key AS requestKey,
+        provider_context_key AS providerContextKey,
+        idle_at_ms AS idleAtMs
+      FROM search_jobs
+      WHERE id = ?
+      LIMIT 1
+    `, sessionId);
+    if (searchRow && !this.isPersistedJobExpired(searchRow.idleAtMs)) {
+      const request = parseJsonPayload<SearchRequest>(searchRow.requestKey ?? "");
+      if (request) {
+        return {
+          request,
+          providerContext: parseJsonPayload<ProviderContext | null>(searchRow.providerContextKey ?? "") ?? undefined,
+        };
+      }
+    }
+
+    const matrixRow = getSql<SqliteStoredRedirectContextRow>(this.db, `
+      SELECT
+        request_key AS requestKey,
+        provider_context_key AS providerContextKey,
+        idle_at_ms AS idleAtMs
+      FROM matrix_jobs
+      WHERE id = ?
+      LIMIT 1
+    `, sessionId);
+    if (!matrixRow || this.isPersistedJobExpired(matrixRow.idleAtMs)) {
+      return undefined;
+    }
+
+    if (matrixRow.requestKey) {
+      const request = parseJsonPayload<SearchRequest>(matrixRow.requestKey);
+      return request
+        ? {
+            request,
+            providerContext: parseJsonPayload<ProviderContext | null>(matrixRow.providerContextKey ?? "") ?? undefined,
+          }
+        : undefined;
+    }
+
+    const legacyRow = getSql<SqliteStoredRedirectContextRow>(this.db, `
+      SELECT payload, idle_at_ms AS idleAtMs
+      FROM matrix_jobs
+      WHERE id = ?
+      LIMIT 1
+    `, sessionId);
+    const persisted = legacyRow?.payload
+      ? parseJsonPayload<MatrixJobRecord>(legacyRow.payload)
+      : undefined;
+    return persisted ? { request: persisted.request, providerContext: persisted.providerContext } : undefined;
   }
 
   createMatrixJob(input: Omit<MatrixJobRecord, "id" | "createdAt" | "updatedAt" | "lastAccessedAt" | "revision">): MatrixJobRecord {
@@ -795,7 +999,7 @@ export class SearchSessionStore {
   getMatrixJob(jobId: string): MatrixJobRecord | undefined {
     const job = this.matrixJobs.get(jobId);
     if (!job) {
-      return undefined;
+      return this.readPersistedMatrixJob(jobId);
     }
 
     this.touchMatrixJob(job);
@@ -805,6 +1009,7 @@ export class SearchSessionStore {
   updateMatrixJob(
     jobId: string,
     updater: (current: MatrixJobRecord) => MatrixJobRecord,
+    options: { persist?: boolean } = {},
   ): MatrixJobRecord | undefined {
     const current = this.matrixJobs.get(jobId);
     if (!current) {
@@ -813,11 +1018,23 @@ export class SearchSessionStore {
 
     const updated = updater(current);
     if (updated === current) {
+      if (options.persist !== false && this.deferredMatrixJobs.delete(jobId)) {
+        this.schedulePersist();
+      }
       return current;
     }
 
+    if (onlyProviderDiagnosticsChanged(current, updated)) {
+      current.providerDiagnostics = updated.providerDiagnostics;
+      this.matrixJobs.set(jobId, current);
+      return current;
+    }
+
+    const cellsUnchanged = updated.cells === current.cells;
     const timestamp = nowIso();
-    const rewrittenCells = updated.cells.map((cell) => this.rewriteMatrixCellPaths(jobId, cell));
+    const rewrittenCells = cellsUnchanged
+      ? current.cells
+      : updated.cells.map((cell) => this.rewriteMatrixCellPaths(jobId, cell));
     const base: MatrixJobRecord = {
       ...updated,
       cells: rewrittenCells,
@@ -837,8 +1054,16 @@ export class SearchSessionStore {
     };
 
     this.matrixJobs.set(jobId, next);
-    this.pruneSessionOwners(jobId, new Set(rewrittenCells.map((cell) => cell.key)));
-    this.schedulePersist();
+    if (!cellsUnchanged) {
+      this.pruneSessionOwners(jobId, new Set(rewrittenCells.map((cell) => cell.key)));
+    }
+    if (options.persist === false) {
+      this.deferredMatrixJobs.add(jobId);
+      this.schedulePersist();
+    } else {
+      this.deferredMatrixJobs.delete(jobId);
+      this.schedulePersist();
+    }
     return next;
   }
 
@@ -902,6 +1127,87 @@ export class SearchSessionStore {
     return { searchJobs, matrixJobs };
   }
 
+  enforceCompletedResidentBudget(nowMs = Date.now()): void {
+    if (!this.db) {
+      return;
+    }
+
+    const candidates: ResidentJobCandidate[] = [];
+    for (const job of this.searchJobs.values()) {
+      if (job.status !== "completed") {
+        continue;
+      }
+      const bytes = this.persistedResidentBytes(job.id, searchJobPersistenceVersion(job), "search");
+      if (bytes !== undefined) {
+        candidates.push({
+          id: job.id,
+          kind: "search",
+          bytes,
+          completedAtMs: resolveSearchCompletionTimestampMs(job),
+          lastAccessedAtMs: resolveIdleTimestampMs(job),
+        });
+      }
+    }
+    for (const job of this.matrixJobs.values()) {
+      if (job.status !== "completed") {
+        continue;
+      }
+      const bytes = this.persistedResidentBytes(job.id, matrixJobPersistenceVersion(job), "matrix");
+      if (bytes !== undefined) {
+        candidates.push({
+          id: job.id,
+          kind: "matrix",
+          bytes,
+          completedAtMs: resolveSearchCompletionTimestampMs(job),
+          lastAccessedAtMs: resolveIdleTimestampMs(job),
+        });
+      }
+    }
+
+    let residentBytes = candidates.reduce((total, candidate) => total + candidate.bytes, 0);
+    if (residentBytes <= this.completedResidentBudgetBytes) {
+      this.clearResidentBudgetTimer();
+      return;
+    }
+
+    candidates.sort((left, right) =>
+      left.lastAccessedAtMs - right.lastAccessedAtMs
+      || left.completedAtMs - right.completedAtMs
+      || left.kind.localeCompare(right.kind)
+      || left.id.localeCompare(right.id));
+    let evictedJobs = 0;
+    let evictedBytes = 0;
+    let nextEligibleAt = Number.POSITIVE_INFINITY;
+    for (const candidate of candidates) {
+      if (residentBytes <= this.completedResidentBudgetBytes) {
+        break;
+      }
+      if ((nowMs - candidate.completedAtMs) < COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS) {
+        nextEligibleAt = Math.min(
+          nextEligibleAt,
+          candidate.completedAtMs + COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS,
+        );
+        continue;
+      }
+
+      this.evictResidentJob(candidate);
+      residentBytes -= candidate.bytes;
+      evictedJobs += 1;
+      evictedBytes += candidate.bytes;
+    }
+
+    if (evictedJobs > 0) {
+      console.warn(
+        `Fly Desk resident cache evicted completed jobs: jobs=${evictedJobs} payloadBytes=${evictedBytes} budgetBytes=${this.completedResidentBudgetBytes}`,
+      );
+    }
+    if (residentBytes > this.completedResidentBudgetBytes && Number.isFinite(nextEligibleAt)) {
+      this.scheduleResidentBudgetEnforcement(Math.max(1, nextEligibleAt - nowMs));
+    } else {
+      this.clearResidentBudgetTimer();
+    }
+  }
+
   purgeExpired(nowMs = Date.now()): PurgeSummary {
     const beforeSessions = this.sessions.size;
     const beforePurchasePaths = this.purchasePaths.size;
@@ -919,6 +1225,7 @@ export class SearchSessionStore {
 
       removedSearchJobs += 1;
       this.searchJobs.delete(jobId);
+      this.deferredSearchJobs.delete(jobId);
       this.sessions.delete(jobId);
       this.forgetSessionPurchasePaths(jobId);
     }
@@ -934,12 +1241,16 @@ export class SearchSessionStore {
 
       removedMatrixJobs += 1;
       this.matrixJobs.delete(jobId);
+      this.deferredMatrixJobs.delete(jobId);
       this.forgetSessionPurchasePaths(jobId);
     }
 
     if (removedSearchJobs > 0 || removedMatrixJobs > 0) {
       this.schedulePersist();
     }
+
+    this.pruneExpiredDiskOnlyRows(nowMs);
+    this.enforceCompletedResidentBudget(nowMs);
 
     return {
       searchJobs: removedSearchJobs,
@@ -952,9 +1263,36 @@ export class SearchSessionStore {
   getDiagnostics(): StoreDiagnostics {
     const searchJobs = [...this.searchJobs.values()];
     const matrixJobs = [...this.matrixJobs.values()];
+    const completedSearchJobs = searchJobs.filter((job) => job.status === "completed");
+    const completedMatrixJobs = matrixJobs.filter((job) => job.status === "completed");
+    const residentCompletedBytes = completedSearchJobs.reduce(
+      (total, job) => total + this.persistedSessionBytes(job.id, "search", this.sessionPurchasePathIds.get(job.id)),
+      0,
+    ) + completedMatrixJobs.reduce(
+      (total, job) => total + this.persistedSessionBytes(job.id, "matrix", this.sessionPurchasePathIds.get(job.id)),
+      0,
+    );
+    const diskOnlyIds = [
+      ...[...this.diskOnlySearchJobs.keys()].map((id) => [id, "search"] as const),
+      ...[...this.diskOnlyMatrixJobs.keys()].map((id) => [id, "matrix"] as const),
+    ];
     return {
       generatedAt: nowIso(),
       ttlMs: COMPLETED_SEARCH_SESSION_TTL_MS,
+      residentCache: {
+        budgetBytes: this.completedResidentBudgetBytes,
+        completedJobs: completedSearchJobs.length + completedMatrixJobs.length,
+        completedBytes: residentCompletedBytes,
+        diskOnlyJobs: diskOnlyIds.length,
+        diskOnlyBytes: diskOnlyIds.reduce(
+          (total, [id, kind]) => total + this.persistedSessionBytes(
+            id,
+            kind,
+            this.diskOnlySessionPurchasePathIds.get(id),
+          ),
+          0,
+        ),
+      },
       counts: {
         sessions: this.sessions.size,
         searchJobs: searchJobs.length,
@@ -982,6 +1320,195 @@ export class SearchSessionStore {
           : [...this.purchasePaths.values()].reduce((total, path) => total + safeJsonSize(path), 0),
       },
     };
+  }
+
+  private persistedResidentBytes(
+    sessionId: string,
+    version: string,
+    kind: ResidentJobCandidate["kind"],
+  ): number | undefined {
+    const jobState = kind === "search"
+      ? this.persistedSearchJobs.get(sessionId)
+      : this.persistedMatrixJobs.get(sessionId);
+    if (!jobState || jobState.version !== version) {
+      return undefined;
+    }
+
+    let bytes = jobState.bytes;
+    for (const purchasePathId of this.sessionPurchasePathIds.get(sessionId) ?? []) {
+      const path = this.purchasePaths.get(purchasePathId);
+      const pathState = this.persistedPurchasePaths.get(purchasePathId);
+      if (!path || !pathState || pathState.version !== purchasePathPersistenceVersion(path)) {
+        return undefined;
+      }
+      bytes += pathState.bytes;
+    }
+    return bytes;
+  }
+
+  private persistedSessionBytes(
+    sessionId: string,
+    kind: ResidentJobCandidate["kind"],
+    purchasePathIds: Set<string> | undefined,
+  ): number {
+    let bytes = (kind === "search"
+      ? this.persistedSearchJobs.get(sessionId)
+      : this.persistedMatrixJobs.get(sessionId))?.bytes ?? 0;
+    for (const purchasePathId of purchasePathIds ?? []) {
+      bytes += this.persistedPurchasePaths.get(purchasePathId)?.bytes ?? 0;
+    }
+    return bytes;
+  }
+
+  private evictResidentJob(candidate: ResidentJobCandidate): void {
+    if (candidate.kind === "search") {
+      this.searchJobs.delete(candidate.id);
+      this.deferredSearchJobs.delete(candidate.id);
+      this.sessions.delete(candidate.id);
+      this.diskOnlySearchJobs.set(candidate.id, candidate.lastAccessedAtMs);
+    } else {
+      this.matrixJobs.delete(candidate.id);
+      this.deferredMatrixJobs.delete(candidate.id);
+      this.diskOnlyMatrixJobs.set(candidate.id, candidate.lastAccessedAtMs);
+    }
+
+    const purchasePathIds = new Set(this.sessionPurchasePathIds.get(candidate.id) ?? []);
+    for (const purchasePathId of purchasePathIds) {
+      this.purchasePaths.delete(purchasePathId);
+      this.diskOnlyPurchasePathIds.add(purchasePathId);
+    }
+    for (const ownerKey of this.sessionOwnerKeys.get(candidate.id) ?? []) {
+      this.ownerPurchasePathIds.delete(ownerKey);
+    }
+    this.sessionPurchasePathIds.delete(candidate.id);
+    this.sessionOwnerKeys.delete(candidate.id);
+    if (purchasePathIds.size > 0) {
+      this.diskOnlySessionPurchasePathIds.set(candidate.id, purchasePathIds);
+    }
+  }
+
+  private pruneExpiredDiskOnlyRows(nowMs: number): void {
+    if (!this.db) {
+      return;
+    }
+
+    const cutoffMs = nowMs - COMPLETED_SEARCH_SESSION_TTL_MS;
+    const expiredSearchIds = [...this.diskOnlySearchJobs.entries()]
+      .filter(([, idleAtMs]) => idleAtMs < cutoffMs)
+      .map(([id]) => id);
+    const expiredMatrixIds = [...this.diskOnlyMatrixJobs.entries()]
+      .filter(([, idleAtMs]) => idleAtMs < cutoffMs)
+      .map(([id]) => id);
+    if (expiredSearchIds.length === 0 && expiredMatrixIds.length === 0) {
+      return;
+    }
+
+    const db = this.db;
+    const deletePurchasePaths = db.prepare("DELETE FROM purchase_paths WHERE session_id = ?");
+    const deleteSearchJob = db.prepare("DELETE FROM search_jobs WHERE id = ?");
+    const deleteMatrixJob = db.prepare("DELETE FROM matrix_jobs WHERE id = ?");
+    try {
+      db.transaction(() => {
+        for (const id of expiredSearchIds) {
+          deletePurchasePaths.run(id);
+          deleteSearchJob.run(id);
+        }
+        for (const id of expiredMatrixIds) {
+          deletePurchasePaths.run(id);
+          deleteMatrixJob.run(id);
+        }
+      })();
+    } catch {
+      return;
+    } finally {
+      deletePurchasePaths.finalize();
+      deleteSearchJob.finalize();
+      deleteMatrixJob.finalize();
+    }
+
+    for (const id of [...expiredSearchIds, ...expiredMatrixIds]) {
+      this.diskOnlySearchJobs.delete(id);
+      this.diskOnlyMatrixJobs.delete(id);
+      this.persistedSearchJobs.delete(id);
+      this.persistedMatrixJobs.delete(id);
+      for (const purchasePathId of this.diskOnlySessionPurchasePathIds.get(id) ?? []) {
+        this.diskOnlyPurchasePathIds.delete(purchasePathId);
+        this.persistedPurchasePaths.delete(purchasePathId);
+      }
+      this.diskOnlySessionPurchasePathIds.delete(id);
+    }
+  }
+
+  private readPersistedPurchasePath(purchasePathId: string): StoredPurchasePath | undefined {
+    if (!this.db) {
+      return undefined;
+    }
+
+    const row = getSql<SqliteStoredRedirectRow>(this.db, `
+      SELECT
+        purchase_paths.payload,
+        COALESCE(search_jobs.idle_at_ms, matrix_jobs.idle_at_ms) AS idleAtMs
+      FROM purchase_paths
+      LEFT JOIN search_jobs ON search_jobs.id = purchase_paths.session_id
+      LEFT JOIN matrix_jobs ON matrix_jobs.id = purchase_paths.session_id
+      WHERE purchase_paths.id = ?
+        AND (search_jobs.id IS NOT NULL OR matrix_jobs.id IS NOT NULL)
+      LIMIT 1
+    `, purchasePathId);
+    if (!row || this.isPersistedJobExpired(row.idleAtMs)) {
+      return undefined;
+    }
+
+    const stored = parseJsonPayload<StoredPurchasePath>(row.payload);
+    return stored?.path?.id === purchasePathId ? stored : undefined;
+  }
+
+  private readPersistedSearchJob(jobId: string): SearchJobRecord | undefined {
+    if (!this.db || !this.diskOnlySearchJobs.has(jobId)) {
+      return undefined;
+    }
+
+    const row = getSql<SqliteStoredRedirectRow>(this.db, `
+      SELECT payload, idle_at_ms AS idleAtMs
+      FROM search_jobs
+      WHERE id = ?
+      LIMIT 1
+    `, jobId);
+    if (!row || this.isPersistedJobExpired(row.idleAtMs)) {
+      return undefined;
+    }
+
+    const job = parseJsonPayload<SearchJobRecord>(row.payload);
+    return job?.id === jobId && job.status === "completed"
+      ? redactSearchJobForPersistence(job)
+      : undefined;
+  }
+
+  private readPersistedMatrixJob(jobId: string): MatrixJobRecord | undefined {
+    if (!this.db || !this.diskOnlyMatrixJobs.has(jobId)) {
+      return undefined;
+    }
+
+    const row = getSql<SqliteStoredRedirectRow>(this.db, `
+      SELECT payload, idle_at_ms AS idleAtMs
+      FROM matrix_jobs
+      WHERE id = ?
+      LIMIT 1
+    `, jobId);
+    if (!row || this.isPersistedJobExpired(row.idleAtMs)) {
+      return undefined;
+    }
+
+    const job = parseJsonPayload<MatrixJobRecord>(row.payload);
+    return job?.id === jobId && job.status === "completed"
+      ? redactMatrixJobForPersistence(job)
+      : undefined;
+  }
+
+  private isPersistedJobExpired(idleAtMs: number): boolean {
+    return !Number.isFinite(idleAtMs)
+      || idleAtMs <= 0
+      || (Date.now() - idleAtMs) > COMPLETED_SEARCH_SESSION_TTL_MS;
   }
 
   private rewriteOfferPaths(sessionId: string, offer: CanonicalOffer): CanonicalOffer {
@@ -1127,14 +1654,24 @@ export class SearchSessionStore {
   }
 
   private touchSearchJob(job: SearchJobRecord, timestamp = nowIso()): string {
+    const persisted = this.persistedSearchJobs.get(job.id);
+    const previousVersion = searchJobPersistenceVersion(job);
     job.lastAccessedAt = timestamp;
     this.searchJobs.set(job.id, job);
+    if (persisted?.version === previousVersion) {
+      persisted.version = searchJobPersistenceVersion(job);
+    }
     return timestamp;
   }
 
   private touchMatrixJob(job: MatrixJobRecord, timestamp = nowIso()): string {
+    const persisted = this.persistedMatrixJobs.get(job.id);
+    const previousVersion = matrixJobPersistenceVersion(job);
     job.lastAccessedAt = timestamp;
     this.matrixJobs.set(job.id, job);
+    if (persisted?.version === previousVersion) {
+      persisted.version = matrixJobPersistenceVersion(job);
+    }
     return timestamp;
   }
 
@@ -1248,7 +1785,30 @@ export class SearchSessionStore {
         this.sessionOwnerKeys.delete(sessionId);
       }
     }
-    this.schedulePersist();
+  }
+
+  private clearResidentBudgetTimer(): void {
+    if (this.residentBudgetTimer) {
+      clearTimeout(this.residentBudgetTimer);
+      this.residentBudgetTimer = undefined;
+    }
+    this.residentBudgetDueAt = 0;
+  }
+
+  private scheduleResidentBudgetEnforcement(delayMs: number): void {
+    const boundedDelayMs = Math.max(1, Math.trunc(delayMs));
+    const dueAt = Date.now() + boundedDelayMs;
+    if (this.residentBudgetTimer && this.residentBudgetDueAt <= dueAt) {
+      return;
+    }
+    this.clearResidentBudgetTimer();
+    this.residentBudgetDueAt = dueAt;
+    this.residentBudgetTimer = setTimeout(() => {
+      this.residentBudgetTimer = undefined;
+      this.residentBudgetDueAt = 0;
+      this.enforceCompletedResidentBudget();
+    }, boundedDelayMs);
+    this.residentBudgetTimer.unref?.();
   }
 
   private schedulePersist(): void {
@@ -1270,15 +1830,19 @@ export class SearchSessionStore {
 
     const persistStart = startPerfTimer();
     try {
-      const activeSearchJobs = [...this.searchJobs.values()].filter((job) => isPersistableStatus(job.status));
-      const activeMatrixJobs = [...this.matrixJobs.values()].filter((job) => isPersistableStatus(job.status));
-      const activeSessionIds = new Set<string>([
-        ...activeSearchJobs.map((job) => job.id),
-        ...activeMatrixJobs.map((job) => job.id),
+      const persistableSessionIds = new Set<string>([
+        ...[...this.searchJobs.values()].filter((job) => isPersistableStatus(job.status)).map((job) => job.id),
+        ...[...this.matrixJobs.values()].filter((job) => isPersistableStatus(job.status)).map((job) => job.id),
       ]);
+      const activeSearchJobs = [...this.searchJobs.values()].filter(
+        (job) => isPersistableStatus(job.status) && !this.deferredSearchJobs.has(job.id),
+      );
+      const activeMatrixJobs = [...this.matrixJobs.values()].filter(
+        (job) => isPersistableStatus(job.status) && !this.deferredMatrixJobs.has(job.id),
+      );
       const activeOwnerKeys = new Set(this.ownerPurchasePathIds.keys());
       const activePurchasePaths = [...this.purchasePaths.values()].filter(
-        (path) => activeSessionIds.has(path.sessionId)
+        (path) => persistableSessionIds.has(path.sessionId)
           && activeOwnerKeys.has(this.ownerKey(path.sessionId, path.ownerId)),
       );
       const activeSearchJobIds = new Set(activeSearchJobs.map((job) => job.id));
@@ -1286,11 +1850,15 @@ export class SearchSessionStore {
       const activePurchasePathIds = new Set(activePurchasePaths.map((path) => path.path.id));
 
       const deletedSearchJobIds = [...this.persistedSearchJobs.keys()]
-        .filter((id) => !activeSearchJobIds.has(id));
+        .filter((id) => !activeSearchJobIds.has(id)
+          && !this.diskOnlySearchJobs.has(id)
+          && !this.deferredSearchJobs.has(id));
       const deletedMatrixJobIds = [...this.persistedMatrixJobs.keys()]
-        .filter((id) => !activeMatrixJobIds.has(id));
+        .filter((id) => !activeMatrixJobIds.has(id)
+          && !this.diskOnlyMatrixJobs.has(id)
+          && !this.deferredMatrixJobs.has(id));
       const deletedPurchasePathIds = [...this.persistedPurchasePaths.keys()]
-        .filter((id) => !activePurchasePathIds.has(id));
+        .filter((id) => !activePurchasePathIds.has(id) && !this.diskOnlyPurchasePathIds.has(id));
       const changedSearchJobs = activeSearchJobs
         .filter((job) => this.persistedSearchJobs.get(job.id)?.version !== searchJobPersistenceVersion(job))
         .map((job) => {
@@ -1371,11 +1939,15 @@ export class SearchSessionStore {
           id,
           idle_at_ms,
           status,
+          request_key,
+          provider_context_key,
           payload
-        ) VALUES (?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           idle_at_ms = excluded.idle_at_ms,
           status = excluded.status,
+          request_key = excluded.request_key,
+          provider_context_key = excluded.provider_context_key,
           payload = excluded.payload
       `);
       const upsertPurchasePath = db.prepare(`
@@ -1425,6 +1997,8 @@ export class SearchSessionStore {
               entry.job.id,
               resolveIdleTimestampMs(entry.job),
               entry.job.status,
+              serializeForComparison(normalizeSearchRequestForSearchCache(entry.job.request)),
+              serializeForComparison(normalizeProviderContextForSearchCache(entry.job.providerContext)),
               entry.payload,
             );
           }
@@ -1462,6 +2036,7 @@ export class SearchSessionStore {
       changedSearchJobs.forEach((entry) => this.persistedSearchJobs.set(entry.job.id, entry.state));
       changedMatrixJobs.forEach((entry) => this.persistedMatrixJobs.set(entry.job.id, entry.state));
       changedPurchasePaths.forEach((entry) => this.persistedPurchasePaths.set(entry.path.path.id, entry.state));
+      this.enforceCompletedResidentBudget();
 
       logPerfSpan("sessionStore.persist", persistStart, {
         searchJobsWritten: changedSearchJobs.length,
@@ -1510,6 +2085,8 @@ export class SearchSessionStore {
         id TEXT PRIMARY KEY,
         idle_at_ms INTEGER NOT NULL,
         status TEXT NOT NULL,
+        request_key TEXT,
+        provider_context_key TEXT,
         payload TEXT NOT NULL
       );
 
@@ -1527,16 +2104,27 @@ export class SearchSessionStore {
       CREATE INDEX IF NOT EXISTS idx_purchase_paths_session
         ON purchase_paths (session_id);
     `);
+
+    const matrixColumns = new Set(
+      allSql<{ name: string }>(this.db, "PRAGMA table_info(matrix_jobs)")
+        .map((column) => column.name),
+    );
+    if (!matrixColumns.has("request_key")) {
+      runSql(this.db, "ALTER TABLE matrix_jobs ADD COLUMN request_key TEXT");
+    }
+    if (!matrixColumns.has("provider_context_key")) {
+      runSql(this.db, "ALTER TABLE matrix_jobs ADD COLUMN provider_context_key TEXT");
+    }
   }
 
   private loadPersisted(): void {
     const nowMs = Date.now();
     this.pruneExpiredSqliteRows(nowMs);
-    this.prunePersistedRowsToRestoreBudget();
+    const restoreCandidates = this.selectPersistedRowsToRestore();
     const hadSqliteRows = this.hasSqlitePayloadRows();
     try {
       this.bootstrapping = true;
-      this.loadSqlitePayload();
+      this.loadSqlitePayload(restoreCandidates);
       this.migrateLegacyPersistencePayload({ load: !hadSqliteRows });
     } finally {
       this.bootstrapping = false;
@@ -1546,9 +2134,9 @@ export class SearchSessionStore {
     this.persistNow();
   }
 
-  private prunePersistedRowsToRestoreBudget(): void {
+  private selectPersistedRowsToRestore(): PersistedJobRestoreCandidate[] {
     if (!this.db) {
-      return;
+      return [];
     }
 
     const candidates = allSql<PersistedJobRestoreCandidate>(this.db, `
@@ -1578,46 +2166,35 @@ export class SearchSessionStore {
       ORDER BY idleAtMs DESC, kind ASC, id ASC
     `);
     let retainedBytes = 0;
-    const evicted = candidates.filter((candidate) => {
+    const retained: PersistedJobRestoreCandidate[] = [];
+    const diskOnly: PersistedJobRestoreCandidate[] = [];
+    for (const candidate of candidates) {
       const payloadBytes = Math.max(0, Number(candidate.payloadBytes) || 0);
       if (retainedBytes + payloadBytes > this.persistedRestoreBudgetBytes) {
-        return true;
+        diskOnly.push(candidate);
+        if (candidate.kind === "search") {
+          this.diskOnlySearchJobs.set(candidate.id, candidate.idleAtMs);
+        } else {
+          this.diskOnlyMatrixJobs.set(candidate.id, candidate.idleAtMs);
+        }
+        continue;
       }
       retainedBytes += payloadBytes;
-      return false;
-    });
-    if (evicted.length === 0) {
-      return;
+      retained.push(candidate);
     }
 
-    const db = this.db;
-    const deletePurchasePaths = db.prepare("DELETE FROM purchase_paths WHERE session_id = ?");
-    const deleteSearchJob = db.prepare("DELETE FROM search_jobs WHERE id = ?");
-    const deleteMatrixJob = db.prepare("DELETE FROM matrix_jobs WHERE id = ?");
-    try {
-      db.transaction(() => {
-        for (const candidate of evicted) {
-          deletePurchasePaths.run(candidate.id);
-          if (candidate.kind === "search") {
-            deleteSearchJob.run(candidate.id);
-          } else {
-            deleteMatrixJob.run(candidate.id);
-          }
-        }
-      })();
-    } finally {
-      deletePurchasePaths.finalize();
-      deleteSearchJob.finalize();
-      deleteMatrixJob.finalize();
+    if (diskOnly.length === 0) {
+      return retained;
     }
 
-    const evictedBytes = evicted.reduce(
+    const diskOnlyBytes = diskOnly.reduce(
       (total, candidate) => total + Math.max(0, Number(candidate.payloadBytes) || 0),
       0,
     );
     console.warn(
-      `Fly Desk persisted cache restore budget evicted jobs: jobs=${evicted.length} payloadBytes=${evictedBytes} budgetBytes=${this.persistedRestoreBudgetBytes}`,
+      `Fly Desk persisted cache restore budget kept jobs disk-only: jobs=${diskOnly.length} payloadBytes=${diskOnlyBytes} budgetBytes=${this.persistedRestoreBudgetBytes}`,
     );
+    return retained;
   }
 
   private hasSqlitePayloadRows(): boolean {
@@ -1685,74 +2262,98 @@ export class SearchSessionStore {
     })();
   }
 
-  private loadSqlitePayload(): void {
+  private loadSqlitePayload(restoreCandidates: PersistedJobRestoreCandidate[]): void {
     if (!this.db) {
       return;
     }
 
-    const searchJobs = allSql<SqlitePayloadRow>(this.db, "SELECT id, payload FROM search_jobs ORDER BY id");
-    const matrixJobs = allSql<SqlitePayloadRow>(this.db, "SELECT id, payload FROM matrix_jobs ORDER BY id");
-    const purchasePaths = allSql<SqlitePayloadRow>(this.db, "SELECT id, payload FROM purchase_paths ORDER BY id");
-    const parsedSearchJobs = searchJobs
-      .map((row) => {
-        const parsed = parseJsonPayload<SearchJobRecord>(row.payload);
-        if (!parsed) {
-          this.persistedSearchJobs.set(row.id, {
-            version: "",
-            bytes: Buffer.byteLength(row.payload, "utf8"),
-          });
-          return undefined;
+    const searchRows = allSql<{ id: string; payloadBytes: number }>(
+      this.db,
+      "SELECT id, length(CAST(payload AS BLOB)) AS payloadBytes FROM search_jobs",
+    );
+    const matrixRows = allSql<{ id: string; payloadBytes: number }>(
+      this.db,
+      "SELECT id, length(CAST(payload AS BLOB)) AS payloadBytes FROM matrix_jobs",
+    );
+    const pathRows = allSql<{ id: string; sessionId: string; payloadBytes: number }>(this.db, `
+      SELECT id, session_id AS sessionId, length(CAST(payload AS BLOB)) AS payloadBytes
+      FROM purchase_paths
+    `);
+    searchRows.forEach((row) => this.persistedSearchJobs.set(row.id, {
+      version: "",
+      bytes: Math.max(0, Number(row.payloadBytes) || 0),
+    }));
+    matrixRows.forEach((row) => this.persistedMatrixJobs.set(row.id, {
+      version: "",
+      bytes: Math.max(0, Number(row.payloadBytes) || 0),
+    }));
+    pathRows.forEach((row) => {
+      this.persistedPurchasePaths.set(row.id, {
+        version: "",
+        bytes: Math.max(0, Number(row.payloadBytes) || 0),
+      });
+      if (!this.diskOnlySearchJobs.has(row.sessionId) && !this.diskOnlyMatrixJobs.has(row.sessionId)) {
+        return;
+      }
+      this.diskOnlyPurchasePathIds.add(row.id);
+      const pathIds = this.diskOnlySessionPurchasePathIds.get(row.sessionId) ?? new Set<string>();
+      pathIds.add(row.id);
+      this.diskOnlySessionPurchasePathIds.set(row.sessionId, pathIds);
+    });
+
+    const parsedSearchJobs: SearchJobRecord[] = [];
+    const parsedMatrixJobs: MatrixJobRecord[] = [];
+    const parsedPurchasePaths: StoredPurchasePath[] = [];
+    for (const candidate of restoreCandidates) {
+      const row = getSql<SqlitePayloadRow>(
+        this.db,
+        `SELECT id, payload FROM ${candidate.kind === "search" ? "search_jobs" : "matrix_jobs"} WHERE id = ?`,
+        candidate.id,
+      );
+      if (row) {
+        if (candidate.kind === "search") {
+          const parsed = parseJsonPayload<SearchJobRecord>(row.payload);
+          if (parsed) {
+            const redacted = redactSearchJobForPersistence(parsed);
+            this.persistedSearchJobs.set(row.id, {
+              version: parsed.providerContext?.costamar?.token ? "" : searchJobPersistenceVersion(redacted),
+              bytes: Buffer.byteLength(row.payload, "utf8"),
+            });
+            parsedSearchJobs.push(redacted);
+          }
+        } else {
+          const parsed = parseJsonPayload<MatrixJobRecord>(row.payload);
+          if (parsed) {
+            const redacted = redactMatrixJobForPersistence(parsed);
+            this.persistedMatrixJobs.set(row.id, {
+              version: parsed.providerContext?.costamar?.token ? "" : matrixJobPersistenceVersion(redacted),
+              bytes: Buffer.byteLength(row.payload, "utf8"),
+            });
+            parsedMatrixJobs.push(redacted);
+          }
         }
-        const redacted = redactSearchJobForPersistence(parsed);
-        this.persistedSearchJobs.set(row.id, {
-          version: parsed.providerContext?.costamar?.token
-            ? ""
-            : searchJobPersistenceVersion(redacted),
-          bytes: Buffer.byteLength(row.payload, "utf8"),
-        });
-        return redacted;
-      })
-      .filter((job): job is SearchJobRecord => Boolean(job));
-    const parsedMatrixJobs = matrixJobs
-      .map((row) => {
-        const parsed = parseJsonPayload<MatrixJobRecord>(row.payload);
+      }
+
+      const paths = allSql<SqlitePayloadRow>(
+        this.db,
+        "SELECT id, payload FROM purchase_paths WHERE session_id = ? ORDER BY id",
+        candidate.id,
+      );
+      for (const pathRow of paths) {
+        const parsed = parseJsonPayload<StoredPurchasePath>(pathRow.payload);
         if (!parsed) {
-          this.persistedMatrixJobs.set(row.id, {
-            version: "",
-            bytes: Buffer.byteLength(row.payload, "utf8"),
-          });
-          return undefined;
-        }
-        const redacted = redactMatrixJobForPersistence(parsed);
-        this.persistedMatrixJobs.set(row.id, {
-          version: parsed.providerContext?.costamar?.token
-            ? ""
-            : matrixJobPersistenceVersion(redacted),
-          bytes: Buffer.byteLength(row.payload, "utf8"),
-        });
-        return redacted;
-      })
-      .filter((job): job is MatrixJobRecord => Boolean(job));
-    const parsedPurchasePaths = purchasePaths
-      .map((row) => {
-        const parsed = parseJsonPayload<StoredPurchasePath>(row.payload);
-        if (!parsed) {
-          this.persistedPurchasePaths.set(row.id, {
-            version: "",
-            bytes: Buffer.byteLength(row.payload, "utf8"),
-          });
-          return undefined;
+          continue;
         }
         const redacted = redactStoredPurchasePathForPersistence(parsed);
-        this.persistedPurchasePaths.set(row.id, {
+        this.persistedPurchasePaths.set(pathRow.id, {
           version: redacted.path.url === parsed.path.url && redacted.fingerprint === parsed.fingerprint
             ? purchasePathPersistenceVersion(redacted)
             : "",
-          bytes: Buffer.byteLength(row.payload, "utf8"),
+          bytes: Buffer.byteLength(pathRow.payload, "utf8"),
         });
-        return redacted;
-      })
-      .filter((path): path is StoredPurchasePath => Boolean(path));
+        parsedPurchasePaths.push(redacted);
+      }
+    }
 
     this.loadPersistencePayload(parsedSearchJobs, parsedMatrixJobs, parsedPurchasePaths);
   }

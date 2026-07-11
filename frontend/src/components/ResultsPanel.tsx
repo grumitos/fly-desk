@@ -516,7 +516,6 @@ function PaginatedResultsList({
         data-testid="results-page-body"
       >
         <div
-          key={pageKey}
           ref={listRef}
           className={cn(
             "fd-results-list grid content-start gap-2.5 pt-1",

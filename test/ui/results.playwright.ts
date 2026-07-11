@@ -966,11 +966,7 @@ test("result cards reserve matching airline and provider logo slots", async () =
 
 test("detail panel mirrors selected result content and omits unknown fare conditions", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
-    const quotationPayloads: Array<{
-      searchSessionId?: string;
-      offerId?: string;
-      migrationPlan?: boolean;
-    }> = [];
+    let quotationRequests = 0;
     await page.setViewportSize({ width: 1280, height: 760 });
     await page.addInitScript(() => {
       const originalExecCommand = document.execCommand.bind(document);
@@ -1000,25 +996,11 @@ test("detail panel mirrors selected result content and omits unknown fare condit
       });
     });
     await page.route("**/api/quotation", async (route) => {
-      const payload = route.request().postDataJSON() as {
-        searchSessionId?: string;
-        offerId?: string;
-        migrationPlan?: boolean;
-      };
-      quotationPayloads.push(payload);
-      const heading = payload.migrationPlan
-        ? "PAQUETE MIGRATORIO MADRID 🇪🇸"
-        : "COTIZACIÓN BOLETO AÉREO ✈️";
+      quotationRequests += 1;
       await route.fulfill({
-        status: 200,
+        status: 500,
         contentType: "application/json",
-        body: JSON.stringify({
-          commercialText: [
-            heading,
-            ...Array.from({ length: 24 }, (_, index) => `Detalle operativo ${index + 1}`),
-          ].join("\n"),
-          offer: {},
-        }),
+        body: JSON.stringify({ error: "Quotation endpoint must not be used by the UI." }),
       });
     });
     await page.route("**/api/search", async (route) => {
@@ -1026,6 +1008,7 @@ test("detail panel mirrors selected result content and omits unknown fare condit
       const offers = [
         buildOffer({
           id: "detail-panel-offer",
+          quotationPreparedAt: "2026-05-21T10:12:58.582Z",
           origin: "LIM",
           destination: "MAD",
           airline: "LATAM Airlines",
@@ -1046,6 +1029,7 @@ test("detail panel mirrors selected result content and omits unknown fare condit
             base: { amount: 710, currencyCode: "USD" },
             taxes: { amount: 102.35, currencyCode: "USD" },
           },
+          usdToPenRate: 3.75,
           itineraries: [
             {
               direction: "outbound",
@@ -1117,10 +1101,10 @@ test("detail panel mirrors selected result content and omits unknown fare condit
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
 
-    const quotationPrefetch = page.waitForResponse("**/api/quotation");
     await page.getByTestId("result-card").click();
     await page.getByRole("heading", { name: "Oferta seleccionada" }).waitFor();
-    await quotationPrefetch;
+    await page.waitForTimeout(100);
+    assert.equal(quotationRequests, 0);
 
     const selectedText = await page.evaluate(() => {
       const heading = Array.from(document.querySelectorAll("h2"))
@@ -1173,25 +1157,17 @@ test("detail panel mirrors selected result content and omits unknown fare condit
     await page.waitForFunction(() => (
       (window as unknown as { __flyDeskCopiedText?: string }).__flyDeskCopiedText?.startsWith("COTIZACIÓN BOLETO AÉREO ✈️")
     ));
-    assert.deepEqual(quotationPayloads[0], {
-      searchSessionId: "detail-panel-search",
-      offerId: "detail-panel-offer",
-      migrationPlan: false,
-    });
+    assert.equal(quotationRequests, 0);
 
-    const migrationQuotationRequest = page.waitForRequest((request) => (
-      request.url().endsWith("/api/quotation")
-      && request.method() === "POST"
-      && (request.postDataJSON() as { migrationPlan?: boolean }).migrationPlan === true
-    ));
     await migrationSwitch.click();
-    await migrationQuotationRequest;
     assert.equal(await migrationSwitch.getAttribute("aria-checked"), "true");
+    assert.equal(await page.getByTestId("quotation-text").count(), 1);
+    await page.getByTestId("quotation-text").getByText("PAQUETE MIGRATORIO MADRID 🇪🇸", { exact: false }).waitFor();
+    assert.match(await page.getByTestId("quotation-text").innerText(), /Seguro de viaje Transitorio/);
+    assert.match(await page.getByTestId("quotation-text").innerText(), /Selección de asiento no permitida; la asignación es aleatoria/);
+    assert.equal(quotationRequests, 0);
 
-    assert.equal(await page.getByTestId("quotation-text").count(), 0);
-
-    await page.getByRole("button", { name: "Cotizar" }).click();
-    await page.getByTestId("quotation-text").waitFor();
+    await page.getByTestId("quotation-section").getByRole("button", { name: "Copiar" }).click();
     const quotedText = await page.evaluate(() => {
       const heading = Array.from(document.querySelectorAll("h2"))
         .find((node) => node.textContent?.trim() === "Oferta seleccionada");
@@ -1207,7 +1183,7 @@ test("detail panel mirrors selected result content and omits unknown fare condit
     const copiedText = await page.evaluate(() => (
       (window as unknown as { __flyDeskCopiedText?: string }).__flyDeskCopiedText
     ));
-    assert.match(copiedText ?? "", /Detalle operativo 24/);
+    assert.match(copiedText ?? "", /Seguro de viaje Transitorio/);
     assert.ok(await page.getByRole("button", { name: "Copiado" }).count() >= 1);
 
     const quotationLayout = await page.getByTestId("quotation-text").evaluate((element) => {
@@ -1228,5 +1204,272 @@ test("detail panel mirrors selected result content and omits unknown fare condit
     assert.notEqual(quotationLayout.offerInfoOverflowY, "auto", JSON.stringify(quotationLayout));
     assert.notEqual(quotationLayout.offerInfoOverflowY, "scroll", JSON.stringify(quotationLayout));
     assert.equal(quotationLayout.offerInfoScrolls, false, JSON.stringify(quotationLayout));
+  }, { autoOpen: false });
+});
+
+test("domestic Costamar quotation uses the rate returned by search without another request", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let quotationRequests = 0;
+    const offer = buildOffer({
+      id: "domestic-costamar-quote",
+      providerSource: "costamar",
+      quotationPreparedAt: "2026-06-01T12:00:00.000Z",
+      usdToPenRate: 3.61,
+      origin: "LIM",
+      destination: "CUZ",
+      price: {
+        total: { amount: 100, currencyCode: "USD" },
+        base: { amount: 80, currencyCode: "USD" },
+        taxes: { amount: 20, currencyCode: "USD" },
+      },
+      itineraries: [{
+        direction: "outbound",
+        durationMinutes: 85,
+        stops: 0,
+        segments: [{
+          marketingCarrier: "LA",
+          flightNumber: "LA 2025",
+          origin: "LIM",
+          destination: "CUZ",
+          departureAt: "2026-06-08T09:00:00-05:00",
+          arrivalAt: "2026-06-08T10:25:00-05:00",
+        }],
+      }],
+    });
+
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suggestions: [] }) });
+    });
+    await page.route("**/api/quotation", async (route) => {
+      quotationRequests += 1;
+      await route.fulfill({ status: 500, body: "quotation endpoint must remain unused" });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "domestic-costamar-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers: [offer],
+          allOffers: [offer],
+          searchMeta: {
+            requestedAt: "2026-06-01T12:00:00.000Z",
+            completedAt: "2026-06-01T12:00:00.000Z",
+            providersUsed: ["costamar"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: { exactProvider: "costamar", coverageMode: "core" },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=CUZ&departure=2026-06-08&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await page.getByTestId("result-card").click();
+    await page.getByRole("button", { name: "Cotizar" }).click();
+
+    const quotation = await page.getByTestId("quotation-text").innerText();
+    assert.match(quotation, /S\/ 361 por adulto/);
+    assert.doesNotMatch(quotation, /US\$|USD/);
+    assert.equal(quotationRequests, 0);
+  }, { autoOpen: false });
+});
+
+test("progressive results preserve existing cards when the remaining offers arrive", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let releasePoll = () => {};
+    const pollGate = new Promise<void>((resolve) => {
+      releasePoll = resolve;
+    });
+    const firstOffer = buildOffer({ id: "progressive-first", quotationPreparedAt: "2026-05-21T10:12:58.582Z" });
+    const secondOffer = buildOffer({ id: "progressive-second", price: { total: { amount: 950, currencyCode: "USD" } } });
+
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suggestions: [] }) });
+    });
+    await page.route("**/api/search**", async (route) => {
+      const url = new URL(route.request().url());
+      if (route.request().method() === "POST" && url.pathname === "/api/search") {
+        const payload = route.request().postDataJSON() as Record<string, unknown>;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            searchJobId: "progressive-results",
+            searchComplete: false,
+            searchStatus: "running",
+            revision: 1,
+            sortMode: payload.sortMode,
+            request: payload.request,
+            offers: [firstOffer],
+            allOffers: [firstOffer],
+            searchMeta: {
+              requestedAt: "2026-05-21T10:12:58.582Z",
+              completedAt: "2026-05-21T10:12:58.582Z",
+              providersUsed: ["agil-local"],
+              warnings: [],
+              partial: true,
+              searchState: "search_partial",
+            },
+            providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+            warnings: [],
+          }),
+        });
+        return;
+      }
+
+      if (route.request().method() === "GET" && url.pathname === "/api/search/progressive-results") {
+        await pollGate;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            searchJobId: "progressive-results",
+            searchComplete: true,
+            searchStatus: "completed",
+            revision: 2,
+            sortMode: "cheapest",
+            request: undefined,
+            offers: [firstOffer, secondOffer],
+            allOffers: [firstOffer, secondOffer],
+            searchMeta: {
+              requestedAt: "2026-05-21T10:12:58.582Z",
+              completedAt: "2026-05-21T10:12:59.582Z",
+              providersUsed: ["agil-local", "costamar"],
+              warnings: [],
+              partial: false,
+              searchState: "search_live",
+            },
+            providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+            warnings: [],
+          }),
+        });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-05-28&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await page.getByTestId("result-card").first().waitFor();
+    await page.evaluate(() => {
+      (window as unknown as { __firstResultCard?: Element }).__firstResultCard = document.querySelector('[data-testid="result-card"]') ?? undefined;
+    });
+
+    releasePoll();
+    await page.getByTestId("result-card").nth(1).waitFor();
+    assert.equal(await page.evaluate(() => (
+      (window as unknown as { __firstResultCard?: Element }).__firstResultCard
+        === document.querySelector('[data-testid="result-card"]')
+    )), true);
+  }, { autoOpen: false });
+});
+
+test("cached offers stay non-quotable until a fresh provider result replaces them", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let releasePoll = () => {};
+    const pollGate = new Promise<void>((resolve) => {
+      releasePoll = resolve;
+    });
+    const cachedOffer = buildOffer({ id: "cache-refresh-offer" });
+    const freshOffer = { ...cachedOffer, quotationPreparedAt: "2026-05-21T10:13:58.582Z" };
+
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suggestions: [] }) });
+    });
+    await page.route("**/api/search**", async (route) => {
+      const url = new URL(route.request().url());
+      if (route.request().method() === "POST" && url.pathname === "/api/search") {
+        const payload = route.request().postDataJSON() as Record<string, unknown>;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            searchJobId: "cache-refresh-job",
+            searchComplete: false,
+            searchStatus: "running",
+            revision: 1,
+            sortMode: payload.sortMode,
+            request: payload.request,
+            offers: [cachedOffer],
+            allOffers: [cachedOffer],
+            searchMeta: {
+              requestedAt: "2026-05-21T10:12:58.582Z",
+              completedAt: "2026-05-21T10:12:58.582Z",
+              providersUsed: ["agil-local"],
+              warnings: ["Mostrando resultados cacheados mientras actualizamos en segundo plano."],
+              partial: true,
+              searchState: "search_cached",
+            },
+            providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+            warnings: [],
+          }),
+        });
+        return;
+      }
+
+      if (route.request().method() === "GET" && url.pathname === "/api/search/cache-refresh-job") {
+        await pollGate;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            searchJobId: "cache-refresh-job",
+            searchComplete: true,
+            searchStatus: "completed",
+            revision: 2,
+            sortMode: "cheapest",
+            request: undefined,
+            offers: [freshOffer],
+            allOffers: [freshOffer],
+            searchMeta: {
+              requestedAt: "2026-05-21T10:12:58.582Z",
+              completedAt: "2026-05-21T10:13:58.582Z",
+              providersUsed: ["agil-local"],
+              warnings: [],
+              partial: false,
+              searchState: "search_live",
+            },
+            providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+            warnings: [],
+          }),
+        });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-05-28&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await page.getByTestId("result-card").click();
+    const quoteButton = page.getByRole("button", { name: "Cotizar" });
+    assert.equal(await quoteButton.isDisabled(), true);
+
+    releasePoll();
+    await page.waitForFunction(() => {
+      const button = Array.from(document.querySelectorAll("button")).find((candidate) => candidate.textContent?.includes("Cotizar"));
+      return button instanceof HTMLButtonElement && !button.disabled;
+    });
+    assert.equal(await quoteButton.isEnabled(), true);
   }, { autoOpen: false });
 });

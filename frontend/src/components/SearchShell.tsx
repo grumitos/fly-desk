@@ -1285,7 +1285,7 @@ function MonthField({
                   <span className="text-sm font-bold">{year}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-1.5" role="group" aria-label={`Meses de ${year}`}>
-                  {months.filter((month) => month.key.startsWith(`${year}-`)).map((month) => {
+                  {hideFullyDisabledMonthRows(months.filter((month) => month.key.startsWith(`${year}-`))).map((month) => {
                     const selected = month.key === selectedMonth?.key
 
                     return (
@@ -1634,6 +1634,10 @@ function buildMigrationMonthOptions(startIso: string): MigrationMonthOption[] {
       disabled: key < start.slice(0, 7),
     }
   })
+}
+
+function hideFullyDisabledMonthRows(months: MigrationMonthOption[]) {
+  return months.filter((_, index) => months.slice(index - index % 3, index - index % 3 + 3).some((month) => !month.disabled))
 }
 
 function defaultMigrationMonthSelection(options: MigrationMonthOption[]) {

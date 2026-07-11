@@ -1067,6 +1067,30 @@ test("flexible and migratory modes expose their distinct controls", async () => 
   });
 });
 
+test("migratory month picker hides rows whose months are all unavailable", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route(`${baseUrl}/`, async (route) => {
+      const response = await route.fetch();
+      const body = (await response.text())
+        .replace(/"minSearchDate":"[^"]+"/, '"minSearchDate":"2026-04-01"')
+        .replace(/"maxSearchDate":"[^"]+"/, '"maxSearchDate":"2027-04-01"');
+      await route.fulfill({ response, body });
+    });
+
+    await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await page.getByRole("button", { name: "Migratorio" }).click();
+    await page.getByRole("button", { name: "Mes desde", exact: true }).click();
+
+    const calendar = page.getByRole("dialog", { name: "Calendario de mes desde" });
+    await calendar.waitFor();
+    assert.equal(await calendar.getByRole("button", { name: /Enero de 2026/i }).count(), 0);
+    assert.equal(await calendar.getByRole("button", { name: /Febrero de 2026/i }).count(), 0);
+    assert.equal(await calendar.getByRole("button", { name: /Marzo de 2026/i }).count(), 0);
+    assert.equal(await calendar.getByRole("button", { name: /Abril de 2026/i }).count(), 1);
+  }, { autoOpen: false });
+});
+
 test("one-way exact search keeps the return field visible but disabled", async () => {
   await withDesktopPage(async ({ page }) => {
     await page.getByRole("button", { name: "Solo ida" }).click();

@@ -1,4 +1,4 @@
-import { CanonicalOffer, Itinerary, QuotationUsdToPenRateInfo, SearchRequest, Segment } from "./types";
+import type { CanonicalOffer, Itinerary, QuotationUsdToPenRateInfo, SearchRequest, Segment } from "./types";
 import { cityNameForIataCode, countryCodeForIataCode, normalizeIataCode, stripAllAirportsLabel } from "./location-display";
 import { resolveAirlineDisplayName } from "./airline-names";
 
@@ -37,26 +37,55 @@ const PERU_AIRPORT_CODES = new Set([
   "TYL",
 ]);
 
+function commercialScheduleDate(iso: string, timeZone?: string): { date: Date; timeZone?: string } | undefined {
+  if (isDateOnly(iso) || !timeZone) {
+    const match = iso.match(/^(\d{4})-(\d{2})-(\d{2})(?:[Tt ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/);
+    if (match) {
+      const [, yearValue, monthValue, dayValue, hourValue = "12", minuteValue = "00", secondValue = "00"] = match;
+      const year = Number(yearValue);
+      const month = Number(monthValue) - 1;
+      const day = Number(dayValue);
+      const hour = Number(hourValue);
+      const minute = Number(minuteValue);
+      const second = Number(secondValue);
+      const date = new Date(Date.UTC(year, month, day, hour, minute, second));
+      if (
+        date.getUTCFullYear() === year
+        && date.getUTCMonth() === month
+        && date.getUTCDate() === day
+        && date.getUTCHours() === hour
+        && date.getUTCMinutes() === minute
+        && date.getUTCSeconds() === second
+      ) {
+        return { date, timeZone: "UTC" };
+      }
+    }
+  }
+
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? undefined : { date, timeZone };
+}
+
 function formatCommercialDate(iso?: string, timeZone?: string): string {
   if (!iso) {
     return "Fecha por confirmar";
   }
 
-  const date = new Date(isDateOnly(iso) ? `${iso}T12:00:00` : iso);
-  if (Number.isNaN(date.getTime())) {
+  const schedule = commercialScheduleDate(iso, timeZone);
+  if (!schedule) {
     return iso;
   }
 
   const formatter = new Intl.DateTimeFormat("es-PE", {
     day: "2-digit",
     month: "long",
-    ...(timeZone ? { timeZone } : {}),
+    ...(schedule.timeZone ? { timeZone: schedule.timeZone } : {}),
   });
-  const parts = formatter.formatToParts(date);
+  const parts = formatter.formatToParts(schedule.date);
   const day = parts.find((part) => part.type === "day")?.value;
   const month = parts.find((part) => part.type === "month")?.value;
 
-  return day && month ? `${day} ${month}` : formatter.format(date).replace("-", " ");
+  return day && month ? `${day} ${month}` : formatter.format(schedule.date).replace("-", " ");
 }
 
 function formatCommercialTime(iso?: string, timeZone?: string): string {
@@ -68,8 +97,8 @@ function formatCommercialTime(iso?: string, timeZone?: string): string {
     return "hora por confirmar";
   }
 
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
+  const schedule = commercialScheduleDate(iso, timeZone);
+  if (!schedule) {
     return iso;
   }
 
@@ -77,8 +106,8 @@ function formatCommercialTime(iso?: string, timeZone?: string): string {
     hour: "2-digit",
     minute: "2-digit",
     hour12: true,
-    ...(timeZone ? { timeZone } : {}),
-  }).formatToParts(date);
+    ...(schedule.timeZone ? { timeZone: schedule.timeZone } : {}),
+  }).formatToParts(schedule.date);
   const hour = parts.find((part) => part.type === "hour")?.value;
   const minute = parts.find((part) => part.type === "minute")?.value;
   const dayPeriod = parts.find((part) => part.type === "dayPeriod")?.value?.toLowerCase();
@@ -95,8 +124,7 @@ function formatCommercialEndpointSchedule(iso?: string, timeZone?: string): stri
     return formatCommercialDate(iso, timeZone);
   }
 
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
+  if (!commercialScheduleDate(iso, timeZone)) {
     return iso;
   }
 

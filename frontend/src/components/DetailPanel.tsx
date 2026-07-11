@@ -1,19 +1,23 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { buildResultCardModel, type ResultCardModel, type ResultJourneySummary } from "@/components/results/result-card-model"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { AppIcon } from "@/components/ui/app-icon"
 import { PanelSection, PanelSectionStack } from "@/components/ui/panel-section"
-import { fetchQuotation } from "@/lib/api"
+import { Switch } from "@/components/ui/switch"
+import { toBackendPayload } from "@/lib/api"
 import { buildOfferDetailSummary, formatOfferDate, type OfferDetailSummary } from "@/lib/offer-display"
 import { bestPurchasePath, normalizeSafePurchaseUrl } from "@/lib/purchase-path"
 import { providerDisplayName } from "@/lib/providers"
 import type { CanonicalOffer, SearchRequest, Segment } from "@/types"
+import { buildCommercialQuotation } from "../../../src/core/quotation"
+import { normalizeQuotationOfferSnapshot, normalizeQuotationRequestSnapshot } from "../../../src/http-quotation-snapshot"
 
 interface DetailPanelProps {
   offer: CanonicalOffer | null
   request?: SearchRequest
   searchJobId?: string
+  usdToPenRate?: number
 }
 
 type QuotationState = {
@@ -22,27 +26,50 @@ type QuotationState = {
   error?: boolean
 }
 
-export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
-  const [quotation, setQuotation] = useState<QuotationState | null>(null)
+export function DetailPanel({ offer, request, searchJobId, usdToPenRate }: DetailPanelProps) {
+  const [visibleQuotationKey, setVisibleQuotationKey] = useState<string | null>(null)
   const [migrationPlan, setMigrationPlan] = useState(false)
-  const [loadingKey, setLoadingKey] = useState<string | null>(null)
   const [copiedOfferKey, setCopiedOfferKey] = useState<string | null>(null)
   const [pathFeedback, setPathFeedback] = useState<{ offerId: string; message: string } | null>(null)
-  const pendingQuotationRef = useRef<{ key: string; promise: Promise<QuotationState> } | null>(null)
-  const preparedQuotationRef = useRef<QuotationState | null>(null)
 
-  const quoteSearchJobId = offer?.sourceSearchJobId ?? searchJobId
-  const quoteOfferId = offer?.sourceOfferId ?? offer?.id
   const quoteKey = offer && request
-    ? `${quoteSearchJobId ?? "snapshot"}:${quoteOfferId ?? offer.id}:${request.origin}:${request.destination}:${request.departureDate ?? request.departureStart ?? ""}:${request.returnDate ?? request.returnStart ?? ""}:${migrationPlan ? "migration" : "standard"}`
+    ? `${offer.sourceSearchJobId ?? searchJobId ?? "snapshot"}:${offer.sourceOfferId ?? offer.id}:${request.origin}:${request.destination}:${request.departureDate ?? request.departureStart ?? ""}:${request.returnDate ?? request.returnStart ?? ""}`
     : undefined
-  const activeQuotation = quotation && quotation.key === quoteKey ? quotation : null
-  const copied = copiedOfferKey === quoteKey
+  const copyKey = quoteKey ? `${quoteKey}:${migrationPlan ? "migration" : "standard"}` : undefined
+  const preparedQuotation = useMemo<QuotationState | null>(() => {
+    if (!offer || !request || !copyKey) return null
+
+    try {
+      const normalizedRequest = normalizeQuotationRequestSnapshot(toBackendPayload(request, "cheapest").request, offer)
+      const normalizedOffer = normalizedRequest && normalizeQuotationOfferSnapshot(offer, normalizedRequest)
+      if (!normalizedRequest || !normalizedOffer) throw new Error("Incomplete quotation snapshot")
+
+      return {
+        key: copyKey,
+        text: buildCommercialQuotation(normalizedOffer, normalizedRequest, {
+          migrationPlan,
+          usdToPenRate: normalizedOffer.usdToPenRate ?? usdToPenRate,
+        }),
+      }
+    } catch {
+      return {
+        key: copyKey,
+        text: "No se pudo generar la cotización con los datos de esta oferta.",
+        error: true,
+      }
+    }
+  }, [copyKey, migrationPlan, offer, request, usdToPenRate])
+  const activeQuotation = visibleQuotationKey === quoteKey ? preparedQuotation : null
+  const copied = copiedOfferKey === copyKey
   const purchasePath = offer ? bestPurchasePath(offer) : undefined
   const flightCodes = offer ? offerFlightCodes(offer) : []
   const activePathFeedback = pathFeedback && pathFeedback.offerId === offer?.id ? pathFeedback.message : null
-  const loading = Boolean(quoteKey && loadingKey === quoteKey)
-  const canQuote = Boolean(offer && request && quoteKey && quoteSearchJobId && quoteOfferId)
+  const canQuote = Boolean(offer?.quotationPreparedAt && request && quoteKey && preparedQuotation && !preparedQuotation.error)
+  const quotationActionTitle = !offer?.quotationPreparedAt
+    ? "Esperando una tarifa actualizada del proveedor"
+    : preparedQuotation?.error
+      ? "La oferta no contiene todos los datos necesarios para cotizar"
+      : "Cotizar y copiar"
   const purchasePathActionLabel = purchasePath?.type === "search-redirect" ? "Buscar" : "Abrir"
   const purchasePathActionTitle = purchasePath?.type === "search-redirect"
     ? "Abre la busqueda equivalente del proveedor; la disponibilidad puede variar."
@@ -66,89 +93,18 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
     }
   }, [markCopied])
 
-  const requestQuotation = useCallback(async (options: { silent?: boolean } = {}) => {
-    if (!offer || !request || !quoteKey || !quoteSearchJobId || !quoteOfferId) return null
-    if (quotation?.key === quoteKey && !quotation.error) return quotation
-
-    const prepared = preparedQuotationRef.current
-    if (prepared?.key === quoteKey && !prepared.error) {
-      if (!options.silent) setQuotation(prepared)
-      return prepared
-    }
-
-    const pending = pendingQuotationRef.current
-    if (pending?.key === quoteKey) {
-      if (!options.silent) setLoadingKey(quoteKey)
-      try {
-        const result = await pending.promise
-        if (!result.error) {
-          if (options.silent) {
-            preparedQuotationRef.current = result
-          } else {
-            setQuotation(result)
-          }
-        } else if (!options.silent) {
-          setQuotation(result)
-        }
-        return result
-      } finally {
-        if (!options.silent) {
-          setLoadingKey((current) => (current === quoteKey ? null : current))
-        }
-      }
-    }
-
-    const promise = fetchQuotation({
-      searchSessionId: quoteSearchJobId,
-      offerId: quoteOfferId,
-      migrationPlan,
-    })
-      .then((result): QuotationState => ({ key: quoteKey, text: result.commercialText }))
-      .catch((): QuotationState => ({
-        key: quoteKey,
-        text: "No se pudo generar la cotización. Revisa la oferta o intenta nuevamente.",
-        error: true,
-      }))
-    pendingQuotationRef.current = { key: quoteKey, promise }
-    if (!options.silent) setLoadingKey(quoteKey)
-
-    try {
-      const result = await promise
-      if (!result.error && options.silent) {
-        preparedQuotationRef.current = result
-      } else if (!result.error || !options.silent) {
-        setQuotation(result)
-      }
-      return result
-    } finally {
-      if (pendingQuotationRef.current?.key === quoteKey) {
-        pendingQuotationRef.current = null
-      }
-      if (!options.silent) {
-        setLoadingKey((current) => (current === quoteKey ? null : current))
-      }
-    }
-  }, [migrationPlan, offer, quoteKey, quoteOfferId, quoteSearchJobId, quotation, request])
-
-  useEffect(() => {
-    if (!canQuote || !quoteKey || activeQuotation || pendingQuotationRef.current?.key === quoteKey) return
-    void requestQuotation({ silent: true })
-  }, [activeQuotation, canQuote, quoteKey, requestQuotation])
-
   const handleQuotation = async () => {
-    if (!quoteKey) return
-    const result = activeQuotation && !activeQuotation.error
-      ? activeQuotation
-      : await requestQuotation()
+    if (!quoteKey || !preparedQuotation) return
+    setVisibleQuotationKey(quoteKey)
 
-    if (result && !result.error) {
-      await copyQuotationText(result.key, result.text)
+    if (!preparedQuotation.error) {
+      await copyQuotationText(preparedQuotation.key, preparedQuotation.text)
     }
   }
 
   const copyToClipboard = async () => {
-    if (!offer || !activeQuotation || activeQuotation.error || !quoteKey) return
-    await copyQuotationText(quoteKey, activeQuotation.text)
+    if (!offer || !activeQuotation || activeQuotation.error) return
+    await copyQuotationText(activeQuotation.key, activeQuotation.text)
   }
 
   const handlePurchasePath = async () => {
@@ -325,19 +281,18 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
           </div>
         )}
         <div className="flex items-center justify-between gap-2">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={migrationPlan}
-            aria-label="Paquete migratorio"
-            onClick={() => setMigrationPlan((current) => !current)}
-            className="flex h-8 items-center gap-2 rounded-lg px-1.5 text-xs font-semibold text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          <label
+            htmlFor="migration-plan"
+            className="flex h-8 cursor-pointer items-center gap-2 rounded-lg px-1.5 text-xs font-semibold text-muted-foreground hover:bg-accent hover:text-foreground"
           >
-            <span className={`relative h-4 w-7 rounded-full transition-colors ${migrationPlan ? "bg-primary" : "bg-input"}`} aria-hidden="true">
-              <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${migrationPlan ? "translate-x-3.5" : "translate-x-0.5"}`} />
-            </span>
-            Migratorio
-          </button>
+            <Switch
+              id="migration-plan"
+              checked={migrationPlan}
+              aria-label="Paquete migratorio"
+              onCheckedChange={setMigrationPlan}
+            />
+            <span>Migratorio</span>
+          </label>
           <div className="flex items-center gap-1.5">
             {purchasePath && (
               <Button size="sm" variant="secondary" title={purchasePathActionTitle} onClick={handlePurchasePath}>
@@ -345,9 +300,14 @@ export function DetailPanel({ offer, request, searchJobId }: DetailPanelProps) {
                 {purchasePathActionLabel}
               </Button>
             )}
-            <Button size="sm" onClick={handleQuotation} disabled={loading || !canQuote}>
-              {loading ? <AppIcon name="loading" spin /> : copied ? <AppIcon name="check" /> : <AppIcon name="clipboard" />}
-              {loading ? "Generando" : copied ? "Copiado" : "Cotizar"}
+            <Button
+              size="sm"
+              title={quotationActionTitle}
+              onClick={handleQuotation}
+              disabled={!canQuote}
+            >
+              {copied ? <AppIcon name="check" /> : <AppIcon name="clipboard" />}
+              {copied ? "Copiado" : "Cotizar"}
             </Button>
           </div>
         </div>

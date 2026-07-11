@@ -1,5 +1,7 @@
 # Bounded persisted search cache
 
+> Historical decision, superseded by the disk-only compatibility model in `2026-07-10-search-runtime-budget-design.md`. Over-budget valid rows are no longer deleted; only their resident hydration is bounded, and APIs/redirects load them from SQLite on demand until TTL expiry.
+
 ## Context
 
 The 2026-07-02 outage was triggered when the daily maintenance restart loaded 20 still-valid completed searches from SQLite. Their search payloads totaled 400,952,566 bytes and referenced 126,799 purchase paths. Deserializing that cache raised the search runner to about 2.6 GiB RSS and prevented it from reaching its health endpoint.

@@ -18,6 +18,7 @@ export interface ProviderSearchResult {
   offers: CanonicalOffer[];
   warnings: string[];
   partial: boolean;
+  incremental?: boolean;
 }
 
 export interface ProviderSearchWorkerInput {
@@ -285,6 +286,7 @@ export async function runProviderSearchInWorker(input: ProviderSearchWorkerInput
         offers: message.offers,
         warnings: message.warnings,
         partial: message.partial,
+        incremental: message.incremental,
       });
       if (keepGoing === false) {
         child.kill();

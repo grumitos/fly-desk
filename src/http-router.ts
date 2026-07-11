@@ -1,6 +1,7 @@
 import { materializeSearchResponse } from "./core/orchestrator";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
 import { buildCommercialQuotation, shouldIncludePenQuotationPrice } from "./core/quotation";
+import type { ProviderSearchResult } from "./core/provider";
 import { mkdir } from "node:fs/promises";
 import { timingSafeEqual } from "node:crypto";
 import * as path from "node:path";
@@ -14,6 +15,7 @@ import {
   ProviderDiagnostics,
   ProviderContext,
   ProviderId,
+  QuotationUsdToPenRateInfo,
   SEARCH_CACHE_VERSION,
   SearchMeta,
   SearchRequest,
@@ -58,7 +60,9 @@ import {
   resolveUsableCostamarBrandedToken,
   verifyCostamarTokenLive,
 } from "./provider-context";
-import { resolveQuotationUsdToPenRateInfo, warmQuotationUsdToPenRateInfo } from "./quotation-exchange-rate";
+import {
+  resolveStandaloneUsdToPenRateInfo,
+} from "./quotation-exchange-rate";
 import { SearchAdmissionError, type SearchAdmissionKind } from "./search-admission";
 import { resolveAcceptedApiAccessTokens } from "./service-auth";
 import { isSearchServiceRoute, maybeProxySearchServiceRequest } from "./search-service-client";
@@ -141,13 +145,13 @@ interface ProgressiveSearchAdapter {
   resolveExactProgressive(
     request: SearchRequest,
     providerContext: ProviderContext | undefined,
-    onUpdate?: (result: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => boolean | void,
-  ): Promise<{ offers: CanonicalOffer[]; warnings: string[]; partial: boolean }>;
+    onUpdate?: (result: ProviderSearchResult) => boolean | void,
+  ): Promise<ProviderSearchResult>;
   resolveRangeProgressive(
     request: SearchRequest,
     providerContext: ProviderContext | undefined,
-    onUpdate?: (result: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => boolean | void,
-  ): Promise<{ offers: CanonicalOffer[]; warnings: string[]; partial: boolean }>;
+    onUpdate?: (result: ProviderSearchResult) => boolean | void,
+  ): Promise<ProviderSearchResult>;
   createMatrixDraft(
     request: SearchRequest,
     providerMeta: { exactProvider: ProviderId; coverageMode: SearchRequest["coverageMode"] },
@@ -165,11 +169,34 @@ interface ProviderSearchState {
   warnings: string[];
   partial: boolean;
   completed: boolean;
+  fresh: boolean;
 }
 
-interface ProviderMatrixState {
+export function mergeProviderSearchProgress(
+  current: ProviderSearchState | undefined,
+  update: ProviderSearchResult,
+): ProviderSearchState {
+  if (update.incremental && current?.fresh) {
+    current.offers.push(...update.offers);
+    current.warnings.push(...update.warnings);
+    current.partial = true;
+    current.completed = false;
+    return current;
+  }
+
+  return {
+    offers: [...update.offers],
+    warnings: [...update.warnings],
+    partial: true,
+    completed: false,
+    fresh: true,
+  };
+}
+
+export interface ProviderMatrixState {
   response: MatrixResponse;
   completed: boolean;
+  cellIndex: Map<string, number>;
 }
 
 const PROGRESSIVE_ADAPTERS: Record<ProviderId, ProgressiveSearchAdapter> = {
@@ -224,6 +251,7 @@ export const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
     : SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS;
 })();
 const SEARCH_REVALIDATION_CACHE_WARNING = "Mostrando resultados cacheados mientras actualizamos en segundo plano.";
+const SEARCH_PROGRESS_SYNC_INTERVAL_MS = 900;
 const SEARCH_CANCELLED_WARNING = "Search cancelled by user.";
 const SEARCH_REFRESH_CANCELLED_WARNING = "Search stopped because the page was refreshed.";
 const DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS = 55_000;
@@ -254,6 +282,109 @@ function scheduleBackgroundSearchJob(callback: () => void, delayMs: number): voi
   const timer = setTimeout(callback, delayMs);
   if (typeof timer === "object" && timer && "unref" in timer) {
     (timer as { unref: () => void }).unref();
+  }
+}
+
+interface ProgressSyncController {
+  mark: () => void;
+  flush: () => void;
+  dispose: () => void;
+}
+
+const pendingProgressSyncs = new Map<string, ProgressSyncController>();
+
+function progressSyncKey(kind: "search" | "matrix", jobId: string): string {
+  return `${kind}:${jobId}`;
+}
+
+export function createTrailingProgressSync(
+  searchMode: SearchRequest["searchMode"],
+  sync: () => void,
+  intervalMs = SEARCH_PROGRESS_SYNC_INTERVAL_MS,
+): ProgressSyncController {
+  let dirty = false;
+  let lastSyncAt = Date.now();
+  let progressCount = 0;
+  let nextPublishCount = 1;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const flush = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+    if (!dirty) {
+      return;
+    }
+
+    dirty = false;
+    lastSyncAt = Date.now();
+    sync();
+    nextPublishCount = Math.max(progressCount + 1, progressCount * 2);
+  };
+
+  const mark = () => {
+    progressCount += 1;
+    dirty = true;
+    if (searchMode === "exact" || progressCount < nextPublishCount) {
+      return;
+    }
+
+    const remainingMs = Math.max(0, intervalMs - (Date.now() - lastSyncAt));
+    if (remainingMs === 0) {
+      flush();
+      return;
+    }
+    if (timer) {
+      return;
+    }
+
+    timer = setTimeout(flush, remainingMs);
+    if (typeof timer === "object" && timer && "unref" in timer) {
+      (timer as { unref: () => void }).unref();
+    }
+  };
+
+  return {
+    mark,
+    flush,
+    dispose: () => {
+      dirty = false;
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    },
+  };
+}
+
+function registerPendingProgressSync(
+  kind: "search" | "matrix",
+  jobId: string,
+  controller: ProgressSyncController,
+): void {
+  pendingProgressSyncs.set(progressSyncKey(kind, jobId), controller);
+}
+
+function disposePendingProgressSync(kind: "search" | "matrix", jobId: string, flush = false): void {
+  const key = progressSyncKey(kind, jobId);
+  const controller = pendingProgressSyncs.get(key);
+  if (!controller) {
+    return;
+  }
+
+  if (flush) {
+    controller.flush();
+  }
+  controller.dispose();
+  pendingProgressSyncs.delete(key);
+}
+
+export function flushPendingProgressForShutdown(): void {
+  for (const [key, controller] of pendingProgressSyncs) {
+    controller.flush();
+    controller.dispose();
+    pendingProgressSyncs.delete(key);
   }
 }
 
@@ -631,16 +762,21 @@ function currentSearchMeta(searchMeta: SearchMeta): SearchMeta {
   };
 }
 
+export function shouldPersistProgressSnapshot(lastPersistedCount: number, currentCount: number): boolean {
+  return currentCount > 0
+    && (lastPersistedCount <= 0 || currentCount >= lastPersistedCount * 2);
+}
+
 function createSearchDraftResponse(
   request: SearchRequest,
   providerIds: ProviderId[],
 ): SearchResponse {
   const requestedAt = new Date().toISOString();
   const warning = providerIds.length > 1
-    ? "Consultando Agil y Click and Book Plus. Los resultados se iran agregando."
+    ? "Consultando Agil y Click and Book Plus."
     : providerIds[0] === "costamar"
-      ? "Consultando Click and Book Plus. Los resultados se iran agregando."
-      : "Consultando Agil. Los resultados se iran agregando.";
+      ? "Consultando Click and Book Plus."
+      : "Consultando Agil.";
 
   return {
     offers: [],
@@ -682,11 +818,20 @@ function materializeAggregatedSearchResponse(
   states: Map<ProviderId, ProviderSearchState>,
 ): SearchResponse {
   const aggregated = aggregateProviderSearchStates(providerIds, states);
+  const freshOffers = providerIds.flatMap((providerId) => {
+    const state = states.get(providerId);
+    return state?.fresh ? state.offers : [];
+  });
+  const preparedFreshOffers = prepareOffersForQuotation(request, freshOffers);
+  const preparedBySource = new Map(freshOffers.map((offer, index) => [offer, preparedFreshOffers[index]]));
   const materialized = materializeSearchResponse(
     request,
     sortMode,
     providerIds[0],
-    aggregated,
+    {
+      ...aggregated,
+      offers: aggregated.offers.map((offer) => preparedBySource.get(offer) ?? stripQuotationPreparation(offer)),
+    },
   );
 
   materialized.searchMeta.providersUsed = providerIds;
@@ -728,7 +873,7 @@ function matrixCellStateRank(cell?: MatrixCell): number {
 function compareAggregatedMatrixCells(
   left: MatrixCell,
   right: MatrixCell,
-  providerIds: ProviderId[],
+  providerRanks: ReadonlyMap<ProviderId, number>,
 ): number {
   const leftHasPrice = typeof left.price?.amount === "number";
   const rightHasPrice = typeof right.price?.amount === "number";
@@ -748,27 +893,31 @@ function compareAggregatedMatrixCells(
     return stateDiff;
   }
 
-  return providerIds.indexOf(left.providerSource) - providerIds.indexOf(right.providerSource);
+  return (providerRanks.get(left.providerSource) ?? Number.MAX_SAFE_INTEGER)
+    - (providerRanks.get(right.providerSource) ?? Number.MAX_SAFE_INTEGER);
 }
 
 function pickAggregatedMatrixCell(
   cells: MatrixCell[],
-  providerIds: ProviderId[],
+  providerRanks: ReadonlyMap<ProviderId, number>,
 ): MatrixCell | undefined {
-  if (cells.length === 0) {
-    return undefined;
+  let selected = cells[0];
+  for (let index = 1; index < cells.length; index += 1) {
+    if (compareAggregatedMatrixCells(cells[index]!, selected!, providerRanks) < 0) {
+      selected = cells[index];
+    }
   }
-
-  return [...cells].sort((left, right) => compareAggregatedMatrixCells(left, right, providerIds))[0];
+  return selected;
 }
 
-function materializeAggregatedMatrixResponse(
+export function materializeAggregatedMatrixResponse(
   request: SearchRequest,
   providerIds: ProviderId[],
   states: Map<ProviderId, ProviderMatrixState>,
 ): MatrixResponse {
   const orderedKeys: string[] = [];
   const seenKeys = new Set<string>();
+  const providerRanks = new Map(providerIds.map((providerId, index) => [providerId, index]));
 
   providerIds.forEach((providerId) => {
     const response = states.get(providerId)?.response;
@@ -780,13 +929,32 @@ function materializeAggregatedMatrixResponse(
     });
   });
 
-  const cells = orderedKeys.flatMap((key) => {
+  const selectedCells = orderedKeys.flatMap((key) => {
     const candidates = providerIds
-      .map((providerId) => states.get(providerId)?.response.cells.find((cell) => cell.key === key))
+      .map((providerId) => {
+        const state = states.get(providerId);
+        if (!state) {
+          return undefined;
+        }
+        const index = state.cellIndex.get(key);
+        return index === undefined ? undefined : state.response.cells[index];
+      })
       .filter((cell): cell is MatrixCell => Boolean(cell));
-    const selected = pickAggregatedMatrixCell(candidates, providerIds);
+    const selected = pickAggregatedMatrixCell(candidates, providerRanks);
     return selected ? [selected] : [];
   });
+  const matrixOffers = providerIds.flatMap((providerId) =>
+    states.get(providerId)?.response.cells.flatMap((cell) => cell.offer ? [cell.offer] : []) ?? []
+  );
+  const preparedOffers = prepareOffersForQuotation(
+    request,
+    selectedCells.flatMap((cell) => cell.offer ? [cell.offer] : []),
+    matrixOffers,
+  );
+  let preparedOfferIndex = 0;
+  const cells = selectedCells.map((cell) => cell.offer
+    ? { ...cell, offer: preparedOffers[preparedOfferIndex++] }
+    : cell);
 
   const departureDates: string[] = [];
   const seenDepartureDates = new Set<string>();
@@ -848,13 +1016,38 @@ function materializeAggregatedMatrixResponse(
   };
 }
 
-function updateMatrixDraftCell(response: MatrixResponse, cell: MatrixCell): MatrixResponse {
-  const cells = response.cells.map((entry) => entry.key === cell.key ? cell : entry);
-  return {
-    ...response,
-    cells,
-    confidenceSummary: buildMatrixConfidenceSummary(cells),
-  };
+export function buildMatrixCellIndex(cells: readonly MatrixCell[]): Map<string, number> {
+  const index = new Map<string, number>();
+  cells.forEach((cell, position) => {
+    if (!index.has(cell.key)) {
+      index.set(cell.key, position);
+    }
+  });
+  return index;
+}
+
+export function updateMatrixDraftCell(
+  response: MatrixResponse,
+  cell: MatrixCell,
+  cellIndex: ReadonlyMap<string, number>,
+): MatrixResponse {
+  const position = cellIndex.get(cell.key);
+  const previous = position === undefined ? undefined : response.cells[position];
+  if (position === undefined || !previous) {
+    return response;
+  }
+
+  response.cells[position] = cell;
+  if (previous.confidence !== cell.confidence) {
+    const previousCount = (response.confidenceSummary[previous.confidence] ?? 0) - 1;
+    if (previousCount > 0) {
+      response.confidenceSummary[previous.confidence] = previousCount;
+    } else {
+      delete response.confidenceSummary[previous.confidence];
+    }
+    response.confidenceSummary[cell.confidence] = (response.confidenceSummary[cell.confidence] ?? 0) + 1;
+  }
+  return response;
 }
 
 function materializeFailedMatrixResponse(
@@ -920,11 +1113,11 @@ async function resolveProviderSearchProgressive(
   providerId: ProviderId,
   request: SearchRequest,
   providerContext: ProviderContext | undefined,
-  onProgress: (result: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => boolean | void,
+  onProgress: (result: ProviderSearchResult) => boolean | void,
   diagnostics: ProviderDiagnostics | undefined,
   onProviderEvent: ((event: ProviderDiagnosticEvent) => void) | undefined,
   shouldContinue: (() => boolean) | undefined,
-): Promise<{ offers: CanonicalOffer[]; warnings: string[]; partial: boolean }> {
+): Promise<ProviderSearchResult> {
   const kind = request.searchMode === "stay-range" ? "range" : "exact";
   if (shouldUseSearchWorkerProcesses()) {
     return runProviderSearchInWorker({
@@ -939,7 +1132,7 @@ async function resolveProviderSearchProgressive(
   }
 
   const adapter = getProgressiveAdapter(providerId);
-  const guardedOnProgress = (result: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
+  const guardedOnProgress = (result: ProviderSearchResult) => {
     if (!shouldContinueProviderWork(shouldContinue)) {
       return false;
     }
@@ -1127,7 +1320,8 @@ function isTrustedApiRequest(request: Request): boolean {
 }
 
 function isOfferValidatedForQuotation(offer: CanonicalOffer): boolean {
-  return offer.priceConfidence === "validated" && offer.priceStatus === "verified";
+  return offer.priceConfidence === "validated" && offer.priceStatus === "verified"
+    || Boolean(offer.quotationPreparedAt);
 }
 
 function stripQuotationPreparation(offer: CanonicalOffer): CanonicalOffer {
@@ -1140,16 +1334,96 @@ function stripQuotationPreparation(offer: CanonicalOffer): CanonicalOffer {
   return next;
 }
 
-function scheduleQuotationWarmupForSearchJob(
-  runtime: ReturnType<typeof getRuntime>,
-  jobId: string,
-): void {
-  const session = runtime.sessions.getSession(jobId);
-  if (!session || session.offers.length === 0) {
-    return;
+type QuotationRateResolver = (
+  offer: CanonicalOffer,
+  options?: { final?: boolean },
+) => Promise<QuotationUsdToPenRateInfo | undefined>;
+
+function isUsableUsdToPenRate(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 2 && value <= 8;
+}
+
+function offerNeedsQuotationRate(offer: CanonicalOffer, request: SearchRequest): boolean {
+  const currencyCode = String(offer.price.total.currencyCode ?? "").trim().toUpperCase();
+  const domesticPeru = shouldIncludePenQuotationPrice(offer, request);
+  return domesticPeru ? currencyCode === "USD" : currencyCode === "PEN";
+}
+
+export function prepareOffersForQuotation(
+  request: SearchRequest,
+  offers: CanonicalOffer[],
+  rateCandidates: readonly CanonicalOffer[] = offers,
+): CanonicalOffer[] {
+  const sharedRate = rateCandidates.map((offer) => offer.usdToPenRate).find(isUsableUsdToPenRate);
+  const quotationPreparedAt = new Date().toISOString();
+
+  return offers.map((offer) => {
+    const usdToPenRate = isUsableUsdToPenRate(offer.usdToPenRate) ? offer.usdToPenRate : sharedRate;
+    const prepared = usdToPenRate === undefined ? { ...offer } : { ...offer, usdToPenRate };
+    if (offerNeedsQuotationRate(prepared, request) && usdToPenRate === undefined) {
+      delete prepared.quotationPreparedAt;
+      return prepared;
+    }
+    return { ...prepared, quotationPreparedAt };
+  });
+}
+
+export async function resolveQuotationReadyOffers(
+  request: SearchRequest,
+  offers: CanonicalOffer[],
+  resolveRate: QuotationRateResolver = (offer) => resolveStandaloneUsdToPenRateInfo(offer),
+): Promise<CanonicalOffer[]> {
+  const prepared = prepareOffersForQuotation(request, offers);
+  const unresolved = prepared.find((offer) => offerNeedsQuotationRate(offer, request) && !offer.quotationPreparedAt);
+  if (!unresolved) {
+    return prepared;
   }
 
-  void warmQuotationUsdToPenRateInfo(session)?.catch(() => undefined);
+  const rateInfo = await resolveRate(unresolved, { final: true }).catch(() => undefined);
+  if (!isUsableUsdToPenRate(rateInfo?.rate)) {
+    return prepared;
+  }
+
+  return prepareOffersForQuotation(request, offers.map((offer) => ({ ...offer, usdToPenRate: rateInfo.rate })));
+}
+
+export function createSharedQuotationRateResolver(
+  lookup: (offer: CanonicalOffer) => Promise<QuotationUsdToPenRateInfo | undefined> = resolveStandaloneUsdToPenRateInfo,
+): QuotationRateResolver {
+  let pending: Promise<QuotationUsdToPenRateInfo | undefined> | undefined;
+  let prefetched = false;
+  let finalRetryUsed = false;
+  const startLookup = (offer: CanonicalOffer) => lookup(offer).catch(() => undefined);
+
+  return async (offer, options) => {
+    if (!pending) {
+      pending = startLookup(offer);
+      prefetched = !options?.final;
+    }
+
+    const rateInfo = await pending;
+    if (rateInfo || !options?.final || !prefetched || finalRetryUsed) {
+      return rateInfo;
+    }
+
+    finalRetryUsed = true;
+    pending = startLookup(offer);
+    return pending;
+  };
+}
+
+function startQuotationRateResolution(
+  request: SearchRequest,
+  offers: CanonicalOffer[],
+  resolveRate: QuotationRateResolver,
+): void {
+  if (offers.some((offer) => isUsableUsdToPenRate(offer.usdToPenRate))) {
+    return;
+  }
+  const unresolved = offers.find((offer) => offerNeedsQuotationRate(offer, request));
+  if (unresolved) {
+    void resolveRate(unresolved);
+  }
 }
 
 function offerFirstSegment(offer: CanonicalOffer): CanonicalOffer["itineraries"][number]["segments"][number] | undefined {
@@ -1632,6 +1906,12 @@ function resolveLocationSuggestionSessionId(value: string | null): string | unde
   return normalized || undefined;
 }
 
+function matrixCellHasResult(cell: MatrixCell): boolean {
+  return Boolean(cell.offer)
+    || typeof cell.price?.amount === "number"
+    || Boolean(cell.purchasePaths?.length);
+}
+
 function matrixJobResponse(
   job: ReturnType<typeof getRuntime>["sessions"] extends { getMatrixJob(jobId: string): infer T } ? NonNullable<T> : never,
   sinceRevision?: number,
@@ -1657,7 +1937,7 @@ function matrixJobResponse(
 
   return {
     ...base,
-    cells: job.cells,
+    cells: job.cells.filter(matrixCellHasResult),
     axes: job.axes,
     confidenceSummary: job.confidenceSummary,
     recommendations: job.recommendations,
@@ -1928,6 +2208,7 @@ function createProviderSearchStates(
       warnings: [],
       partial: true,
       completed: false,
+      fresh: false,
     }]),
   );
 }
@@ -2087,6 +2368,7 @@ function shouldCachePartialCancellation(url: URL): boolean {
 
 function cancelSearchJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: string, url: URL): Response {
   const cachePartial = shouldCachePartialCancellation(url);
+  disposePendingProgressSync("search", jobId, cachePartial);
   const job = runtime.sessions.cancelSearchJob(
     jobId,
     cachePartial ? SEARCH_REFRESH_CANCELLED_WARNING : SEARCH_CANCELLED_WARNING,
@@ -2101,6 +2383,7 @@ function cancelSearchJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: 
 
 function cancelMatrixJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: string, url: URL): Response {
   const cachePartial = shouldCachePartialCancellation(url);
+  disposePendingProgressSync("matrix", jobId, cachePartial);
   const job = runtime.sessions.cancelMatrixJob(
     jobId,
     cachePartial ? SEARCH_REFRESH_CANCELLED_WARNING : SEARCH_CANCELLED_WARNING,
@@ -2201,6 +2484,8 @@ async function handleSearchRequest(
     cached: Boolean(cacheSeedJob),
     offers: job.offers.length,
   });
+  const quotationRateResolver = createSharedQuotationRateResolver();
+  let lastPersistedSearchProgressCount = 0;
 
   const syncSearchJob = (status: "running" | "completed") => {
     const materialized = materializeAggregatedSearchResponse(
@@ -2209,9 +2494,15 @@ async function handleSearchRequest(
       providerIds,
       providerStates,
     );
+    const progressCount = (materialized.allOffers ?? materialized.offers).length;
+    const persist = status === "completed"
+      || shouldPersistProgressSnapshot(lastPersistedSearchProgressCount, progressCount);
+    if (status === "running" && persist) {
+      lastPersistedSearchProgressCount = progressCount;
+    }
 
-    const updated = runtime.sessions.updateSearchJob(job.id, (current) => {
-      if (current.status === "cancelled") {
+    runtime.sessions.updateSearchJob(job.id, (current) => {
+      if (current.status !== "running") {
         return current;
       }
       return {
@@ -2229,14 +2520,18 @@ async function handleSearchRequest(
         status,
         error: undefined,
       };
-    });
-    if (updated?.offers.length) {
-      scheduleQuotationWarmupForSearchJob(runtime, job.id);
-    }
+    }, { persist });
     return materialized;
   };
 
   if (shouldRunBackgroundSearchJobs()) {
+    const searchProgressSync = createTrailingProgressSync(normalizedRequest.searchMode, () => {
+      if (isSearchJobRunning(runtime, job.id)) {
+        syncSearchJob("running");
+      }
+    });
+    registerPendingProgressSync("search", job.id, searchProgressSync);
+    const syncSearchProgress = searchProgressSync.mark;
     scheduleBackgroundSearchJob(() => {
       void runtime.searchAdmission.run(
         {
@@ -2246,6 +2541,7 @@ async function handleSearchRequest(
         },
         async () => {
           if (!isSearchJobRunning(runtime, job.id)) {
+            disposePendingProgressSync("search", job.id);
             return;
           }
 
@@ -2282,7 +2578,7 @@ async function handleSearchRequest(
               }));
             };
             let firstProgressReported = false;
-            const onProgress = (partialResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean }) => {
+            const onProgress = (partialResult: ProviderSearchResult) => {
               if (!isSearchJobRunning(runtime, job.id)) {
                 return false;
               }
@@ -2292,13 +2588,16 @@ async function handleSearchRequest(
                 recordProviderEvent("first_progress");
               }
 
-              providerStates.set(providerId, {
-                offers: partialResult.offers,
-                warnings: partialResult.warnings,
-                partial: true,
-                completed: false,
-              });
-              syncSearchJob("running");
+              providerStates.set(
+                providerId,
+                mergeProviderSearchProgress(providerStates.get(providerId), partialResult),
+              );
+              startQuotationRateResolution(
+                normalizedRequest,
+                partialResult.offers,
+                quotationRateResolver,
+              );
+              syncSearchProgress();
               return isSearchJobRunning(runtime, job.id);
             };
 
@@ -2329,7 +2628,13 @@ async function handleSearchRequest(
                 warnings: result.warnings,
                 partial: result.partial,
                 completed: true,
+                fresh: true,
               });
+              startQuotationRateResolution(
+                normalizedRequest,
+                providerIds.flatMap((id) => providerStates.get(id)?.offers ?? []),
+                quotationRateResolver,
+              );
               logPerfSpan("search.provider", providerStart, {
                 jobId: job.id,
                 providerId,
@@ -2342,19 +2647,23 @@ async function handleSearchRequest(
                 offers: result.offers.length,
                 warningCount: result.warnings.length,
               });
-              syncSearchJob("running");
+              syncSearchProgress();
             } catch (error) {
               if (!isSearchJobRunning(runtime, job.id)) {
                 return;
               }
 
+              const partialState = providerStates.get(providerId);
+              const errorMessage = error instanceof Error ? error.message : "Search job failed.";
               providerStates.set(providerId, {
-                offers: [],
-                warnings: [
-                  error instanceof Error ? error.message : "Search job failed.",
-                ],
+                offers: partialState?.fresh ? partialState.offers : [],
+                warnings: uniqueStrings([
+                  ...(partialState?.fresh ? partialState.warnings : []),
+                  errorMessage,
+                ]),
                 partial: true,
                 completed: true,
+                fresh: true,
               });
               failedProviderIds.add(providerId);
               recordProviderEvent("failed", "failed");
@@ -2369,11 +2678,13 @@ async function handleSearchRequest(
                 status: "failed",
                 error: error instanceof Error ? error.name : "Error",
               });
+              syncSearchProgress();
             }
           });
 
           const settled = await Promise.allSettled(resolvers);
           if (!isSearchJobRunning(runtime, job.id)) {
+            disposePendingProgressSync("search", job.id);
             logPerfSpan("search.job", requestStart, {
               jobId: job.id,
               status: runtime.sessions.getSearchJob(job.id)?.status ?? "missing",
@@ -2382,6 +2693,21 @@ async function handleSearchRequest(
             return;
           }
 
+          const sourceOffers = providerIds.flatMap((providerId) => providerStates.get(providerId)?.offers ?? []);
+          const readyOffers = await resolveQuotationReadyOffers(normalizedRequest, sourceOffers, quotationRateResolver);
+          const readyBySource = new Map(sourceOffers.map((offer, index) => [offer, readyOffers[index]]));
+          providerIds.forEach((providerId) => {
+            const state = providerStates.get(providerId);
+            if (state) {
+              state.offers = state.offers.map((offer) => readyBySource.get(offer) ?? offer);
+            }
+          });
+          if (!isSearchJobRunning(runtime, job.id)) {
+            disposePendingProgressSync("search", job.id);
+            return;
+          }
+
+          disposePendingProgressSync("search", job.id);
           const materialized = syncSearchJob("completed");
           logPerfSpan("search.job", requestStart, {
             jobId: job.id,
@@ -2393,6 +2719,7 @@ async function handleSearchRequest(
           });
         },
       ).catch((error) => {
+        disposePendingProgressSync("search", job.id, true);
         failSearchJobForAdmission(runtime, job.id, providerIds, error);
         logPerfSpan("search.job", requestStart, {
           jobId: job.id,
@@ -2439,6 +2766,7 @@ async function handleMatrixRequest(
       return [providerId, {
         response,
         completed: false,
+        cellIndex: buildMatrixCellIndex(response.cells),
       }];
     }),
   );
@@ -2466,6 +2794,8 @@ async function handleMatrixRequest(
     providers: providerIds.join(","),
     cells: job.cells.length,
   });
+  const quotationRateResolver = createSharedQuotationRateResolver();
+  let lastPersistedMatrixProgressCount = 0;
 
   const syncMatrixJob = (status: "running" | "completed") => {
     const materialized = materializeAggregatedMatrixResponse(
@@ -2473,9 +2803,15 @@ async function handleMatrixRequest(
       providerIds,
       providerStates,
     );
+    const progressCount = materialized.cells.filter((cell) => cell.confidence !== "loading").length;
+    const persist = status === "completed"
+      || shouldPersistProgressSnapshot(lastPersistedMatrixProgressCount, progressCount);
+    if (status === "running" && persist) {
+      lastPersistedMatrixProgressCount = progressCount;
+    }
 
     runtime.sessions.updateMatrixJob(job.id, (current) => {
-      if (current.status === "cancelled") {
+      if (current.status !== "running") {
         return current;
       }
       return {
@@ -2494,12 +2830,19 @@ async function handleMatrixRequest(
         status,
         error: undefined,
       };
-    });
+    }, { persist });
 
     return materialized;
   };
 
   if (shouldRunBackgroundSearchJobs()) {
+    const matrixProgressSync = createTrailingProgressSync(normalizedRequest.searchMode, () => {
+      if (isMatrixJobRunning(runtime, job.id)) {
+        syncMatrixJob("running");
+      }
+    });
+    registerPendingProgressSync("matrix", job.id, matrixProgressSync);
+    const syncMatrixProgress = matrixProgressSync.mark;
     scheduleBackgroundSearchJob(() => {
       void runtime.searchAdmission.run(
         {
@@ -2509,6 +2852,7 @@ async function handleMatrixRequest(
         },
         async () => {
           if (!isMatrixJobRunning(runtime, job.id)) {
+            disposePendingProgressSync("matrix", job.id);
             return;
           }
 
@@ -2581,11 +2925,14 @@ async function handleMatrixRequest(
                 return false;
               }
 
-              providerStates.set(providerId, {
-                response: updateMatrixDraftCell(providerState.response, cell),
-                completed: false,
-              });
-              syncMatrixJob("running");
+              updateMatrixDraftCell(providerState.response, cell, providerState.cellIndex);
+              providerState.completed = false;
+              startQuotationRateResolution(
+                normalizedRequest,
+                cell.offer ? [cell.offer] : [],
+                quotationRateResolver,
+              );
+              syncMatrixProgress();
               return isMatrixJobRunning(runtime, job.id);
             },
             providerDiagnosticSeed ? cloneProviderDiagnostics(providerDiagnosticSeed) : undefined,
@@ -2599,7 +2946,15 @@ async function handleMatrixRequest(
           providerStates.set(providerId, {
             response: result,
             completed: true,
+            cellIndex: buildMatrixCellIndex(result.cells),
           });
+          startQuotationRateResolution(
+            normalizedRequest,
+            providerIds.flatMap((id) =>
+              providerStates.get(id)?.response.cells.flatMap((entry) => entry.offer ? [entry.offer] : []) ?? []
+            ),
+            quotationRateResolver,
+          );
           logPerfSpan("matrix.provider", providerStart, {
             jobId: job.id,
             providerId,
@@ -2617,12 +2972,16 @@ async function handleMatrixRequest(
             return;
           }
 
+          const partialState = providerStates.get(providerId);
+          const partialResponse = partialState?.response ?? draftResponse;
+          const failedResponse = materializeFailedMatrixResponse(
+            partialResponse,
+            error instanceof Error ? error.message : "Matrix job failed.",
+          );
           providerStates.set(providerId, {
-            response: materializeFailedMatrixResponse(
-              draftResponse,
-              error instanceof Error ? error.message : "Matrix job failed.",
-            ),
+            response: failedResponse,
             completed: true,
+            cellIndex: partialState?.cellIndex ?? buildMatrixCellIndex(failedResponse.cells),
           });
           failedProviderIds.add(providerId);
           recordProviderEvent("failed", "failed");
@@ -2640,12 +2999,13 @@ async function handleMatrixRequest(
         }
 
         if (isMatrixJobRunning(runtime, job.id)) {
-          syncMatrixJob("running");
+          syncMatrixProgress();
         }
       });
 
           const settled = await Promise.allSettled(resolvers);
           if (!isMatrixJobRunning(runtime, job.id)) {
+            disposePendingProgressSync("matrix", job.id);
             logPerfSpan("matrix.job", requestStart, {
               jobId: job.id,
               status: runtime.sessions.getMatrixJob(job.id)?.status ?? "missing",
@@ -2654,6 +3014,25 @@ async function handleMatrixRequest(
             return;
           }
 
+          const sourceOffers = providerIds.flatMap((providerId) =>
+            providerStates.get(providerId)?.response.cells.flatMap((cell) => cell.offer ? [cell.offer] : []) ?? []
+          );
+          const readyOffers = await resolveQuotationReadyOffers(normalizedRequest, sourceOffers, quotationRateResolver);
+          const readyBySource = new Map(sourceOffers.map((offer, index) => [offer, readyOffers[index]]));
+          providerIds.forEach((providerId) => {
+            const state = providerStates.get(providerId);
+            if (state) {
+              state.response.cells = state.response.cells.map((cell) => cell.offer
+                ? { ...cell, offer: readyBySource.get(cell.offer) ?? cell.offer }
+                : cell);
+            }
+          });
+          if (!isMatrixJobRunning(runtime, job.id)) {
+            disposePendingProgressSync("matrix", job.id);
+            return;
+          }
+
+          disposePendingProgressSync("matrix", job.id);
           const materialized = syncMatrixJob("completed");
           logPerfSpan("matrix.job", requestStart, {
             jobId: job.id,
@@ -2665,6 +3044,7 @@ async function handleMatrixRequest(
           });
         },
       ).catch((error) => {
+        disposePendingProgressSync("matrix", job.id, true);
         failMatrixJobForAdmission(runtime, job.id, providerIds, error);
         logPerfSpan("matrix.job", requestStart, {
           jobId: job.id,
@@ -2978,10 +3358,9 @@ export async function routeRequest(request: Request): Promise<Response> {
       let location = resolved.path.url;
 
       if (resolved.path.provider === "costamar" && resolved.path.type === "search-redirect") {
-        const searchSession = runtime.sessions.getSession(resolved.sessionId);
-        const matrixJob = runtime.sessions.getMatrixJob(resolved.sessionId);
-        const providerContext = searchSession?.providerContext ?? matrixJob?.providerContext;
-        const fallbackRequest = searchSession?.request ?? matrixJob?.request;
+        const redirectContext = runtime.sessions.getRedirectContext(resolved.sessionId);
+        const providerContext = redirectContext?.providerContext;
+        const fallbackRequest = redirectContext?.request;
         let canRedirect = false;
         let blockedReason: string | undefined;
 
@@ -3070,9 +3449,8 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     const offer = storeValidatedQuotationOffer(runtime, source, validatedOffer);
-    const searchSession = runtime.sessions.getSession(source.sessionId);
-    const usdToPenRateInfo = shouldIncludePenQuotationPrice(offer, source.request) && searchSession
-      ? await resolveQuotationUsdToPenRateInfo(searchSession, offer)
+    const usdToPenRateInfo = offerNeedsQuotationRate(offer, source.request)
+      ? await resolveStandaloneUsdToPenRateInfo(offer)
       : undefined;
 
     return json({

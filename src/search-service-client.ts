@@ -4,6 +4,16 @@ const SEARCH_SERVICE_PROXY_HEADER = "x-flydesk-search-proxy";
 const DEFAULT_SEARCH_SERVICE_TIMEOUT_MS = 15_000;
 const MIN_ENV_SEARCH_SERVICE_TIMEOUT_MS = DEFAULT_SEARCH_SERVICE_TIMEOUT_MS;
 const MAX_SEARCH_SERVICE_TIMEOUT_MS = 60_000;
+const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
 
 type FetchImpl = typeof fetch;
 
@@ -91,9 +101,15 @@ function joinTargetPath(basePathname: string, requestPathname: string): string {
 
 function responseHeadersFromProxy(response: Response): Headers {
   const headers = new Headers();
+  const connectionHeaders = new Set(
+    (response.headers.get("connection") ?? "")
+      .split(",")
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean),
+  );
   response.headers.forEach((value, key) => {
     const normalized = key.toLowerCase();
-    if (normalized === "connection" || normalized === "keep-alive" || normalized === "transfer-encoding") {
+    if (HOP_BY_HOP_RESPONSE_HEADERS.has(normalized) || connectionHeaders.has(normalized)) {
       return;
     }
     headers.set(key, value);
@@ -196,20 +212,16 @@ export async function maybeProxySearchServiceRequest(
 
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   const body = hasBody ? await request.arrayBuffer() : undefined;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), resolveSearchServiceTimeoutMs(options.timeoutMs));
-  timeout.unref?.();
 
   try {
     const response = await (options.fetchImpl ?? fetch)(target, {
       method: request.method,
       headers,
       body,
-      signal: controller.signal,
+      signal: AbortSignal.timeout(resolveSearchServiceTimeoutMs(options.timeoutMs)),
     });
 
-    const responseBody = await response.arrayBuffer();
-    return new Response(responseBody, {
+    return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
       headers: responseHeadersFromProxy(response),
@@ -217,7 +229,5 @@ export async function maybeProxySearchServiceRequest(
   } catch (error) {
     logSearchServiceProxyFailure(error, target, request, hasApiToken);
     return searchServiceUnavailableResponse();
-  } finally {
-    clearTimeout(timeout);
   }
 }
