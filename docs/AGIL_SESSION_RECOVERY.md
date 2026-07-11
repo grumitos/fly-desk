@@ -22,7 +22,7 @@ mantenedor.
 
    ```bash
    systemctl is-active caddy video-downloader fly-desk fly-desk-search fly-desk-chrome fly-desk-maintenance.timer
-   curl -fsS http://127.0.0.1:32123/api/health
+   curl -fsS http://127.0.0.1:8100/api/health
    curl -fsS http://127.0.0.1:9222/json/version >/dev/null
    ```
 
