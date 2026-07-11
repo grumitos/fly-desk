@@ -22,3 +22,13 @@ test("deploy and rollback only invoke the fixed platform release wrapper", async
   assert.doesNotMatch(workflow, /bash -s --/);
   assert.doesNotMatch(workflow, /rsync -a --delete "\$release_dir"/);
 });
+
+test("deploy proves an exact main revision without retained checkout credentials", async () => {
+  const workflow = await Bun.file(new URL("../.github/workflows/deploy-vps.yml", import.meta.url)).text();
+
+  assert.match(workflow, /ref: main/);
+  assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /git merge-base --is-ancestor "\$REVISION" HEAD/);
+  assert.match(workflow, /git checkout --detach "\$REVISION"/);
+  assert.doesNotMatch(workflow, /git fetch/);
+});
