@@ -222,7 +222,10 @@ jobs:
             echo "flock is required for Fly Desk operation coordination."
             exit 1
           fi
+          operation_lock_group="$(id -gn)"
           $sudo_cmd touch "$operation_lock_file"
+          $sudo_cmd chown "root:$operation_lock_group" "$operation_lock_file"
+          $sudo_cmd chmod 0640 "$operation_lock_file"
           exec 9<"$operation_lock_file"
           if ! flock -w 300 9; then
             echo "Timed out waiting for the Fly Desk operation lock."
@@ -446,7 +449,10 @@ jobs:
             echo "flock is required for Fly Desk operation coordination."
             exit 1
           fi
+          operation_lock_group="$(id -gn)"
           $sudo_cmd touch "$operation_lock_file"
+          $sudo_cmd chown "root:$operation_lock_group" "$operation_lock_file"
+          $sudo_cmd chmod 0640 "$operation_lock_file"
           exec 9<"$operation_lock_file"
           if ! flock -w 300 9; then
             echo "Timed out waiting for the Fly Desk operation lock."
