@@ -59,7 +59,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 
 ### Supply Chain
 
-- package manager soportado: Bun (`packageManager: "bun@1.3.13"`)
+- package manager soportado: Bun (`packageManager: "bun@1.3.14"`)
 - lockfile vigente: `bun.lock`
 - `bunfig.toml` desactiva lifecycle scripts durante instalacion y filtra versiones publicadas hace menos de 3 dias
 - `.npmrc` define `ignore-scripts=true` como proteccion para instalaciones accidentales con npm/pnpm
