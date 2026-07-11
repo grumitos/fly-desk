@@ -5,18 +5,20 @@ test("deploy and rollback require a pinned VPS host key", async () => {
   const workflow = await Bun.file(new URL("../.github/workflows/deploy-vps.yml", import.meta.url)).text();
 
   assert.doesNotMatch(workflow, /\bssh-keyscan\b/);
-  assert.equal(workflow.match(/secrets\.FLY_DESK_VPS_KNOWN_HOSTS/g)?.length, 2);
+  assert.equal(workflow.match(/secrets\.VPS_SSH_KNOWN_HOSTS_B64/g)?.length, 2);
   assert.equal(workflow.match(/ssh-keygen -F /g)?.length, 2);
-  assert.equal(workflow.match(/StrictHostKeyChecking=yes/g)?.length, 3);
+  assert.equal(workflow.match(/StrictHostKeyChecking yes/g)?.length, 2);
+  assert.equal(workflow.match(/BatchMode yes/g)?.length, 2);
+  assert.equal(workflow.match(/IdentitiesOnly yes/g)?.length, 2);
 });
 
-test("deploy and rollback coordinate with Fly Desk maintenance", async () => {
+test("deploy and rollback only invoke the fixed platform release wrapper", async () => {
   const workflow = await Bun.file(new URL("../.github/workflows/deploy-vps.yml", import.meta.url)).text();
 
-  assert.equal(workflow.match(/operation_lock_file="\/run\/fly-desk-operation\.lock"/g)?.length, 2);
-  assert.equal(workflow.match(/command -v flock/g)?.length, 2);
-  assert.equal(workflow.match(/operation_lock_group="\$\(id -gn\)"/g)?.length, 2);
-  assert.equal(workflow.match(/chown "root:\$operation_lock_group"/g)?.length, 2);
-  assert.equal(workflow.match(/chmod 0640 "\$operation_lock_file"/g)?.length, 2);
-  assert.equal(workflow.match(/flock -w 300 9/g)?.length, 2);
+  assert.match(workflow, /RELEASE_WRAPPER: \/usr\/local\/bin\/vps-release-fly-desk/);
+  assert.match(workflow, /sudo -n '\$RELEASE_WRAPPER' deploy '\$REVISION' '\$ARTIFACT_DIGEST'/);
+  assert.match(workflow, /sudo -n '\$RELEASE_WRAPPER' rollback '\$REVISION'/);
+  assert.match(workflow, /incoming\/\$APP_NAME\/\$REVISION/);
+  assert.doesNotMatch(workflow, /bash -s --/);
+  assert.doesNotMatch(workflow, /rsync -a --delete "\$release_dir"/);
 });

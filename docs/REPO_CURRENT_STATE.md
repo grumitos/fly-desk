@@ -59,7 +59,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 
 ### Supply Chain
 
-- package manager soportado: Bun (`packageManager: "bun@1.3.13"`)
+- package manager soportado: Bun (`packageManager: "bun@1.3.14"`)
 - lockfile vigente: `bun.lock`
 - `bunfig.toml` desactiva lifecycle scripts durante instalacion y filtra versiones publicadas hace menos de 3 dias
 - `.npmrc` define `ignore-scripts=true` como proteccion para instalaciones accidentales con npm/pnpm
@@ -135,7 +135,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - `scripts/generate-web-password-hash.ts`: genera hash scrypt para `FLY_DESK_WEB_PASSWORD_HASH`
 - `docs/DEPLOY_APP.md`: deploy y rollback de app
 - `.github/workflows/ci.yml`: CI Bun para typecheck, lint, test y build
-- `.github/workflows/deploy-vps.yml`: deploy manual y rollback por SHA/release al VPS; reinicia `fly-desk-search.service` y `fly-desk-redirect.service` si la plataforma ya los instalo
+- `.github/workflows/deploy-vps.yml`: deploy y rollback manual por SHA exacto mediante el wrapper fijo de releases de plataforma
 
 La infraestructura compartida del VPS ya no vive en este repo: Caddy, systemd, rollback de Caddy y plan de plataforma se mantienen en `grumitos/vps-platform` (`D:\Dev\VPS\vps-platform`). Este repo conserva app, CI, deploy de revision y rollback de release.
 
@@ -189,7 +189,7 @@ Nota de QA: `test/helpers/server.ts` fija `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JO
 
 ## Estado De Deploy
 
-`main` es la linea de producto y despliegue. El deploy repetible escribe el SHA activado en `/opt/fly-desk/REVISION` y lo verifica despues de reiniciar `fly-desk.service`. Si la plataforma ya instalo `fly-desk-search.service` o `fly-desk-redirect.service`, el mismo deploy los reinicia y valida sus healthchecks locales.
+`main` es la linea de producto y despliegue. El workflow solo acepta un SHA exacto alcanzable desde `main`, publica un artefacto con digest y delega la activacion/rollback a `/usr/local/bin/vps-release-fly-desk`. La plataforma conserva releases inmutables, conmuta `/opt/fly-desk` atomicamente, reinicia web/search/redirect, valida sus healthchecks y restaura el current anterior si la activacion falla.
 
 Las revisiones desplegadas y el inventario de servicios vivos se mantienen en `D:\Dev\VPS\vps-platform\docs\INVENTORY.md`. Este repo no mantiene SHAs productivos como estado vivo para evitar drift documental.
 
