@@ -4,24 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Deploy a new revision or roll back to an existing release.
+        description: Deploy an exact main revision or roll back to an existing release.
         required: true
         default: deploy
         type: choice
         options:
           - deploy
           - rollback
-      ref:
-        description: Git ref to deploy when mode is deploy.
+      revision:
+        description: Exact 40-character Git SHA to deploy or restore.
         required: true
-        default: main
-        type: string
-      rollback_sha:
-        description: Existing release SHA to activate when mode is rollback.
-        required: false
         type: string
       public_smoke_url:
-        description: Public URL to smoke after the VPS restart.
+        description: Public URL to smoke after activation.
         required: true
         default: https://fly-desk.pages.dev/login
         type: string
@@ -34,499 +29,235 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  DEPLOY_PATH: ${{ vars.FLY_DESK_DEPLOY_PATH || '/opt/fly-desk' }}
-  RELEASE_ROOT: ${{ vars.FLY_DESK_RELEASE_ROOT || '/opt/apps/fly-desk/releases' }}
-  BUN_BIN: ${{ vars.FLY_DESK_BUN_BIN || '/home/deploy/.bun/bin/bun' }}
-  SERVICE_NAME: ${{ vars.FLY_DESK_SERVICE || 'fly-desk.service' }}
-  SEARCH_SERVICE_NAME: ${{ vars.FLY_DESK_SEARCH_SERVICE || 'fly-desk-search.service' }}
-  CHROME_SERVICE_NAME: ${{ vars.FLY_DESK_CHROME_SERVICE || 'fly-desk-chrome.service' }}
-  REDIRECT_SERVICE_NAME: ${{ vars.FLY_DESK_REDIRECT_SERVICE || 'fly-desk-redirect.service' }}
-  LOCAL_SMOKE_URL: ${{ vars.FLY_DESK_LOCAL_SMOKE_URL || 'http://127.0.0.1:32123/api/health' }}
-  SEARCH_LOCAL_SMOKE_URL: ${{ vars.FLY_DESK_SEARCH_LOCAL_SMOKE_URL || 'http://127.0.0.1:32125/api/health' }}
-  REDIRECT_LOCAL_SMOKE_URL: ${{ vars.FLY_DESK_REDIRECT_LOCAL_SMOKE_URL || 'http://127.0.0.1:32124/api/health' }}
+  APP_NAME: fly-desk
+  RELEASE_WRAPPER: /usr/local/bin/vps-release-fly-desk
 
 jobs:
   deploy:
-    name: Deploy revision
+    name: Validate and deploy revision
     if: ${{ inputs.mode == 'deploy' }}
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 35
 
     steps:
-      - name: Checkout
+      - name: Validate revision input
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REVISION" | grep -Eq '^[0-9a-f]{40}$' || {
+            echo "revision must be a lowercase 40-character Git SHA."
+            exit 1
+          }
+
+      - name: Checkout exact revision
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.revision }}
+          fetch-depth: 0
+
+      - name: Require revision on main
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$REVISION"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$REVISION" origin/main || {
+            echo "Only revisions reachable from origin/main may be deployed."
+            exit 1
+          }
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
           node-version: 26
 
-      - name: Typecheck
-        run: bun run typecheck
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
 
-      - name: Lint if configured
+      - name: Validate application
         run: |
           set -euo pipefail
-          if bun -e "const pkg = await Bun.file('package.json').json(); process.exit(pkg.scripts?.lint ? 0 : 1)"; then
-            bun run lint
-          else
-            echo "No lint script configured; skipping."
-          fi
-
-      - name: Build
-        run: bun run build
-
-      - name: Test
-        run: bun run test
+          bun run typecheck
+          bun run lint
+          bun run build
+          bun run test
         env:
           FLY_DESK_TEST_BROWSER_CHANNEL: chrome
 
-      - name: Resolve revision
-        id: revision
-        run: |
-          set -euo pipefail
-          sha="$(git rev-parse HEAD)"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "package=fly-desk-$sha.tar.gz" >> "$GITHUB_OUTPUT"
-          echo "package_path=$RUNNER_TEMP/fly-desk-$sha.tar.gz" >> "$GITHUB_OUTPUT"
-
-      - name: Create release package
-        run: |
-          set -euo pipefail
-          tar \
-            --exclude-vcs \
-            --exclude='./node_modules' \
-            --exclude='./frontend/node_modules' \
-            --exclude='./output' \
-            --exclude='./playwright-report' \
-            --exclude='./test-results' \
-            -czf "${{ steps.revision.outputs.package_path }}" .
-
-      - name: Configure SSH
+      - name: Build release artifact
+        id: artifact
         env:
-          VPS_HOST: ${{ secrets.FLY_DESK_VPS_HOST }}
-          VPS_USER: ${{ secrets.FLY_DESK_VPS_USER }}
-          VPS_PORT: ${{ secrets.FLY_DESK_VPS_PORT }}
-          VPS_SSH_KEY: ${{ secrets.FLY_DESK_VPS_SSH_KEY }}
-          VPS_SSH_KEY_B64: ${{ secrets.FLY_DESK_VPS_SSH_KEY_B64 }}
-          VPS_KNOWN_HOSTS: ${{ secrets.FLY_DESK_VPS_KNOWN_HOSTS }}
+          REVISION: ${{ inputs.revision }}
         run: |
           set -euo pipefail
-          if [ -z "${VPS_HOST}" ] || [ -z "${VPS_USER}" ] || [ -z "${VPS_KNOWN_HOSTS}" ] || { [ -z "${VPS_SSH_KEY}" ] && [ -z "${VPS_SSH_KEY_B64}" ]; }; then
-            echo "Required VPS SSH secrets are not configured."
-            exit 1
-          fi
+          package_root="$RUNNER_TEMP/fly-desk-package"
+          artifact="$RUNNER_TEMP/fly-desk-$REVISION.tar.gz"
+          rm -rf "$package_root"
+          install -d -m 0755 "$package_root/app"
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='node_modules/' \
+            --exclude='frontend/node_modules/' \
+            --exclude='output/' \
+            --exclude='playwright-report/' \
+            --exclude='test-results/' \
+            ./ "$package_root/app/"
+          printf '%s\n' "$REVISION" > "$package_root/app/REVISION"
+          tar -C "$package_root" -czf "$artifact" app
+          digest="$(sha256sum "$artifact" | awk '{print $1}')"
+          echo "path=$artifact" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Configure pinned SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY_B64: ${{ secrets.VPS_SSH_KEY_B64 }}
+          VPS_SSH_KNOWN_HOSTS_B64: ${{ secrets.VPS_SSH_KNOWN_HOSTS_B64 }}
+        run: |
+          set -euo pipefail
+          : "${VPS_HOST:?VPS_HOST is required}"
+          : "${VPS_USER:?VPS_USER is required}"
+          : "${VPS_SSH_KEY_B64:?VPS_SSH_KEY_B64 is required}"
+          : "${VPS_SSH_KNOWN_HOSTS_B64:?VPS_SSH_KNOWN_HOSTS_B64 is required}"
           port="${VPS_PORT:-22}"
+          printf '%s' "$port" | grep -Eq '^[0-9]+$'
+          test "$port" -ge 1 && test "$port" -le 65535
+          printf '%s' "$VPS_USER" | grep -Eq '^[A-Za-z0-9._-]+$'
           install -m 700 -d ~/.ssh
-          if [ -n "${VPS_SSH_KEY_B64}" ]; then
-            printf '%s' "${VPS_SSH_KEY_B64}" | base64 -d > ~/.ssh/fly_desk_vps_key
-          else
-            printf '%s\n' "${VPS_SSH_KEY}" | tr -d '\r' > ~/.ssh/fly_desk_vps_key
-          fi
-          chmod 600 ~/.ssh/fly_desk_vps_key
-          ssh-keygen -y -f ~/.ssh/fly_desk_vps_key >/dev/null
-          printf '%s\n' "${VPS_KNOWN_HOSTS}" | tr -d '\r' > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
+          printf '%s' "$VPS_SSH_KEY_B64" | base64 -d > ~/.ssh/vps_app_key
+          printf '%s' "$VPS_SSH_KNOWN_HOSTS_B64" | base64 -d > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/vps_app_key ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/vps_app_key >/dev/null
           known_host="$VPS_HOST"
-          if [ "$port" != "22" ]; then known_host="[$VPS_HOST]:$port"; fi
-          if ! ssh-keygen -F "$known_host" -f ~/.ssh/known_hosts >/dev/null; then
-            echo "Pinned VPS host key does not match the configured host and port."
-            exit 1
-          fi
+          if [ "$port" != 22 ]; then known_host="[$VPS_HOST]:$port"; fi
+          ssh-keygen -F "$known_host" -f ~/.ssh/known_hosts >/dev/null
+          cat > ~/.ssh/config <<EOF
+          Host vps-app
+            HostName $VPS_HOST
+            User $VPS_USER
+            Port $port
+            IdentityFile ~/.ssh/vps_app_key
+            IdentitiesOnly yes
+            BatchMode yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+          EOF
+          chmod 600 ~/.ssh/config
 
-      - name: Upload release package
+      - name: Upload immutable artifact
         env:
-          VPS_HOST: ${{ secrets.FLY_DESK_VPS_HOST }}
-          VPS_USER: ${{ secrets.FLY_DESK_VPS_USER }}
-          VPS_PORT: ${{ secrets.FLY_DESK_VPS_PORT }}
+          REVISION: ${{ inputs.revision }}
+          ARTIFACT_PATH: ${{ steps.artifact.outputs.path }}
         run: |
           set -euo pipefail
-          port="${VPS_PORT:-22}"
-          scp -o StrictHostKeyChecking=yes -P "$port" -i ~/.ssh/fly_desk_vps_key \
-            "${{ steps.revision.outputs.package_path }}" \
-            "$VPS_USER@$VPS_HOST:/tmp/${{ steps.revision.outputs.package }}"
+          incoming="/var/lib/vps-app-release/incoming/$APP_NAME/$REVISION"
+          ssh vps-app "umask 077; install -d -m 0700 '$incoming'"
+          scp "$ARTIFACT_PATH" "vps-app:$incoming/artifact.tar.gz.upload"
+          ssh vps-app "mv '$incoming/artifact.tar.gz.upload' '$incoming/artifact.tar.gz'"
 
-      - name: Activate revision on VPS
+      - name: Activate revision
         env:
-          VPS_HOST: ${{ secrets.FLY_DESK_VPS_HOST }}
-          VPS_USER: ${{ secrets.FLY_DESK_VPS_USER }}
-          VPS_PORT: ${{ secrets.FLY_DESK_VPS_PORT }}
+          REVISION: ${{ inputs.revision }}
+          ARTIFACT_DIGEST: ${{ steps.artifact.outputs.digest }}
         run: |
           set -euo pipefail
-          port="${VPS_PORT:-22}"
-          ssh -o StrictHostKeyChecking=yes -p "$port" -i ~/.ssh/fly_desk_vps_key "$VPS_USER@$VPS_HOST" \
-            bash -s -- \
-            "${{ steps.revision.outputs.sha }}" \
-            "/tmp/${{ steps.revision.outputs.package }}" \
-            "$DEPLOY_PATH" \
-            "$RELEASE_ROOT" \
-            "$BUN_BIN" \
-            "$SERVICE_NAME" \
-            "$SEARCH_SERVICE_NAME" \
-            "$CHROME_SERVICE_NAME" \
-            "$LOCAL_SMOKE_URL" \
-            "$SEARCH_LOCAL_SMOKE_URL" \
-            "$REDIRECT_SERVICE_NAME" \
-            "$REDIRECT_LOCAL_SMOKE_URL" <<'REMOTE'
-          set -euo pipefail
-
-          target_sha="$1"
-          package_path="$2"
-          deploy_path="$3"
-          release_root="$4"
-          bun_bin="$5"
-          service_name="$6"
-          search_service_name="$7"
-          chrome_service_name="$8"
-          local_smoke_url="$9"
-          search_local_smoke_url="${10}"
-          redirect_service_name="${11}"
-          redirect_local_smoke_url="${12}"
-
-          if ! printf '%s' "$target_sha" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "Invalid target SHA."
-            exit 1
-          fi
-          case "$deploy_path" in ""|"/"|"/opt"|"/opt/") echo "Refusing unsafe deploy path."; exit 1;; esac
-          case "$release_root" in ""|"/"|"/opt"|"/opt/") echo "Refusing unsafe release root."; exit 1;; esac
-          if [ ! -f "$package_path" ]; then
-            echo "Release package was not uploaded."
-            exit 1
-          fi
-          if ! command -v rsync >/dev/null 2>&1; then
-            echo "rsync is required on the VPS."
-            exit 1
-          fi
-          if [ ! -x "$bun_bin" ]; then
-            echo "Configured Bun binary is not executable."
-            exit 1
-          fi
-
-          sudo_cmd=""
-          if [ "$(id -u)" -ne 0 ]; then
-            sudo_cmd="sudo"
-          fi
-
-          operation_lock_file="/run/fly-desk-operation.lock"
-          if ! command -v flock >/dev/null 2>&1; then
-            echo "flock is required for Fly Desk operation coordination."
-            exit 1
-          fi
-          operation_lock_group="$(id -gn)"
-          $sudo_cmd touch "$operation_lock_file"
-          $sudo_cmd chown "root:$operation_lock_group" "$operation_lock_file"
-          $sudo_cmd chmod 0640 "$operation_lock_file"
-          exec 9<"$operation_lock_file"
-          if ! flock -w 300 9; then
-            echo "Timed out waiting for the Fly Desk operation lock."
-            exit 1
-          fi
-
-          chrome_was_active=0
-          if systemctl is-active --quiet "$chrome_service_name"; then
-            chrome_was_active=1
-          fi
-          redirect_unit_present=0
-          if systemctl cat "$redirect_service_name" >/dev/null 2>&1; then
-            redirect_unit_present=1
-          fi
-          search_unit_present=0
-          if systemctl cat "$search_service_name" >/dev/null 2>&1; then
-            search_unit_present=1
-          fi
-
-          release_dir="$release_root/$target_sha"
-          remote_user="$(id -un)"
-          remote_group="$(id -gn)"
-
-          $sudo_cmd mkdir -p "$release_root" "$deploy_path"
-          $sudo_cmd rm -rf -- "$release_dir"
-          $sudo_cmd mkdir -p "$release_dir"
-          $sudo_cmd tar -xzf "$package_path" -C "$release_dir"
-          $sudo_cmd chown -R "$remote_user:$remote_group" "$release_dir"
-
-          cd "$release_dir"
-          "$bun_bin" install --frozen-lockfile
-          printf '%s\n' "$target_sha" > REVISION
-
-          if [ -L "$deploy_path" ]; then
-            $sudo_cmd ln -sfn "$release_dir" "$deploy_path"
-          else
-            $sudo_cmd rsync -a --delete "$release_dir"/ "$deploy_path"/
-            $sudo_cmd chown -R "$remote_user:$remote_group" "$deploy_path"
-          fi
-
-          actual_revision="$(cat "$deploy_path/REVISION")"
-          if [ "$actual_revision" != "$target_sha" ]; then
-            echo "REVISION does not match deployed SHA."
-            exit 1
-          fi
-
-          if [ "$search_unit_present" -eq 1 ]; then
-            $sudo_cmd systemctl restart "$search_service_name"
-          fi
-          $sudo_cmd systemctl restart "$service_name"
-          if [ "$redirect_unit_present" -eq 1 ]; then
-            $sudo_cmd systemctl restart "$redirect_service_name"
-          fi
-
-          if [ "$chrome_was_active" -eq 1 ]; then
-            systemctl is-active --quiet "$chrome_service_name"
-          fi
-
-          for attempt in $(seq 1 10); do
-            if curl -fsS --max-time 10 "$local_smoke_url" > /dev/null; then
-              break
-            fi
-            if [ "$attempt" -eq 10 ]; then
-              echo "Local smoke failed after restart."
-              exit 1
-            fi
-            sleep 2
-          done
-          if [ "$search_unit_present" -eq 1 ]; then
-            for attempt in $(seq 1 10); do
-              if curl -fsS --max-time 10 "$search_local_smoke_url" > /dev/null; then
-                break
-              fi
-              if [ "$attempt" -eq 10 ]; then
-                echo "Search local smoke failed after restart."
-                exit 1
-              fi
-              sleep 2
-            done
-          fi
-          if [ "$redirect_unit_present" -eq 1 ]; then
-            for attempt in $(seq 1 10); do
-              if curl -fsS --max-time 10 "$redirect_local_smoke_url" > /dev/null; then
-                break
-              fi
-              if [ "$attempt" -eq 10 ]; then
-                echo "Redirect local smoke failed after restart."
-                exit 1
-              fi
-              sleep 2
-            done
-          fi
-          rm -f -- "$package_path"
-          echo "Deployed revision $target_sha."
-          REMOTE
+          ssh vps-app "sudo -n '$RELEASE_WRAPPER' deploy '$REVISION' '$ARTIFACT_DIGEST'"
 
       - name: Public smoke
         env:
-          PUBLIC_SMOKE_URL_INPUT: ${{ inputs.public_smoke_url }}
+          PUBLIC_SMOKE_URL: ${{ inputs.public_smoke_url }}
         run: |
           set -euo pipefail
-          if ! printf '%s' "$PUBLIC_SMOKE_URL_INPUT" | grep -Eq '^https?://[^[:space:]]+$'; then
-            echo "public_smoke_url must be a valid http(s) URL without spaces."
-            exit 1
-          fi
-          status="$(curl -sS -o /dev/null -w "%{http_code}" --location --retry 5 --retry-delay 5 --max-time 20 "$PUBLIC_SMOKE_URL_INPUT")"
+          printf '%s' "$PUBLIC_SMOKE_URL" | grep -Eq '^https://[^[:space:]]+$'
+          status="$(curl -sS -o /dev/null -w '%{http_code}' --location --retry 5 --retry-delay 5 --max-time 20 "$PUBLIC_SMOKE_URL")"
           case "$status" in
             200) ;;
-            403)
-              echo "::warning::Public smoke returned 403. This is expected from non-Peru runners when the Fly Desk regional restriction is active."
-              ;;
-            *)
-              echo "Public smoke failed with HTTP $status."
-              exit 1
-              ;;
+            403) echo "::warning::Public smoke returned the expected regional 403 from the hosted runner." ;;
+            *) echo "Public smoke failed with HTTP $status."; exit 1 ;;
           esac
-          echo "Public smoke returned HTTP $status."
 
   rollback:
     name: Roll back revision
     if: ${{ inputs.mode == 'rollback' }}
     runs-on: ubuntu-latest
+    environment: production
     timeout-minutes: 15
 
     steps:
-      - name: Validate rollback input
+      - name: Validate revision input
         env:
-          ROLLBACK_SHA_INPUT: ${{ inputs.rollback_sha }}
+          REVISION: ${{ inputs.revision }}
         run: |
           set -euo pipefail
-          if ! printf '%s' "$ROLLBACK_SHA_INPUT" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "rollback_sha must be a 40-character Git SHA."
+          printf '%s' "$REVISION" | grep -Eq '^[0-9a-f]{40}$' || {
+            echo "revision must be a lowercase 40-character Git SHA."
             exit 1
-          fi
+          }
 
-      - name: Configure SSH
+      - name: Configure pinned SSH
         env:
-          VPS_HOST: ${{ secrets.FLY_DESK_VPS_HOST }}
-          VPS_USER: ${{ secrets.FLY_DESK_VPS_USER }}
-          VPS_PORT: ${{ secrets.FLY_DESK_VPS_PORT }}
-          VPS_SSH_KEY: ${{ secrets.FLY_DESK_VPS_SSH_KEY }}
-          VPS_KNOWN_HOSTS: ${{ secrets.FLY_DESK_VPS_KNOWN_HOSTS }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY_B64: ${{ secrets.VPS_SSH_KEY_B64 }}
+          VPS_SSH_KNOWN_HOSTS_B64: ${{ secrets.VPS_SSH_KNOWN_HOSTS_B64 }}
         run: |
           set -euo pipefail
-          if [ -z "${VPS_HOST}" ] || [ -z "${VPS_USER}" ] || [ -z "${VPS_SSH_KEY}" ] || [ -z "${VPS_KNOWN_HOSTS}" ]; then
-            echo "Required VPS SSH secrets are not configured."
-            exit 1
-          fi
+          : "${VPS_HOST:?VPS_HOST is required}"
+          : "${VPS_USER:?VPS_USER is required}"
+          : "${VPS_SSH_KEY_B64:?VPS_SSH_KEY_B64 is required}"
+          : "${VPS_SSH_KNOWN_HOSTS_B64:?VPS_SSH_KNOWN_HOSTS_B64 is required}"
           port="${VPS_PORT:-22}"
+          printf '%s' "$port" | grep -Eq '^[0-9]+$'
+          test "$port" -ge 1 && test "$port" -le 65535
+          printf '%s' "$VPS_USER" | grep -Eq '^[A-Za-z0-9._-]+$'
           install -m 700 -d ~/.ssh
-          printf '%s' "${VPS_SSH_KEY}" > ~/.ssh/fly_desk_vps_key
-          chmod 600 ~/.ssh/fly_desk_vps_key
-          ssh-keygen -y -f ~/.ssh/fly_desk_vps_key >/dev/null
-          printf '%s\n' "${VPS_KNOWN_HOSTS}" | tr -d '\r' > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
+          printf '%s' "$VPS_SSH_KEY_B64" | base64 -d > ~/.ssh/vps_app_key
+          printf '%s' "$VPS_SSH_KNOWN_HOSTS_B64" | base64 -d > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/vps_app_key ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/vps_app_key >/dev/null
           known_host="$VPS_HOST"
-          if [ "$port" != "22" ]; then known_host="[$VPS_HOST]:$port"; fi
-          if ! ssh-keygen -F "$known_host" -f ~/.ssh/known_hosts >/dev/null; then
-            echo "Pinned VPS host key does not match the configured host and port."
-            exit 1
-          fi
+          if [ "$port" != 22 ]; then known_host="[$VPS_HOST]:$port"; fi
+          ssh-keygen -F "$known_host" -f ~/.ssh/known_hosts >/dev/null
+          cat > ~/.ssh/config <<EOF
+          Host vps-app
+            HostName $VPS_HOST
+            User $VPS_USER
+            Port $port
+            IdentityFile ~/.ssh/vps_app_key
+            IdentitiesOnly yes
+            BatchMode yes
+            StrictHostKeyChecking yes
+            UserKnownHostsFile ~/.ssh/known_hosts
+          EOF
+          chmod 600 ~/.ssh/config
 
-      - name: Activate previous release on VPS
+      - name: Activate existing release
         env:
-          VPS_HOST: ${{ secrets.FLY_DESK_VPS_HOST }}
-          VPS_USER: ${{ secrets.FLY_DESK_VPS_USER }}
-          VPS_PORT: ${{ secrets.FLY_DESK_VPS_PORT }}
-          ROLLBACK_SHA_INPUT: ${{ inputs.rollback_sha }}
+          REVISION: ${{ inputs.revision }}
         run: |
           set -euo pipefail
-          port="${VPS_PORT:-22}"
-          ssh -o StrictHostKeyChecking=yes -p "$port" -i ~/.ssh/fly_desk_vps_key "$VPS_USER@$VPS_HOST" \
-            bash -s -- \
-            "$ROLLBACK_SHA_INPUT" \
-            "$DEPLOY_PATH" \
-            "$RELEASE_ROOT" \
-            "$SERVICE_NAME" \
-            "$SEARCH_SERVICE_NAME" \
-            "$CHROME_SERVICE_NAME" \
-            "$LOCAL_SMOKE_URL" \
-            "$SEARCH_LOCAL_SMOKE_URL" \
-            "$REDIRECT_SERVICE_NAME" \
-            "$REDIRECT_LOCAL_SMOKE_URL" <<'REMOTE'
-          set -euo pipefail
-
-          target_sha="$1"
-          deploy_path="$2"
-          release_root="$3"
-          service_name="$4"
-          search_service_name="$5"
-          chrome_service_name="$6"
-          local_smoke_url="$7"
-          search_local_smoke_url="$8"
-          redirect_service_name="$9"
-          redirect_local_smoke_url="${10}"
-
-          if ! printf '%s' "$target_sha" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "Invalid rollback SHA."
-            exit 1
-          fi
-          case "$deploy_path" in ""|"/"|"/opt"|"/opt/") echo "Refusing unsafe deploy path."; exit 1;; esac
-          case "$release_root" in ""|"/"|"/opt"|"/opt/") echo "Refusing unsafe release root."; exit 1;; esac
-          if ! command -v rsync >/dev/null 2>&1; then
-            echo "rsync is required on the VPS."
-            exit 1
-          fi
-
-          release_dir="$release_root/$target_sha"
-          if [ ! -d "$release_dir" ]; then
-            echo "Requested release does not exist on the VPS."
-            exit 1
-          fi
-
-          sudo_cmd=""
-          if [ "$(id -u)" -ne 0 ]; then
-            sudo_cmd="sudo"
-          fi
-
-          operation_lock_file="/run/fly-desk-operation.lock"
-          if ! command -v flock >/dev/null 2>&1; then
-            echo "flock is required for Fly Desk operation coordination."
-            exit 1
-          fi
-          operation_lock_group="$(id -gn)"
-          $sudo_cmd touch "$operation_lock_file"
-          $sudo_cmd chown "root:$operation_lock_group" "$operation_lock_file"
-          $sudo_cmd chmod 0640 "$operation_lock_file"
-          exec 9<"$operation_lock_file"
-          if ! flock -w 300 9; then
-            echo "Timed out waiting for the Fly Desk operation lock."
-            exit 1
-          fi
-
-          chrome_was_active=0
-          if systemctl is-active --quiet "$chrome_service_name"; then
-            chrome_was_active=1
-          fi
-          redirect_unit_present=0
-          if systemctl cat "$redirect_service_name" >/dev/null 2>&1; then
-            redirect_unit_present=1
-          fi
-          search_unit_present=0
-          if systemctl cat "$search_service_name" >/dev/null 2>&1; then
-            search_unit_present=1
-          fi
-
-          if [ -L "$deploy_path" ]; then
-            $sudo_cmd ln -sfn "$release_dir" "$deploy_path"
-          else
-            $sudo_cmd rsync -a --delete "$release_dir"/ "$deploy_path"/
-            $sudo_cmd chown -R "$(id -un):$(id -gn)" "$deploy_path"
-          fi
-
-          printf '%s\n' "$target_sha" | $sudo_cmd tee "$deploy_path/REVISION" > /dev/null
-
-          actual_revision="$(cat "$deploy_path/REVISION")"
-          if [ "$actual_revision" != "$target_sha" ]; then
-            echo "REVISION does not match rollback SHA."
-            exit 1
-          fi
-
-          if [ "$search_unit_present" -eq 1 ]; then
-            $sudo_cmd systemctl restart "$search_service_name"
-          fi
-          $sudo_cmd systemctl restart "$service_name"
-          if [ "$redirect_unit_present" -eq 1 ]; then
-            $sudo_cmd systemctl restart "$redirect_service_name"
-          fi
-
-          if [ "$chrome_was_active" -eq 1 ]; then
-            systemctl is-active --quiet "$chrome_service_name"
-          fi
-
-          curl -fsS --max-time 10 "$local_smoke_url" > /dev/null
-          if [ "$search_unit_present" -eq 1 ]; then
-            curl -fsS --max-time 10 "$search_local_smoke_url" > /dev/null
-          fi
-          if [ "$redirect_unit_present" -eq 1 ]; then
-            curl -fsS --max-time 10 "$redirect_local_smoke_url" > /dev/null
-          fi
-          echo "Rolled back to revision $target_sha."
-          REMOTE
+          ssh vps-app "sudo -n '$RELEASE_WRAPPER' rollback '$REVISION'"
 
       - name: Public smoke
         env:
-          PUBLIC_SMOKE_URL_INPUT: ${{ inputs.public_smoke_url }}
+          PUBLIC_SMOKE_URL: ${{ inputs.public_smoke_url }}
         run: |
           set -euo pipefail
-          if ! printf '%s' "$PUBLIC_SMOKE_URL_INPUT" | grep -Eq '^https?://[^[:space:]]+$'; then
-            echo "public_smoke_url must be a valid http(s) URL without spaces."
-            exit 1
-          fi
-          status="$(curl -sS -o /dev/null -w "%{http_code}" --location --retry 5 --retry-delay 5 --max-time 20 "$PUBLIC_SMOKE_URL_INPUT")"
+          printf '%s' "$PUBLIC_SMOKE_URL" | grep -Eq '^https://[^[:space:]]+$'
+          status="$(curl -sS -o /dev/null -w '%{http_code}' --location --retry 5 --retry-delay 5 --max-time 20 "$PUBLIC_SMOKE_URL")"
           case "$status" in
             200) ;;
-            403)
-              echo "::warning::Public smoke returned 403. This is expected from non-Peru runners when the Fly Desk regional restriction is active."
-              ;;
-            *)
-              echo "Public smoke failed with HTTP $status."
-              exit 1
-              ;;
+            403) echo "::warning::Public smoke returned the expected regional 403 from the hosted runner." ;;
+            *) echo "Public smoke failed with HTTP $status."; exit 1 ;;
           esac
-          echo "Public smoke returned HTTP $status."
