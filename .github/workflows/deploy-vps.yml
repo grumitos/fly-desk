@@ -51,23 +51,25 @@ jobs:
             exit 1
           }
 
-      - name: Checkout exact revision
+      - name: Checkout main history
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.revision }}
+          ref: main
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Require revision on main
         env:
           REVISION: ${{ inputs.revision }}
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$REVISION"
-          git fetch --no-tags origin main
-          git merge-base --is-ancestor "$REVISION" origin/main || {
+          git cat-file -e "$REVISION^{commit}"
+          git merge-base --is-ancestor "$REVISION" HEAD || {
             echo "Only revisions reachable from origin/main may be deployed."
             exit 1
           }
+          git checkout --detach "$REVISION"
+          test "$(git rev-parse HEAD)" = "$REVISION"
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
