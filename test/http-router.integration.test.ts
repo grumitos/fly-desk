@@ -807,7 +807,7 @@ test("quotation validates an unverified stored offer before rendering", { concur
   }
 });
 
-test("quotation renders a fresh search result without querying the provider again", { concurrency: false }, async () => {
+test("quotation revalidates a quote-ready search result before rendering", { concurrency: false }, async () => {
   const runtime = getRuntime();
   const offer = {
     ...buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0"),
@@ -845,11 +845,8 @@ test("quotation renders a fresh search result without querying the provider agai
       }))
     );
 
-    assert.equal(response.status, 200);
-    const payload = await response.json() as { commercialText?: string; offer?: CanonicalOffer };
-    assert.equal(validatorCalls, 0);
-    assert.equal(payload.offer?.id, offer.id);
-    assert.match(payload.commercialText ?? "", /COTIZACIÓN BOLETO AÉREO/);
+    assert.equal(response.status, 409);
+    assert.equal(validatorCalls, 1);
   } finally {
     setQuotationOfferValidatorForTests();
   }
