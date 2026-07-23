@@ -413,7 +413,7 @@ test("partial cacheable results survive a shutdown persistence cycle", () => {
   assert.equal(restored?.offers.length, 1);
   secondStore.close();
 
-  rmSync(tempRoot, { recursive: true, force: true });
+  rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
 test("search job refresh preserves stable purchase path ids when the underlying path did not change", () => {
