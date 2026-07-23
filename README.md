@@ -1,6 +1,12 @@
 # Fly Desk
 
+> **Estado:** en desarrollo activo. La aplicacion, su build y sus suites automatizadas son funcionales; el despliegue operativo y las sesiones de proveedores siguen siendo privados.
+
 Workspace web privado para busqueda, comparacion y cotizacion aerea orientado a agentes de viajes.
+
+El repositorio no incluye credenciales, sesiones de navegador ni datos operativos. Una instalacion nueva puede compilar y ejecutar la interfaz, pero las busquedas reales requieren acceso autorizado a los proveedores configurados.
+
+![Interfaz de busqueda de Fly Desk](./docs/screenshots/overview.png)
 
 Fly Desk es una app Bun-only preparada para VPS:
 
