@@ -8,6 +8,9 @@
   "workspaces": [
     "frontend"
   ],
+  "overrides": {
+    "brace-expansion": "5.0.7"
+  },
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "demo": "bun src/demo.ts",
