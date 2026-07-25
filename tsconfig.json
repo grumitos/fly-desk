@@ -3,7 +3,6 @@
     "target": "ESNext",
     "module": "Preserve",
     "moduleResolution": "bundler",
-    "ignoreDeprecations": "5.0",
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
