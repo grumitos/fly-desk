@@ -166,6 +166,32 @@ describe("SearchAdmissionController", () => {
     }
   });
 
+  test("starts the next eligible job when a blocked queue head times out", async () => {
+    const controller = new SearchAdmissionController({
+      capacityUnits: 3,
+      exactCostUnits: 1,
+      rangeCostUnits: 2,
+      matrixCostUnits: 2,
+      maxQueued: 4,
+      queueTimeoutMs: 25,
+    });
+
+    try {
+      const active = await controller.acquire({ kind: "range", jobId: "active" });
+      const blocked = controller.acquire({ kind: "matrix", jobId: "blocked" });
+      const eligible = controller.acquire({ kind: "exact", jobId: "eligible" });
+
+      await expectAdmissionError(blocked, "queue-timeout");
+      const eligibleLease = await eligible;
+      expect(eligibleLease.jobId).toBe("eligible");
+
+      active.release();
+      eligibleLease.release();
+    } finally {
+      controller.dispose();
+    }
+  });
+
   test("cancels queued work before it consumes capacity", async () => {
     const controller = new SearchAdmissionController({
       capacityUnits: 1,
@@ -195,6 +221,51 @@ describe("SearchAdmissionController", () => {
         activeCount: 0,
         queuedCount: 0,
       }));
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  test("does not let newer exact searches bypass an older heavy search", async () => {
+    const controller = new SearchAdmissionController({
+      capacityUnits: 4,
+      exactCostUnits: 1,
+      rangeCostUnits: 2,
+      matrixCostUnits: 2,
+      maxQueued: 4,
+      queueTimeoutMs: 10_000,
+    });
+    const started: string[] = [];
+
+    try {
+      const activeHeavy = await controller.acquire({ kind: "range", jobId: "active-heavy" });
+      const activeExact = await controller.acquire({ kind: "exact", jobId: "active-exact" });
+      const queuedHeavyPromise = controller.acquire({ kind: "matrix", jobId: "queued-heavy" }).then((lease) => {
+        started.push("queued-heavy");
+        return lease;
+      });
+      const queuedExactPromise = controller.acquire({ kind: "exact", jobId: "queued-exact" }).then((lease) => {
+        started.push("queued-exact");
+        return lease;
+      });
+
+      await delay(10);
+      expect(started).toEqual([]);
+      expect(controller.getDiagnostics().queued.map((entry) => entry.jobId)).toEqual([
+        "queued-heavy",
+        "queued-exact",
+      ]);
+
+      activeExact.release();
+      const queuedHeavy = await queuedHeavyPromise;
+      expect(started).toEqual(["queued-heavy"]);
+
+      activeHeavy.release();
+      const queuedExact = await queuedExactPromise;
+      expect(started).toEqual(["queued-heavy", "queued-exact"]);
+
+      queuedHeavy.release();
+      queuedExact.release();
     } finally {
       controller.dispose();
     }

@@ -138,7 +138,9 @@ export class SearchAdmissionController {
       return Promise.reject(new SearchAdmissionError("cancelled", "Search was cancelled before admission."));
     }
 
-    if (this.canStart(costUnits)) {
+    // Preserve queue order once contention exists. Otherwise a stream of
+    // smaller jobs can keep bypassing an older, more expensive job forever.
+    if (this.queued.length === 0 && this.canStart(costUnits)) {
       return Promise.resolve(this.start({
         kind: request.kind,
         jobId: request.jobId,
@@ -162,8 +164,11 @@ export class SearchAdmissionController {
         resolve,
         reject,
         timeout: setTimeout(() => {
-          this.removeQueued(entry.id);
+          const removed = this.removeQueued(entry.id);
           reject(new SearchAdmissionError("queue-timeout", "Search waited too long for capacity."));
+          if (removed) {
+            this.startQueued();
+          }
         }, this.limits.queueTimeoutMs),
       };
 
@@ -268,28 +273,35 @@ export class SearchAdmissionController {
 
   private startQueued(): void {
     for (;;) {
-      const nextIndex = this.queued.findIndex((entry) => this.canStart(entry.costUnits));
-      if (nextIndex < 0) {
+      const entry = this.queued[0];
+      if (!entry) {
         return;
       }
 
-      const [entry] = this.queued.splice(nextIndex, 1);
-      clearTimeout(entry.timeout);
-
       if (entry.shouldContinue && !this.shouldContinue(entry.shouldContinue)) {
+        this.queued.shift();
+        clearTimeout(entry.timeout);
         entry.reject(new SearchAdmissionError("cancelled", "Search was cancelled before admission."));
         continue;
       }
 
+      if (!this.canStart(entry.costUnits)) {
+        return;
+      }
+
+      this.queued.shift();
+      clearTimeout(entry.timeout);
       entry.resolve(this.start(entry));
     }
   }
 
-  private removeQueued(id: symbol): void {
+  private removeQueued(id: symbol): boolean {
     const index = this.queued.findIndex((entry) => entry.id === id);
     if (index >= 0) {
       this.queued.splice(index, 1);
+      return true;
     }
+    return false;
   }
 
   private shouldContinue(callback: () => boolean): boolean {

@@ -100,6 +100,36 @@ test("search service proxy forwards search requests to the configured runner", a
   }
 });
 
+test("search service proxy forwards the request stream without calling arrayBuffer", async () => {
+  const request = new Request("http://fly-desk.test/api/search", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: "{\"route\":\"LIM-MAD\"}",
+  });
+  let arrayBufferCalls = 0;
+  Object.defineProperty(request, "arrayBuffer", {
+    value: async () => {
+      arrayBufferCalls += 1;
+      throw new Error("proxied request must not be buffered again");
+    },
+  });
+
+  let forwardedBody = "";
+  const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
+    serviceUrl: "http://127.0.0.1:32125",
+    fetchImpl: async (_input, init) => {
+      forwardedBody = await new Response(init?.body).text();
+      return Response.json({ ok: true });
+    },
+  });
+
+  assert.equal(response?.status, 200);
+  assert.equal(forwardedBody, "{\"route\":\"LIM-MAD\"}");
+  assert.equal(arrayBufferCalls, 0);
+});
+
 test("search service proxy streams runner responses without buffering and strips hop-by-hop headers", async () => {
   let arrayBufferCalls = 0;
   const upstream = new Response("first\nsecond\n", {

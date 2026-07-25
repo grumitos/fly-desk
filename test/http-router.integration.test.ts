@@ -12,6 +12,7 @@ import type {
   SearchMeta,
   SearchRequest,
 } from "../src/core/types";
+import { addDays } from "../src/core/flexible-search";
 import { buildCommercialQuotation } from "../src/core/quotation";
 import {
   buildProviderContext,
@@ -38,6 +39,7 @@ import {
 } from "../src/http-router";
 import type { ProviderMatrixState } from "../src/http-router";
 import { resolveSearchServiceProxyApiToken } from "../src/service-auth";
+import { getSearchDatePolicy } from "../src/search-date-policy";
 import { getRuntime } from "../src/runtime";
 import { withServer } from "./helpers/server";
 
@@ -1166,11 +1168,12 @@ test("accepted searches record global location usage from the backend", { concur
 
   try {
     const request = buildCostamarRequest();
+    const departureDate = getSearchDatePolicy().minSearchDate;
     delete request.providerId;
     request.legs[0] = {
       ...request.legs[0],
-      departureDate: "2026-07-23",
-      returnDate: "2026-07-30",
+      departureDate,
+      returnDate: addDays(departureDate, 7),
     };
     const accepted = await routeRequest(new Request("http://fly-desk.local/api/search", {
       method: "POST",
@@ -2003,6 +2006,8 @@ test("agil search redirect returns the provider URL without local handoff page",
 
   assert.equal(response.status, 302);
   assert.equal(response.headers.get("Location"), agilUrl);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.equal(response.headers.get("Referrer-Policy"), "no-referrer");
   assert.doesNotMatch(await response.text(), /Abriendo proveedor|Abrir manualmente/);
 });
 

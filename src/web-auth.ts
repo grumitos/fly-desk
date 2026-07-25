@@ -229,7 +229,7 @@ export function resolveWebTheme(request: Request): WebTheme {
 
 export function renderLoginPage(error?: string, theme: WebTheme = DEFAULT_WEB_THEME): string {
   const errorMarkup = error
-    ? `<p class="error">${escapeHtml(error)}</p>`
+    ? `<p class="error" role="alert" aria-live="assertive">${escapeHtml(error)}</p>`
     : "";
   const initialTheme = theme === "dark" ? "dark" : "light";
 

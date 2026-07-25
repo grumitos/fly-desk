@@ -3410,6 +3410,8 @@ export async function routeRequest(request: Request): Promise<Response> {
         status: 302,
         headers: {
           Location: location,
+          "Cache-Control": "no-store",
+          "Referrer-Policy": "no-referrer",
         },
       });
     }
@@ -3419,6 +3421,8 @@ export async function routeRequest(request: Request): Promise<Response> {
         status: 200,
         headers: {
           "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Referrer-Policy": "no-referrer",
         },
       });
     }

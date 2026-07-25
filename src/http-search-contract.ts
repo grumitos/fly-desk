@@ -1,7 +1,9 @@
 import {
   diffDays,
+  MAX_FLEXIBLE_STAY_NIGHTS,
   normalizeFlexibleRoundTripRequest,
   resolveFlexibleRoundTripMode,
+  resolveNightBounds,
 } from "./core/flexible-search";
 import {
   Cabin,
@@ -34,7 +36,7 @@ export interface PreparedSearchContract {
   request: SearchRequest;
 }
 
-const MAX_STAY_NIGHTS = 90;
+const MAX_STAY_NIGHTS = MAX_FLEXIBLE_STAY_NIGHTS;
 const MAX_ROUNDTRIP_GRID_COMBINATIONS = 5000;
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
@@ -49,6 +51,8 @@ function estimateRoundTripGridCombinations(
   departureEnd: string,
   returnStart: string,
   returnEnd: string,
+  minNights = 1,
+  maxNights = Number.POSITIVE_INFINITY,
 ): number | undefined {
   const departureStartDay = parseIsoDateToUtcDay(departureStart);
   const departureEndDay = parseIsoDateToUtcDay(departureEnd);
@@ -70,9 +74,12 @@ function estimateRoundTripGridCombinations(
 
   let combinations = 0;
   for (let departureDay = departureStartDay; departureDay <= departureEndDay; departureDay += 1) {
-    const minReturnDay = Math.max(returnStartDay, departureDay + 1);
-    if (minReturnDay <= returnEndDay) {
-      combinations += (returnEndDay - minReturnDay) + 1;
+    const minReturnDay = Math.max(returnStartDay, departureDay + Math.max(1, minNights));
+    const maxReturnDay = Number.isFinite(maxNights)
+      ? Math.min(returnEndDay, departureDay + maxNights)
+      : returnEndDay;
+    if (minReturnDay <= maxReturnDay) {
+      combinations += (maxReturnDay - minReturnDay) + 1;
     }
   }
 
@@ -221,12 +228,12 @@ function validateRequest(request: SearchRequest): string[] {
     ["Return end", leg.returnEnd],
   ];
 
-  if (!leg.origin || leg.origin.length < 3) {
-    errors.push("Origin is required and must be an IATA-like code.");
+  if (!/^[A-Z]{3}$/.test(leg.origin ?? "")) {
+    errors.push("Origin is required and must be a three-letter IATA code.");
   }
 
-  if (!leg.destination || leg.destination.length < 3) {
-    errors.push("Destination is required and must be an IATA-like code.");
+  if (!/^[A-Z]{3}$/.test(leg.destination ?? "")) {
+    errors.push("Destination is required and must be a three-letter IATA code.");
   }
 
   if (leg.origin && leg.destination && leg.origin === leg.destination) {
@@ -334,6 +341,39 @@ function validateRequest(request: SearchRequest): string[] {
         leg.departureEnd,
         leg.returnStart,
         leg.returnEnd,
+        1,
+        MAX_STAY_NIGHTS,
+      );
+      if (
+        typeof estimatedCombinations === "number"
+        && estimatedCombinations > MAX_ROUNDTRIP_GRID_COMBINATIONS
+      ) {
+        errors.push(
+          `Round-trip matrix search cannot exceed ${MAX_ROUNDTRIP_GRID_COMBINATIONS} combinations. Narrow the departure or return ranges.`,
+        );
+      }
+    }
+
+    if (
+      request.tripType === "round-trip"
+      && flexibleRoundTripMode === "legacy-night-range"
+      && leg.departureStart
+      && leg.departureEnd
+      && leg.returnStart
+      && leg.returnEnd
+    ) {
+      const nightBounds = resolveNightBounds(leg);
+      if (nightBounds.maxNights > MAX_STAY_NIGHTS) {
+        errors.push(`Stay length cannot exceed ${MAX_STAY_NIGHTS} nights.`);
+      }
+
+      const estimatedCombinations = estimateRoundTripGridCombinations(
+        leg.departureStart,
+        leg.departureEnd,
+        leg.returnStart,
+        leg.returnEnd,
+        nightBounds.minNights,
+        Math.min(nightBounds.maxNights, MAX_STAY_NIGHTS),
       );
       if (
         typeof estimatedCombinations === "number"

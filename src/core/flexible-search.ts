@@ -25,6 +25,8 @@ export interface FlexibleRoundTripAxes {
   returnDates: string[];
 }
 
+export const MAX_FLEXIBLE_STAY_NIGHTS = 90;
+
 interface ResolvedRoundTripFlexibleSpec {
   mode: FlexibleRoundTripResolutionMode;
   departureStart: string;
@@ -311,7 +313,7 @@ export function isUsefulRoundTripCombination(
     }
 
     if (spec.mode === "fixed-ranges") {
-      return true;
+      return stayNights <= MAX_FLEXIBLE_STAY_NIGHTS;
     }
 
     return stayNights >= (spec.nightBounds?.minNights ?? 1)

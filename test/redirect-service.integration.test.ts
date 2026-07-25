@@ -294,6 +294,8 @@ test("redirect service resolves Agil purchase paths from SQLite without the main
 
       assert.equal(response.status, 302);
       assert.equal(response.headers.get("Location"), agilUrl);
+      assert.equal(response.headers.get("Cache-Control"), "no-store");
+      assert.equal(response.headers.get("Referrer-Policy"), "no-referrer");
     } finally {
       restoreEnv();
     }
