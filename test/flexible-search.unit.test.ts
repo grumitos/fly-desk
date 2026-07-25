@@ -80,7 +80,7 @@ test("exact-stay keeps only round-trip pairs whose return remains inside the act
   assert.equal(pairs.some((pair) => pair.returnDate.startsWith("2026-06")), false);
 });
 
-test("fixed-ranges enumerates every valid departure and return pair without an implicit 3-7 night filter", () => {
+test("fixed-ranges keep every valid pair up to the 90-night policy limit", () => {
   const request = normalizeFlexibleRoundTripRequest({
     ...buildBaseRequest(),
     legs: [
@@ -97,16 +97,20 @@ test("fixed-ranges enumerates every valid departure and return pair without an i
   const pairs = enumerateUsefulRoundTripPairs(request);
 
   assert.equal(resolveFlexibleRoundTripMode(request), "fixed-ranges");
-  assert.equal(pairs.length, 31 * 31);
+  assert.equal(pairs.length, (31 * 31) - 1);
   assert.equal(
     pairs.some((pair) => pair.departureDate === "2026-05-31" && pair.returnDate === "2026-07-01"),
     true,
   );
   assert.equal(
     pairs.some((pair) => pair.departureDate === "2026-05-01" && pair.returnDate === "2026-07-31"),
+    false,
+  );
+  assert.equal(
+    pairs.some((pair) => pair.departureDate === "2026-05-02" && pair.returnDate === "2026-07-31"),
     true,
   );
-  assert.equal(pairs.some((pair) => pair.stayNights > 7), true);
+  assert.equal(pairs.every((pair) => pair.stayNights <= 90), true);
 });
 
 test("minNights equal to maxNights stays compatible with exact-stay semantics", () => {

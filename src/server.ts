@@ -347,10 +347,14 @@ export async function handleRequest(request: Request, server: BunServer<undefine
       );
     }
 
-    const message = error instanceof Error ? error.message : "Unexpected server error";
+    console.error("Fly Desk request failed", {
+      method: request.method,
+      path: pathname,
+      errorName: error instanceof Error ? error.name : "Error",
+    });
     status = 500;
     return Response.json(
-      { error: message },
+      { error: "Unexpected server error." },
       { status, headers: noStoreHeaders("application/json; charset=utf-8") },
     );
   } finally {

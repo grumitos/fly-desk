@@ -459,6 +459,7 @@ function redirect(location: string): Response {
     headers: {
       Location: location,
       "Cache-Control": "no-store",
+      "Referrer-Policy": "no-referrer",
     },
   });
 }
@@ -634,6 +635,7 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
         "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
       },
     });
   }

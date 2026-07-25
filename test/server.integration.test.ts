@@ -25,6 +25,25 @@ test("malformed request URLs are handled with a controlled bad request response"
   assert.match(payload.error ?? "", /malformed request url/i);
 });
 
+test("unexpected server failures return a generic error without leaking details", { concurrency: false }, async () => {
+  const originalConsoleError = console.error;
+  console.error = () => {};
+
+  try {
+    const response = await handleRequest(
+      new Request("http://fly-desk.test/api/health"),
+      { requestIP: () => { throw new Error("sensitive internal failure"); } } as never,
+    );
+    const payload = await response.json() as { error?: string };
+
+    assert.equal(response.status, 500);
+    assert.equal(payload.error, "Unexpected server error.");
+    assert.doesNotMatch(JSON.stringify(payload), /sensitive internal failure/);
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
 test("server accepts bearer API tokens after filtering internal x-flydesk headers", { concurrency: false }, async () => {
   const previousApiToken = process.env.FLY_DESK_API_TOKEN;
   const previousWebAuth = process.env.FLY_DESK_WEB_AUTH;

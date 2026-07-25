@@ -4,12 +4,21 @@ import {
   createScryptPasswordHash,
   createWebSessionCookie,
   hasValidWebSession,
+  renderLoginPage,
   shouldTrustLoopbackClient,
   verifyWebPassword,
   WEB_SESSION_COOKIE_NAME,
 } from "../src/web-auth";
 import { applyEnvironment } from "./helpers/environment";
 import { withServer } from "./helpers/server";
+
+test("login errors are announced without rendering unescaped content", () => {
+  const html = renderLoginPage('<strong>Contraseña inválida</strong>');
+
+  assert.match(html, /class="error" role="alert" aria-live="assertive"/);
+  assert.match(html, /&lt;strong&gt;Contraseña inválida&lt;\/strong&gt;/);
+  assert.doesNotMatch(html, /<strong>Contraseña inválida<\/strong>/);
+});
 
 test("web authentication accepts only the configured password hash", { concurrency: false }, () => {
   const restore = applyEnvironment({

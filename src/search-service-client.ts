@@ -211,15 +211,17 @@ export async function maybeProxySearchServiceRequest(
   headers.set(SEARCH_SERVICE_PROXY_HEADER, "1");
 
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
-  const body = hasBody ? await request.arrayBuffer() : undefined;
+  const body = hasBody ? request.body : undefined;
+  const requestInit: RequestInit & { duplex?: "half" } = {
+    method: request.method,
+    headers,
+    body,
+    signal: AbortSignal.timeout(resolveSearchServiceTimeoutMs(options.timeoutMs)),
+    duplex: body ? "half" : undefined,
+  };
 
   try {
-    const response = await (options.fetchImpl ?? fetch)(target, {
-      method: request.method,
-      headers,
-      body,
-      signal: AbortSignal.timeout(resolveSearchServiceTimeoutMs(options.timeoutMs)),
-    });
+    const response = await (options.fetchImpl ?? fetch)(target, requestInit);
 
     return new Response(response.body, {
       status: response.status,
