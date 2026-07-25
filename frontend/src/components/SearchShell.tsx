@@ -408,8 +408,8 @@ export function SearchShell({
   }
 
   const validation = buildSearchValidation({
-    originValue: origin.query,
-    destinationValue: destination.query,
+    originValue: originCode || origin.query,
+    destinationValue: destCode || destination.query,
     departureDate,
     returnDate,
     adults,
@@ -1618,7 +1618,7 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
 function buildMigrationMonthOptions(startIso: string): MigrationMonthOption[] {
   const start = isIsoDate(startIso) ? startIso : localDateToIso(new Date())
   const [year, startMonth] = start.split("-").map(Number)
-  const lastMonthIndex = Math.max(11, startMonth + LEGACY_DEFAULT_MIGRATION_MONTH_COUNT - 2)
+  const lastMonthIndex = startMonth + LEGACY_DEFAULT_MIGRATION_MONTH_COUNT - 2
 
   return Array.from({ length: lastMonthIndex + 1 }, (_, index) => {
     const optionYear = year + Math.floor(index / 12)
@@ -1676,7 +1676,7 @@ function buildMigrationMonthRangeSelection(start: string, end: string, options: 
   const from = Math.min(resolvedStartIndex, resolvedEndIndex)
   const to = Math.max(resolvedStartIndex, resolvedEndIndex)
 
-  return enabledKeys.slice(from, to + 1)
+  return enabledKeys.slice(from, to + 1).slice(0, LEGACY_DEFAULT_MIGRATION_MONTH_COUNT)
 }
 
 function uniqueMonthKeys(values: string[]) {
@@ -1759,6 +1759,8 @@ function buildSearchValidation(input: SearchValidationInput): SearchValidationSt
   if (input.mode === "migration") {
     if (input.migrationMonths.length === 0) {
       state.migrationMonths = "Selecciona al menos un mes."
+    } else if (input.migrationMonths.length > LEGACY_DEFAULT_MIGRATION_MONTH_COUNT) {
+      state.migrationMonths = `Selecciona hasta ${LEGACY_DEFAULT_MIGRATION_MONTH_COUNT} meses.`
     }
     return state
   }
@@ -1817,7 +1819,7 @@ function toDomId(value: string) {
 }
 
 function isValidLocationCandidate(value: string) {
-  return /^[A-Z]{3}/.test(value)
+  return /^[A-Z]{3}$/.test(value)
 }
 
 function clampIsoDate(value: string, minDate: string, maxDate?: string) {

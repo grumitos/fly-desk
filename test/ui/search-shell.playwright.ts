@@ -1060,6 +1060,7 @@ test("flexible and migratory modes expose their distinct controls", async () => 
     await assert.equal(await monthCalendar.getByRole("button", { name: /Enero de 2026/i }).isDisabled(), true);
     await assert.equal(await monthCalendar.getByRole("button", { name: /Febrero de 2026/i }).isDisabled(), true);
     await assert.equal(await monthCalendar.getByRole("button", { name: /Marzo de 2026/i }).isDisabled(), false);
+    await assert.equal(await monthCalendar.getByRole("button", { name: /Noviembre de 2026/i }).count(), 0);
     await assert.equal(await page.getByRole("button", { name: "Ida y vuelta" }).isDisabled(), true);
     await assert.equal(await page.getByRole("button", { name: "Solo ida" }).isDisabled(), true);
     await assert.equal(await page.getByRole("button", { name: "Solo ida" }).getAttribute("aria-pressed"), "true");
