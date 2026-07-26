@@ -194,6 +194,7 @@ como artefactos.
 - [`docs/REPO_CURRENT_STATE.md`](./docs/REPO_CURRENT_STATE.md): estado funcional y tecnico actual
 - [`docs/DEPLOY_APP.md`](./docs/DEPLOY_APP.md): deploy y rollback de app Fly Desk
 - [`docs/AGIL_SESSION_RECOVERY.md`](./docs/AGIL_SESSION_RECOVERY.md): recuperacion de sesion Agil en Chrome/CDP del VPS
+- [`docs/CBPLUS_SESSION_RECOVERY.md`](./docs/CBPLUS_SESSION_RECOVERY.md): regeneracion y recuperacion segura de Click and Book Plus sin copiar una sesion
 - [`docs/FRONTEND_IDENTITY.md`](./docs/FRONTEND_IDENTITY.md): identidad visual y reglas UI React
 - [`docs/TESTING.md`](./docs/TESTING.md): clasificacion, ejecucion y criterios de relevancia de pruebas
 - [`docs/superpowers/specs/2026-07-10-search-runtime-budget-design.md`](./docs/superpowers/specs/2026-07-10-search-runtime-budget-design.md): decisiones de fluidez, cotizacion local y presupuesto residente
