@@ -12,17 +12,25 @@ test("deploy and rollback require a pinned VPS host key", async () => {
   assert.equal(workflow.match(/IdentitiesOnly yes/g)?.length, 2);
 });
 
-test("deploy and rollback only invoke the fixed platform release wrapper", async () => {
+test("deploy and rollback use only the forced command contract", async () => {
   const workflow = await Bun.file(new URL("../.github/workflows/deploy-vps.yml", import.meta.url)).text();
 
-  assert.match(workflow, /RELEASE_WRAPPER: \/usr\/local\/bin\/vps-release-fly-desk/);
-  assert.match(workflow, /sudo -n '\$RELEASE_WRAPPER' deploy '\$REVISION' '\$ARTIFACT_DIGEST'/);
-  assert.match(workflow, /sudo -n '\$RELEASE_WRAPPER' rollback '\$REVISION'/);
-  assert.match(workflow, /incoming\/\$APP_NAME\/\$REVISION/);
-  assert.equal(workflow.match(/readlink \/opt\/fly-desk/g)?.length, 2);
-  assert.doesNotMatch(workflow, /cat \/opt\/fly-desk\/REVISION/);
-  assert.doesNotMatch(workflow, /bash -s --/);
-  assert.doesNotMatch(workflow, /rsync -a --delete "\$release_dir"/);
+  assert.match(workflow, /ssh vps-app "upload \$REVISION \$ARTIFACT_DIGEST" < "\$ARTIFACT_PATH"/);
+  assert.match(workflow, /ssh vps-app "deploy \$REVISION \$ARTIFACT_DIGEST"/);
+  assert.match(workflow, /ssh vps-app "rollback \$REVISION"/);
+  assert.equal(workflow.match(/ssh vps-app "verify \$REVISION"/g)?.length, 2);
+  assert.equal(workflow.match(/^\s*ssh(?!-)\s/gm)?.length, 5);
+  assert.equal(workflow.match(/ssh vps-app "(?:upload \$REVISION \$ARTIFACT_DIGEST|deploy \$REVISION \$ARTIFACT_DIGEST|rollback \$REVISION|verify \$REVISION)"/g)?.length, 5);
+  for (const forbidden of [
+    /\bscp\b/,
+    /\/var\/lib\/vps-app-release\/incoming/,
+    /\/usr\/local\/bin\/vps-release-/,
+    /sudo -n/,
+    /readlink \/opt\//,
+    /curl .*http:\/\/127\.0\.0\.1:/,
+    /bash -s --/,
+  ])
+    assert.doesNotMatch(workflow, forbidden);
 });
 
 test("deploy proves an exact main revision without retained checkout credentials", async () => {
