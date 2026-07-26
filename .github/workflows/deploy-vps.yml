@@ -28,10 +28,6 @@ concurrency:
   group: fly-desk-vps-deploy
   cancel-in-progress: false
 
-env:
-  APP_NAME: fly-desk
-  RELEASE_WRAPPER: /usr/local/bin/vps-release-fly-desk
-
 jobs:
   deploy:
     name: Validate and deploy revision
@@ -115,6 +111,7 @@ jobs:
           printf '%s\n' "$REVISION" > "$package_root/app/REVISION"
           tar -C "$package_root" -czf "$artifact" app
           digest="$(sha256sum "$artifact" | awk '{print $1}')"
+          printf '%s' "$digest" | grep -Eq '^[0-9a-f]{64}$'
           echo "path=$artifact" >> "$GITHUB_OUTPUT"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
@@ -160,12 +157,11 @@ jobs:
         env:
           REVISION: ${{ inputs.revision }}
           ARTIFACT_PATH: ${{ steps.artifact.outputs.path }}
+          ARTIFACT_DIGEST: ${{ steps.artifact.outputs.digest }}
         run: |
           set -euo pipefail
-          incoming="/var/lib/vps-app-release/incoming/$APP_NAME/$REVISION"
-          ssh vps-app "umask 077; install -d -m 0700 '$incoming'"
-          scp "$ARTIFACT_PATH" "vps-app:$incoming/artifact.tar.gz.upload"
-          ssh vps-app "mv '$incoming/artifact.tar.gz.upload' '$incoming/artifact.tar.gz'"
+          printf '%s' "$ARTIFACT_DIGEST" | grep -Eq '^[0-9a-f]{64}$'
+          ssh vps-app "upload $REVISION $ARTIFACT_DIGEST" < "$ARTIFACT_PATH"
 
       - name: Activate revision
         env:
@@ -173,14 +169,15 @@ jobs:
           ARTIFACT_DIGEST: ${{ steps.artifact.outputs.digest }}
         run: |
           set -euo pipefail
-          ssh vps-app "sudo -n '$RELEASE_WRAPPER' deploy '$REVISION' '$ARTIFACT_DIGEST'"
+          printf '%s' "$ARTIFACT_DIGEST" | grep -Eq '^[0-9a-f]{64}$'
+          ssh vps-app "deploy $REVISION $ARTIFACT_DIGEST"
 
       - name: Verify atomic pointer
         env:
           REVISION: ${{ inputs.revision }}
         run: |
           set -euo pipefail
-          ssh vps-app "test \"\$(readlink /opt/fly-desk)\" = '/opt/apps/fly-desk/releases/$REVISION'"
+          ssh vps-app "verify $REVISION"
 
       - name: Public smoke
         env:
@@ -256,14 +253,14 @@ jobs:
           REVISION: ${{ inputs.revision }}
         run: |
           set -euo pipefail
-          ssh vps-app "sudo -n '$RELEASE_WRAPPER' rollback '$REVISION'"
+          ssh vps-app "rollback $REVISION"
 
       - name: Verify atomic pointer
         env:
           REVISION: ${{ inputs.revision }}
         run: |
           set -euo pipefail
-          ssh vps-app "test \"\$(readlink /opt/fly-desk)\" = '/opt/apps/fly-desk/releases/$REVISION'"
+          ssh vps-app "verify $REVISION"
 
       - name: Public smoke
         env:
