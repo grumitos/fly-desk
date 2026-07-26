@@ -4,6 +4,10 @@ Este runbook cubre la recuperacion operativa cuando Agil deja de funcionar en
 `fly-desk-chrome.service`, pero la sesion sigue activa en Chrome local del
 mantenedor.
 
+Click and Book Plus no comparte este procedimiento: debe regenerar su token
+desde credenciales/TOTP y usar Chrome/CDP solo como fallback. Ver
+[`CBPLUS_SESSION_RECOVERY.md`](./CBPLUS_SESSION_RECOVERY.md).
+
 ## Reglas
 
 - No imprimir cookies, tokens, payloads de storage, passwords ni valores de

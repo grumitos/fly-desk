@@ -57,10 +57,21 @@ El job usa `BatchMode`, `IdentitiesOnly` y `StrictHostKeyChecking`; no admite `s
 
 Las variables reales de aplicación viven en `/etc/fly-desk.env`. `.env.example` documenta nombres y defaults, no valores. Los SQLite, caches, sesiones, perfil Chrome y artefactos mutables deben permanecer bajo `/var/lib/fly-desk`.
 
+En una migracion de host, no copiar el perfil Chrome ni la SQLite de sesiones
+para conservar Click and Book Plus. Regenerar su token desde credenciales/TOTP
+y usar CDP solo como fallback segun
+[`CBPLUS_SESSION_RECOVERY.md`](./CBPLUS_SESSION_RECOVERY.md). La sesion Agil,
+que tiene un modelo distinto, se recupera mediante
+[`AGIL_SESSION_RECOVERY.md`](./AGIL_SESSION_RECOVERY.md).
+
 ## Verificacion y rollback
 
 Tras desplegar, el wrapper exige health local en `8100`, `8101` y `8102`. El workflow acepta `200` publico o el `403` regional esperado desde runners fuera de Peru.
 
 Para cambios de busqueda, cancelacion, redirects, proveedores o sesiones/cache, ejecutar despues `Fly Desk Production Smoke` en `vps-platform` y esperar su resultado.
+
+Antes de retirar un VPS anterior, el smoke debe probar busqueda y `/r/*` de
+Click and Book Plus despues de regenerar el token en el host nuevo. Un health
+`200` o un token localmente utilizable no bastan por separado.
 
 Para rollback, abrir `Deploy VPS`, elegir `mode=rollback` e indicar el SHA exacto de un release existente. Si Actions no esta disponible, usar el wrapper desde el acceso operativo documentado por plataforma; no copiar releases con `rsync` ni cambiar manualmente `/opt/fly-desk`.
