@@ -1,49 +1,40 @@
-# Estrategia de pruebas
+# Testing Strategy
 
-Fly Desk separa las pruebas por recursos consumidos y por el tipo de contrato que protegen.
+Fly Desk separates tests by the resources they consume and the type of contract they protect.
 
-## Comandos
+## Commands
 
-- `bun run test:unit`: logica pura y contratos pequenos, sin procesos externos.
-- `bun run test:integration`: HTTP, SQLite, filesystem, workers y providers controlados.
-- `bun run test:core`: unitarias e integracion en una sola ejecucion Bun.
-- `bun run test:ui`: flujos React en Chromium contra el build local.
-- `bun run test:coverage`: cobertura de las suites Bun. La cobertura del navegador no se mezcla con este reporte.
-- `bun run test`: gate completo de core y UI.
+- `bun run test:unit`: pure logic and small contracts, without external processes.
+- `bun run test:integration`: HTTP, SQLite, filesystem, workers, and controlled providers.
+- `bun run test:core`: unit and integration tests in a single Bun run.
+- `bun run test:ui`: React flows in Chromium against the local build.
+- `bun run test:coverage`: coverage for the Bun suites. Browser coverage is not included in this report.
+- `bun run test`: complete core and UI gate.
 
-Los archivos Bun deben terminar en `.unit.test.ts` o `.integration.test.ts`; los scripts filtran
-esos sufijos directamente con `bun test`.
+Bun test files must end in `.unit.test.ts` or `.integration.test.ts`; the scripts pass those suffixes directly to `bun test`.
 
-## Suite UI
+## UI Suite
 
-`test/ui.playwright.ts` registra el lifecycle compartido y carga modulos por capacidad desde
-`test/ui/`. La suite levanta una instancia del servidor y una de Chromium. Cada caso recibe un
-`BrowserContext` nuevo para aislar cookies, storage, rutas y paginas.
+`test/ui.playwright.ts` registers the shared lifecycle and loads capability-based modules from `test/ui/`. The suite starts one server instance and one Chromium instance. Each test receives a fresh `BrowserContext` to isolate cookies, storage, routes, and pages.
 
-En GitHub Actions se usa el canal `chrome` incluido en la imagen oficial del runner mediante
-`FLY_DESK_TEST_BROWSER_CHANNEL=chrome`; localmente, al no definirlo, Playwright usa su Chromium
-instalado. Esto evita descargar un navegador completo en cada job.
+GitHub Actions uses the `chrome` channel included in the official runner image through `FLY_DESK_TEST_BROWSER_CHANNEL=chrome`. When that variable is not set locally, Playwright uses its installed Chromium. This avoids downloading a full browser in every job.
 
-Las pruebas UI deben priorizar:
+UI tests should prioritize:
 
-- roles, nombres accesibles y navegacion por teclado
-- payloads enviados y estados visibles
-- overflow, disponibilidad de controles y cambio de paneles
-- flujos criticos de busqueda, resultados, filtros, detalle y cotizacion
+- roles, accessible names, and keyboard navigation
+- submitted payloads and visible states
+- overflow, control availability, and panel changes
+- critical search, results, filtering, detail, and quotation flows
 
-Evitar aserciones contra fragmentos de clases Tailwind, jerarquia interna de componentes o
-tolerancias subpixel salvo que representen un contrato visual deliberado. Cuando un caso UI falla,
-el harness guarda una captura en `test-results/ui/`; CI publica ese directorio como artefacto.
+Avoid assertions against Tailwind class fragments, internal component hierarchy, or subpixel tolerances unless they represent a deliberate visual contract. When a UI test fails, the harness saves a screenshot under `test-results/ui/`; CI publishes that directory as an artifact.
 
-## Cobertura
+## Coverage
 
-La cobertura es una senal, no una meta global aislada. Los nuevos casos deben priorizar ramas de:
+Coverage is a signal, not an isolated global target. New tests should prioritize branches involving:
 
-- seguridad y autenticacion
-- orquestacion y contratos de providers
-- persistencia, cache, cancelacion y redirects
-- conversion de requests compartidos entre frontend y backend
+- security and authentication
+- orchestration and provider contracts
+- persistence, caching, cancellation, and redirects
+- conversion of shared requests between frontend and backend
 
-No se eliminan pruebas de compatibilidad `costamar` solo por el nombre legacy: siguen protegiendo
-la integracion Click and Book Plus. Antes de retirar una prueba, debe existir evidencia de que el
-contrato desaparecio o quedo cubierto por un caso mas directo.
+Do not remove `costamar` compatibility tests solely because they use the legacy name: they still protect the Click and Book Plus integration. Before removing a test, establish that the contract no longer exists or is covered by a more direct test.
