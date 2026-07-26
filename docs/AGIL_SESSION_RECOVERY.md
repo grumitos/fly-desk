@@ -1,28 +1,20 @@
-# Recuperar sesion Agil en el VPS
+# Recovering an Agil Session on the VPS
 
-Este runbook cubre la recuperacion operativa cuando Agil deja de funcionar en
-`fly-desk-chrome.service`, pero la sesion sigue activa en Chrome local del
-mantenedor.
+This runbook covers operational recovery when Agil stops working in `fly-desk-chrome.service` but the session remains active in the maintainer's local Chrome browser.
 
-Click and Book Plus no comparte este procedimiento: debe regenerar su token
-desde credenciales/TOTP y usar Chrome/CDP solo como fallback. Ver
-[`CBPLUS_SESSION_RECOVERY.md`](./CBPLUS_SESSION_RECOVERY.md).
+Click and Book Plus does not use this procedure: its token must be regenerated from credentials/TOTP, with Chrome/CDP used only as a fallback. See [`CBPLUS_SESSION_RECOVERY.md`](./CBPLUS_SESSION_RECOVERY.md).
 
-## Reglas
+## Rules
 
-- No imprimir cookies, tokens, payloads de storage, passwords ni valores de
-  `/etc/fly-desk.env`.
-- No copiar el perfil Chrome completo al repo ni dejar payloads en Git.
-- No reiniciar `fly-desk-chrome.service` salvo instruccion explicita; ese
-  servicio mantiene el perfil Agil del VPS.
-- Si se reinicia algo despues de inyectar, reiniciar `fly-desk-search.service`
-  cuando exista y luego `fly-desk.service`, para limpiar cache de token en los
-  procesos Bun sin tocar Chrome.
-- Borrar archivos temporales locales y remotos al terminar.
+- Do not print cookies, tokens, storage payloads, passwords, or values from `/etc/fly-desk.env`.
+- Do not copy the complete Chrome profile into the repository or leave payloads in Git.
+- Do not restart `fly-desk-chrome.service` unless explicitly instructed; that service maintains the Agil profile on the VPS.
+- If anything is restarted after injection, restart `fly-desk-search.service` when it exists, then restart `fly-desk.service`. This clears the token cache in the Bun processes without touching Chrome.
+- Delete local and remote temporary files when finished.
 
-## Resumen del flujo
+## Procedure Summary
 
-1. Confirmar que el VPS y los servicios estan activos:
+1. Confirm that the VPS and services are active:
 
    ```bash
    systemctl is-active caddy video-downloader fly-desk fly-desk-search fly-desk-chrome fly-desk-maintenance.timer
@@ -30,8 +22,7 @@ desde credenciales/TOTP y usar Chrome/CDP solo como fallback. Ver
    curl -fsS http://127.0.0.1:9222/json/version >/dev/null
    ```
 
-2. En Windows, crear una copia temporal minima del perfil Chrome local que tiene
-   la sesion Agil. Copiar solo:
+2. On Windows, create a minimal temporary copy of the local Chrome profile that holds the Agil session. Copy only:
 
    - `Local State`
    - `<profile>/Preferences`
@@ -41,47 +32,39 @@ desde credenciales/TOTP y usar Chrome/CDP solo como fallback. Ver
    - `<profile>/Local Storage`
    - `<profile>/Session Storage`
 
-   No sirve copiar la base de cookies al VPS: las cookies de Chrome en Windows
-   estan cifradas con DPAPI y no son portables a Linux. La copia temporal se usa
-   solo para que Chrome local descifre su propio estado.
+   Copying the cookie database to the VPS will not work: Chrome cookies on Windows are encrypted with DPAPI and are not portable to Linux. The temporary copy is used only so local Chrome can decrypt its own state.
 
-3. Levantar Chrome local contra esa copia temporal con CDP en loopback y abrir
-   `https://www.agilsmart.com/`. La sesion local queda confirmada si termina en
-   `/home-user` y el storage de Agil contiene:
+3. Start local Chrome against that temporary copy with CDP bound to loopback, then open `https://www.agilsmart.com/`. The local session is confirmed if the browser reaches `/home-user` and Agil storage contains:
 
-   - `tokenSearchFlight` o `tokenTravelC`
+   - `tokenSearchFlight` or `tokenTravelC`
    - `user_data`
    - `ip`
 
-4. Desde ese Chrome temporal, capturar en memoria un payload con:
+4. From that temporary Chrome instance, capture an in-memory payload containing:
 
-   - cookies de `agilsmart.com` y `expertiatravel.com`
-   - `localStorage` y `sessionStorage` de
-     `https://www.agilsmart.com/home-user`
-   - `localStorage` y `sessionStorage` de
-     `https://motorvuelos.expertiatravel.com/`
+   - cookies for `agilsmart.com` and `expertiatravel.com`
+   - `localStorage` and `sessionStorage` from `https://www.agilsmart.com/home-user`
+   - `localStorage` and `sessionStorage` from `https://motorvuelos.expertiatravel.com/`
 
-   Guardarlo solo en un archivo temporal fuera del repo, con permisos privados.
+   Save it only to a private temporary file outside the repository.
 
-5. Subir el payload temporal por SSH a `/tmp` en el VPS. Usar `StrictHostKeyChecking=yes`
-   y `UserKnownHostsFile` pineado al almacen local de credenciales.
+5. Upload the temporary payload over SSH to `/tmp` on the VPS. Use `StrictHostKeyChecking=yes` and a `UserKnownHostsFile` pinned to the local credential store.
 
-6. En el VPS, conectar por CDP a `http://127.0.0.1:9222` y aplicar el payload:
+6. On the VPS, connect through CDP to `http://127.0.0.1:9222` and apply the payload:
 
-   - `Network.setCookies` para las cookies capturadas
-   - navegar cada origen de Agil
-   - ejecutar `localStorage.setItem(...)` y `sessionStorage.setItem(...)` para
-     sus claves capturadas
+   - use `Network.setCookies` for the captured cookies
+   - navigate to each Agil origin
+   - run `localStorage.setItem(...)` and `sessionStorage.setItem(...)` for the captured keys
 
-7. Verificar en el mismo Chrome remoto:
+7. Verify in the same remote Chrome instance:
 
    ```text
    https://www.agilsmart.com/ -> https://www.agilsmart.com/home-user
    ```
 
-   Ademas, confirmar que el storage remoto tiene token, `user_data` e `ip`.
+   Also confirm that remote storage contains a token, `user_data`, and `ip`.
 
-8. Reiniciar solo Fly Desk app/runner para descartar cache de sesion anterior:
+8. Restart only the Fly Desk application/runner to discard the previous session cache:
 
    ```bash
    if systemctl cat fly-desk-search.service >/dev/null 2>&1; then
@@ -94,12 +77,9 @@ desde credenciales/TOTP y usar Chrome/CDP solo como fallback. Ver
    fi
    ```
 
-9. Ejecutar una busqueda desde el propio VPS contra Fly Desk. Si no hay
-   `FLY_DESK_API_TOKEN`, generar una cookie web valida dentro del proceso remoto
-   usando `FLY_DESK_WEB_SESSION_SECRET` cargado desde `/etc/fly-desk.env`; no
-   imprimir la cookie.
+9. Run a search from the VPS against Fly Desk. If `FLY_DESK_API_TOKEN` is unavailable, generate a valid web cookie within the remote process using `FLY_DESK_WEB_SESSION_SECRET` loaded from `/etc/fly-desk.env`; do not print the cookie.
 
-   Payload minimo recomendado para smoke:
+   Recommended minimal smoke payload:
 
    ```json
    {
@@ -128,29 +108,25 @@ desde credenciales/TOTP y usar Chrome/CDP solo como fallback. Ver
    }
    ```
 
-   La API publica siempre busca en Agil y Click and Book Plus. El criterio de exito de
-   esta recuperacion es encontrar al menos una oferta con
-   `providerSource = "agil-local"` en `allOffers`.
+   The public API always searches both Agil and Click and Book Plus. Recovery succeeds when `allOffers` contains at least one offer with `providerSource = "agil-local"`.
 
-10. Limpiar temporales:
+10. Remove temporary files:
 
     ```bash
     rm -f /tmp/flydesk-agil-session-*.json /tmp/flydesk-inject.*.ts /tmp/flydesk-search.*.ts
     ```
 
-    En Windows, borrar el payload local, la copia temporal del perfil Chrome y
-    la copia temporal de la llave SSH si se uso una para ajustar permisos.
+    On Windows, delete the local payload, the temporary Chrome profile copy, and any temporary SSH key copy created to adjust permissions.
 
-## Evidencia esperada
+## Expected Evidence
 
-Al cerrar la recuperacion, reportar solo hechos no sensibles:
+At the end of recovery, report only non-sensitive facts:
 
-- perfil local usado, por nombre generico si hace falta, por ejemplo `Default`
-- cantidad de cookies inyectadas
-- cantidad de origenes de storage aplicados
-- redireccion remota a `/home-user`
-- estado de `fly-desk.service`, `fly-desk-search.service` si existe, y `fly-desk-chrome.service`
-- resumen del smoke, por ejemplo `agilOfferCount=228`
+- the local profile used, with a generic name if necessary, such as `Default`
+- number of injected cookies
+- number of storage origins applied
+- remote redirection to `/home-user`
+- status of `fly-desk.service`, `fly-desk-search.service` when it exists, and `fly-desk-chrome.service`
+- a smoke summary, such as `agilOfferCount=228`
 
-No reportar valores de cookies, tokens, storage, headers, passwords ni contenido
-de archivos `.env`.
+Do not report cookie or token values, storage, headers, passwords, or contents of `.env` files.

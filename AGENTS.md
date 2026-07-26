@@ -1,19 +1,19 @@
 # AGENTS
 
-Guia para agentes que trabajen en Fly Desk.
+Guidance for agents working on Fly Desk.
 
-## Reglas obligatorias
+## Mandatory Rules
 
-1. Lee primero `README.md`, `docs/REPO_CURRENT_STATE.md`, `docs/DEPLOY_APP.md` y `docs/FRONTEND_IDENTITY.md`.
-2. No imprimas ni guardes secretos. Esto incluye `.env`, cookies, tokens, passwords, TOTP/otpauth, subscription keys, API tokens y sesiones de navegador.
-3. Este repo cambia producto, backend, frontend, CI y deploy propio de Fly Desk. Caddy, systemd compartido, firewall, certificados, geofence y mantenimiento diario pertenecen a `D:\Dev\VPS\vps-platform`.
-4. El package manager soportado es Bun. No agregar `package-lock.json`, `pnpm-lock.yaml` ni `yarn.lock`.
-5. El deploy de app debe reiniciar `fly-desk.service`, reiniciar `fly-desk-search.service` y `fly-desk-redirect.service` si existen, y conservar `fly-desk-chrome.service` salvo instruccion explicita.
-6. Cloudflare Pages, bindings de Pages, geofence publico y secretos operativos compartidos pertenecen a `vps-platform`; no resolverlos ni documentarlos desde este repo.
+1. Read `README.md`, `docs/REPO_CURRENT_STATE.md`, `docs/DEPLOY_APP.md`, and `docs/FRONTEND_IDENTITY.md` first.
+2. Never print or store secrets. This includes `.env` files, cookies, tokens, passwords, TOTP/otpauth values, subscription keys, API tokens, and browser sessions.
+3. This repository owns the Fly Desk product, backend, frontend, CI, and application deployment. Shared Caddy, systemd, firewall, certificates, geofencing, and daily maintenance belong to `D:\Dev\VPS\vps-platform`.
+4. Bun is the supported package manager. Do not add `package-lock.json`, `pnpm-lock.yaml`, or `yarn.lock`.
+5. Application deployment must restart `fly-desk.service`, restart `fly-desk-search.service` and `fly-desk-redirect.service` when they exist, and preserve `fly-desk-chrome.service` unless explicitly instructed otherwise.
+6. Cloudflare Pages, Pages bindings, public geofencing, and shared operational secrets belong to `vps-platform`; do not manage or document them from this repository.
 
-## Verificacion
+## Verification
 
-Para cambios de codigo o runtime:
+For code or runtime changes:
 
 ```powershell
 bun install --frozen-lockfile
@@ -23,7 +23,7 @@ bun run build
 bun run test
 ```
 
-Para cambios solo documentales:
+For documentation-only changes:
 
 ```powershell
 git diff --check
