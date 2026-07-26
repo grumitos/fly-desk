@@ -1,83 +1,51 @@
-# Recuperar Click and Book Plus sin migrar una sesion
+# Recovering Click and Book Plus Without Migrating a Session
 
-Este runbook cubre la preparacion y recuperacion de Click and Book Plus en un
-host nuevo. La estrategia normal es regenerar el token branded desde
-credenciales B2B y TOTP almacenados de forma segura. La extraccion logica desde
-Chrome/CDP queda reservada como fallback controlado.
+This runbook covers preparing and recovering Click and Book Plus on a new host. The normal strategy is to regenerate the branded token from securely stored B2B credentials and TOTP. Logical extraction through Chrome/CDP is reserved as a controlled fallback.
 
-No se debe copiar el perfil Chrome, la base de cookies, una SQLite de sesiones
-ni `CBPLUS_TOKEN` desde el VPS anterior. Esos artefactos son estado efimero,
-pueden contener tokens o rutas de compra y no demuestran que la autenticacion
-sea reproducible en el host nuevo.
+Do not copy the Chrome profile, cookie database, session SQLite database, or `CBPLUS_TOKEN` from the previous VPS. These artifacts are ephemeral state, may contain tokens or purchase paths, and do not prove that authentication is reproducible on the new host.
 
-## Decision operativa
+## Operational Decision
 
-El orden de recuperacion es obligatorio:
+The recovery order is mandatory:
 
-1. regeneracion HTTP desde `CBPLUS_B2B_EMAIL`, `CBPLUS_B2B_PASSWORD` y una
-   fuente TOTP;
-2. automatizacion Playwright sobre el Chrome/CDP del host nuevo, sin clonar un
-   perfil, solo si el flujo HTTP no puede completar el login vigente;
-3. bloqueo y diagnostico si ninguno de los dos flujos produce un token valido.
+1. HTTP regeneration from `CBPLUS_B2B_EMAIL`, `CBPLUS_B2B_PASSWORD`, and a TOTP source;
+2. Playwright automation against Chrome/CDP on the new host, without cloning a profile, only if the HTTP flow cannot complete the current login;
+3. block and diagnose if neither flow produces a valid token.
 
-`src/local-costamar.ts` intenta el flujo HTTP antes de Playwright. El login
-mantiene cookies solo en memoria, genera el OTP en el momento y solicita un
-token para `CBPLUS_TERMINAL_ID`. `src/provider-context.ts` descarta tokens
-vencidos o asociados a otro terminal. El identificador interno `costamar` se
-conserva por compatibilidad; una instalacion nueva debe usar variables
-`CBPLUS_*`, no introducir nuevas dependencias de `COSTAMAR_*`.
+`src/local-costamar.ts` tries the HTTP flow before Playwright. Login keeps cookies only in memory, generates the OTP when needed, and requests a token for `CBPLUS_TERMINAL_ID`. `src/provider-context.ts` rejects expired tokens and tokens associated with a different terminal. The internal `costamar` identifier remains for compatibility; a new installation must use `CBPLUS_*` variables rather than introduce new dependencies on `COSTAMAR_*`.
 
-## Reglas de seguridad
+## Security Rules
 
-- No imprimir, registrar, pegar en comandos ni incluir en tickets valores de
-  credenciales, TOTP, cookies, JWT, cabeceras de autorizacion o `.env`.
-- No establecer `CBPLUS_TOKEN` como secreto permanente en el host nuevo. Debe
-  quedar ausente para probar que la regeneracion funciona.
-- No copiar `/etc/fly-desk.env`, `/var/lib/fly-desk`, el perfil de
-  `fly-desk-chrome.service` ni archivos bajo `/tmp` desde Hetzner.
-- No usar `rsync`, `scp` ni un tar para trasladar un perfil Chrome completo o
-  parcial. Las cookies de otro host no son la fuente de verdad.
-- Mantener `CBPLUS_B2B_DEBUG=0`; los diagnosticos normales exponen estados y
-  conteos suficientes.
-- Mantener `CBPLUS_B2B_CLONE_CHROME_PROFILE=0`, incluso durante el fallback.
-- El acceso CDP debe seguir en loopback. No publicar `9222` ni crear un tunel
-  compartido para facilitar la recuperacion.
-- No mostrar una cabecera `Location` de Click and Book Plus: puede contener el
-  token en la URL. Reportar solo estado HTTP y host de destino permitido.
-- No reiniciar ni reemplazar `fly-desk-chrome.service` durante el camino normal.
+- Do not print, log, paste into commands, or include in tickets any credentials, TOTP values, cookies, JWTs, authorization headers, or `.env` values.
+- Do not set `CBPLUS_TOKEN` as a permanent secret on the new host. It must remain absent to prove regeneration works.
+- Do not copy `/etc/fly-desk.env`, `/var/lib/fly-desk`, the `fly-desk-chrome.service` profile, or files under `/tmp` from Hetzner.
+- Do not use `rsync`, `scp`, or a tar archive to move a complete or partial Chrome profile. Cookies from another host are not the source of truth.
+- Keep `CBPLUS_B2B_DEBUG=0`; normal diagnostics expose sufficient states and counts.
+- Keep `CBPLUS_B2B_CLONE_CHROME_PROFILE=0`, including during fallback.
+- CDP access must remain on loopback. Do not expose port `9222` or create a shared tunnel to simplify recovery.
+- Do not display a Click and Book Plus `Location` header: it may contain the token in the URL. Report only the HTTP status and the allowed destination host.
+- Do not restart or replace `fly-desk-chrome.service` during the normal path.
 
-## Precondiciones
+## Preconditions
 
-Antes de intentar la recuperacion:
+Before attempting recovery:
 
-- el release que se va a operar esta activo en el host nuevo;
-- `fly-desk.service`, `fly-desk-search.service` y
-  `fly-desk-redirect.service` responden en loopback;
-- `/etc/fly-desk.env` fue reconstruido desde el almacen de secretos canonico,
-  no copiado del VPS anterior;
-- estan presentes `CBPLUS_TERMINAL_ID`, `CBPLUS_B2B_EMAIL` y
-  `CBPLUS_B2B_PASSWORD`;
-- esta presente exactamente una fuente TOTP operativa:
-  `CBPLUS_B2B_TOTP_SECRET` o `CBPLUS_B2B_TOTP_URI`;
-- el reloj del host esta sincronizado; un desfase puede invalidar cada OTP;
-- `CBPLUS_B2B_AUTOMATION_ENABLED=1`,
-  `CBPLUS_SESSION_WARMUP_ENABLED=1` y
-  `CBPLUS_B2B_CLONE_CHROME_PROFILE=0`;
-- `CBPLUS_B2B_PLAYWRIGHT_FALLBACK_ENABLED=0` y
-  `CBPLUS_CDP_TAB_SCAN_ENABLED=0` durante la primera prueba, para demostrar que
-  el host no depende de una sesion de navegador previa.
+- the release to be operated is active on the new host;
+- `fly-desk.service`, `fly-desk-search.service`, and `fly-desk-redirect.service` respond on loopback;
+- `/etc/fly-desk.env` was reconstructed from the canonical secret store, not copied from the previous VPS;
+- `CBPLUS_TERMINAL_ID`, `CBPLUS_B2B_EMAIL`, and `CBPLUS_B2B_PASSWORD` are present;
+- exactly one working TOTP source is present: `CBPLUS_B2B_TOTP_SECRET` or `CBPLUS_B2B_TOTP_URI`;
+- the host clock is synchronized, because drift can invalidate every OTP;
+- `CBPLUS_B2B_AUTOMATION_ENABLED=1`, `CBPLUS_SESSION_WARMUP_ENABLED=1`, and `CBPLUS_B2B_CLONE_CHROME_PROFILE=0`;
+- `CBPLUS_B2B_PLAYWRIGHT_FALLBACK_ENABLED=0` and `CBPLUS_CDP_TAB_SCAN_ENABLED=0` during the first test, proving that the host does not depend on an existing browser session.
 
-No comprobar estas variables con `cat`, `grep` o `systemctl show` si la salida
-puede incluir valores. La comprobacion debe limitarse a presencia/ausencia y
-realizarse mediante el procedimiento privado de secretos de plataforma.
+Do not check these variables with `cat`, `grep`, or `systemctl show` if the output could include values. Limit the check to presence or absence and perform it through the platform's private secret procedure.
 
-## Camino normal: regeneracion desde credenciales y TOTP
+## Normal Path: Regeneration From Credentials and TOTP
 
-1. Confirmar que `CBPLUS_TOKEN` y el fallback `COSTAMAR_TOKEN` estan ausentes.
-   Si existian, retirarlos mediante el flujo seguro de configuracion; no
-   conservar una copia temporal.
+1. Confirm that `CBPLUS_TOKEN` and its `COSTAMAR_TOKEN` fallback are absent. If they existed, remove them through the secure configuration flow; do not retain a temporary copy.
 
-2. Reiniciar los procesos que leen `/etc/fly-desk.env`, sin tocar Chrome:
+2. Restart the processes that read `/etc/fly-desk.env`, without touching Chrome:
 
    ```bash
    sudo systemctl restart fly-desk-search.service
@@ -86,49 +54,34 @@ realizarse mediante el procedimiento privado de secretos de plataforma.
    systemctl is-active fly-desk.service fly-desk-search.service fly-desk-redirect.service
    ```
 
-3. Ejecutar `Fly Desk Production Smoke` desde `vps-platform`. La primera
-   busqueda fuerza al runner a obtener contexto Click and Book Plus y, al no
-   encontrar un token persistido, activa la regeneracion B2B. El smoke espera
-   la finalizacion, exige purchase paths para Agil y Click and Book Plus y
-   resuelve `/r/*` sin publicar la URL externa sensible.
+3. Run `Fly Desk Production Smoke` from `vps-platform`. The first search forces the runner to obtain Click and Book Plus context and, because no persisted token is present, triggers B2B regeneration. The smoke waits for completion, requires purchase paths for Agil and Click and Book Plus, and resolves `/r/*` without exposing the sensitive external URL.
 
-4. Despues de la busqueda, consultar desde loopback el endpoint de estado del
-   runner:
+4. After the search, query the runner status endpoint over loopback:
 
    ```text
    http://127.0.0.1:8101/api/costamar/token-status?verify=true
    ```
 
-   La respuesta no contiene el token, pero no debe copiarse completa. Registrar
-   solo `tokenUsable` y `verification.valid`. Esta comprobacion complementa el
-   smoke: valida compatibilidad local y alcance del upstream, pero no demuestra
-   por si sola que el redirect branded acepte el token.
+   The response does not contain the token, but it still must not be copied in full. Record only `tokenUsable` and `verification.valid`. This check complements the smoke: it validates local compatibility and upstream scope, but does not prove by itself that the branded redirect accepts the token.
 
-5. Considerar regenerado el token solo si se cumplen en la misma ejecucion:
+5. Consider the token regenerated only when all of the following hold in the same run:
 
-   - la busqueda termina;
-   - existe al menos una oferta con `providerSource = "costamar"`;
-   - existe un purchase path Click and Book Plus bajo `/r/<id>`;
-   - el resolver responde `302` hacia un host branded permitido;
-   - el destino no es una pagina de login, autenticacion o error;
-   - los tres servicios siguen activos.
+   - the search completes;
+   - at least one offer has `providerSource = "costamar"`;
+   - a Click and Book Plus purchase path exists under `/r/<id>`;
+   - the resolver returns `302` to an allowed branded host;
+   - the destination is not a login, authentication, or error page;
+   - all three services remain active.
 
-6. Reiniciar otra vez `fly-desk-search.service` y
-   `fly-desk-redirect.service`, repetir el smoke y exigir el mismo resultado.
-   Esta segunda pasada prueba regeneracion despues de perder el estado solo en
-   memoria; no basta con reutilizar el token de la primera busqueda.
+6. Restart `fly-desk-search.service` and `fly-desk-redirect.service` again, repeat the smoke, and require the same result. This second pass proves regeneration after losing in-memory-only state; reusing the first search's token is not sufficient.
 
-`CBPLUS_PROVIDER_B2B_PREWARM_ENABLED` puede habilitarse despues de esta prueba
-si se desea renovar antes del primer click. No es requisito para la migracion y
-no debe sustituir el smoke externo.
+`CBPLUS_PROVIDER_B2B_PREWARM_ENABLED` may be enabled after this test to renew the token before the first click. It is not required for migration and must not replace the external smoke.
 
-## Fallback: automatizacion logica sobre Chrome/CDP
+## Fallback: Logical Automation Through Chrome/CDP
 
-Usar este camino solo si el proveedor cambio el login de modo que el flujo HTTP
-no puede completarlo, pero las credenciales y el TOTP siguen siendo validos.
-Debe operar exclusivamente sobre `fly-desk-chrome.service` del host nuevo.
+Use this path only if the provider changed the login so that the HTTP flow cannot complete it, while the credentials and TOTP remain valid. It must operate exclusively against `fly-desk-chrome.service` on the new host.
 
-1. Mantener las credenciales/TOTP configuradas y habilitar de forma temporal:
+1. Keep credentials/TOTP configured and temporarily enable:
 
    ```text
    CBPLUS_B2B_PLAYWRIGHT_FALLBACK_ENABLED=1
@@ -137,96 +90,64 @@ Debe operar exclusivamente sobre `fly-desk-chrome.service` del host nuevo.
    CBPLUS_B2B_CLONE_CHROME_PROFILE=0
    ```
 
-2. Configurar `CBPLUS_CHROME_USER_DATA_DIR` y `CBPLUS_CHROME_PROFILE` para el
-   perfil ya administrado por `fly-desk-chrome.service` en el host nuevo. No
-   apuntarlos a un staging, mount o copia procedente de Hetzner.
+2. Set `CBPLUS_CHROME_USER_DATA_DIR` and `CBPLUS_CHROME_PROFILE` to the profile already managed by `fly-desk-chrome.service` on the new host. Do not point them to staging, a mount, or a copy from Hetzner.
 
-3. Reiniciar runner y redirect, no Chrome. Ejecutar una busqueda controlada o
-   el smoke de produccion. Playwright se conecta por CDP al browser existente,
-   completa el login y observa solamente paginas/respuestas de hosts permitidos
-   para capturar un candidato compatible.
+3. Restart the runner and redirect service, not Chrome. Run a controlled search or the production smoke. Playwright connects to the existing browser through CDP, completes login, and observes only pages and responses from allowed hosts to capture a compatible candidate.
 
-4. Exigir los mismos criterios de busqueda y redirect del camino normal. La
-   presencia de una pestaña autenticada no es evidencia suficiente.
+4. Require the same search and redirect criteria as the normal path. An authenticated tab alone is not sufficient evidence.
 
-5. Si el fallback queda como operacion estable, documentar el motivo y mantener
-   CDP en loopback. Si solo fue diagnostico, volver a
-   `CBPLUS_B2B_PLAYWRIGHT_FALLBACK_ENABLED=0` y
-   `CBPLUS_CDP_TAB_SCAN_ENABLED=0`, reiniciar los procesos y repetir el camino
-   normal.
+5. If fallback becomes part of stable operations, document why and keep CDP on loopback. If it was only diagnostic, return `CBPLUS_B2B_PLAYWRIGHT_FALLBACK_ENABLED=0` and `CBPLUS_CDP_TAB_SCAN_ENABLED=0`, restart the processes, and repeat the normal path.
 
-El runtime puede inspeccionar artefactos que ya pertenezcan al perfil local
-configurado para recuperar URLs branded recientes. Eso no autoriza copiar
-archivos de sesion, History, Favicons o Cookies desde otro host.
+The runtime may inspect artifacts that already belong to the configured local profile to recover recent branded URLs. This does not authorize copying session files, History, Favicons, or Cookies from another host.
 
-## Diagnostico sin exponer secretos
+## Diagnostics Without Exposing Secrets
 
-Clasificar el fallo antes de repetir intentos:
+Classify the failure before repeating attempts:
 
-| Estado observable | Interpretacion | Accion |
+| Observable state | Interpretation | Action |
 | --- | --- | --- |
-| `tokenUsable=false` | falta token, expiro o no coincide con el terminal | revisar presencia de credenciales/TOTP, reloj y terminal; no copiar un JWT viejo |
-| OTP generado, sin token capturado | el login o el endpoint B2B cambio | habilitar temporalmente el fallback CDP y revisar solo nombres de etapas/estado HTTP |
-| busqueda `401` o `402` | el proveedor rechazo el token de busqueda | forzar una regeneracion; bloquear si vuelve a ocurrir |
-| busqueda con ofertas, redirect bloqueado | el JWT no fue aceptado por el branded flow | usar `/r/*` como evidencia y diagnosticar refresh/terminal; no entregar enlaces directos |
-| timeout o upstream inaccesible | no se puede distinguir red de autenticacion | comprobar DNS, TLS y reachability; no declarar recuperada la sesion |
+| `tokenUsable=false` | Token is missing, expired, or does not match the terminal | Check the presence of credentials/TOTP, clock, and terminal; do not copy an old JWT |
+| OTP generated, no token captured | The login or B2B endpoint changed | Temporarily enable CDP fallback and inspect only stage names and HTTP status |
+| Search returns `401` or `402` | The provider rejected the search token | Force regeneration; block if it happens again |
+| Search has offers, redirect is blocked | The branded flow did not accept the JWT | Use `/r/*` as evidence and diagnose refresh/terminal; do not provide direct links |
+| Timeout or upstream unreachable | Network and authentication failures cannot be distinguished | Check DNS, TLS, and reachability; do not declare the session recovered |
 
-Los campos seguros para un informe son booleanos de presencia, estados,
-conteos, nombres de etapas y codigos HTTP. No incluir `terminalId`, timestamps de
-token, URLs completas, cuerpos de proveedor ni contenido de
-`lastWarmup.failureReason` si incorpora datos externos.
+Safe report fields are presence booleans, states, counts, stage names, and HTTP status codes. Do not include `terminalId`, token timestamps, complete URLs, provider bodies, or `lastWarmup.failureReason` contents if they incorporate external data.
 
-## Limpieza
+## Cleanup
 
-Al terminar, exitoso o no:
+When finished, whether successful or not:
 
-1. deshabilitar flags temporales de fallback que no formen parte del diseño
-   final;
-2. comprobar mediante `/api/diagnostics` que no quedaron artefactos temporales
-   activos de Click and Book Plus;
-3. ejecutar la rutina de mantenimiento de plataforma si existen artefactos
-   obsoletos `travel_quote_foundation_costamar_*` o
-   `travel_quote_foundation_costamar_browser_*`; no abrirlos ni archivarlos;
-4. confirmar que no se crearon `.env`, payloads, perfiles, cookies o tokens en
-   el repo, el home de `ops` o `/tmp`;
-5. conservar en `/var/lib/fly-desk` solo el estado generado por el host nuevo y
-   sujeto al TTL de la aplicacion.
+1. disable temporary fallback flags that are not part of the final design;
+2. use `/api/diagnostics` to confirm that no active temporary Click and Book Plus artifacts remain;
+3. run the platform maintenance routine if obsolete `travel_quote_foundation_costamar_*` or `travel_quote_foundation_costamar_browser_*` artifacts exist; do not open or archive them;
+4. confirm that no `.env` files, payloads, profiles, cookies, or tokens were created in the repository, the `ops` home directory, or `/tmp`;
+5. keep under `/var/lib/fly-desk` only state generated by the new host and subject to the application's TTL.
 
-No migrar la SQLite de sesiones para preservar redirects antiguos: los precios
-y purchase paths son efimeros y deben reconstruirse mediante una busqueda
-nueva.
+Do not migrate the session SQLite database to preserve old redirects: prices and purchase paths are ephemeral and must be rebuilt by a new search.
 
-## Puerta para eliminar Hetzner
+## Gate for Removing Hetzner
 
-Click and Book Plus bloquea la eliminacion del VPS anterior mientras falte
-cualquiera de estas evidencias:
+Click and Book Plus blocks removal of the previous VPS until all of the following evidence exists:
 
-- las credenciales B2B y la fuente TOTP estan disponibles desde el almacen
-  canonico y no existen solamente en el host viejo;
-- el host nuevo regenera un token con `CBPLUS_TOKEN` ausente y sin usar una
-  copia del perfil anterior;
-- dos smokes consecutivos, separados por reinicio de runner/redirect, completan
-  busqueda Click and Book Plus y validan su `/r/*`;
-- no hay referencias desde configuracion, rutas Chrome/CDP, unidades, callbacks
-  ni documentacion operativa hacia Hetzner;
-- la limpieza no encuentra perfiles, cookies, payloads o tokens copiados;
-- la ruta de recuperacion se ha probado con el acceso operativo del host nuevo;
-- las puertas globales de Agil, las otras aplicaciones, DNS y rollback tambien
-  autorizaron el retiro del VPS anterior.
+- B2B credentials and the TOTP source are available from the canonical store and do not exist only on the old host;
+- the new host regenerates a token with `CBPLUS_TOKEN` absent and without using a copy of the previous profile;
+- two consecutive smokes, separated by a runner/redirect restart, complete a Click and Book Plus search and validate its `/r/*`;
+- no configuration, Chrome/CDP paths, units, callbacks, or operational documentation refer to Hetzner;
+- cleanup finds no copied profiles, cookies, payloads, or tokens;
+- the recovery path has been tested through operational access to the new host;
+- the global gates for Agil, the other applications, DNS, and rollback also authorize retiring the previous VPS.
 
-Si la unica evidencia funcional sigue siendo una cookie, JWT, perfil o SQLite
-del VPS viejo, la migracion esta bloqueada. No compensar esa dependencia
-copiando el artefacto: recuperar primero las credenciales/TOTP o coordinar con
-Click and Book Plus la restauracion del acceso.
+If the only functional evidence remains a cookie, JWT, profile, or SQLite database from the old VPS, migration is blocked. Do not compensate for that dependency by copying the artifact: recover credentials/TOTP first or coordinate access restoration with Click and Book Plus.
 
-## Evidencia de cierre
+## Closure Evidence
 
-Reportar solamente:
+Report only:
 
-- camino usado: `http-b2b` o `cdp-fallback`;
-- `tokenUsable=true` y resultado booleano de la prevalidacion;
-- busqueda completa y cantidad de ofertas Click and Book Plus;
-- `/r/*` validado con `302` y host branded permitido, sin URL completa;
-- estado de web/search/redirect despues de la segunda pasada;
-- limpieza de temporales completada;
-- decision `apto` o `bloqueado` para retirar Hetzner, con motivos no sensibles.
+- path used: `http-b2b` or `cdp-fallback`;
+- `tokenUsable=true` and the boolean prevalidation result;
+- completed search and Click and Book Plus offer count;
+- `/r/*` validated with `302` and an allowed branded host, without the complete URL;
+- web/search/redirect status after the second pass;
+- completion of temporary-file cleanup;
+- `ready` or `blocked` decision for removing Hetzner, with non-sensitive reasons.
