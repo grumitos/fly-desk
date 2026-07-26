@@ -116,12 +116,12 @@ Keyboard focus must be visible, and visible controls must be reachable by tab un
 ## Copy Rules
 
 - Use Spanish labels and statuses.
-- Replace technical states with product copy:
+- Replace technical states with clear localized product copy:
   - `IDLE` -> omit the status badge when it adds no operational value.
-  - `running` -> `En búsqueda`
-  - `search_live` -> `Consultando`
-  - `partial` -> `Actualizando`
-- Keep CTA labels direct: `Buscar`, `Cotizar`, `Copiar`, `Limpiar`.
+  - `running` -> the localized equivalent of "Searching"
+  - `search_live` -> the localized equivalent of "Querying"
+  - `partial` -> the localized equivalent of "Updating"
+- Keep CTA labels direct and use localized equivalents of "Search," "Quote," "Copy," and "Clear."
 
 ## QA Gate
 

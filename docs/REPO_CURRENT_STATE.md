@@ -1,150 +1,150 @@
-# Estado Actual de la Repo
+# Current Repository State
 
-Fecha de corte: 2026-07-25
+Snapshot date: 2026-07-25
 
-## Resumen
+## Summary
 
-Fly Desk es una aplicacion web privada para agentes de viajes. El runtime activo es Bun-only: Bun instala dependencias, ejecuta el backend, compila la UI React, sirve el BFF HTTP y usa `bun:sqlite` para caches locales o de VPS.
+Fly Desk is a private web application for travel agents. The active runtime is Bun-only: Bun installs dependencies, runs the backend, builds the React UI, serves the HTTP BFF, and uses `bun:sqlite` for local or VPS caches.
 
-El repo no versiona artefactos generados:
+The repository does not version generated artifacts:
 
-- `dist/` esta ignorado
-- `frontend/dist/` esta ignorado
-- `output/` esta ignorado
-- `config/results-layout.json` puede generarse localmente desde el layout editor y no debe tratarse como estado fuente
+- `dist/` is ignored
+- `frontend/dist/` is ignored
+- `output/` is ignored
+- `config/results-layout.json` may be generated locally by the layout editor and must not be treated as source state
 
-## Producto Vigente
+## Current Product
 
-### UI React
+### React UI
 
-- busqueda exacta
-- busqueda flexible de solo ida via rango `stay-range`
-- busqueda flexible ida/vuelta via `/api/matrix`, normalizada a lista de resultados
-- busqueda migratoria mensual: selector de hasta ocho meses desde la fecha minima, incluso al cruzar de año, y fan-out solo para meses marcados
-- autocomplete de origen y destino
-- sugerencias frecuentes de origen/destino con ranking global persistido en el VPS; el backend registra la ruta cuando acepta una busqueda
-- filtros de escalas, tiempo maximo de escala, equipaje y aerolineas
-- resultados paginados con advertencias del backend
-- panel lateral con precio, equipaje, condiciones, rutas de compra y cotizacion local desde los datos frescos de busqueda
-- ajuste persistente de columnas bajo `?layoutEditor=1` o `?layout=editor`
+- exact search
+- flexible one-way search through the `stay-range` range
+- flexible round-trip search through `/api/matrix`, normalized into a results list
+- monthly migratory search: selection of up to eight months from the minimum date, including across year boundaries, with fan-out only for selected months
+- origin and destination autocomplete
+- frequent origin/destination suggestions with global ranking persisted on the VPS; the backend records a route when it accepts a search
+- filters for stops, maximum layover time, baggage, and airlines
+- paginated results with backend warnings
+- side panel with price, baggage, conditions, purchase paths, and local quotation from fresh search data
+- persistent column adjustment behind `?layoutEditor=1` or `?layout=editor`
 
-La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz visible:
+The React UI must not display simulated controls. The following remain outside the visible interface:
 
-- multidestino
-- vista calendario/matriz dedicada
+- multi-city search
+- dedicated calendar/matrix view
 - `reprice`
 
-### Feedback De Carga
+### Loading Feedback
 
-- busqueda exacta: placeholder inline y una sola publicacion estable de ofertas al terminar proveedores
-- polling y revalidacion: badge `Actualizando`
-- resultados parciales de rango/matriz: badge `Parcial`, milestones geometricos coalescidos durante 900 ms, estado final inmediato y tarjetas con identidad DOM estable
-- cotizacion: se genera y copia localmente sin `/api/quotation`; el switch migratorio inyecta sus diferencias sin ocultar ni recargar el texto
+- exact search: inline placeholder and one stable publication of offers after providers finish
+- polling and revalidation: `Actualizando` badge
+- partial range/matrix results: `Parcial` badge, geometric milestones coalesced for 900 ms, immediate final state, and cards with stable DOM identity
+- quotation: generated and copied locally without `/api/quotation`; the migratory switch injects its differences without hiding or reloading the text
 
-## Runtime, Seguridad Y Dependencias
+## Runtime, Security, and Dependencies
 
-### Web Privada
+### Private Web Application
 
-- el servidor escucha en `127.0.0.1` por defecto
-- en produccion queda detras de Caddy y mantiene `HOST=127.0.0.1`
-- `FLY_DESK_WEB_AUTH=1` activa login web con cookie httpOnly firmada
-- `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` es obligatorio cuando hay reverse proxy local
-- `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK=1` solo debe usarse si el proxy local tambien bloquea o autentica rutas local-only; por defecto las solicitudes con `x-forwarded-for`, `forwarded` o `x-real-ip` no heredan confianza loopback
-- endpoints operativos aceptan cookie web valida o `FLY_DESK_API_TOKEN`
-- diagnosticos, estado de token Click and Book Plus y apertura local de browser son loopback-only
-- layout de resultados acepta auth web porque es una preferencia de la app
-- la restriccion publica por pais vive en `grumitos/vps-platform`: Caddy bloquea `/login` y el resto de la app fuera de Peru antes de llegar a Fly Desk
-- la politica de fechas es movil: `minSearchDate = hoy`, `maxSearchDate = hoy + SEARCH_MAX_FUTURE_DAYS`
-- las estadias ida/vuelta se limitan a 90 noches
+- the server listens on `127.0.0.1` by default
+- in production it remains behind Caddy with `HOST=127.0.0.1`
+- `FLY_DESK_WEB_AUTH=1` enables web login with a signed httpOnly cookie
+- `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` is mandatory when a local reverse proxy is present
+- `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK=1` must be used only if the local proxy also blocks or authenticates local-only routes; by default, requests with `x-forwarded-for`, `forwarded`, or `x-real-ip` do not inherit loopback trust
+- operational endpoints accept a valid web cookie or `FLY_DESK_API_TOKEN`
+- diagnostics, Click and Book Plus token status, and local browser launch are loopback-only
+- results layout accepts web authentication because it is an application preference
+- public country restriction belongs to `grumitos/vps-platform`: Caddy blocks `/login` and the rest of the application outside Peru before the request reaches Fly Desk
+- the date policy moves with `minSearchDate = today` and `maxSearchDate = today + SEARCH_MAX_FUTURE_DAYS`
+- round-trip stays are limited to 90 nights
 
 ### Supply Chain
 
-- package manager soportado: Bun (`packageManager: "bun@1.3.14"`)
-- lockfile vigente: `bun.lock`
-- `bunfig.toml` desactiva lifecycle scripts durante instalacion y filtra versiones publicadas hace menos de 3 dias
-- TypeScript 7 ejecuta el typecheck y el build mediante `@typescript/native`; `typescript-eslint` usa TypeScript 6 solo como API de desarrollo porque TypeScript 7 todavia no ofrece una API programatica estable
-- `.npmrc` define `ignore-scripts=true` como proteccion para instalaciones accidentales con npm/pnpm
-- no se adopta pnpm como flujo normal porque el repo es Bun-only y no hay `pnpm-lock.yaml`
-- el grafo actual no usa paquetes `@tanstack/*`
-- cualquier dependencia que necesite scripts de instalacion debe aprobarse con `trustedDependencies` y una nota en el cambio
-- no hay launchers Windows ni scripts de autoupdate local en esta rama web
+- supported package manager: Bun (`packageManager: "bun@1.3.14"`)
+- current lockfile: `bun.lock`
+- `bunfig.toml` disables lifecycle scripts during installation and filters versions published less than three days ago
+- TypeScript 7 performs typechecking and builds through `@typescript/native`; `typescript-eslint` uses TypeScript 6 only as a development API because TypeScript 7 does not yet expose a stable programmatic API
+- `.npmrc` sets `ignore-scripts=true` as protection against accidental npm/pnpm installations
+- pnpm is not adopted as a normal workflow because the repository is Bun-only and has no `pnpm-lock.yaml`
+- the current graph does not use `@tanstack/*` packages
+- any dependency that requires installation scripts must be approved through `trustedDependencies` with a note in the change
+- this web branch has no Windows launchers or local auto-update scripts
 
 ### Providers
 
-- Agil usa sesion persistente de Chrome y subscription key desde entorno o recuperada desde el bundle Agil
-- Click and Book Plus usa contexto controlado por entorno, allowlist de hosts y warm-up B2B opcional
-- Click and Book Plus no acepta hosts/base URLs por request
-- el prewarm silencioso de providers esta activo por defecto y puede apagarse con `FLY_DESK_PROVIDER_PREWARM=0`
-- las busquedas de proveedor deben ejecutarse en el runner dedicado cuando `FLY_DESK_SEARCH_SERVICE_URL` esta configurado; dentro del runner, `FLY_DESK_SEARCH_WORKER_PROCESSES=1` mantiene proveedores en procesos hijos
-- `FLY_DESK_SEARCH_WORKER_PROCESSES=0` queda como excepcion temporal de QA y requiere repetir QA externo antes de cambiar conteos de workers, runner o warm-up
-- toda busqueda publica espera a Agil y Click and Book Plus y retiene las ofertas completas devueltas por ambos; los filtros visibles se materializan sin recortar `allOffers`, y los limites de concurrencia solo regulan solicitudes en lote
-- una oferta fresca recibe `quotationPreparedAt` solo cuando contiene los datos necesarios para cotizar; los borradores SWR cacheados eliminan esa marca hasta terminar su revalidacion
-- la tasa USD/PEN disponible en Agil se propaga a ofertas hermanas; si una ruta nacional Costamar queda sola, la resolucion diaria ocurre dentro de la busqueda y no vuelve a consultar vuelos
-- la consulta externa de tasa termina en un timeout corto y admite un unico reintento final despues de un prefetch fallido; si no resuelve, la busqueda termina sin marcar la oferta como cotizable
-- la admision global de busquedas usa unidades de capacidad: presupuesto default `4`, exacta `1`, rango `2`, matriz `2`, cola default `8` y timeout default `120000ms`
-- el proxy web transmite la respuesta del runner sin bufferizar el body completo y mantiene el timeout durante el stream; no usar valores menores al default operativo
-- la capacidad se libera solo cuando termina el trabajo de proveedores; la cache de sesiones y purchase paths queda en `src/session-store.ts` hasta su TTL operativo
-- el TTL de reutilizacion de precio se ancla en `searchMeta.completedAt`, no en polling; la retencion idle de sesion permanece separada para conservar redirects
-- los jobs completados residentes comparten 128 MiB por defecto; un timer reevalua el LRU al vencer la gracia de 5 segundos (ademas del mantenimiento de 60 segundos), deja el excedente disk-only con APIs y `/r/<id>` compatibles y lo elimina al vencer el TTL. Jobs running no son elegibles
-- los deltas de rango/matriz viajan de worker a router sin reenviar el acumulado; RAM, polling y SQLite publican snapshots en milestones geometricos coalescidos durante 900 ms, mas la finalizacion durable. Los purchase paths se persisten independientemente para mantener redirects visibles entre milestones
-- los payloads HTTP y SQLite de matriz conservan sólo celdas con oferta/precio/redirect y omiten placeholders sin resultado; la actualizacion por celda usa indice O(1) y la agregacion entre proveedores es O(P·N)
-- las matrices persisten request/contexto compactos para redirects; filas antiguas conservan fallback compatible al payload completo
-- con `FLY_DESK_SEARCH_SERVICE_URL`, el proceso web no abre la SQLite de sesiones por autocomplete o preferencias; el getter lazy reserva esa restauracion para el runner, `/r`, cotizacion o diagnosticos que realmente la usan
-- cancelar desde la UI, cerrar la pestaña o detener ordenadamente el proceso cambia el job remoto a cancelado; `pagehide`/`beforeunload` y shutdown fuerzan primero el ultimo delta pendiente y piden cache parcial
-- los enlaces externos siguen pasando por `/r/<id>` como cache local de purchase paths; Agil redirige sin pagina intermedia, mientras Click and Book Plus conserva validacion/refresh de token antes del `302`
-- en produccion `/r/*` puede resolverse desde `fly-desk-redirect.service`, un proceso Bun separado que lee la misma SQLite de sesiones y mantiene la misma autenticacion web/API antes de abrir proveedor
+- Agil uses a persistent Chrome session and a subscription key from the environment or recovered from the Agil bundle
+- Click and Book Plus uses environment-controlled context, a host allowlist, and optional B2B warm-up
+- Click and Book Plus does not accept hosts or base URLs per request
+- silent provider prewarm is enabled by default and can be disabled with `FLY_DESK_PROVIDER_PREWARM=0`
+- provider searches must run in the dedicated runner when `FLY_DESK_SEARCH_SERVICE_URL` is configured; within the runner, `FLY_DESK_SEARCH_WORKER_PROCESSES=1` keeps providers in child processes
+- `FLY_DESK_SEARCH_WORKER_PROCESSES=0` remains a temporary QA exception, and external QA must be repeated before changing worker counts, the runner, or warm-up
+- every public search waits for Agil and Click and Book Plus and retains all offers returned by both; visible filters are materialized without trimming `allOffers`, and concurrency limits regulate only batch requests
+- a fresh offer receives `quotationPreparedAt` only when it contains the data required for quotation; cached SWR drafts remove that marker until revalidation finishes
+- the USD/PEN rate available from Agil propagates to sibling offers; if a domestic Costamar route remains alone, daily rate resolution occurs within the search and does not query flights again
+- external rate lookup has a short timeout and allows one final retry after a failed prefetch; if unresolved, the search finishes without marking the offer quotable
+- global search admission uses capacity units: default budget `4`, exact `1`, range `2`, matrix `2`, default queue `8`, and default timeout `120000ms`
+- the web proxy streams the runner response without buffering the complete body and retains the timeout during the stream; do not use values below the operational default
+- capacity is released only when provider work finishes; session and purchase-path caches remain in `src/session-store.ts` until their operational TTL
+- the price-reuse TTL is anchored to `searchMeta.completedAt`, not polling; session idle retention remains separate to preserve redirects
+- completed resident jobs share 128 MiB by default; a timer reevaluates LRU when the five-second grace expires, in addition to 60-second maintenance, leaves excess jobs disk-only with compatible APIs and `/r/<id>`, and deletes them at TTL expiry. Running jobs are not eligible
+- range/matrix deltas travel from worker to router without resending accumulated state; RAM, polling, and SQLite publish snapshots at geometric milestones coalesced for 900 ms, plus durable completion. Purchase paths persist independently to keep redirects visible between milestones
+- matrix HTTP and SQLite payloads retain only cells with an offer, price, or redirect and omit empty placeholders; cell updates use an O(1) index and aggregation across providers is O(P·N)
+- matrices persist compact request/context data for redirects; older rows retain a compatible fallback to the complete payload
+- with `FLY_DESK_SEARCH_SERVICE_URL`, the web process does not open the session SQLite database for autocomplete or preferences; the lazy getter reserves that restoration for the runner, `/r`, quotation, or diagnostics that actually need it
+- cancellation from the UI, tab close, or orderly process shutdown changes the remote job to cancelled; `pagehide`/`beforeunload` and shutdown first force the last pending delta and request a partial cache
+- external links continue through `/r/<id>` as a local purchase-path cache; Agil redirects without an intermediate page, while Click and Book Plus validates or refreshes its token before `302`
+- in production, `/r/*` may be resolved by `fly-desk-redirect.service`, a separate Bun process that reads the same session SQLite database and enforces the same web/API authentication before opening the provider
 
-## Estructura Funcional
+## Functional Structure
 
 ### Frontend
 
-- `frontend/index.html`: shell HTML/React usado por el build Bun
-- `frontend/public/`: favicon y assets estaticos copiados a `frontend/dist`
-- `frontend/src/main.tsx`: entrypoint React
-- `frontend/src/App.tsx`: composicion principal, filtros, seleccion y layout responsive
-- `frontend/src/components/`: `TopBar`, `SearchShell`, `ResultsPanel`, `DetailPanel` y componentes UI
-- `frontend/src/components/results/`: `ResultCard`, modelo de tarjeta, CSS y layout editor
-- `frontend/src/hooks/`: `useSearch` y `useAutocomplete`
-- `frontend/src/lib/api.ts`: cliente HTTP, busqueda/polling, matriz, migratorio, autocomplete y layout
-- `frontend/src/lib/location-usage-suggestions.ts`: cliente HTTP del ranking global de origen/destino frecuentes
-- `frontend/src/index.css`: tokens, layout, tema claro/oscuro y estados visuales
-- `scripts/build-frontend.ts`: build con `Bun.build`, `bun-plugin-tailwind` y copia de `frontend/public`
+- `frontend/index.html`: HTML/React shell used by the Bun build
+- `frontend/public/`: favicon and static assets copied to `frontend/dist`
+- `frontend/src/main.tsx`: React entry point
+- `frontend/src/App.tsx`: main composition, filters, selection, and responsive layout
+- `frontend/src/components/`: `TopBar`, `SearchShell`, `ResultsPanel`, `DetailPanel`, and UI components
+- `frontend/src/components/results/`: `ResultCard`, card model, CSS, and layout editor
+- `frontend/src/hooks/`: `useSearch` and `useAutocomplete`
+- `frontend/src/lib/api.ts`: HTTP client, search/polling, matrix, migratory search, autocomplete, and layout
+- `frontend/src/lib/location-usage-suggestions.ts`: HTTP client for the global frequent origin/destination ranking
+- `frontend/src/index.css`: tokens, layout, light/dark themes, and visual states
+- `scripts/build-frontend.ts`: build with `Bun.build`, `bun-plugin-tailwind`, and copying of `frontend/public`
 
 ### Backend
 
-- `src/server.ts`: `Bun.serve`, serving de `frontend/dist`, headers, limite de body e inyeccion de config runtime
-- `src/redirect-service.ts` y `src/redirect-index.ts`: resolver dedicado de `/r/<id>` desde cache SQLite para no depender del runtime principal en clicks a proveedores
-- `src/http-router.ts`: rutas HTTP, auth web/loopback/token, jobs, matriz, cotizacion, redirects, diagnosticos y layout
-- `src/web-auth.ts`: password web, cookie firmada y validacion de sesion
-- `src/core/quotation.ts`: render compartido de cotizaciones; por defecto preserva la hora local codificada por cada segmento
-- `src/search-date-policy.ts`: ventana movil de fechas y config publica embebida
-- `src/provider-context.ts`: contexto Click and Book Plus, allowlist, recovery desde Chrome/CDP y estado live de token
-- `src/local-agil.ts`: sesion local, refresh token, exact/range/matrix, pricing y deep links
-- `src/local-costamar.ts`: autocomplete, exact/range/matrix, branded links y warm-up B2B de Click and Book Plus
-- `src/providers/costamar/search-payloads.ts`: payloads Click and Book Plus; `costamar` se conserva como alias interno legacy
-- `src/core/`: normalizacion, matriz, grouping, ranking, cotizacion y tipos compartidos
-- `src/search-service-client.ts`: proxy loopback de busquedas/matriz/polling/cancelacion hacia `fly-desk-search.service`
-- `src/search-worker-client.ts` y `src/search-worker.ts`: procesos hijos Bun para busquedas pesadas de proveedor dentro del runner
-- `src/session-store.ts`: jobs vivos, frescura de cache, presupuesto residente, SQLite local, redirects y purchase paths
-- `src/location-suggestion-cache.ts`: cache SQLite de autocomplete con TTL
-- `src/location-usage-store.ts`: ranking global SQLite de origen/destino frecuentes
-- `src/runtime-paths.ts`: fallback persistente basado en `FLY_DESK_APP_DATA_DIR` para caches SQLite cuando no hay `*_DB_PATH` especifico
+- `src/server.ts`: `Bun.serve`, `frontend/dist` serving, headers, body limit, and runtime configuration injection
+- `src/redirect-service.ts` and `src/redirect-index.ts`: dedicated `/r/<id>` resolver from the SQLite cache, independent of the main runtime for provider clicks
+- `src/http-router.ts`: HTTP routes, web/loopback/token authentication, jobs, matrix, quotation, redirects, diagnostics, and layout
+- `src/web-auth.ts`: web password, signed cookie, and session validation
+- `src/core/quotation.ts`: shared quotation rendering; by default it preserves the local time encoded by each segment
+- `src/search-date-policy.ts`: moving date window and embedded public configuration
+- `src/provider-context.ts`: Click and Book Plus context, allowlist, Chrome/CDP recovery, and live token status
+- `src/local-agil.ts`: local session, token refresh, exact/range/matrix search, pricing, and deep links
+- `src/local-costamar.ts`: autocomplete, exact/range/matrix search, branded links, and Click and Book Plus B2B warm-up
+- `src/providers/costamar/search-payloads.ts`: Click and Book Plus payloads; `costamar` remains as a legacy internal alias
+- `src/core/`: normalization, matrix, grouping, ranking, quotation, and shared types
+- `src/search-service-client.ts`: loopback proxy for search/matrix/polling/cancellation to `fly-desk-search.service`
+- `src/search-worker-client.ts` and `src/search-worker.ts`: Bun child processes for heavy provider searches within the runner
+- `src/session-store.ts`: live jobs, cache freshness, resident budget, local SQLite, redirects, and purchase paths
+- `src/location-suggestion-cache.ts`: SQLite autocomplete cache with TTL
+- `src/location-usage-store.ts`: global SQLite ranking of frequent origins/destinations
+- `src/runtime-paths.ts`: persistent fallback based on `FLY_DESK_APP_DATA_DIR` for SQLite caches when no specific `*_DB_PATH` is set
 
-### Operacion
+### Operations
 
-- `scripts/build-frontend.ts`: build frontend
-- `scripts/generate-web-password-hash.ts`: genera hash scrypt para `FLY_DESK_WEB_PASSWORD_HASH`
-- `docs/DEPLOY_APP.md`: deploy y rollback de app
-- `.github/workflows/ci.yml`: CI Bun para typecheck, lint, test y build
-- `.github/workflows/deploy-vps.yml`: deploy y rollback manual por SHA exacto mediante el wrapper fijo de releases de plataforma
+- `scripts/build-frontend.ts`: frontend build
+- `scripts/generate-web-password-hash.ts`: generates the scrypt hash for `FLY_DESK_WEB_PASSWORD_HASH`
+- `docs/DEPLOY_APP.md`: application deployment and rollback
+- `.github/workflows/ci.yml`: Bun CI for typecheck, lint, test, and build
+- `.github/workflows/deploy-vps.yml`: manual deployment and rollback by exact SHA through the fixed platform release wrapper
 
-La infraestructura compartida del VPS ya no vive en este repo: Caddy, systemd, rollback de Caddy y plan de plataforma se mantienen en `grumitos/vps-platform` (`D:\Dev\VPS\vps-platform`). Este repo conserva app, CI, deploy de revision y rollback de release.
+Shared VPS infrastructure no longer lives in this repository. Caddy, systemd, Caddy rollback, and the platform plan are maintained in `grumitos/vps-platform` (`D:\Dev\VPS\vps-platform`). This repository retains the application, CI, revision deployment, and release rollback.
 
-Despues de un deploy de app que toque busquedas, cancelacion o redirects, cerrar la verificacion con `Fly Desk Production Smoke` en `vps-platform`. Ese workflow valida health local de web/search/redirect, busqueda completada, `/r/*` para Agil y Click and Book Plus, cancelacion de una segunda busqueda y servicios activos.
+After an application deployment that affects search, cancellation, or redirects, finish verification with `Fly Desk Production Smoke` in `vps-platform`. That workflow checks local web/search/redirect health, a completed search, `/r/*` for Agil and Click and Book Plus, cancellation of a second search, and active services.
 
-## Pruebas
+## Tests
 
-Comandos principales:
+Main commands:
 
 - `bun install --frozen-lockfile`
 - `bun run typecheck`
@@ -156,31 +156,28 @@ Comandos principales:
 - `bun run test:ui`
 - `bun run test:coverage`
 
-Las suites Bun usan sufijos `.unit.test.ts` y `.integration.test.ts`; la UI modular vive en
-`test/ui/` y se registra desde `test/ui.playwright.ts`. Los helpers compartidos estan en
-`test/helpers/`. La suite UI reutiliza servidor y Chromium, pero crea un contexto aislado por caso.
-Ver `docs/TESTING.md`.
+Bun suites use `.unit.test.ts` and `.integration.test.ts` suffixes. The modular UI suite lives in `test/ui/` and is registered from `test/ui.playwright.ts`. Shared helpers are in `test/helpers/`. The UI suite reuses the server and Chromium but creates an isolated context for each case. See `docs/TESTING.md`.
 
-Cobertura importante actual:
+Current important coverage:
 
-- bind por defecto a loopback y override por `HOST`
-- auth web con cookie firmada y loopback deshabilitable
-- token API para clientes no loopback
-- endpoints loopback-only
-- validacion compartida de fechas con ventana movil
-- contexto Click and Book Plus endurecido
-- key requerida o recuperable para Agil live
-- workers Bun habilitados por defecto para aislar busquedas pesadas de proveedor
-- persistencia SQLite de sesiones/autocomplete
-- presupuesto residente con fallback disk-only y runtime web lazy cuando la busqueda esta delegada
-- ranking global de sugerencias frecuentes en servidor, no por `localStorage` de cada navegador; se registra desde `/api/search` y `/api/matrix`
-- layout persistente de resultados
-- rail de busqueda, filtros, tema, autocomplete, provider links y cotizacion
-- cotizacion local estandar/migratoria sin request adicional, preservacion de horarios con offset y filas mensuales totalmente deshabilitadas ocultas
+- loopback binding by default and override through `HOST`
+- web authentication with a signed cookie and optional loopback disabling
+- API token for non-loopback clients
+- loopback-only endpoints
+- shared validation of the moving date window
+- hardened Click and Book Plus context
+- required or recoverable key for live Agil
+- Bun workers enabled by default to isolate heavy provider searches
+- SQLite persistence for sessions/autocomplete
+- resident budget with disk-only fallback and lazy web runtime when search is delegated
+- server-side global ranking of frequent suggestions rather than per-browser `localStorage`, recorded from `/api/search` and `/api/matrix`
+- persistent results layout
+- search rail, filters, theme, autocomplete, provider links, and quotation
+- standard/migratory local quotation without another request, preservation of offset-bearing times, and hiding of fully disabled monthly rows
 
-Nota de QA: `test/helpers/server.ts` fija `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1` durante tests HTTP para validar contratos inmediatos sin dejar jobs progresivos vivos. El runtime normal no define esa variable.
+QA note: `test/helpers/server.ts` sets `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1` during HTTP tests to validate immediate contracts without leaving progressive jobs alive. The normal runtime does not define that variable.
 
-## Documentacion Vigente
+## Current Documentation
 
 - `README.md`
 - `frontend/README.md`
@@ -190,20 +187,20 @@ Nota de QA: `test/helpers/server.ts` fija `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JO
 - `docs/CBPLUS_SESSION_RECOVERY.md`
 - `docs/FRONTEND_IDENTITY.md`
 
-## Estado De Deploy
+## Deployment State
 
-`main` es la linea de producto y despliegue. El workflow solo acepta un SHA exacto alcanzable desde `main`, publica un artefacto con digest y delega la activacion/rollback a `/usr/local/bin/vps-release-fly-desk`. La plataforma conserva releases inmutables, conmuta `/opt/fly-desk` atomicamente, reinicia web/search/redirect, valida sus healthchecks y restaura el current anterior si la activacion falla.
+`main` is the product and deployment line. The workflow accepts only an exact SHA reachable from `main`, publishes an artifact with a digest, and delegates activation/rollback to `/usr/local/bin/vps-release-fly-desk`. The platform keeps immutable releases, switches `/opt/fly-desk` atomically, restarts web/search/redirect, validates their health checks, and restores the previous current release if activation fails.
 
-Las revisiones desplegadas y el inventario de servicios vivos se mantienen en `D:\Dev\VPS\vps-platform\docs\INVENTORY.md`. Este repo no mantiene SHAs productivos como estado vivo para evitar drift documental.
+Deployed revisions and the live service inventory are maintained in `D:\Dev\VPS\vps-platform\docs\INVENTORY.md`. This repository does not keep production SHAs as live state, avoiding documentation drift.
 
-No se mantienen planes de migracion ni auditorias historicas como documentacion viva. El historial Git conserva ese contexto si hace falta recuperarlo.
+Migration plans and historical audits are not maintained as live documentation. Git history retains that context if it must be recovered.
 
-## Deuda Tecnica Vigente
+## Current Technical Debt
 
-- `frontend/src/App.tsx` todavia concentra bastante composicion, filtros y seleccion
-- `src/local-agil.ts` concentra sesion, cliente, pricing y mapping
-- `src/local-costamar.ts` concentra automatizacion B2B, cliente, mapping y redirects de Click and Book Plus
-- la persistencia es SQLite local; no hay store externo para multi-instancia
-- Chrome CDP persistente ya queda cubierto por `fly-desk-chrome.service`; Agil aun necesita una sesion real valida en ese perfil del VPS
-- repetir QA externo antes de cambiar `FLY_DESK_SEARCH_WORKER_PROCESSES` o warm-up de providers en VPS
-- la busqueda migratoria consulta cada dia de cada mes seleccionado contra Agil y Click and Book Plus sin filtros de tarifa; procesa meses en tandas configurables con `FLY_DESK_MIGRATION_CONCURRENT_MONTHS` (default `2`), lo cual debe vigilarse si sube el volumen de uso
+- `frontend/src/App.tsx` still concentrates substantial composition, filtering, and selection
+- `src/local-agil.ts` concentrates session handling, client behavior, pricing, and mapping
+- `src/local-costamar.ts` concentrates B2B automation, client behavior, mapping, and Click and Book Plus redirects
+- persistence is local SQLite; there is no external store for multiple instances
+- persistent Chrome CDP is covered by `fly-desk-chrome.service`; Agil still needs a valid real session in that VPS profile
+- repeat external QA before changing `FLY_DESK_SEARCH_WORKER_PROCESSES` or provider warm-up on the VPS
+- migratory search queries every day in every selected month against Agil and Click and Book Plus without fare filters; it processes months in configurable batches through `FLY_DESK_MIGRATION_CONCURRENT_MONTHS` (default `2`), which must be monitored if usage volume increases
