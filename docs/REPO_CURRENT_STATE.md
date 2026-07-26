@@ -1,6 +1,6 @@
 # Estado Actual de la Repo
 
-Fecha de corte: 2026-07-10
+Fecha de corte: 2026-07-25
 
 ## Resumen
 
@@ -62,6 +62,7 @@ La UI React no debe mostrar controles simulados. Permanecen fuera de la interfaz
 - package manager soportado: Bun (`packageManager: "bun@1.3.14"`)
 - lockfile vigente: `bun.lock`
 - `bunfig.toml` desactiva lifecycle scripts durante instalacion y filtra versiones publicadas hace menos de 3 dias
+- TypeScript 7 ejecuta el typecheck y el build mediante `@typescript/native`; `typescript-eslint` usa TypeScript 6 solo como API de desarrollo porque TypeScript 7 todavia no ofrece una API programatica estable
 - `.npmrc` define `ignore-scripts=true` como proteccion para instalaciones accidentales con npm/pnpm
 - no se adopta pnpm como flujo normal porque el repo es Bun-only y no hay `pnpm-lock.yaml`
 - el grafo actual no usa paquetes `@tanstack/*`

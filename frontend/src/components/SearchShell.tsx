@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type MouseEvent, type RefObject } from "react"
 import { createPortal } from "react-dom"
-import { es } from "react-day-picker/locale"
+import { es } from "@daypicker/react/locale"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup, ButtonGroupText } from "@/components/ui/button-group"
 import { Calendar } from "@/components/ui/calendar"
