@@ -42,3 +42,9 @@ test("deploy proves an exact main revision without retained checkout credentials
   assert.match(workflow, /git checkout --detach "\$REVISION"/);
   assert.doesNotMatch(workflow, /git fetch/);
 });
+
+test("release preparation copies dependencies out of the Bun cache", async () => {
+  const prepareRelease = await Bun.file(new URL("../deploy/prepare-release.sh", import.meta.url)).text();
+
+  assert.match(prepareRelease, /^"\$bun_bin" install --frozen-lockfile --backend copyfile\r?$/m);
+});
