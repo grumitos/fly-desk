@@ -70,6 +70,9 @@ El package manager soportado es Bun. No agregues `package-lock.json`, `pnpm-lock
 
 - Instalacion: `bun install --frozen-lockfile`
 - Lockfile: `bun.lock`
+- Typecheck y build: TypeScript 7 mediante `@typescript/native`; ESLint conserva
+  TypeScript 6 como API de compatibilidad hasta que TypeScript 7 exponga una API
+  programatica estable. Ninguna de esas dependencias forma parte del runtime del VPS.
 - Workspace: `package.json` con `workspaces: ["frontend"]`
 - Hardening: `bunfig.toml` desactiva lifecycle scripts de dependencias y filtra versiones publicadas hace menos de 3 dias.
 - Guardrail extra: `.npmrc` define `ignore-scripts=true` para instalaciones accidentales con npm/pnpm; eso no convierte a pnpm en el flujo normal del proyecto.

@@ -3,6 +3,9 @@
 # very new package versions during installs unless a package is deliberately exempted.
 ignoreScripts = true
 minimumReleaseAge = 259200
+# Security override: 5.0.8 fixes GHSA-mh99-v99m-4gvg and was published
+# inside the normal age window. Keep the exemption scoped to this package.
+minimumReleaseAgeExcludes = ["brace-expansion"]
 
 [serve.static]
 plugins = ["bun-plugin-tailwind"]
