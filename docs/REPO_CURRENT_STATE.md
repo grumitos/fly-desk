@@ -186,6 +186,8 @@ Nota de QA: `test/helpers/server.ts` fija `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JO
 - `frontend/README.md`
 - `docs/REPO_CURRENT_STATE.md`
 - `docs/DEPLOY_APP.md`
+- `docs/AGIL_SESSION_RECOVERY.md`
+- `docs/CBPLUS_SESSION_RECOVERY.md`
 - `docs/FRONTEND_IDENTITY.md`
 
 ## Estado De Deploy
