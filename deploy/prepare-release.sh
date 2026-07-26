@@ -7,5 +7,5 @@ if [ ! -x "$bun_bin" ]; then
   exit 1
 fi
 
-"$bun_bin" install --frozen-lockfile
+"$bun_bin" install --frozen-lockfile --backend copyfile
 test -f frontend/dist/index.html
