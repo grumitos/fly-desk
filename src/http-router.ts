@@ -71,7 +71,10 @@ import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import {
+  clearRedirectSessionCookie,
   clearWebSessionCookie,
+  createRedirectSessionCookie,
+  createRedirectSessionCookieForWebSession,
   createWebSessionCookie,
   getWebAuthConfigError,
   hasValidWebSession,
@@ -1818,50 +1821,60 @@ async function handleWebLogin(request: Request, options: { jsonResponse?: boolea
   }
 
   const sessionCookie = createWebSessionCookie(request);
+  const redirectSessionCookie = createRedirectSessionCookie(request);
   if (options.jsonResponse) {
-    return json(
+    const response = json(
       { ok: true },
       {
         headers: {
           "Cache-Control": "no-store",
-          "Set-Cookie": sessionCookie,
         },
       },
     );
+    response.headers.append("Set-Cookie", sessionCookie);
+    response.headers.append("Set-Cookie", redirectSessionCookie);
+    return response;
   }
 
-  return new Response(null, {
+  const response = new Response(null, {
     status: 303,
     headers: {
       Location: "/",
       "Cache-Control": "no-store",
-      "Set-Cookie": sessionCookie,
     },
   });
+  response.headers.append("Set-Cookie", sessionCookie);
+  response.headers.append("Set-Cookie", redirectSessionCookie);
+  return response;
 }
 
 function handleWebLogout(request: Request, options: { jsonResponse?: boolean } = {}): Response {
   const cookie = clearWebSessionCookie(request);
+  const redirectCookie = clearRedirectSessionCookie(request);
   if (options.jsonResponse) {
-    return json(
+    const response = json(
       { ok: true },
       {
         headers: {
           "Cache-Control": "no-store",
-          "Set-Cookie": cookie,
         },
       },
     );
+    response.headers.append("Set-Cookie", cookie);
+    response.headers.append("Set-Cookie", redirectCookie);
+    return response;
   }
 
-  return new Response(null, {
+  const response = new Response(null, {
     status: 303,
     headers: {
       Location: "/login",
       "Cache-Control": "no-store",
-      "Set-Cookie": cookie,
     },
   });
+  response.headers.append("Set-Cookie", cookie);
+  response.headers.append("Set-Cookie", redirectCookie);
+  return response;
 }
 
 function validateLocalOpenUrl(input: string): URL | undefined {
@@ -3078,13 +3091,21 @@ export async function routeRequest(request: Request): Promise<Response> {
   }
 
   if (request.method === "GET" && url.pathname === "/api/auth/session") {
-    return json(
+    const authenticated = hasValidWebSession(request);
+    const response = json(
       {
         webAuthEnabled: isWebAuthEnabled(),
-        authenticated: hasValidWebSession(request),
+        authenticated,
       },
       { headers: { "Cache-Control": "no-store" } },
     );
+    if (authenticated) {
+      const redirectCookie = createRedirectSessionCookieForWebSession(request);
+      if (redirectCookie) {
+        response.headers.append("Set-Cookie", redirectCookie);
+      }
+    }
+    return response;
   }
 
   if (request.method === "GET" && url.pathname === "/api/health") {

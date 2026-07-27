@@ -62,7 +62,7 @@ The current React UI does not expose:
 - The web server limits incoming bodies to 1 MiB and materializes each body once to rebuild a trusted request. Delegation reuses that stream without a second copy and retains a bounded timeout during the response. Do not lower `FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS` below the operational default.
 - The stop-search button, tab close/navigation, and orderly process shutdown cancel remote jobs. Tab close and shutdown first materialize any pending delta and request a partial cache to preserve resolved results and purchase paths.
 - Public purchase paths are served as `/r/<id>` to preserve caching without persisting sensitive links in the UI. Agil responds with a direct provider `302`; Click and Book Plus keeps the local handoff to validate or refresh the token before opening the external link.
-- In production, the platform can route `/r/*` to `fly-desk-redirect.service`, a separate Bun process that reads `FLY_DESK_SESSION_DB_PATH` and enforces the same web/API authentication.
+- In production, the platform can route `/r/*` to `fly-desk-redirect.service`, a separate Bun process that reads `FLY_DESK_SESSION_DB_PATH`. Browser requests use a distinct HttpOnly session cookie scoped to `/r`; the main web cookie and bearer credentials are not forwarded to this service. Loopback and fixed API-token access remain available for controlled smokes.
 
 ## Dependencies
 

@@ -7,6 +7,7 @@ import { Database } from "bun:sqlite";
 import type { CanonicalOffer, MatrixCell, ProviderMeta, SearchMeta, SearchRequest } from "../src/core/types";
 import { requestWithServerTrustHeaders, routeRedirectRequest } from "../src/redirect-service";
 import { SearchSessionStore } from "../src/session-store";
+import { createRedirectSessionCookie, createWebSessionCookie } from "../src/web-auth";
 import { resetCostamarSessionCacheForTests } from "../src/provider-context";
 import {
   resetCostamarWarmupStateForTests,
@@ -234,6 +235,37 @@ test("redirect service requires auth before reading purchase paths", async () =>
   } finally {
     restoreEnv();
   }
+});
+
+test("redirect service accepts only its path-scoped web credential", { concurrency: false }, async () => {
+  await withTempDb(async (dbPath) => {
+    const restoreEnv = overrideEnv({
+      FLY_DESK_API_TOKEN: undefined,
+      FLY_DESK_WEB_AUTH: "1",
+      FLY_DESK_WEB_SESSION_SECRET: "test-session-secret-with-at-least-32-characters",
+      FLY_DESK_TRUST_LOOPBACK_CLIENT: undefined,
+    });
+
+    try {
+      const baseRequest = new Request("https://fly-desk.example/r/unknown");
+      const webCookie = createWebSessionCookie(baseRequest).split(";", 1)[0]!;
+      const redirectCookie = createRedirectSessionCookie(baseRequest).split(";", 1)[0]!;
+
+      const denied = await routeRedirectRequest(
+        new Request(baseRequest, { headers: { Cookie: webCookie } }),
+        { dbPath, cacheLookupTimeoutMs: 0 },
+      );
+      assert.equal(denied.status, 401);
+
+      const accepted = await routeRedirectRequest(
+        new Request(baseRequest, { headers: { Cookie: redirectCookie } }),
+        { dbPath, cacheLookupTimeoutMs: 0 },
+      );
+      assert.equal(accepted.status, 503);
+    } finally {
+      restoreEnv();
+    }
+  });
 });
 
 test("redirect service ignores forged loopback trust headers from non-loopback clients", async () => {
