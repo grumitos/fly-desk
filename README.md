@@ -131,10 +131,14 @@ Production must keep `FLY_DESK_SEARCH_WORKER_PROCESSES=1` except during a tempor
 `.env` is not versioned. To generate the web password hash:
 
 ```bash
-FLY_DESK_WEB_PASSWORD='<password>' bun run auth:hash
+bun run auth:hash
 ```
 
-Use the result as `FLY_DESK_WEB_PASSWORD_HASH` and do not keep `FLY_DESK_WEB_PASSWORD` in the final environment.
+The command uses a hidden terminal prompt. For controlled automation, provide
+the password only through standard input from the secret manager. Plaintext
+arguments and `FLY_DESK_WEB_PASSWORD` input are rejected so the password does
+not enter command arguments, environment assignments, shell history, or logs.
+Use only the resulting hash as `FLY_DESK_WEB_PASSWORD_HASH`.
 
 When working on another machine, do not send `.env` as plaintext through chat, email, or commits. In practice:
 
