@@ -41,6 +41,8 @@ import type { ProviderMatrixState } from "../src/http-router";
 import { resolveSearchServiceProxyApiToken } from "../src/service-auth";
 import { getSearchDatePolicy } from "../src/search-date-policy";
 import { getRuntime } from "../src/runtime";
+import { createScryptPasswordHash } from "../src/web-auth";
+import { resetWebLoginAdmission } from "../src/login-admission";
 import { withServer } from "./helpers/server";
 
 function buildJwt(payload: Record<string, unknown>): string {
@@ -1303,6 +1305,15 @@ test("web auth cookie allows API access when loopback trust is disabled", { conc
     assert.equal(session.status, 200);
     assert.match(session.headers.get("set-cookie") ?? "", /flydesk_redirect_session=/);
     assert.match(session.headers.get("set-cookie") ?? "", /Path=\/r/);
+
+    const logout = await routeRequest(new Request("https://fly-desk.local/logout", {
+      method: "POST",
+      headers: { Cookie: webCookie },
+    }));
+    assert.equal(logout.status, 303);
+    assert.equal(logout.headers.get("location"), "/login");
+    assert.equal(logout.headers.getSetCookie().length, 2);
+    assert.ok(logout.headers.getSetCookie().every((value) => value.includes("Max-Age=0")));
   } finally {
     if (previousWebAuth === undefined) {
       delete process.env.FLY_DESK_WEB_AUTH;
@@ -1333,6 +1344,54 @@ test("web auth cookie allows API access when loopback trust is disabled", { conc
     } else {
       process.env.FLY_DESK_COOKIE_SECURE = previousCookieSecure;
     }
+  }
+});
+
+test("web login bounds failed scrypt attempts and returns retry guidance", { concurrency: false }, async () => {
+  const previousWebAuth = process.env.FLY_DESK_WEB_AUTH;
+  const previousWebPassword = process.env.FLY_DESK_WEB_PASSWORD;
+  const previousPasswordHash = process.env.FLY_DESK_WEB_PASSWORD_HASH;
+  const previousSessionSecret = process.env.FLY_DESK_WEB_SESSION_SECRET;
+
+  process.env.FLY_DESK_WEB_AUTH = "1";
+  delete process.env.FLY_DESK_WEB_PASSWORD;
+  process.env.FLY_DESK_WEB_PASSWORD_HASH = createScryptPasswordHash(
+    "correct-password",
+    Buffer.alloc(16, 9),
+  );
+  process.env.FLY_DESK_WEB_SESSION_SECRET = "test-session-secret-32-characters-minimum";
+  resetWebLoginAdmission();
+
+  try {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const response = await routeRequest(new Request("https://fly-desk.local/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: "wrong-password" }),
+      }));
+      assert.equal(response.status, 401);
+    }
+
+    const limited = await routeRequest(new Request("https://fly-desk.local/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: "correct-password" }),
+    }));
+    assert.equal(limited.status, 429);
+    assert.match(limited.headers.get("retry-after") ?? "", /^\d+$/);
+    assert.deepEqual(await limited.json(), {
+      error: "Too many login attempts. Try again later.",
+    });
+  } finally {
+    resetWebLoginAdmission();
+    if (previousWebAuth === undefined) delete process.env.FLY_DESK_WEB_AUTH;
+    else process.env.FLY_DESK_WEB_AUTH = previousWebAuth;
+    if (previousWebPassword === undefined) delete process.env.FLY_DESK_WEB_PASSWORD;
+    else process.env.FLY_DESK_WEB_PASSWORD = previousWebPassword;
+    if (previousPasswordHash === undefined) delete process.env.FLY_DESK_WEB_PASSWORD_HASH;
+    else process.env.FLY_DESK_WEB_PASSWORD_HASH = previousPasswordHash;
+    if (previousSessionSecret === undefined) delete process.env.FLY_DESK_WEB_SESSION_SECRET;
+    else process.env.FLY_DESK_WEB_SESSION_SECRET = previousSessionSecret;
   }
 });
 
