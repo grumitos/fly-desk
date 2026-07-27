@@ -29,14 +29,22 @@ bun run test
 
 The `.github/workflows/deploy-vps.yml` workflow has two modes:
 
-- `deploy`: verifies that the exact SHA belongs to `main`, runs the gate, creates a tar archive with a single `app/` root, calculates its SHA-256 digest, uploads it to the fixed incoming directory, and calls the versioned platform wrapper.
-- `rollback`: activates an existing immutable release by SHA through the same wrapper.
+- `deploy`: verifies that the exact SHA belongs to `main`, runs the gate,
+  creates a tar archive with a single `app/` root, calculates its SHA-256
+  digest, streams it through the forced `upload` command, activates it with
+  `deploy`, and confirms it with `verify`.
+- `rollback`: activates an existing immutable release by SHA through the
+  forced `rollback` command and confirms it with `verify`.
 
-The workflow does not install units, modify Caddy, or transmit a deployment script over SSH. The only privileged application commands are:
+The workflow does not install units, modify Caddy, transmit a deployment
+script over SSH, write the canonical incoming spool directly, or invoke
+`sudo`. Its complete remote command surface is:
 
 ```text
-/usr/local/bin/vps-release-fly-desk deploy <sha40> <sha256>
-/usr/local/bin/vps-release-fly-desk rollback <sha40>
+upload <sha40> <sha256>
+deploy <sha40> <sha256>
+verify <sha40>
+rollback <sha40>
 ```
 
 The engine takes a lock shared with maintenance, validates the archive digest and structure, prepares the candidate as the runtime user, switches the symlink, restarts web/search/redirect, runs health checks, and restores the previous current release if activation fails.
@@ -49,7 +57,11 @@ Required secrets:
 - `VPS_SSH_KEY_B64`
 - `VPS_SSH_KNOWN_HOSTS_B64`, obtained through a trusted channel
 
-The job uses `BatchMode`, `IdentitiesOnly`, and `StrictHostKeyChecking`; it does not allow `ssh-keyscan`. The CI user must only be able to write to the Fly Desk incoming directory and execute its fixed wrapper with `sudo -n`.
+The job uses `BatchMode`, `IdentitiesOnly`, and `StrictHostKeyChecking`; it does
+not allow `ssh-keyscan`. The CI identity is restricted to those forced
+commands, receives no interactive shell, and cannot submit arbitrary commands.
+The dispatcher alone invokes the fixed wrapper under the platform policy. The
+forced upload command owns placement in the canonical incoming spool.
 
 ## Release Preparation
 
