@@ -1809,7 +1809,8 @@ async function handleWebLogin(request: Request, options: { jsonResponse?: boolea
   }
 
   const password = await readLoginPassword(request);
-  const admission = checkWebLoginAdmission();
+  const loginClientKey = request.headers.get("x-flydesk-client-address")?.trim() || "unknown";
+  const admission = checkWebLoginAdmission(loginClientKey);
   if (!admission.allowed) {
     const headers = {
       "Cache-Control": "no-store",
@@ -1835,7 +1836,7 @@ async function handleWebLogin(request: Request, options: { jsonResponse?: boolea
 
   const verification = verifyWebPassword(password);
   if (!verification.ok) {
-    recordFailedWebLogin();
+    recordFailedWebLogin(loginClientKey);
     if (options.jsonResponse) {
       return json(
         { error: "Invalid password." },
@@ -1852,7 +1853,7 @@ async function handleWebLogin(request: Request, options: { jsonResponse?: boolea
     });
   }
 
-  resetWebLoginAdmission();
+  resetWebLoginAdmission(loginClientKey);
   const sessionCookie = createWebSessionCookie(request);
   const redirectSessionCookie = createRedirectSessionCookie(request);
   if (options.jsonResponse) {

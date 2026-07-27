@@ -46,10 +46,12 @@ The current React UI does not expose:
 - The server listens on `127.0.0.1` by default.
 - In production it must remain behind Caddy with `HOST=127.0.0.1`.
 - `FLY_DESK_WEB_AUTH=1` enables web login with an httpOnly cookie.
-- Login admission rejects the sixth failed attempt within 15 minutes with
-  `429` and `Retry-After` before running scrypt. A successful login resets the
-  bounded global window; it is deliberately not keyed by spoofable forwarded
-  client headers.
+- Login admission rejects the sixth failed attempt for one client within 15
+  minutes with `429` and `Retry-After` before running scrypt. A successful
+  login resets only that client's bucket. Pages overwrites the login client IP
+  from Cloudflare's initial request, and Bun accepts it only through a loopback
+  peer after IP validation. The in-memory map is capped at 1,024 clients; a
+  missing identity uses one bounded fallback bucket.
 - `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` is mandatory when using a local reverse proxy.
 - If `FLY_DESK_TRUST_LOOPBACK_CLIENT=1` is enabled for direct local use, requests with proxy headers (`x-forwarded-for`, `forwarded`, `x-real-ip`) are not treated as local unless `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK=1` is also deliberately configured.
 - Operational endpoints accept a valid web cookie or `FLY_DESK_API_TOKEN`.
