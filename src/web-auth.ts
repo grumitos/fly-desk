@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 
 export const WEB_SESSION_COOKIE_NAME = "flydesk_session";
+export const REDIRECT_SESSION_COOKIE_NAME = "flydesk_redirect_session";
 export const WEB_THEME_COOKIE_NAME = "flydesk_theme";
 
 const DEFAULT_WEB_SESSION_TTL_SECONDS = 12 * 60 * 60;
@@ -160,6 +161,40 @@ function signSessionPayload(expiresAtMs: number, nonce: string, secret: string):
     .digest("base64url");
 }
 
+function signRedirectSessionPayload(expiresAtMs: number, nonce: string, secret: string): string {
+  return createHmac("sha256", secret)
+    .update(`redirect.${expiresAtMs}.${nonce}`)
+    .digest("base64url");
+}
+
+function validSessionExpiry(
+  request: Request,
+  cookieName: string,
+  signer: typeof signSessionPayload,
+  nowMs: number,
+): number | undefined {
+  const secret = resolveWebSessionSecret();
+  if (!secret) {
+    return undefined;
+  }
+
+  const session = parseCookies(request.headers.get("cookie")).get(cookieName);
+  const parts = session?.split(".") ?? [];
+  if (parts.length !== 4 || parts[0] !== "v1") {
+    return undefined;
+  }
+
+  const expiresAtMs = Number(parts[1]);
+  const nonce = parts[2];
+  const signature = parts[3];
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs || !nonce || !signature) {
+    return undefined;
+  }
+
+  const expected = signer(expiresAtMs, nonce, secret);
+  return safeEqualString(signature, expected) ? expiresAtMs : undefined;
+}
+
 function isCookieSecure(request: Request): boolean {
   const configured = readEnv("FLY_DESK_COOKIE_SECURE");
   if (configured === "1") {
@@ -190,36 +225,70 @@ export function createWebSessionCookie(request: Request, nowMs = Date.now()): st
   return `${WEB_SESSION_COOKIE_NAME}=v1.${expiresAtMs}.${nonce}.${signature}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${ttlSeconds}${secure}`;
 }
 
+export function createRedirectSessionCookie(
+  request: Request,
+  nowMs = Date.now(),
+  expiresAtMs = nowMs + resolveWebSessionTtlSeconds() * 1000,
+): string {
+  const secret = resolveWebSessionSecret();
+  if (!secret) {
+    throw new Error("Fly Desk web session secret is not configured.");
+  }
+
+  const nonce = randomBytes(18).toString("base64url");
+  const signature = signRedirectSessionPayload(expiresAtMs, nonce, secret);
+  const maxAgeSeconds = Math.max(0, Math.floor((expiresAtMs - nowMs) / 1000));
+  const secure = isCookieSecure(request) ? "; Secure" : "";
+  return `${REDIRECT_SESSION_COOKIE_NAME}=v1.${expiresAtMs}.${nonce}.${signature}; HttpOnly; Path=/r; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure}`;
+}
+
+export function createRedirectSessionCookieForWebSession(
+  request: Request,
+  nowMs = Date.now(),
+): string | undefined {
+  const expiresAtMs = validSessionExpiry(
+    request,
+    WEB_SESSION_COOKIE_NAME,
+    signSessionPayload,
+    nowMs,
+  );
+  return expiresAtMs === undefined
+    ? undefined
+    : createRedirectSessionCookie(request, nowMs, expiresAtMs);
+}
+
 export function clearWebSessionCookie(request: Request): string {
   const secure = isCookieSecure(request) ? "; Secure" : "";
   return `${WEB_SESSION_COOKIE_NAME}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${secure}`;
+}
+
+export function clearRedirectSessionCookie(request: Request): string {
+  const secure = isCookieSecure(request) ? "; Secure" : "";
+  return `${REDIRECT_SESSION_COOKIE_NAME}=; HttpOnly; Path=/r; SameSite=Lax; Max-Age=0${secure}`;
 }
 
 export function hasValidWebSession(request: Request, nowMs = Date.now()): boolean {
   if (!isWebAuthEnabled()) {
     return false;
   }
+  return validSessionExpiry(
+    request,
+    WEB_SESSION_COOKIE_NAME,
+    signSessionPayload,
+    nowMs,
+  ) !== undefined;
+}
 
-  const secret = resolveWebSessionSecret();
-  if (!secret) {
+export function hasValidRedirectSession(request: Request, nowMs = Date.now()): boolean {
+  if (!isWebAuthEnabled()) {
     return false;
   }
-
-  const session = parseCookies(request.headers.get("cookie")).get(WEB_SESSION_COOKIE_NAME);
-  const parts = session?.split(".") ?? [];
-  if (parts.length !== 4 || parts[0] !== "v1") {
-    return false;
-  }
-
-  const expiresAtMs = Number(parts[1]);
-  const nonce = parts[2];
-  const signature = parts[3];
-  if (!Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs || !nonce || !signature) {
-    return false;
-  }
-
-  const expected = signSessionPayload(expiresAtMs, nonce, secret);
-  return safeEqualString(signature, expected);
+  return validSessionExpiry(
+    request,
+    REDIRECT_SESSION_COOKIE_NAME,
+    signRedirectSessionPayload,
+    nowMs,
+  ) !== undefined;
 }
 
 export function resolveWebTheme(request: Request): WebTheme {
