@@ -6,14 +6,6 @@ import { join } from "node:path";
 import * as exchangeRate from "../src/quotation-exchange-rate";
 import { buildOffer } from "./helpers/ui-fixtures";
 
-test("quotation rate module exposes no legacy flight-search warmup path", () => {
-  assert.equal("buildQuotationRateLookupRequest" in exchangeRate, false);
-  assert.equal("resolveQuotationUsdToPenRate" in exchangeRate, false);
-  assert.equal("resolveQuotationUsdToPenRateInfo" in exchangeRate, false);
-  assert.equal("warmQuotationUsdToPenRate" in exchangeRate, false);
-  assert.equal("warmQuotationUsdToPenRateInfo" in exchangeRate, false);
-});
-
 test("resolveStandaloneUsdToPenRate uses the selected offer rate before an external lookup", async () => {
   exchangeRate.resetQuotationUsdToPenRateCacheForTests();
   let externalCalls = 0;

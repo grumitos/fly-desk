@@ -26,8 +26,6 @@ const COSTAMAR_BRANDED_URL_ESCAPED_REGEX =
 const COSTAMAR_JWT_PREFIX_REGEX = /^([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/;
 const COSTAMAR_TOKEN_SAFE_PREFIX_REGEX = /^[A-Za-z0-9._-]+/;
 const COSTAMAR_SESSION_FILE_REGEX = /^(?:(?:Session|Tabs)_\d+|(?:Current|Last) (?:Session|Tabs))$/;
-const COSTAMAR_STORAGE_ARTIFACT_REGEX = /\.(?:ldb|log)$/i;
-const COSTAMAR_STORAGE_ARTIFACT_LIMIT = 12;
 const COSTAMAR_API_HOSTS = new Set(["air-search-service-zneith.zdev.tech", "test-api-zneith.zdev.tech"]);
 const COSTAMAR_BRAND_HOSTS = new Set(["flights.zdev.tech"]);
 const COSTAMAR_ENGINE_HOSTS = new Set(["api-zneith.zdev.tech"]);
@@ -738,49 +736,6 @@ function readCostamarCandidatesFromChromeArtifact(
   } finally {
     rmSync(tempFile, { force: true });
   }
-}
-
-function readCostamarCandidatesFromChromeArtifactDirectory(
-  userDataDir: string,
-  profileName: string,
-  relativePath: string,
-): CostamarSessionCandidate[] {
-  const directory = join(userDataDir, profileName, relativePath);
-  if (!existsSync(directory)) {
-    return [];
-  }
-
-  const files = readdirSync(directory, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && COSTAMAR_STORAGE_ARTIFACT_REGEX.test(entry.name))
-    .map((entry) => ({
-      name: entry.name,
-      fullPath: join(directory, entry.name),
-      mtimeMs: statSync(join(directory, entry.name)).mtimeMs,
-    }))
-    .sort((left, right) => right.mtimeMs - left.mtimeMs)
-    .slice(0, COSTAMAR_STORAGE_ARTIFACT_LIMIT);
-
-  const candidates: CostamarSessionCandidate[] = [];
-  for (const file of files) {
-    const tempFile = join(
-      tmpdir(),
-      `travel_quote_foundation_costamar_${relativePath.replace(/[\\\/:\s]+/g, "_")}_${crypto.randomUUID()}_${file.name}`,
-    );
-
-    try {
-      copyFileSync(file.fullPath, tempFile);
-      const buffer = readFileSync(tempFile);
-      candidates.push(
-        ...extractCostamarSessionCandidatesFromBuffer(buffer, `${profileName}/${relativePath}/${file.name}`),
-      );
-    } catch {
-      // Ignore locked or malformed storage artifacts.
-    } finally {
-      rmSync(tempFile, { force: true });
-    }
-  }
-
-  return candidates;
 }
 
 function collectCostamarSessionCandidatesFromChromeProfiles(
