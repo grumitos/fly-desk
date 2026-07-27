@@ -29,12 +29,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Validate and deploy revision
+  build_release:
+    name: Validate and build revision
     if: ${{ inputs.mode == 'deploy' }}
     runs-on: ubuntu-latest
-    environment: production
-    timeout-minutes: 35
+    timeout-minutes: 30
+    outputs:
+      artifact_digest: ${{ steps.artifact.outputs.digest }}
 
     steps:
       - name: Validate revision input
@@ -90,30 +91,71 @@ jobs:
         env:
           FLY_DESK_TEST_BROWSER_CHANNEL: chrome
 
-      - name: Build release artifact
+      - name: Build deterministic release artifact
         id: artifact
         env:
           REVISION: ${{ inputs.revision }}
         run: |
           set -euo pipefail
-          package_root="$RUNNER_TEMP/fly-desk-package"
-          artifact="$RUNNER_TEMP/fly-desk-$REVISION.tar.gz"
-          rm -rf "$package_root"
-          install -d -m 0755 "$package_root/app"
-          rsync -a \
-            --exclude='.git/' \
-            --exclude='node_modules/' \
-            --exclude='frontend/node_modules/' \
-            --exclude='output/' \
-            --exclude='playwright-report/' \
-            --exclude='test-results/' \
-            ./ "$package_root/app/"
-          printf '%s\n' "$REVISION" > "$package_root/app/REVISION"
-          tar -C "$package_root" -czf "$artifact" app
-          digest="$(sha256sum "$artifact" | awk '{print $1}')"
+          rm -rf package fly-desk.tar.gz
+          install -d -m 0755 package
+          git archive --format=tar --prefix=app/ "$REVISION" | tar -xf - -C package
+          rm -rf package/app/frontend/dist
+          install -d -m 0755 package/app/frontend
+          cp -R frontend/dist package/app/frontend/dist
+          find package/app/frontend/dist -type d -exec chmod 0755 {} +
+          find package/app/frontend/dist -type f -exec chmod 0644 {} +
+          printf '%s\n' "$REVISION" > package/app/REVISION
+          chmod 0644 package/app/REVISION
+          tar \
+            --sort=name \
+            --mtime='UTC 1970-01-01' \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            -cf - -C package app | gzip -n > fly-desk.tar.gz
+          digest="$(sha256sum fly-desk.tar.gz | awk '{print $1}')"
           printf '%s' "$digest" | grep -Eq '^[0-9a-f]{64}$'
-          echo "path=$artifact" >> "$GITHUB_OUTPUT"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Store immutable release artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fly-desk-${{ inputs.revision }}
+          path: fly-desk.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  deploy:
+    name: Deliver revision
+    needs: build_release
+    if: ${{ inputs.mode == 'deploy' && needs.build_release.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+
+    steps:
+      - name: Validate revision and artifact digest
+        env:
+          REVISION: ${{ inputs.revision }}
+          ARTIFACT_DIGEST: ${{ needs.build_release.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$REVISION" | grep -Eq '^[0-9a-f]{40}$'
+          printf '%s' "$ARTIFACT_DIGEST" | grep -Eq '^[0-9a-f]{64}$'
+
+      - name: Download immutable release artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: fly-desk-${{ inputs.revision }}
+
+      - name: Verify release artifact checksum
+        env:
+          ARTIFACT_DIGEST: ${{ needs.build_release.outputs.artifact_digest }}
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' "$ARTIFACT_DIGEST" fly-desk.tar.gz | sha256sum --check --strict -
 
       - name: Configure pinned SSH
         env:
@@ -156,8 +198,8 @@ jobs:
       - name: Upload immutable artifact
         env:
           REVISION: ${{ inputs.revision }}
-          ARTIFACT_PATH: ${{ steps.artifact.outputs.path }}
-          ARTIFACT_DIGEST: ${{ steps.artifact.outputs.digest }}
+          ARTIFACT_PATH: fly-desk.tar.gz
+          ARTIFACT_DIGEST: ${{ needs.build_release.outputs.artifact_digest }}
         run: |
           set -euo pipefail
           printf '%s' "$ARTIFACT_DIGEST" | grep -Eq '^[0-9a-f]{64}$'
@@ -166,7 +208,7 @@ jobs:
       - name: Activate revision
         env:
           REVISION: ${{ inputs.revision }}
-          ARTIFACT_DIGEST: ${{ steps.artifact.outputs.digest }}
+          ARTIFACT_DIGEST: ${{ needs.build_release.outputs.artifact_digest }}
         run: |
           set -euo pipefail
           printf '%s' "$ARTIFACT_DIGEST" | grep -Eq '^[0-9a-f]{64}$'
