@@ -91,7 +91,7 @@ Click and Book Plus does not use this procedure: its token must be regenerated f
          {
            "origin": "LIM",
            "destination": "MIA",
-           "departureDate": "2026-06-15"
+           "departureDate": "YYYY-MM-DD"
          }
        ],
        "passengers": {
@@ -107,6 +107,8 @@ Click and Book Plus does not use this procedure: its token must be regenerated f
      }
    }
    ```
+
+   Replace `YYYY-MM-DD` with a valid future departure date before running the smoke.
 
    The public API always searches both Agil and Click and Book Plus. Recovery succeeds when `allOffers` contains at least one offer with `providerSource = "agil-local"`.
 
