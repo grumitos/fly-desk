@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Browser, BrowserContext, Page } from "playwright";
@@ -229,12 +229,6 @@ interface CbPlusOriginDestinationOption {
   refNumber?: string | number;
   rph?: string | number;
   flightSegment?: CbPlusFlightSegment | CbPlusFlightSegment[];
-}
-
-interface CbPlusMoney {
-  amount?: string | number;
-  currencyCode?: string;
-  value?: string | number;
 }
 
 interface CbPlusPricedItinerary {
