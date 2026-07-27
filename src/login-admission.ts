@@ -1,63 +1,109 @@
 const DEFAULT_MAX_FAILURES = 5;
 const DEFAULT_WINDOW_MS = 15 * 60 * 1_000;
+const DEFAULT_MAX_CLIENTS = 1_024;
 
 export interface LoginAdmissionDecision {
   allowed: boolean;
   retryAfterSeconds?: number;
 }
 
+interface LoginAdmissionOptions {
+  maxFailures?: number;
+  windowMs?: number;
+  maxClients?: number;
+}
+
 export class LoginAdmissionController {
   private readonly maxFailures: number;
   private readonly windowMs: number;
-  private failures: number[] = [];
+  private readonly maxClients: number;
+  private readonly failuresByClient = new Map<string, number[]>();
 
-  constructor(options: { maxFailures?: number; windowMs?: number } = {}) {
+  constructor(options: LoginAdmissionOptions = {}) {
     this.maxFailures = options.maxFailures ?? DEFAULT_MAX_FAILURES;
     this.windowMs = options.windowMs ?? DEFAULT_WINDOW_MS;
+    this.maxClients = Math.max(1, Math.floor(options.maxClients ?? DEFAULT_MAX_CLIENTS));
   }
 
-  check(nowMs = Date.now()): LoginAdmissionDecision {
-    this.removeExpired(nowMs);
-    if (this.failures.length < this.maxFailures) {
+  check(clientKey: string, nowMs = Date.now()): LoginAdmissionDecision {
+    const failures = this.activeFailures(clientKey, nowMs);
+    if (!failures || failures.length < this.maxFailures) {
       return { allowed: true };
     }
 
-    const retryAtMs = this.failures[0]! + this.windowMs;
+    const retryAtMs = failures[0]! + this.windowMs;
     return {
       allowed: false,
       retryAfterSeconds: Math.max(1, Math.ceil((retryAtMs - nowMs) / 1_000)),
     };
   }
 
-  recordFailure(nowMs = Date.now()): void {
-    this.removeExpired(nowMs);
-    if (this.failures.length < this.maxFailures) {
-      this.failures.push(nowMs);
+  recordFailure(clientKey: string, nowMs = Date.now()): void {
+    let failures = this.activeFailures(clientKey, nowMs);
+    if (!failures) {
+      this.ensureClientCapacity(nowMs);
+      failures = [];
+      this.failuresByClient.set(clientKey, failures);
+    }
+
+    if (failures.length < this.maxFailures) {
+      failures.push(nowMs);
     }
   }
 
-  reset(): void {
-    this.failures = [];
+  reset(clientKey?: string): void {
+    if (clientKey === undefined) {
+      this.failuresByClient.clear();
+      return;
+    }
+    this.failuresByClient.delete(clientKey);
   }
 
-  private removeExpired(nowMs: number): void {
+  private activeFailures(clientKey: string, nowMs: number): number[] | undefined {
+    const failures = this.failuresByClient.get(clientKey);
+    if (!failures) {
+      return undefined;
+    }
+
     const cutoff = nowMs - this.windowMs;
-    while (this.failures.length > 0 && this.failures[0]! <= cutoff) {
-      this.failures.shift();
+    while (failures.length > 0 && failures[0]! <= cutoff) {
+      failures.shift();
+    }
+    if (failures.length === 0) {
+      this.failuresByClient.delete(clientKey);
+      return undefined;
+    }
+    return failures;
+  }
+
+  private ensureClientCapacity(nowMs: number): void {
+    for (const clientKey of this.failuresByClient.keys()) {
+      this.activeFailures(clientKey, nowMs);
+    }
+
+    while (this.failuresByClient.size >= this.maxClients) {
+      const oldestClient = this.failuresByClient.keys().next().value;
+      if (oldestClient === undefined) {
+        return;
+      }
+      this.failuresByClient.delete(oldestClient);
     }
   }
 }
 
 const webLoginAdmission = new LoginAdmissionController();
 
-export function checkWebLoginAdmission(nowMs = Date.now()): LoginAdmissionDecision {
-  return webLoginAdmission.check(nowMs);
+export function checkWebLoginAdmission(
+  clientKey: string,
+  nowMs = Date.now(),
+): LoginAdmissionDecision {
+  return webLoginAdmission.check(clientKey, nowMs);
 }
 
-export function recordFailedWebLogin(nowMs = Date.now()): void {
-  webLoginAdmission.recordFailure(nowMs);
+export function recordFailedWebLogin(clientKey: string, nowMs = Date.now()): void {
+  webLoginAdmission.recordFailure(clientKey, nowMs);
 }
 
-export function resetWebLoginAdmission(): void {
-  webLoginAdmission.reset();
+export function resetWebLoginAdmission(clientKey?: string): void {
+  webLoginAdmission.reset(clientKey);
 }

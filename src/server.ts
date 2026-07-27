@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import * as path from "node:path";
 import type { Server as BunServer } from "bun";
 import { routeRequest } from "./http-router";
@@ -7,6 +8,7 @@ import { hasValidWebSession, isWebAuthEnabled, renderLoginPage, resolveWebTheme 
 
 const publicDir = path.resolve(process.cwd(), "frontend", "dist");
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
+const LOGIN_CLIENT_IP_HEADER = "x-fly-desk-login-client-ip";
 const DEFAULT_SERVER_IDLE_TIMEOUT_SECONDS = 120;
 const MAX_SERVER_IDLE_TIMEOUT_SECONDS = 255;
 
@@ -221,6 +223,17 @@ function isLoopbackRemoteAddress(value: string | undefined): boolean {
     || normalized === "::ffff:127.0.0.1";
 }
 
+function resolveClientAddress(request: Request, remoteAddress: string | undefined): string | undefined {
+  if (!isLoopbackRemoteAddress(remoteAddress)) {
+    return remoteAddress;
+  }
+
+  const loginClientAddress = request.headers.get(LOGIN_CLIENT_IP_HEADER)?.trim();
+  return loginClientAddress && isIP(loginClientAddress) !== 0
+    ? loginClientAddress
+    : remoteAddress;
+}
+
 function parseRequestUrl(request: Request): URL {
   try {
     return new URL(request.url);
@@ -234,20 +247,22 @@ async function proxyToRouter(request: Request, server: BunServer<undefined>): Pr
   const headers = new Headers();
 
   request.headers.forEach((value, key) => {
-    if (key.toLowerCase().startsWith("x-flydesk-")) {
+    const normalizedKey = key.toLowerCase();
+    if (normalizedKey.startsWith("x-flydesk-") || normalizedKey === LOGIN_CLIENT_IP_HEADER) {
       return;
     }
     headers.append(key, value);
   });
 
   const remoteAddress = server.requestIP(request)?.address;
+  const clientAddress = resolveClientAddress(request, remoteAddress);
   headers.set(
     "x-flydesk-client-loopback",
     isLoopbackRemoteAddress(remoteAddress) ? "1" : "0",
   );
 
-  if (remoteAddress) {
-    headers.set("x-flydesk-client-address", remoteAddress);
+  if (clientAddress) {
+    headers.set("x-flydesk-client-address", clientAddress);
   }
 
   const requestInit: RequestInit & { duplex?: "half" } = {
