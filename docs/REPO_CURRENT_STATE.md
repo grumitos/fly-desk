@@ -1,6 +1,6 @@
 # Current Repository State
 
-Snapshot date: 2026-07-25
+Snapshot date: 2026-07-27
 
 ## Summary
 
@@ -48,6 +48,10 @@ The React UI must not display simulated controls. The following remain outside t
 - the server listens on `127.0.0.1` by default
 - in production it remains behind Caddy with `HOST=127.0.0.1`
 - `FLY_DESK_WEB_AUTH=1` enables web login with a signed httpOnly cookie
+- login admission retains at most five failures in a 15-minute global window,
+  returns `429` with `Retry-After` before scrypt on further attempts, expires
+  old failures, and resets after success; it deliberately ignores spoofable
+  forwarded client headers
 - `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` is mandatory when a local reverse proxy is present
 - `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK=1` must be used only if the local proxy also blocks or authenticates local-only routes; by default, requests with `x-forwarded-for`, `forwarded`, or `x-real-ip` do not inherit loopback trust
 - operational endpoints accept a valid web cookie or `FLY_DESK_API_TOKEN`
@@ -115,6 +119,7 @@ The React UI must not display simulated controls. The following remain outside t
 - `src/server.ts`: `Bun.serve`, `frontend/dist` serving, headers, body limit, and runtime configuration injection
 - `src/redirect-service.ts` and `src/redirect-index.ts`: dedicated `/r/<id>` resolver from the SQLite cache, independent of the main runtime for provider clicks
 - `src/http-router.ts`: HTTP routes, web/loopback/token authentication, jobs, matrix, quotation, redirects, diagnostics, and layout
+- `src/login-admission.ts`: bounded global failed-login admission before password derivation
 - `src/web-auth.ts`: web password, signed cookie, and session validation
 - `src/core/quotation.ts`: shared quotation rendering; by default it preserves the local time encoded by each segment
 - `src/search-date-policy.ts`: moving date window and embedded public configuration
@@ -133,7 +138,9 @@ The React UI must not display simulated controls. The following remain outside t
 ### Operations
 
 - `scripts/build-frontend.ts`: frontend build
-- `scripts/generate-web-password-hash.ts`: generates the scrypt hash for `FLY_DESK_WEB_PASSWORD_HASH`
+- `scripts/generate-web-password-hash.ts`: generates the scrypt hash from a
+  hidden terminal prompt or controlled standard input and rejects plaintext
+  arguments and environment input
 - `docs/DEPLOY_APP.md`: application deployment and rollback
 - `.github/workflows/ci.yml`: Bun CI for typecheck, lint, test, and build
 - `.github/workflows/deploy-vps.yml`: manual deployment and rollback by exact SHA through the fixed platform release wrapper
