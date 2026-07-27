@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 
 export const WEB_SESSION_COOKIE_NAME = "flydesk_session";
 export const REDIRECT_SESSION_COOKIE_NAME = "flydesk_redirect_session";
@@ -42,8 +42,29 @@ function resolveWebPasswordHash(): string | undefined {
   return readEnv("FLY_DESK_WEB_PASSWORD_HASH");
 }
 
-function resolveWebPassword(): string | undefined {
-  return readEnv("FLY_DESK_WEB_PASSWORD");
+interface ParsedScryptPasswordHash {
+  salt: Buffer;
+  expected: Buffer;
+}
+
+function parseScryptPasswordHash(encodedHash: string | undefined): ParsedScryptPasswordHash | undefined {
+  const parts = encodedHash?.split(":");
+  if (parts?.length !== 3 || parts[0] !== "scrypt") {
+    return undefined;
+  }
+
+  const [, saltValue, expectedValue] = parts;
+  if (!/^[A-Za-z0-9_-]+$/.test(saltValue) || !/^[A-Za-z0-9_-]+$/.test(expectedValue)) {
+    return undefined;
+  }
+
+  const salt = Buffer.from(saltValue, "base64url");
+  const expected = Buffer.from(expectedValue, "base64url");
+  if (salt.length < 8 || expected.length < 16 || expected.length > 128) {
+    return undefined;
+  }
+
+  return { salt, expected };
 }
 
 export function getWebAuthConfigError(): string | undefined {
@@ -56,8 +77,8 @@ export function getWebAuthConfigError(): string | undefined {
     return "FLY_DESK_WEB_SESSION_SECRET must be set to at least 32 characters.";
   }
 
-  if (!resolveWebPasswordHash() && !resolveWebPassword()) {
-    return "FLY_DESK_WEB_PASSWORD_HASH or FLY_DESK_WEB_PASSWORD must be set.";
+  if (!parseScryptPasswordHash(resolveWebPasswordHash())) {
+    return "FLY_DESK_WEB_PASSWORD_HASH must contain a valid scrypt hash.";
   }
 
   return undefined;
@@ -81,29 +102,13 @@ export function createScryptPasswordHash(password: string, salt = randomBytes(16
 }
 
 function verifyScryptPassword(password: string, encodedHash: string): boolean {
-  const [, saltValue, expectedValue] = encodedHash.split(":");
-  if (!saltValue || !expectedValue) {
+  const parsed = parseScryptPasswordHash(encodedHash);
+  if (!parsed) {
     return false;
   }
 
-  const salt = Buffer.from(saltValue, "base64url");
-  const expected = Buffer.from(expectedValue, "base64url");
-  if (salt.length < 8 || expected.length < 16 || expected.length > 128) {
-    return false;
-  }
-
-  const actual = scryptSync(password, salt, expected.length);
-  return safeEqual(actual, expected);
-}
-
-function verifySha256Password(password: string, encodedHash: string): boolean {
-  const expectedHex = encodedHash.slice("sha256:".length).trim().toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(expectedHex)) {
-    return false;
-  }
-
-  const actualHex = createHash("sha256").update(password, "utf8").digest("hex");
-  return safeEqualString(actualHex, expectedHex);
+  const actual = scryptSync(password, parsed.salt, parsed.expected.length);
+  return safeEqual(actual, parsed.expected);
 }
 
 export function verifyWebPassword(password: string): PasswordVerificationResult {
@@ -112,21 +117,7 @@ export function verifyWebPassword(password: string): PasswordVerificationResult 
     return { ok: false, configError };
   }
 
-  const encodedHash = resolveWebPasswordHash();
-  if (encodedHash?.startsWith("scrypt:")) {
-    return { ok: verifyScryptPassword(password, encodedHash) };
-  }
-
-  if (encodedHash?.startsWith("sha256:")) {
-    return { ok: verifySha256Password(password, encodedHash) };
-  }
-
-  const configuredPassword = resolveWebPassword();
-  if (configuredPassword) {
-    return { ok: safeEqualString(password, configuredPassword) };
-  }
-
-  return { ok: false, configError: "Unsupported web password configuration." };
+  return { ok: verifyScryptPassword(password, resolveWebPasswordHash()!) };
 }
 
 export function resolveWebSessionTtlSeconds(): number {

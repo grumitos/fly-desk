@@ -145,6 +145,8 @@ the password only through standard input from the secret manager. Plaintext
 arguments and `FLY_DESK_WEB_PASSWORD` input are rejected so the password does
 not enter command arguments, environment assignments, shell history, or logs.
 Use only the resulting hash as `FLY_DESK_WEB_PASSWORD_HASH`.
+The runtime accepts only a well-formed scrypt hash in that variable; plaintext
+and legacy SHA-256 password configurations leave web authentication unavailable.
 
 When working on another machine, do not send `.env` as plaintext through chat, email, or commits. In practice:
 
