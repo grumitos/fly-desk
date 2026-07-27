@@ -1,15 +1,15 @@
 # Recovering Click and Book Plus Without Migrating a Session
 
-This runbook covers preparing and recovering Click and Book Plus on a new host. The normal strategy is to regenerate the branded token from securely stored B2B credentials and TOTP. Logical extraction through Chrome/CDP is reserved as a controlled fallback.
+This runbook covers recovering Click and Book Plus on the production host. The normal strategy is to regenerate the branded token from securely stored B2B credentials and TOTP. Logical extraction through Chrome/CDP is reserved as a controlled fallback.
 
-Do not copy the Chrome profile, cookie database, session SQLite database, or `CBPLUS_TOKEN` from the previous VPS. These artifacts are ephemeral state, may contain tokens or purchase paths, and do not prove that authentication is reproducible on the new host.
+Do not copy the Chrome profile, cookie database, session SQLite database, or `CBPLUS_TOKEN` from a retired host. These artifacts are ephemeral state, may contain tokens or purchase paths, and do not prove that authentication is reproducible on the production host.
 
 ## Operational Decision
 
 The recovery order is mandatory:
 
 1. HTTP regeneration from `CBPLUS_B2B_EMAIL`, `CBPLUS_B2B_PASSWORD`, and a TOTP source;
-2. Playwright automation against Chrome/CDP on the new host, without cloning a profile, only if the HTTP flow cannot complete the current login;
+2. Playwright automation against Chrome/CDP on the production host, without cloning a profile, only if the HTTP flow cannot complete the current login;
 3. block and diagnose if neither flow produces a valid token.
 
 `src/local-costamar.ts` tries the HTTP flow before Playwright. Login keeps cookies only in memory, generates the OTP when needed, and requests a token for `CBPLUS_TERMINAL_ID`. `src/provider-context.ts` rejects expired tokens and tokens associated with a different terminal. The internal `costamar` identifier remains for compatibility; a new installation must use `CBPLUS_*` variables rather than introduce new dependencies on `COSTAMAR_*`.
@@ -17,8 +17,8 @@ The recovery order is mandatory:
 ## Security Rules
 
 - Do not print, log, paste into commands, or include in tickets any credentials, TOTP values, cookies, JWTs, authorization headers, or `.env` values.
-- Do not set `CBPLUS_TOKEN` as a permanent secret on the new host. It must remain absent to prove regeneration works.
-- Do not copy `/etc/fly-desk.env`, `/var/lib/fly-desk`, the `fly-desk-chrome.service` profile, or files under `/tmp` from Hetzner.
+- Do not set `CBPLUS_TOKEN` as a permanent secret on the production host. It must remain absent to prove regeneration works.
+- Do not copy `/etc/fly-desk.env`, `/var/lib/fly-desk`, the `fly-desk-chrome.service` profile, or files under `/tmp` from a retired host.
 - Do not use `rsync`, `scp`, or a tar archive to move a complete or partial Chrome profile. Cookies from another host are not the source of truth.
 - Keep `CBPLUS_B2B_DEBUG=0`; normal diagnostics expose sufficient states and counts.
 - Keep `CBPLUS_B2B_CLONE_CHROME_PROFILE=0`, including during fallback.
@@ -30,9 +30,9 @@ The recovery order is mandatory:
 
 Before attempting recovery:
 
-- the release to be operated is active on the new host;
+- the release to be operated is active on the production host;
 - `fly-desk.service`, `fly-desk-search.service`, and `fly-desk-redirect.service` respond on loopback;
-- `/etc/fly-desk.env` was reconstructed from the canonical secret store, not copied from the previous VPS;
+- `/etc/fly-desk.env` was reconstructed from the canonical secret store, not copied from a retired host;
 - `CBPLUS_TERMINAL_ID`, `CBPLUS_B2B_EMAIL`, and `CBPLUS_B2B_PASSWORD` are present;
 - exactly one working TOTP source is present: `CBPLUS_B2B_TOTP_SECRET` or `CBPLUS_B2B_TOTP_URI`;
 - the host clock is synchronized, because drift can invalidate every OTP;
@@ -79,7 +79,7 @@ Do not check these variables with `cat`, `grep`, or `systemctl show` if the outp
 
 ## Fallback: Logical Automation Through Chrome/CDP
 
-Use this path only if the provider changed the login so that the HTTP flow cannot complete it, while the credentials and TOTP remain valid. It must operate exclusively against `fly-desk-chrome.service` on the new host.
+Use this path only if the provider changed the login so that the HTTP flow cannot complete it, while the credentials and TOTP remain valid. It must operate exclusively against `fly-desk-chrome.service` on the production host.
 
 1. Keep credentials/TOTP configured and temporarily enable:
 
@@ -90,7 +90,7 @@ Use this path only if the provider changed the login so that the HTTP flow canno
    CBPLUS_B2B_CLONE_CHROME_PROFILE=0
    ```
 
-2. Set `CBPLUS_CHROME_USER_DATA_DIR` and `CBPLUS_CHROME_PROFILE` to the profile already managed by `fly-desk-chrome.service` on the new host. Do not point them to staging, a mount, or a copy from Hetzner.
+2. Set `CBPLUS_CHROME_USER_DATA_DIR` and `CBPLUS_CHROME_PROFILE` to the profile already managed by `fly-desk-chrome.service` on the production host. Do not point them to staging, a mount, or a copy from another host.
 
 3. Restart the runner and redirect service, not Chrome. Run a controlled search or the production smoke. Playwright connects to the existing browser through CDP, completes login, and observes only pages and responses from allowed hosts to capture a compatible candidate.
 
@@ -122,23 +122,13 @@ When finished, whether successful or not:
 2. use `/api/diagnostics` to confirm that no active temporary Click and Book Plus artifacts remain;
 3. run the platform maintenance routine if obsolete `travel_quote_foundation_costamar_*` or `travel_quote_foundation_costamar_browser_*` artifacts exist; do not open or archive them;
 4. confirm that no `.env` files, payloads, profiles, cookies, or tokens were created in the repository, the `ops` home directory, or `/tmp`;
-5. keep under `/var/lib/fly-desk` only state generated by the new host and subject to the application's TTL.
+5. keep under `/var/lib/fly-desk` only state generated by the production host and subject to the application's TTL.
 
 Do not migrate the session SQLite database to preserve old redirects: prices and purchase paths are ephemeral and must be rebuilt by a new search.
 
-## Gate for Removing Hetzner
+## Historical Migration Note
 
-Click and Book Plus blocks removal of the previous VPS until all of the following evidence exists:
-
-- B2B credentials and the TOTP source are available from the canonical store and do not exist only on the old host;
-- the new host regenerates a token with `CBPLUS_TOKEN` absent and without using a copy of the previous profile;
-- two consecutive smokes, separated by a runner/redirect restart, complete a Click and Book Plus search and validate its `/r/*`;
-- no configuration, Chrome/CDP paths, units, callbacks, or operational documentation refer to Hetzner;
-- cleanup finds no copied profiles, cookies, payloads, or tokens;
-- the recovery path has been tested through operational access to the new host;
-- the global gates for Agil, the other applications, DNS, and rollback also authorize retiring the previous VPS.
-
-If the only functional evidence remains a cookie, JWT, profile, or SQLite database from the old VPS, migration is blocked. Do not compensate for that dependency by copying the artifact: recover credentials/TOTP first or coordinate access restoration with Click and Book Plus.
+Before the previous VPS was retired, the production host passed two consecutive regeneration and redirect smokes without a copied token or browser profile. That retirement gate is closed and is not part of current recovery operations. If recovery now depends on an artifact from another host, stop and restore access through credentials and TOTP instead of copying the artifact.
 
 ## Closure Evidence
 
@@ -150,4 +140,4 @@ Report only:
 - `/r/*` validated with `302` and an allowed branded host, without the complete URL;
 - web/search/redirect status after the second pass;
 - completion of temporary-file cleanup;
-- `ready` or `blocked` decision for removing Hetzner, with non-sensitive reasons.
+- `ready` or `blocked` recovery outcome, with non-sensitive reasons.
