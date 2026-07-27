@@ -1347,7 +1347,7 @@ test("web auth cookie allows API access when loopback trust is disabled", { conc
   }
 });
 
-test("web login bounds failed scrypt attempts and returns retry guidance", { concurrency: false }, async () => {
+test("web login isolates client buckets while keeping the abusive client throttled", { concurrency: false }, async () => {
   const previousWebAuth = process.env.FLY_DESK_WEB_AUTH;
   const previousWebPassword = process.env.FLY_DESK_WEB_PASSWORD;
   const previousPasswordHash = process.env.FLY_DESK_WEB_PASSWORD_HASH;
@@ -1362,19 +1362,32 @@ test("web login bounds failed scrypt attempts and returns retry guidance", { con
   process.env.FLY_DESK_WEB_SESSION_SECRET = "test-session-secret-32-characters-minimum";
   resetWebLoginAdmission();
 
+  const clientHeaders = (clientAddress: string) => ({
+    "Content-Type": "application/json",
+    "x-flydesk-client-address": clientAddress,
+    "x-flydesk-client-loopback": "1",
+  });
+
   try {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const response = await routeRequest(new Request("https://fly-desk.local/api/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: clientHeaders("203.0.113.10"),
         body: JSON.stringify({ password: "wrong-password" }),
       }));
       assert.equal(response.status, 401);
     }
 
+    const unaffectedClient = await routeRequest(new Request("https://fly-desk.local/api/auth/login", {
+      method: "POST",
+      headers: clientHeaders("203.0.113.11"),
+      body: JSON.stringify({ password: "correct-password" }),
+    }));
+    assert.equal(unaffectedClient.status, 200);
+
     const limited = await routeRequest(new Request("https://fly-desk.local/api/auth/login", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: clientHeaders("203.0.113.10"),
       body: JSON.stringify({ password: "correct-password" }),
     }));
     assert.equal(limited.status, 429);

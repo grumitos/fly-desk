@@ -1,6 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { handleRequest, resolveServerIdleTimeoutSeconds } from "../src/server";
+import { resetWebLoginAdmission } from "../src/login-admission";
 import { withServer } from "./helpers/server";
 
 test("server idle timeout defaults above Bun's short request timeout", () => {
@@ -184,5 +185,74 @@ test("web auth login page uses the persisted Fly Desk theme", { concurrency: fal
     } else {
       process.env.FLY_DESK_WEB_SESSION_SECRET = previousSessionSecret;
     }
+  }
+});
+
+test("server trusts the Worker login client IP only through a loopback peer", { concurrency: false }, async () => {
+  const previousWebAuth = process.env.FLY_DESK_WEB_AUTH;
+  const previousWebPassword = process.env.FLY_DESK_WEB_PASSWORD;
+  const previousPasswordHash = process.env.FLY_DESK_WEB_PASSWORD_HASH;
+  const previousSessionSecret = process.env.FLY_DESK_WEB_SESSION_SECRET;
+
+  process.env.FLY_DESK_WEB_AUTH = "1";
+  process.env.FLY_DESK_WEB_PASSWORD = "correct-password";
+  delete process.env.FLY_DESK_WEB_PASSWORD_HASH;
+  process.env.FLY_DESK_WEB_SESSION_SECRET = "test-session-secret-32-characters-minimum";
+  resetWebLoginAdmission();
+
+  const login = (
+    remoteAddress: string,
+    clientAddress: string,
+    password: string,
+  ) => handleRequest(
+    new Request("http://fly-desk.test/api/auth/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Fly-Desk-Login-Client-IP": clientAddress,
+      },
+      body: JSON.stringify({ password }),
+    }),
+    {
+      requestIP: () => ({ address: remoteAddress, port: 443, family: "IPv4" }),
+    } as never,
+  );
+
+  try {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      assert.equal(
+        (await login("127.0.0.1", "203.0.113.10", "wrong-password")).status,
+        401,
+      );
+    }
+
+    assert.equal(
+      (await login("127.0.0.1", "203.0.113.11", "correct-password")).status,
+      200,
+    );
+
+    resetWebLoginAdmission();
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      assert.equal(
+        (await login("198.51.100.20", `203.0.113.${attempt + 20}`, "wrong-password")).status,
+        401,
+      );
+    }
+
+    assert.equal(
+      (await login("198.51.100.20", "203.0.113.99", "correct-password")).status,
+      429,
+    );
+  } finally {
+    resetWebLoginAdmission();
+    if (previousWebAuth === undefined) delete process.env.FLY_DESK_WEB_AUTH;
+    else process.env.FLY_DESK_WEB_AUTH = previousWebAuth;
+    if (previousWebPassword === undefined) delete process.env.FLY_DESK_WEB_PASSWORD;
+    else process.env.FLY_DESK_WEB_PASSWORD = previousWebPassword;
+    if (previousPasswordHash === undefined) delete process.env.FLY_DESK_WEB_PASSWORD_HASH;
+    else process.env.FLY_DESK_WEB_PASSWORD_HASH = previousPasswordHash;
+    if (previousSessionSecret === undefined) delete process.env.FLY_DESK_WEB_SESSION_SECRET;
+    else process.env.FLY_DESK_WEB_SESSION_SECRET = previousSessionSecret;
   }
 });
