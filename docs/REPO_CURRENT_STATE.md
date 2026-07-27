@@ -48,10 +48,12 @@ The React UI must not display simulated controls. The following remain outside t
 - the server listens on `127.0.0.1` by default
 - in production it remains behind Caddy with `HOST=127.0.0.1`
 - `FLY_DESK_WEB_AUTH=1` enables web login with a signed httpOnly cookie
-- login admission retains at most five failures in a 15-minute global window,
-  returns `429` with `Retry-After` before scrypt on further attempts, expires
-  old failures, and resets after success; it deliberately ignores spoofable
-  forwarded client headers
+- login admission retains at most five failures per validated client in a
+  15-minute window, returns `429` with `Retry-After` before scrypt on further
+  attempts, expires old failures, and resets only the successful client
+- Pages overwrites the login client IP from Cloudflare's initial request; Bun
+  accepts that value only through a loopback peer after IP validation, ignores
+  ordinary forwarded headers for admission, and caps the map at 1,024 clients
 - `FLY_DESK_TRUST_LOOPBACK_CLIENT=0` is mandatory when a local reverse proxy is present
 - `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK=1` must be used only if the local proxy also blocks or authenticates local-only routes; by default, requests with `x-forwarded-for`, `forwarded`, or `x-real-ip` do not inherit loopback trust
 - operational endpoints accept a valid web cookie or `FLY_DESK_API_TOKEN`
@@ -119,7 +121,7 @@ The React UI must not display simulated controls. The following remain outside t
 - `src/server.ts`: `Bun.serve`, `frontend/dist` serving, headers, body limit, and runtime configuration injection
 - `src/redirect-service.ts` and `src/redirect-index.ts`: dedicated `/r/<id>` resolver from the SQLite cache, independent of the main runtime for provider clicks
 - `src/http-router.ts`: HTTP routes, web/loopback/token authentication, jobs, matrix, quotation, redirects, diagnostics, and layout
-- `src/login-admission.ts`: bounded global failed-login admission before password derivation
+- `src/login-admission.ts`: bounded per-client failed-login admission before password derivation
 - `src/web-auth.ts`: web password, signed cookie, and session validation
 - `src/core/quotation.ts`: shared quotation rendering; by default it preserves the local time encoded by each segment
 - `src/search-date-policy.ts`: moving date window and embedded public configuration
