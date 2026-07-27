@@ -79,10 +79,17 @@ import {
   getWebAuthConfigError,
   hasValidWebSession,
   isWebAuthEnabled,
+  renderLoginPage,
+  resolveWebTheme,
   shouldTrustReverseProxyLoopbackClient,
   shouldTrustLoopbackClient,
   verifyWebPassword,
 } from "./web-auth";
+import {
+  checkWebLoginAdmission,
+  recordFailedWebLogin,
+  resetWebLoginAdmission,
+} from "./login-admission";
 import { type MatrixJobRecord, type SearchJobRecord } from "./session-store";
 import {
   appendProviderDiagnosticEvent,
@@ -1802,8 +1809,33 @@ async function handleWebLogin(request: Request, options: { jsonResponse?: boolea
   }
 
   const password = await readLoginPassword(request);
+  const admission = checkWebLoginAdmission();
+  if (!admission.allowed) {
+    const headers = {
+      "Cache-Control": "no-store",
+      "Retry-After": String(admission.retryAfterSeconds),
+    };
+    if (options.jsonResponse) {
+      return json(
+        { error: "Too many login attempts. Try again later." },
+        { status: 429, headers },
+      );
+    }
+    return new Response(
+      renderLoginPage("Demasiados intentos. Intenta de nuevo mas tarde.", resolveWebTheme(request)),
+      {
+        status: 429,
+        headers: {
+          ...headers,
+          "Content-Type": "text/html; charset=utf-8",
+        },
+      },
+    );
+  }
+
   const verification = verifyWebPassword(password);
   if (!verification.ok) {
+    recordFailedWebLogin();
     if (options.jsonResponse) {
       return json(
         { error: "Invalid password." },
@@ -1820,6 +1852,7 @@ async function handleWebLogin(request: Request, options: { jsonResponse?: boolea
     });
   }
 
+  resetWebLoginAdmission();
   const sessionCookie = createWebSessionCookie(request);
   const redirectSessionCookie = createRedirectSessionCookie(request);
   if (options.jsonResponse) {
