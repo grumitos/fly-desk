@@ -10,6 +10,15 @@ import {
   waitForStableIndicator,
 } from "./support.ts";
 
+async function clickLocationFieldSurface(page: Page, fieldId: string): Promise<void> {
+  const control = page.locator(`#${fieldId}`).locator("..");
+  const box = await control.boundingBox();
+  assert.ok(box, `Missing ${fieldId} control`);
+
+  await control.click({ position: { x: 16, y: box.height / 2 } });
+  await page.waitForFunction((expectedId) => document.activeElement?.id === expectedId, fieldId);
+}
+
 test("search controls preserve accessible behavior through shadcn primitives", async () => {
   await withDesktopPage(async ({ page }) => {
     const origin = page.getByRole("combobox", { name: "Origen" });
@@ -104,14 +113,8 @@ test("location field surfaces focus the input in idle and search layouts", async
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
 
-    await page.locator("#location-origen").evaluate((input) => {
-      const control = input.parentElement;
-      const rect = control?.getBoundingClientRect();
-      if (!rect) throw new Error("Missing origin control");
-      window.scrollTo(0, 0);
-      return { x: rect.left + 16, y: rect.top + rect.height / 2 };
-    }).then(({ x, y }) => page.mouse.click(x, y));
-    assert.equal(await page.evaluate(() => document.activeElement?.id), "location-origen");
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await clickLocationFieldSurface(page, "location-origen");
     await page.keyboard.type("lim");
     await page.getByRole("listbox").waitFor();
 
@@ -125,13 +128,7 @@ test("location field surfaces focus the input in idle and search layouts", async
     ]);
     await page.locator(".fd-workspace-enter").waitFor({ state: "visible" });
 
-    await page.locator("#location-destino").evaluate((input) => {
-      const control = input.parentElement;
-      const rect = control?.getBoundingClientRect();
-      if (!rect) throw new Error("Missing destination control");
-      return { x: rect.left + 16, y: rect.top + rect.height / 2 };
-    }).then(({ x, y }) => page.mouse.click(x, y));
-    assert.equal(await page.evaluate(() => document.activeElement?.id), "location-destino");
+    await clickLocationFieldSurface(page, "location-destino");
     await page.keyboard.press("Control+A");
     await page.keyboard.type("mad");
     await page.getByRole("listbox").waitFor();
