@@ -1,10 +1,12 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   createRedirectSessionCookie,
   createRedirectSessionCookieForWebSession,
   createScryptPasswordHash,
   createWebSessionCookie,
+  getWebAuthConfigError,
   hasValidRedirectSession,
   hasValidWebSession,
   REDIRECT_SESSION_COOKIE_NAME,
@@ -39,13 +41,62 @@ test("web authentication accepts only the configured password hash", { concurren
     restore();
   }
 });
+test("web authentication rejects legacy plaintext and SHA-256 password configuration", { concurrency: false }, () => {
+  const restore = applyEnvironment({
+    FLY_DESK_WEB_AUTH: "1",
+    FLY_DESK_WEB_SESSION_SECRET: "test-session-secret-with-at-least-32-characters",
+    FLY_DESK_WEB_PASSWORD: "legacy-password",
+    FLY_DESK_WEB_PASSWORD_HASH: undefined,
+  });
+  const expectedError = "FLY_DESK_WEB_PASSWORD_HASH must contain a valid scrypt hash.";
+
+  try {
+    assert.equal(getWebAuthConfigError(), expectedError);
+    assert.deepEqual(verifyWebPassword("legacy-password"), {
+      ok: false,
+      configError: expectedError,
+    });
+
+    delete process.env.FLY_DESK_WEB_PASSWORD;
+    process.env.FLY_DESK_WEB_PASSWORD_HASH = `sha256:${createHash("sha256").update("legacy-password").digest("hex")}`;
+
+    assert.equal(getWebAuthConfigError(), expectedError);
+    assert.deepEqual(verifyWebPassword("legacy-password"), {
+      ok: false,
+      configError: expectedError,
+    });
+  } finally {
+    restore();
+  }
+});
+
+test("web authentication reports malformed scrypt hashes as configuration errors", { concurrency: false }, () => {
+  const restore = applyEnvironment({
+    FLY_DESK_WEB_AUTH: "1",
+    FLY_DESK_WEB_SESSION_SECRET: "test-session-secret-with-at-least-32-characters",
+    FLY_DESK_WEB_PASSWORD: undefined,
+    FLY_DESK_WEB_PASSWORD_HASH: "scrypt:not-a-valid-salt:not-a-valid-key",
+  });
+  const expectedError = "FLY_DESK_WEB_PASSWORD_HASH must contain a valid scrypt hash.";
+
+  try {
+    assert.equal(getWebAuthConfigError(), expectedError);
+    assert.deepEqual(verifyWebPassword("any-password"), {
+      ok: false,
+      configError: expectedError,
+    });
+  } finally {
+    restore();
+  }
+});
+
 
 test("web sessions reject tampering and expiration", { concurrency: false }, () => {
   const restore = applyEnvironment({
     FLY_DESK_WEB_AUTH: "1",
     FLY_DESK_WEB_SESSION_SECRET: "test-session-secret-with-at-least-32-characters",
-    FLY_DESK_WEB_PASSWORD: "test-password",
-    FLY_DESK_WEB_PASSWORD_HASH: undefined,
+    FLY_DESK_WEB_PASSWORD: undefined,
+    FLY_DESK_WEB_PASSWORD_HASH: createScryptPasswordHash("test-password", Buffer.alloc(16, 8)),
     FLY_DESK_WEB_SESSION_TTL_SECONDS: "300",
   });
   const nowMs = 1_800_000_000_000;
@@ -74,8 +125,8 @@ test("redirect sessions use a distinct path-scoped credential", { concurrency: f
   const restore = applyEnvironment({
     FLY_DESK_WEB_AUTH: "1",
     FLY_DESK_WEB_SESSION_SECRET: "test-session-secret-with-at-least-32-characters",
-    FLY_DESK_WEB_PASSWORD: "test-password",
-    FLY_DESK_WEB_PASSWORD_HASH: undefined,
+    FLY_DESK_WEB_PASSWORD: undefined,
+    FLY_DESK_WEB_PASSWORD_HASH: createScryptPasswordHash("test-password", Buffer.alloc(16, 9)),
     FLY_DESK_WEB_SESSION_TTL_SECONDS: "300",
   });
   const nowMs = 1_800_000_000_000;

@@ -43,6 +43,7 @@ import { getSearchDatePolicy } from "../src/search-date-policy";
 import { getRuntime } from "../src/runtime";
 import { createScryptPasswordHash } from "../src/web-auth";
 import { resetWebLoginAdmission } from "../src/login-admission";
+import { applyEnvironment } from "./helpers/environment";
 import { withServer } from "./helpers/server";
 
 function buildJwt(payload: Record<string, unknown>): string {
@@ -1245,13 +1246,13 @@ test("loopback trust does not authorize forwarded proxy clients unless proxy loo
 test("web auth cookie allows API access when loopback trust is disabled", { concurrency: false }, async () => {
   const previousWebAuth = process.env.FLY_DESK_WEB_AUTH;
   const previousTrustLoopback = process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
-  const previousWebPassword = process.env.FLY_DESK_WEB_PASSWORD;
+  const previousPasswordHash = process.env.FLY_DESK_WEB_PASSWORD_HASH;
   const previousSessionSecret = process.env.FLY_DESK_WEB_SESSION_SECRET;
   const previousCookieSecure = process.env.FLY_DESK_COOKIE_SECURE;
 
   process.env.FLY_DESK_WEB_AUTH = "1";
   process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = "0";
-  process.env.FLY_DESK_WEB_PASSWORD = "test-password";
+  process.env.FLY_DESK_WEB_PASSWORD_HASH = createScryptPasswordHash("test-password", Buffer.alloc(16, 8));
   process.env.FLY_DESK_WEB_SESSION_SECRET = "test-session-secret-32-characters-minimum";
   process.env.FLY_DESK_COOKIE_SECURE = "1";
 
@@ -1327,10 +1328,10 @@ test("web auth cookie allows API access when loopback trust is disabled", { conc
       process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = previousTrustLoopback;
     }
 
-    if (previousWebPassword === undefined) {
-      delete process.env.FLY_DESK_WEB_PASSWORD;
+    if (previousPasswordHash === undefined) {
+      delete process.env.FLY_DESK_WEB_PASSWORD_HASH;
     } else {
-      process.env.FLY_DESK_WEB_PASSWORD = previousWebPassword;
+      process.env.FLY_DESK_WEB_PASSWORD_HASH = previousPasswordHash;
     }
 
     if (previousSessionSecret === undefined) {
@@ -1407,6 +1408,57 @@ test("web login isolates client buckets while keeping the abusive client throttl
     else process.env.FLY_DESK_WEB_SESSION_SECRET = previousSessionSecret;
   }
 });
+test("invalid web password configuration returns 503 without consuming login admission", { concurrency: false }, async () => {
+  const restore = applyEnvironment({
+    FLY_DESK_WEB_AUTH: "1",
+    FLY_DESK_WEB_PASSWORD: undefined,
+    FLY_DESK_WEB_PASSWORD_HASH: "scrypt:not-a-valid-salt:not-a-valid-key",
+    FLY_DESK_WEB_SESSION_SECRET: "test-session-secret-32-characters-minimum",
+  });
+  const clientHeaders = {
+    "Content-Type": "application/json",
+    "x-flydesk-client-address": "203.0.113.12",
+    "x-flydesk-client-loopback": "1",
+  };
+  resetWebLoginAdmission();
+
+  try {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const response = await routeRequest(new Request("https://fly-desk.local/api/auth/login", {
+        method: "POST",
+        headers: clientHeaders,
+        body: JSON.stringify({ password: "wrong-password" }),
+      }));
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), {
+        error: "Web authentication is not configured.",
+      });
+    }
+
+    process.env.FLY_DESK_WEB_PASSWORD_HASH = createScryptPasswordHash(
+      "correct-password",
+      Buffer.alloc(16, 10),
+    );
+
+    const firstCredentialFailure = await routeRequest(new Request("https://fly-desk.local/api/auth/login", {
+      method: "POST",
+      headers: clientHeaders,
+      body: JSON.stringify({ password: "wrong-password" }),
+    }));
+    assert.equal(firstCredentialFailure.status, 401);
+
+    const validLogin = await routeRequest(new Request("https://fly-desk.local/api/auth/login", {
+      method: "POST",
+      headers: clientHeaders,
+      body: JSON.stringify({ password: "correct-password" }),
+    }));
+    assert.equal(validLogin.status, 200);
+  } finally {
+    resetWebLoginAdmission();
+    restore();
+  }
+});
+
 
 test("rejects non-loopback purchase path redirects without a valid api token", { concurrency: false }, async () => {
   const previousApiToken = process.env.FLY_DESK_API_TOKEN;

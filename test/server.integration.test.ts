@@ -2,6 +2,7 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { handleRequest, resolveServerIdleTimeoutSeconds } from "../src/server";
 import { resetWebLoginAdmission } from "../src/login-admission";
+import { createScryptPasswordHash } from "../src/web-auth";
 import { withServer } from "./helpers/server";
 
 test("server idle timeout defaults above Bun's short request timeout", () => {
@@ -94,12 +95,12 @@ test("server accepts bearer API tokens after filtering internal x-flydesk header
 test("web auth redirects the app shell to login before serving frontend assets", { concurrency: false }, async () => {
   const previousWebAuth = process.env.FLY_DESK_WEB_AUTH;
   const previousTrustLoopback = process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
-  const previousWebPassword = process.env.FLY_DESK_WEB_PASSWORD;
+  const previousPasswordHash = process.env.FLY_DESK_WEB_PASSWORD_HASH;
   const previousSessionSecret = process.env.FLY_DESK_WEB_SESSION_SECRET;
 
   process.env.FLY_DESK_WEB_AUTH = "1";
   process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = "0";
-  process.env.FLY_DESK_WEB_PASSWORD = "test-password";
+  process.env.FLY_DESK_WEB_PASSWORD_HASH = createScryptPasswordHash("test-password", Buffer.alloc(16, 8));
   process.env.FLY_DESK_WEB_SESSION_SECRET = "test-session-secret-32-characters-minimum";
 
   try {
@@ -121,10 +122,10 @@ test("web auth redirects the app shell to login before serving frontend assets",
       process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = previousTrustLoopback;
     }
 
-    if (previousWebPassword === undefined) {
-      delete process.env.FLY_DESK_WEB_PASSWORD;
+    if (previousPasswordHash === undefined) {
+      delete process.env.FLY_DESK_WEB_PASSWORD_HASH;
     } else {
-      process.env.FLY_DESK_WEB_PASSWORD = previousWebPassword;
+      process.env.FLY_DESK_WEB_PASSWORD_HASH = previousPasswordHash;
     }
 
     if (previousSessionSecret === undefined) {
@@ -138,12 +139,12 @@ test("web auth redirects the app shell to login before serving frontend assets",
 test("web auth login page uses the persisted Fly Desk theme", { concurrency: false }, async () => {
   const previousWebAuth = process.env.FLY_DESK_WEB_AUTH;
   const previousTrustLoopback = process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
-  const previousWebPassword = process.env.FLY_DESK_WEB_PASSWORD;
+  const previousPasswordHash = process.env.FLY_DESK_WEB_PASSWORD_HASH;
   const previousSessionSecret = process.env.FLY_DESK_WEB_SESSION_SECRET;
 
   process.env.FLY_DESK_WEB_AUTH = "1";
   process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = "0";
-  process.env.FLY_DESK_WEB_PASSWORD = "test-password";
+  process.env.FLY_DESK_WEB_PASSWORD_HASH = createScryptPasswordHash("test-password", Buffer.alloc(16, 9));
   process.env.FLY_DESK_WEB_SESSION_SECRET = "test-session-secret-32-characters-minimum";
 
   try {
@@ -174,10 +175,10 @@ test("web auth login page uses the persisted Fly Desk theme", { concurrency: fal
       process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = previousTrustLoopback;
     }
 
-    if (previousWebPassword === undefined) {
-      delete process.env.FLY_DESK_WEB_PASSWORD;
+    if (previousPasswordHash === undefined) {
+      delete process.env.FLY_DESK_WEB_PASSWORD_HASH;
     } else {
-      process.env.FLY_DESK_WEB_PASSWORD = previousWebPassword;
+      process.env.FLY_DESK_WEB_PASSWORD_HASH = previousPasswordHash;
     }
 
     if (previousSessionSecret === undefined) {
@@ -195,8 +196,8 @@ test("server trusts the Worker login client IP only through a loopback peer", { 
   const previousSessionSecret = process.env.FLY_DESK_WEB_SESSION_SECRET;
 
   process.env.FLY_DESK_WEB_AUTH = "1";
-  process.env.FLY_DESK_WEB_PASSWORD = "correct-password";
-  delete process.env.FLY_DESK_WEB_PASSWORD_HASH;
+  delete process.env.FLY_DESK_WEB_PASSWORD;
+  process.env.FLY_DESK_WEB_PASSWORD_HASH = createScryptPasswordHash("correct-password", Buffer.alloc(16, 10));
   process.env.FLY_DESK_WEB_SESSION_SECRET = "test-session-secret-32-characters-minimum";
   resetWebLoginAdmission();
 
