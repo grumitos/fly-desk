@@ -1,9 +1,13 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
+  createRedirectSessionCookie,
+  createRedirectSessionCookieForWebSession,
   createScryptPasswordHash,
   createWebSessionCookie,
+  hasValidRedirectSession,
   hasValidWebSession,
+  REDIRECT_SESSION_COOKIE_NAME,
   renderLoginPage,
   shouldTrustLoopbackClient,
   verifyWebPassword,
@@ -61,6 +65,39 @@ test("web sessions reject tampering and expiration", { concurrency: false }, () 
     });
     assert.equal(hasValidWebSession(tampered, nowMs), false);
     assert.equal(hasValidWebSession(authenticated, nowMs + 300_001), false);
+  } finally {
+    restore();
+  }
+});
+
+test("redirect sessions use a distinct path-scoped credential", { concurrency: false }, () => {
+  const restore = applyEnvironment({
+    FLY_DESK_WEB_AUTH: "1",
+    FLY_DESK_WEB_SESSION_SECRET: "test-session-secret-with-at-least-32-characters",
+    FLY_DESK_WEB_PASSWORD: "test-password",
+    FLY_DESK_WEB_PASSWORD_HASH: undefined,
+    FLY_DESK_WEB_SESSION_TTL_SECONDS: "300",
+  });
+  const nowMs = 1_800_000_000_000;
+
+  try {
+    const baseRequest = new Request("https://fly-desk.test/");
+    const webCookie = createWebSessionCookie(baseRequest, nowMs).split(";", 1)[0]!;
+    const redirectSetCookie = createRedirectSessionCookie(baseRequest, nowMs);
+    const redirectCookie = redirectSetCookie.split(";", 1)[0]!;
+
+    assert.match(redirectSetCookie, /HttpOnly; Path=\/r; SameSite=Lax; Max-Age=300; Secure/);
+    assert.equal(hasValidWebSession(new Request(baseRequest, { headers: { cookie: webCookie } }), nowMs), true);
+    assert.equal(hasValidRedirectSession(new Request(baseRequest, { headers: { cookie: webCookie } }), nowMs), false);
+    assert.equal(hasValidRedirectSession(new Request(baseRequest, { headers: { cookie: redirectCookie } }), nowMs), true);
+    assert.equal(hasValidWebSession(new Request(baseRequest, { headers: { cookie: redirectCookie } }), nowMs), false);
+
+    const migrated = createRedirectSessionCookieForWebSession(
+      new Request(baseRequest, { headers: { cookie: webCookie } }),
+      nowMs + 1_000,
+    );
+    assert.match(migrated ?? "", new RegExp(`^${REDIRECT_SESSION_COOKIE_NAME}=`));
+    assert.match(migrated ?? "", /Max-Age=299/);
   } finally {
     restore();
   }

@@ -1273,15 +1273,22 @@ test("web auth cookie allows API access when loopback trust is disabled", { conc
 
     assert.equal(login.status, 303);
     const cookie = login.headers.get("set-cookie");
+    const setCookies = login.headers.getSetCookie();
+    assert.equal(setCookies.length, 2);
+    assert.ok(setCookies.some((value) => value.startsWith("flydesk_session=")));
+    assert.ok(setCookies.some((value) => value.startsWith("flydesk_redirect_session=")));
     assert.match(cookie ?? "", /flydesk_session=/);
+    assert.match(cookie ?? "", /flydesk_redirect_session=/);
+    assert.match(cookie ?? "", /Path=\/r/);
     assert.match(cookie ?? "", /HttpOnly/);
     assert.match(cookie ?? "", /Secure/);
+    const webCookie = cookie?.match(/flydesk_session=[^;,]+/)?.[0] ?? "";
 
     const accepted = await routeRequest(new Request("https://fly-desk.local/api/locations?q=", {
       method: "GET",
       headers: {
         "x-flydesk-client-loopback": "0",
-        Cookie: cookie ?? "",
+        Cookie: webCookie,
       },
     }));
 
@@ -1289,6 +1296,13 @@ test("web auth cookie allows API access when loopback trust is disabled", { conc
     const payload = await accepted.json() as { query?: string; suggestions?: unknown[] };
     assert.equal(payload.query, "");
     assert.deepEqual(payload.suggestions, []);
+
+    const session = await routeRequest(new Request("https://fly-desk.local/api/auth/session", {
+      headers: { Cookie: webCookie },
+    }));
+    assert.equal(session.status, 200);
+    assert.match(session.headers.get("set-cookie") ?? "", /flydesk_redirect_session=/);
+    assert.match(session.headers.get("set-cookie") ?? "", /Path=\/r/);
   } finally {
     if (previousWebAuth === undefined) {
       delete process.env.FLY_DESK_WEB_AUTH;

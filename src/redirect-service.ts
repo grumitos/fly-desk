@@ -14,7 +14,7 @@ import { resolvePersistPath } from "./runtime-paths";
 import { resolveAcceptedApiAccessTokens } from "./service-auth";
 import { COMPLETED_SEARCH_SESSION_TTL_MS } from "./session-store";
 import {
-  hasValidWebSession,
+  hasValidRedirectSession,
   isWebAuthEnabled,
   shouldTrustLoopbackClient,
   shouldTrustReverseProxyLoopbackClient,
@@ -552,7 +552,7 @@ function isTrustedRedirectRequest(request: Request): boolean {
     return true;
   }
 
-  if (hasValidWebSession(request)) {
+  if (hasValidRedirectSession(request)) {
     return true;
   }
 
