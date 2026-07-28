@@ -138,10 +138,6 @@ type QuotationOfferValidator = (source: QuotationSource) => Promise<CanonicalOff
 let localOpenUrlOpener: LocalOpenUrlOpener = openUrlLocally;
 let quotationOfferValidatorOverride: QuotationOfferValidator | undefined;
 
-export function setLocalOpenUrlOpenerForTests(opener?: LocalOpenUrlOpener): void {
-  localOpenUrlOpener = opener ?? openUrlLocally;
-}
-
 export function setQuotationOfferValidatorForTests(validator?: QuotationOfferValidator): void {
   quotationOfferValidatorOverride = validator;
 }
@@ -3273,38 +3269,6 @@ export async function routeRequest(request: Request): Promise<Response> {
     const verification = verify ? await verifyCostamarTokenLive() : undefined;
     const lastWarmup = getLastCostamarWarmupDiagnostics();
     return json({ ...status, verification, lastWarmup });
-  }
-
-  if (request.method === "GET" && url.pathname === "/api/agil/locations") {
-    if (!isTrustedApiRequest(request)) {
-      return apiAuthRequiredResponse();
-    }
-
-    const query = stringValue(url.searchParams.get("q"));
-    if (query.length < 1) {
-      return json({ query, suggestions: [] });
-    }
-
-    const limit = integerParam(url.searchParams.get("limit"), 8, 1, 20);
-    const clientSessionId = resolveLocationSuggestionSessionId(url.searchParams.get("clientSessionId"));
-    const suggestions = await suggestLocationsForProvider(runtime, clientSessionId, "agil-local", query, limit);
-    return json({ query, providerId: "agil-local", suggestions });
-  }
-
-  if (request.method === "GET" && url.pathname === "/api/costamar/locations") {
-    if (!isTrustedApiRequest(request)) {
-      return apiAuthRequiredResponse();
-    }
-
-    const query = stringValue(url.searchParams.get("q"));
-    if (query.length < 1) {
-      return json({ query, suggestions: [] });
-    }
-
-    const limit = integerParam(url.searchParams.get("limit"), 8, 1, 20);
-    const clientSessionId = resolveLocationSuggestionSessionId(url.searchParams.get("clientSessionId"));
-    const suggestions = await suggestLocationsForProvider(runtime, clientSessionId, "costamar", query, limit);
-    return json({ query, providerId: "costamar", suggestions });
   }
 
   if (request.method === "GET" && url.pathname === "/api/locations") {

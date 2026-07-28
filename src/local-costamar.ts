@@ -2159,14 +2159,10 @@ function recordCostamarWarmupStep(
   }
 }
 
-export function getLastCostamarWarmupDiagnosticsForTests(): CostamarWarmupDiagnostics | undefined {
+export function getLastCostamarWarmupDiagnostics(): CostamarWarmupDiagnostics | undefined {
   return lastCostamarWarmupDiagnostics
     ? JSON.parse(JSON.stringify(lastCostamarWarmupDiagnostics)) as CostamarWarmupDiagnostics
     : undefined;
-}
-
-export function getLastCostamarWarmupDiagnostics(): CostamarWarmupDiagnostics | undefined {
-  return getLastCostamarWarmupDiagnosticsForTests();
 }
 
 function sleep(ms: number): Promise<void> {
@@ -2333,12 +2329,6 @@ export function setCostamarWarmupGeneratorForTests(
   generator?: CostamarWarmupGenerator,
 ): void {
   costamarWarmupGenerator = generator ?? generateCostamarRedirectContextViaB2B;
-}
-
-export function setCostamarB2bPromptProviderForTests(
-  provider?: CostamarB2bPromptProvider,
-): void {
-  costamarB2bPromptProvider = provider ?? promptCostamarB2bViaTerminal;
 }
 
 export function resetCostamarWarmupStateForTests(): void {
