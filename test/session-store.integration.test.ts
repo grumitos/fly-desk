@@ -1003,6 +1003,56 @@ test("findRecentCompletedSearchJob does not reuse completed Costamar searches wh
   assert.equal(reused, undefined);
 });
 
+test("findRecentCompletedMatrixJob reuses recent compatible flexible results", () => {
+  const store = new SearchSessionStore();
+  const request: SearchRequest = {
+    ...buildRequest(),
+    tripType: "round-trip",
+    searchMode: "roundtrip-grid",
+    flexibleMode: "exact-stay",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "MIA",
+        departureStart: "2026-04-15",
+        departureEnd: "2026-04-19",
+        stayNights: 7,
+      },
+    ],
+  };
+  const completedJob = store.createMatrixJob({
+    request,
+    cells: [buildMatrixCell("2026-04-15_2026-04-22", "https://cached.example/flexible")],
+    axes: {
+      departureDates: ["2026-04-15"],
+      returnDates: ["2026-04-22"],
+    },
+    confidenceSummary: { live: 1 },
+    recommendations: [],
+    searchMeta: {
+      ...buildSearchMeta(),
+      completedAt: new Date().toISOString(),
+    },
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    status: "completed",
+  });
+
+  const reused = store.findRecentCompletedMatrixJob({
+    request,
+    providerIds: ["agil-local"],
+    maxAgeMs: 10 * 60 * 1000,
+  });
+  const mismatchedProviders = store.findRecentCompletedMatrixJob({
+    request,
+    providerIds: ["costamar"],
+    maxAgeMs: 10 * 60 * 1000,
+  });
+
+  assert.equal(reused?.id, completedJob.id);
+  assert.equal(mismatchedProviders, undefined);
+});
+
 test("findRecentCompletedSearchJob ignores completed searches from a previous cache version", () => {
   const store = new SearchSessionStore();
   const request = buildRequest();

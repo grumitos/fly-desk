@@ -3274,6 +3274,119 @@ test("search endpoint serves cached results first for the same config while reva
   });
 });
 
+test("matrix endpoint serves partial cached cells first after cancellation and revalidates", async () => {
+  const runtime = getRuntime();
+  const requestPayload = {
+    sortMode: "cheapest",
+    providerConfig: {
+      costamar: {
+        terminalId: "0721808110",
+        token: buildJwt({
+          id: "0721808110",
+          iat: 1893456000,
+          exp: 1893459600,
+        }),
+        lang: "es",
+      },
+    },
+    request: {
+      tripType: "round-trip",
+      searchMode: "roundtrip-grid",
+      flexibleMode: "fixed-ranges",
+      legs: [
+        {
+          origin: "LIM",
+          destination: "MAD",
+          departureStart: "2026-06-01",
+          departureEnd: "2026-06-03",
+          returnStart: "2026-06-08",
+          returnEnd: "2026-06-10",
+          minNights: 7,
+          maxNights: 7,
+        },
+      ],
+      passengers: {
+        adults: 1,
+        children: 0,
+        infants: 0,
+      },
+    },
+  };
+
+  await withServer(async (baseUrl) => {
+    const firstResponse = await fetch(`${baseUrl}/api/matrix`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestPayload),
+    });
+    assert.equal(firstResponse.status, 200);
+    const accepted = await firstResponse.json() as {
+      matrixJobId?: string;
+      matrixStatus?: string;
+    };
+    assert.ok(accepted.matrixJobId);
+    assert.equal(accepted.matrixStatus, "running");
+
+    const cachedCellSeed = buildCostamarMatrixCell(
+      "https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0",
+    );
+    const cachedCell = {
+      ...cachedCellSeed,
+      offer: {
+        ...cachedCellSeed.offer!,
+        quotationPreparedAt: "2026-06-01T12:00:00.000Z",
+      },
+    };
+    const partial = runtime.sessions.updateMatrixJob(accepted.matrixJobId!, (current) => ({
+      ...current,
+      cells: [cachedCell],
+      axes: {
+        departureDates: [cachedCell.departureDate],
+        returnDates: [cachedCell.returnDate],
+      },
+      confidenceSummary: { live: 1 },
+      searchMeta: {
+        ...current.searchMeta,
+        providersUsed: ["agil-local", "costamar"],
+        partial: true,
+        searchState: "search_partial",
+      },
+    }));
+    assert.equal(partial?.cells.length, 1);
+
+    const cancelResponse = await fetch(`${baseUrl}/api/matrix/${accepted.matrixJobId}/cancel?cachePartial=1`, {
+      method: "POST",
+    });
+    assert.equal(cancelResponse.status, 200);
+    const cancelled = await cancelResponse.json() as { matrixStatus?: string };
+    assert.equal(cancelled.matrixStatus, "completed");
+
+    const repeatedResponse = await fetch(`${baseUrl}/api/matrix`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestPayload),
+    });
+    assert.equal(repeatedResponse.status, 200);
+    const repeated = await repeatedResponse.json() as {
+      matrixJobId?: string;
+      matrixStatus?: string;
+      matrixComplete?: boolean;
+      searchMeta?: { searchState?: string; partial?: boolean };
+      warnings?: string[];
+      cells?: Array<{ key?: string; offer?: { quotationPreparedAt?: string } }>;
+    };
+
+    assert.equal(repeated.matrixStatus, "running");
+    assert.equal(repeated.matrixComplete, false);
+    assert.notEqual(repeated.matrixJobId, accepted.matrixJobId);
+    assert.equal(repeated.searchMeta?.searchState, "search_cached");
+    assert.equal(repeated.searchMeta?.partial, true);
+    assert.equal(repeated.cells?.[0]?.key, cachedCell.key);
+    assert.equal(repeated.cells?.[0]?.offer?.quotationPreparedAt, undefined);
+    assert.ok(repeated.warnings?.some((warning) => /cachead/i.test(warning)));
+  });
+});
+
 test("search job polling returns a lightweight unchanged payload when revision has not moved", async () => {
   const runtime = getRuntime();
   const offer = buildCostamarOffer(

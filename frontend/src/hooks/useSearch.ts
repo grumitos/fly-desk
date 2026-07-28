@@ -28,6 +28,7 @@ export function useSearch() {
   const activeJobsRef = useRef<Map<string, ActiveJob>>(new Map())
   const latestResultsRef = useRef<SearchJobResponse | null>(null)
   const runIdRef = useRef(0)
+  const pendingCancellationRef = useRef<Promise<void>>(Promise.resolve())
 
   const clearPoll = useCallback(() => {
     if (pollRef.current) {
@@ -87,8 +88,14 @@ export function useSearch() {
     }
 
     if (jobs.length > 0) {
-      void Promise.allSettled(jobs.map((job) => cancelSearchJob(job, { cachePartial, keepalive })))
+      const cancellation = Promise.allSettled(
+        jobs.map((job) => cancelSearchJob(job, { cachePartial, keepalive })),
+      ).then(() => undefined)
+      pendingCancellationRef.current = cancellation
+      return cancellation
     }
+
+    return Promise.resolve()
   }, [appendDiagnosticLog, clearPoll])
 
   useEffect(() => {
@@ -113,6 +120,7 @@ export function useSearch() {
       sortMode: SortMode,
       options: { keepPreviousResults?: boolean } = {}
     ): Promise<boolean> => {
+      await pendingCancellationRef.current
       cancelActiveJobs({ showFeedback: false, setIdle: false })
       const runId = runIdRef.current + 1
       runIdRef.current = runId
@@ -224,7 +232,7 @@ export function useSearch() {
   )
 
   const cancel = useCallback(() => {
-    cancelActiveJobs({ showFeedback: true, setIdle: true })
+    cancelActiveJobs({ cachePartial: true, showFeedback: true, setIdle: true })
   }, [cancelActiveJobs])
 
   const reset = useCallback(() => {

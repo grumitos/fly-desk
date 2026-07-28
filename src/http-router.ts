@@ -2021,6 +2021,34 @@ function createCachedSearchDraftResponse(
   };
 }
 
+function createCachedMatrixDraftResponse(
+  draft: MatrixResponse,
+  providerIds: ProviderId[],
+  cachedJob: MatrixJobRecord,
+): MatrixResponse {
+  const now = new Date().toISOString();
+  const warnings = uniqueStrings([
+    ...(cachedJob.searchMeta.warnings ?? []),
+    ...cachedJob.warnings,
+    SEARCH_REVALIDATION_CACHE_WARNING,
+  ]);
+
+  return {
+    ...draft,
+    cells: draft.cells.map(stripCachedMatrixCellQuotation),
+    searchMeta: currentSearchMeta({
+      ...draft.searchMeta,
+      requestedAt: now,
+      completedAt: now,
+      providersUsed: providerIds,
+      warnings,
+      partial: true,
+      searchState: "search_cached",
+    }),
+    warnings,
+  };
+}
+
 function recoverCachedCostamarPurchasePaths(
   cachedJob: SearchJobRecord | undefined,
   providerContext: ProviderContext | undefined,
@@ -2257,6 +2285,46 @@ function createProviderSearchStates(
       fresh: false,
     }]),
   );
+}
+
+function stripCachedMatrixCellQuotation(cell: MatrixCell): MatrixCell {
+  return cell.offer
+    ? { ...cell, offer: stripQuotationPreparation(cell.offer) }
+    : cell;
+}
+
+function createProviderMatrixStates(
+  request: SearchRequest,
+  providerIds: ProviderId[],
+  cachedJob?: MatrixJobRecord,
+): Map<ProviderId, ProviderMatrixState> {
+  const cachedCellsByProvider = new Map<ProviderId, Map<string, MatrixCell>>();
+
+  for (const cachedCell of cachedJob?.cells ?? []) {
+    if (!providerIds.includes(cachedCell.providerSource)) {
+      continue;
+    }
+    const providerCells = cachedCellsByProvider.get(cachedCell.providerSource) ?? new Map();
+    providerCells.set(cachedCell.key, stripCachedMatrixCellQuotation(cachedCell));
+    cachedCellsByProvider.set(cachedCell.providerSource, providerCells);
+  }
+
+  return new Map<ProviderId, ProviderMatrixState>(providerIds.map((providerId) => {
+    const adapter = getProgressiveAdapter(providerId);
+    const response = adapter.createMatrixDraft(request, {
+      exactProvider: providerId,
+      coverageMode: request.coverageMode,
+    });
+    const cachedCells = cachedCellsByProvider.get(providerId);
+    const cells = response.cells.map((cell) => cachedCells?.get(cell.key) ?? cell);
+    const seededResponse = { ...response, cells };
+
+    return [providerId, {
+      response: seededResponse,
+      completed: false,
+      cellIndex: buildMatrixCellIndex(cells),
+    }];
+  }));
 }
 
 function searchJobResponse(
@@ -2802,25 +2870,21 @@ async function handleMatrixRequest(
   const providerIds = contract.providerIds;
   recordLocationUsageForSearchRequest(runtime, normalizedRequest);
   const providerDiagnostics = createProviderDiagnosticsForRun(providerIds, "matrix");
-  const providerStates = new Map<ProviderId, ProviderMatrixState>(
-    providerIds.map((providerId) => {
-      const adapter = getProgressiveAdapter(providerId);
-      const response = adapter.createMatrixDraft(normalizedRequest, {
-        exactProvider: providerId,
-        coverageMode: normalizedRequest.coverageMode,
-      });
-      return [providerId, {
-        response,
-        completed: false,
-        cellIndex: buildMatrixCellIndex(response.cells),
-      }];
-    }),
-  );
-  const draft = materializeAggregatedMatrixResponse(
+  const cachedJob = runtime.sessions.findRecentCompletedMatrixJob({
+    request: normalizedRequest,
+    providerContext,
+    providerIds,
+    maxAgeMs: SEARCH_REVALIDATION_CACHE_TTL_MS,
+  });
+  const providerStates = createProviderMatrixStates(normalizedRequest, providerIds, cachedJob);
+  const materializedDraft = materializeAggregatedMatrixResponse(
     normalizedRequest,
     providerIds,
     providerStates,
   );
+  const draft = cachedJob
+    ? createCachedMatrixDraftResponse(materializedDraft, providerIds, cachedJob)
+    : materializedDraft;
   const job = runtime.sessions.createMatrixJob({
     request: normalizedRequest,
     providerContext,
@@ -2838,6 +2902,7 @@ async function handleMatrixRequest(
     jobId: job.id,
     mode: normalizedRequest.searchMode,
     providers: providerIds.join(","),
+    cached: Boolean(cachedJob),
     cells: job.cells.length,
   });
   const quotationRateResolver = createSharedQuotationRateResolver();
@@ -3099,7 +3164,7 @@ async function handleMatrixRequest(
           admissionError: error instanceof Error ? error.name : "Error",
         });
       });
-    }, backgroundSearchStartDelayMs());
+    }, cachedJob ? cachedBackgroundSearchStartDelayMs() : backgroundSearchStartDelayMs());
   }
 
   return json(matrixJobResponse(job));
