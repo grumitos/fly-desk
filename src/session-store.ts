@@ -764,6 +764,74 @@ export class SearchSessionStore {
     return latest;
   }
 
+  findRecentCompletedMatrixJob(input: {
+    request: SearchRequest;
+    providerContext?: ProviderContext;
+    providerIds: ProviderId[];
+    maxAgeMs: number;
+    nowMs?: number;
+  }): MatrixJobRecord | undefined {
+    if (!Number.isFinite(input.maxAgeMs) || input.maxAgeMs <= 0) {
+      return undefined;
+    }
+
+    const nowMs = input.nowMs ?? Date.now();
+    const requestKey = serializeForComparison(normalizeSearchRequestForSearchCache(input.request));
+    const providerIdsKey = serializeForComparison(input.providerIds);
+    const providerContextKey = serializeForComparison(
+      normalizeProviderContextForSearchCache(input.providerContext),
+    );
+
+    let latest: MatrixJobRecord | undefined;
+    let latestCompletionTimestamp = 0;
+
+    for (const candidate of this.matrixJobs.values()) {
+      if (candidate.status !== "completed") {
+        continue;
+      }
+
+      if (!hasCurrentSearchCacheVersion(candidate.searchMeta)) {
+        continue;
+      }
+
+      if (serializeForComparison(normalizeSearchRequestForSearchCache(candidate.request)) !== requestKey) {
+        continue;
+      }
+
+      if (serializeForComparison(candidate.searchMeta.providersUsed ?? []) !== providerIdsKey) {
+        continue;
+      }
+
+      const candidateContextKey = serializeForComparison(
+        normalizeProviderContextForSearchCache(candidate.providerContext),
+      );
+      if (candidateContextKey !== providerContextKey) {
+        continue;
+      }
+
+      if (!hasCompatibleCostamarSearchCacheToken(input.providerContext, candidate.providerContext)) {
+        continue;
+      }
+
+      const completionTimestamp = resolveSearchCompletionTimestampMs(candidate);
+      if ((nowMs - completionTimestamp) > input.maxAgeMs) {
+        continue;
+      }
+
+      if (!latest || completionTimestamp > latestCompletionTimestamp) {
+        latest = candidate;
+        latestCompletionTimestamp = completionTimestamp;
+      }
+    }
+
+    if (!latest) {
+      return undefined;
+    }
+
+    this.touchMatrixJob(latest);
+    return latest;
+  }
+
   updateSearchJob(
     jobId: string,
     updater: (current: SearchJobRecord) => SearchJobRecord,
