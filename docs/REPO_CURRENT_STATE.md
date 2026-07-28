@@ -71,7 +71,6 @@ The React UI must not display simulated controls. The following remain outside t
 - TypeScript 7 performs typechecking and builds through `@typescript/native`; `typescript-eslint` uses TypeScript 6 only as a development API because TypeScript 7 does not yet expose a stable programmatic API
 - `.npmrc` sets `ignore-scripts=true` as protection against accidental npm/pnpm installations
 - pnpm is not adopted as a normal workflow because the repository is Bun-only and has no `pnpm-lock.yaml`
-- the current graph does not use `@tanstack/*` packages
 - any dependency that requires installation scripts must be approved through `trustedDependencies` with a note in the change
 - this web branch has no Windows launchers or local auto-update scripts
 
@@ -202,7 +201,6 @@ QA note: `test/helpers/server.ts` sets `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=
 
 Deployed revisions and the live service inventory are maintained in `D:\Dev\VPS\vps-platform\docs\INVENTORY.md`. This repository does not keep production SHAs as live state, avoiding documentation drift.
 
-Migration plans and historical audits are not maintained as live documentation. Git history retains that context if it must be recovered.
 
 ## Current Technical Debt
 

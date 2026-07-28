@@ -35,7 +35,7 @@ const MIGRATION_MONTH_NAME_FORMATTER = new Intl.DateTimeFormat("es-PE", {
   month: "long",
   timeZone: "UTC",
 })
-const LEGACY_DEFAULT_MIGRATION_MONTH_COUNT = 8
+const DEFAULT_MIGRATION_MONTH_COUNT = 8
 const SEARCH_FIELD_CONTROL_CLASS = "fd-control flex h-[52px] w-full items-center gap-2 px-3 pt-4"
 const SEARCH_FIELD_VALUE_CLASS = "h-4 min-w-0 flex-1 truncate text-sm font-semibold leading-4"
 const SEARCH_MAX_FUTURE_DAYS_FALLBACK = 365
@@ -1618,7 +1618,7 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
 function buildMigrationMonthOptions(startIso: string): MigrationMonthOption[] {
   const start = isIsoDate(startIso) ? startIso : localDateToIso(new Date())
   const [year, startMonth] = start.split("-").map(Number)
-  const lastMonthIndex = startMonth + LEGACY_DEFAULT_MIGRATION_MONTH_COUNT - 2
+  const lastMonthIndex = startMonth + DEFAULT_MIGRATION_MONTH_COUNT - 2
 
   return Array.from({ length: lastMonthIndex + 1 }, (_, index) => {
     const optionYear = year + Math.floor(index / 12)
@@ -1641,7 +1641,7 @@ function hideFullyDisabledMonthRows(months: MigrationMonthOption[]) {
 }
 
 function defaultMigrationMonthSelection(options: MigrationMonthOption[]) {
-  return options.filter((month) => !month.disabled).slice(0, LEGACY_DEFAULT_MIGRATION_MONTH_COUNT).map((month) => month.key)
+  return options.filter((month) => !month.disabled).slice(0, DEFAULT_MIGRATION_MONTH_COUNT).map((month) => month.key)
 }
 
 function resolveMigrationMonthSelection(values: string[] | undefined, options: MigrationMonthOption[]) {
@@ -1676,7 +1676,7 @@ function buildMigrationMonthRangeSelection(start: string, end: string, options: 
   const from = Math.min(resolvedStartIndex, resolvedEndIndex)
   const to = Math.max(resolvedStartIndex, resolvedEndIndex)
 
-  return enabledKeys.slice(from, to + 1).slice(0, LEGACY_DEFAULT_MIGRATION_MONTH_COUNT)
+  return enabledKeys.slice(from, to + 1).slice(0, DEFAULT_MIGRATION_MONTH_COUNT)
 }
 
 function uniqueMonthKeys(values: string[]) {
@@ -1759,8 +1759,8 @@ function buildSearchValidation(input: SearchValidationInput): SearchValidationSt
   if (input.mode === "migration") {
     if (input.migrationMonths.length === 0) {
       state.migrationMonths = "Selecciona al menos un mes."
-    } else if (input.migrationMonths.length > LEGACY_DEFAULT_MIGRATION_MONTH_COUNT) {
-      state.migrationMonths = `Selecciona hasta ${LEGACY_DEFAULT_MIGRATION_MONTH_COUNT} meses.`
+    } else if (input.migrationMonths.length > DEFAULT_MIGRATION_MONTH_COUNT) {
+      state.migrationMonths = `Selecciona hasta ${DEFAULT_MIGRATION_MONTH_COUNT} meses.`
     }
     return state
   }

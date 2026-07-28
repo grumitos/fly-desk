@@ -19,7 +19,6 @@ test("runtime opens the search session cache only on explicit access", () => {
       NODE_ENV: "test",
       FLY_DESK_APP_DATA_DIR: "",
       FLY_DESK_SESSION_DB_PATH: "",
-      FLY_DESK_SEARCH_SESSION_STORE_PATH: "",
     },
     encoding: "utf8",
   });
@@ -51,7 +50,6 @@ test("session maintenance stays lazy and reaches a store initialized later", () 
       NODE_ENV: "test",
       FLY_DESK_APP_DATA_DIR: "",
       FLY_DESK_SESSION_DB_PATH: "",
-      FLY_DESK_SEARCH_SESSION_STORE_PATH: "",
     },
     encoding: "utf8",
   });
