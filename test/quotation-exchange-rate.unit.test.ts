@@ -112,12 +112,12 @@ test("fetchExternalUsdToPenRateInfo aborts a stalled SUNAT request at the app ti
   }
 });
 
-test("standalone rate lookup ignores the legacy predictable tmp cache path", async () => {
+test("default rate cache ignores shared temporary files", async () => {
   const previousCachePath = process.env.FLY_DESK_QUOTATION_RATE_CACHE_PATH;
   delete process.env.FLY_DESK_QUOTATION_RATE_CACHE_PATH;
-  const legacyTmpCachePath = join(tmpdir(), "flydesk-quotation-usd-pen-rate.json");
+  const sharedTmpCachePath = join(tmpdir(), "flydesk-quotation-usd-pen-rate.json");
   exchangeRate.resetQuotationUsdToPenRateCacheForTests();
-  writeFileSync(legacyTmpCachePath, JSON.stringify({
+  writeFileSync(sharedTmpCachePath, JSON.stringify({
     day: "2026-04-07",
     rate: 7.6543,
   }), "utf8");
@@ -137,7 +137,7 @@ test("standalone rate lookup ignores the legacy predictable tmp cache path", asy
     assert.equal(rate, 3.6123);
     assert.equal(lookupCalls, 1);
   } finally {
-    rmSync(legacyTmpCachePath, { force: true });
+    rmSync(sharedTmpCachePath, { force: true });
     exchangeRate.resetQuotationUsdToPenRateCacheForTests();
     if (previousCachePath === undefined) {
       delete process.env.FLY_DESK_QUOTATION_RATE_CACHE_PATH;

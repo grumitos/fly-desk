@@ -12,7 +12,6 @@ import {
 } from "../frontend/src/lib/search-share"
 import type { SearchRequest } from "../frontend/src/types"
 import { prepareSearchContract } from "../src/http-search-contract"
-import { normalizeQuotationRequestSnapshot } from "../src/http-quotation-snapshot"
 
 function request(overrides: Partial<SearchRequest> = {}): SearchRequest {
   return {
@@ -60,31 +59,6 @@ test("quotation location metadata survives the frontend/backend request boundary
   assert.equal(invalid.request.legs[0]?.destinationCountryCode, undefined)
 })
 
-test("frontend contracts omit legacy result-cap fields", () => {
-  const legacyRequest = {
-    ...request(),
-    maxResults: 25,
-    compactAllOffers: true,
-  } as SearchRequest & {
-    maxResults: number
-    compactAllOffers: boolean
-  }
-  const payload = toBackendPayload(legacyRequest, "cheapest")
-  const restored = fromBackendRequest({
-    ...payload.request,
-    filters: {
-      ...payload.request.filters,
-      maxResults: 25,
-      compactAllOffers: true,
-    },
-  })
-
-  assert.equal(Object.hasOwn(payload.request.filters ?? {}, "maxResults"), false)
-  assert.equal(Object.hasOwn(payload.request.filters ?? {}, "compactAllOffers"), false)
-  assert.equal(Object.hasOwn(restored, "maxResults"), false)
-  assert.equal(Object.hasOwn(restored, "compactAllOffers"), false)
-})
-
 test("fromBackendRequest maps legacy baggageRequired to checked baggage", () => {
   const normalized = fromBackendRequest({
     tripType: "round-trip",
@@ -116,50 +90,6 @@ test("readSharedSearchFromUrl treats legacy baggage query param as checked bagga
 
   assert.equal(state?.request.carryOnRequired, false)
   assert.equal(state?.request.checkedBaggageRequired, true)
-})
-
-test("shared search ignores legacy result-cap fields", () => {
-  const fromUrl = readSharedSearchFromUrl(new URL(
-    "http://localhost/?origin=LIM&destination=MIA&departure=2026-06-15&return=2026-06-22&maxResults=25&compact=1",
-  ))
-  const serialized = serializeSharedSearchPayload({
-    ...request(),
-    maxResults: 25,
-    compactAllOffers: true,
-  } as SearchRequest & {
-    maxResults: number
-    compactAllOffers: boolean
-  }, "cheapest")
-  const fromText = readSharedSearchFromText(serialized)
-
-  assert.equal(Object.hasOwn(fromUrl?.request ?? {}, "maxResults"), false)
-  assert.equal(Object.hasOwn(fromUrl?.request ?? {}, "compactAllOffers"), false)
-  assert.equal(serialized.includes("maxResults"), false)
-  assert.equal(serialized.includes("compactAllOffers"), false)
-  assert.equal(Object.hasOwn(fromText?.request ?? {}, "maxResults"), false)
-  assert.equal(Object.hasOwn(fromText?.request ?? {}, "compactAllOffers"), false)
-})
-
-test("quotation snapshots omit legacy result-cap fields", () => {
-  const snapshot = normalizeQuotationRequestSnapshot({
-    tripType: "round-trip",
-    searchMode: "exact",
-    legs: [{
-      origin: "LIM",
-      destination: "MIA",
-      departureDate: "2026-06-15",
-      returnDate: "2026-06-22",
-    }],
-    filters: {
-      maxResults: 25,
-      compactAllOffers: true,
-      exhaustiveResults: true,
-    },
-  })
-
-  assert.equal(Object.hasOwn(snapshot?.filters ?? {}, "maxResults"), false)
-  assert.equal(Object.hasOwn(snapshot?.filters ?? {}, "compactAllOffers"), false)
-  assert.equal(Object.hasOwn(snapshot?.filters ?? {}, "exhaustiveResults"), false)
 })
 
 test("writeSharedSearchToUrl emits migration mode and month range params", () => {

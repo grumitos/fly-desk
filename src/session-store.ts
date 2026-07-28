@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 import { logPerfSpan, startPerfTimer } from "./perf";
@@ -171,16 +171,8 @@ interface PurgeSummary {
 
 interface SearchSessionStoreOptions {
   dbPath?: string;
-  legacyPersistPath?: string;
   persistedRestoreBudgetBytes?: number;
   completedResidentBudgetBytes?: number;
-}
-
-interface LegacyPersistencePayload {
-  version?: number;
-  searchJobs?: SearchJobRecord[];
-  matrixJobs?: MatrixJobRecord[];
-  purchasePaths?: StoredPurchasePath[];
 }
 
 interface SqlitePayloadRow {
@@ -521,7 +513,6 @@ export class SearchSessionStore {
   private readonly matrixJobs = new Map<string, MatrixJobRecord>();
   private readonly searchJobs = new Map<string, SearchJobRecord>();
   private db: Database | undefined;
-  private readonly legacyPersistPath: string | undefined;
   private readonly persistedRestoreBudgetBytes: number;
   private readonly completedResidentBudgetBytes: number;
   private readonly persistedSearchJobs = new Map<string, PersistedEntryState>();
@@ -540,7 +531,6 @@ export class SearchSessionStore {
 
   constructor(options?: SearchSessionStoreOptions) {
     const dbPath = options?.dbPath?.trim() || undefined;
-    this.legacyPersistPath = options?.legacyPersistPath?.trim() || undefined;
     const configuredRestoreBudgetBytes = options?.persistedRestoreBudgetBytes;
     this.persistedRestoreBudgetBytes = typeof configuredRestoreBudgetBytes === "number"
       && Number.isFinite(configuredRestoreBudgetBytes)
@@ -2189,11 +2179,9 @@ export class SearchSessionStore {
     const nowMs = Date.now();
     this.pruneExpiredSqliteRows(nowMs);
     const restoreCandidates = this.selectPersistedRowsToRestore();
-    const hadSqliteRows = this.hasSqlitePayloadRows();
     try {
       this.bootstrapping = true;
       this.loadSqlitePayload(restoreCandidates);
-      this.migrateLegacyPersistencePayload({ load: !hadSqliteRows });
     } finally {
       this.bootstrapping = false;
     }
@@ -2263,42 +2251,6 @@ export class SearchSessionStore {
       `Fly Desk persisted cache restore budget kept jobs disk-only: jobs=${diskOnly.length} payloadBytes=${diskOnlyBytes} budgetBytes=${this.persistedRestoreBudgetBytes}`,
     );
     return retained;
-  }
-
-  private hasSqlitePayloadRows(): boolean {
-    if (!this.db) {
-      return false;
-    }
-
-    return Boolean(
-      getSql<{ present: number }>(this.db, "SELECT 1 AS present FROM search_jobs LIMIT 1")
-        ?? getSql<{ present: number }>(this.db, "SELECT 1 AS present FROM matrix_jobs LIMIT 1")
-        ?? getSql<{ present: number }>(this.db, "SELECT 1 AS present FROM purchase_paths LIMIT 1"),
-    );
-  }
-
-  private migrateLegacyPersistencePayload(options: { load: boolean }): void {
-    if (!this.legacyPersistPath || !existsSync(this.legacyPersistPath)) {
-      return;
-    }
-
-    if (!options.load) {
-      rmSync(this.legacyPersistPath, { force: true });
-      return;
-    }
-
-    const parsed = parseJsonPayload<LegacyPersistencePayload>(readFileSync(this.legacyPersistPath, "utf8"));
-    if (!parsed) {
-      rmSync(this.legacyPersistPath, { force: true });
-      return;
-    }
-
-    this.loadPersistencePayload(
-      Array.isArray(parsed.searchJobs) ? parsed.searchJobs : [],
-      Array.isArray(parsed.matrixJobs) ? parsed.matrixJobs : [],
-      Array.isArray(parsed.purchasePaths) ? parsed.purchasePaths : [],
-    );
-    rmSync(this.legacyPersistPath, { force: true });
   }
 
   private pruneExpiredSqliteRows(nowMs: number): void {

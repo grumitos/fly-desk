@@ -30,11 +30,11 @@ function overrideEnv(values: Record<string, string | undefined>): () => void {
 }
 
 test("search service base URL only accepts loopback HTTP targets", () => {
-  assert.equal(resolveSearchServiceBaseUrl("https://127.0.0.1:32125"), undefined);
-  assert.equal(resolveSearchServiceBaseUrl("http://example.com:32125"), undefined);
+  assert.equal(resolveSearchServiceBaseUrl("https://127.0.0.1:8101"), undefined);
+  assert.equal(resolveSearchServiceBaseUrl("http://example.com:8101"), undefined);
   assert.equal(resolveSearchServiceBaseUrl("not-a-url"), undefined);
-  assert.equal(resolveSearchServiceBaseUrl("http://127.0.0.1:32125")?.toString(), "http://127.0.0.1:32125/");
-  assert.equal(resolveSearchServiceBaseUrl("http://localhost:32125/search")?.toString(), "http://localhost:32125/search");
+  assert.equal(resolveSearchServiceBaseUrl("http://127.0.0.1:8101")?.toString(), "http://127.0.0.1:8101/");
+  assert.equal(resolveSearchServiceBaseUrl("http://localhost:8101/search")?.toString(), "http://localhost:8101/search");
 });
 
 test("search service route detection includes quotation sessions owned by the runner", () => {
@@ -73,7 +73,7 @@ test("search service proxy forwards search requests to the configured runner", a
       body: JSON.stringify({ route: "LIM-MAD" }),
     });
     const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
-      serviceUrl: "http://127.0.0.1:32125",
+      serviceUrl: "http://127.0.0.1:8101",
       timeoutMs: 1_000,
       fetchImpl: async (input, init) => {
         forwardedUrl = String(input);
@@ -86,7 +86,7 @@ test("search service proxy forwards search requests to the configured runner", a
 
     assert.equal(response?.status, 202);
     assert.deepEqual(await response?.json(), { ok: true });
-    assert.equal(forwardedUrl, "http://127.0.0.1:32125/api/search?sinceRevision=4");
+    assert.equal(forwardedUrl, "http://127.0.0.1:8101/api/search?sinceRevision=4");
     assert.equal(forwardedMethod, "POST");
     assert.equal(forwardedBody, "{\"route\":\"LIM-MAD\"}");
     assert.equal(forwardedHeaders.get("accept"), "application/json");
@@ -118,7 +118,7 @@ test("search service proxy forwards the request stream without calling arrayBuff
 
   let forwardedBody = "";
   const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
-    serviceUrl: "http://127.0.0.1:32125",
+    serviceUrl: "http://127.0.0.1:8101",
     fetchImpl: async (_input, init) => {
       forwardedBody = await new Response(init?.body).text();
       return Response.json({ ok: true });
@@ -155,7 +155,7 @@ test("search service proxy streams runner responses without buffering and strips
 
   const request = new Request("http://fly-desk.test/api/search/job-1");
   const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
-    serviceUrl: "http://127.0.0.1:32125",
+    serviceUrl: "http://127.0.0.1:8101",
     fetchImpl: async () => upstream,
   });
 
@@ -181,7 +181,7 @@ test("search service proxy keeps its timeout active while the runner body stream
 
   try {
     const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
-      serviceUrl: "http://127.0.0.1:32125",
+      serviceUrl: "http://127.0.0.1:8101",
       timeoutMs: 5,
       fetchImpl: async (_input, init) => new Response(new ReadableStream<Uint8Array>({
         start(controller) {
@@ -218,7 +218,7 @@ test("search service proxy uses an internal token fallback when explicit api tok
       body: "{}",
     });
     const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
-      serviceUrl: "http://127.0.0.1:32125",
+      serviceUrl: "http://127.0.0.1:8101",
       fetchImpl: async (_input, init) => {
         forwardedHeaders = new Headers(init?.headers);
         return Response.json({ ok: true });
@@ -251,7 +251,7 @@ test("search service proxy leaves api token absent without an explicit token or 
       body: "{}",
     });
     const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
-      serviceUrl: "http://127.0.0.1:32125",
+      serviceUrl: "http://127.0.0.1:8101",
       fetchImpl: async (_input, init) => {
         forwardedHeaders = new Headers(init?.headers);
         return Response.json({ ok: true });
@@ -275,7 +275,7 @@ test("search service proxy skips already proxied requests", async () => {
   });
 
   const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
-    serviceUrl: "http://127.0.0.1:32125",
+    serviceUrl: "http://127.0.0.1:8101",
     fetchImpl: async () => {
       throw new Error("proxy loop should not call fetch");
     },
@@ -304,7 +304,7 @@ test("search service proxy returns a safe unavailable response when the runner r
       body: JSON.stringify({ route: "LIM-MAD" }),
     });
     const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
-      serviceUrl: "http://127.0.0.1:32125",
+      serviceUrl: "http://127.0.0.1:8101",
       timeoutMs: 1_000,
       fetchImpl: async () => {
         throw new Error("connect ECONNREFUSED token-test-api-token-value");
@@ -340,7 +340,7 @@ test("search service proxy clamps env timeout to avoid immediate production abor
     });
     let aborted = false;
     const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
-      serviceUrl: "http://127.0.0.1:32125",
+      serviceUrl: "http://127.0.0.1:8101",
       fetchImpl: async (_input, init) => {
         const signal = init?.signal as AbortSignal | undefined;
         signal?.addEventListener("abort", () => {
