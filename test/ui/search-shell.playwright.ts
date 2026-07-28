@@ -815,6 +815,15 @@ test("running search button cancels the active job and returns to editing", asyn
   await withDesktopPage(async ({ baseUrl, page }) => {
     let cancelRequests = 0;
     let pollRequests = 0;
+    let searchRequests = 0;
+    let releaseCancelResponse!: () => void;
+    let signalCancelStarted!: () => void;
+    const cancelResponseGate = new Promise<void>((resolve) => {
+      releaseCancelResponse = resolve;
+    });
+    const cancelStarted = new Promise<void>((resolve) => {
+      signalCancelStarted = resolve;
+    });
 
     await page.route("**/api/locations**", async (route) => {
       await route.fulfill({
@@ -828,6 +837,7 @@ test("running search button cancels the active job and returns to editing", asyn
       const method = route.request().method();
 
       if (method === "POST" && url.pathname === "/api/search") {
+        searchRequests += 1;
         const payload = route.request().postDataJSON() as Record<string, unknown>;
         await route.fulfill({
           status: 200,
@@ -861,6 +871,9 @@ test("running search button cancels the active job and returns to editing", asyn
 
       if (method === "POST" && url.pathname === "/api/search/cancellable-job/cancel") {
         cancelRequests += 1;
+        signalCancelStarted();
+        assert.equal(url.searchParams.get("cachePartial"), "1");
+        await cancelResponseGate;
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -946,10 +959,121 @@ test("running search button cancels the active job and returns to editing", asyn
     await stopButton.click();
     await page.getByRole("button", { name: "Buscar" }).waitFor();
     await page.getByRole("heading", { name: "Búsqueda detenida" }).waitFor();
-    await page.waitForTimeout(1000);
+    await cancelStarted;
+
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await page.waitForTimeout(150);
 
     assert.equal(cancelRequests, 1);
+    assert.equal(searchRequests, 1, "A repeated search must wait until partial-cache cancellation finishes.");
     assert.ok(pollRequests <= 1, `Expected at most one in-flight poll after cancel, got ${pollRequests}.`);
+
+    const resumedSearch = page.waitForResponse((response) =>
+      response.url().endsWith("/api/search") && response.request().method() === "POST"
+    );
+    releaseCancelResponse();
+    await resumedSearch;
+    assert.equal(searchRequests, 2);
+  }, { autoOpen: false });
+});
+
+test("generic operation failure warning stays hidden while the search is still running", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let searchComplete = false;
+    await page.clock.install();
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search**", async (route) => {
+      const url = new URL(route.request().url());
+      const method = route.request().method();
+
+      if (method === "POST" && url.pathname === "/api/search") {
+        const payload = route.request().postDataJSON() as Record<string, unknown>;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            searchJobId: "running-generic-warning-job",
+            searchComplete: false,
+            searchStatus: "running",
+            revision: 1,
+            sortMode: payload.sortMode,
+            request: payload.request,
+            offers: [],
+            allOffers: [],
+            searchMeta: {
+              requestedAt: "2026-05-04T15:21:48.419Z",
+              completedAt: "2026-05-04T15:21:48.419Z",
+              providersUsed: ["agil-local"],
+              warnings: ["No se pudo completar la operación. Intenta nuevamente."],
+              partial: true,
+              searchState: "search_partial",
+            },
+            providerMeta: {
+              exactProvider: "agil-local",
+              coverageMode: "core",
+            },
+            warnings: ["No se pudo completar la operación. Intenta nuevamente."],
+          }),
+        });
+        return;
+      }
+
+      if (method === "GET" && url.pathname === "/api/search/running-generic-warning-job") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            searchJobId: "running-generic-warning-job",
+            searchComplete,
+            searchStatus: searchComplete ? "completed" : "running",
+            revision: searchComplete ? 2 : 1,
+            sortMode: "cheapest",
+            request: undefined,
+            offers: [],
+            allOffers: [],
+            warnings: ["No se pudo completar la operación. Intenta nuevamente."],
+          }),
+        });
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/api/search/running-generic-warning-job/cancel") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ok: true }),
+        });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await Promise.all([
+      page.waitForResponse((response) => response.url().endsWith("/api/search") && response.request().method() === "POST"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+    await page.getByRole("button", { name: "Detener búsqueda" }).waitFor();
+
+    await page.clock.fastForward(13_000);
+
+    assert.equal(await page.locator('[title*="No se pudo completar la operación"]').count(), 0);
+    assert.equal(await page.getByText("1 aviso", { exact: true }).count(), 0);
+
+    searchComplete = true;
+    await page.clock.fastForward(1_000);
+    await page.getByText("1 aviso", { exact: true }).waitFor();
+    assert.equal(await page.locator('[title*="No se pudo completar la operación"]').count(), 1);
   }, { autoOpen: false });
 });
 

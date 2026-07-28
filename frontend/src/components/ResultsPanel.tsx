@@ -115,13 +115,19 @@ function ResultsPanelBase({
     [results?.warnings, meta?.warnings],
   )
   const actionableWarnings = useMemo(() => warnings.filter(isActionableWarning), [warnings])
+  const displayableWarnings = useMemo(
+    () => loading && !results?.searchComplete
+      ? actionableWarnings.filter((warning) => !isGenericOperationFailureWarning(warning))
+      : actionableWarnings,
+    [actionableWarnings, loading, results?.searchComplete],
+  )
   const noFlightIssues = useMemo(() => providerNoFlightIssues(actionableWarnings), [actionableWarnings])
   const filteredEmpty = isFilteredEmptyState(results, offers, unfilteredOfferCount)
   const emphasizedNoFlightIssues = filteredEmpty ? [] : noFlightIssues
   const warningDelayElapsed = useWarningDelayElapsed(results, loading)
   const displayedWarnings = shouldDelayWarnings(results, loading, noFlightIssues.length)
-    ? warningDelayElapsed ? actionableWarnings : []
-    : actionableWarnings
+    ? warningDelayElapsed ? displayableWarnings : []
+    : displayableWarnings
   const warningSummary = displayedWarnings.length > 0
     ? warningSummaryLabel(displayedWarnings, emphasizedNoFlightIssues)
     : null
@@ -1437,6 +1443,14 @@ function uniqueWarnings(messages: string[]) {
 
 function isActionableWarning(message: string) {
   return !isOperationalWarning(message)
+}
+
+function isGenericOperationFailureWarning(message: string) {
+  const normalized = normalizeWarningText(message)
+    .replace(/[.!]+/g, "")
+    .trim()
+  return normalized === "no se pudo completar la operacion"
+    || normalized === "no se pudo completar la operacion intenta nuevamente"
 }
 
 function isOperationalWarning(message: string) {
