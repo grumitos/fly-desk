@@ -81,7 +81,6 @@ Bun is the supported package manager. Do not add `package-lock.json`, `pnpm-lock
 - Hardening: `bunfig.toml` disables dependency lifecycle scripts and filters versions published less than three days ago.
 - Additional guardrail: `.npmrc` sets `ignore-scripts=true` for accidental npm/pnpm installations; this does not make pnpm part of the normal project workflow.
 - A dependency that needs installation scripts must be deliberately added to `trustedDependencies`, with the reason documented.
-- The current dependency graph does not use `@tanstack/*` packages.
 
 ## Structure
 
@@ -204,7 +203,6 @@ GitHub Actions runs `.github/workflows/ci.yml` on pull requests, pushes to `main
 - [`docs/CBPLUS_SESSION_RECOVERY.md`](./docs/CBPLUS_SESSION_RECOVERY.md): secure Click and Book Plus regeneration and recovery without copying a session
 - [`docs/FRONTEND_IDENTITY.md`](./docs/FRONTEND_IDENTITY.md): React visual identity and UI rules
 - [`docs/TESTING.md`](./docs/TESTING.md): test classification, execution, and relevance criteria
-- [`docs/superpowers/specs/2026-07-10-search-runtime-budget-design.md`](./docs/superpowers/specs/2026-07-10-search-runtime-budget-design.md): responsiveness, local quotation, and resident-budget decisions
 - [`frontend/README.md`](./frontend/README.md): brief frontend workspace notes
 
 ## Deployment

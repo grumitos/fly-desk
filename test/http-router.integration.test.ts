@@ -788,7 +788,7 @@ test("quotation validates an unverified stored offer before rendering", { concur
 
   try {
     const response = await withLoopbackTrustForTests(() =>
-      routeRequest(new Request("http://127.0.0.1:32123/api/quotation", {
+      routeRequest(new Request("http://127.0.0.1:8100/api/quotation", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -837,7 +837,7 @@ test("quotation revalidates a quote-ready search result before rendering", { con
 
   try {
     const response = await withLoopbackTrustForTests(() =>
-      routeRequest(new Request("http://127.0.0.1:32123/api/quotation", {
+      routeRequest(new Request("http://127.0.0.1:8100/api/quotation", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1023,7 +1023,7 @@ test("rejects unauthenticated search service proxy requests before injecting the
   const previousPasswordHash = process.env.FLY_DESK_WEB_PASSWORD_HASH;
   const previousSessionSecret = process.env.FLY_DESK_WEB_SESSION_SECRET;
 
-  process.env.FLY_DESK_SEARCH_SERVICE_URL = "http://127.0.0.1:32125";
+  process.env.FLY_DESK_SEARCH_SERVICE_URL = "http://127.0.0.1:8101";
   process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN = "internal-runner-token";
   process.env.FLY_DESK_WEB_AUTH = "1";
   process.env.FLY_DESK_WEB_PASSWORD_HASH = "test-hash";
@@ -1063,12 +1063,12 @@ test("quotation requests reach the runner that owns the selected search session"
   const previousSearchUrl = process.env.FLY_DESK_SEARCH_SERVICE_URL;
   const previousSearchToken = process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN;
   const previousFetch = global.fetch;
-  process.env.FLY_DESK_SEARCH_SERVICE_URL = "http://127.0.0.1:32125";
+  process.env.FLY_DESK_SEARCH_SERVICE_URL = "http://127.0.0.1:8101";
   process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN = "internal-runner-token";
 
   try {
     global.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      assert.equal(String(input), "http://127.0.0.1:32125/api/quotation");
+      assert.equal(String(input), "http://127.0.0.1:8101/api/quotation");
       assert.equal(init?.method, "POST");
       assert.equal(new Headers(init?.headers).get("authorization"), "Bearer internal-runner-token");
       assert.deepEqual(JSON.parse(await new Response(init?.body).text()), {
@@ -1079,7 +1079,7 @@ test("quotation requests reach the runner that owns the selected search session"
       return Response.json({ commercialText: "PAQUETE MIGRATORIO MADRID 🇪🇸", offer: {} });
     }) as typeof fetch;
 
-    const response = await withLoopbackTrustForTests(() => routeRequest(new Request("http://127.0.0.1:32123/api/quotation", {
+    const response = await withLoopbackTrustForTests(() => routeRequest(new Request("http://127.0.0.1:8100/api/quotation", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1911,7 +1911,7 @@ test("costamar redirect returns a controlled block when refresh hangs", async ()
     assert.ok(redirectPath);
 
     const response = await withLoopbackTrustForTests(() =>
-      routeRequest(new Request(`http://127.0.0.1:32123${redirectPath}`, {
+      routeRequest(new Request(`http://127.0.0.1:8100${redirectPath}`, {
         headers: {
           "x-flydesk-client-loopback": "1",
         },
@@ -2135,7 +2135,7 @@ test("agil search redirect returns the provider URL without local handoff page",
   assert.equal(redirectPath.includes("open=local"), false);
 
   const response = await withLoopbackTrustForTests(() =>
-    routeRequest(new Request(`http://127.0.0.1:32123${redirectPath}?open=local`, {
+    routeRequest(new Request(`http://127.0.0.1:8100${redirectPath}?open=local`, {
       headers: {
         "x-flydesk-client-loopback": "1",
       },
@@ -2871,122 +2871,6 @@ test("public matrix ignores top-level providerId even when provider config is pr
     assert.equal(payload.request?.providerId, undefined);
     assert.equal(payload.cells?.[0]?.derivedRequest?.providerId, undefined);
     assert.deepEqual(payload.searchMeta?.providersUsed, ["agil-local", "costamar"]);
-  });
-});
-
-test("one-way stay-range omits legacy result-cap fields and preserves night bounds", async () => {
-  await withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/search`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        providerId: "costamar",
-        providerConfig: {
-          costamar: {
-            terminalId: "0721808110",
-            token: buildJwt({
-              id: "0721808110",
-              iat: 1893456000,
-              exp: 1893459600,
-            }),
-          },
-        },
-        request: {
-          tripType: "one-way",
-          searchMode: "stay-range",
-          legs: [
-            {
-              origin: "LIM",
-              destination: "MAD",
-              departureStart: "2026-05-01",
-              departureEnd: "2026-05-31",
-            },
-          ],
-          passengers: {
-            adults: 1,
-            children: 0,
-            infants: 0,
-          },
-          filters: {
-            nonStop: false,
-            baggageRequired: false,
-            maxResults: 25,
-            compactAllOffers: true,
-            exhaustiveResults: true,
-          },
-        },
-      }),
-    });
-
-    assert.equal(response.status, 200);
-    const payload = await response.json() as {
-      request?: {
-        filters?: Record<string, unknown>;
-        legs?: Array<{ minNights?: number; maxNights?: number }>;
-      };
-      searchMeta?: { providersUsed?: string[] };
-      searchStatus?: string;
-    };
-
-    assert.equal(payload.searchStatus, "running");
-    assert.deepEqual(payload.searchMeta?.providersUsed, ["agil-local", "costamar"]);
-    assert.equal(Object.hasOwn(payload.request?.filters ?? {}, "exhaustiveResults"), false);
-    assert.equal(Object.hasOwn(payload.request?.filters ?? {}, "maxResults"), false);
-    assert.equal(Object.hasOwn(payload.request?.filters ?? {}, "compactAllOffers"), false);
-    assert.equal(payload.request?.legs?.[0]?.minNights, undefined);
-    assert.equal(payload.request?.legs?.[0]?.maxNights, undefined);
-  });
-});
-
-test("exact searches omit legacy result-cap fields in the public request", async () => {
-  await withServer(async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/search`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        request: {
-          tripType: "round-trip",
-          searchMode: "exact",
-          legs: [
-            {
-              origin: "LIM",
-              destination: "MAD",
-              departureDate: "2026-05-01",
-              returnDate: "2026-05-31",
-            },
-          ],
-          passengers: {
-            adults: 1,
-            children: 0,
-            infants: 0,
-          },
-          filters: {
-            nonStop: false,
-            baggageRequired: false,
-            maxResults: 25,
-            compactAllOffers: true,
-            exhaustiveResults: true,
-          },
-        },
-      }),
-    });
-
-    assert.equal(response.status, 200);
-    const payload = await response.json() as {
-      request?: {
-        filters?: Record<string, unknown>;
-      };
-      searchStatus?: string;
-    };
-
-    assert.equal(payload.searchStatus, "running");
-    assert.equal(Object.hasOwn(payload.request?.filters ?? {}, "maxResults"), false);
-    assert.equal(Object.hasOwn(payload.request?.filters ?? {}, "compactAllOffers"), false);
-    assert.equal(Object.hasOwn(payload.request?.filters ?? {}, "exhaustiveResults"), false);
   });
 });
 

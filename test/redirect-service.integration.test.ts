@@ -227,7 +227,7 @@ test("redirect service requires auth before reading purchase paths", async () =>
 
   try {
     const response = await routeRedirectRequest(
-      new Request("http://127.0.0.1:32124/r/unknown"),
+      new Request("http://127.0.0.1:8102/r/unknown"),
       { dbPath: "missing.sqlite", cacheLookupTimeoutMs: 0 },
     );
 
@@ -278,7 +278,7 @@ test("redirect service ignores forged loopback trust headers from non-loopback c
 
   try {
     const request = requestWithServerTrustHeaders(
-      new Request("http://127.0.0.1:32124/r/unknown", {
+      new Request("http://127.0.0.1:8102/r/unknown", {
         headers: {
           "x-flydesk-client-loopback": "1",
         },
@@ -320,7 +320,7 @@ test("redirect service resolves Agil purchase paths from SQLite without the main
       assert.ok(redirectPath);
 
       const response = await routeRedirectRequest(
-        authenticatedRedirectRequest(`http://127.0.0.1:32124${redirectPath}`),
+        authenticatedRedirectRequest(`http://127.0.0.1:8102${redirectPath}`),
         { dbPath, cacheLookupTimeoutMs: 0 },
       );
 
@@ -362,7 +362,7 @@ test("redirect service does not parse the full search job payload", { concurrenc
       const parseSpy = spyOn(JSON, "parse");
       try {
         const response = await routeRedirectRequest(
-          authenticatedRedirectRequest(`http://127.0.0.1:32124${redirectPath}`),
+          authenticatedRedirectRequest(`http://127.0.0.1:8102${redirectPath}`),
           { dbPath, cacheLookupTimeoutMs: 0 },
         );
 
@@ -448,7 +448,7 @@ test("redirect service does not parse the full matrix job payload", { concurrenc
       const parseSpy = spyOn(JSON, "parse");
       try {
         const response = await routeRedirectRequest(
-          authenticatedRedirectRequest(`http://127.0.0.1:32124${redirectPath}`),
+          authenticatedRedirectRequest(`http://127.0.0.1:8102${redirectPath}`),
           { dbPath, cacheLookupTimeoutMs: 0 },
         );
 
@@ -503,7 +503,7 @@ test("redirect service falls back to the payload for a legacy matrix row", async
 
       assert.ok(redirectPath);
       const response = await routeRedirectRequest(
-        authenticatedRedirectRequest(`http://127.0.0.1:32124${redirectPath}`),
+        authenticatedRedirectRequest(`http://127.0.0.1:8102${redirectPath}`),
         { dbPath, cacheLookupTimeoutMs: 0 },
       );
 
@@ -539,7 +539,7 @@ test("redirect service resolves visible running Agil purchase paths from SQLite"
       assert.ok(redirectPath);
 
       const response = await routeRedirectRequest(
-        authenticatedRedirectRequest(`http://127.0.0.1:32124${redirectPath}`),
+        authenticatedRedirectRequest(`http://127.0.0.1:8102${redirectPath}`),
         { dbPath, cacheLookupTimeoutMs: 0 },
       );
 
@@ -576,7 +576,7 @@ test("redirect service keeps partial cached links after a running search is canc
       assert.ok(redirectPath);
 
       const response = await routeRedirectRequest(
-        authenticatedRedirectRequest(`http://127.0.0.1:32124${redirectPath}`),
+        authenticatedRedirectRequest(`http://127.0.0.1:8102${redirectPath}`),
         { dbPath, cacheLookupTimeoutMs: 0 },
       );
 
@@ -654,7 +654,7 @@ test("redirect service keeps Costamar token validation outside the main runtime"
       assert.ok(redirectPath);
 
       const response = await routeRedirectRequest(
-        authenticatedRedirectRequest(`http://127.0.0.1:32124${redirectPath}`),
+        authenticatedRedirectRequest(`http://127.0.0.1:8102${redirectPath}`),
         { dbPath, cacheLookupTimeoutMs: 0 },
       );
 

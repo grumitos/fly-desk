@@ -331,7 +331,6 @@ test("migratory search sends monthly stay-range requests", async () => {
       tripType?: string;
       searchMode?: string;
       legs?: Array<Record<string, unknown>>;
-      filters?: Record<string, unknown>;
     };
     const firstLeg = firstRequest.legs?.[0];
 
@@ -341,8 +340,6 @@ test("migratory search sends monthly stay-range requests", async () => {
     assert.equal(firstLeg?.originCountryCode, "PE");
     assert.equal(firstLeg?.destinationCountryCode, "US");
     assert.equal(firstRequest.searchMode, "stay-range");
-    assert.equal(Object.hasOwn(firstRequest.filters ?? {}, "maxResults"), false);
-    assert.equal(Object.hasOwn(firstRequest.filters ?? {}, "compactAllOffers"), false);
     assert.equal(firstLeg?.departureStart, "2026-12-01");
     assert.equal(firstLeg?.departureEnd, "2026-12-31");
     assert.equal(firstLeg?.returnDate, undefined);

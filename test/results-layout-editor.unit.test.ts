@@ -7,10 +7,10 @@ import {
 } from "../frontend/src/lib/results-layout-editor";
 
 test("results layout editor is only enabled on localhost URLs", () => {
-  assert.equal(resultsLayoutEditorEnabledFromUrl("http://127.0.0.1:32123/?layout=editor"), true);
-  assert.equal(resultsLayoutEditorEnabledFromUrl("http://localhost:32123/?layoutEditor=1"), true);
+  assert.equal(resultsLayoutEditorEnabledFromUrl("http://127.0.0.1:8100/?layout=editor"), true);
+  assert.equal(resultsLayoutEditorEnabledFromUrl("http://localhost:8100/?layoutEditor=1"), true);
   assert.equal(resultsLayoutEditorEnabledFromUrl("https://fly-desk.pages.dev/?layout=editor"), false);
-  assert.equal(resultsLayoutEditorEnabledFromUrl("http://127.0.0.1:32123/?layout=off"), false);
+  assert.equal(resultsLayoutEditorEnabledFromUrl("http://127.0.0.1:8100/?layout=off"), false);
 });
 
 test("results layout persistence is only available for local browser hosts", () => {
