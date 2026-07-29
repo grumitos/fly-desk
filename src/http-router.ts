@@ -3321,8 +3321,11 @@ export async function routeRequest(request: Request): Promise<Response> {
       return apiAuthRequiredResponse();
     }
 
-    const limit = integerParam(url.searchParams.get("limit"), 3, 1, 20);
-    return json({ suggestions: runtime.locationUsage.getSuggestions(limit) });
+    const limit = integerParam(url.searchParams.get("limit"), 3, 1, 3);
+    return json(
+      { suggestions: runtime.locationUsage.getSuggestions(limit) },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   if (request.method === "POST" && url.pathname === "/api/location-usage-suggestions") {
@@ -3330,9 +3333,16 @@ export async function routeRequest(request: Request): Promise<Response> {
       return apiAuthRequiredResponse();
     }
 
-    const payload = await readPayload<{ origin?: unknown; destination?: unknown }>(request);
-    const limit = integerParam(url.searchParams.get("limit"), 3, 1, 20);
-    return json({ suggestions: runtime.locationUsage.recordFromSearch(payload, Date.now(), limit) });
+    return json(
+      { error: "Location usage ranking is read-only." },
+      {
+        status: 405,
+        headers: {
+          "Allow": "GET",
+          "Cache-Control": "no-store",
+        },
+      },
+    );
   }
 
   if (request.method === "POST" && url.pathname === "/api/local/open-url") {

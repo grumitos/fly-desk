@@ -326,6 +326,10 @@ test("search-level notices use the idle search controls width after a failed sea
     });
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
 
+    const searchTopBeforeNotice = await page.locator(".fd-search-grid").evaluate((element) =>
+      Math.round(element.getBoundingClientRect().top),
+    );
+
     await page.getByRole("button", { name: "Buscar" }).click();
     const notice = page.locator(".fd-search-alert");
     await notice.filter({ hasText: "No se pudo conectar con Fly Desk. Intenta nuevamente." }).waitFor();
@@ -340,12 +344,17 @@ test("search-level notices use the idle search controls width after a failed sea
       return {
         left: Math.round(rect.left),
         right: Math.round(window.innerWidth - rect.right),
+        searchGridBottom: Math.round(searchGrid?.bottom ?? 0),
+        searchGridTop: Math.round(searchGrid?.top ?? 0),
         searchFrameWidth: Math.round(searchFrame?.width ?? 0),
         searchGridWidth: Math.round(searchGrid?.width ?? 0),
+        top: Math.round(rect.top),
         width: Math.round(rect.width),
       };
     });
 
+    assert.ok(Math.abs(noticeBounds.searchGridTop - searchTopBeforeNotice) <= 1, JSON.stringify({ searchTopBeforeNotice, noticeBounds }));
+    assert.ok(noticeBounds.top >= noticeBounds.searchGridBottom + 6, JSON.stringify(noticeBounds));
     assert.ok(Math.abs(noticeBounds.width - noticeBounds.searchGridWidth) <= 2, JSON.stringify(noticeBounds));
     assert.ok(noticeBounds.searchFrameWidth > noticeBounds.width + 40, JSON.stringify(noticeBounds));
     assert.ok(Math.abs(noticeBounds.left - noticeBounds.right) <= 24, JSON.stringify(noticeBounds));
@@ -413,6 +422,11 @@ test("repeated clipboard notice failures keep the workspace from remounting the 
     ]);
     await page.getByTestId("result-card").waitFor();
 
+    const activeSearchBeforeNotice = await page.locator(".fd-search-grid").evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      return { bottom: Math.round(rect.bottom), top: Math.round(rect.top) };
+    });
+
     const copyConfig = page.getByRole("button", { name: "Copiar configuración" });
     await copyConfig.click();
     const notice = page.locator(".fd-search-alert");
@@ -444,9 +458,13 @@ test("repeated clipboard notice failures keep the workspace from remounting the 
       (window as unknown as { __flyDeskNoticeObserver: MutationObserver }).__flyDeskNoticeObserver = observer;
       return {
         alertTop: Math.round(alert.getBoundingClientRect().top),
+        searchGridTop: Math.round(document.querySelector<HTMLElement>(".fd-search-grid")?.getBoundingClientRect().top ?? 0),
         workspaceTop: Math.round(workspace.getBoundingClientRect().top),
       };
     });
+
+    assert.ok(Math.abs(before.searchGridTop - activeSearchBeforeNotice.top) <= 1, JSON.stringify({ activeSearchBeforeNotice, before }));
+    assert.ok(before.alertTop >= activeSearchBeforeNotice.bottom + 6, JSON.stringify({ activeSearchBeforeNotice, before }));
 
     await copyConfig.click();
     await copyConfig.click();

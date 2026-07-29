@@ -4,7 +4,6 @@ import {
   getCachedLocationSuggestions,
   resetLocationSuggestionCachesForTests,
   suggestLocations,
-  warmLocationSuggestionDetails,
 } from "../frontend/src/lib/api"
 import { filterLocationSuggestions, findLocationSuggestionMatch, normalizeLocationSuggestion } from "../frontend/src/lib/locations"
 import { rankLocationSuggestions as rankBackendLocationSuggestions } from "../src/location-suggestions"
@@ -185,7 +184,7 @@ test("suggestLocations uses the combined provider autocomplete endpoint", async 
   }
 })
 
-test("location suggestion details persist and resolve IATA without refetching", async () => {
+test("location suggestion details stay memory-only and never persist in browser storage", async () => {
   const previousFetch = globalThis.fetch
   const storage = new MemoryStorage()
   const restoreLocalStorage = installLocalStorage(storage)
@@ -202,60 +201,14 @@ test("location suggestion details persist and resolve IATA without refetching", 
 
   try {
     await suggestLocations("lim")
-    assert.match(storage.getItem(LOCATION_SUGGESTION_DETAILS_STORAGE_KEY) ?? "", /LIM/)
+    assert.equal(storage.getItem(LOCATION_SUGGESTION_DETAILS_STORAGE_KEY), null)
+    assert.equal(
+      findLocationSuggestionMatch("LIM", getCachedLocationSuggestions("LIM"))?.label,
+      "LIM - Lima, Perú",
+    )
 
     resetLocationSuggestionCachesForTests()
-    globalThis.fetch = (async () => {
-      throw new Error("location details should come from persistent cache")
-    }) as typeof fetch
-
-    const cached = getCachedLocationSuggestions("LIM")
-    assert.equal(findLocationSuggestionMatch("LIM", cached)?.label, "LIM - Lima, Perú")
-  } finally {
-    globalThis.fetch = previousFetch
-    resetLocationSuggestionCachesForTests()
-    restoreLocalStorage()
-  }
-})
-
-test("location suggestion detail prewarm skips cached IATAs and stores misses", async () => {
-  const previousFetch = globalThis.fetch
-  const storage = new MemoryStorage()
-  const restoreLocalStorage = installLocalStorage(storage)
-  const requestedQueries: string[] = []
-
-  storage.setItem(LOCATION_SUGGESTION_DETAILS_STORAGE_KEY, JSON.stringify({
-    version: 1,
-    suggestions: [
-      apiLocationSuggestion("LIM", "Lima", "PE"),
-    ],
-  }))
-
-  resetLocationSuggestionCachesForTests()
-  globalThis.fetch = (async (input) => {
-    const requestedUrl = typeof input === "string" || input instanceof URL
-      ? String(input)
-      : input.url
-    const url = new URL(requestedUrl, "http://localhost")
-    const query = (url.searchParams.get("q") ?? "").toUpperCase()
-    requestedQueries.push(query)
-
-    return new Response(JSON.stringify({
-      suggestions: [
-        apiLocationSuggestion(query, query === "MAD" ? "Madrid" : query, query === "MAD" ? "ES" : "PE"),
-      ],
-    }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    })
-  }) as typeof fetch
-
-  try {
-    await warmLocationSuggestionDetails(["lim", "LIM", "MAD", "12"])
-
-    assert.deepEqual(requestedQueries, ["MAD"])
-    assert.equal(findLocationSuggestionMatch("LIM", getCachedLocationSuggestions("lim"))?.label, "LIM - Lima, Perú")
-    assert.equal(findLocationSuggestionMatch("MAD", getCachedLocationSuggestions("mad"))?.label, "MAD - Madrid, España")
+    assert.equal(findLocationSuggestionMatch("LIM", getCachedLocationSuggestions("LIM")), undefined)
   } finally {
     globalThis.fetch = previousFetch
     resetLocationSuggestionCachesForTests()

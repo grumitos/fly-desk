@@ -1103,46 +1103,19 @@ test("quotation requests reach the runner that owns the selected search session"
   }
 });
 
-test("location usage suggestions are recorded and read from the global runtime store", { concurrency: false }, async () => {
+test("location usage ranking is read-only, uncached by HTTP, and capped at three cards", { concurrency: false }, async () => {
   const previousApiToken = process.env.FLY_DESK_API_TOKEN;
   process.env.FLY_DESK_API_TOKEN = "test-token";
   getRuntime().locationUsage.clearForTests();
 
   try {
-    const first = await routeRequest(new Request("http://fly-desk.local/api/location-usage-suggestions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-flydesk-client-loopback": "0",
-        "x-flydesk-api-token": "test-token",
-      },
-      body: JSON.stringify({ origin: "LIM", destination: "MAD" }),
-    }));
-    assert.equal(first.status, 200);
+    const usage = getRuntime().locationUsage;
+    usage.recordFromSearch({ origin: "LIM", destination: "MAD" }, 1);
+    usage.recordFromSearch({ origin: "CUZ", destination: "BOG" }, 2);
+    usage.recordFromSearch({ origin: "AQP", destination: "SCL" }, 3);
+    usage.recordFromSearch({ origin: "TPP", destination: "MIA" }, 4);
 
-    const second = await routeRequest(new Request("http://fly-desk.local/api/location-usage-suggestions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-flydesk-client-loopback": "0",
-        "x-flydesk-api-token": "test-token",
-      },
-      body: JSON.stringify({ origin: "LIM", destination: "MAD" }),
-    }));
-    assert.equal(second.status, 200);
-
-    const third = await routeRequest(new Request("http://fly-desk.local/api/location-usage-suggestions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-flydesk-client-loopback": "0",
-        "x-flydesk-api-token": "test-token",
-      },
-      body: JSON.stringify({ origin: "CUZ", destination: "BOG" }),
-    }));
-    assert.equal(third.status, 200);
-
-    const response = await routeRequest(new Request("http://fly-desk.local/api/location-usage-suggestions?limit=3", {
+    const response = await routeRequest(new Request("http://fly-desk.local/api/location-usage-suggestions?limit=20", {
       method: "GET",
       headers: {
         "x-flydesk-client-loopback": "0",
@@ -1151,9 +1124,22 @@ test("location usage suggestions are recorded and read from the global runtime s
     }));
 
     assert.equal(response.status, 200);
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
     const payload = await response.json() as { suggestions?: { origin?: string[]; destination?: string[] } };
-    assert.deepEqual(payload.suggestions?.origin, ["LIM", "CUZ"]);
-    assert.deepEqual(payload.suggestions?.destination, ["MAD", "BOG"]);
+    assert.deepEqual(payload.suggestions?.origin, ["TPP", "AQP", "CUZ"]);
+    assert.deepEqual(payload.suggestions?.destination, ["MIA", "SCL", "BOG"]);
+
+    const mutation = await routeRequest(new Request("http://fly-desk.local/api/location-usage-suggestions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
+      },
+      body: JSON.stringify({ origin: "LIM", destination: "MAD" }),
+    }));
+    assert.equal(mutation.status, 405);
+    assert.equal(mutation.headers.get("Allow"), "GET");
   } finally {
     getRuntime().locationUsage.clearForTests();
     if (previousApiToken === undefined) {

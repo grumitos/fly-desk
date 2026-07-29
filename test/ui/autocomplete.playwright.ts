@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Page, Route } from "playwright";
 import { openDesktop, withDesktopPage } from "../helpers/ui.ts";
-import { routeLocationUsageSuggestions } from "./support.ts";
+import { routeLocationUsageSuggestions, waitForFontsReady } from "./support.ts";
 
 test("autocomplete uses combobox, listbox, and option semantics", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
@@ -124,18 +124,8 @@ test("frequent location suggestions resolve labels and collapse their own row", 
       origin: ["LIM", "TPP", "CUZ"],
       destination: ["MAD", "MIA", "BUE"],
     });
-    await page.addInitScript((details) => {
-      window.localStorage.setItem("flydesk-location-suggestion-details-v1", JSON.stringify(details));
-    }, {
-        version: 1,
-        suggestions: [
-          { code: "LIM", city: "Lima", country: "PE", countryCode: "PE", label: "All airports: Lima, PE (LIM)" },
-          { code: "TPP", city: "Tarapoto", country: "PE", countryCode: "PE", label: "Tarapoto, PE (TPP)" },
-          { code: "CUZ", city: "Cusco", country: "PE", countryCode: "PE", label: "Cusco, PE (CUZ)" },
-          { code: "MAD", city: "Madrid", country: "ES", countryCode: "ES", label: "Madrid, ES (MAD)" },
-          { code: "MIA", city: "Miami", country: "US", countryCode: "US", label: "Miami, US (MIA)" },
-          { code: "BUE", city: "Buenos Aires", country: "AR", countryCode: "AR", label: "Buenos Aires, AR (BUE)" },
-        ],
+    await page.addInitScript(() => {
+      window.localStorage.setItem("flydesk-location-suggestion-details-v1", "legacy-cache");
     });
 
     await openDesktop(page, baseUrl);
@@ -144,6 +134,12 @@ test("frequent location suggestions resolve labels and collapse their own row", 
     assert.ok(exactPillBox);
     assert.ok(firstSuggestionBox);
     assert.equal(Math.round(firstSuggestionBox.height), Math.round(exactPillBox.height));
+    assert.equal(locationRequestCount, 0, "Ranking cards must not prewarm a browser-side location cache.");
+    assert.equal(
+      await page.evaluate(() => window.localStorage.getItem("flydesk-location-suggestion-details-v1")),
+      null,
+      "The retired browser cache should be deleted on startup.",
+    );
 
     await page.getByRole("button", { name: "Usar LIM como origen" }).click();
 
@@ -157,7 +153,59 @@ test("frequent location suggestions resolve labels and collapse their own row", 
     assert.equal(await origin.inputValue(), "LIM - Lima, Perú");
     assert.equal(await page.getByRole("button", { name: /como origen/ }).count(), 0);
     assert.equal(await page.getByRole("button", { name: /como destino/ }).count(), 3);
-    assert.equal(locationRequestCount, 0);
+    assert.equal(locationRequestCount, 1, "The selected code should resolve from the server on demand.");
+  }, { autoOpen: false });
+});
+
+test("late global ranking data does not recenter or resize the idle search block", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let releaseRanking = () => undefined;
+    const rankingGate = new Promise<void>((resolve) => {
+      releaseRanking = resolve;
+    });
+
+    await page.route("**/api/location-usage-suggestions**", async (route) => {
+      await rankingGate;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          suggestions: {
+            origin: ["LIM", "TPP", "CUZ"],
+            destination: ["MAD", "MIA", "BUE"],
+          },
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await waitForFontsReady(page);
+    const before = await page.getByTestId("search-shell-frame").evaluate((element) => {
+      const frame = element.getBoundingClientRect();
+      const grid = element.querySelector<HTMLElement>(".fd-search-grid")?.getBoundingClientRect();
+      return {
+        frameHeight: Math.round(frame.height),
+        frameTop: Math.round(frame.top),
+        gridHeight: Math.round(grid?.height ?? 0),
+      };
+    });
+
+    releaseRanking();
+    await page.getByRole("button", { name: "Usar LIM como origen" }).waitFor();
+
+    const after = await page.getByTestId("search-shell-frame").evaluate((element) => {
+      const frame = element.getBoundingClientRect();
+      const grid = element.querySelector<HTMLElement>(".fd-search-grid")?.getBoundingClientRect();
+      return {
+        frameHeight: Math.round(frame.height),
+        frameTop: Math.round(frame.top),
+        gridHeight: Math.round(grid?.height ?? 0),
+      };
+    });
+
+    assert.ok(Math.abs(after.frameTop - before.frameTop) <= 1, JSON.stringify({ before, after }));
+    assert.ok(Math.abs(after.frameHeight - before.frameHeight) <= 1, JSON.stringify({ before, after }));
+    assert.ok(Math.abs(after.gridHeight - before.gridHeight) <= 1, JSON.stringify({ before, after }));
   }, { autoOpen: false });
 });
 
