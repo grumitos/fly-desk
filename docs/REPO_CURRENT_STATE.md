@@ -1,6 +1,6 @@
 # Current Repository State
 
-Snapshot date: 2026-07-27
+Snapshot date: 2026-07-28
 
 ## Summary
 
@@ -22,7 +22,7 @@ The repository does not version generated artifacts:
 - flexible round-trip search through `/api/matrix`, normalized into a results list
 - monthly migratory search: selection of up to eight months from the minimum date, including across year boundaries, with fan-out only for selected months
 - origin and destination autocomplete
-- frequent origin/destination suggestions with global ranking persisted on the VPS; the backend records a route when it accepts a search
+- up to three frequent origin and destination suggestions, ranked by permanent global total-use counters on the VPS; the backend records a route when it accepts a search
 - filters for stops, maximum layover time, baggage, and airlines
 - paginated results with backend warnings
 - side panel with price, baggage, conditions, purchase paths, and local quotation from fresh search data
@@ -40,6 +40,7 @@ The React UI must not display simulated controls. The following remain outside t
 - polling and revalidation: `Actualizando` badge
 - partial range/matrix results: `Parcial` badge, geometric milestones coalesced for 900 ms, immediate final state, and cards with stable DOM identity
 - quotation: generated and copied locally without `/api/quotation`; the migratory switch injects its differences without hiding or reloading the text
+- the idle search frame reserves the ranking-card geometry before the global response arrives; search notices render below without recentering the form in idle or active layouts, while the intentional idle-to-active transition remains animated
 
 ## Runtime, Security, and Dependencies
 
@@ -133,7 +134,7 @@ The React UI must not display simulated controls. The following remain outside t
 - `src/search-worker-client.ts` and `src/search-worker.ts`: Bun child processes for heavy provider searches within the runner
 - `src/session-store.ts`: live jobs, cache freshness, resident budget, local SQLite, redirects, and purchase paths
 - `src/location-suggestion-cache.ts`: SQLite autocomplete cache with TTL
-- `src/location-usage-store.ts`: global SQLite ranking of frequent origins/destinations
+- `src/location-usage-store.ts`: permanent global SQLite counters and top-three ranking for frequent origins/destinations, read directly by both web and search processes
 - `src/runtime-paths.ts`: persistent fallback based on `FLY_DESK_APP_DATA_DIR` for SQLite caches when no specific `*_DB_PATH` is set
 
 ### Operations
@@ -178,9 +179,9 @@ Current important coverage:
 - Bun workers enabled by default to isolate heavy provider searches
 - SQLite persistence for sessions/autocomplete
 - resident budget with disk-only fallback and lazy web runtime when search is delegated
-- server-side global ranking of frequent suggestions rather than per-browser `localStorage`, recorded from `/api/search` and `/api/matrix`
+- server-side all-time ranking of frequent suggestions rather than per-browser `localStorage`, capped at three cards per role, recorded from `/api/search` and `/api/matrix`, and shared coherently by the web and search processes
 - persistent results layout
-- search rail, filters, theme, autocomplete, provider links, and quotation
+- search rail, stable ranking/notice geometry, filters, theme, autocomplete, provider links, and quotation
 - standard/migratory local quotation without another request, preservation of offset-bearing times, and hiding of fully disabled monthly rows
 
 QA note: `test/helpers/server.ts` sets `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1` during HTTP tests to validate immediate contracts without leaving progressive jobs alive. The normal runtime does not define that variable.

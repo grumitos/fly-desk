@@ -1,7 +1,3 @@
-import type { SearchRequest } from "@/types"
-
-export const LOCATION_USAGE_RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
-
 type LocationUsageRole = "origin" | "destination"
 
 export type LocationUsageSuggestions = Record<LocationUsageRole, string[]>
@@ -76,32 +72,13 @@ async function readUsageResponse(response: Response): Promise<LocationUsageSugge
   }
 }
 
-export async function recordLocationUsageFromSearch(
-  request: Pick<SearchRequest, "origin" | "destination">,
-  options: LocationUsageClientOptions = {},
-): Promise<LocationUsageSuggestions> {
-  try {
-    const response = await resolveFetch(options.fetchImpl)("/api/location-usage-suggestions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        origin: request.origin,
-        destination: request.destination,
-      }),
-      signal: options.signal,
-    })
-    return readUsageResponse(response)
-  } catch {
-    return emptySuggestions()
-  }
-}
-
 export async function getLocationUsageSuggestions(
   options: LocationUsageClientOptions = {},
 ): Promise<LocationUsageSuggestions> {
   try {
     const response = await resolveFetch(options.fetchImpl)("/api/location-usage-suggestions", {
       method: "GET",
+      cache: "no-store",
       signal: options.signal,
     })
     return readUsageResponse(response)
