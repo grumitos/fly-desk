@@ -11,7 +11,6 @@ import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-contr
 import { TOPBAR_SEARCH_CONTROLS_ID } from "@/components/TopBar"
 import { AppIcon, type AppIconName } from "@/components/ui/app-icon"
 import { useAutocomplete } from "@/hooks/useAutocomplete"
-import { warmLocationSuggestionDetails } from "@/lib/api"
 import {
   emptyLocationUsageSuggestions,
   getLocationUsageSuggestions,
@@ -146,7 +145,6 @@ export function SearchShell({
   const resolveOriginQuery = origin.resolveCurrentQuery
   const resolveDestinationQuery = destination.resolveCurrentQuery
   const usageSuggestionExitTimersRef = useRef<Partial<Record<LocationUsageField, number>>>({})
-  const warmedUsageSuggestionCodesRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     const timers = usageSuggestionExitTimersRef.current
@@ -221,22 +219,6 @@ export function SearchShell({
 
     return () => controller.abort()
   }, [loading, showLocationUsageSuggestions])
-
-  useEffect(() => {
-    if (!showLocationUsageSuggestions || loading) return
-
-    const nextCodes = [...usageSuggestions.origin, ...usageSuggestions.destination]
-      .map((code) => code.trim().toUpperCase())
-      .filter((code) => /^[A-Z]{3}$/.test(code))
-      .filter((code) => !warmedUsageSuggestionCodesRef.current.has(code))
-
-    if (nextCodes.length === 0) return
-
-    for (const code of nextCodes) {
-      warmedUsageSuggestionCodesRef.current.add(code)
-    }
-    void warmLocationSuggestionDetails(nextCodes)
-  }, [loading, showLocationUsageSuggestions, usageSuggestions])
 
   useEffect(() => {
     if (resetToken === lastResetTokenRef.current) return
@@ -583,8 +565,8 @@ export function SearchShell({
   const visiblePassengerError = touched.passengers ? validation.passengers : undefined
   const shouldShowUsageSuggestions = showLocationUsageSuggestions && !loading
   const reserveIdleHelperSpace = shouldShowUsageSuggestions
-  const reserveOriginSuggestionSpace = shouldShowUsageSuggestions && usageSuggestions.origin.length > 0
-  const reserveDestinationSuggestionSpace = shouldShowUsageSuggestions && usageSuggestions.destination.length > 0
+  const reserveOriginSuggestionSpace = shouldShowUsageSuggestions
+  const reserveDestinationSuggestionSpace = shouldShowUsageSuggestions
   const searchGridClassName = cn(
     "fd-search-grid grid grid-cols-2 gap-1.5 transition-[grid-template-columns,max-width] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]",
     "lg:grid-cols-[minmax(150px,1.2fr)_34px_minmax(150px,1.2fr)_minmax(128px,.85fr)_minmax(128px,.85fr)_minmax(144px,.9fr)_124px]",

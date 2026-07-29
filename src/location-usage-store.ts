@@ -2,11 +2,23 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 
-export const LOCATION_USAGE_RECENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const LOCATION_USAGE_CARD_LIMIT = 3;
+const LOCATION_USAGE_SQLITE_BUSY_TIMEOUT_MS = 5_000;
 
-const LOCATION_USAGE_RECENT_SAMPLE_LIMIT = 50;
-const LOCATION_USAGE_MAX_CODES_PER_ROLE = 60;
-const LOCATION_USAGE_DEFAULT_LIMIT = 3;
+const CREATE_LOCATION_USAGE_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS location_usage (
+    role TEXT NOT NULL,
+    code TEXT NOT NULL,
+    total_uses INTEGER NOT NULL,
+    last_used_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (role, code)
+  );
+`;
+
+const CREATE_LOCATION_USAGE_RANK_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_location_usage_role_rank
+    ON location_usage (role, total_uses DESC, last_used_at_ms DESC, code ASC);
+`;
 
 export type LocationUsageRole = "origin" | "destination";
 
@@ -21,15 +33,18 @@ interface LocationUsageEntry {
   code: string;
   totalUses: number;
   lastUsedAtMs: number;
-  recentUsesMs: number[];
 }
 
 interface LocationUsageRow {
-  role: string;
   code: string;
-  total_uses: number;
-  last_used_at_ms: number;
-  recent_uses_ms: string;
+}
+
+interface LocationUsageCountRow {
+  entries: number;
+}
+
+interface SqliteTableInfoRow {
+  name: string;
 }
 
 function entryKey(role: LocationUsageRole, code: string): string {
@@ -54,11 +69,12 @@ function allSql<T>(db: Database, sql: string, ...params: any[]): T[] {
   }
 }
 
-function parseJsonPayload<T>(payload: string): T | undefined {
+function getSql<T>(db: Database, sql: string, ...params: any[]): T | undefined {
+  const statement = db.prepare(sql);
   try {
-    return JSON.parse(payload) as T;
-  } catch {
-    return undefined;
+    return statement.get(...params) as T | undefined;
+  } finally {
+    statement.finalize();
   }
 }
 
@@ -67,7 +83,10 @@ function resolveNowMs(nowMs: number | undefined): number {
 }
 
 function normalizeLimit(limit: number | undefined): number {
-  return Math.max(1, Math.min(20, Math.trunc(Number(limit) || LOCATION_USAGE_DEFAULT_LIMIT)));
+  return Math.max(1, Math.min(
+    LOCATION_USAGE_CARD_LIMIT,
+    Math.trunc(Number(limit) || LOCATION_USAGE_CARD_LIMIT),
+  ));
 }
 
 function normalizeLocationUsageCode(value: unknown): string | undefined {
@@ -76,65 +95,14 @@ function normalizeLocationUsageCode(value: unknown): string | undefined {
   return match?.[0];
 }
 
-function trimRecentUses(values: number[], nowMs: number): number[] {
-  const cutoffMs = nowMs - LOCATION_USAGE_RECENT_WINDOW_MS;
-  return values
-    .filter((value) => Number.isFinite(value) && value >= cutoffMs && value <= nowMs)
-    .slice(-LOCATION_USAGE_RECENT_SAMPLE_LIMIT);
-}
-
-function countRecentUses(values: number[], nowMs: number): number {
-  const cutoffMs = nowMs - LOCATION_USAGE_RECENT_WINDOW_MS;
-  return values.filter((value) => Number.isFinite(value) && value >= cutoffMs && value <= nowMs).length;
-}
-
-function normalizeEntry(entry: Partial<LocationUsageEntry> | undefined): LocationUsageEntry | undefined {
-  const code = normalizeLocationUsageCode(entry?.code);
-  const role = entry?.role;
-  if (!code || (role !== "origin" && role !== "destination")) {
-    return undefined;
-  }
-
-  const totalUses = Math.max(1, Math.trunc(Number(entry?.totalUses) || 1));
-  const lastUsedAtMs = Number(entry?.lastUsedAtMs);
-
-  return {
-    role,
-    code,
-    totalUses,
-    lastUsedAtMs: Number.isFinite(lastUsedAtMs) ? lastUsedAtMs : 0,
-    recentUsesMs: Array.isArray(entry?.recentUsesMs)
-      ? entry.recentUsesMs.map(Number).filter(Number.isFinite)
-      : [],
-  };
-}
-
-function normalizeRow(row: LocationUsageRow): LocationUsageEntry | undefined {
-  return normalizeEntry({
-    role: row.role === "origin" || row.role === "destination" ? row.role : undefined,
-    code: row.code,
-    totalUses: row.total_uses,
-    lastUsedAtMs: row.last_used_at_ms,
-    recentUsesMs: parseJsonPayload<number[]>(row.recent_uses_ms) ?? [],
-  });
-}
-
-function rankLocationUsageRole(
+function rankMemoryEntries(
   entries: Iterable<LocationUsageEntry>,
   role: LocationUsageRole,
   limit: number,
-  nowMs: number,
 ): string[] {
   return [...entries]
     .filter((entry) => entry.role === role)
-    .map((entry) => ({
-      ...entry,
-      recentCount: countRecentUses(entry.recentUsesMs, nowMs),
-    }))
     .sort((left, right) => {
-      const recentDelta = right.recentCount - left.recentCount;
-      if (recentDelta !== 0) return recentDelta;
-
       const totalDelta = right.totalUses - left.totalUses;
       if (totalDelta !== 0) return totalDelta;
 
@@ -147,25 +115,8 @@ function rankLocationUsageRole(
     .map((entry) => entry.code);
 }
 
-function trimLocationUsageEntries(entries: LocationUsageEntry[], nowMs: number): LocationUsageEntry[] {
-  const trimmed = entries.map((entry) => ({
-    ...entry,
-    recentUsesMs: trimRecentUses(entry.recentUsesMs, nowMs),
-  }));
-
-  return (["origin", "destination"] as const)
-    .flatMap((role) => trimmed
-      .filter((entry) => entry.role === role)
-      .sort((left, right) => {
-        const touchedDelta = right.lastUsedAtMs - left.lastUsedAtMs;
-        if (touchedDelta !== 0) return touchedDelta;
-        return left.code.localeCompare(right.code);
-      })
-      .slice(0, LOCATION_USAGE_MAX_CODES_PER_ROLE));
-}
-
 export class LocationUsageStore {
-  private entries = new Map<string, LocationUsageEntry>();
+  private readonly entries = new Map<string, LocationUsageEntry>();
   private readonly dbPath: string | undefined;
   private readonly db: Database | undefined;
   private closed = false;
@@ -177,42 +128,64 @@ export class LocationUsageStore {
       mkdirSync(dirname(this.dbPath), { recursive: true });
       this.db = new Database(this.dbPath);
       this.initializeDatabase();
-      this.loadPersisted();
     }
   }
 
   recordFromSearch(
     request: { origin?: unknown; destination?: unknown },
     nowMs = Date.now(),
-    limit = LOCATION_USAGE_DEFAULT_LIMIT,
+    limit = LOCATION_USAGE_CARD_LIMIT,
   ): LocationUsageSuggestions {
     const resolvedNowMs = resolveNowMs(nowMs);
-    this.recordLocationUsage("origin", request.origin, resolvedNowMs);
-    this.recordLocationUsage("destination", request.destination, resolvedNowMs);
-    this.entries = new Map(
-      trimLocationUsageEntries([...this.entries.values()], resolvedNowMs)
-        .map((entry) => [entryKey(entry.role, entry.code), entry]),
-    );
-    this.persistAllEntries();
+    const locations = ([
+      ["origin", normalizeLocationUsageCode(request.origin)],
+      ["destination", normalizeLocationUsageCode(request.destination)],
+    ] as const).filter((entry): entry is readonly [LocationUsageRole, string] => Boolean(entry[1]));
+
+    if (this.db) {
+      this.recordPersistedLocations(locations, resolvedNowMs);
+    } else {
+      for (const [role, code] of locations) {
+        this.recordMemoryLocation(role, code, resolvedNowMs);
+      }
+    }
+
     return this.getSuggestions(limit, resolvedNowMs);
   }
 
-  getSuggestions(limit = LOCATION_USAGE_DEFAULT_LIMIT, nowMs = Date.now()): LocationUsageSuggestions {
+  getSuggestions(
+    limit = LOCATION_USAGE_CARD_LIMIT,
+    _nowMs = Date.now(),
+  ): LocationUsageSuggestions {
     const resolvedLimit = normalizeLimit(limit);
-    const resolvedNowMs = resolveNowMs(nowMs);
-    const values = this.entries.values();
 
-    return {
-      origin: rankLocationUsageRole(values, "origin", resolvedLimit, resolvedNowMs),
-      destination: rankLocationUsageRole(this.entries.values(), "destination", resolvedLimit, resolvedNowMs),
-    };
+    if (!this.db) {
+      return {
+        origin: rankMemoryEntries(this.entries.values(), "origin", resolvedLimit),
+        destination: rankMemoryEntries(this.entries.values(), "destination", resolvedLimit),
+      };
+    }
+
+    const readRanking = this.db.transaction(() => ({
+      origin: this.readPersistedRoleRanking("origin", resolvedLimit),
+      destination: this.readPersistedRoleRanking("destination", resolvedLimit),
+    }));
+    return readRanking();
   }
 
   getDiagnostics() {
+    const entries = this.db
+      ? Number(getSql<LocationUsageCountRow>(
+        this.db,
+        "SELECT COUNT(*) AS entries FROM location_usage",
+      )?.entries ?? 0)
+      : this.entries.size;
+
     return {
-      entries: this.entries.size,
+      entries,
       persistence: this.dbPath ? "sqlite" : "memory",
-      recentWindowMs: LOCATION_USAGE_RECENT_WINDOW_MS,
+      ranking: "all-time-total-uses",
+      cardLimit: LOCATION_USAGE_CARD_LIMIT,
     };
   }
 
@@ -235,105 +208,102 @@ export class LocationUsageStore {
     }
   }
 
-  private recordLocationUsage(role: LocationUsageRole, rawCode: unknown, nowMs: number): void {
-    const code = normalizeLocationUsageCode(rawCode);
-    if (!code) {
-      return;
-    }
-
-    const key = entryKey(role, code);
-    const existing = this.entries.get(key);
-    if (existing) {
-      this.entries.set(key, {
-        ...existing,
-        totalUses: existing.totalUses + 1,
-        lastUsedAtMs: nowMs,
-        recentUsesMs: trimRecentUses([...existing.recentUsesMs, nowMs], nowMs),
-      });
-      return;
-    }
-
-    this.entries.set(key, {
-      role,
-      code,
-      totalUses: 1,
-      lastUsedAtMs: nowMs,
-      recentUsesMs: [nowMs],
-    });
-  }
-
   private initializeDatabase(): void {
     if (!this.db) {
       return;
     }
 
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS location_usage (
-        role TEXT NOT NULL,
-        code TEXT NOT NULL,
-        total_uses INTEGER NOT NULL,
-        last_used_at_ms INTEGER NOT NULL,
-        recent_uses_ms TEXT NOT NULL,
-        PRIMARY KEY (role, code)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_location_usage_role_rank
-        ON location_usage (role, last_used_at_ms);
+      PRAGMA busy_timeout = ${LOCATION_USAGE_SQLITE_BUSY_TIMEOUT_MS};
+      PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = NORMAL;
+      ${CREATE_LOCATION_USAGE_TABLE_SQL}
     `);
+    this.removeLegacyRecentUsageColumn();
+    this.db.exec(CREATE_LOCATION_USAGE_RANK_INDEX_SQL);
   }
 
-  private loadPersisted(): void {
+  private removeLegacyRecentUsageColumn(): void {
     if (!this.db) {
       return;
     }
 
-    const rows = allSql<LocationUsageRow>(
-      this.db,
-      "SELECT role, code, total_uses, last_used_at_ms, recent_uses_ms FROM location_usage ORDER BY role, code",
-    );
-
-    for (const row of rows) {
-      const entry = normalizeRow(row);
-      if (!entry) {
-        runSql(this.db, "DELETE FROM location_usage WHERE role = ? AND code = ?", row.role, row.code);
-        continue;
+    this.db.exec("BEGIN IMMEDIATE;");
+    try {
+      const columns = allSql<SqliteTableInfoRow>(this.db, "PRAGMA table_info(location_usage)");
+      if (columns.some((column) => column.name === "recent_uses_ms")) {
+        this.db.exec(`
+          DROP INDEX IF EXISTS idx_location_usage_role_rank;
+          ALTER TABLE location_usage DROP COLUMN recent_uses_ms;
+        `);
       }
-      this.entries.set(entryKey(entry.role, entry.code), entry);
+      this.db.exec("COMMIT;");
+    } catch (error) {
+      try {
+        this.db.exec("ROLLBACK;");
+      } catch {
+        // Preserve the original migration error.
+      }
+      throw error;
     }
   }
 
-  private persistAllEntries(): void {
-    if (!this.db) {
+  private recordPersistedLocations(
+    locations: ReadonlyArray<readonly [LocationUsageRole, string]>,
+    nowMs: number,
+  ): void {
+    if (!this.db || locations.length === 0) {
       return;
     }
 
-    const insert = this.db.prepare(`
-      INSERT INTO location_usage (
-        role,
-        code,
-        total_uses,
-        last_used_at_ms,
-        recent_uses_ms
-      ) VALUES (?, ?, ?, ?, ?)
+    const upsert = this.db.prepare(`
+      INSERT INTO location_usage (role, code, total_uses, last_used_at_ms)
+      VALUES (?, ?, 1, ?)
+      ON CONFLICT(role, code) DO UPDATE SET
+        total_uses = location_usage.total_uses + 1,
+        last_used_at_ms = MAX(location_usage.last_used_at_ms, excluded.last_used_at_ms)
     `);
 
     try {
-      const write = this.db.transaction(() => {
-        runSql(this.db!, "DELETE FROM location_usage");
-        for (const entry of this.entries.values()) {
-          insert.run(
-            entry.role,
-            entry.code,
-            entry.totalUses,
-            entry.lastUsedAtMs,
-            JSON.stringify(entry.recentUsesMs),
-          );
+      const record = this.db.transaction(() => {
+        for (const [role, code] of locations) {
+          upsert.run(role, code, nowMs);
         }
       });
-
-      write();
+      record();
     } finally {
-      insert.finalize();
+      upsert.finalize();
     }
+  }
+
+  private recordMemoryLocation(role: LocationUsageRole, code: string, nowMs: number): void {
+    const key = entryKey(role, code);
+    const existing = this.entries.get(key);
+
+    this.entries.set(key, {
+      role,
+      code,
+      totalUses: (existing?.totalUses ?? 0) + 1,
+      lastUsedAtMs: Math.max(existing?.lastUsedAtMs ?? 0, nowMs),
+    });
+  }
+
+  private readPersistedRoleRanking(role: LocationUsageRole, limit: number): string[] {
+    if (!this.db) {
+      return [];
+    }
+
+    return allSql<LocationUsageRow>(
+      this.db,
+      `
+        SELECT code
+        FROM location_usage
+        WHERE role = ?
+        ORDER BY total_uses DESC, last_used_at_ms DESC, code ASC
+        LIMIT ?
+      `,
+      role,
+      limit,
+    ).map((row) => row.code);
   }
 }
