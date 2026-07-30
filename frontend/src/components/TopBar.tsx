@@ -106,12 +106,15 @@ function TopBarIconGroup({ children }: { children: ReactNode }) {
 
 interface TopBarProps {
   copySearchDisabled?: boolean
+  /** No configuration is known yet, so Paste reads as dim — but still works. */
+  pasteSearchDimmed?: boolean
   onCopySearchConfig?: () => void
   onPasteSearchConfig?: () => void
 }
 
 export function TopBar({
   copySearchDisabled = true,
+  pasteSearchDimmed = true,
   onCopySearchConfig,
   onPasteSearchConfig,
 }: TopBarProps) {
@@ -158,7 +161,7 @@ export function TopBar({
                 onClick={onCopySearchConfig}
                 disabled={copySearchDisabled}
                 aria-label="Copiar configuración"
-                className={TOPBAR_ICON_BUTTON_CLASS}
+                className={cn(TOPBAR_ICON_BUTTON_CLASS, copySearchDisabled && "fd-capsule-cell-dim")}
               >
                 <AppIcon name="copy" />
               </Button>
@@ -170,7 +173,7 @@ export function TopBar({
                 size="icon"
                 onClick={onPasteSearchConfig}
                 aria-label="Pegar configuración"
-                className={TOPBAR_ICON_BUTTON_CLASS}
+                className={cn(TOPBAR_ICON_BUTTON_CLASS, pasteSearchDimmed && "fd-capsule-cell-dim")}
               >
                 <AppIcon name="clipboard" />
               </Button>

@@ -1,10 +1,14 @@
 import { materializeSearchResponse } from "./core/orchestrator";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
-import { buildCommercialQuotation, shouldIncludePenQuotationPrice } from "./core/quotation";
+import { buildOfferScheduleGroups } from "./core/offer-schedule-groups";
+import {
+  buildCommercialQuotation,
+  QUOTATION_FARE_FRESHNESS_MS,
+  shouldIncludePenQuotationPrice,
+} from "./core/quotation";
+import { buildOfferSignature } from "./core/offer-signature";
 import type { ProviderSearchResult } from "./core/provider";
-import { mkdir } from "node:fs/promises";
 import { timingSafeEqual } from "node:crypto";
-import * as path from "node:path";
 import {
   CanonicalOffer,
   LocationSuggestion,
@@ -46,7 +50,9 @@ import {
   createLocalCostamarMatrixDraft,
   createLocalCostamarSearchDraft,
   getLastCostamarWarmupDiagnostics,
+  isAllowedCostamarBrandedSearchLocation,
   resolveCostamarRedirectForRequest,
+  safeCostamarRedirectFailureReason,
   resolveLocalCostamarExactProgressive,
   resolveLocalCostamarMatrixProgressive,
   resolveLocalCostamarRangeProgressive,
@@ -69,7 +75,10 @@ import { isSearchServiceRoute, maybeProxySearchServiceRequest } from "./search-s
 import { runProviderMatrixInWorker, runProviderSearchInWorker } from "./search-worker-client";
 import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
+import { normalizeLocationUsageSessionId } from "./location-usage-store";
+import { LOCATION_SUGGESTION_CACHE_MAX_QUERY_CHARS } from "./location-suggestion-cache";
 import { logPerfSpan, startPerfTimer } from "./perf";
+import { DEFAULT_PROVIDER_STATUS_TTL_MS, providerPublicFailureMessage } from "./provider-status";
 import {
   clearRedirectSessionCookie,
   clearWebSessionCookie,
@@ -109,14 +118,6 @@ interface QuotationPayload extends SessionPayload {
   migrationPlan?: boolean;
 }
 
-type ResultsLayoutColumnKey =
-  | "carrier"
-  | "dates"
-  | "duration"
-  | "stops"
-  | "price"
-  | "links";
-
 interface LocalOpenPayload {
   url?: string;
   preferredBrowser?: "chrome" | "default";
@@ -140,10 +141,6 @@ let quotationOfferValidatorOverride: QuotationOfferValidator | undefined;
 
 export function setQuotationOfferValidatorForTests(validator?: QuotationOfferValidator): void {
   quotationOfferValidatorOverride = validator;
-}
-
-interface ResultsLayoutPayload {
-  columns?: Partial<Record<ResultsLayoutColumnKey, unknown>>;
 }
 
 interface ProgressiveSearchAdapter {
@@ -228,27 +225,6 @@ const PROGRESSIVE_ADAPTERS: Record<ProviderId, ProgressiveSearchAdapter> = {
   },
 };
 
-const RESULTS_LAYOUT_COLUMNS = [
-  "carrier",
-  "dates",
-  "duration",
-  "stops",
-  "price",
-  "links",
-] as const satisfies readonly ResultsLayoutColumnKey[];
-const RESULTS_LAYOUT_DEFAULT_COLUMNS = {
-  carrier: 139,
-  dates: 371,
-  duration: 205,
-  stops: 140,
-  price: 130,
-  links: 54,
-} as const satisfies Record<ResultsLayoutColumnKey, number>;
-const RESULTS_LAYOUT_TARGET_TOTAL = RESULTS_LAYOUT_COLUMNS.reduce(
-  (sum, key) => sum + RESULTS_LAYOUT_DEFAULT_COLUMNS[key],
-  0,
-);
-
 export const SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
 export const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
   const raw = Number(process.env.SEARCH_REVALIDATION_CACHE_TTL_MS ?? SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS);
@@ -276,9 +252,6 @@ function backgroundSearchStartDelayMs(): number {
 function cachedBackgroundSearchStartDelayMs(): number {
   return readNonNegativeEnvMs("FLY_DESK_CACHED_BACKGROUND_SEARCH_START_DELAY_MS", 250);
 }
-
-const RESULTS_LAYOUT_FILE = path.resolve(__dirname, "..", "config", "results-layout.json");
-const RESULTS_LAYOUT_VERSION = 2;
 
 function shouldRunBackgroundSearchJobs(): boolean {
   return process.env.FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS !== "1";
@@ -477,128 +450,6 @@ function applyProviderDiagnosticSummary(
   });
 }
 
-function readRawResultsLayoutColumns(
-  input: Partial<Record<ResultsLayoutColumnKey, unknown>> | undefined,
-): Record<ResultsLayoutColumnKey, number> | undefined {
-  if (!input || typeof input !== "object") {
-    return undefined;
-  }
-
-  const columns = {} as Record<ResultsLayoutColumnKey, number>;
-
-  for (const key of RESULTS_LAYOUT_COLUMNS) {
-    const raw = input[key];
-    const numeric = typeof raw === "number" ? raw : Number(raw);
-    if (!Number.isFinite(numeric)) {
-      continue;
-    }
-    columns[key] = Math.max(0, Math.round(numeric));
-  }
-
-  return Object.keys(columns).length === RESULTS_LAYOUT_COLUMNS.length
-    ? columns
-    : undefined;
-}
-
-function scaleResultsLayoutColumns(
-  columns: Record<ResultsLayoutColumnKey, number>,
-): Record<ResultsLayoutColumnKey, number> {
-  const total = RESULTS_LAYOUT_COLUMNS.reduce((sum, key) => sum + Math.max(0, columns[key]), 0);
-  if (total <= 0) {
-    return { ...RESULTS_LAYOUT_DEFAULT_COLUMNS };
-  }
-
-  const scaled = RESULTS_LAYOUT_COLUMNS.map((key) => {
-    const exact = Math.max(0, columns[key]) / total * RESULTS_LAYOUT_TARGET_TOTAL;
-    const floor = Math.floor(exact);
-    return { key, floor, fraction: exact - floor };
-  });
-  let remainder = RESULTS_LAYOUT_TARGET_TOTAL - scaled.reduce((sum, entry) => sum + entry.floor, 0);
-  const byFraction = [...scaled].sort((left, right) => right.fraction - left.fraction);
-  for (const entry of byFraction) {
-    if (remainder <= 0) {
-      break;
-    }
-    entry.floor += 1;
-    remainder -= 1;
-  }
-
-  return Object.fromEntries(scaled.map((entry) => [entry.key, entry.floor])) as Record<ResultsLayoutColumnKey, number>;
-}
-
-function normalizeResultsLayoutColumns(
-  input: Partial<Record<ResultsLayoutColumnKey, unknown>> | undefined,
-): Record<ResultsLayoutColumnKey, number> | undefined {
-  const rawColumns = readRawResultsLayoutColumns(input);
-  return rawColumns ? scaleResultsLayoutColumns(rawColumns) : undefined;
-}
-
-function resultsLayoutColumnsEqual(
-  left: Record<ResultsLayoutColumnKey, number>,
-  right: Record<ResultsLayoutColumnKey, number>,
-): boolean {
-  return RESULTS_LAYOUT_COLUMNS.every((key) => left[key] === right[key]);
-}
-
-async function readResultsLayoutFile(): Promise<{
-  version: number;
-  savedAt: string;
-  columns: Record<ResultsLayoutColumnKey, number>;
-} | null> {
-  try {
-    const raw = await Bun.file(RESULTS_LAYOUT_FILE).text();
-    const parsed = JSON.parse(raw) as {
-      version?: unknown;
-      savedAt?: unknown;
-      columns?: Partial<Record<ResultsLayoutColumnKey, unknown>>;
-    };
-    const rawColumns = readRawResultsLayoutColumns(parsed?.columns);
-    if (!rawColumns) {
-      return null;
-    }
-
-    const columns = scaleResultsLayoutColumns(rawColumns);
-    if (!columns) {
-      return null;
-    }
-
-    const savedAt = typeof parsed?.savedAt === "string" ? parsed.savedAt : "";
-    const layout = {
-      version: RESULTS_LAYOUT_VERSION,
-      savedAt,
-      columns,
-    };
-
-    if (parsed?.version !== RESULTS_LAYOUT_VERSION || !resultsLayoutColumnsEqual(rawColumns, columns)) {
-      await writeResultsLayoutFile(columns, savedAt);
-    }
-
-    return layout;
-  } catch {
-    return null;
-  }
-}
-
-async function writeResultsLayoutFile(
-  columns: Record<ResultsLayoutColumnKey, number>,
-  savedAt = new Date().toISOString(),
-): Promise<{
-  version: number;
-  savedAt: string;
-  columns: Record<ResultsLayoutColumnKey, number>;
-}> {
-  const normalizedColumns = scaleResultsLayoutColumns(columns);
-  const payload = {
-    version: RESULTS_LAYOUT_VERSION,
-    savedAt,
-    columns: normalizedColumns,
-  };
-
-  await mkdir(path.dirname(RESULTS_LAYOUT_FILE), { recursive: true });
-  await Bun.write(RESULTS_LAYOUT_FILE, JSON.stringify(payload, null, 2));
-  return payload;
-}
-
 function json(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
     status: init?.status ?? 200,
@@ -635,7 +486,7 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Renueva la sesion de Click and Book Plus</title>
+    <title>Renueva la autenticación de Click and Book Plus</title>
     <style>
       :root { color-scheme: light; }
       * {
@@ -694,10 +545,10 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
   <body>
     <main>
       <section>
-        <h1>Renueva la sesion de Click and Book Plus</h1>
+        <h1>Renueva la autenticación de Click and Book Plus</h1>
         <p>Fly Desk no encontro un redirect verificado para abrir esta busqueda en Click and Book Plus.</p>
         <p><strong>Motivo:</strong> ${reasonText}</p>
-        <p>Abre Click and Book Plus B2B/Chrome, confirma que la sesion este activa y vuelve a intentar desde Fly Desk.</p>
+        <p>Abre Click and Book Plus B2B/Chrome, vuelve a autenticarte y reintenta desde Fly Desk.</p>
       </section>
     </main>
   </body>
@@ -1263,14 +1114,6 @@ function isTrustedLocalRequest(request: Request): boolean {
   return true;
 }
 
-function isTrustedDirectLocalRequest(request: Request): boolean {
-  if (!shouldTrustLoopbackClient() || request.headers.get("x-flydesk-client-loopback") !== "1") {
-    return false;
-  }
-
-  return !hasForwardedClientMarker(request);
-}
-
 function hasForwardedClientMarker(request: Request): boolean {
   return Boolean(
     request.headers.get("x-forwarded-for")?.trim()
@@ -1326,7 +1169,13 @@ function isTrustedApiRequest(request: Request): boolean {
 }
 
 function isOfferValidatedForQuotation(offer: CanonicalOffer): boolean {
-  return offer.priceConfidence === "validated" && offer.priceStatus === "verified";
+  if (offer.priceConfidence !== "validated" || offer.priceStatus !== "verified") {
+    return false;
+  }
+
+  const verifiedAt = Date.parse(offer.priceVerifiedAt ?? "");
+  const ageMs = Date.now() - verifiedAt;
+  return Number.isFinite(verifiedAt) && ageMs >= 0 && ageMs <= QUOTATION_FARE_FRESHNESS_MS;
 }
 
 function stripQuotationPreparation(offer: CanonicalOffer): CanonicalOffer {
@@ -1369,7 +1218,10 @@ export function prepareOffersForQuotation(
       delete prepared.quotationPreparedAt;
       return prepared;
     }
-    return { ...prepared, quotationPreparedAt };
+    return {
+      ...prepared,
+      quotationPreparedAt: offer.quotationPreparedAt ?? quotationPreparedAt,
+    };
   });
 }
 
@@ -1514,90 +1366,6 @@ function buildExactRequestFromMatrixCell(baseRequest: SearchRequest, cell: Matri
   };
 }
 
-function buildSyntheticMatrixOffer(cell: MatrixCell, request: SearchRequest): CanonicalOffer | undefined {
-  if (!cell.price) {
-    return undefined;
-  }
-
-  const leg = request.legs[0];
-  if (!leg) {
-    return undefined;
-  }
-
-  const departureAt = `${cell.departureDate}T00:00:00.000Z`;
-  const returnAt = cell.returnDate ? `${cell.returnDate}T00:00:00.000Z` : undefined;
-  const itineraries: CanonicalOffer["itineraries"] = [
-    {
-      id: `${cell.key}-outbound`,
-      direction: "outbound",
-      durationMinutes: 0,
-      stops: 0,
-      layoverMinutes: [],
-      segments: [
-        {
-          id: `${cell.key}-outbound-segment`,
-          marketingCarrier: "",
-          flightNumber: "",
-          origin: leg.origin,
-          destination: leg.destination,
-          departureAt,
-          arrivalAt: departureAt,
-          durationMinutes: 0,
-        },
-      ],
-    },
-  ];
-
-  if (request.tripType === "round-trip" && returnAt) {
-    itineraries.push({
-      id: `${cell.key}-inbound`,
-      direction: "inbound",
-      durationMinutes: 0,
-      stops: 0,
-      layoverMinutes: [],
-      segments: [
-        {
-          id: `${cell.key}-inbound-segment`,
-          marketingCarrier: "",
-          flightNumber: "",
-          origin: leg.destination,
-          destination: leg.origin,
-          departureAt: returnAt,
-          arrivalAt: returnAt,
-          durationMinutes: 0,
-        },
-      ],
-    });
-  }
-
-  return {
-    id: cell.key,
-    signature: cell.key,
-    providerSource: cell.providerSource,
-    providerOfferRef: cell.key,
-    tripType: request.tripType,
-    origin: leg.origin,
-    destination: leg.destination,
-    itineraries,
-    price: {
-      total: cell.price,
-    },
-    priceConfidence: cell.confidence === "validated" || cell.confidence === "live" || cell.confidence === "indicative" || cell.confidence === "stale"
-      ? cell.confidence
-      : "indicative",
-    priceStatus: cell.confidence === "validated" ? "verified" : "unverified",
-    purchasePaths: cell.purchasePaths ?? [],
-    comparisonMetrics: {
-      totalDurationMinutes: 0,
-      totalStops: 0,
-      baggageScore: 0,
-      purchasePathScore: 0,
-    },
-    tags: [],
-    warnings: cell.tooltip ? [cell.tooltip] : [],
-  };
-}
-
 function resolveSearchQuotationSource(
   runtime: ReturnType<typeof getRuntime>,
   sessionId: string,
@@ -1632,7 +1400,7 @@ function resolveMatrixQuotationSource(
   }
 
   const request = buildExactRequestFromMatrixCell(job.request, cell);
-  const offer = cell.offer ?? (request ? buildSyntheticMatrixOffer(cell, request) : undefined);
+  const offer = cell.offer;
   if (!request || !offer) {
     return undefined;
   }
@@ -1675,6 +1443,7 @@ function pickQuotationValidationOffer(
 ): CanonicalOffer | undefined {
   return offers
     .filter((candidate) => candidate.providerSource === original.providerSource)
+    .filter((candidate) => buildOfferSignature(candidate) === buildOfferSignature(original))
     .filter((candidate) => candidate.origin === original.origin && candidate.destination === original.destination)
     .filter((candidate) => offerDepartureDay(candidate) === offerDepartureDay(original))
     .filter((candidate) => original.tripType !== "round-trip" || offerReturnDay(candidate) === offerReturnDay(original))
@@ -1721,7 +1490,17 @@ async function resolveValidatedQuotationOffer(source: QuotationSource): Promise<
 
   const validator = quotationOfferValidatorOverride ?? validateQuotationOfferAgainstProvider;
   const validated = await validator(source);
-  return validated ? markOfferValidatedForQuotation(validated) : undefined;
+  if (!validated || buildOfferSignature(validated) !== buildOfferSignature(source.offer)) {
+    return undefined;
+  }
+
+  return markOfferValidatedForQuotation({
+    ...validated,
+    // Provider normalizers include the current price in their generated ID.
+    // Keep the session-facing ID stable so the refreshed exact flight replaces
+    // the selected record instead of becoming an unreferenced response only.
+    id: source.offer.id,
+  });
 }
 
 function storeValidatedQuotationOffer(
@@ -1944,8 +1723,7 @@ function parseSinceRevision(value: string | null): number | undefined {
 }
 
 function resolveLocationSuggestionSessionId(value: string | null): string | undefined {
-  const normalized = stringValue(value).slice(0, 96);
-  return normalized || undefined;
+  return normalizeLocationUsageSessionId(value);
 }
 
 function matrixCellHasResult(cell: MatrixCell): boolean {
@@ -2351,6 +2129,7 @@ function searchJobResponse(
     ...base,
     offers: job.offers,
     allOffers: job.allOffers,
+    scheduleGroups: buildOfferScheduleGroups(job.allOffers),
   };
 }
 
@@ -2378,7 +2157,7 @@ function searchAdmissionErrorMessage(error: unknown): string {
     }
   }
 
-  return error instanceof Error ? error.message : "No se pudo iniciar la busqueda.";
+  return "No se pudo iniciar la busqueda.";
 }
 
 function admissionFailedProviderDiagnostics(
@@ -2527,6 +2306,7 @@ function buildInitialProviderContext(
 function recordLocationUsageForSearchRequest(
   runtime: ReturnType<typeof getRuntime>,
   request: SearchRequest,
+  clientSessionId?: unknown,
 ): void {
   const firstLeg = request.legs[0];
   if (!firstLeg) {
@@ -2536,7 +2316,7 @@ function recordLocationUsageForSearchRequest(
   runtime.locationUsage.recordFromSearch({
     origin: firstLeg.origin,
     destination: firstLeg.destination,
-  });
+  }, Date.now(), 3, normalizeLocationUsageSessionId(clientSessionId));
 }
 
 async function handleSearchRequest(
@@ -2560,7 +2340,9 @@ async function handleSearchRequest(
   const sortMode = resolveSortMode(payload?.sortMode);
   const normalizedRequest = contract.request;
   const providerIds = contract.providerIds;
-  recordLocationUsageForSearchRequest(runtime, normalizedRequest);
+  if (payload?.recordLocationUsage !== false) {
+    recordLocationUsageForSearchRequest(runtime, normalizedRequest, payload?.clientSessionId);
+  }
   const diagnosticKind = providerDiagnosticKindForRequest(normalizedRequest);
   const providerDiagnostics = createProviderDiagnosticsForRun(providerIds, diagnosticKind);
   const cachedJob = runtime.sessions.findRecentCompletedSearchJob({
@@ -2716,6 +2498,7 @@ async function handleSearchRequest(
                 return;
               }
 
+              runtime.providerStatus.markChecking(providerId, "search");
               if (shouldUseSearchWorkerProcesses()) {
                 recordProviderEvent("worker_spawned");
               }
@@ -2740,6 +2523,7 @@ async function handleSearchRequest(
                 completed: true,
                 fresh: true,
               });
+              runtime.providerStatus.recordSearchResult(providerId, result.partial);
               startQuotationRateResolution(
                 normalizedRequest,
                 providerIds.flatMap((id) => providerStates.get(id)?.offers ?? []),
@@ -2763,8 +2547,9 @@ async function handleSearchRequest(
                 return;
               }
 
+              runtime.providerStatus.recordSearchFailure(providerId, error);
               const partialState = providerStates.get(providerId);
-              const errorMessage = error instanceof Error ? error.message : "Search job failed.";
+              const errorMessage = providerPublicFailureMessage(providerId, error);
               providerStates.set(providerId, {
                 offers: partialState?.fresh ? partialState.offers : [],
                 warnings: uniqueStrings([
@@ -2780,7 +2565,7 @@ async function handleSearchRequest(
               recordProviderSummary("failed", {
                 offers: 0,
                 warningCount: 1,
-                error: error instanceof Error ? error.message : "Search job failed.",
+                error: errorMessage,
               });
               logPerfSpan("search.provider", providerStart, {
                 jobId: job.id,
@@ -2864,7 +2649,7 @@ async function handleMatrixRequest(
 
   const normalizedRequest = contract.request;
   const providerIds = contract.providerIds;
-  recordLocationUsageForSearchRequest(runtime, normalizedRequest);
+  recordLocationUsageForSearchRequest(runtime, normalizedRequest, payload?.clientSessionId);
   const providerDiagnostics = createProviderDiagnosticsForRun(providerIds, "matrix");
   const cachedJob = runtime.sessions.findRecentCompletedMatrixJob({
     request: normalizedRequest,
@@ -3008,6 +2793,7 @@ async function handleMatrixRequest(
             return;
           }
 
+          runtime.providerStatus.markChecking(providerId, "search");
           if (shouldUseSearchWorkerProcesses()) {
             recordProviderEvent("worker_spawned");
           }
@@ -3055,6 +2841,10 @@ async function handleMatrixRequest(
             completed: true,
             cellIndex: buildMatrixCellIndex(result.cells),
           });
+          runtime.providerStatus.recordSearchResult(
+            providerId,
+            result.searchMeta.partial,
+          );
           startQuotationRateResolution(
             normalizedRequest,
             providerIds.flatMap((id) =>
@@ -3079,12 +2869,11 @@ async function handleMatrixRequest(
             return;
           }
 
+          runtime.providerStatus.recordSearchFailure(providerId, error);
           const partialState = providerStates.get(providerId);
           const partialResponse = partialState?.response ?? draftResponse;
-          const failedResponse = materializeFailedMatrixResponse(
-            partialResponse,
-            error instanceof Error ? error.message : "Matrix job failed.",
-          );
+          const errorMessage = providerPublicFailureMessage(providerId, error);
+          const failedResponse = materializeFailedMatrixResponse(partialResponse, errorMessage);
           providerStates.set(providerId, {
             response: failedResponse,
             completed: true,
@@ -3095,7 +2884,7 @@ async function handleMatrixRequest(
           recordProviderSummary("failed", {
             offers: 0,
             warningCount: 1,
-            error: error instanceof Error ? error.message : "Matrix job failed.",
+            error: errorMessage,
           });
           logPerfSpan("matrix.provider", providerStart, {
             jobId: job.id,
@@ -3235,28 +3024,36 @@ export async function routeRequest(request: Request): Promise<Response> {
     });
   }
 
-  if (request.method === "GET" && url.pathname === "/api/results-layout") {
-    if (!isTrustedDirectLocalRequest(request)) {
-      return json({ error: "This results layout endpoint is only available on localhost." }, { status: 403 });
-    }
-
-    const layout = await readResultsLayoutFile();
-    return json({ layout });
-  }
-
-  if (request.method === "POST" && url.pathname === "/api/results-layout") {
-    if (!isTrustedDirectLocalRequest(request)) {
-      return json({ error: "This results layout endpoint is only available on localhost." }, { status: 403 });
-    }
-
-    const payload = await readPayload<ResultsLayoutPayload>(request);
-    const columns = normalizeResultsLayoutColumns(payload?.columns);
-    if (!columns) {
-      return json({ errors: ["A full results column layout is required."] }, { status: 400 });
-    }
-
-    const layout = await writeResultsLayoutFile(columns);
-    return json({ ok: true, layout });
+  if (request.method === "GET" && url.pathname === "/api/provider-status") {
+    const providers = runtime.providerStatus.snapshot().map(({
+      id,
+      label,
+      configured,
+      state,
+      evidence,
+      reasonCode,
+      observedAtMs,
+      stale,
+    }) => ({
+      id,
+      label,
+      configured,
+      state,
+      evidence,
+      reasonCode,
+      observedAt: observedAtMs === null
+        ? null
+        : new Date(observedAtMs).toISOString(),
+      stale,
+    }));
+    return json(
+      {
+        generatedAt: new Date().toISOString(),
+        staleAfterMs: DEFAULT_PROVIDER_STATUS_TTL_MS,
+        providers,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   if (request.method === "GET" && url.pathname === "/api/costamar/token-status") {
@@ -3277,6 +3074,13 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     const query = stringValue(url.searchParams.get("q"));
+    if (query.length > LOCATION_SUGGESTION_CACHE_MAX_QUERY_CHARS) {
+      return json({
+        errors: [
+          `Location suggestion query cannot exceed ${LOCATION_SUGGESTION_CACHE_MAX_QUERY_CHARS} characters.`,
+        ],
+      }, { status: 400 });
+    }
     if (query.length < 1) {
       return json({ query, suggestions: [] });
     }
@@ -3322,8 +3126,10 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     const limit = integerParam(url.searchParams.get("limit"), 3, 1, 3);
+    const clientSessionId = resolveLocationSuggestionSessionId(url.searchParams.get("clientSessionId"));
+    const { frequent, recent } = runtime.locationUsage.getUsageSuggestions(clientSessionId, limit);
     return json(
-      { suggestions: runtime.locationUsage.getSuggestions(limit) },
+      { suggestions: frequent, frequent, recent },
       { headers: { "Cache-Control": "no-store" } },
     );
   }
@@ -3474,7 +3280,10 @@ export async function routeRequest(request: Request): Promise<Response> {
           });
           const redirectRequest = costamarRedirectRequestFromUrl(location, fallbackRequest);
 
-          if (redirectRequest) {
+          if (
+            redirectRequest
+            && isAllowedCostamarBrandedSearchLocation(location, redirectRequest, fastContext)
+          ) {
             const redirectResolution = await withCostamarRedirectTotalTimeout(
               resolveCostamarRedirectForRequest(redirectRequest, fastContext, {
                 force: !parsedTokenIsUsable,
@@ -3487,11 +3296,13 @@ export async function routeRequest(request: Request): Promise<Response> {
               location = applyCostamarContextToBrandedSearchUrl(location, redirectResolution.context);
               canRedirect = true;
             }
-          } else {
+          } else if (!redirectRequest) {
             blockedReason = "No se pudo reconstruir la busqueda Click and Book Plus desde el purchase path.";
+          } else {
+            blockedReason = "El enlace guardado de Click and Book Plus no pertenece a un origen permitido.";
           }
         } catch (error) {
-          blockedReason = error instanceof Error ? error.message : "No se pudo validar el redirect de Click and Book Plus.";
+          blockedReason = safeCostamarRedirectFailureReason(error);
           canRedirect = false;
         }
 

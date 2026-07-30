@@ -16,7 +16,6 @@ test("result filters refine loaded offers without restarting the search", async 
         destination: "BIO",
         mainCarrier: carrier,
         validatingCarrier: carrier,
-        airline: carrier,
         price: {
           total: { amount: 620 + index, currencyCode: "USD" },
           base: { amount: 520 + index, currencyCode: "USD" },
@@ -24,11 +23,14 @@ test("result filters refine loaded offers without restarting the search", async 
         },
         itineraries: [
           {
+            id: `local-filter-offer-${carrier}-outbound`,
             direction: "outbound",
             durationMinutes: 480,
             stops: 0,
+            layoverMinutes: [],
             segments: [
               {
+                id: `local-filter-offer-${carrier}-outbound-1`,
                 flightNumber: `${carrier} 123`,
                 marketingCarrier: carrier,
                 marketingCarrierName: carrierName,
@@ -36,15 +38,19 @@ test("result filters refine loaded offers without restarting the search", async 
                 destination: "BIO",
                 departureAt: "2026-06-08T14:00:00Z",
                 arrivalAt: "2026-06-08T22:00:00Z",
+                durationMinutes: 480,
               },
             ],
           },
           {
+            id: `local-filter-offer-${carrier}-inbound`,
             direction: "inbound",
             durationMinutes: 470,
             stops: 0,
+            layoverMinutes: [],
             segments: [
               {
+                id: `local-filter-offer-${carrier}-inbound-1`,
                 flightNumber: `${carrier} 456`,
                 marketingCarrier: carrier,
                 marketingCarrierName: carrierName,
@@ -52,6 +58,7 @@ test("result filters refine loaded offers without restarting the search", async 
                 destination: "LIM",
                 departureAt: "2026-06-20T15:00:00Z",
                 arrivalAt: "2026-06-20T22:50:00Z",
+                durationMinutes: 470,
               },
             ],
           },
@@ -132,11 +139,20 @@ test("empty local filter results do not blame a provider that already reported n
     const offers = [
       buildOffer({
         id: "costamar-carry-on-only",
+        signature: "costamar:costamar-carry-on-only",
+        providerOfferRef: "costamar-carry-on-only",
+        providerSource: "costamar",
+        priceStatus: "unverified",
         origin: "TPP",
         destination: "LIM",
         mainCarrier: "H2",
         validatingCarrier: "H2",
-        airline: "Sky Airline",
+        comparisonMetrics: {
+          totalDurationMinutes: 80,
+          totalStops: 0,
+          baggageScore: 1,
+          purchasePathScore: 0.8,
+        },
         baggage: {
           carryOnIncluded: true,
           checkedIncluded: false,
@@ -144,19 +160,30 @@ test("empty local filter results do not blame a provider that already reported n
         },
         purchasePaths: [
           {
+            id: "costamar-carry-on-only-path",
             provider: "costamar",
             type: "search-redirect",
             label: "Click and Book Plus",
             url: "https://example.test/costamar",
+            precision: "exact-search",
+            score: 0.8,
+            requiresNewTab: true,
+            commercialMode: "provider",
+            state: "search_redirect",
           },
         ],
+        tags: [],
+        warnings: [],
         itineraries: [
           {
+            id: "costamar-carry-on-only-outbound",
             direction: "outbound",
             durationMinutes: 80,
             stops: 0,
+            layoverMinutes: [],
             segments: [
               {
+                id: "costamar-carry-on-only-outbound-1",
                 flightNumber: "H2 123",
                 marketingCarrier: "H2",
                 marketingCarrierName: "Sky Airline",
@@ -164,6 +191,7 @@ test("empty local filter results do not blame a provider that already reported n
                 destination: "LIM",
                 departureAt: "2026-05-13T14:00:00Z",
                 arrivalAt: "2026-05-13T15:20:00Z",
+                durationMinutes: 80,
               },
             ],
           },
@@ -219,22 +247,24 @@ test("empty local filter results do not blame a provider that already reported n
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
     await page.getByTestId("result-card").first().waitFor();
-    await page.getByText("Agilsmart sin vuelos").waitFor();
 
-    const baggageSliderControl = page.getByRole("slider", { name: "Equipaje incluido" });
-    await baggageSliderControl.focus();
-    await baggageSliderControl.press("End");
-    await page.getByText("No hay búsquedas que coincidan").waitFor();
+    await page.getByRole("button", { name: "Bodega", exact: true }).click();
+    await page.getByText("Ningún vuelo pasa los filtros").waitFor();
+    await page.getByText("«Bodega incluida» dejó la lista vacía. Quítalo o amplía la búsqueda.").waitFor();
 
     assert.equal(await page.getByTestId("result-card").count(), 0);
     assert.equal(await page.getByText("Agilsmart no devolvió vuelos").count(), 0);
     assert.equal(await page.getByText("Agilsmart sin vuelos").count(), 0);
-    assert.equal(await page.getByText("1 aviso").count(), 1);
+    assert.equal(await page.getByText("1 aviso").count(), 0);
+    assert.equal(searchRequests, 1);
+
+    await page.getByRole("button", { name: "Quitar los filtros" }).click();
+    await page.getByTestId("result-card").waitFor();
     assert.equal(searchRequests, 1);
   }, { autoOpen: false });
 });
 
-test("empty exact results identify providers that reported no flights", async () => {
+test("empty exact results stay factual without inventing flight data", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.route("**/api/locations**", async (route) => {
       await route.fulfill({
@@ -290,7 +320,9 @@ test("empty exact results identify providers that reported no flights", async ()
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
 
-    await page.getByText("Agilsmart y Click and Book Plus no devolvieron vuelos").waitFor();
-    await page.getByText("Los proveedores consultados informaron que no hay vuelos para esta combinación.").waitFor();
+    await page.getByText("Sin resultados para esta consulta").waitFor();
+    await page.getByText("Ajusta fechas, escalas, equipaje o aerolíneas para ampliar la cobertura.").waitFor();
+    assert.equal(await page.getByTestId("result-card").count(), 0);
+    assert.equal(await page.getByText("Agilsmart y Click and Book Plus no devolvieron vuelos").count(), 0);
   }, { autoOpen: false });
 });
