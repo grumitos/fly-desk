@@ -11,13 +11,14 @@ test("invalid shared dates do not roll over in the search form", async () => {
       waitUntil: "domcontentloaded",
     });
 
-    const departureButton = page.getByRole("button", { name: "Salida" });
-    await page.waitForFunction(() => {
-      const button = document.querySelector('[aria-labelledby="date-salida-label"]');
-      return button?.textContent?.includes("Fecha inválida");
-    });
-    await assert.equal(await departureButton.innerText(), "Fecha inválida");
+    const departureButton = page.locator('button[aria-label^="Salida:"]');
+    await departureButton.waitFor();
+    await page.waitForFunction(() => (
+      document.querySelector<HTMLButtonElement>('button[aria-label^="Salida:"]')?.getAttribute("aria-invalid") === "true"
+    ));
+    await assert.equal(await departureButton.getAttribute("aria-label"), "Salida: Seleccionar");
     await assert.equal(await departureButton.getAttribute("aria-invalid"), "true");
+    await assert.equal(await departureButton.getAttribute("aria-describedby"), "dates-helper");
     await assert.equal(await page.getByRole("button", { name: "Buscar" }).isDisabled(), true);
     await assert.equal(await page.getByText("Fecha inválida.").count(), 1);
   });
@@ -27,18 +28,16 @@ test("date calendars use the runtime minimum date for both trip dates", async ()
   await withDesktopPage(async ({ page }) => {
     await page.getByRole("button", { name: "Salida" }).click();
 
-    const departureCalendar = page.getByRole("dialog", { name: "Calendario de salida" });
+    const departureCalendar = page.getByRole("dialog", { name: "Calendario de fechas" });
     await departureCalendar.waitFor();
-    await assert.equal(await departureCalendar.getByRole("button", { name: "30 mar 2026" }).isDisabled(), true);
-    await assert.equal(await departureCalendar.getByRole("button", { name: "31 mar 2026" }).isDisabled(), false);
-    await departureCalendar.getByRole("button", { name: "31 mar 2026" }).click();
+    await assert.equal(await departureCalendar.getByRole("button", { name: /^30 de marzo de 2026/ }).isDisabled(), true);
+    await assert.equal(await departureCalendar.getByRole("button", { name: /^31 de marzo de 2026/ }).isDisabled(), false);
+    await departureCalendar.getByRole("button", { name: /^31 de marzo de 2026/ }).click();
 
-    await page.getByRole("button", { name: "Regreso" }).click();
-
-    const returnCalendar = page.getByRole("dialog", { name: "Calendario de regreso" });
+    const returnCalendar = page.getByRole("dialog", { name: "Calendario de fechas" });
     await returnCalendar.waitFor();
-    await assert.equal(await returnCalendar.getByRole("button", { name: "30 mar 2026" }).isDisabled(), true);
-    await assert.equal(await returnCalendar.getByRole("button", { name: "31 mar 2026" }).isDisabled(), false);
+    await assert.equal(await returnCalendar.getByRole("button", { name: /^30 de marzo de 2026/ }).isDisabled(), true);
+    await assert.equal(await returnCalendar.getByRole("button", { name: /^31 de marzo de 2026/ }).isDisabled(), false);
   });
 });
 
@@ -89,9 +88,8 @@ test("one-way flexible search sends the selected stay-range payload without hidd
     await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
     await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
     await page.getByRole("button", { name: "Salida desde" }).click();
-    await page.getByRole("dialog", { name: "Calendario de salida desde" }).getByRole("button", { name: "02 abr 2026" }).click();
-    await page.getByRole("button", { name: "Salida hasta" }).click();
-    await page.getByRole("dialog", { name: "Calendario de salida hasta" }).getByRole("button", { name: "04 abr 2026" }).click();
+    await page.getByRole("dialog", { name: "Calendario de fechas" }).getByRole("button", { name: /^2 de abril de 2026/ }).click();
+    await page.getByRole("dialog", { name: "Calendario de fechas" }).getByRole("button", { name: /^4 de abril de 2026/ }).click();
     await Promise.all([
       page.waitForResponse("**/api/search"),
       page.getByRole("button", { name: "Buscar" }).click(),
@@ -168,9 +166,8 @@ test("search URL stores the payload and reopens it without auto-searching", asyn
     await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
     await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
     await page.getByRole("button", { name: "Salida" }).click();
-    await page.getByRole("dialog", { name: "Calendario de salida" }).getByRole("button", { name: "31 mar 2026" }).click();
-    await page.getByRole("button", { name: "Regreso" }).click();
-    await page.getByRole("dialog", { name: "Calendario de regreso" }).getByRole("button", { name: "01 abr 2026" }).click();
+    await page.getByRole("dialog", { name: "Calendario de fechas" }).getByRole("button", { name: /^31 de marzo de 2026/ }).click();
+    await page.getByRole("dialog", { name: "Calendario de fechas" }).getByRole("button", { name: /^1 de abril de 2026/ }).click();
     await Promise.all([
       page.waitForResponse("**/api/search"),
       page.getByRole("button", { name: "Buscar" }).click(),
@@ -262,50 +259,67 @@ test("paste accepts desktop search config JSON and sends the same exact backend 
         mainCarrier: "IB",
         validatingCarrier: "IB",
         comparisonMetrics: {
-          totalDurationMinutes: 920,
+          totalDurationMinutes: 1850,
           totalStops: 2,
+          baggageScore: 2,
+          purchasePathScore: 1,
         },
-        stops: 2,
         itineraries: [
           {
+            id: "clipboard-cache-offer-outbound",
             direction: "outbound",
-            durationMinutes: 760,
+            durationMinutes: 1235,
             stops: 1,
+            layoverMinutes: [110],
             segments: [
               {
+                id: "clipboard-cache-offer-outbound-1",
                 flightNumber: "IB 610",
+                marketingCarrier: "IB",
                 origin: "LIM",
                 destination: "MAD",
                 departureAt: "2026-06-08T17:30:00Z",
                 arrivalAt: "2026-06-09T11:10:00Z",
+                durationMinutes: 1060,
               },
               {
+                id: "clipboard-cache-offer-outbound-2",
                 flightNumber: "IB 426",
+                marketingCarrier: "IB",
                 origin: "MAD",
                 destination: "BIO",
                 departureAt: "2026-06-09T13:00:00Z",
                 arrivalAt: "2026-06-09T14:05:00Z",
+                durationMinutes: 65,
               },
             ],
           },
           {
+            id: "clipboard-cache-offer-inbound",
             direction: "inbound",
-            durationMinutes: 780,
+            durationMinutes: 615,
             stops: 1,
+            layoverMinutes: [105],
             segments: [
               {
+                id: "clipboard-cache-offer-inbound-1",
                 flightNumber: "IB 447",
+                marketingCarrier: "IB",
                 origin: "BIO",
                 destination: "MAD",
                 departureAt: "2026-06-20T09:15:00Z",
                 arrivalAt: "2026-06-20T10:20:00Z",
+                durationMinutes: 65,
               },
               {
+                id: "clipboard-cache-offer-inbound-2",
                 flightNumber: "IB 6659",
+                marketingCarrier: "IB",
                 origin: "MAD",
                 destination: "LIM",
                 departureAt: "2026-06-20T12:05:00Z",
                 arrivalAt: "2026-06-20T19:30:00Z",
+                durationMinutes: 445,
               },
             ],
           },
@@ -425,8 +439,12 @@ test("paste accepts desktop search config JSON and sends the same exact backend 
     assert.equal(leg?.returnDate, "2026-06-20");
     assert.equal(request.passengers?.adults, 1);
     assert.equal(request.filters?.maxStops, 1);
-    await page.getByText("Cache revalidando").waitFor();
-    await page.getByText("1 vuelo").waitFor();
-    await page.getByText("LIM - MAD - BIO").waitFor();
+    await page.getByText("Parcial", { exact: true }).waitFor();
+    await page.getByTestId("result-card").waitFor();
+    assert.equal(await page.getByTestId("result-card").count(), 1);
+    assert.match(
+      (await page.getByTestId("result-card").getByRole("button").getAttribute("aria-label")) ?? "",
+      /1 escala en MAD/,
+    );
   }, { autoOpen: false });
 });

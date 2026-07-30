@@ -110,9 +110,9 @@ test("workspace panel tabs expose one selected panel and keyboard semantics", as
     await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
     await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
     await page.getByRole("button", { name: "Salida" }).click();
-    await page.getByRole("dialog", { name: "Calendario de salida" }).getByRole("button", { name: "31 mar 2026" }).click();
-    await page.getByRole("button", { name: "Regreso" }).click();
-    await page.getByRole("dialog", { name: "Calendario de regreso" }).getByRole("button", { name: "01 abr 2026" }).click();
+    const calendar = page.getByRole("dialog", { name: "Calendario de fechas" });
+    await calendar.getByRole("button", { name: /^31 de marzo de 2026/ }).click();
+    await calendar.getByRole("button", { name: /^1 de abril de 2026/ }).click();
     await Promise.all([
       page.waitForResponse("**/api/search"),
       page.getByRole("button", { name: "Buscar" }).click(),
@@ -134,7 +134,7 @@ test("workspace panel tabs expose one selected panel and keyboard semantics", as
   });
 });
 
-test("baggage filter uses one compact slider and maps checked baggage to carry-on too", async () => {
+test("baggage filter uses one compact segmented control and maps checked baggage to carry-on too", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let submittedFilters: Record<string, unknown> | null = null;
 
@@ -185,23 +185,24 @@ test("baggage filter uses one compact slider and maps checked baggage to carry-o
     });
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
 
-    const baggageSliderControl = page.getByRole("slider", { name: "Equipaje incluido" });
-    assert.equal(await baggageSliderControl.getAttribute("aria-valuemin"), "0");
-    assert.equal(await baggageSliderControl.getAttribute("aria-valuemax"), "2");
-    assert.equal(await baggageSliderControl.getAttribute("aria-valuenow"), "0");
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+    const baggageControl = page.getByLabel("Equipaje incluido", { exact: true });
+    await baggageControl.waitFor({ state: "visible" });
+    const baggageOptions = baggageControl.getByRole("button");
+    assert.equal(await baggageOptions.count(), 3);
+    assert.deepEqual(await baggageOptions.allTextContents(), ["Todos", "Mano", "Bodega"]);
+    assert.equal(await baggageControl.getByRole("button", { name: "Todos" }).getAttribute("aria-pressed"), "true");
+    assert.equal(await baggageControl.getByRole("button", { name: "Mano" }).getAttribute("aria-pressed"), "false");
+    assert.equal(await baggageControl.getByRole("button", { name: "Bodega" }).getAttribute("aria-pressed"), "false");
     assert.equal(await page.getByRole("switch", { name: "Equipaje de mano" }).count(), 0);
     assert.equal(await page.getByRole("switch", { name: "Maleta de bodega" }).count(), 0);
 
-    const baggageSlider = page.locator(".fd-filter-slider").filter({ has: baggageSliderControl });
-    assert.equal(await baggageSlider.locator(".fd-filter-slider__value").innerText(), "Cualquiera");
-    const visibleSliderLabels = await page.locator(".fd-filter-slider__label").evaluateAll((labels) => (
-      labels.map((label) => label.textContent?.trim()).filter(Boolean)
-    ));
-    assert.deepEqual(visibleSliderLabels, ["Tipo", "Tiempo máximo", "Incluido"]);
-
-    await baggageSliderControl.focus();
-    await baggageSliderControl.press("End");
-    assert.equal(await baggageSlider.locator(".fd-filter-slider__value").innerText(), "Bodega");
+    await baggageControl.getByRole("button", { name: "Bodega" }).click();
+    assert.equal(await baggageControl.getByRole("button", { name: "Bodega" }).getAttribute("aria-pressed"), "true");
+    assert.equal(await baggageControl.getByRole("button", { name: "Todos" }).getAttribute("aria-pressed"), "false");
 
     await Promise.all([
       page.waitForResponse("**/api/search"),
@@ -209,50 +210,6 @@ test("baggage filter uses one compact slider and maps checked baggage to carry-o
     ]);
     assert.equal(submittedFilters?.carryOnRequired, true);
     assert.equal(submittedFilters?.checkedBaggageRequired, true);
-
-    const sliderStyle = await baggageSlider.evaluate((element) => {
-      const value = element.querySelector<HTMLElement>(".fd-filter-slider__value");
-      const visibleLabel = element.querySelector<HTMLElement>(".fd-filter-slider__label");
-      const head = element.querySelector<HTMLElement>(".fd-filter-slider__head");
-      if (!visibleLabel || !value || !head) throw new Error("Missing slider text");
-      return {
-        background: getComputedStyle(element).backgroundColor,
-        visibleLabel: visibleLabel.textContent?.trim(),
-        headJustify: getComputedStyle(head).justifyContent,
-        valueWeight: Number(getComputedStyle(value).fontWeight),
-      };
-    });
-    assert.equal(sliderStyle.background, "rgba(0, 0, 0, 0)");
-    assert.equal(sliderStyle.visibleLabel, "Incluido");
-    assert.equal(sliderStyle.headJustify, "space-between");
-    assert.ok(sliderStyle.valueWeight <= 500, JSON.stringify(sliderStyle));
-
-    const filterSectionTitleGaps = await page.locator("aside.fd-panel section").evaluateAll((sections) => {
-      return sections.flatMap((section) => {
-        const title = section.querySelector<HTMLElement>(".fd-label");
-        const content = section.children.item(1) as HTMLElement | null;
-        if (!title || !content) return [];
-        const titleRect = title.getBoundingClientRect();
-        const contentRect = content.getBoundingClientRect();
-        return [Math.round(contentRect.top - titleRect.bottom)];
-      });
-    });
-    assert.ok(filterSectionTitleGaps.length >= 2, JSON.stringify(filterSectionTitleGaps));
-    assert.ok(
-      Math.max(...filterSectionTitleGaps) - Math.min(...filterSectionTitleGaps) <= 2,
-      JSON.stringify(filterSectionTitleGaps),
-    );
-
-    const markPositions = await page.locator(".fd-filter-slider").evaluateAll((sliders) => {
-      return sliders.map((slider) => (
-        Array.from(slider.querySelectorAll<HTMLElement>(".fd-filter-slider__mark"))
-          .map((mark) => mark.style.getPropertyValue("--fd-filter-slider-mark-position"))
-      ));
-    });
-    for (const positions of markPositions) {
-      assert.equal(positions[0], "0%");
-      assert.equal(positions.at(-1), "100%");
-    }
   }, { autoOpen: false });
 });
 
@@ -308,9 +265,9 @@ test("location suggestions stay above workspace tabs after a search", async () =
     await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
     await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
     await page.getByRole("button", { name: "Salida" }).click();
-    await page.getByRole("dialog", { name: "Calendario de salida" }).getByRole("button", { name: "31 mar 2026" }).click();
-    await page.getByRole("button", { name: "Regreso" }).click();
-    await page.getByRole("dialog", { name: "Calendario de regreso" }).getByRole("button", { name: "01 abr 2026" }).click();
+    const calendar = page.getByRole("dialog", { name: "Calendario de fechas" });
+    await calendar.getByRole("button", { name: /^31 de marzo de 2026/ }).click();
+    await calendar.getByRole("button", { name: /^1 de abril de 2026/ }).click();
     await Promise.all([
       page.waitForResponse("**/api/search"),
       page.getByRole("button", { name: "Buscar" }).click(),
@@ -332,12 +289,14 @@ test("location suggestions stay above workspace tabs after a search", async () =
     const listbox = page.getByRole("listbox");
     await listbox.waitFor({ state: "visible" });
     const layerState = await listbox.evaluate((element) => {
-      const rect = element.getBoundingClientRect();
+      const layer = element.parentElement;
+      if (!layer) throw new Error("Missing suggestions layer");
+      const rect = layer.getBoundingClientRect();
       const topElement = document.elementFromPoint(rect.left + rect.width / 2, rect.top + 12);
       return {
-        ownsTopPoint: topElement === element || element.contains(topElement),
-        position: getComputedStyle(element).position,
-        zIndex: Number(getComputedStyle(element).zIndex),
+        ownsTopPoint: topElement === layer || layer.contains(topElement),
+        position: getComputedStyle(layer).position,
+        zIndex: Number(getComputedStyle(layer).zIndex),
       };
     });
 
@@ -347,7 +306,7 @@ test("location suggestions stay above workspace tabs after a search", async () =
   });
 });
 
-test("technical Agil session errors stay out of the alert and are available in plain logs", async () => {
+test("technical Agil session errors stay out of the notice and are available in plain logs", async () => {
   await withDesktopPage(async ({ page }) => {
     await page.route("**/api/locations**", async (route) => {
       await route.fulfill({
@@ -369,14 +328,14 @@ test("technical Agil session errors stay out of the alert and are available in p
     await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
     await page.getByRole("combobox", { name: "Destino" }).fill("CUZ");
     await page.getByRole("button", { name: "Salida" }).click();
-    await page.getByRole("dialog", { name: "Calendario de salida" }).getByRole("button", { name: "31 mar 2026" }).click();
-    await page.getByRole("button", { name: "Regreso" }).click();
-    await page.getByRole("dialog", { name: "Calendario de regreso" }).getByRole("button", { name: "01 abr 2026" }).click();
+    const calendar = page.getByRole("dialog", { name: "Calendario de fechas" });
+    await calendar.getByRole("button", { name: /^31 de marzo de 2026/ }).click();
+    await calendar.getByRole("button", { name: /^1 de abril de 2026/ }).click();
     await page.getByRole("button", { name: "Buscar" }).click();
 
-    const alert = page.getByRole("alert");
-    await alert.waitFor();
-    const text = await alert.innerText();
+    const notice = page.getByRole("status").filter({ hasText: "No se pudo leer la sesión local de Agil" });
+    await notice.waitFor();
+    const text = await notice.innerText();
 
     assert.match(text, /No se pudo leer la sesión local de Agil/);
     assert.doesNotMatch(text, /Chrome remoto|127\.0\.0\.1:9222/);

@@ -10,6 +10,7 @@ import "./ui/results.playwright.ts";
 import "./ui/filters.playwright.ts";
 import "./ui/flexible.playwright.ts";
 import "./ui/workspace.playwright.ts";
+import "./ui/responsive-smoke.playwright.ts";
 
 before(startDesktopTestHarness);
 after(stopDesktopTestHarness);
