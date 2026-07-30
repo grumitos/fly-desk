@@ -1,8 +1,10 @@
 # Rediseño · cableado de backend y residuales
 
-Estado verificado el 2026-07-29 tras cablear las secciones 1, 2 y 3 del informe
-original. La sección 4 conserva el trabajo de móvil y la reescritura general de
-Playwright que siguen fuera de este alcance.
+Estado verificado el 2026-07-30 tras cablear las secciones 1, 2 y 3 del informe,
+terminar la migración de la suite Playwright y cerrar una auditoría independiente
+del inventario visible, backend y contratos de proveedor. La reconstrucción de
+las láminas móviles 1c–1f permanece diferida; el layout móvil actual sí quedó
+cubierto en reposo y estado activo por el gate responsive.
 
 Regla que siguió toda la implementación: **cuando un dato no existe, la pieza
 desaparece; nunca se inventa**. Una cobertura de mes fabricada o un contador de
@@ -42,9 +44,12 @@ menos** (crítico a ≤2). Hoy el campo aparece principalmente en el detalle.
 
 - Agil propaga la disponibilidad de la tarifa a la oferta de listado y solo
   acepta enteros no negativos.
+- El valor real `0` se muestra como «0 asientos» crítico; ya no se confunde con
+  la ausencia del campo.
 - Los fixtures y respuestas observadas de Click and Book Plus no exponen una
   cantidad de asientos equivalente. En ese proveedor el campo permanece
-  ausente; la tarjeta cae al precio por persona, sin inventar un contador.
+  ausente; la tarjeta cae al precio por persona solo para grupos de adultos y al
+  total para grupos mixtos, sin inventar un contador ni un desglose.
 
 ### 1.4 Aerolínea operadora (codeshare) por oferta — **terminado**
 
@@ -203,6 +208,10 @@ se repintan».
 - En Agil el prewarm puede demostrar disponibilidad. En Click and Book Plus solo
   demuestra contexto local (`context_only`); únicamente una búsqueda real puede
   marcar el proveedor como `ready`.
+- Un estado lógico 401, 403, 429 o 5xx dentro de una respuesta HTTP de Click and
+  Book Plus se propaga como resultado parcial por exacta, rango, progresiva y
+  matriz. El tracker queda `degraded` / `partial_results`; nunca `ready` por una
+  respuesta cerrada sin ofertas.
 - El zócalo consulta el endpoint cada 30 s y muestra `disponible`, `verificando`,
   `con incidencias`, `sin verificar`, `requiere sesión` para Agil o `requiere
   autenticación` para Click and Book Plus. Si una lectura falla, incluso después
@@ -228,7 +237,7 @@ nada que ajustar.
 
 ---
 
-## 4. Lo que quedó pendiente del lado frontend
+## 4. Residual móvil y validación frontend
 
 Honestidad sobre el alcance entregado.
 
@@ -260,25 +269,45 @@ Oferta). Las piezas compartidas ya están listas a escala táctil: las celdas de
 calendario suben a 44 px por media query, y el catálogo 36/44/52 está en
 `design-system.css`.
 
-### 4.2 Suite Playwright — **35 de 53 en rojo**
+### 4.2 Suite Playwright — **terminada**
 
-`test/ui/*.playwright.ts` son 4.434 líneas, con 35 casos todavía fijados al DOM anterior:
-`.fd-result-card` (ahora `.fd-card`), `.fd-filter-slider`,
-`.fd-migration-grid` (ahora `.fd-month-grid`),
-`.fd-offer-detail-*`, `.fd-alert` / `.fd-search-alert`, `.fd-result-variant-card`,
-`.fd-result-group`, `--fd-results-col-*`.
+Los 53 casos existentes se migraron por capacidad al DOM y copy del rediseño:
+búsqueda, autocomplete, sharing, resultados, filtros, flexible/migratorio y
+workspace. Se conservaron las aserciones de payload, polling, cotización,
+redirecciones de Agilsmart y Click and Book Plus, accesibilidad y geometría; no
+se añadieron aliases de compatibilidad en producción, `skip`, `only` ni timeouts
+ampliados.
 
-Los casos específicos del editor de layout ya se retiraron junto con la
-superficie muerta. La reescritura general de los casos restantes sigue siendo un
-trabajo aparte y por caso; no forma parte de las secciones 1–3.
+La migración encontró y fijó cinco defectos reales, cada uno con cobertura:
 
-El gate completo del 2026-07-29 terminó con 18 casos UI verdes y 35 rojos. La
-cobertura de *Recientes* / *Frecuentes*, cotización validada, error sin copiar
-fallback y retirada de salud obsoleta del zócalo está verde. Los fallos restantes
-siguen buscando clases, accesibles o geometría del DOM anterior. El fixture
-compartido sí se completó con proveedor e itinerario reales por exigencia del
-nuevo contrato; no se añadieron aliases muertos a producción ni se eliminaron
-casos para hacer pasar el gate.
+- una alternativa que cambiaba solo la vuelta mostraba y anunciaba la ida;
+- una fila horaria podía desbordar 2 px con una llegada al día siguiente;
+- fechas civiles imposibles como `2026-06-31` se normalizaban al mes siguiente;
+- el rango inválido no exponía `aria-invalid` / `aria-describedby` por mitad;
+- un aviso en reposo recentraba el formulario 18 px.
+
+La auditoría final encontró y fijó además:
+
+- una ida y vuelta incompleta podía cruzar el normalizador y fabricar la fila de
+  vuelta o reutilizar una duración global;
+- una mezcla de adultos, niños o bebés mostraba un promedio «p/p» sin desglose
+  tarifario real;
+- `seatsRemaining: 0` se ocultaba como si el proveedor no hubiera enviado dato;
+- la confianza de una celda podía sobrescribir el estado de verificación de la
+  tarifa;
+- el grid en reposo desbordaba internamente 62 px a 1024 de ancho;
+- Click and Book Plus trataba estados lógicos de error como búsquedas completas;
+- una URL persistida corrupta podía llegar a la fase de token antes de validar
+  su origen y ruta;
+- el fixture compartido de ofertas no garantizaba el contrato canónico. Ahora
+  devuelve `CanonicalOffer`, los positivos one-way solo traen outbound y cinco
+  builders exportados sin ningún consumidor fueron eliminados.
+
+Se añadieron tres smokes del workspace en los viewports obligatorios `1440x900`,
+`1024x768` y `390x844`. Comprueban reposo y estado activo, carga sin errores de
+navegador, overflow global e interno del formulario, resultados/filtros/detalle,
+temas claro y oscuro y foco inicial visible. El gate final suma **56 pass / 0
+fail**.
 
 ---
 
@@ -294,11 +323,11 @@ bun install --frozen-lockfile && bun run typecheck && bun run lint && bun run bu
 | `bun run typecheck` | ✅ |
 | `bun run lint` | ✅ |
 | `bun run build` | ✅ |
-| `bun run test:core` (dentro de `test`) | ✅ 490 pass / 0 fail |
-| `bun run test:ui` (dentro de `test`) | ❌ 18 pass / 35 fallos legacy descritos en §4.2 |
+| `bun run test:core` (dentro de `test`) | ✅ 500 pass / 0 fail |
+| `bun run test:ui` (dentro de `test`) | ✅ 56 pass / 0 fail |
 
-Por tanto se ejecutó el gate exigido, pero `bun run test` no está verde por el
-residual Playwright explícitamente excluido de este alcance.
+El gate completo exigido por `AGENTS.md` quedó verde. No se consultaron sesiones
+reales ni se imprimieron variables, tokens, cookies o credenciales de proveedor.
 
 ---
 
@@ -319,6 +348,13 @@ Mejoras aplicadas durante el cableado:
   origen y vuelve a comprobarlo antes de escribir correo, contraseña u OTP en
   Playwright. El token que exige la URL de compra se resuelve justo antes del
   `302`; no se persiste en `providerContext`, el purchase path ni los logs.
+- Los redirects Click and Book Plus validan HTTPS, origen permitido y pathname
+  exacto reconstruido desde la búsqueda antes de refrescar, validar o anexar el
+  token que viaja por query string. Una fila externa o corrupta devuelve 409 sin
+  `Location` ni consulta de red.
+- Los estados lógicos 401, 403, 429 y 5xx de Click and Book Plus quedan parciales
+  y degradados aunque el transporte HTTP externo haya respondido 200; sus
+  mensajes privados no llegan a warnings ni logs públicos.
 - Agil mantiene su contrato de sesión Chrome: un endpoint explícito prevalece y
   Linux/VPS cae a `http://127.0.0.1:9222`, que corresponde al Chrome loopback de
   plataforma. Windows no recibe ese fallback implícito.
@@ -332,10 +368,16 @@ Mejoras aplicadas durante el cableado:
   «Flexible» ni recibe horarios, escalas o duración inventados. El endpoint de
   cotización aplica la misma regla y ya no construye una oferta sintética para
   esas celdas.
+- La confianza de una celda de matriz puede actualizar `priceConfidence`, pero
+  ya no sobrescribe `priceStatus`: una tarifa `unverified` no se convierte en
+  `live` ni adquiere semántica de verificación por ese transporte.
 - Los normalizadores HTTP y del frontend descartan ofertas sin precio positivo,
-  moneda o itinerario completo. El snapshot de cotización no rellena desde la
-  solicitud precio, moneda, segmentos, horarios, directo ni carrier; un dato
-  ausente permanece ausente en vez de convertirse en evidencia comercial.
+  moneda o itinerario completo, y una ida y vuelta exige tramos outbound e
+  inbound reales. El snapshot de cotización no rellena desde la solicitud
+  precio, moneda, segmentos, horarios, directo ni carrier; un dato ausente
+  permanece ausente en vez de convertirse en evidencia comercial.
+- El precio por persona solo aparece si todos los pasajeros son adultos. Con
+  niños o bebés se conserva el total real hasta que exista un desglose por tipo.
 - Equipaje ausente se mantiene desconocido y se oculta. `true` / `false`
   explícitos conservan su significado; del mismo modo, Agil y Click and Book
   Plus dejan carrier y número de vuelo vacíos si el proveedor no los entregó.
@@ -356,6 +398,11 @@ capa operativa.
 Residuales verificables que no se cambiaron por requerir una decisión operativa
 separada:
 
+- El tracker público conserva un `partial_results` cerrado para cualquier
+  respuesta parcial de proveedor. Distinguir en el zócalo entre autenticación,
+  rate-limit y indisponibilidad exigiría propagar una causa tipada por todos los
+  transportes/workers; el estado actual es veraz (`degraded`) y no se amplió el
+  contrato solo para ganar copy más específico.
 - `SearchSessionStore` usa WAL, `synchronous=NORMAL` y `busy_timeout=5000`, pero
   una escritura que falla después de ese plazo se ignora y no programa un retry
   propio hasta otra mutación o el cierre. La memoria sigue funcionando, pero hay
@@ -367,6 +414,15 @@ separada:
 - Click and Book Plus no entrega cantidad de asientos en los fixtures actuales y
   ninguno de los dos proveedores demuestra recombinación arbitraria de tramos.
   Esos datos siguen ausentes hasta que exista evidencia del proveedor.
+- Los fixtures no demuestran que el producto cartesiano de opciones de viaje de
+  Click and Book Plus sea vendible como una combinación nueva; solo se publican
+  combinaciones nativas ya cotizadas.
+- `costamarRecommendationBase()` separa el sufijo de variante con `:`. No se
+  cambió sin una captura autorizada que pruebe si los IDs nativos pueden contener
+  ese carácter.
+- No hay evidencia suficiente para clasificar `rawRefs.webSessionId` de Agil
+  como secreto reutilizable. Se conserva dentro de la frontera actual y no se
+  expone a la UI; una decisión más fuerte requiere validar el contrato real.
 - Las tres unidades Fly comparten hoy el mismo archivo de entorno y la identidad
   `fly-desk`. Separar privilegios o variables sería trabajo de plataforma y no
   es necesario para cablear estos contratos.

@@ -8,22 +8,20 @@ backend y contratos se implementaron después en la misma rama; el estado y los
 residuales verificables están en
 [`REDISENO_PENDIENTE_CABLEADO.md`](REDISENO_PENDIENTE_CABLEADO.md).
 
-Gate actual del cableado: core **490 pass / 0 fail**; Playwright **18 pass / 35
-fail**. La tabla y el §4.2 de este documento conservan el registro histórico del
-primer incremento; el detalle vigente y su límite de alcance están en el
-documento enlazado arriba.
+Gate actual del cableado: core **500 pass / 0 fail**; Playwright **56 pass / 0
+fail**. Incluye reposo y workspace activo en escritorio, tableta y móvil. El
+detalle de contratos, auditoría y residuales está en el documento enlazado
+arriba.
 
-Balance: **47 archivos, +6.319 / −4.755**; contando solo `frontend/src` y `test`,
-**42 archivos, +5.839 / −4.736**. Es una reescritura casi completa de la
-superficie: añade la capa de sistema de diseño que no existía y retira los
-componentes anteriores.
+El rediseño fue una reescritura casi completa de la superficie: añadió la capa
+de sistema de diseño que no existía y retiró los componentes anteriores.
 
 ---
 
 ## 1. Verificación
 
 ```bash
-bun install --frozen-lockfile && bun run typecheck && bun run lint && bun run build && bun run test:core
+bun install --frozen-lockfile && bun run typecheck && bun run lint && bun run build && bun run test
 ```
 
 | Comando | Estado |
@@ -31,8 +29,8 @@ bun install --frozen-lockfile && bun run typecheck && bun run lint && bun run bu
 | `typecheck` | ✅ |
 | `lint` | ✅ |
 | `build` | ✅ |
-| `test:core` | ✅ 412 pass / 0 fail |
-| `test:ui` | ❌ **37 de 51 en rojo** — ver §4.2 |
+| `test:core` | ✅ 500 pass / 0 fail |
+| `test:ui` | ✅ 56 pass / 0 fail |
 
 ---
 
@@ -144,7 +142,7 @@ Los dos cambios que el primer incremento dejó abiertos se conservan:
 
 ---
 
-## 4. Pendiente de trabajo
+## 4. Residual de diseño y pruebas
 
 ### 4.1 Móvil: láminas 1c – 1f — **no implementadas**
 
@@ -168,19 +166,20 @@ Especificación, ya recuperada:
   escala; «Cotizar» copia y confirma en una línea, sin hoja intermedia, porque en
   móvil la cotización no se edita.
 
-### 4.2 Suite Playwright — 37 de 51 en rojo
+### 4.2 Suite Playwright — terminada
 
-`test/ui/*.playwright.ts` son ~4.900 líneas fijadas al DOM anterior:
-`.fd-result-card` (ahora `.fd-card`), `.fd-filter-slider`,
-`.fd-migration-grid` (ahora `.fd-month-grid`),
-`.fd-offer-detail-*`, `.fd-alert` / `.fd-search-alert`, `.fd-result-variant-card`,
-`.fd-result-group`, `--fd-results-col-*`, y tras §2.5 también `.fd-control`,
-`.fd-control-invalid` y `.fd-label`.
+Los 53 casos anteriores fueron migrados caso por caso a las superficies actuales
+sin aliases productivos, pruebas omitidas ni timeouts inflados. El trabajo
+conservó los contratos de payload y proveedor y detectó defectos reales en la
+selección de alternativas de vuelta, overflow horario, fechas civiles, ARIA del
+rango y estabilidad vertical de avisos. La auditoría posterior añadió cobertura
+para ida y vuelta incompleta, pasajeros mixtos, cero asientos, semántica de
+precio de matriz, fallos parciales de Click and Book Plus y redirects corruptos.
 
-Los casos específicos del editor de layout se retiraron con esa superficie. La
-reescritura general de los casos restantes sigue siendo trabajo aparte y caso
-por caso; las cifras de esta sección describen el primer incremento del
-rediseño, no el gate final del cableado.
+Tres casos adicionales fijan el gate de `FRONTEND_IDENTITY.md` en `1440x900`,
+`1024x768` y `390x844`, desde reposo hasta resultados, filtros y detalle, con
+temas claro/oscuro, foco y overflow global e interno. Resultado final:
+**56/56**.
 
 ---
 

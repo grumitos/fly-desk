@@ -1,6 +1,6 @@
 # Current Repository State
 
-Snapshot date: 2026-07-29
+Snapshot date: 2026-07-30
 
 ## Summary
 
@@ -26,6 +26,8 @@ The repository does not version generated artifacts:
 - an idle provider rail that reads closed, sanitized status observations from the backend without treating an unknown provider as available and removes stale health claims after a failed refresh
 - filters for stops, maximum layover time, baggage, and airlines
 - paginated results with backend warnings
+- per-person price only for all-adult groups; mixed adult/child/infant searches
+  keep the provider total until a real passenger-type breakdown exists
 - side panel with price, known baggage/conditions, purchase paths, and exact-flight provider-revalidated quotation through the shared quotation core; verified prices are reusable for at most 15 minutes
 
 The React UI must not display simulated controls. The following remain outside the visible interface:
@@ -79,6 +81,9 @@ The React UI must not display simulated controls. The following remain outside t
 - Agil uses a persistent Chrome session and a subscription key from the environment or recovered from the Agil bundle; Linux/VPS defaults to the loopback CDP endpoint on port 9222, explicit browser endpoints win, and Windows keeps discovery explicit
 - Click and Book Plus uses environment-controlled context, a host allowlist, and optional B2B warm-up; B2B automation accepts only HTTPS on the exact `b2b.clickandbook.com` origin and rechecks same-origin navigation before entering credentials or OTP
 - Click and Book Plus does not accept hosts or base URLs per request
+- Click and Book Plus payload statuses 401/403/429/5xx propagate as partial
+  failures across exact, range, progressive, and matrix searches, leaving the
+  provider `degraded` rather than `ready`
 - silent provider prewarm is enabled by default and can be disabled with `FLY_DESK_PROVIDER_PREWARM=0`
 - provider searches must run in the dedicated runner when `FLY_DESK_SEARCH_SERVICE_URL` is configured; within the runner, `FLY_DESK_SEARCH_WORKER_PROCESSES=1` keeps providers in child processes
 - `FLY_DESK_SEARCH_WORKER_PROCESSES=0` remains a temporary QA exception, and external QA must be repeated before changing worker counts, the runner, or warm-up
@@ -99,11 +104,11 @@ The React UI must not display simulated controls. The following remain outside t
 - range/matrix deltas travel from worker to router without resending accumulated state; RAM, polling, and SQLite publish snapshots at geometric milestones coalesced for 900 ms, plus durable completion. Purchase paths persist independently to keep redirects visible between milestones
 - matrix HTTP and SQLite payloads retain only cells with an offer, price, or redirect and omit empty placeholders; cell updates use an O(1) index and aggregation across providers is O(P·N)
 - the frontend never turns a price-only matrix cell into a synthetic flight offer
-- the quotation endpoint also refuses price-only matrix cells, and HTTP/frontend transport normalizers require positive price, currency, and complete real itineraries instead of filling them from the request
+- the quotation endpoint also refuses price-only matrix cells, and HTTP/frontend transport normalizers require positive price, currency, and complete real itineraries (including outbound plus inbound for round-trip) instead of filling them from the request
 - matrices persist compact request/context data for redirects; older rows retain a compatible fallback to the complete payload
 - with `FLY_DESK_SEARCH_SERVICE_URL`, the web process does not open the session SQLite database for autocomplete or preferences; the lazy getter reserves that restoration for the runner, `/r`, quotation, provider status, or diagnostics that actually need it
 - cancellation from the UI, tab close, or orderly process shutdown changes the remote job to cancelled; `pagehide`/`beforeunload` and shutdown first force the last pending delta and request a partial cache
-- external links continue through `/r/<id>` as a local purchase-path cache; Agil redirects without an intermediate page, while Click and Book Plus validates or refreshes the query-string token before `302` without persisting or logging the resolved URL
+- external links continue through `/r/<id>` as a local purchase-path cache; Agil redirects without an intermediate page, while Click and Book Plus first verifies HTTPS, an allowed origin, and the exact search pathname, then validates or refreshes the query-string token before `302` without persisting or logging the resolved URL
 - in production, `/r/*` may be resolved by `fly-desk-redirect.service`, a separate Bun process that reads the same session SQLite database; browsers authenticate with a distinct HttpOnly cookie scoped to `/r`, while the main web cookie and bearer credentials stay outside the redirect service
 
 ## Functional Structure
@@ -177,7 +182,7 @@ Main commands:
 - `bun run test:ui`
 - `bun run test:coverage`
 
-Bun suites use `.unit.test.ts` and `.integration.test.ts` suffixes. The modular UI suite lives in `test/ui/` and is registered from `test/ui.playwright.ts`. Shared helpers are in `test/helpers/`. The UI suite reuses the server and Chromium but creates an isolated context for each case. See `docs/TESTING.md`.
+Bun suites use `.unit.test.ts` and `.integration.test.ts` suffixes. The modular UI suite lives in `test/ui/` and is registered from `test/ui.playwright.ts`. Shared helpers are in `test/helpers/`. The UI suite reuses the server and Chromium but creates an isolated context for each case. Its permanent responsive smoke exercises the active workspace at `1440x900`, `1024x768`, and `390x844`. See `docs/TESTING.md`.
 
 Current important coverage:
 
@@ -195,14 +200,15 @@ Current important coverage:
 - authenticated/no-store provider status with runner proxying, closed reason codes, prewarm/search precedence, and no provider diagnostic payloads
 - removed `/api/results-layout` returns 404 for GET and POST
 - search rail, stable ranking/notice geometry, filters, theme, autocomplete, provider links, and quotation
+- exact desktop/tablet/mobile smoke from idle through the active workspace, with no browser errors or global/internal horizontal overflow, visible keyboard focus, light/dark rendering, and reachable results, filters, and detail panels
 - shared standard/migratory quotation composition, freshness-bounded exact-flight provider revalidation through `/api/quotation`, preservation of offset-bearing times, and hiding of fully disabled monthly rows
 
 QA note: `test/helpers/server.ts` sets `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1` during HTTP tests to validate immediate contracts without leaving progressive jobs alive. The normal runtime does not define that variable.
 
-The redesign wiring gate on 2026-07-29 completed with 490/490 core tests. The
-legacy Playwright suite completed with 18/53 passing; its remaining 35 cases
-target the pre-redesign DOM and are tracked, without production compatibility
-aliases, in `docs/REDISENO_PENDIENTE_CABLEADO.md` §4.2.
+The redesign wiring gate on 2026-07-30 completed with 500/500 core tests and
+56/56 Playwright tests. The browser migration retained all 53 capability cases
+and added the three required responsive viewports without production
+compatibility aliases, skipped tests, or inflated timeouts.
 
 ## Current Documentation
 
@@ -229,10 +235,22 @@ Deployed revisions and the live service inventory are maintained in `D:\Dev\VPS\
 - persistence is local SQLite; there is no external store for multiple instances
 - session SQLite uses WAL, `synchronous=NORMAL`, and a five-second busy timeout, but a write that still fails is not independently retried until another mutation or close; add an explicit retry/observability policy before relying on stronger durability
 - `SEARCH_COMPLETED_SESSION_TTL_MS=0` expires on the first positive-age maintenance pass, not synchronously as `no-store`; avoid zero until that semantic is deliberately closed
+- provider search failures expose the truthful closed state
+  `degraded/partial_results`; distinguishing authentication, throttling, and
+  upstream availability in the public rail would require a typed cause across
+  every provider/worker transport and remains a separate contract decision
 - persistent Chrome CDP is covered by `fly-desk-chrome.service`; Agil still needs a valid real session in that VPS profile
 - all three Fly application units currently share `/etc/fly-desk.env` and the `fly-desk` identity; separating least privilege would be a platform change and is not justified by this product-only cableado
 - disk-only legacy session rows outside the restore budget may retain historical raw provider URLs until they are restored or expire; current writes and restored paths are sanitized, so a bulk migration was not added without an operational requirement
 - the main router and dedicated redirect service retain parallel `/r/<id>` orchestration around a shared resolver; consolidating them would cross authentication and process boundaries, so it remains an explicit refactor rather than a speculative layer
 - Click and Book Plus fixtures do not expose seat quantity, and neither provider contract proves arbitrary per-leg repricing; the UI must continue omitting those claims
+- Click and Book Plus fixtures do not prove that a Cartesian product of journey
+  options is sellable, nor whether native recommendation IDs may contain `:`;
+  keep publishing only native quoted combinations until authorized evidence
+  closes those assumptions
+- there is not enough provider evidence to classify Agil
+  `rawRefs.webSessionId` as a reusable secret; it remains inside the existing
+  backend boundary and must not be exposed to the UI
+- the mobile workspace is functional and covered at `390x844`, but still uses the previous Results / Filters / Offer tabs; the dedicated 1c–1f mobile plates remain a separate design implementation
 - repeat external QA before changing `FLY_DESK_SEARCH_WORKER_PROCESSES` or provider warm-up on the VPS
 - migratory search queries every day in every selected month against Agil and Click and Book Plus without fare filters; it processes months in configurable batches through `FLY_DESK_MIGRATION_CONCURRENT_MONTHS` (default `2`), which must be monitored if usage volume increases
