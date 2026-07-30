@@ -2,12 +2,18 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   addDaysIso,
+  getPublicRuntimeConfig,
   getSearchDatePolicy,
   isIsoDateString,
   resolveMigrationConcurrentMonths,
   resolveSearchTodayIso,
   validateSearchDateInPolicy,
 } from "../src/search-date-policy";
+import {
+  MAX_FLEXIBLE_STAY_NIGHTS,
+  MAX_LAP_INFANTS_PER_ADULT,
+  MAX_SEARCH_PASSENGERS,
+} from "../src/core/search-limits";
 
 function withEnv<T>(values: Record<string, string | undefined>, run: () => T): T {
   const previous = new Map(Object.keys(values).map((key) => [key, process.env[key]]));
@@ -86,6 +92,26 @@ test("migration monthly concurrency defaults to two and stays bounded", () => {
   assert.equal(
     withEnv({ FLY_DESK_MIGRATION_CONCURRENT_MONTHS: "99" }, resolveMigrationConcurrentMonths),
     12,
+  );
+});
+
+test("public runtime config exposes the canonical search limits", () => {
+  const runtime = getPublicRuntimeConfig(new Date("2026-03-31T12:00:00.000Z"));
+
+  assert.equal(runtime.maxStayNights, MAX_FLEXIBLE_STAY_NIGHTS);
+  assert.equal(runtime.maxPassengers, MAX_SEARCH_PASSENGERS);
+  assert.equal(runtime.maxLapInfantsPerAdult, MAX_LAP_INFANTS_PER_ADULT);
+  assert.deepEqual(
+    {
+      maxStayNights: runtime.maxStayNights,
+      maxPassengers: runtime.maxPassengers,
+      maxLapInfantsPerAdult: runtime.maxLapInfantsPerAdult,
+    },
+    {
+      maxStayNights: 90,
+      maxPassengers: 9,
+      maxLapInfantsPerAdult: 1,
+    },
   );
 });
 

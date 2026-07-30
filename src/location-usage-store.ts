@@ -4,6 +4,8 @@ import { Database } from "bun:sqlite";
 
 const LOCATION_USAGE_CARD_LIMIT = 3;
 const LOCATION_USAGE_SQLITE_BUSY_TIMEOUT_MS = 5_000;
+export const LOCATION_USAGE_RECENT_TTL_MS = 24 * 60 * 60 * 1000;
+export const LOCATION_USAGE_RECENT_MAX_ENTRIES = 2_048;
 
 const CREATE_LOCATION_USAGE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS location_usage (
@@ -20,18 +22,49 @@ const CREATE_LOCATION_USAGE_RANK_INDEX_SQL = `
     ON location_usage (role, total_uses DESC, last_used_at_ms DESC, code ASC);
 `;
 
+const CREATE_LOCATION_RECENT_USAGE_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS location_recent_usage (
+    session_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    code TEXT NOT NULL,
+    last_used_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (session_id, role, code)
+  );
+`;
+
+const CREATE_LOCATION_RECENT_USAGE_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_location_recent_usage_session_role_rank
+    ON location_recent_usage (session_id, role, last_used_at_ms DESC, code ASC);
+  CREATE INDEX IF NOT EXISTS idx_location_recent_usage_expiry
+    ON location_recent_usage (last_used_at_ms ASC);
+`;
+
 export type LocationUsageRole = "origin" | "destination";
 
 export type LocationUsageSuggestions = Record<LocationUsageRole, string[]>;
 
+export interface LocationUsageSuggestionGroups {
+  frequent: LocationUsageSuggestions;
+  recent: LocationUsageSuggestions;
+}
+
 export interface LocationUsageStoreOptions {
   dbPath?: string;
+  recentTtlMs?: number;
+  recentMaxEntries?: number;
 }
 
 interface LocationUsageEntry {
   role: LocationUsageRole;
   code: string;
   totalUses: number;
+  lastUsedAtMs: number;
+}
+
+interface LocationRecentUsageEntry {
+  sessionId: string;
+  role: LocationUsageRole;
+  code: string;
   lastUsedAtMs: number;
 }
 
@@ -49,6 +82,10 @@ interface SqliteTableInfoRow {
 
 function entryKey(role: LocationUsageRole, code: string): string {
   return `${role}:${code}`;
+}
+
+function recentEntryKey(sessionId: string, role: LocationUsageRole, code: string): string {
+  return `${sessionId}:${role}:${code}`;
 }
 
 function runSql(db: Database, sql: string, ...params: any[]): void {
@@ -89,10 +126,23 @@ function normalizeLimit(limit: number | undefined): number {
   ));
 }
 
+function normalizePositiveInteger(value: number | undefined, fallback: number): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? Math.max(1, Math.trunc(numeric)) : fallback;
+}
+
 function normalizeLocationUsageCode(value: unknown): string | undefined {
   const normalized = String(value ?? "").trim().toUpperCase();
   const match = normalized.match(/^[A-Z]{3}/);
   return match?.[0];
+}
+
+export function normalizeLocationUsageSessionId(value: unknown): string | undefined {
+  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{15,95}$/.test(value)) {
+    return undefined;
+  }
+
+  return value;
 }
 
 function rankMemoryEntries(
@@ -115,14 +165,35 @@ function rankMemoryEntries(
     .map((entry) => entry.code);
 }
 
+function rankMemoryRecentEntries(
+  entries: Iterable<LocationRecentUsageEntry>,
+  sessionId: string,
+  role: LocationUsageRole,
+  limit: number,
+): string[] {
+  return [...entries]
+    .filter((entry) => entry.sessionId === sessionId && entry.role === role)
+    .sort((left, right) => {
+      const touchedDelta = right.lastUsedAtMs - left.lastUsedAtMs;
+      return touchedDelta || left.code.localeCompare(right.code);
+    })
+    .slice(0, limit)
+    .map((entry) => entry.code);
+}
+
 export class LocationUsageStore {
   private readonly entries = new Map<string, LocationUsageEntry>();
+  private readonly recentEntries = new Map<string, LocationRecentUsageEntry>();
   private readonly dbPath: string | undefined;
   private readonly db: Database | undefined;
+  private readonly recentTtlMs: number;
+  private readonly recentMaxEntries: number;
   private closed = false;
 
   constructor(options?: LocationUsageStoreOptions) {
     this.dbPath = options?.dbPath?.trim() || undefined;
+    this.recentTtlMs = normalizePositiveInteger(options?.recentTtlMs, LOCATION_USAGE_RECENT_TTL_MS);
+    this.recentMaxEntries = normalizePositiveInteger(options?.recentMaxEntries, LOCATION_USAGE_RECENT_MAX_ENTRIES);
 
     if (this.dbPath) {
       mkdirSync(dirname(this.dbPath), { recursive: true });
@@ -135,8 +206,10 @@ export class LocationUsageStore {
     request: { origin?: unknown; destination?: unknown },
     nowMs = Date.now(),
     limit = LOCATION_USAGE_CARD_LIMIT,
+    clientSessionId?: unknown,
   ): LocationUsageSuggestions {
     const resolvedNowMs = resolveNowMs(nowMs);
+    const sessionId = normalizeLocationUsageSessionId(clientSessionId);
     const locations = ([
       ["origin", normalizeLocationUsageCode(request.origin)],
       ["destination", normalizeLocationUsageCode(request.destination)],
@@ -144,10 +217,19 @@ export class LocationUsageStore {
 
     if (this.db) {
       this.recordPersistedLocations(locations, resolvedNowMs);
+      if (sessionId) {
+        this.recordPersistedRecentLocations(sessionId, locations, resolvedNowMs);
+      } else {
+        this.prunePersistedRecentEntries(resolvedNowMs);
+      }
     } else {
       for (const [role, code] of locations) {
         this.recordMemoryLocation(role, code, resolvedNowMs);
+        if (sessionId) {
+          this.recordMemoryRecentLocation(sessionId, role, code, resolvedNowMs);
+        }
       }
+      this.pruneMemoryRecentEntries(resolvedNowMs);
     }
 
     return this.getSuggestions(limit, resolvedNowMs);
@@ -173,6 +255,43 @@ export class LocationUsageStore {
     return readRanking();
   }
 
+  getUsageSuggestions(
+    clientSessionId?: unknown,
+    limit = LOCATION_USAGE_CARD_LIMIT,
+    nowMs = Date.now(),
+  ): LocationUsageSuggestionGroups {
+    const resolvedLimit = normalizeLimit(limit);
+    const resolvedNowMs = resolveNowMs(nowMs);
+    const sessionId = normalizeLocationUsageSessionId(clientSessionId);
+    const frequent = this.getSuggestions(resolvedLimit, resolvedNowMs);
+    if (!sessionId) {
+      if (this.db) {
+        this.prunePersistedRecentEntries(resolvedNowMs);
+      } else {
+        this.pruneMemoryRecentEntries(resolvedNowMs);
+      }
+      return { frequent, recent: { origin: [], destination: [] } };
+    }
+
+    if (!this.db) {
+      this.pruneMemoryRecentEntries(resolvedNowMs);
+      return {
+        frequent,
+        recent: {
+          origin: rankMemoryRecentEntries(this.recentEntries.values(), sessionId, "origin", resolvedLimit),
+          destination: rankMemoryRecentEntries(this.recentEntries.values(), sessionId, "destination", resolvedLimit),
+        },
+      };
+    }
+
+    this.prunePersistedRecentEntries(resolvedNowMs);
+    const readRecent = this.db.transaction(() => ({
+      origin: this.readPersistedRecentRoleRanking(sessionId, "origin", resolvedLimit),
+      destination: this.readPersistedRecentRoleRanking(sessionId, "destination", resolvedLimit),
+    }));
+    return { frequent, recent: readRecent() };
+  }
+
   getDiagnostics() {
     const entries = this.db
       ? Number(getSql<LocationUsageCountRow>(
@@ -180,19 +299,30 @@ export class LocationUsageStore {
         "SELECT COUNT(*) AS entries FROM location_usage",
       )?.entries ?? 0)
       : this.entries.size;
+    const recentEntries = this.db
+      ? Number(getSql<LocationUsageCountRow>(
+        this.db,
+        "SELECT COUNT(*) AS entries FROM location_recent_usage",
+      )?.entries ?? 0)
+      : this.recentEntries.size;
 
     return {
       entries,
+      recentEntries,
       persistence: this.dbPath ? "sqlite" : "memory",
       ranking: "all-time-total-uses",
       cardLimit: LOCATION_USAGE_CARD_LIMIT,
+      recentTtlMs: this.recentTtlMs,
+      recentMaxEntries: this.recentMaxEntries,
     };
   }
 
   clearForTests(): void {
     this.entries.clear();
+    this.recentEntries.clear();
     if (this.db) {
       runSql(this.db, "DELETE FROM location_usage");
+      runSql(this.db, "DELETE FROM location_recent_usage");
     }
   }
 
@@ -218,9 +348,11 @@ export class LocationUsageStore {
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = NORMAL;
       ${CREATE_LOCATION_USAGE_TABLE_SQL}
+      ${CREATE_LOCATION_RECENT_USAGE_TABLE_SQL}
     `);
     this.removeLegacyRecentUsageColumn();
     this.db.exec(CREATE_LOCATION_USAGE_RANK_INDEX_SQL);
+    this.db.exec(CREATE_LOCATION_RECENT_USAGE_INDEXES_SQL);
   }
 
   private removeLegacyRecentUsageColumn(): void {
@@ -288,6 +420,139 @@ export class LocationUsageStore {
     });
   }
 
+  private recordPersistedRecentLocations(
+    sessionId: string,
+    locations: ReadonlyArray<readonly [LocationUsageRole, string]>,
+    nowMs: number,
+  ): void {
+    if (!this.db || locations.length === 0) {
+      return;
+    }
+
+    const upsert = this.db.prepare(`
+      INSERT INTO location_recent_usage (session_id, role, code, last_used_at_ms)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(session_id, role, code) DO UPDATE SET
+        last_used_at_ms = MAX(location_recent_usage.last_used_at_ms, excluded.last_used_at_ms)
+    `);
+    const trimSessionRole = this.db.prepare(`
+      DELETE FROM location_recent_usage
+      WHERE session_id = ?
+        AND role = ?
+        AND rowid NOT IN (
+          SELECT rowid
+          FROM location_recent_usage
+          WHERE session_id = ? AND role = ?
+          ORDER BY last_used_at_ms DESC, code ASC
+          LIMIT ?
+        )
+    `);
+
+    try {
+      const record = this.db.transaction(() => {
+        this.deleteExpiredPersistedRecentEntries(nowMs);
+        for (const [role, code] of locations) {
+          upsert.run(sessionId, role, code, nowMs);
+          trimSessionRole.run(sessionId, role, sessionId, role, LOCATION_USAGE_CARD_LIMIT);
+        }
+        this.trimPersistedRecentEntriesGlobally();
+      });
+      record();
+    } finally {
+      upsert.finalize();
+      trimSessionRole.finalize();
+    }
+  }
+
+  private recordMemoryRecentLocation(
+    sessionId: string,
+    role: LocationUsageRole,
+    code: string,
+    nowMs: number,
+  ): void {
+    this.recentEntries.set(recentEntryKey(sessionId, role, code), {
+      sessionId,
+      role,
+      code,
+      lastUsedAtMs: Math.max(
+        this.recentEntries.get(recentEntryKey(sessionId, role, code))?.lastUsedAtMs ?? 0,
+        nowMs,
+      ),
+    });
+
+    const ranked = [...this.recentEntries.values()]
+      .filter((entry) => entry.sessionId === sessionId && entry.role === role)
+      .sort((left, right) => (
+        right.lastUsedAtMs - left.lastUsedAtMs || left.code.localeCompare(right.code)
+      ));
+    for (const entry of ranked.slice(LOCATION_USAGE_CARD_LIMIT)) {
+      this.recentEntries.delete(recentEntryKey(entry.sessionId, entry.role, entry.code));
+    }
+  }
+
+  private pruneMemoryRecentEntries(nowMs: number): void {
+    const expiresBeforeMs = nowMs - this.recentTtlMs;
+    for (const [key, entry] of this.recentEntries) {
+      if (entry.lastUsedAtMs < expiresBeforeMs) {
+        this.recentEntries.delete(key);
+      }
+    }
+
+    const ranked = [...this.recentEntries.values()].sort((left, right) => (
+      right.lastUsedAtMs - left.lastUsedAtMs
+      || left.sessionId.localeCompare(right.sessionId)
+      || left.role.localeCompare(right.role)
+      || left.code.localeCompare(right.code)
+    ));
+    for (const entry of ranked.slice(this.recentMaxEntries)) {
+      this.recentEntries.delete(recentEntryKey(entry.sessionId, entry.role, entry.code));
+    }
+  }
+
+  private prunePersistedRecentEntries(nowMs: number): void {
+    if (!this.db) {
+      return;
+    }
+
+    const prune = this.db.transaction(() => {
+      this.deleteExpiredPersistedRecentEntries(nowMs);
+      this.trimPersistedRecentEntriesGlobally();
+    });
+    prune();
+  }
+
+  private deleteExpiredPersistedRecentEntries(nowMs: number): void {
+    if (!this.db) {
+      return;
+    }
+
+    runSql(
+      this.db,
+      "DELETE FROM location_recent_usage WHERE last_used_at_ms < ?",
+      nowMs - this.recentTtlMs,
+    );
+  }
+
+  private trimPersistedRecentEntriesGlobally(): void {
+    if (!this.db) {
+      return;
+    }
+
+    runSql(
+      this.db,
+      `
+        DELETE FROM location_recent_usage
+        WHERE rowid IN (
+          SELECT rowid
+          FROM location_recent_usage
+          ORDER BY last_used_at_ms DESC, session_id ASC, role ASC, code ASC
+          LIMIT -1 OFFSET ?
+        )
+      `,
+      this.recentMaxEntries,
+    );
+  }
+
   private readPersistedRoleRanking(role: LocationUsageRole, limit: number): string[] {
     if (!this.db) {
       return [];
@@ -302,6 +567,30 @@ export class LocationUsageStore {
         ORDER BY total_uses DESC, last_used_at_ms DESC, code ASC
         LIMIT ?
       `,
+      role,
+      limit,
+    ).map((row) => row.code);
+  }
+
+  private readPersistedRecentRoleRanking(
+    sessionId: string,
+    role: LocationUsageRole,
+    limit: number,
+  ): string[] {
+    if (!this.db) {
+      return [];
+    }
+
+    return allSql<LocationUsageRow>(
+      this.db,
+      `
+        SELECT code
+        FROM location_recent_usage
+        WHERE session_id = ? AND role = ?
+        ORDER BY last_used_at_ms DESC, code ASC
+        LIMIT ?
+      `,
+      sessionId,
       role,
       limit,
     ).map((row) => row.code);

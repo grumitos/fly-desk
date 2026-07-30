@@ -7,27 +7,6 @@ export function bestPurchasePath(offer: CanonicalOffer): OfferPurchasePath | und
   return [...paths].sort((left, right) => purchasePathRank(right) - purchasePathRank(left))[0]
 }
 
-export function bestPurchasePathsByProvider(offer: CanonicalOffer): OfferPurchasePath[] {
-  const bestByProvider = new Map<string, OfferPurchasePath>()
-  for (const path of offer.purchasePaths ?? []) {
-    const current = bestByProvider.get(path.provider)
-    if (!current || purchasePathRank(path) > purchasePathRank(current)) {
-      bestByProvider.set(path.provider, path)
-    }
-  }
-
-  return [...bestByProvider.values()].sort((left, right) => {
-    const providerDiff = providerRank(left.provider) - providerRank(right.provider)
-    return providerDiff !== 0 ? providerDiff : purchasePathRank(right) - purchasePathRank(left)
-  })
-}
-
-function providerRank(provider: string) {
-  if (/agil/i.test(provider)) return 0
-  if (/costamar/i.test(provider)) return 1
-  return 2
-}
-
 function purchasePathRank(path: OfferPurchasePath) {
   const precisionScore: Record<string, number> = {
     "exact-offer": 40,

@@ -2,6 +2,9 @@ import type { CanonicalOffer, Itinerary, QuotationUsdToPenRateInfo, SearchReques
 import { cityNameForIataCode, countryCodeForIataCode, normalizeIataCode, stripAllAirportsLabel } from "./location-display";
 import { resolveAirlineDisplayName } from "./airline-names";
 
+export const QUOTATION_FARE_STALE_MINUTES = 15;
+export const QUOTATION_FARE_FRESHNESS_MS = QUOTATION_FARE_STALE_MINUTES * 60_000;
+
 export interface QuotationRenderOptions {
   timeZone?: string;
   usdToPenRate?: number;

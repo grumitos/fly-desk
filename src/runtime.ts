@@ -7,11 +7,13 @@ import { LocationUsageStore } from "./location-usage-store";
 import { resolvePersistPath } from "./runtime-paths";
 import { SearchAdmissionController } from "./search-admission";
 import { SearchSessionStore } from "./session-store";
+import { createProviderStatusTracker, type ProviderStatusTracker } from "./provider-status";
 
 export interface RuntimeServices {
   orchestrator: SearchOrchestrator;
   locationSuggestions: LocationSuggestionCacheStore;
   locationUsage: LocationUsageStore;
+  providerStatus: ProviderStatusTracker;
   searchAdmission: SearchAdmissionController;
   sessions: SearchSessionStore;
 }
@@ -54,6 +56,7 @@ export function getRuntime(): RuntimeServices {
         "location-usage.sqlite",
       ),
     }),
+    providerStatus: createProviderStatusTracker(),
     searchAdmission: new SearchAdmissionController(),
     get sessions() {
       sessionStore ??= new SearchSessionStore({

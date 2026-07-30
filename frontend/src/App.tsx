@@ -1,19 +1,18 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { DetailPanel } from "@/components/DetailPanel"
-import { ResultsPanel } from "@/components/ResultsPanel"
+import { ProviderRail } from "@/components/ProviderRail"
+import { ResultsPanel, type ActiveFilterChip } from "@/components/ResultsPanel"
 import { SearchShell } from "@/components/SearchShell"
 import { TopBar } from "@/components/TopBar"
 import { AppIcon } from "@/components/ui/app-icon"
-import { Alert } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { FilterSlider, type FilterSliderStep } from "@/components/ui/filter-slider"
-import { PanelSection, PanelSectionStack } from "@/components/ui/panel-section"
+import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-control"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useSearch } from "@/hooks/useSearch"
 import { resolveAirlineDisplayName } from "@/lib/airline-names"
+import { airlineLogoAssetPath } from "../../src/core/airline-assets"
 import {
   readSharedSearchFromText,
   readSharedSearchFromUrl,
@@ -21,7 +20,6 @@ import {
   writeSharedSearchToUrl,
   type SharedSearchState,
 } from "@/lib/search-share"
-import { resultsLayoutEditorEnabledFromUrl } from "@/lib/results-layout-editor"
 import type { CanonicalOffer, SearchJobResponse, SearchRequest, Segment, SortMode } from "@/types"
 
 type Filters = {
@@ -35,31 +33,43 @@ type Filters = {
 type AirlineFilterOption = {
   id: string
   label: string
+  code: string
+  logo: string
   codes: string[]
   count: number
 }
 
-type StopFilterValue = "direct" | "1" | "2+" | "any"
-type LayoverFilterValue = "120" | "240" | "360" | "any"
+type StopFilterValue = "any" | "direct" | "1" | "2+"
+type LayoverFilterValue = "any" | "120" | "240" | "360"
 type BaggageFilterValue = "any" | "carry" | "checked"
 
 const DEFAULT_SORT_MODE: SortMode = "cheapest"
-const STOP_FILTER_STEPS: FilterSliderStep<StopFilterValue>[] = [
-  { value: "direct", label: "Directo", valueLabel: "Directo" },
-  { value: "1", label: "1", valueLabel: "1 escala" },
-  { value: "2+", label: "2+", valueLabel: "2+ escalas" },
-  { value: "any", label: "Todos", valueLabel: "Cualquiera" },
+
+/*
+ * Plate 1b closes the filter panel: three of the four groups are the same
+ * segmented control with no separator between them, and the separator appears
+ * only before Aerolíneas because that is a different kind of filter — a list of
+ * things you include, not a constraint you tighten.
+ *
+ * The sliders these replaced implied a continuum. "Directo · 1 · 2+" is not a
+ * continuum; it is four choices, and a segmented control says so.
+ */
+const STOP_SEGMENTS: Array<{ value: StopFilterValue; label: string; chip?: string }> = [
+  { value: "any", label: "Todos" },
+  { value: "direct", label: "Directo", chip: "Directo" },
+  { value: "1", label: "1", chip: "Hasta 1 escala" },
+  { value: "2+", label: "2+", chip: "2+ escalas" },
 ]
-const LAYOVER_FILTER_STEPS: FilterSliderStep<LayoverFilterValue>[] = [
-  { value: "120", label: "2h", valueLabel: "Hasta 2 h" },
-  { value: "240", label: "4h", valueLabel: "Hasta 4 h" },
-  { value: "360", label: "6h", valueLabel: "Hasta 6 h" },
-  { value: "any", label: "8+", valueLabel: "8+ h" },
+const LAYOVER_SEGMENTS: Array<{ value: LayoverFilterValue; label: string; chip?: string }> = [
+  { value: "any", label: "Todos" },
+  { value: "120", label: "≤2h", chip: "Escala ≤ 2 h" },
+  { value: "240", label: "≤4h", chip: "Escala ≤ 4 h" },
+  { value: "360", label: "≤6h", chip: "Escala ≤ 6 h" },
 ]
-const BAGGAGE_FILTER_STEPS: FilterSliderStep<BaggageFilterValue>[] = [
-  { value: "any", label: "Todos", valueLabel: "Cualquiera" },
-  { value: "carry", label: "Mano", valueLabel: "De mano" },
-  { value: "checked", label: "Bodega", valueLabel: "Bodega" },
+const BAGGAGE_SEGMENTS: Array<{ value: BaggageFilterValue; label: string; icon?: "backpack" | "luggage"; chip?: string }> = [
+  { value: "any", label: "Todos" },
+  { value: "carry", label: "Mano", icon: "backpack", chip: "Mano incluida" },
+  { value: "checked", label: "Bodega", icon: "luggage", chip: "Bodega incluida" },
 ]
 
 export default function App() {
@@ -75,8 +85,10 @@ export default function App() {
   const [mobilePanel, setMobilePanel] = useState<"results" | "filters" | "detail">("results")
   const [plainLogView, setPlainLogView] = useState(false)
   const [clipboardError, setClipboardError] = useState<string | null>(null)
+  /* The notice is dismissible and does not come back within the same search, so
+     what we remember is the exact text that was dismissed. */
+  const [dismissedNotice, setDismissedNotice] = useState<string | null>(null)
   const [searchDraft, setSearchDraft] = useState<SearchRequest | null>(initialSharedRequest)
-  const [resultsLayoutEditorActive] = useState(() => resultsLayoutEditorEnabledFromUrl())
   const filtersRef = useRef(filters)
   const selectedAirlinesRef = useRef(selectedAirlines)
   const sortModeRef = useRef(sortMode)
@@ -119,16 +131,22 @@ export default function App() {
       const label = airlineFilterLabel(offer)
       const codes = airlineFilterCodes(offer)
       const id = label.toLocaleUpperCase("es-PE")
-      const current = options.get(id) ?? { id, label, codes: [], count: 0 }
+      const code = airlineFilterCode(offer)
+      const current = options.get(id) ?? { id, label, code, logo: "", codes: [], count: 0 }
       const mergedCodes = new Set([...current.codes, ...codes])
+      const resolvedCode = current.code || code
       options.set(id, {
         ...current,
+        code: resolvedCode,
+        // The 18px logo in the row is the fastest way to find an airline in a
+        // list of seven; the name is the confirmation, not the target.
+        logo: resolvedCode ? airlineLogoAssetPath(resolvedCode) : "",
         codes: Array.from(mergedCodes),
         count: current.count + 1,
       })
     })
     return Array.from(options.values())
-      .sort((a, b) => a.label.localeCompare(b.label))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
   }, [candidateOffers])
 
   const filteredCandidateOffers = useMemo(
@@ -305,16 +323,33 @@ export default function App() {
     }
   }, [filters, lastRequest, selectedAirlines, sortMode])
 
-  const hasFilters =
-    Boolean(filters.nonStop) ||
-    Boolean(filters.maxStopsFilter) ||
-    Boolean(filters.maxLayoverMinutes) ||
-    Boolean(filters.carryOnRequired) ||
-    Boolean(filters.checkedBaggageRequired) ||
-    selectedAirlines.length > 0
-  const shouldShowWorkspace = workspaceReady || Boolean(results) || loading || resultsLayoutEditorActive
+  const activeFilterChips = useMemo(
+    () => buildActiveFilterChips(filters, selectedAirlines, allAirlines),
+    [allAirlines, filters, selectedAirlines],
+  )
+  const hiddenByFiltersCount = Math.max(0, candidateOffers.length - filteredCandidateOffers.length)
+  const shouldShowWorkspace = workspaceReady || Boolean(results) || loading
   const isSearchIdle = !shouldShowWorkspace
   const loadingLabel = "Buscando"
+
+  const handleRemoveFilterChip = useCallback((id: string) => {
+    if (id === "stops") {
+      handleFilterChange({ nonStop: undefined, maxStopsFilter: undefined })
+      return
+    }
+    if (id === "layover") {
+      handleFilterChange({ maxLayoverMinutes: undefined })
+      return
+    }
+    if (id === "baggage") {
+      handleFilterChange({ carryOnRequired: undefined, checkedBaggageRequired: undefined })
+      return
+    }
+
+    const airlineId = id.startsWith("airline:") ? id.slice("airline:".length) : null
+    const airline = airlineId ? allAirlines.find((option) => option.id === airlineId) : undefined
+    if (airline) toggleAirline(airline)
+  }, [allAirlines, handleFilterChange, toggleAirline])
 
   useLayoutEffect(() => {
     const frame = searchFrameRef.current
@@ -350,6 +385,10 @@ export default function App() {
     )
   }, [isSearchIdle])
 
+  /* One fact — "does the desk know a search configuration?" — behind both
+     capsule cells: Copy is disabled by it, Paste is only dimmed by it. */
+  const hasSearchConfig = Boolean(searchDraft || lastRequest || initialSharedRequest)
+
   const mobileTabs = [
     { id: "results" as const, label: "Resultados", icon: <AppIcon name="list" /> },
     { id: "filters" as const, label: "Filtros", icon: <AppIcon name="filters" /> },
@@ -359,7 +398,8 @@ export default function App() {
   return (
     <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-background text-foreground">
       <TopBar
-        copySearchDisabled={!searchDraft && !lastRequest && !initialSharedRequest}
+        copySearchDisabled={!hasSearchConfig}
+        pasteSearchDimmed={!hasSearchConfig}
         onCopySearchConfig={handleCopySearchConfig}
         onPasteSearchConfig={handlePasteSearchConfig}
       />
@@ -372,6 +412,11 @@ export default function App() {
             isSearchIdle ? "fd-search-stage-idle" : "fd-search-stage-active"
           }`}
         >
+          {/* Plate 1a spaces the idle screen with two unequal spacers — 1 above
+              the form, 1.3 below — which is what leaves the form slightly above
+              centre and the rail on the bottom edge. */}
+          {isSearchIdle && <div className="fd-search-stage-spacer-top" aria-hidden="true" />}
+
           <div
             ref={searchFrameRef}
             data-testid="search-shell-frame"
@@ -388,23 +433,19 @@ export default function App() {
               onSearchConfigDraftChange={setSearchDraft}
             />
 
-            {(clipboardError || error || statusMessage) && (
-              <Alert
-                className={`fd-popover-enter fd-alert fd-search-alert mt-2 flex items-start gap-2 font-medium ${
-                  clipboardError || error ? "fd-alert-error" : "fd-alert-warning"
-                }`}
-              >
-                <AppIcon name="alert" className="mt-0.5" />
-                <div className="min-w-0 space-y-1">
-                  {formatAlertLines(clipboardError || error || statusMessage || "").map((line, index) => (
-                    <p key={`${line}-${index}`} className={index === 0 ? "font-bold" : "text-xs leading-5"}>
-                      {line}
-                    </p>
-                  ))}
-                </div>
-              </Alert>
-            )}
+            <SearchNotice
+              message={clipboardError || error || statusMessage || ""}
+              tone={clipboardError || error ? "error" : "warning"}
+              onDismiss={() => {
+                setClipboardError(null)
+                setDismissedNotice(clipboardError || error || statusMessage || "")
+              }}
+              dismissed={dismissedNotice}
+            />
           </div>
+
+          {isSearchIdle && <div className="fd-search-stage-spacer-bottom" aria-hidden="true" />}
+          {isSearchIdle && <ProviderRail />}
 
           {shouldShowWorkspace && (
             <Tabs
@@ -427,7 +468,7 @@ export default function App() {
               <div className="fd-workspace-enter grid min-h-0 flex-1 grid-cols-1 gap-2.5 overflow-hidden xl:grid-cols-[232px_minmax(0,1fr)_324px]">
                 <div className={`${mobilePanel === "filters" ? "block" : "hidden"} min-h-0 xl:block`}>
                   <FiltersPanel
-                    hasFilters={hasFilters}
+                    activeFilterCount={activeFilterChips.length}
                     filters={filters}
                     allAirlines={allAirlines}
                     selectedAirlines={selectedAirlines}
@@ -446,6 +487,10 @@ export default function App() {
                     onSort={handleSort}
                     onSelectOffer={handleSelectOffer}
                     selectedOfferId={visibleSelectedOffer?.id}
+                    activeFilterChips={activeFilterChips}
+                    hiddenByFiltersCount={hiddenByFiltersCount}
+                    onRemoveFilter={handleRemoveFilterChip}
+                    onClearFilters={handleClearFilters}
                   />
                 </div>
 
@@ -462,6 +507,57 @@ export default function App() {
           )}
         </main>
       )}
+    </div>
+  )
+}
+
+/**
+ * Plate 1b — one notice, one line.
+ *
+ * This replaced a chain of technical warnings that stacked up and pushed the
+ * results down. It appears only when the search actually failed, states the
+ * reason, and can be dismissed; once dismissed it does not return within the
+ * same search, because an agent who has read it does not need it again.
+ */
+function SearchNotice({
+  message,
+  tone,
+  dismissed,
+  onDismiss,
+}: {
+  message: string
+  tone: "warning" | "error"
+  dismissed: string | null
+  onDismiss: () => void
+}) {
+  if (!message || message === dismissed) return null
+
+  const [headline, ...rest] = formatAlertLines(message)
+  const detail = rest.join(" · ")
+
+  return (
+    <div
+      className={`fd-alert-line fd-motion-emergente mt-2 ${tone === "error" ? "fd-alert-line-error" : ""}`}
+      role="status"
+    >
+      <AppIcon name="alert" />
+      <span className="fd-alert-line-text" title={message}>
+        <span className="font-bold">{headline}</span>
+        {detail && (
+          <>
+            <span className="mx-[7px] opacity-50">·</span>
+            <span>{detail}</span>
+          </>
+        )}
+      </span>
+      <button
+        type="button"
+        className="fd-alert-line-dismiss fd-focus-ring"
+        aria-label="Descartar el aviso"
+        onClick={onDismiss}
+      >
+        <AppIcon name="x" size={14} />
+      </button>
     </div>
   )
 }
@@ -485,7 +581,7 @@ function PlainLogView({ lines }: { lines: string[] }) {
 }
 
 const FiltersPanel = memo(function FiltersPanel({
-  hasFilters,
+  activeFilterCount,
   filters,
   allAirlines,
   selectedAirlines,
@@ -493,7 +589,7 @@ const FiltersPanel = memo(function FiltersPanel({
   onFilterChange,
   onToggleAirline,
 }: {
-  hasFilters: boolean
+  activeFilterCount: number
   filters: Filters
   allAirlines: AirlineFilterOption[]
   selectedAirlines: string[]
@@ -501,107 +597,190 @@ const FiltersPanel = memo(function FiltersPanel({
   onFilterChange: (next: Partial<Filters>) => void
   onToggleAirline: (airline: AirlineFilterOption) => void
 }) {
+  const stopValue = stopFilterValue(filters)
+  const layoverValue = layoverFilterValue(filters)
+  const baggageValue = baggageFilterValue(filters)
+
   return (
     <aside className="fd-panel flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="fd-panel-header flex min-w-0 items-center justify-between gap-2">
-        <div className="min-w-0">
+      <div className="fd-panel-header flex min-w-0 items-center justify-between gap-2 !px-3 !py-2.5">
+        <div className="flex min-w-0 items-center gap-2">
           <h2 className="fd-panel-title">Filtros</h2>
-          <p className="fd-panel-subtitle">Ajusta resultados</p>
+          {activeFilterCount > 0 && (
+            <span className="fd-status-pill fd-status-pill-count">{activeFilterCount}</span>
+          )}
         </div>
-        {hasFilters && (
+        {activeFilterCount > 0 && (
           <Button
             type="button"
             variant="ghost"
-            size="sm"
+            size="chip"
             onClick={onClear}
-            className="h-7 shrink-0 px-2 text-xs text-primary"
+            className="shrink-0 !px-2 text-xs font-bold text-primary"
             aria-label="Limpiar filtros"
-            title="Limpiar filtros"
           >
-            <AppIcon name="x" />
+            <AppIcon name="x" size={14} />
             Limpiar
           </Button>
         )}
       </div>
 
-      <PanelSectionStack className="fd-scrollbar min-h-0 flex-1 overflow-auto p-2.5">
-        <PanelSection title="Escalas" contentClassName="space-y-1.5">
-          <StopsFilterControl
-            filters={filters}
-            onFilterChange={onFilterChange}
-          />
-          <FilterSlider
-            label="Tiempo máximo"
-            ariaLabel="Escala máxima"
-            value={layoverFilterValue(filters)}
-            steps={LAYOVER_FILTER_STEPS}
-            onChange={(value) => onFilterChange({ maxLayoverMinutes: value === "any" ? undefined : value })}
-          />
-        </PanelSection>
+      <div className="fd-scrollbar-hidden min-h-0 flex-1 overflow-auto p-3">
+        {/* Three constraints, one control, no separators between them. */}
+        <FilterGroup label="Escalas" used={stopValue !== "any"}>
+          <SegmentedControl
+            aria-label="Escalas"
+            value={stopValue}
+            className="!w-full"
+            onValueChange={(value) => onFilterChange({
+              nonStop: value === "direct" ? true : undefined,
+              maxStopsFilter: value === "1" || value === "2+" ? value : undefined,
+            })}
+          >
+            {STOP_SEGMENTS.map((segment) => (
+              <SegmentButton key={segment.value} value={segment.value} className="!flex-1 !px-0">
+                {segment.label}
+              </SegmentButton>
+            ))}
+          </SegmentedControl>
+        </FilterGroup>
 
-        <PanelSection title="Equipaje" contentClassName="space-y-1.5">
-          <FilterSlider
-            label="Incluido"
-            ariaLabel="Equipaje incluido"
-            value={baggageFilterValue(filters)}
-            steps={BAGGAGE_FILTER_STEPS}
-            onChange={(value) => onFilterChange({
+        <FilterGroup label="Escala máxima" used={layoverValue !== "any"}>
+          <SegmentedControl
+            aria-label="Escala máxima"
+            value={layoverValue}
+            className="!w-full"
+            onValueChange={(value) => onFilterChange({
+              maxLayoverMinutes: value === "any" ? undefined : value,
+            })}
+          >
+            {LAYOVER_SEGMENTS.map((segment) => (
+              <SegmentButton key={segment.value} value={segment.value} className="!flex-1 !px-0">
+                {segment.label}
+              </SegmentButton>
+            ))}
+          </SegmentedControl>
+        </FilterGroup>
+
+        <FilterGroup label="Equipaje incluido" used={baggageValue !== "any"}>
+          <SegmentedControl
+            aria-label="Equipaje incluido"
+            value={baggageValue}
+            className="!w-full"
+            onValueChange={(value) => onFilterChange({
               carryOnRequired: value === "carry" || value === "checked" ? true : undefined,
               checkedBaggageRequired: value === "checked" ? true : undefined,
             })}
-          />
-        </PanelSection>
+          >
+            {BAGGAGE_SEGMENTS.map((segment) => (
+              <SegmentButton key={segment.value} value={segment.value} className="!flex-1 !px-0">
+                {segment.icon && <AppIcon name={segment.icon} size={14} />}
+                {segment.label}
+              </SegmentButton>
+            ))}
+          </SegmentedControl>
+        </FilterGroup>
 
+        {/* The separator goes here and nowhere else: this is a different kind of
+            filter, and the rule is a cheaper signal than a heading change. */}
         {allAirlines.length > 0 && (
-          <PanelSection title="Aerolíneas" contentClassName="space-y-1.5">
-            <div className="fd-scrollbar-hidden max-h-64 space-y-1 overflow-auto pr-1">
+          <div className="fd-filter-divider">
+            <div className="fd-filter-group-head mb-2">
+              <span className="fd-type-micro">Aerolíneas</span>
+              <span className="fd-mono text-xs font-semibold text-muted-foreground">
+                {selectedAirlines.length > 0
+                  ? `${countSelectedAirlines(allAirlines, selectedAirlines)} / ${allAirlines.length}`
+                  : allAirlines.length}
+              </span>
+            </div>
+            <div className="fd-scrollbar-hidden grid max-h-72 gap-0.5 overflow-auto">
               {allAirlines.map((airline) => (
-                <label
-                  key={airline.id}
-                  className="flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm transition-[background-color,transform] duration-150 hover:bg-muted active:scale-[0.995]"
-                >
-                  <span className="flex min-w-0 items-center gap-2">
-                    <Checkbox
-                      checked={isAirlineFilterSelected(airline, selectedAirlines)}
-                      onCheckedChange={() => onToggleAirline(airline)}
-                      aria-label={airline.label}
+                <label key={airline.id} className="fd-airline-row">
+                  <Checkbox
+                    checked={isAirlineFilterSelected(airline, selectedAirlines)}
+                    onCheckedChange={() => onToggleAirline(airline)}
+                    aria-label={airline.label}
+                  />
+                  {airline.logo && (
+                    <img
+                      src={airline.logo}
+                      alt=""
+                      className="fd-airline-row-logo"
+                      decoding="async"
+                      loading="lazy"
                     />
-                    <span className="truncate">{airline.label}</span>
-                  </span>
-                  <Badge variant="secondary" className="h-5 rounded-md px-1.5 text-[10px]">
-                    {airline.count}
-                  </Badge>
+                  )}
+                  <span className="fd-airline-row-name" title={airline.label}>{airline.label}</span>
+                  <span className="fd-airline-row-count">{airline.count}</span>
                 </label>
               ))}
             </div>
-          </PanelSection>
+          </div>
         )}
-      </PanelSectionStack>
+      </div>
     </aside>
   )
 })
 
-function StopsFilterControl({
-  filters,
-  onFilterChange,
+/**
+ * A group nobody has touched sits at 72% opacity and says "sin usar". Greying it
+ * out is what lets the agent see, without reading, which constraints are on —
+ * and an untouched group at full contrast is indistinguishable from one set to
+ * its widest value, which is the same picture with a different meaning.
+ */
+function FilterGroup({
+  label,
+  used,
+  children,
 }: {
-  filters: Filters
-  onFilterChange: (next: Partial<Filters>) => void
+  label: string
+  used: boolean
+  children: React.ReactNode
 }) {
   return (
-    <div className="fd-filter-constraint">
-      <FilterSlider
-        label="Tipo"
-        ariaLabel="Escalas"
-        value={stopFilterValue(filters)}
-        steps={STOP_FILTER_STEPS}
-        onChange={(value) => onFilterChange({
-          nonStop: value === "direct" ? true : undefined,
-          maxStopsFilter: value === "1" || value === "2+" ? value : undefined,
-        })}
-      />
+    <div className="fd-filter-group" data-used={used}>
+      <div className="fd-filter-group-head">
+        <span className="fd-type-micro">{label}</span>
+        {!used && <span className="fd-filter-group-unused">sin usar</span>}
+      </div>
+      {children}
     </div>
   )
+}
+
+function countSelectedAirlines(allAirlines: AirlineFilterOption[], selectedAirlines: string[]): number {
+  return allAirlines.filter((airline) => isAirlineFilterSelected(airline, selectedAirlines)).length
+}
+
+/**
+ * The chips above the list, and the way back out of each one. Every active
+ * constraint gets exactly one chip, so removing them one at a time is possible
+ * without opening the panel.
+ */
+function buildActiveFilterChips(
+  filters: Filters,
+  selectedAirlines: string[],
+  allAirlines: AirlineFilterOption[],
+): ActiveFilterChip[] {
+  const chips: ActiveFilterChip[] = []
+
+  const stopValue = stopFilterValue(filters)
+  const stopSegment = STOP_SEGMENTS.find((segment) => segment.value === stopValue)
+  if (stopSegment?.chip) chips.push({ id: "stops", label: stopSegment.chip })
+
+  const layoverValue = layoverFilterValue(filters)
+  const layoverSegment = LAYOVER_SEGMENTS.find((segment) => segment.value === layoverValue)
+  if (layoverSegment?.chip) chips.push({ id: "layover", label: layoverSegment.chip })
+
+  const baggageValue = baggageFilterValue(filters)
+  const baggageSegment = BAGGAGE_SEGMENTS.find((segment) => segment.value === baggageValue)
+  if (baggageSegment?.chip) chips.push({ id: "baggage", label: baggageSegment.chip })
+
+  allAirlines
+    .filter((airline) => isAirlineFilterSelected(airline, selectedAirlines))
+    .forEach((airline) => chips.push({ id: `airline:${airline.id}`, label: airline.label }))
+
+  return chips
 }
 
 function stopFilterValue(filters: Filters): StopFilterValue {
@@ -725,7 +904,8 @@ function isMigrationResults(results: { migrationMonths?: unknown[]; request: Sea
   return results.request.searchMode === "month-view" || Boolean(results.migrationMonths?.length)
 }
 
-function applyMigrationFilters(results: SearchJobResponse, filteredOffers: CanonicalOffer[], sortMode: SortMode) {
+// eslint-disable-next-line react-refresh/only-export-components -- Pure result transformer exercised directly in unit tests.
+export function applyMigrationFilters(results: SearchJobResponse, filteredOffers: CanonicalOffer[], sortMode: SortMode) {
   const visibleOfferIds = new Set(filteredOffers.map((offer) => offer.id))
   const migrationMonths = (results.migrationMonths ?? []).map((month) => {
     const monthOffers = month.offers?.length
@@ -737,6 +917,7 @@ function applyMigrationFilters(results: SearchJobResponse, filteredOffers: Canon
     return {
       ...month,
       offer: selectedOffer,
+      offers: visibleMonthOffers,
       filtered: !selectedOffer && monthOffers.length > 0 && month.status !== "loading",
     }
   })

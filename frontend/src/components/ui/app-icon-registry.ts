@@ -1,11 +1,15 @@
 import {
   AlertTriangle,
+  ArrowDown,
   ArrowRight,
   ArrowRightLeft,
+  ArrowUp,
   ArrowUpDown,
+  Backpack,
   Briefcase,
   Calendar,
   Check,
+  CornerDownLeft,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -17,13 +21,16 @@ import {
   Copy,
   ExternalLink,
   Funnel,
+  Layers,
   ListChecks,
   Loader2,
+  Luggage,
   MapPin,
   Minus,
   Moon,
   PanelRight,
   Plane,
+  PlaneTakeoff,
   Plus,
   Search,
   ShieldCheck,
@@ -65,11 +72,31 @@ const BrandPlane = forwardRef<SVGSVGElement, LucideProps>(function BrandPlane(
   )
 }) as LucideIcon
 
+/*
+ * Plate 7b closes the pictogram families. Each glyph has exactly one meaning, so
+ * that the agent does not have to read the label to know what a control does:
+ *
+ *   chevron  something opens or closes in place. Never movement.
+ *   arrow    direction or travel: a flight leg, an order, going back, navigating.
+ *   check    confirmation: included, selected, applied.
+ *   ✗ (aspa)  close or remove. Never "error" — errors carry their own colour and
+ *            their own words.
+ *
+ * `arrowDown` is the keyboard arrow, not a sort direction; sorting is a
+ * segmented control with words on it.
+ */
 export const appIconRegistry = {
   alert: AlertTriangle,
   sort: ArrowUpDown,
+  arrowUp: ArrowUp,
+  arrowDown: ArrowDown,
+  enter: CornerDownLeft,
+  backpack: Backpack,
+  luggage: Luggage,
   baggage: Briefcase,
   calendar: Calendar,
+  cityGroup: Layers,
+  airport: PlaneTakeoff,
   check: Check,
   chevronDown: ChevronDown,
   chevronLeft: ChevronLeft,

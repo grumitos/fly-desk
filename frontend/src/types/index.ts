@@ -133,6 +133,8 @@ export interface MigrationMonthSummary {
   label: string
   departureStart: string
   departureEnd: string
+  faredDays?: number
+  queriedDays?: number
   searchJobId?: string
   offer?: CanonicalOffer
   offers?: CanonicalOffer[]
@@ -193,20 +195,3 @@ export interface MatrixCell extends Omit<
 }
 
 export type SortMode = "cheapest" | "fastest"
-
-// Frontend-only: persisted result table layout, unrelated to the backend search contract.
-export type ResultsLayoutColumnKey =
-  | "carrier"
-  | "dates"
-  | "duration"
-  | "stops"
-  | "price"
-  | "links"
-
-export type ResultsColumnLayout = Record<ResultsLayoutColumnKey, number>
-
-export interface ResultsLayout {
-  version: number
-  savedAt: string
-  columns: ResultsColumnLayout
-}
