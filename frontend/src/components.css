@@ -160,8 +160,7 @@
   }
 
   /* ===== Provider rail (1a) ==============================================
-   * Listed = will be searched. Nothing more: showing which provider is down
-   * before searching needs a loopback surface that does not exist yet. */
+   * Names are canonical; status appears only from backend observations. */
 
   .fd-provider-rail {
     display: flex;
@@ -188,6 +187,35 @@
     width: 15px;
     height: 15px;
     object-fit: contain;
+  }
+
+  .fd-provider-rail-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--color-muted-foreground);
+    font-size: 10px;
+    font-weight: var(--fd-weight-regular);
+  }
+
+  .fd-provider-rail-status::before {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: currentColor;
+    content: "";
+  }
+
+  .fd-provider-rail-status[data-state="ready"] {
+    color: color-mix(in srgb, var(--color-success) 82%, var(--color-foreground));
+  }
+
+  .fd-provider-rail-status[data-state="checking"] {
+    color: var(--color-primary);
+  }
+
+  .fd-provider-rail-status[data-state="degraded"] {
+    color: var(--color-warning-soft-foreground);
   }
 
   /* ===== Single-line alert (1b) ==========================================

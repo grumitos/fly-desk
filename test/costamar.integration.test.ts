@@ -12,10 +12,14 @@ import {
   COSTAMAR_CONCURRENCY,
   createLocalCostamarMatrixDraft,
   detectCostamarB2bAuthChallenge,
+  ensureCostamarB2bSessionForTests,
+  generateCostamarRedirectContextViaB2BHttpForTests,
   isCostamarB2bAirlineSearchResponse,
+  mapCostamarLocationSuggestion,
   mapCostamarRecommendationToOffer,
   resetCostamarWarmupStateForTests,
   resolveCostamarRedirectForRequest,
+  readCostamarJsonResponse,
   searchLocalCostamarExact,
   prepareTemporaryCostamarChromeProfileForTests,
   setCostamarWarmupGeneratorForTests,
@@ -70,6 +74,90 @@ function buildRequest(): SearchRequest {
     market: "PE",
   };
 }
+
+test("Costamar autocomplete maps only explicit city and airport suggestion types", () => {
+  const airport = mapCostamarLocationSuggestion({
+    code: "LIM",
+    cityCode: "LIM",
+    cityName: "Lima",
+    countryCode: "PE",
+    type: " airport ",
+    name: "LIM - Lima, Perú",
+  });
+  const unknown = mapCostamarLocationSuggestion({
+    code: "RIO",
+    cityCode: "RIO",
+    cityName: "Río de Janeiro",
+    countryCode: "BR",
+    type: "METROPOLITAN",
+    name: "RIO - Río de Janeiro, Brasil",
+  });
+
+  assert.equal(airport?.type, "AIRPORT");
+  assert.equal(airport?.searchType, "airport");
+  assert.equal(unknown?.type, undefined);
+  assert.equal(unknown?.searchType, "METROPOLITAN");
+});
+
+test("Costamar JSON errors never expose provider response bodies", async () => {
+  const secretFixture = "token=secret-fixture";
+  const response = new Response(`${secretFixture}${"x".repeat(32_000)}`, {
+    status: 500,
+    statusText: "Upstream Failure",
+  });
+
+  await assert.rejects(
+    readCostamarJsonResponse(response, "Click and Book Plus fixture"),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /failed with HTTP 500/);
+      assert.doesNotMatch(error.message, /secret-fixture|token=/);
+      assert.ok(error.message.length < 200);
+      return true;
+    },
+  );
+});
+
+test("Costamar JSON errors are stable for empty and non-JSON success bodies", async () => {
+  await assert.rejects(
+    readCostamarJsonResponse(new Response("<html>login</html>", { status: 200 }), "Costamar HTML fixture"),
+    /Costamar HTML fixture returned invalid JSON\./,
+  );
+  await assert.rejects(
+    readCostamarJsonResponse(new Response("", { status: 200 }), "Costamar empty fixture"),
+    /Costamar empty fixture returned an empty JSON response\./,
+  );
+});
+
+test("Costamar transport errors never expose fetch diagnostics", async () => {
+  const previousFetch = global.fetch;
+  global.fetch = (async () => {
+    throw new Error("request failed with token=secret-fixture at https://provider.invalid/private");
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      searchLocalCostamarExact(buildRequest(), {
+        costamar: {
+          apiBaseUrl: "https://air-search-service-zneith.zdev.tech/v2",
+          brandBaseUrl: "https://flights.zdev.tech/vuelos/pro",
+          engineBaseUrl: "https://api-zneith.zdev.tech/api-engine",
+          terminalId: "0721808110",
+          token: "secret-token",
+          lang: "es",
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /failed before receiving a response/);
+        assert.doesNotMatch(error.message, /secret-fixture|provider\.invalid|token=/);
+        return true;
+      },
+    );
+  } finally {
+    global.fetch = previousFetch;
+  }
+});
 
 function buildJwt(payload: Record<string, unknown>): string {
   const encode = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value))
@@ -225,6 +313,35 @@ function buildEngineWithCurrency(currencyCode: string) {
     },
   };
 }
+
+test("Costamar does not invent carrier or flight number when the provider omits them", () => {
+  const recommendation = buildRecommendation();
+  const providerSegment = recommendation.itinerary[0]?.flights[0] as {
+    marketingAirline?: { code?: string; name?: string };
+    flightNumber?: string;
+  } | undefined;
+  assert.ok(providerSegment);
+  delete providerSegment.marketingAirline;
+  delete providerSegment.flightNumber;
+
+  const normalized = mapCostamarRecommendationToOffer(
+    recommendation,
+    buildExactRequest(),
+    {
+      apiBaseUrl: "https://costamar.example/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: "secret-token",
+      lang: "es",
+    },
+    buildEngine(),
+  );
+  const segment = normalized.offer?.itineraries[0]?.segments[0];
+
+  assert.ok(segment);
+  assert.equal(segment.marketingCarrier, "");
+  assert.equal(segment.flightNumber, "");
+});
 
 test("buildProviderContext normalizes Costamar defaults and overrides", () => {
   const context = buildProviderContext("costamar", {
@@ -1713,7 +1830,7 @@ test("buildCostamarSearchBody rejects tokens that belong to another terminal", (
   );
 });
 
-test("buildCostamarSearchWarning exposes token failures clearly", () => {
+test("buildCostamarSearchWarning exposes closed failures without provider payload text", () => {
   assert.equal(
     buildCostamarSearchWarning({ status: 401, data: [] }),
     "Click and Book Plus rejected this search: the branded token is invalid, expired, or no longer belongs to this agency.",
@@ -1723,10 +1840,54 @@ test("buildCostamarSearchWarning exposes token failures clearly", () => {
     "Click and Book Plus rejected this search: the validation token is missing for this branded flow.",
   );
   assert.equal(
-    buildCostamarSearchWarning({ status: 403, data: [], message: "Agency mismatch" }),
-    "Click and Book Plus rejected this search (403): Agency mismatch",
+    buildCostamarSearchWarning({
+      status: 403,
+      data: [],
+      message: "Agency mismatch token=short-secret https://provider.invalid",
+    }),
+    "Click and Book Plus rejected this search: agency or permission validation failed.",
+  );
+  assert.equal(
+    buildCostamarSearchWarning({ status: 429, data: [], message: "raw throttling detail" }),
+    "Click and Book Plus temporarily rate-limited this search.",
+  );
+  assert.equal(
+    buildCostamarSearchWarning({ status: 503, data: [], message: "internal trace secret" }),
+    "Click and Book Plus is temporarily unavailable.",
   );
   assert.equal(buildCostamarSearchWarning({ status: 200, data: [] }), undefined);
+});
+
+test("Costamar Playwright authentication writes no credentials after a cross-origin navigation", async () => {
+  const previousBaseUrl = process.env.CBPLUS_B2B_BASE_URL;
+  process.env.CBPLUS_B2B_BASE_URL = "https://b2b.clickandbook.com/lang/es/b2b";
+  let currentUrl = "about:blank";
+  let locatorCalls = 0;
+  let gotoCalls = 0;
+
+  const page = {
+    url: () => currentUrl,
+    async goto() {
+      gotoCalls += 1;
+      currentUrl = "https://attacker.invalid/login";
+    },
+    async waitForTimeout() {},
+    async waitForLoadState() {},
+    locator() {
+      locatorCalls += 1;
+      throw new Error("No locator may be read or written on an untrusted origin.");
+    },
+  };
+
+  try {
+    const authenticated = await ensureCostamarB2bSessionForTests(page);
+    assert.equal(authenticated, false);
+    assert.equal(gotoCalls, 1);
+    assert.equal(locatorCalls, 0);
+  } finally {
+    if (previousBaseUrl === undefined) delete process.env.CBPLUS_B2B_BASE_URL;
+    else process.env.CBPLUS_B2B_BASE_URL = previousBaseUrl;
+  }
 });
 
 test("Costamar temporary Chrome profile staging is private and avoids broad storage copies", async () => {
@@ -1920,6 +2081,7 @@ test("searchLocalCostamarExact keeps the Costamar search total without applying 
 
 test("searchLocalCostamarExact does not retry token-protected searches without a token", async () => {
   const previousFetch = global.fetch;
+  const previousWarmupEnabled = process.env.CBPLUS_SESSION_WARMUP_ENABLED;
   const terminalId = "9990004440";
   const request = buildExactRequest();
   const token = buildJwt({
@@ -1928,6 +2090,8 @@ test("searchLocalCostamarExact does not retry token-protected searches without a
     exp: 1893459600,
   });
   const searchBodies: Array<{ token?: string }> = [];
+
+  process.env.CBPLUS_SESSION_WARMUP_ENABLED = "0";
 
   global.fetch = (async (input, init) => {
     const url = String(input);
@@ -1970,6 +2134,11 @@ test("searchLocalCostamarExact does not retry token-protected searches without a
     assert.ok(result.warnings.some((warning) => /branded token is invalid/i.test(warning)));
   } finally {
     global.fetch = previousFetch;
+    if (previousWarmupEnabled === undefined) {
+      delete process.env.CBPLUS_SESSION_WARMUP_ENABLED;
+    } else {
+      process.env.CBPLUS_SESSION_WARMUP_ENABLED = previousWarmupEnabled;
+    }
     resetCostamarWarmupStateForTests();
     resetCostamarSessionCacheForTests();
   }
@@ -2736,7 +2905,7 @@ test("searchLocalCostamarExact maps Click and Book Plus priced itineraries, alte
     elapsedTime: "0200",
     flightNumber,
     marketingAirline: { code: "AV", companyShortName: "Avianca" },
-    operatingAirline: { code: "AV", companyShortName: "Avianca" },
+    operatingAirline: { code: " la ", companyShortName: "LATAM Airlines" },
     bookingClassAvails: [
       {
         bookingClassAvail: [
@@ -2889,6 +3058,10 @@ test("searchLocalCostamarExact maps Click and Book Plus priced itineraries, alte
     assert.equal(result.offers[0]?.price.taxes?.amount, 350);
     assert.equal(result.offers[0]?.itineraries[0]?.segments.length, 1);
     assert.equal(result.offers[0]?.itineraries[1]?.segments.length, 1);
+    assert.equal(result.offers[0]?.itineraries[0]?.segments[0]?.marketingCarrier, "AV");
+    assert.equal(result.offers[0]?.itineraries[0]?.segments[0]?.operatingCarrier, "LA");
+    assert.equal(result.offers[0]?.itineraries[0]?.segments[0]?.operatingCarrierName, "LATAM");
+    assert.equal(result.offers[0]?.fareMeta?.seatsRemaining, undefined);
     assert.equal(result.offers[0]?.baggage?.checkedBags, 1);
     assert.equal(result.offers[0]?.baggage?.carryOnIncluded, true);
     assert.equal(result.offers[0]?.purchasePaths[0]?.label, "Buscar en Click and Book Plus");
@@ -3089,8 +3262,187 @@ test("searchLocalCostamarExact expands Costamar flight alternatives", async () =
 
       assert.equal(result.offers.length, scenario.expected.length, scenario.name);
       assert.deepEqual(result.offers.map(offerFlightNumbers).sort(), scenario.expected, scenario.name);
+      const expectedScope = JSON.stringify([
+        "costamar",
+        scenario.request.tripType,
+        "LIM",
+        "MAD",
+        "2026-06-01",
+        scenario.request.tripType === "round-trip" ? "2026-06-08" : null,
+      ]);
+      assert.ok(result.offers.every((offer) => offer.rawRefs?.scheduleGroupScope === expectedScope));
+      assert.ok(result.offers.every((offer) => offer.rawRefs?.scheduleVariantsTruncated === false));
     });
   }
+});
+
+test("verifyCostamarRedirectCandidate never returns a token-bearing transport error", async () => {
+  const previousFetch = global.fetch;
+  const request = buildExactRequest();
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+
+  try {
+    global.fetch = (async (input) => {
+      throw new Error(`private redirect failed at ${String(input)}&internal=private-redirect-secret`);
+    }) as typeof fetch;
+
+    const result = await verifyCostamarRedirectCandidate(request, {
+      apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token,
+      lang: "es",
+    });
+
+    assert.equal(result.verified, false);
+    assert.equal(result.state, "fresh_unverified");
+    assert.equal(result.reason, "Click and Book Plus redirect validation could not be completed.");
+    assert.doesNotMatch(result.reason ?? "", /token=|private-redirect-secret|booking\.clickandbook\.com/i);
+  } finally {
+    global.fetch = previousFetch;
+  }
+});
+
+test("Costamar B2B rejects a non-official origin before sending credentials", async () => {
+  const previousFetch = global.fetch;
+  const previousBaseUrl = process.env.CBPLUS_B2B_BASE_URL;
+  const previousEmail = process.env.CBPLUS_B2B_EMAIL;
+  const previousPassword = process.env.CBPLUS_B2B_PASSWORD;
+  const fetchedUrls: string[] = [];
+  process.env.CBPLUS_B2B_BASE_URL = "http://attacker.invalid/lang/es/b2b";
+  process.env.CBPLUS_B2B_EMAIL = "agent@example.test";
+  process.env.CBPLUS_B2B_PASSWORD = "fixture-password";
+  global.fetch = (async (input) => {
+    fetchedUrls.push(String(input));
+    return new Response("", { status: 200 });
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      () => generateCostamarRedirectContextViaB2BHttpForTests({
+        apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+        brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+        terminalId: "0721808110",
+        token: "",
+        lang: "es",
+      }),
+      /official HTTPS origin/i,
+    );
+    assert.deepEqual(fetchedUrls, []);
+  } finally {
+    global.fetch = previousFetch;
+    if (previousBaseUrl === undefined) delete process.env.CBPLUS_B2B_BASE_URL;
+    else process.env.CBPLUS_B2B_BASE_URL = previousBaseUrl;
+    if (previousEmail === undefined) delete process.env.CBPLUS_B2B_EMAIL;
+    else process.env.CBPLUS_B2B_EMAIL = previousEmail;
+    if (previousPassword === undefined) delete process.env.CBPLUS_B2B_PASSWORD;
+    else process.env.CBPLUS_B2B_PASSWORD = previousPassword;
+  }
+});
+
+test("Costamar B2B refuses cross-origin redirects without forwarding its cookie jar", async () => {
+  const previousFetch = global.fetch;
+  const previousBaseUrl = process.env.CBPLUS_B2B_BASE_URL;
+  const previousEmail = process.env.CBPLUS_B2B_EMAIL;
+  const previousPassword = process.env.CBPLUS_B2B_PASSWORD;
+  const fetchedUrls: string[] = [];
+  process.env.CBPLUS_B2B_BASE_URL = "https://b2b.clickandbook.com/lang/es/b2b";
+  process.env.CBPLUS_B2B_EMAIL = "agent@example.test";
+  process.env.CBPLUS_B2B_PASSWORD = "fixture-password";
+  global.fetch = (async (input) => {
+    const url = String(input);
+    fetchedUrls.push(url);
+    if (url === "https://b2b.clickandbook.com/login") {
+      return new Response("", {
+        status: 200,
+        headers: { "Set-Cookie": "session=fixture-session; Path=/; Secure; HttpOnly" },
+      });
+    }
+    if (url === "https://b2b.clickandbook.com/lang/en/login") {
+      return new Response("", {
+        status: 302,
+        headers: { Location: "https://attacker.invalid/collect" },
+      });
+    }
+    return new Response("unexpected", { status: 500 });
+  }) as typeof fetch;
+
+  try {
+    const result = await generateCostamarRedirectContextViaB2BHttpForTests({
+      apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: "",
+      lang: "es",
+    });
+    assert.equal(result, undefined);
+    assert.deepEqual(fetchedUrls, [
+      "https://b2b.clickandbook.com/login",
+      "https://b2b.clickandbook.com/lang/en/login",
+    ]);
+  } finally {
+    global.fetch = previousFetch;
+    if (previousBaseUrl === undefined) delete process.env.CBPLUS_B2B_BASE_URL;
+    else process.env.CBPLUS_B2B_BASE_URL = previousBaseUrl;
+    if (previousEmail === undefined) delete process.env.CBPLUS_B2B_EMAIL;
+    else process.env.CBPLUS_B2B_EMAIL = previousEmail;
+    if (previousPassword === undefined) delete process.env.CBPLUS_B2B_PASSWORD;
+    else process.env.CBPLUS_B2B_PASSWORD = previousPassword;
+  }
+});
+
+test("searchLocalCostamarExact marks schedule variants truncated only when the native product exceeds 50", async () => {
+  const terminalId = "9990002225";
+  const recommendation = buildCostamarRecommendationWithAlternatives("round-trip");
+  const outboundJourney = recommendation.itinerary[0];
+  const inboundJourney = recommendation.itinerary[1];
+  assert.ok(outboundJourney);
+  assert.ok(inboundJourney);
+
+  outboundJourney.flights = Array.from({ length: 6 }, (_, index) => {
+    const hour = String(6 + index).padStart(2, "0");
+    const arrivalHour = String(7 + index).padStart(2, "0");
+    return buildCostamarAlternativeFlight(
+      "LIM",
+      "MAD",
+      `2026-06-01T${hour}:00:00-05:00`,
+      `2026-06-01T${arrivalHour}:00:00+02:00`,
+      String(200 + index),
+    );
+  });
+  inboundJourney.flights = Array.from({ length: 10 }, (_, index) => {
+    const hour = String(6 + index).padStart(2, "0");
+    const arrivalHour = String(7 + index).padStart(2, "0");
+    return buildCostamarAlternativeFlight(
+      "MAD",
+      "LIM",
+      `2026-06-08T${hour}:00:00+02:00`,
+      `2026-06-08T${arrivalHour}:00:00-05:00`,
+      String(300 + index),
+    );
+  });
+
+  await withMockedCostamarExactSearch(terminalId, recommendation, async () => {
+    const result = await searchLocalCostamarExact(
+      buildCostamarAlternativeRequest("round-trip"),
+      buildCostamarAlternativeContext(terminalId),
+    );
+
+    assert.equal(result.offers.length, 50);
+    assert.ok(result.offers.every((offer) => offer.rawRefs?.scheduleVariantsTruncated === true));
+    assert.ok(result.offers.every((offer) => offer.rawRefs?.scheduleGroupScope === JSON.stringify([
+      "costamar",
+      "round-trip",
+      "LIM",
+      "MAD",
+      "2026-06-01",
+      "2026-06-08",
+    ])));
+  });
 });
 
 test("createLocalCostamarMatrixDraft leaves only useful stay combinations active", () => {

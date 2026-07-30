@@ -1,7 +1,71 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Page, Route } from "playwright";
-import { withDesktopPage } from "../helpers/ui.ts";
+import { openDesktop, withDesktopPage } from "../helpers/ui.ts";
+
+test("provider rail clears a stale availability claim after a later status request fails", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.addInitScript(() => {
+      const nativeSetInterval = window.setInterval.bind(window);
+      window.setInterval = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) =>
+        nativeSetInterval(handler, timeout === 30_000 ? 500 : timeout, ...args)) as typeof window.setInterval;
+    });
+
+    let statusRequests = 0;
+    let resolveFailedRefresh: (() => void) | undefined;
+    const failedRefresh = new Promise<void>((resolve) => {
+      resolveFailedRefresh = resolve;
+    });
+    await page.route("**/api/provider-status", async (route) => {
+      statusRequests += 1;
+      // React StrictMode mounts the effect twice in the test build; the first
+      // request is aborted by its development-only cleanup.
+      if (statusRequests > 2) {
+        resolveFailedRefresh?.();
+        await route.abort("failed");
+        return;
+      }
+
+      const observedAt = new Date().toISOString();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          generatedAt: observedAt,
+          staleAfterMs: 60_000,
+          providers: [
+            {
+              id: "agil-local",
+              configured: true,
+              state: "ready",
+              evidence: "prewarm",
+              reasonCode: null,
+              observedAt,
+              stale: false,
+            },
+            {
+              id: "costamar",
+              configured: true,
+              state: "ready",
+              evidence: "prewarm",
+              reasonCode: null,
+              observedAt,
+              stale: false,
+            },
+          ],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.getByText("disponible").first().waitFor();
+    await failedRefresh;
+    await page.waitForFunction(() => document.querySelectorAll(".fd-provider-rail-status").length === 0);
+
+    assert.equal(await page.getByText("Agilsmart", { exact: true }).isVisible(), true);
+    assert.equal(await page.getByText("Click and Book Plus", { exact: true }).isVisible(), true);
+  }, { autoOpen: false });
+});
 
 test("workspace panel tabs expose one selected panel and keyboard semantics", async () => {
   await withDesktopPage(async ({ page }) => {
@@ -116,7 +180,7 @@ test("baggage filter uses one compact slider and maps checked baggage to carry-o
       });
     });
 
-    await page.goto(`${baseUrl}/?layout=editor&mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-05-28&adults=1&children=0&infants=0&sort=cheapest`, {
+    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-05-28&adults=1&children=0&infants=0&sort=cheapest`, {
       waitUntil: "domcontentloaded",
     });
     await page.getByRole("combobox", { name: "Origen" }).waitFor();

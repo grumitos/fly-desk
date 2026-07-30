@@ -4,7 +4,7 @@ import { QuotationOverlay } from "@/components/QuotationOverlay"
 import { Button } from "@/components/ui/button"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Switch } from "@/components/ui/switch"
-import { toBackendPayload } from "@/lib/api"
+import { requestQuotation, toBackendPayload } from "@/lib/api"
 import { formatJourneyDuration, formatOfferDate } from "@/lib/offer-display"
 import { bestPurchasePath, normalizeSafePurchaseUrl } from "@/lib/purchase-path"
 import { providerBadgeForId } from "@/components/results/result-card-model"
@@ -45,49 +45,76 @@ type QuotationState = {
   error?: boolean
 }
 
+type VerifiedQuotation = {
+  quoteKey: string
+  migrationPlan: boolean
+  offer: CanonicalOffer
+  commercialText: string
+}
+
 export function DetailPanel({ offer, request, searchJobId, usdToPenRate }: DetailPanelProps) {
   const [visibleQuotationKey, setVisibleQuotationKey] = useState<string | null>(null)
   const [migrationPlan, setMigrationPlan] = useState(false)
   const [copiedOfferKey, setCopiedOfferKey] = useState<string | null>(null)
+  const [verifiedQuotation, setVerifiedQuotation] = useState<VerifiedQuotation | null>(null)
+  const [quotationFailureKey, setQuotationFailureKey] = useState<string | null>(null)
+  const [loadingQuotationKey, setLoadingQuotationKey] = useState<string | null>(null)
   const [pathFeedback, setPathFeedback] = useState<{ offerId: string; message: string } | null>(null)
 
+  const quotationSessionId = offer?.sourceSearchJobId ?? searchJobId
+  const quotationOfferId = offer?.sourceOfferId ?? offer?.id
   const quoteKey = offer && request
-    ? `${offer.sourceSearchJobId ?? searchJobId ?? "snapshot"}:${offer.sourceOfferId ?? offer.id}:${request.origin}:${request.destination}:${request.departureDate ?? request.departureStart ?? ""}:${request.returnDate ?? request.returnStart ?? ""}`
+    ? `${quotationSessionId ?? "snapshot"}:${quotationOfferId}:${request.origin}:${request.destination}:${request.departureDate ?? request.departureStart ?? ""}:${request.returnDate ?? request.returnStart ?? ""}`
     : undefined
   const copyKey = quoteKey ? `${quoteKey}:${migrationPlan ? "migration" : "standard"}` : undefined
   const preparedQuotation = useMemo<QuotationState | null>(() => {
-    if (!offer || !request || !copyKey) return null
-
-    try {
-      const normalizedRequest = normalizeQuotationRequestSnapshot(toBackendPayload(request, "cheapest").request, offer)
-      const normalizedOffer = normalizedRequest && normalizeQuotationOfferSnapshot(offer, normalizedRequest)
-      if (!normalizedRequest || !normalizedOffer) throw new Error("Incomplete quotation snapshot")
-
-      return {
-        key: copyKey,
-        text: buildCommercialQuotation(normalizedOffer, normalizedRequest, {
-          migrationPlan,
-          usdToPenRate: normalizedOffer.usdToPenRate ?? usdToPenRate,
-        }),
-      }
-    } catch {
-      return {
-        key: copyKey,
-        text: "No se pudo generar la cotización con los datos de esta oferta.",
-        error: true,
-      }
-    }
+    return offer && request && copyKey
+      ? composeQuotation(offer, request, copyKey, migrationPlan, usdToPenRate)
+      : null
   }, [copyKey, migrationPlan, offer, request, usdToPenRate])
-  const activeQuotation = visibleQuotationKey === quoteKey ? preparedQuotation : null
+  const verifiedQuotationState = useMemo<QuotationState | null>(() => {
+    if (!request || !copyKey || !verifiedQuotation || verifiedQuotation.quoteKey !== quoteKey) return null
+    if (verifiedQuotation.migrationPlan === migrationPlan) {
+      return { key: copyKey, text: verifiedQuotation.commercialText }
+    }
+
+    return composeQuotation(verifiedQuotation.offer, request, copyKey, migrationPlan, usdToPenRate)
+  }, [copyKey, migrationPlan, quoteKey, request, usdToPenRate, verifiedQuotation])
+  const activeQuotation = visibleQuotationKey === quoteKey
+    ? quotationFailureKey === quoteKey && preparedQuotation
+      ? {
+          key: preparedQuotation.key,
+          text: "No se pudo confirmar la tarifa con el proveedor. Reintenta o abre el proveedor para verificarla.",
+          error: true,
+        }
+      : verifiedQuotationState
+    : null
   const copied = copiedOfferKey === copyKey
+  const activeQuotationPreparedAt = verifiedQuotation && verifiedQuotation.quoteKey === quoteKey
+    ? verifiedQuotation.offer.priceVerifiedAt ?? offer?.quotationPreparedAt
+    : offer?.quotationPreparedAt
   const purchasePath = offer ? bestPurchasePath(offer) : undefined
   const activePathFeedback = pathFeedback && pathFeedback.offerId === offer?.id ? pathFeedback.message : null
-  const canQuote = Boolean(offer?.quotationPreparedAt && request && quoteKey && preparedQuotation && !preparedQuotation.error)
+  const isQuoting = loadingQuotationKey === quoteKey
+  const canQuote = Boolean(
+    offer?.quotationPreparedAt
+    && request
+    && quoteKey
+    && quotationSessionId
+    && quotationOfferId
+    && preparedQuotation
+    && !preparedQuotation.error
+    && !isQuoting,
+  )
   const quotationActionTitle = !offer?.quotationPreparedAt
     ? "Esperando una tarifa actualizada del proveedor"
+    : !quotationSessionId || !quotationOfferId
+      ? "La oferta no está asociada a una búsqueda que pueda revalidarse"
     : preparedQuotation?.error
       ? "La oferta no contiene todos los datos necesarios para cotizar"
-      : "Cotizar y copiar"
+      : isQuoting
+        ? "Validando la tarifa con el proveedor"
+        : "Cotizar y copiar"
 
   const markCopied = useCallback((key: string) => {
     setCopiedOfferKey(key)
@@ -101,10 +128,37 @@ export function DetailPanel({ offer, request, searchJobId, usdToPenRate }: Detai
   }, [markCopied])
 
   const handleQuotation = async () => {
-    if (!quoteKey || !preparedQuotation) return
-    setVisibleQuotationKey(quoteKey)
-    if (!preparedQuotation.error) {
-      await copyQuotationText(preparedQuotation.key, preparedQuotation.text)
+    if (
+      !quoteKey
+      || !copyKey
+      || !quotationSessionId
+      || !quotationOfferId
+      || !preparedQuotation
+      || preparedQuotation.error
+      || loadingQuotationKey === quoteKey
+    ) return
+
+    setQuotationFailureKey(null)
+    setLoadingQuotationKey(quoteKey)
+    try {
+      const response = await requestQuotation({
+        searchSessionId: quotationSessionId,
+        offerId: quotationOfferId,
+        migrationPlan,
+      })
+      setVerifiedQuotation({
+        quoteKey,
+        migrationPlan,
+        offer: response.offer,
+        commercialText: response.commercialText,
+      })
+      setVisibleQuotationKey(quoteKey)
+      await copyQuotationText(copyKey, response.commercialText)
+    } catch {
+      setQuotationFailureKey(quoteKey)
+      setVisibleQuotationKey(quoteKey)
+    } finally {
+      setLoadingQuotationKey((current) => (current === quoteKey ? null : current))
     }
   }
 
@@ -233,7 +287,7 @@ export function DetailPanel({ offer, request, searchJobId, usdToPenRate }: Detai
           state={{
             text: activeQuotation.text,
             error: Boolean(activeQuotation.error),
-            preparedAt: offer.quotationPreparedAt,
+            preparedAt: activeQuotationPreparedAt,
           }}
           headline={`Cotización · ${model.carrier.name}`}
           subtitle={quotationSubtitle(offer, request)}
@@ -245,7 +299,6 @@ export function DetailPanel({ offer, request, searchJobId, usdToPenRate }: Detai
           onCopy={() => copyQuotationText(activeQuotation.key, activeQuotation.text)}
           onOpenProvider={() => void handlePurchasePath()}
           onRetry={() => {
-            setVisibleQuotationKey(null)
             void handleQuotation()
           }}
           onClose={() => setVisibleQuotationKey(null)}
@@ -281,14 +334,46 @@ export function DetailPanel({ offer, request, searchJobId, usdToPenRate }: Detai
               </Button>
             )}
             <Button size="sm" title={quotationActionTitle} onClick={handleQuotation} disabled={!canQuote}>
-              {copied ? <AppIcon name="check" size={14} /> : <AppIcon name="clipboard" size={14} />}
-              {copied ? "Copiado" : "Cotizar"}
+              {isQuoting
+                ? <AppIcon name="loading" size={14} />
+                : copied
+                  ? <AppIcon name="check" size={14} />
+                  : <AppIcon name="clipboard" size={14} />}
+              {isQuoting ? "Validando" : copied ? "Copiado" : "Cotizar"}
             </Button>
           </div>
         </div>
       </div>
     </section>
   )
+}
+
+function composeQuotation(
+  offer: CanonicalOffer,
+  request: SearchRequest,
+  key: string,
+  migrationPlan: boolean,
+  usdToPenRate?: number,
+): QuotationState {
+  try {
+    const normalizedRequest = normalizeQuotationRequestSnapshot(toBackendPayload(request, "cheapest").request, offer)
+    const normalizedOffer = normalizedRequest && normalizeQuotationOfferSnapshot(offer, normalizedRequest)
+    if (!normalizedRequest || !normalizedOffer) throw new Error("Incomplete quotation snapshot")
+
+    return {
+      key,
+      text: buildCommercialQuotation(normalizedOffer, normalizedRequest, {
+        migrationPlan,
+        usdToPenRate: normalizedOffer.usdToPenRate ?? usdToPenRate,
+      }),
+    }
+  } catch {
+    return {
+      key,
+      text: "No se pudo generar la cotización con los datos de esta oferta.",
+      error: true,
+    }
+  }
 }
 
 /** "LIM – MIA · 12 – 19 set · 1 adulto" — the header line that gets verified. */

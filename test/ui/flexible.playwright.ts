@@ -364,13 +364,6 @@ test("mobile workspace keeps search modes inline instead of crowding the topbar"
         body: JSON.stringify({ suggestions: [] }),
       });
     });
-    await page.route("**/api/results-layout", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ layout: null }),
-      });
-    });
     await page.route("**/api/search", async (route) => {
       const payload = route.request().postDataJSON() as Record<string, unknown>;
       const offer = buildOffer({ id: "mobile-layout-offer", origin: "LIM", destination: "MIA" });
@@ -403,7 +396,7 @@ test("mobile workspace keeps search modes inline instead of crowding the topbar"
       });
     });
 
-    await page.goto(`${baseUrl}/?layout=editor&mode=exact&trip=one-way&origin=LIM&destination=MIA&departure=2026-06-08&adults=1&children=0&infants=0`, {
+    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MIA&departure=2026-06-08&adults=1&children=0&infants=0`, {
       waitUntil: "domcontentloaded",
     });
     await page.getByRole("button", { name: "Buscar" }).click();
@@ -411,8 +404,6 @@ test("mobile workspace keeps search modes inline instead of crowding the topbar"
 
     assert.equal(await page.getByTestId("topbar-search-controls").getByRole("button", { name: "Exacto" }).count(), 0);
     assert.equal(await page.locator("main").getByRole("button", { name: "Exacto" }).count(), 1);
-    assert.equal(await page.locator(".fd-result-card--layout-guide").evaluate((element) => getComputedStyle(element).display), "none");
-    assert.equal(await page.locator(".fd-results-layout-editor").count(), 0);
   });
 });
 

@@ -1,7 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { request as httpRequest } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -41,6 +41,8 @@ import type { ProviderMatrixState } from "../src/http-router";
 import { resolveSearchServiceProxyApiToken } from "../src/service-auth";
 import { getSearchDatePolicy } from "../src/search-date-policy";
 import { getRuntime } from "../src/runtime";
+import { LOCATION_SUGGESTION_CACHE_MAX_QUERY_CHARS } from "../src/location-suggestion-cache";
+import { DEFAULT_PROVIDER_STATUS_TTL_MS } from "../src/provider-status";
 import { createScryptPasswordHash } from "../src/web-auth";
 import { resetWebLoginAdmission } from "../src/login-admission";
 import { applyEnvironment } from "./helpers/environment";
@@ -445,6 +447,27 @@ test("quotation preparation propagates a sibling Agil rate", () => {
   assert.ok(matrixSelection[0]?.quotationPreparedAt);
 });
 
+test("quotation preparation timestamps quote-readiness once and preserves it", () => {
+  const request = buildDomesticRequest();
+  const preexistingTimestamp = "2026-06-01T10:30:00.000Z";
+  const preexisting = {
+    ...buildDomesticCostamarOffer(),
+    usdToPenRate: 3.64,
+    quotationPreparedAt: preexistingTimestamp,
+  };
+  const [preserved] = prepareOffersForQuotation(request, [preexisting]);
+  const [firstPreparation] = prepareOffersForQuotation(request, [{
+    ...buildDomesticCostamarOffer(),
+    usdToPenRate: 3.64,
+  }]);
+  const [secondPreparation] = prepareOffersForQuotation(request, [firstPreparation!]);
+
+  assert.equal(preserved?.quotationPreparedAt, preexistingTimestamp);
+  assert.ok(firstPreparation?.quotationPreparedAt);
+  assert.equal(secondPreparation?.quotationPreparedAt, firstPreparation?.quotationPreparedAt);
+  assert.equal(firstPreparation?.priceVerifiedAt, undefined);
+});
+
 test("quotation preparation withholds readiness when required conversion cannot resolve", async () => {
   const [offer] = await resolveQuotationReadyOffers(
     buildDomesticRequest(),
@@ -586,6 +609,7 @@ test("quotation uses the stored exact offer when the selected result belongs to 
     ...buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0"),
     priceConfidence: "validated" as const,
     priceStatus: "verified" as const,
+    priceVerifiedAt: new Date().toISOString(),
   };
   const searchMeta = buildSearchMeta();
   const now = new Date().toISOString();
@@ -721,6 +745,51 @@ test("quotation rejects forged snapshots when the session offer id does not exis
   });
 });
 
+test("quotation refuses a price-only matrix cell without a real stored itinerary", async () => {
+  const runtime = getRuntime();
+  const resolved = buildCostamarMatrixCell(
+    "https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0",
+  );
+  const priceOnlyCell: MatrixCell = {
+    ...resolved,
+    offer: undefined,
+  };
+  const job = runtime.sessions.createMatrixJob({
+    request: {
+      ...buildCostamarRequest(),
+      searchMode: "roundtrip-grid",
+      flexibleMode: "exact-stay",
+    },
+    cells: [priceOnlyCell],
+    axes: {
+      departureDates: [priceOnlyCell.departureDate],
+      returnDates: [priceOnlyCell.returnDate!],
+    },
+    confidenceSummary: { live: 1 },
+    recommendations: [],
+    providerMeta: buildProviderMeta(),
+    searchMeta: buildSearchMeta(),
+    warnings: [],
+    status: "completed",
+  });
+
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/quotation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        searchSessionId: job.id,
+        offerId: priceOnlyCell.key,
+      }),
+    });
+
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), {
+      errors: ["Session or offer not found."],
+    });
+  });
+});
+
 test("quotation refuses cached offers that have not been provider validated", async () => {
   const runtime = getRuntime();
   const offer = buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0");
@@ -753,7 +822,7 @@ test("quotation refuses cached offers that have not been provider validated", as
   });
 });
 
-test("quotation validates an unverified stored offer before rendering", { concurrency: false }, async () => {
+test("quotation persists a refreshed exact offer under the selected stable id", { concurrency: false }, async () => {
   const runtime = getRuntime();
   const offer = buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0");
   const job = runtime.sessions.createSearchJob({
@@ -774,6 +843,7 @@ test("quotation validates an unverified stored offer before rendering", { concur
     assert.equal(source.offer.id, offer.id);
     return {
       ...source.offer,
+      id: "provider-refreshed-price-id",
       price: {
         ...source.offer.price,
         total: {
@@ -804,20 +874,39 @@ test("quotation validates an unverified stored offer before rendering", { concur
     assert.equal(response.status, 200);
     const payload = await response.json() as { commercialText?: string; offer?: CanonicalOffer };
     assert.equal(validatorCalls, 1);
+    assert.equal(payload.offer?.id, offer.id);
     assert.equal(payload.offer?.price.total.amount, 1500);
+    assert.ok(payload.offer?.priceVerifiedAt);
     assert.match(payload.commercialText ?? "", /US\$ 1,500 por adulto/);
-    assert.equal(runtime.sessions.getOffer(job.id, offer.id)?.priceStatus, "verified");
+
+    const stored = runtime.sessions.getOffer(job.id, offer.id);
+    assert.equal(stored?.priceStatus, "verified");
+    assert.equal(stored?.price.total.amount, 1500);
+    assert.ok(stored?.priceVerifiedAt);
+
+    const secondResponse = await withLoopbackTrustForTests(() =>
+      routeRequest(new Request("http://127.0.0.1:8100/api/quotation", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-flydesk-client-loopback": "1",
+        },
+        body: JSON.stringify({
+          searchSessionId: job.id,
+          offerId: offer.id,
+        }),
+      }))
+    );
+    assert.equal(secondResponse.status, 200);
+    assert.equal(validatorCalls, 1);
   } finally {
     setQuotationOfferValidatorForTests();
   }
 });
 
-test("quotation revalidates a quote-ready search result before rendering", { concurrency: false }, async () => {
+test("quotation refuses a validator result for a different flight on the same route and day", { concurrency: false }, async () => {
   const runtime = getRuntime();
-  const offer = {
-    ...buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0"),
-    quotationPreparedAt: new Date().toISOString(),
-  };
+  const offer = buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0");
   const job = runtime.sessions.createSearchJob({
     request: buildCostamarRequest(),
     offers: [offer],
@@ -830,9 +919,22 @@ test("quotation revalidates a quote-ready search result before rendering", { con
   });
   let validatorCalls = 0;
 
-  setQuotationOfferValidatorForTests(async () => {
+  setQuotationOfferValidatorForTests(async (source) => {
     validatorCalls += 1;
-    return undefined;
+    return {
+      ...source.offer,
+      id: "different-flight",
+      price: {
+        ...source.offer.price,
+        total: { amount: 99, currencyCode: "USD" },
+      },
+      itineraries: source.offer.itineraries.map((itinerary, itineraryIndex) => ({
+        ...itinerary,
+        segments: itinerary.segments.map((segment, segmentIndex) => itineraryIndex === 0 && segmentIndex === 0
+          ? { ...segment, flightNumber: `${segment.flightNumber}-different` }
+          : segment),
+      })),
+    };
   });
 
   try {
@@ -852,6 +954,61 @@ test("quotation revalidates a quote-ready search result before rendering", { con
 
     assert.equal(response.status, 409);
     assert.equal(validatorCalls, 1);
+    assert.deepEqual(await response.json(), {
+      errors: ["Selected offer could not be validated for quotation."],
+    });
+  } finally {
+    setQuotationOfferValidatorForTests();
+  }
+});
+
+test("quotation revalidates a stale verified search result before rendering", { concurrency: false }, async () => {
+  const runtime = getRuntime();
+  const offer = {
+    ...buildCostamarOffer("https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0"),
+    quotationPreparedAt: new Date().toISOString(),
+    priceConfidence: "validated" as const,
+    priceStatus: "verified" as const,
+    priceVerifiedAt: new Date(Date.now() - 16 * 60_000).toISOString(),
+  };
+  const job = runtime.sessions.createSearchJob({
+    request: buildCostamarRequest(),
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  let validatorCalls = 0;
+
+  setQuotationOfferValidatorForTests(async (source) => {
+    validatorCalls += 1;
+    return source.offer;
+  });
+
+  try {
+    const response = await withLoopbackTrustForTests(() =>
+      routeRequest(new Request("http://127.0.0.1:8100/api/quotation", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-flydesk-client-loopback": "1",
+        },
+        body: JSON.stringify({
+          searchSessionId: job.id,
+          offerId: offer.id,
+        }),
+      }))
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(validatorCalls, 1);
+    const payload = await response.json() as { offer?: CanonicalOffer };
+    const verifiedAt = Date.parse(payload.offer?.priceVerifiedAt ?? "");
+    assert.ok(Number.isFinite(verifiedAt));
+    assert.ok(Date.now() - verifiedAt < 60_000);
   } finally {
     setQuotationOfferValidatorForTests();
   }
@@ -1016,6 +1173,70 @@ test("accepts non-loopback location requests with the internal search service to
   }
 });
 
+test("provider status is authenticated, uncached, closed, and contains no provider diagnostics", { concurrency: false }, async () => {
+  const previousApiToken = process.env.FLY_DESK_API_TOKEN;
+  const previousSearchUrl = process.env.FLY_DESK_SEARCH_SERVICE_URL;
+  process.env.FLY_DESK_API_TOKEN = "test-token";
+  delete process.env.FLY_DESK_SEARCH_SERVICE_URL;
+
+  try {
+    const denied = await routeRequest(new Request("http://fly-desk.local/api/provider-status", {
+      headers: { "x-flydesk-client-loopback": "0" },
+    }));
+    assert.equal(denied.status, 403);
+
+    const tracker = getRuntime().providerStatus;
+    tracker.recordSearchResult("agil-local", false);
+    tracker.recordSearchFailure(
+      "costamar",
+      new Error("token=never-return-this-secret request timed out"),
+    );
+
+    const response = await routeRequest(new Request("http://fly-desk.local/api/provider-status", {
+      headers: {
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
+      },
+    }));
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
+    const payload = await response.json() as {
+      generatedAt?: string;
+      staleAfterMs?: number;
+      providers?: Array<Record<string, unknown>>;
+    };
+    assert.ok(payload.generatedAt && Number.isFinite(Date.parse(payload.generatedAt)));
+    assert.equal(payload.staleAfterMs, DEFAULT_PROVIDER_STATUS_TTL_MS);
+    assert.deepEqual(payload.providers?.map(({ id, state, evidence, reasonCode }) => ({
+      id,
+      state,
+      evidence,
+      reasonCode,
+    })), [
+      { id: "agil-local", state: "ready", evidence: "search", reasonCode: null },
+      { id: "costamar", state: "degraded", evidence: "search", reasonCode: "timeout" },
+    ]);
+    assert.deepEqual(Object.keys(payload.providers?.[0] ?? {}), [
+      "id",
+      "label",
+      "configured",
+      "state",
+      "evidence",
+      "reasonCode",
+      "observedAt",
+      "stale",
+    ]);
+    const serialized = JSON.stringify(payload);
+    assert.doesNotMatch(serialized, /never-return-this-secret|observedAtMs|\"error\"|https?:\/\//i);
+  } finally {
+    if (previousApiToken === undefined) delete process.env.FLY_DESK_API_TOKEN;
+    else process.env.FLY_DESK_API_TOKEN = previousApiToken;
+    if (previousSearchUrl === undefined) delete process.env.FLY_DESK_SEARCH_SERVICE_URL;
+    else process.env.FLY_DESK_SEARCH_SERVICE_URL = previousSearchUrl;
+  }
+});
+
 test("rejects unauthenticated search service proxy requests before injecting the runner token", { concurrency: false }, async () => {
   const previousSearchUrl = process.env.FLY_DESK_SEARCH_SERVICE_URL;
   const previousSearchToken = process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN;
@@ -1110,12 +1331,14 @@ test("location usage ranking is read-only, uncached by HTTP, and capped at three
 
   try {
     const usage = getRuntime().locationUsage;
-    usage.recordFromSearch({ origin: "LIM", destination: "MAD" }, 1);
-    usage.recordFromSearch({ origin: "CUZ", destination: "BOG" }, 2);
-    usage.recordFromSearch({ origin: "AQP", destination: "SCL" }, 3);
-    usage.recordFromSearch({ origin: "TPP", destination: "MIA" }, 4);
+    const clientSessionId = "browser-session-http-a";
+    const nowMs = Date.now();
+    usage.recordFromSearch({ origin: "LIM", destination: "MAD" }, nowMs, 3, clientSessionId);
+    usage.recordFromSearch({ origin: "CUZ", destination: "BOG" }, nowMs + 1, 3, clientSessionId);
+    usage.recordFromSearch({ origin: "AQP", destination: "SCL" }, nowMs + 2, 3, clientSessionId);
+    usage.recordFromSearch({ origin: "TPP", destination: "MIA" }, nowMs + 3, 3, clientSessionId);
 
-    const response = await routeRequest(new Request("http://fly-desk.local/api/location-usage-suggestions?limit=20", {
+    const response = await routeRequest(new Request(`http://fly-desk.local/api/location-usage-suggestions?limit=20&clientSessionId=${clientSessionId}`, {
       method: "GET",
       headers: {
         "x-flydesk-client-loopback": "0",
@@ -1125,9 +1348,28 @@ test("location usage ranking is read-only, uncached by HTTP, and capped at three
 
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("Cache-Control"), "no-store");
-    const payload = await response.json() as { suggestions?: { origin?: string[]; destination?: string[] } };
+    const payload = await response.json() as {
+      suggestions?: { origin?: string[]; destination?: string[] };
+      frequent?: { origin?: string[]; destination?: string[] };
+      recent?: { origin?: string[]; destination?: string[] };
+    };
     assert.deepEqual(payload.suggestions?.origin, ["TPP", "AQP", "CUZ"]);
     assert.deepEqual(payload.suggestions?.destination, ["MIA", "SCL", "BOG"]);
+    assert.deepEqual(payload.frequent, payload.suggestions);
+    assert.deepEqual(payload.recent, {
+      origin: ["TPP", "AQP", "CUZ"],
+      destination: ["MIA", "SCL", "BOG"],
+    });
+
+    const invalidSession = await routeRequest(new Request("http://fly-desk.local/api/location-usage-suggestions?clientSessionId=invalid/id", {
+      method: "GET",
+      headers: {
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
+      },
+    }));
+    const invalidPayload = await invalidSession.json() as { recent?: { origin?: string[]; destination?: string[] } };
+    assert.deepEqual(invalidPayload.recent, { origin: [], destination: [] });
 
     const mutation = await routeRequest(new Request("http://fly-desk.local/api/location-usage-suggestions", {
       method: "POST",
@@ -1156,6 +1398,7 @@ test("accepted searches record global location usage from the backend", { concur
   getRuntime().locationUsage.clearForTests();
 
   try {
+    const clientSessionId = "browser-session-search-a";
     const request = buildCostamarRequest();
     const departureDate = getSearchDatePolicy().minSearchDate;
     delete request.providerId;
@@ -1172,6 +1415,7 @@ test("accepted searches record global location usage from the backend", { concur
         "x-flydesk-api-token": "test-token",
       },
       body: JSON.stringify({
+        clientSessionId,
         request,
         sortMode: "cheapest",
       }),
@@ -1180,6 +1424,10 @@ test("accepted searches record global location usage from the backend", { concur
 
     const suggestions = getRuntime().locationUsage.getSuggestions(3);
     assert.deepEqual(suggestions, {
+      origin: ["LIM"],
+      destination: ["MAD"],
+    });
+    assert.deepEqual(getRuntime().locationUsage.getUsageSuggestions(clientSessionId).recent, {
       origin: ["LIM"],
       destination: ["MAD"],
     });
@@ -1906,7 +2154,8 @@ test("costamar redirect returns a controlled block when refresh hangs", async ()
 
     assert.equal(response.status, 409);
     const body = await response.text();
-    assert.match(body, /Renueva la sesion de Click and Book Plus/i);
+    assert.match(body, /Renueva la autenticación de Click and Book Plus/i);
+    assert.doesNotMatch(body, /sesion este activa/i);
     assert.match(body, /overflow:\s*hidden/i);
     assert.match(body, /place-items:\s*center/i);
     assert.match(body, /tardo mas de/i);
@@ -2187,7 +2436,7 @@ test("costamar redirect blocks locally when no fresh token is available", async 
       assert.equal(response.status, 409);
       assert.match(response.headers.get("content-type") ?? "", /text\/html/i);
       const body = await response.text();
-      assert.match(body, /Renueva la sesion de Click and Book Plus/i);
+      assert.match(body, /Renueva la autenticación de Click and Book Plus/i);
       assert.match(body, /redirect verificado/i);
     });
   } finally {
@@ -3389,176 +3638,149 @@ test("matrix polling omits cells without results from progressive payloads", asy
   });
 });
 
-test("results layout endpoints persist and read back the saved column widths locally", async () => {
-  const layoutFile = join(process.cwd(), "config", "results-layout.json");
-  const previousLayout = existsSync(layoutFile) ? readFileSync(layoutFile, "utf8") : null;
-  const columns = {
-    carrier: 172,
-    dates: 318,
-    duration: 126,
-    stops: 184,
-    price: 189,
-    links: 50,
-  };
+test("removed results layout endpoints return not found", async () => {
+  await withServer(async (baseUrl) => {
+    const getResponse = await fetch(`${baseUrl}/api/results-layout`);
+    assert.equal(getResponse.status, 404);
+    assert.deepEqual(await getResponse.json(), { error: "Not found" });
 
-  try {
-    rmSync(layoutFile, { force: true });
-
-    await withServer(async (baseUrl) => {
-      const initialResponse = await fetch(`${baseUrl}/api/results-layout`);
-      assert.equal(initialResponse.status, 200);
-      const initialPayload = await initialResponse.json() as {
-        layout?: null | { columns?: typeof columns };
-      };
-      assert.equal(initialPayload.layout, null);
-
-      const saveResponse = await fetch(`${baseUrl}/api/results-layout`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ columns }),
-      });
-      assert.equal(saveResponse.status, 200);
-      const savePayload = await saveResponse.json() as {
-        ok?: boolean;
-        layout?: {
-          version?: number;
-          savedAt?: string;
-          columns?: typeof columns;
-        };
-      };
-
-      assert.equal(savePayload.ok, true);
-      assert.equal(savePayload.layout?.version, 2);
-      assert.deepEqual(savePayload.layout?.columns, columns);
-      assert.match(savePayload.layout?.savedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
-
-      const readBackResponse = await fetch(`${baseUrl}/api/results-layout`);
-      assert.equal(readBackResponse.status, 200);
-      const readBackPayload = await readBackResponse.json() as {
-        layout?: {
-          columns?: typeof columns;
-        } | null;
-      };
-      assert.deepEqual(readBackPayload.layout?.columns, columns);
-    });
-  } finally {
-    if (previousLayout === null) {
-      rmSync(layoutFile, { force: true });
-    } else {
-      mkdirSync(join(process.cwd(), "config"), { recursive: true });
-      writeFileSync(layoutFile, previousLayout, "utf8");
-    }
-  }
-});
-
-test("results layout endpoints reject reverse-proxied clients even when loopback proxy trust is enabled", { concurrency: false }, async () => {
-  const previousTrustLoopback = process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
-  const previousProxyTrust = process.env.FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK;
-
-  process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = "1";
-  process.env.FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK = "1";
-
-  try {
-    const getResponse = await routeRequest(new Request("https://fly-desk.local/api/results-layout", {
-      method: "GET",
-      headers: {
-        "x-flydesk-client-loopback": "1",
-        "x-forwarded-for": "203.0.113.40",
-      },
-    }));
-    assert.equal(getResponse.status, 403);
-
-    const postResponse = await routeRequest(new Request("https://fly-desk.local/api/results-layout", {
+    const postResponse = await fetch(`${baseUrl}/api/results-layout`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-flydesk-client-loopback": "1",
-        "x-forwarded-for": "203.0.113.40",
+      },
+      body: JSON.stringify({ columns: {} }),
+    });
+    assert.equal(postResponse.status, 404);
+    assert.deepEqual(await postResponse.json(), { error: "Not found" });
+  });
+});
+
+test("costamar redirect HTML never exposes a token-bearing validation error", async () => {
+  const previousFetch = global.fetch;
+  const previousWarmupEnabled = process.env.CBPLUS_SESSION_WARMUP_ENABLED;
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  process.env.CBPLUS_SESSION_WARMUP_ENABLED = "0";
+  resetCostamarWarmupStateForTests();
+
+  try {
+    const runtime = getRuntime();
+    const tokenUrl = `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${token}`;
+    const job = runtime.sessions.createSearchJob({
+      request: buildCostamarRequest(),
+      providerContext: {
+        costamar: {
+          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+          terminalId: "0721808110",
+          token,
+          lang: "es",
+        },
+      },
+      offers: [buildCostamarOffer(tokenUrl)],
+      allOffers: [buildCostamarOffer(tokenUrl)],
+      searchMeta: buildSearchMeta(),
+      providerMeta: buildProviderMeta(),
+      warnings: [],
+      sortMode: "cheapest",
+      status: "completed",
+    });
+    const redirectPath = runtime.sessions.getSession(job.id)?.offers[0]?.purchasePaths[0]?.url;
+    assert.ok(redirectPath);
+
+    global.fetch = (async (input) => {
+      throw new Error(`private validation failed at ${String(input)}&internal=private-main-secret`);
+    }) as typeof fetch;
+
+    const response = await withLoopbackTrustForTests(() =>
+      routeRequest(new Request(`http://127.0.0.1:8100${redirectPath}`, {
+        headers: { "x-flydesk-client-loopback": "1" },
+      }))
+    );
+    const body = await response.text();
+    assert.equal(response.status, 409);
+    assert.match(body, /Renueva la autenticación de Click and Book Plus/i);
+    assert.doesNotMatch(body, /token=|private-main-secret|booking\.clickandbook\.com/i);
+  } finally {
+    global.fetch = previousFetch;
+    resetCostamarWarmupStateForTests();
+    if (previousWarmupEnabled === undefined) delete process.env.CBPLUS_SESSION_WARMUP_ENABLED;
+    else process.env.CBPLUS_SESSION_WARMUP_ENABLED = previousWarmupEnabled;
+  }
+});
+
+test("search fan-out can suppress duplicate location usage accounting", { concurrency: false }, async () => {
+  const previousApiToken = process.env.FLY_DESK_API_TOKEN;
+  process.env.FLY_DESK_API_TOKEN = "test-token";
+  getRuntime().locationUsage.clearForTests();
+
+  try {
+    const request = buildCostamarRequest();
+    const departureDate = getSearchDatePolicy().minSearchDate;
+    delete request.providerId;
+    request.legs[0] = {
+      ...request.legs[0],
+      departureDate,
+      returnDate: addDays(departureDate, 7),
+    };
+
+    const accepted = await routeRequest(new Request("http://fly-desk.local/api/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
       },
       body: JSON.stringify({
-        columns: {
-          carrier: 172,
-          dates: 318,
-          duration: 126,
-          stops: 184,
-          price: 189,
-          links: 50,
-        },
+        clientSessionId: "browser-session-search-fanout",
+        recordLocationUsage: false,
+        request,
+        sortMode: "cheapest",
       }),
     }));
-    assert.equal(postResponse.status, 403);
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(getRuntime().locationUsage.getSuggestions(3), {
+      origin: [],
+      destination: [],
+    });
+    assert.deepEqual(
+      getRuntime().locationUsage.getUsageSuggestions("browser-session-search-fanout").recent,
+      { origin: [], destination: [] },
+    );
   } finally {
-    if (previousTrustLoopback === undefined) {
-      delete process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
+    getRuntime().locationUsage.clearForTests();
+    if (previousApiToken === undefined) {
+      delete process.env.FLY_DESK_API_TOKEN;
     } else {
-      process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = previousTrustLoopback;
-    }
-
-    if (previousProxyTrust === undefined) {
-      delete process.env.FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK;
-    } else {
-      process.env.FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK = previousProxyTrust;
+      process.env.FLY_DESK_API_TOKEN = previousApiToken;
     }
   }
 });
 
-test("results layout endpoint migrates legacy column widths to the current result width", async () => {
-  const layoutFile = join(process.cwd(), "config", "results-layout.json");
-  const previousLayout = existsSync(layoutFile) ? readFileSync(layoutFile, "utf8") : null;
+test("rejects overlong location queries before provider lookup", { concurrency: false }, async () => {
+  const previousApiToken = process.env.FLY_DESK_API_TOKEN;
+  process.env.FLY_DESK_API_TOKEN = "test-token";
 
   try {
-    mkdirSync(join(process.cwd(), "config"), { recursive: true });
-    writeFileSync(layoutFile, JSON.stringify({
-      version: 1,
-      savedAt: "2026-05-19T23:11:00.000Z",
-      columns: {
-        carrier: 112,
-        dates: 314,
-        duration: 98,
-        stops: 147,
-        price: 124,
-        links: 44,
+    const query = "x".repeat(LOCATION_SUGGESTION_CACHE_MAX_QUERY_CHARS + 1);
+    const response = await routeRequest(new Request(`http://fly-desk.local/api/locations?q=${query}`, {
+      method: "GET",
+      headers: {
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
       },
-    }, null, 2));
+    }));
 
-    await withServer(async (baseUrl) => {
-      const response = await fetch(`${baseUrl}/api/results-layout`);
-      assert.equal(response.status, 200);
-      const payload = await response.json() as {
-        layout?: {
-          version?: number;
-          savedAt?: string;
-          columns?: Record<string, number>;
-        } | null;
-      };
-
-      assert.equal(payload.layout?.version, 2);
-      assert.equal(payload.layout?.savedAt, "2026-05-19T23:11:00.000Z");
-      assert.deepEqual(payload.layout?.columns, {
-        carrier: 139,
-        dates: 389,
-        duration: 121,
-        stops: 182,
-        price: 154,
-        links: 54,
-      });
-
-      const migratedFile = JSON.parse(readFileSync(layoutFile, "utf8")) as {
-        version?: number;
-        columns?: Record<string, number>;
-      };
-      assert.equal(migratedFile.version, 2);
-      assert.deepEqual(migratedFile.columns, payload.layout?.columns);
-    });
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { errors?: string[] };
+    assert.match(payload.errors?.[0] ?? "", /cannot exceed 120 characters/i);
   } finally {
-    if (previousLayout === null) {
-      rmSync(layoutFile, { force: true });
-    } else {
-      mkdirSync(join(process.cwd(), "config"), { recursive: true });
-      writeFileSync(layoutFile, previousLayout);
-    }
+    if (previousApiToken === undefined) delete process.env.FLY_DESK_API_TOKEN;
+    else process.env.FLY_DESK_API_TOKEN = previousApiToken;
   }
 });
 

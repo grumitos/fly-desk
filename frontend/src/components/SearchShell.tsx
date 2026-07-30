@@ -16,7 +16,7 @@ import { clampIsoDate } from "@/lib/iso-date"
 import {
   emptyLocationUsageSuggestions,
   getLocationUsageSuggestions,
-  type LocationUsageSuggestions,
+  type LocationUsageSuggestionGroups,
 } from "@/lib/location-usage-suggestions"
 import { cn } from "@/lib/utils"
 import type { LocationSuggestion, SearchRequest, SortMode } from "@/types"
@@ -47,11 +47,16 @@ const SEARCH_MAX_FUTURE_DAYS_FALLBACK = 365
    own ceilings so the fallback advertises the truth rather than a guess. */
 const MAX_STAY_NIGHTS_FALLBACK = 90
 const MAX_PASSENGERS_FALLBACK = 9
+const MAX_LAP_INFANTS_PER_ADULT_FALLBACK = 1
 
 /* Resolved once at module scope: the server writes `__FLYDESK_RUNTIME__` into
    `<head>` and this bundle is the last script in `<body>`, so the value is
    already there — and it cannot change during a session. */
-const { maxStayNights: MAX_STAY_NIGHTS, maxPassengers: MAX_PASSENGERS } = getRuntimeSearchLimits()
+const {
+  maxStayNights: MAX_STAY_NIGHTS,
+  maxPassengers: MAX_PASSENGERS,
+  maxLapInfantsPerAdult: MAX_LAP_INFANTS_PER_ADULT,
+} = getRuntimeSearchLimits()
 const MAX_CHILDREN = 8
 /* The Migratorio sweep is capped at twelve months, which is also the length of
    the search window, so the picker can never offer a range it cannot search. */
@@ -106,7 +111,7 @@ export function SearchShell({
   const [children, setChildren] = useState(0)
   const [infants, setInfants] = useState(0)
   const [paxOpen, setPaxOpen] = useState(false)
-  const [usageSuggestions, setUsageSuggestions] = useState<LocationUsageSuggestions>(() => emptyLocationUsageSuggestions())
+  const [usageSuggestions, setUsageSuggestions] = useState<LocationUsageSuggestionGroups>(() => emptyLocationUsageSuggestions())
   const [hiddenUsageSuggestionFields, setHiddenUsageSuggestionFields] = useState<Record<LocationUsageField, boolean>>({
     origin: false,
     destination: false,
@@ -204,7 +209,10 @@ export function SearchShell({
       const nextInfants = clampInteger(
         syncedRequest.infants,
         0,
-        Math.min(nextAdults, Math.max(0, MAX_PASSENGERS - nextAdults - nextChildren)),
+        Math.min(
+          nextAdults * MAX_LAP_INFANTS_PER_ADULT,
+          Math.max(0, MAX_PASSENGERS - nextAdults - nextChildren),
+        ),
         0,
       )
       setAdults(nextAdults)
@@ -281,7 +289,11 @@ export function SearchShell({
   const updateAdults = (nextAdults: number) => {
     const clampedAdults = Math.max(1, Math.min(nextAdults, MAX_PASSENGERS))
     const clampedChildren = Math.min(children, Math.max(0, MAX_PASSENGERS - clampedAdults))
-    const clampedInfants = Math.min(infants, clampedAdults, Math.max(0, MAX_PASSENGERS - clampedAdults - clampedChildren))
+    const clampedInfants = Math.min(
+      infants,
+      clampedAdults * MAX_LAP_INFANTS_PER_ADULT,
+      Math.max(0, MAX_PASSENGERS - clampedAdults - clampedChildren),
+    )
     setAdults(clampedAdults)
     setChildren(clampedChildren)
     setInfants(clampedInfants)
@@ -291,12 +303,20 @@ export function SearchShell({
   const updateChildren = (nextChildren: number) => {
     const clampedChildren = Math.max(0, Math.min(nextChildren, MAX_CHILDREN, MAX_PASSENGERS - adults))
     setChildren(clampedChildren)
-    setInfants((current) => Math.min(current, adults, Math.max(0, MAX_PASSENGERS - adults - clampedChildren)))
+    setInfants((current) => Math.min(
+      current,
+      adults * MAX_LAP_INFANTS_PER_ADULT,
+      Math.max(0, MAX_PASSENGERS - adults - clampedChildren),
+    ))
     setTouched((current) => ({ ...current, passengers: true }))
   }
 
   const updateInfants = (nextInfants: number) => {
-    setInfants(Math.max(0, Math.min(nextInfants, adults, MAX_PASSENGERS - adults - children)))
+    setInfants(Math.max(0, Math.min(
+      nextInfants,
+      adults * MAX_LAP_INFANTS_PER_ADULT,
+      MAX_PASSENGERS - adults - children,
+    )))
     setTouched((current) => ({ ...current, passengers: true }))
   }
 
@@ -649,7 +669,9 @@ export function SearchShell({
                 setOriginCode(suggestion.code)
                 setTouched((current) => ({ ...current, origin: true }))
               }}
-              quickSuggestions={shouldShowUsageSuggestions && !origin.open && !hiddenUsageSuggestionFields.origin ? usageSuggestions.origin : []}
+              quickSuggestions={shouldShowUsageSuggestions && !origin.open && !hiddenUsageSuggestionFields.origin ? usageSuggestions.frequent.origin : []}
+              recentSuggestions={shouldShowUsageSuggestions && !hiddenUsageSuggestionFields.origin ? usageSuggestions.recent.origin : []}
+              frequentSuggestions={shouldShowUsageSuggestions && !hiddenUsageSuggestionFields.origin ? usageSuggestions.frequent.origin : []}
               quickSuggestionsExiting={exitingUsageSuggestionFields.origin}
               onQuickSuggestionSelect={applyOriginUsageSuggestion}
               reserveHelperSpace={reserveIdleHelperSpace}
@@ -697,7 +719,9 @@ export function SearchShell({
               setDestCode(suggestion.code)
               setTouched((current) => ({ ...current, destination: true }))
             }}
-            quickSuggestions={shouldShowUsageSuggestions && !destination.open && !hiddenUsageSuggestionFields.destination ? usageSuggestions.destination : []}
+            quickSuggestions={shouldShowUsageSuggestions && !destination.open && !hiddenUsageSuggestionFields.destination ? usageSuggestions.frequent.destination : []}
+            recentSuggestions={shouldShowUsageSuggestions && !hiddenUsageSuggestionFields.destination ? usageSuggestions.recent.destination : []}
+            frequentSuggestions={shouldShowUsageSuggestions && !hiddenUsageSuggestionFields.destination ? usageSuggestions.frequent.destination : []}
             quickSuggestionsExiting={exitingUsageSuggestionFields.destination}
             onQuickSuggestionSelect={applyDestinationUsageSuggestion}
             reserveHelperSpace={reserveIdleHelperSpace}
@@ -794,12 +818,14 @@ export function SearchShell({
                 <div className="grid gap-0.5 pt-1.5">
                   <PaxRow label="Adultos" detail="12+ años" value={adults} onInc={() => updateAdults(adults + 1)} onDec={() => updateAdults(adults - 1)} decDisabled={adults <= 1} incDisabled={adults >= MAX_PASSENGERS || passengerSlotsRemaining <= 0} />
                   <PaxRow label="Niños" detail="2-11 años" value={children} onInc={() => updateChildren(children + 1)} onDec={() => updateChildren(children - 1)} decDisabled={children <= 0} incDisabled={children >= MAX_CHILDREN || passengerSlotsRemaining <= 0} />
-                  <PaxRow label="Bebés" detail="Menos de 2 años" value={infants} onInc={() => updateInfants(infants + 1)} onDec={() => updateInfants(infants - 1)} decDisabled={infants <= 0} incDisabled={infants >= adults || passengerSlotsRemaining <= 0} />
+                  <PaxRow label="Bebés" detail="Menos de 2 años" value={infants} onInc={() => updateInfants(infants + 1)} onDec={() => updateInfants(infants - 1)} decDisabled={infants <= 0} incDisabled={infants >= adults * MAX_LAP_INFANTS_PER_ADULT || passengerSlotsRemaining <= 0} />
                 </div>
                 {/* Both rules in words. The one-infant-per-adult limit used to be
                     deducible only from a button that went dim. */}
                 <p className="mx-1 mb-0.5 mt-2 border-t border-border pt-2 text-[11px] leading-[1.45] text-muted-foreground">
-                  Máximo {MAX_PASSENGERS} por búsqueda · un bebé en falda por adulto
+                  Máximo {MAX_PASSENGERS} por búsqueda · {MAX_LAP_INFANTS_PER_ADULT === 1
+                    ? "un bebé en falda por adulto"
+                    : `hasta ${MAX_LAP_INFANTS_PER_ADULT} bebés en falda por adulto`}
                 </p>
               </PopoverContent>
               <ControlHelper id="passengers-helper" text={visiblePassengerError} />
@@ -996,6 +1022,8 @@ function LocationField({
   onChange,
   onSelect,
   quickSuggestions = [],
+  recentSuggestions = [],
+  frequentSuggestions = [],
   quickSuggestionsExiting = false,
   onQuickSuggestionSelect,
   reserveHelperSpace = false,
@@ -1017,6 +1045,8 @@ function LocationField({
   onChange: (value: string) => void
   onSelect: (suggestion: LocationSuggestion) => void
   quickSuggestions?: string[]
+  recentSuggestions?: string[]
+  frequentSuggestions?: string[]
   quickSuggestionsExiting?: boolean
   onQuickSuggestionSelect?: (code: string) => void | Promise<void>
   reserveHelperSpace?: boolean
@@ -1026,14 +1056,52 @@ function LocationField({
 }) {
   const fieldId = `location-${label.toLowerCase()}`
   const listboxId = `${fieldId}-suggestions`
-  const activeOptionId = activeIndex >= 0 && suggestions[activeIndex]
-    ? `${listboxId}-${activeIndex}`
-    : undefined
   const fieldRef = useRef<HTMLDivElement | null>(null)
   const controlRef = useRef<HTMLDivElement | null>(null)
   const [listboxStyle, setListboxStyle] = useState<CSSProperties | null>(null)
-  const shouldShowListbox = open && suggestions.length > 0
+  const [usageActiveIndex, setUsageActiveIndex] = useState(-1)
+  const usageOptions = useMemo(() => [
+    ...recentSuggestions.map((code) => ({ code, heading: "Recientes" as const })),
+    ...frequentSuggestions.map((code) => ({ code, heading: "Frecuentes" as const })),
+  ], [frequentSuggestions, recentSuggestions])
+  const shouldShowUsagePanel = open
+    && value.trim().length === 0
+    && Boolean(onQuickSuggestionSelect)
+    && usageOptions.length > 0
+  const shouldShowMatchesPanel = open && suggestions.length > 0 && value.trim().length > 0
+  const shouldShowListbox = shouldShowUsagePanel || shouldShowMatchesPanel
+  const activeOptionId = shouldShowUsagePanel
+    && usageActiveIndex >= 0
+    && usageOptions[usageActiveIndex]
+    ? `${listboxId}-usage-${usageActiveIndex}`
+    : activeIndex >= 0 && suggestions[activeIndex]
+      ? `${listboxId}-${activeIndex}`
+      : undefined
   const listboxTarget = typeof document === "undefined" ? null : document.body
+
+  const handleLocationKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (shouldShowUsagePanel && onQuickSuggestionSelect) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault()
+        setUsageActiveIndex((current) => Math.min(current + 1, usageOptions.length - 1))
+        return
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault()
+        setUsageActiveIndex((current) => current <= 0
+          ? usageOptions.length - 1
+          : Math.min(current - 1, usageOptions.length - 1))
+        return
+      }
+      if (event.key === "Enter" && usageActiveIndex >= 0) {
+        event.preventDefault()
+        const selected = usageOptions[usageActiveIndex]
+        if (selected) void onQuickSuggestionSelect(selected.code)
+        return
+      }
+    }
+    onKeyDown(event)
+  }
 
   useLayoutEffect(() => {
     if (!shouldShowListbox) return
@@ -1065,7 +1133,7 @@ function LocationField({
       window.removeEventListener("resize", updateListboxStyle)
       window.removeEventListener("scroll", updateListboxStyle, true)
     }
-  }, [shouldShowListbox, suggestions.length, value])
+  }, [frequentSuggestions.length, recentSuggestions.length, shouldShowListbox, suggestions.length, value])
 
   const focusInputFromControl = (event: MouseEvent<HTMLDivElement>) => {
     if (event.target === inputRef.current) {
@@ -1108,19 +1176,25 @@ function LocationField({
           aria-autocomplete="list"
           aria-controls={listboxId}
           aria-describedby={helperText ? `${fieldId}-helper` : undefined}
-          aria-expanded={open && suggestions.length > 0}
+          aria-expanded={shouldShowListbox}
           aria-activedescendant={activeOptionId}
           aria-invalid={invalid}
           autoComplete="off"
           name={fieldId}
           role="combobox"
           value={value}
-          onChange={(event) => onChange(event.target.value)}
-          onFocus={onFocus}
+          onChange={(event) => {
+            setUsageActiveIndex(-1)
+            onChange(event.target.value)
+          }}
+          onFocus={() => {
+            setUsageActiveIndex(-1)
+            onFocus()
+          }}
           onBlur={() => {
             void onBlur()
           }}
-          onKeyDown={onKeyDown}
+          onKeyDown={handleLocationKeyDown}
           placeholder={placeholder}
           className={`${SEARCH_FIELD_VALUE_CLASS} w-auto rounded-none border-0 bg-transparent p-0 text-foreground shadow-none outline-none focus-visible:border-0 focus-visible:ring-0`}
         />
@@ -1135,61 +1209,143 @@ function LocationField({
       />
       {listboxTarget && shouldShowListbox && listboxStyle ? createPortal(
         <div style={listboxStyle} className="fd-suggest-panel fd-motion-emergente">
-          <div className="fd-suggest-head">
-            <span className="fd-type-micro">Coincidencias</span>
-            <span className="fd-mono text-xs font-semibold text-muted-foreground">{suggestions.length}</span>
-          </div>
+          {shouldShowUsagePanel ? (
+            <div id={listboxId} role="listbox" className="fd-scrollbar-hidden grid max-h-[288px] overflow-y-auto pb-1.5">
+              <LocationUsageSuggestionSection
+                fieldId={fieldId}
+                listboxId={listboxId}
+                heading="Recientes"
+                suggestions={recentSuggestions}
+                activeIndex={usageActiveIndex}
+                indexOffset={0}
+                onSelect={onQuickSuggestionSelect}
+              />
+              <LocationUsageSuggestionSection
+                fieldId={fieldId}
+                listboxId={listboxId}
+                heading="Frecuentes"
+                suggestions={frequentSuggestions}
+                activeIndex={usageActiveIndex}
+                indexOffset={recentSuggestions.length}
+                onSelect={onQuickSuggestionSelect}
+              />
+            </div>
+          ) : (
+            <>
+              <div className="fd-suggest-head">
+                <span className="fd-type-micro">Coincidencias</span>
+                <span className="fd-mono text-xs font-semibold text-muted-foreground">{suggestions.length}</span>
+              </div>
 
-          {/* One row per result, with the IATA in a fixed column: it is what the
-              agent reads first and what they type. */}
-          <div id={listboxId} role="listbox" className="fd-scrollbar-hidden grid max-h-[288px] overflow-y-auto px-1.5 pb-1.5">
-            {suggestions.map((suggestion, index) => (
-              <button
-                id={`${listboxId}-${index}`}
-                key={`${suggestion.code}-${index}`}
-                type="button"
-                role="option"
-                aria-selected={index === activeIndex}
-                className="fd-suggest-row"
-                onMouseDown={(event) => {
-                  event.preventDefault()
-                  onSelect(suggestion)
-                }}
-              >
-                {/* A city group gets a different glyph, because "all the airports
-                    of this city" is a different kind of answer from one airport —
-                    and a real quote almost always accepts any of the three. */}
-                <span className="grid place-items-center text-muted-foreground">
-                  <AppIcon name={isCityGroupSuggestion(suggestion) ? "cityGroup" : "airport"} size={14} />
-                </span>
-                <span className="fd-suggest-code">{suggestion.code}</span>
-                <span className="grid min-w-0 gap-0.5">
-                  <span className="fd-suggest-city">{suggestionCityLabel(suggestion)}</span>
-                  <span className="fd-suggest-detail">{suggestionPlaceLabel(suggestion)}</span>
-                </span>
-              </button>
-            ))}
-          </div>
+              {/* One row per result, with the IATA in a fixed column: it is what the
+                  agent reads first and what they type. */}
+              <div id={listboxId} role="listbox" className="fd-scrollbar-hidden grid max-h-[288px] overflow-y-auto px-1.5 pb-1.5">
+                {suggestions.map((suggestion, index) => (
+                  <button
+                    id={`${listboxId}-${index}`}
+                    key={`${suggestion.code}-${index}`}
+                    type="button"
+                    role="option"
+                    aria-selected={index === activeIndex}
+                    className="fd-suggest-row"
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                    }}
+                    onClick={() => onSelect(suggestion)}
+                  >
+                    {/* A city group gets a different glyph, because "all the airports
+                        of this city" is a different kind of answer from one airport —
+                        and a real quote almost always accepts any of the three. */}
+                    <span className="grid place-items-center text-muted-foreground">
+                      <AppIcon name={suggestionLocationIcon(suggestion)} size={14} />
+                    </span>
+                    <span className="fd-suggest-code">{suggestion.code}</span>
+                    <span className="grid min-w-0 gap-0.5">
+                      <span className="fd-suggest-city">{suggestionCityLabel(suggestion)}</span>
+                      <span className="fd-suggest-detail">{suggestionPlaceLabel(suggestion)}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
           {/* This search is used by typing, not by pointing, so the keys are on
               screen. They are icons from the same set, not mono glyphs. */}
-          <div className="fd-suggest-foot">
-            <KbdHint keys={<Kbd icon="enter" />} label="elegir" />
-            <KbdHint
-              keys={(
-                <span className="inline-flex gap-1">
-                  <Kbd icon="arrowUp" />
-                  <Kbd icon="arrowDown" />
-                </span>
-              )}
-              label="navegar"
-            />
-            <KbdHint keys={<Kbd>esc</Kbd>} label="cerrar" />
-          </div>
+          {!shouldShowUsagePanel && (
+            <div className="fd-suggest-foot">
+              <KbdHint keys={<Kbd icon="enter" />} label="elegir" />
+              <KbdHint
+                keys={(
+                  <span className="inline-flex gap-1">
+                    <Kbd icon="arrowUp" />
+                    <Kbd icon="arrowDown" />
+                  </span>
+                )}
+                label="navegar"
+              />
+              <KbdHint keys={<Kbd>esc</Kbd>} label="cerrar" />
+            </div>
+          )}
         </div>,
         listboxTarget,
       ) : null}
     </Field>
+  )
+}
+
+function LocationUsageSuggestionSection({
+  fieldId,
+  listboxId,
+  heading,
+  suggestions,
+  activeIndex,
+  indexOffset,
+  onSelect,
+}: {
+  fieldId: string
+  listboxId: string
+  heading: "Recientes" | "Frecuentes"
+  suggestions: string[]
+  activeIndex: number
+  indexOffset: number
+  onSelect?: (code: string) => void | Promise<void>
+}) {
+  if (suggestions.length === 0 || !onSelect) {
+    return null
+  }
+
+  return (
+    <section aria-label={heading}>
+      <div className="fd-suggest-head">
+        <span className="fd-type-micro">{heading}</span>
+        <span className="fd-mono text-xs font-semibold text-muted-foreground">{suggestions.length}</span>
+      </div>
+      <div className="grid px-1.5">
+        {suggestions.map((code, index) => {
+          const optionIndex = indexOffset + index
+          return (
+          <button
+            id={`${listboxId}-usage-${optionIndex}`}
+            key={`${fieldId}-${heading}-${code}`}
+            type="button"
+            role="option"
+            aria-selected={optionIndex === activeIndex}
+            className="fd-suggest-row"
+            onMouseDown={(event) => {
+              event.preventDefault()
+            }}
+            onClick={() => void onSelect(code)}
+          >
+            <span className="grid place-items-center text-muted-foreground">
+              <AppIcon name="location" size={14} />
+            </span>
+            <span className="fd-suggest-code">{code}</span>
+          </button>
+          )
+        })}
+      </div>
+    </section>
   )
 }
 
@@ -1255,16 +1411,10 @@ function suggestionCityLabel(suggestion: LocationSuggestion): string {
   return suggestionPlaceLabel(suggestion).split(",")[0]?.trim() || suggestion.code
 }
 
-/**
- * Whether this row stands for a whole city rather than one airport. The backend
- * marks city entries with a `CITY` type on some providers and not on others, so
- * this also treats "todos los aeropuertos" phrasing as the same thing.
- */
-function isCityGroupSuggestion(suggestion: LocationSuggestion): boolean {
-  const type = String((suggestion as LocationSuggestion & { type?: string }).type ?? "").toUpperCase()
-  if (type === "CITY") return true
-
-  return /todos los aeropuertos/i.test(suggestion.label ?? "")
+function suggestionLocationIcon(suggestion: LocationSuggestion): AppIconName {
+  if (suggestion.type === "CITY") return "cityGroup"
+  if (suggestion.type === "AIRPORT") return "airport"
+  return "location"
 }
 
 function ControlHelper({ id, text }: { id: string; text?: string }) {
@@ -1390,10 +1540,10 @@ function PaxRow({
  *
  * The server injects `window.__FLYDESK_RUNTIME__` (see `src/server.ts`), so the
  * date window already comes from the backend and honours `SEARCH_MAX_FUTURE_DAYS`
- * / `SEARCH_TODAY_OVERRIDE`. The two ceilings did not: they were frontend
+ * / `SEARCH_TODAY_OVERRIDE`. The three ceilings did not: they were frontend
  * constants that happened to agree with the backend's own limits
  * (`MAX_FLEXIBLE_STAY_NIGHTS` in `src/core/flexible-search.ts`, and the
- * passenger check in `src/http-search-contract.ts`).
+ * passenger and lap-infant checks in `src/http-search-contract.ts`).
  *
  * That is the failure mode plate 1a exists to prevent: the line promises a
  * policy, so if the backend tightened its ceiling to 8 the screen would keep
@@ -1410,6 +1560,7 @@ interface RuntimeSearchDatePolicy {
 interface RuntimeSearchLimits {
   maxStayNights: number
   maxPassengers: number
+  maxLapInfantsPerAdult: number
 }
 
 declare global {
@@ -1418,6 +1569,7 @@ declare global {
       searchDatePolicy?: RuntimeSearchDatePolicy
       maxStayNights?: number
       maxPassengers?: number
+      maxLapInfantsPerAdult?: number
     }
   }
 }
@@ -1438,6 +1590,7 @@ function getRuntimeSearchLimits(): RuntimeSearchLimits {
   return {
     maxStayNights: positiveInteger(runtime?.maxStayNights) ?? MAX_STAY_NIGHTS_FALLBACK,
     maxPassengers: positiveInteger(runtime?.maxPassengers) ?? MAX_PASSENGERS_FALLBACK,
+    maxLapInfantsPerAdult: positiveInteger(runtime?.maxLapInfantsPerAdult) ?? MAX_LAP_INFANTS_PER_ADULT_FALLBACK,
   }
 }
 
@@ -1618,8 +1771,10 @@ function buildSearchValidation(input: SearchValidationInput): SearchValidationSt
     state.passengers = `La cantidad de niños debe estar entre 0 y ${MAX_CHILDREN}.`
   } else if (!Number.isInteger(input.infants) || input.infants < 0) {
     state.passengers = "La cantidad de bebés debe ser válida."
-  } else if (input.infants > input.adults) {
-    state.passengers = "La cantidad de bebés no puede superar la de adultos."
+  } else if (input.infants > input.adults * MAX_LAP_INFANTS_PER_ADULT) {
+    state.passengers = MAX_LAP_INFANTS_PER_ADULT === 1
+      ? "Se admite un bebé en falda por adulto."
+      : `Se admiten hasta ${MAX_LAP_INFANTS_PER_ADULT} bebés en falda por adulto.`
   } else if (passengerTotal > MAX_PASSENGERS) {
     state.passengers = `La búsqueda admite hasta ${MAX_PASSENGERS} pasajeros.`
   }

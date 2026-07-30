@@ -78,6 +78,9 @@ export function isSearchServiceRoute(method: string, pathname: string): boolean 
   if (normalizedMethod === "POST" && pathname === "/api/quotation") {
     return true;
   }
+  if (normalizedMethod === "GET" && pathname === "/api/provider-status") {
+    return true;
+  }
   if (normalizedMethod === "GET" && /^\/api\/search\/[^/]+$/.test(pathname)) {
     return true;
   }
@@ -117,15 +120,6 @@ function responseHeadersFromProxy(response: Response): Headers {
   return headers;
 }
 
-function summarizeProxyError(error: unknown): string {
-  const raw = error instanceof Error
-    ? `${error.name}: ${error.message}`
-    : String(error);
-  return raw
-    .replace(/[A-Za-z0-9_-]{24,}/g, "[redacted]")
-    .slice(0, 240);
-}
-
 function logSearchServiceProxyFailure(
   error: unknown,
   target: URL,
@@ -137,7 +131,9 @@ function logSearchServiceProxyFailure(
     path: target.pathname,
     target: target.origin,
     apiTokenConfigured: hasApiToken,
-    error: summarizeProxyError(error),
+    errorKind: error instanceof Error && error.name === "AbortError"
+      ? "request_aborted"
+      : "request_failed",
   });
 }
 

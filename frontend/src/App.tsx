@@ -904,7 +904,8 @@ function isMigrationResults(results: { migrationMonths?: unknown[]; request: Sea
   return results.request.searchMode === "month-view" || Boolean(results.migrationMonths?.length)
 }
 
-function applyMigrationFilters(results: SearchJobResponse, filteredOffers: CanonicalOffer[], sortMode: SortMode) {
+// eslint-disable-next-line react-refresh/only-export-components -- Pure result transformer exercised directly in unit tests.
+export function applyMigrationFilters(results: SearchJobResponse, filteredOffers: CanonicalOffer[], sortMode: SortMode) {
   const visibleOfferIds = new Set(filteredOffers.map((offer) => offer.id))
   const migrationMonths = (results.migrationMonths ?? []).map((month) => {
     const monthOffers = month.offers?.length
@@ -916,6 +917,7 @@ function applyMigrationFilters(results: SearchJobResponse, filteredOffers: Canon
     return {
       ...month,
       offer: selectedOffer,
+      offers: visibleMonthOffers,
       filtered: !selectedOffer && monthOffers.length > 0 && month.status !== "loading",
     }
   })

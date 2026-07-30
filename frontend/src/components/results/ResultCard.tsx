@@ -108,17 +108,23 @@ export function ResultCard({
             <span className="fd-card__carrier-operator">{model.carrier.operatedBy}</span>
           )}
         </span>
-        <span className="fd-card__baggage">
-          <span className="fd-card__baggage-icons">
-            <span className={cn("fd-card__bag", model.baggage.carryOnIncluded ? "is-included" : "is-missing")}>
-              <Backpack aria-hidden="true" />
+        {model.baggage.label && (
+          <span className="fd-card__baggage">
+            <span className="fd-card__baggage-icons">
+              {model.baggage.carryOnIncluded !== undefined && (
+                <span className={cn("fd-card__bag", model.baggage.carryOnIncluded ? "is-included" : "is-missing")}>
+                  <Backpack aria-hidden="true" />
+                </span>
+              )}
+              {model.baggage.checkedIncluded !== undefined && (
+                <span className={cn("fd-card__bag", model.baggage.checkedIncluded ? "is-included" : "is-missing")}>
+                  <Luggage aria-hidden="true" />
+                </span>
+              )}
             </span>
-            <span className={cn("fd-card__bag", model.baggage.checkedIncluded ? "is-included" : "is-missing")}>
-              <Luggage aria-hidden="true" />
-            </span>
+            <span className="fd-card__baggage-label">{model.baggage.label}</span>
           </span>
-          <span className="fd-card__baggage-label">{model.baggage.label}</span>
-        </span>
+        )}
       </div>
 
       <div className="fd-card__legs" aria-hidden="true">

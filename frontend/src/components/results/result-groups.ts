@@ -1,4 +1,4 @@
-import type { CanonicalOffer } from "@/types"
+import type { CanonicalOffer, SearchJobResponse } from "@/types"
 import { buildResultCardModel } from "./result-card-model"
 
 export type ResultListItem =
@@ -19,81 +19,80 @@ export interface ResultListPage {
   displayWeight: number
 }
 
-type GroupBucket = ResultOfferGroup & {
-  firstIndex: number
-}
+type ScheduleGroup = NonNullable<SearchJobResponse["scheduleGroups"]>[number]
 
-type NativeGroupDescriptor = {
-  providerKey: "agil" | "costamar"
-  providerLabel: string
-  nativeId: string
-}
+export function buildResultListItems(
+  offers: CanonicalOffer[],
+  scheduleGroups: readonly ScheduleGroup[] = [],
+): ResultListItem[] {
+  const offersById = new Map(offers.map((offer) => [offer.id, offer]))
+  const groupByOfferId = new Map<string, ResultOfferGroup>()
+  const assignedOfferIds = new Set<string>()
+  const registeredGroupIds = new Set<string>()
 
-export function buildResultListItems(offers: CanonicalOffer[]): ResultListItem[] {
-  const buckets = new Map<string, GroupBucket>()
-  const offerKeys = new Map<string, string>()
+  for (const scheduleGroup of scheduleGroups) {
+    if (registeredGroupIds.has(scheduleGroup.id)) continue
 
-  offers.forEach((offer, index) => {
-    const key = offerNaturalGroupKey(offer)
-    if (!key) return
+    const memberOffers: CanonicalOffer[] = []
+    const memberOfferIds = new Set<string>()
+    for (const combination of scheduleGroup.combinations) {
+      if (memberOfferIds.has(combination.offerId) || assignedOfferIds.has(combination.offerId)) continue
 
-    offerKeys.set(offer.id, key)
-    const bucket = buckets.get(key)
-    if (bucket) {
-      bucket.offers.push(offer)
-      return
+      const offer = offersById.get(combination.offerId)
+      if (!offer) continue
+
+      memberOfferIds.add(offer.id)
+      memberOffers.push(offer)
     }
 
-    const descriptor = nativeGroupDescriptor(offer)
-    if (!descriptor) return
+    // A partially filtered or stale group is not a group in the visible list.
+    // Its one remaining offer stays selectable as the complete backend offer.
+    if (memberOffers.length <= 1) continue
 
-    buckets.set(key, {
-      id: `result-group:${key}`,
-      key,
-      providerLabel: descriptor.providerLabel,
-      offers: [offer],
-      firstIndex: index,
-    })
-  })
+    const id = `result-group:${scheduleGroup.id}`
+    const group: ResultOfferGroup = {
+      id,
+      key: scheduleGroup.id,
+      providerLabel: providerLabelForScheduleGroup(scheduleGroup.providerSource),
+      offers: orderVisibleGroupOffers(memberOffers),
+    }
 
-  const groupedKeys = new Set(
-    Array.from(buckets)
-      .filter(([, bucket]) => bucket.offers.length > 1)
-      .sort((left, right) => left[1].firstIndex - right[1].firstIndex)
-      .map(([key]) => key),
-  )
+    registeredGroupIds.add(scheduleGroup.id)
+    for (const offer of memberOffers) {
+      assignedOfferIds.add(offer.id)
+      groupByOfferId.set(offer.id, group)
+    }
+  }
+
   const emittedGroups = new Set<string>()
 
   return offers.flatMap((offer): ResultListItem[] => {
-    const key = offerKeys.get(offer.id)
-    if (!key || !groupedKeys.has(key)) {
+    const group = groupByOfferId.get(offer.id)
+    if (!group) {
       return [{ type: "offer", id: offer.id, offer, offerCount: 1 }]
     }
 
-    if (emittedGroups.has(key)) return []
-    emittedGroups.add(key)
+    if (emittedGroups.has(group.id)) return []
+    emittedGroups.add(group.id)
 
-    const bucket = buckets.get(key)
-    if (!bucket) return [{ type: "offer", id: offer.id, offer, offerCount: 1 }]
-
-    const visibleOffers = orderVisibleGroupOffers(bucket.offers)
-    if (visibleOffers.length <= 1) {
-      const visibleOffer = visibleOffers[0] ?? offer
+    if (group.offers.length <= 1) {
+      const visibleOffer = group.offers[0] ?? offer
       return [{ type: "offer", id: visibleOffer.id, offer: visibleOffer, offerCount: 1 }]
     }
 
     return [{
       type: "group",
-      id: bucket.id,
-      offerCount: visibleOffers.length,
-      group: {
-        id: bucket.id,
-        key: bucket.key,
-        providerLabel: bucket.providerLabel,
-        offers: visibleOffers,
-      },
+      id: group.id,
+      offerCount: group.offers.length,
+      group,
     }]
   })
+}
+
+function providerLabelForScheduleGroup(providerSource: ScheduleGroup["providerSource"]): string {
+  if (providerSource === "costamar") return "Click and Book Plus"
+  if (providerSource === "agil-local") return "Agilsmart"
+  return providerSource
 }
 
 export function resultListItemContainsOffer(item: ResultListItem, offerId: string): boolean {
@@ -171,86 +170,6 @@ export function paginateResultListItems(
  */
 export function resultListItemDisplayWeight(item: ResultListItem): number {
   return item.type === "offer" ? 1 : 1.34
-}
-
-function offerNaturalGroupKey(offer: CanonicalOffer): string | null {
-  const descriptor = nativeGroupDescriptor(offer)
-  if (!descriptor) return null
-
-  const price = moneySignature(offer.price?.total)
-  if (!price) return null
-
-  return [
-    descriptor.providerKey,
-    descriptor.nativeId,
-    price,
-    baggageSignature(offer),
-  ].join("|")
-}
-
-function nativeGroupDescriptor(offer: CanonicalOffer): NativeGroupDescriptor | null {
-  const rawRefs = offer.rawRefs
-  const agilGroupId = rawRefString(rawRefs?.agilGroupId)
-  if (agilGroupId) {
-    return {
-      providerKey: "agil",
-      providerLabel: "Agilsmart",
-      nativeId: agilGroupId,
-    }
-  }
-
-  const recommendationId = rawRefString(rawRefs?.recommendationId)
-  if (recommendationId) {
-    return {
-      providerKey: "costamar",
-      providerLabel: "Click and Book Plus",
-      nativeId: costamarRecommendationBase(recommendationId),
-    }
-  }
-
-  const pos = rawRefString(rawRefs?.pos)
-  if (pos && isCostamarOffer(offer)) {
-    return {
-      providerKey: "costamar",
-      providerLabel: "Click and Book Plus",
-      nativeId: `pos:${pos}`,
-    }
-  }
-
-  return null
-}
-
-function isCostamarOffer(offer: CanonicalOffer): boolean {
-  return offer.providerSource === "costamar"
-    || offer.purchasePaths?.some((path) => path.provider === "costamar") === true
-}
-
-function costamarRecommendationBase(value: string): string {
-  return value.split(":")[0]?.trim() || value
-}
-
-function rawRefString(value: unknown): string | null {
-  if (typeof value !== "string" && typeof value !== "number") return null
-
-  const text = String(value).trim()
-  return text ? text : null
-}
-
-function moneySignature(money: CanonicalOffer["price"]["total"] | undefined): string | null {
-  if (!money || !Number.isFinite(money.amount)) return null
-
-  return `${money.currencyCode}:${Math.round(money.amount * 100)}`
-}
-
-function baggageSignature(offer: CanonicalOffer): string {
-  const baggage = offer.baggage
-  if (!baggage) return "bag:unknown"
-
-  return [
-    baggage.carryOnIncluded === true ? "carry:yes" : baggage.carryOnIncluded === false ? "carry:no" : "carry:unknown",
-    baggage.checkedIncluded === true ? "checked:yes" : baggage.checkedIncluded === false ? "checked:no" : "checked:unknown",
-    `checkedBags:${baggage.checkedBags ?? "unknown"}`,
-  ].join(";")
 }
 
 function orderVisibleGroupOffers(offers: CanonicalOffer[]): CanonicalOffer[] {

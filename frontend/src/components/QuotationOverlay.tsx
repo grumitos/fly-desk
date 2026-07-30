@@ -4,6 +4,7 @@ import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
+import { QUOTATION_FARE_STALE_MINUTES } from "../../../src/core/quotation"
 
 /*
  * Plate 1h — "Cotización lista para pegar", and plate 3c — the error.
@@ -22,14 +23,10 @@ import { cn } from "@/lib/utils"
  * because a quote is not edited on a phone.
  */
 
-/* Past this, the fare has been sitting long enough that it should be re-quoted
-   rather than pasted. The plate writes the rule on screen instead of hiding it. */
-const FARE_STALE_MINUTES = 15
-
 export type QuotationOverlayState = {
   text: string
   error: boolean
-  /** When the provider confirmed the fare, for the age line in the footer. */
+  /** Backend timestamp used for the visible fare age; verified quotes use priceVerifiedAt. */
   preparedAt?: string
 }
 
@@ -98,17 +95,19 @@ export function QuotationOverlay({
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            <label
-              className="flex h-8 cursor-pointer items-center gap-2 rounded-lg px-1.5 text-xs font-semibold text-muted-foreground hover:bg-accent hover:text-foreground"
-              title="Cambia el texto al paquete migratorio"
-            >
-              <Switch
-                checked={migrationPlan}
-                aria-label="Paquete migratorio"
-                onCheckedChange={onToggleMigrationPlan}
-              />
-              <span>Paquete migratorio</span>
-            </label>
+            {!state.error && (
+              <label
+                className="flex h-8 cursor-pointer items-center gap-2 rounded-lg px-1.5 text-xs font-semibold text-muted-foreground hover:bg-accent hover:text-foreground"
+                title="Cambia el texto al paquete migratorio"
+              >
+                <Switch
+                  checked={migrationPlan}
+                  aria-label="Paquete migratorio"
+                  onCheckedChange={onToggleMigrationPlan}
+                />
+                <span>Paquete migratorio</span>
+              </label>
+            )}
             <button
               type="button"
               className="fd-control-quiet fd-focus-ring grid size-8 place-items-center !rounded-lg"
@@ -146,10 +145,12 @@ export function QuotationOverlay({
           <div className="flex shrink-0 items-center gap-2">
             {state.error ? (
               <>
-                <Button type="button" size="sm" variant="secondary" onClick={() => void onCopy()}>
-                  <AppIcon name="copy" size={14} />
-                  Copiar sin tarifa confirmada
-                </Button>
+                {canOpenProvider && (
+                  <Button type="button" size="sm" variant="secondary" onClick={onOpenProvider}>
+                    <AppIcon name="externalLink" size={14} />
+                    Abrir proveedor
+                  </Button>
+                )}
                 <Button type="button" size="sm" onClick={onRetry}>
                   <AppIcon name="loading" size={14} />
                   Reintentar
@@ -183,15 +184,15 @@ export function QuotationOverlay({
  * hands; a bare timestamp makes them do the arithmetic mid-call.
  */
 function fareAgeLabel(preparedAt?: string): string {
-  if (!preparedAt) return `Vuelve a cotizar si la tarifa pasa de ${FARE_STALE_MINUTES} min`
+  if (!preparedAt) return `Vuelve a cotizar si la tarifa pasa de ${QUOTATION_FARE_STALE_MINUTES} min`
 
   const prepared = Date.parse(preparedAt)
-  if (Number.isNaN(prepared)) return `Vuelve a cotizar si la tarifa pasa de ${FARE_STALE_MINUTES} min`
+  if (Number.isNaN(prepared)) return `Vuelve a cotizar si la tarifa pasa de ${QUOTATION_FARE_STALE_MINUTES} min`
 
   const minutes = Math.max(0, Math.round((Date.now() - prepared) / 60_000))
   const age = minutes < 1 ? "hace menos de 1 min" : `hace ${minutes} min`
 
-  return minutes >= FARE_STALE_MINUTES
+  return minutes >= QUOTATION_FARE_STALE_MINUTES
     ? `Tarifa preparada ${age} · vuelve a cotizar antes de pegar`
-    : `Tarifa preparada ${age} · vuelve a cotizar si pasa de ${FARE_STALE_MINUTES}`
+    : `Tarifa preparada ${age} · vuelve a cotizar si pasa de ${QUOTATION_FARE_STALE_MINUTES}`
 }

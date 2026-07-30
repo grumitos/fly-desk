@@ -103,6 +103,8 @@ export function buildMatrixResponse(overrides: Record<string, unknown> = {}) {
 export function buildOffer(overrides: Record<string, unknown> = {}) {
   return {
     id: "offer-1",
+    providerSource: "agil-local",
+    tripType: "round-trip",
     origin: "LIM",
     destination: "MIA",
     mainCarrier: "LA",
@@ -140,6 +142,7 @@ export function buildOffer(overrides: Record<string, unknown> = {}) {
         segments: [
           {
             flightNumber: "LA 123",
+            marketingCarrier: "LA",
             origin: "LIM",
             destination: "MIA",
             departureAt: "2026-04-15T14:00:00Z",
@@ -154,6 +157,7 @@ export function buildOffer(overrides: Record<string, unknown> = {}) {
         segments: [
           {
             flightNumber: "LA 456",
+            marketingCarrier: "LA",
             origin: "MIA",
             destination: "LIM",
             departureAt: "2026-04-22T15:00:00Z",

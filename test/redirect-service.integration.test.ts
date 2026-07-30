@@ -660,8 +660,74 @@ test("redirect service keeps Costamar token validation outside the main runtime"
 
       assert.equal(response.status, 409);
       assert.match(response.headers.get("content-type") ?? "", /text\/html/i);
-      assert.match(await response.text(), /Renueva la sesion de Click and Book Plus/i);
+      const body = await response.text();
+      assert.match(body, /Renueva la autenticación de Click and Book Plus/i);
+      assert.doesNotMatch(body, /sesion este activa/i);
     } finally {
+      resetCostamarWarmupStateForTests();
+      resetCostamarSessionCacheForTests();
+      restoreEnv();
+    }
+  });
+});
+
+test("redirect service HTML never exposes a token-bearing validation error", async () => {
+  await withTempDb(async (dbPath) => {
+    const previousFetch = global.fetch;
+    const token = buildJwt({
+      id: "0721808110",
+      iat: 1893456000,
+      exp: 1893459600,
+    });
+    const restoreEnv = overrideEnv({
+      FLY_DESK_API_TOKEN: "redirect-test-token",
+      CBPLUS_TOKEN: token,
+      COSTAMAR_TOKEN: undefined,
+      CBPLUS_SESSION_WARMUP_ENABLED: "0",
+      COSTAMAR_SESSION_WARMUP_ENABLED: "0",
+    });
+
+    try {
+      const tokenUrl = `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${token}`;
+      const offer = buildOffer("costamar", tokenUrl);
+      const store = new SearchSessionStore({ dbPath });
+      const job = store.createSearchJob({
+        request: buildRequest("costamar"),
+        providerContext: {
+          costamar: {
+            apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+            brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+            terminalId: "0721808110",
+            token,
+            lang: "es",
+          },
+        },
+        offers: [offer],
+        allOffers: [offer],
+        searchMeta: buildSearchMeta("costamar"),
+        providerMeta: buildProviderMeta("costamar"),
+        warnings: [],
+        sortMode: "cheapest",
+        status: "completed",
+      });
+      const redirectPath = store.getSession(job.id)?.offers[0]?.purchasePaths[0]?.url;
+      store.close();
+      assert.ok(redirectPath);
+
+      global.fetch = (async (input) => {
+        throw new Error(`private validation failed at ${String(input)}&internal=private-runner-secret`);
+      }) as typeof fetch;
+
+      const response = await routeRedirectRequest(
+        authenticatedRedirectRequest(`http://127.0.0.1:8102${redirectPath}`),
+        { dbPath, cacheLookupTimeoutMs: 0 },
+      );
+      const body = await response.text();
+      assert.equal(response.status, 409);
+      assert.match(body, /Renueva la autenticación de Click and Book Plus/i);
+      assert.doesNotMatch(body, /token=|private-runner-secret|booking\.clickandbook\.com/i);
+    } finally {
+      global.fetch = previousFetch;
       resetCostamarWarmupStateForTests();
       resetCostamarSessionCacheForTests();
       restoreEnv();

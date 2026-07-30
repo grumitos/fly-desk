@@ -1,5 +1,6 @@
 import { applySearchFilters } from "./filtering";
 import { groupExactProviderOffers } from "./offer-grouping";
+import { buildOfferScheduleGroups } from "./offer-schedule-groups";
 import { ProviderExecutionContext, SearchProvider } from "./provider";
 import { enrichComparisonMetrics, sortOffers } from "./ranking";
 import {
@@ -58,6 +59,7 @@ export function materializeSearchResponse(
   return {
     offers,
     allOffers,
+    scheduleGroups: buildOfferScheduleGroups(allOffers),
     searchMeta: buildSearchMeta(
       startedAt,
       [exactProviderId],

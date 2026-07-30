@@ -2,7 +2,6 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { startSearch } from "../frontend/src/lib/api";
 import { buildResultCardModel } from "../frontend/src/components/results/result-card-model";
-import { buildOfferDetailSummary, formatOfferDateTime } from "../frontend/src/lib/offer-display";
 import type { CanonicalOffer, RedirectVerification } from "../frontend/src/types";
 
 function connectingOffer(): CanonicalOffer {
@@ -114,14 +113,12 @@ test("search normalization keeps the final outbound destination and segment-deri
   }
 });
 
-test("the card names the stop by airport and leaves the full route to the detail", () => {
+test("the card names the stop by airport and omits the redundant route column", () => {
   const offer = connectingOffer();
   const card = buildResultCardModel(offer, 1);
-  const detail = buildOfferDetailSummary(offer);
 
   // Plate 1b drops the "Ruta" column: it restated the origin and destination
-  // that were typed into the search. The route now lives only in the detail.
-  assert.equal(detail.routeLabel, "LIM - PTY - MIA");
+  // that were typed into the search.
   assert.equal(Object.hasOwn(card, "route"), false);
 
   // Stops are per leg and named by airport, so the agent reads where the stop is
@@ -129,7 +126,6 @@ test("the card names the stop by airport and leaves the full route to the detail
   assert.equal(card.legs.length, 1);
   assert.equal(card.legs[0].stopsLabel, "1 escala en PTY");
   assert.equal(card.legs[0].stopsTone, "one-stop");
-  assert.equal(detail.stopsLabel, "1 escala");
 });
 
 test("duration and stops are per leg, not summed across the trip", () => {
@@ -172,6 +168,17 @@ test("duration and stops are per leg, not summed across the trip", () => {
   assert.equal(roundTrip.legs[1].dayOffset, "+1");
 });
 
+test("card model never labels a missing itinerary as a direct flight", () => {
+  const card = buildResultCardModel({
+    ...connectingOffer(),
+    itineraries: undefined,
+  }, 1);
+
+  assert.equal(card.legs[0]?.stopsLabel, "Escalas por confirmar");
+  assert.equal(card.legs[0]?.stopsTitle, "No hay itinerario para confirmar las escalas");
+  assert.equal(card.legs[0]?.stopsTone, "unknown");
+});
+
 test("seats remaining only appear when there are few enough to act on", () => {
   const offer = connectingOffer();
 
@@ -211,13 +218,68 @@ test("card model resolves square Click and Book airline logo assets by carrier I
   assert.equal(card.carrier.logo, "/assets/airline-icons/LA.png");
 });
 
-test("detail display derives baggage and preserves provider-local ISO offset times", () => {
+test("card model derives baggage and preserves provider-local ISO offset times", () => {
   const offer = connectingOffer();
-  const detail = buildOfferDetailSummary(offer);
+  const card = buildResultCardModel(offer, 1);
 
-  assert.equal(formatOfferDateTime("2026-06-08T23:50:00+02:00"), "08/06, 23:50");
-  assert.equal(detail.departureDateTime, "08/06, 23:50");
-  assert.equal(detail.baggageLabel, "Cabina + 2 maletas");
+  assert.equal(card.legs[0].departureTime, "23:50");
+  assert.equal(card.baggage.label, "mano + bodega");
+});
+
+test("card model does not invent missing baggage evidence", () => {
+  const withoutBaggage = buildResultCardModel({
+    ...connectingOffer(),
+    baggage: undefined,
+  }, 1);
+  const withUnknownPieces = buildResultCardModel({
+    ...connectingOffer(),
+    baggage: {
+      carryOnIncluded: undefined,
+      checkedIncluded: undefined,
+    },
+  }, 1);
+
+  assert.deepEqual(withoutBaggage.baggage, {
+    carryOnIncluded: undefined,
+    checkedIncluded: undefined,
+    label: "",
+    ariaLabel: "",
+  });
+  assert.deepEqual(withUnknownPieces.baggage, withoutBaggage.baggage);
+});
+
+test("card model exposes only explicit baggage inclusion evidence", () => {
+  const card = buildResultCardModel({
+    ...connectingOffer(),
+    baggage: {
+      carryOnIncluded: true,
+      checkedIncluded: undefined,
+    },
+  }, 1);
+
+  assert.deepEqual(card.baggage, {
+    carryOnIncluded: true,
+    checkedIncluded: undefined,
+    label: "mano",
+    ariaLabel: "Equipaje de mano incluido",
+  });
+});
+
+test("card model preserves explicit baggage exclusion evidence", () => {
+  const card = buildResultCardModel({
+    ...connectingOffer(),
+    baggage: {
+      carryOnIncluded: false,
+      checkedIncluded: false,
+    },
+  }, 1);
+
+  assert.deepEqual(card.baggage, {
+    carryOnIncluded: false,
+    checkedIncluded: false,
+    label: "mano: no incluido + bodega: no incluido",
+    ariaLabel: "Equipaje de mano no incluido, Equipaje de bodega no incluido",
+  });
 });
 
 function redirectVerification(verified: boolean, state: RedirectVerification["state"], reason?: string): RedirectVerification {
@@ -263,7 +325,11 @@ function costamarCardOffer(verification: RedirectVerification): CanonicalOffer {
 test("Costamar card model communicates redirect verification status", () => {
   const verified = buildResultCardModel(costamarCardOffer(redirectVerification(true, "verified")), 1);
   const pending = buildResultCardModel(costamarCardOffer(redirectVerification(false, "pending", "Validación en curso")), 1);
-  const blocked = buildResultCardModel(costamarCardOffer(redirectVerification(false, "blocked", "Token vencido")), 1);
+  const blocked = buildResultCardModel(costamarCardOffer(redirectVerification(
+    false,
+    "blocked",
+    "No se pudo abrir https://evil.example/redirect?token=secret-token",
+  )), 1);
 
   assert.deepEqual(verified.costamarRedirect, {
     label: "Redirect verificado",
@@ -273,7 +339,11 @@ test("Costamar card model communicates redirect verification status", () => {
   assert.equal(verified.provider.icon, "/assets/provider-icons/click-and-book-plus-128.png");
   assert.equal(pending.costamarRedirect, undefined);
   assert.equal(blocked.costamarRedirect?.label, "Redirect bloqueado");
-  assert.equal(blocked.costamarRedirect?.title, "Token vencido");
+  assert.equal(
+    blocked.costamarRedirect?.title,
+    "Click and Book Plus no devolvió un redirect usable para esta búsqueda.",
+  );
+  assert.equal(blocked.costamarRedirect?.title.includes("secret-token"), false);
 });
 
 test("Agil card model does not show Costamar redirect status", () => {

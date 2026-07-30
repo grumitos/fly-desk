@@ -436,267 +436,6 @@ test("grouped result variants align changed values with the primary card columns
   }, { autoOpen: false });
 });
 
-test("normal results wait for saved column layout before drawing cards", async () => {
-  await withDesktopPage(async ({ baseUrl, page }) => {
-    await page.setViewportSize({ width: 1180, height: 700 });
-
-    let releaseLayout!: () => void;
-    let markLayoutRequested!: () => void;
-    const layoutReleased = new Promise<void>((resolve) => {
-      releaseLayout = resolve;
-    });
-    const layoutRequested = new Promise<void>((resolve) => {
-      markLayoutRequested = resolve;
-    });
-
-    await page.route("**/api/results-layout", async (route) => {
-      markLayoutRequested();
-      await layoutReleased;
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          layout: {
-            version: 1,
-            savedAt: "2026-05-11T17:18:33.592Z",
-            columns: {
-              carrier: 117,
-              dates: 260,
-              duration: 94,
-              stops: 145,
-              price: 127,
-              links: 40,
-            },
-          },
-        }),
-      });
-    });
-    await page.route("**/api/locations**", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ suggestions: [] }),
-      });
-    });
-    await page.route("**/api/search", async (route) => {
-      const payload = route.request().postDataJSON() as Record<string, unknown>;
-      const offers = [buildOffer({ id: "saved-layout-offer", origin: "LIM", destination: "BIO" })];
-
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          searchJobId: "saved-layout-search",
-          searchComplete: true,
-          searchStatus: "completed",
-          revision: 1,
-          sortMode: payload.sortMode,
-          request: payload.request,
-          offers,
-          allOffers: offers,
-          searchMeta: {
-            requestedAt: "2026-05-11T17:18:33.592Z",
-            completedAt: "2026-05-11T17:18:33.592Z",
-            providersUsed: ["agil-local"],
-            warnings: [],
-            partial: false,
-            searchState: "search_live",
-          },
-          providerMeta: {
-            exactProvider: "agil-local",
-            coverageMode: "core",
-          },
-          warnings: [],
-        }),
-      });
-    });
-
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-      layoutRequested,
-    ]);
-
-    await page.locator('[data-testid="result-card"]').waitFor({ state: "detached" });
-    await page.locator(".fd-skeleton").first().waitFor({ state: "visible" });
-    assert.equal(await page.locator('[data-testid="result-card"]').count(), 0);
-    const skeletonPadding = await page.getByTestId("results-loading-skeleton").evaluate((element) => {
-      const grid = element.firstElementChild as HTMLElement | null;
-      if (!grid) throw new Error("Missing skeleton grid");
-      const rect = element.getBoundingClientRect();
-      const gridRect = grid.getBoundingClientRect();
-      const style = getComputedStyle(element);
-      return {
-        bottomGap: Math.round(rect.bottom - gridRect.bottom),
-        paddingBottom: Math.round(Number.parseFloat(style.paddingBottom)),
-      };
-    });
-    assert.ok(skeletonPadding.bottomGap >= skeletonPadding.paddingBottom - 1, JSON.stringify(skeletonPadding));
-
-    releaseLayout();
-    await page.locator('[data-testid="result-card"]').waitFor({ state: "visible" });
-
-    const layout = await page.locator(".fd-results-list").evaluate((list) => {
-      const style = getComputedStyle(list);
-      return {
-        fixed: list.classList.contains("fd-results-list--fixed-layout"),
-        carrier: style.getPropertyValue("--fd-results-col-carrier").trim(),
-        dates: style.getPropertyValue("--fd-results-col-dates").trim(),
-        duration: style.getPropertyValue("--fd-results-col-duration").trim(),
-        stops: style.getPropertyValue("--fd-results-col-stops").trim(),
-        price: style.getPropertyValue("--fd-results-col-price").trim(),
-        links: style.getPropertyValue("--fd-results-col-links").trim(),
-      };
-    });
-
-    assert.deepEqual(layout, {
-      fixed: true,
-      carrier: "155fr",
-      dates: "345fr",
-      duration: "125fr",
-      stops: "192fr",
-      price: "169fr",
-      links: "53fr",
-    });
-  }, { autoOpen: false });
-});
-
-test("layout editor guide renders as the first result card and resizes adjacent columns", async () => {
-  await withDesktopPage(async ({ baseUrl, page }) => {
-    await page.setViewportSize({ width: 1180, height: 700 });
-    await page.route("**/api/locations**", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ suggestions: [] }),
-      });
-    });
-    await page.route("**/api/results-layout", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ layout: null }),
-      });
-    });
-    await page.route("**/api/search", async (route) => {
-      const payload = route.request().postDataJSON() as Record<string, unknown>;
-      const offers = [
-        buildOffer({ id: "layout-guide-offer-1", origin: "LIM", destination: "MAD" }),
-        buildOffer({ id: "layout-guide-offer-2", origin: "LIM", destination: "MAD" }),
-      ];
-
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          searchJobId: "layout-guide-search",
-          searchComplete: true,
-          searchStatus: "completed",
-          revision: 1,
-          sortMode: payload.sortMode,
-          request: payload.request,
-          offers,
-          allOffers: offers,
-          searchMeta: {
-            requestedAt: "2026-05-11T17:18:33.592Z",
-            completedAt: "2026-05-11T17:18:33.592Z",
-            providersUsed: ["agil-local"],
-            warnings: [],
-            partial: false,
-            searchState: "search_live",
-          },
-          providerMeta: {
-            exactProvider: "agil-local",
-            coverageMode: "core",
-          },
-          warnings: [],
-        }),
-      });
-    });
-
-    await page.goto(`${baseUrl}/?layout=editor&mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
-
-    const guide = page.getByTestId("results-layout-guide");
-    await guide.waitFor({ state: "visible" });
-    const defaultLayout = await guide.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return {
-        carrier: style.getPropertyValue("--fd-results-col-carrier").trim(),
-        dates: style.getPropertyValue("--fd-results-col-dates").trim(),
-        duration: style.getPropertyValue("--fd-results-col-duration").trim(),
-        stops: style.getPropertyValue("--fd-results-col-stops").trim(),
-        price: style.getPropertyValue("--fd-results-col-price").trim(),
-        links: style.getPropertyValue("--fd-results-col-links").trim(),
-      };
-    });
-    assert.deepEqual(defaultLayout, {
-      carrier: "139fr",
-      dates: "371fr",
-      duration: "205fr",
-      stops: "140fr",
-      price: "130fr",
-      links: "54fr",
-    });
-    const order = await page.locator(".fd-results-list").evaluate((list) => {
-      const children = Array.from(list.children);
-      return children.slice(0, 2).map((child) => ({
-        guide: child.classList.contains("fd-result-card--layout-guide"),
-        result: child.getAttribute("data-testid") === "result-card",
-      }));
-    });
-    assert.deepEqual(order, [
-      { guide: true, result: false },
-      { guide: false, result: true },
-    ]);
-
-    const initialGeometry = await guide.evaluate((element) => {
-      const rectOf = (selector: string) => {
-        const node = element.querySelector<HTMLElement>(selector);
-        if (!node) throw new Error(`Missing ${selector}`);
-        const rect = node.getBoundingClientRect();
-        return { left: rect.left, right: rect.right, width: rect.width };
-      };
-      const columns = Array.from(element.querySelectorAll<HTMLElement>(".fd-results-layout-column"))
-        .slice(0, 2)
-        .map((column) => {
-          const rect = column.getBoundingClientRect();
-          return { left: rect.left, right: rect.right, width: rect.width };
-        });
-      const firstHandle = rectOf(".fd-results-layout-column__handle");
-      return {
-        columns,
-        handleCenter: (firstHandle.left + firstHandle.right) / 2,
-        boundaryCenter: (columns[0].right + columns[1].left) / 2,
-      };
-    });
-    assert.ok(Math.abs(initialGeometry.handleCenter - initialGeometry.boundaryCenter) <= 1, JSON.stringify(initialGeometry));
-
-    await guide.locator(".fd-results-layout-column__handle").first().press("ArrowRight");
-
-    const resizedGeometry = await guide.evaluate((element) => {
-      return Array.from(element.querySelectorAll<HTMLElement>(".fd-results-layout-column"))
-        .slice(0, 2)
-        .map((column) => Math.round(column.getBoundingClientRect().width));
-    });
-    const initialWidths = initialGeometry.columns.map((column) => Math.round(column.width));
-    assert.ok(resizedGeometry[0] > initialWidths[0], JSON.stringify({ initialWidths, resizedGeometry }));
-    assert.ok(resizedGeometry[1] < initialWidths[1], JSON.stringify({ initialWidths, resizedGeometry }));
-    assert.ok(Math.abs((resizedGeometry[0] + resizedGeometry[1]) - (initialWidths[0] + initialWidths[1])) <= 1);
-  }, { autoOpen: false });
-});
-
 test("grouped provider offer renders Agilsmart and Click and Book Plus external links vertically", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 1180, height: 700 });
@@ -967,6 +706,7 @@ test("result cards reserve matching airline and provider logo slots", async () =
 test("detail panel mirrors selected result content and omits unknown fare conditions", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let quotationRequests = 0;
+    let quotedOffer: ReturnType<typeof buildOffer> | undefined;
     await page.setViewportSize({ width: 1280, height: 760 });
     await page.addInitScript(() => {
       const originalExecCommand = document.execCommand.bind(document);
@@ -997,10 +737,25 @@ test("detail panel mirrors selected result content and omits unknown fare condit
     });
     await page.route("**/api/quotation", async (route) => {
       quotationRequests += 1;
+      assert.deepEqual(route.request().postDataJSON(), {
+        searchSessionId: "detail-panel-search",
+        offerId: "detail-panel-offer",
+        migrationPlan: false,
+      });
+      assert.ok(quotedOffer);
       await route.fulfill({
-        status: 500,
+        status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ error: "Quotation endpoint must not be used by the UI." }),
+        body: JSON.stringify({
+          searchSessionId: "detail-panel-search",
+          commercialText: "COTIZACIÓN BOLETO AÉREO ✈️\nTarifa validada por el proveedor",
+          offer: {
+            ...quotedOffer,
+            priceConfidence: "validated",
+            priceStatus: "verified",
+            priceVerifiedAt: "2026-05-21T10:13:58.582Z",
+          },
+        }),
       });
     });
     await page.route("**/api/search", async (route) => {
@@ -1062,6 +817,7 @@ test("detail panel mirrors selected result content and omits unknown fare condit
           ],
         }),
       ];
+      quotedOffer = offers[0];
 
       await route.fulfill({
         status: 200,
@@ -1157,7 +913,7 @@ test("detail panel mirrors selected result content and omits unknown fare condit
     await page.waitForFunction(() => (
       (window as unknown as { __flyDeskCopiedText?: string }).__flyDeskCopiedText?.startsWith("COTIZACIÓN BOLETO AÉREO ✈️")
     ));
-    assert.equal(quotationRequests, 0);
+    assert.equal(quotationRequests, 1);
 
     await migrationSwitch.click();
     assert.equal(await migrationSwitch.getAttribute("aria-checked"), "true");
@@ -1165,7 +921,7 @@ test("detail panel mirrors selected result content and omits unknown fare condit
     await page.getByTestId("quotation-text").getByText("PAQUETE MIGRATORIO MADRID 🇪🇸", { exact: false }).waitFor();
     assert.match(await page.getByTestId("quotation-text").innerText(), /Seguro de viaje Transitorio/);
     assert.match(await page.getByTestId("quotation-text").innerText(), /Selección de asiento no permitida; la asignación es aleatoria/);
-    assert.equal(quotationRequests, 0);
+    assert.equal(quotationRequests, 1);
 
     await page.getByTestId("quotation-section").getByRole("button", { name: "Copiar" }).click();
     const quotedText = await page.evaluate(() => {
@@ -1207,7 +963,7 @@ test("detail panel mirrors selected result content and omits unknown fare condit
   }, { autoOpen: false });
 });
 
-test("domestic Costamar quotation uses the rate returned by search without another request", async () => {
+test("domestic Costamar quotation uses the verified endpoint response", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let quotationRequests = 0;
     const offer = buildOffer({
@@ -1242,7 +998,25 @@ test("domestic Costamar quotation uses the rate returned by search without anoth
     });
     await page.route("**/api/quotation", async (route) => {
       quotationRequests += 1;
-      await route.fulfill({ status: 500, body: "quotation endpoint must remain unused" });
+      assert.deepEqual(route.request().postDataJSON(), {
+        searchSessionId: "domestic-costamar-search",
+        offerId: "domestic-costamar-quote",
+        migrationPlan: false,
+      });
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchSessionId: "domestic-costamar-search",
+          commercialText: "COTIZACIÓN BOLETO AÉREO ✈️\nS/ 361 por adulto",
+          offer: {
+            ...offer,
+            priceConfidence: "validated",
+            priceStatus: "verified",
+            priceVerifiedAt: "2026-06-01T12:01:00.000Z",
+          },
+        }),
+      });
     });
     await page.route("**/api/search", async (route) => {
       const payload = route.request().postDataJSON() as Record<string, unknown>;
@@ -1283,7 +1057,88 @@ test("domestic Costamar quotation uses the rate returned by search without anoth
     const quotation = await page.getByTestId("quotation-text").innerText();
     assert.match(quotation, /S\/ 361 por adulto/);
     assert.doesNotMatch(quotation, /US\$|USD/);
-    assert.equal(quotationRequests, 0);
+    assert.equal(quotationRequests, 1);
+  }, { autoOpen: false });
+});
+
+test("quotation failure never exposes or copies an unvalidated local quote", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const offer = buildOffer({
+      id: "quotation-validation-failure",
+      providerSource: "agil-local",
+      quotationPreparedAt: "2026-06-01T12:00:00.000Z",
+      origin: "LIM",
+      destination: "MIA",
+      price: { total: { amount: 500, currencyCode: "USD" } },
+      itineraries: [{
+        direction: "outbound",
+        durationMinutes: 360,
+        stops: 0,
+        segments: [{
+          marketingCarrier: "LA",
+          flightNumber: "2478",
+          origin: "LIM",
+          destination: "MIA",
+          departureAt: "2026-06-08T09:00:00-05:00",
+          arrivalAt: "2026-06-08T15:00:00-04:00",
+        }],
+      }],
+    });
+
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suggestions: [] }) });
+    });
+    await page.route("**/api/quotation", async (route) => {
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({ errors: ["Selected offer could not be validated for quotation."] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "quotation-validation-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers: [offer],
+          allOffers: [offer],
+          searchMeta: {
+            requestedAt: "2026-06-01T12:00:00.000Z",
+            completedAt: "2026-06-01T12:00:00.000Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MIA&departure=2026-06-08&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await page.getByTestId("result-card").click();
+    await page.getByRole("button", { name: "Cotizar" }).click();
+
+    const dialog = page.getByRole("dialog", { name: "Cotización lista para pegar" });
+    await dialog.waitFor();
+    const text = await page.getByTestId("quotation-text").innerText();
+    assert.match(text, /No se pudo confirmar la tarifa con el proveedor/);
+    assert.doesNotMatch(text, /COTIZACIÓN BOLETO|USD 500/);
+    assert.equal(await dialog.getByRole("button", { name: /Copiar/ }).count(), 0);
+    assert.equal(await dialog.getByRole("switch", { name: "Paquete migratorio" }).count(), 0);
+    assert.equal(await dialog.getByRole("button", { name: "Reintentar" }).count(), 1);
   }, { autoOpen: false });
 });
 

@@ -157,6 +157,65 @@ test("frequent location suggestions resolve labels and collapse their own row", 
   }, { autoOpen: false });
 });
 
+test("empty location field shows separate recent and frequent sections", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route("**/api/location-usage-suggestions**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          suggestions: {
+            origin: ["LIM", "CUZ"],
+            destination: ["MAD"],
+          },
+          frequent: {
+            origin: ["LIM", "CUZ"],
+            destination: ["MAD"],
+          },
+          recent: {
+            origin: ["AQP", "TPP"],
+            destination: ["SCL"],
+          },
+        }),
+      });
+    });
+    await page.route("**/api/locations**", async (route) => {
+      const query = new URL(route.request().url()).searchParams.get("q")?.toUpperCase() ?? "";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          query,
+          suggestions: [{
+            code: query,
+            city: query === "AQP" ? "Arequipa" : query,
+            country: "Perú",
+            countryCode: "PE",
+            label: `${query} - ${query === "AQP" ? "Arequipa" : query}, Perú`,
+          }],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    const origin = page.getByRole("combobox", { name: "Origen" });
+    await origin.focus();
+
+    const recent = page.getByRole("region", { name: "Recientes" });
+    const frequent = page.getByRole("region", { name: "Frecuentes" });
+    await recent.waitFor();
+    assert.deepEqual(await recent.getByRole("option").allTextContents(), ["AQP", "TPP"]);
+    assert.deepEqual(await frequent.getByRole("option").allTextContents(), ["LIM", "CUZ"]);
+
+    await origin.press("ArrowDown");
+    assert.match(await origin.getAttribute("aria-activedescendant") ?? "", /usage-0$/);
+    await origin.press("Enter");
+    await page.waitForFunction(() => (
+      document.querySelector<HTMLInputElement>('[aria-label="Origen"]')?.value === "AQP - Arequipa, Perú"
+    ));
+  }, { autoOpen: false });
+});
+
 test("late global ranking data does not recenter or resize the idle search block", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let releaseRanking = () => undefined;

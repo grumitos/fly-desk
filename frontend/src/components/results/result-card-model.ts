@@ -44,7 +44,7 @@ export type ResultLegModel = {
   /** "Directo" · "1 escala en PTY" · "2 escalas · PTY, BOG" · "PTY, BOG +2". */
   stopsLabel: string
   stopsTitle: string
-  stopsTone: "direct" | "one-stop" | "many-stops"
+  stopsTone: "direct" | "one-stop" | "many-stops" | "unknown"
 }
 
 export type ResultCardModel = {
@@ -56,8 +56,8 @@ export type ResultCardModel = {
     operatedBy: string
   }
   baggage: {
-    carryOnIncluded: boolean
-    checkedIncluded: boolean
+    carryOnIncluded: boolean | undefined
+    checkedIncluded: boolean | undefined
     label: string
     ariaLabel: string
   }
@@ -162,8 +162,16 @@ function legDuration(itinerary: Itinerary | null, offer: CanonicalOffer): string
  * who cares opens the detail panel anyway.
  */
 function stopsForItinerary(itinerary: Itinerary | null) {
+  if (!itinerary) {
+    return {
+      label: "Escalas por confirmar",
+      title: "No hay itinerario para confirmar las escalas",
+      tone: "unknown" as const,
+    }
+  }
+
   const segments = itinerary?.segments ?? []
-  const stopCount = (itinerary ? stopsCountFromItinerary(itinerary) : undefined)
+  const stopCount = stopsCountFromItinerary(itinerary)
     ?? Math.max(0, segments.length - 1)
 
   if (stopCount === 0) {
@@ -243,18 +251,26 @@ function operatingCopy(offer: CanonicalOffer, knownTokens: Set<string>): string 
 }
 
 function baggageParts(offer: CanonicalOffer) {
-  const carryOnIncluded = offer.baggage?.carryOnIncluded === true
-  const checkedIncluded = offer.baggage?.checkedIncluded === true
-  const included = [carryOnIncluded && "mano", checkedIncluded && "bodega"].filter(Boolean)
+  const carryOnIncluded = offer.baggage?.carryOnIncluded
+  const checkedIncluded = offer.baggage?.checkedIncluded
+  const labels = [
+    carryOnIncluded === true ? "mano" : carryOnIncluded === false ? "mano: no incluido" : "",
+    checkedIncluded === true ? "bodega" : checkedIncluded === false ? "bodega: no incluido" : "",
+  ].filter(Boolean)
+  const ariaLabels = [
+    carryOnIncluded === true
+      ? "Equipaje de mano incluido"
+      : carryOnIncluded === false ? "Equipaje de mano no incluido" : "",
+    checkedIncluded === true
+      ? "Equipaje de bodega incluido"
+      : checkedIncluded === false ? "Equipaje de bodega no incluido" : "",
+  ].filter(Boolean)
 
   return {
     carryOnIncluded,
     checkedIncluded,
-    label: included.length > 0 ? included.join(" + ") : "sin equipaje",
-    ariaLabel: [
-      `Equipaje de mano ${carryOnIncluded ? "incluido" : "no incluido"}`,
-      `Equipaje de bodega ${checkedIncluded ? "incluido" : "no incluido"}`,
-    ].join(", "),
+    label: labels.join(" + "),
+    ariaLabel: ariaLabels.join(", "),
   }
 }
 
@@ -308,7 +324,7 @@ function costamarRedirectStatus(offer: CanonicalOffer): ResultRedirectStatus | u
   if (verification.state === "blocked") {
     return {
       label: "Redirect bloqueado",
-      title: verification.reason || "Click and Book Plus no devolvió un redirect usable para esta búsqueda.",
+      title: "Click and Book Plus no devolvió un redirect usable para esta búsqueda.",
       tone: "blocked",
     }
   }
@@ -333,7 +349,7 @@ function resolveCostamarRedirectVerification(offer: CanonicalOffer): RedirectVer
 }
 
 function formatMoney(money: CanonicalOffer["price"]["total"]) {
-  return `${money.currencyCode || "USD"} ${money.amount.toLocaleString("es-PE", {
+  return `${money.currencyCode} ${money.amount.toLocaleString("es-PE", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`
@@ -386,11 +402,4 @@ export function providerBadgeForId(providerId?: string): ResultProviderBadge {
     shortLabel: label.slice(0, 2).toUpperCase(),
     icon: "",
   }
-}
-
-/** The signature two offers share when their schedule is identical leg by leg. */
-export function legScheduleSignature(model: ResultCardModel): string {
-  return model.legs
-    .map((leg) => `${leg.departureTime}-${leg.arrivalTime}-${leg.dayOffset}`)
-    .join("|")
 }

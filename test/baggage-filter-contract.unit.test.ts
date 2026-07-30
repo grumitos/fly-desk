@@ -156,6 +156,19 @@ test("shared search payload round-trips through text and base64url formats", () 
   assert.equal(decodeSharedSearchPayload("not-json"), null)
 })
 
+test("shared search payload never serializes the browser client session", () => {
+  const clientSessionId = "browser-session-share-a"
+  const searchRequest = {
+    ...request(),
+    clientSessionId,
+  } as ReturnType<typeof request> & { clientSessionId: string }
+
+  const serialized = serializeSharedSearchPayload(searchRequest, "cheapest")
+
+  assert.doesNotMatch(serialized, new RegExp(clientSessionId))
+  assert.equal(Object.hasOwn(JSON.parse(serialized) as object, "clientSessionId"), false)
+})
+
 test("shared search URL cleanup removes only Fly Desk search parameters", () => {
   const globalWindow = globalThis as typeof globalThis & {
     window?: {

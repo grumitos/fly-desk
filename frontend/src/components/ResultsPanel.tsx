@@ -295,6 +295,7 @@ function ResultsBody({
   return (
     <ResultsPage
       offers={offers}
+      scheduleGroups={results?.scheduleGroups}
       passengerCount={passengerCount}
       selectedOfferId={selectedOfferId}
       onSelectOffer={onSelectOffer}
@@ -318,18 +319,23 @@ function filteredEmptyBody(chips: ActiveFilterChip[]): string {
 
 function ResultsPage({
   offers,
+  scheduleGroups,
   passengerCount,
   selectedOfferId,
   onSelectOffer,
   partial,
 }: {
   offers: CanonicalOffer[]
+  scheduleGroups: SearchJobResponse["scheduleGroups"]
   passengerCount: number
   selectedOfferId?: string
   onSelectOffer: (offer: CanonicalOffer) => void
   partial: boolean
 }) {
-  const resultItems = useMemo(() => buildResultListItems(offers), [offers])
+  const resultItems = useMemo(
+    () => buildResultListItems(offers, scheduleGroups),
+    [offers, scheduleGroups],
+  )
   const { pageCapacity, viewportRef } = useAdaptiveResultsPageCapacity(resultItems.length)
   const pageKey = useMemo(() => resultItemsPaginationKey(resultItems), [resultItems])
   /* Which schedule each group is currently showing, and which group has its full

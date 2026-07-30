@@ -5,6 +5,7 @@ import type { ProviderContext, PurchasePath, SearchRequest } from "./core/types"
 import {
   applyCostamarContextToBrandedSearchUrl,
   resolveCostamarRedirectForRequest,
+  safeCostamarRedirectFailureReason,
 } from "./local-costamar";
 import {
   normalizeCostamarProviderContext,
@@ -109,7 +110,7 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Renueva la sesion de Click and Book Plus</title>
+    <title>Renueva la autenticación de Click and Book Plus</title>
     <style>
       :root { color-scheme: light; }
       * { box-sizing: border-box; }
@@ -141,10 +142,10 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
   <body>
     <main>
       <section>
-        <h1>Renueva la sesion de Click and Book Plus</h1>
+        <h1>Renueva la autenticación de Click and Book Plus</h1>
         <p>Fly Desk no encontro un redirect verificado para abrir esta busqueda en Click and Book Plus.</p>
         <p><strong>Motivo:</strong> ${reasonText}</p>
-        <p>Abre Click and Book Plus B2B/Chrome, confirma que la sesion este activa y vuelve a intentar desde Fly Desk.</p>
+        <p>Abre Click and Book Plus B2B/Chrome, vuelve a autenticarte y reintenta desde Fly Desk.</p>
       </section>
     </main>
   </body>
@@ -617,7 +618,7 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
           blockedReason = "No se pudo reconstruir la busqueda Click and Book Plus desde el purchase path.";
         }
       } catch (error) {
-        blockedReason = error instanceof Error ? error.message : "No se pudo validar el redirect de Click and Book Plus.";
+        blockedReason = safeCostamarRedirectFailureReason(error);
         canRedirect = false;
       }
 

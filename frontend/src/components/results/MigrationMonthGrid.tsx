@@ -213,10 +213,10 @@ type MonthFareCoverage = { faredDays: number; queriedDays: number }
  * is what tells the agent whether a cheap month is genuinely cheap or merely
  * thinly sampled.
  *
- * `faredDays` / `queriedDays` are not on the search contract yet, so the line
- * only appears once a provider sends them. It degrades to nothing rather than to
- * a guess: a fabricated coverage figure would make a barely-sampled month look
- * thoroughly checked, which is worse than saying nothing.
+ * `faredDays` / `queriedDays` are emitted only after a complete, non-partial
+ * provider scan. The line degrades to nothing rather than to a guess: a
+ * fabricated coverage figure would make a barely-sampled month look thoroughly
+ * checked, which is worse than saying nothing.
  */
 function monthFareCoverage(month: DisplayMonth): MonthFareCoverage | null {
   const candidate = month as DisplayMonth & Partial<MonthFareCoverage>

@@ -8,8 +8,8 @@ import type { CanonicalOffer } from "@/types"
  * Plate 3b — what the "+n" on the alternative-schedules strip opens.
  *
  * Same columns as the card, plus the one column the card has no room for: the
- * price difference against the schedule currently shown. Each leg is chosen
- * separately, and choosing repaints the card and the detail panel.
+ * price difference against the schedule currently shown. Each row is a complete
+ * provider offer, and choosing one repaints the card and the detail panel.
  */
 
 export function AllSchedulesPanel({
