@@ -216,7 +216,16 @@ function routeLocationToken(value: unknown): string {
   return normalized.match(/\b[A-Z]{3}\b/)?.[0] ?? normalized
 }
 
-function stopsCountFromItinerary(itinerary: Itinerary): number | undefined {
+/**
+ * Stops on one leg.
+ *
+ * When the declared count disagrees with the segments, the larger wins. A
+ * provider that sends two segments but declares zero stops is simply wrong —
+ * there is demonstrably a plane change. The reverse can be legitimate: a
+ * technical stop keeps one flight number and one segment, so a declared count
+ * above the segment boundaries is believed.
+ */
+export function stopsCountFromItinerary(itinerary: Itinerary): number | undefined {
   const explicit = nonNegativeNumber(itinerary.stops)
   const segmentStops = itinerary.segments.length > 0 ? Math.max(0, itinerary.segments.length - 1) : undefined
   if (explicit !== undefined) return Math.max(explicit, segmentStops ?? 0)

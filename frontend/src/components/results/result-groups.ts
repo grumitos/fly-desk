@@ -1,5 +1,5 @@
 import type { CanonicalOffer } from "@/types"
-import { buildResultCardModel, type ResultJourneySummary } from "./result-card-model"
+import { buildResultCardModel } from "./result-card-model"
 
 export type ResultListItem =
   | { type: "offer"; id: string; offer: CanonicalOffer; offerCount: 1 }
@@ -161,11 +161,16 @@ export function paginateResultListItems(
   return pages
 }
 
+/**
+ * How much vertical room an item asks for, in card-heights.
+ *
+ * A group used to cost one card per alternative schedule. Plate 1b folds them
+ * into a single strip inside the card that owns them, so the whole group is now
+ * one card plus roughly a third of one — regardless of how many alternatives it
+ * holds, because the strip scrolls sideways instead of growing.
+ */
 export function resultListItemDisplayWeight(item: ResultListItem): number {
-  if (item.type === "offer") return 1
-
-  const variantCount = Math.max(0, item.offerCount - 1)
-  return 1 + variantCount * 0.42
+  return item.type === "offer" ? 1 : 1.34
 }
 
 function offerNaturalGroupKey(offer: CanonicalOffer): string | null {
@@ -305,53 +310,51 @@ function uniqueVisibleGroupOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
   return visibleOffers
 }
 
+/**
+ * What makes two offers in the same bucket worth showing separately. Duration
+ * and stops are per leg now (plate 1b), so the signature is too — two offers
+ * that differ only in a total we no longer display are the same offer here.
+ */
 function offerVisibleVariantSignature(offer: CanonicalOffer): string {
-  const model = buildResultCardModel(offer, 1)
-  return [
-    model.journeys.map(journeyVisibleScheduleSignature).join(";"),
-    model.duration,
-    model.stops.label,
-    model.stops.layoverLabel,
-  ].join("|")
-}
-
-function journeyVisibleScheduleSignature(journey: ResultJourneySummary): string {
-  return [
-    journey.label,
-    journey.hasKnownSchedule,
-    journey.departureTime,
-    journey.arrivalTime,
-    journey.arrivalDayOffset,
-  ].join(":")
+  return buildResultCardModel(offer, 1).legs
+    .map((leg) => [
+      leg.label,
+      leg.hasKnownSchedule,
+      leg.departureTime,
+      leg.arrivalTime,
+      leg.dayOffset,
+      leg.duration,
+      leg.stopsLabel,
+    ].join(":"))
+    .join(";")
 }
 
 function offerVariantDifferenceCount(primary: CanonicalOffer, variant: CanonicalOffer): number {
-  const primaryModel = buildResultCardModel(primary, 1)
-  const variantModel = buildResultCardModel(variant, 1)
-  const maxJourneys = Math.max(primaryModel.journeys.length, variantModel.journeys.length)
+  const primaryLegs = buildResultCardModel(primary, 1).legs
+  const variantLegs = buildResultCardModel(variant, 1).legs
   let count = 0
 
-  for (let index = 0; index < maxJourneys; index += 1) {
-    const primaryJourney = primaryModel.journeys[index]
-    const variantJourney = variantModel.journeys[index]
-    if (!primaryJourney || !variantJourney) {
+  for (let index = 0; index < Math.max(primaryLegs.length, variantLegs.length); index += 1) {
+    const primaryLeg = primaryLegs[index]
+    const variantLeg = variantLegs[index]
+    if (!primaryLeg || !variantLeg) {
       count += 1
       continue
     }
 
     if (
-      primaryJourney.hasKnownSchedule !== variantJourney.hasKnownSchedule
-      || primaryJourney.departureTime !== variantJourney.departureTime
-      || primaryJourney.arrivalTime !== variantJourney.arrivalTime
-      || primaryJourney.arrivalDayOffset !== variantJourney.arrivalDayOffset
+      primaryLeg.hasKnownSchedule !== variantLeg.hasKnownSchedule
+      || primaryLeg.departureTime !== variantLeg.departureTime
+      || primaryLeg.arrivalTime !== variantLeg.arrivalTime
+      || primaryLeg.dayOffset !== variantLeg.dayOffset
     ) {
       count += 1
+      continue
     }
-  }
 
-  if (primaryModel.duration !== variantModel.duration) count += 1
-  if (primaryModel.stops.label !== variantModel.stops.label) count += 1
-  if (primaryModel.stops.layoverLabel !== variantModel.stops.layoverLabel) count += 1
+    if (primaryLeg.duration !== variantLeg.duration) count += 1
+    if (primaryLeg.stopsLabel !== variantLeg.stopsLabel) count += 1
+  }
 
   return count
 }

@@ -114,15 +114,80 @@ test("search normalization keeps the final outbound destination and segment-deri
   }
 });
 
-test("detail keeps the full route separate from the stop conditions summary", () => {
+test("the card names the stop by airport and leaves the full route to the detail", () => {
   const offer = connectingOffer();
   const card = buildResultCardModel(offer, 1);
   const detail = buildOfferDetailSummary(offer);
 
-  assert.equal(card.route, "LIM - PTY - MIA");
-  assert.equal(detail.routeLabel, card.route);
-  assert.equal(card.stops.label, "1 escala · PTY");
+  // Plate 1b drops the "Ruta" column: it restated the origin and destination
+  // that were typed into the search. The route now lives only in the detail.
+  assert.equal(detail.routeLabel, "LIM - PTY - MIA");
+  assert.equal(Object.hasOwn(card, "route"), false);
+
+  // Stops are per leg and named by airport, so the agent reads where the stop is
+  // without opening anything.
+  assert.equal(card.legs.length, 1);
+  assert.equal(card.legs[0].stopsLabel, "1 escala en PTY");
+  assert.equal(card.legs[0].stopsTone, "one-stop");
   assert.equal(detail.stopsLabel, "1 escala");
+});
+
+test("duration and stops are per leg, not summed across the trip", () => {
+  const outbound = connectingOffer();
+  const roundTrip = buildResultCardModel({
+    ...outbound,
+    returnDate: "2026-06-15",
+    itineraries: [
+      ...(outbound.itineraries ?? []),
+      {
+        id: "in-1",
+        direction: "inbound",
+        durationMinutes: 695,
+        stops: 0,
+        layoverMinutes: [],
+        segments: [{
+          id: "in-seg-1",
+          marketingCarrier: "CM",
+          flightNumber: "802",
+          origin: "MIA",
+          destination: "LIM",
+          departureAt: "2026-06-15T16:35:00-04:00",
+          arrivalAt: "2026-06-16T04:10:00-05:00",
+          durationMinutes: 695,
+        }],
+      },
+    ],
+  }, 1);
+
+  assert.equal(roundTrip.legs.length, 2);
+  assert.equal(roundTrip.legs[0].label, "Ida");
+  assert.equal(roundTrip.legs[1].label, "Vta");
+  // The old card added the two together and printed a total that matches no
+  // flight the agent is about to sell.
+  assert.notEqual(roundTrip.legs[0].duration, roundTrip.legs[1].duration);
+  assert.equal(roundTrip.legs[1].stopsLabel, "Directo");
+  assert.equal(roundTrip.legs[1].stopsTone, "direct");
+  // A flight that lands the next day gets its own lane, so the arrival time
+  // never shifts left to make room for the "+1".
+  assert.equal(roundTrip.legs[1].dayOffset, "+1");
+});
+
+test("seats remaining only appear when there are few enough to act on", () => {
+  const offer = connectingOffer();
+
+  assert.equal(buildResultCardModel(offer, 1).seats, null);
+  assert.equal(
+    buildResultCardModel({ ...offer, fareMeta: { seatsRemaining: 9 } }, 1).seats,
+    null,
+  );
+  assert.deepEqual(
+    buildResultCardModel({ ...offer, fareMeta: { seatsRemaining: 4 } }, 1).seats,
+    { label: "4 asientos", urgency: "low" },
+  );
+  assert.deepEqual(
+    buildResultCardModel({ ...offer, fareMeta: { seatsRemaining: 1 } }, 1).seats,
+    { label: "1 asiento", urgency: "critical" },
+  );
 });
 
 test("card model resolves square Click and Book airline logo assets by carrier IATA code", () => {

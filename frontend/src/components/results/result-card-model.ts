@@ -1,61 +1,76 @@
-import type { CanonicalOffer, Itinerary, RedirectVerification } from "@/types"
+import type { CanonicalOffer, Itinerary, RedirectVerification, Segment } from "@/types"
 import { airlineLogoAssetPath } from "../../../../src/core/airline-assets"
 import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
 import {
   diffDaysIso,
-  formatDateCompact,
   formatJourneyDuration,
-  itineraryRouteLabel,
   isoDatePart,
-  layoverItemsForOffer,
+  layoverItemsForItinerary,
   primaryItineraryForOffer,
   returnItineraryForOffer,
-  stopsCountForOffer,
+  stopsCountFromItinerary,
   timeOfIso,
 } from "@/lib/offer-display"
 import { providerDisplayName } from "@/lib/providers"
 
-export type ResultJourneySummary = {
-  label: "Ida" | "Vuelta"
-  origin: string
-  destination: string
-  route: string
-  schedule: string
-  hasKnownSchedule: boolean
+/*
+ * The card model for plate 1b.
+ *
+ * Two decisions from the plate shape this file:
+ *
+ * 1. Duration and stops are *per leg*. The old card added outbound and inbound
+ *    together, which produced a number ("19h 05m") that matches no flight the
+ *    agent is about to sell.
+ * 2. The "Ruta" column is gone. It restated the origin and destination that were
+ *    typed into the search, and with its width returned the two schedules sit
+ *    together and the price has nothing to its left.
+ */
+
+/** How urgent a seat count is. Only shown at four seats or fewer. */
+export type SeatsUrgency = "low" | "critical"
+
+export type ResultLegModel = {
+  /** "Ida" / "Vta" — the short form the 58px label column can hold. */
+  label: string
+  ariaLabel: string
+  /** dd/MM next to the label, so the row says which day it departs. */
+  dateLabel: string
   departureTime: string
   arrivalTime: string
-  departureDateLabel: string
-  arrivalDayOffset: number
-}
-
-export type ResultRedirectStatus = {
-  label: string
-  title: string
-  tone: "verified" | "pending" | "blocked"
+  hasKnownSchedule: boolean
+  /** "+1" when the flight lands on a later day; lives in its own lane. */
+  dayOffset: string
+  duration: string
+  /** "Directo" · "1 escala en PTY" · "2 escalas · PTY, BOG" · "PTY, BOG +2". */
+  stopsLabel: string
+  stopsTitle: string
+  stopsTone: "direct" | "one-stop" | "many-stops"
 }
 
 export type ResultCardModel = {
   carrier: {
     code: string
     name: string
-    display: string
     logo: string
+    /** "op. LATAM" — the codeshare operator, when it differs from the marketer. */
     operatedBy: string
   }
-  journeys: ResultJourneySummary[]
-  route: string
-  duration: string
-  stops: {
+  baggage: {
+    carryOnIncluded: boolean
+    checkedIncluded: boolean
     label: string
-    title: string
-    layoverLabel: string
-    tone: "direct" | "warning" | "danger"
+    ariaLabel: string
   }
+  legs: ResultLegModel[]
   price: {
-    totalLabel: string
+    label: string
     perPersonLabel: string
-    combinedLabel: string
+    ariaLabel: string
   }
+  seats: {
+    label: string
+    urgency: SeatsUrgency
+  } | null
   provider: {
     label: string
     shortLabel: string
@@ -65,188 +80,216 @@ export type ResultCardModel = {
   tripType: "one-way" | "round-trip"
 }
 
+export type ResultRedirectStatus = {
+  label: string
+  title: string
+  tone: "verified" | "pending" | "blocked"
+}
+
 export type ResultProviderBadge = ResultCardModel["provider"]
+
+/** Below this the count is worth interrupting the agent for; above it, noise. */
+const SEATS_VISIBLE_THRESHOLD = 4
+const SEATS_CRITICAL_THRESHOLD = 2
 
 export function buildResultCardModel(
   offer: CanonicalOffer,
   passengerCount: number,
 ): ResultCardModel {
-  const outboundItinerary = primaryItineraryForOffer(offer)
-  const inboundItinerary = returnItineraryForOffer(offer)
-  const outboundSummary = itineraryWindowSummary(outboundItinerary, offer, "Ida")
-  const inboundSummary = returnWindowSummary(inboundItinerary, offer)
-  const journeys = [outboundSummary, inboundSummary].filter((journey): journey is ResultJourneySummary => Boolean(journey))
+  const outbound = primaryItineraryForOffer(offer)
+  const inbound = returnItineraryForOffer(offer)
+  const outboundLeg = legModel(outbound, offer, "outbound")
+  const inboundLeg = inbound || offer.returnDate ? legModel(inbound, offer, "inbound") : null
 
   return {
-    carrier: carrierDisplayParts(offer),
-    journeys,
-    route: outboundSummary.route,
-    duration: journeyDurationLabel(offer),
-    stops: stopsSummary(offer),
-    price: priceLabels(offer.price?.total, passengerCount),
+    carrier: carrierParts(offer),
+    baggage: baggageParts(offer),
+    legs: [outboundLeg, inboundLeg].filter((leg): leg is ResultLegModel => Boolean(leg)),
+    price: priceParts(offer, passengerCount),
+    seats: seatsParts(offer),
     provider: providerBadge(offer),
     costamarRedirect: costamarRedirectStatus(offer),
-    tripType: inboundSummary ? "round-trip" : "one-way",
+    tripType: inboundLeg ? "round-trip" : "one-way",
   }
 }
 
-function carrierDisplayParts(offer: CanonicalOffer) {
-  const segment = primarySegmentForOffer(offer)
+function legModel(
+  itinerary: Itinerary | null,
+  offer: CanonicalOffer,
+  direction: "outbound" | "inbound",
+): ResultLegModel {
+  const segments = itinerary?.segments ?? []
+  const first = segments[0]
+  const last = segments[segments.length - 1]
+  const departureIso = first?.departureAt ?? (direction === "inbound" ? offer.returnDate : offer.departureDate)
+  const arrivalIso = last?.arrivalAt ?? (direction === "inbound" ? undefined : offer.arrivalDate)
+  const departureDate = isoDatePart(departureIso)
+  const arrivalDate = isoDatePart(arrivalIso)
+  const departureTime = timeOfIso(departureIso)
+  const arrivalTime = timeOfIso(arrivalIso)
+  const hasKnownSchedule = Boolean(departureTime || arrivalTime)
+  const dayOffset = departureDate && arrivalDate ? Math.max(0, diffDaysIso(departureDate, arrivalDate)) : 0
+  const stops = stopsForItinerary(itinerary)
+
+  return {
+    label: direction === "outbound" ? "Ida" : "Vta",
+    ariaLabel: direction === "outbound" ? "Ida" : "Vuelta",
+    dateLabel: dayMonthLabel(departureDate),
+    departureTime: departureTime || "--:--",
+    arrivalTime: arrivalTime || "--:--",
+    hasKnownSchedule,
+    dayOffset: dayOffset > 0 ? `+${dayOffset}` : "",
+    duration: legDuration(itinerary, offer),
+    stopsLabel: stops.label,
+    stopsTitle: stops.title,
+    stopsTone: stops.tone,
+  }
+}
+
+/** Per-leg duration, falling back to the offer's own string only if we must. */
+function legDuration(itinerary: Itinerary | null, offer: CanonicalOffer): string {
+  const minutes = itinerary?.durationMinutes
+  if (typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0) {
+    return formatJourneyDuration(minutes)
+  }
+
+  return offer.duration || "--"
+}
+
+/**
+ * Stops for one leg, named by airport. From three stops the label shows two
+ * codes and `+n`: the third code costs more width than it buys, and the agent
+ * who cares opens the detail panel anyway.
+ */
+function stopsForItinerary(itinerary: Itinerary | null) {
+  const segments = itinerary?.segments ?? []
+  const stopCount = (itinerary ? stopsCountFromItinerary(itinerary) : undefined)
+    ?? Math.max(0, segments.length - 1)
+
+  if (stopCount === 0) {
+    return { label: "Directo", title: "Vuelo directo", tone: "direct" as const }
+  }
+
+  const codes = segments
+    .slice(0, -1)
+    .map((segment) => String(segment.destination ?? "").trim().toUpperCase())
+    .filter(Boolean)
+  const layovers = itinerary ? layoverItemsForItinerary(itinerary) : []
+  const title = layovers.length
+    ? layovers.map((item) => `${item.city}: ${formatJourneyDuration(item.minutes)}`).join(" · ")
+    : `${stopCount} ${stopCount === 1 ? "escala" : "escalas"}`
+
+  if (stopCount === 1) {
+    return {
+      label: codes[0] ? `1 escala en ${codes[0]}` : "1 escala",
+      title,
+      tone: "one-stop" as const,
+    }
+  }
+
+  const shown = codes.slice(0, 2).join(", ")
+  const overflow = codes.length > 2 ? ` +${codes.length - 2}` : ""
+  return {
+    label: shown ? `${stopCount} escalas · ${shown}${overflow}` : `${stopCount} escalas`,
+    title,
+    tone: "many-stops" as const,
+  }
+}
+
+function carrierParts(offer: CanonicalOffer) {
+  const segment = primaryItineraryForOffer(offer)?.segments?.[0]
   const code = String(
-    offer.mainCarrier
-      ?? offer.validatingCarrier
-      ?? segment?.marketingCarrier
-      ?? offer.airline
-      ?? "",
+    offer.mainCarrier ?? offer.validatingCarrier ?? segment?.marketingCarrier ?? offer.airline ?? "",
   ).trim()
-  const rawNames = [
-    segment?.marketingCarrierName,
-    offer.airline,
-    segment?.operatingCarrierName,
-  ]
-  const rawName = rawNames.find((value) => typeof value === "string" && value.trim())
+  const names = [segment?.marketingCarrierName, offer.airline, segment?.operatingCarrierName]
   const name = resolveAirlineDisplayName({
-    names: rawNames,
-    codes: [
-      code,
-      offer.validatingCarrier,
-      segment?.marketingCarrier,
-      segment?.operatingCarrier,
-    ],
+    names,
+    codes: [code, offer.validatingCarrier, segment?.marketingCarrier, segment?.operatingCarrier],
   })
-  const operatedBy = operatingCopy(offer, new Set([code, name, rawName].map((value) => String(value ?? "").trim().toUpperCase())))
+  const knownTokens = new Set(
+    [code, name, names.find((value) => value?.trim())].map((value) => String(value ?? "").trim().toUpperCase()),
+  )
 
   return {
     code,
-    name,
-    display: name || "Aerolínea",
+    name: name || "Aerolínea",
     logo: airlineLogoAssetPath(code),
-    operatedBy,
+    operatedBy: operatingCopy(offer, knownTokens),
   }
 }
 
-function primarySegmentForOffer(offer: CanonicalOffer) {
-  return primaryItineraryForOffer(offer)?.segments?.[0]
-}
-
-function operatingCopy(offer: CanonicalOffer, primaryTokens: Set<string>) {
+/**
+ * The codeshare operator, phrased "op. LATAM" — the agent needs to know who
+ * actually flies it, because that is who the passenger will deal with at the
+ * gate. Only the operators that differ from the marketing carrier appear.
+ */
+function operatingCopy(offer: CanonicalOffer, knownTokens: Set<string>): string {
   const operators = new Set<string>()
 
   offer.itineraries?.forEach((itinerary) => {
-    itinerary.segments.forEach((segment) => {
-      const marketingCarrier = String(segment.marketingCarrier ?? "").trim().toUpperCase()
-      const operatingCarrier = String(segment.operatingCarrier ?? "").trim().toUpperCase()
-      const operatingName = segment.operatingCarrierName?.trim() ?? ""
-      const label = normalizeAirlineDisplayName(operatingName || operatingCarrier)
-      const normalizedLabel = label.toUpperCase()
+    itinerary.segments.forEach((segment: Segment) => {
+      const marketing = String(segment.marketingCarrier ?? "").trim().toUpperCase()
+      const operating = String(segment.operatingCarrier ?? "").trim().toUpperCase()
+      const label = normalizeAirlineDisplayName(segment.operatingCarrierName?.trim() || operating)
 
       if (!label) return
-      if (operatingCarrier && marketingCarrier && operatingCarrier === marketingCarrier) return
-      if (primaryTokens.has(normalizedLabel) || primaryTokens.has(operatingCarrier)) return
+      if (operating && marketing && operating === marketing) return
+      if (knownTokens.has(label.toUpperCase()) || knownTokens.has(operating)) return
       operators.add(label)
     })
   })
 
-  return operators.size > 0 ? `+ ${Array.from(operators).join(" / ")}` : ""
+  return operators.size > 0 ? `op. ${Array.from(operators).join(" / ")}` : ""
 }
 
-function itineraryWindowSummary(itinerary: Itinerary | null, offer: CanonicalOffer, label: "Ida" | "Vuelta") {
-  const segments = itinerary?.segments ?? []
-  const first = segments[0]
-  const last = segments[segments.length - 1]
-  const departureIso = first?.departureAt ?? (label === "Vuelta" ? offer.returnDate : offer.departureDate)
-  const arrivalIso = last?.arrivalAt ?? (label === "Vuelta" ? undefined : offer.arrivalDate)
-  const departureDate = isoDatePart(departureIso)
-  const arrivalDate = isoDatePart(arrivalIso)
-  const origin = String(first?.origin ?? offer.origin ?? "").trim().toUpperCase()
-  const destination = String(last?.destination ?? offer.destination ?? "").trim().toUpperCase()
-  const parsedDepartureTime = timeOfIso(departureIso)
-  const parsedArrivalTime = timeOfIso(arrivalIso)
-  const hasKnownSchedule = Boolean(parsedDepartureTime || parsedArrivalTime)
-  const departureTime = parsedDepartureTime || "-"
-  const arrivalTime = parsedArrivalTime || "-"
+function baggageParts(offer: CanonicalOffer) {
+  const carryOnIncluded = offer.baggage?.carryOnIncluded === true
+  const checkedIncluded = offer.baggage?.checkedIncluded === true
+  const included = [carryOnIncluded && "mano", checkedIncluded && "bodega"].filter(Boolean)
 
   return {
-    label,
-    origin,
-    destination,
-    route: itineraryRouteLabel(itinerary, { origin, destination }),
-    schedule: hasKnownSchedule ? `${departureTime} - ${arrivalTime}` : "Horario por confirmar",
-    hasKnownSchedule,
-    departureTime,
-    arrivalTime,
-    departureDateLabel: departureDate ? `${label} ${formatDateCompact(departureDate)}` : "Horario por confirmar",
-    arrivalDayOffset: departureDate && arrivalDate ? Math.max(0, diffDaysIso(departureDate, arrivalDate)) : 0,
+    carryOnIncluded,
+    checkedIncluded,
+    label: included.length > 0 ? included.join(" + ") : "sin equipaje",
+    ariaLabel: [
+      `Equipaje de mano ${carryOnIncluded ? "incluido" : "no incluido"}`,
+      `Equipaje de bodega ${checkedIncluded ? "incluido" : "no incluido"}`,
+    ].join(", "),
   }
 }
 
-function returnWindowSummary(itinerary: Itinerary | null, offer: CanonicalOffer) {
-  if (!itinerary && !offer.returnDate) return null
-
-  return itineraryWindowSummary(itinerary, offer, "Vuelta")
-}
-
-function journeyDurationLabel(offer: CanonicalOffer) {
-  const minutes = offer.comparisonMetrics?.totalDurationMinutes
-  if (Number.isFinite(minutes) && typeof minutes === "number" && minutes > 0) {
-    return formatJourneyDuration(minutes)
-  }
-
-  return offer.duration || "-"
-}
-
-function stopsSummary(offer: CanonicalOffer) {
-  const stops = stopsCountForOffer(offer)
-  const layovers = layoverItemsForOffer(offer)
-
-  if (stops === 0) {
-    return {
-      label: "Directo",
-      title: "Vuelo directo",
-      layoverLabel: "",
-      tone: "direct" as const,
-    }
-  }
-
-  const label = stops === 1 ? "1 escala" : `${stops} escalas`
-  const primaryCity = layovers[0]?.city || "Ciudad por confirmar"
-  const citySummary = layovers.length > 1 ? `${primaryCity} +${layovers.length - 1}` : primaryCity
-  const maxLayover = layovers.reduce((max, item) => Math.max(max, item.minutes), 0)
-  const layoverLabel = maxLayover > 0 ? formatJourneyDuration(maxLayover) : ""
-  const title = layovers.length
-    ? `Escala max.: ${layoverLabel} | ${layovers.map((item) => `${item.city}: ${formatJourneyDuration(item.minutes)}`).join(" | ")}`
-    : `${label} · ${citySummary}`
-
-  return {
-    label: `${label} · ${citySummary}`,
-    title,
-    layoverLabel,
-    tone: stops === 1 ? "warning" as const : "danger" as const,
-  }
-}
-
-function priceLabels(
-  money: CanonicalOffer["price"]["total"] | undefined,
-  passengerCount: number,
-) {
+function priceParts(offer: CanonicalOffer, passengerCount: number) {
+  const money = offer.price?.total
   if (!money) {
-    return {
-      totalLabel: "-",
-      perPersonLabel: "",
-      combinedLabel: "-",
-    }
+    return { label: "--", perPersonLabel: "", ariaLabel: "Precio no disponible" }
   }
 
-  const totalLabel = formatMoney(money)
+  const label = formatMoney(money)
   const showPerPerson = Number.isFinite(passengerCount) && passengerCount > 1
   const perPersonLabel = showPerPerson
     ? formatMoney({ ...money, amount: money.amount / passengerCount })
     : ""
 
   return {
-    totalLabel,
+    label,
     perPersonLabel,
-    combinedLabel: perPersonLabel ? `${totalLabel} · ${perPersonLabel}` : totalLabel,
+    ariaLabel: perPersonLabel ? `${label} total, ${perPersonLabel} por persona` : `${label} total`,
+  }
+}
+
+/**
+ * Seats remaining, shown only at four or fewer. Above that the number is not a
+ * reason to act, and a card that always shows a count trains the agent to stop
+ * reading it.
+ */
+function seatsParts(offer: CanonicalOffer): ResultCardModel["seats"] {
+  const seats = offer.fareMeta?.seatsRemaining
+  if (typeof seats !== "number" || !Number.isFinite(seats) || seats <= 0) return null
+  if (seats > SEATS_VISIBLE_THRESHOLD) return null
+
+  return {
+    label: seats === 1 ? "1 asiento" : `${seats} asientos`,
+    urgency: seats <= SEATS_CRITICAL_THRESHOLD ? "critical" : "low",
   }
 }
 
@@ -296,6 +339,11 @@ function formatMoney(money: CanonicalOffer["price"]["total"]) {
   })}`
 }
 
+function dayMonthLabel(isoDate: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return ""
+  return `${isoDate.slice(8)}/${isoDate.slice(5, 7)}`
+}
+
 function providerBadge(offer: CanonicalOffer) {
   const primaryProviderId = normalizedProviderId(offer.providerSource)
   if (primaryProviderId) {
@@ -338,4 +386,11 @@ export function providerBadgeForId(providerId?: string): ResultProviderBadge {
     shortLabel: label.slice(0, 2).toUpperCase(),
     icon: "",
   }
+}
+
+/** The signature two offers share when their schedule is identical leg by leg. */
+export function legScheduleSignature(model: ResultCardModel): string {
+  return model.legs
+    .map((leg) => `${leg.departureTime}-${leg.arrivalTime}-${leg.dayOffset}`)
+    .join("|")
 }

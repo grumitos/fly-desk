@@ -1,1161 +1,586 @@
-.fd-results-list {
-  container-type: inline-size;
-}
+/*
+ * Plate 1b — the result card, and plate 4a — its skeleton.
+ *
+ * The grid is 32 / 186 / 1fr / 116 / 26 and the skeleton inherits it, because a
+ * skeleton whose columns differ from the component makes every value jump when
+ * the data lands.
+ */
 
-.fd-results-list--fixed-layout {
-  --fd-result-col-airline-logo: var(--fd-result-col-links, minmax(0, 54fr));
-  --fd-result-col-carrier: minmax(0, var(--fd-results-col-carrier, 139fr));
-  --fd-result-col-dates: minmax(0, var(--fd-results-col-dates, 389fr));
-  --fd-result-col-duration: minmax(0, var(--fd-results-col-duration, 121fr));
-  --fd-result-col-stops: minmax(0, var(--fd-results-col-stops, 182fr));
-  --fd-result-col-price: minmax(0, var(--fd-results-col-price, 154fr));
-  --fd-result-col-links: minmax(0, var(--fd-results-col-links, 54fr));
-  width: 100%;
-  min-width: 0;
-}
-
-.fd-results-list--fixed-layout .fd-result-card:not(.fd-result-card--compact) {
-  justify-content: center;
-  min-width: 0;
-}
-
-.fd-results-list > .fd-result-card:not(.fd-result-card--layout-guide),
-.fd-results-list > .fd-result-group {
-  animation: fd-result-row-in 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.fd-result-group {
-  display: grid;
-  min-width: 0;
-  gap: 0.42rem;
-  padding-left: 0.62rem;
-  border-left: 3px solid color-mix(in srgb, var(--color-border) 88%, var(--color-muted-foreground));
-  transition: border-color 150ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.fd-result-group:hover {
-  border-left-color: color-mix(in srgb, var(--color-primary) 48%, var(--color-border));
-}
-
-.fd-result-group.is-selected,
-.fd-result-group.is-selected:hover {
-  border-left-color: color-mix(in srgb, var(--color-primary) 72%, var(--color-border));
-}
-
-.fd-result-group__header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0 0.14rem;
-}
-
-.fd-result-group__title,
-.fd-result-group__meta {
-  min-width: 0;
-  overflow: hidden;
-  line-height: 1.16;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.fd-result-group__title {
-  color: var(--color-foreground);
-  font-size: 0.78rem;
-  font-weight: 900;
-}
-
-.fd-result-group__meta {
-  flex: 0 0 auto;
-  color: var(--color-muted-foreground);
-  font-size: 0.72rem;
-  font-weight: 800;
-}
-
-.fd-result-group__stack {
-  display: grid;
-  min-width: 0;
-  gap: 0.38rem;
-}
-
-.fd-result-group__variants {
-  display: grid;
-  min-width: 0;
-  gap: 0.32rem;
-}
-
-.fd-result-variant-card {
-  --fd-result-column-gap: clamp(0.48rem, 0.82vw, 0.75rem);
-  display: grid;
-  grid-template-columns:
-    var(--fd-result-col-airline-logo, var(--fd-result-col-links, 2.5rem))
-    var(--fd-result-col-carrier, minmax(7rem, 1.05fr))
-    var(--fd-result-col-dates, minmax(8.4rem, 1.15fr))
-    var(--fd-result-col-duration, minmax(7.5rem, 1fr))
-    var(--fd-result-col-stops, minmax(6.4rem, 0.82fr))
-    var(--fd-result-col-price, minmax(6.8rem, 0.76fr))
-    var(--fd-result-col-links, 2.5rem);
-  column-gap: var(--fd-result-column-gap);
-  min-width: 0;
-  min-height: 2.42rem;
-  align-items: center;
-  padding: 0.42rem 0.92rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-card);
-  color: var(--color-foreground);
-  cursor: pointer;
-  transition:
-    border-color 150ms cubic-bezier(0.22, 1, 0.36, 1),
-    background 150ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.fd-result-variant-card:hover {
-  border-color: color-mix(in srgb, var(--color-primary) 48%, var(--color-border));
-  background: color-mix(in srgb, var(--color-card) 92%, var(--color-secondary));
-}
-
-.fd-result-variant-card.is-selected {
-  border-color: color-mix(in srgb, var(--color-primary) 66%, var(--color-border));
-  background: color-mix(in srgb, var(--color-primary) 7%, var(--color-card));
-}
-
-.fd-result-variant-card:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--color-primary) 58%, var(--color-border));
-  outline-offset: 2px;
-}
-
-.fd-result-variant-card__schedules,
-.fd-result-variant-card__schedule,
-.fd-result-variant-card__journey {
-  display: grid;
-  min-width: 0;
-  gap: 0.16rem;
-}
-
-.fd-result-variant-card__schedules {
-  align-items: center;
-  column-gap: 0.82rem;
-  justify-items: center;
-  text-align: center;
-}
-
-.fd-result-variant-card__schedules[data-trip-type="one-way"] {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.fd-result-variant-card__schedules[data-trip-type="round-trip"] {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.fd-result-variant-card__schedule {
-  justify-items: center;
-  min-height: 1.24rem;
-  text-align: center;
-}
-
-.fd-result-variant-card__schedule.is-empty {
-  visibility: hidden;
-}
-
-.fd-result-variant-card__journey {
-  justify-items: center;
-  text-align: center;
-}
-
-.fd-result-variant-card .fd-result-card__schedule-main {
-  font-size: 1rem;
-}
-
-.fd-result-variant-card .fd-result-card__journey-main {
-  font-size: 0.82rem;
-}
-
-.fd-result-variant-card .fd-result-card__stops,
-.fd-result-variant-card .fd-result-card__layover {
-  font-size: 0.68rem;
-}
-
-.fd-result-group .fd-result-card {
-  border-radius: var(--radius-lg);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--color-card) 78%, transparent),
-    0 8px 16px color-mix(in srgb, var(--color-foreground) 5%, transparent);
-}
-
-.fd-result-group .fd-result-card:hover {
-  transform: none;
-}
-
-.fd-results-list--cached .fd-result-group {
-  border-left-color: color-mix(in srgb, var(--color-muted-foreground) 48%, var(--color-border));
-}
-
-.fd-results-list--cached .fd-result-card {
-  border-color: color-mix(in srgb, var(--color-border) 78%, var(--color-muted-foreground));
-  background: color-mix(in srgb, var(--color-secondary) 72%, var(--color-card));
-  box-shadow: none;
-  filter: grayscale(0.18);
-}
-
-.fd-results-list--cached .fd-result-variant-card {
-  border-color: color-mix(in srgb, var(--color-border) 78%, var(--color-muted-foreground));
-  background: color-mix(in srgb, var(--color-secondary) 76%, var(--color-card));
-  color: color-mix(in srgb, var(--color-foreground) 74%, var(--color-muted-foreground));
-}
-
-.fd-results-list--cached .fd-result-card:not(.is-selected) {
-  color: color-mix(in srgb, var(--color-foreground) 72%, var(--color-muted-foreground));
-}
-
-.fd-results-list--cached .fd-result-card:not(.is-selected) .fd-result-card__airline-name,
-.fd-results-list--cached .fd-result-card:not(.is-selected) .fd-result-card__route-main,
-.fd-results-list--cached .fd-result-card:not(.is-selected) .fd-result-card__journey-main,
-.fd-results-list--cached .fd-result-card:not(.is-selected) .fd-result-card__price-total {
-  color: color-mix(in srgb, var(--color-foreground) 70%, var(--color-muted-foreground));
-}
-
-.fd-results-list--cached .fd-result-card:not(.is-selected) .fd-result-card__stops,
-.fd-results-list--cached .fd-result-card:not(.is-selected) .fd-result-card__redirect-status {
-  opacity: 0.78;
-}
-
-.fd-results-layout-editor {
-  display: grid;
-  flex-shrink: 0;
-  gap: 0.65rem;
-  margin: 0 0.75rem 0.2rem;
-  padding: 0.72rem;
-  border: 1px solid color-mix(in srgb, var(--color-border) 82%, var(--color-muted-foreground));
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--color-card) 88%, var(--color-secondary));
-}
-
-.fd-results-layout-editor__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.fd-results-layout-editor__title {
-  margin: 0;
-  font-size: 0.86rem;
-  font-weight: 900;
-  line-height: 1.1;
-}
-
-.fd-results-layout-editor__status {
-  margin: 0.18rem 0 0;
-  color: var(--color-muted-foreground);
-  font-size: 0.72rem;
-  font-weight: 700;
-  line-height: 1.25;
-}
-
-.fd-results-layout-column {
-  --fd-results-layout-column-border-width: 1px;
-  position: relative;
-  display: grid;
-  min-width: 0;
-  gap: 0.42rem;
-  padding: 0.46rem 0.5rem;
-  border: var(--fd-results-layout-column-border-width) solid color-mix(in srgb, var(--color-border) 72%, transparent);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-card) 92%, var(--color-secondary));
-}
-
-.fd-results-layout-column__header {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.35rem;
-  color: var(--color-muted-foreground);
-  font-size: 0.68rem;
-  font-weight: 900;
-  line-height: 1.1;
-}
-
-.fd-results-layout-column__header span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.fd-results-layout-column__header span:last-child {
-  font-family: var(--font-mono);
-}
-
-.fd-results-layout-column__skeleton {
-  display: grid;
-  gap: 0.26rem;
-}
-
-.fd-results-layout-column__skeleton span {
-  display: block;
-  height: 0.42rem;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--color-muted-foreground) 18%, transparent);
-}
-
-.fd-results-layout-column__skeleton span:nth-child(2) {
-  width: 72%;
-}
-
-.fd-results-layout-column__skeleton span:nth-child(3) {
-  width: 48%;
-}
-
-.fd-results-layout-column[data-column="links"] .fd-results-layout-column__skeleton {
-  width: 1.35rem;
-  height: 1.35rem;
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-primary) 16%, var(--color-card));
-}
-
-.fd-results-layout-column[data-column="links"] .fd-results-layout-column__skeleton span {
-  display: none;
-}
-
-.fd-results-layout-column__handle {
-  position: absolute;
-  top: -0.34rem;
-  bottom: -0.34rem;
-  left: calc(100% + var(--fd-results-layout-column-border-width) + (var(--fd-result-column-gap) / 2));
-  z-index: 1;
-  width: var(--fd-results-layout-handle-width, 0.82rem);
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: col-resize;
-  touch-action: none;
-  transform: translateX(-50%);
-}
-
-.fd-results-layout-column__handle::after {
-  position: absolute;
-  top: 0.34rem;
-  bottom: 0.34rem;
-  left: 50%;
-  width: 1px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--color-primary) 56%, var(--color-border));
-  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--color-primary) 28%, transparent);
-  content: "";
-  transform: translateX(-50%);
-}
-
-.fd-results-layout-column__handle:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--color-primary) 72%, var(--color-border));
-  outline-offset: 2px;
-}
-
-.fd-results-layout-column__handle:disabled {
-  cursor: default;
-}
-
-@media (max-width: 767px) {
-  .fd-results-layout-editor {
-    gap: 0.46rem;
-    margin: 0 0.55rem 0.1rem;
-    padding: 0.55rem;
+@layer utilities {
+  .fd-results-list {
+    container-type: inline-size;
   }
 
-  .fd-results-layout-editor__header {
+  .fd-card {
+    position: relative;
+    display: grid;
+    grid-template-columns: 32px minmax(0, 186px) minmax(0, 1fr) 116px 26px;
+    column-gap: 12px;
     align-items: center;
-  }
-
-  .fd-results-layout-editor__status {
-    display: none;
-  }
-
-  .fd-results-layout-column {
-    gap: 0.28rem;
-    padding: 0.34rem 0.4rem;
-  }
-
-  .fd-results-layout-column__skeleton {
-    display: none;
-  }
-}
-
-.fd-result-card {
-  --fd-result-accent: var(--color-primary);
-  --fd-result-card-edge-padding: 0.92rem;
-  --fd-result-column-gap: clamp(0.48rem, 0.82vw, 0.75rem);
-  display: grid;
-  position: relative;
-  grid-template-columns:
-    var(--fd-result-col-airline-logo, 2.5rem)
-    var(--fd-result-col-carrier, minmax(7rem, 1.05fr))
-    var(--fd-result-col-dates, minmax(8.4rem, 1.15fr))
-    var(--fd-result-col-duration, minmax(7.5rem, 1fr))
-    var(--fd-result-col-stops, minmax(6.4rem, 0.82fr))
-    var(--fd-result-col-price, minmax(6.8rem, 0.76fr))
-    var(--fd-result-col-links, 2.5rem);
-  column-gap: var(--fd-result-column-gap);
-  row-gap: 0.54rem;
-  align-items: center;
-  width: 100%;
-  min-width: 0;
-  padding: 0.86rem var(--fd-result-card-edge-padding);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
-  background: var(--color-card);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--color-card) 78%, transparent),
-    0 12px 24px color-mix(in srgb, var(--color-foreground) 7%, transparent);
-  color: var(--color-foreground);
-  cursor: pointer;
-  transition:
-    border-color 150ms cubic-bezier(0.22, 1, 0.36, 1),
-    background 150ms cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 150ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 150ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.fd-result-card:hover {
-  border-color: color-mix(in srgb, var(--fd-result-accent) 64%, var(--color-border));
-  background: color-mix(in srgb, var(--color-card) 92%, var(--color-secondary));
-  transform: translateY(-1px);
-}
-
-.fd-result-card.is-selected {
-  border-color: color-mix(in srgb, var(--fd-result-accent) 72%, var(--color-primary) 18%);
-  background: color-mix(in srgb, var(--color-primary) 7%, var(--color-card));
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--fd-result-accent) 28%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--color-card) 78%, transparent),
-    0 14px 28px color-mix(in srgb, var(--color-foreground) 9%, transparent);
-}
-
-.fd-result-card__select-action {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  border: 0;
-  border-radius: inherit;
-  background: transparent;
-  cursor: pointer;
-}
-
-.fd-result-card__select-action:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--fd-result-accent) 58%, var(--color-primary) 18%);
-  outline-offset: 2px;
-}
-
-.fd-result-card__airline,
-.fd-result-card__airline-logo,
-.fd-result-card__schedules,
-.fd-result-card__schedule,
-.fd-result-card__route,
-.fd-result-card__journey,
-.fd-result-card__price,
-.fd-result-card__provider {
-  display: grid;
-  gap: 0.2rem;
-  min-width: 0;
-}
-
-.fd-result-card__eyebrow {
-  display: none;
-}
-
-.fd-result-card__route,
-.fd-result-card__journey {
-  justify-items: center;
-  text-align: center;
-}
-
-.fd-result-card__airline-logo {
-  align-self: center;
-  justify-items: start;
-}
-
-.fd-result-card__schedules {
-  align-items: start;
-  column-gap: 0.82rem;
-  justify-items: center;
-  row-gap: 0.34rem;
-  text-align: center;
-}
-
-.fd-result-card--layout-guide {
-  --fd-results-layout-handle-width: 0.82rem;
-  row-gap: 0.7rem;
-  align-items: stretch;
-  border-style: dashed;
-  background: color-mix(in srgb, var(--color-card) 84%, var(--color-secondary));
-  box-shadow: none;
-  cursor: default;
-}
-
-.fd-results-layout-guide__header {
-  display: flex;
-  grid-column: 1 / -1;
-  min-width: 0;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.fd-results-layout-column-spacer {
-  display: grid;
-  min-width: 0;
-  place-items: center;
-}
-
-.fd-results-layout-column-spacer::before {
-  display: block;
-  width: 1.72rem;
-  height: 1.72rem;
-  border: 1px dashed color-mix(in srgb, var(--color-border) 82%, transparent);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-muted-foreground) 10%, transparent);
-  content: "";
-}
-
-.fd-result-card--layout-guide:hover {
-  transform: none;
-}
-
-@media (max-width: 767px) {
-  .fd-result-card--layout-guide {
-    display: none;
-  }
-}
-
-.fd-result-card__schedules[data-trip-type="one-way"] {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.fd-result-card__schedules[data-trip-type="round-trip"] {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.fd-result-card__airline-name,
-.fd-result-card__route-main,
-.fd-result-card__journey-main {
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 800;
-}
-
-.fd-result-card__airline-name {
-  font-size: 0.98rem;
-  line-height: 1.15;
-}
-
-.fd-result-card__meta,
-.fd-result-card__micro-label {
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--color-muted-foreground);
-  font-size: 0.76rem;
-  line-height: 1.26;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.fd-result-card__meta--muted {
-  color: color-mix(in srgb, var(--color-muted-foreground) 72%, transparent);
-}
-
-.fd-result-card__schedule-main {
-  display: inline-flex;
-  align-items: baseline;
-  justify-content: center;
-  justify-self: center;
-  min-width: 0;
-  max-width: 100%;
-  gap: 0.28rem;
-  overflow: hidden;
-  font-size: 1.22rem;
-  font-weight: 900;
-  line-height: 1.02;
-  white-space: nowrap;
-}
-
-.fd-result-card__schedule {
-  justify-items: center;
-  text-align: center;
-}
-
-.fd-result-card__schedule-separator {
-  color: var(--color-muted-foreground);
-  font-weight: 600;
-}
-
-.fd-result-card__schedule-offset {
-  color: var(--color-muted-foreground);
-  font-size: 0.72rem;
-  font-weight: 800;
-}
-
-.fd-result-card__schedule-unknown {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-muted-foreground);
-  font-size: 0.82rem;
-  font-weight: 800;
-  text-overflow: ellipsis;
-}
-
-.fd-result-card__route-main {
-  font-size: 0.98rem;
-  line-height: 1.18;
-}
-
-.fd-result-card__journey-main {
-  font-family: var(--font-mono);
-  font-size: 0.91rem;
-  line-height: 1.18;
-}
-
-.fd-result-card__stops {
-  justify-self: center;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--color-muted-foreground);
-  font-size: 0.76rem;
-  font-weight: 800;
-  line-height: 1.16;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.fd-result-card__stops--direct {
-  color: color-mix(in srgb, var(--color-success) 82%, var(--color-foreground));
-}
-
-.fd-result-card__stops--warning {
-  color: color-mix(in srgb, var(--color-warning) 82%, var(--color-foreground));
-}
-
-.fd-result-card__stops--danger {
-  color: color-mix(in srgb, var(--color-destructive) 82%, var(--color-foreground));
-}
-
-.fd-result-card__layover {
-  justify-self: center;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--color-muted-foreground);
-  font-family: var(--font-mono);
-  font-size: 0.76rem;
-  font-weight: 700;
-  line-height: 1.15;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.fd-result-card__baggage-icons {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.28rem;
-  min-width: 0;
-}
-
-.fd-result-card__route-baggage {
-  display: inline-flex;
-  justify-self: center;
-  min-width: 0;
-  align-items: center;
-  gap: 0.34rem;
-  text-align: center;
-}
-
-.fd-result-card__route-baggage .fd-result-card__micro-label {
-  flex: 0 1 auto;
-}
-
-.fd-result-card__bag-icon {
-  display: inline-grid;
-  width: 1.05rem;
-  height: 1.05rem;
-  place-items: center;
-}
-
-.fd-result-card__bag-icon svg {
-  width: 1rem;
-  height: 1rem;
-  stroke-width: 2;
-}
-
-.fd-result-card__bag-icon.is-included {
-  color: var(--color-foreground);
-}
-
-.fd-result-card__bag-icon.is-missing {
-  color: var(--color-muted-foreground);
-  opacity: 0.48;
-}
-
-.fd-result-card__price {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  overflow: hidden;
-  text-align: right;
-}
-
-.fd-result-card__price-total,
-.fd-result-card__price-meta {
-  display: block;
-  flex: 0 0 auto;
-  min-width: max-content;
-  max-width: none;
-  overflow: visible;
-  font-family: var(--font-mono);
-  text-align: right;
-  white-space: nowrap;
-}
-
-.fd-result-card__price-total {
-  font-size: 0.98rem;
-  font-weight: 900;
-  line-height: 1.15;
-}
-
-.fd-result-card__price-meta {
-  color: var(--color-muted-foreground);
-  font-size: 0.72rem;
-  font-weight: 700;
-}
-
-.fd-result-card__redirect-status {
-  display: block;
-  max-width: 100%;
-  overflow: hidden;
-  font-size: 0.68rem;
-  font-weight: 800;
-  line-height: 1.18;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.fd-result-card__redirect-status--verified {
-  color: var(--color-success-foreground, var(--color-primary));
-}
-
-.fd-result-card__redirect-status--pending {
-  color: var(--color-warning-soft-foreground);
-}
-
-.fd-result-card__redirect-status--blocked {
-  color: var(--color-destructive);
-}
-
-.fd-result-card__provider {
-  position: relative;
-  z-index: 2;
-  justify-items: end;
-  pointer-events: none;
-}
-
-.fd-result-card__provider--stacked {
-  align-content: center;
-  gap: 0.22rem;
-}
-
-.fd-result-card__provider-action {
-  display: grid;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  justify-self: end;
-  pointer-events: auto;
-}
-
-.fd-result-card__provider-action:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--fd-result-accent) 58%, var(--color-primary) 18%);
-  outline-offset: 2px;
-}
-
-.fd-result-card__airline-logo img,
-.fd-result-card__airline-logo span,
-.fd-result-card__provider img,
-.fd-result-card__provider span {
-  display: grid;
-  width: 2.35rem;
-  height: 2.35rem;
-  place-items: center;
-}
-
-.fd-result-card__airline-logo img,
-.fd-result-card__provider img {
-  object-fit: contain;
-}
-
-.fd-result-card__provider--stacked img,
-.fd-result-card__provider--stacked span {
-  width: 1.72rem;
-  height: 1.72rem;
-}
-
-.fd-result-card__airline-logo span,
-.fd-result-card__provider span {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-card) 88%, var(--color-secondary));
-  color: var(--color-foreground);
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  font-weight: 900;
-}
-
-.fd-result-card--compact {
-  grid-template-columns: 2.2rem minmax(0, 1fr) 2.2rem;
-  align-items: start;
-  min-height: 10.75rem;
-  padding: 0.72rem;
-  border-radius: var(--radius-lg);
-  row-gap: 0.46rem;
-}
-
-.fd-result-card--compact .fd-result-card__eyebrow {
-  display: block;
-  grid-column: 1 / -1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-primary);
-  font-size: 0.72rem;
-  font-weight: 900;
-  line-height: 1.14;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.fd-result-card--compact .fd-result-card__airline {
-  grid-column: 2;
-  grid-row: 2;
-}
-
-.fd-result-card--compact .fd-result-card__airline-logo {
-  grid-column: 1;
-  grid-row: 2;
-  justify-items: start;
-}
-
-.fd-result-card--compact .fd-result-card__provider {
-  grid-column: 3;
-  grid-row: 2;
-  align-self: center;
-  justify-items: end;
-}
-
-.fd-result-card--compact .fd-result-card__airline,
-.fd-result-card--compact .fd-result-card__airline-logo {
-  align-self: center;
-}
-
-.fd-result-card--compact .fd-result-card__schedules,
-.fd-result-card--compact .fd-result-card__route,
-.fd-result-card--compact .fd-result-card__journey,
-.fd-result-card--compact .fd-result-card__price {
-  grid-column: 1 / -1;
-}
-
-.fd-result-card--compact .fd-result-card__airline-name,
-.fd-result-card--compact .fd-result-card__route-main {
-  font-size: 0.9rem;
-}
-
-.fd-result-card--compact .fd-result-card__meta,
-.fd-result-card--compact .fd-result-card__micro-label,
-.fd-result-card--compact .fd-result-card__stops,
-.fd-result-card--compact .fd-result-card__layover,
-.fd-result-card--compact .fd-result-card__price-meta,
-.fd-result-card--compact .fd-result-card__redirect-status {
-  font-size: 0.7rem;
-}
-
-.fd-result-card--compact .fd-result-card__schedule-main {
-  font-size: 1.06rem;
-}
-
-.fd-result-card--compact .fd-result-card__schedules {
-  column-gap: 0.7rem;
-}
-
-.fd-result-card--compact .fd-result-card__journey-main,
-.fd-result-card--compact .fd-result-card__price-total {
-  font-size: 0.86rem;
-}
-
-.fd-result-card--compact .fd-result-card__price {
-  align-items: flex-end;
-  text-align: right;
-}
-
-.fd-result-card--compact .fd-result-card__airline-logo img,
-.fd-result-card--compact .fd-result-card__airline-logo span,
-.fd-result-card--compact .fd-result-card__provider img,
-.fd-result-card--compact .fd-result-card__provider span {
-  width: 2rem;
-  height: 2rem;
-}
-
-.fd-migration-grid-shell {
-  container-type: inline-size;
-}
-
-.fd-migration-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.68rem;
-}
-
-.fd-migration-month-card {
-  display: grid;
-  min-height: 10.75rem;
-  align-content: start;
-  gap: 0.56rem;
-  padding: 0.72rem;
-  border: 1px dashed color-mix(in srgb, var(--color-border) 86%, var(--color-muted-foreground));
-  border-radius: var(--radius-lg);
-  background: color-mix(in srgb, var(--color-card) 86%, var(--color-secondary));
-  color: var(--color-foreground);
-}
-
-.fd-migration-month-card--loading {
-  border-style: solid;
-  background:
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--color-card) 92%, var(--color-secondary)) 0%,
-      color-mix(in srgb, var(--color-secondary) 86%, var(--color-card)) 48%,
-      color-mix(in srgb, var(--color-card) 92%, var(--color-secondary)) 100%
-    );
-  background-size: 220% 100%;
-  animation: fd-migration-card-loading 1.15s ease-in-out infinite;
-}
-
-.fd-migration-month-card--error {
-  border-color: color-mix(in srgb, var(--color-destructive) 42%, var(--color-border));
-}
-
-.fd-migration-month-card--cancelled {
-  border-color: color-mix(in srgb, var(--color-muted-foreground) 34%, var(--color-border));
-  color: var(--color-muted-foreground);
-}
-
-.fd-migration-month-card__status {
-  position: absolute;
-  right: 0.55rem;
-  bottom: 0.5rem;
-  border-radius: var(--radius-md);
-  background: var(--color-warning-soft);
-  color: var(--color-warning-soft-foreground);
-  padding: 0.18rem 0.42rem;
-  font-size: 0.65rem;
-  font-weight: 800;
-  line-height: 1;
-}
-
-@keyframes fd-migration-card-loading {
-  0% {
-    background-position: 100% 0;
-  }
-
-  100% {
-    background-position: -100% 0;
-  }
-}
-
-.fd-migration-month-card .fd-result-card__eyebrow {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-primary);
-  font-size: 0.72rem;
-  font-weight: 900;
-  line-height: 1.14;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.fd-migration-month-card__title {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 0.94rem;
-  font-weight: 900;
-  line-height: 1.12;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.fd-migration-month-card__meta,
-.fd-migration-month-card__body {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-muted-foreground);
-  font-size: 0.74rem;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-}
-
-.fd-migration-month-card__body {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
-@container (max-width: 860px) {
-  .fd-migration-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-@container (max-width: 660px) {
-  .fd-migration-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@container (max-width: 430px) {
-  .fd-migration-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.dark .fd-result-card {
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--color-card-foreground) 10%, transparent),
-    0 12px 24px color-mix(in srgb, var(--color-background) 72%, transparent);
-}
-
-.dark .fd-result-card.is-selected {
-  box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--fd-result-accent) 32%, transparent),
-    inset 0 1px 0 color-mix(in srgb, var(--color-card-foreground) 10%, transparent),
-    0 14px 28px color-mix(in srgb, var(--color-background) 78%, transparent);
-}
-
-.fd-migration-month-card--updating .fd-result-card--compact {
-  padding-bottom: 1.8rem;
-}
-
-@container (min-width: 740px) and (max-width: 900px) {
-  .fd-result-card__schedule-main {
-    gap: 0.1rem;
-    font-size: 1.04rem;
-  }
-
-  .fd-result-card__schedule-offset {
-    font-size: 0.66rem;
-  }
-}
-
-@container (max-width: 740px) {
-  .fd-result-card {
-    grid-template-columns: 2.35rem repeat(2, minmax(0, 1fr)) 2.7rem;
     min-width: 0;
+    padding: 10px 13px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--fd-radius-12);
+    background: var(--color-card);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--color-foreground) 4%, transparent);
+    color: var(--color-foreground);
+    cursor: pointer;
+    /* `tacto`: colour only. The card does not lift, scale or shadow-bloom on
+       hover — a list of 40 cards that each move is a list that shimmers. */
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      border-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-result-variant-card {
-    grid-template-columns: 2.35rem repeat(2, minmax(0, 1fr)) 2.7rem;
+  .fd-card:hover {
+    border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
   }
 
-  .fd-result-card__airline-logo {
-    grid-column: 1;
+  .fd-card.is-selected {
+    border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-border));
+    background: color-mix(in srgb, var(--color-primary) 7%, var(--color-card));
   }
 
-  .fd-result-card__airline {
-    grid-column: 2;
+  /* A card whose schedule was swapped from the strip stays marked until it is
+     quoted or dropped, so the agent cannot quote a fare they did not read. */
+  .fd-card.is-schedule-changed {
+    border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-border));
+    box-shadow:
+      inset 3px 0 0 var(--color-primary),
+      0 1px 2px color-mix(in srgb, var(--color-foreground) 4%, transparent);
   }
 
-  .fd-result-card__schedules {
-    grid-column: 3;
+  .fd-card__hit {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
+    cursor: pointer;
   }
 
-  .fd-result-card__provider {
-    grid-column: 4;
+  /* ---- logo ------------------------------------------------------------- */
+
+  .fd-card__logo,
+  .fd-card__logo img,
+  .fd-card__logo span {
+    display: grid;
+    width: 32px;
+    height: 32px;
+    place-items: center;
   }
 
-  .fd-result-card__route {
-    grid-column: 1 / span 2;
+  .fd-card__logo img {
+    object-fit: contain;
   }
 
-  .fd-result-card__journey {
-    grid-column: 3;
+  .fd-card__logo span {
+    border: 1px solid var(--color-border);
+    border-radius: var(--fd-radius-8);
+    background: color-mix(in srgb, var(--color-card) 88%, var(--color-secondary));
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-mono-meta);
+    font-weight: var(--fd-weight-figure);
   }
 
-  .fd-result-card__price {
-    grid-column: 4;
+  /* ---- carrier ---------------------------------------------------------- */
+
+  .fd-card__carrier {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
   }
 
-  .fd-result-card__price {
+  .fd-card__carrier-line {
+    display: flex;
+    min-width: 0;
+    align-items: baseline;
+    gap: 6px;
+  }
+
+  .fd-card__carrier-name {
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--fd-text-body);
+    font-weight: var(--fd-weight-title);
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-card__carrier-operator {
+    flex-shrink: 0;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-value);
+    line-height: 1.25;
+    white-space: nowrap;
+  }
+
+  .fd-card__baggage {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .fd-card__baggage-icons {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .fd-card__bag {
+    display: inline-grid;
+    width: var(--fd-icon-14);
+    height: var(--fd-icon-14);
+    place-items: center;
+  }
+
+  .fd-card__bag svg {
+    width: var(--fd-icon-14);
+    height: var(--fd-icon-14);
+    stroke-width: 2;
+  }
+
+  .fd-card__bag.is-included {
+    color: var(--color-foreground);
+  }
+
+  /* Not included is a fact, not a warning: it goes grey, not red. */
+  .fd-card__bag.is-missing {
+    color: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent);
+  }
+
+  .fd-card__baggage-label {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-mono-meta);
+    font-weight: var(--fd-weight-value);
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ---- legs -------------------------------------------------------------
+   * Fixed lanes so the two rows align down the card and across the list:
+   * date 58, schedule 126, duration 50, stops elastic. */
+
+  .fd-card__legs {
+    display: grid;
+    min-width: 0;
+    gap: 4px;
+  }
+
+  .fd-card__leg {
+    display: grid;
+    grid-template-columns: 58px 126px 50px minmax(0, 1fr);
+    align-items: center;
+    column-gap: 10px;
+    line-height: 16px;
+  }
+
+  .fd-card__leg-label {
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-title);
+    letter-spacing: var(--fd-tracking-micro);
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .fd-card__leg-date {
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-label);
+    letter-spacing: 0;
+  }
+
+  .fd-card__leg-schedule {
+    display: grid;
+    grid-template-columns: auto 12px auto 14px;
+    align-items: center;
+    column-gap: 6px;
+  }
+
+  .fd-card__leg-time {
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-body);
+    font-weight: var(--fd-weight-title);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fd-card__leg-arrow {
+    display: inline-grid;
+    place-items: center;
+    color: color-mix(in srgb, var(--color-muted-foreground) 75%, transparent);
+  }
+
+  .fd-card__leg-offset {
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-title);
+  }
+
+  .fd-card__leg-unknown {
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-mono-meta);
+    font-weight: var(--fd-weight-label);
+  }
+
+  .fd-card__leg-duration {
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .fd-card__leg-stops {
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--fd-text-mono-meta);
+    font-weight: var(--fd-weight-label);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Direct is the good outcome, so it carries the success tone; two or more
+     stops is worth a warning tone; one stop is simply a fact. */
+  .fd-card__leg-stops.is-direct {
+    color: color-mix(in srgb, var(--color-success) 82%, var(--color-foreground));
+  }
+
+  .fd-card__leg-stops.is-one-stop {
+    color: var(--color-muted-foreground);
+  }
+
+  .fd-card__leg-stops.is-many-stops {
+    color: var(--color-warning-soft-foreground);
+  }
+
+  /* ---- price ------------------------------------------------------------ */
+
+  .fd-card__price {
+    display: grid;
+    min-width: 0;
     align-content: center;
-  }
-}
-
-@container (max-width: 620px) {
-  .fd-result-card {
-    grid-template-columns: 2.2rem minmax(0, 1fr) auto;
-    align-items: start;
+    justify-items: end;
+    gap: 2px;
   }
 
-  .fd-result-variant-card {
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: start;
+  .fd-card__price-figure {
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-card);
+    font-weight: var(--fd-weight-figure);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+    white-space: nowrap;
   }
 
-  .fd-result-card__airline-logo {
-    grid-column: 1;
-    grid-row: 1;
+  .fd-card__price-meta {
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-label);
+    line-height: 1.1;
+    white-space: nowrap;
   }
 
-  .fd-result-card__airline,
-  .fd-result-card__schedules,
-  .fd-result-card__route,
-  .fd-result-card__journey,
-  .fd-result-card__price {
-    grid-column: 2;
+  .fd-card__seats {
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-label);
+    line-height: 1.1;
+    white-space: nowrap;
   }
 
-  .fd-result-card__provider {
-    grid-column: 3;
-    grid-row: 1 / span 2;
+  .fd-card__seats.is-low {
+    color: var(--color-warning-soft-foreground);
   }
 
-  .fd-result-card__price {
-    align-items: flex-end;
+  .fd-card__seats.is-critical {
+    color: var(--color-destructive);
+  }
+
+  /* ---- provider -------------------------------------------------------- */
+
+  .fd-card__provider,
+  .fd-card__provider img,
+  .fd-card__provider span {
+    display: grid;
+    width: 26px;
+    height: 26px;
+    place-items: center;
+    justify-self: end;
+  }
+
+  .fd-card__provider {
+    position: relative;
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  .fd-card__provider img {
+    object-fit: contain;
+  }
+
+  .fd-card__provider span {
+    border: 1px solid var(--color-border);
+    border-radius: var(--fd-radius-8);
+    background: color-mix(in srgb, var(--color-card) 88%, var(--color-secondary));
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-figure);
+  }
+
+  /* ---- alternative schedules strip ------------------------------------- */
+
+  .fd-card__alts {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    grid-column: 1 / -1;
+    min-width: 0;
+    align-items: center;
+    gap: 10px;
+    margin-top: 7px;
+    padding-top: 7px;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .fd-card__alts-label {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .fd-card__alts-strip {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  .fd-card__alt-chip {
+    display: inline-flex;
+    height: var(--fd-control-chip);
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+    padding: 0 9px;
+    border: 1px solid var(--color-input);
+    border-radius: var(--fd-radius-8);
+    background: var(--color-card);
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      border-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-card__alt-chip:hover {
+    border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
+    background: var(--color-accent);
+  }
+
+  .fd-card__alt-chip.is-selected {
+    border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  }
+
+  .fd-card__alt-time {
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-title);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fd-card__alt-meta {
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-label);
+  }
+
+  .fd-card__alts-more {
+    display: inline-flex;
+    height: var(--fd-control-chip);
+    flex-shrink: 0;
+    align-items: center;
+    gap: 4px;
+    padding: 0 9px;
+    border-radius: var(--fd-radius-8);
+    color: var(--color-primary);
+    font-size: var(--fd-text-mono-meta);
+    font-weight: var(--fd-weight-title);
+    transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-card__alts-more:hover {
+    background: var(--color-accent);
+  }
+
+  .fd-card__eyebrow {
+    display: none;
+  }
+
+  /* ---- skeleton (4a) ---------------------------------------------------
+   * Same grid, same paddings, blocks at the height of the line they stand in
+   * for: 12–14 price, 10 title and time, 8 secondary. Widths are the only
+   * thing that varies, and they vary in %, never in the number of columns. */
+
+  .fd-card--skeleton {
+    cursor: default;
+    pointer-events: none;
+  }
+
+  .fd-card--skeleton:hover {
+    border-color: var(--color-border);
+  }
+
+  /* ---- all-schedules row (3b) ------------------------------------------
+   * The card's own leg lanes, plus the one column the card cannot fit: the
+   * price difference against the schedule currently shown. */
+
+  .fd-schedule-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 96px;
+    width: 100%;
+    align-items: center;
+    column-gap: 12px;
+    padding: 8px 10px;
+    border-radius: var(--fd-radius-10);
+    text-align: left;
+    transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-schedule-row:hover {
+    background: var(--color-accent);
+  }
+
+  .fd-schedule-row.is-current {
+    background: color-mix(in srgb, var(--color-primary) 7%, transparent);
+  }
+
+  .fd-schedule-row__leg {
+    display: grid;
+    grid-template-columns: 34px 126px 50px minmax(0, 1fr);
+    align-items: center;
+    column-gap: 10px;
+    line-height: 16px;
+  }
+
+  .fd-schedule-row__delta {
+    justify-self: end;
     text-align: right;
   }
 
-  .fd-result-card__schedules,
-  .fd-result-card__schedules[data-trip-type="round-trip"] {
-    grid-template-columns: minmax(0, 1fr);
+  .fd-schedule-row__delta-same {
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-mono-meta);
+    font-weight: var(--fd-weight-label);
   }
 
-  .fd-result-variant-card__empty {
-    display: none;
+  .fd-schedule-row__delta-value {
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-title);
+    font-variant-numeric: tabular-nums;
   }
 
-  .fd-result-variant-card__schedules,
-  .fd-result-variant-card__journey {
-    grid-column: 1;
+  /* Cheaper is the good news, so it takes the neutral success tone; more
+     expensive takes the soft warning tone. Neither is an error. */
+  .fd-schedule-row__delta-value.is-down {
+    color: color-mix(in srgb, var(--color-success) 82%, var(--color-foreground));
   }
 
-  .fd-result-variant-card__schedules,
-  .fd-result-variant-card__schedules[data-trip-type="round-trip"] {
-    grid-template-columns: minmax(0, 1fr);
+  .fd-schedule-row__delta-value.is-up {
+    color: var(--color-warning-soft-foreground);
+  }
+
+  /* ---- migration month card (1i, 2f) ----------------------------------- */
+
+  .fd-card--compact {
+    grid-template-columns: 28px minmax(0, 1fr) 26px;
+    align-items: start;
+    row-gap: 8px;
+    padding: 12px;
+  }
+
+  .fd-card--compact .fd-card__eyebrow {
+    display: block;
+    grid-column: 1 / -1;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--color-primary);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-title);
+    letter-spacing: var(--fd-tracking-micro);
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .fd-card--compact .fd-card__logo,
+  .fd-card--compact .fd-card__logo img,
+  .fd-card--compact .fd-card__logo span {
+    width: 28px;
+    height: 28px;
+  }
+
+  .fd-card--compact .fd-card__legs,
+  .fd-card--compact .fd-card__price {
+    grid-column: 1 / -1;
+  }
+
+  .fd-card--compact .fd-card__price {
+    justify-items: start;
+  }
+
+  /* In the month grid the price is the thing being compared, so it takes the
+     display body — the only place in the system that uses 22px. */
+  .fd-card--compact .fd-card__price-figure {
+    font-size: var(--fd-text-display);
+  }
+
+  .fd-card--compact .fd-card__leg {
+    grid-template-columns: 48px minmax(0, 1fr);
+    row-gap: 2px;
+  }
+
+  .fd-card--compact .fd-card__leg-duration,
+  .fd-card--compact .fd-card__leg-stops {
+    grid-column: 2;
+  }
+
+  /* ---- narrow container ------------------------------------------------
+   * Below 900px the two schedule rows cannot hold four lanes, so stops move
+   * under the schedule rather than being truncated to nothing. */
+
+  @container (max-width: 900px) {
+    .fd-card {
+      grid-template-columns: 32px minmax(0, 1fr) 96px 26px;
+      row-gap: 8px;
+    }
+
+    .fd-card__legs {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+  }
+
+  @container (max-width: 560px) {
+    .fd-card__leg {
+      grid-template-columns: 52px minmax(0, 1fr);
+      row-gap: 2px;
+    }
+
+    .fd-card__leg-duration {
+      text-align: left;
+    }
+
+    .fd-card__leg-duration,
+    .fd-card__leg-stops {
+      grid-column: 2;
+    }
   }
 }
