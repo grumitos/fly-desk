@@ -199,6 +199,80 @@ test("search transport drops offers without a real positive price and itinerary"
   assert.equal(result.offers[0]?.stops, 0);
 });
 
+test("search transport drops a round-trip offer without a real inbound itinerary", async () => {
+  const request: SearchRequest = {
+    ...buildExactRequest(),
+    tripType: "round-trip",
+    returnDate: "2026-06-22",
+  };
+  const incompleteOffer = {
+    id: "round-trip-missing-inbound",
+    providerSource: "agil-local",
+    tripType: "round-trip",
+    returnDate: "2026-06-22",
+    price: { total: { amount: 425, currencyCode: "USD" } },
+    itineraries: [{
+      direction: "outbound",
+      segments: [{
+        marketingCarrier: "LA",
+        flightNumber: "2460",
+        origin: "LIM",
+        destination: "MIA",
+        departureAt: "2026-06-15T08:00:00-05:00",
+        arrivalAt: "2026-06-15T14:00:00-04:00",
+      }],
+    }],
+  };
+  const completeOffer = {
+    ...incompleteOffer,
+    id: "complete-round-trip",
+    itineraries: [
+      ...incompleteOffer.itineraries,
+      {
+        direction: "inbound",
+        segments: [{
+          marketingCarrier: "LA",
+          flightNumber: "2461",
+          origin: "MIA",
+          destination: "LIM",
+          departureAt: "2026-06-22T17:00:00-04:00",
+          arrivalAt: "2026-06-22T23:00:00-05:00",
+        }],
+      },
+    ],
+  };
+
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    assert.equal(String(input), "/api/search");
+    const payload = JSON.parse(String(init?.body)) as BackendSearchPayload;
+    return Promise.resolve(Response.json({
+      searchJobId: "strict-round-trip-boundary",
+      searchComplete: true,
+      searchStatus: "completed",
+      revision: 1,
+      sortMode: payload.sortMode,
+      request: payload.request,
+      offers: [incompleteOffer, completeOffer],
+      allOffers: [incompleteOffer, completeOffer],
+      searchMeta: {
+        requestedAt: "2026-06-01T00:00:00.000Z",
+        completedAt: "2026-06-01T00:00:00.000Z",
+        providersUsed: ["agil-local"],
+        warnings: [],
+        partial: false,
+        searchState: "search_live",
+      },
+      providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+      warnings: [],
+    }));
+  }) as typeof fetch;
+
+  const result = await startSearch(request, "cheapest");
+
+  assert.deepEqual(result.offers.map((offer) => offer.id), ["complete-round-trip"]);
+  assert.deepEqual(result.allOffers.map((offer) => offer.id), ["complete-round-trip"]);
+});
+
 test("browser session id is attached to locations, search, and matrix transports", async () => {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   const clientSessionId = "browser-session-transport-a";
@@ -952,6 +1026,8 @@ test("matrix offer normalization suppresses provider status warnings in selected
             returnDate: "2026-07-09",
             duration: "11h",
             stops: 0,
+            priceConfidence: "indicative",
+            priceStatus: "unverified",
             price: { total: { amount: 710, currencyCode: "USD" } },
             itineraries: [
               {
@@ -1008,5 +1084,7 @@ test("matrix offer normalization suppresses provider status warnings in selected
     ["costamar-offer-real-warning"],
     "price-only matrix cells must not become invented flight offers",
   );
+  assert.equal(realWarningOffer?.priceConfidence, "live");
+  assert.equal(realWarningOffer?.priceStatus, "unverified");
   assert.deepEqual(realWarningOffer?.warnings ?? [], ["Click and Book Plus no devolvió vuelos para esta búsqueda."]);
 });

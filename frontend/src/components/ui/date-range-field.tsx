@@ -55,7 +55,9 @@ export function DateRangeField({
   maxStayNights,
   endDisabled = false,
   endDisabledLabel = "No aplica",
-  invalid = false,
+  startInvalid = false,
+  endInvalid = false,
+  errorId,
   onChange,
   onTouch,
 }: {
@@ -68,7 +70,9 @@ export function DateRangeField({
   maxStayNights: number
   endDisabled?: boolean
   endDisabledLabel?: string
-  invalid?: boolean
+  startInvalid?: boolean
+  endInvalid?: boolean
+  errorId?: string
   onChange: (next: { startDate: string; endDate: string }) => void
   onTouch?: (half: Half) => void
 }) {
@@ -132,7 +136,7 @@ export function DateRangeField({
     <Popover open={activeHalf !== null} onOpenChange={(next) => { if (!next) setOpenHalf(null) }}>
       <PopoverAnchor asChild>
         <div
-          className={cn("fd-daterange-control", invalid && "fd-field-invalid")}
+          className={cn("fd-daterange-control", (startInvalid || endInvalid) && "fd-field-invalid")}
           data-open={activeHalf !== null}
         >
           <RangeHalf
@@ -141,6 +145,8 @@ export function DateRangeField({
             value={validStart ? formatDay(validStart) : "Seleccionar"}
             placeholder={!validStart}
             active={activeHalf === "start"}
+            invalid={startInvalid}
+            errorId={errorId}
             onOpen={() => openHalfFor("start")}
           />
           <span className="fd-daterange-divider" aria-hidden="true" />
@@ -155,6 +161,8 @@ export function DateRangeField({
             placeholder={endDisabled || !validEnd}
             active={activeHalf === "end"}
             disabled={endDisabled}
+            invalid={endInvalid}
+            errorId={errorId}
             onOpen={() => openHalfFor("end")}
             onClear={validEnd
               ? () => onChange({ startDate, endDate: "" })
@@ -195,6 +203,8 @@ function RangeHalf({
   placeholder,
   active,
   disabled = false,
+  invalid = false,
+  errorId,
   onOpen,
   onClear,
 }: {
@@ -204,6 +214,8 @@ function RangeHalf({
   placeholder: boolean
   active: boolean
   disabled?: boolean
+  invalid?: boolean
+  errorId?: string
   onOpen: () => void
   onClear?: () => void
 }) {
@@ -215,6 +227,8 @@ function RangeHalf({
         aria-label={`${label}: ${value}`}
         aria-haspopup="dialog"
         aria-expanded={active}
+        aria-invalid={invalid}
+        aria-describedby={invalid ? errorId : undefined}
         disabled={disabled}
         onClick={onOpen}
       />

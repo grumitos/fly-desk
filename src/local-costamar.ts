@@ -266,6 +266,7 @@ export interface CostamarAutocompleteAirport {
 interface CostamarSearchOutcome {
   offers: CanonicalOffer[];
   warnings: string[];
+  partial: boolean;
 }
 
 interface CostamarB2bPromptRequest {
@@ -4024,6 +4025,51 @@ export function applyCostamarContextToBrandedSearchUrl(
   return branded.toString();
 }
 
+export function isAllowedCostamarBrandedSearchLocation(
+  input: string,
+  request: SearchRequest,
+  context: CostamarProviderContext,
+): boolean {
+  let candidate: URL;
+  try {
+    candidate = new URL(input);
+  } catch {
+    return false;
+  }
+
+  if (candidate.protocol !== "https:" || candidate.username || candidate.password) {
+    return false;
+  }
+
+  const allowedBaseUrls = [
+    context.brandBaseUrl,
+    "https://booking.clickandbook.com/vuelos",
+  ];
+
+  return allowedBaseUrls.some((brandBaseUrl) => {
+    try {
+      const base = new URL(brandBaseUrl);
+      if (
+        base.protocol !== "https:"
+        || base.username
+        || base.password
+        || (base.hostname !== "flights.zdev.tech" && base.hostname !== "booking.clickandbook.com")
+      ) {
+        return false;
+      }
+
+      const expected = new URL(buildCostamarBrandedSearchUrl(request, {
+        ...context,
+        brandBaseUrl: base.toString(),
+        token: "",
+      }));
+      return candidate.origin === expected.origin && candidate.pathname === expected.pathname;
+    } catch {
+      return false;
+    }
+  });
+}
+
 export function mapCostamarRecommendationToOffer(
   recommendation: CostamarRecommendation,
   request: SearchRequest,
@@ -4222,6 +4268,7 @@ async function searchRecommendations(
   return {
     offers,
     warnings,
+    partial: Boolean(responseWarning),
   };
 }
 
@@ -4237,7 +4284,7 @@ export async function searchLocalCostamarExact(
   return {
     offers: outcome.offers,
     warnings: outcome.warnings,
-    partial: false,
+    partial: outcome.partial,
   };
 }
 
@@ -4318,7 +4365,7 @@ export async function searchLocalCostamarRange(
   return {
     offers,
     warnings,
-    partial: outcomes.some((outcome) => Boolean(outcome.error)),
+    partial: outcomes.some((outcome) => Boolean(outcome.error) || outcome.result?.partial === true),
   };
 }
 
@@ -4342,6 +4389,7 @@ export async function resolveLocalCostamarRangeProgressive(
       progressOffers = result.offers;
       progressWarnings = result.warnings;
       warnings.push(...result.warnings);
+      partial = partial || result.partial;
     } catch (error) {
       const warning = providerPublicFailureMessage("costamar", error);
       partial = true;
@@ -4458,9 +4506,9 @@ export function matchesCostamarNativeFlexibleWindow(request: SearchRequest): boo
 async function seedMatrixWithFlexibleSearch(
   request: SearchRequest,
   providerContext?: ProviderContext,
-): Promise<Map<string, CanonicalOffer>> {
+): Promise<{ offers: Map<string, CanonicalOffer>; partial: boolean }> {
   if (!matchesCostamarNativeFlexibleWindow(request)) {
-    return new Map();
+    return { offers: new Map(), partial: false };
   }
 
   const leg = request.legs[0];
@@ -4499,7 +4547,10 @@ async function seedMatrixWithFlexibleSearch(
     }
   }
 
-  return byKey;
+  return {
+    offers: byKey,
+    partial: search.partial,
+  };
 }
 
 function buildMatrixCellFromOffer(
@@ -4535,17 +4586,23 @@ function buildMatrixCellFromOffer(
 async function resolveCellPrice(
   derivedRequest: SearchRequest,
   providerContext?: ProviderContext,
-): Promise<CanonicalOffer | undefined> {
+): Promise<{ offer?: CanonicalOffer; partial: boolean; warnings: string[] }> {
   const search = await searchLocalCostamarExact(derivedRequest, providerContext);
   const offers = enrichComparisonMetrics(search.offers);
 
-  return offers.reduce<CanonicalOffer | undefined>((best, current) => {
+  const offer = offers.reduce<CanonicalOffer | undefined>((best, current) => {
     if (!best || compareByPriceThenDuration(current, best) < 0) {
       return current;
     }
 
     return best;
   }, undefined);
+
+  return {
+    offer,
+    partial: search.partial,
+    warnings: search.warnings,
+  };
 }
 
 export async function resolveLocalCostamarMatrixProgressive(
@@ -4556,7 +4613,12 @@ export async function resolveLocalCostamarMatrixProgressive(
 ): Promise<MatrixResponse> {
   let partial = false;
   let stopRequested = false;
-  const seeded = await seedMatrixWithFlexibleSearch(request, providerContext).catch(() => new Map<string, CanonicalOffer>());
+  const seedResult = await seedMatrixWithFlexibleSearch(request, providerContext).catch(() => ({
+    offers: new Map<string, CanonicalOffer>(),
+    partial: true,
+  }));
+  const seeded = seedResult.offers;
+  partial = seedResult.partial;
   const seededKeys = new Set<string>();
   const seededCells = draft.cells.map((cell) => {
     if (cell.confidence !== "loading" || !cell.derivedRequest) {
@@ -4584,7 +4646,9 @@ export async function resolveLocalCostamarMatrixProgressive(
     .filter((cell) => !stopRequested && !seededKeys.has(cell.key));
   const resolvedLoadingCells = await mapConcurrent(prioritizedCells, COSTAMAR_CONCURRENCY.matrixCell, async (cell) => {
     try {
-      const offer = await resolveCellPrice(cell.derivedRequest, providerContext);
+      const resolution = await resolveCellPrice(cell.derivedRequest, providerContext);
+      partial = partial || resolution.partial;
+      const offer = resolution.offer;
       const nextCell = offer
         ? buildMatrixCellFromOffer(cell, offer, providerContext)
         : {
@@ -4592,7 +4656,9 @@ export async function resolveLocalCostamarMatrixProgressive(
             confidence: "unavailable" as const,
             selectable: false,
             stateCode: "chg" as const,
-            tooltip: "Click and Book Plus returned no live result for this combination.",
+            tooltip: resolution.partial
+              ? resolution.warnings[0] ?? "Click and Book Plus search was only partially available."
+              : "Click and Book Plus returned no live result for this combination.",
           } satisfies MatrixCell;
       if (onCellResolved?.(nextCell) === false) {
         stopRequested = true;

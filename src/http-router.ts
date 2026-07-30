@@ -50,6 +50,7 @@ import {
   createLocalCostamarMatrixDraft,
   createLocalCostamarSearchDraft,
   getLastCostamarWarmupDiagnostics,
+  isAllowedCostamarBrandedSearchLocation,
   resolveCostamarRedirectForRequest,
   safeCostamarRedirectFailureReason,
   resolveLocalCostamarExactProgressive,
@@ -3279,7 +3280,10 @@ export async function routeRequest(request: Request): Promise<Response> {
           });
           const redirectRequest = costamarRedirectRequestFromUrl(location, fallbackRequest);
 
-          if (redirectRequest) {
+          if (
+            redirectRequest
+            && isAllowedCostamarBrandedSearchLocation(location, redirectRequest, fastContext)
+          ) {
             const redirectResolution = await withCostamarRedirectTotalTimeout(
               resolveCostamarRedirectForRequest(redirectRequest, fastContext, {
                 force: !parsedTokenIsUsable,
@@ -3292,8 +3296,10 @@ export async function routeRequest(request: Request): Promise<Response> {
               location = applyCostamarContextToBrandedSearchUrl(location, redirectResolution.context);
               canRedirect = true;
             }
-          } else {
+          } else if (!redirectRequest) {
             blockedReason = "No se pudo reconstruir la busqueda Click and Book Plus desde el purchase path.";
+          } else {
+            blockedReason = "El enlace guardado de Click and Book Plus no pertenece a un origen permitido.";
           }
         } catch (error) {
           blockedReason = safeCostamarRedirectFailureReason(error);

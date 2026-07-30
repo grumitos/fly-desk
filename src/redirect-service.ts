@@ -4,6 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { ProviderContext, PurchasePath, SearchRequest } from "./core/types";
 import {
   applyCostamarContextToBrandedSearchUrl,
+  isAllowedCostamarBrandedSearchLocation,
   resolveCostamarRedirectForRequest,
   safeCostamarRedirectFailureReason,
 } from "./local-costamar";
@@ -601,7 +602,10 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
         });
         const redirectRequest = costamarRedirectRequestFromUrl(location, record.job?.request);
 
-        if (redirectRequest) {
+        if (
+          redirectRequest
+          && isAllowedCostamarBrandedSearchLocation(location, redirectRequest, fastContext)
+        ) {
           const redirectResolution = await withCostamarRedirectTotalTimeout(
             resolveCostamarRedirectForRequest(redirectRequest, fastContext, {
               force: !parsedTokenIsUsable,
@@ -614,8 +618,10 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
             location = applyCostamarContextToBrandedSearchUrl(location, redirectResolution.context);
             canRedirect = true;
           }
-        } else {
+        } else if (!redirectRequest) {
           blockedReason = "No se pudo reconstruir la busqueda Click and Book Plus desde el purchase path.";
+        } else {
+          blockedReason = "El enlace guardado de Click and Book Plus no pertenece a un origen permitido.";
         }
       } catch (error) {
         blockedReason = safeCostamarRedirectFailureReason(error);

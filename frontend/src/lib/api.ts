@@ -9,6 +9,7 @@ import type {
 } from "@/types"
 import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
 import { getBrowserClientSessionId } from "@/lib/browser-client-session"
+import { isIsoDate } from "@/lib/iso-date"
 import { filterLocationSuggestions, normalizeLocationSearchText, normalizeLocationSuggestions } from "@/lib/locations"
 import {
   normalizeProviderStatusResponse,
@@ -719,7 +720,10 @@ function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0
 }
 
-function offerTransportRecord(input: unknown): Record<string, unknown> | undefined {
+function offerTransportRecord(
+  input: unknown,
+  expectedTripType?: SearchRequest["tripType"],
+): Record<string, unknown> | undefined {
   const offer = objectRecord(input)
   const price = objectRecord(offer?.price)
   const total = objectRecord(price?.total)
@@ -738,10 +742,10 @@ function offerTransportRecord(input: unknown): Record<string, unknown> | undefin
     || itineraries.length === 0
   ) return undefined
 
-  const hasCompleteItineraries = itineraries.every((itinerary) => {
+  const completeItineraries = itineraries.flatMap((itinerary) => {
     const rawItinerary = objectRecord(itinerary)
     const segments = rawItinerary?.segments
-    return Array.isArray(segments)
+    const complete = Array.isArray(segments)
       && segments.length > 0
       && segments.every((segment) => {
         const rawSegment = objectRecord(segment)
@@ -753,9 +757,21 @@ function offerTransportRecord(input: unknown): Record<string, unknown> | undefin
           && nonEmptyString(rawSegment.arrivalAt),
         )
       })
+    return complete && rawItinerary ? [rawItinerary] : []
   })
 
-  return hasCompleteItineraries ? offer : undefined
+  if (completeItineraries.length !== itineraries.length) return undefined
+
+  const tripType = expectedTripType
+    ?? (offer.tripType === "one-way" || offer.tripType === "round-trip" || offer.tripType === "multi-city"
+      ? offer.tripType
+      : undefined)
+  const directions = new Set(completeItineraries.map((itinerary) => itinerary.direction))
+  if (tripType === "one-way" && !directions.has("outbound")) return undefined
+  if (tripType === "round-trip" && (!directions.has("outbound") || !directions.has("inbound"))) return undefined
+  if (tripType === "multi-city" && !directions.has("multi")) return undefined
+
+  return offer
 }
 
 function offerAirlineCode(offer: Record<string, unknown>, segment?: Record<string, unknown>): string {
@@ -851,8 +867,8 @@ function hasCheckedBaggage(baggage: unknown): boolean {
   )
 }
 
-function normalizeOffer(input: unknown): CanonicalOffer | undefined {
-  const offer = offerTransportRecord(input)
+function normalizeOffer(input: unknown, expectedTripType?: SearchRequest["tripType"]): CanonicalOffer | undefined {
+  const offer = offerTransportRecord(input, expectedTripType)
   if (!offer) return undefined
 
   const itineraries = normalizeOfferItineraries(offer.itineraries)
@@ -938,12 +954,13 @@ function filterNoOfferWarningsWhenProviderHasOffers(messages: string[], offers: 
 }
 
 function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
+  const request = fromBackendRequest(data.request)
   const offers = (data.offers ?? []).flatMap((offer) => {
-    const normalized = normalizeOffer(offer)
+    const normalized = normalizeOffer(offer, request.tripType)
     return normalized ? [normalized] : []
   })
   const allOffers = (data.allOffers ?? []).flatMap((offer) => {
-    const normalized = normalizeOffer(offer)
+    const normalized = normalizeOffer(offer, request.tripType)
     return normalized ? [normalized] : []
   })
   const offerScope = allOffers.length ? allOffers : offers
@@ -968,7 +985,7 @@ function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
     ...data,
     searchMeta,
     warnings,
-    request: fromBackendRequest(data.request),
+    request,
     offers,
     allOffers,
     diagnosticLog: toDiagnosticLines([
@@ -980,16 +997,18 @@ function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
   }
 }
 
-function normalizeMatrixOffer(cell: MatrixCell): CanonicalOffer | undefined {
+function normalizeMatrixOffer(
+  cell: MatrixCell,
+  expectedTripType: SearchRequest["tripType"],
+): CanonicalOffer | undefined {
   const tooltipWarning = translatedMatrixTooltipWarning(cell.tooltip)
 
   if (cell.offer) {
-    const offer = normalizeOffer(cell.offer)
+    const offer = normalizeOffer(cell.offer, expectedTripType)
     if (!offer) return undefined
     return {
       ...offer,
       priceConfidence: cell.confidence || offer.priceConfidence,
-      priceStatus: cell.confidence || offer.priceStatus,
       purchasePaths: cell.purchasePaths ?? offer.purchasePaths,
       warnings: uniqueStrings([
         ...(offer.warnings ?? []),
@@ -1014,7 +1033,7 @@ function normalizeMatrixJob(data: BackendMatrixJobResponse, sortMode: SortMode):
   ]
   const cells = data.cells ?? []
   const offers = cells.flatMap((cell) => {
-    const offer = normalizeMatrixOffer(cell)
+    const offer = normalizeMatrixOffer(cell, request.tripType)
     return offer ? [offer] : []
   })
 
@@ -1233,12 +1252,6 @@ function offerAmount(offer: CanonicalOffer) {
 function todayIso() {
   const date = new Date()
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
-}
-
-function isIsoDate(value: unknown): value is string {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
-  const date = new Date(`${value}T00:00:00Z`)
-  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
 }
 
 function addMonths(monthValue: string, delta: number) {

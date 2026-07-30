@@ -8,7 +8,7 @@ import {
   useState,
 } from "react"
 import { ResultCard, type AlternateSchedule } from "@/components/results/ResultCard"
-import { buildResultCardModel } from "@/components/results/result-card-model"
+import { buildAlternateScheduleModel } from "@/components/results/result-card-model"
 import {
   buildResultListItems,
   paginateResultListItems,
@@ -84,6 +84,7 @@ function ResultsPanelBase({
   const isCancelled = results?.searchStatus === "cancelled"
   const isPartial = Boolean(meta?.partial) || (loading && offers.length > 0)
   const passengerCount = passengerCountForRequest(results?.request)
+  const showPerPerson = canShowPerPersonForRequest(results?.request)
 
   return (
     <section className="fd-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden" aria-busy={loading}>
@@ -164,6 +165,7 @@ function ResultsPanelBase({
         isMigration={isMigration}
         unfilteredOfferCount={unfilteredOfferCount}
         passengerCount={passengerCount}
+        showPerPerson={showPerPerson}
         selectedOfferId={selectedOfferId}
         onSelectOffer={onSelectOffer}
         onClearFilters={onClearFilters}
@@ -206,6 +208,7 @@ function ResultsBody({
   isMigration,
   unfilteredOfferCount,
   passengerCount,
+  showPerPerson,
   selectedOfferId,
   onSelectOffer,
   onClearFilters,
@@ -218,6 +221,7 @@ function ResultsBody({
   isMigration: boolean
   unfilteredOfferCount: number
   passengerCount: number
+  showPerPerson: boolean
   selectedOfferId?: string
   onSelectOffer: (offer: CanonicalOffer) => void
   onClearFilters?: () => void
@@ -297,6 +301,7 @@ function ResultsBody({
       offers={offers}
       scheduleGroups={results?.scheduleGroups}
       passengerCount={passengerCount}
+      showPerPerson={showPerPerson}
       selectedOfferId={selectedOfferId}
       onSelectOffer={onSelectOffer}
       partial={loading}
@@ -321,6 +326,7 @@ function ResultsPage({
   offers,
   scheduleGroups,
   passengerCount,
+  showPerPerson,
   selectedOfferId,
   onSelectOffer,
   partial,
@@ -328,6 +334,7 @@ function ResultsPage({
   offers: CanonicalOffer[]
   scheduleGroups: SearchJobResponse["scheduleGroups"]
   passengerCount: number
+  showPerPerson: boolean
   selectedOfferId?: string
   onSelectOffer: (offer: CanonicalOffer) => void
   partial: boolean
@@ -385,6 +392,7 @@ function ResultsPage({
                 key={item.id}
                 group={item.group}
                 passengerCount={passengerCount}
+                showPerPerson={showPerPerson}
                 selectedOfferId={selectedOfferId}
                 chosenOfferId={scheduleChoice[item.id]}
                 expanded={expandedGroupId === item.id}
@@ -409,6 +417,7 @@ function ResultsPage({
                 offer={item.offer}
                 selected={selectedOfferId === item.offer.id}
                 passengerCount={passengerCount}
+                showPerPerson={showPerPerson}
                 onSelect={onSelectOffer}
               />
             )
@@ -443,6 +452,7 @@ function ResultsPage({
 function GroupCard({
   group,
   passengerCount,
+  showPerPerson,
   selectedOfferId,
   chosenOfferId,
   expanded,
@@ -452,6 +462,7 @@ function GroupCard({
 }: {
   group: ResultOfferGroup
   passengerCount: number
+  showPerPerson: boolean
   selectedOfferId?: string
   chosenOfferId?: string
   expanded: boolean
@@ -464,7 +475,6 @@ function GroupCard({
   if (!shownOffer) return null
 
   const alternates = group.offers.filter((offer) => offer.id !== shownOffer.id)
-  const shownPrice = shownOffer.price?.total?.amount ?? 0
 
   return (
     <div className="relative min-w-0">
@@ -472,8 +482,9 @@ function GroupCard({
         offer={shownOffer}
         selected={selectedOfferId === shownOffer.id}
         passengerCount={passengerCount}
+        showPerPerson={showPerPerson}
         onSelect={onSelectOffer}
-        alternates={alternates.map((offer) => alternateChip(offer, shownPrice))}
+        alternates={alternates.map((offer) => alternateChip(offer, shownOffer))}
         alternateCount={alternates.length}
         onSelectAlternate={onChooseSchedule}
         onShowAllAlternates={onToggleExpanded}
@@ -503,17 +514,14 @@ function GroupCard({
  * When the fare is identical the chip shows the duration instead, which is the
  * next thing that decides it.
  */
-function alternateChip(offer: CanonicalOffer, currentPrice: number): AlternateSchedule {
-  const model = buildResultCardModel(offer, 1)
-  const delta = (offer.price?.total?.amount ?? 0) - currentPrice
-  const meta = Math.abs(delta) < 0.01
-    ? model.legs[0]?.duration ?? ""
-    : `${delta > 0 ? "+" : "−"}${Math.abs(delta).toLocaleString("es-PE", { maximumFractionDigits: 0 })}`
+function alternateChip(offer: CanonicalOffer, currentOffer: CanonicalOffer): AlternateSchedule {
+  const model = buildAlternateScheduleModel(offer, currentOffer)
 
   return {
     offer,
-    time: model.legs[0]?.departureTime ?? "--:--",
-    meta,
+    legAriaLabel: model.legAriaLabel,
+    time: model.time,
+    meta: model.meta,
     selected: false,
   }
 }
@@ -729,6 +737,10 @@ function resultItemsPaginationKey(items: ResultListItem[]) {
 function passengerCountForRequest(request: SearchJobResponse["request"] | undefined) {
   if (!request) return 1
   return Math.max(1, request.adults + request.children + request.infants)
+}
+
+function canShowPerPersonForRequest(request: SearchJobResponse["request"] | undefined) {
+  return Boolean(request && request.children === 0 && request.infants === 0)
 }
 
 export const ResultsPanel = memo(ResultsPanelBase)

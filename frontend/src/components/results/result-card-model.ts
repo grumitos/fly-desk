@@ -80,6 +80,16 @@ export type ResultCardModel = {
   tripType: "one-way" | "round-trip"
 }
 
+export type ResultAlternateScheduleModel = {
+  legAriaLabel: string
+  time: string
+  meta: string
+}
+
+export type ResultCardModelOptions = {
+  showPerPerson?: boolean
+}
+
 export type ResultRedirectStatus = {
   label: string
   title: string
@@ -95,22 +105,60 @@ const SEATS_CRITICAL_THRESHOLD = 2
 export function buildResultCardModel(
   offer: CanonicalOffer,
   passengerCount: number,
+  options: ResultCardModelOptions = {},
 ): ResultCardModel {
   const outbound = primaryItineraryForOffer(offer)
   const inbound = returnItineraryForOffer(offer)
   const outboundLeg = legModel(outbound, offer, "outbound")
-  const inboundLeg = inbound || offer.returnDate ? legModel(inbound, offer, "inbound") : null
+  const inboundLeg = inbound ? legModel(inbound, offer, "inbound") : null
 
   return {
     carrier: carrierParts(offer),
     baggage: baggageParts(offer),
     legs: [outboundLeg, inboundLeg].filter((leg): leg is ResultLegModel => Boolean(leg)),
-    price: priceParts(offer, passengerCount),
+    price: priceParts(offer, passengerCount, options.showPerPerson ?? true),
     seats: seatsParts(offer),
     provider: providerBadge(offer),
     costamarRedirect: costamarRedirectStatus(offer),
     tripType: inboundLeg ? "round-trip" : "one-way",
   }
+}
+
+export function buildAlternateScheduleModel(
+  alternateOffer: CanonicalOffer,
+  currentOffer: CanonicalOffer,
+): ResultAlternateScheduleModel {
+  const alternate = buildResultCardModel(alternateOffer, 1)
+  const current = buildResultCardModel(currentOffer, 1)
+  const changedLegIndex = alternate.legs.findIndex(
+    (leg, index) => !sameDisplayedSchedule(leg, current.legs[index]),
+  )
+  const leg = alternate.legs[changedLegIndex >= 0 ? changedLegIndex : 0]
+  const delta = (alternateOffer.price?.total?.amount ?? 0)
+    - (currentOffer.price?.total?.amount ?? 0)
+  const meta = Math.abs(delta) < 0.01
+    ? leg?.duration ?? ""
+    : `${delta > 0 ? "+" : "−"}${Math.abs(delta).toLocaleString("es-PE", { maximumFractionDigits: 0 })}`
+
+  return {
+    legAriaLabel: leg?.ariaLabel ?? "Tramo",
+    time: leg?.departureTime ?? "--:--",
+    meta,
+  }
+}
+
+function sameDisplayedSchedule(
+  left: ResultLegModel,
+  right: ResultLegModel | undefined,
+): boolean {
+  if (!right) return false
+
+  return left.dateLabel === right.dateLabel
+    && left.departureTime === right.departureTime
+    && left.arrivalTime === right.arrivalTime
+    && left.dayOffset === right.dayOffset
+    && left.duration === right.duration
+    && left.stopsLabel === right.stopsLabel
 }
 
 function legModel(
@@ -139,21 +187,21 @@ function legModel(
     arrivalTime: arrivalTime || "--:--",
     hasKnownSchedule,
     dayOffset: dayOffset > 0 ? `+${dayOffset}` : "",
-    duration: legDuration(itinerary, offer),
+    duration: legDuration(itinerary),
     stopsLabel: stops.label,
     stopsTitle: stops.title,
     stopsTone: stops.tone,
   }
 }
 
-/** Per-leg duration, falling back to the offer's own string only if we must. */
-function legDuration(itinerary: Itinerary | null, offer: CanonicalOffer): string {
+/** Per-leg duration; a whole-offer duration cannot stand in for a missing leg. */
+function legDuration(itinerary: Itinerary | null): string {
   const minutes = itinerary?.durationMinutes
   if (typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0) {
     return formatJourneyDuration(minutes)
   }
 
-  return offer.duration || "--"
+  return "--"
 }
 
 /**
@@ -274,15 +322,15 @@ function baggageParts(offer: CanonicalOffer) {
   }
 }
 
-function priceParts(offer: CanonicalOffer, passengerCount: number) {
+function priceParts(offer: CanonicalOffer, passengerCount: number, showPerPerson: boolean) {
   const money = offer.price?.total
   if (!money) {
     return { label: "--", perPersonLabel: "", ariaLabel: "Precio no disponible" }
   }
 
   const label = formatMoney(money)
-  const showPerPerson = Number.isFinite(passengerCount) && passengerCount > 1
-  const perPersonLabel = showPerPerson
+  const canShowPerPerson = showPerPerson && Number.isFinite(passengerCount) && passengerCount > 1
+  const perPersonLabel = canShowPerPerson
     ? formatMoney({ ...money, amount: money.amount / passengerCount })
     : ""
 
@@ -300,7 +348,7 @@ function priceParts(offer: CanonicalOffer, passengerCount: number) {
  */
 function seatsParts(offer: CanonicalOffer): ResultCardModel["seats"] {
   const seats = offer.fareMeta?.seatsRemaining
-  if (typeof seats !== "number" || !Number.isFinite(seats) || seats <= 0) return null
+  if (typeof seats !== "number" || !Number.isFinite(seats) || seats < 0) return null
   if (seats > SEATS_VISIBLE_THRESHOLD) return null
 
   return {

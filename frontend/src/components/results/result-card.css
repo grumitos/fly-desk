@@ -202,7 +202,7 @@
     display: grid;
     grid-template-columns: auto 12px auto 14px;
     align-items: center;
-    column-gap: 6px;
+    column-gap: 4px;
   }
 
   .fd-card__leg-time {

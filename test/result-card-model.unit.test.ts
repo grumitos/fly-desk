@@ -1,7 +1,10 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { startSearch } from "../frontend/src/lib/api";
-import { buildResultCardModel } from "../frontend/src/components/results/result-card-model";
+import {
+  buildAlternateScheduleModel,
+  buildResultCardModel,
+} from "../frontend/src/components/results/result-card-model";
 import type { CanonicalOffer, RedirectVerification } from "../frontend/src/types";
 
 function connectingOffer(): CanonicalOffer {
@@ -168,15 +171,86 @@ test("duration and stops are per leg, not summed across the trip", () => {
   assert.equal(roundTrip.legs[1].dayOffset, "+1");
 });
 
+test("alternate schedule model names the inbound leg when only the return changes", () => {
+  const outbound = connectingOffer();
+  const current = {
+    ...outbound,
+    id: "round-trip-current",
+    returnDate: "2026-06-15",
+    itineraries: [
+      ...(outbound.itineraries ?? []),
+      {
+        id: "in-current",
+        direction: "inbound" as const,
+        durationMinutes: 360,
+        stops: 0,
+        segments: [{
+          id: "in-current-segment",
+          marketingCarrier: "CM",
+          flightNumber: "802",
+          origin: "MIA",
+          destination: "LIM",
+          departureAt: "2026-06-15T17:30:00-04:00",
+          arrivalAt: "2026-06-15T23:30:00-05:00",
+          durationMinutes: 360,
+        }],
+      },
+    ],
+  } as CanonicalOffer;
+  const alternate = {
+    ...current,
+    id: "round-trip-alternate",
+    itineraries: current.itineraries?.map((itinerary) => itinerary.direction === "inbound"
+      ? {
+          ...itinerary,
+          id: "in-alternate",
+          durationMinutes: 390,
+          segments: itinerary.segments.map((segment) => ({
+            ...segment,
+            id: "in-alternate-segment",
+            flightNumber: "804",
+            departureAt: "2026-06-15T20:15:00-04:00",
+            arrivalAt: "2026-06-16T02:45:00-05:00",
+            durationMinutes: 390,
+          })),
+        }
+      : itinerary),
+  } as CanonicalOffer;
+
+  assert.deepEqual(buildAlternateScheduleModel(alternate, current), {
+    legAriaLabel: "Vuelta",
+    time: "20:15",
+    meta: "6h 30m",
+  });
+});
+
 test("card model never labels a missing itinerary as a direct flight", () => {
   const card = buildResultCardModel({
     ...connectingOffer(),
     itineraries: undefined,
   }, 1);
 
+  assert.equal(card.legs[0]?.duration, "--");
   assert.equal(card.legs[0]?.stopsLabel, "Escalas por confirmar");
   assert.equal(card.legs[0]?.stopsTitle, "No hay itinerario para confirmar las escalas");
   assert.equal(card.legs[0]?.stopsTone, "unknown");
+});
+
+test("card model omits an inbound row when returnDate has no real inbound itinerary", () => {
+  const card = buildResultCardModel({
+    ...connectingOffer(),
+    returnDate: "2026-06-15",
+  }, 1);
+
+  assert.deepEqual(card.legs.map((leg) => leg.ariaLabel), ["Ida"]);
+  assert.equal(card.tripType, "one-way");
+});
+
+test("card model omits a per-person average when the passenger mix has no real breakdown", () => {
+  const card = buildResultCardModel(connectingOffer(), 3, { showPerPerson: false });
+
+  assert.equal(card.price.perPersonLabel, "");
+  assert.doesNotMatch(card.price.ariaLabel, /por persona/i);
 });
 
 test("seats remaining only appear when there are few enough to act on", () => {
@@ -194,6 +268,10 @@ test("seats remaining only appear when there are few enough to act on", () => {
   assert.deepEqual(
     buildResultCardModel({ ...offer, fareMeta: { seatsRemaining: 1 } }, 1).seats,
     { label: "1 asiento", urgency: "critical" },
+  );
+  assert.deepEqual(
+    buildResultCardModel({ ...offer, fareMeta: { seatsRemaining: 0 } }, 1).seats,
+    { label: "0 asientos", urgency: "critical" },
   );
 });
 

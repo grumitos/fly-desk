@@ -10,13 +10,15 @@ const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 const ISO_MONTH_PATTERN = /^\d{4}-\d{2}$/
 
 export function isIsoDate(value: unknown): value is string {
-  return typeof value === "string"
-    && ISO_DATE_PATTERN.test(value)
-    && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))
+  if (typeof value !== "string" || !ISO_DATE_PATTERN.test(value)) return false
+  const date = new Date(`${value}T00:00:00Z`)
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
 }
 
 export function isIsoMonth(value: unknown): value is string {
-  return typeof value === "string" && ISO_MONTH_PATTERN.test(value)
+  if (typeof value !== "string" || !ISO_MONTH_PATTERN.test(value)) return false
+  const month = Number(value.slice(5, 7))
+  return month >= 1 && month <= 12
 }
 
 export function todayIso(): string {

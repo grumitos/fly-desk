@@ -18,9 +18,12 @@ import {
   mapCostamarLocationSuggestion,
   mapCostamarRecommendationToOffer,
   resetCostamarWarmupStateForTests,
+  resolveLocalCostamarMatrixProgressive,
+  resolveLocalCostamarRangeProgressive,
   resolveCostamarRedirectForRequest,
   readCostamarJsonResponse,
   searchLocalCostamarExact,
+  searchLocalCostamarRange,
   prepareTemporaryCostamarChromeProfileForTests,
   setCostamarWarmupGeneratorForTests,
   setCostamarWarmupOpenerForTests,
@@ -37,6 +40,7 @@ import {
   resolveCostamarProviderContext,
   resolveUsableCostamarBrandedToken,
 } from "../src/provider-context";
+import { createProviderStatusTracker } from "../src/provider-status";
 import type { CanonicalOffer, SearchRequest } from "../src/core/types";
 import { generateTotpCode, generateTotpCodeWithMetadata, totpCanSubmitSafely } from "../src/totp";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync } from "node:fs";
@@ -2131,7 +2135,21 @@ test("searchLocalCostamarExact does not retry token-protected searches without a
     assert.equal(searchBodies.length, 1);
     assert.equal(searchBodies[0]?.token, token);
     assert.equal(result.offers.length, 0);
+    assert.equal(result.partial, true);
     assert.ok(result.warnings.some((warning) => /branded token is invalid/i.test(warning)));
+
+    const tracker = createProviderStatusTracker({ clock: () => 1_000 });
+    tracker.recordSearchResult("costamar", result.partial);
+    assert.deepEqual(tracker.snapshot()[1], {
+      id: "costamar",
+      label: "Click and Book Plus",
+      configured: true,
+      state: "degraded",
+      evidence: "search",
+      reasonCode: "partial_results",
+      observedAtMs: 1_000,
+      stale: false,
+    });
   } finally {
     global.fetch = previousFetch;
     if (previousWarmupEnabled === undefined) {
@@ -3273,6 +3291,101 @@ test("searchLocalCostamarExact expands Costamar flight alternatives", async () =
       assert.ok(result.offers.every((offer) => offer.rawRefs?.scheduleGroupScope === expectedScope));
       assert.ok(result.offers.every((offer) => offer.rawRefs?.scheduleVariantsTruncated === false));
     });
+  }
+});
+
+test("Costamar 5xx payloads remain partial through range and matrix aggregation", async () => {
+  const previousFetch = global.fetch;
+  const terminalId = "9990004441";
+  const token = buildJwt({
+    id: terminalId,
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  const request: SearchRequest = {
+    ...buildExactRequest(),
+    searchMode: "stay-range",
+    legs: [
+      {
+        origin: "LIM",
+        destination: "MAD",
+        departureStart: "2026-06-01",
+        departureEnd: "2026-06-01",
+      },
+    ],
+  };
+  const providerContext = {
+    costamar: {
+      apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId,
+      token,
+      lang: "es",
+    },
+  };
+
+  global.fetch = (async (input) => {
+    const url = String(input);
+    if (url === `https://api-zneith.zdev.tech/api-engine/engines/${terminalId}`) {
+      return new Response(JSON.stringify(buildEngine()), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url === "https://air-search-service-zneith.zdev.tech/v2/searchFlights") {
+      return new Response(JSON.stringify({
+        status: 503,
+        data: [],
+        message: "private upstream body token=must-not-leak",
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const rangeResult = await searchLocalCostamarRange(request, providerContext);
+    assert.equal(rangeResult.partial, true);
+    assert.deepEqual(rangeResult.warnings, ["Click and Book Plus is temporarily unavailable."]);
+    assert.doesNotMatch(rangeResult.warnings.join(" "), /private upstream body|must-not-leak/i);
+
+    const progressiveRangeResult = await resolveLocalCostamarRangeProgressive(
+      request,
+      providerContext,
+    );
+    assert.equal(progressiveRangeResult.partial, true);
+    assert.deepEqual(
+      progressiveRangeResult.warnings,
+      ["Click and Book Plus is temporarily unavailable."],
+    );
+
+    const matrixDraft = createLocalCostamarMatrixDraft(request, {
+      exactProvider: "costamar",
+      coverageMode: "core",
+    });
+    const matrixResult = await resolveLocalCostamarMatrixProgressive(
+      request,
+      providerContext,
+      matrixDraft,
+    );
+    assert.equal(matrixResult.searchMeta.partial, true);
+    assert.equal(matrixResult.searchMeta.searchState, "search_partial");
+
+    const tracker = createProviderStatusTracker({ clock: () => 2_000 });
+    tracker.recordSearchResult("costamar", rangeResult.partial);
+    assert.deepEqual(
+      {
+        state: tracker.snapshot()[1]?.state,
+        reasonCode: tracker.snapshot()[1]?.reasonCode,
+      },
+      { state: "degraded", reasonCode: "partial_results" },
+    );
+  } finally {
+    global.fetch = previousFetch;
   }
 });
 

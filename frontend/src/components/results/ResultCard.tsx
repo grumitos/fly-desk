@@ -22,6 +22,8 @@ import "./result-card.css"
 
 export type AlternateSchedule = {
   offer: CanonicalOffer
+  /** The leg that differs from the schedule currently shown. */
+  legAriaLabel: string
   /** The departure time of the leg this chip would change. */
   time: string
   /** Price delta against the current schedule, or the duration when equal. */
@@ -33,6 +35,7 @@ interface ResultCardProps {
   offer: CanonicalOffer
   selected: boolean
   passengerCount: number
+  showPerPerson?: boolean
   onSelect: (offer: CanonicalOffer) => void
   /** Up to three chips inline; the rest live behind "+n". */
   alternates?: AlternateSchedule[]
@@ -49,6 +52,7 @@ export function ResultCard({
   offer,
   selected,
   passengerCount,
+  showPerPerson = true,
   onSelect,
   alternates = [],
   alternateCount = 0,
@@ -58,7 +62,7 @@ export function ResultCard({
   variant = "regular",
   eyebrow,
 }: ResultCardProps) {
-  const model = buildResultCardModel(offer, passengerCount)
+  const model = buildResultCardModel(offer, passengerCount, { showPerPerson })
   const inlineAlternates = alternates.slice(0, 3)
   const hiddenAlternateCount = Math.max(0, alternateCount - inlineAlternates.length)
   const cardLabel = [
@@ -158,7 +162,7 @@ export function ResultCard({
                 type="button"
                 className={cn("fd-card__alt-chip fd-focus-ring", alternate.selected && "is-selected")}
                 aria-pressed={alternate.selected}
-                aria-label={`Cambiar a la salida de ${alternate.time}, ${alternate.meta}`}
+                aria-label={`Cambiar la ${alternate.legAriaLabel.toLocaleLowerCase("es-PE")} a las ${alternate.time}, ${alternate.meta}`}
                 onClick={() => onSelectAlternate(alternate.offer)}
               >
                 <span className="fd-card__alt-time">{alternate.time}</span>

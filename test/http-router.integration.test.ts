@@ -1878,6 +1878,80 @@ test("costamar redirect refreshes the stored token with the latest Chrome sessio
   }
 });
 
+test("costamar redirect rejects an external stored location before token validation", { concurrency: false }, async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-external-redirect-"));
+  const previousFetch = global.fetch;
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  const maliciousUrl = `https://attacker.invalid/vuelos/pro/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${token}`;
+  const restoreEnvironment = applyEnvironment({
+    CBPLUS_CHROME_USER_DATA_DIR: tempRoot,
+    CBPLUS_AGENT_CHROME_USER_DATA_DIR: tempRoot,
+    COSTAMAR_CHROME_USER_DATA_DIR: tempRoot,
+    COSTAMAR_AGENT_CHROME_USER_DATA_DIR: tempRoot,
+    CBPLUS_CDP_TAB_SCAN_ENABLED: "0",
+    COSTAMAR_CDP_TAB_SCAN_ENABLED: "0",
+    CBPLUS_SESSION_WARMUP_ENABLED: "0",
+    COSTAMAR_SESSION_WARMUP_ENABLED: "0",
+  });
+  let validationRequests = 0;
+
+  global.fetch = (async () => {
+    validationRequests += 1;
+    return new Response("<html><body>Click and Book Plus search accepted</body></html>", {
+      status: 200,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    });
+  }) as typeof fetch;
+
+  resetCostamarSessionCacheForTests();
+  resetCostamarWarmupStateForTests();
+  try {
+    const runtime = getRuntime();
+    const job = runtime.sessions.createSearchJob({
+      request: buildCostamarRequest(),
+      providerContext: {
+        costamar: {
+          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+          terminalId: "0721808110",
+          token,
+          lang: "es",
+        },
+      },
+      offers: [buildCostamarOffer(maliciousUrl)],
+      allOffers: [buildCostamarOffer(maliciousUrl)],
+      searchMeta: buildSearchMeta(),
+      providerMeta: buildProviderMeta(),
+      warnings: [],
+      sortMode: "cheapest",
+      status: "completed",
+    });
+    const redirectPath = runtime.sessions.getSession(job.id)?.offers[0]?.purchasePaths[0]?.url;
+    assert.ok(redirectPath);
+
+    const response = await withLoopbackTrustForTests(() => routeRequest(new Request(
+      `http://127.0.0.1:8100${redirectPath}`,
+      { headers: { "x-flydesk-client-loopback": "1" } },
+    )));
+
+    assert.equal(response.status, 409);
+    assert.equal(response.headers.get("Location"), null);
+    assert.equal(validationRequests, 0);
+    const body = await response.text();
+    assert.doesNotMatch(body, /attacker\.invalid|token=/i);
+  } finally {
+    global.fetch = previousFetch;
+    resetCostamarWarmupStateForTests();
+    resetCostamarSessionCacheForTests();
+    restoreEnvironment();
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("costamar redirect refreshes an unverified stored token before opening Costamar", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-redirect-fast-"));
   const profileName = "Profile 41";

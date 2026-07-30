@@ -671,6 +671,106 @@ test("redirect service keeps Costamar token validation outside the main runtime"
   });
 });
 
+test("redirect service rejects a corrupt external Costamar row before token validation", { concurrency: false }, async () => {
+  await withTempDb(async (dbPath) => {
+    const emptyChromeDir = join(dbPath, "..", "chrome-empty-external");
+    mkdirSync(emptyChromeDir, { recursive: true });
+    const token = buildJwt({
+      id: "0721808110",
+      iat: 1893456000,
+      exp: 1893459600,
+    });
+    const restoreEnv = overrideEnv({
+      FLY_DESK_API_TOKEN: "redirect-test-token",
+      CBPLUS_TOKEN: undefined,
+      COSTAMAR_TOKEN: undefined,
+      CBPLUS_CHROME_USER_DATA_DIR: emptyChromeDir,
+      CBPLUS_AGENT_CHROME_USER_DATA_DIR: emptyChromeDir,
+      COSTAMAR_CHROME_USER_DATA_DIR: emptyChromeDir,
+      COSTAMAR_AGENT_CHROME_USER_DATA_DIR: emptyChromeDir,
+      CBPLUS_CDP_TAB_SCAN_ENABLED: "0",
+      COSTAMAR_CDP_TAB_SCAN_ENABLED: "0",
+      CBPLUS_SESSION_WARMUP_ENABLED: "0",
+      COSTAMAR_SESSION_WARMUP_ENABLED: "0",
+    });
+    const previousFetch = global.fetch;
+    let validationRequests = 0;
+
+    global.fetch = (async () => {
+      validationRequests += 1;
+      return new Response("<html><body>Click and Book Plus search accepted</body></html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }) as typeof fetch;
+
+    try {
+      resetCostamarSessionCacheForTests();
+      resetCostamarWarmupStateForTests();
+      const maliciousUrl = "https://attacker.invalid/vuelos/pro/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es";
+      const offer = buildOffer("costamar", maliciousUrl);
+      const store = new SearchSessionStore({ dbPath });
+      const job = store.createSearchJob({
+        request: buildRequest("costamar"),
+        providerContext: {
+          costamar: {
+            apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+            brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+            terminalId: "0721808110",
+            token,
+            lang: "es",
+          },
+        },
+        offers: [offer],
+        allOffers: [offer],
+        searchMeta: buildSearchMeta("costamar"),
+        providerMeta: buildProviderMeta("costamar"),
+        warnings: [],
+        sortMode: "cheapest",
+        status: "completed",
+      });
+      const redirectPath = store.getSession(job.id)?.offers[0]?.purchasePaths[0]?.url;
+      store.close();
+      assert.ok(redirectPath);
+
+      const purchasePathId = redirectPath.slice(3);
+      const db = new Database(dbPath);
+      try {
+        const row = db.query<{ payload: string }, [string]>(
+          "SELECT payload FROM purchase_paths WHERE id = ? LIMIT 1",
+        ).get(purchasePathId);
+        assert.ok(row?.payload);
+        const stored = JSON.parse(row.payload) as { path?: { url?: string } };
+        assert.ok(stored.path);
+        stored.path.url = `${maliciousUrl}&token=${token}`;
+        db.run(
+          "UPDATE purchase_paths SET payload = ? WHERE id = ?",
+          JSON.stringify(stored),
+          purchasePathId,
+        );
+      } finally {
+        db.close(true);
+      }
+
+      const response = await routeRedirectRequest(
+        authenticatedRedirectRequest(`http://127.0.0.1:8102${redirectPath}`),
+        { dbPath, cacheLookupTimeoutMs: 0 },
+      );
+
+      assert.equal(response.status, 409);
+      assert.equal(response.headers.get("Location"), null);
+      assert.equal(validationRequests, 0);
+      const body = await response.text();
+      assert.doesNotMatch(body, /attacker\.invalid|token=/i);
+    } finally {
+      global.fetch = previousFetch;
+      resetCostamarWarmupStateForTests();
+      resetCostamarSessionCacheForTests();
+      restoreEnv();
+    }
+  });
+});
+
 test("redirect service HTML never exposes a token-bearing validation error", async () => {
   await withTempDb(async (dbPath) => {
     const previousFetch = global.fetch;

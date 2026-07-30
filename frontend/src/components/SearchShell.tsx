@@ -12,7 +12,7 @@ import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-contr
 import { TOPBAR_SEARCH_CONTROLS_ID } from "@/components/TopBar"
 import { AppIcon, type AppIconName } from "@/components/ui/app-icon"
 import { useAutocomplete } from "@/hooks/useAutocomplete"
-import { clampIsoDate } from "@/lib/iso-date"
+import { clampIsoDate, isIsoDate } from "@/lib/iso-date"
 import {
   emptyLocationUsageSuggestions,
   getLocationUsageSuggestions,
@@ -760,7 +760,9 @@ export function SearchShell({
                 maxDate={datePolicy.maxSearchDate}
                 maxStayNights={MAX_STAY_NIGHTS}
                 endDisabled={mode === "exact" && trip === "one-way"}
-                invalid={Boolean(visibleDepartureDateError || visibleReturnDateError)}
+                startInvalid={Boolean(visibleDepartureDateError)}
+                endInvalid={Boolean(visibleReturnDateError)}
+                errorId="dates-helper"
                 onChange={handleDateRangeChange}
                 onTouch={(half) => setTouched((current) => ({
                   ...current,
@@ -1602,12 +1604,6 @@ function positiveInteger(value: unknown): number | undefined {
 function todayIso() {
   const date = new Date()
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
-}
-
-function isIsoDate(value: unknown): value is string {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
-  const date = new Date(`${value}T00:00:00Z`)
-  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
 }
 
 function addDays(value: string, days: number) {

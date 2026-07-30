@@ -278,6 +278,16 @@
     max-width: min(var(--fd-app-max-width), calc(100vw - 1.25rem));
   }
 
+  /* Idle notices use the lower spacer instead of becoming part of the form's
+     measured height. Otherwise the asymmetric flex spacers recenter the whole
+     form when a one-line error appears. */
+  .fd-search-stage-idle .fd-search-frame > .fd-alert-line {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
+  }
+
   .fd-search-grid {
     width: 100%;
     max-width: 100%;
@@ -484,6 +494,16 @@
 @media (min-width: 1024px) {
   .fd-search-stage-idle .fd-search-frame {
     max-width: min(1180px, calc(100vw - 12rem));
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1087px) {
+  .fd-search-stage-idle .fd-search-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fd-search-stage-idle .fd-route-swap-cell {
+    display: none;
   }
 }
 
