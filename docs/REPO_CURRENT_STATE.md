@@ -1,6 +1,6 @@
 # Current Repository State
 
-Snapshot date: 2026-07-28
+Snapshot date: 2026-07-29
 
 ## Summary
 
@@ -11,7 +11,6 @@ The repository does not version generated artifacts:
 - `dist/` is ignored
 - `frontend/dist/` is ignored
 - `output/` is ignored
-- `config/results-layout.json` may be generated locally by the layout editor and must not be treated as source state
 
 ## Current Product
 
@@ -21,12 +20,13 @@ The repository does not version generated artifacts:
 - flexible one-way search through the `stay-range` range
 - flexible round-trip search through `/api/matrix`, normalized into a results list
 - monthly migratory search: selection of up to eight months from the minimum date, including across year boundaries, with fan-out only for selected months
-- origin and destination autocomplete
-- up to three frequent origin and destination suggestions, ranked by permanent global total-use counters on the VPS; the backend records a route when it accepts a search
+- origin and destination autocomplete with an explicit `CITY`/`AIRPORT` discriminator when the provider supplies it
+- up to three recent origin/destination suggestions per opaque browser session (24-hour TTL), plus three frequent suggestions ranked by permanent global counters; the backend records a route when it accepts a search
+- month cards with complete-only queried/fared-day coverage and retained real alternatives
+- an idle provider rail that reads closed, sanitized status observations from the backend without treating an unknown provider as available and removes stale health claims after a failed refresh
 - filters for stops, maximum layover time, baggage, and airlines
 - paginated results with backend warnings
-- side panel with price, baggage, conditions, purchase paths, and local quotation from fresh search data
-- persistent column adjustment behind `?layoutEditor=1` or `?layout=editor`
+- side panel with price, known baggage/conditions, purchase paths, and exact-flight provider-revalidated quotation through the shared quotation core; verified prices are reusable for at most 15 minutes
 
 The React UI must not display simulated controls. The following remain outside the visible interface:
 
@@ -39,7 +39,7 @@ The React UI must not display simulated controls. The following remain outside t
 - exact search: inline placeholder and one stable publication of offers after providers finish
 - polling and revalidation: `Actualizando` badge
 - partial range/matrix results: `Parcial` badge, geometric milestones coalesced for 900 ms, immediate final state, and cards with stable DOM identity
-- quotation: generated and copied locally without `/api/quotation`; the migratory switch injects its differences without hiding or reloading the text
+- quotation: the first action calls `/api/quotation`, accepts only a validated/verified offer with `priceVerifiedAt`, and uses the returned commercial text; the immediate migratory toggle then runs the same shared compositor over that verified offer
 - the idle search frame reserves the ranking-card geometry before the global response arrives; search notices render below without recentering the form in idle or active layouts, while the intentional idle-to-active transition remains animated
 
 ## Runtime, Security, and Dependencies
@@ -59,10 +59,9 @@ The React UI must not display simulated controls. The following remain outside t
 - `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK=1` must be used only if the local proxy also blocks or authenticates local-only routes; by default, requests with `x-forwarded-for`, `forwarded`, or `x-real-ip` do not inherit loopback trust
 - operational endpoints accept a valid web cookie or `FLY_DESK_API_TOKEN`
 - diagnostics, Click and Book Plus token status, and local browser launch are loopback-only
-- results layout accepts web authentication because it is an application preference
 - public country restriction belongs to `grumitos/vps-platform`: Caddy blocks `/login` and the rest of the application outside Peru before the request reaches Fly Desk
 - the date policy moves with `minSearchDate = today` and `maxSearchDate = today + SEARCH_MAX_FUTURE_DAYS`
-- round-trip stays are limited to 90 nights
+- round-trip stays are limited to 90 nights, searches to nine passengers, lap infants to one per adult, and fixed-range fan-out to 5,000 combinations; the public runtime exposes the same limits
 
 ### Supply Chain
 
@@ -77,14 +76,19 @@ The React UI must not display simulated controls. The following remain outside t
 
 ### Providers
 
-- Agil uses a persistent Chrome session and a subscription key from the environment or recovered from the Agil bundle
-- Click and Book Plus uses environment-controlled context, a host allowlist, and optional B2B warm-up
+- Agil uses a persistent Chrome session and a subscription key from the environment or recovered from the Agil bundle; Linux/VPS defaults to the loopback CDP endpoint on port 9222, explicit browser endpoints win, and Windows keeps discovery explicit
+- Click and Book Plus uses environment-controlled context, a host allowlist, and optional B2B warm-up; B2B automation accepts only HTTPS on the exact `b2b.clickandbook.com` origin and rechecks same-origin navigation before entering credentials or OTP
 - Click and Book Plus does not accept hosts or base URLs per request
 - silent provider prewarm is enabled by default and can be disabled with `FLY_DESK_PROVIDER_PREWARM=0`
 - provider searches must run in the dedicated runner when `FLY_DESK_SEARCH_SERVICE_URL` is configured; within the runner, `FLY_DESK_SEARCH_WORKER_PROCESSES=1` keeps providers in child processes
 - `FLY_DESK_SEARCH_WORKER_PROCESSES=0` remains a temporary QA exception, and external QA must be repeated before changing worker counts, the runner, or warm-up
 - every public search waits for Agil and Click and Book Plus and retains all offers returned by both; visible filters are materialized without trimming `allOffers`, and concurrency limits regulate only batch requests
-- a fresh offer receives `quotationPreparedAt` only when it contains the data required for quotation; cached SWR drafts remove that marker until revalidation finishes
+- a fresh offer receives `quotationPreparedAt` once, when it first contains the data required for local quotation; cached SWR drafts remove that marker until fresh data is ready. It is distinct from provider revalidation in `priceVerifiedAt`
+- Agil exposes list-seat availability when the provider returns a valid integer; Click and Book Plus currently exposes no equivalent quantity, so Fly Desk leaves it absent
+- both normalizers preserve explicit operating-carrier metadata for codeshares
+- both normalizers leave carrier and flight number empty when the provider omits them; the UI also hides baggage without explicit inclusion/exclusion evidence
+- `scheduleGroups` contains only provider-native, response-scoped alternatives and references existing offer IDs; the UI uses those IDs as its only group membership and arbitrary per-leg recombination is not synthesized
+- provider readiness uses closed states/reasons with a five-minute TTL; search evidence outranks fresh prewarm evidence, and Click and Book Plus context-only warm-up cannot claim readiness
 - the USD/PEN rate available from Agil propagates to sibling offers; if a domestic Costamar route remains alone, daily rate resolution occurs within the search and does not query flights again
 - external rate lookup has a short timeout and allows one final retry after a failed prefetch; if unresolved, the search finishes without marking the offer quotable
 - global search admission uses capacity units: default budget `4`, exact `1`, range `2`, matrix `2`, default queue `8`, and default timeout `120000ms`
@@ -94,10 +98,12 @@ The React UI must not display simulated controls. The following remain outside t
 - completed resident jobs share 128 MiB by default; a timer reevaluates LRU when the five-second grace expires, in addition to 60-second maintenance, leaves excess jobs disk-only with compatible APIs and `/r/<id>`, and deletes them at TTL expiry. Running jobs are not eligible
 - range/matrix deltas travel from worker to router without resending accumulated state; RAM, polling, and SQLite publish snapshots at geometric milestones coalesced for 900 ms, plus durable completion. Purchase paths persist independently to keep redirects visible between milestones
 - matrix HTTP and SQLite payloads retain only cells with an offer, price, or redirect and omit empty placeholders; cell updates use an O(1) index and aggregation across providers is O(P·N)
+- the frontend never turns a price-only matrix cell into a synthetic flight offer
+- the quotation endpoint also refuses price-only matrix cells, and HTTP/frontend transport normalizers require positive price, currency, and complete real itineraries instead of filling them from the request
 - matrices persist compact request/context data for redirects; older rows retain a compatible fallback to the complete payload
-- with `FLY_DESK_SEARCH_SERVICE_URL`, the web process does not open the session SQLite database for autocomplete or preferences; the lazy getter reserves that restoration for the runner, `/r`, quotation, or diagnostics that actually need it
+- with `FLY_DESK_SEARCH_SERVICE_URL`, the web process does not open the session SQLite database for autocomplete or preferences; the lazy getter reserves that restoration for the runner, `/r`, quotation, provider status, or diagnostics that actually need it
 - cancellation from the UI, tab close, or orderly process shutdown changes the remote job to cancelled; `pagehide`/`beforeunload` and shutdown first force the last pending delta and request a partial cache
-- external links continue through `/r/<id>` as a local purchase-path cache; Agil redirects without an intermediate page, while Click and Book Plus validates or refreshes its token before `302`
+- external links continue through `/r/<id>` as a local purchase-path cache; Agil redirects without an intermediate page, while Click and Book Plus validates or refreshes the query-string token before `302` without persisting or logging the resolved URL
 - in production, `/r/*` may be resolved by `fly-desk-redirect.service`, a separate Bun process that reads the same session SQLite database; browsers authenticate with a distinct HttpOnly cookie scoped to `/r`, while the main web cookie and bearer credentials stay outside the redirect service
 
 ## Functional Structure
@@ -109,10 +115,12 @@ The React UI must not display simulated controls. The following remain outside t
 - `frontend/src/main.tsx`: React entry point
 - `frontend/src/App.tsx`: main composition, filters, selection, and responsive layout
 - `frontend/src/components/`: `TopBar`, `SearchShell`, `ResultsPanel`, `DetailPanel`, and UI components
-- `frontend/src/components/results/`: `ResultCard`, card model, CSS, and layout editor
+- `frontend/src/components/results/`: `ResultCard`, card model, CSS, migration coverage, and schedule alternatives
 - `frontend/src/hooks/`: `useSearch` and `useAutocomplete`
-- `frontend/src/lib/api.ts`: HTTP client, search/polling, matrix, migratory search, autocomplete, and layout
-- `frontend/src/lib/location-usage-suggestions.ts`: HTTP client for the global frequent origin/destination ranking
+- `frontend/src/lib/api.ts`: HTTP client, search/polling, matrix, migratory search, autocomplete, quotation, and provider status
+- `frontend/src/lib/location-usage-suggestions.ts`: compatible HTTP client for per-session recent and global frequent locations
+- `frontend/src/lib/browser-client-session.ts`: opaque `sessionStorage` identifier used only for recent-location isolation
+- `frontend/src/lib/providers.ts`: canonical provider metadata and strict public-status normalization
 - `frontend/src/index.css`: tokens, layout, light/dark themes, and visual states
 - `scripts/build-frontend.ts`: build with `Bun.build`, `bun-plugin-tailwind`, and copying of `frontend/public`
 
@@ -120,21 +128,25 @@ The React UI must not display simulated controls. The following remain outside t
 
 - `src/server.ts`: `Bun.serve`, `frontend/dist` serving, headers, body limit, and runtime configuration injection
 - `src/redirect-service.ts` and `src/redirect-index.ts`: dedicated `/r/<id>` resolver from the SQLite cache, independent of the main runtime for provider clicks
-- `src/http-router.ts`: HTTP routes, web/loopback/token authentication, jobs, matrix, quotation, redirects, diagnostics, and layout
+- `src/http-router.ts`: HTTP routes, web/loopback/token authentication, jobs, matrix, quotation, provider status, redirects, and diagnostics
 - `src/login-admission.ts`: bounded per-client failed-login admission before password derivation
 - `src/web-auth.ts`: web password, signed cookie, and session validation
 - `src/core/quotation.ts`: shared quotation rendering; by default it preserves the local time encoded by each segment
+- `src/core/quotation-parser.ts`: bounded, tested pasted-quotation contract with field/line trace and no inherited price/default filters; its deferred reconstruction panel has no production consumer yet
+- `src/core/offer-schedule-groups.ts`: provider-native schedule group contract without synthetic combinations
+- `src/core/search-limits.ts`: canonical stay, passenger, and lap-infant limits shared by validation and public runtime
 - `src/search-date-policy.ts`: moving date window and embedded public configuration
 - `src/provider-context.ts`: Click and Book Plus context, allowlist, Chrome/CDP recovery, and live token status
 - `src/local-agil.ts`: local session, token refresh, exact/range/matrix search, pricing, and deep links
 - `src/local-costamar.ts`: autocomplete, exact/range/matrix search, branded links, and Click and Book Plus B2B warm-up
 - `src/providers/costamar/search-payloads.ts`: Click and Book Plus payloads; `costamar` remains as a legacy internal alias
-- `src/core/`: normalization, matrix, grouping, ranking, quotation, and shared types
-- `src/search-service-client.ts`: loopback proxy for search/matrix/polling/cancellation to `fly-desk-search.service`
+- `src/core/`: normalization, matrix, grouping, ranking, quotation/parser, and shared types
+- `src/search-service-client.ts`: loopback proxy for search/matrix/polling/cancellation, quotation, and provider status to `fly-desk-search.service`
 - `src/search-worker-client.ts` and `src/search-worker.ts`: Bun child processes for heavy provider searches within the runner
 - `src/session-store.ts`: live jobs, cache freshness, resident budget, local SQLite, redirects, and purchase paths
-- `src/location-suggestion-cache.ts`: SQLite autocomplete cache with TTL
-- `src/location-usage-store.ts`: permanent global SQLite counters and top-three ranking for frequent origins/destinations, read directly by both web and search processes
+- `src/location-suggestion-cache.ts`: SQLite autocomplete cache with TTL plus query/session/global bounds
+- `src/location-usage-store.ts`: permanent global frequency counters plus bounded, expiring recent locations per browser session, read directly by both web and search processes
+- `src/provider-status.ts`: in-memory closed/sanitized provider readiness tracker
 - `src/runtime-paths.ts`: persistent fallback based on `FLY_DESK_APP_DATA_DIR` for SQLite caches when no specific `*_DB_PATH` is set
 
 ### Operations
@@ -179,12 +191,18 @@ Current important coverage:
 - Bun workers enabled by default to isolate heavy provider searches
 - SQLite persistence for sessions/autocomplete
 - resident budget with disk-only fallback and lazy web runtime when search is delegated
-- server-side all-time ranking of frequent suggestions rather than per-browser `localStorage`, capped at three cards per role, recorded from `/api/search` and `/api/matrix`, and shared coherently by the web and search processes
-- persistent results layout
+- server-side all-time ranking of frequent suggestions plus 24-hour per-session recents, both capped at three cards per role, recorded from `/api/search` and `/api/matrix`, and shared coherently by the web and search processes
+- authenticated/no-store provider status with runner proxying, closed reason codes, prewarm/search precedence, and no provider diagnostic payloads
+- removed `/api/results-layout` returns 404 for GET and POST
 - search rail, stable ranking/notice geometry, filters, theme, autocomplete, provider links, and quotation
-- standard/migratory local quotation without another request, preservation of offset-bearing times, and hiding of fully disabled monthly rows
+- shared standard/migratory quotation composition, freshness-bounded exact-flight provider revalidation through `/api/quotation`, preservation of offset-bearing times, and hiding of fully disabled monthly rows
 
 QA note: `test/helpers/server.ts` sets `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1` during HTTP tests to validate immediate contracts without leaving progressive jobs alive. The normal runtime does not define that variable.
+
+The redesign wiring gate on 2026-07-29 completed with 490/490 core tests. The
+legacy Playwright suite completed with 18/53 passing; its remaining 35 cases
+target the pre-redesign DOM and are tracked, without production compatibility
+aliases, in `docs/REDISENO_PENDIENTE_CABLEADO.md` §4.2.
 
 ## Current Documentation
 
@@ -209,6 +227,12 @@ Deployed revisions and the live service inventory are maintained in `D:\Dev\VPS\
 - `src/local-agil.ts` concentrates session handling, client behavior, pricing, and mapping
 - `src/local-costamar.ts` concentrates B2B automation, client behavior, mapping, and Click and Book Plus redirects
 - persistence is local SQLite; there is no external store for multiple instances
+- session SQLite uses WAL, `synchronous=NORMAL`, and a five-second busy timeout, but a write that still fails is not independently retried until another mutation or close; add an explicit retry/observability policy before relying on stronger durability
+- `SEARCH_COMPLETED_SESSION_TTL_MS=0` expires on the first positive-age maintenance pass, not synchronously as `no-store`; avoid zero until that semantic is deliberately closed
 - persistent Chrome CDP is covered by `fly-desk-chrome.service`; Agil still needs a valid real session in that VPS profile
+- all three Fly application units currently share `/etc/fly-desk.env` and the `fly-desk` identity; separating least privilege would be a platform change and is not justified by this product-only cableado
+- disk-only legacy session rows outside the restore budget may retain historical raw provider URLs until they are restored or expire; current writes and restored paths are sanitized, so a bulk migration was not added without an operational requirement
+- the main router and dedicated redirect service retain parallel `/r/<id>` orchestration around a shared resolver; consolidating them would cross authentication and process boundaries, so it remains an explicit refactor rather than a speculative layer
+- Click and Book Plus fixtures do not expose seat quantity, and neither provider contract proves arbitrary per-leg repricing; the UI must continue omitting those claims
 - repeat external QA before changing `FLY_DESK_SEARCH_WORKER_PROCESSES` or provider warm-up on the VPS
 - migratory search queries every day in every selected month against Agil and Click and Book Plus without fare filters; it processes months in configurable batches through `FLY_DESK_MIGRATION_CONCURRENT_MONTHS` (default `2`), which must be monitored if usage volume increases

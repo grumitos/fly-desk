@@ -3,8 +3,15 @@
 Rama `claude/fly-desk-frontend-redesign-9232c6`. Implementación de
 `Fly Desk Rediseño.dc.html` (proyecto de diseño `9d0c1e04-e3a0-415e-8371-224efcad7b39`).
 
-Alcance acordado: **solo frontend**. El cableado de backend lo lleva otro agente;
-lo que le falta está en [`REDISENO_PENDIENTE_CABLEADO.md`](REDISENO_PENDIENTE_CABLEADO.md).
+El primer incremento fue solo frontend. Las secciones 1–3 del cableado de
+backend y contratos se implementaron después en la misma rama; el estado y los
+residuales verificables están en
+[`REDISENO_PENDIENTE_CABLEADO.md`](REDISENO_PENDIENTE_CABLEADO.md).
+
+Gate actual del cableado: core **490 pass / 0 fail**; Playwright **18 pass / 35
+fail**. La tabla y el §4.2 de este documento conservan el registro histórico del
+primer incremento; el detalle vigente y su límite de alcance están en el
+documento enlazado arriba.
 
 Balance: **47 archivos, +6.319 / −4.755**; contando solo `frontend/src` y `test`,
 **42 archivos, +5.839 / −4.736**. Es una reescritura casi completa de la
@@ -78,7 +85,8 @@ láminas), y `--radius-3xl: 16px` —fuera de catálogo y sin uso— desapareci�
   casi vacías repitiendo aerolínea y precio.
 - **El editor de anchos de columna se retiró**: plate 1b cierra la grilla en
   `32 / 186 / 1fr / 116 / 26`, así que no queda nada que ajustar. Eso deja
-  `/api/results-layout` sin consumidores (§3 del informe de cableado).
+  `/api/results-layout` sin consumidores; el cableado posterior retiró también
+  la ruta, persistencia y cliente (§3 del informe).
 - **Una regla de tipografía transversal**: cifra dura —hora, precio, fecha, día de
   calendario, contador, número de página— en mono 600; texto de interfaz en Inter.
 
@@ -122,23 +130,17 @@ el divisor como `border-left` de la mitad derecha con `1fr 1fr`.
 
 ---
 
-## 3. Pendiente de decisión del usuario
+## 3. Decisiones cerradas por el cableado
 
-Dos cambios que **se hicieron sin pedirlo**, al responder una pregunta sobre si la
-línea de política estaba cableada. Están verificados y en verde, pero la decisión
-de dejarlos o revertirlos es del usuario y **está abierta**:
+Los dos cambios que el primer incremento dejó abiertos se conservan:
 
-1. **`frontend/src/components/SearchShell.tsx`** — `getRuntimeSearchLimits()` lee
-   `maxStayNights` / `maxPassengers` de `window.__FLYDESK_RUNTIME__` con 90 / 9 de
-   respaldo, resuelto a nivel de módulo. Pisa territorio del agente de backend, en
-   el sentido de que anticipa dos campos que aún no existen. Si se revierte, el
-   informe de cableado §2.3 sigue siendo válido salvo la frase «ya hecho en el
-   frontend».
-2. **`frontend/index.html`** — los ejes de fuente pasaron de Inter 400–700 /
-   Plex Mono 400–600 a Inter 400–900 / Plex Mono 400–700, que es exactamente lo
-   que pide la maqueta. Sin esto, la escala 5a pide **mono 800 para toda cifra** y
-   el navegador dibuja los precios con negrita sintética. Es puramente de
-   presentación.
+1. **`frontend/src/components/SearchShell.tsx`** — `getRuntimeSearchLimits()` ya
+   no anticipa campos inexistentes: `maxStayNights`, `maxPassengers` y
+   `maxLapInfantsPerAdult` forman parte de `PublicRuntimeConfig`, usan las mismas
+   constantes que valida el backend y mantienen respaldo solo para HTML antiguo.
+2. **`frontend/index.html`** — se conservan los ejes Inter 400–900 / Plex Mono
+   400–700 requeridos por la escala tipográfica del rediseño; no alteran ningún
+   contrato de proveedor.
 
 ---
 
@@ -170,17 +172,15 @@ Especificación, ya recuperada:
 
 `test/ui/*.playwright.ts` son ~4.900 líneas fijadas al DOM anterior:
 `.fd-result-card` (ahora `.fd-card`), `.fd-filter-slider`,
-`.fd-results-layout-editor`, `.fd-migration-grid` (ahora `.fd-month-grid`),
+`.fd-migration-grid` (ahora `.fd-month-grid`),
 `.fd-offer-detail-*`, `.fd-alert` / `.fd-search-alert`, `.fd-result-variant-card`,
 `.fd-result-group`, `--fd-results-col-*`, y tras §2.5 también `.fd-control`,
 `.fd-control-invalid` y `.fd-label`.
 
-**Se dejaron en rojo a propósito.** Varios casos verifican comportamientos que el
-rediseño elimina deliberadamente («normal results wait for saved column layout»,
-«layout editor guide renders as the first result card», «baggage filter uses one
-compact slider»), así que reescribirlos mecánicamente para que pasen daría una
-suite que aprueba aserciones vacías — peor que una roja, porque esconde
-regresiones. Es trabajo aparte y caso por caso.
+Los casos específicos del editor de layout se retiraron con esa superficie. La
+reescritura general de los casos restantes sigue siendo trabajo aparte y caso
+por caso; las cifras de esta sección describen el primer incremento del
+rediseño, no el gate final del cableado.
 
 ---
 
