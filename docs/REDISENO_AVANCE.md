@@ -6,8 +6,10 @@ Rama `claude/fly-desk-frontend-redesign-9232c6`. Implementación de
 Alcance acordado: **solo frontend**. El cableado de backend lo lleva otro agente;
 lo que le falta está en [`REDISENO_PENDIENTE_CABLEADO.md`](REDISENO_PENDIENTE_CABLEADO.md).
 
-Balance: **33 archivos, +2.460 / −4.755**. El rediseño borra casi el doble de lo
-que añade, porque cierra catálogos que antes estaban dispersos.
+Balance: **47 archivos, +6.319 / −4.755**; contando solo `frontend/src` y `test`,
+**42 archivos, +5.839 / −4.736**. Es una reescritura casi completa de la
+superficie: añade la capa de sistema de diseño que no existía y retira los
+componentes anteriores.
 
 ---
 
