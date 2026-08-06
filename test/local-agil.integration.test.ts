@@ -14,7 +14,6 @@ import {
   cleanupTemporaryAgilChromeProfileForTests,
   isAgilRawChromeStorageFileScanEnabledForTests,
   isAgilTemporaryChromeStorageFallbackEnabledForTests,
-  mapAgilGeoTreeLocation,
   parseAgilApimSubscriptionKeyFromFrontendBundle,
   prepareTemporaryAgilChromeProfileForTests,
   parseAgilRefreshTokenPayload,
@@ -24,7 +23,6 @@ import {
   readAgilStorageSnapshotFromPage,
   resetAgilSessionCacheForTests,
   resolveLocalAgilMatrixProgressive,
-  resolveAgilBrowserEndpoint,
   resolveAgilChromeDevToolsBrowserWsEndpointForTests,
   sameAgilSessionIdentity,
   resetAgilApimSubscriptionKeyCacheForTests,
@@ -32,7 +30,6 @@ import {
   searchLocalAgilExact,
   shouldReuseAgilSession,
   suggestLocalAgilLocations,
-  throwAgilHttpResponseError,
   extractAgilUsdToPenRate,
 } from "../src/local-agil";
 import type { SearchRequest } from "../src/core/types";
@@ -44,75 +41,6 @@ function restoreEnv(name: string, value: string | undefined): void {
     process.env[name] = value;
   }
 }
-
-test("Agil autocomplete maps only explicit city and airport suggestion types", () => {
-  const city = mapAgilGeoTreeLocation({
-    aerocodiata: "rio",
-    city: "Río de Janeiro",
-    country: "Brasil",
-    country_id: "BR",
-    search_type: "city",
-  });
-  const unknown = mapAgilGeoTreeLocation({
-    aerocodiata: "lim",
-    city: "Lima",
-    country: "Perú",
-    country_id: "PE",
-    search_type: "ALL_AIRPORTS",
-  });
-
-  assert.equal(city?.type, "CITY");
-  assert.equal(city?.searchType, "city");
-  assert.equal(unknown?.type, undefined);
-  assert.equal(unknown?.searchType, "ALL_AIRPORTS");
-});
-
-test("Agil transport errors never expose fetch diagnostics", async () => {
-  const previousFetch = global.fetch;
-  const previousKey = process.env.AGIL_APIM_SUBSCRIPTION_KEY;
-  process.env.AGIL_APIM_SUBSCRIPTION_KEY = "test-subscription-key";
-  resetAgilApimSubscriptionKeyCacheForTests();
-  global.fetch = (async () => {
-    throw new Error("request failed with token=secret-fixture at https://provider.invalid/private");
-  }) as typeof fetch;
-
-  try {
-    await assert.rejects(
-      suggestLocalAgilLocations("LIM"),
-      (error: unknown) => {
-        assert.ok(error instanceof Error);
-        assert.match(error.message, /failed before receiving a response/);
-        assert.doesNotMatch(error.message, /secret-fixture|provider\.invalid|token=/);
-        return true;
-      },
-    );
-  } finally {
-    global.fetch = previousFetch;
-    resetAgilApimSubscriptionKeyCacheForTests();
-    restoreEnv("AGIL_APIM_SUBSCRIPTION_KEY", previousKey);
-  }
-});
-
-test("Agil HTTP failures discard provider bodies and status text", async () => {
-  const response = new Response(
-    "token=short-secret https://provider.invalid/private internal trace",
-    {
-      status: 503,
-      statusText: "trace-secret",
-    },
-  );
-
-  await assert.rejects(
-    throwAgilHttpResponseError(response, "Agil GDS 2"),
-    (error: unknown) => {
-      assert.ok(error instanceof Error);
-      assert.equal(error.message, "Agil GDS 2 failed with HTTP 503.");
-      assert.doesNotMatch(error.message, /short-secret|provider\.invalid|trace-secret/);
-      return true;
-    },
-  );
-  assert.equal(response.bodyUsed, true);
-});
 
 test("reads Agil session storage after DOM content is ready without waiting for network idle", async () => {
   const calls: Array<{ kind: string; args: unknown[] }> = [];
@@ -1063,10 +991,6 @@ function buildAgilCandidate(
   departureDateTime: string,
   arrivalDateTime: string,
   flightNumber: number,
-  options: {
-    seatsRemaining?: number;
-    operatingCarrier?: { code: string; name: string };
-  } = {},
 ) {
   return {
     segmentId,
@@ -1080,11 +1004,11 @@ function buildAgilCandidate(
         departureDateTime,
         arrivalDateTime,
         elapsedTime: "0200",
-        seatsRemaining: options.seatsRemaining ?? 4,
+        seatsRemaining: 4,
         departureAirport: { code: origin, name: origin },
         arrivalAirport: { code: destination, name: destination },
         marketingAirline: { code: "UX", name: "Air Europa" },
-        operatingAirline: options.operatingCarrier ?? { code: "UX", name: "Air Europa" },
+        operatingAirline: { code: "UX", name: "Air Europa" },
       },
     ],
   };
@@ -1098,9 +1022,7 @@ function buildAgilOptionsGroup(returnSegments = true) {
     departure: [
       {
         segments: [
-          buildAgilCandidate(10, "LIM", "MAD", "2026-05-21T08:00:00", "2026-05-21T16:00:00", 100, {
-            operatingCarrier: { code: " la ", name: "LATAM Airlines" },
-          }),
+          buildAgilCandidate(10, "LIM", "MAD", "2026-05-21T08:00:00", "2026-05-21T16:00:00", 100),
           buildAgilCandidate(12, "LIM", "MAD", "2026-05-21T10:00:00", "2026-05-21T18:00:00", 102),
         ],
       },
@@ -1110,8 +1032,8 @@ function buildAgilOptionsGroup(returnSegments = true) {
         returns: [
           {
             segments: [
-              buildAgilCandidate(11, "MAD", "LIM", "2026-05-28T09:00:00", "2026-05-28T15:00:00", 101, { seatsRemaining: 3 }),
-              buildAgilCandidate(13, "MAD", "LIM", "2026-05-28T11:00:00", "2026-05-28T17:00:00", 103, { seatsRemaining: 3 }),
+              buildAgilCandidate(11, "MAD", "LIM", "2026-05-28T09:00:00", "2026-05-28T15:00:00", 101),
+              buildAgilCandidate(13, "MAD", "LIM", "2026-05-28T11:00:00", "2026-05-28T17:00:00", 103),
             ],
           },
         ],
@@ -1240,122 +1162,8 @@ test("Agil exact search expands candidate combinations inside a group", async ()
 
       assert.equal(result.offers.length, scenario.expected.length, scenario.name);
       assert.deepEqual(flightNumbers, scenario.expected, scenario.name);
-      const expectedScope = JSON.stringify([
-        "agil-local",
-        0,
-        scenario.request.tripType,
-        "LIM",
-        "MAD",
-        "2026-05-21",
-        scenario.request.tripType === "round-trip" ? "2026-05-28" : null,
-      ]);
-      assert.ok(result.offers.every((offer) => offer.rawRefs?.scheduleGroupScope === expectedScope));
-      assert.ok(result.offers.every((offer) => offer.rawRefs?.scheduleVariantsTruncated === false));
-      if (scenario.name === "round-trip") {
-        assert.ok(result.offers.every((offer) => offer.fareMeta?.seatsRemaining === 3));
-        const codeshare = result.offers.find((offer) => offer.itineraries[0]?.segments[0]?.flightNumber === "100");
-        assert.equal(codeshare?.itineraries[0]?.segments[0]?.marketingCarrier, "UX");
-        assert.equal(codeshare?.itineraries[0]?.segments[0]?.operatingCarrier, "LA");
-        assert.equal(codeshare?.itineraries[0]?.segments[0]?.operatingCarrierName, "LATAM");
-      }
     });
   }
-});
-
-test("Agil does not invent carrier or flight number when the provider omits them", async () => {
-  const group = buildAgilOptionsGroup(false);
-  const groupRecord = group as unknown as {
-    airline?: { code?: string; name?: string };
-    pricingInfo?: { itinTotalFare?: { validatingCarrier?: string } };
-    departure?: Array<{ segments?: Array<{ flightSegments?: Array<{
-      flightNumber?: number;
-      marketingAirline?: { code?: string; name?: string };
-      operatingAirline?: { code?: string; name?: string };
-    }> }> }>;
-  };
-  delete groupRecord.airline;
-  if (groupRecord.pricingInfo?.itinTotalFare) {
-    delete groupRecord.pricingInfo.itinTotalFare.validatingCarrier;
-  }
-  const providerSegment = groupRecord.departure?.[0]?.segments?.[0]?.flightSegments?.[0];
-  assert.ok(providerSegment);
-  delete providerSegment.flightNumber;
-  delete providerSegment.marketingAirline;
-  delete providerSegment.operatingAirline;
-
-  await withMockedAgilExactSearch(group, async () => {
-    const result = await searchLocalAgilExact(buildAgilExactRequest("one-way"));
-    const segment = result.offers
-      .flatMap((offer) => offer.itineraries.flatMap((itinerary) => itinerary.segments))
-      .find((candidate) => candidate.departureAt === "2026-05-21T08:00:00");
-
-    assert.ok(segment);
-    assert.equal(segment.marketingCarrier, "");
-    assert.equal(segment.operatingCarrier, "");
-    assert.equal(segment.flightNumber, "");
-  });
-});
-
-test("Agil uses the VPS Chrome loopback endpoint by default only on Linux", () => {
-  assert.equal(resolveAgilBrowserEndpoint({}, "linux"), "http://127.0.0.1:9222");
-  assert.equal(resolveAgilBrowserEndpoint({}, "win32"), undefined);
-  assert.equal(
-    resolveAgilBrowserEndpoint({ AGIL_BROWSER_URL: "http://127.0.0.1:9333" }, "linux"),
-    "http://127.0.0.1:9333",
-  );
-  assert.equal(
-    resolveAgilBrowserEndpoint({ AGIL_BROWSER_WS_ENDPOINT: "ws://127.0.0.1:9444/devtools/browser/test" }, "linux"),
-    "ws://127.0.0.1:9444/devtools/browser/test",
-  );
-});
-
-test("Agil exact search marks schedule variants truncated only when the native product exceeds 50", async () => {
-  const group = buildAgilOptionsGroup(true);
-  const departureSlice = group.departure[0];
-  const returnSlice = group.returns?.[0];
-  assert.ok(departureSlice);
-  assert.ok(returnSlice);
-
-  departureSlice.segments = Array.from({ length: 6 }, (_, index) => {
-    const hour = String(6 + index).padStart(2, "0");
-    const arrivalHour = String(7 + index).padStart(2, "0");
-    return buildAgilCandidate(
-      100 + index,
-      "LIM",
-      "MAD",
-      `2026-05-21T${hour}:00:00`,
-      `2026-05-21T${arrivalHour}:00:00`,
-      200 + index,
-    );
-  });
-  returnSlice.segments = Array.from({ length: 10 }, (_, index) => {
-    const hour = String(6 + index).padStart(2, "0");
-    const arrivalHour = String(7 + index).padStart(2, "0");
-    return buildAgilCandidate(
-      200 + index,
-      "MAD",
-      "LIM",
-      `2026-05-28T${hour}:00:00`,
-      `2026-05-28T${arrivalHour}:00:00`,
-      300 + index,
-    );
-  });
-
-  await withMockedAgilExactSearch(group, async () => {
-    const result = await searchLocalAgilExact(buildAgilExactRequest("round-trip"));
-
-    assert.equal(result.offers.length, 50);
-    assert.ok(result.offers.every((offer) => offer.rawRefs?.scheduleVariantsTruncated === true));
-    assert.ok(result.offers.every((offer) => offer.rawRefs?.scheduleGroupScope === JSON.stringify([
-      "agil-local",
-      0,
-      "round-trip",
-      "LIM",
-      "MAD",
-      "2026-05-21",
-      "2026-05-28",
-    ])));
-  });
 });
 
 test("Agil exact search treats zero pieces without cabina as no included baggage", async () => {

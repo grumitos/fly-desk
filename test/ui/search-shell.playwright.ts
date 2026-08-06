@@ -48,9 +48,12 @@ test("search controls preserve accessible behavior through shadcn primitives", a
 
     const passengerButton = page.getByRole("button", { name: "Seleccionar pasajeros" });
     await passengerButton.click();
-    assert.equal(await passengerButton.getAttribute("aria-expanded"), "true");
-    assert.equal(await page.getByRole("button", { name: "Agregar adultos" }).count(), 1);
-    assert.equal(await page.getByRole("button", { name: "Quitar adultos" }).isDisabled(), true);
+    assert.equal(
+      await page.locator('[data-slot="button-group"]').filter({
+        has: page.getByRole("button", { name: "Agregar adultos" }),
+      }).count(),
+      1,
+    );
     assert.equal(await page.getByRole("button", { name: "Intercambiar ruta" }).count(), 1);
     assert.equal(await page.getByRole("button", { name: "Buscar" }).count(), 1);
 
@@ -192,9 +195,9 @@ test("idle search form transitions smoothly into the workspace layout", async ()
       };
     });
 
-    assert.ok(idleBounds.width >= 1160 && idleBounds.width <= 1200, JSON.stringify(idleBounds));
+    assert.ok(idleBounds.width >= 1220 && idleBounds.width <= 1260, JSON.stringify(idleBounds));
     assert.ok(Math.abs(idleBounds.left - idleBounds.right) <= 24, JSON.stringify(idleBounds));
-    assert.ok(idleBounds.centerOffset !== null && idleBounds.centerOffset <= 0 && idleBounds.centerOffset >= -72, JSON.stringify(idleBounds));
+    assert.ok(idleBounds.centerOffset !== null && idleBounds.centerOffset <= 0 && idleBounds.centerOffset >= -24, JSON.stringify(idleBounds));
 
     await page.evaluate(() => {
       type LayoutAnimationSnapshot = {
@@ -328,7 +331,7 @@ test("search-level notices use the idle search controls width after a failed sea
     );
 
     await page.getByRole("button", { name: "Buscar" }).click();
-    const notice = page.getByRole("status");
+    const notice = page.locator(".fd-search-alert");
     await notice.filter({ hasText: "No se pudo conectar con Fly Desk. Intenta nuevamente." }).waitFor();
     await notice.evaluate(async (element) => {
       await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
@@ -353,7 +356,7 @@ test("search-level notices use the idle search controls width after a failed sea
     assert.ok(Math.abs(noticeBounds.searchGridTop - searchTopBeforeNotice) <= 1, JSON.stringify({ searchTopBeforeNotice, noticeBounds }));
     assert.ok(noticeBounds.top >= noticeBounds.searchGridBottom + 6, JSON.stringify(noticeBounds));
     assert.ok(Math.abs(noticeBounds.width - noticeBounds.searchGridWidth) <= 2, JSON.stringify(noticeBounds));
-    assert.ok(Math.abs(noticeBounds.searchFrameWidth - noticeBounds.width) <= 2, JSON.stringify(noticeBounds));
+    assert.ok(noticeBounds.searchFrameWidth > noticeBounds.width + 40, JSON.stringify(noticeBounds));
     assert.ok(Math.abs(noticeBounds.left - noticeBounds.right) <= 24, JSON.stringify(noticeBounds));
   }, { autoOpen: false });
 });
@@ -426,14 +429,14 @@ test("repeated clipboard notice failures keep the workspace from remounting the 
 
     const copyConfig = page.getByRole("button", { name: "Copiar configuración" });
     await copyConfig.click();
-    const notice = page.getByRole("status");
+    const notice = page.locator(".fd-search-alert");
     await notice.filter({ hasText: "No se pudo copiar la configuración. Revisa el permiso del navegador e intenta nuevamente." }).waitFor();
     await notice.evaluate(async (element) => {
       await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
     });
 
     const before = await page.evaluate(() => {
-      const alert = document.querySelector<HTMLElement>(".fd-alert-line");
+      const alert = document.querySelector<HTMLElement>(".fd-search-alert");
       const workspace = document.querySelector<HTMLElement>(".fd-shell-workspace");
       if (!alert || !workspace) throw new Error("Missing alert or workspace");
       (window as unknown as { __flyDeskNoticeMutations: string[] }).__flyDeskNoticeMutations = [];
@@ -441,10 +444,10 @@ test("repeated clipboard notice failures keep the workspace from remounting the 
         const mutations = (window as unknown as { __flyDeskNoticeMutations: string[] }).__flyDeskNoticeMutations;
         records.forEach((record) => {
           record.removedNodes.forEach((node) => {
-            if (node instanceof HTMLElement && node.matches(".fd-alert-line")) mutations.push("removed");
+            if (node instanceof HTMLElement && node.matches(".fd-search-alert")) mutations.push("removed");
           });
           record.addedNodes.forEach((node) => {
-            if (node instanceof HTMLElement && node.matches(".fd-alert-line")) mutations.push("added");
+            if (node instanceof HTMLElement && node.matches(".fd-search-alert")) mutations.push("added");
           });
         });
       });
@@ -468,7 +471,7 @@ test("repeated clipboard notice failures keep the workspace from remounting the 
     await page.waitForTimeout(120);
 
     const after = await page.evaluate(() => {
-      const alert = document.querySelector<HTMLElement>(".fd-alert-line");
+      const alert = document.querySelector<HTMLElement>(".fd-search-alert");
       const workspace = document.querySelector<HTMLElement>(".fd-shell-workspace");
       if (!alert || !workspace) throw new Error("Missing alert or workspace after retries");
       const mutations = (window as unknown as { __flyDeskNoticeMutations: string[] }).__flyDeskNoticeMutations;
@@ -486,7 +489,7 @@ test("repeated clipboard notice failures keep the workspace from remounting the 
   }, { autoOpen: false });
 });
 
-test("wide desktop shell expands from the idle measure into the workspace width", async () => {
+test("wide desktop shell uses half of the leftover viewport width", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.route("**/api/locations**", async (route) => {
@@ -543,25 +546,13 @@ test("wide desktop shell expands from the idle measure into the workspace width"
     });
 
     assert.equal(idleBounds.topbarWidth, 1760, JSON.stringify(idleBounds));
-    assert.ok(idleBounds.frameWidth >= 1160 && idleBounds.frameWidth <= 1200, JSON.stringify(idleBounds));
+    assert.ok(idleBounds.frameWidth >= 1720 && idleBounds.frameWidth <= 1736, JSON.stringify(idleBounds));
 
     await Promise.all([
       page.waitForResponse("**/api/search"),
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
     await page.getByTestId("result-card").waitFor();
-    await page.waitForFunction(() => {
-      const frame = document.querySelector<HTMLElement>('[data-testid="search-shell-frame"]')?.getBoundingClientRect();
-      const grid = document.querySelector<HTMLElement>(".fd-workspace-enter")?.getBoundingClientRect();
-      return Boolean(
-        frame
-        && grid
-        && frame.width >= 1720
-        && frame.width <= 1736
-        && grid.width >= 1720
-        && grid.width <= 1736,
-      );
-    });
 
     const workspaceBounds = await page.evaluate(() => {
       const frame = document.querySelector<HTMLElement>('[data-testid="search-shell-frame"]')?.getBoundingClientRect();
@@ -669,7 +660,7 @@ test("segmented hover keeps the shared indicator stable and theme hover inverts 
       });
     });
     const activeMetrics = await readSegmentMetrics();
-    assert.ok(activeMetrics.every((metric) => metric.height === 30), JSON.stringify(activeMetrics));
+    assert.ok(activeMetrics.every((metric) => metric.height === 32), JSON.stringify(activeMetrics));
     assert.ok(activeMetrics.every((metric) => metric.paddingLeft === metric.paddingRight), JSON.stringify(activeMetrics));
 
     type SearchModeGapMetrics = {
@@ -807,13 +798,11 @@ test("search field labels and filled rows share a consistent vertical center", a
     await page.getByRole("button", { name: "Salida desde" }).waitFor();
 
     const metrics = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll("form .fd-field-label")).map((label) => {
+      return Array.from(document.querySelectorAll("form label.fd-label")).map((label) => {
         const field = label.parentElement;
-        const control = field?.matches(".fd-field-control")
-          ? field
-          : field?.querySelector("button[aria-haspopup='dialog']") ?? null;
-        const icon = field?.querySelector("svg") ?? null;
-        const value = field?.querySelector("input, .fd-field-value") ?? null;
+        const control = field?.querySelector(".fd-control, button[aria-haspopup='dialog'], button[aria-label='Seleccionar pasajeros']") ?? null;
+        const icon = control?.querySelector("svg") ?? null;
+        const value = control?.querySelector("input, .fd-field-value-swap, span.min-w-0") ?? null;
         const controlBox = control?.getBoundingClientRect();
         const labelBox = label.getBoundingClientRect();
         const iconBox = icon?.getBoundingClientRect();
@@ -1006,7 +995,7 @@ test("running search button cancels the active job and returns to editing", asyn
   }, { autoOpen: false });
 });
 
-test("generic operation warning never becomes a search-level failure notice", async () => {
+test("generic operation failure warning stays hidden while the search is still running", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let searchComplete = false;
     await page.clock.install();
@@ -1096,18 +1085,13 @@ test("generic operation warning never becomes a search-level failure notice", as
 
     await page.clock.fastForward(13_000);
 
-    const genericWarning = page.getByRole("status").filter({
-      hasText: "No se pudo completar la operación. Intenta nuevamente.",
-    });
     assert.equal(await page.locator('[title*="No se pudo completar la operación"]').count(), 0);
-    assert.equal(await genericWarning.count(), 0);
+    assert.equal(await page.getByText("1 aviso", { exact: true }).count(), 0);
 
     searchComplete = true;
     await page.clock.fastForward(1_000);
-    await page.getByRole("button", { name: "Buscar" }).waitFor();
-    assert.equal(await genericWarning.count(), 0);
-    assert.equal(await page.locator('[title*="No se pudo completar la operación"]').count(), 0);
-    await page.getByText("Parcial", { exact: true }).waitFor();
+    await page.getByText("1 aviso", { exact: true }).waitFor();
+    assert.equal(await page.locator('[title*="No se pudo completar la operación"]').count(), 1);
   }, { autoOpen: false });
 });
 
@@ -1202,17 +1186,20 @@ test("flexible and migratory modes expose their distinct controls", async () => 
     assert.equal(await page.getByText("Salida hasta", { exact: true }).count(), 1);
 
     await migratory.click();
-    const monthRangeField = page.getByRole("button", { name: /^Meses:/ });
-    assert.equal(await monthRangeField.isEnabled(), true);
-    assert.match((await monthRangeField.getAttribute("aria-label")) ?? "", /Mar 2026.*Oct 2026/);
+    const monthFromField = page.getByRole("button", { name: "Mes desde", exact: true });
+    const monthUntilField = page.getByRole("button", { name: "Mes hasta", exact: true });
+    assert.equal(await monthFromField.isEnabled(), true);
+    assert.equal(await monthUntilField.isEnabled(), true);
+    assert.match(await monthFromField.innerText(), /Marzo 2026/);
+    assert.match(await monthUntilField.innerText(), /Octubre 2026/);
 
-    await monthRangeField.click();
-    const monthCalendar = page.getByRole("dialog", { name: "Selector de meses" });
+    await monthFromField.click();
+    const monthCalendar = page.getByRole("dialog", { name: "Calendario de mes desde" });
     await monthCalendar.waitFor();
     await assert.equal(await monthCalendar.getByRole("button", { name: /Enero de 2026/i }).isDisabled(), true);
     await assert.equal(await monthCalendar.getByRole("button", { name: /Febrero de 2026/i }).isDisabled(), true);
     await assert.equal(await monthCalendar.getByRole("button", { name: /Marzo de 2026/i }).isDisabled(), false);
-    await assert.equal(await monthCalendar.getByRole("button", { name: /Noviembre de 2026/i }).isDisabled(), true);
+    await assert.equal(await monthCalendar.getByRole("button", { name: /Noviembre de 2026/i }).count(), 0);
     await assert.equal(await page.getByRole("button", { name: "Ida y vuelta" }).isDisabled(), true);
     await assert.equal(await page.getByRole("button", { name: "Solo ida" }).isDisabled(), true);
     await assert.equal(await page.getByRole("button", { name: "Solo ida" }).getAttribute("aria-pressed"), "true");
@@ -1220,7 +1207,7 @@ test("flexible and migratory modes expose their distinct controls", async () => 
   });
 });
 
-test("migratory month picker disables months before the runtime minimum", async () => {
+test("migratory month picker hides rows whose months are all unavailable", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.route(`${baseUrl}/`, async (route) => {
       const response = await route.fetch();
@@ -1233,14 +1220,14 @@ test("migratory month picker disables months before the runtime minimum", async 
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
     await page.getByRole("button", { name: "Migratorio" }).click();
-    await page.getByRole("button", { name: /^Meses:/ }).click();
+    await page.getByRole("button", { name: "Mes desde", exact: true }).click();
 
-    const calendar = page.getByRole("dialog", { name: "Selector de meses" });
+    const calendar = page.getByRole("dialog", { name: "Calendario de mes desde" });
     await calendar.waitFor();
-    assert.equal(await calendar.getByRole("button", { name: /Enero de 2026/i }).isDisabled(), true);
-    assert.equal(await calendar.getByRole("button", { name: /Febrero de 2026/i }).isDisabled(), true);
-    assert.equal(await calendar.getByRole("button", { name: /Marzo de 2026/i }).isDisabled(), true);
-    assert.equal(await calendar.getByRole("button", { name: /Abril de 2026/i }).isDisabled(), false);
+    assert.equal(await calendar.getByRole("button", { name: /Enero de 2026/i }).count(), 0);
+    assert.equal(await calendar.getByRole("button", { name: /Febrero de 2026/i }).count(), 0);
+    assert.equal(await calendar.getByRole("button", { name: /Marzo de 2026/i }).count(), 0);
+    assert.equal(await calendar.getByRole("button", { name: /Abril de 2026/i }).count(), 1);
   }, { autoOpen: false });
 });
 
@@ -1248,12 +1235,12 @@ test("one-way exact search keeps the return field visible but disabled", async (
   await withDesktopPage(async ({ page }) => {
     await page.getByRole("button", { name: "Solo ida" }).click();
 
-    const returnField = page.getByRole("button", { name: "Regreso: No aplica" });
+    const returnField = page.locator('button[aria-labelledby="date-regreso-label"]');
     await returnField.waitFor({ state: "visible" });
     assert.equal(await returnField.count(), 1);
     assert.equal(await returnField.isDisabled(), true);
-    assert.equal(await returnField.getAttribute("aria-label"), "Regreso: No aplica");
-    assert.equal(await returnField.locator("xpath=..").getAttribute("data-half"), "end");
+    assert.match(await returnField.innerText(), /No aplica/);
+    assert.match(await returnField.locator("xpath=..").getAttribute("class") ?? "", /fd-disabled-section/);
   });
 });
 

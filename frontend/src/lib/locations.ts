@@ -1,5 +1,4 @@
 import type { LocationSuggestion } from "@/types"
-import { normalizeLocationSuggestionType } from "../../../src/core/location-suggestion"
 
 function sanitizeLocationToken(value: unknown): string {
   return String(value ?? "")
@@ -113,7 +112,6 @@ export function normalizeLocationSuggestion(suggestion: LocationSuggestion): Loc
     city: city || fallbackCity || code,
     country: country || fallbackCountry,
     countryCode: sanitizeLocationToken(suggestion.countryCode).toUpperCase() || undefined,
-    type: normalizeLocationSuggestionType(suggestion.type),
     label,
   }
 }

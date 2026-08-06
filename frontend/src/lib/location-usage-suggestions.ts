@@ -1,27 +1,14 @@
-import {
-  getBrowserClientSessionId,
-  normalizeBrowserClientSessionId,
-} from "@/lib/browser-client-session"
-
 type LocationUsageRole = "origin" | "destination"
 
 export type LocationUsageSuggestions = Record<LocationUsageRole, string[]>
 
-export interface LocationUsageSuggestionGroups {
-  frequent: LocationUsageSuggestions
-  recent: LocationUsageSuggestions
-}
-
 type LocationUsageApiResponse = {
   suggestions?: Partial<Record<LocationUsageRole, unknown>>
-  frequent?: Partial<Record<LocationUsageRole, unknown>>
-  recent?: Partial<Record<LocationUsageRole, unknown>>
 }
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
 type LocationUsageClientOptions = {
-  clientSessionId?: string
   fetchImpl?: FetchLike
   signal?: AbortSignal
 }
@@ -61,17 +48,11 @@ function emptySuggestions(): LocationUsageSuggestions {
   }
 }
 
-function normalizeLocationUsageSuggestions(input: unknown): LocationUsageSuggestionGroups {
+function normalizeLocationUsageSuggestions(input: unknown): LocationUsageSuggestions {
   const payload = input && typeof input === "object" ? input as LocationUsageApiResponse : {}
   return {
-    frequent: {
-      origin: normalizeCodes(payload.frequent?.origin ?? payload.suggestions?.origin),
-      destination: normalizeCodes(payload.frequent?.destination ?? payload.suggestions?.destination),
-    },
-    recent: {
-      origin: normalizeCodes(payload.recent?.origin),
-      destination: normalizeCodes(payload.recent?.destination),
-    },
+    origin: normalizeCodes(payload.suggestions?.origin),
+    destination: normalizeCodes(payload.suggestions?.destination),
   }
 }
 
@@ -79,42 +60,33 @@ function resolveFetch(fetchImpl: FetchLike | undefined): FetchLike {
   return fetchImpl ?? fetch
 }
 
-async function readUsageResponse(response: Response): Promise<LocationUsageSuggestionGroups> {
+async function readUsageResponse(response: Response): Promise<LocationUsageSuggestions> {
   if (!response.ok) {
-    return emptyLocationUsageSuggestions()
+    return emptySuggestions()
   }
 
   try {
     return normalizeLocationUsageSuggestions(await response.json())
   } catch {
-    return emptyLocationUsageSuggestions()
+    return emptySuggestions()
   }
 }
 
 export async function getLocationUsageSuggestions(
   options: LocationUsageClientOptions = {},
-): Promise<LocationUsageSuggestionGroups> {
+): Promise<LocationUsageSuggestions> {
   try {
-    const clientSessionId = options.clientSessionId === undefined
-      ? getBrowserClientSessionId()
-      : normalizeBrowserClientSessionId(options.clientSessionId)
-    const url = clientSessionId
-      ? `/api/location-usage-suggestions?clientSessionId=${encodeURIComponent(clientSessionId)}`
-      : "/api/location-usage-suggestions"
-    const response = await resolveFetch(options.fetchImpl)(url, {
+    const response = await resolveFetch(options.fetchImpl)("/api/location-usage-suggestions", {
       method: "GET",
       cache: "no-store",
       signal: options.signal,
     })
     return readUsageResponse(response)
   } catch {
-    return emptyLocationUsageSuggestions()
+    return emptySuggestions()
   }
 }
 
-export function emptyLocationUsageSuggestions(): LocationUsageSuggestionGroups {
-  return {
-    frequent: emptySuggestions(),
-    recent: emptySuggestions(),
-  }
+export function emptyLocationUsageSuggestions(): LocationUsageSuggestions {
+  return emptySuggestions()
 }

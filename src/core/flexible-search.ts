@@ -4,9 +4,6 @@ import {
   SearchLeg,
   SearchRequest,
 } from "./types";
-import { MAX_FLEXIBLE_STAY_NIGHTS } from "./search-limits";
-
-export { MAX_FLEXIBLE_STAY_NIGHTS } from "./search-limits";
 
 export interface NightBounds {
   minNights: number;
@@ -27,6 +24,8 @@ export interface FlexibleRoundTripAxes {
   departureDates: string[];
   returnDates: string[];
 }
+
+export const MAX_FLEXIBLE_STAY_NIGHTS = 90;
 
 interface ResolvedRoundTripFlexibleSpec {
   mode: FlexibleRoundTripResolutionMode;
