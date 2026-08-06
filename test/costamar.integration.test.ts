@@ -3472,6 +3472,94 @@ test("Costamar B2B rejects a non-official origin before sending credentials", as
   }
 });
 
+test("Costamar B2B completes 2FA when login redirects to the authenticator page", async () => {
+  const previousFetch = global.fetch;
+  const previousBaseUrl = process.env.CBPLUS_B2B_BASE_URL;
+  const previousEmail = process.env.CBPLUS_B2B_EMAIL;
+  const previousPassword = process.env.CBPLUS_B2B_PASSWORD;
+  const previousTotpSecret = process.env.CBPLUS_B2B_TOTP_SECRET;
+  const fetchedUrls: string[] = [];
+  const token = buildJwt({
+    id: "0721808110",
+    iat: 1893456000,
+    exp: 1893459600,
+  });
+  process.env.CBPLUS_B2B_BASE_URL = "https://b2b.clickandbook.com/lang/es/b2b";
+  process.env.CBPLUS_B2B_EMAIL = "agent@example.test";
+  process.env.CBPLUS_B2B_PASSWORD = "fixture-password";
+  process.env.CBPLUS_B2B_TOTP_SECRET = "JBSWY3DPEHPK3PXP";
+  global.fetch = (async (input, init) => {
+    const url = String(input);
+    fetchedUrls.push(url);
+    if (url === "https://b2b.clickandbook.com/login") {
+      return new Response("", {
+        status: 200,
+        headers: { "Set-Cookie": "session=fixture-session; Path=/; Secure; HttpOnly" },
+      });
+    }
+    if (url === "https://b2b.clickandbook.com/lang/en/login") {
+      return new Response("", {
+        status: 302,
+        headers: { Location: "/lang/en/login2factor" },
+      });
+    }
+    if (url === "https://b2b.clickandbook.com/lang/en/login2factor" && init?.method !== "POST") {
+      return new Response(
+        '<form><input name="csrf" value="fixture-csrf"><input name="secretcode">Google Authenticator</form>',
+        { status: 200 },
+      );
+    }
+    if (url === "https://b2b.clickandbook.com/lang/en/login2factor" && init?.method === "POST") {
+      const body = new URLSearchParams(String(init.body));
+      assert.equal(body.get("csrf"), "fixture-csrf");
+      assert.match(body.get("secretcode") ?? "", /^\d{6}$/);
+      return new Response("", {
+        status: 302,
+        headers: { Location: "/lang/en/b2b" },
+      });
+    }
+    if (url === "https://b2b.clickandbook.com/lang/en/b2b") {
+      return new Response("authenticated", { status: 200 });
+    }
+    if (url === "https://b2b.clickandbook.com/lang/en/airlinesearch") {
+      return new Response(JSON.stringify({ token }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response("unexpected", { status: 500 });
+  }) as typeof fetch;
+
+  try {
+    const result = await generateCostamarRedirectContextViaB2BHttpForTests({
+      apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: "",
+      lang: "es",
+    });
+    assert.equal(result?.token, token);
+    assert.deepEqual(fetchedUrls, [
+      "https://b2b.clickandbook.com/login",
+      "https://b2b.clickandbook.com/lang/en/login",
+      "https://b2b.clickandbook.com/lang/en/login2factor",
+      "https://b2b.clickandbook.com/lang/en/login2factor",
+      "https://b2b.clickandbook.com/lang/en/b2b",
+      "https://b2b.clickandbook.com/lang/en/airlinesearch",
+    ]);
+  } finally {
+    global.fetch = previousFetch;
+    if (previousBaseUrl === undefined) delete process.env.CBPLUS_B2B_BASE_URL;
+    else process.env.CBPLUS_B2B_BASE_URL = previousBaseUrl;
+    if (previousEmail === undefined) delete process.env.CBPLUS_B2B_EMAIL;
+    else process.env.CBPLUS_B2B_EMAIL = previousEmail;
+    if (previousPassword === undefined) delete process.env.CBPLUS_B2B_PASSWORD;
+    else process.env.CBPLUS_B2B_PASSWORD = previousPassword;
+    if (previousTotpSecret === undefined) delete process.env.CBPLUS_B2B_TOTP_SECRET;
+    else process.env.CBPLUS_B2B_TOTP_SECRET = previousTotpSecret;
+  }
+});
+
 test("Costamar B2B refuses cross-origin redirects without forwarding its cookie jar", async () => {
   const previousFetch = global.fetch;
   const previousBaseUrl = process.env.CBPLUS_B2B_BASE_URL;
