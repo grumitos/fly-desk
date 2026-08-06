@@ -428,6 +428,9 @@ const COSTAMAR_B2B_AUTH_HINT_PATTERN =
   /otp|authenticator|verification|verificaci[oó]n|token|one.?time|two.?factor|2fa|mfa|c[oó]digo|code|pin/i;
 const COSTAMAR_B2B_AUTH_FIELD_PATTERN =
   /otp|auth|token|verification|verify|code|pin|2fa|mfa/i;
+const COSTAMAR_B2B_EMAIL_SELECTOR = "#email, input[name='email']";
+const COSTAMAR_B2B_PASSWORD_SELECTOR = "#password, input[name='password']";
+const COSTAMAR_B2B_LOGIN_SUBMIT_SELECTOR = "#btnsubmit, button[type='submit'], input[type='submit']";
 
 function costamarSessionWarmupEnabled(): boolean {
   return String(cbPlusEnv("CBPLUS_SESSION_WARMUP_ENABLED", "COSTAMAR_SESSION_WARMUP_ENABLED") ?? "1").trim() !== "0";
@@ -475,23 +478,44 @@ function resolveCostamarChromeProfileName(): string {
   return resolveCostamarChromeLaunchOptions().profileDirectory || "Default";
 }
 
+function resolveCostamarChromeExecutableCandidates(
+  platform: NodeJS.Platform = process.platform,
+  environment: Record<string, string | undefined> = process.env,
+): string[] {
+  const configured = environment.CBPLUS_CHROME_EXECUTABLE?.trim()
+    || environment.COSTAMAR_CHROME_EXECUTABLE?.trim();
+  const platformCandidates = platform === "linux"
+    ? [
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+      ]
+    : platform === "darwin"
+      ? [
+          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        ]
+      : [
+          environment.LOCALAPPDATA && join(environment.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe"),
+          environment.PROGRAMFILES && join(environment.PROGRAMFILES, "Google", "Chrome", "Application", "chrome.exe"),
+          environment["PROGRAMFILES(X86)"] && join(environment["PROGRAMFILES(X86)"], "Google", "Chrome", "Application", "chrome.exe"),
+          environment.LOCALAPPDATA && join(environment.LOCALAPPDATA, "Microsoft", "Edge", "Application", "msedge.exe"),
+          environment.PROGRAMFILES && join(environment.PROGRAMFILES, "Microsoft", "Edge", "Application", "msedge.exe"),
+          environment["PROGRAMFILES(X86)"] && join(environment["PROGRAMFILES(X86)"], "Microsoft", "Edge", "Application", "msedge.exe"),
+        ];
+  return [...new Set([configured, ...platformCandidates].filter((value): value is string => Boolean(value)))];
+}
+
+export function resolveCostamarChromeExecutableCandidatesForTests(
+  platform: NodeJS.Platform,
+  environment: Record<string, string | undefined>,
+): string[] {
+  return resolveCostamarChromeExecutableCandidates(platform, environment);
+}
+
 function resolveCostamarChromeExecutable(): string {
-  const configured = process.env.CBPLUS_CHROME_EXECUTABLE?.trim()
-    || process.env.COSTAMAR_CHROME_EXECUTABLE?.trim();
-  if (configured && existsSync(configured)) {
-    return configured;
-  }
-
-  const candidates = [
-    process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe"),
-    process.env.PROGRAMFILES && join(process.env.PROGRAMFILES, "Google", "Chrome", "Application", "chrome.exe"),
-    process.env["PROGRAMFILES(X86)"] && join(process.env["PROGRAMFILES(X86)"], "Google", "Chrome", "Application", "chrome.exe"),
-    process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, "Microsoft", "Edge", "Application", "msedge.exe"),
-    process.env.PROGRAMFILES && join(process.env.PROGRAMFILES, "Microsoft", "Edge", "Application", "msedge.exe"),
-    process.env["PROGRAMFILES(X86)"] && join(process.env["PROGRAMFILES(X86)"], "Microsoft", "Edge", "Application", "msedge.exe"),
-  ].filter((value): value is string => Boolean(value));
-
-  const match = candidates.find((candidate) => existsSync(candidate));
+  const match = resolveCostamarChromeExecutableCandidates().find((candidate) => existsSync(candidate));
   if (!match) {
     throw new Error("Chrome executable was not found on this machine.");
   }
@@ -1893,8 +1917,8 @@ async function pageShowsCostamarB2bLogin(page: Page): Promise<boolean> {
     return false;
   }
   try {
-    const email = page.locator("#email").first();
-    const password = page.locator("#password").first();
+    const email = page.locator(COSTAMAR_B2B_EMAIL_SELECTOR).first();
+    const password = page.locator(COSTAMAR_B2B_PASSWORD_SELECTOR).first();
     if (await email.count() === 0 || await password.count() === 0) {
       return false;
     }
@@ -1934,15 +1958,21 @@ async function ensureCostamarB2bSession(page: Page): Promise<boolean> {
   if (!isCostamarB2bUrlAllowed(page.url())) {
     return false;
   }
-  await applyCostamarB2bKeyboardInput(page.locator("#email"), credentials.email);
+  const emailInput = page.locator(COSTAMAR_B2B_EMAIL_SELECTOR).first();
+  const passwordInput = page.locator(COSTAMAR_B2B_PASSWORD_SELECTOR).first();
+  await applyCostamarB2bKeyboardInput(emailInput, credentials.email);
   if (!isCostamarB2bUrlAllowed(page.url())) {
     return false;
   }
-  await applyCostamarB2bKeyboardInput(page.locator("#password"), credentials.password);
+  await applyCostamarB2bKeyboardInput(passwordInput, credentials.password);
   if (!isCostamarB2bUrlAllowed(page.url())) {
     return false;
   }
-  await page.locator("#btnsubmit").click();
+  const submit = page.locator(COSTAMAR_B2B_LOGIN_SUBMIT_SELECTOR).first();
+  if (await submit.count() === 0 || !(await submit.isVisible().catch(() => false))) {
+    return false;
+  }
+  await submit.click();
   await page.waitForLoadState("domcontentloaded", { timeout: 45000 }).catch(() => undefined);
   await waitForCostamarB2bSessionTransition(page, 8000);
 
@@ -1977,14 +2007,9 @@ async function launchCostamarBrowserContext(): Promise<{
     : "";
   try {
     const playwright = await getPlaywright();
-    const configuredExecutable = cbPlusEnv("CBPLUS_CHROME_EXECUTABLE", "COSTAMAR_CHROME_EXECUTABLE");
-    const executablePath = cloneSourceProfile
-      ? resolveCostamarChromeExecutable()
-      : configuredExecutable && existsSync(configuredExecutable)
-        ? configuredExecutable
-        : undefined;
+    const executablePath = resolveCostamarChromeExecutable();
     const launchOptions = {
-      ...(executablePath ? { executablePath } : {}),
+      executablePath,
       headless: costamarBrowserAutomationHeadless(),
       args: [
         "--no-first-run",

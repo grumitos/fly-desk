@@ -18,6 +18,7 @@ import {
   mapCostamarLocationSuggestion,
   mapCostamarRecommendationToOffer,
   resetCostamarWarmupStateForTests,
+  resolveCostamarChromeExecutableCandidatesForTests,
   resolveLocalCostamarMatrixProgressive,
   resolveLocalCostamarRangeProgressive,
   resolveCostamarRedirectForRequest,
@@ -1907,6 +1908,96 @@ test("Costamar Playwright authentication writes no credentials after a cross-ori
     if (previousBaseUrl === undefined) delete process.env.CBPLUS_B2B_BASE_URL;
     else process.env.CBPLUS_B2B_BASE_URL = previousBaseUrl;
   }
+});
+
+test("Costamar Playwright authentication supports the current name-based login form", async () => {
+  const previousBaseUrl = process.env.CBPLUS_B2B_BASE_URL;
+  const previousEmail = process.env.CBPLUS_B2B_EMAIL;
+  const previousPassword = process.env.CBPLUS_B2B_PASSWORD;
+  process.env.CBPLUS_B2B_BASE_URL = "https://b2b.clickandbook.com/lang/es/b2b";
+  process.env.CBPLUS_B2B_EMAIL = "agent@example.test";
+  process.env.CBPLUS_B2B_PASSWORD = "fixture-password";
+  let currentUrl = "about:blank";
+  let loginVisible = true;
+  let submitted = false;
+  const typed: Record<string, string> = {};
+
+  const absentLocator = {
+    first() { return this; },
+    async count() { return 0; },
+    async isVisible() { return false; },
+    async click() {},
+    async press() {},
+    async type() {},
+  };
+  const inputLocator = (field: "email" | "password") => ({
+    first() { return this; },
+    async count() { return 1; },
+    async isVisible() { return loginVisible; },
+    async click() {},
+    async press() {},
+    async type(value: string) { typed[field] = value; },
+  });
+  const submitLocator = {
+    first() { return this; },
+    async count() { return 1; },
+    async isVisible() { return loginVisible; },
+    async click() {
+      submitted = true;
+      loginVisible = false;
+      currentUrl = "https://b2b.clickandbook.com/en/b2b";
+    },
+    async press() {},
+    async type() {},
+  };
+  const page = {
+    url: () => currentUrl,
+    async goto() {
+      currentUrl = "https://b2b.clickandbook.com/en/login";
+    },
+    async waitForTimeout() {},
+    async waitForLoadState() {},
+    async evaluate() {
+      return { text: "", inputs: [] };
+    },
+    locator(selector: string) {
+      if (selector.includes("input[name='email']")) return inputLocator("email");
+      if (selector.includes("input[name='password']")) return inputLocator("password");
+      if (selector.includes("button[type='submit']")) return submitLocator;
+      return absentLocator;
+    },
+  };
+
+  try {
+    const authenticated = await ensureCostamarB2bSessionForTests(page);
+    assert.equal(authenticated, true);
+    assert.equal(submitted, true);
+    assert.deepEqual(typed, {
+      email: "agent@example.test",
+      password: "fixture-password",
+    });
+  } finally {
+    if (previousBaseUrl === undefined) delete process.env.CBPLUS_B2B_BASE_URL;
+    else process.env.CBPLUS_B2B_BASE_URL = previousBaseUrl;
+    if (previousEmail === undefined) delete process.env.CBPLUS_B2B_EMAIL;
+    else process.env.CBPLUS_B2B_EMAIL = previousEmail;
+    if (previousPassword === undefined) delete process.env.CBPLUS_B2B_PASSWORD;
+    else process.env.CBPLUS_B2B_PASSWORD = previousPassword;
+  }
+});
+
+test("Costamar isolated automation can resolve the Linux system Chrome", () => {
+  assert.deepEqual(
+    resolveCostamarChromeExecutableCandidatesForTests("linux", {
+      CBPLUS_CHROME_EXECUTABLE: "/opt/custom/chrome",
+    }).slice(0, 4),
+    [
+      "/opt/custom/chrome",
+      "/usr/bin/google-chrome",
+      "/usr/bin/google-chrome-stable",
+      "/usr/bin/chromium",
+    ],
+  );
 });
 
 test("Costamar temporary Chrome profile staging is private and avoids broad storage copies", async () => {
