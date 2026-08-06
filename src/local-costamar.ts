@@ -1123,6 +1123,16 @@ function resolveCostamarB2bLocalizedPath(loginUrl: string, suffix: string): stri
   return `${login.origin}${localizedBasePath}/${suffix.replace(/^\/+/, "")}`;
 }
 
+function resolveCostamarB2bPreferredLoginUrl(baseUrl: string): string | undefined {
+  const base = new URL(baseUrl);
+  const locale = base.pathname.match(/^\/(?:lang\/)?([a-z]{2}(?:-[a-z]{2})?)(?:\/|$)/i)?.[1];
+  if (!locale) {
+    return undefined;
+  }
+
+  return `${base.origin}/${locale.toLowerCase()}/login`;
+}
+
 function decodeCostamarB2bHtmlAttribute(value: string): string {
   return value
     .replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
@@ -1990,6 +2000,23 @@ async function ensureCostamarB2bSession(page: Page): Promise<boolean> {
 
   if (!(await pageShowsCostamarB2bLogin(page))) {
     return completeCostamarB2bAuthPrompt(page);
+  }
+
+  const preferredLoginUrl = resolveCostamarB2bPreferredLoginUrl(baseUrl);
+  if (preferredLoginUrl) {
+    const current = new URL(page.url());
+    const preferred = new URL(preferredLoginUrl);
+    if (/\/login\/?$/i.test(current.pathname)
+      && (current.origin !== preferred.origin || current.pathname !== preferred.pathname)) {
+      await page.goto(preferredLoginUrl, {
+        waitUntil: "domcontentloaded",
+        timeout: 45000,
+      });
+      await page.waitForTimeout(1500);
+      if (!isCostamarB2bUrlAllowed(page.url()) || !(await pageShowsCostamarB2bLogin(page))) {
+        return false;
+      }
+    }
   }
 
   const credentials = await resolveCostamarB2bCredentialsForAutomation();

@@ -1939,6 +1939,7 @@ test("Costamar Playwright authentication supports the current name-based login f
   let currentUrl = "about:blank";
   let loginVisible = true;
   let submitted = false;
+  const navigatedUrls: string[] = [];
   const typed: Record<string, string> = {};
 
   const absentLocator = {
@@ -1964,15 +1965,18 @@ test("Costamar Playwright authentication supports the current name-based login f
     async click() {
       submitted = true;
       loginVisible = false;
-      currentUrl = "https://b2b.clickandbook.com/en/b2b";
+      currentUrl = "https://b2b.clickandbook.com/es/b2b";
     },
     async press() {},
     async type() {},
   };
   const page = {
     url: () => currentUrl,
-    async goto() {
-      currentUrl = "https://b2b.clickandbook.com/en/login";
+    async goto(url: string) {
+      navigatedUrls.push(url);
+      currentUrl = navigatedUrls.length === 1
+        ? "https://b2b.clickandbook.com/en/login"
+        : url;
     },
     async waitForTimeout() {},
     async waitForLoadState() {},
@@ -1991,6 +1995,10 @@ test("Costamar Playwright authentication supports the current name-based login f
     const authenticated = await ensureCostamarB2bSessionForTests(page);
     assert.equal(authenticated, true);
     assert.equal(submitted, true);
+    assert.deepEqual(navigatedUrls, [
+      "https://b2b.clickandbook.com/lang/es/b2b",
+      "https://b2b.clickandbook.com/es/login",
+    ]);
     assert.deepEqual(typed, {
       email: "agent@example.test",
       password: "fixture-password",
