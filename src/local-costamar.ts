@@ -359,8 +359,8 @@ const COSTAMAR_B2B_KEYSTROKE_DELAY_MS = 35;
 const COSTAMAR_PAGE_SNAPSHOT_HTML_MAX_CHARS = 64 * 1024;
 const COSTAMAR_PAGE_STORAGE_MAX_ENTRIES = 50;
 const COSTAMAR_PAGE_STORAGE_VALUE_MAX_CHARS = 4096;
-const DEFAULT_COSTAMAR_B2B_BASE_URL = "https://b2b.clickandbook.com/lang/es/b2b";
-const COSTAMAR_B2B_ALLOWED_ORIGINS = new Set(["https://b2b.clickandbook.com"]);
+const DEFAULT_COSTAMAR_B2B_BASE_URL = "https://www.clickandbook.plus/es/login";
+const COSTAMAR_B2B_ALLOWED_ORIGINS = new Set(["https://www.clickandbook.plus"]);
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 
 const pendingCostamarSessionWarmups = new Map<string, Promise<CostamarProviderContext>>();
@@ -1114,7 +1114,7 @@ function resolveCostamarB2bLoginUrl(
     return resolveLoginCandidate(decodeCostamarB2bHtmlAttribute(action));
   }
 
-  return `${trustedOrigin}/lang/en/login`;
+  return undefined;
 }
 
 function resolveCostamarB2bLocalizedPath(loginUrl: string, suffix: string): string {
@@ -1171,12 +1171,14 @@ async function generateCostamarRedirectContextViaB2BHttp(
     return undefined;
   }
 
-  const base = new URL(resolveCostamarB2bBaseUrl());
+  const baseUrl = resolveCostamarB2bBaseUrl();
+  const base = new URL(baseUrl);
   const origin = base.origin;
   const jar = new Map<string, string>();
 
   try {
-    const loginEntry = await fetchCostamarB2bWithCookies(`${origin}/login`, origin, jar, {
+    const loginEntryUrl = resolveCostamarB2bPreferredLoginUrl(baseUrl) ?? baseUrl;
+    const loginEntry = await fetchCostamarB2bWithCookies(loginEntryUrl, origin, jar, {
       headers: {
         accept: "text/html,application/xhtml+xml",
       },
