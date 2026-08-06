@@ -192,15 +192,12 @@ export interface ProviderDiagnostics {
   error?: string;
 }
 
-export type LocationSuggestionType = "CITY" | "AIRPORT";
-
 export interface LocationSuggestion {
   code: string;
   city: string;
   country: string;
   countryCode?: string;
   cityCode?: string;
-  type?: LocationSuggestionType;
   searchType?: string;
   label: string;
 }
@@ -257,26 +254,6 @@ export interface Itinerary {
   stops: number;
   layoverMinutes: number[];
   segments: Segment[];
-}
-
-export interface OfferScheduleOption {
-  id: string;
-  itinerary: Itinerary;
-}
-
-export interface OfferScheduleCombination {
-  outboundOptionId: string;
-  inboundOptionId?: string;
-  offerId: string;
-}
-
-export interface OfferScheduleGroup {
-  id: string;
-  providerSource: ProviderId;
-  outboundOptions: OfferScheduleOption[];
-  inboundOptions?: OfferScheduleOption[];
-  combinations: OfferScheduleCombination[];
-  truncated: boolean;
 }
 
 export interface BaggageSummary {
@@ -386,7 +363,6 @@ export interface ProviderMeta {
 export interface SearchResponse {
   offers: CanonicalOffer[];
   allOffers?: CanonicalOffer[];
-  scheduleGroups?: OfferScheduleGroup[];
   matrix?: MatrixCell[];
   searchMeta: SearchMeta;
   providerMeta: ProviderMeta;

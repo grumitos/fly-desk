@@ -87,11 +87,10 @@ Solid orange surfaces must use white foreground text/icons for contrast and legi
 - `filter-panel`: compact filter groups with visible selected states and clear action.
 - `result-row`: dense comparison row prioritizing airline, schedule, route, baggage, provider, and price.
 - `detail-panel`: selected offer and quotation workflow, with flat data groups instead of inner cards.
-- `provider-rail`: canonical provider names plus only backend-observed readiness; unknown must remain explicit and provider errors must never be reproduced verbatim.
 
 Do not render placeholder sections for workflows that are not connected in the React app. Flexible search is connected through `stay-range` and `/api/matrix`; monthly migratory search is connected through client-side monthly `stay-range` fan-out for selected months. Each migratory month scans every day against Agil and Click and Book Plus without fare filters, while the client limits concurrent months to generous batches. Multi-city search, the dedicated calendar/matrix view, and visible `reprice` remain intentionally hidden.
 
-The results grid is fixed by the redesign. Do not reintroduce a persisted layout editor or `/api/results-layout` without a new product decision and a real consumer.
+The results layout editor is an operational/debug surface only; keep it hidden behind `?layoutEditor=1` or `?layout=editor` unless it is promoted to a first-class workflow.
 
 ## Interaction States
 

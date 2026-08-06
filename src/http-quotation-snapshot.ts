@@ -32,11 +32,9 @@ function quotationStringArrayValue(value: unknown): string[] {
     : [];
 }
 
-function normalizeProviderSource(value: unknown): ProviderId | undefined {
+function normalizeProviderSource(value: unknown): ProviderId {
   const normalized = String(value ?? "").trim().toLowerCase();
-  if (normalized.includes("costamar")) return "costamar";
-  if (normalized.includes("agil")) return "agil-local";
-  return undefined;
+  return normalized.includes("costamar") ? "costamar" : "agil-local";
 }
 
 function normalizeTripType(value: unknown): SearchRequest["tripType"] {
@@ -134,18 +132,20 @@ export function normalizeQuotationRequestSnapshot(input: unknown, offerInput?: u
   };
 }
 
-function normalizeQuotationSegment(input: unknown, idSeed: string): Segment | undefined {
-  const raw = quotationObjectRecord(input);
-  const origin = quotationStringValue(raw?.origin);
-  const destination = quotationStringValue(raw?.destination);
-  const departureAt = quotationStringValue(raw?.departureAt);
-  const arrivalAt = quotationStringValue(raw?.arrivalAt);
-  if (!raw || !origin || !destination || !departureAt || !arrivalAt) {
-    return undefined;
-  }
+function normalizeQuotationSegment(input: unknown, fallback: {
+  direction: "outbound" | "inbound";
+  origin: string;
+  destination: string;
+  departureAt?: string;
+}): Segment {
+  const raw = quotationObjectRecord(input) ?? {};
+  const origin = quotationStringValue(raw.origin) ?? fallback.origin;
+  const destination = quotationStringValue(raw.destination) ?? fallback.destination;
+  const departureAt = quotationStringValue(raw.departureAt) ?? fallback.departureAt ?? "";
+  const arrivalAt = quotationStringValue(raw.arrivalAt) ?? departureAt;
 
   return {
-    id: quotationStringValue(raw.id) ?? idSeed,
+    id: quotationStringValue(raw.id) ?? `${fallback.direction}-segment`,
     marketingCarrier: quotationStringValue(raw.marketingCarrier) ?? "",
     marketingCarrierName: normalizeAirlineDisplayName(raw.marketingCarrierName) || undefined,
     operatingCarrier: quotationStringValue(raw.operatingCarrier),
@@ -163,48 +163,80 @@ function normalizeQuotationSegment(input: unknown, idSeed: string): Segment | un
   };
 }
 
-function normalizeQuotationItineraries(input: unknown, request: SearchRequest): Itinerary[] {
-  if (!Array.isArray(input) || input.length === 0) return [];
-
-  const normalized = input.map((item, index): Itinerary | undefined => {
+function normalizeQuotationItineraries(input: unknown, request: SearchRequest, offer: Record<string, unknown>): Itinerary[] {
+  const leg = request.legs[0];
+  const rawItineraries = Array.isArray(input) ? input : [];
+  const normalized = rawItineraries.flatMap((item, index): Itinerary[] => {
     const raw = quotationObjectRecord(item);
-    if (!raw) return undefined;
+    if (!raw) {
+      return [];
+    }
 
-    const direction = raw.direction === "outbound" || raw.direction === "inbound" || raw.direction === "multi"
-      ? raw.direction
-      : undefined;
+    const direction = raw.direction === "inbound" || raw.direction === "multi" ? raw.direction : "outbound";
     const rawSegments = Array.isArray(raw.segments) ? raw.segments : [];
-    if (!direction || rawSegments.length === 0) return undefined;
+    const fallback = {
+      direction: direction === "inbound" ? "inbound" as const : "outbound" as const,
+      origin: direction === "inbound" ? leg.destination : leg.origin,
+      destination: direction === "inbound" ? leg.origin : leg.destination,
+      departureAt: direction === "inbound"
+        ? quotationStringValue(offer.returnDate) ?? leg.returnDate
+        : quotationStringValue(offer.departureDate) ?? leg.departureDate,
+    };
+    const segments = rawSegments.length > 0
+      ? rawSegments.map((segment) => normalizeQuotationSegment(segment, fallback))
+      : [normalizeQuotationSegment(undefined, fallback)];
 
-    const segments = rawSegments.map((segment, segmentIndex) =>
-      normalizeQuotationSegment(segment, `itinerary-${index}-segment-${segmentIndex}`));
-    if (segments.some((segment) => !segment)) return undefined;
-    const completeSegments = segments as Segment[];
-
-    return {
+    return [{
       id: quotationStringValue(raw.id) ?? `itinerary-${index}`,
       direction,
       durationMinutes: Math.max(0, Math.round(quotationNumberValue(raw.durationMinutes) ?? 0)),
-      stops: Math.max(0, Math.round(quotationNumberValue(raw.stops) ?? Math.max(0, completeSegments.length - 1))),
+      stops: Math.max(0, Math.round(quotationNumberValue(raw.stops) ?? Math.max(0, segments.length - 1))),
       layoverMinutes: Array.isArray(raw.layoverMinutes)
         ? raw.layoverMinutes.map((value) => Math.max(0, Math.round(quotationNumberValue(value) ?? 0)))
         : [],
-      segments: completeSegments,
-    };
+      segments,
+    }];
   });
 
-  if (normalized.some((itinerary) => !itinerary)) return [];
-  const complete = normalized as Itinerary[];
-  if (request.tripType === "one-way") {
-    return complete.some((itinerary) => itinerary.direction === "outbound") ? complete : [];
+  if (normalized.length > 0) {
+    return normalized;
   }
-  if (request.tripType === "round-trip") {
-    return complete.some((itinerary) => itinerary.direction === "outbound")
-      && complete.some((itinerary) => itinerary.direction === "inbound")
-      ? complete
-      : [];
+
+  const outboundDeparture = quotationStringValue(offer.departureDate) ?? leg.departureDate ?? leg.departureStart ?? "";
+  const outbound = normalizeQuotationSegment(undefined, {
+    direction: "outbound",
+    origin: leg.origin,
+    destination: leg.destination,
+    departureAt: outboundDeparture,
+  });
+  const itineraries: Itinerary[] = [{
+    id: "outbound",
+    direction: "outbound",
+    durationMinutes: 0,
+    stops: 0,
+    layoverMinutes: [],
+    segments: [outbound],
+  }];
+
+  const returnDeparture = quotationStringValue(offer.returnDate) ?? leg.returnDate ?? leg.returnStart;
+  if (request.tripType === "round-trip" && returnDeparture) {
+    const inbound = normalizeQuotationSegment(undefined, {
+      direction: "inbound",
+      origin: leg.destination,
+      destination: leg.origin,
+      departureAt: returnDeparture,
+    });
+    itineraries.push({
+      id: "inbound",
+      direction: "inbound",
+      durationMinutes: 0,
+      stops: 0,
+      layoverMinutes: [],
+      segments: [inbound],
+    });
   }
-  return complete;
+
+  return itineraries;
 }
 
 export function normalizeQuotationOfferSnapshot(input: unknown, request: SearchRequest): CanonicalOffer | undefined {
@@ -216,54 +248,47 @@ export function normalizeQuotationOfferSnapshot(input: unknown, request: SearchR
   const rawPrice = quotationObjectRecord(offer.price);
   const rawTotal = quotationObjectRecord(rawPrice?.total) ?? rawPrice;
   const amount = quotationNumberValue(rawTotal?.amount);
-  const currencyCode = quotationStringValue(rawTotal?.currencyCode);
-  const offerId = quotationStringValue(offer.sourceOfferId) ?? quotationStringValue(offer.id);
-  const providerSource = normalizeProviderSource(offer.providerSource);
-  const itineraries = normalizeQuotationItineraries(offer.itineraries, request);
-  if (amount === undefined || amount <= 0 || !currencyCode || !offerId || !providerSource || itineraries.length === 0) {
+  if (amount === undefined) {
     return undefined;
   }
 
+  const providerSource = normalizeProviderSource(offer.providerSource);
   const mainCarrier = quotationStringValue(offer.mainCarrier)
     ?? quotationStringValue(offer.validatingCarrier)
     ?? quotationStringValue(offer.airline)
     ?? "";
+  const itineraries = normalizeQuotationItineraries(offer.itineraries, request, offer);
   const rawBaggage = quotationObjectRecord(offer.baggage);
   const rawFareMeta = quotationObjectRecord(offer.fareMeta);
   const rawMetrics = quotationObjectRecord(offer.comparisonMetrics);
-  const totalStops = itineraries.reduce((sum, itinerary) => sum + itinerary.stops, 0);
-  const outbound = itineraries.find((itinerary) => itinerary.direction === "outbound") ?? itineraries[0];
-  const firstSegment = outbound.segments[0];
-  const lastSegment = outbound.segments[outbound.segments.length - 1];
+  const totalStops = quotationNumberValue(rawMetrics?.totalStops) ?? quotationNumberValue(offer.stops) ?? 0;
 
   return {
-    id: offerId,
-    signature: quotationStringValue(offer.signature) ?? offerId,
+    id: quotationStringValue(offer.sourceOfferId) ?? quotationStringValue(offer.id) ?? "selected-offer",
+    signature: quotationStringValue(offer.signature) ?? quotationStringValue(offer.id) ?? "selected-offer",
     providerSource,
-    providerOfferRef: quotationStringValue(offer.providerOfferRef) ?? offerId,
+    providerOfferRef: quotationStringValue(offer.providerOfferRef) ?? quotationStringValue(offer.id) ?? "selected-offer",
     tripType: request.tripType,
     validatingCarrier: quotationStringValue(offer.validatingCarrier) ?? mainCarrier,
     mainCarrier,
-    origin: quotationStringValue(offer.origin) ?? firstSegment.origin,
-    destination: quotationStringValue(offer.destination) ?? lastSegment.destination,
+    origin: quotationStringValue(offer.origin) ?? request.legs[0].origin,
+    destination: quotationStringValue(offer.destination) ?? request.legs[0].destination,
     itineraries,
     price: {
       total: {
         amount,
-        currencyCode,
+        currencyCode: quotationStringValue(rawTotal?.currencyCode) ?? request.currencyCode ?? "USD",
       },
       base: quotationObjectRecord(rawPrice?.base)
-        && quotationNumberValue(quotationObjectRecord(rawPrice?.base)?.amount) !== undefined
         ? {
-            amount: quotationNumberValue(quotationObjectRecord(rawPrice?.base)?.amount)!,
-            currencyCode: quotationStringValue(quotationObjectRecord(rawPrice?.base)?.currencyCode) ?? currencyCode,
+            amount: quotationNumberValue(quotationObjectRecord(rawPrice?.base)?.amount) ?? amount,
+            currencyCode: quotationStringValue(quotationObjectRecord(rawPrice?.base)?.currencyCode) ?? quotationStringValue(rawTotal?.currencyCode) ?? "USD",
           }
         : undefined,
       taxes: quotationObjectRecord(rawPrice?.taxes)
-        && quotationNumberValue(quotationObjectRecord(rawPrice?.taxes)?.amount) !== undefined
         ? {
-            amount: quotationNumberValue(quotationObjectRecord(rawPrice?.taxes)?.amount)!,
-            currencyCode: quotationStringValue(quotationObjectRecord(rawPrice?.taxes)?.currencyCode) ?? currencyCode,
+            amount: quotationNumberValue(quotationObjectRecord(rawPrice?.taxes)?.amount) ?? 0,
+            currencyCode: quotationStringValue(quotationObjectRecord(rawPrice?.taxes)?.currencyCode) ?? quotationStringValue(rawTotal?.currencyCode) ?? "USD",
           }
         : undefined,
     },
@@ -296,7 +321,7 @@ export function normalizeQuotationOfferSnapshot(input: unknown, request: SearchR
     purchasePaths: [],
     comparisonMetrics: {
       totalDurationMinutes: Math.max(0, Math.round(quotationNumberValue(rawMetrics?.totalDurationMinutes) ?? 0)),
-      totalStops,
+      totalStops: Math.max(0, Math.round(totalStops)),
       baggageScore: Math.max(0, Math.round(quotationNumberValue(rawMetrics?.baggageScore) ?? 0)),
       purchasePathScore: Math.max(0, Math.round(quotationNumberValue(rawMetrics?.purchasePathScore) ?? 0)),
     },

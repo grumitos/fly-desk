@@ -5,8 +5,6 @@ import { LocationSuggestion, ProviderId } from "./core/types";
 
 export const LOCATION_SUGGESTION_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const LOCATION_SUGGESTION_CACHE_MAX_ENTRIES_PER_SESSION = 80;
-export const LOCATION_SUGGESTION_CACHE_MAX_ENTRIES = 1000;
-export const LOCATION_SUGGESTION_CACHE_MAX_QUERY_CHARS = 120;
 
 interface CacheEntry {
   suggestions: LocationSuggestion[];
@@ -108,17 +106,11 @@ export class LocationSuggestionCacheStore {
     loader: () => Promise<LocationSuggestion[]>,
   ): Promise<LocationSuggestion[]> {
     const normalizedSessionId = normalizeSessionId(sessionId);
-    const normalizedQuery = normalizeQuery(query);
-    if (normalizedQuery.length > LOCATION_SUGGESTION_CACHE_MAX_QUERY_CHARS) {
-      throw new RangeError(
-        `Location suggestion query cannot exceed ${LOCATION_SUGGESTION_CACHE_MAX_QUERY_CHARS} characters.`,
-      );
-    }
     const normalizedLimit = Math.max(1, Math.trunc(limit));
     const key = cacheKey({
       sessionId: normalizedSessionId,
       providerId,
-      query: normalizedQuery,
+      query,
       limit: normalizedLimit,
     });
     const nowMs = Date.now();
@@ -126,7 +118,7 @@ export class LocationSuggestionCacheStore {
 
     if (cached && cached.expiresAtMs > nowMs) {
       cached.touchedAtMs = nowMs;
-      this.persistEntry(key, normalizedSessionId, providerId, normalizedQuery, normalizedLimit, cached);
+      this.persistEntry(key, normalizedSessionId, providerId, query, normalizedLimit, cached);
       return cloneSuggestions(cached.suggestions);
     }
 
@@ -149,9 +141,8 @@ export class LocationSuggestionCacheStore {
         };
         this.entries.set(key, nextEntry);
         this.trackKey(normalizedSessionId, key);
-        this.persistEntry(key, normalizedSessionId, providerId, normalizedQuery, normalizedLimit, nextEntry);
         this.trimSession(normalizedSessionId);
-        this.trimGlobal();
+        this.persistEntry(key, normalizedSessionId, providerId, query, normalizedLimit, nextEntry);
         return cloneSuggestions(nextEntry.suggestions);
       })
       .finally(() => {
@@ -165,7 +156,7 @@ export class LocationSuggestionCacheStore {
   purgeExpired(nowMs = Date.now()): void {
     for (const [key, entry] of this.entries) {
       if (entry.expiresAtMs <= nowMs) {
-        const sessionId = this.sessionIdForKey(key);
+        const sessionId = key.split("::", 1)[0] ?? "anonymous";
         this.deleteKey(sessionId, key);
       }
     }
@@ -180,8 +171,6 @@ export class LocationSuggestionCacheStore {
       ttlMs: LOCATION_SUGGESTION_CACHE_TTL_MS,
       sessions: this.sessionKeys.size,
       entries: this.entries.size,
-      maxEntries: LOCATION_SUGGESTION_CACHE_MAX_ENTRIES,
-      maxQueryChars: LOCATION_SUGGESTION_CACHE_MAX_QUERY_CHARS,
       inflight: this.inflight.size,
       persistence: this.dbPath ? "sqlite" : "disabled",
     };
@@ -224,33 +213,6 @@ export class LocationSuggestionCacheStore {
       }
       this.deleteKey(sessionId, oldest.key);
     }
-  }
-
-  private trimGlobal(): void {
-    if (this.entries.size <= LOCATION_SUGGESTION_CACHE_MAX_ENTRIES) {
-      return;
-    }
-
-    const oldestKeys = [...this.entries]
-      .map(([key, entry]) => ({ key, touchedAtMs: entry.touchedAtMs }))
-      .sort((left, right) => left.touchedAtMs - right.touchedAtMs);
-
-    while (this.entries.size > LOCATION_SUGGESTION_CACHE_MAX_ENTRIES && oldestKeys.length > 0) {
-      const oldest = oldestKeys.shift();
-      if (!oldest) {
-        break;
-      }
-      this.deleteKey(this.sessionIdForKey(oldest.key), oldest.key);
-    }
-  }
-
-  private sessionIdForKey(key: string): string {
-    for (const [sessionId, keys] of this.sessionKeys) {
-      if (keys.has(key)) {
-        return sessionId;
-      }
-    }
-    return "anonymous";
   }
 
   private deleteKey(sessionId: string, key: string): void {
@@ -317,28 +279,14 @@ export class LocationSuggestionCacheStore {
       return;
     }
 
-    runSql(this.db, `
-      DELETE FROM location_suggestions
-      WHERE key NOT IN (
-        SELECT key
-        FROM location_suggestions
-        ORDER BY touched_at_ms DESC, key DESC
-        LIMIT ?
-      )
-    `, LOCATION_SUGGESTION_CACHE_MAX_ENTRIES);
-
     const rows = allSql<SqliteLocationSuggestionRow>(
       this.db,
-      "SELECT key, session_id, expires_at_ms, touched_at_ms, payload FROM location_suggestions ORDER BY touched_at_ms DESC, key DESC",
+      "SELECT key, session_id, expires_at_ms, touched_at_ms, payload FROM location_suggestions ORDER BY key",
     );
 
     for (const row of rows) {
       const suggestions = parseJsonPayload<LocationSuggestion[]>(row.payload);
       if (!Array.isArray(suggestions)) {
-        runSql(this.db, "DELETE FROM location_suggestions WHERE key = ?", row.key);
-        continue;
-      }
-      if ((this.sessionKeys.get(row.session_id)?.size ?? 0) >= LOCATION_SUGGESTION_CACHE_MAX_ENTRIES_PER_SESSION) {
         runSql(this.db, "DELETE FROM location_suggestions WHERE key = ?", row.key);
         continue;
       }

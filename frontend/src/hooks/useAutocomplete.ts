@@ -48,8 +48,8 @@ export function useAutocomplete(onResolved?: (suggestion: LocationSuggestion) =>
   }, [inputHasFocus])
 
   const openSuggestions = useCallback(() => {
-    setOpen(true)
-  }, [])
+    setOpen(suggestions.length > 0)
+  }, [suggestions.length])
 
   const warmSuggestions = useCallback(async (q: string) => {
     const requestSeq = ++requestSeqRef.current

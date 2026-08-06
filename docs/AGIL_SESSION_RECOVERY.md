@@ -4,11 +4,6 @@ This runbook covers operational recovery when Agil stops working in `fly-desk-ch
 
 Click and Book Plus does not use this procedure: its token must be regenerated from credentials/TOTP, with Chrome/CDP used only as a fallback. See [`CBPLUS_SESSION_RECOVERY.md`](./CBPLUS_SESSION_RECOVERY.md).
 
-On Linux, the runtime uses `http://127.0.0.1:9222` when neither
-`AGIL_BROWSER_URL` nor `AGIL_BROWSER_WS_ENDPOINT` is set. This matches
-`fly-desk-chrome.service` on the VPS. An explicit endpoint still wins; Windows
-does not receive this implicit fallback.
-
 ## Rules
 
 - Do not print cookies, tokens, storage payloads, passwords, or values from `/etc/fly-desk.env`.

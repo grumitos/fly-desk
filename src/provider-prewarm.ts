@@ -1,11 +1,6 @@
 import { prewarmLocalAgilSession } from "./local-agil";
 import { prewarmLocalCostamarContext } from "./local-costamar";
 import { logPerfSpan, startPerfTimer } from "./perf";
-import type { ProviderId } from "./core/types";
-import {
-  providerDegradedReasonFromError,
-  type ProviderStatusTracker,
-} from "./provider-status";
 
 const DEFAULT_PROVIDER_PREWARM_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -24,37 +19,22 @@ export function providerPrewarmIntervalMs(): number {
   return readNonNegativeMs("FLY_DESK_PROVIDER_PREWARM_INTERVAL_MS", DEFAULT_PROVIDER_PREWARM_INTERVAL_MS);
 }
 
-export async function prewarmProvidersSilently(providerStatus?: ProviderStatusTracker): Promise<void> {
+export async function prewarmProvidersSilently(): Promise<void> {
   const prewarmStart = startPerfTimer();
-  const providerIds = ["agil-local", "costamar"] as const satisfies readonly ProviderId[];
-  providerIds.forEach((providerId) => providerStatus?.markChecking(providerId, "prewarm"));
   const outcomes = await Promise.allSettled([
     prewarmLocalAgilSession(),
     Promise.resolve().then(() => prewarmLocalCostamarContext()),
   ]);
 
-  outcomes.forEach((outcome, index) => {
-    const providerId = providerIds[index]!;
-    if (outcome.status === "rejected") {
-      const reasonCode = providerDegradedReasonFromError(outcome.reason);
-      providerStatus?.recordDegraded(providerId, "prewarm", reasonCode);
-      return;
-    }
-
-    if (providerId === "costamar") {
-      providerStatus?.recordCostamarContextAvailable();
-    } else {
-      providerStatus?.recordReady(providerId, "prewarm");
-    }
-  });
-
   const failed = outcomes.filter((outcome) => outcome.status === "rejected");
   if (failed.length > 0) {
-    const failedProviderIds = outcomes.flatMap((outcome, index) =>
-      outcome.status === "rejected" ? [providerIds[index]] : []);
-    console.warn(
-      `Fly Desk provider prewarm skipped ${failed.length} provider(s): ${failedProviderIds.join(", ")}`,
-    );
+    console.warn(`Fly Desk provider prewarm skipped ${failed.length} provider(s): ${
+      failed.map((outcome) => outcome.status === "rejected"
+        ? outcome.reason instanceof Error ? outcome.reason.message : "unknown failure"
+        : "")
+        .filter(Boolean)
+        .join(" | ")
+    }`);
   }
 
   logPerfSpan("providers.prewarm", prewarmStart, {
@@ -62,19 +42,19 @@ export async function prewarmProvidersSilently(providerStatus?: ProviderStatusTr
   });
 }
 
-export function startProviderPrewarmLoop(providerStatus?: ProviderStatusTracker): NodeJS.Timeout | undefined {
+export function startProviderPrewarmLoop(): NodeJS.Timeout | undefined {
   if (!providerPrewarmEnabled()) {
     return undefined;
   }
 
-  void prewarmProvidersSilently(providerStatus).catch(() => undefined);
+  void prewarmProvidersSilently().catch(() => undefined);
   const intervalMs = providerPrewarmIntervalMs();
   if (intervalMs <= 0) {
     return undefined;
   }
 
   const timer = setInterval(() => {
-    void prewarmProvidersSilently(providerStatus).catch(() => undefined);
+    void prewarmProvidersSilently().catch(() => undefined);
   }, intervalMs);
   timer.unref?.();
   return timer;

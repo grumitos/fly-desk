@@ -3,18 +3,14 @@ import type {
   LocationSuggestion,
   MatrixCell,
   MigrationMonthSummary,
+  ResultsColumnLayout,
+  ResultsLayout,
   SearchRequest,
   SearchJobResponse,
   SortMode,
 } from "@/types"
 import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
-import { getBrowserClientSessionId } from "@/lib/browser-client-session"
-import { isIsoDate } from "@/lib/iso-date"
 import { filterLocationSuggestions, normalizeLocationSearchText, normalizeLocationSuggestions } from "@/lib/locations"
-import {
-  normalizeProviderStatusResponse,
-  type ProviderStatusResponse,
-} from "@/lib/providers"
 import {
   firstSegmentForItinerary,
   formatOfferBaggageLabel,
@@ -60,22 +56,9 @@ type RequestOptions = {
   signal?: AbortSignal
 }
 
-export type QuotationRequest = {
-  searchSessionId: string
-  offerId: string
-  migrationPlan?: boolean
-}
-
-export type QuotationResponse = {
-  searchSessionId: string
-  offer: CanonicalOffer
-  commercialText: string
-}
-
 type SearchRequestOptions = RequestOptions & {
   onJobStart?: (job: { id: string; type: "search" | "matrix" }) => void
   onMigrationProgress?: (job: SearchJobResponse) => void
-  recordLocationUsage?: boolean
 }
 
 type MigrationMonthRange = {
@@ -125,6 +108,7 @@ function translateApiMessage(message: string): string {
     "Return range end must be on or after return range start.": "El fin del rango de regreso debe ser igual o posterior al inicio.",
     "Costamar terminalId is required.": "Falta configurar el terminal de Click and Book Plus.",
     "Click and Book Plus terminalId is required.": "Falta configurar el terminal de Click and Book Plus.",
+    "A full results column layout is required.": "El layout de resultados está incompleto.",
     "searchSessionId and offerId are required.": "Falta la sesión de búsqueda o la oferta.",
     "Session or offer not found.": "No se encontró la sesión o la oferta.",
     "Search job not found.": "No se encontró la búsqueda.",
@@ -221,7 +205,7 @@ function translateApiMessage(message: string): string {
   }
 
   if (/(Costamar|Click and Book Plus)/i.test(normalized) && /(failed|error|token|auth|login|session|sesión|401|403|500|expired|challenge)/i.test(normalized)) {
-    return "No se pudo consultar Click and Book Plus. Verifica la autenticación e intenta nuevamente."
+    return "No se pudo consultar Click and Book Plus. Verifica que la sesión esté activa e intenta nuevamente."
   }
 
   return normalized ? "No se pudo completar la operación. Intenta nuevamente." : "Ocurrió un error inesperado."
@@ -453,21 +437,10 @@ async function getJson<T>(url: string, options: RequestOptions = {}): Promise<T>
   return data as T
 }
 
-export async function getProviderStatus(
-  options: { signal?: AbortSignal } = {},
-): Promise<ProviderStatusResponse> {
-  const data = await getJson<unknown>(`${API_BASE}/api/provider-status`, options)
-  return normalizeProviderStatusResponse(data)
-}
-
 export async function suggestLocations(query: string, limit = 8): Promise<LocationSuggestion[]> {
   if (query.trim().length < 1) return []
-  const clientSessionId = getBrowserClientSessionId()
-  const sessionQuery = clientSessionId
-    ? `&clientSessionId=${encodeURIComponent(clientSessionId)}`
-    : ""
   const data = await getJson<{ suggestions: LocationSuggestion[] }>(
-    `${API_BASE}/api/locations?q=${encodeURIComponent(query)}&limit=${limit}${sessionQuery}`
+    `${API_BASE}/api/locations?q=${encodeURIComponent(query)}&limit=${limit}`
   )
   const suggestions = normalizeLocationSuggestions(data.suggestions)
   const rankedSuggestions = filterLocationSuggestions(query, suggestions, limit)
@@ -491,6 +464,23 @@ export function getCachedLocationSuggestions(query: string, limit = 8): Location
 export function resetLocationSuggestionCachesForTests(): void {
   locationSuggestionCache.clear()
   locationSuggestionPool.clear()
+}
+
+export async function getResultsLayout(options: RequestOptions = {}): Promise<ResultsLayout | null> {
+  const data = await getJson<{ layout: ResultsLayout | null }>(`${API_BASE}/api/results-layout`, options)
+  return data.layout ?? null
+}
+
+export async function saveResultsLayout(
+  columns: ResultsColumnLayout,
+  options: RequestOptions = {},
+): Promise<ResultsLayout> {
+  const data = await postJson<{ ok?: boolean; layout: ResultsLayout }>(
+    `${API_BASE}/api/results-layout`,
+    { columns },
+    options,
+  )
+  return data.layout
 }
 
 function rememberLocationSuggestions(query: string, limit: number, suggestions: LocationSuggestion[]) {
@@ -574,8 +564,6 @@ export type BackendSearchRequest = {
 }
 
 export type BackendSearchPayload = {
-  clientSessionId?: string
-  recordLocationUsage?: boolean
   sortMode: SortMode
   request: BackendSearchRequest
 }
@@ -710,70 +698,6 @@ function normalizeOfferItineraries(value: unknown): CanonicalOffer["itineraries"
   }) as CanonicalOffer["itineraries"]
 }
 
-function objectRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined
-}
-
-function nonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0
-}
-
-function offerTransportRecord(
-  input: unknown,
-  expectedTripType?: SearchRequest["tripType"],
-): Record<string, unknown> | undefined {
-  const offer = objectRecord(input)
-  const price = objectRecord(offer?.price)
-  const total = objectRecord(price?.total)
-  const amount = total?.amount
-  const itineraries = offer?.itineraries
-
-  if (
-    !offer
-    || !nonEmptyString(offer.id)
-    || !nonEmptyString(offer.providerSource)
-    || typeof amount !== "number"
-    || !Number.isFinite(amount)
-    || amount <= 0
-    || !nonEmptyString(total?.currencyCode)
-    || !Array.isArray(itineraries)
-    || itineraries.length === 0
-  ) return undefined
-
-  const completeItineraries = itineraries.flatMap((itinerary) => {
-    const rawItinerary = objectRecord(itinerary)
-    const segments = rawItinerary?.segments
-    const complete = Array.isArray(segments)
-      && segments.length > 0
-      && segments.every((segment) => {
-        const rawSegment = objectRecord(segment)
-        return Boolean(
-          rawSegment
-          && nonEmptyString(rawSegment.origin)
-          && nonEmptyString(rawSegment.destination)
-          && nonEmptyString(rawSegment.departureAt)
-          && nonEmptyString(rawSegment.arrivalAt),
-        )
-      })
-    return complete && rawItinerary ? [rawItinerary] : []
-  })
-
-  if (completeItineraries.length !== itineraries.length) return undefined
-
-  const tripType = expectedTripType
-    ?? (offer.tripType === "one-way" || offer.tripType === "round-trip" || offer.tripType === "multi-city"
-      ? offer.tripType
-      : undefined)
-  const directions = new Set(completeItineraries.map((itinerary) => itinerary.direction))
-  if (tripType === "one-way" && !directions.has("outbound")) return undefined
-  if (tripType === "round-trip" && (!directions.has("outbound") || !directions.has("inbound"))) return undefined
-  if (tripType === "multi-city" && !directions.has("multi")) return undefined
-
-  return offer
-}
-
 function offerAirlineCode(offer: Record<string, unknown>, segment?: Record<string, unknown>): string {
   return String(
     offer.mainCarrier
@@ -867,10 +791,8 @@ function hasCheckedBaggage(baggage: unknown): boolean {
   )
 }
 
-function normalizeOffer(input: unknown, expectedTripType?: SearchRequest["tripType"]): CanonicalOffer | undefined {
-  const offer = offerTransportRecord(input, expectedTripType)
-  if (!offer) return undefined
-
+function normalizeOffer(input: unknown): CanonicalOffer {
+  const offer = input && typeof input === "object" ? input as Record<string, unknown> : {}
   const itineraries = normalizeOfferItineraries(offer.itineraries)
   const offerWithNormalizedNames = {
     ...offer,
@@ -885,7 +807,9 @@ function normalizeOffer(input: unknown, expectedTripType?: SearchRequest["tripTy
   const outbound = firstSegmentForItinerary(outboundItinerary)
   const outboundLast = lastSegmentForItinerary(outboundItinerary)
   const inbound = firstSegmentForItinerary(inboundItinerary)
-  const price = offer.price as CanonicalOffer["price"]
+  const price = offer.price && typeof offer.price === "object"
+    ? offer.price as CanonicalOffer["price"]
+    : { total: { amount: 0, currencyCode: "USD" } }
   const warnings = translatedOfferWarnings(offer.warnings)
   const totalDurationMinutes = positiveNumber(metrics.totalDurationMinutes)
     ?? itineraryDurationMinutesFromOffer(offer)
@@ -903,8 +827,8 @@ function normalizeOffer(input: unknown, expectedTripType?: SearchRequest["tripTy
 
   return {
     ...(offer as Partial<CanonicalOffer>),
-    id: String(offer.id),
-    providerSource: String(offer.providerSource),
+    id: String(offer.id ?? crypto.randomUUID()),
+    providerSource: String(offer.providerSource ?? ""),
     airline: offerAirlineDisplayName(offerWithNormalizedNames, outbound),
     itineraries,
     origin: typeof outbound?.origin === "string" ? outbound.origin : String(offer.origin ?? ""),
@@ -954,15 +878,8 @@ function filterNoOfferWarningsWhenProviderHasOffers(messages: string[], offers: 
 }
 
 function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
-  const request = fromBackendRequest(data.request)
-  const offers = (data.offers ?? []).flatMap((offer) => {
-    const normalized = normalizeOffer(offer, request.tripType)
-    return normalized ? [normalized] : []
-  })
-  const allOffers = (data.allOffers ?? []).flatMap((offer) => {
-    const normalized = normalizeOffer(offer, request.tripType)
-    return normalized ? [normalized] : []
-  })
+  const offers = (data.offers ?? []).map(normalizeOffer)
+  const allOffers = (data.allOffers ?? []).map(normalizeOffer)
   const offerScope = allOffers.length ? allOffers : offers
   const rawWarnings = filterNoOfferWarningsWhenProviderHasOffers(
     (data.warnings ?? []).map((warning) => String(warning)),
@@ -985,7 +902,7 @@ function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
     ...data,
     searchMeta,
     warnings,
-    request,
+    request: fromBackendRequest(data.request),
     offers,
     allOffers,
     diagnosticLog: toDiagnosticLines([
@@ -997,18 +914,17 @@ function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
   }
 }
 
-function normalizeMatrixOffer(
-  cell: MatrixCell,
-  expectedTripType: SearchRequest["tripType"],
-): CanonicalOffer | undefined {
+function normalizeMatrixOffer(cell: MatrixCell, request: SearchRequest): CanonicalOffer {
+  const currencyCode = cell.price?.currencyCode ?? "USD"
+  const amount = cell.price?.amount ?? 0
   const tooltipWarning = translatedMatrixTooltipWarning(cell.tooltip)
 
   if (cell.offer) {
-    const offer = normalizeOffer(cell.offer, expectedTripType)
-    if (!offer) return undefined
+    const offer = normalizeOffer(cell.offer)
     return {
       ...offer,
       priceConfidence: cell.confidence || offer.priceConfidence,
+      priceStatus: cell.confidence || offer.priceStatus,
       purchasePaths: cell.purchasePaths ?? offer.purchasePaths,
       warnings: uniqueStrings([
         ...(offer.warnings ?? []),
@@ -1017,7 +933,32 @@ function normalizeMatrixOffer(
     }
   }
 
-  return undefined
+  return {
+    id: cell.key,
+    providerSource: cell.providerSource,
+    airline: "Flexible",
+    origin: request.origin,
+    destination: request.destination,
+    departureDate: cell.departureDate,
+    returnDate: cell.returnDate,
+    arrivalDate: cell.returnDate,
+    duration: cell.stayNights ? `${cell.stayNights} noches` : "",
+    stops: 0,
+    stopMeta: cell.returnDate
+      ? `${cell.departureDate} -> ${cell.returnDate}`
+      : cell.departureDate,
+    baggageLabel: tooltipWarning,
+    priceConfidence: cell.confidence,
+    priceStatus: cell.confidence,
+    purchasePaths: cell.purchasePaths,
+    warnings: tooltipWarning ? [tooltipWarning] : undefined,
+    price: {
+      total: {
+        amount,
+        currencyCode,
+      },
+    },
+  }
 }
 
 function normalizeMatrixJob(data: BackendMatrixJobResponse, sortMode: SortMode): SearchJobResponse {
@@ -1032,10 +973,8 @@ function normalizeMatrixJob(data: BackendMatrixJobResponse, sortMode: SortMode):
     ...rawError.map((warning) => translateApiMessage(warning)),
   ]
   const cells = data.cells ?? []
-  const offers = cells.flatMap((cell) => {
-    const offer = normalizeMatrixOffer(cell, request.tripType)
-    return offer ? [offer] : []
-  })
+  const pricedCells = cells.filter((cell) => typeof cell.price?.amount === "number")
+  const offers = pricedCells.map((cell) => normalizeMatrixOffer(cell, request))
 
   return {
     searchJobId: data.matrixJobId,
@@ -1175,55 +1114,6 @@ function normalizeMigrationOffers(job: SearchJobResponse, range: MigrationMonthR
   return offers.map((offer) => normalizeMigrationOffer(offer, range, job))
 }
 
-function withBrowserClientSessionId(payload: BackendSearchPayload): BackendSearchPayload {
-  const clientSessionId = getBrowserClientSessionId()
-  return clientSessionId ? { ...payload, clientSessionId } : payload
-}
-
-function migrationOfferDepartureDate(offer: CanonicalOffer): string | undefined {
-  const outbound = offer.itineraries?.find((itinerary) => itinerary.direction === "outbound")
-    ?? offer.itineraries?.[0]
-  const departureAt = outbound?.segments?.[0]?.departureAt
-  const itineraryDate = typeof departureAt === "string" && departureAt.length >= 10
-    ? departureAt.slice(0, 10)
-    : undefined
-
-  if (isIsoDate(itineraryDate)) {
-    return itineraryDate
-  }
-
-  return isIsoDate(offer.departureDate) ? offer.departureDate : undefined
-}
-
-function migrationMonthCoverage(
-  result: MigrationMonthWorkResult,
-): Pick<MigrationMonthSummary, "faredDays" | "queriedDays"> {
-  if (!result.job?.searchComplete || result.job.searchMeta?.partial) {
-    return {}
-  }
-
-  const startMs = Date.parse(`${result.range.departureStart}T00:00:00Z`)
-  const endMs = Date.parse(`${result.range.departureEnd}T00:00:00Z`)
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
-    return {}
-  }
-
-  const fareDates = new Set(
-    result.offers
-      .map(migrationOfferDepartureDate)
-      .filter((date): date is string => Boolean(
-        date
-        && date >= result.range.departureStart
-        && date <= result.range.departureEnd
-      )),
-  )
-
-  return {
-    faredDays: fareDates.size,
-    queriedDays: Math.floor((endMs - startMs) / 86_400_000) + 1,
-  }
-}
-
 async function runWithConcurrency<T, R>(
   items: T[],
   limit: number,
@@ -1252,6 +1142,12 @@ function offerAmount(offer: CanonicalOffer) {
 function todayIso() {
   const date = new Date()
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
+}
+
+function isIsoDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = new Date(`${value}T00:00:00Z`)
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
 }
 
 function addMonths(monthValue: string, delta: number) {
@@ -1291,65 +1187,12 @@ function delay(ms: number, signal?: AbortSignal) {
   })
 }
 
-export async function requestQuotation(
-  payload: QuotationRequest,
-  options: RequestOptions = {},
-): Promise<QuotationResponse> {
-  const data = await postJson<{
-    searchSessionId?: unknown
-    offer?: unknown
-    commercialText?: unknown
-  }>(`${API_BASE}/api/quotation`, payload, options)
-  const rawOffer = data.offer
-  const rawOfferRecord = offerTransportRecord(rawOffer)
-  const priceVerifiedAt = rawOfferRecord?.priceVerifiedAt
-
-  if (
-    typeof data.searchSessionId !== "string"
-    || data.searchSessionId !== payload.searchSessionId
-    || typeof data.commercialText !== "string"
-    || data.commercialText.trim().length === 0
-    || !rawOfferRecord
-    || typeof rawOfferRecord.id !== "string"
-    || typeof rawOfferRecord.providerSource !== "string"
-    || rawOfferRecord.priceConfidence !== "validated"
-    || rawOfferRecord.priceStatus !== "verified"
-    || typeof priceVerifiedAt !== "string"
-    || !Number.isFinite(Date.parse(priceVerifiedAt))
-  ) {
-    throw new FlyDeskApiError(
-      "El servidor devolvió una cotización no válida.",
-      ["POST /api/quotation returned an invalid contract."],
-    )
-  }
-
-  const offer = normalizeOffer(rawOffer)
-  if (!offer) {
-    throw new FlyDeskApiError(
-      "El servidor devolvió una cotización no válida.",
-      ["POST /api/quotation returned an invalid offer."],
-    )
-  }
-
-  return {
-    searchSessionId: data.searchSessionId,
-    commercialText: data.commercialText,
-    offer,
-  }
-}
-
 export async function startSearch(
   request: SearchRequest,
   sortMode: SortMode,
   options: SearchRequestOptions = {}
 ): Promise<SearchJobResponse> {
-  const payload = withBrowserClientSessionId({
-    ...toBackendPayload(request, sortMode),
-    ...(options.recordLocationUsage === undefined
-      ? {}
-      : { recordLocationUsage: options.recordLocationUsage }),
-  })
-  const data = await postJson<BackendSearchJobResponse>(`${API_BASE}/api/search`, payload, options)
+  const data = await postJson<BackendSearchJobResponse>(`${API_BASE}/api/search`, toBackendPayload(request, sortMode), options)
   if (data.searchJobId) {
     options.onJobStart?.({ id: data.searchJobId, type: "search" })
   }
@@ -1368,8 +1211,7 @@ export async function startMatrix(
   sortMode: SortMode,
   options: SearchRequestOptions = {}
 ): Promise<SearchJobResponse> {
-  const payload = withBrowserClientSessionId(toBackendPayload(request, sortMode))
-  const data = await postJson<BackendMatrixJobResponse>(`${API_BASE}/api/matrix`, payload, options)
+  const data = await postJson<BackendMatrixJobResponse>(`${API_BASE}/api/matrix`, toBackendPayload(request, sortMode), options)
   if (data.matrixJobId) {
     options.onJobStart?.({ id: data.matrixJobId, type: "matrix" })
   }
@@ -1442,8 +1284,6 @@ export async function startMigrationSearch(
       coverageMode: "core",
     }
     const hasPendingMonth = monthResults.some((result) => !result.complete)
-    const hasPartialMonth = monthResults.some((result) => result.status === "partial" || result.status === "error")
-    const migrationIsPartial = hasPendingMonth || hasPartialMonth
     const monthlyWarnings = searchComplete && selectedOffers.length === 0
       ? uniqueStrings([
           ...warnings,
@@ -1467,7 +1307,6 @@ export async function startMigrationSearch(
         label: result.range.label,
         departureStart: result.range.departureStart,
         departureEnd: result.range.departureEnd,
-        ...migrationMonthCoverage(result),
         searchJobId: result.job?.searchJobId,
         offer: result.offer,
         offers: result.offers,
@@ -1479,8 +1318,8 @@ export async function startMigrationSearch(
         completedAt: searchComplete ? new Date().toISOString() : "",
         providersUsed: uniqueStrings(monthResults.flatMap((result) => result.job?.searchMeta?.providersUsed ?? [])),
         warnings: monthlyWarnings,
-        partial: migrationIsPartial,
-        searchState: searchComplete && !migrationIsPartial ? "search_live" : "search_partial",
+        partial: hasPendingMonth || monthResults.some((result) => result.status === "partial" || result.status === "error"),
+        searchState: searchComplete && !hasPendingMonth ? "search_live" : "search_partial",
       },
       providerMeta,
       warnings: monthlyWarnings,
@@ -1500,10 +1339,7 @@ export async function startMigrationSearch(
     async (range, index) => {
       try {
         throwIfAborted(options.signal)
-        let job = await startSearch(migrationRequestForMonth(request, range), "cheapest", {
-          ...options,
-          recordLocationUsage: index === 0,
-        })
+        let job = await startSearch(migrationRequestForMonth(request, range), "cheapest", options)
         let lastRevision = job.revision
 
         while (true) {
@@ -1517,11 +1353,9 @@ export async function startMigrationSearch(
             warnings: uniqueStrings([...(job.warnings ?? []), ...(job.searchMeta?.warnings ?? [])]),
             diagnosticLog: job.diagnosticLog ?? [],
             complete: job.searchComplete,
-            status: job.searchMeta?.partial
-              ? "partial"
-              : offer
-                ? job.searchComplete ? "available" : "partial"
-                : job.searchComplete ? "empty" : "loading",
+            status: offer
+              ? job.searchComplete ? "available" : "partial"
+              : job.searchComplete ? "empty" : "loading",
           }
           emitProgress()
 
