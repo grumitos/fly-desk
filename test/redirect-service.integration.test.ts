@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import type { CanonicalOffer, MatrixCell, ProviderMeta, SearchMeta, SearchRequest } from "../src/core/types";
-import { requestWithServerTrustHeaders, routeRedirectRequest } from "../src/redirect-service";
+import {
+  requestWithServerTrustHeaders,
+  resolveRedirectServerIdleTimeoutSeconds,
+  routeRedirectRequest,
+} from "../src/redirect-service";
 import { SearchSessionStore } from "../src/session-store";
 import { createRedirectSessionCookie, createWebSessionCookie } from "../src/web-auth";
 import { resetCostamarSessionCacheForTests } from "../src/provider-context";
@@ -13,6 +17,13 @@ import {
   resetCostamarWarmupStateForTests,
   setCostamarWarmupGeneratorForTests,
 } from "../src/local-costamar";
+
+test("redirect server idle timeout outlives Click and Book redirect validation", () => {
+  assert.equal(resolveRedirectServerIdleTimeoutSeconds(undefined, 55_000), 120);
+  assert.equal(resolveRedirectServerIdleTimeoutSeconds("10", 55_000), 60);
+  assert.equal(resolveRedirectServerIdleTimeoutSeconds("240", 240_000), 245);
+  assert.equal(resolveRedirectServerIdleTimeoutSeconds("0", 55_000), 0);
+});
 
 function buildJwt(payload: Record<string, unknown>): string {
   const encode = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value))
