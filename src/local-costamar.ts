@@ -1131,19 +1131,41 @@ async function generateCostamarRedirectContextViaB2BHttp(
       requiresAuthenticator: costamarB2bResponseRequiresAuthenticator(login.body),
     });
 
-    if (costamarB2bResponseRequiresAuthenticator(login.body)) {
+    let authChallengeBody = costamarB2bResponseRequiresAuthenticator(login.body)
+      ? login.body
+      : undefined;
+    let authChallengeUrl = `${origin}/lang/en/login2factor`;
+    const loginLocation = login.response.headers.get("location");
+    if (!authChallengeBody && login.response.status >= 300 && login.response.status < 400 && loginLocation) {
+      const redirectUrl = resolveCostamarB2bRedirectUrl(loginLocation, origin);
+      if (!redirectUrl) {
+        return undefined;
+      }
+      const redirected = await fetchCostamarB2bWithCookies(redirectUrl, origin, jar, {
+        headers: {
+          accept: "text/html,application/xhtml+xml",
+        },
+      });
+      const redirectedToAuthenticator = /\/login2factor\/?$/i.test(new URL(redirectUrl).pathname);
+      if (redirectedToAuthenticator || costamarB2bResponseRequiresAuthenticator(redirected.body)) {
+        authChallengeBody = redirected.body;
+        authChallengeUrl = redirectUrl;
+      }
+    }
+
+    if (authChallengeBody !== undefined) {
       const authCode = await promptCostamarB2bAuthCode("Codigo de Google Authenticator");
       if (!authCode) {
         return undefined;
       }
 
-      const authFields = readCostamarB2bInputValues(login.body);
-      const auth = await fetchCostamarB2bWithCookies(`${origin}/lang/en/login2factor`, origin, jar, {
+      const authFields = readCostamarB2bInputValues(authChallengeBody);
+      const auth = await fetchCostamarB2bWithCookies(authChallengeUrl, origin, jar, {
         method: "POST",
         headers: {
           "content-type": "application/x-www-form-urlencoded",
           accept: "text/html,application/xhtml+xml",
-          referer: `${origin}/lang/en/login`,
+          referer: authChallengeUrl,
         },
         body: new URLSearchParams({
           ...authFields,
@@ -1169,19 +1191,6 @@ async function generateCostamarRedirectContextViaB2BHttp(
         });
       } else if (/login|authenticator|secretcode/i.test(auth.body)) {
         return undefined;
-      }
-    } else {
-      const location = login.response.headers.get("location");
-      if (login.response.status >= 300 && login.response.status < 400 && location) {
-        const redirectUrl = resolveCostamarB2bRedirectUrl(location, origin);
-        if (!redirectUrl) {
-          return undefined;
-        }
-        await fetchCostamarB2bWithCookies(redirectUrl, origin, jar, {
-          headers: {
-            accept: "text/html,application/xhtml+xml",
-          },
-        });
       }
     }
 
