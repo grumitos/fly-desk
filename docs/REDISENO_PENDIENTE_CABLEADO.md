@@ -344,7 +344,7 @@ Mejoras aplicadas durante el cableado:
   registra solo IDs de proveedor fallidos. Los workers y las respuestas HTTP
   serializan códigos cerrados en vez de stacks, rutas, URLs o cuerpos externos.
 - La automatización B2B de Click and Book Plus acepta únicamente HTTPS en el
-  origen exacto `b2b.clickandbook.com`, conserva redirects HTTP en ese mismo
+  origen exacto `www.clickandbook.plus`, conserva redirects HTTP en ese mismo
   origen y vuelve a comprobarlo antes de escribir correo, contraseña u OTP en
   Playwright. El token que exige la URL de compra se resuelve justo antes del
   `302`; no se persiste en `providerContext`, el purchase path ni los logs.
