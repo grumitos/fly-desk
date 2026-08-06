@@ -19,6 +19,7 @@ import {
   mapCostamarRecommendationToOffer,
   resetCostamarWarmupStateForTests,
   resolveCostamarChromeExecutableCandidatesForTests,
+  resolveCostamarSessionWarmupTimeoutMsForTests,
   resolveLocalCostamarMatrixProgressive,
   resolveLocalCostamarRangeProgressive,
   resolveCostamarRedirectForRequest,
@@ -1910,6 +1911,24 @@ test("Costamar Playwright authentication writes no credentials after a cross-ori
   }
 });
 
+test("Costamar browser automation defaults to enough time for login and 2FA", () => {
+  const previousPrimary = process.env.CBPLUS_SESSION_WARMUP_TIMEOUT_MS;
+  const previousLegacy = process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS;
+  delete process.env.CBPLUS_SESSION_WARMUP_TIMEOUT_MS;
+  delete process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS;
+
+  try {
+    assert.equal(resolveCostamarSessionWarmupTimeoutMsForTests(), 30_000);
+    process.env.CBPLUS_SESSION_WARMUP_TIMEOUT_MS = "12000";
+    assert.equal(resolveCostamarSessionWarmupTimeoutMsForTests(), 12_000);
+  } finally {
+    if (previousPrimary === undefined) delete process.env.CBPLUS_SESSION_WARMUP_TIMEOUT_MS;
+    else process.env.CBPLUS_SESSION_WARMUP_TIMEOUT_MS = previousPrimary;
+    if (previousLegacy === undefined) delete process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS;
+    else process.env.COSTAMAR_SESSION_WARMUP_TIMEOUT_MS = previousLegacy;
+  }
+});
+
 test("Costamar Playwright authentication supports the current name-based login form", async () => {
   const previousBaseUrl = process.env.CBPLUS_B2B_BASE_URL;
   const previousEmail = process.env.CBPLUS_B2B_EMAIL;
@@ -3563,6 +3582,48 @@ test("Costamar B2B rejects a non-official origin before sending credentials", as
   }
 });
 
+test("Costamar B2B sends credentials only to an official login path", async () => {
+  const previousFetch = global.fetch;
+  const previousBaseUrl = process.env.CBPLUS_B2B_BASE_URL;
+  const previousEmail = process.env.CBPLUS_B2B_EMAIL;
+  const previousPassword = process.env.CBPLUS_B2B_PASSWORD;
+  const fetchedUrls: string[] = [];
+  process.env.CBPLUS_B2B_BASE_URL = "https://b2b.clickandbook.com/lang/es/b2b";
+  process.env.CBPLUS_B2B_EMAIL = "agent@example.test";
+  process.env.CBPLUS_B2B_PASSWORD = "fixture-password";
+  global.fetch = (async (input) => {
+    const url = String(input);
+    fetchedUrls.push(url);
+    if (url === "https://b2b.clickandbook.com/login") {
+      return new Response("", {
+        status: 302,
+        headers: { Location: "/en/maintenance" },
+      });
+    }
+    return new Response("unexpected", { status: 500 });
+  }) as typeof fetch;
+
+  try {
+    const result = await generateCostamarRedirectContextViaB2BHttpForTests({
+      apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+      brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+      terminalId: "0721808110",
+      token: "",
+      lang: "es",
+    });
+    assert.equal(result, undefined);
+    assert.deepEqual(fetchedUrls, ["https://b2b.clickandbook.com/login"]);
+  } finally {
+    global.fetch = previousFetch;
+    if (previousBaseUrl === undefined) delete process.env.CBPLUS_B2B_BASE_URL;
+    else process.env.CBPLUS_B2B_BASE_URL = previousBaseUrl;
+    if (previousEmail === undefined) delete process.env.CBPLUS_B2B_EMAIL;
+    else process.env.CBPLUS_B2B_EMAIL = previousEmail;
+    if (previousPassword === undefined) delete process.env.CBPLUS_B2B_PASSWORD;
+    else process.env.CBPLUS_B2B_PASSWORD = previousPassword;
+  }
+});
+
 test("Costamar B2B completes 2FA when login redirects to the authenticator page", async () => {
   const previousFetch = global.fetch;
   const previousBaseUrl = process.env.CBPLUS_B2B_BASE_URL;
@@ -3584,35 +3645,38 @@ test("Costamar B2B completes 2FA when login redirects to the authenticator page"
     fetchedUrls.push(url);
     if (url === "https://b2b.clickandbook.com/login") {
       return new Response("", {
-        status: 200,
-        headers: { "Set-Cookie": "session=fixture-session; Path=/; Secure; HttpOnly" },
+        status: 302,
+        headers: {
+          Location: "/en/login",
+          "Set-Cookie": "session=fixture-session; Path=/; Secure; HttpOnly",
+        },
       });
     }
-    if (url === "https://b2b.clickandbook.com/lang/en/login") {
+    if (url === "https://b2b.clickandbook.com/en/login") {
       return new Response("", {
         status: 302,
-        headers: { Location: "/lang/en/login2factor" },
+        headers: { Location: "/en/login2factor" },
       });
     }
-    if (url === "https://b2b.clickandbook.com/lang/en/login2factor" && init?.method !== "POST") {
+    if (url === "https://b2b.clickandbook.com/en/login2factor" && init?.method !== "POST") {
       return new Response(
         '<form><input name="csrf" value="fixture-csrf"><input name="secretcode">Google Authenticator</form>',
         { status: 200 },
       );
     }
-    if (url === "https://b2b.clickandbook.com/lang/en/login2factor" && init?.method === "POST") {
+    if (url === "https://b2b.clickandbook.com/en/login2factor" && init?.method === "POST") {
       const body = new URLSearchParams(String(init.body));
       assert.equal(body.get("csrf"), "fixture-csrf");
       assert.match(body.get("secretcode") ?? "", /^\d{6}$/);
       return new Response("", {
         status: 302,
-        headers: { Location: "/lang/en/b2b" },
+        headers: { Location: "/en/b2b" },
       });
     }
-    if (url === "https://b2b.clickandbook.com/lang/en/b2b") {
+    if (url === "https://b2b.clickandbook.com/en/b2b") {
       return new Response("authenticated", { status: 200 });
     }
-    if (url === "https://b2b.clickandbook.com/lang/en/airlinesearch") {
+    if (url === "https://b2b.clickandbook.com/en/airlinesearch") {
       return new Response(JSON.stringify({ token }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -3632,11 +3696,11 @@ test("Costamar B2B completes 2FA when login redirects to the authenticator page"
     assert.equal(result?.token, token);
     assert.deepEqual(fetchedUrls, [
       "https://b2b.clickandbook.com/login",
-      "https://b2b.clickandbook.com/lang/en/login",
-      "https://b2b.clickandbook.com/lang/en/login2factor",
-      "https://b2b.clickandbook.com/lang/en/login2factor",
-      "https://b2b.clickandbook.com/lang/en/b2b",
-      "https://b2b.clickandbook.com/lang/en/airlinesearch",
+      "https://b2b.clickandbook.com/en/login",
+      "https://b2b.clickandbook.com/en/login2factor",
+      "https://b2b.clickandbook.com/en/login2factor",
+      "https://b2b.clickandbook.com/en/b2b",
+      "https://b2b.clickandbook.com/en/airlinesearch",
     ]);
   } finally {
     global.fetch = previousFetch;
@@ -3665,11 +3729,14 @@ test("Costamar B2B refuses cross-origin redirects without forwarding its cookie 
     fetchedUrls.push(url);
     if (url === "https://b2b.clickandbook.com/login") {
       return new Response("", {
-        status: 200,
-        headers: { "Set-Cookie": "session=fixture-session; Path=/; Secure; HttpOnly" },
+        status: 302,
+        headers: {
+          Location: "/en/login",
+          "Set-Cookie": "session=fixture-session; Path=/; Secure; HttpOnly",
+        },
       });
     }
-    if (url === "https://b2b.clickandbook.com/lang/en/login") {
+    if (url === "https://b2b.clickandbook.com/en/login") {
       return new Response("", {
         status: 302,
         headers: { Location: "https://attacker.invalid/collect" },
@@ -3689,7 +3756,7 @@ test("Costamar B2B refuses cross-origin redirects without forwarding its cookie 
     assert.equal(result, undefined);
     assert.deepEqual(fetchedUrls, [
       "https://b2b.clickandbook.com/login",
-      "https://b2b.clickandbook.com/lang/en/login",
+      "https://b2b.clickandbook.com/en/login",
     ]);
   } finally {
     global.fetch = previousFetch;
