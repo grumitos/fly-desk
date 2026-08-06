@@ -550,6 +550,18 @@ test("wide desktop shell expands from the idle measure into the workspace width"
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
     await page.getByTestId("result-card").waitFor();
+    await page.waitForFunction(() => {
+      const frame = document.querySelector<HTMLElement>('[data-testid="search-shell-frame"]')?.getBoundingClientRect();
+      const grid = document.querySelector<HTMLElement>(".fd-workspace-enter")?.getBoundingClientRect();
+      return Boolean(
+        frame
+        && grid
+        && frame.width >= 1720
+        && frame.width <= 1736
+        && grid.width >= 1720
+        && grid.width <= 1736,
+      );
+    });
 
     const workspaceBounds = await page.evaluate(() => {
       const frame = document.querySelector<HTMLElement>('[data-testid="search-shell-frame"]')?.getBoundingClientRect();

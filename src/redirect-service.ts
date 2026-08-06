@@ -26,6 +26,9 @@ const DEFAULT_REDIRECT_HOST = "127.0.0.1";
 const DEFAULT_REDIRECT_PORT = 8102;
 const DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS = 55_000;
 const MAX_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS = 240_000;
+const DEFAULT_REDIRECT_IDLE_TIMEOUT_SECONDS = 120;
+const MAX_REDIRECT_IDLE_TIMEOUT_SECONDS = 255;
+const REDIRECT_IDLE_TIMEOUT_MARGIN_SECONDS = 5;
 const DEFAULT_CACHE_LOOKUP_TIMEOUT_MS = 1_000;
 const MAX_CACHE_LOOKUP_TIMEOUT_MS = 5_000;
 
@@ -706,14 +709,45 @@ export function resolveRedirectServerPort(): number {
   return numberFromEnv("FLY_DESK_REDIRECT_PORT", DEFAULT_REDIRECT_PORT, 1, 65535);
 }
 
+export function resolveRedirectServerIdleTimeoutSeconds(
+  input = process.env.FLY_DESK_REDIRECT_IDLE_TIMEOUT_SECONDS?.trim()
+    ?? process.env.FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS,
+  redirectTotalTimeoutMs = costamarRedirectTotalTimeoutMs(),
+): number {
+  const minimum = Math.min(
+    MAX_REDIRECT_IDLE_TIMEOUT_SECONDS,
+    Math.ceil(Math.max(1_000, redirectTotalTimeoutMs) / 1_000)
+      + REDIRECT_IDLE_TIMEOUT_MARGIN_SECONDS,
+  );
+  const fallback = Math.max(DEFAULT_REDIRECT_IDLE_TIMEOUT_SECONDS, minimum);
+  const normalized = String(input ?? "").trim();
+  if (!normalized) {
+    return fallback;
+  }
+
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const configured = Math.trunc(parsed);
+  if (configured === 0) {
+    return 0;
+  }
+
+  return Math.max(minimum, Math.min(MAX_REDIRECT_IDLE_TIMEOUT_SECONDS, configured));
+}
+
 export function createRedirectServer(options: {
   port?: number;
   hostname?: string;
   dbPath?: string;
+  idleTimeoutSeconds?: number;
 } = {}): BunServer<undefined> {
   return Bun.serve({
     port: options.port ?? resolveRedirectServerPort(),
     hostname: options.hostname ?? resolveRedirectServerHost(),
+    idleTimeout: options.idleTimeoutSeconds ?? resolveRedirectServerIdleTimeoutSeconds(),
     fetch: (request, server) => routeRedirectRequest(requestWithServerTrustHeaders(request, server), { dbPath: options.dbPath }),
   });
 }
