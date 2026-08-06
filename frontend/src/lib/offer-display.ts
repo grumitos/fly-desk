@@ -6,6 +6,14 @@ export type LayoverItem = {
   minutes: number
 }
 
+export type OfferDetailSummary = {
+  routeLabel: string
+  stopsLabel: string
+  baggageLabel: string
+  departureDateTime: string
+  returnDateTime: string
+}
+
 export function primaryItineraryForOffer(offer: Pick<CanonicalOffer, "itineraries">): Itinerary | null {
   return offer.itineraries?.find((itinerary) => itinerary.direction === "outbound")
     ?? offer.itineraries?.[0]
@@ -34,6 +42,31 @@ export function itineraryRouteLabel(
   return route.length > 0 ? route.join(" - ") : "Ruta por confirmar"
 }
 
+export function offerRouteLabel(offer: CanonicalOffer): string {
+  return itineraryRouteLabel(primaryItineraryForOffer(offer), {
+    origin: offer.origin,
+    destination: offer.destination,
+  })
+}
+
+export function stopsCountForOffer(offer: CanonicalOffer): number {
+  const itineraryStops = (offer.itineraries ?? [])
+    .map(stopsCountFromItinerary)
+    .filter((value): value is number => value !== undefined)
+
+  if (itineraryStops.length > 0) {
+    return itineraryStops.reduce((sum, value) => sum + value, 0)
+  }
+
+  return nonNegativeNumber(offer.comparisonMetrics?.totalStops)
+    ?? nonNegativeNumber(offer.stops)
+    ?? 0
+}
+
+export function layoverItemsForOffer(offer: CanonicalOffer): LayoverItem[] {
+  return (offer.itineraries ?? []).flatMap((itinerary) => layoverItemsForItinerary(itinerary))
+}
+
 export function layoverItemsForItinerary(itinerary: Itinerary): LayoverItem[] {
   if (itinerary.segments.length < 2) return []
 
@@ -47,6 +80,13 @@ export function layoverItemsForItinerary(itinerary: Itinerary): LayoverItem[] {
       minutes,
     }
   })
+}
+
+export function formatOfferStopsLabel(offer: CanonicalOffer): string {
+  const stops = stopsCountForOffer(offer)
+  if (stops <= 0) return "Directo"
+
+  return stops === 1 ? "1 escala" : `${stops} escalas`
 }
 
 export function formatOfferBaggageLabel(baggage: unknown): string | undefined {
@@ -64,6 +104,21 @@ export function formatOfferBaggageLabel(baggage: unknown): string | undefined {
   return parts.length ? parts.join(" + ") : undefined
 }
 
+export function buildOfferDetailSummary(offer: CanonicalOffer): OfferDetailSummary {
+  const outbound = primaryItineraryForOffer(offer)
+  const inbound = returnItineraryForOffer(offer)
+  const outboundDeparture = firstSegmentForItinerary(outbound)?.departureAt ?? offer.departureDate
+  const inboundDeparture = firstSegmentForItinerary(inbound)?.departureAt ?? offer.returnDate
+
+  return {
+    routeLabel: offerRouteLabel(offer),
+    stopsLabel: formatOfferStopsLabel(offer),
+    baggageLabel: offer.baggageLabel || formatOfferBaggageLabel(offer.baggage) || "Consultar",
+    departureDateTime: formatOfferDateTime(outboundDeparture),
+    returnDateTime: inboundDeparture ? formatOfferDateTime(inboundDeparture) : "No aplica",
+  }
+}
+
 export function formatJourneyDuration(minutes: number): string {
   const total = Math.round(minutes)
   const days = Math.floor(total / 1440)
@@ -75,6 +130,16 @@ export function formatJourneyDuration(minutes: number): string {
   if (hours > 0 || days > 0) parts.push(`${hours}h`)
   parts.push(`${mins}m`)
   return parts.join(" ")
+}
+
+export function formatOfferDateTime(value?: string): string {
+  if (!value) return "-"
+  const date = isoDatePart(value)
+  const time = timeOfIso(value)
+  if (date && time) return `${formatDateCompact(date)}, ${time}`
+  if (date) return formatDateCompact(date)
+  if (time) return time
+  return String(value).trim() || "-"
 }
 
 export function formatOfferDate(value?: string): string {
@@ -104,6 +169,15 @@ export function isoDatePart(value?: string): string {
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) return ""
   return parsed.toISOString().slice(0, 10)
+}
+
+export function formatDateCompact(iso?: string): string {
+  const value = isoDatePart(iso)
+  if (!value) return "-"
+
+  const [year, month, day] = value.split("-")
+  if (!year || !month || !day) return value
+  return `${day}/${month}`
 }
 
 export function diffDaysIso(from: string, to: string): number {
@@ -142,16 +216,7 @@ function routeLocationToken(value: unknown): string {
   return normalized.match(/\b[A-Z]{3}\b/)?.[0] ?? normalized
 }
 
-/**
- * Stops on one leg.
- *
- * When the declared count disagrees with the segments, the larger wins. A
- * provider that sends two segments but declares zero stops is simply wrong —
- * there is demonstrably a plane change. The reverse can be legitimate: a
- * technical stop keeps one flight number and one segment, so a declared count
- * above the segment boundaries is believed.
- */
-export function stopsCountFromItinerary(itinerary: Itinerary): number | undefined {
+function stopsCountFromItinerary(itinerary: Itinerary): number | undefined {
   const explicit = nonNegativeNumber(itinerary.stops)
   const segmentStops = itinerary.segments.length > 0 ? Math.max(0, itinerary.segments.length - 1) : undefined
   if (explicit !== undefined) return Math.max(explicit, segmentStops ?? 0)

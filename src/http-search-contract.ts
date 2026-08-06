@@ -1,14 +1,10 @@
 import {
   diffDays,
+  MAX_FLEXIBLE_STAY_NIGHTS,
   normalizeFlexibleRoundTripRequest,
   resolveFlexibleRoundTripMode,
   resolveNightBounds,
 } from "./core/flexible-search";
-import {
-  MAX_FLEXIBLE_STAY_NIGHTS,
-  MAX_LAP_INFANTS_PER_ADULT,
-  MAX_SEARCH_PASSENGERS,
-} from "./core/search-limits";
 import {
   Cabin,
   FlexibleRoundTripMode,
@@ -27,8 +23,6 @@ export interface SearchPayload {
   // Backward-compatible ignored input: public flight searches always aggregate both providers.
   providerId?: ProviderId;
   providerConfig?: ProviderConfigInput;
-  clientSessionId?: unknown;
-  recordLocationUsage?: unknown;
   request?: Partial<SearchRequest> & {
     legs?: Array<Record<string, unknown>>;
     passengers?: Record<string, unknown>;
@@ -266,14 +260,14 @@ function validateRequest(request: SearchRequest): string[] {
     errors.push("At least one adult is required.");
   }
 
-  if (request.passengers.infants > request.passengers.adults * MAX_LAP_INFANTS_PER_ADULT) {
-    errors.push(`Lap infants cannot exceed ${MAX_LAP_INFANTS_PER_ADULT} per adult.`);
+  if (request.passengers.infants > request.passengers.adults) {
+    errors.push("Infants cannot exceed adults.");
   }
 
   if (
-    request.passengers.adults + request.passengers.children + request.passengers.infants > MAX_SEARCH_PASSENGERS
+    request.passengers.adults + request.passengers.children + request.passengers.infants > 9
   ) {
-    errors.push(`Passenger count cannot exceed ${MAX_SEARCH_PASSENGERS}.`);
+    errors.push("Passenger count cannot exceed 9.");
   }
 
   if (request.searchMode === "exact") {
@@ -402,36 +396,6 @@ function validateRequest(request: SearchRequest): string[] {
       (!leg.returnStart || !leg.returnEnd)
     ) {
       errors.push("Return range is required for round-trip range search.");
-    }
-
-    if (
-      request.tripType === "round-trip"
-      && leg.departureStart
-      && leg.departureEnd
-      && leg.returnStart
-      && leg.returnEnd
-    ) {
-      const nightBounds = resolveNightBounds(leg);
-      if (nightBounds.maxNights > MAX_STAY_NIGHTS) {
-        errors.push(`Stay length cannot exceed ${MAX_STAY_NIGHTS} nights.`);
-      }
-
-      const estimatedCombinations = estimateRoundTripGridCombinations(
-        leg.departureStart,
-        leg.departureEnd,
-        leg.returnStart,
-        leg.returnEnd,
-        nightBounds.minNights,
-        Math.min(nightBounds.maxNights, MAX_STAY_NIGHTS),
-      );
-      if (
-        typeof estimatedCombinations === "number"
-        && estimatedCombinations > MAX_ROUNDTRIP_GRID_COMBINATIONS
-      ) {
-        errors.push(
-          `Round-trip range search cannot exceed ${MAX_ROUNDTRIP_GRID_COMBINATIONS} combinations. Narrow the departure or return ranges.`,
-        );
-      }
     }
   }
 

@@ -1,6 +1,4 @@
 @import "tailwindcss";
-@import "./design-system.css";
-@import "./components.css";
 
 @theme {
   --color-background: #f8f8f6;
@@ -41,16 +39,12 @@
   --color-warning-soft: #d977571a;
   --color-warning-soft-foreground: #6f321f;
 
-  /* Plate 5b closes the radius scale at 4 / 6 / 8 / 10 / 12 / 14 / 999. The odd
-     radii the app had accumulated are gone, so each control family is uniform:
-     26px chips at 8, 32 and 36px controls at 10, inputs and cards at 12, window
-     frames at 14. Written in px because that is how the plates specify them. */
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 10px;
-  --radius-xl: 12px;
-  --radius-2xl: 14px;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.625rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 0.875rem;
+  --radius-3xl: 1rem;
 
   --font-sans: "Inter", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
@@ -166,6 +160,18 @@
 }
 
 @layer utilities {
+  @keyframes fd-workspace-in {
+    from {
+      opacity: 0.98;
+      transform: translateY(0.25rem);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
   @keyframes fd-inline-in {
     from {
       opacity: 0;
@@ -175,6 +181,76 @@
     to {
       opacity: 1;
       transform: translateX(0) scale(1);
+    }
+  }
+
+  @keyframes fd-inline-out {
+    from {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+
+    to {
+      opacity: 0;
+      transform: translateX(-0.375rem) scale(0.985);
+    }
+  }
+
+  @keyframes fd-popover-in {
+    from {
+      opacity: 0;
+      transform: translateY(-0.25rem) scale(0.985);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes fd-result-row-in {
+    from {
+      opacity: 0.84;
+      transform: translateY(0.25rem);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes fd-label-word-swap {
+    from {
+      opacity: 0;
+      transform: translateY(0.18rem);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes fd-field-value-swap {
+    from {
+      opacity: 0;
+      transform: translateY(0.12rem);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes fd-skeleton-sheen {
+    from {
+      background-position: 120% 0;
+    }
+
+    to {
+      background-position: -120% 0;
     }
   }
 
@@ -206,17 +282,8 @@
     background-color: var(--color-accent);
   }
 
-  /* Plate 1a dims a capsule cell that has nothing to act on. Copy earns it by
-     being disabled — there is no configuration to copy yet. Paste earns it from
-     the same fact and stays clickable anyway: the clipboard may well hold a
-     configuration, and only a user gesture can tell us. The `:disabled` half of
-     the selector is what lets this win over the generic disabled opacity. */
-  .fd-capsule-cell-dim,
-  .fd-capsule-cell-dim:disabled {
-    opacity: 0.5;
-  }
-
   .fd-search-stage {
+    --fd-search-idle-optical-offset: -0.75rem;
     display: grid;
     grid-template-rows: 0fr auto minmax(0, 1fr);
     align-content: stretch;
@@ -224,24 +291,9 @@
     padding-block: 0.625rem;
   }
 
-  /* Plate 1a: idle is a flex column — a `1fr` spacer, the 1180px form column, a
-     larger `1.3fr` spacer, and the provider rail as the last child so it is
-     pinned to the bottom of the viewport. The asymmetric spacers are what put
-     the form slightly above centre, which is why the optical `translateY` that
-     used to fake it is gone. */
   .fd-search-stage-idle {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    padding-block: 0 0.75rem;
-  }
-
-  .fd-search-stage-spacer-top {
-    flex: 1 1 0;
-  }
-
-  .fd-search-stage-spacer-bottom {
-    flex: 1.3 1 0;
+    grid-template-rows: minmax(0, 1fr) auto minmax(10vh, 1fr);
+    padding-block: 0.625rem;
   }
 
   .fd-search-stage-active {
@@ -263,36 +315,26 @@
     justify-self: center;
     width: 100%;
     max-width: var(--fd-app-max-width);
-    margin-inline: auto;
     transform-origin: top center;
     will-change: width, max-width, transform;
   }
 
-  /* In idle this element *is* the plate's form column, so the controls row, the
-     grid and the policy line all share one 1180px measure instead of being
-     clamped one by one — which is how the policy line's border-top used to run
-     wider than the grid above it. */
   .fd-search-stage-idle .fd-search-frame {
     position: relative;
-    flex: none;
     max-width: min(var(--fd-app-max-width), calc(100vw - 1.25rem));
+    transform: translateY(var(--fd-search-idle-optical-offset));
   }
 
-  /* Idle notices use the lower spacer instead of becoming part of the form's
-     measured height. Otherwise the asymmetric flex spacers recenter the whole
-     form when a one-line error appears. */
-  .fd-search-stage-idle .fd-search-frame > .fd-alert-line {
+  .fd-search-stage-idle .fd-search-alert {
     position: absolute;
+    inset-inline: 0;
     top: 100%;
-    right: 0;
-    left: 0;
   }
 
   .fd-search-grid {
     width: 100%;
     max-width: 100%;
     margin-inline: auto;
-    align-items: start;
   }
 
   .fd-search-controls-row {
@@ -319,10 +361,18 @@
     min-height: 0;
   }
 
-  /* Idle → active: the workspace arrives on the `estructura` token, and only by
-     opacity — the panels inside it carry the 8px slide from their own edge. */
   .fd-workspace-enter {
-    animation: fd-crossfade var(--fd-dur-estructura) var(--fd-ease-estructura) both;
+    animation: fd-workspace-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .fd-inline-enter {
+    transform-origin: left center;
+    animation: fd-inline-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .fd-popover-enter {
+    transform-origin: top center;
+    animation: fd-popover-in 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
   }
 
   .fd-segmented-control {
@@ -404,6 +454,196 @@
     opacity: 0.66;
   }
 
+  .fd-filter-constraint {
+    display: grid;
+    min-width: 0;
+    gap: 0.375rem;
+    border-radius: var(--radius-lg);
+  }
+
+  .fd-filter-constraint__head,
+  .fd-filter-slider__head {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .fd-filter-constraint__head {
+    min-height: 1.625rem;
+    padding-inline: 0.5rem;
+  }
+
+  .fd-filter-slider__head--value-only {
+    justify-content: flex-end;
+  }
+
+  .fd-filter-constraint__label,
+  .fd-filter-slider__label {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--color-foreground);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    line-height: 1.15;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+    white-space: nowrap;
+  }
+
+  .fd-filter-slider {
+    display: grid;
+    min-width: 0;
+    gap: 0.25rem;
+    border-radius: var(--radius-lg);
+    padding: 0.35rem 0.5rem 0.45rem;
+    transition:
+      opacity 150ms cubic-bezier(0.22, 1, 0.36, 1),
+      filter 150ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .fd-filter-slider.is-disabled {
+    opacity: 0.66;
+    filter: grayscale(0.18);
+  }
+
+  .fd-filter-slider__value {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--color-foreground);
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1.15;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-filter-slider.is-neutral .fd-filter-slider__value,
+  .fd-filter-slider.is-disabled .fd-filter-slider__value {
+    color: var(--color-muted-foreground);
+    font-weight: 500;
+  }
+
+  .fd-filter-slider__range {
+    width: 100%;
+    height: 1.125rem;
+    margin: 0.05rem 0 0;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .fd-filter-slider__range[data-disabled] {
+    cursor: not-allowed;
+  }
+
+  .fd-filter-slider__range [data-slot="slider-track"] {
+    height: 0.25rem;
+    border-radius: 999px;
+    background:
+      linear-gradient(
+        to right,
+        var(--color-primary) 0 var(--fd-filter-slider-progress),
+        color-mix(in srgb, var(--color-muted-foreground) 25%, transparent) var(--fd-filter-slider-progress) 100%
+      );
+  }
+
+  .fd-filter-slider.is-neutral .fd-filter-slider__range [data-slot="slider-track"],
+  .fd-filter-slider.is-disabled .fd-filter-slider__range [data-slot="slider-track"] {
+    background: color-mix(in srgb, var(--color-muted-foreground) 25%, transparent);
+  }
+
+  .fd-filter-slider__range [data-slot="slider-range"] {
+    background: var(--color-primary);
+  }
+
+  .fd-filter-slider.is-neutral .fd-filter-slider__range [data-slot="slider-range"],
+  .fd-filter-slider.is-disabled .fd-filter-slider__range [data-slot="slider-range"] {
+    background: transparent;
+  }
+
+  .fd-filter-slider__range [data-slot="slider-thumb"] {
+    width: 0.875rem;
+    height: 0.875rem;
+    border: 2px solid var(--color-card);
+    border-radius: 999px;
+    background: var(--color-primary);
+    box-shadow: none;
+  }
+
+  .fd-filter-slider.is-neutral .fd-filter-slider__range [data-slot="slider-thumb"],
+  .fd-filter-slider.is-disabled .fd-filter-slider__range [data-slot="slider-thumb"] {
+    background: var(--color-muted-foreground);
+  }
+
+  .fd-filter-slider__range [data-slot="slider-thumb"]:focus-visible {
+    box-shadow:
+      0 0 0 2px var(--color-card),
+      0 0 0 4px var(--color-ring);
+  }
+
+  .fd-filter-slider__marks {
+    position: relative;
+    min-height: 0.78rem;
+  }
+
+  .fd-filter-slider__mark {
+    position: absolute;
+    top: 0;
+    left: var(--fd-filter-slider-mark-position);
+    min-width: 0;
+    max-width: 5rem;
+    overflow: hidden;
+    color: var(--color-muted-foreground);
+    font-size: 0.65rem;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+    text-align: center;
+    text-overflow: ellipsis;
+    transform: translateX(-50%);
+    white-space: nowrap;
+  }
+
+  .fd-filter-slider__mark:first-child {
+    max-width: 4rem;
+    text-align: left;
+    transform: translateX(0);
+  }
+
+  .fd-filter-slider__mark:last-child {
+    max-width: 4.75rem;
+    text-align: right;
+    transform: translateX(-100%);
+  }
+
+  .fd-filter-slider__mark.is-active {
+    color: var(--color-foreground);
+    font-weight: 600;
+  }
+
+  .fd-label-word-swap {
+    display: inline-block;
+    animation: fd-label-word-swap 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .fd-field-value-swap {
+    animation: fd-field-value-swap 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
   .fd-panel {
     @apply rounded-xl border border-border bg-card text-card-foreground shadow-[0_1px_0_rgba(31,31,30,0.04)] transition-[background-color,border-color,box-shadow] duration-150 ease-out;
   }
@@ -424,22 +664,75 @@
     @apply truncate text-xs text-muted-foreground;
   }
 
-  /* The 52px search field lives in `components.css` as `.fd-field-control` —
-     one implementation for all six fields, including both halves of the merged
-     date control. The second one that used to sit here (radius 12 via `@apply`,
-     but 16px of top padding instead of 15) is gone. */
-
-  .fd-control-quiet {
-    @apply rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40;
-    transition:
-      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
-      color var(--fd-dur-tacto) var(--fd-ease-tacto),
-      opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
+  .fd-offer-detail-price {
+    @apply min-w-0 truncate font-mono text-base font-bold leading-snug text-foreground;
+    font-variant-numeric: tabular-nums;
   }
 
-  /* 3d: the ring sits outside the border and never changes the control's size. */
+  .fd-offer-detail-meta {
+    @apply min-w-0 truncate text-xs font-medium leading-5 text-muted-foreground;
+  }
+
+  .fd-offer-detail-row {
+    @apply grid min-w-0 grid-cols-[3.25rem_minmax(0,1fr)] items-baseline gap-2;
+  }
+
+  .fd-offer-detail-data {
+    @apply min-w-0 truncate text-sm font-semibold leading-snug text-foreground;
+  }
+
+  .fd-offer-detail-data--mono {
+    @apply font-mono;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fd-offer-flight-code {
+    @apply rounded-md border border-border bg-secondary px-2 py-1 font-mono text-xs font-bold leading-none text-foreground;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fd-offer-info-grid {
+    @apply grid grid-cols-2 gap-x-4 gap-y-2.5;
+  }
+
+  .fd-offer-info-tile {
+    @apply min-w-0;
+  }
+
+  .fd-offer-condition-row {
+    @apply min-w-0 truncate text-xs font-medium leading-5 text-muted-foreground;
+  }
+
+  .fd-control {
+    @apply transform-gpu rounded-lg border border-input bg-card text-foreground transition-[background-color,border-color,box-shadow,transform,opacity,color,filter] duration-150 ease-out hover:border-border hover:bg-accent/60 focus-within:outline-none focus-visible:outline-none active:scale-[0.995] disabled:pointer-events-none disabled:opacity-55;
+  }
+
+  .fd-control:focus-within,
+  .fd-control:focus-visible {
+    border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
+  }
+
+  .fd-control-quiet {
+    @apply transform-gpu rounded-md text-muted-foreground transition-[background-color,color,transform,opacity,filter] duration-150 ease-out hover:bg-accent hover:text-foreground focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100;
+  }
+
   .fd-control-quiet:focus-visible {
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 55%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
+  }
+
+  .fd-selected-passive {
+    @apply border-border bg-accent text-accent-foreground shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-foreground)_14%,transparent)];
+  }
+
+  .fd-control-invalid {
+    @apply border-destructive bg-destructive-soft shadow-[0_0_0_1px_color-mix(in_srgb,var(--color-destructive)_24%,transparent)] hover:border-destructive;
+  }
+
+  .fd-control-invalid:focus-within,
+  .fd-control-invalid:focus-visible {
+    border-color: var(--color-destructive);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-destructive) 24%, transparent);
   }
 
   .fd-control-helper {
@@ -449,6 +742,29 @@
     font-size: 0.72rem;
     font-weight: 700;
     line-height: 1.2;
+  }
+
+  .fd-location-usage-suggestions {
+    @apply mt-1 grid grid-cols-3 gap-1.5;
+  }
+
+  .fd-location-usage-suggestions-exit {
+    pointer-events: none;
+    animation: fd-inline-out 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .fd-location-usage-card {
+    @apply flex h-8 min-h-8 min-w-0 items-center justify-center px-2 font-mono text-xs font-semibold;
+    letter-spacing: 0;
+  }
+
+  .fd-label {
+    @apply text-[10px] font-bold uppercase leading-none text-muted-foreground;
+    letter-spacing: 0;
+  }
+
+  .fd-meta {
+    @apply text-xs text-muted-foreground;
   }
 
   .fd-scrollbar {
@@ -479,6 +795,35 @@
     width: 0;
   }
 
+  .fd-alert {
+    @apply rounded-xl border px-3 py-2.5 text-sm leading-5;
+  }
+
+  .fd-search-alert {
+    width: 100%;
+    max-width: 100%;
+    margin-inline: auto;
+  }
+
+  .fd-search-stage-idle .fd-search-alert {
+    max-width: min(1180px, 100%);
+  }
+
+  .fd-alert-warning {
+    @apply border-warning/45 bg-warning-soft text-warning-soft-foreground;
+  }
+
+  .fd-alert-error {
+    @apply border-destructive/50 bg-destructive-soft text-destructive-soft-foreground;
+  }
+
+  .fd-skeleton {
+    background:
+      linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--color-card) 74%, transparent) 50%, transparent 100%),
+      var(--color-muted);
+    background-size: 220% 100%, 100% 100%;
+    animation: fd-skeleton-sheen 1200ms ease-in-out infinite;
+  }
 }
 
 @media (min-width: 640px) {
@@ -493,17 +838,12 @@
 
 @media (min-width: 1024px) {
   .fd-search-stage-idle .fd-search-frame {
-    max-width: min(1180px, calc(100vw - 12rem));
-  }
-}
-
-@media (min-width: 1024px) and (max-width: 1087px) {
-  .fd-search-stage-idle .fd-search-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-width: min(var(--fd-app-max-width), calc(100vw - 12rem));
   }
 
-  .fd-search-stage-idle .fd-route-swap-cell {
-    display: none;
+  .fd-search-stage-idle .fd-search-grid,
+  .fd-search-stage-idle .fd-search-controls-row {
+    max-width: min(1180px, 100%);
   }
 }
 

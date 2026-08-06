@@ -4,9 +4,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { ProviderContext, PurchasePath, SearchRequest } from "./core/types";
 import {
   applyCostamarContextToBrandedSearchUrl,
-  isAllowedCostamarBrandedSearchLocation,
   resolveCostamarRedirectForRequest,
-  safeCostamarRedirectFailureReason,
 } from "./local-costamar";
 import {
   normalizeCostamarProviderContext,
@@ -26,9 +24,6 @@ const DEFAULT_REDIRECT_HOST = "127.0.0.1";
 const DEFAULT_REDIRECT_PORT = 8102;
 const DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS = 55_000;
 const MAX_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS = 240_000;
-const DEFAULT_REDIRECT_IDLE_TIMEOUT_SECONDS = 120;
-const MAX_REDIRECT_IDLE_TIMEOUT_SECONDS = 255;
-const REDIRECT_IDLE_TIMEOUT_MARGIN_SECONDS = 5;
 const DEFAULT_CACHE_LOOKUP_TIMEOUT_MS = 1_000;
 const MAX_CACHE_LOOKUP_TIMEOUT_MS = 5_000;
 
@@ -114,7 +109,7 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Renueva la autenticación de Click and Book Plus</title>
+    <title>Renueva la sesion de Click and Book Plus</title>
     <style>
       :root { color-scheme: light; }
       * { box-sizing: border-box; }
@@ -146,10 +141,10 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
   <body>
     <main>
       <section>
-        <h1>Renueva la autenticación de Click and Book Plus</h1>
+        <h1>Renueva la sesion de Click and Book Plus</h1>
         <p>Fly Desk no encontro un redirect verificado para abrir esta busqueda en Click and Book Plus.</p>
         <p><strong>Motivo:</strong> ${reasonText}</p>
-        <p>Abre Click and Book Plus B2B/Chrome, vuelve a autenticarte y reintenta desde Fly Desk.</p>
+        <p>Abre Click and Book Plus B2B/Chrome, confirma que la sesion este activa y vuelve a intentar desde Fly Desk.</p>
       </section>
     </main>
   </body>
@@ -605,10 +600,7 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
         });
         const redirectRequest = costamarRedirectRequestFromUrl(location, record.job?.request);
 
-        if (
-          redirectRequest
-          && isAllowedCostamarBrandedSearchLocation(location, redirectRequest, fastContext)
-        ) {
+        if (redirectRequest) {
           const redirectResolution = await withCostamarRedirectTotalTimeout(
             resolveCostamarRedirectForRequest(redirectRequest, fastContext, {
               force: !parsedTokenIsUsable,
@@ -621,13 +613,11 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
             location = applyCostamarContextToBrandedSearchUrl(location, redirectResolution.context);
             canRedirect = true;
           }
-        } else if (!redirectRequest) {
-          blockedReason = "No se pudo reconstruir la busqueda Click and Book Plus desde el purchase path.";
         } else {
-          blockedReason = "El enlace guardado de Click and Book Plus no pertenece a un origen permitido.";
+          blockedReason = "No se pudo reconstruir la busqueda Click and Book Plus desde el purchase path.";
         }
       } catch (error) {
-        blockedReason = safeCostamarRedirectFailureReason(error);
+        blockedReason = error instanceof Error ? error.message : "No se pudo validar el redirect de Click and Book Plus.";
         canRedirect = false;
       }
 
@@ -709,45 +699,14 @@ export function resolveRedirectServerPort(): number {
   return numberFromEnv("FLY_DESK_REDIRECT_PORT", DEFAULT_REDIRECT_PORT, 1, 65535);
 }
 
-export function resolveRedirectServerIdleTimeoutSeconds(
-  input = process.env.FLY_DESK_REDIRECT_IDLE_TIMEOUT_SECONDS?.trim()
-    ?? process.env.FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS,
-  redirectTotalTimeoutMs = costamarRedirectTotalTimeoutMs(),
-): number {
-  const minimum = Math.min(
-    MAX_REDIRECT_IDLE_TIMEOUT_SECONDS,
-    Math.ceil(Math.max(1_000, redirectTotalTimeoutMs) / 1_000)
-      + REDIRECT_IDLE_TIMEOUT_MARGIN_SECONDS,
-  );
-  const fallback = Math.max(DEFAULT_REDIRECT_IDLE_TIMEOUT_SECONDS, minimum);
-  const normalized = String(input ?? "").trim();
-  if (!normalized) {
-    return fallback;
-  }
-
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  const configured = Math.trunc(parsed);
-  if (configured === 0) {
-    return 0;
-  }
-
-  return Math.max(minimum, Math.min(MAX_REDIRECT_IDLE_TIMEOUT_SECONDS, configured));
-}
-
 export function createRedirectServer(options: {
   port?: number;
   hostname?: string;
   dbPath?: string;
-  idleTimeoutSeconds?: number;
 } = {}): BunServer<undefined> {
   return Bun.serve({
     port: options.port ?? resolveRedirectServerPort(),
     hostname: options.hostname ?? resolveRedirectServerHost(),
-    idleTimeout: options.idleTimeoutSeconds ?? resolveRedirectServerIdleTimeoutSeconds(),
     fetch: (request, server) => routeRedirectRequest(requestWithServerTrustHeaders(request, server), { dbPath: options.dbPath }),
   });
 }
