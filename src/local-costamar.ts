@@ -437,7 +437,11 @@ function costamarSessionWarmupEnabled(): boolean {
 }
 
 function costamarSessionWarmupTimeoutMs(): number {
-  return Math.max(0, Number(cbPlusEnv("CBPLUS_SESSION_WARMUP_TIMEOUT_MS", "COSTAMAR_SESSION_WARMUP_TIMEOUT_MS") ?? 8000));
+  return Math.max(0, Number(cbPlusEnv("CBPLUS_SESSION_WARMUP_TIMEOUT_MS", "COSTAMAR_SESSION_WARMUP_TIMEOUT_MS") ?? 30000));
+}
+
+export function resolveCostamarSessionWarmupTimeoutMsForTests(): number {
+  return costamarSessionWarmupTimeoutMs();
 }
 
 function costamarSessionWarmupOpenBrowserFallbackEnabled(): boolean {
@@ -1088,6 +1092,37 @@ function resolveCostamarB2bRedirectUrl(location: string, trustedOrigin: string):
   }
 }
 
+function resolveCostamarB2bLoginUrl(
+  response: Response,
+  body: string,
+  trustedOrigin: string,
+): string | undefined {
+  const resolveLoginCandidate = (value: string): string | undefined => {
+    const candidate = resolveCostamarB2bRedirectUrl(value, trustedOrigin);
+    return candidate && /\/login\/?$/i.test(new URL(candidate).pathname)
+      ? candidate
+      : undefined;
+  };
+  const location = response.headers.get("location")?.trim();
+  if (location) {
+    return resolveLoginCandidate(location);
+  }
+
+  const formTag = body.match(/<form\b[^>]*>/i)?.[0];
+  const action = formTag?.match(/\baction=["']([^"']+)["']/i)?.[1]?.trim();
+  if (action) {
+    return resolveLoginCandidate(decodeCostamarB2bHtmlAttribute(action));
+  }
+
+  return `${trustedOrigin}/lang/en/login`;
+}
+
+function resolveCostamarB2bLocalizedPath(loginUrl: string, suffix: string): string {
+  const login = new URL(loginUrl);
+  const localizedBasePath = login.pathname.replace(/\/login\/?$/i, "").replace(/\/+$/, "");
+  return `${login.origin}${localizedBasePath}/${suffix.replace(/^\/+/, "")}`;
+}
+
 function decodeCostamarB2bHtmlAttribute(value: string): string {
   return value
     .replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
@@ -1131,18 +1166,25 @@ async function generateCostamarRedirectContextViaB2BHttp(
   const jar = new Map<string, string>();
 
   try {
-    await fetchCostamarB2bWithCookies(`${origin}/login`, origin, jar, {
+    const loginEntry = await fetchCostamarB2bWithCookies(`${origin}/login`, origin, jar, {
       headers: {
         accept: "text/html,application/xhtml+xml",
       },
     });
+    const loginUrl = resolveCostamarB2bLoginUrl(loginEntry.response, loginEntry.body, origin);
+    if (!loginUrl) {
+      return undefined;
+    }
+    const authenticatorUrl = resolveCostamarB2bLocalizedPath(loginUrl, "login2factor");
+    const b2bUrl = resolveCostamarB2bLocalizedPath(loginUrl, "b2b");
+    const airlineSearchUrl = resolveCostamarB2bLocalizedPath(loginUrl, "airlinesearch");
 
-    const login = await fetchCostamarB2bWithCookies(`${origin}/lang/en/login`, origin, jar, {
+    const login = await fetchCostamarB2bWithCookies(loginUrl, origin, jar, {
       method: "POST",
       headers: {
         "content-type": "application/x-www-form-urlencoded",
         accept: "text/html,application/xhtml+xml",
-        referer: `${origin}/login`,
+        referer: loginUrl,
       },
       body: new URLSearchParams({
         email: credentials.email,
@@ -1158,7 +1200,7 @@ async function generateCostamarRedirectContextViaB2BHttp(
     let authChallengeBody = costamarB2bResponseRequiresAuthenticator(login.body)
       ? login.body
       : undefined;
-    let authChallengeUrl = `${origin}/lang/en/login2factor`;
+    let authChallengeUrl = authenticatorUrl;
     const loginLocation = login.response.headers.get("location");
     if (!authChallengeBody && login.response.status >= 300 && login.response.status < 400 && loginLocation) {
       const redirectUrl = resolveCostamarB2bRedirectUrl(loginLocation, origin);
@@ -1218,13 +1260,13 @@ async function generateCostamarRedirectContextViaB2BHttp(
       }
     }
 
-    const tokenResponse = await fetchCostamarB2bWithCookies(`${origin}/lang/en/airlinesearch`, origin, jar, {
+    const tokenResponse = await fetchCostamarB2bWithCookies(airlineSearchUrl, origin, jar, {
       method: "POST",
       headers: {
         "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
         accept: "application/json, text/javascript, */*; q=0.01",
         "x-requested-with": "XMLHttpRequest",
-        referer: `${origin}/lang/en/b2b`,
+        referer: b2bUrl,
       },
       body: new URLSearchParams({
         accountid: context.terminalId,
