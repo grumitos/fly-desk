@@ -4,12 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import {
-  LocationSuggestionCacheStore,
-  LOCATION_SUGGESTION_CACHE_MAX_ENTRIES,
-  LOCATION_SUGGESTION_CACHE_MAX_QUERY_CHARS,
-  LOCATION_SUGGESTION_CACHE_TTL_MS,
-} from "../src/location-suggestion-cache";
+import { LocationSuggestionCacheStore, LOCATION_SUGGESTION_CACHE_TTL_MS } from "../src/location-suggestion-cache";
 
 test("location suggestion cache remains the seven-day autocomplete exception", () => {
   assert.equal(LOCATION_SUGGESTION_CACHE_TTL_MS, 7 * 24 * 60 * 60 * 1000);
@@ -94,43 +89,6 @@ test("location suggestion cache purges expired entries", async () => {
   await cache.getOrLoad("session-a", "costamar", "mad", 8, loader);
 
   assert.equal(calls, 2);
-});
-
-test("location suggestion cache bounds global entries across rotating session ids", async () => {
-  const cache = new LocationSuggestionCacheStore();
-
-  for (let index = 0; index <= LOCATION_SUGGESTION_CACHE_MAX_ENTRIES; index += 1) {
-    await cache.getOrLoad(`rotating-session-${index}`, "costamar", `query-${index}`, 8, async () => [{
-      code: "LIM",
-      city: "Lima",
-      country: "Peru",
-      label: "LIM - Lima, Peru",
-    }]);
-  }
-
-  assert.equal(cache.getDiagnostics().entries, LOCATION_SUGGESTION_CACHE_MAX_ENTRIES);
-  assert.equal(cache.getDiagnostics().sessions, LOCATION_SUGGESTION_CACHE_MAX_ENTRIES);
-});
-
-test("location suggestion cache rejects oversized queries before invoking a provider", async () => {
-  const cache = new LocationSuggestionCacheStore();
-  let calls = 0;
-
-  await assert.rejects(
-    cache.getOrLoad(
-      "session-a",
-      "costamar",
-      "x".repeat(LOCATION_SUGGESTION_CACHE_MAX_QUERY_CHARS + 1),
-      8,
-      async () => {
-        calls += 1;
-        return [];
-      },
-    ),
-    /cannot exceed/i,
-  );
-  assert.equal(calls, 0);
-  assert.equal(cache.getDiagnostics().entries, 0);
 });
 
 test("location suggestion cache survives process-like restarts when persisted", async () => {

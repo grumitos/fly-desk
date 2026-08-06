@@ -17,14 +17,6 @@ Bun test files must end in `.unit.test.ts` or `.integration.test.ts`; the script
 
 `test/ui.playwright.ts` registers the shared lifecycle and loads capability-based modules from `test/ui/`. The suite starts one server instance and one Chromium instance. Each test receives a fresh `BrowserContext` to isolate cookies, storage, routes, and pages.
 
-`test/ui/responsive-smoke.playwright.ts` fixes the frontend QA viewports at
-desktop `1440x900`, tablet `1024x768`, and mobile `390x844`. Each case drives the
-workspace from idle into an active result, checks global horizontal overflow and
-the search grid's own `scrollWidth`, visits the panels available at that
-breakpoint, renders light and dark themes, and proves that the first keyboard
-focus is visible. The shared harness fails every case on an uncaught browser
-error.
-
 GitHub Actions uses the `chrome` channel included in the official runner image through `FLY_DESK_TEST_BROWSER_CHANNEL=chrome`. When that variable is not set locally, Playwright uses its installed Chromium. This avoids downloading a full browser in every job.
 
 UI tests should prioritize:

@@ -18,7 +18,6 @@ import {
   isUsefulRoundTripCombination,
 } from "./core/flexible-search";
 import { normalizeAirlineDisplayName } from "./core/airline-names";
-import { normalizeLocationSuggestionType } from "./core/location-suggestion";
 import {
   buildMatrixConfidenceSummary,
   mapConcurrent,
@@ -58,7 +57,6 @@ import {
   resolveUsableCostamarBrandedToken,
 } from "./provider-context";
 import { recordProviderFirstHttpRequest } from "./provider-diagnostics";
-import { providerPublicFailureMessage } from "./provider-status";
 import { openUrlLocally } from "./local-browser";
 import {
   resolveMatrixCellConcurrency,
@@ -172,8 +170,6 @@ interface CostamarRecommendation {
   id?: string;
   itinerary?: CostamarJourney[];
   pricing?: CostamarPricing;
-  scheduleGroupScope?: string;
-  scheduleVariantsTruncated?: boolean;
   pos?: {
     systemProviderCode?: string;
     codeContext?: string;
@@ -254,19 +250,22 @@ interface CbPlusPricedItinerary {
   };
 }
 
-export interface CostamarAutocompleteAirport {
-  code?: string;
-  countryCode?: string;
-  cityCode?: string;
-  cityName?: string;
-  type?: string;
-  name?: string;
+interface CostamarAutocompleteResponse {
+  airports?: Array<{
+    code?: string;
+    countryCode?: string;
+    cityCode?: string;
+    cityName?: string;
+    type?: string;
+    name?: string;
+  }>;
 }
+
+type CostamarAutocompleteAirport = NonNullable<CostamarAutocompleteResponse["airports"]>[number];
 
 interface CostamarSearchOutcome {
   offers: CanonicalOffer[];
   warnings: string[];
-  partial: boolean;
 }
 
 interface CostamarB2bPromptRequest {
@@ -359,8 +358,7 @@ const COSTAMAR_B2B_KEYSTROKE_DELAY_MS = 35;
 const COSTAMAR_PAGE_SNAPSHOT_HTML_MAX_CHARS = 64 * 1024;
 const COSTAMAR_PAGE_STORAGE_MAX_ENTRIES = 50;
 const COSTAMAR_PAGE_STORAGE_VALUE_MAX_CHARS = 4096;
-const DEFAULT_COSTAMAR_B2B_BASE_URL = "https://www.clickandbook.plus/es/login";
-const COSTAMAR_B2B_ALLOWED_ORIGINS = new Set(["https://www.clickandbook.plus"]);
+const DEFAULT_COSTAMAR_B2B_BASE_URL = "https://b2b.clickandbook.com/lang/es/b2b";
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 
 const pendingCostamarSessionWarmups = new Map<string, Promise<CostamarProviderContext>>();
@@ -428,20 +426,13 @@ const COSTAMAR_B2B_AUTH_HINT_PATTERN =
   /otp|authenticator|verification|verificaci[oó]n|token|one.?time|two.?factor|2fa|mfa|c[oó]digo|code|pin/i;
 const COSTAMAR_B2B_AUTH_FIELD_PATTERN =
   /otp|auth|token|verification|verify|code|pin|2fa|mfa/i;
-const COSTAMAR_B2B_EMAIL_SELECTOR = "#email, input[name='email']";
-const COSTAMAR_B2B_PASSWORD_SELECTOR = "#password, input[name='password']";
-const COSTAMAR_B2B_LOGIN_SUBMIT_SELECTOR = "#btnsubmit, button[type='submit'], input[type='submit']";
 
 function costamarSessionWarmupEnabled(): boolean {
   return String(cbPlusEnv("CBPLUS_SESSION_WARMUP_ENABLED", "COSTAMAR_SESSION_WARMUP_ENABLED") ?? "1").trim() !== "0";
 }
 
 function costamarSessionWarmupTimeoutMs(): number {
-  return Math.max(0, Number(cbPlusEnv("CBPLUS_SESSION_WARMUP_TIMEOUT_MS", "COSTAMAR_SESSION_WARMUP_TIMEOUT_MS") ?? 30000));
-}
-
-export function resolveCostamarSessionWarmupTimeoutMsForTests(): number {
-  return costamarSessionWarmupTimeoutMs();
+  return Math.max(0, Number(cbPlusEnv("CBPLUS_SESSION_WARMUP_TIMEOUT_MS", "COSTAMAR_SESSION_WARMUP_TIMEOUT_MS") ?? 8000));
 }
 
 function costamarSessionWarmupOpenBrowserFallbackEnabled(): boolean {
@@ -482,44 +473,23 @@ function resolveCostamarChromeProfileName(): string {
   return resolveCostamarChromeLaunchOptions().profileDirectory || "Default";
 }
 
-function resolveCostamarChromeExecutableCandidates(
-  platform: NodeJS.Platform = process.platform,
-  environment: Record<string, string | undefined> = process.env,
-): string[] {
-  const configured = environment.CBPLUS_CHROME_EXECUTABLE?.trim()
-    || environment.COSTAMAR_CHROME_EXECUTABLE?.trim();
-  const platformCandidates = platform === "linux"
-    ? [
-        "/usr/bin/google-chrome",
-        "/usr/bin/google-chrome-stable",
-        "/usr/bin/chromium",
-        "/usr/bin/chromium-browser",
-      ]
-    : platform === "darwin"
-      ? [
-          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-          "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-        ]
-      : [
-          environment.LOCALAPPDATA && join(environment.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe"),
-          environment.PROGRAMFILES && join(environment.PROGRAMFILES, "Google", "Chrome", "Application", "chrome.exe"),
-          environment["PROGRAMFILES(X86)"] && join(environment["PROGRAMFILES(X86)"], "Google", "Chrome", "Application", "chrome.exe"),
-          environment.LOCALAPPDATA && join(environment.LOCALAPPDATA, "Microsoft", "Edge", "Application", "msedge.exe"),
-          environment.PROGRAMFILES && join(environment.PROGRAMFILES, "Microsoft", "Edge", "Application", "msedge.exe"),
-          environment["PROGRAMFILES(X86)"] && join(environment["PROGRAMFILES(X86)"], "Microsoft", "Edge", "Application", "msedge.exe"),
-        ];
-  return [...new Set([configured, ...platformCandidates].filter((value): value is string => Boolean(value)))];
-}
-
-export function resolveCostamarChromeExecutableCandidatesForTests(
-  platform: NodeJS.Platform,
-  environment: Record<string, string | undefined>,
-): string[] {
-  return resolveCostamarChromeExecutableCandidates(platform, environment);
-}
-
 function resolveCostamarChromeExecutable(): string {
-  const match = resolveCostamarChromeExecutableCandidates().find((candidate) => existsSync(candidate));
+  const configured = process.env.CBPLUS_CHROME_EXECUTABLE?.trim()
+    || process.env.COSTAMAR_CHROME_EXECUTABLE?.trim();
+  if (configured && existsSync(configured)) {
+    return configured;
+  }
+
+  const candidates = [
+    process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe"),
+    process.env.PROGRAMFILES && join(process.env.PROGRAMFILES, "Google", "Chrome", "Application", "chrome.exe"),
+    process.env["PROGRAMFILES(X86)"] && join(process.env["PROGRAMFILES(X86)"], "Google", "Chrome", "Application", "chrome.exe"),
+    process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, "Microsoft", "Edge", "Application", "msedge.exe"),
+    process.env.PROGRAMFILES && join(process.env.PROGRAMFILES, "Microsoft", "Edge", "Application", "msedge.exe"),
+    process.env["PROGRAMFILES(X86)"] && join(process.env["PROGRAMFILES(X86)"], "Microsoft", "Edge", "Application", "msedge.exe"),
+  ].filter((value): value is string => Boolean(value));
+
+  const match = candidates.find((candidate) => existsSync(candidate));
   if (!match) {
     throw new Error("Chrome executable was not found on this machine.");
   }
@@ -528,21 +498,9 @@ function resolveCostamarChromeExecutable(): string {
 }
 
 function resolveCostamarB2bBaseUrl(): string {
-  const configured = process.env.CBPLUS_B2B_BASE_URL?.trim()
+  return process.env.CBPLUS_B2B_BASE_URL?.trim()
     || process.env.COSTAMAR_B2B_BASE_URL?.trim()
     || DEFAULT_COSTAMAR_B2B_BASE_URL;
-  let parsed: URL;
-  try {
-    parsed = new URL(configured);
-  } catch {
-    throw new Error("Click and Book Plus B2B base URL must use the official HTTPS origin.");
-  }
-
-  if (parsed.protocol !== "https:" || !COSTAMAR_B2B_ALLOWED_ORIGINS.has(parsed.origin)) {
-    throw new Error("Click and Book Plus B2B base URL must use the official HTTPS origin.");
-  }
-
-  return parsed.toString();
 }
 
 function resolveCostamarB2bCredentials(): { email?: string; password?: string } {
@@ -752,39 +710,7 @@ function costamarB2bPlaywrightFallbackEnabled(): boolean {
   return String(cbPlusEnv("CBPLUS_B2B_PLAYWRIGHT_FALLBACK_ENABLED", "COSTAMAR_B2B_PLAYWRIGHT_FALLBACK_ENABLED") ?? "0").trim() !== "0";
 }
 
-type CostamarB2bDebugDetail = Record<string, string | number | boolean | undefined>;
-
-function safeCostamarB2bDebugUrl(value: string): string {
-  try {
-    const parsed = new URL(value);
-    return `${parsed.origin}${parsed.pathname}`;
-  } catch {
-    return "[invalid-url]";
-  }
-}
-
-function sanitizeCostamarB2bDebugDetail(detail: CostamarB2bDebugDetail): CostamarB2bDebugDetail {
-  return Object.fromEntries(Object.entries(detail).map(([key, value]) => {
-    if (value === undefined) {
-      return [key, value];
-    }
-    if (/^(?:token|password|secret|cookie|authorization|authCode|otp)$/i.test(key)) {
-      return [key, "[redacted]"];
-    }
-    if (typeof value === "string" && /^(?:url|location)$/i.test(key)) {
-      return [key, safeCostamarB2bDebugUrl(value)];
-    }
-    if (typeof value === "string") {
-      return [key, value
-        .replace(/([?&]token=)[^&\s]+/gi, "$1[redacted]")
-        .replace(/\bBearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
-        .replace(/\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "[redacted]")];
-    }
-    return [key, value];
-  }));
-}
-
-function logCostamarB2bDebug(stage: string, detail?: CostamarB2bDebugDetail): void {
+function logCostamarB2bDebug(stage: string, detail?: unknown): void {
   if (!costamarB2bDebugEnabled()) {
     return;
   }
@@ -794,7 +720,7 @@ function logCostamarB2bDebug(stage: string, detail?: CostamarB2bDebugDetail): vo
     return;
   }
 
-  console.log(`[costamar-b2b] ${stage}`, sanitizeCostamarB2bDebugDetail(detail));
+  console.log(`[costamar-b2b] ${stage}`, detail);
 }
 
 async function getPlaywright(): Promise<typeof import("playwright")> {
@@ -1044,25 +970,14 @@ function cookieHeader(jar: Map<string, string>): string {
 
 async function fetchCostamarB2bWithCookies(
   url: string,
-  trustedOrigin: string,
   jar: Map<string, string>,
   init: RequestInit = {},
 ): Promise<{ response: Response; body: string }> {
-  let target: URL;
-  try {
-    target = new URL(url);
-  } catch {
-    throw new Error("Click and Book Plus B2B request URL is invalid.");
-  }
-  if (target.protocol !== "https:" || target.origin !== trustedOrigin) {
-    throw new Error("Click and Book Plus B2B request left the official origin.");
-  }
-
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(5000, costamarSessionWarmupTimeoutMs()));
   try {
     const cookies = cookieHeader(jar);
-    const response = await fetch(target, {
+    const response = await fetch(url, {
       redirect: "manual",
       ...init,
       headers: {
@@ -1079,58 +994,6 @@ async function fetchCostamarB2bWithCookies(
   } finally {
     clearTimeout(timeout);
   }
-}
-
-function resolveCostamarB2bRedirectUrl(location: string, trustedOrigin: string): string | undefined {
-  try {
-    const target = new URL(location, `${trustedOrigin}/`);
-    return target.protocol === "https:" && target.origin === trustedOrigin
-      ? target.toString()
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function resolveCostamarB2bLoginUrl(
-  response: Response,
-  body: string,
-  trustedOrigin: string,
-): string | undefined {
-  const resolveLoginCandidate = (value: string): string | undefined => {
-    const candidate = resolveCostamarB2bRedirectUrl(value, trustedOrigin);
-    return candidate && /\/login\/?$/i.test(new URL(candidate).pathname)
-      ? candidate
-      : undefined;
-  };
-  const location = response.headers.get("location")?.trim();
-  if (location) {
-    return resolveLoginCandidate(location);
-  }
-
-  const formTag = body.match(/<form\b[^>]*>/i)?.[0];
-  const action = formTag?.match(/\baction=["']([^"']+)["']/i)?.[1]?.trim();
-  if (action) {
-    return resolveLoginCandidate(decodeCostamarB2bHtmlAttribute(action));
-  }
-
-  return undefined;
-}
-
-function resolveCostamarB2bLocalizedPath(loginUrl: string, suffix: string): string {
-  const login = new URL(loginUrl);
-  const localizedBasePath = login.pathname.replace(/\/login\/?$/i, "").replace(/\/+$/, "");
-  return `${login.origin}${localizedBasePath}/${suffix.replace(/^\/+/, "")}`;
-}
-
-function resolveCostamarB2bPreferredLoginUrl(baseUrl: string): string | undefined {
-  const base = new URL(baseUrl);
-  const locale = base.pathname.match(/^\/(?:lang\/)?([a-z]{2}(?:-[a-z]{2})?)(?:\/|$)/i)?.[1];
-  if (!locale) {
-    return undefined;
-  }
-
-  return `${base.origin}/${locale.toLowerCase()}/login`;
 }
 
 function decodeCostamarB2bHtmlAttribute(value: string): string {
@@ -1171,32 +1034,23 @@ async function generateCostamarRedirectContextViaB2BHttp(
     return undefined;
   }
 
-  const baseUrl = resolveCostamarB2bBaseUrl();
-  const base = new URL(baseUrl);
+  const base = new URL(resolveCostamarB2bBaseUrl());
   const origin = base.origin;
   const jar = new Map<string, string>();
 
   try {
-    const loginEntryUrl = resolveCostamarB2bPreferredLoginUrl(baseUrl) ?? baseUrl;
-    const loginEntry = await fetchCostamarB2bWithCookies(loginEntryUrl, origin, jar, {
+    await fetchCostamarB2bWithCookies(`${origin}/login`, jar, {
       headers: {
         accept: "text/html,application/xhtml+xml",
       },
     });
-    const loginUrl = resolveCostamarB2bLoginUrl(loginEntry.response, loginEntry.body, origin);
-    if (!loginUrl) {
-      return undefined;
-    }
-    const authenticatorUrl = resolveCostamarB2bLocalizedPath(loginUrl, "login2factor");
-    const b2bUrl = resolveCostamarB2bLocalizedPath(loginUrl, "b2b");
-    const airlineSearchUrl = resolveCostamarB2bLocalizedPath(loginUrl, "airlinesearch");
 
-    const login = await fetchCostamarB2bWithCookies(loginUrl, origin, jar, {
+    const login = await fetchCostamarB2bWithCookies(`${origin}/lang/en/login`, jar, {
       method: "POST",
       headers: {
         "content-type": "application/x-www-form-urlencoded",
         accept: "text/html,application/xhtml+xml",
-        referer: loginUrl,
+        referer: `${origin}/login`,
       },
       body: new URLSearchParams({
         email: credentials.email,
@@ -1209,41 +1063,19 @@ async function generateCostamarRedirectContextViaB2BHttp(
       requiresAuthenticator: costamarB2bResponseRequiresAuthenticator(login.body),
     });
 
-    let authChallengeBody = costamarB2bResponseRequiresAuthenticator(login.body)
-      ? login.body
-      : undefined;
-    let authChallengeUrl = authenticatorUrl;
-    const loginLocation = login.response.headers.get("location");
-    if (!authChallengeBody && login.response.status >= 300 && login.response.status < 400 && loginLocation) {
-      const redirectUrl = resolveCostamarB2bRedirectUrl(loginLocation, origin);
-      if (!redirectUrl) {
-        return undefined;
-      }
-      const redirected = await fetchCostamarB2bWithCookies(redirectUrl, origin, jar, {
-        headers: {
-          accept: "text/html,application/xhtml+xml",
-        },
-      });
-      const redirectedToAuthenticator = /\/login2factor\/?$/i.test(new URL(redirectUrl).pathname);
-      if (redirectedToAuthenticator || costamarB2bResponseRequiresAuthenticator(redirected.body)) {
-        authChallengeBody = redirected.body;
-        authChallengeUrl = redirectUrl;
-      }
-    }
-
-    if (authChallengeBody !== undefined) {
+    if (costamarB2bResponseRequiresAuthenticator(login.body)) {
       const authCode = await promptCostamarB2bAuthCode("Codigo de Google Authenticator");
       if (!authCode) {
         return undefined;
       }
 
-      const authFields = readCostamarB2bInputValues(authChallengeBody);
-      const auth = await fetchCostamarB2bWithCookies(authChallengeUrl, origin, jar, {
+      const authFields = readCostamarB2bInputValues(login.body);
+      const auth = await fetchCostamarB2bWithCookies(`${origin}/lang/en/login2factor`, jar, {
         method: "POST",
         headers: {
           "content-type": "application/x-www-form-urlencoded",
           accept: "text/html,application/xhtml+xml",
-          referer: authChallengeUrl,
+          referer: `${origin}/lang/en/login`,
         },
         body: new URLSearchParams({
           ...authFields,
@@ -1253,16 +1085,12 @@ async function generateCostamarRedirectContextViaB2BHttp(
       });
       logCostamarB2bDebug("http 2fa response", {
         status: auth.response.status,
-        hasRedirect: Boolean(auth.response.headers.get("location")),
+        location: auth.response.headers.get("location"),
       });
 
       const location = auth.response.headers.get("location");
       if (auth.response.status >= 300 && auth.response.status < 400 && location) {
-        const redirectUrl = resolveCostamarB2bRedirectUrl(location, origin);
-        if (!redirectUrl) {
-          return undefined;
-        }
-        await fetchCostamarB2bWithCookies(redirectUrl, origin, jar, {
+        await fetchCostamarB2bWithCookies(new URL(location, origin).toString(), jar, {
           headers: {
             accept: "text/html,application/xhtml+xml",
           },
@@ -1270,15 +1098,24 @@ async function generateCostamarRedirectContextViaB2BHttp(
       } else if (/login|authenticator|secretcode/i.test(auth.body)) {
         return undefined;
       }
+    } else {
+      const location = login.response.headers.get("location");
+      if (login.response.status >= 300 && login.response.status < 400 && location) {
+        await fetchCostamarB2bWithCookies(new URL(location, origin).toString(), jar, {
+          headers: {
+            accept: "text/html,application/xhtml+xml",
+          },
+        });
+      }
     }
 
-    const tokenResponse = await fetchCostamarB2bWithCookies(airlineSearchUrl, origin, jar, {
+    const tokenResponse = await fetchCostamarB2bWithCookies(`${origin}/lang/en/airlinesearch`, jar, {
       method: "POST",
       headers: {
         "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
         accept: "application/json, text/javascript, */*; q=0.01",
         "x-requested-with": "XMLHttpRequest",
-        referer: b2bUrl,
+        referer: `${origin}/lang/en/b2b`,
       },
       body: new URLSearchParams({
         accountid: context.terminalId,
@@ -1302,16 +1139,10 @@ async function generateCostamarRedirectContextViaB2BHttp(
       ...context,
       token,
     });
-  } catch {
-    logCostamarB2bDebug("http automation failed");
+  } catch (error) {
+    logCostamarB2bDebug("http automation failed", error instanceof Error ? error.message : "unknown error");
     return undefined;
   }
-}
-
-export async function generateCostamarRedirectContextViaB2BHttpForTests(
-  context: CostamarProviderContext,
-): Promise<CostamarProviderContext | undefined> {
-  return generateCostamarRedirectContextViaB2BHttp(context);
 }
 
 function collectCostamarCandidatesFromText(
@@ -1480,18 +1311,12 @@ function buildCostamarSessionCandidateFromToken(
 }
 
 async function openCostamarB2bFlightsTab(page: Page): Promise<boolean> {
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return false;
-  }
   const flightsTab = page.locator("a[href='#airlines']").first();
   if (await flightsTab.count() === 0) {
     return false;
   }
 
   await flightsTab.click({ force: true }).catch(() => undefined);
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return false;
-  }
   await page.locator("#fairlines").first().waitFor({ state: "attached", timeout: 10000 }).catch(() => undefined);
   await page.waitForTimeout(500);
 
@@ -1502,9 +1327,6 @@ async function primeCostamarB2bFlightForm(
   page: Page,
   payload: CostamarB2bFlightWarmupPayload,
 ): Promise<boolean> {
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return false;
-  }
   return page.evaluate((flight) => {
     document.querySelector<HTMLElement>("a[href='#airlines']")?.click();
     document
@@ -1592,8 +1414,8 @@ async function primeCostamarB2bFlightForm(
     }
 
     return Boolean(document.querySelector("#fsairlines"));
-  }, payload).catch(() => {
-    logCostamarB2bDebug("form prime failed");
+  }, payload).catch((error) => {
+    logCostamarB2bDebug("form prime failed", error instanceof Error ? error.message : "unknown error");
     return false;
   });
 }
@@ -1606,9 +1428,6 @@ async function submitCostamarB2bFlightSearch(
   sourcePrefix: string,
   observedPages: Set<Page>,
 ): Promise<CostamarSessionCandidate | undefined> {
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return undefined;
-  }
   const payload = buildCostamarB2bWarmupPayload(request, context);
   if (!payload) {
     return undefined;
@@ -1778,9 +1597,6 @@ export function detectCostamarB2bAuthChallenge(
 }
 
 async function readCostamarB2bAuthSnapshot(page: Page): Promise<CostamarB2bAuthSnapshot | undefined> {
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return undefined;
-  }
   try {
     return await page.evaluate(() => {
       const inputs = Array.from(document.querySelectorAll("input"))
@@ -1828,9 +1644,6 @@ async function detectCostamarB2bAuthPrompt(page: Page): Promise<{
   challenge: CostamarB2bAuthChallenge;
   label: string;
 } | undefined> {
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return undefined;
-  }
   const snapshot = await readCostamarB2bAuthSnapshot(page);
   const challenge = detectCostamarB2bAuthChallenge(snapshot);
   if (!challenge) {
@@ -1847,28 +1660,19 @@ async function submitCostamarB2bAuthPrompt(
   page: Page,
   challenge: CostamarB2bAuthChallenge,
   authCode: string,
-): Promise<boolean> {
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return false;
-  }
+): Promise<void> {
   const inputLocator = page.locator("input");
   const normalizedCode = authCode.trim();
 
   if (challenge.kind === "split") {
     const characters = [...normalizedCode];
     for (let index = 0; index < challenge.inputIndexes.length; index += 1) {
-      if (!isCostamarB2bUrlAllowed(page.url())) {
-        return false;
-      }
       await applyCostamarB2bKeyboardInput(
         inputLocator.nth(challenge.inputIndexes[index]),
         characters[index] ?? "",
       );
     }
   } else {
-    if (!isCostamarB2bUrlAllowed(page.url())) {
-      return false;
-    }
     await applyCostamarB2bKeyboardInput(
       inputLocator.nth(challenge.inputIndexes[0]),
       normalizedCode,
@@ -1887,9 +1691,6 @@ async function submitCostamarB2bAuthPrompt(
 
   let submitted = false;
   for (const selector of submitSelectors) {
-    if (!isCostamarB2bUrlAllowed(page.url())) {
-      return false;
-    }
     const control = page.locator(selector).first();
     if (await control.count() === 0) {
       continue;
@@ -1906,16 +1707,12 @@ async function submitCostamarB2bAuthPrompt(
   }
 
   if (!submitted) {
-    if (!isCostamarB2bUrlAllowed(page.url())) {
-      return false;
-    }
     const lastInput = inputLocator.nth(challenge.inputIndexes[challenge.inputIndexes.length - 1]);
     await lastInput.press("Enter").catch(() => undefined);
   }
 
   await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => undefined);
   await page.waitForTimeout(1500);
-  return isCostamarB2bUrlAllowed(page.url());
 }
 
 async function waitForCostamarB2bSessionTransition(
@@ -1924,9 +1721,6 @@ async function waitForCostamarB2bSessionTransition(
 ): Promise<void> {
   const deadline = Date.now() + Math.max(2000, timeoutMs);
   while (Date.now() < deadline) {
-    if (!isCostamarB2bUrlAllowed(page.url())) {
-      return;
-    }
     const loginVisible = await pageShowsCostamarB2bLogin(page);
     const authPromptVisible = Boolean(await detectCostamarB2bAuthPrompt(page));
     if (!loginVisible && !authPromptVisible) {
@@ -1939,9 +1733,6 @@ async function waitForCostamarB2bSessionTransition(
 }
 
 async function completeCostamarB2bAuthPrompt(page: Page): Promise<boolean> {
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return false;
-  }
   const prompt = await detectCostamarB2bAuthPrompt(page);
   if (!prompt) {
     return true;
@@ -1952,27 +1743,16 @@ async function completeCostamarB2bAuthPrompt(page: Page): Promise<boolean> {
     return false;
   }
 
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return false;
-  }
-  if (!(await submitCostamarB2bAuthPrompt(page, prompt.challenge, authCode))) {
-    return false;
-  }
+  await submitCostamarB2bAuthPrompt(page, prompt.challenge, authCode);
   await waitForCostamarB2bSessionTransition(page);
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return false;
-  }
   return !(await pageShowsCostamarB2bLogin(page))
     && !(await detectCostamarB2bAuthPrompt(page));
 }
 
 async function pageShowsCostamarB2bLogin(page: Page): Promise<boolean> {
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return false;
-  }
   try {
-    const email = page.locator(COSTAMAR_B2B_EMAIL_SELECTOR).first();
-    const password = page.locator(COSTAMAR_B2B_PASSWORD_SELECTOR).first();
+    const email = page.locator("#email").first();
+    const password = page.locator("#password").first();
     if (await email.count() === 0 || await password.count() === 0) {
       return false;
     }
@@ -1996,29 +1776,8 @@ async function ensureCostamarB2bSession(page: Page): Promise<boolean> {
     await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => undefined);
   }
 
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return false;
-  }
-
   if (!(await pageShowsCostamarB2bLogin(page))) {
     return completeCostamarB2bAuthPrompt(page);
-  }
-
-  const preferredLoginUrl = resolveCostamarB2bPreferredLoginUrl(baseUrl);
-  if (preferredLoginUrl) {
-    const current = new URL(page.url());
-    const preferred = new URL(preferredLoginUrl);
-    if (/\/login\/?$/i.test(current.pathname)
-      && (current.origin !== preferred.origin || current.pathname !== preferred.pathname)) {
-      await page.goto(preferredLoginUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 45000,
-      });
-      await page.waitForTimeout(1500);
-      if (!isCostamarB2bUrlAllowed(page.url()) || !(await pageShowsCostamarB2bLogin(page))) {
-        return false;
-      }
-    }
   }
 
   const credentials = await resolveCostamarB2bCredentialsForAutomation();
@@ -2026,30 +1785,11 @@ async function ensureCostamarB2bSession(page: Page): Promise<boolean> {
     return false;
   }
 
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return false;
-  }
-  const emailInput = page.locator(COSTAMAR_B2B_EMAIL_SELECTOR).first();
-  const passwordInput = page.locator(COSTAMAR_B2B_PASSWORD_SELECTOR).first();
-  await applyCostamarB2bKeyboardInput(emailInput, credentials.email);
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return false;
-  }
-  await applyCostamarB2bKeyboardInput(passwordInput, credentials.password);
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return false;
-  }
-  const submit = page.locator(COSTAMAR_B2B_LOGIN_SUBMIT_SELECTOR).first();
-  if (await submit.count() === 0 || !(await submit.isVisible().catch(() => false))) {
-    return false;
-  }
-  await submit.click();
+  await applyCostamarB2bKeyboardInput(page.locator("#email"), credentials.email);
+  await applyCostamarB2bKeyboardInput(page.locator("#password"), credentials.password);
+  await page.locator("#btnsubmit").click();
   await page.waitForLoadState("domcontentloaded", { timeout: 45000 }).catch(() => undefined);
   await waitForCostamarB2bSessionTransition(page, 8000);
-
-  if (!isCostamarB2bUrlAllowed(page.url())) {
-    return false;
-  }
 
   if (!(await pageShowsCostamarB2bLogin(page))) {
     return completeCostamarB2bAuthPrompt(page);
@@ -2057,12 +1797,6 @@ async function ensureCostamarB2bSession(page: Page): Promise<boolean> {
 
   clearInteractiveCostamarB2bCredentials();
   return false;
-}
-
-export async function ensureCostamarB2bSessionForTests(
-  page: Pick<Page, "url" | "goto" | "waitForTimeout" | "waitForLoadState" | "locator">,
-): Promise<boolean> {
-  return ensureCostamarB2bSession(page as Page);
 }
 
 async function launchCostamarBrowserContext(): Promise<{
@@ -2078,9 +1812,14 @@ async function launchCostamarBrowserContext(): Promise<{
     : "";
   try {
     const playwright = await getPlaywright();
-    const executablePath = resolveCostamarChromeExecutable();
+    const configuredExecutable = cbPlusEnv("CBPLUS_CHROME_EXECUTABLE", "COSTAMAR_CHROME_EXECUTABLE");
+    const executablePath = cloneSourceProfile
+      ? resolveCostamarChromeExecutable()
+      : configuredExecutable && existsSync(configuredExecutable)
+        ? configuredExecutable
+        : undefined;
     const launchOptions = {
-      executablePath,
+      ...(executablePath ? { executablePath } : {}),
       headless: costamarBrowserAutomationHeadless(),
       args: [
         "--no-first-run",
@@ -2370,7 +2109,7 @@ async function generateCostamarRedirectContextViaB2B(
       await sleep(COSTAMAR_SESSION_WARMUP_POLL_MS);
     }
   } catch (error) {
-    logCostamarB2bDebug("isolated automation failed");
+    logCostamarB2bDebug("isolated automation failed", error instanceof Error ? error.message : "unknown error");
     return undefined;
   } finally {
     await closeCostamarBrowserContext(browserContext);
@@ -3579,12 +3318,8 @@ async function fetchCostamar(
       signal: controller.signal,
     });
   } catch (error) {
-    const timedOut = controller.signal.aborted || (error instanceof Error && error.name === "AbortError");
-    throw new Error(
-      timedOut
-        ? `${action} timed out.`
-        : `${action} failed before receiving a response.`,
-    );
+    const detail = error instanceof Error ? error.message : "unknown error";
+    throw new Error(`${action} failed: ${detail}`);
   } finally {
     clearTimeout(timeout);
   }
@@ -3597,41 +3332,21 @@ async function fetchCostamarJson<T>(
   action: string,
 ): Promise<T> {
   const response = await fetchCostamar(context, path, init, action);
-  return readCostamarJsonResponse<T>(response, action);
-}
-
-function isCostamarB2bUrlAllowed(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === "https:" && COSTAMAR_B2B_ALLOWED_ORIGINS.has(parsed.origin);
-  } catch {
-    return false;
-  }
-}
-
-export async function readCostamarJsonResponse<T = Record<string, unknown>>(
-  response: Response,
-  action: string,
-): Promise<T> {
-  if (!response.ok) {
-    await response.body?.cancel().catch(() => undefined);
-    throw new Error(`${action} failed with HTTP ${response.status}.`);
-  }
-
   const bodyText = await response.text();
-  if (!bodyText.trim()) {
-    throw new Error(`${action} returned an empty JSON response.`);
-  }
+  let parsed: T | undefined;
 
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(bodyText);
+    parsed = bodyText ? JSON.parse(bodyText) as T : undefined;
   } catch {
-    throw new Error(`${action} returned invalid JSON.`);
+    parsed = undefined;
   }
 
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`${action} returned an invalid JSON payload.`);
+  if (!response.ok) {
+    throw new Error(
+      bodyText
+        ? `${action} failed with ${response.status} ${response.statusText}: ${bodyText}`
+        : `${action} failed with ${response.status} ${response.statusText}`,
+    );
   }
 
   return parsed as T;
@@ -3668,24 +3383,17 @@ export function buildCostamarSearchWarning(payload: CostamarSearchResponse): str
     return undefined;
   }
 
+  const message = payload.message?.trim();
+  if (message) {
+    return `Click and Book Plus rejected this search (${status}): ${message}`;
+  }
+
   if (status === 401) {
     return "Click and Book Plus rejected this search: the branded token is invalid, expired, or no longer belongs to this agency.";
   }
 
   if (status === 402) {
     return "Click and Book Plus rejected this search: the validation token is missing for this branded flow.";
-  }
-
-  if (status === 403) {
-    return "Click and Book Plus rejected this search: agency or permission validation failed.";
-  }
-
-  if (status === 429) {
-    return "Click and Book Plus temporarily rate-limited this search.";
-  }
-
-  if (status >= 500) {
-    return "Click and Book Plus is temporarily unavailable.";
   }
 
   return `Click and Book Plus rejected this search with status ${status}.`;
@@ -3704,7 +3412,7 @@ function normalizeSegment(
     return undefined;
   }
 
-  const marketingCarrier = value.marketingAirline?.code?.trim().toUpperCase() || "";
+  const marketingCarrier = value.marketingAirline?.code?.trim().toUpperCase() || "XX";
   const rawFlightNumber = String(value.flightNumber ?? "").trim();
 
   return {
@@ -3804,37 +3512,6 @@ function costamarRecommendationStableId(recommendation: CostamarRecommendation):
   return String(recommendation.id ?? sha1Hex(JSON.stringify(recommendation))).trim() || "recommendation";
 }
 
-function buildCostamarScheduleGroupScope(request: SearchRequest): string | undefined {
-  const leg = request.legs[0];
-  const departureDate = leg?.departureDate;
-  const returnDate = request.tripType === "round-trip" ? leg?.returnDate : undefined;
-  if (!leg || !departureDate || (request.tripType === "round-trip" && !returnDate)) {
-    return undefined;
-  }
-
-  return JSON.stringify([
-    "costamar",
-    request.tripType,
-    leg.origin.trim().toUpperCase(),
-    leg.destination.trim().toUpperCase(),
-    departureDate,
-    returnDate ?? null,
-  ]);
-}
-
-function scheduleVariantProductExceedsLimit(
-  optionsByJourney: ReadonlyArray<ReadonlyArray<unknown>>,
-): boolean {
-  let product = 1;
-  for (const options of optionsByJourney) {
-    if (options.length > Math.floor(PROVIDER_OFFER_VARIANT_LIMIT / product)) {
-      return true;
-    }
-    product *= options.length;
-  }
-  return false;
-}
-
 function expandCostamarRecommendationFlightOptions(
   recommendation: CostamarRecommendation,
   request: SearchRequest,
@@ -3857,7 +3534,6 @@ function expandCostamarRecommendationFlightOptions(
   }
 
   const baseId = costamarRecommendationStableId(recommendation);
-  const scheduleVariantsTruncated = scheduleVariantProductExceedsLimit(optionsByJourney);
   let variants: Array<Array<{ flight: CostamarFlight; index: number }>> = [[]];
   for (const options of optionsByJourney) {
     const next: Array<Array<{ flight: CostamarFlight; index: number }>> = [];
@@ -3874,7 +3550,6 @@ function expandCostamarRecommendationFlightOptions(
   return takeProviderOfferVariants(variants).map((variant) => ({
     ...recommendation,
     id: `${baseId}:${variant.map((option) => option.index).join("-")}`,
-    scheduleVariantsTruncated,
     itinerary: relevantJourneys.map((journey, index) => ({
       ...journey,
       flights: [variant[index].flight],
@@ -3958,23 +3633,15 @@ export async function verifyCostamarRedirectCandidate(
     }
 
     return costamarRedirectVerification("blocked", false, `The branded redirect rejected the token with HTTP ${response.status}.`);
-  } catch {
+  } catch (error) {
     return costamarRedirectVerification(
       "fresh_unverified",
       false,
-      "Click and Book Plus redirect validation could not be completed.",
+      error instanceof Error ? `Redirect validation failed: ${error.message}` : "Redirect validation failed.",
     );
   } finally {
     clearTimeout(timeout);
   }
-}
-
-export function safeCostamarRedirectFailureReason(error: unknown): string {
-  const message = error instanceof Error ? error.message.trim() : "";
-  if (/^La validacion del redirect de Click and Book Plus tardo mas de \d+ms\.$/.test(message)) {
-    return message;
-  }
-  return "No se pudo validar el redirect de Click and Book Plus.";
 }
 
 function redirectStateRequiresRefresh(state: CostamarRedirectState): boolean {
@@ -4130,51 +3797,6 @@ export function applyCostamarContextToBrandedSearchUrl(
   return branded.toString();
 }
 
-export function isAllowedCostamarBrandedSearchLocation(
-  input: string,
-  request: SearchRequest,
-  context: CostamarProviderContext,
-): boolean {
-  let candidate: URL;
-  try {
-    candidate = new URL(input);
-  } catch {
-    return false;
-  }
-
-  if (candidate.protocol !== "https:" || candidate.username || candidate.password) {
-    return false;
-  }
-
-  const allowedBaseUrls = [
-    context.brandBaseUrl,
-    "https://booking.clickandbook.com/vuelos",
-  ];
-
-  return allowedBaseUrls.some((brandBaseUrl) => {
-    try {
-      const base = new URL(brandBaseUrl);
-      if (
-        base.protocol !== "https:"
-        || base.username
-        || base.password
-        || (base.hostname !== "flights.zdev.tech" && base.hostname !== "booking.clickandbook.com")
-      ) {
-        return false;
-      }
-
-      const expected = new URL(buildCostamarBrandedSearchUrl(request, {
-        ...context,
-        brandBaseUrl: base.toString(),
-        token: "",
-      }));
-      return candidate.origin === expected.origin && candidate.pathname === expected.pathname;
-    } catch {
-      return false;
-    }
-  });
-}
-
 export function mapCostamarRecommendationToOffer(
   recommendation: CostamarRecommendation,
   request: SearchRequest,
@@ -4253,8 +3875,6 @@ export function mapCostamarRecommendationToOffer(
     warnings: [],
     rawRefs: {
       recommendationId: recommendation.id,
-      scheduleGroupScope: recommendation.scheduleGroupScope,
-      scheduleVariantsTruncated: recommendation.scheduleVariantsTruncated === true,
       pos: recommendation.pos,
     },
   };
@@ -4335,13 +3955,7 @@ async function searchRecommendations(
   }
 
   const responseWarning = buildCostamarSearchWarning(payload);
-  const scheduleGroupScope = buildCostamarScheduleGroupScope(request);
-  const recommendations = responseWarning
-    ? []
-    : extractCostamarRecommendations(payload, request).map((recommendation) => ({
-      ...recommendation,
-      scheduleGroupScope,
-    }));
+  const recommendations = responseWarning ? [] : extractCostamarRecommendations(payload, request);
   const recommendationVariants = recommendations.flatMap((recommendation) =>
     expandCostamarRecommendationFlightOptions(recommendation, request),
   );
@@ -4373,7 +3987,6 @@ async function searchRecommendations(
   return {
     offers,
     warnings,
-    partial: Boolean(responseWarning),
   };
 }
 
@@ -4389,7 +4002,7 @@ export async function searchLocalCostamarExact(
   return {
     offers: outcome.offers,
     warnings: outcome.warnings,
-    partial: outcome.partial,
+    partial: false,
   };
 }
 
@@ -4450,7 +4063,7 @@ export async function searchLocalCostamarRange(
       };
     } catch (error) {
       return {
-        error: providerPublicFailureMessage("costamar", error),
+        error: error instanceof Error ? error.message : "Click and Book Plus range search failed.",
       };
     }
   });
@@ -4470,7 +4083,7 @@ export async function searchLocalCostamarRange(
   return {
     offers,
     warnings,
-    partial: outcomes.some((outcome) => Boolean(outcome.error) || outcome.result?.partial === true),
+    partial: outcomes.some((outcome) => Boolean(outcome.error)),
   };
 }
 
@@ -4494,9 +4107,8 @@ export async function resolveLocalCostamarRangeProgressive(
       progressOffers = result.offers;
       progressWarnings = result.warnings;
       warnings.push(...result.warnings);
-      partial = partial || result.partial;
     } catch (error) {
-      const warning = providerPublicFailureMessage("costamar", error);
+      const warning = error instanceof Error ? error.message : "Click and Book Plus range search failed.";
       partial = true;
       warnings.push(warning);
       progressWarnings = [warning];
@@ -4611,9 +4223,9 @@ export function matchesCostamarNativeFlexibleWindow(request: SearchRequest): boo
 async function seedMatrixWithFlexibleSearch(
   request: SearchRequest,
   providerContext?: ProviderContext,
-): Promise<{ offers: Map<string, CanonicalOffer>; partial: boolean }> {
+): Promise<Map<string, CanonicalOffer>> {
   if (!matchesCostamarNativeFlexibleWindow(request)) {
-    return { offers: new Map(), partial: false };
+    return new Map();
   }
 
   const leg = request.legs[0];
@@ -4652,10 +4264,7 @@ async function seedMatrixWithFlexibleSearch(
     }
   }
 
-  return {
-    offers: byKey,
-    partial: search.partial,
-  };
+  return byKey;
 }
 
 function buildMatrixCellFromOffer(
@@ -4691,23 +4300,17 @@ function buildMatrixCellFromOffer(
 async function resolveCellPrice(
   derivedRequest: SearchRequest,
   providerContext?: ProviderContext,
-): Promise<{ offer?: CanonicalOffer; partial: boolean; warnings: string[] }> {
+): Promise<CanonicalOffer | undefined> {
   const search = await searchLocalCostamarExact(derivedRequest, providerContext);
   const offers = enrichComparisonMetrics(search.offers);
 
-  const offer = offers.reduce<CanonicalOffer | undefined>((best, current) => {
+  return offers.reduce<CanonicalOffer | undefined>((best, current) => {
     if (!best || compareByPriceThenDuration(current, best) < 0) {
       return current;
     }
 
     return best;
   }, undefined);
-
-  return {
-    offer,
-    partial: search.partial,
-    warnings: search.warnings,
-  };
 }
 
 export async function resolveLocalCostamarMatrixProgressive(
@@ -4718,12 +4321,7 @@ export async function resolveLocalCostamarMatrixProgressive(
 ): Promise<MatrixResponse> {
   let partial = false;
   let stopRequested = false;
-  const seedResult = await seedMatrixWithFlexibleSearch(request, providerContext).catch(() => ({
-    offers: new Map<string, CanonicalOffer>(),
-    partial: true,
-  }));
-  const seeded = seedResult.offers;
-  partial = seedResult.partial;
+  const seeded = await seedMatrixWithFlexibleSearch(request, providerContext).catch(() => new Map<string, CanonicalOffer>());
   const seededKeys = new Set<string>();
   const seededCells = draft.cells.map((cell) => {
     if (cell.confidence !== "loading" || !cell.derivedRequest) {
@@ -4751,9 +4349,7 @@ export async function resolveLocalCostamarMatrixProgressive(
     .filter((cell) => !stopRequested && !seededKeys.has(cell.key));
   const resolvedLoadingCells = await mapConcurrent(prioritizedCells, COSTAMAR_CONCURRENCY.matrixCell, async (cell) => {
     try {
-      const resolution = await resolveCellPrice(cell.derivedRequest, providerContext);
-      partial = partial || resolution.partial;
-      const offer = resolution.offer;
+      const offer = await resolveCellPrice(cell.derivedRequest, providerContext);
       const nextCell = offer
         ? buildMatrixCellFromOffer(cell, offer, providerContext)
         : {
@@ -4761,9 +4357,7 @@ export async function resolveLocalCostamarMatrixProgressive(
             confidence: "unavailable" as const,
             selectable: false,
             stateCode: "chg" as const,
-            tooltip: resolution.partial
-              ? resolution.warnings[0] ?? "Click and Book Plus search was only partially available."
-              : "Click and Book Plus returned no live result for this combination.",
+            tooltip: "Click and Book Plus returned no live result for this combination.",
           } satisfies MatrixCell;
       if (onCellResolved?.(nextCell) === false) {
         stopRequested = true;
@@ -4776,7 +4370,9 @@ export async function resolveLocalCostamarMatrixProgressive(
         confidence: "unavailable" as const,
         selectable: false,
         stateCode: "chg" as const,
-        tooltip: providerPublicFailureMessage("costamar", error),
+        tooltip: error instanceof Error
+          ? `Click and Book Plus error: ${error.message}`
+          : "Click and Book Plus error while resolving this combination.",
       } satisfies MatrixCell;
       if (onCellResolved?.(nextCell) === false) {
         stopRequested = true;
@@ -4826,7 +4422,7 @@ export async function buildLocalCostamarMatrix(
   return resolveLocalCostamarMatrixProgressive(request, providerContext, draft);
 }
 
-export function mapCostamarLocationSuggestion(
+function mapLocationSuggestion(
   entry: CostamarAutocompleteAirport,
 ): LocationSuggestion | undefined {
   const code = entry.code?.trim().toUpperCase();
@@ -4843,7 +4439,6 @@ export function mapCostamarLocationSuggestion(
     country: countryCode,
     countryCode,
     cityCode: entry.cityCode?.trim().toUpperCase(),
-    type: normalizeLocationSuggestionType(entry.type),
     searchType: entry.type?.trim(),
     label,
   };
@@ -4873,19 +4468,12 @@ export async function suggestLocalCostamarLocations(
     );
 
     if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new Error(`Click and Book Plus location suggest failed with HTTP ${response.status}.`);
+      throw new Error(`Click and Book Plus location suggest failed: ${response.status} ${response.statusText}`);
     }
 
-    const rawPayload = await response.json() as unknown;
-    const rawAirports = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)
-      ? (rawPayload as { airports?: unknown }).airports
-      : undefined;
-    const airports = Array.isArray(rawAirports)
-      ? rawAirports.filter((entry): entry is CostamarAutocompleteAirport => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry))
-      : [];
-    const suggestions = airports
-      .map((entry) => mapCostamarLocationSuggestion(entry))
+    const payload = await response.json() as CostamarAutocompleteResponse;
+    const suggestions = asArray(payload.airports)
+      .map((entry) => mapLocationSuggestion(entry))
       .filter((entry): entry is LocationSuggestion => Boolean(entry));
 
     return rankLocationSuggestions(normalizedQuery, suggestions, limit);

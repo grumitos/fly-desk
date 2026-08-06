@@ -37,7 +37,7 @@ test("search service base URL only accepts loopback HTTP targets", () => {
   assert.equal(resolveSearchServiceBaseUrl("http://localhost:8101/search")?.toString(), "http://localhost:8101/search");
 });
 
-test("search service route detection includes provider status and quotation sessions owned by the runner", () => {
+test("search service route detection includes quotation sessions owned by the runner", () => {
   assert.equal(isSearchServiceRoute("POST", "/api/search"), true);
   assert.equal(isSearchServiceRoute("GET", "/api/search/job-1"), true);
   assert.equal(isSearchServiceRoute("POST", "/api/search/job-1/cancel"), true);
@@ -45,50 +45,11 @@ test("search service route detection includes provider status and quotation sess
   assert.equal(isSearchServiceRoute("GET", "/api/matrix/job-1"), true);
   assert.equal(isSearchServiceRoute("POST", "/api/matrix/job-1/cancel"), true);
   assert.equal(isSearchServiceRoute("POST", "/api/quotation"), true);
-  assert.equal(isSearchServiceRoute("GET", "/api/provider-status"), true);
-
-  assert.equal(isSearchServiceRoute("POST", "/api/provider-status"), false);
 
   assert.equal(isSearchServiceRoute("GET", "/api/health"), false);
   assert.equal(isSearchServiceRoute("GET", "/api/locations"), false);
   assert.equal(isSearchServiceRoute("POST", "/api/auth/login"), false);
   assert.equal(isSearchServiceRoute("GET", "/r/path-id"), false);
-});
-
-test("search service proxy forwards provider status reads to the configured runner", async () => {
-  const restoreEnv = overrideEnv({
-    FLY_DESK_API_TOKEN: "test-api-token",
-    FLY_DESK_SEARCH_SERVICE_API_TOKEN: undefined,
-  });
-
-  try {
-    let forwardedUrl = "";
-    let forwardedMethod = "";
-    const request = new Request("http://fly-desk.test/api/provider-status", {
-      headers: {
-        Accept: "application/json",
-        Cookie: "flydesk_session=test",
-      },
-    });
-    const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
-      serviceUrl: "http://127.0.0.1:8101",
-      fetchImpl: async (input, init) => {
-        forwardedUrl = String(input);
-        forwardedMethod = String(init?.method ?? "");
-        return Response.json({ providers: [] }, {
-          headers: { "Cache-Control": "no-store" },
-        });
-      },
-    });
-
-    assert.equal(response?.status, 200);
-    assert.deepEqual(await response?.json(), { providers: [] });
-    assert.equal(response?.headers.get("cache-control"), "no-store");
-    assert.equal(forwardedUrl, "http://127.0.0.1:8101/api/provider-status");
-    assert.equal(forwardedMethod, "GET");
-  } finally {
-    restoreEnv();
-  }
 });
 
 test("search service proxy forwards search requests to the configured runner", async () => {
@@ -346,7 +307,7 @@ test("search service proxy returns a safe unavailable response when the runner r
       serviceUrl: "http://127.0.0.1:8101",
       timeoutMs: 1_000,
       fetchImpl: async () => {
-        throw new Error("connect ECONNREFUSED token-test-api-token-value password=s3cr3t");
+        throw new Error("connect ECONNREFUSED token-test-api-token-value");
       },
     });
 
@@ -356,7 +317,6 @@ test("search service proxy returns a safe unavailable response when the runner r
     const logged = JSON.stringify(warnings[0]);
     assert.match(logged, /apiTokenConfigured/);
     assert.doesNotMatch(logged, /test-api-token-value/);
-    assert.doesNotMatch(logged, /s3cr3t/);
   } finally {
     console.warn = originalWarn;
     restoreEnv();

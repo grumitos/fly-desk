@@ -1,5 +1,5 @@
-import type { CanonicalOffer, SearchJobResponse } from "@/types"
-import { buildResultCardModel } from "./result-card-model"
+import type { CanonicalOffer } from "@/types"
+import { buildResultCardModel, type ResultJourneySummary } from "./result-card-model"
 
 export type ResultListItem =
   | { type: "offer"; id: string; offer: CanonicalOffer; offerCount: 1 }
@@ -19,80 +19,81 @@ export interface ResultListPage {
   displayWeight: number
 }
 
-type ScheduleGroup = NonNullable<SearchJobResponse["scheduleGroups"]>[number]
+type GroupBucket = ResultOfferGroup & {
+  firstIndex: number
+}
 
-export function buildResultListItems(
-  offers: CanonicalOffer[],
-  scheduleGroups: readonly ScheduleGroup[] = [],
-): ResultListItem[] {
-  const offersById = new Map(offers.map((offer) => [offer.id, offer]))
-  const groupByOfferId = new Map<string, ResultOfferGroup>()
-  const assignedOfferIds = new Set<string>()
-  const registeredGroupIds = new Set<string>()
+type NativeGroupDescriptor = {
+  providerKey: "agil" | "costamar"
+  providerLabel: string
+  nativeId: string
+}
 
-  for (const scheduleGroup of scheduleGroups) {
-    if (registeredGroupIds.has(scheduleGroup.id)) continue
+export function buildResultListItems(offers: CanonicalOffer[]): ResultListItem[] {
+  const buckets = new Map<string, GroupBucket>()
+  const offerKeys = new Map<string, string>()
 
-    const memberOffers: CanonicalOffer[] = []
-    const memberOfferIds = new Set<string>()
-    for (const combination of scheduleGroup.combinations) {
-      if (memberOfferIds.has(combination.offerId) || assignedOfferIds.has(combination.offerId)) continue
+  offers.forEach((offer, index) => {
+    const key = offerNaturalGroupKey(offer)
+    if (!key) return
 
-      const offer = offersById.get(combination.offerId)
-      if (!offer) continue
-
-      memberOfferIds.add(offer.id)
-      memberOffers.push(offer)
+    offerKeys.set(offer.id, key)
+    const bucket = buckets.get(key)
+    if (bucket) {
+      bucket.offers.push(offer)
+      return
     }
 
-    // A partially filtered or stale group is not a group in the visible list.
-    // Its one remaining offer stays selectable as the complete backend offer.
-    if (memberOffers.length <= 1) continue
+    const descriptor = nativeGroupDescriptor(offer)
+    if (!descriptor) return
 
-    const id = `result-group:${scheduleGroup.id}`
-    const group: ResultOfferGroup = {
-      id,
-      key: scheduleGroup.id,
-      providerLabel: providerLabelForScheduleGroup(scheduleGroup.providerSource),
-      offers: orderVisibleGroupOffers(memberOffers),
-    }
+    buckets.set(key, {
+      id: `result-group:${key}`,
+      key,
+      providerLabel: descriptor.providerLabel,
+      offers: [offer],
+      firstIndex: index,
+    })
+  })
 
-    registeredGroupIds.add(scheduleGroup.id)
-    for (const offer of memberOffers) {
-      assignedOfferIds.add(offer.id)
-      groupByOfferId.set(offer.id, group)
-    }
-  }
-
+  const groupedKeys = new Set(
+    Array.from(buckets)
+      .filter(([, bucket]) => bucket.offers.length > 1)
+      .sort((left, right) => left[1].firstIndex - right[1].firstIndex)
+      .map(([key]) => key),
+  )
   const emittedGroups = new Set<string>()
 
   return offers.flatMap((offer): ResultListItem[] => {
-    const group = groupByOfferId.get(offer.id)
-    if (!group) {
+    const key = offerKeys.get(offer.id)
+    if (!key || !groupedKeys.has(key)) {
       return [{ type: "offer", id: offer.id, offer, offerCount: 1 }]
     }
 
-    if (emittedGroups.has(group.id)) return []
-    emittedGroups.add(group.id)
+    if (emittedGroups.has(key)) return []
+    emittedGroups.add(key)
 
-    if (group.offers.length <= 1) {
-      const visibleOffer = group.offers[0] ?? offer
+    const bucket = buckets.get(key)
+    if (!bucket) return [{ type: "offer", id: offer.id, offer, offerCount: 1 }]
+
+    const visibleOffers = orderVisibleGroupOffers(bucket.offers)
+    if (visibleOffers.length <= 1) {
+      const visibleOffer = visibleOffers[0] ?? offer
       return [{ type: "offer", id: visibleOffer.id, offer: visibleOffer, offerCount: 1 }]
     }
 
     return [{
       type: "group",
-      id: group.id,
-      offerCount: group.offers.length,
-      group,
+      id: bucket.id,
+      offerCount: visibleOffers.length,
+      group: {
+        id: bucket.id,
+        key: bucket.key,
+        providerLabel: bucket.providerLabel,
+        offers: visibleOffers,
+      },
     }]
   })
-}
-
-function providerLabelForScheduleGroup(providerSource: ScheduleGroup["providerSource"]): string {
-  if (providerSource === "costamar") return "Click and Book Plus"
-  if (providerSource === "agil-local") return "Agilsmart"
-  return providerSource
 }
 
 export function resultListItemContainsOffer(item: ResultListItem, offerId: string): boolean {
@@ -160,16 +161,91 @@ export function paginateResultListItems(
   return pages
 }
 
-/**
- * How much vertical room an item asks for, in card-heights.
- *
- * A group used to cost one card per alternative schedule. Plate 1b folds them
- * into a single strip inside the card that owns them, so the whole group is now
- * one card plus roughly a third of one — regardless of how many alternatives it
- * holds, because the strip scrolls sideways instead of growing.
- */
 export function resultListItemDisplayWeight(item: ResultListItem): number {
-  return item.type === "offer" ? 1 : 1.34
+  if (item.type === "offer") return 1
+
+  const variantCount = Math.max(0, item.offerCount - 1)
+  return 1 + variantCount * 0.42
+}
+
+function offerNaturalGroupKey(offer: CanonicalOffer): string | null {
+  const descriptor = nativeGroupDescriptor(offer)
+  if (!descriptor) return null
+
+  const price = moneySignature(offer.price?.total)
+  if (!price) return null
+
+  return [
+    descriptor.providerKey,
+    descriptor.nativeId,
+    price,
+    baggageSignature(offer),
+  ].join("|")
+}
+
+function nativeGroupDescriptor(offer: CanonicalOffer): NativeGroupDescriptor | null {
+  const rawRefs = offer.rawRefs
+  const agilGroupId = rawRefString(rawRefs?.agilGroupId)
+  if (agilGroupId) {
+    return {
+      providerKey: "agil",
+      providerLabel: "Agilsmart",
+      nativeId: agilGroupId,
+    }
+  }
+
+  const recommendationId = rawRefString(rawRefs?.recommendationId)
+  if (recommendationId) {
+    return {
+      providerKey: "costamar",
+      providerLabel: "Click and Book Plus",
+      nativeId: costamarRecommendationBase(recommendationId),
+    }
+  }
+
+  const pos = rawRefString(rawRefs?.pos)
+  if (pos && isCostamarOffer(offer)) {
+    return {
+      providerKey: "costamar",
+      providerLabel: "Click and Book Plus",
+      nativeId: `pos:${pos}`,
+    }
+  }
+
+  return null
+}
+
+function isCostamarOffer(offer: CanonicalOffer): boolean {
+  return offer.providerSource === "costamar"
+    || offer.purchasePaths?.some((path) => path.provider === "costamar") === true
+}
+
+function costamarRecommendationBase(value: string): string {
+  return value.split(":")[0]?.trim() || value
+}
+
+function rawRefString(value: unknown): string | null {
+  if (typeof value !== "string" && typeof value !== "number") return null
+
+  const text = String(value).trim()
+  return text ? text : null
+}
+
+function moneySignature(money: CanonicalOffer["price"]["total"] | undefined): string | null {
+  if (!money || !Number.isFinite(money.amount)) return null
+
+  return `${money.currencyCode}:${Math.round(money.amount * 100)}`
+}
+
+function baggageSignature(offer: CanonicalOffer): string {
+  const baggage = offer.baggage
+  if (!baggage) return "bag:unknown"
+
+  return [
+    baggage.carryOnIncluded === true ? "carry:yes" : baggage.carryOnIncluded === false ? "carry:no" : "carry:unknown",
+    baggage.checkedIncluded === true ? "checked:yes" : baggage.checkedIncluded === false ? "checked:no" : "checked:unknown",
+    `checkedBags:${baggage.checkedBags ?? "unknown"}`,
+  ].join(";")
 }
 
 function orderVisibleGroupOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
@@ -229,51 +305,53 @@ function uniqueVisibleGroupOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
   return visibleOffers
 }
 
-/**
- * What makes two offers in the same bucket worth showing separately. Duration
- * and stops are per leg now (plate 1b), so the signature is too — two offers
- * that differ only in a total we no longer display are the same offer here.
- */
 function offerVisibleVariantSignature(offer: CanonicalOffer): string {
-  return buildResultCardModel(offer, 1).legs
-    .map((leg) => [
-      leg.label,
-      leg.hasKnownSchedule,
-      leg.departureTime,
-      leg.arrivalTime,
-      leg.dayOffset,
-      leg.duration,
-      leg.stopsLabel,
-    ].join(":"))
-    .join(";")
+  const model = buildResultCardModel(offer, 1)
+  return [
+    model.journeys.map(journeyVisibleScheduleSignature).join(";"),
+    model.duration,
+    model.stops.label,
+    model.stops.layoverLabel,
+  ].join("|")
+}
+
+function journeyVisibleScheduleSignature(journey: ResultJourneySummary): string {
+  return [
+    journey.label,
+    journey.hasKnownSchedule,
+    journey.departureTime,
+    journey.arrivalTime,
+    journey.arrivalDayOffset,
+  ].join(":")
 }
 
 function offerVariantDifferenceCount(primary: CanonicalOffer, variant: CanonicalOffer): number {
-  const primaryLegs = buildResultCardModel(primary, 1).legs
-  const variantLegs = buildResultCardModel(variant, 1).legs
+  const primaryModel = buildResultCardModel(primary, 1)
+  const variantModel = buildResultCardModel(variant, 1)
+  const maxJourneys = Math.max(primaryModel.journeys.length, variantModel.journeys.length)
   let count = 0
 
-  for (let index = 0; index < Math.max(primaryLegs.length, variantLegs.length); index += 1) {
-    const primaryLeg = primaryLegs[index]
-    const variantLeg = variantLegs[index]
-    if (!primaryLeg || !variantLeg) {
+  for (let index = 0; index < maxJourneys; index += 1) {
+    const primaryJourney = primaryModel.journeys[index]
+    const variantJourney = variantModel.journeys[index]
+    if (!primaryJourney || !variantJourney) {
       count += 1
       continue
     }
 
     if (
-      primaryLeg.hasKnownSchedule !== variantLeg.hasKnownSchedule
-      || primaryLeg.departureTime !== variantLeg.departureTime
-      || primaryLeg.arrivalTime !== variantLeg.arrivalTime
-      || primaryLeg.dayOffset !== variantLeg.dayOffset
+      primaryJourney.hasKnownSchedule !== variantJourney.hasKnownSchedule
+      || primaryJourney.departureTime !== variantJourney.departureTime
+      || primaryJourney.arrivalTime !== variantJourney.arrivalTime
+      || primaryJourney.arrivalDayOffset !== variantJourney.arrivalDayOffset
     ) {
       count += 1
-      continue
     }
-
-    if (primaryLeg.duration !== variantLeg.duration) count += 1
-    if (primaryLeg.stopsLabel !== variantLeg.stopsLabel) count += 1
   }
+
+  if (primaryModel.duration !== variantModel.duration) count += 1
+  if (primaryModel.stops.label !== variantModel.stops.label) count += 1
+  if (primaryModel.stops.layoverLabel !== variantModel.stops.layoverLabel) count += 1
 
   return count
 }

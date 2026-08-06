@@ -7,7 +7,6 @@ import {
 } from "../frontend/src/lib/api"
 import { filterLocationSuggestions, findLocationSuggestionMatch, normalizeLocationSuggestion } from "../frontend/src/lib/locations"
 import { rankLocationSuggestions as rankBackendLocationSuggestions } from "../src/location-suggestions"
-import { normalizeLocationSuggestionType } from "../src/core/location-suggestion"
 
 const LOCATION_SUGGESTION_DETAILS_STORAGE_KEY = "flydesk-location-suggestion-details-v1"
 
@@ -79,31 +78,6 @@ test("location labels preserve provider city and country when the raw label is n
 
   assert.equal(suggestion.label, "LIM - Lima, Perú")
   assert.equal(suggestion.country, "Perú")
-})
-
-test("location suggestion type keeps only explicit city and airport values", () => {
-  assert.equal(normalizeLocationSuggestionType("CITY"), "CITY")
-  assert.equal(normalizeLocationSuggestionType(" airport "), "AIRPORT")
-  assert.equal(normalizeLocationSuggestionType("ALL_AIRPORTS"), undefined)
-  assert.equal(normalizeLocationSuggestionType(undefined), undefined)
-
-  const city = normalizeLocationSuggestion({
-    code: "RIO",
-    city: "Río de Janeiro",
-    country: "Brasil",
-    type: "CITY",
-    label: "RIO - Río de Janeiro, Brasil",
-  })
-  const unknown = normalizeLocationSuggestion({
-    code: "LIM",
-    city: "Lima",
-    country: "Perú",
-    type: "ALL_AIRPORTS" as never,
-    label: "LIM - Lima, Perú",
-  })
-
-  assert.equal(city.type, "CITY")
-  assert.equal(unknown.type, undefined)
 })
 
 test("location match accepts code, city, country, and accent-insensitive label variants", () => {
