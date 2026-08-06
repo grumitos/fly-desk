@@ -25,6 +25,7 @@ const COSTAMAR_BRANDED_URL_ESCAPED_REGEX =
   /https:\\\/\\\/(?:booking\.clickandbook\.com\\\/vuelos|flights\.zdev\.tech\\\/vuelos\\\/pro)\\\/b\\\/[A-Za-z0-9%._~!$'()*+,;=:@/?&=-]*/gi;
 const COSTAMAR_JWT_PREFIX_REGEX = /^([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/;
 const COSTAMAR_TOKEN_SAFE_PREFIX_REGEX = /^[A-Za-z0-9._-]+/;
+const COSTAMAR_TOKEN_MAX_LENGTH = 4096;
 const COSTAMAR_SESSION_FILE_REGEX = /^(?:(?:Session|Tabs)_\d+|(?:Current|Last) (?:Session|Tabs))$/;
 const COSTAMAR_API_HOSTS = new Set(["air-search-service-zneith.zdev.tech", "test-api-zneith.zdev.tech"]);
 const COSTAMAR_BRAND_HOSTS = new Set(["flights.zdev.tech"]);
@@ -167,7 +168,7 @@ function decodeCostamarTokenTerminalId(token: string): string | undefined {
 
 export function sanitizeCostamarToken(token: string | undefined): string {
   const normalized = token?.trim() ?? "";
-  if (!normalized) {
+  if (!normalized || normalized.length > COSTAMAR_TOKEN_MAX_LENGTH) {
     return "";
   }
 
@@ -192,7 +193,7 @@ export function sanitizeCostamarToken(token: string | undefined): string {
     return `${header}.${payload}.${signature.slice(0, expectedSignatureLength)}`;
   }
 
-  return normalized.match(COSTAMAR_TOKEN_SAFE_PREFIX_REGEX)?.[0] ?? normalized;
+  return normalized.match(COSTAMAR_TOKEN_SAFE_PREFIX_REGEX)?.[0] ?? "";
 }
 
 export function costamarTokenMatchesTerminal(
