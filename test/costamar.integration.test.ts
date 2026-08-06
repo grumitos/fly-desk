@@ -271,6 +271,21 @@ test("resolveUsableCostamarBrandedToken enforces terminal match and JWT freshnes
   assert.equal(resolveUsableCostamarBrandedToken("opaque-token", "0721808110", 1893457000000), "opaque-token");
 });
 
+test("resolveUsableCostamarBrandedToken rejects HTML and oversized opaque responses", () => {
+  assert.equal(
+    resolveUsableCostamarBrandedToken(
+      "<html><head><title>403 Forbidden</title></head><body>Forbidden</body></html>",
+      "0721808110",
+      1893457000000,
+    ),
+    undefined,
+  );
+  assert.equal(
+    resolveUsableCostamarBrandedToken("a".repeat(4097), "0721808110", 1893457000000),
+    undefined,
+  );
+});
+
 test("extractCostamarSessionCandidates reads branded urls from Chrome session text", () => {
   const older = buildJwt({
     id: "0721808110",
