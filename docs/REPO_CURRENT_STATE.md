@@ -79,7 +79,7 @@ The React UI must not display simulated controls. The following remain outside t
 ### Providers
 
 - Agil uses a persistent Chrome session and a subscription key from the environment or recovered from the Agil bundle; Linux/VPS defaults to the loopback CDP endpoint on port 9222, explicit browser endpoints win, and Windows keeps discovery explicit
-- Click and Book Plus uses environment-controlled context, a host allowlist, and optional B2B warm-up; B2B automation accepts only HTTPS on the exact `b2b.clickandbook.com` origin and rechecks same-origin navigation before entering credentials or OTP
+- Click and Book Plus uses environment-controlled context, a host allowlist, and optional B2B warm-up; B2B automation accepts only HTTPS on the exact `www.clickandbook.plus` origin and rechecks same-origin navigation before entering credentials or OTP
 - Click and Book Plus does not accept hosts or base URLs per request
 - Click and Book Plus payload statuses 401/403/429/5xx propagate as partial
   failures across exact, range, progressive, and matrix searches, leaving the
