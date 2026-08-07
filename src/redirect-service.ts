@@ -176,6 +176,13 @@ function costamarRedirectTotalTimeoutMs(): number {
   );
 }
 
+function costamarRedirectTrustUsableToken(): boolean {
+  const configured = process.env.CBPLUS_REDIRECT_TRUST_USABLE_TOKEN?.trim()
+    ?? process.env.COSTAMAR_REDIRECT_TRUST_USABLE_TOKEN?.trim()
+    ?? "1";
+  return configured !== "0";
+}
+
 async function withCostamarRedirectTotalTimeout<T>(promise: Promise<T>): Promise<T> {
   const timeoutMs = costamarRedirectTotalTimeoutMs();
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -598,12 +605,29 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
           ...(lang ? { lang } : {}),
           token: parsedTokenIsUsable ? parsedToken : sessionContext?.token,
         });
+        // Neither the stored purchase path nor the persisted session context keeps a
+        // branded token, so parsedToken is normally absent and usability has to be judged
+        // on the resolved runtime context, which falls back to the configured token.
+        // Judging it on parsedToken alone left `force` permanently true, so every single
+        // redirect asked the provider for a brand new token.
+        const tokenIsUsable = Boolean(
+          resolveUsableCostamarBrandedToken(fastContext.token, fastContext.terminalId),
+        );
         const redirectRequest = costamarRedirectRequestFromUrl(location, record.job?.request);
 
-        if (redirectRequest) {
+        if (tokenIsUsable && costamarRedirectTrustUsableToken()) {
+          // resolveUsableCostamarBrandedToken has already rejected a malformed token, a
+          // token minted for another terminal, and an expired one. Re-running a live
+          // provider search only to emit a 302 adds an upstream dependency to a redirect
+          // that is already provably valid, and it fails closed whenever that upstream is
+          // unreachable. Every other case still goes through live validation below, which
+          // is the only way to tell a stale link from a good one.
+          location = applyCostamarContextToBrandedSearchUrl(location, fastContext);
+          canRedirect = true;
+        } else if (redirectRequest) {
           const redirectResolution = await withCostamarRedirectTotalTimeout(
             resolveCostamarRedirectForRequest(redirectRequest, fastContext, {
-              force: !parsedTokenIsUsable,
+              force: !tokenIsUsable,
               validateLive: true,
               forceOnUnverified: true,
             }),
