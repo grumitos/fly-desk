@@ -668,3 +668,82 @@ test("redirect service keeps Costamar token validation outside the main runtime"
     }
   });
 });
+
+test("redirect service redirects a Costamar link whose own token is still usable without a live provider call", async () => {
+  await withTempDb(async (dbPath) => {
+    const emptyChromeDir = join(dbPath, "..", "chrome-usable");
+    mkdirSync(emptyChromeDir, { recursive: true });
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const usableToken = buildJwt({
+      id: "0721808110",
+      iat: nowSeconds - 60,
+      exp: nowSeconds + 3000,
+    });
+    const restoreEnv = overrideEnv({
+      FLY_DESK_API_TOKEN: "redirect-test-token",
+      CBPLUS_TOKEN: usableToken,
+      COSTAMAR_TOKEN: undefined,
+      CBPLUS_CHROME_USER_DATA_DIR: emptyChromeDir,
+      CBPLUS_AGENT_CHROME_USER_DATA_DIR: emptyChromeDir,
+      COSTAMAR_CHROME_USER_DATA_DIR: emptyChromeDir,
+      COSTAMAR_AGENT_CHROME_USER_DATA_DIR: emptyChromeDir,
+      CBPLUS_CDP_TAB_SCAN_ENABLED: "0",
+      COSTAMAR_CDP_TAB_SCAN_ENABLED: "0",
+      CBPLUS_SESSION_WARMUP_ENABLED: "0",
+      COSTAMAR_SESSION_WARMUP_ENABLED: "0",
+      CBPLUS_B2B_AUTOMATION_ENABLED: "0",
+      COSTAMAR_B2B_AUTOMATION_ENABLED: "0",
+      CBPLUS_B2B_PROMPT_ENABLED: "0",
+      COSTAMAR_B2B_PROMPT_ENABLED: "0",
+    });
+
+    try {
+      resetCostamarSessionCacheForTests();
+      resetCostamarWarmupStateForTests();
+
+      setCostamarWarmupGeneratorForTests(async () => undefined);
+
+      const costamarUrl = `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${usableToken}`;
+      const offer = buildOffer("costamar", costamarUrl);
+      const store = new SearchSessionStore({ dbPath });
+      const job = store.createSearchJob({
+        request: buildRequest("costamar"),
+        providerContext: {
+          costamar: {
+            apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+            brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+            terminalId: "0721808110",
+            token: usableToken,
+            lang: "es",
+          },
+        },
+        offers: [offer],
+        allOffers: [offer],
+        searchMeta: buildSearchMeta("costamar"),
+        providerMeta: buildProviderMeta("costamar"),
+        warnings: [],
+        sortMode: "cheapest",
+        status: "completed",
+      });
+      const redirectPath = store.getSession(job.id)?.offers[0]?.purchasePaths[0]?.url;
+      store.close();
+
+      assert.ok(redirectPath);
+
+      const response = await routeRedirectRequest(
+        authenticatedRedirectRequest(`http://127.0.0.1:8102${redirectPath}`),
+        { dbPath, cacheLookupTimeoutMs: 0 },
+      );
+
+      assert.equal(response.status, 302);
+      const target = new URL(response.headers.get("Location") ?? "");
+      assert.equal(target.host, "booking.clickandbook.com");
+      assert.equal(target.searchParams.get("terminalId"), "0721808110");
+      assert.equal(target.searchParams.get("token"), usableToken);
+    } finally {
+      resetCostamarWarmupStateForTests();
+      resetCostamarSessionCacheForTests();
+      restoreEnv();
+    }
+  });
+});
