@@ -159,9 +159,10 @@ export function DayRangeCalendar({
         <LegendItem swatch={<span className="fd-cal-legend-swatch" style={unavailableSwatchStyle}>12</span>}>
           no disponible
         </LegendItem>
-        <LegendItem swatch={<span className="fd-cal-legend-swatch" style={otherMonthSwatchStyle} />}>
-          otro mes
-        </LegendItem>
+        {/* No «otro mes» entry: 03 §7 says a day from a neighbouring month is
+            not drawn at all, so the grid has no dashed cell for this legend to
+            explain. A legend that names a state the grid never shows sends the
+            agent looking for it. */}
       </div>
     </div>
   )
@@ -389,10 +390,6 @@ const todaySwatchStyle = {
 const unavailableSwatchStyle = {
   color: "color-mix(in srgb, var(--color-muted-foreground) 38%, transparent)",
   fontWeight: 400,
-} as const
-
-const otherMonthSwatchStyle = {
-  border: "1px dashed var(--color-input)",
 } as const
 
 const inRangeSwatchStyle = {

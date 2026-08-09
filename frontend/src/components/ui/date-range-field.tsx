@@ -98,6 +98,15 @@ export function DateRangeField({
      close it in the same render, not one render later. */
   const activeHalf = endDisabled && openHalf === "end" ? null : openHalf
   const nights = nightsBetween(calendarStart, calendarEnd)
+  /* 11 §2.2 moment 3: while the pointer is over a later day the range is
+     already written — the field does it, and the calendar header has to do it
+     too, or the agent picks a return without ever seeing how many nights it
+     buys. It is a preview, not a choice: leaving the pointer erases it. */
+  const previewEnd = !endDisabled && calendarStart && tentativeEnd && tentativeEnd >= calendarStart
+    ? tentativeEnd
+    : undefined
+  const summaryEnd = calendarEnd ?? previewEnd
+  const summaryNights = nights ?? nightsBetween(calendarStart, previewEnd)
   const endCeiling = useMemo(
     () => calendarStart
       ? clampIsoDate(addDays(calendarStart, maxStayNights), minDate, maxDate)
@@ -138,7 +147,13 @@ export function DateRangeField({
       }
 
       onChange({ startDate: startDate, endDate: clampIsoDate(day, minDate, endCeiling) })
-      setOpenHalf(null)
+      /* 11 §2.2 moment 4 is a thing the agent has to be able to see: the fill
+         grows towards the chosen end, the ends round off and «12 ago → 19 ago ·
+         7 noches» appears in the header. Closing here meant none of it was ever
+         on screen — the summary only showed up if they reopened the calendar.
+         03 §7 says the desk calendar has no actions because «se confirma al
+         cerrar», so leaving it open is also what that clause describes. */
+      setTentativeEnd(undefined)
       return
     }
 
@@ -263,7 +278,14 @@ export function DateRangeField({
       visibleMonth={visibleMonth}
       presets={endDisabled ? undefined : STAY_PRESETS}
       activePreset={nights}
-      rangeSummary={<RangeSummary start={calendarStart} end={calendarEnd} nights={nights} />}
+      rangeSummary={(
+        <RangeSummary
+          start={calendarStart}
+          end={summaryEnd}
+          nights={summaryNights}
+          tentative={!calendarEnd && Boolean(previewEnd)}
+        />
+      )}
       onVisibleMonthChange={setVisibleMonth}
       onSelectDay={handleSelectDay}
       onPreset={endDisabled ? undefined : handlePreset}
@@ -414,10 +436,12 @@ function RangeSummary({
   start,
   end,
   nights,
+  tentative = false,
 }: {
   start?: string
   end?: string
   nights?: number
+  tentative?: boolean
 }) {
   if (!start) {
     return <span className="fd-cal-range text-muted-foreground">Elige la salida</span>
@@ -425,7 +449,7 @@ function RangeSummary({
 
   return (
     <div className="flex items-center gap-2.5">
-      <span className="fd-cal-range">
+      <span className="fd-cal-range" data-tentative={tentative || undefined}>
         {formatDayShort(start)}
         {end && (
           <>

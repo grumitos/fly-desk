@@ -47,11 +47,6 @@ const MIGRATION_MONTH_NAME_FORMATTER = new Intl.DateTimeFormat("es-PE", {
   month: "long",
   timeZone: "UTC",
 })
-/* What the picker preselects when the mode is chosen. The ceiling is a
-   different number and lives in `MAX_MIGRATION_MONTHS` below: 06 §6 sets the
-   sweep's limit at twelve, and reusing the default as the cap is what made
-   the picker offer twelve months and then refuse the last four. */
-const DEFAULT_MIGRATION_MONTH_SELECTION = 8
 /* One 52px field (plate 1a) shared by Origen, Destino, Pasajeros and both halves
    of the merged date control, so the value baseline lands on the same y in all
    six. Geometry lives in `.fd-field-control` / `.fd-field-value`. */
@@ -154,11 +149,7 @@ export function SearchShell({
     () => buildMigrationMonthOptions(datePolicy.minSearchDate),
     [datePolicy.minSearchDate],
   )
-  const defaultMigrationMonths = useMemo(
-    () => defaultMigrationMonthSelection(migrationMonthOptions),
-    [migrationMonthOptions],
-  )
-  const [selectedMigrationMonths, setSelectedMigrationMonths] = useState<string[]>(() => defaultMigrationMonths)
+  const [selectedMigrationMonths, setSelectedMigrationMonths] = useState<string[]>([])
   const migrationMonthRange = useMemo(
     () => resolveMigrationMonthRange(selectedMigrationMonths, migrationMonthOptions),
     [migrationMonthOptions, selectedMigrationMonths],
@@ -285,7 +276,7 @@ export function SearchShell({
       setDepartureDate("")
       setReturnDate("")
       setStayNights(7)
-      setSelectedMigrationMonths(defaultMigrationMonths)
+      setSelectedMigrationMonths([])
       setAdults(1)
       setChildren(0)
       setInfants(0)
@@ -302,7 +293,7 @@ export function SearchShell({
     })
 
     return () => window.cancelAnimationFrame(frame)
-  }, [defaultMigrationMonths, onSearchConfigDraftChange, resetToken, setDestinationQuery, setOriginQuery])
+  }, [onSearchConfigDraftChange, resetToken, setDestinationQuery, setOriginQuery])
 
   const updateAdults = (nextAdults: number) => {
     const clampedAdults = Math.max(1, Math.min(nextAdults, MAX_PASSENGERS))
@@ -372,9 +363,6 @@ export function SearchShell({
 
   const handleModeChange = (nextMode: SearchModeControl) => {
     setMode(nextMode)
-    if (nextMode === "migration") {
-      setSelectedMigrationMonths((current) => current.length ? current : defaultMigrationMonths)
-    }
     setTouched((current) => ({
       ...current,
       departureDate: false,
@@ -1957,28 +1945,31 @@ function buildMigrationMonthOptions(startIso: string): MigrationMonthOption[] {
   })
 }
 
-function defaultMigrationMonthSelection(options: MigrationMonthOption[]) {
-  return options.filter((month) => !month.disabled).slice(0, DEFAULT_MIGRATION_MONTH_SELECTION).map((month) => month.key)
-}
-
+/*
+ * Migratorio starts empty.
+ *
+ * 11 §0.2 — «nada se confirma sin un gesto explícito» — and a sweep is the most
+ * expensive thing this form can ask for: every day of every selected month
+ * against both providers. Arriving with eight months already chosen made one
+ * click on Buscar launch a search the agent never picked. The field says
+ * «Elegir» until they do, and `validateSearch` already refuses an empty
+ * selection with «Selecciona al menos un mes».
+ */
 function resolveMigrationMonthSelection(values: string[] | undefined, options: MigrationMonthOption[]) {
-  const fallback = defaultMigrationMonthSelection(options)
-  if (!values?.length) return fallback
+  if (!values?.length) return []
 
   const allowed = new Set(options.filter((month) => !month.disabled).map((month) => month.key))
   const selected = orderMigrationMonths(uniqueMonthKeys(values.filter((month) => allowed.has(month))), options)
-  return selected.length ? buildMigrationMonthRangeSelection(selected[0], selected[selected.length - 1], options) : fallback
+  return selected.length ? buildMigrationMonthRangeSelection(selected[0], selected[selected.length - 1], options) : []
 }
 
 function resolveMigrationMonthRange(values: string[], options: MigrationMonthOption[]) {
   const selected = resolveMigrationMonthSelection(values, options)
-  const fallback = defaultMigrationMonthSelection(options)
-  const normalized = selected.length ? selected : fallback
-  const start = normalized[0] ?? ""
+  const start = selected[0] ?? ""
 
   return {
     start,
-    end: normalized[normalized.length - 1] ?? start,
+    end: selected[selected.length - 1] ?? start,
   }
 }
 

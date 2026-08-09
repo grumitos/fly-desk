@@ -266,7 +266,9 @@ function MonthRangeSummary({
 }
 
 function rangeLabel(start?: string, end?: string): string {
-  if (!start) return "Seleccionar"
+  // 03 §2 gives the empty date control one word, «Elegir». The month picker is
+  // the same control with a different grid (06 §4), so it uses the same word.
+  if (!start) return "Elegir"
   if (!end || end === start) return monthYearLabel(start)
   return `${monthYearLabel(start)} – ${monthYearLabel(end)}`
 }

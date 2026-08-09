@@ -1189,8 +1189,9 @@
   /* Plate 1c: the field grows to 58px and its contents grow with it — value at
      16/600 on a 19px line, icon 18, floating label at 14/10. */
   .fd-field-control {
+    --fd-field-label-band: 16px;
     gap: 10px;
-    padding: 16px 14px 0;
+    padding: var(--fd-field-label-band) 14px 0;
   }
 
   .fd-field-label {
@@ -1342,8 +1343,9 @@
      at 15 rather than the route's 16 — a date is short, and 16 would push
      «Regreso» against the divider on a 360px screen. */
   .fd-daterange-half {
+    --fd-field-label-band: 16px;
     gap: 10px;
-    padding: 16px 12px 0 14px;
+    padding: var(--fd-field-label-band) 12px 0 14px;
   }
 
   .fd-daterange-half .fd-field-value {

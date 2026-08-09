@@ -673,6 +673,16 @@ test("migratory search renders monthly progress and refilters each month locally
     await clickSegment(segment(page, "Migratorio"));
     await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
     await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
+    /* The sweep starts empty (11 §0.2), so the months are a gesture like any
+       other: open the picker, sweep the first eight, close. */
+    await page.getByRole("button", { name: /^Meses:/ }).click();
+    const monthPicker = page.getByRole("dialog", { name: "Selector de meses" });
+    await monthPicker.waitFor();
+    const pickableMonths = monthPicker.locator("button:not([disabled])[aria-label*='de 20']");
+    await pickableMonths.first().click();
+    await pickableMonths.nth(7).click();
+    await page.keyboard.press("Escape");
+    await monthPicker.waitFor({ state: "detached" });
     await Promise.all([
       page.waitForResponse("**/api/search"),
       page.getByRole("button", { name: "Buscar" }).click(),

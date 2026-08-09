@@ -20,7 +20,10 @@
     height: var(--fd-control-primary);
     align-items: center;
     gap: 8px;
-    padding: 15px 12px 0;
+    /* The top band belongs to the floating label (03 §2). Named because the
+       trailing affordances have to cancel it — see `.fd-field-trailing`. */
+    --fd-field-label-band: 15px;
+    padding: var(--fd-field-label-band) 12px 0;
     border: 1px solid var(--color-input);
     border-radius: var(--fd-radius-12);
     background: var(--color-card);
@@ -873,7 +876,8 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 15px 12px 0;
+    --fd-field-label-band: 15px;
+    padding: var(--fd-field-label-band) 12px 0;
     box-sizing: border-box;
     text-align: left;
     transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
@@ -920,6 +924,23 @@
     color: var(--color-foreground);
   }
 
+  /*
+   * The label band pushes everything in the row down, which is right for the
+   * leading icon and the value — they are the value line — and wrong for a
+   * trailing affordance, which belongs on the axis of the control itself. With
+   * `align-items: center` the row centres inside the padded box, so the cross
+   * and the chevron sat about 7px low and read as misplaced.
+   *
+   * A bottom margin the size of the band makes the item's margin box fill the
+   * content area, so it centres on the whole field instead of on the value
+   * line. Nothing moves for a field without a trailing control.
+   */
+  .fd-daterange-clear,
+  .fd-field-clear,
+  .fd-field-control > .fd-disclosure {
+    margin-block-end: var(--fd-field-label-band, 0px);
+  }
+
   .fd-cal-popover {
     border: 1px solid var(--color-border);
     border-radius: var(--fd-radius-12);
@@ -945,6 +966,13 @@
     gap: 8px;
     font-size: var(--fd-text-body);
     font-weight: var(--fd-weight-title);
+  }
+
+  /* 11 §2.2 moment 3: the range under the pointer is written before it is
+     chosen, and it says so in primary — the same tell the return half of the
+     field uses, so the two never disagree about what is settled. */
+  .fd-cal-range[data-tentative] {
+    color: var(--color-primary);
   }
 
   .fd-cal-preset {

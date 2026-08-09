@@ -1352,7 +1352,11 @@ test("flexible and migratory modes expose their distinct controls", async () => 
     await migratory.click();
     const monthRangeField = page.getByRole("button", { name: /^Meses:/ });
     assert.equal(await monthRangeField.isEnabled(), true);
-    assert.match((await monthRangeField.getAttribute("aria-label")) ?? "", /Mar 2026.*Oct 2026/);
+    /* 11 §0.2: the sweep is the most expensive request this form makes — every
+       day of every month against both providers — so it starts empty and waits
+       for a gesture. It used to arrive with eight months already chosen. */
+    assert.match((await monthRangeField.getAttribute("aria-label")) ?? "", /^Meses: Elegir/);
+    assert.equal(await page.locator(".fd-field-value-placeholder").count() > 0, true);
 
     await monthRangeField.click();
     const monthCalendar = page.getByRole("dialog", { name: "Selector de meses" });
@@ -1864,4 +1868,83 @@ test("11 §2.1 · the cross on a field empties it and reopens Recientes", async 
         && Boolean(box?.parentElement?.textContent?.match(/Recientes|Frecuentes/));
     });
   });
+});
+
+test("11 §2.2 · the header counts the nights under the pointer, before the second click", async () => {
+  await withDesktopPage(async ({ page }) => {
+    await page.locator(".fd-daterange-half").first().click();
+    await page.locator(".fd-cal-grid").first().waitFor();
+
+    /* 03 §7 says a day from a neighbouring month is not drawn, so there is no
+       dashed cell for a legend to explain. The legend used to name one anyway,
+       which sent the agent looking for a state the grid never shows. */
+    const legend = (await page.locator(".fd-cal-legend-item").allInnerTexts()).join(" ");
+    assert.doesNotMatch(legend, /otro mes/i);
+
+    const days = page.locator(".fd-cal-grid button:not([disabled])");
+    await days.nth(8).click();
+
+    /*
+     * Moment 3: the pointer over a later day already writes the range and its
+     * nights, in primary because nothing is settled yet. Reading it only after
+     * the second click meant the agent chose a return without ever seeing how
+     * many nights it bought.
+     */
+    await days.nth(15).hover();
+    const header = page.locator(".fd-cal-head").first();
+    await page.locator(".fd-cal-range[data-tentative]").waitFor();
+    assert.match((await header.innerText()).replace(/\s+/g, " "), /7 noches/i);
+
+    // Moment 4: the same figures stay, and they stop being a preview.
+    await days.nth(15).click();
+    await page.locator(".fd-cal-range:not([data-tentative])").waitFor();
+    assert.equal(await page.locator(".fd-cal-grid").count() > 0, true);
+    assert.match((await header.innerText()).replace(/\s+/g, " "), /7 noches/i);
+  });
+});
+
+test("01 §3 · a trailing affordance sits on the axis of its field, not of its value", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+
+    for (const [width, height] of [[1440, 900], [390, 844]] as const) {
+      await page.setViewportSize({ width, height });
+      await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-09-12&return=2026-09-19&adults=1&children=0&infants=0`, {
+        waitUntil: "domcontentloaded",
+      });
+      await page.getByRole("combobox", { name: "Origen" }).waitFor();
+
+      /*
+       * The floating label owns a band at the top of the field, which is right
+       * for the value line and wrong for the cross and the chevron: centred in
+       * the padded box they sat about 7px low. Measured against the field, not
+       * against the row.
+       */
+      const offsets = await page.evaluate(() => {
+        const rows = Array.from(document.querySelectorAll<HTMLElement>(".fd-field-control, .fd-daterange-half"));
+        return rows.flatMap((row) => {
+          const rowBox = row.getBoundingClientRect();
+          if (rowBox.height === 0) return [];
+          return Array.from(row.querySelectorAll<HTMLElement>(".fd-field-clear, .fd-daterange-clear, .fd-disclosure"))
+            .map((element) => {
+              const box = element.getBoundingClientRect();
+              if (box.height === 0) return null;
+              return (box.top + box.height / 2) - (rowBox.top + rowBox.height / 2);
+            })
+            .filter((offset): offset is number => offset !== null);
+        });
+      });
+
+      assert.ok(offsets.length >= 3, `${width}: expected trailing controls, saw ${offsets.length}`);
+      offsets.forEach((offset) => {
+        assert.ok(Math.abs(offset) <= 1, `${width}: trailing control off centre by ${offset}`);
+      });
+    }
+  }, { autoOpen: false });
 });
