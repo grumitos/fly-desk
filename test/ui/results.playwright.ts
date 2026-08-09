@@ -458,6 +458,126 @@ test("native schedule groups expose complete return-flight alternatives", async 
   }, { autoOpen: false });
 });
 
+test("a page with more results to give fills the column it was measured against", async () => {
+  /*
+   * Reported from the desk at 1920: five cards and a third of the column blank
+   * below them. Capacity is counted in plain-card slots, so it has to be
+   * measured on a plain card — taking the tallest instead made a single group
+   * card (101px against 58) the unit for the whole page and cut it almost in
+   * half. With results still queued, what is left over must be less than one
+   * more row, or a card that fits was withheld.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1920, height: 940 });
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      const offers = Array.from({ length: 14 }, (_, index) => {
+        const base = buildOffer({ id: `fill-${index}`, destination: "MAD" });
+        // The first three share an outbound and differ on the return, which is
+        // what makes them one group with a strip instead of three plain cards.
+        const inbound = base.itineraries[1];
+        return buildOffer({
+          id: `fill-${index}`,
+          destination: "MAD",
+          itineraries: [
+            base.itineraries[0],
+            {
+              ...inbound,
+              id: `fill-${index}-inbound`,
+              segments: inbound.segments.map((segment) => ({
+                ...segment,
+                departureAt: `2026-06-04T${String(12 + index).padStart(2, "0")}:30:00Z`,
+                arrivalAt: `2026-06-04T${String(18 + index).padStart(2, "0")}:30:00Z`,
+              })),
+            },
+          ] as never,
+        });
+      });
+      const grouped = offers.slice(0, 3);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "fill-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers,
+          allOffers: offers,
+          scheduleGroups: [{
+            id: "agil-local:FILL",
+            providerSource: "agil-local",
+            outboundOptions: [{ id: "fill-out", itinerary: grouped[0].itineraries[0] }],
+            inboundOptions: grouped.map((offer, index) => ({ id: `fill-in-${index}`, itinerary: offer.itineraries[1] })),
+            combinations: grouped.map((offer, index) => ({
+              outboundOptionId: "fill-out",
+              inboundOptionId: `fill-in-${index}`,
+              offerId: offer.id,
+            })),
+            truncated: false,
+          }],
+          searchMeta: {
+            requestedAt: "2026-05-04T15:21:48.419Z",
+            completedAt: "2026-05-04T15:21:48.419Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-05-28&return=2026-06-04&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+    await page.getByTestId("result-card").first().waitFor();
+    // There is a second page, so the first one has no excuse to be short.
+    await page.getByTestId("results-pagination").waitFor();
+
+    const fill = await page.evaluate(() => {
+      const body = document.querySelector<HTMLElement>("[data-testid='results-page-body']");
+      const list = document.querySelector<HTMLElement>(".fd-results-list");
+      const cards = Array.from(document.querySelectorAll<HTMLElement>("[data-testid='result-card']"));
+      const plain = cards.find((card) => !card.querySelector(".fd-card__alts"));
+      const grouped = cards.find((card) => card.querySelector(".fd-card__alts"));
+      const last = cards[cards.length - 1];
+      if (!body || !list || !plain || !grouped || !last) return null;
+
+      const gap = Number.parseFloat(getComputedStyle(list).rowGap || "0");
+      return {
+        available: body.clientHeight,
+        used: last.getBoundingClientRect().bottom - list.getBoundingClientRect().top,
+        row: plain.getBoundingClientRect().height + gap,
+        groupHeight: grouped.getBoundingClientRect().height,
+        cards: cards.length,
+      };
+    });
+
+    assert.ok(fill, "missing list metrics");
+    // The mix is what makes the measurement meaningful.
+    assert.ok(fill.groupHeight > fill.row, JSON.stringify(fill));
+    assert.ok(fill.used <= fill.available + 1, JSON.stringify(fill));
+    assert.ok(fill.available - fill.used < fill.row, JSON.stringify(fill));
+  }, { autoOpen: false });
+});
+
 test("a page sized to its items still fits a group card, which is taller than one", async () => {
   /*
    * Found by running the app against the live providers: a real LIM–MIA search

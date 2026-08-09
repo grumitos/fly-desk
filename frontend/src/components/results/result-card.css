@@ -46,12 +46,12 @@
   }
 
   /* A card whose schedule was swapped from the strip stays marked until it is
-     quoted or dropped, so the agent cannot quote a fare they did not read. */
+     quoted or dropped, so the agent cannot quote a fare they did not read. The
+     mark is the primary border plus the active chip in the strip; the 3px rail
+     that used to sit inside the left edge is not drawn anywhere in the plates
+     and is not one of the three elevations 01 §4 allows. */
   .fd-card.is-schedule-changed {
     border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-border));
-    box-shadow:
-      inset 3px 0 0 var(--color-primary),
-      0 1px 2px color-mix(in srgb, var(--color-foreground) 4%, transparent);
   }
 
   .fd-card__hit {
@@ -173,20 +173,31 @@
   }
 
   /* ---- legs -------------------------------------------------------------
-   * Fixed lanes so the two rows align down the card and across the list:
-   * date 58, schedule 126, duration 50, stops elastic. */
+   * Fixed lanes so the two rows align down the card: date 58, schedule 126,
+   * duration 50, stops elastic.
+   *
+   * The lanes live on the wrapper and both rows take them with `subgrid`, so
+   * the alignment is a fact of the layout rather than two grids that happen to
+   * agree. That is also what lets the duration lane grow: the plate only ever
+   * drew sub-24h flights, so 50px fits «9h 30m» but not «1d 11h 10m», which
+   * overflowed its track and painted straight over the stops. `max-content`
+   * keeps 50 as the floor, gives the longer figure the room it needs — a
+   * duration is a cifra and 02 §13 forbids clipping one — and takes it from the
+   * elastic stops lane, which already ellipsises by design. */
 
   .fd-card__legs {
     display: grid;
+    grid-template-columns: 58px 126px minmax(50px, max-content) minmax(0, 1fr);
     min-width: 0;
-    gap: 4px;
+    row-gap: 4px;
+    column-gap: 10px;
   }
 
   .fd-card__leg {
     display: grid;
-    grid-template-columns: 58px 126px 50px minmax(0, 1fr);
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
     align-items: center;
-    column-gap: 10px;
     line-height: 16px;
   }
 
@@ -625,6 +636,11 @@
     font-size: var(--fd-text-display);
   }
 
+  /* The month card is two lanes, not four, so it opts out of the subgrid. */
+  .fd-card--compact .fd-card__legs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .fd-card--compact .fd-card__leg {
     grid-template-columns: 48px minmax(0, 1fr);
     row-gap: 2px;
@@ -750,11 +766,8 @@
     .fd-card:not(.fd-card--compact) .fd-card__legs {
       grid-column: 1 / 4;
       grid-row: 2;
-      gap: 4px;
-    }
-
-    .fd-card:not(.fd-card--compact) .fd-card__leg {
-      grid-template-columns: 56px 124px 46px minmax(0, 1fr);
+      grid-template-columns: 56px 124px minmax(46px, max-content) minmax(0, 1fr);
+      row-gap: 4px;
       column-gap: 8px;
     }
 

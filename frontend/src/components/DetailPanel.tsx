@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch"
 import { Kbd } from "@/components/ui/kbd"
 import { ShortcutTooltip } from "@/components/ui/tooltip"
 import { requestQuotation, toBackendPayload } from "@/lib/api"
-import { diffDaysIso, formatJourneyDuration, formatOfferDate, isoDatePart } from "@/lib/offer-display"
+import { diffDaysIso, formatJourneyDuration, formatOfferDate, isoDatePart, stationDisplayName } from "@/lib/offer-display"
 import { bestPurchasePath, normalizeSafePurchaseUrl } from "@/lib/purchase-path"
 import { providerBadgeForId } from "@/components/results/result-card-model"
 import { cn } from "@/lib/utils"
@@ -818,7 +818,7 @@ function dayOffsetOf(legDate: string | undefined, at?: string): string {
 
 function stationLabel(code?: string, name?: string, dayOffset = ""): string {
   const iata = String(code ?? "").trim().toUpperCase()
-  const place = String(name ?? "").trim()
+  const place = stationDisplayName(name)
   const station = iata && place ? `${iata} · ${place}` : iata || place || "Estación por confirmar"
   return dayOffset ? `${station} ${dayOffset}` : station
 }
