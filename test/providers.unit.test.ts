@@ -1,140 +1,39 @@
 import { describe, expect, test } from "bun:test";
 
-import {
-  configuredSearchProviders,
-  normalizeProviderStatusResponse,
-  providerStatusCopy,
-} from "../frontend/src/lib/providers";
+import { configuredSearchProviders, providerDisplayName } from "../frontend/src/lib/providers";
 
-describe("provider status frontend contract", () => {
-  test("normalizes only canonical, closed provider status entries", () => {
-    const response = normalizeProviderStatusResponse({
-      generatedAt: "2026-07-29T12:00:00.000Z",
-      staleAfterMs: 300_000,
-      providers: [
-        {
-          id: "agil-local",
-          label: "Provider-supplied label is ignored",
-          configured: true,
-          state: "ready",
-          evidence: "search",
-          reasonCode: null,
-          observedAt: "2026-07-29T11:59:00.000Z",
-          stale: false,
-          raw: "must not cross the contract",
-        },
-        {
-          id: "costamar",
-          label: "Click and Book Plus",
-          configured: true,
-          state: "degraded",
-          evidence: "search",
-          reasonCode: "authentication_required",
-          observedAt: "2026-07-29T11:58:00.000Z",
-          stale: false,
-        },
-        { id: "unexpected-provider", configured: true, state: "ready" },
-      ],
-    });
+describe("provider rail contract", () => {
+  /*
+   * Plate 1a's rail is coverage, not health. It used to be filtered by a live
+   * readiness observation and Click and Book Plus never survived the filter on
+   * the idle screen — it cannot reach `ready` until a real search has answered
+   * — so the desk claimed to search one provider. Both are always listed; a
+   * provider that fails a search is said in one line above the results.
+   */
+  test("lists both providers, always, with their canonical name and icon", () => {
+    const providers = configuredSearchProviders();
 
-    expect(response).toEqual({
-      generatedAt: "2026-07-29T12:00:00.000Z",
-      staleAfterMs: 300_000,
-      providers: [
-        {
-          id: "agil-local",
-          label: "Agilsmart",
-          configured: true,
-          state: "ready",
-          evidence: "search",
-          reasonCode: null,
-          observedAt: "2026-07-29T11:59:00.000Z",
-          stale: false,
-          icon: "/assets/provider-icons/agilsmart-128.png",
-        },
-        {
-          id: "costamar",
-          label: "Click and Book Plus",
-          configured: true,
-          state: "degraded",
-          evidence: "search",
-          reasonCode: "authentication_required",
-          observedAt: "2026-07-29T11:58:00.000Z",
-          stale: false,
-          icon: "/assets/provider-icons/click-and-book-plus-128.png",
-        },
-      ],
+    expect(providers.map((provider) => provider.id)).toEqual(["agil-local", "costamar"]);
+    expect(providers.map((provider) => provider.label)).toEqual(["Agilsmart", "Click and Book Plus"]);
+    providers.forEach((provider) => {
+      expect(provider.icon).toMatch(/^\/assets\/provider-icons\/.+\.png$/);
     });
   });
 
-  test("drops malformed status fields instead of inventing health", () => {
-    const response = normalizeProviderStatusResponse({
-      generatedAt: "not-a-date",
-      staleAfterMs: -1,
-      providers: [
-        {
-          id: "agil-local",
-          configured: true,
-          state: "healthy",
-          evidence: "probe",
-          reasonCode: "raw provider failure",
-          observedAt: "not-a-date",
-          stale: "no",
-        },
-      ],
-    });
+  test("hands back a fresh copy, so a caller cannot edit the catalogue", () => {
+    const first = configuredSearchProviders();
+    first[0].label = "mutated";
 
-    expect(response).toEqual({
-      generatedAt: undefined,
-      staleAfterMs: undefined,
-      providers: [],
-    });
+    expect(configuredSearchProviders()[0].label).toBe("Agilsmart");
   });
 
-  test("maps backend configuration and explicit states to truthful rail copy", () => {
-    const providers = configuredSearchProviders([
-      {
-        id: "agil-local",
-        label: "Agilsmart",
-        configured: true,
-        state: "ready",
-        evidence: "prewarm",
-        reasonCode: null,
-        observedAt: "2026-07-29T12:00:00.000Z",
-        stale: false,
-        icon: "/assets/provider-icons/agilsmart-128.png",
-      },
-      {
-        id: "costamar",
-        label: "Click and Book Plus",
-        configured: false,
-        state: "unknown",
-        evidence: null,
-        reasonCode: "not_configured",
-        observedAt: null,
-        stale: false,
-        icon: "/assets/provider-icons/click-and-book-plus-128.png",
-      },
-    ]);
-
-    expect(providers.map(({ id }) => id)).toEqual(["agil-local"]);
-    expect(providerStatusCopy(providers[0])).toBe("disponible");
-    expect(providerStatusCopy({
-      ...providers[0]!,
-      state: "degraded",
-      reasonCode: "authentication_required",
-    })).toBe("requiere sesión");
-    expect(providerStatusCopy({
-      ...providers[0]!,
-      id: "costamar",
-      label: "Click and Book Plus",
-      state: "degraded",
-      reasonCode: "authentication_required",
-    })).toBe("requiere autenticación");
-    expect(providerStatusCopy({
-      ...providers[0]!,
-      state: "unknown",
-      reasonCode: "context_only",
-    })).toBe("sin verificar");
+  test("resolves the display name from every id the providers answer to", () => {
+    expect(providerDisplayName("agil-local")).toBe("Agilsmart");
+    expect(providerDisplayName("agil")).toBe("Agilsmart");
+    expect(providerDisplayName("costamar")).toBe("Click and Book Plus");
+    expect(providerDisplayName("cbplus")).toBe("Click and Book Plus");
+    expect(providerDisplayName("click-and-book-plus")).toBe("Click and Book Plus");
+    expect(providerDisplayName("")).toBe("Proveedor");
+    expect(providerDisplayName(null)).toBe("Proveedor");
   });
 });

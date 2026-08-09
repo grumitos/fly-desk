@@ -1,62 +1,22 @@
-import { useEffect, useState } from "react"
-import { getProviderStatus } from "@/lib/api"
 import { configuredSearchProviders } from "@/lib/providers"
-
-const PROVIDER_STATUS_REFRESH_MS = 30_000
 
 /*
  * Plate 1a — the rail at the foot of the idle screen.
  *
- * Listed = currently available. The diagnostic state remains behind the
- * authenticated API contract; this customer-facing rail intentionally renders
- * neither status words nor failed/unknown providers.
+ * «Buscando en» plus the providers this desk searches. It is coverage, not
+ * health: the rail used to poll `/api/provider-status` and keep only providers
+ * with a live `ready` observation, which read as availability but behaved as
+ * censorship — Click and Book Plus cannot reach `ready` until a real search has
+ * answered, so on the idle screen it was never there and the desk claimed to
+ * search one provider. A provider that fails a search is said in one line above
+ * the results (04 §8), where the agent can act on it.
  *
  * It is a child of the stage rather than of the search form because the plate
  * pins it to the bottom of the viewport and runs its rule across the full width
  * of `main` — wider than the 1180px column the form occupies.
  */
 export function ProviderRail({ leaving = false }: { leaving?: boolean } = {}) {
-  const [searchProviders, setSearchProviders] = useState(
-    () => configuredSearchProviders([]),
-  )
-
-  useEffect(() => {
-    let active = true
-    let controller: AbortController | undefined
-    let requestSequence = 0
-
-    const refresh = async () => {
-      const requestId = ++requestSequence
-      controller?.abort()
-      const requestController = new AbortController()
-      controller = requestController
-      try {
-        const response = await getProviderStatus({ signal: requestController.signal })
-        if (active && requestId === requestSequence) {
-          setSearchProviders(
-            configuredSearchProviders(response.providers)
-              .filter((provider) => provider.state === "ready" && provider.stale !== true),
-          )
-        }
-      } catch {
-        if (active && requestId === requestSequence && !requestController.signal.aborted) {
-          setSearchProviders(configuredSearchProviders([]))
-        }
-      }
-    }
-
-    void refresh()
-    const timer = window.setInterval(() => void refresh(), PROVIDER_STATUS_REFRESH_MS)
-    return () => {
-      active = false
-      controller?.abort()
-      window.clearInterval(timer)
-    }
-  }, [])
-
-  if (searchProviders.length === 0) {
-    return null
-  }
+  const searchProviders = configuredSearchProviders()
 
   return (
     <div
@@ -64,12 +24,11 @@ export function ProviderRail({ leaving = false }: { leaving?: boolean } = {}) {
          over 120ms instead of vanishing with the screen it belongs to. */
       className={`fd-provider-rail${leaving ? " fd-motion-idle-exit" : ""}`}
       data-leaving={leaving ? "true" : undefined}
-      aria-live="polite"
     >
       <span className="text-xs text-muted-foreground">Buscando en</span>
       {searchProviders.map((provider) => (
         <span key={provider.id} className="fd-provider-rail-item">
-          {provider.icon && <img src={provider.icon} alt="" decoding="async" />}
+          <img src={provider.icon} alt="" decoding="async" />
           <span>{provider.label}</span>
         </span>
       ))}

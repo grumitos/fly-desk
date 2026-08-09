@@ -12,10 +12,6 @@ import { getBrowserClientSessionId } from "@/lib/browser-client-session"
 import { isIsoDate } from "@/lib/iso-date"
 import { filterLocationSuggestions, normalizeLocationSearchText, normalizeLocationSuggestions } from "@/lib/locations"
 import {
-  normalizeProviderStatusResponse,
-  type ProviderStatusResponse,
-} from "@/lib/providers"
-import {
   firstSegmentForItinerary,
   formatOfferBaggageLabel,
   itineraryRouteLabel,
@@ -523,13 +519,6 @@ async function getJson<T>(url: string, options: RequestOptions = {}): Promise<T>
   if (!res.ok) throw new FlyDeskApiError(apiErrorMessage(data), buildHttpDiagnosticLog(url, res, data))
   if (data === undefined) throw new FlyDeskApiError("El servidor devolvió una respuesta no válida.", buildHttpDiagnosticLog(url, res, data))
   return data as T
-}
-
-export async function getProviderStatus(
-  options: { signal?: AbortSignal } = {},
-): Promise<ProviderStatusResponse> {
-  const data = await getJson<unknown>(`${API_BASE}/api/provider-status`, options)
-  return normalizeProviderStatusResponse(data)
 }
 
 export async function suggestLocations(query: string, limit = 8): Promise<LocationSuggestion[]> {
