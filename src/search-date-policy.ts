@@ -1,3 +1,9 @@
+import {
+  MAX_FLEXIBLE_STAY_NIGHTS,
+  MAX_LAP_INFANTS_PER_ADULT,
+  MAX_SEARCH_PASSENGERS,
+} from "./core/search-limits";
+
 export const DEFAULT_SEARCH_MAX_FUTURE_DAYS = 365;
 export const DEFAULT_MIGRATION_CONCURRENT_MONTHS = 2;
 export const MAX_MIGRATION_CONCURRENT_MONTHS = 12;
@@ -11,6 +17,9 @@ export interface SearchDatePolicy {
 
 export interface PublicRuntimeConfig {
   migrationConcurrentMonths: number;
+  maxStayNights: number;
+  maxPassengers: number;
+  maxLapInfantsPerAdult: number;
   searchDatePolicy: SearchDatePolicy;
 }
 
@@ -115,6 +124,9 @@ export function validateSearchDateInPolicy(
 export function getPublicRuntimeConfig(now = new Date()): PublicRuntimeConfig {
   return {
     migrationConcurrentMonths: resolveMigrationConcurrentMonths(),
+    maxStayNights: MAX_FLEXIBLE_STAY_NIGHTS,
+    maxPassengers: MAX_SEARCH_PASSENGERS,
+    maxLapInfantsPerAdult: MAX_LAP_INFANTS_PER_ADULT,
     searchDatePolicy: getSearchDatePolicy(now),
   };
 }

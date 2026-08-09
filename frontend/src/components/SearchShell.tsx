@@ -1,21 +1,28 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type MouseEvent, type RefObject } from "react"
 import { createPortal } from "react-dom"
-import { es } from "@daypicker/react/locale"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup, ButtonGroupText } from "@/components/ui/button-group"
-import { Calendar } from "@/components/ui/calendar"
-import { Field, FieldError, FieldLabel } from "@/components/ui/field"
+import { DateRangeField } from "@/components/ui/date-range-field"
+import { DisclosureIcon } from "@/components/ui/disclosure-icon"
+import { SwapIcon } from "@/components/ui/swap-icon"
+import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { Kbd, KbdHint } from "@/components/ui/kbd"
+import { ShortcutTooltip } from "@/components/ui/tooltip"
+import { MonthRangeField } from "@/components/ui/month-range-field"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-control"
+import { SegmentedControl, SegmentedOption } from "@/components/ui/segmented-control"
+import { Sheet } from "@/components/ui/sheet"
 import { TOPBAR_SEARCH_CONTROLS_ID } from "@/components/TopBar"
 import { AppIcon, type AppIconName } from "@/components/ui/app-icon"
-import { useAutocomplete } from "@/hooks/useAutocomplete"
+import { MIN_MATCH_QUERY, useAutocomplete } from "@/hooks/useAutocomplete"
+import { clampIsoDate, isIsoDate } from "@/lib/iso-date"
 import {
   emptyLocationUsageSuggestions,
   getLocationUsageSuggestions,
-  type LocationUsageSuggestions,
+  type LocationUsageSuggestionGroups,
 } from "@/lib/location-usage-suggestions"
+import { returnExitDuration, useLeaveWindow } from "@/lib/search-choreography"
 import { cn } from "@/lib/utils"
 import type { LocationSuggestion, SearchRequest, SortMode } from "@/types"
 
@@ -23,6 +30,12 @@ const DATE_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
   day: "2-digit",
   month: "short",
   year: "numeric",
+  timeZone: "UTC",
+})
+const COMPACT_POLICY_DATE_FORMATTER = new Intl.DateTimeFormat("es-PE", {
+  day: "2-digit",
+  month: "short",
+  year: "2-digit",
   timeZone: "UTC",
 })
 const MIGRATION_MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
@@ -34,18 +47,37 @@ const MIGRATION_MONTH_NAME_FORMATTER = new Intl.DateTimeFormat("es-PE", {
   month: "long",
   timeZone: "UTC",
 })
-const DEFAULT_MIGRATION_MONTH_COUNT = 8
-const SEARCH_FIELD_CONTROL_CLASS = "fd-control flex h-[52px] w-full items-center gap-2 px-3 pt-4"
-const SEARCH_FIELD_VALUE_CLASS = "h-4 min-w-0 flex-1 truncate text-sm font-semibold leading-4"
+/* What the picker preselects when the mode is chosen. The ceiling is a
+   different number and lives in `MAX_MIGRATION_MONTHS` below: 06 §6 sets the
+   sweep's limit at twelve, and reusing the default as the cap is what made
+   the picker offer twelve months and then refuse the last four. */
+const DEFAULT_MIGRATION_MONTH_SELECTION = 8
+/* One 52px field (plate 1a) shared by Origen, Destino, Pasajeros and both halves
+   of the merged date control, so the value baseline lands on the same y in all
+   six. Geometry lives in `.fd-field-control` / `.fd-field-value`. */
+const SEARCH_FIELD_CONTROL_CLASS = "fd-field-control w-full"
+const SEARCH_FIELD_VALUE_CLASS = "fd-field-value"
 const SEARCH_MAX_FUTURE_DAYS_FALLBACK = 365
-const MAX_STAY_NIGHTS = 90
-const MAX_PASSENGERS = 9
-const MAX_CHILDREN = 8
-const TOPBAR_CONTROLS_MEDIA_QUERY = "(min-width: 768px)"
+/* Used only if the server did not inject the limits; they mirror the backend's
+   own ceilings so the fallback advertises the truth rather than a guess. */
+const MAX_STAY_NIGHTS_FALLBACK = 90
+const MAX_PASSENGERS_FALLBACK = 9
+const MAX_LAP_INFANTS_PER_ADULT_FALLBACK = 1
 
+/* Resolved once at module scope: the server writes `__FLYDESK_RUNTIME__` into
+   `<head>` and this bundle is the last script in `<body>`, so the value is
+   already there — and it cannot change during a session. */
+const {
+  maxStayNights: MAX_STAY_NIGHTS,
+  maxPassengers: MAX_PASSENGERS,
+  maxLapInfantsPerAdult: MAX_LAP_INFANTS_PER_ADULT,
+} = getRuntimeSearchLimits()
+const MAX_CHILDREN = 8
+/* The Migratorio sweep is capped at twelve months, which is also the length of
+   the search window, so the picker can never offer a range it cannot search. */
+const MAX_MIGRATION_MONTHS = 12
 type SearchModeControl = "exact" | "flexible" | "migration"
 type SearchTouchedField = "origin" | "destination" | "departureDate" | "returnDate" | "passengers" | "migrationMonths"
-type LocationUsageField = "origin" | "destination"
 type SearchLocationMeta = Partial<Pick<LocationSuggestion, "label" | "countryCode">>
 type MigrationMonthOption = {
   key: string
@@ -61,7 +93,21 @@ interface SearchShellProps {
   loading: boolean
   loadingLabel?: string
   controlsPlacement?: "inline" | "topbar"
+  compactActive?: boolean
+  mobilePresentation?: boolean
+  mobilePolicyTarget?: HTMLElement | null
   showLocationUsageSuggestions?: boolean
+  /** The idle screen itself, which is the only place the policy line belongs. */
+  idle?: boolean
+  /** The 120ms of 07 §1 during which the frequent chips are still on screen. */
+  usageSuggestionsLeaving?: boolean
+  /** True once the workspace is on screen, on any armazón. */
+  workspaceActive?: boolean
+  /** 11 §2.4 · the agent has gone back to edit, with the results behind. */
+  editing?: boolean
+  onEditingChange?: (editing: boolean) => void
+  /** The stage FLIPs these into the title bar; it needs to be able to measure them. */
+  controlsRef?: RefObject<HTMLDivElement | null>
   syncedRequest?: SearchRequest | null
   resetToken?: number
   onSearchConfigDraftChange?: (request: SearchRequest | null) => void
@@ -73,7 +119,16 @@ export function SearchShell({
   loading,
   loadingLabel = "Buscando",
   controlsPlacement = "inline",
+  compactActive = false,
+  mobilePresentation = false,
+  mobilePolicyTarget = null,
   showLocationUsageSuggestions = false,
+  idle = false,
+  usageSuggestionsLeaving = false,
+  workspaceActive = false,
+  editing = false,
+  onEditingChange,
+  controlsRef,
   syncedRequest = null,
   resetToken = 0,
   onSearchConfigDraftChange,
@@ -82,6 +137,8 @@ export function SearchShell({
   const [trip, setTrip] = useState<"round-trip" | "one-way">("round-trip")
   const [originCode, setOriginCode] = useState("")
   const [destCode, setDestCode] = useState("")
+  /** Bumped by `swapRoute`, so the two field values re-enter with movement 10. */
+  const [swapToken, setSwapToken] = useState(0)
   const [originMeta, setOriginMeta] = useState<SearchLocationMeta>({})
   const [destinationMeta, setDestinationMeta] = useState<SearchLocationMeta>({})
   const [departureDate, setDepartureDate] = useState("")
@@ -91,15 +148,7 @@ export function SearchShell({
   const [children, setChildren] = useState(0)
   const [infants, setInfants] = useState(0)
   const [paxOpen, setPaxOpen] = useState(false)
-  const [usageSuggestions, setUsageSuggestions] = useState<LocationUsageSuggestions>(() => emptyLocationUsageSuggestions())
-  const [hiddenUsageSuggestionFields, setHiddenUsageSuggestionFields] = useState<Record<LocationUsageField, boolean>>({
-    origin: false,
-    destination: false,
-  })
-  const [exitingUsageSuggestionFields, setExitingUsageSuggestionFields] = useState<Record<LocationUsageField, boolean>>({
-    origin: false,
-    destination: false,
-  })
+  const [usageSuggestions, setUsageSuggestions] = useState<LocationUsageSuggestionGroups>(() => emptyLocationUsageSuggestions())
   const datePolicy = useMemo(() => getRuntimeSearchDatePolicy(), [])
   const migrationMonthOptions = useMemo(
     () => buildMigrationMonthOptions(datePolicy.minSearchDate),
@@ -114,6 +163,15 @@ export function SearchShell({
     () => resolveMigrationMonthRange(selectedMigrationMonths, migrationMonthOptions),
     [migrationMonthOptions, selectedMigrationMonths],
   )
+  /* The pickable window, taken from the options the date policy produced rather
+     than recomputed — one source for "how far ahead can this search reach". */
+  const migrationMonthBounds = useMemo(() => {
+    const selectable = migrationMonthOptions.filter((month) => !month.disabled)
+    return {
+      min: selectable[0]?.key ?? migrationMonthOptions[0]?.key ?? "",
+      max: selectable[selectable.length - 1]?.key ?? migrationMonthOptions[migrationMonthOptions.length - 1]?.key ?? "",
+    }
+  }, [migrationMonthOptions])
   const lastResetTokenRef = useRef(resetToken)
   const [touched, setTouched] = useState<Record<SearchTouchedField, boolean>>({
     origin: false,
@@ -125,12 +183,10 @@ export function SearchShell({
   })
   const validDepartureDate = isIsoDate(departureDate) ? departureDate : ""
   const returnMinDate = maxIsoDate(datePolicy.minSearchDate, validDepartureDate || datePolicy.minSearchDate)
-  const endDateMaxDate = mode === "exact" && trip === "round-trip" && validDepartureDate
-    ? minIsoDate(datePolicy.maxSearchDate, addDays(validDepartureDate, MAX_STAY_NIGHTS))
-    : datePolicy.maxSearchDate
-  const departureLabel = mode === "migration" ? "Mes desde" : mode === "flexible" ? "Salida desde" : "Salida"
-  const endDateLabel = mode === "migration" ? "Mes hasta" : mode === "flexible" ? "Salida hasta" : "Regreso"
-  const canUseTopbarControls = useCanUseTopbarControls()
+  /* The merged control owns the stay ceiling now: it derives the return's upper
+     bound from the departure the agent just picked, in one place. */
+  const departureLabel = mode === "flexible" ? "Salida desde" : "Salida"
+  const endDateLabel = mode === "flexible" ? "Salida hasta" : "Regreso"
 
   const origin = useAutocomplete((suggestion) => {
     setOriginCode(suggestion.code)
@@ -144,21 +200,11 @@ export function SearchShell({
   const setDestinationQuery = destination.setQuery
   const resolveOriginQuery = origin.resolveCurrentQuery
   const resolveDestinationQuery = destination.resolveCurrentQuery
-  const usageSuggestionExitTimersRef = useRef<Partial<Record<LocationUsageField, number>>>({})
-
-  useEffect(() => {
-    const timers = usageSuggestionExitTimersRef.current
-    return () => {
-      for (const timer of Object.values(timers)) {
-        if (timer) window.clearTimeout(timer)
-      }
-    }
-  }, [])
-
   useEffect(() => {
     if (!syncedRequest) return
 
     const frame = window.requestAnimationFrame(() => {
+      onEditingChange?.(false)
       const nextMode = modeFromSearchRequest(syncedRequest)
       const nextTrip = syncedRequest.searchMode === "month-view" ? "one-way" : syncedRequest.tripType
       const nextOrigin = syncedRequest.origin.toUpperCase().trim()
@@ -181,7 +227,10 @@ export function SearchShell({
       const nextInfants = clampInteger(
         syncedRequest.infants,
         0,
-        Math.min(nextAdults, Math.max(0, MAX_PASSENGERS - nextAdults - nextChildren)),
+        Math.min(
+          nextAdults * MAX_LAP_INFANTS_PER_ADULT,
+          Math.max(0, MAX_PASSENGERS - nextAdults - nextChildren),
+        ),
         0,
       )
       setAdults(nextAdults)
@@ -199,7 +248,7 @@ export function SearchShell({
       void resolveDestinationQuery()
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [migrationMonthOptions, resolveDestinationQuery, resolveOriginQuery, setDestinationQuery, setOriginQuery, syncedRequest])
+  }, [migrationMonthOptions, onEditingChange, resolveDestinationQuery, resolveOriginQuery, setDestinationQuery, setOriginQuery, syncedRequest])
 
   useEffect(() => {
     if (!showLocationUsageSuggestions || loading) return
@@ -258,7 +307,11 @@ export function SearchShell({
   const updateAdults = (nextAdults: number) => {
     const clampedAdults = Math.max(1, Math.min(nextAdults, MAX_PASSENGERS))
     const clampedChildren = Math.min(children, Math.max(0, MAX_PASSENGERS - clampedAdults))
-    const clampedInfants = Math.min(infants, clampedAdults, Math.max(0, MAX_PASSENGERS - clampedAdults - clampedChildren))
+    const clampedInfants = Math.min(
+      infants,
+      clampedAdults * MAX_LAP_INFANTS_PER_ADULT,
+      Math.max(0, MAX_PASSENGERS - clampedAdults - clampedChildren),
+    )
     setAdults(clampedAdults)
     setChildren(clampedChildren)
     setInfants(clampedInfants)
@@ -268,18 +321,31 @@ export function SearchShell({
   const updateChildren = (nextChildren: number) => {
     const clampedChildren = Math.max(0, Math.min(nextChildren, MAX_CHILDREN, MAX_PASSENGERS - adults))
     setChildren(clampedChildren)
-    setInfants((current) => Math.min(current, adults, Math.max(0, MAX_PASSENGERS - adults - clampedChildren)))
+    setInfants((current) => Math.min(
+      current,
+      adults * MAX_LAP_INFANTS_PER_ADULT,
+      Math.max(0, MAX_PASSENGERS - adults - clampedChildren),
+    ))
     setTouched((current) => ({ ...current, passengers: true }))
   }
 
   const updateInfants = (nextInfants: number) => {
-    setInfants(Math.max(0, Math.min(nextInfants, adults, MAX_PASSENGERS - adults - children)))
+    setInfants(Math.max(0, Math.min(
+      nextInfants,
+      adults * MAX_LAP_INFANTS_PER_ADULT,
+      MAX_PASSENGERS - adults - children,
+    )))
     setTouched((current) => ({ ...current, passengers: true }))
   }
 
   const handleDepartureDateChange = (nextDate: string) => {
     const clampedDate = clampIsoDate(nextDate, datePolicy.minSearchDate, datePolicy.maxSearchDate)
-    const maxReturnDate = mode === "exact" && trip === "round-trip"
+    /* 11 §2.2 · «el aspa borra **las dos** fechas». Emptying the departure is a
+       gesture of the ficha, not an edge case, and there is no ceiling to derive
+       from a date that no longer exists: `addDays("")` builds an Invalid Date
+       and `toISOString()` throws, which aborted the update and left the control
+       showing the dates the agent had just asked to remove. */
+    const maxReturnDate = mode === "exact" && trip === "round-trip" && isIsoDate(clampedDate)
       ? minIsoDate(datePolicy.maxSearchDate, addDays(clampedDate, MAX_STAY_NIGHTS))
       : datePolicy.maxSearchDate
     setDepartureDate(clampedDate)
@@ -289,10 +355,6 @@ export function SearchShell({
       if (current > maxReturnDate) return maxReturnDate
       return current
     })
-  }
-
-  const handleReturnDateChange = (nextDate: string) => {
-    setReturnDate(clampIsoDate(nextDate, returnMinDate, endDateMaxDate))
   }
 
   const handleTripChange = (nextTrip: "round-trip" | "one-way") => {
@@ -321,24 +383,28 @@ export function SearchShell({
     }))
   }
 
-  const handleMigrationStartMonthChange = (key: string) => {
-    setSelectedMigrationMonths((current) => {
-      const range = resolveMigrationMonthRange(current, migrationMonthOptions)
-      const end = range.end && key <= range.end ? range.end : key
-      return buildMigrationMonthRangeSelection(key, end, migrationMonthOptions)
-    })
+  /* The month picker hands back a range; the request still travels as the list
+     of months it covers, because that is what the backend fans out over. */
+  const handleMigrationRangeChange = ({ startMonth, endMonth }: { startMonth: string; endMonth: string }) => {
+    setSelectedMigrationMonths(buildMigrationMonthRangeSelection(startMonth, endMonth, migrationMonthOptions))
     setTouched((current) => ({ ...current, migrationMonths: true }))
   }
 
-  const handleMigrationEndMonthChange = (key: string) => {
-    setSelectedMigrationMonths((current) => {
-      const range = resolveMigrationMonthRange(current, migrationMonthOptions)
-      const start = range.start && key >= range.start ? range.start : key
-      return buildMigrationMonthRangeSelection(start, key, migrationMonthOptions)
-    })
-    setTouched((current) => ({ ...current, migrationMonths: true }))
+  /* Both halves of the merged control arrive together, so clamping the return
+     against the new departure happens in one place instead of two. */
+  const handleDateRangeChange = ({ startDate, endDate }: { startDate: string; endDate: string }) => {
+    handleDepartureDateChange(startDate)
+    setReturnDate(endDate ? clampIsoDate(endDate, datePolicy.minSearchDate, datePolicy.maxSearchDate) : "")
+    setTouched((current) => ({ ...current, departureDate: true, returnDate: Boolean(endDate) || current.returnDate }))
   }
 
+  /*
+   * Movement 10 (07 §4): what crosses is the *content* of the two fields, in
+   * 140ms — the icon does not turn, and 07 §5 names it among the things that
+   * never move. The token bumps on every swap so the two values re-enter with
+   * the cross-fade instead of being replaced between two frames; without it the
+   * only feedback for the gesture was that the words were suddenly elsewhere.
+   */
   const swapRoute = () => {
     setOriginCode(destCode)
     setDestCode(originCode)
@@ -346,33 +412,16 @@ export function SearchShell({
     setDestinationMeta(originMeta)
     origin.setQuery(destination.query)
     destination.setQuery(origin.query)
+    setSwapToken((current) => current + 1)
   }
 
-  const clearUsageSuggestionExitTimer = (field: LocationUsageField) => {
-    const timer = usageSuggestionExitTimersRef.current[field]
-    if (timer) window.clearTimeout(timer)
-    delete usageSuggestionExitTimersRef.current[field]
-  }
-
-  const resetUsageSuggestionVisibility = () => {
-    clearUsageSuggestionExitTimer("origin")
-    clearUsageSuggestionExitTimer("destination")
-    setHiddenUsageSuggestionFields({ origin: false, destination: false })
-    setExitingUsageSuggestionFields({ origin: false, destination: false })
-  }
-
-  const hideUsageSuggestionField = (field: LocationUsageField) => {
-    clearUsageSuggestionExitTimer(field)
-    setExitingUsageSuggestionFields((current) => ({ ...current, [field]: true }))
-    usageSuggestionExitTimersRef.current[field] = window.setTimeout(() => {
-      setHiddenUsageSuggestionFields((current) => ({ ...current, [field]: true }))
-      setExitingUsageSuggestionFields((current) => ({ ...current, [field]: false }))
-      delete usageSuggestionExitTimersRef.current[field]
-    }, 150)
-  }
-
+  /*
+   * The frequent-station chips are a standing shortcut, not a one-shot prompt.
+   * Using one used to fade its whole row away, so the second field lost the
+   * shortcut the moment the first was filled, and re-picking meant typing. They
+   * stay put now; the idle screen is the only place they appear at all.
+   */
   const applyOriginUsageSuggestion = async (code: string) => {
-    hideUsageSuggestionField("origin")
     setOriginCode(code)
     origin.setQuery(code)
     setTouched((current) => ({ ...current, origin: true }))
@@ -381,12 +430,20 @@ export function SearchShell({
   }
 
   const applyDestinationUsageSuggestion = async (code: string) => {
-    hideUsageSuggestionField("destination")
     setDestCode(code)
     destination.setQuery(code)
     setTouched((current) => ({ ...current, destination: true }))
     const resolved = await destination.resolveCurrentQuery()
     if (resolved) setDestCode(resolved.code)
+  }
+
+  const applyMobileUsageSuggestion = async (code: string) => {
+    if (!isValidLocationCandidate(originCode)) {
+      await applyOriginUsageSuggestion(code)
+      return
+    }
+
+    await applyDestinationUsageSuggestion(code)
   }
 
   const validation = buildSearchValidation({
@@ -548,7 +605,7 @@ export function SearchShell({
       originCountryCode: resolvedOrigin?.countryCode ?? originMeta.countryCode,
       destinationCountryCode: resolvedDestination?.countryCode ?? destinationMeta.countryCode,
     }
-    resetUsageSuggestionVisibility()
+    onEditingChange?.(false)
     onSearch(nextRequest)
   }
 
@@ -564,13 +621,23 @@ export function SearchShell({
     : undefined
   const visiblePassengerError = touched.passengers ? validation.passengers : undefined
   const shouldShowUsageSuggestions = showLocationUsageSuggestions && !loading
+  const mobileSummaryExit = useLeaveWindow(compactActive && !editing, returnExitDuration)
+  /* The chips outlive the screen they belong to by the 180ms of their row in
+     07 §1 — but only the chips. The space the fields reserve for them is
+     released at once, because what the table has travelling upward is the block
+     of fields, and it cannot travel while it is still holding their height. */
+  const shouldRenderQuickChips = shouldShowUsageSuggestions || usageSuggestionsLeaving
   const reserveIdleHelperSpace = shouldShowUsageSuggestions
   const reserveOriginSuggestionSpace = shouldShowUsageSuggestions
   const reserveDestinationSuggestionSpace = shouldShowUsageSuggestions
-  const searchGridClassName = cn(
-    "fd-search-grid grid grid-cols-2 gap-1.5 transition-[grid-template-columns,max-width] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]",
-    "lg:grid-cols-[minmax(150px,1.2fr)_34px_minmax(150px,1.2fr)_minmax(128px,.85fr)_minmax(128px,.85fr)_minmax(144px,.9fr)_124px]",
-  )
+  const mobileQuickSuggestions = Array.from(new Set([
+    ...usageSuggestions.frequent.origin,
+    ...usageSuggestions.frequent.destination,
+  ])).slice(0, 5)
+  /* No transition on the tracks: no plate animates a grid re-flowing. Plate 2h
+     moves the block of fields with `translateY`, and the tracks simply arrive
+     at their new widths. */
+  const searchGridClassName = "fd-search-grid grid gap-1.5"
   const visibleMigrationMonthsError = mode === "migration" && touched.migrationMonths
     ? validation.migrationMonths
     : undefined
@@ -578,12 +645,13 @@ export function SearchShell({
     { key: "round-trip", label: "Ida y vuelta", icon: "roundTrip" },
     { key: "one-way", label: "Solo ida", icon: "oneWay" },
   ]
-  const topbarControlsTarget = controlsPlacement === "topbar" && canUseTopbarControls
+  const topbarControlsTarget = controlsPlacement === "topbar"
     ? document.getElementById(TOPBAR_SEARCH_CONTROLS_ID)
     : null
   const shouldPortalControls = Boolean(topbarControlsTarget)
   const searchControls = (
     <SearchModeControls
+      ref={controlsRef}
       mode={mode}
       trip={trip}
       tripTabs={tripTabs}
@@ -595,18 +663,135 @@ export function SearchShell({
     />
   )
 
+  const dateSummary = mode === "migration"
+    ? [
+        migrationMonthRange.start ? formatMigrationMonthName(migrationMonthRange.start) : "Meses",
+        migrationMonthRange.end ? formatMigrationMonthName(migrationMonthRange.end) : "seleccionar",
+      ].join(" – ")
+    : [departureDate, trip === "round-trip" ? returnDate : null]
+        .filter((value): value is string => Boolean(value))
+        .map(formatDateLabel)
+        .join(" – ")
+  const modeLabel = mode === "migration" ? "Migratorio" : mode === "flexible" ? "Flexible" : "Exacto"
+  const mobileSummary = (
+    /*
+     * Plate 1d — the search collapsed to one line. The mode is no longer a
+     * control here: it is read as the last word of the summary, and changing
+     * it means going back in to edit (02 §4). The pencil is a 44px target
+     * because it is the only way back out.
+     */
+    <button
+      type="button"
+      className="fd-mobile-search-summary fd-focus-ring"
+      aria-label="Editar búsqueda"
+      onClick={() => onEditingChange?.(true)}
+    >
+      <span className="fd-mobile-search-lead">
+        <span className="fd-mobile-search-route">
+          <span>{originCode || "Origen"}</span>
+          <AppIcon name="swap" size={14} className="text-muted-foreground" />
+          <span>{destCode || "Destino"}</span>
+        </span>
+        <span className="fd-mobile-search-meta">
+          {dateSummary || "Fechas"} · {passengerTotal} pasajero{passengerTotal === 1 ? "" : "s"} · {modeLabel}
+        </span>
+      </span>
+      <span className="fd-mobile-search-edit" aria-hidden="true">
+        <AppIcon name="edit" size={18} />
+      </span>
+    </button>
+  )
+
+  if (compactActive && !editing) {
+    return (
+      <section className="fd-mobile-search-summary-shell" aria-busy={loading}>
+        {mobileSummary}
+      </section>
+    )
+  }
+
+  /* «El resumen se funde» while the block grows underneath it (2h). It has to
+     leave the flow to do that — two forms stacked would double the height the
+     growth is animating towards — so it fades on top of the one replacing it. */
+  const leavingSummary = mobileSummaryExit.leaving ? (
+    <section
+      className="fd-mobile-search-summary-shell fd-motion-exit"
+      data-leaving="true"
+      aria-hidden="true"
+    >
+      {mobileSummary}
+    </section>
+  ) : null
+
+  const handlePaxOpenChange = (nextOpen: boolean) => {
+    setPaxOpen(nextOpen)
+    if (nextOpen) setTouched((current) => ({ ...current, passengers: true }))
+  }
+  const passengerButton = (
+    <button
+      type="button"
+      aria-label="Seleccionar pasajeros"
+      aria-expanded={paxOpen}
+      aria-haspopup="dialog"
+      aria-invalid={Boolean(visiblePassengerError)}
+      aria-describedby={visiblePassengerError ? "passengers-helper" : undefined}
+      className={cn(
+        SEARCH_FIELD_CONTROL_CLASS,
+        "text-left",
+        visiblePassengerError && "fd-field-invalid",
+      )}
+      onClick={mobilePresentation ? () => handlePaxOpenChange(true) : undefined}
+    >
+      <FieldLabel>Pasajeros</FieldLabel>
+      <AppIcon name="passengers" className="text-muted-foreground" />
+      <span className={SEARCH_FIELD_VALUE_CLASS}>
+        {passengerTotal} pasajero{passengerTotal > 1 ? "s" : ""}
+      </span>
+      <DisclosureIcon open={paxOpen} className="text-muted-foreground" />
+    </button>
+  )
+  const passengerPickerBody = (
+    <>
+      <div className="fd-pax-rows">
+        <PaxRow label="Adultos" detail="12+ años" value={adults} onInc={() => updateAdults(adults + 1)} onDec={() => updateAdults(adults - 1)} decDisabled={adults <= 1} incDisabled={adults >= MAX_PASSENGERS || passengerSlotsRemaining <= 0} />
+        <PaxRow label="Niños" detail="2-11 años" value={children} onInc={() => updateChildren(children + 1)} onDec={() => updateChildren(children - 1)} decDisabled={children <= 0} incDisabled={children >= MAX_CHILDREN || passengerSlotsRemaining <= 0} />
+        <PaxRow label="Bebés" detail="Menos de 2 años" value={infants} onInc={() => updateInfants(infants + 1)} onDec={() => updateInfants(infants - 1)} decDisabled={infants <= 0} incDisabled={infants >= adults * MAX_LAP_INFANTS_PER_ADULT || passengerSlotsRemaining <= 0} />
+      </div>
+      <p className="fd-pax-note">
+        Máximo {MAX_PASSENGERS} por búsqueda · {MAX_LAP_INFANTS_PER_ADULT === 1
+          ? "un bebé en falda por adulto"
+          : `hasta ${MAX_LAP_INFANTS_PER_ADULT} bebés en falda por adulto`}
+      </p>
+    </>
+  )
+
   return (
     <>
       {topbarControlsTarget ? createPortal(searchControls, topbarControlsTarget) : null}
+      {leavingSummary}
       <section className="overflow-visible" aria-busy={loading}>
         {!shouldPortalControls && (
-          <div className="fd-search-controls-row mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="fd-search-controls-row mb-2.5 flex flex-wrap items-center justify-between gap-2">
             {searchControls}
           </div>
         )}
 
         <form onSubmit={handleSubmit}>
-          <div className={searchGridClassName}>
+          <div
+            className={searchGridClassName}
+            /* 11 §2.4 · «Editar la búsqueda (escritorio: clic en un campo)».
+               Capture, because the focus lands on an input three components
+               down and this only needs to know that it happened. The CTA is in
+               the same grid and is not a field: pressing Buscar is the opposite
+               gesture, and treating it as editing would undo the sequence it
+               just started. */
+            onFocusCapture={(event) => {
+              if (!workspaceActive || editing) return
+              if ((event.target as HTMLElement).closest("[data-fd-search-submit]")) return
+              onEditingChange?.(true)
+            }}
+          >
+            <div className="fd-route-fields">
             <LocationField
               label="Origen"
               value={origin.query}
@@ -616,7 +801,6 @@ export function SearchShell({
               activeIndex={origin.activeIndex}
               placeholder="Ciudad o IATA"
               icon="location"
-              roundedClass="lg:rounded-l-lg"
               onFocus={origin.openSuggestions}
               onBlur={() => {
                 setTouched((current) => ({ ...current, origin: true }))
@@ -634,16 +818,20 @@ export function SearchShell({
                 setOriginCode(suggestion.code)
                 setTouched((current) => ({ ...current, origin: true }))
               }}
-              quickSuggestions={shouldShowUsageSuggestions && !origin.open && !hiddenUsageSuggestionFields.origin ? usageSuggestions.origin : []}
-              quickSuggestionsExiting={exitingUsageSuggestionFields.origin}
+              quickSuggestions={!mobilePresentation && shouldRenderQuickChips && !origin.open ? usageSuggestions.frequent.origin : []}
+              recentSuggestions={shouldShowUsageSuggestions ? usageSuggestions.recent.origin : []}
+              frequentSuggestions={shouldShowUsageSuggestions ? usageSuggestions.frequent.origin : []}
+              quickSuggestionsLeavingIdle={usageSuggestionsLeaving}
               onQuickSuggestionSelect={applyOriginUsageSuggestion}
-              reserveHelperSpace={reserveIdleHelperSpace}
-              reserveSuggestionSpace={reserveOriginSuggestionSpace}
+              reserveHelperSpace={reserveIdleHelperSpace && !mobilePresentation}
+              reserveSuggestionSpace={reserveOriginSuggestionSpace && !mobilePresentation}
               invalid={Boolean(visibleOriginError)}
               helperText={visibleOriginError}
+              mobilePresentation={mobilePresentation}
+              swapToken={swapToken}
             />
 
-          <div className="fd-route-swap-cell hidden justify-center lg:flex">
+          <div className="fd-route-swap-cell">
             <Button
               type="button"
               variant="secondary"
@@ -652,7 +840,7 @@ export function SearchShell({
               className="h-8 w-8 text-muted-foreground hover:text-foreground"
               aria-label="Intercambiar ruta"
             >
-              <AppIcon name="swap" />
+              <SwapIcon />
             </Button>
           </div>
 
@@ -682,116 +870,115 @@ export function SearchShell({
               setDestCode(suggestion.code)
               setTouched((current) => ({ ...current, destination: true }))
             }}
-            quickSuggestions={shouldShowUsageSuggestions && !destination.open && !hiddenUsageSuggestionFields.destination ? usageSuggestions.destination : []}
-            quickSuggestionsExiting={exitingUsageSuggestionFields.destination}
+            quickSuggestions={!mobilePresentation && shouldRenderQuickChips && !destination.open ? usageSuggestions.frequent.destination : []}
+            recentSuggestions={shouldShowUsageSuggestions ? usageSuggestions.recent.destination : []}
+            frequentSuggestions={shouldShowUsageSuggestions ? usageSuggestions.frequent.destination : []}
+            quickSuggestionsLeavingIdle={usageSuggestionsLeaving}
             onQuickSuggestionSelect={applyDestinationUsageSuggestion}
-            reserveHelperSpace={reserveIdleHelperSpace}
-            reserveSuggestionSpace={reserveDestinationSuggestionSpace}
+            reserveHelperSpace={reserveIdleHelperSpace && !mobilePresentation}
+            reserveSuggestionSpace={reserveDestinationSuggestionSpace && !mobilePresentation}
             invalid={Boolean(visibleDestinationError)}
             helperText={visibleDestinationError}
+            mobilePresentation={mobilePresentation}
+            swapToken={swapToken}
           />
-
-          {mode === "migration" ? (
-            <>
-              <MonthField
-                label={departureLabel}
-                value={migrationMonthRange.start}
-                months={migrationMonthOptions}
+          </div>
+          {/* One control spanning the two date columns (plate 2e). In Migratorio
+              the calendar of days gives up its place to the month picker (6c). */}
+          <Field
+            className={cn(
+              "relative min-w-0",
+              reserveIdleHelperSpace && !mobilePresentation && "fd-search-field-shell",
+            )}
+          >
+            {mode === "migration" ? (
+              <MonthRangeField
+                label="Meses"
+                startMonth={migrationMonthRange.start}
+                endMonth={migrationMonthRange.end}
+                minMonth={migrationMonthBounds.min}
+                maxMonth={migrationMonthBounds.max}
+                maxSpan={MAX_MIGRATION_MONTHS}
                 invalid={Boolean(visibleMigrationMonthsError)}
-                helperText={visibleMigrationMonthsError}
-                onChange={handleMigrationStartMonthChange}
+                onChange={handleMigrationRangeChange}
                 onTouch={() => setTouched((current) => ({ ...current, migrationMonths: true }))}
-                reserveHelperSpace={reserveIdleHelperSpace}
+                mobile={mobilePresentation}
               />
-              <MonthField
-                label={endDateLabel}
-                value={migrationMonthRange.end}
-                months={migrationMonthOptions}
-                invalid={Boolean(visibleMigrationMonthsError)}
-                onChange={handleMigrationEndMonthChange}
-                onTouch={() => setTouched((current) => ({ ...current, migrationMonths: true }))}
-                reserveHelperSpace={reserveIdleHelperSpace}
-              />
-            </>
-          ) : (
-            <>
-              <DateField
-                label={departureLabel}
-                value={departureDate}
+            ) : (
+              <DateRangeField
+                startLabel={departureLabel}
+                endLabel={endDateLabel}
+                startDate={departureDate}
+                endDate={returnDate}
                 minDate={datePolicy.minSearchDate}
                 maxDate={datePolicy.maxSearchDate}
-                onChange={(value) => {
-                  handleDepartureDateChange(value)
-                  setTouched((current) => ({ ...current, departureDate: true }))
-                }}
-                invalid={Boolean(visibleDepartureDateError)}
-                helperText={visibleDepartureDateError}
-                onTouch={() => setTouched((current) => ({ ...current, departureDate: true }))}
-                reserveHelperSpace={reserveIdleHelperSpace}
+                maxStayNights={MAX_STAY_NIGHTS}
+                endDisabled={mode === "exact" && trip === "one-way"}
+                startInvalid={Boolean(visibleDepartureDateError)}
+                endInvalid={Boolean(visibleReturnDateError)}
+                errorId="dates-helper"
+                onChange={handleDateRangeChange}
+                onTouch={(half) => setTouched((current) => ({
+                  ...current,
+                  [half === "start" ? "departureDate" : "returnDate"]: true,
+                }))}
+                mobile={mobilePresentation}
               />
-              <DateField
-                label={endDateLabel}
-                value={returnDate}
-                minDate={returnMinDate}
-                maxDate={endDateMaxDate}
-                disabled={mode === "exact" && trip === "one-way"}
-                disabledLabel="No aplica"
-                onChange={(value) => {
-                  handleReturnDateChange(value)
-                  setTouched((current) => ({ ...current, returnDate: true }))
-                }}
-                invalid={Boolean(visibleReturnDateError)}
-                helperText={visibleReturnDateError}
-                onTouch={() => setTouched((current) => ({ ...current, returnDate: true }))}
-                reserveHelperSpace={reserveIdleHelperSpace}
-              />
-            </>
+            )}
+            <ControlHelper
+              id="dates-helper"
+              text={visibleMigrationMonthsError || visibleDepartureDateError || visibleReturnDateError}
+            />
+          </Field>
+
+          {mobilePresentation ? (
+            <Field className={cn("relative", reserveIdleHelperSpace && !mobilePresentation && "fd-search-field-shell")}>
+              {passengerButton}
+              <ControlHelper id="passengers-helper" text={visiblePassengerError} />
+              <Sheet
+                open={paxOpen}
+                onOpenChange={handlePaxOpenChange}
+                title="Pasajeros"
+                meta={`${passengerTotal} de ${MAX_PASSENGERS}`}
+                placement="bottom"
+                size="partial"
+                className="fd-passenger-sheet"
+                footer={(
+                  /* Plate 2d closes the sheet with one 52px primary. It confirms
+                     nothing new — the counters already applied — it just gives
+                     the thumb a target that is not the 44px close. */
+                  <button
+                    type="button"
+                    className="fd-sheet-action fd-focus-ring"
+                    onClick={() => handlePaxOpenChange(false)}
+                  >
+                    <AppIcon name="check" size={18} />
+                    Aplicar
+                  </button>
+                )}
+              >
+                {passengerPickerBody}
+              </Sheet>
+            </Field>
+          ) : (
+            <Popover open={paxOpen} onOpenChange={handlePaxOpenChange}>
+              <Field className={cn("relative", reserveIdleHelperSpace && "fd-search-field-shell")}>
+                <PopoverTrigger asChild>{passengerButton}</PopoverTrigger>
+                <PopoverContent align="end" sideOffset={6} className="fd-pax-popover">
+                  {/* The total against the ceiling, so the agent sees how much room
+                      is left before a button goes dim rather than after. */}
+                  <div className="fd-pax-popover-head">
+                    <span className="fd-type-micro">Pasajeros</span>
+                    <span className="fd-mono text-xs font-bold">{passengerTotal} de {MAX_PASSENGERS}</span>
+                  </div>
+                  {passengerPickerBody}
+                </PopoverContent>
+                <ControlHelper id="passengers-helper" text={visiblePassengerError} />
+              </Field>
+            </Popover>
           )}
 
-          <Popover
-            open={paxOpen}
-            onOpenChange={(nextOpen) => {
-              setPaxOpen(nextOpen)
-              if (nextOpen) setTouched((current) => ({ ...current, passengers: true }))
-            }}
-          >
-            <Field className={cn("relative", reserveIdleHelperSpace && "fd-search-field-shell")}>
-              <FieldLabel className="pointer-events-none absolute left-3 top-2.5 z-10">Pasajeros</FieldLabel>
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  aria-label="Seleccionar pasajeros"
-                  aria-expanded={paxOpen}
-                  aria-haspopup="dialog"
-                  aria-invalid={Boolean(visiblePassengerError)}
-                  aria-describedby={visiblePassengerError ? "passengers-helper" : undefined}
-                  className={cn(
-                    SEARCH_FIELD_CONTROL_CLASS,
-                    "justify-start p-0 px-3 pt-4 text-left hover:bg-accent/60",
-                    visiblePassengerError && "fd-control-invalid",
-                  )}
-                >
-                  <AppIcon name="passengers" className="text-muted-foreground" />
-                  <span className={SEARCH_FIELD_VALUE_CLASS}>
-                    {passengerTotal} pasajero{passengerTotal > 1 ? "s" : ""}
-                  </span>
-                  <AppIcon name="chevronDown" className={`text-muted-foreground transition-transform ${paxOpen ? "rotate-180" : ""}`} />
-                </Button>
-              </PopoverTrigger>
-
-              <PopoverContent align="end" className="w-72">
-                <PaxRow label="Adultos" detail="12+ años" value={adults} onInc={() => updateAdults(adults + 1)} onDec={() => updateAdults(adults - 1)} decDisabled={adults <= 1} incDisabled={adults >= MAX_PASSENGERS || passengerSlotsRemaining <= 0} />
-                <PaxRow label="Niños" detail="2-11 años" value={children} onInc={() => updateChildren(children + 1)} onDec={() => updateChildren(children - 1)} decDisabled={children <= 0} incDisabled={children >= MAX_CHILDREN || passengerSlotsRemaining <= 0} />
-                <PaxRow label="Bebés" detail="Menos de 2 años" value={infants} onInc={() => updateInfants(infants + 1)} onDec={() => updateInfants(infants - 1)} decDisabled={infants <= 0} incDisabled={infants >= adults || passengerSlotsRemaining <= 0} />
-                <p className="px-2 pt-1 text-xs font-medium text-muted-foreground">
-                  Máximo {MAX_PASSENGERS} pasajeros por búsqueda.
-                </p>
-              </PopoverContent>
-              <ControlHelper id="passengers-helper" text={visiblePassengerError} />
-            </Field>
-          </Popover>
-
+          <ShortcutTooltip label={loading ? "Detener búsqueda" : "Buscar"} shortcut={<Kbd icon="enter" />}>
           <Button
             type={loading ? "button" : "submit"}
             onClick={loading
@@ -803,21 +990,22 @@ export function SearchShell({
               : undefined}
             aria-label={loading ? "Detener búsqueda" : "Buscar"}
             title={loading ? "Detener búsqueda" : undefined}
+            data-fd-search-submit=""
             disabled={!loading && hasValidationError}
+            size="xl"
             className={cn(
-              "h-[52px] rounded-lg text-sm",
               loading && "group border border-primary/40 hover:border-destructive hover:bg-destructive hover:text-destructive-foreground",
             )}
           >
             {loading ? (
               <>
                 <span className="relative grid h-4 w-4 place-items-center">
-                  <AppIcon name="loading" spin className="transition-opacity duration-150 group-hover:opacity-0" />
-                  <AppIcon name="x" className="absolute opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
+                  <AppIcon name="loading" spin className="transition-opacity duration-[var(--fd-dur-tacto)] ease-[var(--fd-ease-tacto)] group-hover:opacity-0" />
+                  <AppIcon name="x" className="absolute opacity-0 transition-opacity duration-[var(--fd-dur-tacto)] ease-[var(--fd-ease-tacto)] group-hover:opacity-100" />
                 </span>
                 <span className="relative inline-grid min-w-16">
-                  <span className="transition-opacity duration-150 group-hover:opacity-0">{loadingLabel}</span>
-                  <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                  <span className="transition-opacity duration-[var(--fd-dur-tacto)] ease-[var(--fd-ease-tacto)] group-hover:opacity-0">{loadingLabel}</span>
+                  <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-[var(--fd-dur-tacto)] ease-[var(--fd-ease-tacto)] group-hover:opacity-100">
                     Detener
                   </span>
                 </span>
@@ -829,15 +1017,64 @@ export function SearchShell({
               </>
             )}
           </Button>
+          </ShortcutTooltip>
           </div>
-        </form>
 
+          {/* 03 §4 · one row for both fields, pressed in order. It is the same
+              strip as the desk's — the phone only merges the two lists and puts
+              a title on them; the geometry comes from the armazón. */}
+          {mobilePresentation && shouldShowUsageSuggestions && mobileQuickSuggestions.length > 0 && (
+            <LocationUsageSuggestionRow
+              fieldId="mobile-route"
+              label="en la ruta"
+              heading="Frecuentes"
+              suggestions={mobileQuickSuggestions}
+              onSelect={applyMobileUsageSuggestion}
+            />
+          )}
+
+          {/* Plate 1a: the emptiness of the idle state is resolved with real
+              material, not filler. The policy the agent needs *before* typing —
+              the window, the stay ceiling, the passenger ceiling — instead of
+              discovering each one by being rejected.
+
+              Keyed to the idle screen and not to the chips: 03 §8 puts these
+              two lines «al pie del reposo», the same clause that keeps the
+              provider rail there. Going back to edit (11 §2.4) brings the chips
+              back because they are part of the form; it does not bring back the
+              foot of a screen that is no longer on show. */}
+          {idle && mobilePresentation && mobilePolicyTarget
+            ? createPortal(
+                <div className="fd-policy-line fd-policy-line--mobile">
+                  <p className="m-0">
+                    Ventana{" "}
+                    <b>{formatCompactPolicyDateLabel(datePolicy.minSearchDate)} – {formatCompactPolicyDateLabel(datePolicy.maxSearchDate)}</b>
+                    <span className="fd-policy-sep">·</span>
+                    hasta <b>{MAX_STAY_NIGHTS}</b> noches
+                  </p>
+                </div>,
+                mobilePolicyTarget,
+              )
+            : idle && !mobilePresentation && (
+                <div className="fd-policy-line">
+                  <p className="m-0">
+                    Ventana de búsqueda{" "}
+                    <b>{formatDateLabel(datePolicy.minSearchDate)} – {formatDateLabel(datePolicy.maxSearchDate)}</b>
+                    <span className="fd-policy-sep">·</span>
+                    hasta <b>{MAX_STAY_NIGHTS}</b> noches en ida y vuelta
+                    <span className="fd-policy-sep">·</span>
+                    hasta <b>{MAX_PASSENGERS}</b> pasajeros
+                  </p>
+                </div>
+              )}
+        </form>
       </section>
     </>
   )
 }
 
 function SearchModeControls({
+  ref,
   mode,
   trip,
   tripTabs,
@@ -847,6 +1084,7 @@ function SearchModeControls({
   onStayNightsChange,
   topbar,
 }: {
+  ref?: RefObject<HTMLDivElement | null>
   mode: SearchModeControl
   trip: "round-trip" | "one-way"
   tripTabs: { key: "round-trip" | "one-way"; label: string; icon: AppIconName }[]
@@ -860,45 +1098,34 @@ function SearchModeControls({
   const tripControlsDisabled = mode === "migration"
   const displayedTrip: "round-trip" | "one-way" = tripControlsDisabled ? "one-way" : trip
 
+  /*
+   * One component, two mounting points (02 §4): the title bar once a search is
+   * running, the form while it is at rest. In armazón C the title-bar slot is
+   * empty and these live in the form, stacked full width at the touch minimum —
+   * which is why the shape comes from a container query and not from a prop.
+   *
+   * Changing mounting point is exactly what makes 07 §1 call this a FLIP: the
+   * element is rebuilt somewhere else, so the stage measures it here before the
+   * move and plays the difference away. Hence the ref reaching in from `App`.
+   */
   return (
-    <div
-      className={cn(
-        "flex min-w-0 flex-wrap items-center gap-2",
-        topbar ? "max-w-[calc(100vw-11rem)] justify-center" : "w-full sm:w-auto",
-      )}
-    >
+    <div ref={ref} className="fd-trip-mode-controls" data-placement={topbar ? "topbar" : "form"}>
       <SegmentedControl
+        aria-label="Modo de búsqueda"
         value={mode}
         onValueChange={(value) => {
           if (value === "exact" || value === "flexible" || value === "migration") onModeChange(value)
         }}
-        className={cn(!topbar && "flex min-w-0 flex-1 basis-full sm:inline-flex sm:flex-none sm:basis-auto")}
       >
-        <SegmentButton
-          value="exact"
-          className={cn(!topbar && "flex-1 px-2 sm:flex-none sm:px-3")}
-        >
-          Exacto
-        </SegmentButton>
-        <SegmentButton
-          value="flexible"
-          className={cn(!topbar && "flex-1 px-2 sm:flex-none sm:px-3")}
-        >
-          Flexible
-        </SegmentButton>
-        <SegmentButton
-          value="migration"
-          className={cn(!topbar && "flex-1 px-2 sm:flex-none sm:px-3")}
-        >
-          Migratorio
-        </SegmentButton>
+        <SegmentedOption value="exact">Exacto</SegmentedOption>
+        <SegmentedOption value="flexible">Flexible</SegmentedOption>
+        <SegmentedOption value="migration">Migratorio</SegmentedOption>
       </SegmentedControl>
 
       <div
         aria-hidden={!flexibleControlsActive}
         className={cn(
           "fd-inline-reveal min-w-0",
-          !topbar && "flex-[1_1_100%] sm:flex-none",
           flexibleControlsActive ? "fd-inline-reveal-open" : "fd-inline-reveal-closed",
         )}
       >
@@ -911,44 +1138,24 @@ function SearchModeControls({
         />
       </div>
 
+      {/* Migratorio sweeps months, so there is no return leg to choose: the
+          control goes to `opacity:.45` in place and keeps its value (11 §1). */}
       <SegmentedControl
+        aria-label="Tipo de viaje"
         value={displayedTrip}
         onValueChange={(value) => {
           if (value === "round-trip" || value === "one-way") onTripChange(value)
         }}
         disabled={tripControlsDisabled}
-        className={cn(!topbar && "flex min-w-0 flex-1 basis-full sm:inline-flex sm:flex-none sm:basis-auto")}
       >
         {tripTabs.map((item) => (
-          <SegmentButton
-            key={item.key}
-            value={item.key}
-            disabled={tripControlsDisabled}
-            className={cn(!topbar && "flex-1 px-2 sm:flex-none sm:px-3")}
-          >
-            <AppIcon name={item.icon} />
+          <SegmentedOption key={item.key} value={item.key} icon={item.icon}>
             {item.label}
-          </SegmentButton>
+          </SegmentedOption>
         ))}
       </SegmentedControl>
     </div>
   )
-}
-
-function useCanUseTopbarControls() {
-  const [canUseTopbarControls, setCanUseTopbarControls] = useState(() => (
-    typeof window === "undefined" ? false : window.matchMedia(TOPBAR_CONTROLS_MEDIA_QUERY).matches
-  ))
-
-  useEffect(() => {
-    const query = window.matchMedia(TOPBAR_CONTROLS_MEDIA_QUERY)
-    const update = () => setCanUseTopbarControls(query.matches)
-    update()
-    query.addEventListener("change", update)
-    return () => query.removeEventListener("change", update)
-  }, [])
-
-  return canUseTopbarControls
 }
 
 function LocationField({
@@ -960,19 +1167,23 @@ function LocationField({
   activeIndex,
   placeholder,
   icon,
-  roundedClass = "",
   onFocus,
   onBlur,
   onKeyDown,
   onChange,
   onSelect,
   quickSuggestions = [],
+  recentSuggestions = [],
+  frequentSuggestions = [],
   quickSuggestionsExiting = false,
+  quickSuggestionsLeavingIdle = false,
   onQuickSuggestionSelect,
   reserveHelperSpace = false,
   reserveSuggestionSpace = false,
   invalid = false,
   helperText,
+  mobilePresentation = false,
+  swapToken = 0,
 }: {
   label: string
   value: string
@@ -982,33 +1193,102 @@ function LocationField({
   activeIndex: number
   placeholder: string
   icon?: AppIconName
-  roundedClass?: string
   onFocus: () => void
   onBlur: () => void | Promise<unknown>
   onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void
   onChange: (value: string) => void
   onSelect: (suggestion: LocationSuggestion) => void
   quickSuggestions?: string[]
+  recentSuggestions?: string[]
+  frequentSuggestions?: string[]
   quickSuggestionsExiting?: boolean
+  quickSuggestionsLeavingIdle?: boolean
   onQuickSuggestionSelect?: (code: string) => void | Promise<void>
   reserveHelperSpace?: boolean
   reserveSuggestionSpace?: boolean
   invalid?: boolean
   helperText?: string
+  mobilePresentation?: boolean
+  /** Movement 10: bumped on every route swap so the value re-enters. */
+  swapToken?: number
 }) {
   const fieldId = `location-${label.toLowerCase()}`
   const listboxId = `${fieldId}-suggestions`
-  const activeOptionId = activeIndex >= 0 && suggestions[activeIndex]
-    ? `${listboxId}-${activeIndex}`
-    : undefined
   const fieldRef = useRef<HTMLDivElement | null>(null)
   const controlRef = useRef<HTMLDivElement | null>(null)
+  const fieldInputRef = useRef<HTMLInputElement | null>(null)
   const [listboxStyle, setListboxStyle] = useState<CSSProperties | null>(null)
-  const shouldShowListbox = open && suggestions.length > 0
+  const [usageActiveIndex, setUsageActiveIndex] = useState(-1)
+  const [mobileSheetOpen, setMobileSheetOpen] = useState(false)
+  const usageOptions = useMemo(() => [
+    ...recentSuggestions.map((code) => ({ code, heading: "Recientes" as const })),
+    ...frequentSuggestions.map((code) => ({ code, heading: "Frecuentes" as const })),
+  ], [frequentSuggestions, recentSuggestions])
+  const presentationOpen = mobilePresentation ? mobileSheetOpen : open
+  /* 11 §2.1 puts the changeover at two letters, not at one: with a single
+     letter «nada cambia en la lista, se sigue viendo Recientes». Below the
+     threshold the field has not narrowed anything down, and swapping the
+     agent's own history for one stray match was the panel jumping under their
+     hands on the first keystroke. */
+  const shouldShowUsagePanel = presentationOpen
+    && value.trim().length < MIN_MATCH_QUERY
+    && Boolean(onQuickSuggestionSelect)
+    && usageOptions.length > 0
+  const shouldShowMatchesPanel = presentationOpen
+    && suggestions.length > 0
+    && value.trim().length >= MIN_MATCH_QUERY
+  const shouldShowListbox = shouldShowUsagePanel || shouldShowMatchesPanel
+  const activeOptionId = shouldShowUsagePanel
+    && usageActiveIndex >= 0
+    && usageOptions[usageActiveIndex]
+    ? `${listboxId}-usage-${usageActiveIndex}`
+    : activeIndex >= 0 && suggestions[activeIndex]
+      ? `${listboxId}-${activeIndex}`
+      : undefined
   const listboxTarget = typeof document === "undefined" ? null : document.body
 
+  const handleLocationKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (mobilePresentation && event.key === "Escape") {
+      event.preventDefault()
+      event.stopPropagation()
+      setMobileSheetOpen(false)
+      void onBlur()
+      return
+    }
+    /* 11 §7: in the searcher `Esc` clears the focused field when it holds text.
+       Only then — on an empty field it belongs to whatever is open above, and
+       swallowing it there would strand a popover the agent meant to close. */
+    if (event.key === "Escape" && value.length > 0) {
+      event.preventDefault()
+      event.stopPropagation()
+      onChange("")
+      return
+    }
+    if (shouldShowUsagePanel && onQuickSuggestionSelect) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault()
+        setUsageActiveIndex((current) => Math.min(current + 1, usageOptions.length - 1))
+        return
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault()
+        setUsageActiveIndex((current) => current <= 0
+          ? usageOptions.length - 1
+          : Math.min(current - 1, usageOptions.length - 1))
+        return
+      }
+      if (event.key === "Enter" && usageActiveIndex >= 0) {
+        event.preventDefault()
+        const selected = usageOptions[usageActiveIndex]
+        if (selected) void onQuickSuggestionSelect(selected.code)
+        return
+      }
+    }
+    onKeyDown(event)
+  }
+
   useLayoutEffect(() => {
-    if (!shouldShowListbox) return
+    if (!shouldShowListbox || mobilePresentation) return
 
     const updateListboxStyle = () => {
       const rect = controlRef.current?.getBoundingClientRect() ?? fieldRef.current?.getBoundingClientRect()
@@ -1037,102 +1317,249 @@ function LocationField({
       window.removeEventListener("resize", updateListboxStyle)
       window.removeEventListener("scroll", updateListboxStyle, true)
     }
-  }, [shouldShowListbox, suggestions.length, value])
+  }, [frequentSuggestions.length, mobilePresentation, recentSuggestions.length, shouldShowListbox, suggestions.length, value])
 
   const focusInputFromControl = (event: MouseEvent<HTMLDivElement>) => {
-    if (event.target === inputRef.current) {
+    const activeInputRef = mobilePresentation ? fieldInputRef : inputRef
+    if (event.target === activeInputRef.current) {
       return
     }
 
-    const alreadyFocused = document.activeElement === inputRef.current
-    inputRef.current?.focus()
+    const alreadyFocused = document.activeElement === activeInputRef.current
+    activeInputRef.current?.focus()
     if (alreadyFocused) {
       onFocus()
     }
   }
 
+  const selectLocationSuggestion = (suggestion: LocationSuggestion) => {
+    if (mobilePresentation) setMobileSheetOpen(false)
+    onSelect(suggestion)
+  }
+
+  const selectUsageSuggestion = onQuickSuggestionSelect
+    ? (code: string) => {
+        if (mobilePresentation) setMobileSheetOpen(false)
+        return onQuickSuggestionSelect(code)
+      }
+    : undefined
+
+  const suggestionList = (
+    <>
+      {shouldShowUsagePanel ? (
+        <div id={listboxId} role="listbox" className="fd-scrollbar-hidden grid max-h-[288px] overflow-y-auto pb-1.5">
+          <LocationUsageSuggestionSection
+            fieldId={fieldId}
+            listboxId={listboxId}
+            heading="Recientes"
+            suggestions={recentSuggestions}
+            activeIndex={usageActiveIndex}
+            indexOffset={0}
+            onSelect={selectUsageSuggestion}
+          />
+          <LocationUsageSuggestionSection
+            fieldId={fieldId}
+            listboxId={listboxId}
+            heading="Frecuentes"
+            suggestions={frequentSuggestions}
+            activeIndex={usageActiveIndex}
+            indexOffset={recentSuggestions.length}
+            onSelect={selectUsageSuggestion}
+          />
+        </div>
+      ) : shouldShowMatchesPanel ? (
+        <>
+          <div className="fd-suggest-head">
+            <span className="fd-type-micro">Coincidencias</span>
+            <span className="fd-mono text-xs font-semibold text-muted-foreground">{suggestions.length}</span>
+          </div>
+          <div id={listboxId} role="listbox" className="fd-scrollbar-hidden grid max-h-[288px] overflow-y-auto px-1.5 pb-1.5">
+            {suggestions.map((suggestion, index) => (
+              <button
+                id={`${listboxId}-${index}`}
+                key={`${suggestion.code}-${index}`}
+                type="button"
+                role="option"
+                aria-selected={index === activeIndex}
+                className="fd-suggest-row"
+                onMouseDown={(event) => {
+                  event.preventDefault()
+                }}
+                onClick={() => selectLocationSuggestion(suggestion)}
+              >
+                <span className="grid place-items-center text-muted-foreground">
+                  <AppIcon name={suggestionLocationIcon(suggestion)} size={14} />
+                </span>
+                <span className="fd-suggest-code">{suggestion.code}</span>
+                <span className="grid min-w-0 gap-0.5">
+                  <span className="fd-suggest-city">{suggestionCityLabel(suggestion)}</span>
+                  <span className="fd-suggest-detail">{suggestionPlaceLabel(suggestion)}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className="fd-suggest-empty">Escribe una ciudad o código IATA.</p>
+      )}
+
+      {!shouldShowUsagePanel && shouldShowMatchesPanel && (
+        <div className="fd-suggest-foot">
+          <KbdHint keys={<Kbd icon="enter" />} label="elegir" />
+          <KbdHint
+            keys={(
+              <span className="inline-flex gap-1">
+                <Kbd icon="arrowUp" />
+                <Kbd icon="arrowDown" />
+              </span>
+            )}
+            label="navegar"
+          />
+          <KbdHint keys={<Kbd>esc</Kbd>} label="cerrar" />
+        </div>
+      )}
+    </>
+  )
+
   return (
     <Field
       ref={fieldRef}
       className={cn(
-        "relative",
+        "fd-location-field relative",
         reserveHelperSpace && "fd-search-field-shell",
         reserveSuggestionSpace && "fd-location-field-shell-reserve-suggestions",
       )}
     >
-      <FieldLabel htmlFor={fieldId} className="pointer-events-none absolute left-3 top-2.5 z-10">{label}</FieldLabel>
       <div
         ref={controlRef}
         onClick={focusInputFromControl}
         className={cn(
           SEARCH_FIELD_CONTROL_CLASS,
           "cursor-text",
-          invalid && "fd-control-invalid",
-          roundedClass,
+          invalid && "fd-field-invalid",
         )}
       >
+        <FieldLabel htmlFor={fieldId}>{label}</FieldLabel>
         {icon && (
           <AppIcon name={icon} className="pointer-events-none text-muted-foreground" />
         )}
         <Input
           id={fieldId}
-          ref={inputRef}
+          ref={mobilePresentation ? fieldInputRef : inputRef}
           aria-label={label}
           aria-autocomplete="list"
           aria-controls={listboxId}
           aria-describedby={helperText ? `${fieldId}-helper` : undefined}
-          aria-expanded={open && suggestions.length > 0}
+          aria-expanded={mobilePresentation ? mobileSheetOpen : shouldShowListbox}
           aria-activedescendant={activeOptionId}
           aria-invalid={invalid}
           autoComplete="off"
           name={fieldId}
           role="combobox"
+          /* The target of `/` (11 §7). An attribute rather than a ref chain:
+             the field is three components deep and the shell only needs to
+             find it, not to own it. */
+          data-fd-location-field={label === "Origen" ? "origin" : "destination"}
+          /* Alternating names because a CSS animation does not replay when only
+             an attribute changes; the parity is what makes the swap visible
+             every time rather than only the first. Absent until the agent has
+             actually swapped, so the field does not fade in on page load. */
+          data-swap-parity={swapToken > 0 ? swapToken % 2 : undefined}
           value={value}
-          onChange={(event) => onChange(event.target.value)}
-          onFocus={onFocus}
+          onChange={(event) => {
+            setUsageActiveIndex(-1)
+            onChange(event.target.value)
+          }}
+          onFocus={() => {
+            setUsageActiveIndex(-1)
+            if (mobilePresentation) setMobileSheetOpen(true)
+            onFocus()
+          }}
           onBlur={() => {
+            // Mobile moves focus from this field into its full-screen sheet.
+            // Resolve only when that sheet itself closes, not during the handoff.
+            if (mobilePresentation) return
             void onBlur()
           }}
-          onKeyDown={onKeyDown}
+          onKeyDown={handleLocationKeyDown}
           placeholder={placeholder}
-          className={`${SEARCH_FIELD_VALUE_CLASS} w-auto rounded-none border-0 bg-transparent p-0 text-foreground shadow-none outline-none placeholder:text-muted-foreground/60 focus-visible:border-0 focus-visible:ring-0`}
+          className={`${SEARCH_FIELD_VALUE_CLASS} w-auto rounded-none border-0 bg-transparent p-0 text-foreground shadow-none outline-none focus-visible:border-0 focus-visible:ring-0`}
         />
+        {/* 11 §2.1 gives it two rows: it «aparece» once the field holds a query,
+            and pressing it «vacía el campo y **reabre** el panel con Recientes»
+            with the focus still in the field. The reopening is not a second
+            action — an empty field is what the usage panel shows on. The
+            mousedown is swallowed so the blur never happens: losing focus here
+            would resolve the query being erased. */}
+        {value.length > 0 && (
+          <button
+            type="button"
+            className="fd-field-clear fd-focus-ring"
+            aria-label={`Limpiar ${label.toLowerCase()}`}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              onChange("")
+              inputRef.current?.focus()
+            }}
+          >
+            <AppIcon name="x" size={14} />
+          </button>
+        )}
       </div>
       <ControlHelper id={`${fieldId}-helper`} text={helperText} />
       <LocationUsageSuggestionRow
         fieldId={fieldId}
-        label={label}
+        label={`como ${label}`}
         suggestions={quickSuggestions}
         exiting={quickSuggestionsExiting}
+        leavingIdle={quickSuggestionsLeavingIdle}
         onSelect={onQuickSuggestionSelect}
       />
-      {listboxTarget && shouldShowListbox && listboxStyle ? createPortal(
-        <div
-          id={listboxId}
-          role="listbox"
-          style={listboxStyle}
-          className="fd-popover-enter fd-scrollbar overflow-auto rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg"
+      {mobilePresentation && (
+        <Sheet
+          open={mobileSheetOpen}
+          onOpenChange={(next) => {
+            setMobileSheetOpen(next)
+            if (!next) void onBlur()
+          }}
+          title={label}
+          placement="bottom"
+          size="full"
+          className="fd-location-sheet"
         >
-          {suggestions.map((suggestion, index) => (
-            <Button
-              id={`${listboxId}-${index}`}
-              key={`${suggestion.code}-${index}`}
-              type="button"
-              variant="ghost"
-              role="option"
-              aria-selected={index === activeIndex}
-              onMouseDown={(event) => {
-                event.preventDefault()
-                onSelect(suggestion)
-              }}
-              className={`h-auto w-full justify-start rounded-lg px-3 py-2 text-left text-sm font-normal ${
-                index === activeIndex ? "bg-accent text-accent-foreground" : "hover:bg-muted"
-              }`}
-            >
-              <div className="font-bold">{suggestion.code}</div>
-              <div className="truncate text-xs text-muted-foreground">{suggestionPlaceLabel(suggestion)}</div>
-            </Button>
-          ))}
+          <div className="fd-mobile-suggest-layout">
+            <div className="fd-mobile-suggest-search">
+              <AppIcon name={icon ?? "location"} size={18} className="text-muted-foreground" />
+              <Input
+                ref={inputRef}
+                autoFocus
+                data-sheet-autofocus
+                aria-label={`${label}: buscar ciudad o IATA`}
+                aria-autocomplete="list"
+                aria-controls={listboxId}
+                aria-expanded={shouldShowListbox}
+                aria-activedescendant={activeOptionId}
+                autoComplete="off"
+                role="combobox"
+                value={value}
+                onChange={(event) => {
+                  setUsageActiveIndex(-1)
+                  onChange(event.target.value)
+                }}
+                onKeyDown={handleLocationKeyDown}
+                placeholder={placeholder}
+                className="h-11 flex-1 border-0 bg-transparent px-0 text-base shadow-none focus-visible:ring-0"
+              />
+            </div>
+            <div className="fd-mobile-suggest-panel">
+              {suggestionList}
+            </div>
+          </div>
+        </Sheet>
+      )}
+      {!mobilePresentation && listboxTarget && shouldShowListbox && listboxStyle ? createPortal(
+        <div style={listboxStyle} className="fd-suggest-panel fd-motion-emergente">
+          {suggestionList}
         </div>,
         listboxTarget,
       ) : null}
@@ -1140,17 +1567,21 @@ function LocationField({
   )
 }
 
-function LocationUsageSuggestionRow({
+function LocationUsageSuggestionSection({
   fieldId,
-  label,
+  listboxId,
+  heading,
   suggestions,
-  exiting,
+  activeIndex,
+  indexOffset,
   onSelect,
 }: {
   fieldId: string
-  label: string
+  listboxId: string
+  heading: "Recientes" | "Frecuentes"
   suggestions: string[]
-  exiting: boolean
+  activeIndex: number
+  indexOffset: number
   onSelect?: (code: string) => void | Promise<void>
 }) {
   if (suggestions.length === 0 || !onSelect) {
@@ -1158,24 +1589,101 @@ function LocationUsageSuggestionRow({
   }
 
   return (
+    <section aria-label={heading}>
+      <div className="fd-suggest-head">
+        <span className="fd-type-micro">{heading}</span>
+        <span className="fd-mono text-xs font-semibold text-muted-foreground">{suggestions.length}</span>
+      </div>
+      <div className="grid px-1.5">
+        {suggestions.map((code, index) => {
+          const optionIndex = indexOffset + index
+          return (
+          <button
+            id={`${listboxId}-usage-${optionIndex}`}
+            key={`${fieldId}-${heading}-${code}`}
+            type="button"
+            role="option"
+            aria-selected={optionIndex === activeIndex}
+            className="fd-suggest-row"
+            onMouseDown={(event) => {
+              event.preventDefault()
+            }}
+            onClick={() => void onSelect(code)}
+          >
+            <span className="grid place-items-center text-muted-foreground">
+              <AppIcon name="location" size={14} />
+            </span>
+            <span className="fd-suggest-code">{code}</span>
+          </button>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+function LocationUsageSuggestionRow({
+  fieldId,
+  label,
+  heading,
+  suggestions,
+  exiting = false,
+  leavingIdle = false,
+  onSelect,
+}: {
+  fieldId: string
+  /** How a chip is worded: «Usar LIM como origen», «Usar LIM en la ruta». */
+  label: string
+  /** Only the phone titles the strip: there it is one row for both fields. */
+  heading?: string
+  suggestions: string[]
+  exiting?: boolean
+  leavingIdle?: boolean
+  onSelect?: (code: string) => void | Promise<void>
+}) {
+  if (suggestions.length === 0 || !onSelect) {
+    return null
+  }
+
+  if (heading) {
+    return (
+      <div className="fd-mobile-quick-block">
+        <span className="fd-type-micro">{heading}</span>
+        <LocationUsageSuggestionRow
+          fieldId={fieldId}
+          label={label}
+          suggestions={suggestions}
+          onSelect={onSelect}
+        />
+      </div>
+    )
+  }
+
+  return (
     <div
-      className={cn("fd-location-usage-suggestions", exiting && "fd-location-usage-suggestions-exit")}
-      aria-label={`Sugerencias frecuentes de ${label.toLowerCase()}`}
+      /* Two different exits. `exiting` is the agent dismissing the row, which
+         is rule 1's 70ms; `leavingIdle` is the search starting, which is the
+         60ms cue and 120ms of 07 §1 — and that one also has to stop holding
+         height, because the field it hangs from is about to travel. */
+      className={cn("fd-quick-chips", exiting && "fd-motion-exit", leavingIdle && "fd-motion-idle-exit")}
+      data-leaving={leavingIdle ? "true" : undefined}
+      aria-label={`Estaciones frecuentes ${label.toLowerCase()}`}
     >
+      {/* Real material in the space the old layout reserved and left blank: the
+          stations this desk actually searches, already ranked by the backend. */}
       {suggestions.map((code) => (
-        <Button
+        <button
           key={`${fieldId}-${code}`}
           type="button"
-          variant="outline"
-          className="fd-control fd-location-usage-card"
-          aria-label={`Usar ${code} como ${label.toLowerCase()}`}
+          className="fd-quick-chip fd-focus-ring"
+          aria-label={`Usar ${code} ${label.toLowerCase()}`}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => {
             void onSelect(code)
           }}
         >
           {code}
-        </Button>
+        </button>
       ))}
     </div>
   )
@@ -1193,248 +1701,24 @@ function suggestionPlaceLabel(suggestion: LocationSuggestion): string {
   return label || [suggestion.city, suggestion.country].filter(Boolean).join(", ")
 }
 
-function MonthField({
-  label,
-  value,
-  months,
-  onChange,
-  invalid = false,
-  helperText,
-  onTouch,
-  reserveHelperSpace = false,
-}: {
-  label: string
-  value: string
-  months: MigrationMonthOption[]
-  onChange: (value: string) => void
-  invalid?: boolean
-  helperText?: string
-  onTouch?: () => void
-  reserveHelperSpace?: boolean
-}) {
-  const [open, setOpen] = useState(false)
-  const fieldId = `month-${toDomId(label)}`
-  const selectedMonth = months.find((month) => month.key === value && !month.disabled)
-    ?? months.find((month) => !month.disabled)
-  const selectedLabel = selectedMonth?.shortLabel ?? "Seleccionar"
-  const years = Array.from(new Set(months.map((month) => month.key.slice(0, 4))))
+/** The city carries the title weight; the airport and country are the detail. */
+function suggestionCityLabel(suggestion: LocationSuggestion): string {
+  const city = suggestion.city?.trim()
+  if (city) return city
 
-  return (
-    <Popover
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (nextOpen) onTouch?.()
-        setOpen(nextOpen)
-      }}
-    >
-      <Field className={cn("relative", reserveHelperSpace && "fd-search-field-shell")}>
-        <FieldLabel id={`${fieldId}-label`} className="pointer-events-none absolute left-3 top-2.5 z-10">
-          <AnimatedDateLabel label={label} />
-        </FieldLabel>
-        <PopoverTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            aria-labelledby={`${fieldId}-label`}
-            aria-describedby={helperText ? `${fieldId}-helper` : undefined}
-            aria-expanded={open}
-            aria-haspopup="dialog"
-            aria-invalid={invalid}
-            className={cn(
-              SEARCH_FIELD_CONTROL_CLASS,
-              "justify-start p-0 px-3 pt-4 text-left hover:bg-accent/60",
-              invalid && "fd-control-invalid",
-            )}
-          >
-            <AppIcon name="calendar" className="text-muted-foreground" />
-            <span key={selectedLabel} className={`${SEARCH_FIELD_VALUE_CLASS} fd-field-value-swap ${selectedMonth ? "text-foreground" : "text-muted-foreground"}`}>
-              {selectedLabel}
-            </span>
-            <AppIcon name="chevronDown" className={`text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
-          </Button>
-        </PopoverTrigger>
-        <ControlHelper id={`${fieldId}-helper`} text={helperText} />
-
-        <PopoverContent
-          align="start"
-          className="w-[min(20rem,calc(100vw-2rem))]"
-          aria-label={`Calendario de ${label.toLowerCase()}`}
-        >
-          <div className="space-y-3 p-1">
-            {years.map((year) => (
-              <div key={year} className="space-y-2">
-                <div className="flex h-8 items-center justify-center px-2">
-                  <span className="text-sm font-bold">{year}</span>
-                </div>
-                <div className="grid grid-cols-3 gap-1.5" role="group" aria-label={`Meses de ${year}`}>
-                  {hideFullyDisabledMonthRows(months.filter((month) => month.key.startsWith(`${year}-`))).map((month) => {
-                    const selected = month.key === selectedMonth?.key
-
-                    return (
-                      <Button
-                        key={month.key}
-                        type="button"
-                        variant="ghost"
-                        aria-label={`${month.label}${month.disabled ? " no disponible" : ""}`}
-                        aria-pressed={selected}
-                        disabled={month.disabled}
-                        onClick={() => {
-                          onChange(month.key)
-                          setOpen(false)
-                        }}
-                        className={cn(
-                          "h-10 w-full rounded-lg border border-transparent px-2 text-xs capitalize",
-                          selected && "fd-selected-passive",
-                          month.disabled && "text-muted-foreground/45 line-through hover:bg-transparent hover:text-muted-foreground/45",
-                        )}
-                      >
-                        {month.monthLabel}
-                      </Button>
-                    )
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        </PopoverContent>
-      </Field>
-    </Popover>
-  )
+  return suggestionPlaceLabel(suggestion).split(",")[0]?.trim() || suggestion.code
 }
 
-function DateField({
-  label,
-  value,
-  minDate,
-  maxDate,
-  disabled = false,
-  disabledLabel = "No aplica",
-  onChange,
-  invalid = false,
-  helperText,
-  onTouch,
-  reserveHelperSpace = false,
-}: {
-  label: string
-  value: string
-  minDate: string
-  maxDate?: string
-  disabled?: boolean
-  disabledLabel?: string
-  onChange: (value: string) => void
-  invalid?: boolean
-  helperText?: string
-  onTouch?: () => void
-  reserveHelperSpace?: boolean
-}) {
-  const [open, setOpen] = useState(false)
-  const fieldId = `date-${toDomId(label)}`
-  const selectedLabel = disabled ? disabledLabel : value ? formatDateLabel(value) : "Seleccionar"
-  const selectedDate = value ? isoToLocalDate(value) : undefined
-  const minSelectableDate = isoToLocalDate(minDate)
-  const maxSelectableDate = maxDate ? isoToLocalDate(maxDate) : undefined
-  const disabledDays = maxSelectableDate
-    ? [{ before: minSelectableDate }, { after: maxSelectableDate }]
-    : [{ before: minSelectableDate }]
-
-  useEffect(() => {
-    if (!disabled) return
-    const frame = window.requestAnimationFrame(() => setOpen(false))
-    return () => window.cancelAnimationFrame(frame)
-  }, [disabled])
-
-  return (
-    <Popover
-      open={disabled ? false : open}
-      onOpenChange={(nextOpen) => {
-        if (disabled) return
-        if (nextOpen) onTouch?.()
-        setOpen(nextOpen)
-      }}
-    >
-      <Field className={cn(
-        "relative transition-[opacity,filter,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]",
-        reserveHelperSpace && "fd-search-field-shell",
-        disabled && "fd-disabled-section",
-      )}>
-        <FieldLabel id={`${fieldId}-label`} className="pointer-events-none absolute left-3 top-2.5 z-10">
-          <AnimatedDateLabel label={label} />
-        </FieldLabel>
-        <PopoverTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            aria-labelledby={`${fieldId}-label`}
-            aria-describedby={helperText ? `${fieldId}-helper` : undefined}
-            aria-expanded={disabled ? false : open}
-            aria-invalid={invalid}
-            disabled={disabled}
-            className={cn(
-              SEARCH_FIELD_CONTROL_CLASS,
-              "justify-start p-0 px-3 pt-4 text-left hover:bg-accent/60",
-              disabled && "fd-control-disabled-section hover:bg-secondary",
-              invalid && "fd-control-invalid",
-            )}
-          >
-            <AppIcon name="calendar" className="text-muted-foreground" />
-            <span key={selectedLabel} className={`${SEARCH_FIELD_VALUE_CLASS} fd-field-value-swap ${!disabled && value ? "text-foreground" : "text-muted-foreground"}`}>
-              {selectedLabel}
-            </span>
-          </Button>
-        </PopoverTrigger>
-        <ControlHelper id={`${fieldId}-helper`} text={helperText} />
-
-        <PopoverContent
-          align="start"
-          className="w-[min(20rem,calc(100vw-2rem))]"
-          aria-label={`Calendario de ${label.toLowerCase()}`}
-        >
-          <Calendar
-            mode="single"
-            locale={es}
-            weekStartsOn={1}
-            fixedWeeks
-            labels={{
-              labelDayButton: (date) => formatDateLabel(localDateToIso(date)),
-            }}
-            selected={selectedDate}
-            defaultMonth={selectedDate ?? minSelectableDate}
-            startMonth={minSelectableDate}
-            endMonth={maxSelectableDate}
-            disabled={disabledDays}
-            onSelect={(date) => {
-              if (!date) return
-              onChange(localDateToIso(date))
-              setOpen(false)
-            }}
-          />
-        </PopoverContent>
-      </Field>
-    </Popover>
-  )
+function suggestionLocationIcon(suggestion: LocationSuggestion): AppIconName {
+  if (suggestion.type === "CITY") return "cityGroup"
+  if (suggestion.type === "AIRPORT") return "airport"
+  return "location"
 }
 
 function ControlHelper({ id, text }: { id: string; text?: string }) {
   if (!text) return null
 
-  return <FieldError id={id}>{text}</FieldError>
-}
-
-function AnimatedDateLabel({ label }: { label: string }) {
-  return (
-    <span key={label} className="fd-label-word-swap whitespace-nowrap leading-none">
-      {label}
-    </span>
-  )
-}
-
-function isoToLocalDate(value: string) {
-  const [year, month, day] = value.split("-").map(Number)
-  return new Date(year, month - 1, day)
-}
-
-function localDateToIso(date: Date) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
+  return <p id={id} className="fd-control-helper">{text}</p>
 }
 
 function FlexibleOptionsBar({
@@ -1453,14 +1737,14 @@ function FlexibleOptionsBar({
   const stayControlsDisabled = disabled || stayNightsDisabled
 
   return (
-    <div className={cn("flex min-w-0 flex-wrap items-center gap-2", stretch && "w-full sm:w-auto")}>
+    <div className={cn("flex min-w-0 flex-wrap items-center gap-2", stretch && "w-full")}>
       <ButtonGroup
         aria-disabled={stayControlsDisabled}
         aria-labelledby="flexible-stay-nights-label"
         className={cn(
-          "inline-flex h-8 items-center overflow-hidden rounded-lg border border-input bg-secondary p-0.5 transition-[background-color,border-color,opacity,filter,transform] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)]",
-          stretch && "w-full justify-between sm:w-auto sm:justify-start",
-          stayControlsDisabled && "fd-control-disabled-section",
+          "fd-stay-counter",
+          stretch && "fd-stay-counter--stretch",
+          stayControlsDisabled && "fd-disabled",
         )}
       >
         <ButtonGroupText id="flexible-stay-nights-label" className="px-2 text-xs font-semibold text-muted-foreground">
@@ -1473,11 +1757,11 @@ function FlexibleOptionsBar({
           aria-label="Quitar noche"
           onClick={() => onStayNightsChange(Math.max(1, stayNights - 1))}
           disabled={stayControlsDisabled || stayNights <= 1}
-          className="h-7 w-7 text-muted-foreground hover:text-foreground"
+          className="fd-stay-counter-step text-muted-foreground hover:text-foreground"
         >
           <AppIcon name="minus" />
         </Button>
-        <ButtonGroupText className={cn("min-w-14 px-1 text-center text-xs font-semibold transition-colors duration-150", stayControlsDisabled ? "text-muted-foreground" : "text-foreground")}>
+        <ButtonGroupText className={cn("min-w-14 px-1 text-center text-xs font-semibold transition-colors duration-[var(--fd-dur-tacto)] ease-[var(--fd-ease-tacto)]", stayControlsDisabled ? "text-muted-foreground" : "text-foreground")}>
           {stayNights} noche{stayNights === 1 ? "" : "s"}
         </ButtonGroupText>
         <Button
@@ -1487,7 +1771,7 @@ function FlexibleOptionsBar({
           aria-label="Agregar noche"
           onClick={() => onStayNightsChange(clampStayNights(stayNights + 1))}
           disabled={stayControlsDisabled || stayNights >= MAX_STAY_NIGHTS}
-          className="h-7 w-7 text-muted-foreground hover:text-foreground"
+          className="fd-stay-counter-step text-muted-foreground hover:text-foreground"
         >
           <AppIcon name="plus" />
         </Button>
@@ -1496,6 +1780,13 @@ function FlexibleOptionsBar({
   )
 }
 
+/*
+ * Plates 1g and 2d: one row, two surfaces. The popover gives it 44px with 32px
+ * steppers and a mono 15 figure; inside the sheet the same row grows to 64 with
+ * 44px steppers and a mono 17 figure. That growth is CSS on the surface, not a
+ * prop — a row that reads the viewport to pick its own height is the platform
+ * duplication rule 10 forbids.
+ */
 function PaxRow({
   label,
   detail,
@@ -1514,34 +1805,73 @@ function PaxRow({
   decDisabled?: boolean
 }) {
   return (
-    <div className="flex items-center justify-between rounded-lg px-2 py-2 transition-colors duration-150 hover:bg-muted">
-      <div>
-        <div className="text-sm font-semibold">{label}</div>
-        <div className="text-xs text-muted-foreground">{detail}</div>
-      </div>
-      <ButtonGroup className="gap-2">
-        <Button type="button" variant="outline" size="icon" onClick={onDec} disabled={decDisabled} aria-label={`Quitar ${label.toLowerCase()}`} className="fd-control h-8 w-8">
+    <div className="fd-pax-row">
+      <span className="fd-pax-row-copy">
+        <span className="fd-pax-row-label">{label}</span>
+        <span className="fd-pax-row-detail">{detail}</span>
+      </span>
+      {/* A stepper at its limit dims in place and never disappears: the pair
+          must not move under the thumb that is still pressing it (03 §8). */}
+      <span className="fd-pax-counter">
+        <button
+          type="button"
+          className="fd-pax-step fd-focus-ring"
+          onClick={onDec}
+          disabled={decDisabled}
+          aria-label={`Quitar ${label.toLowerCase()}`}
+        >
           <AppIcon name="minus" />
-        </Button>
-        <ButtonGroupText className="w-6 text-center font-mono text-sm font-bold">{value}</ButtonGroupText>
-        <Button type="button" variant="outline" size="icon" onClick={onInc} disabled={incDisabled} aria-label={`Agregar ${label.toLowerCase()}`} className="fd-control h-8 w-8">
+        </button>
+        <span className="fd-pax-figure">{value}</span>
+        <button
+          type="button"
+          className="fd-pax-step fd-focus-ring"
+          onClick={onInc}
+          disabled={incDisabled}
+          aria-label={`Agregar ${label.toLowerCase()}`}
+        >
           <AppIcon name="plus" />
-        </Button>
-      </ButtonGroup>
+        </button>
+      </span>
     </div>
   )
 }
 
+/*
+ * The search policy the idle screen advertises (plate 1a) and the form enforces.
+ *
+ * The server injects `window.__FLYDESK_RUNTIME__` (see `src/server.ts`), so the
+ * date window already comes from the backend and honours `SEARCH_MAX_FUTURE_DAYS`
+ * / `SEARCH_TODAY_OVERRIDE`. The three ceilings did not: they were frontend
+ * constants that happened to agree with the backend's own limits
+ * (`MAX_FLEXIBLE_STAY_NIGHTS` in `src/core/flexible-search.ts`, and the
+ * passenger and lap-infant checks in `src/http-search-contract.ts`).
+ *
+ * That is the failure mode plate 1a exists to prevent: the line promises a
+ * policy, so if the backend tightened its ceiling to 8 the screen would keep
+ * advertising 9 and the agent would find out only after being rejected. They are
+ * read from the runtime config now, with the current values as the fallback, so
+ * adding the fields server-side is enough — no second change here.
+ */
 interface RuntimeSearchDatePolicy {
   minSearchDate: string
   maxSearchDate: string
   maxFutureDays?: number
 }
 
+interface RuntimeSearchLimits {
+  maxStayNights: number
+  maxPassengers: number
+  maxLapInfantsPerAdult: number
+}
+
 declare global {
   interface Window {
     __FLYDESK_RUNTIME__?: {
       searchDatePolicy?: RuntimeSearchDatePolicy
+      maxStayNights?: number
+      maxPassengers?: number
+      maxLapInfantsPerAdult?: number
     }
   }
 }
@@ -1556,15 +1886,24 @@ function getRuntimeSearchDatePolicy(): RuntimeSearchDatePolicy {
   return { minSearchDate, maxSearchDate, maxFutureDays: configured?.maxFutureDays }
 }
 
+function getRuntimeSearchLimits(): RuntimeSearchLimits {
+  const runtime = window.__FLYDESK_RUNTIME__
+
+  return {
+    maxStayNights: positiveInteger(runtime?.maxStayNights) ?? MAX_STAY_NIGHTS_FALLBACK,
+    maxPassengers: positiveInteger(runtime?.maxPassengers) ?? MAX_PASSENGERS_FALLBACK,
+    maxLapInfantsPerAdult: positiveInteger(runtime?.maxLapInfantsPerAdult) ?? MAX_LAP_INFANTS_PER_ADULT_FALLBACK,
+  }
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  const numeric = Number(value)
+  return Number.isInteger(numeric) && numeric > 0 ? numeric : undefined
+}
+
 function todayIso() {
   const date = new Date()
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
-}
-
-function isIsoDate(value: unknown): value is string {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
-  const date = new Date(`${value}T00:00:00Z`)
-  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
 }
 
 function addDays(value: string, days: number) {
@@ -1598,9 +1937,9 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
 }
 
 function buildMigrationMonthOptions(startIso: string): MigrationMonthOption[] {
-  const start = isIsoDate(startIso) ? startIso : localDateToIso(new Date())
+  const start = isIsoDate(startIso) ? startIso : todayIso()
   const [year, startMonth] = start.split("-").map(Number)
-  const lastMonthIndex = startMonth + DEFAULT_MIGRATION_MONTH_COUNT - 2
+  const lastMonthIndex = startMonth + MAX_MIGRATION_MONTHS - 2
 
   return Array.from({ length: lastMonthIndex + 1 }, (_, index) => {
     const optionYear = year + Math.floor(index / 12)
@@ -1618,12 +1957,8 @@ function buildMigrationMonthOptions(startIso: string): MigrationMonthOption[] {
   })
 }
 
-function hideFullyDisabledMonthRows(months: MigrationMonthOption[]) {
-  return months.filter((_, index) => months.slice(index - index % 3, index - index % 3 + 3).some((month) => !month.disabled))
-}
-
 function defaultMigrationMonthSelection(options: MigrationMonthOption[]) {
-  return options.filter((month) => !month.disabled).slice(0, DEFAULT_MIGRATION_MONTH_COUNT).map((month) => month.key)
+  return options.filter((month) => !month.disabled).slice(0, DEFAULT_MIGRATION_MONTH_SELECTION).map((month) => month.key)
 }
 
 function resolveMigrationMonthSelection(values: string[] | undefined, options: MigrationMonthOption[]) {
@@ -1658,7 +1993,7 @@ function buildMigrationMonthRangeSelection(start: string, end: string, options: 
   const from = Math.min(resolvedStartIndex, resolvedEndIndex)
   const to = Math.max(resolvedStartIndex, resolvedEndIndex)
 
-  return enabledKeys.slice(from, to + 1).slice(0, DEFAULT_MIGRATION_MONTH_COUNT)
+  return enabledKeys.slice(from, to + 1).slice(0, MAX_MIGRATION_MONTHS)
 }
 
 function uniqueMonthKeys(values: string[]) {
@@ -1732,8 +2067,10 @@ function buildSearchValidation(input: SearchValidationInput): SearchValidationSt
     state.passengers = `La cantidad de niños debe estar entre 0 y ${MAX_CHILDREN}.`
   } else if (!Number.isInteger(input.infants) || input.infants < 0) {
     state.passengers = "La cantidad de bebés debe ser válida."
-  } else if (input.infants > input.adults) {
-    state.passengers = "La cantidad de bebés no puede superar la de adultos."
+  } else if (input.infants > input.adults * MAX_LAP_INFANTS_PER_ADULT) {
+    state.passengers = MAX_LAP_INFANTS_PER_ADULT === 1
+      ? "Se admite un bebé en falda por adulto."
+      : `Se admiten hasta ${MAX_LAP_INFANTS_PER_ADULT} bebés en falda por adulto.`
   } else if (passengerTotal > MAX_PASSENGERS) {
     state.passengers = `La búsqueda admite hasta ${MAX_PASSENGERS} pasajeros.`
   }
@@ -1741,8 +2078,8 @@ function buildSearchValidation(input: SearchValidationInput): SearchValidationSt
   if (input.mode === "migration") {
     if (input.migrationMonths.length === 0) {
       state.migrationMonths = "Selecciona al menos un mes."
-    } else if (input.migrationMonths.length > DEFAULT_MIGRATION_MONTH_COUNT) {
-      state.migrationMonths = `Selecciona hasta ${DEFAULT_MIGRATION_MONTH_COUNT} meses.`
+    } else if (input.migrationMonths.length > MAX_MIGRATION_MONTHS) {
+      state.migrationMonths = `Selecciona hasta ${MAX_MIGRATION_MONTHS} meses.`
     }
     return state
   }
@@ -1796,23 +2133,18 @@ function normalizeLocationCandidate(value: string) {
   return value.trim().toUpperCase()
 }
 
-function toDomId(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")
-}
-
 function isValidLocationCandidate(value: string) {
   return /^[A-Z]{3}$/.test(value)
-}
-
-function clampIsoDate(value: string, minDate: string, maxDate?: string) {
-  if (value < minDate) return minDate
-  if (maxDate && value > maxDate) return maxDate
-  return value
 }
 
 function formatDateLabel(value: string) {
   if (!isIsoDate(value)) return "Fecha inválida"
   return DATE_LABEL_FORMATTER.format(new Date(`${value}T00:00:00Z`)).replace(".", "")
+}
+
+function formatCompactPolicyDateLabel(value: string) {
+  if (!isIsoDate(value)) return "Fecha inválida"
+  return COMPACT_POLICY_DATE_FORMATTER.format(new Date(`${value}T00:00:00Z`)).replace(".", "")
 }
 
 function modeFromSearchRequest(request: SearchRequest): SearchModeControl {

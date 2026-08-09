@@ -246,9 +246,9 @@ function runInWorker(
         return;
       }
 
-      const detail = (await stderrPromise).trim();
+      const hadDiagnostics = Boolean((await stderrPromise).trim());
       finish(() => reject(new Error(
-        `Search worker stopped before completing (exit code ${code ?? "unknown"}).${detail ? ` ${detail}` : ""}`,
+        `Search worker stopped before completing (exit code ${code ?? "unknown"}).${hadDiagnostics ? " Worker diagnostics were emitted." : ""}`,
       )));
     }).catch((error: unknown) => {
       finish(() => reject(error));

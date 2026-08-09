@@ -10,12 +10,13 @@ import {
   resolveLocalCostamarMatrixProgressive,
   resolveLocalCostamarRangeProgressive,
 } from "./local-costamar";
-import type { CanonicalOffer, MatrixResponse } from "./core/types";
+import type { CanonicalOffer, MatrixResponse, ProviderId } from "./core/types";
 import {
   createProviderDiagnostics,
   recordProviderDiagnosticEvent,
   withProviderDiagnostics,
 } from "./provider-diagnostics";
+import { providerPublicFailureMessage } from "./provider-status";
 import type {
   ProviderSearchWorkerComplete,
   ProviderSearchWorkerError,
@@ -27,13 +28,17 @@ function send(message: ProviderSearchWorkerMessage): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
 
-function serializeError(id: string, error: unknown): ProviderSearchWorkerError {
+function serializeError(
+  id: string,
+  providerId: ProviderId | undefined,
+  error: unknown,
+): ProviderSearchWorkerError {
   return {
     id,
     type: "error",
-    message: error instanceof Error ? error.message : "Provider search worker failed.",
-    name: error instanceof Error ? error.name : undefined,
-    stack: error instanceof Error ? error.stack : undefined,
+    message: providerId
+      ? providerPublicFailureMessage(providerId, error)
+      : "Provider search worker rejected an invalid request.",
   };
 }
 
@@ -124,7 +129,7 @@ function handleWorkerRequest(message: ProviderSearchWorkerRequest): void {
   pendingMessages += 1;
   void runProviderSearch(message)
     .then((result) => send(result))
-    .catch((error) => send(serializeError(message.id, error)))
+    .catch((error) => send(serializeError(message.id, message.providerId, error)))
     .finally(() => {
       pendingMessages -= 1;
       maybeExit();
@@ -149,7 +154,7 @@ process.stdin.on("data", (chunk) => {
     try {
       handleWorkerRequest(JSON.parse(line) as ProviderSearchWorkerRequest);
     } catch (error) {
-      send(serializeError("unknown", error));
+      send(serializeError("unknown", undefined, error));
     }
   }
 });
@@ -161,7 +166,7 @@ process.stdin.on("end", () => {
     try {
       handleWorkerRequest(JSON.parse(line) as ProviderSearchWorkerRequest);
     } catch (error) {
-      send(serializeError("unknown", error));
+      send(serializeError("unknown", undefined, error));
     }
   }
 

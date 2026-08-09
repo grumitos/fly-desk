@@ -3,14 +3,18 @@ import type {
   LocationSuggestion,
   MatrixCell,
   MigrationMonthSummary,
-  ResultsColumnLayout,
-  ResultsLayout,
   SearchRequest,
   SearchJobResponse,
   SortMode,
 } from "@/types"
 import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
+import { getBrowserClientSessionId } from "@/lib/browser-client-session"
+import { isIsoDate } from "@/lib/iso-date"
 import { filterLocationSuggestions, normalizeLocationSearchText, normalizeLocationSuggestions } from "@/lib/locations"
+import {
+  normalizeProviderStatusResponse,
+  type ProviderStatusResponse,
+} from "@/lib/providers"
 import {
   firstSegmentForItinerary,
   formatOfferBaggageLabel,
@@ -21,7 +25,10 @@ import {
 } from "@/lib/offer-display"
 
 const API_BASE = ""
-const MIGRATION_MONTH_COUNT = 8
+/* 06 §6: «Límite del barrido: 12 meses». The picker offers twelve, so the
+   sweep has to run twelve — cutting it back here is what silently dropped the
+   months past the eighth out of a range the agent had chosen. */
+const MIGRATION_MONTH_COUNT = 12
 const MIGRATION_CONCURRENT_REQUESTS_FALLBACK = 2
 const MIGRATION_CONCURRENT_REQUESTS_MAX = 12
 const MIGRATION_POLL_INTERVAL_MS = 900
@@ -56,9 +63,22 @@ type RequestOptions = {
   signal?: AbortSignal
 }
 
+export type QuotationRequest = {
+  searchSessionId: string
+  offerId: string
+  migrationPlan?: boolean
+}
+
+export type QuotationResponse = {
+  searchSessionId: string
+  offer: CanonicalOffer
+  commercialText: string
+}
+
 type SearchRequestOptions = RequestOptions & {
   onJobStart?: (job: { id: string; type: "search" | "matrix" }) => void
   onMigrationProgress?: (job: SearchJobResponse) => void
+  recordLocationUsage?: boolean
 }
 
 type MigrationMonthRange = {
@@ -79,12 +99,14 @@ type MigrationMonthWorkResult = {
   warnings: string[]
 }
 
-function translateApiMessage(message: string): string {
+export function translateApiMessage(message: string): string {
   const normalized = stripAnsi(String(message)).replace(/\s+/g, " ").trim()
 
   const exact: Record<string, string> = {
     "Origin is required and must be an IATA-like code.": "Ingresa un origen válido.",
     "Destination is required and must be an IATA-like code.": "Ingresa un destino válido.",
+    "Origin is required and must be a three-letter IATA code.": "Ingresa un origen válido.",
+    "Destination is required and must be a three-letter IATA code.": "Ingresa un destino válido.",
     "Origin and destination must be different.": "El origen y el destino deben ser diferentes.",
     "Multi-city search is not supported.": "La búsqueda multidestino aún no está disponible.",
     "Adults must be a non-negative integer.": "La cantidad de adultos debe ser válida.",
@@ -92,13 +114,11 @@ function translateApiMessage(message: string): string {
     "Infants must be a non-negative integer.": "La cantidad de bebés debe ser válida.",
     "At least one adult is required.": "Debe viajar al menos un adulto.",
     "Infants cannot exceed adults.": "La cantidad de bebés no puede superar la de adultos.",
-    "Passenger count cannot exceed 9.": "La búsqueda admite hasta 9 pasajeros.",
     "Departure date is required for exact search.": "Selecciona una fecha de salida.",
     "Departure date must be a valid ISO date (YYYY-MM-DD).": "La fecha de salida no es válida.",
     "Return date is required for round-trip exact search.": "Selecciona una fecha de regreso.",
     "Return date must be a valid ISO date (YYYY-MM-DD).": "La fecha de regreso no es válida.",
     "Return date must be after departure date.": "La fecha de regreso debe ser posterior a la salida.",
-    "Stay length cannot exceed 90 nights.": "La estadía máxima es de 90 noches.",
     "Departure range is required for matrix search.": "Selecciona un rango de salida.",
     "Return range is required for round-trip matrix search.": "Selecciona un rango de regreso.",
     "Stay nights is required for exact-stay matrix search.": "Indica la cantidad de noches.",
@@ -108,7 +128,6 @@ function translateApiMessage(message: string): string {
     "Return range end must be on or after return range start.": "El fin del rango de regreso debe ser igual o posterior al inicio.",
     "Costamar terminalId is required.": "Falta configurar el terminal de Click and Book Plus.",
     "Click and Book Plus terminalId is required.": "Falta configurar el terminal de Click and Book Plus.",
-    "A full results column layout is required.": "El layout de resultados está incompleto.",
     "searchSessionId and offerId are required.": "Falta la sesión de búsqueda o la oferta.",
     "Session or offer not found.": "No se encontró la sesión o la oferta.",
     "Search job not found.": "No se encontró la búsqueda.",
@@ -133,6 +152,15 @@ function translateApiMessage(message: string): string {
     "Consultando Costamar...": "Consultando Click and Book Plus...",
     "Consultando Click and Book Plus...": "Consultando Click and Book Plus...",
     "Consultando Agil...": "Consultando Agil...",
+    /* The three draft warnings the router emits on the first response of every
+       job (`createSearchDraftResponse`). Without them a month that is still
+       being queried reads «No se pudo completar la operación» — loading painted
+       as failure, the worst confusion in a grid meant for deciding. */
+    "Consultando Agil y Costamar.": "Consultando Agil y Click and Book Plus.",
+    "Consultando Agil y Click and Book Plus.": "Consultando Agil y Click and Book Plus.",
+    "Consultando Agil.": "Consultando Agil.",
+    "Consultando Costamar.": "Consultando Click and Book Plus.",
+    "Consultando Click and Book Plus.": "Consultando Click and Book Plus.",
     "Consultando Agil y Costamar. Los resultados se iran agregando.": "Consultando Agil y Click and Book Plus. Los resultados se irán agregando.",
     "Consultando Agil y Click and Book Plus. Los resultados se iran agregando.": "Consultando Agil y Click and Book Plus. Los resultados se irán agregando.",
     "Consultando Agil. Los resultados se iran agregando.": "Consultando Agil. Los resultados se irán agregando.",
@@ -159,6 +187,66 @@ function translateApiMessage(message: string): string {
   }
 
   if (exact[normalized]) return exact[normalized]
+
+  /* The ceilings the policy line announces come from the backend runtime, and
+     its rejection messages carry the same number. Matching by pattern instead
+     of by literal keeps the two in step: when the backend lowers a ceiling the
+     line moves on its own, and the rejection keeps translating. */
+  const passengerCap = normalized.match(/^Passenger count cannot exceed (\d+)\.$/)
+  if (passengerCap) {
+    return `La búsqueda admite hasta ${passengerCap[1]} pasajeros.`
+  }
+
+  const stayCap = normalized.match(/^Stay length cannot exceed (\d+) nights?\.$/)
+  if (stayCap) {
+    return `La estadía máxima es de ${stayCap[1]} ${stayCap[1] === "1" ? "noche" : "noches"}.`
+  }
+
+  const lapInfantCap = normalized.match(/^Lap infants cannot exceed (\d+) per adult\.$/)
+  if (lapInfantCap) {
+    const infants = lapInfantCap[1] === "1" ? "un bebé" : `${lapInfantCap[1]} bebés`
+    return `Se admite ${infants} en falda por adulto.`
+  }
+
+  /* The only ceiling of the form that can be crossed with no warning before or
+     after, and the only rejection that tells the agent what to do about it.
+     The instruction is the point: dropping it to the generic message leaves a
+     matrix that will not run and no way to find out why. */
+  const combinationCap = normalized.match(
+    /^Round-trip (?:matrix|range) search cannot exceed (\d+) combinations\. Narrow the departure or return ranges\.$/,
+  )
+  if (combinationCap) {
+    const cap = Number(combinationCap[1])
+    const formatted = Number.isFinite(cap) ? cap.toLocaleString("es-PE") : combinationCap[1]
+    return `El rango pedido supera las ${formatted} combinaciones. Estrecha el rango de salida o el de regreso.`
+  }
+
+  /* `providerPublicFailureMessage` builds these from the provider label and the
+     reason code. Three of the six fell to the generic message, which dropped
+     the name and the reason at once — the two things the notice exists to
+     carry. They come before the loose provider rules below on purpose. */
+  const providerFailure = normalized.match(
+    /^(Agilsmart|Agil|Click and Book Plus|Costamar|Provider) (authentication or session is unavailable|is temporarily unavailable|request timed out|returned an invalid response|request failed)\.$/,
+  )
+  if (providerFailure) {
+    const provider = /costamar|click and book/i.test(providerFailure[1])
+      ? "Click and Book Plus"
+      : /agil/i.test(providerFailure[1])
+        ? "Agilsmart"
+        : "El proveedor"
+    switch (providerFailure[2]) {
+      case "authentication or session is unavailable":
+        return `${provider} no tiene una sesión activa. Vuelve a iniciar sesión e intenta nuevamente.`
+      case "is temporarily unavailable":
+        return `${provider} no está disponible por ahora. Intenta nuevamente en unos minutos.`
+      case "request timed out":
+        return `${provider} tardó demasiado en responder. Intenta nuevamente.`
+      case "returned an invalid response":
+        return `${provider} devolvió una respuesta que no se pudo leer. Intenta nuevamente.`
+      default:
+        return `No se pudo consultar ${provider === "El proveedor" ? "el proveedor" : provider}. Intenta nuevamente.`
+    }
+  }
 
   const dateMatch = normalized.match(/^(Departure|Return) date must be on (or after|or before) ([0-9-]+)\.$/)
   if (dateMatch) {
@@ -205,7 +293,7 @@ function translateApiMessage(message: string): string {
   }
 
   if (/(Costamar|Click and Book Plus)/i.test(normalized) && /(failed|error|token|auth|login|session|sesión|401|403|500|expired|challenge)/i.test(normalized)) {
-    return "No se pudo consultar Click and Book Plus. Verifica que la sesión esté activa e intenta nuevamente."
+    return "No se pudo consultar Click and Book Plus. Verifica la autenticación e intenta nuevamente."
   }
 
   return normalized ? "No se pudo completar la operación. Intenta nuevamente." : "Ocurrió un error inesperado."
@@ -437,10 +525,21 @@ async function getJson<T>(url: string, options: RequestOptions = {}): Promise<T>
   return data as T
 }
 
+export async function getProviderStatus(
+  options: { signal?: AbortSignal } = {},
+): Promise<ProviderStatusResponse> {
+  const data = await getJson<unknown>(`${API_BASE}/api/provider-status`, options)
+  return normalizeProviderStatusResponse(data)
+}
+
 export async function suggestLocations(query: string, limit = 8): Promise<LocationSuggestion[]> {
   if (query.trim().length < 1) return []
+  const clientSessionId = getBrowserClientSessionId()
+  const sessionQuery = clientSessionId
+    ? `&clientSessionId=${encodeURIComponent(clientSessionId)}`
+    : ""
   const data = await getJson<{ suggestions: LocationSuggestion[] }>(
-    `${API_BASE}/api/locations?q=${encodeURIComponent(query)}&limit=${limit}`
+    `${API_BASE}/api/locations?q=${encodeURIComponent(query)}&limit=${limit}${sessionQuery}`
   )
   const suggestions = normalizeLocationSuggestions(data.suggestions)
   const rankedSuggestions = filterLocationSuggestions(query, suggestions, limit)
@@ -464,23 +563,6 @@ export function getCachedLocationSuggestions(query: string, limit = 8): Location
 export function resetLocationSuggestionCachesForTests(): void {
   locationSuggestionCache.clear()
   locationSuggestionPool.clear()
-}
-
-export async function getResultsLayout(options: RequestOptions = {}): Promise<ResultsLayout | null> {
-  const data = await getJson<{ layout: ResultsLayout | null }>(`${API_BASE}/api/results-layout`, options)
-  return data.layout ?? null
-}
-
-export async function saveResultsLayout(
-  columns: ResultsColumnLayout,
-  options: RequestOptions = {},
-): Promise<ResultsLayout> {
-  const data = await postJson<{ ok?: boolean; layout: ResultsLayout }>(
-    `${API_BASE}/api/results-layout`,
-    { columns },
-    options,
-  )
-  return data.layout
 }
 
 function rememberLocationSuggestions(query: string, limit: number, suggestions: LocationSuggestion[]) {
@@ -564,6 +646,8 @@ export type BackendSearchRequest = {
 }
 
 export type BackendSearchPayload = {
+  clientSessionId?: string
+  recordLocationUsage?: boolean
   sortMode: SortMode
   request: BackendSearchRequest
 }
@@ -698,6 +782,70 @@ function normalizeOfferItineraries(value: unknown): CanonicalOffer["itineraries"
   }) as CanonicalOffer["itineraries"]
 }
 
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0
+}
+
+function offerTransportRecord(
+  input: unknown,
+  expectedTripType?: SearchRequest["tripType"],
+): Record<string, unknown> | undefined {
+  const offer = objectRecord(input)
+  const price = objectRecord(offer?.price)
+  const total = objectRecord(price?.total)
+  const amount = total?.amount
+  const itineraries = offer?.itineraries
+
+  if (
+    !offer
+    || !nonEmptyString(offer.id)
+    || !nonEmptyString(offer.providerSource)
+    || typeof amount !== "number"
+    || !Number.isFinite(amount)
+    || amount <= 0
+    || !nonEmptyString(total?.currencyCode)
+    || !Array.isArray(itineraries)
+    || itineraries.length === 0
+  ) return undefined
+
+  const completeItineraries = itineraries.flatMap((itinerary) => {
+    const rawItinerary = objectRecord(itinerary)
+    const segments = rawItinerary?.segments
+    const complete = Array.isArray(segments)
+      && segments.length > 0
+      && segments.every((segment) => {
+        const rawSegment = objectRecord(segment)
+        return Boolean(
+          rawSegment
+          && nonEmptyString(rawSegment.origin)
+          && nonEmptyString(rawSegment.destination)
+          && nonEmptyString(rawSegment.departureAt)
+          && nonEmptyString(rawSegment.arrivalAt),
+        )
+      })
+    return complete && rawItinerary ? [rawItinerary] : []
+  })
+
+  if (completeItineraries.length !== itineraries.length) return undefined
+
+  const tripType = expectedTripType
+    ?? (offer.tripType === "one-way" || offer.tripType === "round-trip" || offer.tripType === "multi-city"
+      ? offer.tripType
+      : undefined)
+  const directions = new Set(completeItineraries.map((itinerary) => itinerary.direction))
+  if (tripType === "one-way" && !directions.has("outbound")) return undefined
+  if (tripType === "round-trip" && (!directions.has("outbound") || !directions.has("inbound"))) return undefined
+  if (tripType === "multi-city" && !directions.has("multi")) return undefined
+
+  return offer
+}
+
 function offerAirlineCode(offer: Record<string, unknown>, segment?: Record<string, unknown>): string {
   return String(
     offer.mainCarrier
@@ -791,8 +939,10 @@ function hasCheckedBaggage(baggage: unknown): boolean {
   )
 }
 
-function normalizeOffer(input: unknown): CanonicalOffer {
-  const offer = input && typeof input === "object" ? input as Record<string, unknown> : {}
+function normalizeOffer(input: unknown, expectedTripType?: SearchRequest["tripType"]): CanonicalOffer | undefined {
+  const offer = offerTransportRecord(input, expectedTripType)
+  if (!offer) return undefined
+
   const itineraries = normalizeOfferItineraries(offer.itineraries)
   const offerWithNormalizedNames = {
     ...offer,
@@ -807,9 +957,7 @@ function normalizeOffer(input: unknown): CanonicalOffer {
   const outbound = firstSegmentForItinerary(outboundItinerary)
   const outboundLast = lastSegmentForItinerary(outboundItinerary)
   const inbound = firstSegmentForItinerary(inboundItinerary)
-  const price = offer.price && typeof offer.price === "object"
-    ? offer.price as CanonicalOffer["price"]
-    : { total: { amount: 0, currencyCode: "USD" } }
+  const price = offer.price as CanonicalOffer["price"]
   const warnings = translatedOfferWarnings(offer.warnings)
   const totalDurationMinutes = positiveNumber(metrics.totalDurationMinutes)
     ?? itineraryDurationMinutesFromOffer(offer)
@@ -827,8 +975,8 @@ function normalizeOffer(input: unknown): CanonicalOffer {
 
   return {
     ...(offer as Partial<CanonicalOffer>),
-    id: String(offer.id ?? crypto.randomUUID()),
-    providerSource: String(offer.providerSource ?? ""),
+    id: String(offer.id),
+    providerSource: String(offer.providerSource),
     airline: offerAirlineDisplayName(offerWithNormalizedNames, outbound),
     itineraries,
     origin: typeof outbound?.origin === "string" ? outbound.origin : String(offer.origin ?? ""),
@@ -878,8 +1026,15 @@ function filterNoOfferWarningsWhenProviderHasOffers(messages: string[], offers: 
 }
 
 function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
-  const offers = (data.offers ?? []).map(normalizeOffer)
-  const allOffers = (data.allOffers ?? []).map(normalizeOffer)
+  const request = fromBackendRequest(data.request)
+  const offers = (data.offers ?? []).flatMap((offer) => {
+    const normalized = normalizeOffer(offer, request.tripType)
+    return normalized ? [normalized] : []
+  })
+  const allOffers = (data.allOffers ?? []).flatMap((offer) => {
+    const normalized = normalizeOffer(offer, request.tripType)
+    return normalized ? [normalized] : []
+  })
   const offerScope = allOffers.length ? allOffers : offers
   const rawWarnings = filterNoOfferWarningsWhenProviderHasOffers(
     (data.warnings ?? []).map((warning) => String(warning)),
@@ -902,7 +1057,11 @@ function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
     ...data,
     searchMeta,
     warnings,
-    request: fromBackendRequest(data.request),
+    /* A failed job carries its reason here. It is translated on the way in, like
+       every other backend string, so whoever paints it does not have to know
+       that it arrived in English. */
+    error: data.error ? translateApiMessage(String(data.error)) : undefined,
+    request,
     offers,
     allOffers,
     diagnosticLog: toDiagnosticLines([
@@ -914,17 +1073,18 @@ function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
   }
 }
 
-function normalizeMatrixOffer(cell: MatrixCell, request: SearchRequest): CanonicalOffer {
-  const currencyCode = cell.price?.currencyCode ?? "USD"
-  const amount = cell.price?.amount ?? 0
+function normalizeMatrixOffer(
+  cell: MatrixCell,
+  expectedTripType: SearchRequest["tripType"],
+): CanonicalOffer | undefined {
   const tooltipWarning = translatedMatrixTooltipWarning(cell.tooltip)
 
   if (cell.offer) {
-    const offer = normalizeOffer(cell.offer)
+    const offer = normalizeOffer(cell.offer, expectedTripType)
+    if (!offer) return undefined
     return {
       ...offer,
       priceConfidence: cell.confidence || offer.priceConfidence,
-      priceStatus: cell.confidence || offer.priceStatus,
       purchasePaths: cell.purchasePaths ?? offer.purchasePaths,
       warnings: uniqueStrings([
         ...(offer.warnings ?? []),
@@ -933,32 +1093,7 @@ function normalizeMatrixOffer(cell: MatrixCell, request: SearchRequest): Canonic
     }
   }
 
-  return {
-    id: cell.key,
-    providerSource: cell.providerSource,
-    airline: "Flexible",
-    origin: request.origin,
-    destination: request.destination,
-    departureDate: cell.departureDate,
-    returnDate: cell.returnDate,
-    arrivalDate: cell.returnDate,
-    duration: cell.stayNights ? `${cell.stayNights} noches` : "",
-    stops: 0,
-    stopMeta: cell.returnDate
-      ? `${cell.departureDate} -> ${cell.returnDate}`
-      : cell.departureDate,
-    baggageLabel: tooltipWarning,
-    priceConfidence: cell.confidence,
-    priceStatus: cell.confidence,
-    purchasePaths: cell.purchasePaths,
-    warnings: tooltipWarning ? [tooltipWarning] : undefined,
-    price: {
-      total: {
-        amount,
-        currencyCode,
-      },
-    },
-  }
+  return undefined
 }
 
 function normalizeMatrixJob(data: BackendMatrixJobResponse, sortMode: SortMode): SearchJobResponse {
@@ -973,8 +1108,10 @@ function normalizeMatrixJob(data: BackendMatrixJobResponse, sortMode: SortMode):
     ...rawError.map((warning) => translateApiMessage(warning)),
   ]
   const cells = data.cells ?? []
-  const pricedCells = cells.filter((cell) => typeof cell.price?.amount === "number")
-  const offers = pricedCells.map((cell) => normalizeMatrixOffer(cell, request))
+  const offers = cells.flatMap((cell) => {
+    const offer = normalizeMatrixOffer(cell, request.tripType)
+    return offer ? [offer] : []
+  })
 
   return {
     searchJobId: data.matrixJobId,
@@ -1049,7 +1186,18 @@ function isMigrationMonthKey(value: string): boolean {
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(value)
 }
 
-function migrationRequestForMonth(request: SearchRequest, range: MigrationMonthRange): SearchRequest {
+/**
+ * One month of the sweep, as an ordinary day search.
+ *
+ * Exported because 06 §1.3 — «al elegir un mes se entra en la lista normal de
+ * ese mes» — has to open exactly the search the sweep ran for that month, and
+ * building a second, nearly-identical request in the shell is how the two drift
+ * apart. The filters are cleared here and re-applied by whoever runs it.
+ */
+export function migrationRequestForMonth(
+  request: SearchRequest,
+  range: Pick<MigrationMonthRange, "departureStart" | "departureEnd">,
+): SearchRequest {
   return {
     ...request,
     tripType: "one-way",
@@ -1114,6 +1262,55 @@ function normalizeMigrationOffers(job: SearchJobResponse, range: MigrationMonthR
   return offers.map((offer) => normalizeMigrationOffer(offer, range, job))
 }
 
+function withBrowserClientSessionId(payload: BackendSearchPayload): BackendSearchPayload {
+  const clientSessionId = getBrowserClientSessionId()
+  return clientSessionId ? { ...payload, clientSessionId } : payload
+}
+
+function migrationOfferDepartureDate(offer: CanonicalOffer): string | undefined {
+  const outbound = offer.itineraries?.find((itinerary) => itinerary.direction === "outbound")
+    ?? offer.itineraries?.[0]
+  const departureAt = outbound?.segments?.[0]?.departureAt
+  const itineraryDate = typeof departureAt === "string" && departureAt.length >= 10
+    ? departureAt.slice(0, 10)
+    : undefined
+
+  if (isIsoDate(itineraryDate)) {
+    return itineraryDate
+  }
+
+  return isIsoDate(offer.departureDate) ? offer.departureDate : undefined
+}
+
+function migrationMonthCoverage(
+  result: MigrationMonthWorkResult,
+): Pick<MigrationMonthSummary, "faredDays" | "queriedDays"> {
+  if (!result.job?.searchComplete || result.job.searchMeta?.partial) {
+    return {}
+  }
+
+  const startMs = Date.parse(`${result.range.departureStart}T00:00:00Z`)
+  const endMs = Date.parse(`${result.range.departureEnd}T00:00:00Z`)
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
+    return {}
+  }
+
+  const fareDates = new Set(
+    result.offers
+      .map(migrationOfferDepartureDate)
+      .filter((date): date is string => Boolean(
+        date
+        && date >= result.range.departureStart
+        && date <= result.range.departureEnd
+      )),
+  )
+
+  return {
+    faredDays: fareDates.size,
+    queriedDays: Math.floor((endMs - startMs) / 86_400_000) + 1,
+  }
+}
+
 async function runWithConcurrency<T, R>(
   items: T[],
   limit: number,
@@ -1142,12 +1339,6 @@ function offerAmount(offer: CanonicalOffer) {
 function todayIso() {
   const date = new Date()
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
-}
-
-function isIsoDate(value: unknown): value is string {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
-  const date = new Date(`${value}T00:00:00Z`)
-  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
 }
 
 function addMonths(monthValue: string, delta: number) {
@@ -1187,12 +1378,65 @@ function delay(ms: number, signal?: AbortSignal) {
   })
 }
 
+export async function requestQuotation(
+  payload: QuotationRequest,
+  options: RequestOptions = {},
+): Promise<QuotationResponse> {
+  const data = await postJson<{
+    searchSessionId?: unknown
+    offer?: unknown
+    commercialText?: unknown
+  }>(`${API_BASE}/api/quotation`, payload, options)
+  const rawOffer = data.offer
+  const rawOfferRecord = offerTransportRecord(rawOffer)
+  const priceVerifiedAt = rawOfferRecord?.priceVerifiedAt
+
+  if (
+    typeof data.searchSessionId !== "string"
+    || data.searchSessionId !== payload.searchSessionId
+    || typeof data.commercialText !== "string"
+    || data.commercialText.trim().length === 0
+    || !rawOfferRecord
+    || typeof rawOfferRecord.id !== "string"
+    || typeof rawOfferRecord.providerSource !== "string"
+    || rawOfferRecord.priceConfidence !== "validated"
+    || rawOfferRecord.priceStatus !== "verified"
+    || typeof priceVerifiedAt !== "string"
+    || !Number.isFinite(Date.parse(priceVerifiedAt))
+  ) {
+    throw new FlyDeskApiError(
+      "El servidor devolvió una cotización no válida.",
+      ["POST /api/quotation returned an invalid contract."],
+    )
+  }
+
+  const offer = normalizeOffer(rawOffer)
+  if (!offer) {
+    throw new FlyDeskApiError(
+      "El servidor devolvió una cotización no válida.",
+      ["POST /api/quotation returned an invalid offer."],
+    )
+  }
+
+  return {
+    searchSessionId: data.searchSessionId,
+    commercialText: data.commercialText,
+    offer,
+  }
+}
+
 export async function startSearch(
   request: SearchRequest,
   sortMode: SortMode,
   options: SearchRequestOptions = {}
 ): Promise<SearchJobResponse> {
-  const data = await postJson<BackendSearchJobResponse>(`${API_BASE}/api/search`, toBackendPayload(request, sortMode), options)
+  const payload = withBrowserClientSessionId({
+    ...toBackendPayload(request, sortMode),
+    ...(options.recordLocationUsage === undefined
+      ? {}
+      : { recordLocationUsage: options.recordLocationUsage }),
+  })
+  const data = await postJson<BackendSearchJobResponse>(`${API_BASE}/api/search`, payload, options)
   if (data.searchJobId) {
     options.onJobStart?.({ id: data.searchJobId, type: "search" })
   }
@@ -1211,7 +1455,8 @@ export async function startMatrix(
   sortMode: SortMode,
   options: SearchRequestOptions = {}
 ): Promise<SearchJobResponse> {
-  const data = await postJson<BackendMatrixJobResponse>(`${API_BASE}/api/matrix`, toBackendPayload(request, sortMode), options)
+  const payload = withBrowserClientSessionId(toBackendPayload(request, sortMode))
+  const data = await postJson<BackendMatrixJobResponse>(`${API_BASE}/api/matrix`, payload, options)
   if (data.matrixJobId) {
     options.onJobStart?.({ id: data.matrixJobId, type: "matrix" })
   }
@@ -1284,6 +1529,17 @@ export async function startMigrationSearch(
       coverageMode: "core",
     }
     const hasPendingMonth = monthResults.some((result) => !result.complete)
+    /*
+     * Whether the sweep is incomplete comes from the months' own jobs, not from
+     * the state the grid draws them in. A month that finishes with a fare after
+     * a partial provider scan is «con tarifa» on screen (06 §3 has no fifth
+     * state for it) while still being a month that was not fully swept, and
+     * reading the display status here would have dropped that from the sweep.
+     */
+    const hasPartialMonth = monthResults.some((result) => (
+      result.status === "error" || Boolean(result.job?.searchMeta?.partial)
+    ))
+    const migrationIsPartial = hasPendingMonth || hasPartialMonth
     const monthlyWarnings = searchComplete && selectedOffers.length === 0
       ? uniqueStrings([
           ...warnings,
@@ -1307,6 +1563,7 @@ export async function startMigrationSearch(
         label: result.range.label,
         departureStart: result.range.departureStart,
         departureEnd: result.range.departureEnd,
+        ...migrationMonthCoverage(result),
         searchJobId: result.job?.searchJobId,
         offer: result.offer,
         offers: result.offers,
@@ -1318,8 +1575,8 @@ export async function startMigrationSearch(
         completedAt: searchComplete ? new Date().toISOString() : "",
         providersUsed: uniqueStrings(monthResults.flatMap((result) => result.job?.searchMeta?.providersUsed ?? [])),
         warnings: monthlyWarnings,
-        partial: hasPendingMonth || monthResults.some((result) => result.status === "partial" || result.status === "error"),
-        searchState: searchComplete && !hasPendingMonth ? "search_live" : "search_partial",
+        partial: migrationIsPartial,
+        searchState: searchComplete && !migrationIsPartial ? "search_live" : "search_partial",
       },
       providerMeta,
       warnings: monthlyWarnings,
@@ -1339,7 +1596,10 @@ export async function startMigrationSearch(
     async (range, index) => {
       try {
         throwIfAborted(options.signal)
-        let job = await startSearch(migrationRequestForMonth(request, range), "cheapest", options)
+        let job = await startSearch(migrationRequestForMonth(request, range), "cheapest", {
+          ...options,
+          recordLocationUsage: index === 0,
+        })
         let lastRevision = job.revision
 
         while (true) {
@@ -1353,9 +1613,19 @@ export async function startMigrationSearch(
             warnings: uniqueStrings([...(job.warnings ?? []), ...(job.searchMeta?.warnings ?? [])]),
             diagnosticLog: job.diagnosticLog ?? [],
             complete: job.searchComplete,
-            status: offer
-              ? job.searchComplete ? "available" : "partial"
-              : job.searchComplete ? "empty" : "loading",
+            /*
+             * Whether the month is still out is `searchComplete`, never
+             * `searchMeta.partial`. The router's first response for every month
+             * is a draft — `partial: true` with no offers — so keying on it
+             * moved a month that had only just been asked straight to
+             * «partial», where the grid drew it grey and fareless while the
+             * header counted it as searching. It also never let go: `partial`
+             * stays true after a month completes with a provider down, which
+             * left that month spinning for good.
+             */
+            status: job.searchComplete
+              ? offer ? "available" : "empty"
+              : offer ? "partial" : "loading",
           }
           emitProgress()
 

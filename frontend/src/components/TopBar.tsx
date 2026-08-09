@@ -1,15 +1,10 @@
 import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from "react"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
-import { segmentedControlClassName } from "@/components/ui/segmented-control-classes"
-import { SlidingSegmentIndicator } from "@/components/ui/sliding-segment-indicator"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { useSlidingSegmentIndicator } from "@/components/ui/use-sliding-segment-indicator"
-import { cn } from "@/lib/utils"
+import { withoutThemeTransition } from "@/lib/reduced-motion"
 
 export const TOPBAR_SEARCH_CONTROLS_ID = "fd-topbar-search-controls"
-const TOPBAR_ICON_BUTTON_CLASS =
-  "relative z-10 h-8 w-8 rounded-none border-0 text-foreground transition-[background-color,color,transform,opacity] hover:text-foreground focus-visible:ring-0"
 
 function getInitialTheme(): "light" | "dark" {
   try {
@@ -53,7 +48,7 @@ function ThemeToggle({
           onClick={() => setTheme(nextTheme)}
           aria-label="Cambiar tema"
           aria-pressed={theme === "dark"}
-          className={`${TOPBAR_ICON_BUTTON_CLASS} fd-theme-toggle`}
+          className="fd-capsule-cell fd-theme-toggle"
         >
           <AppIcon name={theme === "dark" ? "sun" : "moon"} />
         </Button>
@@ -90,63 +85,64 @@ function IconButtonTooltip({
   )
 }
 
-function TopBarIconGroup({ children }: { children: ReactNode }) {
-  const { containerRef, indicatorStyle } = useSlidingSegmentIndicator<HTMLDivElement>({ trackActive: false })
-
-  return (
-    <div
-      ref={containerRef}
-      className={cn("fd-segmented-control text-muted-foreground", segmentedControlClassName)}
-    >
-      <SlidingSegmentIndicator style={indicatorStyle} />
-      {children}
-    </div>
-  )
+/**
+ * Plate 1b draws copy and paste as one capsule and the theme toggle as its own,
+ * both 32px on `--secondary` with a 1px `--input` border. In armazón C the
+ * capsule breaks into loose buttons (02 §4) — same component, the geometry
+ * comes from the container query.
+ */
+function TopBarCapsule({ children }: { children: ReactNode }) {
+  return <div className="fd-capsule">{children}</div>
 }
 
 interface TopBarProps {
   copySearchDisabled?: boolean
+  /** No configuration is known yet, so Paste reads as dim — but still works. */
+  pasteSearchDimmed?: boolean
   onCopySearchConfig?: () => void
   onPasteSearchConfig?: () => void
+  workspaceActive?: boolean
 }
 
 export function TopBar({
   copySearchDisabled = true,
+  pasteSearchDimmed = true,
   onCopySearchConfig,
   onPasteSearchConfig,
+  workspaceActive = false,
 }: TopBarProps) {
   const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme)
   const homeHref = useMemo(() => `${window.location.origin}/`, [])
 
+  /* Plate 9b names the theme switch among the things that never animate. Left
+     bare it starts 130 transitions at once — every border, background and text
+     colour in the tree crossfading — which is the opposite of a setting taking
+     effect. The wrapper suppresses them for the swap and restores them after. */
   useEffect(() => {
-    syncTheme(theme)
+    withoutThemeTransition(() => syncTheme(theme))
   }, [theme])
 
   return (
-    <header className="fd-topbar">
-      <div className="fd-app-width mx-auto grid min-h-11 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 py-1.5 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:px-4">
-        <div className="flex min-w-0 items-center gap-2 justify-self-start">
-          <a
-            href={homeHref}
-            aria-label="Abrir Fly Desk"
-            title="Abrir Fly Desk"
-            className="group -ml-1 flex h-8 min-w-0 items-center gap-2 border-0 border-none bg-transparent px-1 text-left outline-none transition-[color,opacity,transform] duration-150 hover:text-primary focus-visible:outline-none focus-visible:ring-0 active:scale-[0.99]"
-          >
-            <AppIcon name="brandPlane" className="h-6 w-6 text-primary transition-transform duration-150 group-hover:-translate-y-px" />
-            <span className="min-w-0 truncate text-sm font-bold text-foreground transition-colors duration-150 group-hover:text-primary">
-              Fly Desk
-            </span>
-          </a>
-        </div>
+    <header className="fd-topbar" data-workspace-active={workspaceActive}>
+      <div className="fd-topbar-inner">
+        <a
+          href={homeHref}
+          aria-label="Abrir Fly Desk"
+          title="Abrir Fly Desk"
+          className="fd-topbar-brand fd-focus-ring"
+        >
+          <AppIcon name="brandPlane" className="fd-topbar-brand-mark" />
+          <span className="fd-topbar-brand-name">Fly Desk</span>
+        </a>
 
         <div
           id={TOPBAR_SEARCH_CONTROLS_ID}
           data-testid="topbar-search-controls"
-          className="hidden min-w-0 justify-self-center md:block"
+          className="fd-topbar-search-slot"
         />
 
-        <div className="flex items-center gap-1.5 justify-self-end">
-          <TopBarIconGroup>
+        <div className="fd-topbar-actions">
+          <TopBarCapsule>
             <IconButtonTooltip
               disabled={copySearchDisabled}
               label={copySearchDisabled ? "Completa una búsqueda para copiar la configuración" : "Copiar configuración"}
@@ -158,7 +154,7 @@ export function TopBar({
                 onClick={onCopySearchConfig}
                 disabled={copySearchDisabled}
                 aria-label="Copiar configuración"
-                className={TOPBAR_ICON_BUTTON_CLASS}
+                className={`fd-capsule-cell fd-topbar-copy${copySearchDisabled ? " fd-capsule-cell-dim" : ""}`}
               >
                 <AppIcon name="copy" />
               </Button>
@@ -170,15 +166,15 @@ export function TopBar({
                 size="icon"
                 onClick={onPasteSearchConfig}
                 aria-label="Pegar configuración"
-                className={TOPBAR_ICON_BUTTON_CLASS}
+                className={`fd-capsule-cell fd-topbar-paste${pasteSearchDimmed ? " fd-capsule-cell-dim" : ""}`}
               >
                 <AppIcon name="clipboard" />
               </Button>
             </IconButtonTooltip>
-          </TopBarIconGroup>
-          <TopBarIconGroup>
+          </TopBarCapsule>
+          <TopBarCapsule>
             <ThemeToggle theme={theme} setTheme={setTheme} />
-          </TopBarIconGroup>
+          </TopBarCapsule>
         </div>
       </div>
     </header>

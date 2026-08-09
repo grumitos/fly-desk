@@ -6,7 +6,32 @@ import {
   paginateResultListItems,
   resultListItemContainsOffer,
 } from "../frontend/src/components/results/result-groups"
-import type { CanonicalOffer } from "../frontend/src/types"
+import type { CanonicalOffer, SearchJobResponse } from "../frontend/src/types"
+
+type ScheduleGroup = NonNullable<SearchJobResponse["scheduleGroups"]>[number]
+
+function scheduleGroup({
+  id,
+  providerSource = "agil-local",
+  offerIds,
+}: {
+  id: string
+  providerSource?: ScheduleGroup["providerSource"]
+  offerIds: string[]
+}): ScheduleGroup {
+  return {
+    id,
+    providerSource,
+    outboundOptions: [],
+    inboundOptions: [],
+    combinations: offerIds.map((offerId, index) => ({
+      outboundOptionId: `outbound-${index}`,
+      inboundOptionId: `inbound-${index}`,
+      offerId,
+    })),
+    truncated: false,
+  }
+}
 
 function offer({
   id,
@@ -98,6 +123,68 @@ function offer({
   } as CanonicalOffer
 }
 
+test("does not infer schedule groups from reused provider raw references", () => {
+  const offers = [
+    offer({ id: "same-ref-day-one", rawRefs: { agilGroupId: "REUSED" } }),
+    offer({
+      id: "same-ref-day-two",
+      rawRefs: { agilGroupId: "REUSED" },
+      outboundDeparture: "2026-06-16T10:00:00-05:00",
+      outboundArrival: "2026-06-16T16:00:00-05:00",
+    }),
+  ]
+
+  const items = buildResultListItems(offers, [])
+
+  assert.deepEqual(items.map((item) => item.type), ["offer", "offer"])
+  assert.deepEqual(items.map((item) => item.id), ["same-ref-day-one", "same-ref-day-two"])
+})
+
+test("uses backend combination offer ids as the only schedule-group membership", () => {
+  const first = offer({ id: "first", rawRefs: { agilGroupId: "MISLEADING" } })
+  const unrelated = offer({
+    id: "unrelated",
+    rawRefs: { agilGroupId: "MISLEADING" },
+    inboundDeparture: "2026-06-20T11:00:00-05:00",
+  })
+  const second = offer({
+    id: "second",
+    rawRefs: { agilGroupId: "OTHER" },
+    inboundDeparture: "2026-06-20T13:00:00-05:00",
+  })
+
+  const items = buildResultListItems(
+    [first, unrelated, second],
+    [scheduleGroup({ id: "authoritative", offerIds: [first.id, second.id] })],
+  )
+
+  assert.equal(items.length, 2)
+  assert.equal(items[0]?.type, "group")
+  if (items[0]?.type !== "group") throw new Error("Expected backend-defined group")
+
+  assert.deepEqual(items[0].group.offers.map((item) => item.id), [first.id, second.id])
+  assert.strictEqual(items[0].group.offers[0], first)
+  assert.strictEqual(items[0].group.offers[1], second)
+  assert.equal(items[1]?.id, unrelated.id)
+})
+
+test("ignores stale and filtered-out combination ids without synthesizing an offer", () => {
+  const visible = offer({ id: "visible", rawRefs: { agilGroupId: "REUSED" } })
+  const otherVisible = offer({
+    id: "other-visible",
+    rawRefs: { agilGroupId: "REUSED" },
+    inboundDeparture: "2026-06-20T13:00:00-05:00",
+  })
+
+  const items = buildResultListItems(
+    [visible, otherVisible],
+    [scheduleGroup({ id: "partially-visible", offerIds: [visible.id, "filtered-out", "missing"] })],
+  )
+
+  assert.deepEqual(items.map((item) => item.type), ["offer", "offer"])
+  assert.deepEqual(items.map((item) => item.id), [visible.id, otherVisible.id])
+})
+
 test("groups native Agil variants with the same fare", () => {
   const items = buildResultListItems([
     offer({ id: "agil-am", rawRefs: { agilGroupId: "G-100" } }),
@@ -108,7 +195,7 @@ test("groups native Agil variants with the same fare", () => {
       inboundArrival: "2026-06-20T21:10:00-05:00",
     }),
     offer({ id: "solo", rawRefs: { agilGroupId: "G-200" } }),
-  ])
+  ], [scheduleGroup({ id: "G-100", offerIds: ["agil-am", "agil-pm"] })])
 
   assert.equal(items.length, 2)
   assert.equal(items[0]?.type, "group")
@@ -140,7 +227,10 @@ test("orders grouped native variants by their changing schedules", () => {
       inboundDeparture: "2026-06-20T13:05:00-05:00",
       inboundArrival: "2026-06-21T15:25:00-05:00",
     }),
-  ])
+  ], [scheduleGroup({
+    id: "G-150",
+    offerIds: ["late-return", "early-return", "mid-return"],
+  })])
 
   assert.equal(items.length, 1)
   assert.equal(items[0]?.type, "group")
@@ -190,7 +280,10 @@ test("promotes the shortest grouped schedule as primary and sorts variants by du
       inboundArrival: "2026-06-20T18:20:00-05:00",
       totalDurationMinutes: 1400,
     }),
-  ])
+  ], [scheduleGroup({
+    id: "G-175",
+    offerIds: ["early-slow", "early-mid", "late-fastest", "late-second"],
+  })])
 
   assert.equal(items.length, 1)
   assert.equal(items[0]?.type, "group")
@@ -216,7 +309,11 @@ test("groups Costamar recommendation variants by recommendation base", () => {
       inboundDeparture: "2026-06-20T13:05:00-05:00",
       inboundArrival: "2026-06-20T21:10:00-05:00",
     }),
-  ])
+  ], [scheduleGroup({
+    id: "REC-7",
+    providerSource: "costamar",
+    offerIds: ["costamar-1", "costamar-2"],
+  })])
 
   assert.equal(items.length, 1)
   assert.equal(items[0]?.type, "group")
@@ -226,7 +323,7 @@ test("groups Costamar recommendation variants by recommendation base", () => {
   assert.deepEqual(items[0].group.offers.map((item) => item.id), ["costamar-1", "costamar-2"])
 })
 
-test("keeps native variants with different prices as separate offers", () => {
+test("keeps offers separate when backend does not publish a schedule group", () => {
   const items = buildResultListItems([
     offer({ id: "fare-500", rawRefs: { agilGroupId: "G-300" }, amount: 500 }),
     offer({ id: "fare-540", rawRefs: { agilGroupId: "G-300" }, amount: 540 }),
@@ -239,7 +336,7 @@ test("collapses native variants with no visible differences", () => {
   const items = buildResultListItems([
     offer({ id: "duplicate-1", rawRefs: { agilGroupId: "G-350" } }),
     offer({ id: "duplicate-2", rawRefs: { agilGroupId: "G-350" } }),
-  ])
+  ], [scheduleGroup({ id: "G-350", offerIds: ["duplicate-1", "duplicate-2"] })])
 
   assert.equal(items.length, 1)
   assert.equal(items[0]?.type, "offer")
@@ -259,7 +356,7 @@ test("keeps exact provider matches inside the native schedule group", () => {
       inboundDeparture: "2026-06-20T13:05:00-05:00",
       inboundArrival: "2026-06-20T21:10:00-05:00",
     }),
-  ])
+  ], [scheduleGroup({ id: "G-400", offerIds: ["merged-exact", "agil-later"] })])
 
   assert.equal(items.length, 1)
   assert.equal(items[0]?.type, "group")
@@ -290,7 +387,7 @@ test("paginates compact groups by visual weight instead of raw grouped height", 
     offer({ id: "solo-2", rawRefs: { agilGroupId: "G-502" }, amount: 520 }),
     offer({ id: "solo-3", rawRefs: { agilGroupId: "G-503" }, amount: 530 }),
     offer({ id: "solo-4", rawRefs: { agilGroupId: "G-504" }, amount: 540 }),
-  ])
+  ], [scheduleGroup({ id: "G-500", offerIds: ["group-3", "group-1", "group-2"] })])
 
   const pages = paginateResultListItems(items, 4)
 

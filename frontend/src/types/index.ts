@@ -133,6 +133,8 @@ export interface MigrationMonthSummary {
   label: string
   departureStart: string
   departureEnd: string
+  faredDays?: number
+  queriedDays?: number
   searchJobId?: string
   offer?: CanonicalOffer
   offers?: CanonicalOffer[]
@@ -173,6 +175,13 @@ export interface SearchJobResponse extends SearchResponse {
   migrationMonths?: MigrationMonthSummary[]
   diagnosticLog?: string[]
   unchanged?: boolean
+  /**
+   * Why the job ended in `failed`. The backend has always sent it; leaving it
+   * undeclared here is what kept the shell from being able to say that a search
+   * failed at all, so a job that died on admission was drawn as a route with no
+   * flights.
+   */
+  error?: string
 }
 
 export type ProviderDiagnosticEvent = CoreProviderDiagnostics["events"][number]
@@ -193,20 +202,3 @@ export interface MatrixCell extends Omit<
 }
 
 export type SortMode = "cheapest" | "fastest"
-
-// Frontend-only: persisted result table layout, unrelated to the backend search contract.
-export type ResultsLayoutColumnKey =
-  | "carrier"
-  | "dates"
-  | "duration"
-  | "stops"
-  | "price"
-  | "links"
-
-export type ResultsColumnLayout = Record<ResultsLayoutColumnKey, number>
-
-export interface ResultsLayout {
-  version: number
-  savedAt: string
-  columns: ResultsColumnLayout
-}

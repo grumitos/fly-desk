@@ -7,11 +7,18 @@ import { LocationUsageStore } from "./location-usage-store";
 import { resolvePersistPath } from "./runtime-paths";
 import { SearchAdmissionController } from "./search-admission";
 import { SearchSessionStore } from "./session-store";
+import {
+  createProviderStatusTracker,
+  providerStatusTtlMsFor,
+  type ProviderStatusTracker,
+} from "./provider-status";
+import { providerPrewarmEnabled, providerPrewarmIntervalMs } from "./provider-prewarm";
 
 export interface RuntimeServices {
   orchestrator: SearchOrchestrator;
   locationSuggestions: LocationSuggestionCacheStore;
   locationUsage: LocationUsageStore;
+  providerStatus: ProviderStatusTracker;
   searchAdmission: SearchAdmissionController;
   sessions: SearchSessionStore;
 }
@@ -53,6 +60,13 @@ export function getRuntime(): RuntimeServices {
         "FLY_DESK_LOCATION_USAGE_DB_PATH",
         "location-usage.sqlite",
       ),
+    }),
+    /* The rail says «aparecer = disponible» (03 §5), so an observation must
+       not expire before the thing that renews it comes round again. */
+    providerStatus: createProviderStatusTracker({
+      ttlMs: providerPrewarmEnabled()
+        ? providerStatusTtlMsFor(providerPrewarmIntervalMs())
+        : undefined,
     }),
     searchAdmission: new SearchAdmissionController(),
     get sessions() {

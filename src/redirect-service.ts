@@ -4,7 +4,9 @@ import { timingSafeEqual } from "node:crypto";
 import type { ProviderContext, PurchasePath, SearchRequest } from "./core/types";
 import {
   applyCostamarContextToBrandedSearchUrl,
+  isAllowedCostamarBrandedSearchLocation,
   resolveCostamarRedirectForRequest,
+  safeCostamarRedirectFailureReason,
 } from "./local-costamar";
 import {
   normalizeCostamarProviderContext,
@@ -109,7 +111,7 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Renueva la sesion de Click and Book Plus</title>
+    <title>Renueva la autenticación de Click and Book Plus</title>
     <style>
       :root { color-scheme: light; }
       * { box-sizing: border-box; }
@@ -141,10 +143,10 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
   <body>
     <main>
       <section>
-        <h1>Renueva la sesion de Click and Book Plus</h1>
+        <h1>Renueva la autenticación de Click and Book Plus</h1>
         <p>Fly Desk no encontro un redirect verificado para abrir esta busqueda en Click and Book Plus.</p>
         <p><strong>Motivo:</strong> ${reasonText}</p>
-        <p>Abre Click and Book Plus B2B/Chrome, confirma que la sesion este activa y vuelve a intentar desde Fly Desk.</p>
+        <p>Abre Click and Book Plus B2B/Chrome, vuelve a autenticarte y reintenta desde Fly Desk.</p>
       </section>
     </main>
   </body>
@@ -615,7 +617,15 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
         );
         const redirectRequest = costamarRedirectRequestFromUrl(location, record.job?.request);
 
-        if (tokenIsUsable && costamarRedirectTrustUsableToken()) {
+        // The origin is checked before anything else, including the usable-token shortcut:
+        // the stored row is the only thing between a redirect and the browser, and a token
+        // that happens to be valid must never be enough to forward the user to a URL that
+        // is not our own branded search.
+        if (!redirectRequest) {
+          blockedReason = "No se pudo reconstruir la busqueda Click and Book Plus desde el purchase path.";
+        } else if (!isAllowedCostamarBrandedSearchLocation(location, redirectRequest, fastContext)) {
+          blockedReason = "El enlace guardado de Click and Book Plus no pertenece a un origen permitido.";
+        } else if (tokenIsUsable && costamarRedirectTrustUsableToken()) {
           // resolveUsableCostamarBrandedToken has already rejected a malformed token, a
           // token minted for another terminal, and an expired one. Re-running a live
           // provider search only to emit a 302 adds an upstream dependency to a redirect
@@ -624,7 +634,7 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
           // is the only way to tell a stale link from a good one.
           location = applyCostamarContextToBrandedSearchUrl(location, fastContext);
           canRedirect = true;
-        } else if (redirectRequest) {
+        } else {
           const redirectResolution = await withCostamarRedirectTotalTimeout(
             resolveCostamarRedirectForRequest(redirectRequest, fastContext, {
               force: !tokenIsUsable,
@@ -637,11 +647,9 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
             location = applyCostamarContextToBrandedSearchUrl(location, redirectResolution.context);
             canRedirect = true;
           }
-        } else {
-          blockedReason = "No se pudo reconstruir la busqueda Click and Book Plus desde el purchase path.";
         }
       } catch (error) {
-        blockedReason = error instanceof Error ? error.message : "No se pudo validar el redirect de Click and Book Plus.";
+        blockedReason = safeCostamarRedirectFailureReason(error);
         canRedirect = false;
       }
 

@@ -7,6 +7,9 @@ interface UpdateQueryOptions {
   showSuggestions?: boolean
 }
 
+/** 11 §2.1 · «Recientes» only becomes «Coincidencias» at two letters. */
+export const MIN_MATCH_QUERY = 2
+
 export function useAutocomplete(onResolved?: (suggestion: LocationSuggestion) => void) {
   const [query, setQuery] = useState("")
   const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([])
@@ -42,19 +45,29 @@ export function useAutocomplete(onResolved?: (suggestion: LocationSuggestion) =>
     }
   }, [closeSuggestions])
 
+  /* 11 §2.1: with two letters or more «se resalta la primera fila» — and the
+     row after it, «resaltado ≠ elegido»: the highlight is where `Enter` would
+     land, not a value the field has taken. Left at -1 the agent had to press ↓
+     before `Enter` did anything, which is the one keystroke the ficha spends a
+     whole row saying should not be needed. */
   const showSuggestions = useCallback((available: LocationSuggestion[]) => {
     setOpen(inputHasFocus() && available.length > 0)
-    setActiveIndex(-1)
+    setActiveIndex(available.length > 0 ? 0 : -1)
   }, [inputHasFocus])
 
   const openSuggestions = useCallback(() => {
-    setOpen(suggestions.length > 0)
-  }, [suggestions.length])
+    setOpen(true)
+  }, [])
 
   const warmSuggestions = useCallback(async (q: string) => {
     const requestSeq = ++requestSeqRef.current
-    if (q.trim().length < 1) {
-      closeSuggestions()
+    /* 11 §2.1 draws the threshold at two: «escribir 1 letra · nada cambia en la
+       lista, se sigue viendo Recientes». So one letter clears the matches but
+       does **not** close the panel — closing it would take Recientes away, which
+       is the very thing that row says stays. */
+    if (q.trim().length < MIN_MATCH_QUERY) {
+      setSuggestions([])
+      setActiveIndex(-1)
       return
     }
 

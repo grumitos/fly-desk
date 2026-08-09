@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@import "./design-system.css";
+@import "./components.css";
 
 @theme {
   --color-background: #f8f8f6;
@@ -24,27 +26,32 @@
 
   --color-destructive: #d97757;
   --color-destructive-foreground: #ffffff;
-  --color-destructive-soft: #d977571f;
-  --color-destructive-soft-foreground: #7a2e18;
 
   --color-border: #1f1f1e26;
   --color-input: #1f1f1e26;
   --color-ring: #d97757;
 
-  --color-success: #373734;
-  --color-success-foreground: #f8f8f6;
+  /* 01 §1. The veil is ink, not "the text colour at 35 %": deriving it from
+     `--color-foreground` inverted it to white in dark mode and every sheet came
+     up on a bright wash. It is the one colour that does NOT flip with the
+     theme, so it is declared once and never overridden below. */
+  --color-scrim: #1f1f1e59;
 
   --color-warning: #d97757;
   --color-warning-foreground: #ffffff;
   --color-warning-soft: #d977571a;
   --color-warning-soft-foreground: #6f321f;
 
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.625rem;
-  --radius-xl: 0.75rem;
-  --radius-2xl: 0.875rem;
-  --radius-3xl: 1rem;
+  /* Plate 5b closes the radius scale at 4 / 6 / 8 / 10 / 12 / 14 / 999. The odd
+     radii the app had accumulated are gone, so each control family is uniform:
+     26px chips at 8, 32 and 36px controls at 10, inputs and cards at 12, window
+     frames at 14. Written in px because that is how the plates specify them. */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 14px;
 
   --font-sans: "Inter", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
@@ -75,7 +82,7 @@
 
   body {
     @apply bg-background text-foreground font-sans antialiased;
-    min-height: 100vh;
+    min-height: 100dvh;
     text-rendering: geometricPrecision;
   }
 
@@ -118,7 +125,7 @@
     --color-background: #1f1f1e;
     --color-foreground: #f8f8f6;
 
-    --color-card: #1f1e1b;
+    --color-card: #1f1f1e;
     --color-card-foreground: #f8f8f6;
 
     --color-popover: #2c2c2a;
@@ -138,15 +145,10 @@
 
     --color-destructive: #d97757;
     --color-destructive-foreground: #ffffff;
-    --color-destructive-soft: #d9775726;
-    --color-destructive-soft-foreground: #f2c3b3;
 
     --color-border: #e2e1da26;
     --color-input: #e2e1da26;
     --color-ring: #d97757;
-
-    --color-success: #c3c2b7;
-    --color-success-foreground: #121212;
 
     --color-warning: #d97757;
     --color-warning-foreground: #ffffff;
@@ -160,97 +162,15 @@
 }
 
 @layer utilities {
-  @keyframes fd-workspace-in {
-    from {
-      opacity: 0.98;
-      transform: translateY(0.25rem);
-    }
-
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
   @keyframes fd-inline-in {
     from {
       opacity: 0;
-      transform: translateX(-0.375rem) scale(0.985);
+      transform: translateX(-0.375rem);
     }
 
     to {
       opacity: 1;
-      transform: translateX(0) scale(1);
-    }
-  }
-
-  @keyframes fd-inline-out {
-    from {
-      opacity: 1;
-      transform: translateX(0) scale(1);
-    }
-
-    to {
-      opacity: 0;
-      transform: translateX(-0.375rem) scale(0.985);
-    }
-  }
-
-  @keyframes fd-popover-in {
-    from {
-      opacity: 0;
-      transform: translateY(-0.25rem) scale(0.985);
-    }
-
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
-  }
-
-  @keyframes fd-result-row-in {
-    from {
-      opacity: 0.84;
-      transform: translateY(0.25rem);
-    }
-
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes fd-label-word-swap {
-    from {
-      opacity: 0;
-      transform: translateY(0.18rem);
-    }
-
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes fd-field-value-swap {
-    from {
-      opacity: 0;
-      transform: translateY(0.12rem);
-    }
-
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes fd-skeleton-sheen {
-    from {
-      background-position: 120% 0;
-    }
-
-    to {
-      background-position: -120% 0;
+      transform: translateX(0);
     }
   }
 
@@ -277,64 +197,278 @@
     max-width: var(--fd-app-max-width);
   }
 
+  .fd-shell {
+    container: fdshell / inline-size;
+    min-height: 100dvh;
+  }
+
   .fd-topbar {
     @apply sticky top-0 z-50 backdrop-blur-md;
     background-color: var(--color-accent);
   }
 
-  .fd-search-stage {
-    --fd-search-idle-optical-offset: -0.75rem;
+  /* The title bar shares the application's measure and its 16px of screen
+     padding (plate 1b), so the brand lines up with the first field of the form
+     below it at every width. */
+  .fd-topbar-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    max-width: var(--fd-app-max-width);
+    min-height: 44px;
+    margin-inline: auto;
+    padding: 6px 16px;
+    box-sizing: border-box;
+  }
+
+  /* The slot the mode and trip-type segments are handed to when the search goes
+     active (02 §4). In armazón C it is empty and they stay in the form. */
+  .fd-topbar-search-slot {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .fd-topbar-brand {
+    display: flex;
+    height: var(--fd-control-standard);
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+    margin-left: -4px;
+    padding-inline: 4px;
+    border-radius: var(--fd-radius-8);
+    color: var(--color-foreground);
+    transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-topbar-brand:hover {
+    color: var(--color-primary);
+  }
+
+  .fd-topbar-brand-mark {
+    width: 24px;
+    height: 24px;
+    color: var(--color-primary);
+  }
+
+  .fd-topbar-brand-name {
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--fd-text-body);
+    font-weight: var(--fd-weight-title);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-topbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* Copy + paste as one capsule, the theme toggle as another (plate 1b). */
+  .fd-capsule {
+    display: inline-flex;
+    height: var(--fd-control-standard);
+    align-items: stretch;
+    overflow: hidden;
+    border: 1px solid var(--color-input);
+    border-radius: var(--fd-radius-10);
+    background: var(--color-secondary);
+    color: var(--color-muted-foreground);
+  }
+
+  .fd-capsule-cell {
     display: grid;
-    grid-template-rows: 0fr auto minmax(0, 1fr);
-    align-content: stretch;
-    gap: 0.625rem;
-    padding-block: 0.625rem;
+    width: var(--fd-control-standard);
+    height: var(--fd-control-standard);
+    place-items: center;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
+  .fd-capsule-cell:hover:not(:disabled) {
+    background: var(--color-accent);
+    color: var(--color-foreground);
+  }
+
+  /* Plate 1a dims a capsule cell that has nothing to act on. Copy earns it by
+     being disabled — there is no configuration to copy yet. Paste earns it from
+     the same fact and stays clickable anyway: the clipboard may well hold a
+     configuration, and only a user gesture can tell us. The `:disabled` half of
+     the selector is what lets this win over the generic disabled opacity. */
+  .fd-capsule-cell-dim,
+  .fd-capsule-cell-dim:disabled {
+    opacity: 0.5;
+  }
+
+  /* Plates 1a and 1b draw one measure for the whole application: 1760px
+     centred, 16px of screen padding on both sides. The bottom is 12px idle and
+     10px active — the plates give it a slightly tighter foot than flanks
+     because the list already ends in a rule. The sides never change with the
+     viewport; the armazón does that, and it does it by container query. */
+  .fd-search-stage {
+    position: relative;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    width: 100%;
+    max-width: var(--fd-app-max-width);
+    min-height: 0;
+    margin-inline: auto;
+    padding: 8px 16px 10px;
+    box-sizing: border-box;
+    gap: 8px;
+  }
+
+  /* Plate 1a: idle is a flex column — a `1fr` spacer, the 1180px form column, a
+     larger `1.3fr` spacer, and the provider rail as the last child so it is
+     pinned to the bottom of the viewport. The asymmetric spacers are what put
+     the form slightly above centre, which is why the optical `translateY` that
+     used to fake it is gone. */
   .fd-search-stage-idle {
-    grid-template-rows: minmax(0, 1fr) auto minmax(10vh, 1fr);
-    padding-block: 0.625rem;
+    gap: 0;
+    padding-block: 0 12px;
   }
 
-  .fd-search-stage-active {
-    grid-template-rows: auto minmax(0, 1fr);
-    gap: 0.375rem;
-    padding-block: 0.375rem;
+  .fd-search-stage-spacer-top {
+    flex: 1 1 0;
+  }
+
+  .fd-search-stage-spacer-bottom {
+    flex: 1.3 1 0;
   }
 
   .fd-search-stage-active .fd-search-frame {
-    grid-row: 1;
-  }
-
-  .fd-search-stage-active .fd-shell-workspace {
-    grid-row: 2;
+    flex-shrink: 0;
   }
 
   .fd-search-frame {
-    grid-row: 2;
-    justify-self: center;
     width: 100%;
+    align-self: center;
     max-width: var(--fd-app-max-width);
+    margin-inline: auto;
     transform-origin: top center;
     will-change: width, max-width, transform;
   }
 
+  /* In idle this element *is* the plate's form column, so the controls row, the
+     grid and the policy line all share one 1180px measure instead of being
+     clamped one by one — which is how the policy line's border-top used to run
+     wider than the grid above it. The screen padding is already on the stage,
+     so the column only needs its own ceiling. */
   .fd-search-stage-idle .fd-search-frame {
     position: relative;
-    max-width: min(var(--fd-app-max-width), calc(100vw - 1.25rem));
-    transform: translateY(var(--fd-search-idle-optical-offset));
+    flex: none;
+    max-width: 1180px;
   }
 
-  .fd-search-stage-idle .fd-search-alert {
+  /* Idle notices use the lower spacer instead of becoming part of the form's
+     measured height. Otherwise the asymmetric flex spacers recenter the whole
+     form when a one-line error appears, and 07 §0 rule 1 is explicit that what
+     responds to an event is the control, not the page around it.
+     The notice is a sibling of the form, not a child, so the positioned
+     ancestor is the block that holds both — and it keeps the form's own 1180
+     measure (plate 1a), not the full width of the stage. */
+  .fd-search-stage-idle .fd-tools-block {
+    position: relative;
+  }
+
+  /* Centred with auto margins rather than a translate: the notice enters with
+     an animation that owns `transform`, and an animated transform beats a
+     declared one. */
+  .fd-search-stage-idle .fd-alert-line {
     position: absolute;
-    inset-inline: 0;
     top: 100%;
+    right: 0;
+    left: 0;
+    width: min(1180px, 100%);
+    margin-inline: auto;
   }
 
+  /*
+   * ===== 07 §1 · reposo → activo, the table transcribed =====================
+   *
+   *     0 ms  CTA Buscar         `bucle-giro`; the form locks without moving
+   *    60 ms  chips + zócalo     leave by opacity, 120ms   (`fd-motion-idle-exit`)
+   *    60 ms  bloque de campos   `translateY` to the top   (FLIP, App.tsx)
+   *    60 ms  modo + tipo        FLIP into the title bar   (FLIP, App.tsx)
+   *   140 ms  filtros / detalle  8px from their own edge + opacity
+   *   140 ms  lista              opacity only
+   *   180 ms  esqueleto          with the real grid
+   *
+   * Closes at 400ms, inside the 420ms ceiling.
+   *
+   * `data-entering` is up for those 420ms and not a millisecond longer, which is
+   * what keeps the cue attached to *this* arrival: the detail panel remounts
+   * every time another flight is picked, and that later arrival is 05 §8 — the
+   * same 8px from the right, with no delay in front of it.
+   */
+  .fd-search-stage[data-entering] .fd-filter-column {
+    animation: fd-enter-left var(--fd-dur-estructura) var(--fd-ease-estructura) var(--fd-cue-paneles) both;
+  }
+
+  /* The detail already owns `fd-enter-right`; giving the column a second one
+     would play the row twice and travel 16px. Only the cue is added. */
+  .fd-search-stage[data-entering] .fd-detail-column > .fd-panel {
+    animation-delay: var(--fd-cue-paneles);
+  }
+
+  .fd-search-stage[data-entering] .fd-list {
+    animation: fd-crossfade var(--fd-dur-estructura) var(--fd-ease-estructura) var(--fd-cue-paneles) both;
+  }
+
+  /* «Aparece con la grilla real»: the skeleton is the result card with its text
+     replaced, so what the cue governs is only when it becomes visible. */
+  .fd-search-stage[data-entering] .fd-results-list--skeleton {
+    animation: fd-crossfade var(--fd-dur-estructura) var(--fd-ease-estructura) var(--fd-cue-esqueleto) both;
+  }
+
+  /* The furniture of the idle screen on its way out. It leaves the flow first:
+     the stage is relaying out underneath it, and something that fades while
+     still holding its height drags the column it used to close. */
+  .fd-provider-rail[data-leaving="true"] {
+    position: absolute;
+    right: 16px;
+    bottom: 12px;
+    left: 16px;
+  }
+
+  .fd-quick-chips[data-leaving="true"] {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    left: 0;
+  }
+
+  /* Plate 1a's one row of six tracks:
+       minmax(150,1.2fr) 34 minmax(150,1.2fr) minmax(268,1.7fr) minmax(144,.9fr) 124
+     Origin, swap and destination are written as one nested grid (334 = 150+34+150,
+     2.4fr = 1.2 + 1.2) because armazón B moves those three as a block onto their
+     own row, and a nested grid moves as a block. */
   .fd-search-grid {
+    display: grid;
+    grid-template-columns:
+      minmax(334px, 2.4fr)
+      minmax(268px, 1.7fr)
+      minmax(144px, 0.9fr)
+      124px;
+    gap: 6px;
     width: 100%;
     max-width: 100%;
     margin-inline: auto;
+    align-items: start;
   }
 
   .fd-search-controls-row {
@@ -351,64 +485,360 @@
     min-height: calc(52px + 2.25rem);
   }
 
+  /* Plate 1a gives the swap its own 34px track, aligned with the top of the
+     52px fields. In armazón C it leaves the track and sits on the divider that
+     splits the single Origin/Destination card (03 §2). */
   .fd-route-swap-cell {
+    display: flex;
     align-self: start;
-    padding-top: 0.625rem;
+    justify-content: center;
+    padding-top: 10px;
   }
 
+  .fd-route-fields {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(150px, 1fr) 34px minmax(150px, 1fr);
+    gap: 6px;
+    min-width: 0;
+  }
+
+  /* The workspace owns everything the form does not, and it is the element the
+     armazón B side sheet is positioned against — hence `position: relative`. */
   .fd-shell-workspace {
-    grid-row: 3;
+    position: relative;
+    flex: 1;
     min-height: 0;
   }
 
-  .fd-workspace-enter {
-    animation: fd-workspace-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  .fd-results {
+    display: grid;
+    grid-template-columns: 248px minmax(0, 1fr) 316px;
+    grid-template-areas: "filters list detail";
+    gap: 10px;
+    height: 100%;
+    min-height: 0;
   }
 
-  .fd-inline-enter {
-    transform-origin: left center;
-    animation: fd-inline-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  .fd-filter-column {
+    grid-area: filters;
+    min-width: 0;
+    min-height: 0;
   }
 
-  .fd-popover-enter {
-    transform-origin: top center;
-    animation: fd-popover-in 140ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  .fd-list {
+    container: fdlist / inline-size;
+    grid-area: list;
+    min-width: 0;
+    min-height: 0;
   }
 
-  .fd-segmented-control {
+  .fd-detail-column {
+    grid-area: detail;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* 05 §8: the panel arrives with `estructura`, 8px from the right. Only here —
+     in armazón B and C the detail is a sheet and the sheet owns its own
+     arrival, so animating the panel too would play the movement twice. */
+  .fd-detail-column > .fd-panel {
+    animation: fd-enter-right var(--fd-dur-estructura) var(--fd-ease-estructura) both;
+  }
+
+  /* ===== List column (plates 1b, 8a, 1d) =================================
+   * Not a card: filters and detail are panels because they sit beside the
+   * list; the list is the page itself. */
+
+  .fd-list-shell {
+    display: flex;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    gap: 8px;
+    overflow: hidden;
+  }
+
+  .fd-list-header {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .fd-list-header-lead {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .fd-list-header-trail {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .fd-list-title {
+    flex-shrink: 0;
+    font-size: var(--fd-text-body);
+    font-weight: var(--fd-weight-title);
+    letter-spacing: -0.01em;
+  }
+
+  /* Plate 1d's «↕ Precio»: the same order control with the same state, worn
+     small enough for a 32px row. It is the segmented's sibling and only one of
+     the two is ever shown. */
+  .fd-result-sort-compact {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+    transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-result-sort-compact:hover {
+    color: var(--color-foreground);
+  }
+
+  /* 02 §9 step 6. Hidden until the tools retract, so the filters are never out
+     of reach; it is not a second control, it is the same one relocated. */
+  .fd-status-row-filters {
+    display: none;
+    width: 26px;
+    height: 26px;
+    flex: 0 0 auto;
+    place-items: center;
+    border: 0;
+    border-radius: var(--fd-radius-8);
+    background: var(--color-primary);
+    color: var(--color-primary-foreground);
+  }
+
+  /* The list body owns the only scroll container of the column, and on a phone
+     the only one of the screen (02 §11). `overscroll-behavior: contain` stops
+     the gesture leaking to whatever is behind an open sheet. */
+  .fd-list-body {
     position: relative;
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    overflow: hidden;
   }
 
-  .fd-segmented-indicator {
+  /* 02 §9: 44px, r999, anchored to the bottom-right of the list — the corner a
+     thumb reaches without moving the hand. It sits over the viewport rather
+     than inside it, so it does not scroll away with the content it undoes.
+     The shadow is the `emergente` level of 01 §4: §9 writes a fourth shadow,
+     and the elevation catalog is closed at three. */
+  .fd-back-to-top {
     position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 0;
-    width: var(--fd-segment-width);
-    border-radius: 0;
-    background: transparent;
-    opacity: var(--fd-segment-opacity);
-    pointer-events: none;
-    transform: translateX(var(--fd-segment-x));
-    transition:
-      transform 150ms cubic-bezier(0.22, 1, 0.36, 1),
-      width 150ms cubic-bezier(0.22, 1, 0.36, 1),
-      opacity 150ms cubic-bezier(0.22, 1, 0.36, 1);
+    right: 14px;
+    bottom: 18px;
+    z-index: 20;
+    display: grid;
+    width: var(--fd-control-touch);
+    height: var(--fd-control-touch);
+    place-items: center;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: var(--color-popover);
+    box-shadow: var(--fd-shadow-emergente);
+    color: var(--color-foreground);
   }
 
-  .fd-segmented-indicator::before {
-    content: "";
-    position: absolute;
-    inset: 2px;
-    border-radius: calc(var(--radius-lg) - 2px);
-    background: var(--color-card);
+  .fd-list-viewport {
+    min-height: 0;
+    flex: 1;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .fd-segmented-indicator {
-      transition: none;
+  .fd-list-viewport::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  /* 6px, which is what plates 1b and 2g both draw between cards — and what
+     `RESULTS_CARD_GAP_PX` already assumed when working out how many rows fit. */
+  .fd-results-list {
+    display: grid;
+    align-content: start;
+    gap: 6px;
+  }
+
+  /*
+   * 04 §9 / 07 §4 row 12: cards arrive 6px low and in cascade, 30ms apart, and
+   * the cascade is capped — seven on a desk, six on a phone. The cap is why the
+   * delay is written per position instead of from an index: past the cap every
+   * remaining card shares the last delay, so a long page still finishes in the
+   * same beat as a short one.
+   *
+   * `nth-child` rather than a prop: the list children are two different
+   * components, and the position in the list is a fact about the list.
+   */
+  .fd-results-list[data-cascade="true"] > * {
+    animation: fd-enter-row var(--fd-dur-emergente) var(--fd-ease-estructura) both;
+    animation-delay: calc(6 * var(--fd-stagger-row));
+  }
+
+  .fd-results-list[data-cascade="true"] > *:nth-child(1) {
+    animation-delay: 0ms;
+  }
+
+  .fd-results-list[data-cascade="true"] > *:nth-child(2) {
+    animation-delay: calc(1 * var(--fd-stagger-row));
+  }
+
+  .fd-results-list[data-cascade="true"] > *:nth-child(3) {
+    animation-delay: calc(2 * var(--fd-stagger-row));
+  }
+
+  .fd-results-list[data-cascade="true"] > *:nth-child(4) {
+    animation-delay: calc(3 * var(--fd-stagger-row));
+  }
+
+  .fd-results-list[data-cascade="true"] > *:nth-child(5) {
+    animation-delay: calc(4 * var(--fd-stagger-row));
+  }
+
+  .fd-results-list[data-cascade="true"] > *:nth-child(6) {
+    animation-delay: calc(5 * var(--fd-stagger-row));
+  }
+
+  /* Six on a phone: the stacked card is taller, so the seventh is below the
+     fold and its delay would only postpone a card nobody is looking at. Only
+     the catch-all moves — positions 1 to 6 already carry their own delay. */
+  @container fdlist (max-width: 659.98px) {
+    .fd-results-list[data-cascade="true"] > * {
+      animation-delay: calc(5 * var(--fd-stagger-row));
     }
+  }
+
+  /* ===== Active filter strip (04 §3 desk · plate 1d phone) ============== */
+
+  .fd-filter-strip {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .fd-filter-strip:empty {
+    display: none;
+  }
+
+  .fd-filter-strip-open {
+    display: none;
+  }
+
+  .fd-filter-strip-hidden {
+    margin-left: auto;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+  }
+
+  .fd-mobile-search-summary-shell {
+    min-width: 0;
+  }
+
+  /* Plate 1d: 52px, the route at 15/700 with the swap glyph between the two
+     stations, and the whole search underneath at 12/400 — including the mode,
+     which stops being a control here and becomes the last word of the line. */
+  .fd-mobile-search-summary {
+    display: flex;
+    width: 100%;
+    height: 52px;
+    align-items: center;
+    gap: 10px;
+    padding: 0 8px 0 14px;
+    border: 1px solid var(--color-input);
+    border-radius: var(--fd-radius-12);
+    background: var(--color-card);
+    color: var(--color-foreground);
+    text-align: left;
+  }
+
+  .fd-mobile-search-lead {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .fd-mobile-search-route,
+  .fd-mobile-search-meta {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-mobile-search-route {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--fd-text-action);
+    font-weight: var(--fd-weight-title);
+    line-height: 1.2;
+  }
+
+  .fd-mobile-search-meta {
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-value);
+    line-height: 1.3;
+  }
+
+  .fd-mobile-search-edit {
+    display: grid;
+    width: var(--fd-control-touch);
+    height: var(--fd-control-touch);
+    flex-shrink: 0;
+    place-items: center;
+    border-radius: var(--fd-radius-12);
+    background: var(--color-secondary);
+    color: var(--color-foreground);
+  }
+
+  /* Mode and trip type: inline and content-sized on a desk (plates 1a, 1b),
+     stacked and full width on a phone (plate 1c). Same component, same
+     heights — only the track changes. */
+  .fd-trip-mode-controls {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .fd-trip-mode-controls[data-placement="topbar"] {
+    justify-content: center;
+  }
+
+  .fd-trip-mode-controls > .fd-segmented {
+    width: max-content;
+    max-width: 100%;
+  }
+
+  /* Sized by their own content, so here the padding is the air. Plate 1b: 13px
+     in the title bar, 12px in the list header. */
+  .fd-trip-mode-controls .fd-segmented-item {
+    padding-inline: 13px;
+  }
+
+  .fd-result-sort-segmented .fd-segmented-item {
+    padding-inline: 12px;
   }
 
   .fd-inline-reveal {
@@ -418,7 +848,7 @@
     pointer-events: none;
     transform-origin: left center;
     opacity: 0;
-    transition: opacity 150ms cubic-bezier(0.22, 1, 0.36, 1);
+    transition: opacity var(--fd-dur-emergente) var(--fd-ease-estructura);
   }
 
   .fd-inline-reveal-open {
@@ -430,230 +860,29 @@
   }
 
   .fd-inline-reveal-open > * {
-    animation: fd-inline-in 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: fd-inline-in var(--fd-dur-emergente) var(--fd-ease-estructura) both;
   }
 
   .fd-inline-reveal-closed {
     margin-inline: -0.25rem;
   }
 
-  .fd-disabled-section {
-    opacity: 0.66;
-    filter: grayscale(0.18);
-  }
+  /* Disabled is `.fd-disabled` and nothing else (01 §1): opacity over the whole
+     control. The greyscale filter this replaced was inventing a colour the
+     palette does not have. */
 
-  .fd-segmented-control.fd-disabled-section > button:disabled {
-    color: var(--color-muted-foreground);
-    font-weight: 600;
-    opacity: 1;
-  }
-
-  .fd-control-disabled-section {
-    @apply border-input bg-secondary text-muted-foreground shadow-none;
-    filter: grayscale(0.18);
-    opacity: 0.66;
-  }
-
-  .fd-filter-constraint {
-    display: grid;
-    min-width: 0;
-    gap: 0.375rem;
-    border-radius: var(--radius-lg);
-  }
-
-  .fd-filter-constraint__head,
-  .fd-filter-slider__head {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-  }
-
-  .fd-filter-constraint__head {
-    min-height: 1.625rem;
-    padding-inline: 0.5rem;
-  }
-
-  .fd-filter-slider__head--value-only {
-    justify-content: flex-end;
-  }
-
-  .fd-filter-constraint__label,
-  .fd-filter-slider__label {
-    min-width: 0;
-    overflow: hidden;
-    color: var(--color-foreground);
-    font-size: 0.8125rem;
-    font-weight: 500;
-    line-height: 1.15;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .fd-sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    border: 0;
-    white-space: nowrap;
-  }
-
-  .fd-filter-slider {
-    display: grid;
-    min-width: 0;
-    gap: 0.25rem;
-    border-radius: var(--radius-lg);
-    padding: 0.35rem 0.5rem 0.45rem;
-    transition:
-      opacity 150ms cubic-bezier(0.22, 1, 0.36, 1),
-      filter 150ms cubic-bezier(0.22, 1, 0.36, 1);
-  }
-
-  .fd-filter-slider.is-disabled {
-    opacity: 0.66;
-    filter: grayscale(0.18);
-  }
-
-  .fd-filter-slider__value {
-    flex: 0 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    color: var(--color-foreground);
-    font-size: 0.75rem;
-    font-weight: 500;
-    line-height: 1.15;
-    text-align: right;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .fd-filter-slider.is-neutral .fd-filter-slider__value,
-  .fd-filter-slider.is-disabled .fd-filter-slider__value {
-    color: var(--color-muted-foreground);
-    font-weight: 500;
-  }
-
-  .fd-filter-slider__range {
-    width: 100%;
-    height: 1.125rem;
-    margin: 0.05rem 0 0;
-    padding: 0;
-    cursor: pointer;
-  }
-
-  .fd-filter-slider__range[data-disabled] {
-    cursor: not-allowed;
-  }
-
-  .fd-filter-slider__range [data-slot="slider-track"] {
-    height: 0.25rem;
-    border-radius: 999px;
-    background:
-      linear-gradient(
-        to right,
-        var(--color-primary) 0 var(--fd-filter-slider-progress),
-        color-mix(in srgb, var(--color-muted-foreground) 25%, transparent) var(--fd-filter-slider-progress) 100%
-      );
-  }
-
-  .fd-filter-slider.is-neutral .fd-filter-slider__range [data-slot="slider-track"],
-  .fd-filter-slider.is-disabled .fd-filter-slider__range [data-slot="slider-track"] {
-    background: color-mix(in srgb, var(--color-muted-foreground) 25%, transparent);
-  }
-
-  .fd-filter-slider__range [data-slot="slider-range"] {
-    background: var(--color-primary);
-  }
-
-  .fd-filter-slider.is-neutral .fd-filter-slider__range [data-slot="slider-range"],
-  .fd-filter-slider.is-disabled .fd-filter-slider__range [data-slot="slider-range"] {
-    background: transparent;
-  }
-
-  .fd-filter-slider__range [data-slot="slider-thumb"] {
-    width: 0.875rem;
-    height: 0.875rem;
-    border: 2px solid var(--color-card);
-    border-radius: 999px;
-    background: var(--color-primary);
-    box-shadow: none;
-  }
-
-  .fd-filter-slider.is-neutral .fd-filter-slider__range [data-slot="slider-thumb"],
-  .fd-filter-slider.is-disabled .fd-filter-slider__range [data-slot="slider-thumb"] {
-    background: var(--color-muted-foreground);
-  }
-
-  .fd-filter-slider__range [data-slot="slider-thumb"]:focus-visible {
-    box-shadow:
-      0 0 0 2px var(--color-card),
-      0 0 0 4px var(--color-ring);
-  }
-
-  .fd-filter-slider__marks {
-    position: relative;
-    min-height: 0.78rem;
-  }
-
-  .fd-filter-slider__mark {
-    position: absolute;
-    top: 0;
-    left: var(--fd-filter-slider-mark-position);
-    min-width: 0;
-    max-width: 5rem;
-    overflow: hidden;
-    color: var(--color-muted-foreground);
-    font-size: 0.65rem;
-    font-weight: 500;
-    font-variant-numeric: tabular-nums;
-    line-height: 1.1;
-    text-align: center;
-    text-overflow: ellipsis;
-    transform: translateX(-50%);
-    white-space: nowrap;
-  }
-
-  .fd-filter-slider__mark:first-child {
-    max-width: 4rem;
-    text-align: left;
-    transform: translateX(0);
-  }
-
-  .fd-filter-slider__mark:last-child {
-    max-width: 4.75rem;
-    text-align: right;
-    transform: translateX(-100%);
-  }
-
-  .fd-filter-slider__mark.is-active {
-    color: var(--color-foreground);
-    font-weight: 600;
-  }
-
-  .fd-label-word-swap {
-    display: inline-block;
-    animation: fd-label-word-swap 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  }
-
-  .fd-field-value-swap {
-    animation: fd-field-value-swap 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  }
 
   .fd-panel {
-    @apply rounded-xl border border-border bg-card text-card-foreground shadow-[0_1px_0_rgba(31,31,30,0.04)] transition-[background-color,border-color,box-shadow] duration-150 ease-out;
+    @apply rounded-xl border border-border bg-card text-card-foreground;
+    box-shadow: var(--fd-shadow-reposo);
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      border-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      box-shadow var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
   .fd-panel-header {
     @apply shrink-0 border-b border-border bg-secondary/60 px-3 py-2.5;
-  }
-
-  .fd-panel-footer {
-    @apply shrink-0 border-t border-border bg-secondary/60 px-3 py-2.5;
   }
 
   .fd-panel-title {
@@ -664,107 +893,31 @@
     @apply truncate text-xs text-muted-foreground;
   }
 
-  .fd-offer-detail-price {
-    @apply min-w-0 truncate font-mono text-base font-bold leading-snug text-foreground;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .fd-offer-detail-meta {
-    @apply min-w-0 truncate text-xs font-medium leading-5 text-muted-foreground;
-  }
-
-  .fd-offer-detail-row {
-    @apply grid min-w-0 grid-cols-[3.25rem_minmax(0,1fr)] items-baseline gap-2;
-  }
-
-  .fd-offer-detail-data {
-    @apply min-w-0 truncate text-sm font-semibold leading-snug text-foreground;
-  }
-
-  .fd-offer-detail-data--mono {
-    @apply font-mono;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .fd-offer-flight-code {
-    @apply rounded-md border border-border bg-secondary px-2 py-1 font-mono text-xs font-bold leading-none text-foreground;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .fd-offer-info-grid {
-    @apply grid grid-cols-2 gap-x-4 gap-y-2.5;
-  }
-
-  .fd-offer-info-tile {
-    @apply min-w-0;
-  }
-
-  .fd-offer-condition-row {
-    @apply min-w-0 truncate text-xs font-medium leading-5 text-muted-foreground;
-  }
-
-  .fd-control {
-    @apply transform-gpu rounded-lg border border-input bg-card text-foreground transition-[background-color,border-color,box-shadow,transform,opacity,color,filter] duration-150 ease-out hover:border-border hover:bg-accent/60 focus-within:outline-none focus-visible:outline-none active:scale-[0.995] disabled:pointer-events-none disabled:opacity-55;
-  }
-
-  .fd-control:focus-within,
-  .fd-control:focus-visible {
-    border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
-  }
+  /* The 52px search field lives in `components.css` as `.fd-field-control` —
+     one implementation for all six fields, including both halves of the merged
+     date control. The second one that used to sit here (radius 12 via `@apply`,
+     but 16px of top padding instead of 15) is gone. */
 
   .fd-control-quiet {
-    @apply transform-gpu rounded-md text-muted-foreground transition-[background-color,color,transform,opacity,filter] duration-150 ease-out hover:bg-accent hover:text-foreground focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40 disabled:active:scale-100;
+    @apply rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40;
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
+  /* 3d: the ring sits outside the border and never changes the control's size. */
   .fd-control-quiet:focus-visible {
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
-  }
-
-  .fd-selected-passive {
-    @apply border-border bg-accent text-accent-foreground shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-foreground)_14%,transparent)];
-  }
-
-  .fd-control-invalid {
-    @apply border-destructive bg-destructive-soft shadow-[0_0_0_1px_color-mix(in_srgb,var(--color-destructive)_24%,transparent)] hover:border-destructive;
-  }
-
-  .fd-control-invalid:focus-within,
-  .fd-control-invalid:focus-visible {
-    border-color: var(--color-destructive);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-destructive) 24%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 55%, transparent);
   }
 
   .fd-control-helper {
     margin: 0.25rem 0 0;
     min-height: 0.875rem;
     color: var(--color-destructive);
-    font-size: 0.72rem;
+    font-size: var(--fd-text-meta);
     font-weight: 700;
     line-height: 1.2;
-  }
-
-  .fd-location-usage-suggestions {
-    @apply mt-1 grid grid-cols-3 gap-1.5;
-  }
-
-  .fd-location-usage-suggestions-exit {
-    pointer-events: none;
-    animation: fd-inline-out 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  }
-
-  .fd-location-usage-card {
-    @apply flex h-8 min-h-8 min-w-0 items-center justify-center px-2 font-mono text-xs font-semibold;
-    letter-spacing: 0;
-  }
-
-  .fd-label {
-    @apply text-[10px] font-bold uppercase leading-none text-muted-foreground;
-    letter-spacing: 0;
-  }
-
-  .fd-meta {
-    @apply text-xs text-muted-foreground;
   }
 
   .fd-scrollbar {
@@ -795,65 +948,1284 @@
     width: 0;
   }
 
-  .fd-alert {
-    @apply rounded-xl border px-3 py-2.5 text-sm leading-5;
-  }
-
-  .fd-search-alert {
-    width: 100%;
-    max-width: 100%;
-    margin-inline: auto;
-  }
-
-  .fd-search-stage-idle .fd-search-alert {
-    max-width: min(1180px, 100%);
-  }
-
-  .fd-alert-warning {
-    @apply border-warning/45 bg-warning-soft text-warning-soft-foreground;
-  }
-
-  .fd-alert-error {
-    @apply border-destructive/50 bg-destructive-soft text-destructive-soft-foreground;
-  }
-
-  .fd-skeleton {
-    background:
-      linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--color-card) 74%, transparent) 50%, transparent 100%),
-      var(--color-muted);
-    background-size: 220% 100%, 100% 100%;
-    animation: fd-skeleton-sheen 1200ms ease-in-out infinite;
-  }
 }
 
-@media (min-width: 640px) {
-  .fd-search-stage-idle .fd-search-frame {
-    max-width: min(var(--fd-app-max-width), calc(100vw - 4rem));
-  }
-
+@container fdshell (min-width: 1100px) {
   .fd-inline-reveal-open {
-    max-width: min(28rem, calc(100vw - 2rem));
+    max-width: min(28rem, calc(100cqw - 2rem));
   }
 }
 
-@media (min-width: 1024px) {
-  .fd-search-stage-idle .fd-search-frame {
-    max-width: min(var(--fd-app-max-width), calc(100vw - 12rem));
+/*
+ * Armazón B · 720–1099 (plate 8a).
+ *
+ * Not a third design: A with two mechanical changes. One, the six mínimos of
+ * the form add up to 894px and do not fit, so origin/swap/destination take the
+ * first row and dates/passengers/Buscar the second — same heights, same type.
+ * Two, the detail leaves the third column and overlays the results region as a
+ * 380px side sheet with a scrim (see `.fd-detail-sheet`).
+ *
+ * The filter column stays. That is what separates this armazón from mobile.
+ */
+@container fdshell (max-width: 1099.98px) {
+  .fd-search-grid {
+    grid-template-columns: minmax(268px, 2fr) minmax(144px, 1fr) 124px;
   }
 
-  .fd-search-stage-idle .fd-search-grid,
-  .fd-search-stage-idle .fd-search-controls-row {
-    max-width: min(1180px, 100%);
+  .fd-route-fields {
+    grid-column: 1 / -1;
+  }
+
+  .fd-results {
+    grid-template-columns: 248px minmax(0, 1fr);
+    grid-template-areas: "filters list";
   }
 }
 
+@container fdshell (max-width: 719.98px) {
+  /*
+   * ===== 07 §1 · reposo → activo on a phone (`1c` → `1d`) ===================
+   *
+   *     0 ms  teclado + CTA de 52px   the keyboard closes, the CTA spins
+   *     0 ms  campos → resumen        collapse to 52px with `estructura`,
+   *                                   the summary text at half travel
+   *   120 ms  chips de filtro         12px from the left, +40ms
+   *   120 ms  fila de estado          opacity, no displacement
+   *   160 ms  tarjetas                their own cascade (movement 12)
+   *
+   * Its own table, so its own rules: the desk puts the list on the 140ms cue as
+   * one block, and here the strip and the status row are separate rows at 120
+   * and the list itself is not a row at all.
+   */
+  .fd-search-stage[data-entering] .fd-list {
+    animation: none;
+  }
+
+  .fd-search-stage[data-entering] .fd-filter-strip > * {
+    --fd-enter-shift: 12px;
+
+    animation: fd-enter-left var(--fd-dur-estructura) var(--fd-ease-estructura) var(--fd-cue-tira-movil) both;
+    animation-delay: calc(var(--fd-cue-tira-movil) + var(--fd-stagger-chip) * var(--fd-chip-index, 0));
+  }
+
+  .fd-search-stage[data-entering] .fd-list-header {
+    animation: fd-crossfade var(--fd-dur-estructura) var(--fd-ease-estructura) var(--fd-cue-tira-movil) both;
+  }
+
+  /* «El texto del resumen entra con opacidad a mitad de recorrido (sin cruce)»:
+     the fields collapse for 110ms with nothing written over them, and only then
+     does the one line that replaces them appear. */
+  .fd-search-stage[data-entering] .fd-mobile-search-lead {
+    animation: fd-crossfade calc(var(--fd-dur-estructura) / 2) var(--fd-ease-estructura)
+      calc(var(--fd-dur-estructura) / 2) both;
+  }
+
+  /* The rail leaves against the 14px the idle screen is padded with, not the
+     16px of a desk (`.fd-search-stage-idle` in this same block). */
+  .fd-provider-rail[data-leaving="true"] {
+    right: 14px;
+    bottom: 0;
+    left: 14px;
+  }
+
+  /* Plate 1c: 48px tall, 12px of screen padding — the same 12px the list below
+     it uses, so the brand and the first card share one left edge. */
+  .fd-topbar-inner {
+    min-height: 48px;
+    height: 48px;
+    padding: 0 12px;
+  }
+
+  .fd-topbar-brand-mark {
+    width: 23px;
+    height: 23px;
+  }
+
+  .fd-topbar-brand-name {
+    font-size: var(--fd-text-action);
+  }
+
+  /* The mode and trip-type segments are not in the bar here: the slot goes
+     empty and they mount inside the form (02 §4). */
+  .fd-topbar-search-slot {
+    display: none;
+  }
+
+  /* The capsule breaks into loose buttons, each with its own border. */
+  .fd-capsule {
+    height: auto;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    gap: 6px;
+  }
+
+  .fd-capsule-cell {
+    width: var(--fd-control-touch-sm);
+    height: var(--fd-control-touch-sm);
+    border: 1px solid var(--color-input);
+    border-radius: var(--fd-radius-10);
+    background: var(--color-secondary);
+  }
+
+  /* Plate 1d gives the same buttons a 44px reach once the list is behind them,
+     where they are hit while scrolling rather than while reading. */
+  .fd-topbar[data-workspace-active="true"] .fd-capsule-cell {
+    height: var(--fd-control-touch);
+  }
+
+  /* Segmented controls go full width at the touch minimum. The pill moves in
+     by a third pixel because at 44px a 2px inset reads as a hairline
+     (plates 1e and 8d; 01 §3). */
+  .fd-segmented {
+    height: var(--fd-control-touch);
+  }
+
+  /* Full width here, so the trip-mode group gives up its content padding and
+     lets the leftover split evenly like every other segmented (plate 1c). */
+  .fd-segmented-item,
+  .fd-trip-mode-controls .fd-segmented-item {
+    padding-inline: 0;
+    font-size: var(--fd-text-base);
+  }
+
+  .fd-segmented-item[data-state="on"]::before {
+    inset: 3px;
+  }
+
+  /* 01 §5 ties the pictogram to the height of the control it sits in: a 44px
+     control takes 18, not the 16 of its 32px desktop twin. Sized here rather
+     than by a prop, because the height is decided here too. */
+  .fd-segmented-item svg {
+    width: var(--fd-icon-18);
+    height: var(--fd-icon-18);
+  }
+
+  /* Plate 1c stacks both segments full width at 44px, one under the other. */
+  .fd-trip-mode-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+    gap: 8px;
+  }
+
+  .fd-trip-mode-controls > .fd-segmented {
+    width: auto;
+  }
+
+  .fd-stay-counter--stretch {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  /*
+   * 05 §1 and 02 §7.6: on a phone the detail's actions are anchored at the foot
+   * of the sheet, at 44px, with the sheet footer's padding and the home
+   * indicator absorbed. They stay inside the panel — one component, three
+   * mounts (rule 1) — and take the anchoring from `position: sticky` against
+   * the sheet body, which is the only thing that scrolls.
+   */
+  /* 02 §12: every square icon control reaches 44px here, «sin excepciones».
+     The counter grows with its buttons — a 44px ± inside a 32px frame would
+     spill. */
+  .fd-stay-counter {
+    height: var(--fd-control-touch-lg);
+  }
+
+  .fd-stay-counter-step {
+    width: var(--fd-control-touch);
+    height: var(--fd-control-touch);
+  }
+
+  /* The cross of the date control is a square icon target like any other. */
+  .fd-daterange-clear,
+  .fd-field-clear {
+    width: var(--fd-control-touch);
+    height: var(--fd-control-touch);
+  }
+
+  .fd-topbar[data-workspace-active="false"] .fd-topbar-copy,
+  .fd-topbar[data-workspace-active="true"] .fd-topbar-paste {
+    display: none;
+  }
+
+  /* Plate 1c: the resting searcher is centred in the free space with 14px of
+     screen padding, and the plinth sits on the bottom edge. Plate 1d: once
+     active there is no stage padding at all — the retractable block, the status
+     row and the list each carry their own, because they scroll independently. */
+  .fd-search-stage {
+    /* `1c` → `1d` collapses the fields at 0ms where the desk waits 60: on a
+       phone nothing else is competing for the movement — there is no segmented
+       pair travelling to a title bar that has no slot for it. */
+    --fd-cue-campos: 0ms;
+
+    padding: 0;
+    gap: 0;
+  }
+
+  .fd-search-stage-idle {
+    padding: 0 14px;
+  }
+
+  .fd-search-stage-idle .fd-search-frame,
+  .fd-search-stage-active .fd-search-frame {
+    max-width: 100%;
+    padding: 0;
+  }
+
+  /* Both spacers equal: on a phone the form is centred, not optically raised —
+     there is no rail of results below it to balance against. */
+  .fd-search-stage-spacer-bottom {
+    flex-grow: 1;
+  }
+
+  .fd-search-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  /* Plate 1c: the field grows to 58px and its contents grow with it — value at
+     16/600 on a 19px line, icon 18, floating label at 14/10. */
+  .fd-field-control {
+    gap: 10px;
+    padding: 16px 14px 0;
+  }
+
+  .fd-field-label {
+    top: 10px;
+    left: 14px;
+  }
+
+  .fd-field-value {
+    height: 19px;
+    font-size: var(--fd-text-card);
+    line-height: 19px;
+  }
+
+  .fd-field-control > svg,
+  .fd-daterange-icon {
+    width: var(--fd-icon-18);
+    height: var(--fd-icon-18);
+  }
+
+  /* Plate 1c: Origen and Destino are **one** card, 58 + 1 + 58. Two stacked
+     cards was the shape this replaces. */
+  .fd-route-fields {
+    grid-column: auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 58px 58px;
+    gap: 1px;
+    height: 117px;
+    overflow: visible;
+    border: 1px solid var(--color-input);
+    border-radius: var(--fd-radius-12);
+    background: var(--color-card);
+    box-sizing: border-box;
+  }
+
+  /* The division is a line inside the card, not a border under the first
+     field: it starts 14px in, level with the icons, so the card reads as one
+     surface split rather than as two surfaces touching. */
+  .fd-route-fields::after {
+    content: "";
+    position: absolute;
+    top: 58px;
+    right: 0;
+    left: 14px;
+    height: 1px;
+    background: var(--color-border);
+  }
+
+  .fd-route-fields > .fd-location-field {
+    height: auto;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* 60px on the right is the 44px swap plus its 10px inset and 6px of air: the
+     value has to stop before the button, not run under it. */
+  .fd-route-fields .fd-field-control {
+    height: 100%;
+    min-height: 0;
+    padding-right: 60px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  /* One card, one ring. The focused half tints at 7% and lets the card carry
+     the ring — the same rule that keeps the merged date control from growing a
+     second border (03 §2). */
+  .fd-route-fields:focus-within {
+    border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
+  }
+
+  .fd-route-fields .fd-field-control:focus-within {
+    background: color-mix(in srgb, var(--color-primary) 7%, transparent);
+    box-shadow: none;
+  }
+
+  .fd-route-fields .fd-field-control:focus-within .fd-field-label,
+  .fd-route-fields .fd-field-control:focus-within > svg {
+    color: var(--color-primary);
+  }
+
+  .fd-route-fields .fd-route-swap-cell {
+    position: absolute;
+    z-index: 4;
+    top: 50%;
+    right: 10px;
+    display: flex !important;
+    padding: 0;
+    transform: translateY(-50%);
+  }
+
+  .fd-route-fields .fd-route-swap-cell > button {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--fd-radius-12);
+  }
+
+  /* 18px is the size a 44px control takes (7b). */
+  .fd-route-fields .fd-swap-icon > svg {
+    width: var(--fd-icon-18);
+    height: var(--fd-icon-18);
+  }
+
+  /* Stacked fields, stacked arrow (plate 1c). */
+  .fd-swap-icon > :first-child {
+    display: none;
+  }
+
+  .fd-swap-icon > :last-child {
+    display: block;
+  }
+
+  .fd-mobile-quick-block {
+    display: grid;
+    gap: 6px;
+    margin-top: 16px;
+  }
+
+
+  .fd-policy-line {
+    gap: 6px 10px;
+    margin-top: 8px;
+    padding-top: 8px;
+    font-size: 11px;
+  }
+
+  .fd-mobile-policy-slot {
+    width: 100%;
+    flex-shrink: 0;
+  }
+
+  .fd-policy-line--mobile {
+    justify-content: flex-start;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+
+  .fd-search-grid > .fd-field-control,
+  .fd-search-grid .fd-field-control {
+    min-height: 58px;
+  }
+
+  .fd-search-grid .fd-daterange-control {
+    height: 58px;
+  }
+
+  /* Plate 1c: the two halves take the mobile field padding, and the date sits
+     at 15 rather than the route's 16 — a date is short, and 16 would push
+     «Regreso» against the divider on a 360px screen. */
+  .fd-daterange-half {
+    gap: 10px;
+    padding: 16px 12px 0 14px;
+  }
+
+  .fd-daterange-half .fd-field-value {
+    font-size: var(--fd-text-action);
+  }
+
+  /* One full-width track, so anything mounted here stretches instead of
+     shrinking to its content (plate 1c). */
+  .fd-search-controls-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .fd-results {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "list";
+    gap: 0;
+  }
+
+  /* Filters live in a partial sheet here (02 §7), so the column is not
+     rendered at all — see `App.tsx`. It has to actually leave the tree: an
+     element still holding `grid-area: filters` against a template that only
+     names `list` is placed into an implicit column, and the list ends up with
+     half the screen. */
+
+  /*
+   * The retractable block (plate 1d, algorithm in 02 §9).
+   *
+   * One container, one `max-height`, three bands inside: the 52px search
+   * summary, the filter strip and the notice — 182px at most. It retracts as a
+   * unit because it *is* a unit; splitting it across two subtrees with two
+   * collapse mechanisms is what tore the layout when the bar undocked.
+   *
+   * `flex-shrink: 0` matters: without it the block gives up height to the list
+   * instead of scrolling, and the summary gets clipped mid-line.
+   */
+  .fd-tools-block[data-active="true"] {
+    flex-shrink: 0;
+    overflow: hidden;
+    max-height: 182px;
+    opacity: 1;
+    transform: translateY(0);
+    transition:
+      max-height var(--fd-dur-estructura) var(--fd-ease-estructura),
+      transform var(--fd-dur-estructura) var(--fd-ease-estructura),
+      opacity 160ms var(--fd-ease-tacto);
+  }
+
+  .fd-tools-block[data-active="true"][data-collapsed="true"] {
+    max-height: 0;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-8px);
+  }
+
+  /*
+   * 11 §2.4 · back to editing, with the results behind.
+   *
+   * The 182px is the height of the *summary* band, and while the form is open
+   * it is not that band any more — «el bloque crece a su alto natural» (2h).
+   * Measured clipped by 301px on a 390px screen: the passenger field and the
+   * CTA were below the cut, so the way back out of editing did not exist.
+   *
+   * `flex` rather than a plain block so the form gets the space it needs and
+   * gives the rest back to the list, and `overflow: visible` because the
+   * calendar and the passenger popover open out of this box.
+   */
+  .fd-tools-block[data-active="true"][data-editing] {
+    max-height: none;
+    overflow: visible;
+  }
+
+  /* The one-line summary fading out on top of the form that replaces it. Out of
+     the flow, or the growth it is fading over would be measuring both. */
+  .fd-mobile-search-summary-shell[data-leaving="true"] {
+    position: absolute;
+    z-index: 1;
+    right: 0;
+    left: 0;
+    animation-duration: calc(var(--fd-dur-vuelta) / 2);
+    pointer-events: none;
+  }
+
+  /* The retraction of 02 §9 measures scroll against a summary; while the form
+     is open there is nothing to retract, and doing it anyway would fold the
+     fields away under the agent's hands. */
+  .fd-tools-block[data-active="true"][data-editing][data-collapsed="true"] {
+    max-height: none;
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+
+  .fd-tools-block[data-active="true"] > .fd-search-frame {
+    padding: 10px 12px 0;
+  }
+
+  /* The status row: 32px, never retracts, and the one place the count and the
+     order live once the title is gone (04 §3). */
+  .fd-list-header {
+    height: 32px;
+    min-height: 32px;
+    padding-inline: 14px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-background);
+  }
+
+  .fd-list-title {
+    display: none;
+  }
+
+  .fd-list-header .fd-status-pill {
+    height: 18px;
+    padding-inline: 6px;
+  }
+
+  /* 04 §3: the phone count is 12/600 — one step down from the desk's 13,
+     because the status row it lives in is 32px and shares the line with the
+     order and the filter button. */
+  .fd-list-header .fd-panel-count {
+    font-size: var(--fd-text-meta);
+  }
+
+  /* 02 §9 and 04 §8 both put the notice at 44px inside the retractable block;
+     it was inheriting the desk's 36px bar height, which also put the dismiss
+     target under the touch minimum of 02 §12. */
+  .fd-alert-line {
+    height: var(--fd-control-touch);
+  }
+
+  .fd-alert-line-dismiss {
+    width: var(--fd-control-touch);
+    height: var(--fd-control-touch);
+  }
+
+  /* The label goes (it names a control that is no longer a group) and the
+     segmented gives way to the compact swap of plate 1d. The order itself
+     stays: 02 §5 is a closed list of what may be hidden on a phone and the
+     order is not in it. */
+  .fd-result-sort-label,
+  .fd-result-sort-segmented {
+    display: none;
+  }
+
+  .fd-result-sort-compact {
+    display: inline-flex;
+  }
+
+  /* On a phone the notice is a band of the retractable block (plate 1d), so it
+     stays in the flow rather than hanging under the form. */
+  .fd-search-stage-idle .fd-alert-line {
+    position: static;
+    width: auto;
+    margin-inline: 0;
+  }
+
+  .fd-status-row-filters[data-collapsed="true"] {
+    display: grid;
+  }
+
+  /* Plate 1d: the strip is the middle band of the block — 44px chips on one
+     line that scrolls sideways, never wrapping into a second row that would
+     push the list down. */
+  .fd-filter-strip {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 8px 12px 0;
+    scrollbar-width: none;
+  }
+
+  .fd-filter-strip::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  .fd-filter-strip-open {
+    display: inline-flex;
+    height: var(--fd-control-touch);
+    flex-shrink: 0;
+    align-items: center;
+    gap: 6px;
+    padding-inline: 12px;
+    border: 1px solid transparent;
+    border-radius: var(--fd-radius-10);
+    background: var(--color-primary);
+    color: var(--color-primary-foreground);
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-title);
+  }
+
+  .fd-filter-strip-count {
+    display: inline-grid;
+    min-width: 17px;
+    height: 17px;
+    place-items: center;
+    border-radius: var(--fd-radius-6);
+    background: color-mix(in srgb, #ffffff 20%, transparent);
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-micro);
+  }
+
+  .fd-active-chip {
+    height: var(--fd-control-touch);
+    flex-shrink: 0;
+    padding: 0 12px;
+    border-radius: var(--fd-radius-10);
+    font-size: var(--fd-text-base);
+  }
+
+  /* 02 §5 is a closed white-list of what a phone may hide, and «N vuelos
+     ocultos por filtros» is not on it: it is the count that tells the agent a
+     filter is costing them flights. It moves to the end of the strip, which
+     scrolls sideways, instead of disappearing. */
+  .fd-filter-strip-hidden {
+    flex-shrink: 0;
+    margin-left: 4px;
+    padding-right: 12px;
+  }
+
+  /* Plate 1d: 10px of air above the first card, 12px at the flanks — the same
+     12px the title bar uses — and 22px at the foot to clear the home
+     indicator. */
+  .fd-list-viewport {
+    padding: 10px 12px 22px;
+  }
+
+  .fd-provider-rail {
+    margin-top: auto;
+  }
+}
+
+/* Plate 2g — an empty list.
+ *
+ * Never a sad drawing and a "no results". The list says how many results the
+ * search *does* hold, which filter is throwing most of them away, and gives two
+ * ways out: clear everything, or relax the one filter to blame. */
+.fd-list-empty {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  padding: 16px;
+  place-items: center;
+}
+
+.fd-list-empty-inner {
+  display: grid;
+  max-width: 360px;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.fd-list-empty-icon {
+  display: grid;
+  width: var(--fd-control-touch);
+  height: var(--fd-control-touch);
+  place-items: center;
+  border-radius: var(--fd-radius-12);
+  background: var(--color-secondary);
+  color: var(--color-muted-foreground);
+}
+
+.fd-list-empty-title {
+  font-size: var(--fd-text-action);
+  font-weight: var(--fd-weight-title);
+}
+
+.fd-list-empty-body {
+  color: var(--color-muted-foreground);
+  font-size: var(--fd-text-base);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.fd-list-empty-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.fd-list-empty-action {
+  display: inline-flex;
+  height: var(--fd-control-standard);
+  align-items: center;
+  gap: 8px;
+  padding: 0 13px;
+  border-radius: var(--fd-radius-10);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  font-size: var(--fd-text-base);
+  font-weight: var(--fd-weight-title);
+  transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+}
+
+.fd-list-empty-action:hover {
+  background: color-mix(in srgb, var(--color-primary) 90%, #000);
+}
+
+/* The lesser exit: it relaxes one filter rather than dropping them all, so it
+   reads as the smaller commitment it is. */
+.fd-list-empty-action--secondary {
+  padding: 0 12px;
+  border: 1px solid var(--color-input);
+  background: var(--color-secondary);
+  color: var(--color-secondary-foreground);
+  font-weight: var(--fd-weight-label);
+}
+
+.fd-list-empty-action--secondary:hover {
+  background: var(--color-accent);
+}
+
+/* One sheet primitive serves mobile overlays and the narrow-desktop detail. */
+.fd-sheet-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+}
+
+/* Armazón B: the sheet belongs to the results region, not to the window.
+   Plate 8a veils the results and leaves the form above it live, so the layer is
+   absolute inside `.fd-shell-workspace` — which already sits inside the stage's
+   16px of screen padding, so the plate's `right:16; bottom:12` are the padding
+   itself and the layer only needs `inset: 0`. Anchoring it to the window is
+   what produced a sheet floating at a fixed 112px from the top while the form
+   below it had grown to two rows. */
+.fd-sheet-layer--side {
+  position: absolute;
+}
+
+.fd-sheet-scrim {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--color-scrim);
+}
+
+.fd-sheet {
+  position: absolute;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  background: var(--color-popover);
+  color: var(--color-popover-foreground);
+  outline: none;
+  /* Each placement declares the edge it comes from; the base declares none. A
+     shared 8px lift here was what made the bottom sheet appear in place instead
+     of rising from the edge (02 §7). */
+}
+
+/*
+ * A finger on the handle owns `transform`, so the entry animation has to let
+ * go — an animation with `both` fill outranks an inline style. Once a drag has
+ * happened the animation stays off for the life of the sheet: turning it back
+ * on at release would replay the entry from the bottom of the screen.
+ */
+.fd-sheet[data-drag="active"] {
+  animation: none;
+  transition: none;
+}
+
+.fd-sheet[data-drag="settle"] {
+  animation: none;
+  transition: transform var(--fd-dur-estructura) var(--fd-ease-estructura);
+}
+
+.fd-sheet--bottom {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  max-height: calc(100dvh - 48px);
+  /* 1f and 8d draw the edge-to-edge sheet with a rounded top, a lift and no
+     border at all — the two side hairlines were eating 2px of a 390px screen
+     and putting a line down both edges of the display. */
+  border: 0;
+  border-radius: 22px 22px 0 0;
+  box-shadow: var(--fd-shadow-hoja-inferior);
+  animation: fd-enter-sheet var(--fd-dur-hoja) var(--fd-ease-estructura) both;
+}
+
+.fd-sheet--modal {
+  animation: fd-enter-emergente var(--fd-dur-emergente) var(--fd-ease-tacto) both;
+}
+
+/*
+ * Leaving: 160ms, opacity plus the displacement back to the edge it came from
+ * (02 §7, 07 §3). The layer is inert while it plays — a sheet that is on its
+ * way out must not still take a tap.
+ */
+.fd-sheet-layer[data-closing="true"] {
+  pointer-events: none;
+}
+
+.fd-sheet-layer[data-closing="true"] .fd-sheet-scrim {
+  animation: fd-exit-opacity var(--fd-dur-exit-hoja) var(--fd-ease-tacto) both;
+}
+
+.fd-sheet-layer[data-closing="true"] .fd-sheet--bottom {
+  animation: fd-exit-sheet var(--fd-dur-exit-hoja) var(--fd-ease-estructura) both;
+}
+
+.fd-sheet-layer[data-closing="true"] .fd-sheet--side {
+  animation: fd-exit-right var(--fd-dur-exit-hoja) var(--fd-ease-estructura) both;
+}
+
+.fd-sheet-layer[data-closing="true"] .fd-sheet--modal {
+  animation: fd-exit-opacity var(--fd-dur-exit-emergente) var(--fd-ease-tacto) both;
+}
+
+.fd-sheet--bottom.fd-sheet--partial {
+  height: 67dvh;
+}
+
+.fd-sheet--bottom.fd-sheet--full {
+  height: calc(100dvh - 48px);
+}
+
+.fd-sheet--side {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  max-width: 100%;
+  border-radius: var(--fd-radius-12);
+  box-shadow: var(--fd-shadow-hoja);
+  animation: fd-enter-right var(--fd-dur-estructura) var(--fd-ease-estructura) both;
+}
+
+/* The scrim rounds with the region it covers (plate 8a). */
+.fd-sheet-layer--side .fd-sheet-scrim {
+  border-radius: var(--fd-radius-12);
+}
+
+.fd-sheet-layer--modal {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.fd-sheet--modal {
+  position: relative;
+  width: min(940px, calc(100vw - 48px));
+  height: min(520px, calc(100dvh - 48px));
+  border-radius: var(--fd-radius-14);
+  box-shadow: var(--fd-shadow-hoja);
+}
+
+.fd-sheet--modal .fd-sheet-header {
+  min-height: 55px;
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--color-secondary) 60%, transparent);
+}
+
+.fd-sheet--modal .fd-sheet-close {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--fd-radius-10);
+}
+
+.fd-sheet--modal .fd-sheet-body,
+.fd-quotation-paste-sheet .fd-sheet-body {
+  overflow: hidden;
+  padding: 0;
+}
+
+.fd-quotation-paste-sheet {
+  container: fdpaste / inline-size;
+}
+
+.fd-quotation-paste {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 400px;
+  height: 100%;
+  min-height: 0;
+}
+
+.fd-quotation-paste-source,
+.fd-quotation-paste-rebuild {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.fd-quotation-paste-source {
+  border-right: 1px solid var(--color-border);
+}
+
+.fd-quotation-paste-section-head {
+  display: flex;
+  min-height: 42px;
+  flex: 0 0 auto;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 14px 8px;
+}
+
+.fd-paste-read-count {
+  display: inline-flex;
+  height: 20px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border-radius: var(--fd-radius-6);
+  background: var(--color-secondary);
+  color: var(--color-secondary-foreground);
+  font-size: var(--fd-text-micro);
+  font-weight: var(--fd-weight-title);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.fd-quotation-paste-text {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  padding: 0 14px 14px;
+  color: var(--color-secondary-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--fd-text-mono-meta);
+  line-height: 1.65;
+  scrollbar-width: none;
+  white-space: pre-wrap;
+}
+
+.fd-quotation-paste-text::-webkit-scrollbar {
+  display: none;
+}
+
+.fd-quotation-paste-fields {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 14px;
+}
+
+.fd-quotation-paste-field {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: start;
+  padding: 8px 6px;
+  border-radius: var(--fd-radius-10);
+}
+
+.fd-quotation-paste-field:hover {
+  background: var(--color-muted);
+}
+
+.fd-quotation-paste-field-icon {
+  display: grid;
+  height: 17px;
+  place-items: center;
+  color: var(--color-muted-foreground);
+}
+
+.fd-quotation-paste-field[data-state="parsed"] .fd-quotation-paste-field-icon {
+  color: color-mix(in srgb, var(--color-secondary-foreground) 88%, var(--color-foreground));
+}
+
+.fd-quotation-paste-actions {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 10px;
+  padding: 11px 14px;
+  border-top: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-secondary) 60%, transparent);
+}
+
+.fd-quotation-paste-warning {
+  display: flex;
+  height: 36px;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+  margin: 0;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 38%, transparent);
+  border-radius: var(--fd-radius-10);
+  background: var(--color-warning-soft);
+  color: var(--color-warning-soft-foreground);
+  font-size: var(--fd-text-meta);
+}
+
+.fd-quotation-paste-warning span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@container fdpaste (max-width: 719px) {
+  .fd-quotation-paste {
+    display: flex;
+    height: auto;
+    min-height: 100%;
+    flex-direction: column;
+  }
+
+  .fd-quotation-paste-source {
+    min-height: 220px;
+    max-height: 34dvh;
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .fd-quotation-paste-rebuild {
+    min-height: 480px;
+  }
+
+  .fd-quotation-paste-fields {
+    overflow: visible;
+  }
+}
+
+.fd-sheet-handle-zone {
+  display: grid;
+  flex: 0 0 auto;
+  height: 16px;
+  place-items: center;
+  padding-top: 5px;
+  touch-action: pan-y;
+}
+
+.fd-sheet-handle {
+  width: 38px;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-muted-foreground) 40%, transparent);
+}
+
+.fd-sheet-header {
+  display: flex;
+  flex: 0 0 auto;
+  min-height: 56px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 14px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.fd-sheet-heading {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.fd-sheet-meta {
+  color: var(--color-muted-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--fd-text-mono-meta);
+  font-weight: var(--fd-weight-title);
+  white-space: nowrap;
+}
+
+.fd-sheet--side .fd-sheet-header {
+  padding-top: 12px;
+}
+
+.fd-sheet-header h2 {
+  margin: 0;
+  font-size: var(--fd-text-sheet);
+  font-weight: var(--fd-weight-title);
+  letter-spacing: -0.01em;
+}
+
+.fd-sheet-close {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: var(--fd-radius-12);
+  background: var(--color-secondary);
+  color: var(--color-foreground);
+}
+
+.fd-sheet-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px 14px 8px;
+}
+
+.fd-calendar-sheet .fd-sheet-body {
+  padding-top: 12px;
+}
+
+.fd-passenger-sheet .fd-sheet-body {
+  padding-top: 10px;
+}
+
+.fd-filter-sheet .fd-airline-row {
+  height: 44px;
+}
+
+.fd-location-sheet .fd-sheet-body {
+  padding: 0 14px 8px;
+}
+
+.fd-mobile-suggest-layout {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+}
+
+.fd-mobile-suggest-search {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  min-height: 60px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-popover);
+}
+
+.fd-mobile-suggest-panel {
+  min-height: 0;
+  flex: 1;
+  padding-top: 6px;
+}
+
+.fd-mobile-suggest-panel [role="listbox"] {
+  max-height: none;
+}
+
+.fd-mobile-suggest-panel .fd-suggest-head {
+  padding-inline: 4px;
+}
+
+.fd-mobile-suggest-panel .fd-suggest-row {
+  grid-template-columns: 24px 46px minmax(0, 1fr);
+  padding-inline: 8px;
+}
+
+.fd-mobile-suggest-panel .fd-suggest-row > :first-child svg {
+  width: 18px;
+  height: 18px;
+}
+
+.fd-mobile-suggest-panel .fd-suggest-code {
+  font-size: 15px;
+}
+
+.fd-mobile-suggest-panel .fd-suggest-city {
+  font-size: 15px;
+}
+
+.fd-mobile-suggest-panel .fd-suggest-detail {
+  font-size: 12px;
+}
+
+.fd-mobile-suggest-panel .fd-suggest-foot {
+  display: none;
+}
+
+.fd-suggest-empty {
+  margin: 0;
+  padding: 24px 10px;
+  color: var(--color-muted-foreground);
+  font-size: var(--fd-text-body);
+  text-align: center;
+}
+
+/* A tooltip whose job is the shortcut: the words, then the key, on one line. */
+.fd-tooltip-shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* A disabled control does not take a pointer, so the trigger wraps it. The shim
+   contributes nothing to layout — it is a handle for the tooltip, not a box. */
+.fd-tooltip-trigger-shim {
+  display: contents;
+}
+
+.fd-sheet-body > .fd-panel {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/*
+ * Plates 8a and 1f: the detail arrives with its own header, its own scroll and
+ * its own anchored foot, so the sheet around it contributes nothing but the
+ * surface. The body gives up its padding and its scrollbar — two scroll
+ * containers nested inside each other is how a foot stops being anchored.
+ */
+.fd-detail-sheet .fd-sheet-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.fd-panel--embedded {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+
+.fd-sheet-footer {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px max(22px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-secondary) 60%, var(--color-popover));
+}
+
+/* Plate 8d: the anchored action of a sheet. 52px primary; a pair of secondaries
+   drops to 44 (`--fd-sheet-action-secondary`). One shape for every sheet, so
+   the thumb finds the same target in filters, passengers and the calendar. */
+.fd-sheet-action {
+  display: inline-flex;
+  height: var(--fd-control-touch-lg);
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: var(--fd-radius-12);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  font-size: var(--fd-text-action);
+  font-weight: var(--fd-weight-title);
+}
+
+/* Colour only. The height stays 52 unless a sheet says otherwise — the filter
+   sheet drops its «Limpiar» to 44 (04 §2), the calendar keeps both at 52. */
+.fd-sheet-action--secondary {
+  border: 1px solid var(--color-input);
+  background: var(--color-secondary);
+  color: var(--color-secondary-foreground);
+  font-weight: var(--fd-weight-label);
+}
+
+/* The filter sheet is the one that says otherwise (plate 1e, 04 §2): «Limpiar»
+   is 44 and sized by its label, so «Ver N vuelos» — the button that carries the
+   count — takes the rest of the row. */
+.fd-filter-sheet .fd-sheet-action--secondary {
+  height: var(--fd-control-touch);
+  flex: 0 0 auto;
+  padding-inline: 18px;
+  font-size: var(--fd-text-body);
+  font-weight: var(--fd-weight-label);
+}
+
+/*
+ * Reduced motion is governed in one place — the block at the foot of
+ * `design-system.css`, which zeroes the duration tokens and swaps every entry
+ * for a 90ms cross-fade (07 §0 rule 5, 11 §8).
+ *
+ * A blanket `transition-duration: 1ms !important` used to live here, and
+ * `!important` beat the tokens: the deliberate 90ms opacity was dead and the
+ * setting could not be reasoned about from the catalog. Scroll behaviour is not
+ * a motion token, so it is the one thing this block still says.
+ */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     scroll-behavior: auto !important;
-    transition-duration: 1ms !important;
-    animation-duration: 1ms !important;
-    animation-iteration-count: 1 !important;
   }
 }
