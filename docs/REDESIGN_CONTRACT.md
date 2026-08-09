@@ -27,7 +27,7 @@ repository made on top of the manual.
 | 05 §7 offers «copiar sin tarifa confirmada» as an exit from a failed quotation | The draft is never shown and never copied | A fare that turns out not to exist reaches a customer as a price the agency has to honour. The failure stays in the panel with a retry (11 §4) and the local draft does not survive it. Covered by a Playwright case. |
 | 02 §2 puts the card's stacking threshold at a list width of 660 | 750 | The manual's own sum omits the card's `padding: 0 13` and its border. Measured against this card the legs track is exactly `list - 436`, so at 660 the stops lane is 224 against a stated minimum of 264: the column collapses to zero and the airport codes disappear, which §5 forbids and §4 says must be answered by stacking. 264 plus a 50px floor — the width the duration lane already uses — gives 750. |
 | The plate sets the stacked schedule sub-grid gap at 6 | 4 | The plate never loaded Plex Mono 700, so its bold times were synthesised from 600 and kept the narrower advance. With the real face each time measures 42px and the row needs 126 inside a 124px lane. The next gap down keeps every width the plate pins (56/124/46, the 11px arrow lane, the 13px day lane). |
-| 03 §5 says the plinth only lists available providers, with no state | The plinth also reports `verificando`, `con incidencias`, `sin verificar` and the two "needs authentication" states | `GET /api/provider-status` was built for it (below). A provider that is down but listed is worse than no list. |
+| 03 §5 reads "the plinth lists the available providers", and "listed = available" | The plinth lists the providers this deployment searches, always, with no state | Health was tried and it backfired: filtering by a live `ready` observation dropped Click and Book Plus from the idle screen entirely, because it cannot reach `ready` until a real search has answered. The rail is coverage — «Buscando en» — and a provider that fails a search is said in one line above the results (04 §8). `GET /api/provider-status` stays as an authenticated diagnostic surface with no UI consumer. |
 | 02 §12 sets a 44px touch minimum for every square icon control on a phone | The two title-bar buttons stay at 36 | 02 §4 and the mockup both draw them at 36, and the mockup is the delivered source. Flagged rather than silently unified. |
 
 Only the result card asks the list container (`fdlist`); the pager, the
@@ -76,6 +76,11 @@ periodic prewarm. Prewarm can prove availability for Agil; for Click and Book
 Plus it only proves local context, so only a real search marks it `ready`. A
 logical 401/403/429/5xx inside an HTTP 200 propagates as a partial result and
 leaves the tracker `degraded`, never `ready`.
+
+The tracker is what the router consults while a search runs. Nothing in the UI
+reads the endpoint any more: the last consumer was the idle plinth, and that
+asymmetry — Agil provable by prewarm, Click and Book Plus only by a completed
+search — is precisely why filtering the plinth by readiness was wrong.
 
 **Data the cards need.** `faredDays`/`queriedDays` per month (absent on partial
 results, so an under-sampled month never looks verified), the two next fares per

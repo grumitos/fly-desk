@@ -23,7 +23,7 @@ The repository does not version generated artifacts:
 - origin and destination autocomplete with an explicit `CITY`/`AIRPORT` discriminator when the provider supplies it
 - up to three recent origin/destination suggestions per opaque browser session (24-hour TTL), plus three frequent suggestions ranked by permanent global counters; the backend records a route when it accepts a search
 - month cards with complete-only queried/fared-day coverage and retained real alternatives
-- an idle provider rail that reads closed, sanitized status observations from the backend without treating an unknown provider as available and removes stale health claims after a failed refresh
+- an idle provider rail that names the providers this deployment searches, always and without health copy; readiness stays on the authenticated `/api/provider-status` surface, which the router uses internally and no UI consumes
 - filters for stops, maximum layover time, baggage, and airlines
 - paginated results with backend warnings
 - per-person price only for all-adult groups; mixed adult/child/infant searches

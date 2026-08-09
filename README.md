@@ -29,7 +29,7 @@ Fly Desk is a Bun-only application prepared for VPS deployment:
 - exact search publishes a stable set after both providers finish; range, matrix, and migratory searches send deltas and publish geometric milestones (1, 2, 4...) coalesced for 900 ms, plus the final state, without remounting visible cards
 - origin and destination autocomplete with explicit city/airport types
 - up to three recent origins/destinations per browser session and three frequent origins/destinations from permanent global counters, recorded by the backend when a search is accepted
-- an idle provider rail backed by authenticated, sanitized readiness observations from the search runner; a failed refresh removes earlier health claims while retaining the canonical provider names
+- an idle provider rail that names the providers the desk searches, always and without health copy; readiness stays on the authenticated `/api/provider-status` surface that the router uses internally
 - visible filters for stops, maximum layover time, baggage, and airlines
 - paginated results with backend warnings
 - a side panel with details, known conditions, purchase paths, and quotation from the shared core; the first quote calls `/api/quotation`, requires a complete provider-validated response for the exact stored flight, and may reuse it for at most 15 minutes before revalidation; the migratory switch updates that same verified offer immediately through the shared compositor

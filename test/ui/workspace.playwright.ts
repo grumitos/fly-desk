@@ -4,68 +4,40 @@ import type { Page, Route } from "playwright";
 import { openDesktop, withDesktopPage } from "../helpers/ui.ts";
 import { clickSegment, segment } from "./support.ts";
 
-test("provider rail lists only providers with a current ready observation", async () => {
+test("the provider rail says who the desk searches, whatever their health", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
-    await page.addInitScript(() => {
-      const nativeSetInterval = window.setInterval.bind(window);
-      window.setInterval = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) =>
-        nativeSetInterval(handler, timeout === 30_000 ? 500 : timeout, ...args)) as typeof window.setInterval;
-    });
-
+    /*
+     * The rail used to poll `/api/provider-status` and keep only providers with
+     * a live `ready` observation. Click and Book Plus cannot reach `ready`
+     * until a real search has answered, so on the idle screen — the only screen
+     * this rail lives on — it was never listed and the desk looked like it
+     * searched one provider. Coverage is a fact of the deployment, not of the
+     * minute; a provider that fails a search is said in one line above the
+     * results (04 §8), where the agent can act on it.
+     */
     let statusRequests = 0;
-    let resolveFailedRefresh: (() => void) | undefined;
-    const failedRefresh = new Promise<void>((resolve) => {
-      resolveFailedRefresh = resolve;
-    });
     await page.route("**/api/provider-status", async (route) => {
       statusRequests += 1;
-      // React StrictMode mounts the effect twice in the test build; the first
-      // request is aborted by its development-only cleanup.
-      if (statusRequests > 2) {
-        resolveFailedRefresh?.();
-        await route.abort("failed");
-        return;
-      }
-
-      const observedAt = new Date().toISOString();
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          generatedAt: observedAt,
-          staleAfterMs: 60_000,
-          providers: [
-            {
-              id: "agil-local",
-              configured: true,
-              state: "ready",
-              evidence: "prewarm",
-              reasonCode: null,
-              observedAt,
-              stale: false,
-            },
-            {
-              id: "costamar",
-              configured: true,
-              state: "ready",
-              evidence: "prewarm",
-              reasonCode: null,
-              observedAt,
-              stale: false,
-            },
-          ],
-        }),
-      });
+      await route.abort("failed");
     });
 
     await openDesktop(page, baseUrl);
-    await page.getByText("Agilsmart", { exact: true }).waitFor();
-    assert.equal(await page.locator(".fd-provider-rail-status").count(), 0);
-    await failedRefresh;
-    await page.waitForFunction(() => document.querySelectorAll(".fd-provider-rail-item").length === 0);
+    const rail = page.locator(".fd-provider-rail");
+    await rail.waitFor();
+    await page.getByText("Click and Book Plus", { exact: true }).waitFor();
 
-    assert.equal(await page.getByText("Agilsmart", { exact: true }).count(), 0);
-    assert.equal(await page.getByText("Click and Book Plus", { exact: true }).count(), 0);
+    assert.equal(await page.getByText("Agilsmart", { exact: true }).count(), 1);
+    assert.equal(await rail.locator(".fd-provider-rail-item").count(), 2);
+    // 03 §5: names and 14px icons. No health word belongs on this rail.
+    assert.equal(await rail.locator("img").count(), 2);
+    assert.doesNotMatch(
+      await rail.innerText(),
+      /disponible|verificando|incidencias|sin verificar|requiere/i,
+    );
+
+    // And nothing on this screen asks the backend how the providers are doing.
+    await page.waitForTimeout(1200);
+    assert.equal(statusRequests, 0);
   }, { autoOpen: false });
 });
 
