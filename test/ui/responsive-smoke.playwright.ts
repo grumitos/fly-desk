@@ -175,6 +175,8 @@ for (const viewport of VIEWPORTS) {
         const carrierName = element.querySelector<HTMLElement>(".fd-card__carrier-name");
         const carrierOperator = element.querySelector<HTMLElement>(".fd-card__carrier-operator");
         const legs = element.querySelector<HTMLElement>(".fd-card__legs");
+        const stops = element.querySelector<HTMLElement>(".fd-card__leg-stops");
+        const list = element.closest<HTMLElement>(".fd-list");
         const carrierBox = carrier?.getBoundingClientRect();
         const carrierNameBox = carrierName?.getBoundingClientRect();
         const carrierOperatorBox = carrierOperator?.getBoundingClientRect();
@@ -187,12 +189,23 @@ for (const viewport of VIEWPORTS) {
           carrierNameWidth: carrierNameBox?.width ?? 0,
           carrierOperatorRight: carrierOperatorBox?.right ?? 0,
           legsLeft: legsBox?.left ?? 0,
+          listWidth: list?.getBoundingClientRect().width ?? 0,
+          stopsWidth: stops?.getBoundingClientRect().width ?? 0,
         };
       });
       assert.ok(cardLayout.carrierNameWidth > 0, JSON.stringify(cardLayout));
       // The operator ellipsis happens inside the carrier box; it never spills.
       assert.ok(cardLayout.carrierOperatorRight <= cardLayout.carrierRight + 1, JSON.stringify(cardLayout));
-      if (viewport.shell === "mobile") {
+      /*
+       * 02 §2: the disposition answers to the width of the list, not to the
+       * shell, so the expectation is read off the same container the CSS asks.
+       * The threshold is 750 — the manual says 660, but its sum omits the
+       * card's own padding and border, and at 660 the stops lane is zero. That
+       * is the point of the last assertion: whichever disposition the list
+       * lands in, the airport codes still have a box to live in.
+       */
+      const stacked = cardLayout.listWidth < 750;
+      if (stacked) {
         // 02 §6: the provider icon leaves for the detail, the chevron gets its
         // own 14px column.
         assert.equal(cardLayout.providerVisible, false, JSON.stringify(cardLayout));
@@ -205,6 +218,7 @@ for (const viewport of VIEWPORTS) {
         assert.equal(cardLayout.chevronVisible, false, JSON.stringify(cardLayout));
         assert.match(cardLayout.columns, /^32px 186px /);
       }
+      assert.ok(cardLayout.stopsWidth >= 32, JSON.stringify(cardLayout));
 
       await assertNoHorizontalOverflow(page, `${viewport.label}:results`);
       if (captureDir) {

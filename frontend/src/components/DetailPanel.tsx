@@ -154,7 +154,7 @@ export function DetailPanel({
    * «copiar sin tarifa confirmada» as a second exit. This repository holds a
    * stronger rule and keeps it on both surfaces: a locally composed quotation
    * that the provider has not confirmed is never shown and never copied
-   * (`docs/REDISENO_PENDIENTE_CABLEADO.md` §2.1, covered by a test). A fare that
+   * (`docs/REDESIGN_CONTRACT.md`, covered by a test). A fare that
    * turns out not to exist reaches a customer as a price the agency has to
    * honour, so the failure never opens the 620 panel and the draft does not
    * survive it.

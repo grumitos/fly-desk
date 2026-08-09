@@ -444,7 +444,18 @@ test("repeated clipboard notice failures keep the workspace from remounting the 
     ]);
     await page.getByTestId("result-card").waitFor();
 
-    const activeSearchBeforeNotice = await page.locator(".fd-search-grid").evaluate((element) => {
+    /*
+     * 07 §1: idle → active is a 420ms choreography and the field block is one of
+     * the pieces that travels. Reading the "before" geometry as soon as the first
+     * card exists samples the form mid-flight, and then any settled measurement
+     * taken later looks like the notice moved it. Let the stage finish first —
+     * the invariant under test is what the notice does, not how fast the desk is.
+     */
+    const activeSearchBeforeNotice = await page.locator(".fd-search-grid").evaluate(async (element) => {
+      const stage = element.closest(".fd-search-stage") ?? element;
+      await Promise.all(
+        stage.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => undefined)),
+      );
       const rect = element.getBoundingClientRect();
       return { bottom: Math.round(rect.bottom), top: Math.round(rect.top) };
     });

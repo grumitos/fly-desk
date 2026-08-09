@@ -205,6 +205,7 @@ GitHub Actions runs `.github/workflows/ci.yml` on pull requests, pushes to `main
 - [`docs/AGIL_SESSION_RECOVERY.md`](./docs/AGIL_SESSION_RECOVERY.md): Agil session recovery in VPS Chrome/CDP
 - [`docs/CBPLUS_SESSION_RECOVERY.md`](./docs/CBPLUS_SESSION_RECOVERY.md): secure Click and Book Plus regeneration and recovery without copying a session
 - [`docs/FRONTEND_IDENTITY.md`](./docs/FRONTEND_IDENTITY.md): React visual identity and UI rules
+- [`docs/REDESIGN_CONTRACT.md`](./docs/REDESIGN_CONTRACT.md): what the search redesign commits the code to, where it departs from the design manual, and what is still missing
 - [`docs/TESTING.md`](./docs/TESTING.md): test classification, execution, and relevance criteria
 - [`frontend/README.md`](./frontend/README.md): brief frontend workspace notes
 

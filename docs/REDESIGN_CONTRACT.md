@@ -1,0 +1,132 @@
+# Redesign Contract
+
+What the flight-search redesign committed the code to, where it deliberately
+departs from the design manual, and what is still missing. This replaces the two
+Spanish progress reports the redesign branch carried; their narrative is in the
+Git history, the decisions that still bind the code are here.
+
+## The normative source is not in this repository
+
+The redesign is specified by a twelve-file manual (`00-LEEME.md` …
+`11-acciones.md`) that ships with `Fly Desk Rediseño.dc.html` in the Claude
+Design project «Rediseño web · búsqueda de vuelos». It is not committed here, so
+any audit of the frontend has to re-extract it first. Reading order that
+matters: `01-fundamentos` (the closed catalogues) and `02-armazon-y-responsive`
+(the three shells at 720 and 1100, and the master stacking table) before
+touching anything, then the sheet for the surface, then `11-acciones` for what
+each gesture does.
+
+Comments in the frontend cite that manual by section (`02 §6`, `11 §2.2`). When
+a comment and this file disagree, this file wins: it records the decisions the
+repository made on top of the manual.
+
+## Where the code departs from the manual, and why
+
+| Manual says | Code does | Why |
+|---|---|---|
+| 05 §7 offers «copiar sin tarifa confirmada» as an exit from a failed quotation | The draft is never shown and never copied | A fare that turns out not to exist reaches a customer as a price the agency has to honour. The failure stays in the panel with a retry (11 §4) and the local draft does not survive it. Covered by a Playwright case. |
+| 02 §2 puts the card's stacking threshold at a list width of 660 | 750 | The manual's own sum omits the card's `padding: 0 13` and its border. Measured against this card the legs track is exactly `list - 436`, so at 660 the stops lane is 224 against a stated minimum of 264: the column collapses to zero and the airport codes disappear, which §5 forbids and §4 says must be answered by stacking. 264 plus a 50px floor — the width the duration lane already uses — gives 750. |
+| The plate sets the stacked schedule sub-grid gap at 6 | 4 | The plate never loaded Plex Mono 700, so its bold times were synthesised from 600 and kept the narrower advance. With the real face each time measures 42px and the row needs 126 inside a 124px lane. The next gap down keeps every width the plate pins (56/124/46, the 11px arrow lane, the 13px day lane). |
+| 03 §5 says the plinth only lists available providers, with no state | The plinth also reports `verificando`, `con incidencias`, `sin verificar` and the two "needs authentication" states | `GET /api/provider-status` was built for it (below). A provider that is down but listed is worse than no list. |
+| 02 §12 sets a 44px touch minimum for every square icon control on a phone | The two title-bar buttons stay at 36 | 02 §4 and the mockup both draw them at 36, and the mockup is the delivered source. Flagged rather than silently unified. |
+
+Only the result card asks the list container (`fdlist`); the pager, the
+migratory grid and the card cascade answer the shell (`fdshell`) at 719.98,
+because the master table describes them as desk-versus-phone shapes.
+
+## Decisions that bind the backend
+
+**One quotation composer.** `src/core/quotation.ts::buildCommercialQuotation()`
+is the only place the commercial text exists. The UI and `POST /api/quotation`
+pass `migrationPlan` to that same function; there is no second template in the
+router or the component. The migratory switch regenerates the text locally from
+that core over the already-revalidated offer, without a second provider call.
+
+**Quoting always revalidates.** The first «Cotizar» calls `POST /api/quotation`
+with the source search and offer ids. The endpoint only accepts a complete
+stored offer — a matrix cell with a price but no real itinerary is not
+quotable. A `validated`/`verified` fare is reused only within 15 minutes of
+`priceVerifiedAt`; past that the endpoint asks the provider again and demands
+the same canonical flight signature (legs, numbers, airports, times), so a
+cheaper alternative on the same day and route cannot silently replace the chosen
+one. The client accepts the answer only if it keeps the requested session and
+carries a complete transport offer, a positive price, a currency,
+`validated`/`verified`, a valid timestamp and non-empty text.
+
+**`quotationPreparedAt` is local, `priceVerifiedAt` is the provider's.** The
+first means the first local materialisation with everything needed to quote; it
+is set once and preserved across re-materialisations. Only the second changes
+when the quotation call succeeds. One shared constant fixes both the visible
+15-minute warning and the reuse window. Cached SWR drafts drop
+`quotationPreparedAt` so the UI never publishes a false age.
+
+**Search ceilings come from the runtime.** `src/core/search-limits.ts` holds the
+stay, passenger and lap-infant maxima; the HTTP contract validates against those
+constants and `getPublicRuntimeConfig()` injects them into the page, which is
+where the plinth's «hasta 90 noches · hasta 9 pasajeros» comes from. The backend
+rejects stays over 90 nights and matrices over 5,000 combinations before any
+provider work starts.
+
+**Provider status is a closed surface.** `GET /api/provider-status` is
+authenticated and `no-store`, and returns only canonical ids, a closed state, a
+closed reason code and timestamps — never messages, URLs, tokens or provider
+payloads. The tracker distinguishes `unknown`, `checking`, `ready` and
+`degraded` with a five-minute TTL, and a fresh search observation outranks the
+periodic prewarm. Prewarm can prove availability for Agil; for Click and Book
+Plus it only proves local context, so only a real search marks it `ready`. A
+logical 401/403/429/5xx inside an HTTP 200 propagates as a partial result and
+leaves the tracker `degraded`, never `ready`.
+
+**Data the cards need.** `faredDays`/`queriedDays` per month (absent on partial
+results, so an under-sampled month never looks verified), the two next fares per
+month, `fareMeta.seatsRemaining` (a real `0` shows as «0 asientos»; Click and
+Book Plus does not publish the field and it stays absent rather than invented),
+the operating carrier for codeshares, and per-leg duration and stops — the old
+`comparisonMetrics.totalDurationMinutes` and `stopsCountForOffer` summed both
+legs, which is why the pre-redesign card said «21h 05m · 2 escalas» for a flight
+with one stop each way.
+
+**`/api/results-layout` is gone.** The column-width editor existed to tune the
+card grid; plate 1b closes that grid at `32 / 186 / 1fr / 116 / 26`, so there is
+nothing to tune. Routes, types, persistence, helpers and the HTTP client were
+removed and a negative test pins both methods at 404.
+
+## What is still missing
+
+**Arbitrary leg recombination (plate 3b).** `SearchResponse.scheduleGroups`
+publishes groups backed by native Agil or Click and Book Plus identity, and the
+UI treats `combinations[].offerId` as the only source of membership. Choosing an
+outbound and an inbound independently requires the provider to have quoted that
+exact combination; no fixture shows either provider able to recombine freely, so
+the backend neither promises nor simulates it. Without a native reference there
+is no group, and a lone alternative stays an independent offer.
+
+**Durability edges.** A session write that fails after its deadline is dropped
+and schedules no retry of its own until the next mutation or shutdown, and
+`SEARCH_COMPLETED_SESSION_TTL_MS=0` expires on the first interval with a
+positive age rather than behaving as a synchronous `no-store`. Both deserve an
+explicit policy before being relied on operationally.
+
+**Shared Fly environment.** The three Fly units share one environment file and
+the `fly-desk` identity. Splitting privileges or variables is platform work and
+was not needed to wire these contracts.
+
+## Verification
+
+```powershell
+bun install --frozen-lockfile
+bun run typecheck
+bun run lint
+bun run build
+bun run test
+```
+
+The responsive gate lives in `test/ui/responsive-smoke.playwright.ts` and covers
+the desk, tablet and phone viewports end to end: idle and active, console
+errors, global and inner overflow, results, filters, detail, both themes, and
+visible initial focus. It reads the card's disposition off the list container
+rather than the shell, and asserts the stops lane always has a box, which is the
+regression that produced the 750 threshold above.
+
+Set `FLY_DESK_UI_CAPTURE_DIR` to have that gate write screenshots for a review
+next to the plates.

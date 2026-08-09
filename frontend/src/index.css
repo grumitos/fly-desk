@@ -714,10 +714,11 @@
     animation-delay: calc(5 * var(--fd-stagger-row));
   }
 
-  /* Six on a phone: the stacked card is taller, so the seventh is below the
-     fold and its delay would only postpone a card nobody is looking at. Only
-     the catch-all moves — positions 1 to 6 already carry their own delay. */
-  @container fdlist (max-width: 659.98px) {
+  /* 04 §9: seven on a desk, six on a phone. The stacked card is taller, so the
+     seventh is below the fold and its delay would only postpone a card nobody
+     is looking at. Only the catch-all moves — positions 1 to 6 already carry
+     their own delay. */
+  @container fdshell (max-width: 719.98px) {
     .fd-results-list[data-cascade="true"] > * {
       animation-delay: calc(5 * var(--fd-stagger-row));
     }

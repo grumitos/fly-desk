@@ -1,6 +1,6 @@
 # Current Repository State
 
-Snapshot date: 2026-07-30
+Snapshot date: 2026-08-09
 
 ## Summary
 
@@ -205,10 +205,12 @@ Current important coverage:
 
 QA note: `test/helpers/server.ts` sets `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1` during HTTP tests to validate immediate contracts without leaving progressive jobs alive. The normal runtime does not define that variable.
 
-The redesign wiring gate on 2026-07-30 completed with 500/500 core tests and
-56/56 Playwright tests. The browser migration retained all 53 capability cases
-and added the three required responsive viewports without production
-compatibility aliases, skipped tests, or inflated timeouts.
+The redesign gate on 2026-08-09 completed with 503/503 core tests and 71/71
+Playwright tests, on top of the Click and Book Plus baseline restored in #39 and
+fixed in #40. The responsive smoke reads the result card's disposition off the
+list container rather than the shell, and asserts the stops lane always has a
+box: that is the regression behind the corrected stacking threshold recorded in
+`docs/REDESIGN_CONTRACT.md`.
 
 ## Current Documentation
 
@@ -251,6 +253,6 @@ Deployed revisions and the live service inventory are maintained in `D:\Dev\VPS\
 - there is not enough provider evidence to classify Agil
   `rawRefs.webSessionId` as a reusable secret; it remains inside the existing
   backend boundary and must not be exposed to the UI
-- the mobile workspace is functional and covered at `390x844`, but still uses the previous Results / Filters / Offer tabs; the dedicated 1c–1f mobile plates remain a separate design implementation
+- the mobile plates are built: one shell with three layouts at the 720 and 1100 frontiers, the merged origin/destination card, the retractable toolbar, and filters, calendar, suggestions, passengers, month picker and offer as bottom sheets. Arbitrary per-leg recombination is the one design promise still unmet, because no provider fixture supports it — see `docs/REDESIGN_CONTRACT.md`
 - repeat external QA before changing `FLY_DESK_SEARCH_WORKER_PROCESSES` or provider warm-up on the VPS
 - migratory search queries every day in every selected month against Agil and Click and Book Plus without fare filters; it processes months in configurable batches through `FLY_DESK_MIGRATION_CONCURRENT_MONTHS` (default `2`), which must be monitored if usage volume increases

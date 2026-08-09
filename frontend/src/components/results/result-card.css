@@ -636,11 +636,21 @@
   }
 
   /* ---- stacked card -----------------------------------------------------
-   * The list has one named container and one arithmetic breakpoint: below
-   * 660px the four-lane leg no longer has enough room, so the same component
-   * changes to the three-row anatomy from plate 8c. */
+   * The list has one named container and one arithmetic breakpoint: below it
+   * the four-lane leg no longer has enough room, so the same component changes
+   * to the three-row anatomy from plate 8c.
+   *
+   * 02 §2 derives the number and lands on 660, but its sum leaves out the
+   * card's own `padding: 0 13` and its border. Measured against this card the
+   * legs track is exactly `list - 436` (32+186+116+26 columns, four 12px gaps,
+   * 26px padding, 2px border), so at 660 the track is 224 where the manual's
+   * own minimum is 264: the stops column collapses to zero and the airport
+   * codes disappear, which §5 forbids and §4 says must be answered by stacking.
+   * 264 + a 50px floor for the elastic lane — the width the duration lane
+   * already uses, so no value leaves the catalogue — puts the threshold at
+   * 750. */
 
-  @container fdlist (max-width: 659.98px) {
+  @container fdlist (max-width: 749.98px) {
     .fd-card:not(.fd-card--compact) {
       grid-template-columns: 24px minmax(0, 1fr) auto 14px;
       /* Plate 8c: the four gaps of row 1 are 10. The chevron rides the same
@@ -754,12 +764,18 @@
 
     /* Two legs, one column of digits: the day jump gets a 13px lane of its own
        so the arrival time of the outbound sits exactly above the arrival time
-       of the return, whether or not either lands the next day. */
+       of the return, whether or not either lands the next day.
+       The gap is 4, not the 6 of the plate: the plate never loaded Plex Mono
+       700, so its bold times were synthesised from 600 and kept the 41px
+       advance of the lighter face. With the real 700 each time measures 42, and
+       42+11+42+13 plus three 6px gaps is 126 inside a 124px lane — two pixels
+       of clipped digits. Dropping to the next gap down keeps every width the
+       plate pins (56/124/46, the 11px arrow lane, the 13px day lane). */
     .fd-card:not(.fd-card--compact) .fd-card__leg-schedule {
       display: grid;
       grid-template-columns: auto 11px auto 13px;
       align-items: center;
-      column-gap: 6px;
+      column-gap: 4px;
     }
 
     .fd-card:not(.fd-card--compact) .fd-card__leg-time {

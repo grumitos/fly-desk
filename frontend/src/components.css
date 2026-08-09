@@ -596,7 +596,10 @@
     font-variant-numeric: tabular-nums;
   }
 
-  @container fdlist (max-width: 659.98px) {
+  /* 02 §4: the pager has two forms, one for the desk and one for the phone, so
+     it answers the shell like every other row of the master table. The result
+     card is the one piece that asks the list instead (02 §2). */
+  @container fdshell (max-width: 719.98px) {
     .fd-pager-nested {
       display: none;
     }
@@ -2663,10 +2666,9 @@
     display: none;
   }
 
-  /* 06 §2: four columns on a desk, one row per month on a phone. The two
-     shapes and the one threshold between them, which is the list's — the same
-     660px that stacks the result card (02 §2). */
-  @container fdlist (max-width: 659.98px) {
+  /* 06 §2: four columns on a desk, one row per month on a phone. That is a
+     shell shape, not a list one. */
+  @container fdshell (max-width: 719.98px) {
     .fd-month-scroller {
       padding: 10px 12px 22px;
     }
