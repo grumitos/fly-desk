@@ -200,3 +200,28 @@ function positiveNumber(value: unknown): number | undefined {
   const parsed = typeof value === "number" ? value : Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : undefined
 }
+
+/*
+ * Plate 1b writes the stop as «LIM · Jorge Chávez», in the case a person would
+ * write it. Agil hands the airport name straight through and Click and Book
+ * Plus falls back to its own label, and both providers shout: «SAO PAULO
+ * GUARULHOS». Shouting is not a fact about the airport, so it is corrected on
+ * the way to the screen — and only when there is nothing to lose, i.e. when the
+ * provider sent no lowercase of its own.
+ */
+const SPANISH_CONNECTORS = new Set(["de", "del", "la", "las", "el", "los", "y", "e", "da", "do", "dos"])
+
+export function stationDisplayName(value?: string): string {
+  const name = String(value ?? "").trim()
+  if (!name || /\p{Ll}/u.test(name)) return name
+
+  return name
+    .toLocaleLowerCase("es")
+    .split(/\s+/)
+    .map((word, index) => (
+      index > 0 && SPANISH_CONNECTORS.has(word)
+        ? word
+        : word.charAt(0).toLocaleUpperCase("es") + word.slice(1)
+    ))
+    .join(" ")
+}

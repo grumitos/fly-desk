@@ -168,8 +168,17 @@ export function paginateResultListItems(
  * one card plus roughly a third of one — regardless of how many alternatives it
  * holds, because the strip scrolls sideways instead of growing.
  */
+/**
+ * What a row costs, in plain-card slots.
+ *
+ * A card that carries the alternatives strip takes back its vertical padding
+ * and adds the strip itself, so it measures 101px against the plain card's 58.
+ * With the list's 6px gap a slot is 64 and a group is 107, which is 1.67 — the
+ * 1.34 this used to claim under-priced every group and let a page promise room
+ * it did not have.
+ */
 export function resultListItemDisplayWeight(item: ResultListItem): number {
-  return item.type === "offer" ? 1 : 1.34
+  return item.type === "offer" ? 1 : 1.67
 }
 
 function orderVisibleGroupOffers(offers: CanonicalOffer[]): CanonicalOffer[] {

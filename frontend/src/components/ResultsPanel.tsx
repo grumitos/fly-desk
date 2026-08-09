@@ -47,12 +47,14 @@ import type { CanonicalOffer, SearchJobResponse, SortMode } from "@/types"
 
 const RESULTS_PAGE_SIZE_MAX = 12
 const RESULTS_PAGE_SIZE_FALLBACK = 4
-/* Dropping the "Ruta" column took the card from 81px to 68px, which is what
-   turns 4 visible results into 7. */
-const RESULTS_CARD_HEIGHT_ESTIMATE_PX = 68
+/* The plain card of plate 8c, which is the unit a display weight of 1 means.
+   The measurement below replaces this on the first frame. */
+const RESULTS_CARD_HEIGHT_ESTIMATE_PX = 58
 const RESULTS_CARD_GAP_PX = 6
 const RESULTS_LIST_TOP_INSET_PX = 4
-const RESULTS_EXTRA_ROW_MIN_BLANK_PX = 28
+/* Kept in step with `resultListItemDisplayWeight`: only used to recover the
+   plain-card unit from a page that happens to hold nothing but groups. */
+const RESULTS_GROUP_CARD_WEIGHT = 1.67
 /* A skeleton that never stops is a skeleton that lies. At eight seconds it
    yields the floor to the incomplete-search notice. */
 const SKELETON_GIVE_UP_MS = 8000
@@ -1110,15 +1112,29 @@ function useAdaptiveResultsPageCapacity(totalDisplayWeight: number, scrollableLi
         ? Number.parseFloat(listStyle.rowGap || listStyle.gap || `${RESULTS_CARD_GAP_PX}`)
         : RESULTS_CARD_GAP_PX
       const gap = Number.isFinite(measuredGap) ? measuredGap : RESULTS_CARD_GAP_PX
-      const measuredHeight = cards.reduce((max, card) => Math.max(max, card.getBoundingClientRect().height), 0)
-      if (measuredHeight > 0 && Math.abs(measuredHeight - rowHeightRef.current) > 1) {
+      /*
+       * The unit is the plain card, because that is what a weight of 1 means.
+       * Taking the tallest card instead made one group card — 101px against 58
+       * — the row height for the whole page: capacity fell from eleven rows to
+       * six and the list stopped less than two thirds of the way down the
+       * column, which is exactly the empty space the desk was reported with.
+       * A page of nothing but groups is rare, and dividing by the group weight
+       * recovers the same unit from it.
+       */
+      const plainCards = cards.filter((card) => !card.querySelector(".fd-card__alts"))
+      const measuredHeight = plainCards.length > 0
+        ? Math.min(...plainCards.map((card) => card.getBoundingClientRect().height))
+        : cards.reduce(
+          (min, card) => Math.min(min, card.getBoundingClientRect().height / RESULTS_GROUP_CARD_WEIGHT),
+          Number.POSITIVE_INFINITY,
+        )
+      if (Number.isFinite(measuredHeight) && measuredHeight > 0
+        && Math.abs(measuredHeight - rowHeightRef.current) > 1) {
         rowHeightRef.current = measuredHeight
       }
 
       const rowHeight = rowHeightRef.current
       const fullRows = Math.max(1, Math.floor((availableHeight + gap) / (rowHeight + gap)))
-      const usedHeight = fullRows * rowHeight + Math.max(0, fullRows - 1) * gap
-      const blank = availableHeight - usedHeight
       /*
        * Never claim more room than the list needs — but «what the list needs»
        * is its weight, not its length. Clamping to the item count split a page
@@ -1127,8 +1143,7 @@ function useAdaptiveResultsPageCapacity(totalDisplayWeight: number, scrollableLi
        * eleven empty rows.
        */
       const neededRows = Math.ceil(totalDisplayWeight)
-      const addOverflowRow = blank >= RESULTS_EXTRA_ROW_MIN_BLANK_PX && fullRows < neededRows
-      const next = Math.max(1, Math.min(neededRows, RESULTS_PAGE_SIZE_MAX, fullRows + (addOverflowRow ? 1 : 0)))
+      const next = Math.max(1, Math.min(neededRows, RESULTS_PAGE_SIZE_MAX, fullRows))
 
       setPageCapacity((current) => current === next ? current : next)
     }
