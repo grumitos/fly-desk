@@ -2446,8 +2446,63 @@
     animation-delay: calc(var(--fd-stagger-row) * var(--fd-month-index, 0));
   }
 
+  .fd-month-card {
+    position: relative;
+  }
+
   .fd-month-card:hover {
     border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+  }
+
+  /* The whole card selects, the way a result card does. It sits under the
+     content so the «Abrir mes» control keeps its own hit area. */
+  .fd-month-card__hit {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  /* The content rides above the hit target but lets clicks through to it; the
+     controls that are their own gesture opt back in. */
+  .fd-month-card > *:not(.fd-month-card__hit, .fd-month-open) {
+    position: relative;
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  .fd-month-open {
+    position: relative;
+    z-index: 2;
+  }
+
+  /* 11 §0.3: leaving this screen is a decision, so it gets a control that says
+     so instead of happening on the way past. */
+  .fd-month-open {
+    display: inline-flex;
+    height: var(--fd-control-chip);
+    align-items: center;
+    align-self: start;
+    margin-top: 10px;
+    padding-inline: 9px;
+    border: 1px solid var(--color-input);
+    border-radius: var(--fd-radius-8);
+    background: var(--color-card);
+    color: var(--color-foreground);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+    pointer-events: auto;
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      border-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-month-open:hover {
+    border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+    background: var(--color-accent);
   }
 
   .fd-month-head {

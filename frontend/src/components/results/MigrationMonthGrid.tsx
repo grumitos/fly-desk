@@ -77,7 +77,8 @@ export function MigrationMonthGrid({
               cheapest={cheapest}
               dearest={dearest}
               pricedMonthCount={priced}
-              onSelect={onOpenMonth ? () => onOpenMonth(month) : () => onSelectOffer(month.offer!)}
+              onSelect={() => onSelectOffer(month.offer!)}
+              onOpen={onOpenMonth ? () => onOpenMonth(month) : undefined}
             />
           ) : (
             <EmptyMonthCard key={month.key} month={month} index={index} />
@@ -98,6 +99,7 @@ function MonthCard({
   dearest,
   pricedMonthCount,
   onSelect,
+  onOpen,
 }: {
   month: DisplayMonth
   offer: CanonicalOffer
@@ -108,6 +110,7 @@ function MonthCard({
   dearest: number
   pricedMonthCount: number
   onSelect: () => void
+  onOpen?: () => void
 }) {
   const model = buildResultCardModel(offer, passengerCount)
   const provider = providerBadgeForId(offer.providerSource)
@@ -118,15 +121,29 @@ function MonthCard({
   const isCheapest = pricedMonthCount > 1 && price > 0 && price === cheapest
 
   return (
-    <button
-      type="button"
-      className={cn("fd-month-card fd-focus-ring", selected && "is-selected", isCheapest && "is-cheapest")}
+    /*
+     * Two gestures, not one. A month used to be a single button that launched
+     * the day search, so reading a month cost a search and a way back. Now the
+     * card behaves like a result card — it selects, and the detail panel says
+     * the rest (11 §3) — and opening the month is its own control, because
+     * leaving this screen is a decision the agent makes on purpose.
+     *
+     * The card is a div with a full-bleed hit button underneath, the same
+     * arrangement the result card uses, because a button cannot contain another
+     * button and both have to be reachable by keyboard.
+     */
+    <div
+      className={cn("fd-month-card", selected && "is-selected", isCheapest && "is-cheapest")}
       style={monthRowStyle(index)}
       data-testid="migration-month-card"
-      aria-pressed={selected}
-      aria-label={`${month.label}: ${model.price.label} con ${model.carrier.name}`}
-      onClick={onSelect}
     >
+      <button
+        type="button"
+        className="fd-month-card__hit fd-focus-ring"
+        aria-pressed={selected}
+        aria-label={`${month.label}: ${model.price.label} con ${model.carrier.name}`}
+        onClick={onSelect}
+      />
       <span className="fd-month-head">
         <span className="fd-month-label">{month.label}</span>
         {/* 06 §2/§3: the month holding the minimum of the sweep says so. It is
@@ -194,7 +211,18 @@ function MonthCard({
           </span>
         )}
       </span>
-    </button>
+
+      {onOpen && (
+        <button
+          type="button"
+          className="fd-month-open fd-focus-ring"
+          onClick={onOpen}
+          title={`Abrir ${month.label} en una pestaña nueva`}
+        >
+          Abrir mes
+        </button>
+      )}
+    </div>
   )
 }
 

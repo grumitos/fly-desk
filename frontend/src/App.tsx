@@ -108,7 +108,7 @@ const BAGGAGE_SEGMENTS: Array<{ value: BaggageFilterValue; label: string; icon?:
 ]
 
 export default function App() {
-  const { results, loading, error, statusMessage, diagnosticLog, runSearch, cancel } = useSearch()
+  const { results, loading, error, statusMessage, diagnosticLog, runSearch, restoreJob, cancel } = useSearch()
   const [initialSharedSearch] = useState<SharedSearchState | null>(() => readInitialSharedSearch())
   const [sessionPreferences] = useState<WorkspacePreferences>(() => readWorkspacePreferences())
   const initialSharedRequest = initialSharedSearch?.request ?? null
@@ -179,6 +179,18 @@ export default function App() {
      hands the shell the action itself when — and only when — the offer on
      screen can actually be quoted. */
   const quotationShortcutRef = useRef<(() => void) | null>(null)
+
+  /*
+   * `?job=` opens a search that already exists, which is how a month of a
+   * migratory sweep reaches its own tab. It is deliberately not a shared-search
+   * link: there is no request to re-run, only a job to read, so the list is on
+   * screen in one round trip and keeps filling if the sweep had not finished.
+   */
+  useEffect(() => {
+    const jobId = readRestorableJobIdFromUrl()
+    if (!jobId) return
+    void restoreJob(jobId)
+  }, [restoreJob])
 
   useEffect(() => {
     filtersRef.current = filters
@@ -457,6 +469,19 @@ export default function App() {
      opens is the month that was swept and not a near-miss of it. `handleSearch`
      puts the agent's current filters back on top. */
   const handleOpenMigrationMonth = useCallback((month: MigrationMonthSummary) => {
+    /* The sweep already ran this month and the server still holds its job, so
+       the new tab reads it rather than paying for it twice: the list is there
+       on the first round trip and keeps filling if the month had not finished.
+       A month whose job the server no longer has falls back to re-running it
+       here, which is the old behaviour and still better than a dead click. */
+    if (month.searchJobId) {
+      const url = new URL(window.location.href)
+      url.search = `?${RESTORE_JOB_QUERY_PARAM}=${encodeURIComponent(month.searchJobId)}`
+      url.hash = ""
+      window.open(url.toString(), "_blank", "noopener")
+      return
+    }
+
     const base = lastRequest ?? searchDraft ?? initialSharedRequest
     if (!base || !month.departureStart || !month.departureEnd) return
     handleSearch(migrationRequestForMonth(base, {
@@ -1771,6 +1796,18 @@ function formatAlertLines(message: string) {
 function readInitialSharedSearch(): SharedSearchState | null {
   try {
     return readSharedSearchFromUrl(new URL(window.location.href))
+  } catch {
+    return null
+  }
+}
+
+export const RESTORE_JOB_QUERY_PARAM = "job"
+
+/** The id of a server-side job this tab should read instead of starting one. */
+function readRestorableJobIdFromUrl(): string | null {
+  try {
+    const value = new URL(window.location.href).searchParams.get(RESTORE_JOB_QUERY_PARAM)?.trim()
+    return value ? value : null
   } catch {
     return null
   }
