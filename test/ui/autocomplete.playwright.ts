@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Page, Route } from "playwright";
 import { openDesktop, withDesktopPage } from "../helpers/ui.ts";
-import { routeLocationUsageSuggestions, waitForFontsReady } from "./support.ts";
+import { clickSegment, routeLocationUsageSuggestions, segment, waitForFontsReady } from "./support.ts";
 
 test("autocomplete uses combobox, listbox, and option semantics", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
@@ -22,7 +22,9 @@ test("autocomplete uses combobox, listbox, and option semantics", async () => {
 
     await openDesktop(page, baseUrl);
     const origin = page.getByRole("combobox", { name: "Origen" });
-    await origin.fill("l");
+    /* 11 §2.1 puts the changeover at two letters: with one, «nada cambia en la
+       lista, se sigue viendo Recientes». Matches are what this test is about. */
+    await origin.fill("li");
 
     const listbox = page.getByRole("listbox");
     await listbox.waitFor();
@@ -44,7 +46,11 @@ test("autocomplete uses combobox, listbox, and option semantics", async () => {
     assert.match(options[0].text, /LIM/);
     assert.doesNotMatch(options[0].text, /LIM\s*LIM/);
     assert.ok(options.every((option) => Boolean(option.id)));
-    assert.ok(options.every((option) => option.selected === "false"));
+    /* «Se resalta la primera fila» (11 §2.1) — and only the first: the highlight
+       says where `Enter` would land, and the row after it in the ficha is
+       explicit that «resaltado ≠ elegido». */
+    assert.equal(options[0].selected, "true");
+    assert.ok(options.slice(1).every((option) => option.selected === "false"));
   }, { autoOpen: false });
 });
 
@@ -88,7 +94,7 @@ test("autocomplete resolves an exact location match and closes suggestions", asy
   }, { autoOpen: false });
 });
 
-test("frequent location suggestions resolve labels and collapse their own row", async () => {
+test("frequent location suggestions resolve labels and keep their row in place", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let locationRequestCount = 0;
     await page.route("**/api/locations**", async (route) => {
@@ -129,11 +135,14 @@ test("frequent location suggestions resolve labels and collapse their own row", 
     });
 
     await openDesktop(page, baseUrl);
-    const exactPillBox = await page.getByRole("button", { name: "Exacto" }).boundingBox();
+    const exactPillBox = await segment(page, "Exacto").boundingBox();
     const firstSuggestionBox = await page.getByRole("button", { name: "Usar LIM como origen" }).boundingBox();
     assert.ok(exactPillBox);
     assert.ok(firstSuggestionBox);
-    assert.equal(Math.round(firstSuggestionBox.height), Math.round(exactPillBox.height));
+    assert.ok(
+      Math.abs(firstSuggestionBox.height - exactPillBox.height) <= 2,
+      JSON.stringify({ exactPillBox, firstSuggestionBox }),
+    );
     assert.equal(locationRequestCount, 0, "Ranking cards must not prewarm a browser-side location cache.");
     assert.equal(
       await page.evaluate(() => window.localStorage.getItem("flydesk-location-suggestion-details-v1")),
@@ -151,9 +160,71 @@ test("frequent location suggestions resolve labels and collapse their own row", 
     await page.waitForTimeout(170);
 
     assert.equal(await origin.inputValue(), "LIM - Lima, Perú");
-    assert.equal(await page.getByRole("button", { name: /como origen/ }).count(), 0);
+    /* The chips are a standing shortcut, not a one-shot prompt: using one used
+       to fade its own row away, so changing your mind meant typing the code by
+       hand. Both rows stay. */
+    assert.equal(await page.getByRole("button", { name: /como origen/ }).count(), 3);
     assert.equal(await page.getByRole("button", { name: /como destino/ }).count(), 3);
     assert.equal(locationRequestCount, 1, "The selected code should resolve from the server on demand.");
+  }, { autoOpen: false });
+});
+
+test("empty location field shows separate recent and frequent sections", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route("**/api/location-usage-suggestions**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          suggestions: {
+            origin: ["LIM", "CUZ"],
+            destination: ["MAD"],
+          },
+          frequent: {
+            origin: ["LIM", "CUZ"],
+            destination: ["MAD"],
+          },
+          recent: {
+            origin: ["AQP", "TPP"],
+            destination: ["SCL"],
+          },
+        }),
+      });
+    });
+    await page.route("**/api/locations**", async (route) => {
+      const query = new URL(route.request().url()).searchParams.get("q")?.toUpperCase() ?? "";
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          query,
+          suggestions: [{
+            code: query,
+            city: query === "AQP" ? "Arequipa" : query,
+            country: "Perú",
+            countryCode: "PE",
+            label: `${query} - ${query === "AQP" ? "Arequipa" : query}, Perú`,
+          }],
+        }),
+      });
+    });
+
+    await openDesktop(page, baseUrl);
+    const origin = page.getByRole("combobox", { name: "Origen" });
+    await origin.focus();
+
+    const recent = page.getByRole("region", { name: "Recientes" });
+    const frequent = page.getByRole("region", { name: "Frecuentes" });
+    await recent.waitFor();
+    assert.deepEqual(await recent.getByRole("option").allTextContents(), ["AQP", "TPP"]);
+    assert.deepEqual(await frequent.getByRole("option").allTextContents(), ["LIM", "CUZ"]);
+
+    await origin.press("ArrowDown");
+    assert.match(await origin.getAttribute("aria-activedescendant") ?? "", /usage-0$/);
+    await origin.press("Enter");
+    await page.waitForFunction(() => (
+      document.querySelector<HTMLInputElement>('[aria-label="Origen"]')?.value === "AQP - Arequipa, Perú"
+    ));
   }, { autoOpen: false });
 });
 
@@ -235,21 +306,21 @@ test("idle location suggestions do not disturb autocomplete and swap geometry", 
     await page.getByRole("combobox", { name: "Origen" }).fill("lim");
     await page.getByRole("listbox").waitFor();
     await page.waitForFunction(() => {
-      const originControl = document.querySelector("#location-origen")?.parentElement?.getBoundingClientRect();
-      const listbox = document.querySelector('[role="listbox"]')?.getBoundingClientRect();
-      return Boolean(originControl && listbox && Math.abs(listbox.top - originControl.bottom - 4) <= 1);
+      const originControl = document.querySelector("#location-origen")?.closest(".fd-field-control")?.getBoundingClientRect();
+      const suggestionLayer = document.querySelector('[role="listbox"]')?.parentElement?.getBoundingClientRect();
+      return Boolean(originControl && suggestionLayer && Math.abs(suggestionLayer.top - originControl.bottom - 4) <= 1);
     });
 
     const geometry = await page.evaluate(() => {
-      const originControl = document.querySelector("#location-origen")?.parentElement?.getBoundingClientRect();
-      const listbox = document.querySelector('[role="listbox"]')?.getBoundingClientRect();
+      const originControl = document.querySelector("#location-origen")?.closest(".fd-field-control")?.getBoundingClientRect();
+      const suggestionLayer = document.querySelector('[role="listbox"]')?.parentElement?.getBoundingClientRect();
       const swap = document.querySelector('button[aria-label="Intercambiar ruta"]')?.getBoundingClientRect();
-      if (!originControl || !listbox || !swap) {
+      if (!originControl || !suggestionLayer || !swap) {
         throw new Error("Missing search geometry target");
       }
 
       return {
-        autocompleteGap: listbox.top - originControl.bottom,
+        autocompleteGap: suggestionLayer.top - originControl.bottom,
         originCenterY: originControl.top + originControl.height / 2,
         swapCenterY: swap.top + swap.height / 2,
       };
@@ -310,7 +381,7 @@ test("using both idle location suggestions keeps the search block anchored", asy
       return input?.value === "LIM - Lima, Perú";
     });
     await page.waitForTimeout(170);
-    assert.equal(await page.getByRole("button", { name: /como origen/ }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: /como origen/ }).count(), 3);
 
     await page.getByRole("button", { name: "Usar MAD como destino" }).click();
     await page.waitForFunction(() => {
@@ -322,9 +393,10 @@ test("using both idle location suggestions keeps the search block anchored", asy
     const frameTopAfter = await frame.evaluate((element) => element.getBoundingClientRect().top);
     const gridHeightAfter = await grid.evaluate((element) => element.getBoundingClientRect().height);
 
-    assert.equal(await page.getByRole("button", { name: /como destino/ }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: /como destino/ }).count(), 3);
+    // The rows no longer collapse, so holding the block still is the whole point.
     assert.ok(Math.abs(frameTopAfter - frameTopBefore) <= 1);
-    assert.equal(Math.round(gridHeightAfter), Math.round(gridHeightBefore));
+    assert.ok(Math.abs(gridHeightAfter - gridHeightBefore) <= 1);
   }, { autoOpen: false });
 });
 
@@ -378,11 +450,14 @@ test("passenger steppers cap the UI at nine travelers", async () => {
       await addAdults.click();
     }
 
-    assert.equal(await page.getByRole("button", { name: "Seleccionar pasajeros" }).innerText(), "9 pasajeros");
+    assert.match(
+      await page.getByRole("button", { name: "Seleccionar pasajeros" }).innerText(),
+      /9 pasajeros\s*$/,
+    );
     assert.equal(await addAdults.isDisabled(), true);
     assert.equal(await page.getByRole("button", { name: "Agregar niños" }).isDisabled(), true);
     assert.equal(await page.getByRole("button", { name: "Agregar bebés" }).isDisabled(), true);
-    assert.equal(await page.getByText("Máximo 9 pasajeros por búsqueda.").count(), 1);
+    assert.equal(await page.getByText(/Máximo 9 por búsqueda/).count(), 1);
   });
 });
 
@@ -394,10 +469,10 @@ test("search fields show invalid outline and inline helper text", async () => {
     await page.getByRole("combobox", { name: "Destino" }).focus();
 
     await assert.equal(await origin.getAttribute("aria-invalid"), "true");
-    assert.match(await origin.locator("xpath=..").getAttribute("class") ?? "", /fd-control-invalid/);
+    assert.match(await origin.locator("xpath=..").getAttribute("class") ?? "", /fd-field-invalid/);
     await assert.equal(await page.getByText("Ingresa un origen válido.").count(), 1);
 
-    await page.getByRole("button", { name: "Flexible" }).click();
+    await clickSegment(segment(page, "Flexible"));
     await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
     await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
     await assert.equal(await page.getByRole("button", { name: "Buscar" }).isDisabled(), true);
@@ -408,6 +483,13 @@ test("search fields show invalid outline and inline helper text", async () => {
 
     await assert.equal(await page.getByRole("button", { name: "Salida desde" }).getAttribute("aria-invalid"), "true");
     await assert.equal(await page.getByText("Selecciona el inicio del rango.").count(), 1);
+    await assert.equal(await page.getByText("Selecciona el fin del rango.").count(), 0);
+
+    await page.getByRole("button", { name: "Salida desde" }).click();
+    await page.getByRole("dialog", { name: "Calendario de fechas" })
+      .getByRole("button", { name: /^31 de marzo de 2026/ })
+      .click();
+    await assert.equal(await page.getByRole("button", { name: "Salida hasta" }).getAttribute("aria-invalid"), "true");
     await assert.equal(await page.getByText("Selecciona el fin del rango.").count(), 1);
   });
 });

@@ -1,56 +1,35 @@
 import assert from "node:assert/strict";
 import type { Locator, Page } from "playwright";
 
-export async function waitForPressed(button: Locator): Promise<void> {
+/*
+ * Segmented controls (01 §3, 11 §8) are a radio group: one choice out of n,
+ * applied on the gesture. The options carry `aria-checked`, not `aria-pressed`
+ * — that belonged to the shadcn ToggleGroup the redesign removed, and a toggle
+ * button says "on/off" where the plate says "one of these".
+ *
+ * There is no sliding pill to wait for either: 07 §5 and 11 §8 make the pill a
+ * `::before` of the active option, so it changes place with `tacto` instead of
+ * travelling. `aria-checked` flipping *is* the whole settled state.
+ */
+export function segment(scope: Page | Locator, name: string | RegExp): Locator {
+  return scope.getByRole("radio", { name, exact: typeof name === "string" });
+}
+
+export async function waitForSegmentChecked(option: Locator): Promise<void> {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    if (await button.getAttribute("aria-pressed") === "true") {
+    if (await option.getAttribute("aria-checked") === "true") {
       return;
     }
 
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 
-  assert.equal(await button.getAttribute("aria-pressed"), "true");
+  assert.equal(await option.getAttribute("aria-checked"), "true");
 }
 
-export async function clickSegment(button: Locator): Promise<void> {
-  await button.click();
-  await waitForPressed(button);
-}
-
-export async function waitForStableIndicator(indicator: Locator): Promise<void> {
-  let previous: { width: number; x: number } | undefined;
-  let stableFrames = 0;
-
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const current = await indicator.evaluate((element) => {
-      const style = getComputedStyle(element);
-      const matrix = new DOMMatrixReadOnly(style.transform);
-      return {
-        width: Number.parseFloat(style.width),
-        x: matrix.m41,
-      };
-    });
-
-    if (!Number.isFinite(current.width) || !Number.isFinite(current.x)) {
-      throw new Error(`Segmented indicator has invalid geometry: ${JSON.stringify(current)}`);
-    }
-
-    stableFrames = previous
-      && Math.abs(previous.width - current.width) <= 0.01
-      && Math.abs(previous.x - current.x) <= 0.01
-      ? stableFrames + 1
-      : 0;
-    previous = current;
-
-    if (stableFrames >= 2) {
-      return;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-
-  throw new Error("Segmented indicator did not settle before the timeout.");
+export async function clickSegment(option: Locator): Promise<void> {
+  await option.click();
+  await waitForSegmentChecked(option);
 }
 
 export async function waitForLocationFieldsClosed(

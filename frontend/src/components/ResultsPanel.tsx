@@ -6,95 +6,106 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
-  type ReactNode,
 } from "react"
-import { ResultCard, ResultScheduleTime } from "@/components/results/ResultCard"
-import { buildResultCardModel, type ResultCardModel, type ResultJourneySummary } from "@/components/results/result-card-model"
+import { ResultCard, type AlternateSchedule } from "@/components/results/ResultCard"
+import { buildAlternateScheduleModel } from "@/components/results/result-card-model"
 import {
   buildResultListItems,
   paginateResultListItems,
   resultListItemContainsOffer,
+  resultListItemDisplayWeight,
   type ResultListItem,
   type ResultOfferGroup,
 } from "@/components/results/result-groups"
+import { AllSchedulesPanel } from "@/components/results/AllSchedulesPanel"
+import { MigrationMonthGrid } from "@/components/results/MigrationMonthGrid"
+import { migrationSweepSummary, type DisplayMonth } from "@/components/results/migration-month-model"
+import { ResultsSkeleton } from "@/components/results/ResultsSkeleton"
+import { ActiveFilterChips } from "@/components/results/ActiveFilterChips"
 import { AppIcon } from "@/components/ui/app-icon"
-import { Button } from "@/components/ui/button"
+import { SegmentedControl, SegmentedOption } from "@/components/ui/segmented-control"
+import { Spinner } from "@/components/ui/spinner"
+import { Kbd } from "@/components/ui/kbd"
+import { ShortcutTooltip } from "@/components/ui/tooltip"
 import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
-import {
-  Pagination,
-  PaginationContent,
-  PaginationEllipsis,
-  PaginationItem,
-} from "@/components/ui/pagination"
-import { SegmentButton, SegmentedControl } from "@/components/ui/segmented-control"
-import { Skeleton } from "@/components/ui/skeleton"
-import { getResultsLayout, saveResultsLayout } from "@/lib/api"
-import { resultsLayoutEditorEnabledFromUrl, resultsLayoutPersistenceEnabled } from "@/lib/results-layout-editor"
-import { cn } from "@/lib/utils"
-import type {
-  CanonicalOffer,
-  MigrationMonthSummary,
-  ResultsColumnLayout,
-  ResultsLayoutColumnKey,
-  SearchJobResponse,
-  SortMode,
-} from "@/types"
+  describeSearchOutcome,
+  failureSentences,
+  stillSearchingBody,
+  type SearchOutcome,
+} from "@/lib/search-outcome"
+import type { CanonicalOffer, SearchJobResponse, SortMode } from "@/types"
 
-const RUNNING_WARNING_DELAY_MS = 12000
-const CACHED_WARNING_DELAY_MS = 18000
-const RESULTS_PAGE_SIZE_FALLBACK = 4
+/*
+ * Plates 1b (active desktop), 2g (list states), 3b (all schedules), 4a
+ * (skeletons) and 1i (migration grid).
+ *
+ * The panel is one header, one strip of active filters, one page of cards and
+ * one pager. The column-width editor that used to live here is gone: plate 1b
+ * closes the card grid at 32 / 186 / 1fr / 116 / 26, so there is nothing left
+ * for it to tune.
+ */
+
 const RESULTS_PAGE_SIZE_MAX = 12
-const RESULTS_CARD_HEIGHT_ESTIMATE_PX = 126
-const RESULTS_CARD_GAP_PX = 10
+const RESULTS_PAGE_SIZE_FALLBACK = 4
+/* Dropping the "Ruta" column took the card from 81px to 68px, which is what
+   turns 4 visible results into 7. */
+const RESULTS_CARD_HEIGHT_ESTIMATE_PX = 68
+const RESULTS_CARD_GAP_PX = 6
 const RESULTS_LIST_TOP_INSET_PX = 4
 const RESULTS_EXTRA_ROW_MIN_BLANK_PX = 28
-const RESULTS_LAYOUT_FILE_HINT = "config/results-layout.json"
-const RESULTS_LAYOUT_RESIZE_STEP_PX = 8
-const RESULTS_COLUMN_DEFINITIONS = [
-  { key: "carrier", label: "Aerolínea", defaultWidth: 139 },
-  { key: "dates", label: "Fechas", defaultWidth: 371 },
-  { key: "duration", label: "Duración", defaultWidth: 205 },
-  { key: "stops", label: "Escalas", defaultWidth: 140 },
-  { key: "price", label: "Precio", defaultWidth: 130 },
-  { key: "links", label: "Proveedor", defaultWidth: 54 },
-] as const satisfies ReadonlyArray<{
-  key: ResultsLayoutColumnKey
+/* A skeleton that never stops is a skeleton that lies. At eight seconds it
+   yields the floor to the incomplete-search notice. */
+const SKELETON_GIVE_UP_MS = 8000
+/* 02 §9: the way back to the top appears past 300px of list scroll. */
+const BACK_TO_TOP_AFTER_PX = 300
+
+export type ActiveFilterChip = {
+  id: string
   label: string
-  defaultWidth: number
-}>
-const DEFAULT_RESULTS_COLUMN_LAYOUT = Object.fromEntries(
-  RESULTS_COLUMN_DEFINITIONS.map((column) => [column.key, column.defaultWidth]),
-) as ResultsColumnLayout
-const RESULTS_LAYOUT_TARGET_TOTAL = RESULTS_COLUMN_DEFINITIONS.reduce(
-  (sum, column) => sum + column.defaultWidth,
-  0,
-)
+}
+
+/**
+ * Plate 2g: what an empty-by-filters list needs to say. The count comes from
+ * the search; the culprit and the way to relax it can only be worked out where
+ * the filters are applied, so they arrive from above — and both are optional,
+ * because a list that cannot tell which filter is to blame says so by staying
+ * quiet rather than by guessing.
+ */
+export type EmptyByFiltersCopy = {
+  /** "El filtro de directo es el que descarta más." */
+  culpritSentence?: string
+  /** "Permitir 1 escala" — relaxes only the culprit. */
+  relax?: { label: string; onClick: () => void }
+}
 
 interface ResultsPanelProps {
   results: SearchJobResponse | null
   unfilteredOfferCount: number
   loading: boolean
   sort: SortMode
-  onSort: (s: SortMode) => void
+  onSort: (sort: SortMode) => void
   onSelectOffer: (offer: CanonicalOffer) => void
   selectedOfferId?: string
-}
-
-type ResultStatusItem = {
-  key: string
-  label: string
-  icon: ReactNode
-  title?: string
-  tone?: "muted" | "warning"
+  activeFilterChips?: ActiveFilterChip[]
+  hiddenByFiltersCount?: number
+  onRemoveFilter?: (id: string) => void
+  onClearFilters?: () => void
+  onOpenFilters?: () => void
+  /** Plate 2g's second exit, supplied by whoever applies the filters. */
+  emptyByFilters?: EmptyByFiltersCopy
+  /** 04 §8's exit for «vacío por búsqueda»: back to editing the search. */
+  onEditSearch?: () => void
+  /** 06 §1.3: choosing a month of the sweep opens that month's normal list. */
+  onOpenMigrationMonth?: (month: DisplayMonth) => void
+  onMobileToolsCollapsedChange?: (collapsed: boolean) => void
+  mobileCollapseEnabled?: boolean
+  /**
+   * Where the strip of active filters mounts. On a desk it belongs to the list
+   * header; in armazón C it is the middle band of the retractable tools block,
+   * which the shell owns because the search summary above it retracts with it
+   * as one piece (plate 1d, 02 §9).
+   */
+  chipsPlacement?: "list" | "external"
 }
 
 function ResultsPanelBase({
@@ -105,239 +116,285 @@ function ResultsPanelBase({
   onSort,
   onSelectOffer,
   selectedOfferId,
+  activeFilterChips = [],
+  hiddenByFiltersCount = 0,
+  onRemoveFilter,
+  onClearFilters,
+  onOpenFilters,
+  emptyByFilters,
+  onEditSearch,
+  onOpenMigrationMonth,
+  onMobileToolsCollapsedChange,
+  mobileCollapseEnabled = false,
+  chipsPlacement = "list",
 }: ResultsPanelProps) {
+  const [mobileToolsCollapsed, setMobileToolsCollapsed] = useState(false)
   const offers = results?.offers ?? []
   const meta = results?.searchMeta
   const isMigration = results?.request.searchMode === "month-view" || Boolean(results?.migrationMonths?.length)
   const isCancelled = results?.searchStatus === "cancelled"
-  const warnings = useMemo(
-    () => uniqueWarnings([...(results?.warnings ?? []), ...(meta?.warnings ?? [])]),
-    [results?.warnings, meta?.warnings],
-  )
-  const actionableWarnings = useMemo(() => warnings.filter(isActionableWarning), [warnings])
-  const displayableWarnings = useMemo(
-    () => loading && !results?.searchComplete
-      ? actionableWarnings.filter((warning) => !isGenericOperationFailureWarning(warning))
-      : actionableWarnings,
-    [actionableWarnings, loading, results?.searchComplete],
-  )
-  const noFlightIssues = useMemo(() => providerNoFlightIssues(actionableWarnings), [actionableWarnings])
-  const filteredEmpty = isFilteredEmptyState(results, offers, unfilteredOfferCount)
-  const emphasizedNoFlightIssues = filteredEmpty ? [] : noFlightIssues
-  const warningDelayElapsed = useWarningDelayElapsed(results, loading)
-  const displayedWarnings = shouldDelayWarnings(results, loading, noFlightIssues.length)
-    ? warningDelayElapsed ? displayableWarnings : []
-    : displayableWarnings
-  const warningSummary = displayedWarnings.length > 0
-    ? warningSummaryLabel(displayedWarnings, emphasizedNoFlightIssues)
-    : null
-  const isRevalidatingCachedSearch = meta?.searchState === "search_cached"
-  const hasUsableOffers = offers.length > 0
-  const pendingMigrationMonths = results?.migrationMonths?.filter((month) => month.status === "loading" || month.status === "partial").length ?? 0
-  const summaryLabel = isMigration
-    ? `${results?.migrationMonths?.length ?? 8} meses · ${offers.length} con tarifa${pendingMigrationMonths ? ` · ${pendingMigrationMonths} buscando` : ""}`
-    : resultsSummaryLabel(offers.length, loading, Boolean(results))
-  const loadingStatusLabel = isMigration && hasUsableOffers
-    ? "Parcial"
-    : hasUsableOffers ? "Actualizando" : "Buscando"
-  const maybeStatusItems: Array<ResultStatusItem | null> = [
-    isRevalidatingCachedSearch
-      ? { key: "cache", label: "Cache revalidando", icon: <AppIcon name="clock" className="h-3.5 w-3.5" /> }
-      : null,
-    loading
-      ? { key: "loading", label: loadingStatusLabel, icon: <AppIcon name="loading" spin className="h-3.5 w-3.5" /> }
-      : null,
-    isCancelled && !loading
-      ? { key: "cancelled", label: "Detenida", icon: <AppIcon name="x" className="h-3.5 w-3.5" /> }
-      : null,
-    meta?.partial && !loading
-      ? { key: "partial", label: "Parcial", icon: <AppIcon name="clock" className="h-3.5 w-3.5" /> }
-      : null,
-    warningSummary
-      ? {
-        key: "warnings",
-        label: warningSummary,
-        icon: <AppIcon name="alert" className="h-3.5 w-3.5" />,
-        title: displayedWarnings.join("\n"),
-        tone: "warning",
-      }
-      : null,
-  ]
-  const statusItems = maybeStatusItems.filter((item): item is ResultStatusItem => Boolean(item))
-  const layoutPersistenceEnabled = useMemo(() => resultsLayoutPersistenceEnabled(), [])
-  const layoutEditor = useResultsLayoutEditor()
-  const savedResultsLayout = useSavedResultsLayout(!layoutEditor.enabled && layoutPersistenceEnabled)
-  const activeResultsLayout = layoutEditor.enabled
-    ? layoutEditor.initialized ? layoutEditor.columns : null
-    : savedResultsLayout.columns ?? DEFAULT_RESULTS_COLUMN_LAYOUT
-  const resultsLayoutLoading = layoutEditor.enabled ? layoutEditor.loading : savedResultsLayout.loading
+  /*
+   * 11 §3 separates «tarda» from «falla»: the first is a pill that goes away,
+   * the second is a line of text. Keyed on `meta.partial` alone the pill spun
+   * for ever whenever a provider fell over, because `partial` stays true after
+   * the job completes — the search was said to be in progress long after it had
+   * stopped. Progress is what the pill reports, so it lives exactly as long as
+   * the search does, and the failure is left to the notice above.
+   */
+  const isPartial = loading && (Boolean(meta?.partial) || offers.length > 0)
+  /* What became of the providers, read once here so the count, the column and
+     the still-searching copy cannot tell three different stories. */
+  const outcome = useMemo(() => describeSearchOutcome(results), [results])
+  const passengerCount = passengerCountForRequest(results?.request)
+  const showPerPerson = canShowPerPersonForRequest(results?.request)
 
+  const visibleMobileToolsCollapsed = mobileCollapseEnabled && mobileToolsCollapsed
+  /* 1i and 2f give the sweep its own two facts in the header — months with a
+     fare, and the range of prices. Computed once here so the grid below has one
+     header above it instead of a second one of its own. */
+  const sweep = isMigration && results ? migrationSweepSummary(results, offers) : null
+
+  /*
+   * What the agent asked to see, as opposed to what the providers have sent so
+   * far. Only a gesture changes it — a filter, a sort — so it is what the list
+   * cross-fades on and what returns the pager to page 1 (04 §2/§6, 11 §3).
+   *
+   * Deriving that from the offers instead was a real defect: a progressive
+   * search appends offers, which would have re-keyed the list and rebuilt every
+   * card the agent was already reading.
+   */
+  const viewKey = useMemo(
+    () => [sort, ...activeFilterChips.map((chip) => chip.id)].join("|"),
+    [activeFilterChips, sort],
+  )
+
+  useEffect(() => {
+    onMobileToolsCollapsedChange?.(visibleMobileToolsCollapsed)
+  }, [onMobileToolsCollapsedChange, visibleMobileToolsCollapsed])
+
+  /*
+   * Plate 8a: the list column is not a card. Filters and detail are panels
+   * because they sit beside the list; the list itself is the page, so wrapping
+   * it in a second card put a border between the agent and the results.
+   *
+   * The header has two shapes and one job. On a desk (04 §3) it is title +
+   * count + state pill on the left and the order on the right. On a phone it
+   * collapses to the 32px status row of plate 1d — no title, because there is
+   * nothing else on screen to tell it apart from — and that row is the one
+   * thing that never retracts.
+   */
   return (
-    <section className="fd-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden" aria-busy={loading}>
-      <div className="fd-panel-header">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div>
-              <h2 className="fd-panel-title">{isMigration ? "Vuelo migratorio" : "Resultados"}</h2>
-            </div>
-            <ResultMetaLine summary={summaryLabel} items={statusItems} />
-          </div>
+    <section className="fd-list-shell" aria-busy={loading}>
+      <div className="fd-list-header">
+        <div className="fd-list-header-lead">
+          <h2 className="fd-list-title">{isMigration ? "Vuelo migratorio" : "Resultados"}</h2>
+          {sweep ? (
+            <span className="fd-panel-count">
+              {sweep.priced} de {sweep.monthCount} {sweep.monthCount === 1 ? "mes" : "meses"}
+              <span className="fd-month-count-tail"> con tarifa</span>
+            </span>
+          ) : (
+            <ResultCount
+              visible={offers.length}
+              total={unfilteredOfferCount}
+              loading={loading}
+              hasResults={Boolean(results)}
+              searchFailed={outcome.allFailed || outcome.jobFailed}
+            />
+          )}
+          {/* A sweep says how many months are still out rather than that it is
+              «Parcial»: on this view the unit of progress is the month (1i). */}
+          {sweep && sweep.searching > 0 && (
+            <span className="fd-status-pill">
+              <Spinner size={12} />
+              {sweep.searching} buscando
+            </span>
+          )}
+          {isPartial && !sweep && (
+            <span className="fd-status-pill">
+              <Spinner size={12} />
+              Parcial
+            </span>
+          )}
+          {isCancelled && !loading && (
+            <span className="fd-status-pill">
+              <AppIcon name="x" size={12} />
+              Detenida
+            </span>
+          )}
+        </div>
 
-          {!isMigration && (
+        {/* 1i puts the sweep's price range where an ordinary list puts the
+            order — there is nothing to sort here, every month is one fare. On a
+            phone 2f keeps it in the same row, which is what this already is. */}
+        {sweep && (
+          <div className="fd-list-header-trail">
+            <span className="fd-result-sort-label fd-type-micro">Rango</span>
+            <span className="fd-month-range">{sweep.range}</span>
+            <span className="fd-month-range fd-month-range--short">{sweep.rangeShort}</span>
+          </div>
+        )}
+
+        {!isMigration && (
+          <div className="fd-list-header-trail">
+            <span className="fd-result-sort-label fd-type-micro">Ordenar</span>
             <SegmentedControl
               aria-label="Orden de resultados"
               value={sort}
+              className="fd-result-sort-segmented"
               onValueChange={(value) => {
                 if (value === "cheapest" || value === "fastest") onSort(value)
               }}
             >
-              <SegmentButton
-                value="cheapest"
-                aria-label="Ordenar por precio"
-              >
-                Precio
-              </SegmentButton>
-              <SegmentButton
-                value="fastest"
-                aria-label="Ordenar por duración"
-              >
-                Duración
-              </SegmentButton>
+              <SegmentedOption value="cheapest" aria-label="Ordenar por precio">Precio</SegmentedOption>
+              <SegmentedOption value="fastest" aria-label="Ordenar por duración">Duración</SegmentedOption>
             </SegmentedControl>
-          )}
-        </div>
-
+            {/* Plate 1d: a 32px status row has no space for a segmented, so the
+                two modes collapse into whichever is on and tapping swaps them.
+                The order never disappears on a phone — 02 §5 lists what may,
+                and this is not on the list. */}
+            <button
+              type="button"
+              className="fd-result-sort-compact fd-focus-ring"
+              aria-label={`Ordenar por ${sort === "cheapest" ? "duración" : "precio"}`}
+              onClick={() => onSort(sort === "cheapest" ? "fastest" : "cheapest")}
+            >
+              <AppIcon name="sort" size={14} />
+              {sort === "cheapest" ? "Precio" : "Duración"}
+            </button>
+            {/* 02 §9 step 6: once the tools retract, the status row grows a
+                26px filter button so the filters are never out of reach. */}
+            {onOpenFilters && (
+              <ShortcutTooltip label="Abrir filtros" shortcut={<Kbd>F</Kbd>}>
+                <button
+                  type="button"
+                  className="fd-status-row-filters fd-focus-ring"
+                  data-collapsed={visibleMobileToolsCollapsed}
+                  aria-label="Abrir filtros"
+                  onClick={onOpenFilters}
+                >
+                  <AppIcon name="filters" size={14} />
+                </button>
+              </ShortcutTooltip>
+            )}
+          </div>
+        )}
       </div>
 
-      {renderBody({
-        loading,
-        results,
-        offers,
-        isCancelled,
-        noFlightIssues: emphasizedNoFlightIssues,
-        filteredEmpty,
-        selectedOfferId,
-        onSelectOffer,
-        layoutEditorEnabled: layoutEditor.enabled,
-        layoutEditorReady: layoutEditor.initialized,
-        layoutEditorSaving: layoutEditor.saving,
-        layoutEditorError: layoutEditor.error,
-        layoutEditorLoading: layoutEditor.loading,
-        layoutEditorSavedAt: layoutEditor.savedAt,
-        layoutColumns: layoutEditor.columns,
-        onLayoutBoundaryResize: layoutEditor.resizeColumnBoundary,
-        onLayoutColumnsMeasured: layoutEditor.initializeFromMeasuredColumns,
-        onLayoutReset: layoutEditor.reset,
-        onLayoutSave: layoutEditor.save,
-        resultsLayout: activeResultsLayout,
-        resultsLayoutLoading,
-        cached: isRevalidatingCachedSearch,
-      })}
+      {chipsPlacement === "list" && (
+        <ActiveFilterChips
+          chips={activeFilterChips}
+          activeFilterCount={activeFilterChips.length}
+          hiddenByFiltersCount={hiddenByFiltersCount}
+          onRemoveFilter={onRemoveFilter}
+        />
+      )}
+
+      <ResultsBody
+        results={results}
+        outcome={outcome}
+        offers={offers}
+        loading={loading}
+        isCancelled={isCancelled}
+        isMigration={isMigration}
+        unfilteredOfferCount={unfilteredOfferCount}
+        passengerCount={passengerCount}
+        showPerPerson={showPerPerson}
+        selectedOfferId={selectedOfferId}
+        onSelectOffer={onSelectOffer}
+        onClearFilters={onClearFilters}
+        emptyByFilters={emptyByFilters}
+        onEditSearch={onEditSearch}
+        onOpenMigrationMonth={onOpenMigrationMonth}
+        activeFilterChips={activeFilterChips}
+        viewKey={viewKey}
+        onMobileToolsCollapsedChange={setMobileToolsCollapsed}
+        mobileCollapseEnabled={mobileCollapseEnabled}
+      />
     </section>
   )
 }
 
-function ResultMetaLine({ summary, items }: { summary: string; items: ResultStatusItem[] }) {
-  if (!summary && items.length === 0) return null
+function ResultCount({
+  visible,
+  total,
+  loading,
+  hasResults,
+  searchFailed,
+}: {
+  visible: number
+  total: number
+  loading: boolean
+  hasResults: boolean
+  /** Nothing was searched, so there is no count to state — only a notice. */
+  searchFailed: boolean
+}) {
+  if (visible === 0) {
+    if (loading || searchFailed) return null
+    return <span className="fd-panel-count">{hasResults ? "sin vuelos visibles" : "sin consulta"}</span>
+  }
 
-  const warningItems = items.filter((item) => item.key === "warnings")
-  const statusItems = items.filter((item) => item.key !== "warnings")
+  // "386 de 1,240" only when filters are actually hiding something; otherwise
+  // the second number is the first number and says nothing.
+  const label = total > visible
+    ? `${visible.toLocaleString("es-PE")} de ${total.toLocaleString("es-PE")}`
+    : visible.toLocaleString("es-PE")
 
-  return (
-    <div
-      aria-live="polite"
-      className="fd-panel-subtitle mt-0.5 flex min-w-0 max-w-full items-center gap-2 overflow-hidden"
-    >
-      {statusItems.map((item, index) => (
-        <span
-          key={item.key}
-          title={item.title}
-          className={cn(
-            "inline-flex min-w-0 items-center gap-1",
-            index > 0 && "before:text-muted-foreground before:content-['·']",
-            item.tone === "warning" && "text-warning-soft-foreground",
-          )}
-        >
-          {item.icon}
-          <span className="truncate">{item.label}</span>
-        </span>
-      ))}
-      {summary && (
-        <span className={cn("shrink-0", statusItems.length > 0 && "before:mr-2 before:text-muted-foreground before:content-['·']")}>
-          {summary}
-        </span>
-      )}
-      {warningItems.map((item) => (
-        <span
-          key={item.key}
-          title={item.title}
-          className={cn(
-            "inline-flex min-w-0 items-center gap-1",
-            (summary || statusItems.length > 0) && "before:text-muted-foreground before:content-['·']",
-            item.tone === "warning" && "text-warning-soft-foreground",
-          )}
-        >
-          {item.icon}
-          <span className="truncate">{item.label}</span>
-        </span>
-      ))}
-    </div>
-  )
+  return <span className="fd-panel-count">{label}</span>
 }
 
-function renderBody({
-  loading,
+function ResultsBody({
   results,
+  outcome,
   offers,
-  noFlightIssues,
-  filteredEmpty,
+  loading,
   isCancelled,
+  isMigration,
+  unfilteredOfferCount,
+  passengerCount,
+  showPerPerson,
   selectedOfferId,
   onSelectOffer,
-  layoutEditorEnabled,
-  layoutEditorReady,
-  layoutEditorSaving,
-  layoutEditorError,
-  layoutEditorLoading,
-  layoutEditorSavedAt,
-  layoutColumns,
-  onLayoutBoundaryResize,
-  onLayoutColumnsMeasured,
-  onLayoutReset,
-  onLayoutSave,
-  resultsLayout,
-  resultsLayoutLoading,
-  cached,
+  onClearFilters,
+  emptyByFilters,
+  onEditSearch,
+  onOpenMigrationMonth,
+  activeFilterChips,
+  viewKey,
+  onMobileToolsCollapsedChange,
+  mobileCollapseEnabled,
 }: {
-  loading: boolean
   results: SearchJobResponse | null
+  outcome: SearchOutcome
   offers: CanonicalOffer[]
+  loading: boolean
   isCancelled: boolean
-  noFlightIssues: ProviderNoFlightIssue[]
-  filteredEmpty: boolean
+  isMigration: boolean
+  unfilteredOfferCount: number
+  passengerCount: number
+  showPerPerson: boolean
   selectedOfferId?: string
   onSelectOffer: (offer: CanonicalOffer) => void
-  layoutEditorEnabled: boolean
-  layoutEditorReady: boolean
-  layoutEditorSaving: boolean
-  layoutEditorError: string
-  layoutEditorLoading: boolean
-  layoutEditorSavedAt: string
-  layoutColumns: ResultsColumnLayout
-  onLayoutBoundaryResize: (leftKey: ResultsLayoutColumnKey, rightKey: ResultsLayoutColumnKey, delta: number) => void
-  onLayoutColumnsMeasured: (columns: ResultsColumnLayout) => void
-  onLayoutReset: () => void
-  onLayoutSave: () => void
-  resultsLayout: ResultsColumnLayout | null
-  resultsLayoutLoading: boolean
-  cached: boolean
+  onClearFilters?: () => void
+  emptyByFilters?: EmptyByFiltersCopy
+  onEditSearch?: () => void
+  onOpenMigrationMonth?: (month: DisplayMonth) => void
+  activeFilterChips: ActiveFilterChip[]
+  viewKey: string
+  onMobileToolsCollapsedChange: (collapsed: boolean) => void
+  mobileCollapseEnabled: boolean
 }) {
+  const skeletonExpired = useSkeletonTimeout(
+    loading && offers.length === 0,
+    results?.searchJobId ?? "pending",
+  )
+
   if (!results && !loading) {
     return (
       <EmptyState
-        icon={<AppIcon name="flight" />}
+        icon="flight"
         title="Busca vuelos para comparar"
-        body="Ingresa origen, destino y fechas. La lista priorizará precio, duración, escalas, equipaje y proveedor."
+        body="Ingresa origen, destino y fechas. La lista prioriza precio, duración, escalas, equipaje y proveedor."
       />
     )
   }
@@ -345,211 +402,355 @@ function renderBody({
   if (isCancelled && offers.length === 0) {
     return (
       <EmptyState
-        icon={<AppIcon name="x" />}
+        icon="x"
         title="Búsqueda detenida"
         body="Ajusta origen, destino, fechas o pasajeros y vuelve a buscar cuando esté listo."
       />
     )
   }
 
-  if (results?.request.searchMode === "month-view" || results?.migrationMonths?.length) {
+  if (isMigration && results) {
     return (
       <MigrationMonthGrid
-        months={migrationMonthsForDisplay(results, offers)}
-        passengerCount={passengerCountForRequest(results.request)}
+        results={results}
+        offers={offers}
+        passengerCount={passengerCount}
         selectedOfferId={selectedOfferId}
         onSelectOffer={onSelectOffer}
+        onOpenMonth={onOpenMigrationMonth}
       />
     )
   }
 
-  if (resultsLayoutLoading && offers.length > 0) {
-    return <ResultsLoadingSkeleton rows={Math.max(offers.length, RESULTS_PAGE_SIZE_FALLBACK)} />
+  if (loading && offers.length === 0 && !skeletonExpired) {
+    return <ResultsSkeleton />
   }
 
+  /*
+   * 04 §7 and 11 §3: at eight seconds the skeleton stops and the state is said
+   * with words. Without this branch the search fell through to an empty
+   * `ResultsPage` — a blank column with no message and no pager, which reads as
+   * "no flights" for a search that is still running.
+   *
+   * The words come from the diagnostics rather than from the timer that raised
+   * them: the old copy asserted in the plural that «los proveedores están
+   * tardando», which was simply false when one of the two had already failed.
+   */
   if (loading && offers.length === 0) {
-    return <ResultsLoadingSkeleton />
-  }
-
-  if (!loading && results && offers.length === 0) {
-    const emptyModel = emptySearchModel(noFlightIssues, filteredEmpty)
-
     return (
       <EmptyState
-        icon={<AppIcon name="sort" />}
-        title={emptyModel.title}
-        body={emptyModel.body}
+        icon="clock"
+        title="La búsqueda sigue en curso"
+        body={stillSearchingBody(outcome)}
+      />
+    )
+  }
+
+  if (offers.length === 0 && results) {
+    // Plate 2g: an empty list caused by filters names the filter to blame and
+    // offers two ways out. An empty list with no filters on is a different
+    // problem and gets different words.
+    const filteredEmpty = unfilteredOfferCount > 0 || (results.allOffers?.length ?? 0) > 0
+
+    if (filteredEmpty) {
+      const count = activeFilterChips.length
+      return (
+        <EmptyState
+          icon="filtersOff"
+          title={count === 1
+            ? "Ningún vuelo cumple el filtro"
+            : `Ningún vuelo cumple los ${spellOutCount(count)} filtros`}
+          body={filteredEmptyBody(unfilteredOfferCount, emptyByFilters?.culpritSentence)}
+          action={onClearFilters
+            ? {
+                label: count === 1 ? "Quitar el filtro" : `Quitar los ${count} filtros`,
+                onClick: onClearFilters,
+              }
+            : undefined}
+          secondaryAction={emptyByFilters?.relax}
+        />
+      )
+    }
+
+    /*
+     * Nobody answered. 04 §8 keeps the reason in the one-line notice above, but
+     * the column underneath still has to say something, and «Sin resultados
+     * para esta consulta · Ajusta fechas, escalas, equipaje o aerolíneas» was
+     * the wrong something: it asks the agent to widen a search that never ran.
+     */
+    if (outcome.allFailed || (outcome.jobFailed && outcome.failed.length > 0)) {
+      return (
+        <EmptyState
+          icon="alert"
+          title="No se pudo consultar a los proveedores"
+          body={`${failureSentences(outcome).join(" ")} La búsqueda no llegó a ejecutarse, así que esta ruta puede tener vuelos.`}
+          action={onEditSearch ? { label: "Volver a editar la búsqueda", onClick: onEditSearch, icon: "search" } : undefined}
+        />
+      )
+    }
+
+    if (outcome.jobFailed && results.error) {
+      return (
+        <EmptyState
+          icon="alert"
+          title="La búsqueda no se pudo completar"
+          body={results.error}
+          action={onEditSearch ? { label: "Volver a editar la búsqueda", onClick: onEditSearch, icon: "search" } : undefined}
+        />
+      )
+    }
+
+    // 04 §8, «vacío por búsqueda»: mensaje + volver a editar la búsqueda.
+    return (
+      <EmptyState
+        icon="sort"
+        title="Sin resultados para esta consulta"
+        body="Ajusta fechas, escalas, equipaje o aerolíneas para ampliar la cobertura."
+        action={onEditSearch ? { label: "Volver a editar la búsqueda", onClick: onEditSearch, icon: "search" } : undefined}
       />
     )
   }
 
   return (
-    <PaginatedResultsList
+    <ResultsPage
       offers={offers}
-      passengerCount={passengerCountForRequest(results?.request)}
+      scheduleGroups={results?.scheduleGroups}
+      passengerCount={passengerCount}
+      showPerPerson={showPerPerson}
       selectedOfferId={selectedOfferId}
       onSelectOffer={onSelectOffer}
-      layoutEditorEnabled={layoutEditorEnabled}
-      layoutEditorReady={layoutEditorReady}
-      layoutEditorSaving={layoutEditorSaving}
-      layoutEditorError={layoutEditorError}
-      layoutEditorLoading={layoutEditorLoading}
-      layoutEditorSavedAt={layoutEditorSavedAt}
-      layoutColumns={layoutColumns}
-      onLayoutBoundaryResize={onLayoutBoundaryResize}
-      onLayoutColumnsMeasured={onLayoutColumnsMeasured}
-      onLayoutReset={onLayoutReset}
-      onLayoutSave={onLayoutSave}
-      resultsLayout={resultsLayout}
-      cached={cached}
+      partial={loading}
+      viewKey={viewKey}
+      onMobileToolsCollapsedChange={onMobileToolsCollapsedChange}
+      mobileCollapseEnabled={mobileCollapseEnabled}
     />
   )
 }
 
-function ResultsLoadingSkeleton({ rows = RESULTS_PAGE_SIZE_MAX }: { rows?: number }) {
-  const rowCount = Math.max(1, Math.min(rows, RESULTS_PAGE_SIZE_MAX))
-
-  return (
-    <div className="min-h-0 flex-1 overflow-hidden p-3" aria-hidden="true" data-testid="results-loading-skeleton">
-      <div className="grid h-full auto-rows-[104px] gap-2.5 overflow-hidden">
-        {Array.from({ length: rowCount }).map((_, index) => (
-          <Skeleton key={index} className="h-full w-full" />
-        ))}
-      </div>
-    </div>
-  )
+/**
+ * How many results the search *does* hold, and — when it can be worked out —
+ * which filter is throwing most of them away. The second sentence is omitted
+ * rather than guessed: naming the wrong culprit sends the agent to undo a
+ * filter that was not the problem.
+ */
+function filteredEmptyBody(totalCount: number, culpritSentence?: string): string {
+  const held = `Hay ${totalCount.toLocaleString("es-PE")} ${totalCount === 1 ? "resultado" : "resultados"} en esta búsqueda.`
+  return culpritSentence ? `${held} ${culpritSentence}` : held
 }
 
-function PaginatedResultsList({
+/** Plate 2g writes the count as a word in the title and as a figure in the button. */
+const COUNT_WORDS = ["cero", "un", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve"]
+
+function spellOutCount(count: number): string {
+  return COUNT_WORDS[count] ?? String(count)
+}
+
+function ResultsPage({
   offers,
+  scheduleGroups,
   passengerCount,
+  showPerPerson,
   selectedOfferId,
   onSelectOffer,
-  layoutEditorEnabled,
-  layoutEditorReady,
-  layoutEditorSaving,
-  layoutEditorError,
-  layoutEditorLoading,
-  layoutEditorSavedAt,
-  layoutColumns,
-  onLayoutBoundaryResize,
-  onLayoutColumnsMeasured,
-  onLayoutReset,
-  onLayoutSave,
-  resultsLayout,
-  cached,
+  partial,
+  viewKey,
+  onMobileToolsCollapsedChange,
+  mobileCollapseEnabled,
 }: {
   offers: CanonicalOffer[]
+  scheduleGroups: SearchJobResponse["scheduleGroups"]
   passengerCount: number
+  showPerPerson: boolean
   selectedOfferId?: string
   onSelectOffer: (offer: CanonicalOffer) => void
-  layoutEditorEnabled: boolean
-  layoutEditorReady: boolean
-  layoutEditorSaving: boolean
-  layoutEditorError: string
-  layoutEditorLoading: boolean
-  layoutEditorSavedAt: string
-  layoutColumns: ResultsColumnLayout
-  onLayoutBoundaryResize: (leftKey: ResultsLayoutColumnKey, rightKey: ResultsLayoutColumnKey, delta: number) => void
-  onLayoutColumnsMeasured: (columns: ResultsColumnLayout) => void
-  onLayoutReset: () => void
-  onLayoutSave: () => void
-  resultsLayout: ResultsColumnLayout | null
-  cached: boolean
+  partial: boolean
+  viewKey: string
+  onMobileToolsCollapsedChange: (collapsed: boolean) => void
+  mobileCollapseEnabled: boolean
 }) {
-  const resultItems = useMemo(() => buildResultListItems(offers), [offers])
-  const layoutGuideVisible = layoutEditorEnabled && layoutEditorReady
-  const { pageCapacity, viewportRef } = useAdaptiveResultsPageCapacity(
-    resultItems.length + (layoutGuideVisible ? 1 : 0),
+  const resultItems = useMemo(
+    () => buildResultListItems(offers, scheduleGroups),
+    [offers, scheduleGroups],
   )
-  const resultPageCapacity = Math.max(1, pageCapacity - (layoutGuideVisible ? 1 : 0))
-  const listRef = useRef<HTMLDivElement | null>(null)
-  const layoutStyle = useMemo(() => (
-    resultsLayout ? resultsLayoutStyleVars(resultsLayout) : undefined
-  ), [resultsLayout])
+  /* Capacity is measured in card-heights, so what bounds it is the list's total
+     *weight*, not how many items it has: a group card costs 1.34. */
+  const totalDisplayWeight = useMemo(
+    () => resultItems.reduce((total, item) => total + resultListItemDisplayWeight(item), 0),
+    [resultItems],
+  )
+  const { pageCapacity, viewportRef } = useAdaptiveResultsPageCapacity(totalDisplayWeight, mobileCollapseEnabled)
   const pageKey = useMemo(() => resultItemsPaginationKey(resultItems), [resultItems])
+  /* Which schedule each group is currently showing, and which group has its full
+     list open. Both are stamped with the result set they belong to, so a new
+     search drops them in the same render instead of briefly pinning a stale
+     schedule onto a group id that has been reused for different offers. */
+  const [scheduleState, setScheduleState] = useState<{
+    key: string
+    choice: Record<string, string>
+    expandedGroupId: string | null
+  }>({ key: "", choice: {}, expandedGroupId: null })
+  const scheduleChoice = scheduleState.key === pageKey ? scheduleState.choice : {}
+  const expandedGroupId = scheduleState.key === pageKey ? scheduleState.expandedGroupId : null
   const [pageState, setPageState] = useState({ key: "", index: 0 })
   const pages = useMemo(
-    () => paginateResultListItems(resultItems, resultPageCapacity),
-    [resultItems, resultPageCapacity],
+    () => paginateResultListItems(resultItems, pageCapacity),
+    [resultItems, pageCapacity],
   )
   const pageCount = Math.max(1, pages.length)
   const selectedPageIndex = useMemo(() => {
     if (!selectedOfferId) return
+    const index = pages.findIndex((page) => page.items.some((item) => resultListItemContainsOffer(item, selectedOfferId)))
+    return index >= 0 ? index : undefined
+  }, [pages, selectedOfferId])
 
-    const selectedIndex = resultItems.findIndex((item) => resultListItemContainsOffer(item, selectedOfferId))
-    if (selectedIndex < 0) return
+  /*
+   * 11 §3: every filter and sort gesture returns the list to page 1 — but a
+   * provider answering does not. Keyed on `viewKey` rather than on the offers,
+   * so a progressive batch leaves the page where the agent left it.
+   *
+   * The exception is the first view: a shared link arrives with an offer
+   * already selected, and opening on page 1 would hide the flight the link was
+   * sent about.
+   */
+  const [firstViewKey] = useState(viewKey)
+  const isFirstView = firstViewKey === viewKey
 
-    return pages.findIndex((page) => page.items.some((item) => resultListItemContainsOffer(item, selectedOfferId)))
-  }, [pages, resultItems, selectedOfferId])
-
-  const requestedPageIndex = pageState.key === pageKey
+  const requestedPageIndex = pageState.key === viewKey
     ? pageState.index
-    : selectedPageIndex ?? 0
+    : isFirstView
+      ? selectedPageIndex ?? 0
+      : 0
   const safePageIndex = Math.max(0, Math.min(requestedPageIndex, pageCount - 1))
-  const currentPage = pages[safePageIndex] ?? pages[0] ?? {
-    items: [],
-    startOfferIndex: 0,
-    endOfferIndex: 0,
-    displayWeight: 0,
-  }
-  const pageItems = currentPage.items
-  const offersBeforePage = currentPage.startOfferIndex
-  const endIndex = currentPage.endOfferIndex
-  const handlePageChange = (nextPageIndex: number) => {
-    setPageState({
-      key: pageKey,
-      index: Math.max(0, Math.min(nextPageIndex, pageCount - 1)),
-    })
-  }
+  const currentPage = pages[safePageIndex] ?? pages[0] ?? { items: [], startOfferIndex: 0, endOfferIndex: 0, displayWeight: 0 }
+  const scrollStateRef = useRef({
+    lastTop: 0,
+    accumulated: 0,
+    direction: 0,
+    lockedUntil: 0,
+    collapsed: false,
+  })
+  /* 02 §9, last paragraph: past 300px of list scroll a way back to the top
+     appears. It belongs to the same mobile block as the retraction — on a desk
+     the list is short enough and the wheel is fast enough that it would be one
+     more thing floating over the results. */
+  const [backToTopVisible, setBackToTopVisible] = useState(false)
 
-  useLayoutEffect(() => {
-    if (!layoutEditorEnabled || resultsLayout || pageItems.length === 0) return
-
-    const measured = measureCurrentResultCardColumns(listRef.current)
-    if (measured) {
-      onLayoutColumnsMeasured(measured)
+  const handlePageChange = useCallback((nextPageIndex: number) => {
+    setPageState({ key: viewKey, index: Math.max(0, Math.min(nextPageIndex, pageCount - 1)) })
+    // 02 §11: back to the top with no animated scroll (07 §0 rule 2).
+    viewportRef.current?.scrollTo({ top: 0 })
+    scrollStateRef.current = {
+      lastTop: 0,
+      accumulated: 0,
+      direction: 0,
+      lockedUntil: 0,
+      collapsed: false,
     }
-  }, [layoutEditorEnabled, onLayoutColumnsMeasured, pageItems.length, resultsLayout])
+    setBackToTopVisible(false)
+    onMobileToolsCollapsedChange(false)
+  }, [onMobileToolsCollapsedChange, pageCount, viewKey, viewportRef])
+
+  const handleBackToTop = useCallback(() => {
+    viewportRef.current?.scrollTo({ top: 0 })
+    setBackToTopVisible(false)
+  }, [viewportRef])
+
+  const handleResultsScroll = useCallback(() => {
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const top = viewport.scrollTop
+    if (!mobileCollapseEnabled) return
+    setBackToTopVisible(top > BACK_TO_TOP_AFTER_PX)
+    const state = scrollStateRef.current
+    const now = performance.now()
+    const delta = top - state.lastTop
+    state.lastTop = top
+
+    if (top <= 0) {
+      state.accumulated = 0
+      state.direction = 0
+      if (state.collapsed) {
+        state.collapsed = false
+        state.lockedUntil = now + 300
+        onMobileToolsCollapsedChange(false)
+      }
+      return
+    }
+    if (now < state.lockedUntil || Math.abs(delta) < 1) return
+
+    const direction = delta > 0 ? 1 : -1
+    if (direction !== state.direction) {
+      state.direction = direction
+      state.accumulated = 0
+    }
+    state.accumulated += Math.abs(delta)
+    if (state.accumulated < 88) return
+
+    const nextCollapsed = direction > 0
+    state.accumulated = 0
+    if (nextCollapsed === state.collapsed) return
+    state.collapsed = nextCollapsed
+    state.lockedUntil = now + 300
+    onMobileToolsCollapsedChange(nextCollapsed)
+  }, [mobileCollapseEnabled, onMobileToolsCollapsedChange, viewportRef])
+
+  useEffect(() => {
+    scrollStateRef.current = {
+      lastTop: 0,
+      accumulated: 0,
+      direction: 0,
+      lockedUntil: 0,
+      collapsed: false,
+    }
+    onMobileToolsCollapsedChange(false)
+  }, [onMobileToolsCollapsedChange, pageKey])
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-2.5" data-testid="results-page-shell">
+    <div className="fd-list-body" data-testid="results-page-shell">
       <div
         ref={viewportRef}
-        className={cn(
-          "fd-scrollbar-hidden min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain",
-        )}
+        onScroll={handleResultsScroll}
+        className="fd-list-viewport"
         data-testid="results-page-body"
       >
+        {/* Keyed on the requested view *and* the page, so a filter, a sort
+            and a page change each cross-fade in 140ms rather than animating a
+            height (rule 2). Keyed on the page alone, applying a filter swapped
+            the cards with no transition at all, because the page index usually
+            stays at 0 (04 §2).
+
+            The cascade of 04 §9 belongs to *arrival* — the first page of a new
+            search. A filter, a sort and a page change are repaints, and 04 §2
+            and §6 give those the cross-fade alone; replaying seven staggered
+            entries on every filter click turns a refinement into an event. */}
         <div
-          ref={listRef}
-          className={cn(
-            "fd-results-list grid content-start gap-2.5 pt-1",
-            resultsLayout && "fd-results-list--fixed-layout",
-            cached && "fd-results-list--cached",
-          )}
-          style={layoutStyle}
+          key={`${viewKey}:${safePageIndex}`}
+          className="fd-results-list fd-motion-crossfade"
+          data-cascade={isFirstView && safePageIndex === 0}
         >
-          {layoutGuideVisible && (
-            <ResultsLayoutGuideCard
-              columns={layoutColumns}
-              error={layoutEditorError}
-              loading={layoutEditorLoading}
-              ready={layoutEditorReady}
-              savedAt={layoutEditorSavedAt}
-              saving={layoutEditorSaving}
-              onBoundaryResize={onLayoutBoundaryResize}
-              onReset={onLayoutReset}
-              onSave={onLayoutSave}
-            />
-          )}
-          {pageItems.map((item) => (
+          {currentPage.items.map((item) => (
             item.type === "group" ? (
-              <ResultOfferGroupCard
+              <GroupCard
                 key={item.id}
                 group={item.group}
-                selectedOfferId={selectedOfferId}
                 passengerCount={passengerCount}
+                showPerPerson={showPerPerson}
+                selectedOfferId={selectedOfferId}
+                chosenOfferId={scheduleChoice[item.id]}
+                expanded={expandedGroupId === item.id}
+                onChooseSchedule={(offer) => {
+                  setScheduleState((current) => ({
+                    key: pageKey,
+                    choice: { ...(current.key === pageKey ? current.choice : {}), [item.id]: offer.id },
+                    expandedGroupId: current.key === pageKey ? current.expandedGroupId : null,
+                  }))
+                  onSelectOffer(offer)
+                }}
+                onToggleExpanded={() => setScheduleState((current) => ({
+                  key: pageKey,
+                  choice: current.key === pageKey ? current.choice : {},
+                  expandedGroupId: current.key === pageKey && current.expandedGroupId === item.id ? null : item.id,
+                }))}
                 onSelectOffer={onSelectOffer}
               />
             ) : (
@@ -558,19 +759,42 @@ function PaginatedResultsList({
                 offer={item.offer}
                 selected={selectedOfferId === item.offer.id}
                 passengerCount={passengerCount}
+                showPerPerson={showPerPerson}
                 onSelect={onSelectOffer}
               />
             )
           ))}
+
+          {/* In a partial search the skeleton fills only the rows still missing,
+              and it fills them at the end. */}
+          {partial && currentPage.items.length > 0 && currentPage.items.length < pageCapacity && (
+            <ResultsSkeleton
+              rows={pageCapacity - currentPage.items.length}
+              inline
+              startDelayIndex={currentPage.items.length}
+            />
+          )}
         </div>
       </div>
 
+      {mobileCollapseEnabled && backToTopVisible && (
+        <button
+          type="button"
+          className="fd-back-to-top fd-motion-emergente fd-focus-ring"
+          aria-label="Volver al inicio de la lista"
+          data-testid="results-back-to-top"
+          onClick={handleBackToTop}
+        >
+          <AppIcon name="chevronUp" size={18} />
+        </button>
+      )}
+
       {pageCount > 1 && (
-        <ResultsPagination
-          endIndex={endIndex}
-          pageCount={pageCount}
+        <ResultsPager
           pageIndex={safePageIndex}
-          startIndex={offersBeforePage}
+          pageCount={pageCount}
+          startIndex={currentPage.startOfferIndex}
+          endIndex={currentPage.endOfferIndex}
           totalCount={offers.length}
           onPageChange={handlePageChange}
         />
@@ -579,1046 +803,334 @@ function PaginatedResultsList({
   )
 }
 
-function ResultOfferGroupCard({
+function GroupCard({
   group,
-  selectedOfferId,
   passengerCount,
+  showPerPerson,
+  selectedOfferId,
+  chosenOfferId,
+  expanded,
+  onChooseSchedule,
+  onToggleExpanded,
   onSelectOffer,
 }: {
   group: ResultOfferGroup
-  selectedOfferId?: string
   passengerCount: number
+  showPerPerson: boolean
+  selectedOfferId?: string
+  chosenOfferId?: string
+  expanded: boolean
+  onChooseSchedule: (offer: CanonicalOffer) => void
+  onToggleExpanded: () => void
   onSelectOffer: (offer: CanonicalOffer) => void
 }) {
-  const primaryOffer = group.offers[0]
-  const variantOffers = group.offers.slice(1)
-  const primaryModel = primaryOffer ? buildResultCardModel(primaryOffer, passengerCount) : null
-  const visibleVariantOffers = primaryModel
-    ? variantOffers.filter((offer) => hasVisibleVariantDifference(primaryModel, buildResultCardModel(offer, passengerCount)))
-    : []
-  const groupSelected = group.offers.some((offer) => offer.id === selectedOfferId)
+  const defaultOffer = group.offers[0]
+  const shownOffer = group.offers.find((offer) => offer.id === chosenOfferId) ?? defaultOffer
+  if (!shownOffer) return null
 
-  if (!primaryOffer || !primaryModel) return null
+  const alternates = group.offers.filter((offer) => offer.id !== shownOffer.id)
 
-  if (visibleVariantOffers.length === 0) {
-    return (
+  return (
+    <div className="relative min-w-0">
       <ResultCard
-        offer={primaryOffer}
-        selected={selectedOfferId === primaryOffer.id}
+        offer={shownOffer}
+        selected={selectedOfferId === shownOffer.id}
         passengerCount={passengerCount}
+        showPerPerson={showPerPerson}
         onSelect={onSelectOffer}
+        alternates={alternates.map((offer) => alternateChip(offer, shownOffer))}
+        alternateCount={alternates.length}
+        onSelectAlternate={onChooseSchedule}
+        onShowAllAlternates={onToggleExpanded}
+        scheduleChanged={Boolean(chosenOfferId) && chosenOfferId !== defaultOffer.id}
       />
-    )
-  }
 
-  return (
-    <section
-      className={cn("fd-result-group", groupSelected && "is-selected")}
-      aria-label={`${group.providerLabel}: ${resultGroupTitle(visibleVariantOffers.length + 1)}`}
-      data-testid="result-offer-group"
-    >
-      <div className="fd-result-group__header">
-        <span className="fd-result-group__title">{resultGroupTitle(visibleVariantOffers.length + 1)}</span>
-        <span className="fd-result-group__meta">{group.providerLabel}</span>
-      </div>
-      <div className="fd-result-group__stack">
-        <ResultCard
-          offer={primaryOffer}
-          selected={selectedOfferId === primaryOffer.id}
+      {expanded && (
+        <AllSchedulesPanel
+          offers={group.offers}
+          currentOfferId={shownOffer.id}
           passengerCount={passengerCount}
-          onSelect={onSelectOffer}
+          providerLabel={group.providerLabel}
+          onChoose={(offer) => {
+            onChooseSchedule(offer)
+            onToggleExpanded()
+          }}
+          onClose={onToggleExpanded}
         />
-        <div className="fd-result-group__variants" aria-label="Horarios alternativos">
-          {visibleVariantOffers.map((offer) => (
-            <ResultVariantCard
-              key={offer.id}
-              offer={offer}
-              primaryModel={primaryModel}
-              selected={selectedOfferId === offer.id}
-              passengerCount={passengerCount}
-              onSelect={onSelectOffer}
-            />
-          ))}
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function ResultVariantCard({
-  offer,
-  primaryModel,
-  selected,
-  passengerCount,
-  onSelect,
-}: {
-  offer: CanonicalOffer
-  primaryModel: ResultCardModel
-  selected: boolean
-  passengerCount: number
-  onSelect: (offer: CanonicalOffer) => void
-}) {
-  const model = buildResultCardModel(offer, passengerCount)
-  const scheduleCells = variantScheduleCells(primaryModel, model)
-  const durationChanged = model.duration !== primaryModel.duration
-  const stopsChanged = variantStopsSignature(model) !== variantStopsSignature(primaryModel)
-  const label = [
-    selected ? "Horario seleccionado" : "Seleccionar horario",
-    ...scheduleCells
-      .filter((cell) => cell.changed)
-      .map((cell) => `${cell.journey.label} ${journeyScheduleValue(cell.journey)}`),
-    durationChanged ? `Duracion ${model.duration}` : undefined,
-    stopsChanged ? `Escalas ${model.stops.label}` : undefined,
-  ]
-    .filter(Boolean)
-    .join(" - ")
-
-  return (
-    <article
-      role="button"
-      tabIndex={0}
-      aria-label={label}
-      aria-pressed={selected}
-      className={cn("fd-result-variant-card", selected && "is-selected")}
-      data-testid="result-variant-card"
-      onClick={() => onSelect(offer)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault()
-          onSelect(offer)
-        }
-      }}
-    >
-      <span className="fd-result-variant-card__empty" aria-hidden="true" />
-      <span className="fd-result-variant-card__empty" aria-hidden="true" />
-      <div className="fd-result-variant-card__schedules" data-trip-type={model.tripType}>
-        {scheduleCells.map((cell) => (
-          <VariantSchedule key={cell.journey.label} summary={cell.journey} visible={cell.changed} />
-        ))}
-      </div>
-      <span className="fd-result-variant-card__empty" aria-hidden="true" />
-      <div className="fd-result-variant-card__journey">
-        {durationChanged && (
-          <span className="fd-result-card__journey-main">{model.duration}</span>
-        )}
-        {stopsChanged && (
-          <span
-            className={cn(
-              "fd-result-card__stops",
-              model.stops.tone === "direct" && "fd-result-card__stops--direct",
-              model.stops.tone === "warning" && "fd-result-card__stops--warning",
-              model.stops.tone === "danger" && "fd-result-card__stops--danger",
-            )}
-            title={model.stops.title}
-          >
-            {model.stops.label}
-          </span>
-        )}
-        {stopsChanged && model.stops.layoverLabel && <span className="fd-result-card__layover">{model.stops.layoverLabel}</span>}
-      </div>
-      <span className="fd-result-variant-card__empty" aria-hidden="true" />
-      <span className="fd-result-variant-card__empty" aria-hidden="true" />
-    </article>
-  )
-}
-
-function resultGroupTitle(count: number) {
-  return count === 1
-    ? "1 horario"
-    : `${count} horarios`
-}
-
-function hasVisibleVariantDifference(primary: ResultCardModel, variant: ResultCardModel): boolean {
-  return variantScheduleCells(primary, variant).some((cell) => cell.changed)
-    || variant.duration !== primary.duration
-    || variantStopsSignature(variant) !== variantStopsSignature(primary)
-}
-
-function variantScheduleCells(primary: ResultCardModel, variant: ResultCardModel) {
-  const primaryJourneys = new Map(primary.journeys.map((journey) => [journey.label, journey]))
-  return variant.journeys.map((journey) => {
-    const primaryJourney = primaryJourneys.get(journey.label)
-    return {
-      journey,
-      changed: !primaryJourney || journeyScheduleSignature(primaryJourney) !== journeyScheduleSignature(journey),
-    }
-  })
-}
-
-function journeyScheduleSignature(journey: ResultJourneySummary) {
-  return [
-    journey.hasKnownSchedule,
-    journey.departureTime,
-    journey.arrivalTime,
-    journey.arrivalDayOffset,
-  ].join("|")
-}
-
-function journeyScheduleValue(journey: ResultJourneySummary) {
-  if (!journey.hasKnownSchedule) return "por confirmar"
-
-  const offset = journey.arrivalDayOffset > 0 ? `+${journey.arrivalDayOffset}` : ""
-  return `${journey.departureTime} - ${journey.arrivalTime}${offset}`
-}
-
-function variantStopsSignature(model: ResultCardModel) {
-  return [model.stops.label, model.stops.layoverLabel].join("|")
-}
-
-function VariantSchedule({ summary, visible }: { summary: ResultJourneySummary; visible: boolean }) {
-  return (
-    <div className={cn("fd-result-variant-card__schedule", !visible && "is-empty")} aria-hidden={!visible}>
-      {visible && <ResultScheduleTime summary={summary} />}
+      )}
     </div>
   )
 }
 
-function ResultsLayoutGuideCard({
-  columns,
-  error,
-  loading,
-  ready,
-  savedAt,
-  saving,
-  onBoundaryResize,
-  onReset,
-  onSave,
-}: {
-  columns: ResultsColumnLayout
-  error: string
-  loading: boolean
-  ready: boolean
-  savedAt: string
-  saving: boolean
-  onBoundaryResize: (leftKey: ResultsLayoutColumnKey, rightKey: ResultsLayoutColumnKey, delta: number) => void
-  onReset: () => void
-  onSave: () => void
-}) {
-  const dragRef = useRef<{
-    leftKey: ResultsLayoutColumnKey
-    lastX: number
-    pointerId: number
-  } | null>(null)
-
-  const handleResizePointerDown = useCallback((
-    event: ReactPointerEvent<HTMLButtonElement>,
-    leftKey: ResultsLayoutColumnKey,
-  ) => {
-    if (saving) return
-
-    event.preventDefault()
-    event.currentTarget.setPointerCapture(event.pointerId)
-    dragRef.current = {
-      leftKey,
-      lastX: event.clientX,
-      pointerId: event.pointerId,
-    }
-  }, [saving])
-
-  const handleResizePointerMove = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    const drag = dragRef.current
-    if (!drag || drag.pointerId !== event.pointerId) return
-
-    const rightKey = nextResultsLayoutColumnKey(drag.leftKey)
-    if (!rightKey) return
-
-    event.preventDefault()
-    onBoundaryResize(drag.leftKey, rightKey, event.clientX - drag.lastX)
-    drag.lastX = event.clientX
-  }, [onBoundaryResize])
-
-  const handleResizePointerEnd = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
-    const drag = dragRef.current
-    if (!drag || drag.pointerId !== event.pointerId) return
-
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
-    }
-    dragRef.current = null
-  }, [])
-
-  const handleResizeKeyDown = useCallback((
-    event: ReactKeyboardEvent<HTMLButtonElement>,
-    leftKey: ResultsLayoutColumnKey,
-  ) => {
-    if (saving) return
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return
-
-    const rightKey = nextResultsLayoutColumnKey(leftKey)
-    if (!rightKey) return
-
-    event.preventDefault()
-    onBoundaryResize(
-      leftKey,
-      rightKey,
-      event.key === "ArrowRight" ? RESULTS_LAYOUT_RESIZE_STEP_PX : -RESULTS_LAYOUT_RESIZE_STEP_PX,
-    )
-  }, [onBoundaryResize, saving])
-
-  return (
-    <article
-      className="fd-result-card fd-result-card--layout-guide"
-      aria-label="Tarjeta guia para ajustar columnas"
-      data-testid="results-layout-guide"
-      style={resultsLayoutStyleVars(columns)}
-    >
-      <div className="fd-results-layout-guide__header">
-        <div className="min-w-0">
-          <h3 className="fd-results-layout-editor__title">Columnas</h3>
-          <p className="fd-results-layout-editor__status">
-            {resultsLayoutStatus({ error, loading, ready, savedAt, saving })}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <Button
-            aria-label="Restaurar anchos"
-            className="h-8 rounded-md"
-            disabled={!ready || saving}
-            size="sm"
-            type="button"
-            variant="secondary"
-            onClick={onReset}
-          >
-            Restaurar
-          </Button>
-          <Button
-            aria-label="Guardar layout"
-            className="h-8 rounded-md"
-            disabled={!ready || loading || saving}
-            size="sm"
-            type="button"
-            onClick={onSave}
-          >
-            {saving && <AppIcon name="loading" className="h-3.5 w-3.5 animate-spin" />}
-            Guardar
-          </Button>
-        </div>
-      </div>
-      <div className="fd-results-layout-column-spacer" aria-hidden="true" />
-      {RESULTS_COLUMN_DEFINITIONS.map((column, index) => {
-        const nextColumn = RESULTS_COLUMN_DEFINITIONS[index + 1]
-
-        return (
-          <div
-            key={column.key}
-            className="fd-results-layout-column"
-            data-column={column.key}
-          >
-            <div className="fd-results-layout-column__header">
-              <span>{column.label}</span>
-              <span>{resultsLayoutColumnShareLabel(columns, column.key)}</span>
-            </div>
-            <div className="fd-results-layout-column__skeleton" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </div>
-            {nextColumn && (
-              <button
-                aria-label={`Mover separador entre ${column.label} y ${nextColumn.label}`}
-                aria-orientation="vertical"
-                aria-valuenow={Math.round(columns[column.key])}
-                className="fd-results-layout-column__handle"
-                disabled={saving}
-                role="separator"
-                type="button"
-                onKeyDown={(event) => handleResizeKeyDown(event, column.key)}
-                onPointerCancel={handleResizePointerEnd}
-                onPointerDown={(event) => handleResizePointerDown(event, column.key)}
-                onPointerMove={handleResizePointerMove}
-                onPointerUp={handleResizePointerEnd}
-              />
-            )}
-          </div>
-        )
-      })}
-    </article>
-  )
-}
-
-function useResultsLayoutEditor() {
-  const enabled = useMemo(() => resultsLayoutEditorEnabledFromUrl(), [])
-  const [columns, setColumns] = useState<ResultsColumnLayout>(DEFAULT_RESULTS_COLUMN_LAYOUT)
-  const [baselineColumns, setBaselineColumns] = useState<ResultsColumnLayout>(DEFAULT_RESULTS_COLUMN_LAYOUT)
-  const [initialized, setInitialized] = useState(false)
-  const [savedAt, setSavedAt] = useState("")
-  const [error, setError] = useState("")
-  const [loading, setLoading] = useState(enabled)
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    if (!enabled) return
-
-    const controller = new AbortController()
-
-    void getResultsLayout({ signal: controller.signal })
-      .then((layout) => {
-        if (controller.signal.aborted) return
-
-        const nextColumns = normalizeResultsLayoutColumns(layout?.columns ?? DEFAULT_RESULTS_COLUMN_LAYOUT)
-        setBaselineColumns(nextColumns)
-        setColumns(nextColumns)
-        setInitialized(true)
-        setSavedAt(layout?.savedAt ?? "")
-        setError("")
-      })
-      .catch((caught: unknown) => {
-        if (controller.signal.aborted) return
-
-        setBaselineColumns(DEFAULT_RESULTS_COLUMN_LAYOUT)
-        setColumns(DEFAULT_RESULTS_COLUMN_LAYOUT)
-        setInitialized(true)
-        setSavedAt("")
-        setError(errorMessage(caught))
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setLoading(false)
-        }
-      })
-
-    return () => controller.abort()
-  }, [enabled])
-
-  const initializeFromMeasuredColumns = useCallback((measuredColumns: ResultsColumnLayout) => {
-    if (!enabled || initialized) return
-
-    const nextColumns = normalizeResultsLayoutColumns(measuredColumns)
-    setBaselineColumns(nextColumns)
-    setColumns(nextColumns)
-    setInitialized(true)
-    setSavedAt("")
-    setError("")
-  }, [enabled, initialized])
-
-  const resizeColumnBoundary = useCallback((
-    leftKey: ResultsLayoutColumnKey,
-    rightKey: ResultsLayoutColumnKey,
-    delta: number,
-  ) => {
-    setColumns((current) => {
-      const leftStart = current[leftKey]
-      const rightStart = current[rightKey]
-      const boundedDelta = clamp(
-        Math.round(delta),
-        -leftStart,
-        rightStart,
-      )
-
-      if (boundedDelta === 0) return current
-
-      return {
-        ...current,
-        [leftKey]: leftStart + boundedDelta,
-        [rightKey]: rightStart - boundedDelta,
-      }
-    })
-    setInitialized(true)
-    setSavedAt("")
-    setError("")
-  }, [])
-
-  const reset = useCallback(() => {
-    setColumns(baselineColumns)
-    setInitialized(true)
-    setSavedAt("")
-    setError("")
-  }, [baselineColumns])
-
-  const save = useCallback(() => {
-    if (saving) return
-
-    const savedColumns = normalizeResultsLayoutColumns(columns)
-    setSaving(true)
-    setError("")
-    void saveResultsLayout(savedColumns)
-      .then((layout) => {
-        setColumns(savedColumns)
-        setBaselineColumns(savedColumns)
-        setSavedAt(layout.savedAt)
-      })
-      .catch((caught: unknown) => setError(errorMessage(caught)))
-      .finally(() => setSaving(false))
-  }, [columns, saving])
+/**
+ * A chip carries the departure time it would switch to, and — because the fare
+ * is the reason to hesitate — the price difference against what is on the card.
+ * When the fare is identical the chip shows the duration instead, which is the
+ * next thing that decides it.
+ */
+function alternateChip(offer: CanonicalOffer, currentOffer: CanonicalOffer): AlternateSchedule {
+  const model = buildAlternateScheduleModel(offer, currentOffer)
 
   return {
-    enabled,
-    columns,
-    error,
-    initialized,
-    initializeFromMeasuredColumns,
-    loading,
-    savedAt,
-    saving,
-    reset,
-    save,
-    resizeColumnBoundary,
+    offer,
+    legAriaLabel: model.legAriaLabel,
+    time: model.time,
+    meta: model.meta,
+    /* Never on, by construction. 04 §5's «el chip elegido queda activo» lands
+       in the full list (`3b`), which draws every schedule including the current
+       one; the strip on the card is labelled «N horarios más» and holds only
+       the ones the card is not showing, so the chosen schedule is the card
+       itself. A chip marked active here would be a fourth schedule that does
+       not exist. */
+    selected: false,
   }
 }
 
-function useSavedResultsLayout(enabled: boolean) {
-  const [columns, setColumns] = useState<ResultsColumnLayout | null>(null)
-  const [loading, setLoading] = useState(enabled)
-
-  useEffect(() => {
-    if (!enabled) {
-      return
-    }
-
-    const controller = new AbortController()
-
-    void getResultsLayout({ signal: controller.signal })
-      .then((layout) => {
-        if (controller.signal.aborted) return
-
-        setColumns(layout?.columns ? normalizeResultsLayoutColumns(layout.columns) : null)
-      })
-      .catch((caught: unknown) => {
-        if (controller.signal.aborted) return
-
-        console.warn("No se pudo cargar el layout de resultados.", caught)
-        setColumns(null)
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) {
-          setLoading(false)
-        }
-      })
-
-    return () => controller.abort()
-  }, [enabled])
-
-  return { columns, loading }
-}
-
-function normalizeResultsLayoutColumn(
-  definition: (typeof RESULTS_COLUMN_DEFINITIONS)[number],
-  value: number,
-) {
-  const numeric = Number.isFinite(value) ? value : definition.defaultWidth
-  return Math.max(0, Math.round(numeric))
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, value))
-}
-
-function nextResultsLayoutColumnKey(key: ResultsLayoutColumnKey): ResultsLayoutColumnKey | null {
-  const index = RESULTS_COLUMN_DEFINITIONS.findIndex((column) => column.key === key)
-  return RESULTS_COLUMN_DEFINITIONS[index + 1]?.key ?? null
-}
-
-function normalizeResultsLayoutColumns(columns: ResultsColumnLayout): ResultsColumnLayout {
-  const rawColumns = Object.fromEntries(
-    RESULTS_COLUMN_DEFINITIONS.map((definition) => [
-      definition.key,
-      normalizeResultsLayoutColumn(definition, columns[definition.key]),
-    ]),
-  ) as ResultsColumnLayout
-
-  return scaleResultsLayoutColumns(rawColumns)
-}
-
-function scaleResultsLayoutColumns(columns: ResultsColumnLayout): ResultsColumnLayout {
-  const total = RESULTS_COLUMN_DEFINITIONS.reduce((sum, column) => (
-    sum + Math.max(0, columns[column.key])
-  ), 0)
-  if (total <= 0) return DEFAULT_RESULTS_COLUMN_LAYOUT
-
-  const scaled = RESULTS_COLUMN_DEFINITIONS.map((column) => {
-    const exact = Math.max(0, columns[column.key]) / total * RESULTS_LAYOUT_TARGET_TOTAL
-    const floor = Math.floor(exact)
-    return {
-      key: column.key,
-      floor,
-      fraction: exact - floor,
-    }
-  })
-  let remainder = RESULTS_LAYOUT_TARGET_TOTAL - scaled.reduce((sum, entry) => sum + entry.floor, 0)
-  const byFraction = [...scaled].sort((left, right) => right.fraction - left.fraction)
-  for (const entry of byFraction) {
-    if (remainder <= 0) break
-    entry.floor += 1
-    remainder -= 1
-  }
-
-  return Object.fromEntries(scaled.map((entry) => [entry.key, entry.floor])) as ResultsColumnLayout
-}
-
-function measureCurrentResultCardColumns(list: HTMLDivElement | null): ResultsColumnLayout | null {
-  const card = list?.querySelector<HTMLElement>(".fd-result-card:not(.fd-result-card--compact)")
-  if (!card) return null
-
-  const trackWidths = getComputedStyle(card).gridTemplateColumns
-    .split(/\s+/)
-    .map((track) => Number.parseFloat(track))
-    .filter((value) => Number.isFinite(value) && value > 0)
-
-  if (trackWidths.length < RESULTS_COLUMN_DEFINITIONS.length) return null
-
-  const editableTrackWidths = trackWidths.slice(trackWidths.length - RESULTS_COLUMN_DEFINITIONS.length)
-
-  return Object.fromEntries(
-    RESULTS_COLUMN_DEFINITIONS.map((definition, index) => [
-      definition.key,
-      Math.round(editableTrackWidths[index]),
-    ]),
-  ) as ResultsColumnLayout
-}
-
-function resultsLayoutStyleVars(columns: ResultsColumnLayout): CSSProperties {
-  const style: Record<string, string> = {}
-  RESULTS_COLUMN_DEFINITIONS.forEach((column) => {
-    style[`--fd-results-col-${column.key}`] = `${Math.max(0, Math.round(columns[column.key]))}fr`
-  })
-  return style as CSSProperties
-}
-
-function resultsLayoutColumnShareLabel(
-  columns: ResultsColumnLayout,
-  key: ResultsLayoutColumnKey,
-) {
-  const total = RESULTS_COLUMN_DEFINITIONS.reduce((sum, column) => (
-    sum + Math.max(0, columns[column.key])
-  ), 0)
-  if (total <= 0) return "0%"
-
-  const share = Math.max(0, columns[key]) / total * 100
-  return `${share >= 10 ? Math.round(share) : share.toFixed(1)}%`
-}
-
-function resultsLayoutStatus({
-  error,
-  loading,
-  ready,
-  savedAt,
-  saving,
-}: {
-  error: string
-  loading: boolean
-  ready: boolean
-  savedAt: string
-  saving: boolean
-}) {
-  if (saving) return `Guardando en ${RESULTS_LAYOUT_FILE_HINT}`
-  if (loading) return `Cargando ${RESULTS_LAYOUT_FILE_HINT}`
-  if (error) return error
-  if (!ready) return "Esperando una card para medir el layout actual"
-  if (savedAt) return `Guardado ${formatLayoutSavedAt(savedAt)}`
-  return `Sin guardar en ${RESULTS_LAYOUT_FILE_HINT}`
-}
-
-function formatLayoutSavedAt(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat("es-PE", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date)
-}
-
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : "No se pudo completar la acción."
-}
-
-function ResultsPagination({
-  endIndex,
-  pageCount,
+function ResultsPager({
   pageIndex,
+  pageCount,
   startIndex,
+  endIndex,
   totalCount,
   onPageChange,
 }: {
-  endIndex: number
-  pageCount: number
   pageIndex: number
+  pageCount: number
   startIndex: number
+  endIndex: number
   totalCount: number
-  onPageChange: (pageIndex: number) => void
+  onPageChange: (index: number) => void
 }) {
-  const firstDisabled = pageIndex <= 0
-  const lastDisabled = pageIndex >= pageCount - 1
-
   return (
-    <Pagination
-      aria-label="Paginación de resultados"
-      className="mt-2 grid shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-t border-border/80 px-1 pb-0.5 pt-2"
-      data-testid="results-pagination"
-    >
-      <p className="col-start-2 min-w-0 text-center text-xs font-semibold text-muted-foreground">
-        {startIndex + 1}-{endIndex} de {totalCount}
+    <nav className="fd-pager" aria-label="Paginación de resultados" data-testid="results-pagination">
+      <p className="fd-pager-range">
+        {startIndex + 1}–{endIndex} de {totalCount.toLocaleString("es-PE")}
       </p>
-      <PaginationContent className="col-start-3 justify-end">
-        <PaginationItem>
-          <Button
-            aria-label="Primera página"
-            className="h-7 w-7 rounded-md"
-            disabled={firstDisabled}
-            size="icon"
-            type="button"
-            variant="ghost"
-            onClick={() => onPageChange(0)}
-          >
-            <AppIcon name="chevronsLeft" className="h-3.5 w-3.5" />
-          </Button>
-        </PaginationItem>
-        <PaginationItem>
-          <Button
-            aria-label="Página anterior"
-            className="h-7 w-7 rounded-md"
-            disabled={firstDisabled}
-            size="icon"
-            type="button"
-            variant="ghost"
-            onClick={() => onPageChange(pageIndex - 1)}
-          >
-            <AppIcon name="chevronLeft" className="h-3.5 w-3.5" />
-          </Button>
-        </PaginationItem>
+      <span className="fd-pager-divider" aria-hidden="true" />
+      {/* Two modes, one component (04 §6). The nested control needs room for
+          seven 26px cells and two ellipses; a phone has neither the room nor a
+          finger fine enough for a 26px target, so below the list threshold it
+          is replaced by ‹ · 6/65 · › at the touch minimum. Both are always in
+          the DOM: which one shows is a container query, so the choice follows
+          the width of the list and not a guess about the device. */}
+      <div className="fd-pager-nested">
+        <button
+          type="button"
+          className="fd-pager-cell fd-focus-ring"
+          aria-label="Página anterior"
+          disabled={pageIndex <= 0}
+          onClick={() => onPageChange(pageIndex - 1)}
+        >
+          <AppIcon name="chevronLeft" />
+        </button>
 
-        {paginationItems(pageIndex, pageCount).map((item) => (
-          typeof item === "number" ? (
-            <PaginationItem key={item}>
-              <Button
-                aria-current={item === pageIndex ? "page" : undefined}
-                aria-label={`Página ${item + 1}`}
-                className="h-7 min-w-7 rounded-md px-2 text-xs"
-                size="sm"
-                type="button"
-                variant={item === pageIndex ? "secondary" : "ghost"}
-                onClick={() => onPageChange(item)}
-              >
-                {item + 1}
-              </Button>
-            </PaginationItem>
+        {pagerCells(pageIndex, pageCount).map((cell) => (
+          typeof cell === "number" ? (
+            <button
+              key={cell}
+              type="button"
+              className="fd-pager-cell fd-focus-ring"
+              aria-label={`Página ${cell + 1}`}
+              aria-current={cell === pageIndex ? "page" : undefined}
+              onClick={() => onPageChange(cell)}
+            >
+              {cell + 1}
+            </button>
           ) : (
-            <PaginationItem key={item}>
-              <PaginationEllipsis className="h-7 min-w-5 text-xs text-muted-foreground" />
-            </PaginationItem>
+            <span key={cell} className="fd-pager-gap" aria-hidden="true">…</span>
           )
         ))}
 
-        <PaginationItem>
-          <Button
-            aria-label="Página siguiente"
-            className="h-7 w-7 rounded-md"
-            disabled={lastDisabled}
-            size="icon"
-            type="button"
-            variant="ghost"
-            onClick={() => onPageChange(pageIndex + 1)}
-          >
-            <AppIcon name="chevronRight" className="h-3.5 w-3.5" />
-          </Button>
-        </PaginationItem>
-        <PaginationItem>
-          <Button
-            aria-label="Última página"
-            className="h-7 w-7 rounded-md"
-            disabled={lastDisabled}
-            size="icon"
-            type="button"
-            variant="ghost"
-            onClick={() => onPageChange(pageCount - 1)}
-          >
-            <AppIcon name="chevronsRight" className="h-3.5 w-3.5" />
-          </Button>
-        </PaginationItem>
-      </PaginationContent>
-    </Pagination>
+        <button
+          type="button"
+          className="fd-pager-cell fd-focus-ring"
+          aria-label="Página siguiente"
+          disabled={pageIndex >= pageCount - 1}
+          onClick={() => onPageChange(pageIndex + 1)}
+        >
+          <AppIcon name="chevronRight" />
+        </button>
+      </div>
+
+      <div className="fd-pager-compact" data-testid="results-pagination-compact">
+        <button
+          type="button"
+          className="fd-pager-step fd-focus-ring"
+          aria-label="Página anterior"
+          disabled={pageIndex <= 0}
+          onClick={() => onPageChange(pageIndex - 1)}
+        >
+          <AppIcon name="chevronLeft" size={18} />
+        </button>
+        <span className="fd-pager-position" aria-current="page">
+          {pageIndex + 1} / {pageCount}
+        </span>
+        <button
+          type="button"
+          className="fd-pager-step fd-focus-ring"
+          aria-label="Página siguiente"
+          disabled={pageIndex >= pageCount - 1}
+          onClick={() => onPageChange(pageIndex + 1)}
+        >
+          <AppIcon name="chevronRight" size={18} />
+        </button>
+      </div>
+    </nav>
   )
 }
 
-function resultsSummaryLabel(totalCount: number, loading: boolean, hasResults: boolean) {
-  if (totalCount > 0) return resultsTotalLabel(totalCount)
-  if (loading) return ""
-  return hasResults ? "Sin vuelos visibles" : "Sin consulta"
+/** `1 … 5 6 7 … 56` — first and last always reachable, three around current. */
+function pagerCells(pageIndex: number, pageCount: number): Array<number | "gap-left" | "gap-right"> {
+  if (pageCount <= 7) {
+    return Array.from({ length: pageCount }, (_, index) => index)
+  }
+
+  if (pageIndex <= 2) {
+    return [0, 1, 2, 3, "gap-right", pageCount - 1]
+  }
+
+  if (pageIndex >= pageCount - 3) {
+    return [0, "gap-left", pageCount - 4, pageCount - 3, pageCount - 2, pageCount - 1]
+  }
+
+  return [0, "gap-left", pageIndex - 1, pageIndex, pageIndex + 1, "gap-right", pageCount - 1]
 }
 
-function resultsTotalLabel(totalCount: number) {
-  return `${totalCount} vuelo${totalCount === 1 ? "" : "s"}`
-}
+type EmptyStateAction = { label: string; onClick: () => void; icon?: "x" | "search" }
 
-function MigrationMonthGrid({
-  months,
-  passengerCount,
-  selectedOfferId,
-  onSelectOffer,
+function EmptyState({
+  icon,
+  title,
+  body,
+  action,
+  secondaryAction,
 }: {
-  months: DisplayMigrationMonth[]
-  passengerCount: number
-  selectedOfferId?: string
-  onSelectOffer: (offer: CanonicalOffer) => void
+  icon: "flight" | "x" | "sort" | "filtersOff" | "clock" | "alert"
+  title: string
+  body: string
+  /**
+   * The whole way out. Dropping every filter carries the `x`, like every
+   * remove; going back to edit the search (04 §8) is not a removal, so it
+   * carries the search glyph instead.
+   */
+  action?: EmptyStateAction
+  /** The lesser way out: relax the one filter to blame (plate 2g). */
+  secondaryAction?: EmptyStateAction
 }) {
   return (
-    <div className="fd-scrollbar fd-migration-grid-shell flex-1 overflow-auto p-2.5">
-      <div className="fd-migration-grid pt-1">
-        {months.map((month) => (
-          month.offer ? (
-            <div key={month.key} className={`relative min-w-0${month.status === "partial" ? " fd-migration-month-card--updating" : ""}`}>
-              <ResultCard
-                offer={month.offer}
-                selected={selectedOfferId === month.offer.id}
-                passengerCount={passengerCount}
-                onSelect={onSelectOffer}
-                variant="compact"
-                eyebrow={month.label}
-              />
-              {month.status === "partial" && (
-                <span className="fd-migration-month-card__status">Actualizando</span>
-              )}
-            </div>
-          ) : (
-            <MigrationEmptyMonthCard key={month.key} month={month} />
-          )
-        ))}
+    <div className="fd-list-empty">
+      <div className="fd-list-empty-inner">
+        <span className="fd-list-empty-icon">
+          <AppIcon name={icon} size={18} />
+        </span>
+        <h3 className="fd-list-empty-title">{title}</h3>
+        <p className="fd-list-empty-body">{body}</p>
+        {(action || secondaryAction) && (
+          <div className="fd-list-empty-actions">
+            {action && (
+              <button type="button" className="fd-list-empty-action fd-focus-ring" onClick={action.onClick}>
+                <AppIcon name={action.icon ?? "x"} size={14} />
+                {action.label}
+              </button>
+            )}
+            {secondaryAction && (
+              <button
+                type="button"
+                className="fd-list-empty-action fd-list-empty-action--secondary fd-focus-ring"
+                onClick={secondaryAction.onClick}
+              >
+                {secondaryAction.label}
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-function MigrationEmptyMonthCard({ month }: { month: DisplayMigrationMonth }) {
-  const loading = month.status === "loading"
-  const error = month.status === "error"
-  const cancelled = month.status === "cancelled"
-  const title = loading
-    ? "Buscando..."
-    : error
-      ? "Error al consultar"
-      : cancelled
-        ? "No consultado"
-        : month.filtered ? "Sin tarifa con filtros" : "Sin tarifa disponible"
-  const body = loading
-    ? "Consultando el precio más bajo disponible para este mes."
-    : error
-      ? month.warnings?.[0] ?? "La consulta de este mes no pudo completarse. Vuelve a intentarlo."
-      : month.filtered
-        ? "Ajusta directo, equipaje o aerolínea para volver a incluir este mes."
-        : cancelled
-          ? month.warnings?.[0] ?? "Búsqueda detenida antes de consultar este mes."
-          : month.warnings?.[0] ?? "No hubo una oferta disponible para este mes."
-
-  return (
-    <article
-      className={`fd-migration-month-card${loading ? " fd-migration-month-card--loading" : ""}${error ? " fd-migration-month-card--error" : ""}${cancelled ? " fd-migration-month-card--cancelled" : ""}`}
-      data-testid="migration-month-card"
-    >
-      <span className="fd-result-card__eyebrow">{month.label}</span>
-      <div>
-        <p className="fd-migration-month-card__title">{title}</p>
-        <p className="fd-migration-month-card__meta">
-          {formatDateRange(month.departureStart, month.departureEnd)}
-        </p>
-      </div>
-      <p className="fd-migration-month-card__body">{body}</p>
-    </article>
-  )
-}
-
-function EmptyState({ icon, title, body }: { icon: ReactNode; title: string; body: string }) {
-  return (
-    <Empty className="grid h-full min-h-[320px] place-items-center gap-0 rounded-none border-0 bg-transparent p-6 text-center md:p-6">
-      <EmptyHeader className="max-w-md gap-0">
-        <EmptyMedia className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-secondary text-muted-foreground">
-          {icon}
-        </EmptyMedia>
-        <EmptyTitle className="text-base font-bold" role="heading" aria-level={3}>{title}</EmptyTitle>
-        <EmptyDescription className="mx-auto mt-1 max-w-md text-sm leading-6 text-muted-foreground">
-          {body}
-        </EmptyDescription>
-      </EmptyHeader>
-    </Empty>
-  )
-}
-
-export const ResultsPanel = memo(ResultsPanelBase)
-
-type DisplayMigrationMonth = MigrationMonthSummary & {
-  filtered?: boolean
-}
-
-function uniqueWarnings(messages: string[]) {
-  return Array.from(new Set(messages.map((message) => message.trim()).filter(Boolean)))
-}
-
-function isActionableWarning(message: string) {
-  return !isOperationalWarning(message)
-}
-
-function isGenericOperationFailureWarning(message: string) {
-  const normalized = normalizeWarningText(message)
-    .replace(/[.!]+/g, "")
-    .trim()
-  return normalized === "no se pudo completar la operacion"
-    || normalized === "no se pudo completar la operacion intenta nuevamente"
-}
-
-function isOperationalWarning(message: string) {
-  const normalized = normalizeWarningText(message)
-
-  if (normalized.includes("resultados cacheados") && normalized.includes("actualiz")) return true
-  if (normalized.includes("consultando") && normalized.includes("resultados se iran agregando")) return true
-  if (normalized.includes("matrix loading") && normalized.includes("parallel")) return true
-  if (normalized.includes("search cancelled by user")) return true
-  if (normalized.includes("busqueda detenida por el usuario")) return true
-  if (normalized.includes("search stopped because the page was refreshed")) return true
-
-  return false
-}
-
-function normalizeWarningText(message: string) {
-  return message
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-}
-
-function useWarningDelayElapsed(results: SearchJobResponse | null, loading: boolean) {
-  const [elapsedKey, setElapsedKey] = useState<string | null>(null)
-  const jobId = results?.searchJobId
-  const searchState = results?.searchMeta?.searchState
-  const delayMs = searchState === "search_cached" ? CACHED_WARNING_DELAY_MS : RUNNING_WARNING_DELAY_MS
-  const delayKey = jobId && loading && !results?.searchComplete
-    ? `${jobId}:${searchState ?? "unknown"}`
-    : null
+/**
+ * True once the skeleton has been up long enough to stop claiming progress.
+ *
+ * The flag is stamped with the search it belongs to, so the next search starts
+ * fresh without an effect having to clear it first — a stale `true` would skip
+ * the skeleton entirely on the following search.
+ */
+function useSkeletonTimeout(active: boolean, searchKey: string) {
+  const [expiredKey, setExpiredKey] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!delayKey) return
+    if (!active) return
 
-    const timer = window.setTimeout(() => setElapsedKey(delayKey), delayMs)
+    const timer = window.setTimeout(() => setExpiredKey(searchKey), SKELETON_GIVE_UP_MS)
     return () => window.clearTimeout(timer)
-  }, [delayKey, delayMs])
+  }, [active, searchKey])
 
-  return !delayKey || elapsedKey === delayKey
+  return active && expiredKey === searchKey
 }
 
-function shouldDelayWarnings(
-  results: SearchJobResponse | null,
-  loading: boolean,
-  noFlightIssueCount: number,
-) {
-  if (!results || !loading || results.searchComplete) return false
-  if (noFlightIssueCount > 0 && results.offers.length === 0) return false
-  return true
-}
-
-type ProviderNoFlightIssue = {
-  provider: "Agilsmart" | "Click and Book Plus"
-  warning: string
-}
-
-function providerNoFlightIssues(warnings: string[]): ProviderNoFlightIssue[] {
-  const issues: ProviderNoFlightIssue[] = []
-  const seen = new Set<string>()
-
-  for (const warning of warnings) {
-    const normalized = warning.toLowerCase()
-    const provider = normalized.includes("agil no devolvió")
-      ? "Agilsmart"
-      : normalized.includes("costamar no devolvió") || normalized.includes("click and book plus no devolvió")
-        ? "Click and Book Plus"
-        : null
-
-    if (!provider || seen.has(provider)) continue
-    seen.add(provider)
-    issues.push({ provider, warning })
-  }
-
-  return issues
-}
-
-function emptySearchModel(noFlightIssues: ProviderNoFlightIssue[], filteredEmpty: boolean) {
-  if (filteredEmpty) {
-    return {
-      title: "No hay búsquedas que coincidan",
-      body: "Ajusta filtros de equipaje, escalas o aerolíneas para volver a incluir resultados.",
-    }
-  }
-
-  if (noFlightIssues.length > 0) {
-    const providers = providerSentence(noFlightIssues.map((issue) => issue.provider))
-    return {
-      title: noFlightIssues.length === 1
-        ? `${providers} no devolvió vuelos`
-        : `${providers} no devolvieron vuelos`,
-      body: noFlightIssues.length === 1
-        ? `${noFlightIssues[0].warning} Ajusta fechas, escalas o equipaje para ampliar la búsqueda.`
-        : "Los proveedores consultados informaron que no hay vuelos para esta combinación. Ajusta fechas, escalas o equipaje para ampliar la búsqueda.",
-    }
-  }
-
-  return {
-    title: "Sin resultados para esta consulta",
-    body: "Ajusta fechas, escalas, equipaje o aerolíneas para ampliar la cobertura.",
-  }
-}
-
-function providerSentence(providers: string[]) {
-  if (providers.length === 0) return "Los proveedores"
-  if (providers.length === 1) return providers[0]
-  return `${providers.slice(0, -1).join(", ")} y ${providers[providers.length - 1]}`
-}
-
-function isFilteredEmptyState(
-  results: SearchJobResponse | null,
-  offers: CanonicalOffer[],
-  unfilteredOfferCount: number,
-) {
-  if (!results || offers.length > 0) return false
-
-  const retainedOfferCount = results.allOffers?.length ?? 0
-  return unfilteredOfferCount > 0 || retainedOfferCount > 0
-}
-
-function warningSummaryLabel(warnings: string[], noFlightIssues: ProviderNoFlightIssue[]) {
-  if (noFlightIssues.length > 0) {
-    return noFlightIssues.length === 1
-      ? `${noFlightIssues[0].provider} sin vuelos`
-      : "Agilsmart y Click and Book Plus sin vuelos"
-  }
-
-  return warnings.length === 1 ? "1 aviso" : `${warnings.length} avisos`
-}
-
-function useAdaptiveResultsPageCapacity(itemCount: number) {
+/**
+ * How many cards fit without cutting one in half. A page that ends mid-card
+ * makes the agent scroll to find out whether there was anything there.
+ */
+/**
+ * How many results a page holds.
+ *
+ * On a desk it is whatever fits: plates 1b and 8a draw the list ending on the
+ * pager with no scroll, and the measurement agrees — 11 cards at 1440 leave 1px
+ * of slack. A phone is the opposite. Plate `1d` is annotated «interactiva:
+ * desliza la lista», 02 §9 retracts the tools after **88px** of travel and 11 §6
+ * raises the back-to-top button after **300px**. Fitted to the viewport the
+ * mobile list had 43px of travel in total (6 cards of 94px in 583px), so both
+ * of those were unreachable outside a test that injected a spacer. A page that
+ * is longer than the screen is what makes that whole section of the handoff
+ * exist; the pager (`‹ 6/65 ›`, 04 §6) is unchanged either way.
+ */
+function useAdaptiveResultsPageCapacity(totalDisplayWeight: number, scrollableList: boolean) {
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const [pageCapacity, setPageCapacity] = useState(RESULTS_PAGE_SIZE_FALLBACK)
   const rowHeightRef = useRef(RESULTS_CARD_HEIGHT_ESTIMATE_PX)
 
   useLayoutEffect(() => {
+    /* Nothing to measure when the page is deliberately taller than the screen:
+       the answer is the ceiling, and it is returned below rather than stored,
+       so a phone never pays for a measurement it does not use. */
+    if (scrollableList) return
+
     const node = viewportRef.current
-    if (!node || itemCount <= 0) return
+    if (!node || totalDisplayWeight <= 0) return
 
     let frame = 0
     const update = () => {
       const list = node.querySelector<HTMLElement>(".fd-results-list")
       const availableHeight = Math.max(0, node.clientHeight - RESULTS_LIST_TOP_INSET_PX)
-      const measuredCards = list
-        ? Array.from(list.querySelectorAll<HTMLElement>(".fd-result-card:not(.fd-result-card--compact):not(.fd-result-card--layout-guide)"))
-        : []
+      const cards = list ? Array.from(list.querySelectorAll<HTMLElement>(".fd-card:not(.fd-card--skeleton)")) : []
       const listStyle = list ? window.getComputedStyle(list) : null
       const measuredGap = listStyle
         ? Number.parseFloat(listStyle.rowGap || listStyle.gap || `${RESULTS_CARD_GAP_PX}`)
         : RESULTS_CARD_GAP_PX
       const gap = Number.isFinite(measuredGap) ? measuredGap : RESULTS_CARD_GAP_PX
-      const measuredCardHeight = measuredCards.reduce((maxHeight, card) => {
-        return Math.max(maxHeight, card.getBoundingClientRect().height)
-      }, 0)
-      if (measuredCardHeight > 0 && Math.abs(measuredCardHeight - rowHeightRef.current) > 1) {
-        rowHeightRef.current = measuredCardHeight
+      const measuredHeight = cards.reduce((max, card) => Math.max(max, card.getBoundingClientRect().height), 0)
+      if (measuredHeight > 0 && Math.abs(measuredHeight - rowHeightRef.current) > 1) {
+        rowHeightRef.current = measuredHeight
       }
 
       const rowHeight = rowHeightRef.current
-      const fullyVisibleRows = Math.max(1, Math.floor((availableHeight + gap) / (rowHeight + gap)))
-      const usedHeight = fullyVisibleRows * rowHeight + Math.max(0, fullyVisibleRows - 1) * gap
-      const blankHeight = availableHeight - usedHeight
-      const shouldAddOverflowRow = blankHeight >= RESULTS_EXTRA_ROW_MIN_BLANK_PX && fullyVisibleRows < itemCount
-      const nextPageCapacity = Math.max(
-        1,
-        Math.min(itemCount, RESULTS_PAGE_SIZE_MAX, fullyVisibleRows + (shouldAddOverflowRow ? 1 : 0)),
-      )
+      const fullRows = Math.max(1, Math.floor((availableHeight + gap) / (rowHeight + gap)))
+      const usedHeight = fullRows * rowHeight + Math.max(0, fullRows - 1) * gap
+      const blank = availableHeight - usedHeight
+      /*
+       * Never claim more room than the list needs — but «what the list needs»
+       * is its weight, not its length. Clamping to the item count split a page
+       * of one flight and one group of thirteen across two pages: two items,
+       * capacity two, weight 2.34. A real LIM–MIA search showed one card and
+       * eleven empty rows.
+       */
+      const neededRows = Math.ceil(totalDisplayWeight)
+      const addOverflowRow = blank >= RESULTS_EXTRA_ROW_MIN_BLANK_PX && fullRows < neededRows
+      const next = Math.max(1, Math.min(neededRows, RESULTS_PAGE_SIZE_MAX, fullRows + (addOverflowRow ? 1 : 0)))
 
-      setPageCapacity((current) => current === nextPageCapacity ? current : nextPageCapacity)
+      setPageCapacity((current) => current === next ? current : next)
     }
     const scheduleUpdate = () => {
       window.cancelAnimationFrame(frame)
@@ -1642,9 +1154,9 @@ function useAdaptiveResultsPageCapacity(itemCount: number) {
       window.cancelAnimationFrame(frame)
       observer.disconnect()
     }
-  }, [itemCount])
+  }, [scrollableList, totalDisplayWeight])
 
-  return { pageCapacity, viewportRef }
+  return { pageCapacity: scrollableList ? RESULTS_PAGE_SIZE_MAX : pageCapacity, viewportRef }
 }
 
 function resultItemsPaginationKey(items: ResultListItem[]) {
@@ -1661,81 +1173,13 @@ function resultItemsPaginationKey(items: ResultListItem[]) {
   ].join("|")
 }
 
-type PaginationItem = number | "ellipsis-left" | "ellipsis-right"
-
-function paginationItems(pageIndex: number, pageCount: number): PaginationItem[] {
-  if (pageCount <= 5) {
-    return Array.from({ length: pageCount }, (_, index) => index)
-  }
-
-  if (pageIndex <= 2) {
-    return [0, 1, 2, 3, "ellipsis-right", pageCount - 1]
-  }
-
-  if (pageIndex >= pageCount - 3) {
-    return [0, "ellipsis-left", pageCount - 4, pageCount - 3, pageCount - 2, pageCount - 1]
-  }
-
-  return [0, "ellipsis-left", pageIndex - 1, pageIndex, pageIndex + 1, "ellipsis-right", pageCount - 1]
-}
-
 function passengerCountForRequest(request: SearchJobResponse["request"] | undefined) {
   if (!request) return 1
   return Math.max(1, request.adults + request.children + request.infants)
 }
 
-function migrationMonthsForDisplay(results: SearchJobResponse, offers: CanonicalOffer[]): DisplayMigrationMonth[] {
-  if (!results.migrationMonths?.length) {
-    return offers.map((offer) => ({
-      key: offer.id,
-      label: migrationLabelFromOffer(offer),
-      departureStart: offer.departureDate,
-      departureEnd: offer.departureDate,
-      offer,
-      status: "available",
-    }))
-  }
-
-  const visibleOfferIds = new Set(offers.map((offer) => offer.id))
-  return results.migrationMonths.map((month) => {
-    if (!month.offer || visibleOfferIds.has(month.offer.id)) {
-      return month
-    }
-
-    return {
-      ...month,
-      offer: undefined,
-      filtered: true,
-    }
-  })
+function canShowPerPersonForRequest(request: SearchJobResponse["request"] | undefined) {
+  return Boolean(request && request.children === 0 && request.infants === 0)
 }
 
-function migrationLabelFromOffer(offer: CanonicalOffer) {
-  const tag = offer.tags?.find((item) => item && item !== "Migratorio")
-  if (tag) return tag
-
-  const value = offer.departureDate?.slice(0, 7)
-  if (!value || !/^\d{4}-\d{2}$/.test(value)) return "Mes"
-
-  const label = new Intl.DateTimeFormat("es-PE", {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(`${value}-01T00:00:00Z`))
-  return label.charAt(0).toUpperCase() + label.slice(1)
-}
-
-function formatDateRange(start?: string, end?: string) {
-  const left = formatShortDate(start)
-  const right = formatShortDate(end)
-  if (!left && !right) return "Fechas por confirmar"
-  if (left && right && left !== right) return `${left} - ${right}`
-  return left || right
-}
-
-function formatShortDate(value?: string) {
-  if (!value) return ""
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  if (!match) return value
-  return `${match[3]}/${match[2]}`
-}
+export const ResultsPanel = memo(ResultsPanelBase)

@@ -1,0 +1,2722 @@
+/*
+ * Fly Desk — component surfaces.
+ *
+ * One block per surface of the coverage map (plate 6b). Values are taken from
+ * the plates; when a value is not in the geometry catalog (5b) it is a bug.
+ */
+
+@layer utilities {
+  /* ===== Search fields (1a, 1b) ==========================================
+   * 52px, radius 12, floating micro label at 12/9, value 14/600 on a 17px
+   * line so the baseline does not move when the value arrives. */
+
+  .fd-field {
+    position: relative;
+  }
+
+  .fd-field-control {
+    position: relative;
+    display: flex;
+    height: var(--fd-control-primary);
+    align-items: center;
+    gap: 8px;
+    padding: 15px 12px 0;
+    border: 1px solid var(--color-input);
+    border-radius: var(--fd-radius-12);
+    background: var(--color-card);
+    box-sizing: border-box;
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      border-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      box-shadow var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-field-control:hover {
+    border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
+  }
+
+  .fd-field-control:focus-within,
+  .fd-field-control[data-active="true"] {
+    border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
+  }
+
+  .fd-field-label {
+    position: absolute;
+    top: 9px;
+    left: 12px;
+    z-index: 10;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-title);
+    letter-spacing: var(--fd-tracking-micro);
+    line-height: 1;
+    pointer-events: none;
+    text-transform: uppercase;
+  }
+
+  .fd-field-control[data-active="true"] + .fd-field-label,
+  .fd-field-label[data-active="true"] {
+    color: var(--color-primary);
+  }
+
+  .fd-field-value {
+    flex: 1;
+    min-width: 0;
+    height: 17px;
+    overflow: hidden;
+    font-size: var(--fd-text-body);
+    font-weight: var(--fd-weight-label);
+    line-height: 17px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* An unfilled value — the typed placeholder of an input and the "Seleccionar"
+     of a picker are the same state, so they carry one colour. */
+  .fd-field-value-placeholder,
+  .fd-field-value::placeholder {
+    color: color-mix(in srgb, var(--color-muted-foreground) 65%, transparent);
+  }
+
+  /* 01 §1 closes the soft fills at `warn-soft`. The separate `destructive-soft`
+     pair differed from it by two percent of the same orange and never read as a
+     different state — the `--success` situation again. Error and warning share
+     the fill; the border is what tells them apart. */
+  .fd-field-invalid {
+    border-color: var(--color-destructive);
+    background: var(--color-warning-soft);
+  }
+
+  .fd-field-invalid:focus-within {
+    border-color: var(--color-destructive);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-destructive) 24%, transparent);
+  }
+
+  /* ===== Frequent-station chips (1a) =====================================
+   * Real material in the place the old layout reserved and left blank.
+   * On mobile they carry no separator: they are pressed in order, origin
+   * first, destination second. */
+
+  .fd-quick-chips {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-top: 5px;
+  }
+
+  .fd-quick-chip {
+    display: flex;
+    height: var(--fd-control-standard);
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--color-input);
+    border-radius: var(--fd-radius-10);
+    background: var(--color-card);
+    color: var(--color-foreground);
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+    letter-spacing: 0;
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      border-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-quick-chip:hover {
+    background: var(--color-accent);
+  }
+
+  /* Plate 1c: one row of five chips at the touch minimum, `flex: 1`, mono 13.
+     They carry no separator because they are pressed in order — first press
+     fills Origin, second fills Destination (11 §2.1). */
+  .fd-shell[data-shell-size="C"] .fd-quick-chips {
+    display: flex;
+    height: var(--fd-control-touch);
+    gap: 6px;
+  }
+
+  .fd-shell[data-shell-size="C"] .fd-quick-chip {
+    width: auto;
+    min-width: 0;
+    height: var(--fd-control-touch);
+    padding-inline: 6px;
+    font-size: var(--fd-text-base);
+    flex: 1;
+    min-width: 0;
+    height: var(--fd-control-touch);
+    font-size: var(--fd-text-base);
+  }
+
+  /* ===== Date policy footer (1a) =========================================
+   * The window, the stay ceiling and the passenger ceiling — what the agent
+   * needs to know before typing, not after being rejected. */
+
+  .fd-policy-line {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-border);
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-meta);
+    line-height: 1.5;
+  }
+
+  .fd-policy-line b {
+    color: var(--color-foreground);
+    font-family: var(--font-mono);
+    font-weight: var(--fd-weight-label);
+  }
+
+  .fd-policy-sep {
+    margin-inline: 8px;
+    opacity: 0.5;
+  }
+
+  /* ===== Provider rail (1a) ==============================================
+   * Names are canonical; presence itself means a current ready observation. */
+
+  .fd-provider-rail {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-border);
+    animation: fd-crossfade var(--fd-dur-emergente) var(--fd-ease-tacto) both;
+  }
+
+  .fd-provider-rail-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--color-foreground);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+  }
+
+  .fd-provider-rail-item img {
+    width: 15px;
+    height: 15px;
+    object-fit: contain;
+  }
+
+  /* ===== Single-line alert (1b) ==========================================
+   * Replaces the chain of technical warnings. 36px, one line, ellipsised,
+   * dismissible, and it never comes back within the same search. */
+
+  .fd-alert-line {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 10px;
+    height: var(--fd-control-bar);
+    padding: 0 8px 0 12px;
+    border: 1px solid color-mix(in srgb, var(--color-primary) 38%, transparent);
+    border-radius: var(--fd-radius-10);
+    background: var(--color-warning-soft);
+    color: var(--color-warning-soft-foreground);
+  }
+
+  .fd-alert-line-error {
+    border-color: color-mix(in srgb, var(--color-destructive) 50%, transparent);
+  }
+
+  .fd-alert-line-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--fd-text-base);
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-alert-line-dismiss {
+    display: grid;
+    width: var(--fd-control-chip);
+    height: var(--fd-control-chip);
+    flex-shrink: 0;
+    place-items: center;
+    border-radius: var(--fd-radius-8);
+    transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-alert-line-dismiss:hover {
+    background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+  }
+
+  /* ===== Panel chrome (1b) =============================================== */
+
+  .fd-panel-count {
+    flex-shrink: 0;
+    color: var(--color-muted-foreground);
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-label);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Status pill: 20px, radius 6, micro type. Carries the spinner when the
+     search is partial — and says "Parcial" in words, so reduced motion (which
+     stops the spinner) loses nothing. */
+  .fd-status-pill {
+    display: inline-flex;
+    height: 20px;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 4px;
+    padding: 0 7px;
+    border-radius: var(--fd-radius-6);
+    background: var(--color-secondary);
+    color: var(--color-secondary-foreground);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-title);
+    letter-spacing: var(--fd-tracking-micro);
+    text-transform: uppercase;
+  }
+
+  /* The count of active filters. Mono 11/700 in primary, in both the desk
+     header (8a) and the sheet header (1e). */
+  .fd-status-pill-count {
+    background: var(--color-primary);
+    color: var(--color-primary-foreground);
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-mono-meta);
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  /* ===== Filters (8a · 1b · 1e) ==========================================
+   * One component, two containers: the 248px column of plate 8a and the
+   * partial sheet of plate 1e. Four groups — three segmented controls with
+   * **no separator between them**, and a 1px rule *only* before Airlines,
+   * because that is a different kind of filter (checkboxes, not segments). */
+
+  .fd-filter-panel {
+    display: flex;
+    height: 100%;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .fd-filter-panel-header {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  /* Plate 8a draws 12 on top and 10 under the title, not the symmetric 10 of
+     the shared panel chrome. Needs to out-specify `.fd-panel-header`. */
+  .fd-filter-panel > .fd-filter-panel-header {
+    padding: 12px 12px 10px;
+  }
+
+  .fd-filter-panel-heading {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .fd-filter-body {
+    display: grid;
+    min-height: 0;
+    flex: 1;
+    align-content: start;
+    gap: 12px;
+    overflow: auto;
+    padding: 12px;
+  }
+
+  .fd-filter-group {
+    display: grid;
+    gap: 8px;
+    transition: opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  /* A group nobody has touched sits at 72% and says so. Greying it out is
+     what tells the agent, at a glance, which constraints are actually on. */
+  .fd-filter-group[data-used="false"] {
+    opacity: 0.72;
+  }
+
+  .fd-filter-group-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .fd-filter-group-unused {
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-label);
+  }
+
+  /* The only separator in the panel. */
+  .fd-filter-group--airlines {
+    gap: 6px;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .fd-airline-total {
+    color: var(--color-muted-foreground);
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fd-airline-list {
+    display: grid;
+    gap: 6px;
+  }
+
+  /* Airline row: checkbox 16, logo 18, name 13/600, count mono in a fixed
+     32px column so the digits line up. Flush with the group, so the checkbox
+     shares a left edge with the segmented controls above it (8a). */
+  .fd-airline-row {
+    display: flex;
+    min-width: 0;
+    height: var(--fd-control-standard);
+    align-items: center;
+    gap: 8px;
+    border-radius: var(--fd-radius-8);
+    cursor: pointer;
+    font-size: var(--fd-text-base);
+    transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-airline-row:hover {
+    background: var(--color-muted);
+  }
+
+  .fd-airline-row-logo {
+    width: var(--fd-icon-18);
+    height: var(--fd-icon-18);
+    flex-shrink: 0;
+    object-fit: contain;
+  }
+
+  .fd-airline-row-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    font-weight: var(--fd-weight-label);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-airline-row-count {
+    width: 32px;
+    flex-shrink: 0;
+    color: var(--color-muted-foreground);
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+
+  /* ---- the same panel inside the partial sheet (1e) --------------------- */
+
+  .fd-filter-panel--sheet {
+    height: auto;
+    overflow: visible;
+  }
+
+  .fd-filter-panel--sheet > .fd-filter-body {
+    overflow: visible;
+    padding: 0;
+  }
+
+  /* On a phone the rows are a ruled list rather than a spaced one: 44px each,
+     separated by a hairline instead of by air, with the name a notch up and
+     the count in 34 because the mono is a bigger body (01 §10). */
+  .fd-filter-sheet .fd-airline-list {
+    gap: 0;
+  }
+
+  .fd-filter-sheet .fd-airline-row {
+    gap: 12px;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+    border-radius: 0;
+  }
+
+  .fd-filter-sheet .fd-airline-row-name {
+    font-size: var(--fd-text-body);
+  }
+
+  .fd-filter-sheet .fd-airline-row-count {
+    width: 34px;
+  }
+
+  /* ===== Active filter chips (1b) ======================================== */
+
+  .fd-active-chip {
+    display: inline-flex;
+    height: var(--fd-control-chip);
+    align-items: center;
+    gap: 6px;
+    padding: 0 6px 0 9px;
+    border: 1px solid color-mix(in srgb, var(--color-primary) 34%, transparent);
+    border-radius: var(--fd-radius-8);
+    background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+    color: var(--color-foreground);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+  }
+
+  .fd-active-chip-remove {
+    opacity: 0.65;
+    transition: opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-active-chip-remove:hover {
+    opacity: 1;
+  }
+
+  /* ===== Pagination (1b) =================================================
+   * Range on the left, nested control on the right: 1 … 5 6 7 … 56.
+   * 26px cells, mono 12/600, the active one at 700. */
+
+  .fd-pager {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 7px;
+    padding-top: 7px;
+    border-top: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+  }
+
+  .fd-pager-range {
+    margin: 0;
+    color: var(--color-muted-foreground);
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fd-pager-divider {
+    width: 1px;
+    height: 16px;
+    background: var(--color-border);
+  }
+
+  .fd-pager-cell {
+    display: grid;
+    min-width: var(--fd-control-chip);
+    height: var(--fd-control-chip);
+    place-items: center;
+    padding: 0 6px;
+    border-radius: var(--fd-radius-8);
+    color: var(--color-foreground);
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+    font-variant-numeric: tabular-nums;
+    transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-pager-cell:hover:not(:disabled):not([aria-current="page"]) {
+    background: var(--color-accent);
+  }
+
+  .fd-pager-cell[aria-current="page"] {
+    background: var(--color-secondary);
+    font-weight: var(--fd-weight-title);
+  }
+
+  .fd-pager-cell:disabled {
+    color: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent);
+  }
+
+  .fd-pager-gap {
+    display: grid;
+    min-width: var(--fd-control-chip);
+    height: var(--fd-control-chip);
+    place-items: center;
+    color: var(--color-muted-foreground);
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-meta);
+  }
+
+  .fd-pager-nested {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  /* The compact mode of 04 §6: ‹ 44 · píldora 40 · › 44. It asks the list, not
+     the shell, because what decides it is whether seven cells and two ellipses
+     fit — the same arithmetic that stacks the card (02 §2). */
+  .fd-pager-compact {
+    display: none;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .fd-pager-step {
+    display: grid;
+    width: var(--fd-control-touch);
+    height: var(--fd-control-touch);
+    place-items: center;
+    border-radius: var(--fd-radius-12);
+    background: var(--color-secondary);
+    color: var(--color-foreground);
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-pager-position {
+    display: grid;
+    min-width: 40px;
+    height: 40px;
+    place-items: center;
+    padding-inline: 8px;
+    color: var(--color-foreground);
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-label);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 02 §4: the pager has two forms, one for the desk and one for the phone, so
+     it answers the shell like every other row of the master table. The result
+     card is the one piece that asks the list instead (02 §2). */
+  @container fdshell (max-width: 719.98px) {
+    .fd-pager-nested {
+      display: none;
+    }
+
+    .fd-pager-compact {
+      display: flex;
+    }
+
+    .fd-pager-divider {
+      display: none;
+    }
+
+    .fd-pager {
+      justify-content: space-between;
+      gap: 8px;
+    }
+  }
+
+  /* ===== Suggestions (2a) ================================================
+   * One row per result. IATA in a fixed column because it is what the agent
+   * reads first and what they type; city in title weight; airport plus
+   * distance when it is an alternative airport. */
+
+  .fd-suggest-panel {
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    border-radius: var(--fd-radius-12);
+    background: var(--color-popover);
+    box-shadow: var(--fd-shadow-emergente);
+    color: var(--color-popover-foreground);
+  }
+
+  .fd-suggest-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px 8px;
+  }
+
+  .fd-suggest-row {
+    display: grid;
+    grid-template-columns: 18px 40px minmax(0, 1fr);
+    height: 46px;
+    align-items: center;
+    column-gap: 10px;
+    padding: 0 8px;
+    border-radius: var(--fd-radius-10);
+    text-align: left;
+    transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-suggest-row:hover {
+    background: var(--color-accent);
+  }
+
+  .fd-suggest-row[aria-selected="true"] {
+    background: var(--color-accent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 40%, transparent);
+  }
+
+  .fd-suggest-code {
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-title);
+    letter-spacing: 0.01em;
+  }
+
+  .fd-suggest-city {
+    overflow: hidden;
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-label);
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-suggest-detail {
+    overflow: hidden;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-mono-meta);
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The key footer is here because this search is used by typing, not by
+     pointing. */
+  .fd-suggest-foot {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-secondary) 55%, transparent);
+  }
+
+  .fd-location-sheet .fd-suggest-row {
+    height: 60px;
+  }
+
+  /* ===== Passengers (1g, 2d) =============================================
+   * Row 44, steppers 32, figure mono 15/700 in a 28px column so the row does
+   * not twitch between 9 and 10. Inside the sheet the same row is 64 with 44px
+   * steppers and a 17px figure (2d) — one component, two surfaces. */
+
+  .fd-pax-popover {
+    width: 288px;
+    padding: 10px 12px;
+  }
+
+  .fd-pax-popover-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 4px 8px;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .fd-pax-rows {
+    display: grid;
+    gap: 2px;
+    padding-top: 6px;
+  }
+
+  .fd-pax-row {
+    display: flex;
+    height: var(--fd-control-touch);
+    align-items: center;
+    gap: 10px;
+    padding: 0 4px;
+    border-radius: var(--fd-radius-10);
+  }
+
+  .fd-pax-row-copy {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .fd-pax-row-label {
+    display: block;
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-label);
+    line-height: 1.2;
+  }
+
+  .fd-pax-row-detail {
+    display: block;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-mono-meta);
+    line-height: 1.2;
+  }
+
+  .fd-pax-counter {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .fd-pax-step {
+    display: grid;
+    width: var(--fd-control-standard);
+    height: var(--fd-control-standard);
+    place-items: center;
+    border: 1px solid var(--color-input);
+    border-radius: var(--fd-radius-10);
+    background: var(--color-card);
+    transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-pax-step:hover:not(:disabled) {
+    background: var(--color-accent);
+  }
+
+  .fd-pax-figure {
+    display: grid;
+    min-width: 28px;
+    place-items: center;
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-action);
+    font-weight: var(--fd-weight-title);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fd-pax-note {
+    margin: 8px 4px 2px;
+    padding-top: 8px;
+    border-top: 1px solid var(--color-border);
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-mono-meta);
+    line-height: 1.45;
+  }
+
+  /* The sheet is the mobile surface, so it carries the mobile geometry — no
+     container query needed: this sheet only ever exists in armazón C (02 §7). */
+  .fd-passenger-sheet .fd-pax-row {
+    height: 64px;
+    gap: 12px;
+    padding: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+    border-radius: 0;
+  }
+
+  .fd-passenger-sheet .fd-pax-row-label {
+    font-size: var(--fd-text-action);
+    line-height: 1.25;
+  }
+
+  .fd-passenger-sheet .fd-pax-row-detail {
+    font-size: var(--fd-text-meta);
+    line-height: 1.25;
+  }
+
+  .fd-passenger-sheet .fd-pax-step {
+    width: var(--fd-control-touch);
+    height: var(--fd-control-touch);
+    border-radius: var(--fd-radius-12);
+  }
+
+  .fd-passenger-sheet .fd-pax-step svg {
+    width: var(--fd-icon-18);
+    height: var(--fd-icon-18);
+  }
+
+  .fd-passenger-sheet .fd-pax-figure {
+    min-width: 34px;
+    font-size: var(--fd-text-sheet);
+  }
+
+  .fd-passenger-sheet .fd-pax-note {
+    margin: 0;
+    padding: 10px 0 0;
+    border-top: 0;
+    font-size: var(--fd-text-meta);
+    line-height: 1.5;
+  }
+
+  /* ===== Calendar (2e, 6c, 7a) ===========================================
+   * One control with two halves, and one cell treatment shared by all four
+   * calendars — days and months, desktop and mobile. What changes between
+   * them is the grid (7 columns of days, 4 of months) and the cell height
+   * (32 desktop, 44 mobile). Nothing else. */
+
+  .fd-daterange-control {
+    display: grid;
+    grid-template-columns: 1fr 1px 1fr;
+    height: var(--fd-control-primary);
+    overflow: hidden;
+    border: 1px solid var(--color-input);
+    border-radius: var(--fd-radius-12);
+    background: var(--color-card);
+    transition:
+      border-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      box-shadow var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-daterange-control:hover {
+    border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
+  }
+
+  /* The primary ring marks the half being chosen, not the whole control. */
+  .fd-daterange-control[data-open="true"] {
+    border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
+  }
+
+  .fd-daterange-half {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 15px 12px 0;
+    box-sizing: border-box;
+    text-align: left;
+    transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-daterange-half[data-active="true"] {
+    background: color-mix(in srgb, var(--color-primary) 7%, transparent);
+  }
+
+  .fd-daterange-half[data-active="true"] .fd-field-label,
+  .fd-daterange-half[data-active="true"] .fd-daterange-icon {
+    color: var(--color-primary);
+  }
+
+  .fd-daterange-divider {
+    background: var(--color-input);
+  }
+
+  .fd-daterange-icon {
+    width: var(--fd-icon-16);
+    height: var(--fd-icon-16);
+    flex-shrink: 0;
+    color: var(--color-muted-foreground);
+  }
+
+  /* 11 §2.1 and §2.2 both name «el aspa»: the cross that empties a field. One
+     shape for the two of them — the date halves and the location fields — so
+     the affordance the agent learns in one is the one they find in the other. */
+  .fd-daterange-clear,
+  .fd-field-clear {
+    display: grid;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    place-items: center;
+    border-radius: 999px;
+    background: var(--color-secondary);
+    color: var(--color-muted-foreground);
+    transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-daterange-clear:hover,
+  .fd-field-clear:hover {
+    color: var(--color-foreground);
+  }
+
+  .fd-cal-popover {
+    border: 1px solid var(--color-border);
+    border-radius: var(--fd-radius-12);
+    background: var(--color-popover);
+    box-shadow: var(--fd-shadow-emergente);
+    padding: 12px;
+  }
+
+  .fd-cal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0 2px 10px;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  /* The live range plus its counter: the header answers "what did I pick"
+     without reading the grid. */
+  .fd-cal-range {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--fd-text-body);
+    font-weight: var(--fd-weight-title);
+  }
+
+  .fd-cal-preset {
+    display: inline-flex;
+    height: var(--fd-control-chip);
+    align-items: center;
+    padding: 0 9px;
+    border: 1px solid var(--color-input);
+    border-radius: var(--fd-radius-8);
+    background: var(--color-card);
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      border-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-cal-preset:hover {
+    background: var(--color-accent);
+  }
+
+  .fd-cal-preset[aria-pressed="true"] {
+    border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+    color: var(--color-foreground);
+    font-weight: var(--fd-weight-title);
+  }
+
+  .fd-cal-months {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+    padding-top: 10px;
+  }
+
+  .fd-cal-step {
+    position: absolute;
+    top: 6px;
+    display: grid;
+    width: var(--fd-control-chip);
+    height: var(--fd-control-chip);
+    place-items: center;
+    border-radius: var(--fd-radius-8);
+    color: var(--color-foreground);
+    transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-cal-step:hover:not(:disabled) {
+    background: var(--color-accent);
+  }
+
+  .fd-cal-step:disabled {
+    color: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent);
+  }
+
+  .fd-cal-caption {
+    display: flex;
+    height: var(--fd-control-chip);
+    align-items: center;
+    justify-content: center;
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-title);
+  }
+
+  .fd-cal-weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    margin-top: 2px;
+  }
+
+  .fd-cal-weekday {
+    display: flex;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-title);
+    letter-spacing: var(--fd-tracking-micro);
+    text-transform: uppercase;
+  }
+
+  .fd-cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    row-gap: 2px;
+  }
+
+  .fd-cal-grid-months {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    row-gap: 2px;
+    margin-top: 2px;
+  }
+
+  /*
+   * The cell. No box of its own — the sweep is the box. Rounded ends, flat
+   * middle at 12%. Three states and nothing struck through: `today` carries a
+   * ring, `unavailable` (past, or beyond the one-year window) sits at 38% with
+   * no cursor, and `other month` is simply not drawn. A strikethrough was
+   * doing two jobs at once and told you nothing about which.
+   */
+  .fd-cal-cell {
+    display: flex;
+    height: 32px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--fd-radius-8);
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-base);
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--fd-weight-label);
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-cal-cell-month {
+    font-family: var(--font-sans);
+  }
+
+  /* ===== Flexible stay counter (1a) ======================================
+   * A 32px control on `--secondary`, like every other counter in the system.
+   * It used to carry `sm:` variants, which are media queries: the armazón is
+   * decided by container width, not by the window (02 §2). */
+
+  .fd-stay-counter {
+    display: inline-flex;
+    height: var(--fd-control-standard);
+    align-items: center;
+    overflow: hidden;
+    padding: 2px;
+    border: 1px solid var(--color-input);
+    border-radius: var(--fd-radius-10);
+    background: var(--color-secondary);
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      border-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-stay-counter--stretch {
+    width: max-content;
+  }
+
+  /* The ± of the stay counter. 32px, the standard control of 5b — it used to be
+     28, which is not a height this system has; armazón C lifts it to the touch
+     minimum. */
+  .fd-stay-counter-step {
+    width: var(--fd-control-standard);
+    height: var(--fd-control-standard);
+  }
+
+  /* Moments 2 and 3 write into the return half before anything is chosen, so
+     the half reads in primary to say "this is not settled yet" (plate 9a). */
+  .fd-daterange-half[data-tentative] .fd-field-value,
+  .fd-daterange-half[data-tentative] .fd-field-label,
+  .fd-daterange-half[data-tentative] .fd-daterange-icon {
+    color: var(--color-primary);
+  }
+
+  /*
+   * The four moments of plate 9a, one rule each. `dayKind()` decides; this only
+   * translates. The tentative pair (`pmid`, `pend`) is deliberately kept apart
+   * from the confirmed pair (`mid`, `end`): share the code and the 7% and the
+   * 12% blend into one another (11 §8).
+   */
+
+  .fd-cal-cell[data-kind="normal"]:hover,
+  .fd-cal-cell[data-kind="today"]:hover {
+    background: var(--color-accent);
+  }
+
+  /* Moment 1 · today carries a ring and nothing else. */
+  .fd-cal-cell[data-kind="today"] {
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-primary) 55%, transparent);
+    color: var(--color-foreground);
+    font-weight: var(--fd-weight-title);
+  }
+
+  /* Unavailable: past, or beyond the one-year window. It does not respond. */
+  .fd-cal-cell[data-kind="past"] {
+    color: color-mix(in srgb, var(--color-muted-foreground) 38%, transparent);
+    cursor: not-allowed;
+    font-weight: var(--fd-weight-value);
+  }
+
+  /* Moment 2 · the first click fills the day with radius on all four corners:
+     it is a chosen date, not yet an end of anything. */
+  .fd-cal-cell[data-kind="solo"] {
+    border-radius: var(--fd-radius-8);
+  }
+
+  /* Moment 4 · confirmed sweep. The ends round, the middle is flat, and the
+     cell has no box of its own — the sweep is the box. */
+  .fd-cal-cell[data-kind="mid"] {
+    border-radius: 0;
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    color: color-mix(in srgb, var(--color-primary) 78%, var(--color-foreground));
+  }
+
+  .fd-cal-cell[data-kind="solo"],
+  .fd-cal-cell[data-kind="start"],
+  .fd-cal-cell[data-kind="end"] {
+    background: var(--color-primary);
+    color: var(--color-primary-foreground);
+    font-weight: var(--fd-weight-title);
+  }
+
+  .fd-cal-cell[data-kind="start"] {
+    border-radius: var(--fd-radius-8) 0 0 var(--fd-radius-8);
+  }
+
+  .fd-cal-cell[data-kind="end"] {
+    border-radius: 0 var(--fd-radius-8) var(--fd-radius-8) 0;
+  }
+
+  /*
+   * Movement 5 · the confirmed range fills from the end the agent picked. The
+   * colour leaves the cell and becomes a band under it, because a band can be
+   * scaled and a background cannot; the label rides above it on its own
+   * positioned box, which is the only reliable way to get an absolute child
+   * *under* text that has no element of its own.
+   *
+   * The two names are the same movement: an animation replays when its name
+   * changes, not when an attribute does, so a second range of the same shape
+   * would otherwise paint in silence.
+   */
+  .fd-cal-cell-label {
+    position: relative;
+  }
+
+  .fd-cal-cell[data-sweep] {
+    position: relative;
+    background: transparent;
+  }
+
+  .fd-cal-cell[data-sweep]::before {
+    position: absolute;
+    border-radius: inherit;
+    animation-duration: calc(var(--fd-dur-emergente) / var(--fd-sweep-count, 1));
+    animation-delay: calc(var(--fd-dur-emergente) * var(--fd-sweep-index, 0) / var(--fd-sweep-count, 1));
+    animation-fill-mode: both;
+    animation-timing-function: var(--fd-ease-estructura);
+    content: "";
+    inset: 0;
+    transform-origin: var(--fd-sweep-origin, left) center;
+  }
+
+  .fd-cal-cell[data-sweep="0"]::before {
+    animation-name: fd-sweep;
+  }
+
+  .fd-cal-cell[data-sweep="1"]::before {
+    animation-name: fd-sweep-alt;
+  }
+
+  .fd-cal-cell[data-sweep][data-kind="mid"]::before {
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  }
+
+  .fd-cal-cell[data-sweep][data-kind="start"]::before,
+  .fd-cal-cell[data-sweep][data-kind="end"]::before {
+    background: var(--color-primary);
+  }
+
+  /* Moment 3 · the tentative sweep under the pointer, at exactly half the
+     intensity of what is confirmed: 7% for the run, 22% and a ring for the day
+     being pointed at. Nothing here is chosen yet. */
+  .fd-cal-cell[data-kind="pmid"] {
+    border-radius: 0;
+    background: color-mix(in srgb, var(--color-primary) 7%, transparent);
+    color: var(--color-foreground);
+  }
+
+  .fd-cal-cell[data-kind="pend"] {
+    border-radius: 0 var(--fd-radius-8) var(--fd-radius-8) 0;
+    background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-primary) 55%, transparent);
+    color: var(--color-foreground);
+    font-weight: var(--fd-weight-title);
+  }
+
+  .fd-cal-cell[data-blank="true"] {
+    visibility: hidden;
+  }
+
+  .fd-cal-legend {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin: 10px 2px 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--color-border);
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-mono-meta);
+  }
+
+  .fd-cal-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .fd-cal-legend-swatch {
+    display: inline-grid;
+    min-width: 20px;
+    height: 20px;
+    place-items: center;
+    padding: 0 5px;
+    border-radius: var(--fd-radius-6);
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-title);
+  }
+
+  .fd-cal-popover[data-layout="continuous"] {
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .fd-cal-popover[data-layout="continuous"] .fd-cal-head {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    flex-wrap: wrap;
+    background: var(--color-popover);
+    padding: 0 0 12px;
+  }
+
+  .fd-cal-popover[data-layout="continuous"] .fd-cal-head > :last-child {
+    display: flex;
+    width: 100%;
+  }
+
+  /* 03 §7: on a phone the shortcuts are 44px and elastic — they are the only
+     way to move the return date without scrolling a year of months. */
+  .fd-cal-popover[data-layout="continuous"] .fd-cal-preset {
+    height: var(--fd-control-touch);
+    flex: 1;
+    justify-content: center;
+  }
+
+  .fd-cal-popover[data-layout="continuous"] .fd-cal-months {
+    grid-template-columns: 1fr;
+    gap: 18px;
+    padding-top: 12px;
+  }
+
+  .fd-cal-popover[data-layout="continuous"] .fd-cal-weekdays {
+    position: sticky;
+    top: 88px;
+    z-index: 2;
+    background: var(--color-popover);
+  }
+
+  .fd-cal-popover[data-layout="continuous"] .fd-cal-legend {
+    display: none;
+  }
+
+  /* Sheet calendars use the 44px touch grid from the handoff. */
+  .fd-calendar-sheet .fd-cal-cell {
+    height: 44px;
+    font-size: var(--fd-text-action);
+  }
+
+  /* ===== Detail panel (1b · 8a · 1f · 3c) ================================
+   *
+   * One component, three mounts: the 316px column of armazón A (1b), the 380px
+   * side sheet of B (8a) and the edge-to-edge sheet of C (1f). Nothing below
+   * asks how wide the *window* is — the three geometries are three answers of
+   * the same container query, so the panel cannot drift between them.
+   *
+   * The itinerary is a rail: a 1.5px line, a filled dot at every stop, and the
+   * layover leg dotted with its text in primary at 80%. Its type comes from the
+   * `timeline()` model the handoff shares between 1b and 1f — that model is the
+   * rule, and 8a's hand-written numbers are one drawing of it — while its
+   * geometry comes from the plate of the surface it is standing on.
+   */
+
+  /* Its own box, not `.fd-panel-header`: the three plates give this header three
+     paddings and 1f takes its fill away entirely, so sharing the generic one
+     meant three overrides fighting a rule of equal weight. */
+  .fd-detail-header {
+    display: flex;
+    flex-shrink: 0;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-secondary) 60%, transparent);
+  }
+
+  /* 8a keeps the airline mark inside the title line; 1f gives it a column of
+     its own so the provider lines up under the name. One DOM has to serve both
+     and it is 1f's, the later and the richer of the two drawings. */
+  .fd-detail-logo {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    object-fit: contain;
+  }
+
+  .fd-detail-head {
+    display: grid;
+    min-width: 0;
+    flex: 1;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    column-gap: 10px;
+    row-gap: 4px;
+  }
+
+  .fd-detail-title {
+    overflow: hidden;
+    font-size: var(--fd-text-body);
+    font-weight: var(--fd-weight-title);
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-detail-price {
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-sheet);
+    font-weight: var(--fd-weight-figure);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .fd-detail-provider {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-meta);
+    line-height: 1.2;
+  }
+
+  .fd-detail-provider-icon {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+    object-fit: contain;
+  }
+
+  .fd-detail-pax {
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+    line-height: 1.2;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  /* Plate 8a: the side sheet's only close, level with the price. 32px is the
+     desk control size, and `order` sends it to the right edge where 8a draws
+     it — 1f moves the same button to the head of the row as a back chevron. */
+  .fd-detail-close {
+    display: grid;
+    order: 1;
+    width: var(--fd-control-standard);
+    height: var(--fd-control-standard);
+    flex-shrink: 0;
+    /* Centred on the price beside it: 17px at 1.2 is a 20.4px line inside a
+       32px control, so the button starts above the row it shares. */
+    margin-top: -5px;
+    place-items: center;
+    border-radius: var(--fd-radius-10);
+    background: var(--color-secondary);
+    color: var(--color-foreground);
+    transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-detail-close:hover {
+    background: var(--color-accent);
+  }
+
+  .fd-detail-close-back {
+    display: none;
+  }
+
+  .fd-detail-body {
+    padding: 12px;
+  }
+
+  /* Every block after the first arrives behind a rule with 14px of air on each
+     side of it (1b); the phone opens both to 18 (1f). */
+  .fd-detail-section {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .fd-leg-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .fd-leg-summary {
+    color: var(--color-foreground);
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fd-rail {
+    /* The four numbers the three surfaces disagree on, named once so the
+       overrides below restate only what actually changes. */
+    --fd-rail-dot: 8px;
+    --fd-rail-dot-top: 4px;
+    --fd-rail-stop-line: 18px;
+    --fd-rail-leg-line: 20px;
+    display: grid;
+    grid-template-columns: 44px 13px minmax(0, 1fr);
+    column-gap: 10px;
+  }
+
+  .fd-rail-time {
+    color: var(--color-foreground);
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-title);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--fd-rail-stop-line);
+  }
+
+  .fd-rail-track {
+    position: relative;
+    display: flex;
+    justify-content: center;
+  }
+
+  /* The line lives on the track cell, so it is continuous between stops
+     regardless of how tall the text next to it is. */
+  .fd-rail-track::before {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1.5px;
+    background: var(--color-border);
+    content: "";
+    transform: translateX(-50%);
+  }
+
+  /* The waiting leg is the one thing on the rail that is not flying, and the
+     handoff says so twice: dotted line, text in primary at 80%. Both drawings
+     dot it in `--border` — the colour belongs to the text. */
+  .fd-rail-track[data-kind="layover"]::before {
+    background: repeating-linear-gradient(var(--color-border) 0 3px, transparent 3px 6px);
+  }
+
+  /* The rail starts and ends at the centre of a dot, never a stub past it. */
+  .fd-rail-track[data-kind="first"]::before {
+    top: calc(var(--fd-rail-dot-top) + var(--fd-rail-dot) / 2);
+  }
+
+  .fd-rail-track[data-kind="last"]::before {
+    bottom: calc(100% - var(--fd-rail-dot-top) - var(--fd-rail-dot) / 2);
+  }
+
+  .fd-rail-dot {
+    position: relative;
+    z-index: 1;
+    width: var(--fd-rail-dot);
+    height: var(--fd-rail-dot);
+    margin-top: var(--fd-rail-dot-top);
+    border-radius: 999px;
+    background: var(--color-foreground);
+  }
+
+  .fd-rail-stop {
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-title);
+    line-height: var(--fd-rail-stop-line);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-rail-leg {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-mono-meta);
+    font-weight: var(--fd-weight-value);
+    line-height: var(--fd-rail-leg-line);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-rail-leg--layover {
+    color: color-mix(in srgb, var(--color-primary) 80%, var(--color-foreground));
+  }
+
+  /* Conditions, in pairs: label 12 muted / value 13 semibold. */
+  .fd-condition-heading {
+    display: block;
+    margin-bottom: 8px;
+  }
+
+  .fd-condition-list {
+    display: grid;
+    gap: 6px;
+  }
+
+  .fd-condition-row {
+    display: grid;
+    grid-template-columns: 88px minmax(0, 1fr);
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .fd-condition-label {
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-meta);
+  }
+
+  .fd-condition-value {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-label);
+  }
+
+  /* One typography rule across the whole app: a hard figure — a time, a price, a
+     date, a calendar day, a counter, a page number — is mono at 600; interface
+     text is Inter. Seat counts and ticketing dates are figures. */
+  .fd-condition-value--figure {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fd-condition-bags {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .fd-condition-bags svg {
+    width: var(--fd-icon-14);
+    height: var(--fd-icon-14);
+  }
+
+  /* The same grey the card uses for a bag the fare does not include: absence is
+     a fact, not a warning, and the pictogram says it — never words (04 §4). It
+     is the only thing that says it now that the label names what is included
+     and nothing else, which is why the icons stay on all three surfaces even
+     though 1b draws the 316 column without them. */
+  .fd-condition-bag--absent {
+    color: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent);
+  }
+
+  /* --- the anchored foot, and the failure that lands on top of it -------- */
+
+  .fd-detail-footer {
+    display: grid;
+    flex-shrink: 0;
+    gap: 10px;
+    padding: 10px 12px;
+    border-top: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-secondary) 60%, transparent);
+  }
+
+  /* 3c makes the failure and the actions one surface. The error arrives with
+     the footer's own fill, so a line between them would run through the middle
+     of a single block. */
+  .fd-detail-footer[data-quote-error] {
+    border-top: 0;
+  }
+
+  .fd-detail-action-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .fd-detail-migration {
+    display: flex;
+    height: var(--fd-control-standard);
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+    border-radius: var(--fd-radius-10);
+    padding-inline: 6px;
+    color: var(--color-muted-foreground);
+    cursor: pointer;
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+    white-space: nowrap;
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-detail-migration:hover {
+    background: var(--color-accent);
+    color: var(--color-foreground);
+  }
+
+  /* 28 × 16 with a 12px knob is the switch 1b draws, which is also the shared
+     component's own size — the wider surfaces bump it to 30 × 17 below. */
+  .fd-detail-migration-switch {
+    flex-shrink: 0;
+  }
+
+  /* 1b spells it «Migratorio» in the 316 column; 8a and 1f spell it in full
+     where the row has the width for it. */
+  .fd-detail-migration-full {
+    display: none;
+  }
+
+  .fd-detail-action-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* Both foot actions are the 32px control of 1b and differ in the only two
+     things the plate draws differently: the padding around the label, and the
+     weight of the label itself. */
+  .fd-detail-provider-action,
+  .fd-detail-quote-error-open {
+    gap: 6px;
+    padding-inline: 11px;
+    font-weight: var(--fd-weight-label);
+  }
+
+  .fd-detail-quote-action,
+  .fd-detail-quote-error-retry {
+    gap: 6px;
+    padding-inline: 13px;
+    font-weight: var(--fd-weight-title);
+  }
+
+  /* 3c: two exits and a way to put the notice away, over the fill of the foot
+     it belongs to. It enters with the confirmation's 180ms — the same slot on
+     a phone, so the same arrival — and it never leaves on its own. */
+  .fd-detail-quote-error {
+    display: grid;
+    flex-shrink: 0;
+    gap: 10px;
+    padding: 10px 12px 0;
+    border-top: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-secondary) 60%, transparent);
+    animation: fd-enter-confirmacion var(--fd-dur-confirmacion) var(--fd-ease-estructura) both;
+  }
+
+  .fd-detail-quote-error-message {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 9px 10px;
+    border: 1px solid color-mix(in srgb, var(--color-primary) 38%, transparent);
+    border-radius: var(--fd-radius-10);
+    background: var(--color-warning-soft);
+    color: var(--color-warning-soft-foreground);
+    font-size: var(--fd-text-meta);
+    line-height: 1.4;
+  }
+
+  .fd-detail-quote-error-icon {
+    width: var(--fd-icon-14);
+    height: var(--fd-icon-14);
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  .fd-detail-quote-error-copy {
+    min-width: 0;
+  }
+
+  .fd-detail-quote-error-short {
+    display: none;
+  }
+
+  .fd-detail-quote-error-dismiss {
+    display: grid;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    margin-left: auto;
+    place-items: center;
+    border-radius: var(--fd-radius-6);
+    color: inherit;
+    opacity: 0.65;
+    transition: opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-detail-quote-error-dismiss:hover {
+    opacity: 1;
+  }
+
+  .fd-detail-quote-error-exits {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* 3c draws this one on `--card` rather than `--secondary`: it is the quiet
+     exit, and it is sitting on a surface that is already secondary. */
+  .fd-detail-quote-error-open {
+    background: var(--color-card);
+  }
+
+  .fd-detail-quote-error-retry {
+    flex: 1;
+  }
+
+  /* The conditions are still there while the failure is up; they are just not
+     the thing to read (3c). */
+  .fd-panel[data-quote-error] .fd-condition-list {
+    opacity: 0.4;
+  }
+
+  /* 1f · movement 6: the copy confirmation enters in 180ms, stays 2.4s and
+     leaves in 140ms. It is a line of its own between the body and the actions,
+     never a row inside them. */
+  .fd-detail-copy-confirm {
+    display: flex;
+    height: 38px;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+    margin: 0 14px 2px;
+    padding-inline: 12px;
+    border-radius: var(--fd-radius-10);
+    background: var(--color-foreground);
+    color: var(--color-background);
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-label);
+    animation: fd-enter-confirmacion var(--fd-dur-confirmacion) var(--fd-ease-estructura) both;
+  }
+
+  .fd-detail-copy-confirm svg {
+    flex-shrink: 0;
+  }
+
+  .fd-detail-copy-confirm[data-closing] {
+    animation: fd-exit-opacity var(--fd-dur-exit-confirmacion) var(--fd-ease-tacto) both;
+  }
+
+  /* --- armazón B · the 380 side sheet (8a) ------------------------------ */
+  @container fdshell (max-width: 1099.98px) {
+    .fd-detail-header {
+      padding: 14px 14px 12px;
+    }
+
+    .fd-detail-body {
+      padding: 14px;
+    }
+
+    .fd-leg-head {
+      margin-bottom: 10px;
+    }
+
+    .fd-rail {
+      grid-template-columns: 48px 14px minmax(0, 1fr);
+      column-gap: 12px;
+    }
+
+    .fd-condition-list {
+      gap: 8px;
+    }
+
+    .fd-condition-row {
+      grid-template-columns: 96px minmax(0, 1fr);
+      gap: 10px;
+    }
+
+    .fd-detail-footer,
+    .fd-detail-quote-error {
+      padding-inline: 14px;
+    }
+
+    .fd-detail-footer {
+      padding-block: 12px;
+    }
+
+    .fd-detail-quote-error {
+      padding-block: 12px 0;
+    }
+
+    /* «Cotizar» takes the rest of the row here, so the switch stops being one
+       half of a space-between and becomes the fixed end of a flex row. */
+    .fd-detail-action-row {
+      justify-content: flex-start;
+    }
+
+    .fd-detail-action-group {
+      min-width: 0;
+      flex: 1;
+      gap: 8px;
+    }
+
+    .fd-detail-migration {
+      height: var(--fd-control-touch-sm);
+      border-radius: 0;
+      padding-inline: 0;
+    }
+
+    .fd-detail-migration:hover {
+      background: transparent;
+    }
+
+    .fd-detail-migration-short {
+      display: none;
+    }
+
+    .fd-detail-migration-full {
+      display: inline;
+    }
+
+    /* 05 §5 and both plates: 30 × 17 with a 13px knob once the row is 36 or 44
+       tall. The knob's travel is the track minus its own width and the 2px of
+       padding — written on Tailwind's own variable so the utility that put it
+       there is the utility that moves it. */
+    .fd-detail-migration-switch {
+      width: 30px;
+      height: 17px;
+    }
+
+    .fd-detail-migration-switch [data-slot="switch-thumb"] {
+      width: 13px;
+      height: 13px;
+    }
+
+    .fd-detail-migration-switch[data-state="checked"] [data-slot="switch-thumb"] {
+      --tw-translate-x: 15px;
+    }
+
+    .fd-detail-quote-action {
+      height: var(--fd-control-touch-sm);
+      flex: 1;
+      gap: 8px;
+      font-size: var(--fd-text-base);
+    }
+
+    .fd-detail-quote-action svg {
+      width: var(--fd-icon-16);
+      height: var(--fd-icon-16);
+    }
+
+    .fd-detail-provider-action {
+      height: var(--fd-control-touch-sm);
+    }
+  }
+
+  /* --- armazón C · the edge-to-edge sheet (1f, 3c) ---------------------- */
+  @container fdshell (max-width: 719.98px) {
+    .fd-detail-header {
+      align-items: center;
+      padding: 12px 14px;
+      background: transparent;
+    }
+
+    .fd-detail-logo {
+      width: 32px;
+      height: 32px;
+    }
+
+    .fd-detail-title {
+      font-size: var(--fd-text-card);
+    }
+
+    /* Same button, the other glyph: a phone goes back, it does not dismiss. */
+    .fd-detail-close {
+      width: var(--fd-control-touch);
+      height: var(--fd-control-touch);
+      order: 0;
+      margin-top: 0;
+      margin-left: -6px;
+      border-radius: var(--fd-radius-12);
+      background: transparent;
+    }
+
+    .fd-detail-close:hover {
+      background: var(--color-accent);
+    }
+
+    .fd-detail-close-back {
+      display: block;
+    }
+
+    .fd-detail-close-cross {
+      display: none;
+    }
+
+    .fd-detail-body {
+      padding: 16px 14px 12px;
+    }
+
+    .fd-detail-section {
+      margin-top: 18px;
+      padding-top: 18px;
+    }
+
+    .fd-rail {
+      --fd-rail-dot: 9px;
+      --fd-rail-dot-top: 5px;
+      --fd-rail-stop-line: 20px;
+      --fd-rail-leg-line: 22px;
+    }
+
+    .fd-rail-time,
+    .fd-rail-stop {
+      font-size: var(--fd-text-body);
+    }
+
+    .fd-rail-leg {
+      font-size: var(--fd-text-meta);
+    }
+
+    .fd-condition-heading {
+      margin-bottom: 10px;
+    }
+
+    .fd-condition-list {
+      gap: 10px;
+    }
+
+    .fd-condition-label {
+      font-size: var(--fd-text-base);
+    }
+
+    .fd-condition-value {
+      font-size: var(--fd-text-body);
+    }
+
+    .fd-condition-bags svg {
+      width: var(--fd-icon-16);
+      height: var(--fd-icon-16);
+    }
+
+    /* 02 §7.6: the actions are anchored at the foot of the sheet at 44px with
+       the home indicator absorbed. They stay inside the panel — one component,
+       three mounts — because the sheet body is the only thing that scrolls. */
+    .fd-detail-footer {
+      padding: 12px 14px max(22px, env(safe-area-inset-bottom));
+    }
+
+    .fd-detail-action-row {
+      justify-content: flex-start;
+    }
+
+    .fd-detail-action-group {
+      min-width: 0;
+      flex: 1;
+      gap: 8px;
+    }
+
+    .fd-detail-migration {
+      height: var(--fd-control-touch);
+      border-radius: var(--fd-radius-12);
+      padding-inline: 4px;
+      font-size: var(--fd-text-base);
+    }
+
+    .fd-detail-migration:hover {
+      background: transparent;
+    }
+
+    .fd-detail-migration-short {
+      display: none;
+    }
+
+    .fd-detail-migration-full {
+      display: inline;
+    }
+
+    /* 1f drops the provider label: at 44px the row has room for one set of
+       words, and they belong to «Cotizar». */
+    .fd-detail-provider-action {
+      width: var(--fd-control-touch);
+      height: var(--fd-control-touch);
+      flex-shrink: 0;
+      border-radius: var(--fd-radius-12);
+      padding-inline: 0;
+      background: var(--color-card);
+    }
+
+    .fd-detail-provider-action svg {
+      width: var(--fd-icon-18);
+      height: var(--fd-icon-18);
+    }
+
+    .fd-detail-provider-action-label {
+      display: none;
+    }
+
+    .fd-detail-quote-action {
+      height: var(--fd-control-touch);
+      flex: 1;
+      gap: 8px;
+      border-radius: var(--fd-radius-12);
+      font-size: var(--fd-text-action);
+    }
+
+    .fd-detail-quote-action svg {
+      width: var(--fd-icon-16);
+      height: var(--fd-icon-16);
+    }
+
+    /* 3c on a phone: the failure takes the confirmation's slot — same margins,
+       same arrival — inverted instead of soft, with the retry inline and no
+       border, because here it is not part of the foot. */
+    .fd-detail-quote-error {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin: 0 14px 8px;
+      padding: 11px 12px;
+      border-top: 0;
+      border-radius: var(--fd-radius-12);
+      background: var(--color-foreground);
+      color: var(--color-background);
+    }
+
+    .fd-detail-quote-error-message {
+      min-width: 0;
+      flex: 1;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font-size: var(--fd-text-base);
+    }
+
+    .fd-detail-quote-error-icon {
+      width: var(--fd-icon-16);
+      height: var(--fd-icon-16);
+    }
+
+    .fd-detail-quote-error-detail {
+      opacity: 0.75;
+    }
+
+    .fd-detail-quote-error-full {
+      display: none;
+    }
+
+    .fd-detail-quote-error-short {
+      display: inline;
+    }
+
+    .fd-detail-quote-error-exits {
+      flex-shrink: 0;
+    }
+
+    /* The provider is already one tap away in the foot below, so the notice
+       carries the one exit that is not — the retry. */
+    .fd-detail-quote-error-open {
+      display: none;
+    }
+
+    .fd-detail-quote-error-retry {
+      flex: none;
+      padding-inline: 12px;
+      background: color-mix(in srgb, var(--color-background) 22%, transparent);
+      color: var(--color-background);
+      font-size: var(--fd-text-base);
+    }
+
+    .fd-detail-quote-error-retry:hover {
+      background: color-mix(in srgb, var(--color-background) 32%, transparent);
+    }
+
+    .fd-detail-quote-error-retry svg {
+      display: none;
+    }
+
+    /* The foot keeps its own line here: the notice is a block of its own above
+       it, not the top of the same surface. */
+    .fd-panel[data-quote-error] .fd-detail-footer {
+      border-top: 1px solid var(--color-border);
+    }
+  }
+
+  /* ===== Quotation panel (1h, 6a) =======================================
+   *
+   * 620 × 768 over the workspace. This text used to render inside the 316px
+   * detail column, which meant reading a commercial quotation through a
+   * 40-character channel.
+   *
+   * There is no error state here: 3c resolves a failed quotation in the detail
+   * panel's foot, where the button that asked for it lives, and this panel only
+   * ever opens over a fare the provider confirmed. On a phone it does not open
+   * at all — «Cotizar» copies and confirms in one line (05 §6).
+   */
+
+  .fd-quote-layer {
+    position: fixed;
+    z-index: 120;
+    display: grid;
+    inset: 0;
+    padding: 16px;
+    background: var(--color-scrim);
+    place-items: center;
+  }
+
+  .fd-quote-panel {
+    display: flex;
+    width: min(620px, calc(100vw - 32px));
+    height: min(768px, calc(100dvh - 32px));
+    flex-direction: column;
+    overflow: hidden;
+    /* 5b keeps r14 for window frames, and at 620 × 768 this is one. */
+    border: 1px solid var(--color-border);
+    border-radius: var(--fd-radius-14);
+    background: var(--color-popover);
+    box-shadow: var(--fd-shadow-hoja);
+    color: var(--color-popover-foreground);
+    outline: none;
+  }
+
+  .fd-quote-header {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .fd-quote-identity {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .fd-quote-logo {
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    object-fit: contain;
+  }
+
+  .fd-quote-titles {
+    min-width: 0;
+  }
+
+  .fd-quote-title {
+    overflow: hidden;
+    font-size: var(--fd-text-body);
+    font-weight: var(--fd-weight-title);
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-quote-subtitle {
+    overflow: hidden;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-meta);
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-quote-header-actions {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .fd-quote-migration {
+    display: flex;
+    height: var(--fd-control-standard);
+    align-items: center;
+    gap: 8px;
+    border-radius: var(--fd-radius-10);
+    padding-inline: 6px;
+    color: var(--color-muted-foreground);
+    cursor: pointer;
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+    user-select: none;
+    white-space: nowrap;
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-quote-migration:hover {
+    background: var(--color-accent);
+    color: var(--color-foreground);
+  }
+
+  .fd-quote-migration-switch {
+    flex-shrink: 0;
+  }
+
+  .fd-quote-close {
+    display: grid;
+    width: var(--fd-control-standard);
+    height: var(--fd-control-standard);
+    flex-shrink: 0;
+    place-items: center;
+    border-radius: var(--fd-radius-10);
+    color: var(--color-muted-foreground);
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-quote-close:hover {
+    background: var(--color-accent);
+    color: var(--color-foreground);
+  }
+
+  .fd-quote-body {
+    min-height: 0;
+    flex: 1;
+    padding: 14px;
+    overflow-y: auto;
+  }
+
+  .fd-quote-text {
+    margin: 0;
+    padding: 14px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--fd-radius-12);
+    background: color-mix(in srgb, var(--color-secondary) 70%, transparent);
+    color: var(--color-foreground);
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-meta);
+    line-height: 1.55;
+    white-space: pre-wrap;
+  }
+
+  .fd-quote-footer {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-secondary) 60%, transparent);
+  }
+
+  /* How old the fare is, and the rule for when to stop trusting it: a bare
+     timestamp makes the agent do the arithmetic mid-call. */
+  .fd-quote-age {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-meta);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-quote-actions {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .fd-quote-open {
+    gap: 6px;
+    padding-inline: 12px;
+    background: var(--color-card);
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-label);
+  }
+
+  .fd-quote-copy {
+    gap: 6px;
+    padding-inline: 14px;
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-title);
+  }
+
+
+  /* ===== Skeletons (4a) ==================================================
+   * A skeleton is the component with the data switched off: same grid, and
+   * blocks at the exact height of the line they replace, so nothing jumps
+   * when the value arrives. Widths vary in %, deterministic in px. */
+
+  .fd-skeleton-block {
+    display: block;
+    border-radius: var(--fd-radius-4);
+    background: var(--color-muted);
+    animation: fd-pulso var(--fd-dur-pulso) ease-in-out infinite;
+  }
+
+  .fd-skeleton-price {
+    height: 13px;
+  }
+
+  .fd-skeleton-title {
+    height: 10px;
+  }
+
+  .fd-skeleton-secondary {
+    height: 8px;
+  }
+
+  /* ===== Migration grid (1i, 2f) =========================================
+   *
+   * A month sells one thing — the lowest fare — and the 6px bar puts it in
+   * scale against the dearest month, so a year reads in one sweep without
+   * comparing figures. Under it, the flight that gets that price; at the foot,
+   * the month's next two fares.
+   *
+   * Every state is the same six rows: label · hero · bar · flight · spacer ·
+   * foot. A month with no fare keeps its slot in grey with `···` or `—`,
+   * because «la rejilla del barrido es un calendario, no una lista de
+   * ofertas» (06 §3) — a sweep with holes in it is not a sweep.
+   */
+
+  .fd-month-scroller {
+    min-height: 0;
+    flex: 1;
+    padding: 4px 12px 12px;
+    overflow-y: auto;
+  }
+
+  .fd-month-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    /* 190 is the height 06 §2 states as a rule. 1i writes `1fr` instead, but
+       that number is emergent from the 560px frame it happens to be drawn in:
+       stretched into a real 900px window the same declaration gives 362px
+       cards with a 117px hole in the middle of each. The rule wins, the rows
+       size to their content, and the sweep stays a straight line. */
+    grid-auto-rows: minmax(190px, auto);
+    gap: 10px;
+  }
+
+  /*
+   * The row track is what makes the footer sit at the bottom of every card
+   * regardless of how much the middle block has to say.
+   */
+  .fd-month-card {
+    display: grid;
+    grid-template-rows: auto auto auto auto 1fr auto;
+    padding: 12px 13px 11px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--fd-radius-12);
+    background: var(--color-card);
+    text-align: left;
+    transition:
+      border-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+    /* 06 §5: «entra como una tarjeta de resultado», 6px and 30ms apart. */
+    animation: fd-enter-row var(--fd-dur-emergente) var(--fd-ease-estructura) both;
+    animation-delay: calc(var(--fd-stagger-row) * var(--fd-month-index, 0));
+  }
+
+  .fd-month-card:hover {
+    border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+  }
+
+  .fd-month-head {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .fd-month-label {
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-title);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 06 §2 sets it at 20 r6 — the plate's 19 and r5 are off both catalogues.
+     Two tones: the minimum of the sweep in `primary`, everything else quiet. */
+  .fd-month-badge {
+    display: inline-flex;
+    height: 20px;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 4px;
+    padding-inline: 7px;
+    border-radius: var(--fd-radius-6);
+    background: var(--color-primary);
+    color: var(--color-primary-foreground);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-title);
+    letter-spacing: var(--fd-tracking-micro);
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .fd-month-badge--quiet {
+    background: var(--color-secondary);
+    color: var(--color-muted-foreground);
+  }
+
+  .fd-month-hero {
+    display: grid;
+    margin-top: 11px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 10px;
+  }
+
+  .fd-month-price {
+    white-space: nowrap;
+  }
+
+  .fd-month-logo {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    object-fit: contain;
+  }
+
+  /* A month with no fare has no airline either, and the slot has to hold its
+     width or the price would slide right on the cards that lack one. */
+  .fd-month-logo--absent {
+    display: grid;
+    border-radius: var(--fd-radius-8);
+    background: color-mix(in srgb, var(--color-muted-foreground) 12%, transparent);
+    place-items: center;
+  }
+
+  .fd-month-bar {
+    display: block;
+    height: 6px;
+    margin-top: 11px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-muted-foreground) 15%, transparent);
+  }
+
+  .fd-month-bar-fill {
+    display: block;
+    height: 6px;
+    border-radius: 999px;
+    /* Only the minimum of the sweep is drawn in `primary`. Twelve primary bars
+       would be twelve highlights, which is none. */
+    background: color-mix(in srgb, var(--color-foreground) 40%, transparent);
+    transform-origin: left center;
+    /* 06 §5: 420ms, 40ms apart, and only the first time the month's data lands
+       — which is what a CSS animation does by itself, since a refilter keeps
+       the card mounted and a mounted element does not replay its arrival. */
+    animation: fd-month-bar var(--fd-dur-month-bar) var(--fd-ease-estructura) both;
+    animation-delay: calc(var(--fd-stagger-chip) * var(--fd-month-index, 0));
+  }
+
+  .fd-month-card.is-cheapest .fd-month-bar-fill {
+    background: var(--color-primary);
+  }
+
+  @keyframes fd-month-bar {
+    from {
+      transform: scaleX(0);
+    }
+
+    to {
+      transform: scaleX(1);
+    }
+  }
+
+  .fd-month-flight {
+    display: grid;
+    min-width: 0;
+    margin-top: 13px;
+    gap: 4px;
+  }
+
+  .fd-month-flight-lead {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 8px;
+  }
+
+  .fd-month-flight-title {
+    overflow: hidden;
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-month-provider {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+    object-fit: contain;
+  }
+
+  .fd-month-schedule {
+    overflow: hidden;
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-mono-meta);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-month-meta {
+    overflow: hidden;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-mono-meta);
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* The two next fares of the month, so the agent compares without opening
+     every month and without betting the quote on a single flight. */
+  .fd-month-foot {
+    display: grid;
+    margin-top: 10px;
+    padding-top: 9px;
+    border-top: 1px solid var(--color-border);
+    gap: 6px;
+  }
+
+  .fd-month-alt {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: baseline;
+    column-gap: 8px;
+  }
+
+  .fd-month-alt-label {
+    overflow: hidden;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-mono-meta);
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-month-alt-price {
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.3;
+    white-space: nowrap;
+  }
+
+  .fd-month-days {
+    overflow: hidden;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-label);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 06 §3: the sweep minimum sits on `primary 6%`. "Cheapest" is a fact about
+     the data and "selected" is a fact about the agent, so when they land on the
+     same card the selection has to win — which is what puts this rule above it:
+     the two selectors have the same weight, so order is the tie-break. */
+  .fd-month-card.is-cheapest {
+    background: color-mix(in srgb, var(--color-primary) 6%, var(--color-card));
+  }
+
+  .fd-month-card.is-selected {
+    border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-border));
+    background: color-mix(in srgb, var(--color-primary) 7%, var(--color-card));
+  }
+
+  /* No fare, an error, filtered out, or still being looked up. */
+  .fd-month-card--empty {
+    border-color: color-mix(in srgb, var(--color-border) 80%, var(--color-muted-foreground));
+    border-style: dashed;
+    background: color-mix(in srgb, var(--color-secondary) 55%, var(--color-card));
+    box-shadow: none;
+    cursor: default;
+  }
+
+  .fd-month-card--empty .fd-month-label,
+  .fd-month-card--empty .fd-month-flight-title {
+    color: var(--color-muted-foreground);
+  }
+
+  .fd-month-card--empty .fd-month-price {
+    color: color-mix(in srgb, var(--color-muted-foreground) 70%, transparent);
+  }
+
+  /* The sweep's price range, beside the month counter. */
+  .fd-month-range {
+    font-family: var(--font-mono);
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-label);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .fd-month-range--short {
+    display: none;
+  }
+
+  /* 06 §2: four columns on a desk, one row per month on a phone. That is a
+     shell shape, not a list one. */
+  @container fdshell (max-width: 719.98px) {
+    .fd-month-scroller {
+      padding: 10px 12px 22px;
+    }
+
+    /* 2f: the card stops being a fixed-height tile and becomes a row that is as
+       tall as it needs to be, with one gap doing the work of four margins. */
+    .fd-month-grid {
+      grid-template-columns: minmax(0, 1fr);
+      grid-auto-rows: auto;
+      gap: 8px;
+    }
+
+    .fd-month-card {
+      grid-template-rows: none;
+      padding: 12px 13px;
+      border-radius: var(--fd-radius-14);
+      gap: 10px;
+    }
+
+    .fd-month-spacer {
+      display: none;
+    }
+
+    .fd-month-label {
+      font-size: var(--fd-text-body);
+    }
+
+    .fd-month-hero,
+    .fd-month-bar,
+    .fd-month-flight,
+    .fd-month-foot {
+      margin-top: 0;
+    }
+  }
+
+  /* 2f writes the counter and the range short: at 390 that row also carries the
+     state pill. */
+  @container fdshell (max-width: 719.98px) {
+    .fd-month-count-tail,
+    .fd-month-range {
+      display: none;
+    }
+
+    .fd-month-range--short {
+      display: inline;
+      color: var(--color-muted-foreground);
+      font-size: var(--fd-text-meta);
+    }
+  }
+
+}

@@ -660,7 +660,9 @@ test("redirect service keeps Costamar token validation outside the main runtime"
 
       assert.equal(response.status, 409);
       assert.match(response.headers.get("content-type") ?? "", /text\/html/i);
-      assert.match(await response.text(), /Renueva la sesion de Click and Book Plus/i);
+      const body = await response.text();
+      assert.match(body, /Renueva la autenticación de Click and Book Plus/i);
+      assert.doesNotMatch(body, /sesion este activa/i);
     } finally {
       resetCostamarWarmupStateForTests();
       resetCostamarSessionCacheForTests();
@@ -741,6 +743,188 @@ test("redirect service redirects a Costamar link whose own token is still usable
       assert.equal(target.searchParams.get("terminalId"), "0721808110");
       assert.equal(target.searchParams.get("token"), usableToken);
     } finally {
+      resetCostamarWarmupStateForTests();
+      resetCostamarSessionCacheForTests();
+      restoreEnv();
+    }
+  });
+});
+
+test("redirect service rejects a corrupt external Costamar row before token validation", { concurrency: false }, async () => {
+  await withTempDb(async (dbPath) => {
+    const emptyChromeDir = join(dbPath, "..", "chrome-empty-external");
+    mkdirSync(emptyChromeDir, { recursive: true });
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    // A token that passes every usability check, so the only thing that can stop the
+    // redirect is the origin allow-list. Without it the usable-token fast path would
+    // hand the browser whatever URL the row happens to hold.
+    const token = buildJwt({
+      id: "0721808110",
+      iat: nowSeconds - 60,
+      exp: nowSeconds + 3000,
+    });
+    const restoreEnv = overrideEnv({
+      FLY_DESK_API_TOKEN: "redirect-test-token",
+      CBPLUS_TOKEN: undefined,
+      COSTAMAR_TOKEN: undefined,
+      CBPLUS_CHROME_USER_DATA_DIR: emptyChromeDir,
+      CBPLUS_AGENT_CHROME_USER_DATA_DIR: emptyChromeDir,
+      COSTAMAR_CHROME_USER_DATA_DIR: emptyChromeDir,
+      COSTAMAR_AGENT_CHROME_USER_DATA_DIR: emptyChromeDir,
+      CBPLUS_CDP_TAB_SCAN_ENABLED: "0",
+      COSTAMAR_CDP_TAB_SCAN_ENABLED: "0",
+      CBPLUS_SESSION_WARMUP_ENABLED: "0",
+      COSTAMAR_SESSION_WARMUP_ENABLED: "0",
+    });
+    const previousFetch = global.fetch;
+    let validationRequests = 0;
+
+    global.fetch = (async () => {
+      validationRequests += 1;
+      return new Response("<html><body>Click and Book Plus search accepted</body></html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }) as typeof fetch;
+
+    try {
+      resetCostamarSessionCacheForTests();
+      resetCostamarWarmupStateForTests();
+      const maliciousUrl = "https://attacker.invalid/vuelos/pro/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es";
+      const offer = buildOffer("costamar", maliciousUrl);
+      const store = new SearchSessionStore({ dbPath });
+      const job = store.createSearchJob({
+        request: buildRequest("costamar"),
+        providerContext: {
+          costamar: {
+            apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+            brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+            terminalId: "0721808110",
+            token,
+            lang: "es",
+          },
+        },
+        offers: [offer],
+        allOffers: [offer],
+        searchMeta: buildSearchMeta("costamar"),
+        providerMeta: buildProviderMeta("costamar"),
+        warnings: [],
+        sortMode: "cheapest",
+        status: "completed",
+      });
+      const redirectPath = store.getSession(job.id)?.offers[0]?.purchasePaths[0]?.url;
+      store.close();
+      assert.ok(redirectPath);
+
+      const purchasePathId = redirectPath.slice(3);
+      const db = new Database(dbPath);
+      try {
+        const row = db.query<{ payload: string }, [string]>(
+          "SELECT payload FROM purchase_paths WHERE id = ? LIMIT 1",
+        ).get(purchasePathId);
+        assert.ok(row?.payload);
+        const stored = JSON.parse(row.payload) as { path?: { url?: string } };
+        assert.ok(stored.path);
+        stored.path.url = `${maliciousUrl}&token=${token}`;
+        db.run(
+          "UPDATE purchase_paths SET payload = ? WHERE id = ?",
+          JSON.stringify(stored),
+          purchasePathId,
+        );
+      } finally {
+        db.close(true);
+      }
+
+      const response = await routeRedirectRequest(
+        authenticatedRedirectRequest(`http://127.0.0.1:8102${redirectPath}`),
+        { dbPath, cacheLookupTimeoutMs: 0 },
+      );
+
+      assert.equal(response.status, 409);
+      assert.equal(response.headers.get("Location"), null);
+      assert.equal(validationRequests, 0);
+      const body = await response.text();
+      assert.doesNotMatch(body, /attacker\.invalid|token=/i);
+    } finally {
+      global.fetch = previousFetch;
+      resetCostamarWarmupStateForTests();
+      resetCostamarSessionCacheForTests();
+      restoreEnv();
+    }
+  });
+});
+
+test("redirect service HTML never exposes a token-bearing validation error", async () => {
+  await withTempDb(async (dbPath) => {
+    const previousFetch = global.fetch;
+    const emptyChromeDir = join(dbPath, "..", "chrome-leak-check");
+    mkdirSync(emptyChromeDir, { recursive: true });
+    // Deliberately expired: a usable token takes the shortcut that never calls the
+    // provider, and this test is about what the live-validation failure prints.
+    const token = buildJwt({
+      id: "0721808110",
+      iat: 1700000000,
+      exp: 1700003600,
+    });
+    const restoreEnv = overrideEnv({
+      FLY_DESK_API_TOKEN: "redirect-test-token",
+      CBPLUS_TOKEN: token,
+      COSTAMAR_TOKEN: undefined,
+      CBPLUS_CHROME_USER_DATA_DIR: emptyChromeDir,
+      CBPLUS_AGENT_CHROME_USER_DATA_DIR: emptyChromeDir,
+      COSTAMAR_CHROME_USER_DATA_DIR: emptyChromeDir,
+      COSTAMAR_AGENT_CHROME_USER_DATA_DIR: emptyChromeDir,
+      CBPLUS_CDP_TAB_SCAN_ENABLED: "0",
+      COSTAMAR_CDP_TAB_SCAN_ENABLED: "0",
+      CBPLUS_SESSION_WARMUP_ENABLED: "0",
+      COSTAMAR_SESSION_WARMUP_ENABLED: "0",
+      CBPLUS_B2B_AUTOMATION_ENABLED: "0",
+      COSTAMAR_B2B_AUTOMATION_ENABLED: "0",
+      CBPLUS_B2B_PROMPT_ENABLED: "0",
+      COSTAMAR_B2B_PROMPT_ENABLED: "0",
+    });
+
+    try {
+      const tokenUrl = `https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=${token}`;
+      const offer = buildOffer("costamar", tokenUrl);
+      const store = new SearchSessionStore({ dbPath });
+      const job = store.createSearchJob({
+        request: buildRequest("costamar"),
+        providerContext: {
+          costamar: {
+            apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+            brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+            terminalId: "0721808110",
+            token,
+            lang: "es",
+          },
+        },
+        offers: [offer],
+        allOffers: [offer],
+        searchMeta: buildSearchMeta("costamar"),
+        providerMeta: buildProviderMeta("costamar"),
+        warnings: [],
+        sortMode: "cheapest",
+        status: "completed",
+      });
+      const redirectPath = store.getSession(job.id)?.offers[0]?.purchasePaths[0]?.url;
+      store.close();
+      assert.ok(redirectPath);
+
+      global.fetch = (async (input) => {
+        throw new Error(`private validation failed at ${String(input)}&internal=private-runner-secret`);
+      }) as typeof fetch;
+
+      const response = await routeRedirectRequest(
+        authenticatedRedirectRequest(`http://127.0.0.1:8102${redirectPath}`),
+        { dbPath, cacheLookupTimeoutMs: 0 },
+      );
+      const body = await response.text();
+      assert.equal(response.status, 409);
+      assert.match(body, /Renueva la autenticación de Click and Book Plus/i);
+      assert.doesNotMatch(body, /token=|private-runner-secret|booking\.clickandbook\.com/i);
+    } finally {
+      global.fetch = previousFetch;
       resetCostamarWarmupStateForTests();
       resetCostamarSessionCacheForTests();
       restoreEnv();

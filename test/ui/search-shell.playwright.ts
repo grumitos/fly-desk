@@ -5,9 +5,9 @@ import { withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
 import {
   clickSegment,
+  segment,
   waitForFontsReady,
-  waitForPressed,
-  waitForStableIndicator,
+  waitForSegmentChecked,
 } from "./support.ts";
 
 async function clickLocationFieldSurface(page: Page, fieldId: string): Promise<void> {
@@ -30,30 +30,26 @@ test("search controls preserve accessible behavior through shadcn primitives", a
     assert.equal(await page.getByRole("listbox").count(), 0);
     assert.equal(await origin.getAttribute("data-slot"), "input");
 
-    const modeGroup = page.locator('[data-slot="toggle-group"]').filter({
-      has: page.getByRole("button", { name: "Exacto" }),
-    });
+    /* 11 §8 replaced the shadcn ToggleGroup with the `<Segmented>` of 01 §3:
+       one radio group, `aria-checked` on the options, and arrows that move
+       *and* choose — a segmented control has no "highlighted but not applied"
+       state (11 §0 rule 2 forbids confirming without a gesture, and an arrow
+       key is one). */
+    const modeGroup = page.getByRole("radiogroup", { name: "Modo de búsqueda" });
     assert.equal(await modeGroup.count(), 1);
-    assert.equal(
-      await page.getByRole("button", { name: "Exacto" }).getAttribute("data-slot"),
-      "toggle-group-item",
-    );
-    const exactMode = page.getByRole("button", { name: "Exacto" });
-    const flexibleMode = page.getByRole("button", { name: "Flexible" });
+    const exactMode = segment(modeGroup, "Exacto");
+    const flexibleMode = segment(modeGroup, "Flexible");
+    assert.equal(await exactMode.getAttribute("aria-checked"), "true");
     await exactMode.focus();
     await exactMode.press("ArrowRight");
     await page.waitForFunction(() => document.activeElement?.textContent?.trim() === "Flexible");
-    await page.keyboard.press("Space");
-    await waitForPressed(flexibleMode);
+    await waitForSegmentChecked(flexibleMode);
 
     const passengerButton = page.getByRole("button", { name: "Seleccionar pasajeros" });
     await passengerButton.click();
-    assert.equal(
-      await page.locator('[data-slot="button-group"]').filter({
-        has: page.getByRole("button", { name: "Agregar adultos" }),
-      }).count(),
-      1,
-    );
+    assert.equal(await passengerButton.getAttribute("aria-expanded"), "true");
+    assert.equal(await page.getByRole("button", { name: "Agregar adultos" }).count(), 1);
+    assert.equal(await page.getByRole("button", { name: "Quitar adultos" }).isDisabled(), true);
     assert.equal(await page.getByRole("button", { name: "Intercambiar ruta" }).count(), 1);
     assert.equal(await page.getByRole("button", { name: "Buscar" }).count(), 1);
 
@@ -126,7 +122,7 @@ test("location field surfaces focus the input in idle and search layouts", async
       page.waitForResponse("**/api/search"),
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
-    await page.locator(".fd-workspace-enter").waitFor({ state: "visible" });
+    await page.locator(".fd-results").waitFor({ state: "visible" });
 
     await clickLocationFieldSurface(page, "location-destino");
     await page.keyboard.press("Control+A");
@@ -195,14 +191,14 @@ test("idle search form transitions smoothly into the workspace layout", async ()
       };
     });
 
-    assert.ok(idleBounds.width >= 1220 && idleBounds.width <= 1260, JSON.stringify(idleBounds));
+    assert.ok(idleBounds.width >= 1160 && idleBounds.width <= 1200, JSON.stringify(idleBounds));
     assert.ok(Math.abs(idleBounds.left - idleBounds.right) <= 24, JSON.stringify(idleBounds));
-    assert.ok(idleBounds.centerOffset !== null && idleBounds.centerOffset <= 0 && idleBounds.centerOffset >= -24, JSON.stringify(idleBounds));
+    assert.ok(idleBounds.centerOffset !== null && idleBounds.centerOffset <= 0 && idleBounds.centerOffset >= -72, JSON.stringify(idleBounds));
 
     await page.evaluate(() => {
       type LayoutAnimationSnapshot = {
         keyframes: Array<{ properties: string[]; transform: string; width: string }>;
-        options: { duration: number; easing: string };
+        options: { delay: number; duration: number; easing: string; fill: string };
       };
       type LayoutAnimationWindow = Window & typeof globalThis & {
         __flyDeskLayoutAnimations?: LayoutAnimationSnapshot[];
@@ -231,12 +227,16 @@ test("idle search form transitions smoothly into the workspace layout", async ()
             : [];
           const normalizedOptions = typeof options === "object" && options !== null
             ? {
+              delay: Number(options.delay ?? 0),
               duration: Number(options.duration ?? 0),
               easing: String(options.easing ?? ""),
+              fill: String(options.fill ?? ""),
             }
             : {
+              delay: 0,
               duration: Number(options ?? 0),
               easing: "",
+              fill: "",
             };
 
           win.__flyDeskLayoutAnimations?.push({
@@ -253,14 +253,14 @@ test("idle search form transitions smoothly into the workspace layout", async ()
       page.waitForResponse("**/api/search"),
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
-    await page.locator(".fd-workspace-enter").waitFor({ state: "visible" });
+    await page.locator(".fd-results").waitFor({ state: "visible" });
     await page.getByTestId("search-shell-frame").evaluate(async (frame) => {
       await Promise.all(frame.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
     });
     const layoutAnimations = await page.evaluate(() => {
       type LayoutAnimationSnapshot = {
         keyframes: Array<{ properties: string[]; transform: string; width: string }>;
-        options: { duration: number; easing: string };
+        options: { delay: number; duration: number; easing: string; fill: string };
       };
       type LayoutAnimationWindow = Window & typeof globalThis & {
         __flyDeskLayoutAnimations?: LayoutAnimationSnapshot[];
@@ -285,8 +285,22 @@ test("idle search form transitions smoothly into the workspace layout", async ()
 
     assert.equal(layoutAnimations.length, 1, JSON.stringify(layoutAnimations));
     const [layoutAnimation] = layoutAnimations;
-    assert.equal(layoutAnimation.options.duration, 180);
-    assert.equal(layoutAnimation.options.easing, "cubic-bezier(0.22, 1, 0.36, 1)");
+    /* 07 §1: «60 ms · bloque de campos · translateY al tope, estructura». The
+       cue is not decoration — through it the form stays put while the CTA
+       starts spinning, which is the table's whole first row. `backwards` is
+       what holds the first keyframe through the cue; without it the block is
+       already at the top for those 60ms and only then jumps back to animate. */
+    assert.equal(layoutAnimation.options.delay, 60);
+    assert.equal(layoutAnimation.options.duration, 220);
+    assert.equal(layoutAnimation.options.fill, "backwards");
+    /* Compared against the token rather than a copy of its value: the FLIP
+       reads `--fd-ease-estructura` off the cascade so that the reduced-motion
+       block reaches it, and Lightning CSS ships the curve minified. What has to
+       hold is that this is the estructura curve, not how it is spelled. */
+    const estructuraEasing = await page.evaluate(
+      () => getComputedStyle(document.documentElement).getPropertyValue("--fd-ease-estructura").trim(),
+    );
+    assert.equal(layoutAnimation.options.easing, estructuraEasing);
     assert.equal(layoutAnimation.keyframes.length, 2, JSON.stringify(layoutAnimation));
     assert.ok(layoutAnimation.keyframes.every((keyframe) => !keyframe.properties.includes("opacity")), JSON.stringify(layoutAnimation));
 
@@ -331,7 +345,7 @@ test("search-level notices use the idle search controls width after a failed sea
     );
 
     await page.getByRole("button", { name: "Buscar" }).click();
-    const notice = page.locator(".fd-search-alert");
+    const notice = page.getByRole("status");
     await notice.filter({ hasText: "No se pudo conectar con Fly Desk. Intenta nuevamente." }).waitFor();
     await notice.evaluate(async (element) => {
       await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
@@ -353,10 +367,18 @@ test("search-level notices use the idle search controls width after a failed sea
       };
     });
 
+    /*
+     * 1a is one centred 1180px measure: form, chips and rail all sit inside it,
+     * so a notice that arrives afterwards belongs to that measure too — it
+     * cannot be wider than the form, and it cannot push the form up (07 §0
+     * rule 1: what responds is the control, and nothing else moves).
+     * `index.css` already says so, with
+     * `.fd-search-stage-idle .fd-search-frame > .fd-alert-line { position: absolute; top: 100% }`.
+     */
     assert.ok(Math.abs(noticeBounds.searchGridTop - searchTopBeforeNotice) <= 1, JSON.stringify({ searchTopBeforeNotice, noticeBounds }));
     assert.ok(noticeBounds.top >= noticeBounds.searchGridBottom + 6, JSON.stringify(noticeBounds));
     assert.ok(Math.abs(noticeBounds.width - noticeBounds.searchGridWidth) <= 2, JSON.stringify(noticeBounds));
-    assert.ok(noticeBounds.searchFrameWidth > noticeBounds.width + 40, JSON.stringify(noticeBounds));
+    assert.ok(Math.abs(noticeBounds.searchFrameWidth - noticeBounds.width) <= 2, JSON.stringify(noticeBounds));
     assert.ok(Math.abs(noticeBounds.left - noticeBounds.right) <= 24, JSON.stringify(noticeBounds));
   }, { autoOpen: false });
 });
@@ -422,21 +444,32 @@ test("repeated clipboard notice failures keep the workspace from remounting the 
     ]);
     await page.getByTestId("result-card").waitFor();
 
-    const activeSearchBeforeNotice = await page.locator(".fd-search-grid").evaluate((element) => {
+    /*
+     * 07 §1: idle → active is a 420ms choreography and the field block is one of
+     * the pieces that travels. Reading the "before" geometry as soon as the first
+     * card exists samples the form mid-flight, and then any settled measurement
+     * taken later looks like the notice moved it. Let the stage finish first —
+     * the invariant under test is what the notice does, not how fast the desk is.
+     */
+    const activeSearchBeforeNotice = await page.locator(".fd-search-grid").evaluate(async (element) => {
+      const stage = element.closest(".fd-search-stage") ?? element;
+      await Promise.all(
+        stage.getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => undefined)),
+      );
       const rect = element.getBoundingClientRect();
       return { bottom: Math.round(rect.bottom), top: Math.round(rect.top) };
     });
 
     const copyConfig = page.getByRole("button", { name: "Copiar configuración" });
     await copyConfig.click();
-    const notice = page.locator(".fd-search-alert");
+    const notice = page.getByRole("status");
     await notice.filter({ hasText: "No se pudo copiar la configuración. Revisa el permiso del navegador e intenta nuevamente." }).waitFor();
     await notice.evaluate(async (element) => {
       await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
     });
 
     const before = await page.evaluate(() => {
-      const alert = document.querySelector<HTMLElement>(".fd-search-alert");
+      const alert = document.querySelector<HTMLElement>(".fd-alert-line");
       const workspace = document.querySelector<HTMLElement>(".fd-shell-workspace");
       if (!alert || !workspace) throw new Error("Missing alert or workspace");
       (window as unknown as { __flyDeskNoticeMutations: string[] }).__flyDeskNoticeMutations = [];
@@ -444,10 +477,10 @@ test("repeated clipboard notice failures keep the workspace from remounting the 
         const mutations = (window as unknown as { __flyDeskNoticeMutations: string[] }).__flyDeskNoticeMutations;
         records.forEach((record) => {
           record.removedNodes.forEach((node) => {
-            if (node instanceof HTMLElement && node.matches(".fd-search-alert")) mutations.push("removed");
+            if (node instanceof HTMLElement && node.matches(".fd-alert-line")) mutations.push("removed");
           });
           record.addedNodes.forEach((node) => {
-            if (node instanceof HTMLElement && node.matches(".fd-search-alert")) mutations.push("added");
+            if (node instanceof HTMLElement && node.matches(".fd-alert-line")) mutations.push("added");
           });
         });
       });
@@ -471,7 +504,7 @@ test("repeated clipboard notice failures keep the workspace from remounting the 
     await page.waitForTimeout(120);
 
     const after = await page.evaluate(() => {
-      const alert = document.querySelector<HTMLElement>(".fd-search-alert");
+      const alert = document.querySelector<HTMLElement>(".fd-alert-line");
       const workspace = document.querySelector<HTMLElement>(".fd-shell-workspace");
       if (!alert || !workspace) throw new Error("Missing alert or workspace after retries");
       const mutations = (window as unknown as { __flyDeskNoticeMutations: string[] }).__flyDeskNoticeMutations;
@@ -489,7 +522,7 @@ test("repeated clipboard notice failures keep the workspace from remounting the 
   }, { autoOpen: false });
 });
 
-test("wide desktop shell uses half of the leftover viewport width", async () => {
+test("wide desktop shell expands from the idle measure into the workspace width", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.route("**/api/locations**", async (route) => {
@@ -546,17 +579,26 @@ test("wide desktop shell uses half of the leftover viewport width", async () => 
     });
 
     assert.equal(idleBounds.topbarWidth, 1760, JSON.stringify(idleBounds));
-    assert.ok(idleBounds.frameWidth >= 1720 && idleBounds.frameWidth <= 1736, JSON.stringify(idleBounds));
+    assert.ok(idleBounds.frameWidth >= 1160 && idleBounds.frameWidth <= 1200, JSON.stringify(idleBounds));
 
     await Promise.all([
       page.waitForResponse("**/api/search"),
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
     await page.getByTestId("result-card").waitFor();
+    // The idle -> active FLIP animates the frame's own width (07 §1), so the
+    // card appearing is not the same instant as the geometry settling. Wait on
+    // that animation rather than on a duration: this asserts the resting
+    // layout, and a card is visible while its entry animation still runs.
+    await page.evaluate(async () => {
+      const frame = document.querySelector<HTMLElement>('[data-testid="search-shell-frame"]');
+      if (!frame) return;
+      await Promise.all(frame.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
+    });
 
     const workspaceBounds = await page.evaluate(() => {
       const frame = document.querySelector<HTMLElement>('[data-testid="search-shell-frame"]')?.getBoundingClientRect();
-      const grid = document.querySelector<HTMLElement>(".fd-workspace-enter")?.getBoundingClientRect();
+      const grid = document.querySelector<HTMLElement>(".fd-results")?.getBoundingClientRect();
       const card = document.querySelector<HTMLElement>('[data-testid="result-card"]')?.getBoundingClientRect();
       const topbar = document.querySelector<HTMLElement>(".fd-topbar > div")?.getBoundingClientRect();
       return {
@@ -570,65 +612,63 @@ test("wide desktop shell uses half of the leftover viewport width", async () => 
     assert.equal(workspaceBounds.topbarWidth, 1760, JSON.stringify(workspaceBounds));
     assert.ok(workspaceBounds.frameWidth >= 1720 && workspaceBounds.frameWidth <= 1736, JSON.stringify(workspaceBounds));
     assert.ok(workspaceBounds.gridWidth >= 1720 && workspaceBounds.gridWidth <= 1736, JSON.stringify(workspaceBounds));
-    assert.ok(workspaceBounds.cardWidth >= 1120 && workspaceBounds.cardWidth <= 1144, JSON.stringify(workspaceBounds));
+    // 1b / 02 §3: the workspace is `248px minmax(0,1fr) 316px` with a 10px gap,
+    // so the card is whatever the middle track leaves — the list column is not
+    // a card any more (8a) and adds no inset of its own.
+    assert.equal(
+      workspaceBounds.cardWidth,
+      workspaceBounds.gridWidth - 248 - 316 - 10 * 2,
+      JSON.stringify(workspaceBounds),
+    );
   }, { autoOpen: false });
 });
 
-test("segmented hover keeps the shared indicator stable and theme hover inverts colors", async () => {
+test("the segmented pill belongs to the active option and theme hover inverts colors", async () => {
   await withDesktopPage(async ({ page }) => {
-    const modeControl = page.locator(".fd-segmented-control").filter({
-      has: page.getByRole("button", { name: "Exacto" }),
-    });
-    const modeIndicator = modeControl.locator(".fd-segmented-indicator");
+    /*
+     * 07 §5 and 11 §8: there is no sliding indicator any more. The pill is the
+     * `::before` of the active option, so it changes place with `tacto` instead
+     * of travelling — and hovering another option must not move it, because
+     * hover is "solo color y opacidad" (07 §0).
+     */
+    const modeControl = page.getByRole("radiogroup", { name: "Modo de búsqueda" });
+    const exactMode = segment(modeControl, "Exacto");
+    const flexibleMode = segment(modeControl, "Flexible");
     const formBounds = async () => page.locator("main form").evaluate((form) => {
       const rect = form.getBoundingClientRect();
       return { left: Math.round(rect.left), width: Math.round(rect.width) };
     });
-
-    await page.waitForFunction(() => {
-      const exactButton = Array.from(document.querySelectorAll("button"))
-        .find((button) => button.textContent?.trim() === "Exacto");
-      const indicator = exactButton
-        ?.closest(".fd-segmented-control")
-        ?.querySelector<HTMLElement>(".fd-segmented-indicator");
-      return indicator && getComputedStyle(indicator).opacity === "1";
+    const pillOf = async (option: typeof exactMode) => option.evaluate((element) => {
+      const style = getComputedStyle(element, "::before");
+      return { background: style.backgroundColor, content: style.content };
     });
+
     await waitForFontsReady(page);
-    await waitForPressed(page.getByRole("button", { name: "Exacto" }));
-    await waitForStableIndicator(modeIndicator);
+    await waitForSegmentChecked(exactMode);
+    assert.equal(await page.locator(".fd-segmented-indicator").count(), 0);
 
-    const beforeIndicator = await modeIndicator.evaluate((indicator) => {
-      const style = getComputedStyle(indicator);
-      const matrix = new DOMMatrixReadOnly(style.transform);
-      return {
-        width: Number.parseFloat(style.width),
-        x: matrix.m41,
-      };
-    });
     const beforeForm = await formBounds();
+    const pillOnActive = await pillOf(exactMode);
+    const pillOnInactive = await pillOf(flexibleMode);
+    // 01 §3: the pill is `--card` inset 2px inside the active cell; the others
+    // have no pill at all.
+    assert.notEqual(pillOnActive.content, "none");
+    assert.equal(pillOnInactive.content, "none");
 
-    await page.getByRole("button", { name: "Flexible" }).hover();
-    const afterIndicator = await modeIndicator.evaluate((indicator) => {
-      const style = getComputedStyle(indicator);
-      const matrix = new DOMMatrixReadOnly(style.transform);
-      return {
-        width: Number.parseFloat(style.width),
-        x: matrix.m41,
-      };
-    });
-    const flexibleHoverStyle = await page.getByRole("button", { name: "Flexible" }).evaluate((button) => {
+    await flexibleMode.hover();
+    const flexibleHoverStyle = await flexibleMode.evaluate((button) => {
       const style = getComputedStyle(button);
       return {
         backgroundColor: style.backgroundColor,
         fontWeight: style.fontWeight,
       };
     });
-    const activeStyle = await page.getByRole("button", { name: "Exacto" }).evaluate((button) =>
-      getComputedStyle(button).fontWeight,
-    );
+    const activeStyle = await exactMode.evaluate((button) => getComputedStyle(button).fontWeight);
 
-    assert.ok(Math.abs(afterIndicator.x - beforeIndicator.x) <= 0.5, JSON.stringify({ afterIndicator, beforeIndicator }));
-    assert.ok(Math.abs(afterIndicator.width - beforeIndicator.width) <= 0.5, JSON.stringify({ afterIndicator, beforeIndicator }));
+    // Hovering an option does not hand it the pill, and does not take it from
+    // the active one.
+    assert.deepEqual(await pillOf(exactMode), pillOnActive);
+    assert.equal((await pillOf(flexibleMode)).content, "none");
     assert.equal(flexibleHoverStyle.backgroundColor, "rgba(0, 0, 0, 0)");
     assert.ok(Number(activeStyle) >= 700);
     assert.ok(Number(flexibleHoverStyle.fontWeight) < Number(activeStyle));
@@ -644,8 +684,8 @@ test("segmented hover keeps the shared indicator stable and theme hover inverts 
     const readSegmentMetrics = async () => page.evaluate<SegmentMetric[]>(() => {
       const names = ["Exacto", "Flexible", "Migratorio", "Ida y vuelta", "Solo ida"];
       return names.flatMap((name) => {
-        const button = Array.from(document.querySelectorAll("button"))
-          .find((candidate) => candidate.textContent?.trim().replace(/\s+/g, " ") === name) as HTMLButtonElement | undefined;
+        const button = Array.from(document.querySelectorAll<HTMLButtonElement>(".fd-segmented-item"))
+          .find((candidate) => candidate.textContent?.trim().replace(/\s+/g, " ") === name);
         if (!button) return [];
 
         const style = getComputedStyle(button);
@@ -660,25 +700,26 @@ test("segmented hover keeps the shared indicator stable and theme hover inverts 
       });
     });
     const activeMetrics = await readSegmentMetrics();
-    assert.ok(activeMetrics.every((metric) => metric.height === 32), JSON.stringify(activeMetrics));
+    // 1a draws the desk segmented at 32 with a 1px border, so the option box is
+    // 30. 01 §3: `repeat(n,auto)` gives every option the same air, which is
+    // what the equal left/right padding checks.
+    assert.ok(activeMetrics.every((metric) => metric.height === 30), JSON.stringify(activeMetrics));
     assert.ok(activeMetrics.every((metric) => metric.paddingLeft === metric.paddingRight), JSON.stringify(activeMetrics));
 
     type SearchModeGapMetrics = {
-      indicatorBorderRadius: string;
       modeToReveal: number | null;
       modeToTrip: number | null;
       revealToTrip: number | null;
     };
     const readSearchModeGapMetrics = async () => page.evaluate<SearchModeGapMetrics>(`
       (() => {
-        const buttons = Array.from(document.querySelectorAll("button"));
-        const buttonByText = (text) => buttons.find((button) =>
-          button.textContent?.trim().replace(/\\s+/g, " ") === text
+        const options = Array.from(document.querySelectorAll(".fd-segmented-item"));
+        const optionByText = (text) => options.find((option) =>
+          option.textContent?.trim().replace(/\\s+/g, " ") === text
         );
-        const modeControl = buttonByText("Exacto")?.closest(".fd-segmented-control") ?? null;
-        const tripControl = buttonByText("Ida y vuelta")?.closest(".fd-segmented-control") ?? null;
+        const modeControl = optionByText("Exacto")?.closest(".fd-segmented") ?? null;
+        const tripControl = optionByText("Ida y vuelta")?.closest(".fd-segmented") ?? null;
         const reveal = document.querySelector(".fd-inline-reveal");
-        const indicator = modeControl?.querySelector(".fd-segmented-indicator") ?? null;
         const rect = (element) => element?.getBoundingClientRect() ?? null;
         const modeRect = rect(modeControl);
         const tripRect = rect(tripControl);
@@ -689,30 +730,29 @@ test("segmented hover keeps the shared indicator stable and theme hover inverts 
             : Math.round(left - right);
 
         return {
-          indicatorBorderRadius: indicator ? getComputedStyle(indicator).borderRadius : "",
           modeToReveal: distance(revealRect?.left, modeRect?.right),
           modeToTrip: distance(tripRect?.left, modeRect?.right),
           revealToTrip: distance(tripRect?.left, revealRect?.right),
         };
       })()
     `);
+    // 1a: the controls row runs on the 8px gap of the closed scale (01 §3).
     const exactGaps = await readSearchModeGapMetrics();
-    assert.equal(exactGaps.indicatorBorderRadius, "0px");
     assert.equal(exactGaps.modeToTrip, 8, JSON.stringify(exactGaps));
 
-    await clickSegment(page.getByRole("button", { name: "Flexible" }));
+    await clickSegment(flexibleMode);
     const flexibleGaps = await readSearchModeGapMetrics();
-    assert.equal(flexibleGaps.indicatorBorderRadius, "0px");
     assert.equal(flexibleGaps.modeToReveal, 8, JSON.stringify(flexibleGaps));
     assert.equal(flexibleGaps.revealToTrip, 8, JSON.stringify(flexibleGaps));
 
-    await clickSegment(page.getByRole("button", { name: "Migratorio" }));
+    await clickSegment(segment(modeControl, "Migratorio"));
     const migratoryGaps = await readSearchModeGapMetrics();
-    assert.equal(migratoryGaps.indicatorBorderRadius, "0px");
     assert.equal(migratoryGaps.modeToTrip, 8, JSON.stringify(migratoryGaps));
 
+    /* 02 §4: the theme toggle is a capsule cell of its own, not a segment —
+       there is no group pill behind it to keep out of the way. */
     const themeToggle = page.getByRole("button", { name: "Cambiar tema" });
-    const themeGroup = page.locator("header .fd-segmented-control").filter({ has: themeToggle });
+    assert.equal(await page.locator("header .fd-capsule").filter({ has: themeToggle }).count(), 1);
     const themePalette = await page.evaluate(`
       (() => {
         const root = document.documentElement;
@@ -758,13 +798,9 @@ test("segmented hover keeps the shared indicator stable and theme hover inverts 
         color: style.color,
       };
     });
-    const themeIndicatorOpacity = await themeGroup.locator(".fd-segmented-indicator").evaluate((indicator) =>
-      getComputedStyle(indicator).opacity,
-    );
 
     assert.equal(themeHoverStyle.backgroundColor, themePalette.dark.background);
     assert.equal(themeHoverStyle.color, themePalette.dark.foreground);
-    assert.equal(themeIndicatorOpacity, "0");
 
     await themeToggle.click();
     await page.waitForFunction(() => document.documentElement.classList.contains("dark"));
@@ -794,15 +830,17 @@ test("search field labels and filled rows share a consistent vertical center", a
     await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`, {
       waitUntil: "domcontentloaded",
     });
-    await page.getByRole("button", { name: "Flexible" }).click();
+    await clickSegment(segment(page, "Flexible"));
     await page.getByRole("button", { name: "Salida desde" }).waitFor();
 
     const metrics = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll("form label.fd-label")).map((label) => {
+      return Array.from(document.querySelectorAll("form .fd-field-label")).map((label) => {
         const field = label.parentElement;
-        const control = field?.querySelector(".fd-control, button[aria-haspopup='dialog'], button[aria-label='Seleccionar pasajeros']") ?? null;
-        const icon = control?.querySelector("svg") ?? null;
-        const value = control?.querySelector("input, .fd-field-value-swap, span.min-w-0") ?? null;
+        const control = field?.matches(".fd-field-control")
+          ? field
+          : field?.querySelector("button[aria-haspopup='dialog']") ?? null;
+        const icon = field?.querySelector("svg") ?? null;
+        const value = field?.querySelector("input, .fd-field-value") ?? null;
         const controlBox = control?.getBoundingClientRect();
         const labelBox = label.getBoundingClientRect();
         const iconBox = icon?.getBoundingClientRect();
@@ -995,7 +1033,7 @@ test("running search button cancels the active job and returns to editing", asyn
   }, { autoOpen: false });
 });
 
-test("generic operation failure warning stays hidden while the search is still running", async () => {
+test("generic operation warning never becomes a search-level failure notice", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     let searchComplete = false;
     await page.clock.install();
@@ -1085,13 +1123,139 @@ test("generic operation failure warning stays hidden while the search is still r
 
     await page.clock.fastForward(13_000);
 
+    const genericWarning = page.getByRole("status").filter({
+      hasText: "No se pudo completar la operación. Intenta nuevamente.",
+    });
     assert.equal(await page.locator('[title*="No se pudo completar la operación"]').count(), 0);
-    assert.equal(await page.getByText("1 aviso", { exact: true }).count(), 0);
+    assert.equal(await genericWarning.count(), 0);
 
     searchComplete = true;
     await page.clock.fastForward(1_000);
-    await page.getByText("1 aviso", { exact: true }).waitFor();
-    assert.equal(await page.locator('[title*="No se pudo completar la operación"]').count(), 1);
+    await page.getByRole("button", { name: "Buscar" }).waitFor();
+    assert.equal(await genericWarning.count(), 0);
+    assert.equal(await page.locator('[title*="No se pudo completar la operación"]').count(), 0);
+    /* 04 §8 and 11 §3: «Parcial» reports progress and nothing else. `partial`
+       stays true on the meta once the job is done, so keying the pill on it
+       left it spinning for ever on a search that had already stopped. */
+    await page.waitForFunction(() =>
+      !Array.from(document.querySelectorAll(".fd-status-pill"))
+        .some((pill) => pill.textContent?.trim() === "Parcial")
+    );
+  }, { autoOpen: false });
+});
+
+test("a provider that fails is said in one line, and the empty list stops blaming the route", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    let searchComplete = false;
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+
+    /* Both providers down. The backend leaves the job `completed` with zero
+       offers and the reason only in `providerDiagnostics`, which is exactly the
+       shape that used to be drawn as «Sin resultados para esta consulta». */
+    const failedJob = (complete: boolean, request?: unknown) => ({
+      searchJobId: "both-providers-failed-job",
+      searchComplete: complete,
+      searchStatus: complete ? "completed" : "running",
+      revision: complete ? 2 : 1,
+      sortMode: "cheapest",
+      request,
+      offers: [],
+      allOffers: [],
+      searchMeta: {
+        requestedAt: "2026-05-04T15:21:48.419Z",
+        completedAt: "2026-05-04T15:21:48.419Z",
+        providersUsed: ["agil-local", "costamar"],
+        warnings: [],
+        partial: true,
+        searchState: "search_partial",
+      },
+      providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+      warnings: [],
+      providerDiagnostics: complete
+        ? [
+            {
+              providerId: "agil-local",
+              kind: "exact",
+              status: "failed",
+              events: [],
+              error: "Agilsmart is temporarily unavailable.",
+            },
+            {
+              providerId: "costamar",
+              kind: "exact",
+              status: "failed",
+              events: [],
+              error: "Click and Book Plus request timed out.",
+            },
+          ]
+        : [
+            { providerId: "agil-local", kind: "exact", status: "running", events: [] },
+            { providerId: "costamar", kind: "exact", status: "running", events: [] },
+          ],
+    });
+
+    await page.route("**/api/search**", async (route) => {
+      const url = new URL(route.request().url());
+      const method = route.request().method();
+
+      if (method === "POST" && url.pathname === "/api/search") {
+        const payload = route.request().postDataJSON() as Record<string, unknown>;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(failedJob(false, payload.request)),
+        });
+        return;
+      }
+
+      if (method === "GET" && url.pathname === "/api/search/both-providers-failed-job") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify(failedJob(searchComplete)),
+        });
+        return;
+      }
+
+      await route.continue();
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await Promise.all([
+      page.waitForResponse((response) => response.url().endsWith("/api/search") && response.request().method() === "POST"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+
+    searchComplete = true;
+    await page.getByRole("button", { name: "Buscar" }).waitFor();
+
+    // The reason reaches the screen with the provider's name and the cause.
+    const notice = page.getByRole("status").filter({ hasText: "No se pudo consultar a ningún proveedor" });
+    await notice.waitFor();
+    const noticeText = (await notice.innerText()).replace(/\s+/g, " ");
+    assert.match(noticeText, /Agilsmart no disponible/);
+    assert.match(noticeText, /Click and Book Plus sin respuesta a tiempo/);
+
+    // And the column no longer asks the agent to widen a search that never ran.
+    await page.getByRole("heading", { name: "No se pudo consultar a los proveedores" }).waitFor();
+    assert.equal(await page.getByText("Sin resultados para esta consulta").count(), 0);
+    assert.equal(await page.getByRole("button", { name: "Volver a editar la búsqueda" }).count(), 1);
+
+    // 04 §8: one line, dismissible, and it does not come back in the same search.
+    await page.getByRole("button", { name: "Descartar el aviso" }).click();
+    await page.waitForFunction(() =>
+      !Array.from(document.querySelectorAll('[role="status"]'))
+        .some((node) => node.textContent?.includes("No se pudo consultar a ningún proveedor"))
+    );
   }, { autoOpen: false });
 });
 
@@ -1176,8 +1340,8 @@ test("page refresh cancels the active search and asks the server to cache partia
 
 test("flexible and migratory modes expose their distinct controls", async () => {
   await withDesktopPage(async ({ page }) => {
-    const migratory = page.getByRole("button", { name: "Migratorio" });
-    const flexible = page.getByRole("button", { name: "Flexible" });
+    const migratory = segment(page, "Migratorio");
+    const flexible = segment(page, "Flexible");
     assert.equal(await migratory.isEnabled(), true);
     assert.equal(await flexible.isEnabled(), true);
     await flexible.click();
@@ -1186,28 +1350,32 @@ test("flexible and migratory modes expose their distinct controls", async () => 
     assert.equal(await page.getByText("Salida hasta", { exact: true }).count(), 1);
 
     await migratory.click();
-    const monthFromField = page.getByRole("button", { name: "Mes desde", exact: true });
-    const monthUntilField = page.getByRole("button", { name: "Mes hasta", exact: true });
-    assert.equal(await monthFromField.isEnabled(), true);
-    assert.equal(await monthUntilField.isEnabled(), true);
-    assert.match(await monthFromField.innerText(), /Marzo 2026/);
-    assert.match(await monthUntilField.innerText(), /Octubre 2026/);
+    const monthRangeField = page.getByRole("button", { name: /^Meses:/ });
+    assert.equal(await monthRangeField.isEnabled(), true);
+    assert.match((await monthRangeField.getAttribute("aria-label")) ?? "", /Mar 2026.*Oct 2026/);
 
-    await monthFromField.click();
-    const monthCalendar = page.getByRole("dialog", { name: "Calendario de mes desde" });
+    await monthRangeField.click();
+    const monthCalendar = page.getByRole("dialog", { name: "Selector de meses" });
     await monthCalendar.waitFor();
     await assert.equal(await monthCalendar.getByRole("button", { name: /Enero de 2026/i }).isDisabled(), true);
     await assert.equal(await monthCalendar.getByRole("button", { name: /Febrero de 2026/i }).isDisabled(), true);
     await assert.equal(await monthCalendar.getByRole("button", { name: /Marzo de 2026/i }).isDisabled(), false);
-    await assert.equal(await monthCalendar.getByRole("button", { name: /Noviembre de 2026/i }).count(), 0);
-    await assert.equal(await page.getByRole("button", { name: "Ida y vuelta" }).isDisabled(), true);
-    await assert.equal(await page.getByRole("button", { name: "Solo ida" }).isDisabled(), true);
-    await assert.equal(await page.getByRole("button", { name: "Solo ida" }).getAttribute("aria-pressed"), "true");
+    /* 06 §6 caps the sweep at twelve months, so from March 2026 the picker
+       reaches February 2027 and stops. It used to offer twelve and then refuse
+       everything past the eighth — a limit the UI announced and broke. */
+    await assert.equal(await monthCalendar.getByRole("button", { name: /Noviembre de 2026/i }).isDisabled(), false);
+    await assert.equal(await monthCalendar.getByRole("button", { name: /Febrero de 2027/i }).isDisabled(), false);
+    await assert.equal(await monthCalendar.getByRole("button", { name: /Marzo de 2027/i }).isDisabled(), true);
+    // 11 §1: Migratorio sweeps months, so the trip-type control dims in place
+    // and keeps its value — it is not emptied and not removed.
+    await assert.equal(await segment(page, "Ida y vuelta").isDisabled(), true);
+    await assert.equal(await segment(page, "Solo ida").isDisabled(), true);
+    await assert.equal(await segment(page, "Solo ida").getAttribute("aria-checked"), "true");
     await assert.equal(await page.getByRole("button", { name: "Buscar" }).isVisible(), true);
   });
 });
 
-test("migratory month picker hides rows whose months are all unavailable", async () => {
+test("migratory month picker disables months before the runtime minimum", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.route(`${baseUrl}/`, async (route) => {
       const response = await route.fetch();
@@ -1219,35 +1387,35 @@ test("migratory month picker hides rows whose months are all unavailable", async
 
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await page.getByRole("button", { name: "Migratorio" }).click();
-    await page.getByRole("button", { name: "Mes desde", exact: true }).click();
+    await clickSegment(segment(page, "Migratorio"));
+    await page.getByRole("button", { name: /^Meses:/ }).click();
 
-    const calendar = page.getByRole("dialog", { name: "Calendario de mes desde" });
+    const calendar = page.getByRole("dialog", { name: "Selector de meses" });
     await calendar.waitFor();
-    assert.equal(await calendar.getByRole("button", { name: /Enero de 2026/i }).count(), 0);
-    assert.equal(await calendar.getByRole("button", { name: /Febrero de 2026/i }).count(), 0);
-    assert.equal(await calendar.getByRole("button", { name: /Marzo de 2026/i }).count(), 0);
-    assert.equal(await calendar.getByRole("button", { name: /Abril de 2026/i }).count(), 1);
+    assert.equal(await calendar.getByRole("button", { name: /Enero de 2026/i }).isDisabled(), true);
+    assert.equal(await calendar.getByRole("button", { name: /Febrero de 2026/i }).isDisabled(), true);
+    assert.equal(await calendar.getByRole("button", { name: /Marzo de 2026/i }).isDisabled(), true);
+    assert.equal(await calendar.getByRole("button", { name: /Abril de 2026/i }).isDisabled(), false);
   }, { autoOpen: false });
 });
 
 test("one-way exact search keeps the return field visible but disabled", async () => {
   await withDesktopPage(async ({ page }) => {
-    await page.getByRole("button", { name: "Solo ida" }).click();
+    await clickSegment(segment(page, "Solo ida"));
 
-    const returnField = page.locator('button[aria-labelledby="date-regreso-label"]');
+    const returnField = page.getByRole("button", { name: "Regreso: No aplica" });
     await returnField.waitFor({ state: "visible" });
     assert.equal(await returnField.count(), 1);
     assert.equal(await returnField.isDisabled(), true);
-    assert.match(await returnField.innerText(), /No aplica/);
-    assert.match(await returnField.locator("xpath=..").getAttribute("class") ?? "", /fd-disabled-section/);
+    assert.equal(await returnField.getAttribute("aria-label"), "Regreso: No aplica");
+    assert.equal(await returnField.locator("xpath=..").getAttribute("data-half"), "end");
   });
 });
 
 test("one-way flexible search keeps stay controls visible but disabled", async () => {
   await withDesktopPage(async ({ page }) => {
-    await page.getByRole("button", { name: "Flexible" }).click();
-    await page.getByRole("button", { name: "Solo ida" }).click();
+    await clickSegment(segment(page, "Flexible"));
+    await clickSegment(segment(page, "Solo ida"));
 
     const stayGroup = page.getByRole("group", { name: "Estadía" });
     await stayGroup.waitFor({ state: "visible" });
@@ -1257,6 +1425,443 @@ test("one-way flexible search keeps stay controls visible but disabled", async (
     await assert.equal(await page.getByRole("button", { name: "Agregar noche" }).isDisabled(), true);
     assert.match(await stayGroup.innerText(), /Estadía/);
     assert.match(await stayGroup.innerText(), /7 noches/);
-    assert.match(await stayGroup.getAttribute("class") ?? "", /fd-control-disabled-section/);
+    // 01 §1: disabled is `opacity:.45` over the whole control and nothing else
+    // — no new grey, no different border, no `cursor:pointer`.
+    const disabledStyle = await stayGroup.evaluate(async (element) => {
+      await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
+      const style = getComputedStyle(element);
+      return { cursor: style.cursor, opacity: Number(style.opacity) };
+    });
+    assert.equal(disabledStyle.cursor, "not-allowed");
+    assert.ok(Math.abs(disabledStyle.opacity - 0.45) <= 0.01, JSON.stringify(disabledStyle));
+  });
+});
+
+/**
+ * The choreography of 07 §1 and the way back of 11 §2.4.
+ *
+ * Read off `document.getAnimations()` rather than by watching pixels: what the
+ * table specifies is *when each piece starts*, and the schedule is the only
+ * thing that answers that without racing the compositor.
+ */
+async function routeChoreographySearch(page: Page, offers: number, delayMs = 0): Promise<void> {
+  await page.route("**/api/locations**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suggestions: [] }) });
+  });
+  await page.route("**/api/location-usage-suggestions**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ suggestions: { origin: ["LIM", "CUZ"], destination: ["MAD", "MIA"] } }),
+    });
+  });
+  await page.route("**/api/search", async (route) => {
+    /* The table is a schedule, and a schedule can only be read while it is
+       running: answered instantly, the spinner, the skeleton and both FLIPs are
+       already gone by the time the workspace is on screen. */
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const payload = route.request().postDataJSON() as Record<string, unknown>;
+    const list = Array.from({ length: offers }, (_, index) => buildOffer({ id: `choreo-${index}` }));
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        searchJobId: "choreography",
+        searchComplete: true,
+        searchStatus: "completed",
+        revision: 1,
+        sortMode: payload.sortMode,
+        request: payload.request,
+        offers: list,
+        allOffers: list,
+        searchMeta: {
+          requestedAt: "2026-03-31T00:00:00.000Z",
+          completedAt: "2026-03-31T00:00:00.000Z",
+          providersUsed: ["agil-local"],
+          warnings: [],
+          partial: false,
+          searchState: "search_live",
+        },
+        providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+        warnings: [],
+      }),
+    });
+  });
+}
+
+const CHOREOGRAPHY_URL = "/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest";
+
+type ScheduleWindow = Window & typeof globalThis & { __fdSchedule?: string[] };
+
+/**
+ * Collect every animation that runs over the next `windowMs`, as
+ * `selector · name · delay · duration`.
+ *
+ * Sampling once is a race: the chips of the 60ms cue are done at 180ms, and the
+ * two FLIPs are removed as soon as they finish because they fill backwards
+ * only. Polling each frame is what makes the schedule readable whole.
+ */
+async function recordSchedule(page: Page, windowMs: number): Promise<void> {
+  await page.evaluate((limit) => {
+    const win = window as ScheduleWindow;
+    const seen = new Set<string>();
+    win.__fdSchedule = [];
+    const started = performance.now();
+    const tick = () => {
+      for (const animation of document.getAnimations()) {
+        const effect = animation.effect as KeyframeEffect | null;
+        const timing = effect?.getComputedTiming();
+        const target = effect?.target as HTMLElement | null;
+        const classes = typeof target?.className === "string"
+          ? target.className.split(/\s+/).filter((name) => name.startsWith("fd-")).join(".")
+          : "";
+        const name = (animation as CSSAnimation).animationName
+          ?? (animation as CSSTransition).transitionProperty
+          ?? "flip";
+        const entry = `${target?.tagName.toLowerCase() ?? "?"}.${classes} · ${name} · ${timing?.delay} · ${timing?.duration}`;
+        if (!seen.has(entry)) {
+          seen.add(entry);
+          win.__fdSchedule?.push(entry);
+        }
+      }
+      if (performance.now() - started < limit) requestAnimationFrame(tick);
+    };
+    tick();
+  }, windowMs);
+}
+
+async function readSchedule(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window as ScheduleWindow).__fdSchedule ?? []);
+}
+
+/** Wait until the list has stopped reflowing, which is when a page settles. */
+async function waitForListSettled(page: Page): Promise<void> {
+  await page.waitForFunction(() => {
+    const win = window as typeof window & { __fdLastHeight?: number; __fdStableSince?: number };
+    const node = document.querySelector(".fd-list-viewport");
+    if (!node) return false;
+    const height = node.scrollHeight;
+    if (win.__fdLastHeight !== height) {
+      win.__fdLastHeight = height;
+      win.__fdStableSince = performance.now();
+      return false;
+    }
+    return performance.now() - (win.__fdStableSince ?? 0) > 250;
+  }, null, { polling: 50 });
+}
+
+test("07 §1 · the desk hands the workspace its cues in the order of the table", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeChoreographySearch(page, 2, 900);
+    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await page.locator(".fd-quick-chips").first().waitFor();
+
+    await recordSchedule(page, 700);
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await page.locator(".fd-shell-workspace").waitFor();
+    await page.waitForTimeout(750);
+    const scheduled = await readSchedule(page);
+    const find = (needle: string) => scheduled.find((entry) => entry.includes(needle));
+    const all = JSON.stringify(scheduled, null, 2);
+
+    // 0 ms · the CTA spins on `bucle-giro` and nothing else has moved.
+    assert.match(find("· spin ·") ?? "", /· spin · 0 · 1100$/, all);
+    // 60 ms · the frequent chips leave by opacity over 120 ms.
+    assert.match(find("fd-quick-chips") ?? "", /fd-exit-opacity · 60 · 120$/, all);
+    // 60 ms · the block of fields and the segments travel on `estructura`.
+    assert.match(find("fd-search-frame") ?? "", / · 60 · 220$/, all);
+    assert.match(find("fd-trip-mode-controls") ?? "", / · 60 · 220$/, all);
+    // 140 ms · filters from the left, detail from the right, the list by opacity.
+    assert.match(find("fd-filter-column") ?? "", /fd-enter-left · 140 · 220$/, all);
+    assert.match(find("fd-panel") ?? "", /fd-enter-right · 140 · 220$/, all);
+    assert.match(find("div.fd-list ·") ?? "", /fd-crossfade · 140 · 220$/, all);
+    // 180 ms · the skeleton, with the real grid. 180 + 220 = 400, inside 420.
+    assert.match(find("fd-results-list--skeleton") ?? "", /fd-crossfade · 180 · 220$/, all);
+
+    // The segments end up in the title bar (07 §1: «mismo tamaño y peso: solo
+    // cambia de sitio»).
+    await page.waitForFunction(() => (
+      document.querySelector<HTMLElement>(".fd-trip-mode-controls")?.dataset.placement === "topbar"
+    ));
+  });
+});
+
+test("11 §2.4 · clicking a field on a desk hands the segments back to the form", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeChoreographySearch(page, 2);
+    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await page.locator(".fd-shell-workspace").waitFor();
+    await page.waitForFunction(() => (
+      document.querySelector<HTMLElement>(".fd-trip-mode-controls")?.dataset.placement === "topbar"
+    ));
+    const active = await page.locator(".fd-tools-block").boundingBox();
+    assert.ok(active);
+
+    await recordSchedule(page, 400);
+    await page.getByRole("combobox", { name: "Origen" }).click();
+    await page.waitForTimeout(450);
+
+    // «La misma secuencia invertida en 180 ms» — one budget, no cue in front.
+    const scheduled = await readSchedule(page);
+    /* The recorder was armed before the click and the schedule still holds the
+       *outbound* FLIP of 07 §1, so the return is the last of the two. */
+    const controlsFlip = scheduled.findLast((entry) => entry.includes("fd-trip-mode-controls"));
+    assert.match(controlsFlip ?? "", / · 0 · 180$/, JSON.stringify(scheduled, null, 2));
+
+    await page.waitForFunction(() => (
+      document.querySelector<HTMLElement>(".fd-trip-mode-controls")?.dataset.placement === "form"
+    ));
+    /* The form recovers its resting anatomy and the block grows; the results
+       stay behind — they are not cleared. The frequent-station chips do **not**
+       come back: they are furniture of the idle screen, and once a search
+       exists they compete with the results for the same eye. */
+    assert.equal(await page.locator(".fd-quick-chips").count(), 0);
+    assert.equal(await page.locator(".fd-shell-workspace").isVisible(), true);
+    /* 52 → 94 measured: the summary band gives way to the form's resting
+       anatomy. The old threshold was «+60», which only held because the
+       frequent chips were still padding the block; what 11 §2.4 actually asks
+       is that the form come back **whole**, so the clipping check is the one
+       that matters. */
+    await page.waitForFunction((previous) => (
+      (document.querySelector(".fd-tools-block")?.getBoundingClientRect().height ?? 0) > previous + 30
+    ), active.height);
+    const clipped = await page.locator(".fd-tools-block").evaluate(async (node) => {
+      await Promise.all(node.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
+      return node.scrollHeight - node.clientHeight;
+    });
+    assert.ok(clipped <= 1, `El formulario reabierto queda recortado ${clipped}px.`);
+    // Focus stays where the agent put it.
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute("aria-label")), "Origen");
+  });
+});
+
+test("11 §2.4 · the phone's summary reopens the whole form, not a clipped one", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await routeChoreographySearch(page, 2);
+    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await page.locator(".fd-mobile-search-summary").waitFor();
+
+    await page.getByRole("button", { name: "Editar búsqueda" }).click();
+
+    /* 02 §9 caps the retractable block at 182px because that is the height of
+       the *summary* band. While the form is open the block is the form, and
+       «el bloque crece a su alto natural» (2h): capped, the passenger field and
+       the CTA sat 301px below the clip and there was no way back out. */
+    await page.getByRole("button", { name: "Seleccionar pasajeros" }).waitFor({ state: "visible" });
+    /* Measured once the growth has landed: while it runs, the block is clipped
+       on purpose — that is what animating a height means. */
+    const overflow = await page.locator(".fd-tools-block").evaluate(async (node) => {
+      await Promise.all(node.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
+      return node.scrollHeight - node.clientHeight;
+    });
+    assert.equal(overflow, 0);
+  });
+});
+
+/**
+ * 02 §11 · «Al volver del detalle (o de cualquier hoja), la lista recupera su
+ * scrollTop exacto. Al cambiar de página del paginado, la lista vuelve a 0 sin
+ * animación.» — and 01 §9 names the same restoration among what the session
+ * remembers.
+ *
+ * The list is never unmounted by a sheet, which is *why* the position survives;
+ * the test is here so that stops being an accident. It asserts a non-zero
+ * starting position first, so a future page size that leaves the list unable to
+ * scroll fails here instead of passing vacuously.
+ */
+test("02 §11 · the list keeps its exact scrollTop across the detail sheet", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await routeChoreographySearch(page, 24);
+    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await page.getByTestId("result-card").first().waitFor();
+    /* The page size is measured from the viewport, so it settles a frame or two
+       after the cards land — and settling changes `pageCount`, which is one of
+       the two things 02 §11 *does* send the list back to 0. Scrolling before
+       that is testing the wrong moment. */
+    await waitForListSettled(page);
+
+    await page.locator(".fd-list-viewport").evaluate((node) => { node.scrollTop = node.scrollHeight; });
+    /* Scrolling that far retracts the tools (02 §9), the list grows by their
+       height and the browser clamps the position down to match. That is the
+       same place in the *content*, so the baseline is taken once it settles —
+       otherwise the test compares a position against the viewport it had before
+       it grew. The 300ms lock of 02 §9 is why it settles at all. */
+    await page.waitForFunction(() => {
+      const win = window as typeof window & { __fdTop?: number; __fdSince?: number };
+      const node = document.querySelector(".fd-list-viewport");
+      if (!node) return false;
+      const top = Math.round(node.scrollTop);
+      if (win.__fdTop !== top) {
+        win.__fdTop = top;
+        win.__fdSince = performance.now();
+        return false;
+      }
+      return performance.now() - (win.__fdSince ?? 0) > 400;
+    }, null, { polling: 50 });
+    const scrolled = await page.locator(".fd-list-viewport")
+      .evaluate((node) => Math.round(node.scrollTop));
+    assert.ok(scrolled > 0, `the mobile list has no scroll to restore: ${scrolled}`);
+
+    /* The *last* card, because it is the one on screen at this position.
+       Clicking one further up would have the runner scroll it into view first,
+       and then the position under test is lost by the gesture rather than by
+       the sheet — which is a way of measuring nothing. */
+    await page.getByTestId("result-card").last().click();
+    await page.getByRole("dialog").waitFor();
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 0);
+
+    const restored = await page.locator(".fd-list-viewport")
+      .evaluate((node) => Math.round(node.scrollTop));
+    assert.equal(restored, scrolled);
+  });
+});
+
+test("02 §11 · changing page returns the list to 0 with no animated scroll", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeChoreographySearch(page, 60);
+    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await page.getByTestId("result-card").first().waitFor();
+    await waitForListSettled(page);
+
+    await page.locator(".fd-list-viewport").evaluate((node) => { node.scrollTop = node.scrollHeight; });
+    const nextPage = page.getByRole("button", { name: "Página siguiente" });
+    await nextPage.waitFor();
+    await nextPage.click();
+
+    /* 07 §0 rule 2 and 07 §5: the page change is a crossfade at fixed height,
+       and the scroll back to the top is not animated — so there is no
+       `scroll-behavior: smooth` to wait out and no animation on the viewport. */
+    const settled = await page.locator(".fd-list-viewport").evaluate((node) => ({
+      scrollTop: Math.round(node.scrollTop),
+      scrollBehavior: getComputedStyle(node).scrollBehavior,
+      animations: node.getAnimations().length,
+    }));
+    assert.equal(settled.scrollTop, 0);
+    assert.equal(settled.scrollBehavior, "auto");
+    assert.equal(settled.animations, 0);
+  });
+});
+
+/**
+ * Ficha 11 · the three gestures the walk found broken.
+ *
+ * They are here because none of them is visible in a diff: the cross threw,
+ * the highlight never moved, and the cross that 11 §2.1 asks for did not exist.
+ */
+async function routeLocationMatches(page: Page): Promise<void> {
+  await page.route("**/api/locations**", async (route) => {
+    const query = new URL(route.request().url()).searchParams.get("q")?.trim() ?? "";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        suggestions: query.length >= 2
+          ? [
+            { code: "MAD", city: "Madrid", country: "España", countryCode: "ES", label: "Madrid, España (MAD)" },
+            { code: "MIA", city: "Miami", country: "EE. UU.", countryCode: "US", label: "Miami, EE. UU. (MIA)" },
+          ]
+          : [],
+      }),
+    });
+  });
+  await page.route("**/api/location-usage-suggestions**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ suggestions: { origin: ["LIM", "CUZ"], destination: ["MAD", "MIA"] } }),
+    });
+  });
+}
+
+test("11 §2.2 · the cross on the return half empties both dates and hands focus back", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeLocationMatches(page);
+    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: /^Regreso:/ }).waitFor();
+
+    await page.getByRole("button", { name: "Quitar regreso" }).click();
+
+    /* «Borra las dos fechas, deja las mitades en Elegir y devuelve el foco a la
+       mitad de salida.» Emptying the departure is a gesture of the ficha, not an
+       edge case: deriving the return ceiling from it built an Invalid Date and
+       `toISOString()` threw, so the handler died and the control kept showing
+       the dates the agent had just asked to remove. */
+    await page.waitForFunction(() => (
+      document.querySelector('[aria-label^="Salida:"]')?.getAttribute("aria-label") === "Salida: Elegir"
+      && document.querySelector('[aria-label^="Regreso:"]')?.getAttribute("aria-label") === "Regreso: Elegir"
+    ));
+    // 11 §0.4: never the `<body>` — and the cross erases itself as it works.
+    assert.equal(
+      await page.evaluate(() => document.activeElement?.getAttribute("aria-label")),
+      "Salida: Elegir",
+    );
+  });
+});
+
+test("11 §2.1 · one letter keeps Recientes, two highlight the first match", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeLocationMatches(page);
+    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
+    const origin = page.getByRole("combobox", { name: "Origen" });
+    await origin.waitFor();
+
+    await origin.click();
+    await origin.fill("m");
+    await page.waitForFunction(() => {
+      const box = document.querySelector('[role="listbox"]');
+      return Boolean(box?.parentElement?.textContent?.includes("Frecuentes"));
+    });
+    // «Escribir 1 letra · nada cambia en la lista, se sigue viendo Recientes.»
+    assert.equal(await page.getByRole("option").count(), 2);
+
+    await origin.fill("mad");
+    await page.waitForFunction(() => (
+      document.querySelector('[aria-label="Origen"]')?.getAttribute("aria-activedescendant") !== null
+    ));
+    const matches = await page.getByRole("option").evaluateAll((items) => items.map((item) => ({
+      selected: item.getAttribute("aria-selected"),
+      text: item.textContent ?? "",
+    })));
+    // «Se resalta la primera fila» — and only it: «resaltado ≠ elegido».
+    assert.equal(matches[0]?.selected, "true");
+    assert.ok(matches.slice(1).every((match) => match.selected === "false"), JSON.stringify(matches));
+    assert.equal(await origin.inputValue(), "mad");
+  });
+});
+
+test("11 §2.1 · the cross on a field empties it and reopens Recientes", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeLocationMatches(page);
+    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
+    const origin = page.getByRole("combobox", { name: "Origen" });
+    await origin.waitFor();
+    await origin.click();
+    await origin.fill("mad");
+    await page.getByRole("option").first().waitFor();
+
+    await page.getByRole("button", { name: "Limpiar origen" }).click();
+
+    // «Vacía el campo y **reabre** el panel con Recientes · foco en el campo.»
+    await page.waitForFunction(() => {
+      const input = document.querySelector<HTMLInputElement>('[aria-label="Origen"]');
+      const box = document.querySelector('[role="listbox"]');
+      return input?.value === ""
+        && document.activeElement === input
+        && Boolean(box?.parentElement?.textContent?.match(/Recientes|Frecuentes/));
+    });
   });
 });

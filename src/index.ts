@@ -131,7 +131,7 @@ async function main() {
   if (!delegatesSearch) {
     providerPrewarmStartTimer = setTimeout(() => {
       providerPrewarmStartTimer = undefined;
-      providerPrewarmHandle = startProviderPrewarmLoop();
+      providerPrewarmHandle = startProviderPrewarmLoop(startupRuntime?.providerStatus);
     }, STARTUP_BACKGROUND_TASK_DELAY_MS);
     providerPrewarmStartTimer.unref?.();
   }

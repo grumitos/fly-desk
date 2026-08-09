@@ -1,5 +1,9 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
+import type {
+  CanonicalOffer as FrontendCanonicalOffer,
+  SearchJobResponse,
+} from "../frontend/src/types";
 import { materializeSearchResponse } from "../src/core/orchestrator";
 import { PROVIDER_OFFER_VARIANT_LIMIT, takeProviderOfferVariants } from "../src/core/provider-offer-limits";
 import type { CanonicalOffer, SearchRequest } from "../src/core/types";
@@ -132,6 +136,54 @@ test("search filters narrow visible offers without removing retained provider re
 
   assert.equal(response.offers.length, 1);
   assert.equal(response.allOffers?.length, 2);
+});
+
+test("migration filters remove hidden offers from each month's visible alternatives", async () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: { __FLYDESK_RUNTIME__: undefined },
+  });
+
+  try {
+    const { applyMigrationFilters } = await import("../frontend/src/App");
+    const visibleOffer = buildOffer(1) as FrontendCanonicalOffer;
+    const hiddenOffer = buildOffer(2) as FrontendCanonicalOffer;
+    const results = {
+      request: {
+        origin: "LIM",
+        destination: "MIA",
+        tripType: "round-trip",
+        adults: 1,
+        children: 0,
+        infants: 0,
+        searchMode: "month-view",
+      },
+      offers: [hiddenOffer],
+      allOffers: [visibleOffer, hiddenOffer],
+      migrationMonths: [{
+        key: "2026-04",
+        label: "Abril 2026",
+        departureStart: "2026-04-01",
+        departureEnd: "2026-04-30",
+        offer: hiddenOffer,
+        offers: [visibleOffer, hiddenOffer],
+        status: "available",
+      }],
+    } as unknown as SearchJobResponse;
+
+    const filtered = applyMigrationFilters(results, [visibleOffer], "cheapest");
+
+    assert.deepEqual(filtered.migrationMonths?.[0]?.offers?.map((offer) => offer.id), [visibleOffer.id]);
+    assert.equal(filtered.migrationMonths?.[0]?.offer?.id, visibleOffer.id);
+    assert.deepEqual(filtered.allOffers?.map((offer) => offer.id), [visibleOffer.id, hiddenOffer.id]);
+  } finally {
+    if (previousWindow) {
+      Object.defineProperty(globalThis, "window", previousWindow);
+    } else {
+      delete (globalThis as typeof globalThis & { window?: Window }).window;
+    }
+  }
 });
 
 test("search materialization does not mark unverified offers as quote-ready", () => {

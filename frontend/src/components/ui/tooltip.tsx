@@ -3,8 +3,15 @@ import * as TooltipPrimitive from "@radix-ui/react-tooltip"
 
 import { cn } from "@/lib/utils"
 
+/*
+ * 01 §7: tooltips exist only on icons with no label. Ink background, page
+ * colour for the text, 12px, radius 8, no arrow, 300ms of delay, and they enter
+ * with `emergente`. Nothing about them is decorative — a tooltip over text that
+ * is already on screen is noise, so those call sites are the bug, not this
+ * component.
+ */
 function TooltipProvider({
-  delayDuration = 350,
+  delayDuration = 300,
   skipDelayDuration = 150,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Provider>) {
@@ -37,10 +44,7 @@ function TooltipContent({
       <TooltipPrimitive.Content
         data-slot="tooltip-content"
         sideOffset={sideOffset}
-        className={cn(
-          "z-50 max-w-72 rounded-md border border-border bg-popover px-2 py-1.5 text-xs font-medium text-popover-foreground shadow-lg",
-          className,
-        )}
+        className={cn("fd-tooltip fd-motion-emergente", className)}
         {...props}
       >
         {children}
@@ -49,4 +53,37 @@ function TooltipContent({
   )
 }
 
-export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger }
+/**
+ * 6b closes the keyboard map with one rule: «cada atajo aparece en el tooltip
+ * de su control». That is not the repetition 01 §7 forbids — the key is the one
+ * thing about the control that is *not* on screen — so a labelled button may
+ * carry a tooltip as long as the tooltip is the shortcut.
+ *
+ * A disabled control still explains itself: the trigger is a span around it, so
+ * the reason arrives even where the button itself no longer takes a pointer.
+ */
+function ShortcutTooltip({
+  children,
+  label,
+  shortcut,
+  disabled = false,
+}: {
+  children: React.ReactElement
+  label: string
+  shortcut: React.ReactNode
+  disabled?: boolean
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        {disabled ? <span className="fd-tooltip-trigger-shim">{children}</span> : children}
+      </TooltipTrigger>
+      <TooltipContent className="fd-tooltip-shortcut">
+        {label}
+        {shortcut}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+export { ShortcutTooltip, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger }

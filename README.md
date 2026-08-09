@@ -17,7 +17,7 @@ Fly Desk is a Bun-only application prepared for VPS deployment:
 - web authentication with a signed httpOnly cookie
 - Agil integration that reuses a real Chrome session when available on the host
 - Click and Book Plus integration using environment-controlled context and B2B warm-up when applicable
-- SQLite persistence through `bun:sqlite`: expiring caches for sessions, matrices, purchase paths, and autocomplete, plus a permanent global route ranking
+- SQLite persistence through `bun:sqlite`: expiring caches for sessions, matrices, purchase paths, autocomplete, and per-browser recent locations, plus a permanent global route ranking
 
 ## Current Scope
 
@@ -27,12 +27,12 @@ Fly Desk is a Bun-only application prepared for VPS deployment:
 - exhaustive monthly migratory search: queries every day in the selected months against Agil and Click and Book Plus without fare filters and processes months in batches
 - all searches wait for Agil and Click and Book Plus and retain their complete results; concurrency regulates batch requests rather than trimming available offers
 - exact search publishes a stable set after both providers finish; range, matrix, and migratory searches send deltas and publish geometric milestones (1, 2, 4...) coalesced for 900 ms, plus the final state, without remounting visible cards
-- origin and destination autocomplete
-- up to three frequent origins and three destinations, ranked globally by their permanent total-use counters and recorded by the backend when a search is accepted
+- origin and destination autocomplete with explicit city/airport types
+- up to three recent origins/destinations per browser session and three frequent origins/destinations from permanent global counters, recorded by the backend when a search is accepted
+- an idle provider rail backed by authenticated, sanitized readiness observations from the search runner; a failed refresh removes earlier health claims while retaining the canonical provider names
 - visible filters for stops, maximum layover time, baggage, and airlines
 - paginated results with backend warnings
-- a side panel with details, conditions, purchase paths, and local quotation from the fresh offer; the migratory switch updates text immediately without calling the provider again
-- persistent column-width adjustment behind `?layoutEditor=1` or `?layout=editor`
+- a side panel with details, known conditions, purchase paths, and quotation from the shared core; the first quote calls `/api/quotation`, requires a complete provider-validated response for the exact stored flight, and may reuse it for at most 15 minutes before revalidation; the migratory switch updates that same verified offer immediately through the shared compositor
 
 The current React UI does not expose:
 
@@ -56,10 +56,11 @@ The current React UI does not expose:
 - If `FLY_DESK_TRUST_LOOPBACK_CLIENT=1` is enabled for direct local use, requests with proxy headers (`x-forwarded-for`, `forwarded`, `x-real-ip`) are not treated as local unless `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK=1` is also deliberately configured.
 - Operational endpoints accept a valid web cookie or `FLY_DESK_API_TOKEN`.
 - Diagnostics, Click and Book Plus token status, and local browser launch remain loopback-only surfaces.
-- The normal date window moves from `today` to `today + SEARCH_MAX_FUTURE_DAYS`; round trips are limited to 90 nights.
+- The normal date window moves from `today` to `today + SEARCH_MAX_FUTURE_DAYS`; round trips are limited to 90 nights, searches to nine passengers, and lap infants to one per adult. The same limits are embedded in the public runtime contract.
 - Click and Book Plus does not accept `apiBaseUrl` or `brandBaseUrl` per request; base URLs come from the environment and pass through an allowlist.
-- Agil depends on a local browser session and a subscription key resolved from the environment or the Agil bundle.
-- In production, `fly-desk.service` can delegate `/api/search`, `/api/matrix`, polling, and cancellation to `fly-desk-search.service` through `FLY_DESK_SEARCH_SERVICE_URL`; that runner stays on loopback and runs providers/workers.
+- Agil depends on a real Chrome session and a subscription key resolved from the environment or the Agil bundle. Linux/VPS defaults to the platform CDP endpoint on `127.0.0.1:9222`; explicit `AGIL_BROWSER_*` values override it, while Windows keeps discovery explicit.
+- Provider fields remain unknown when absent: the normalizers do not synthesize carrier, flight number, seat count, or baggage evidence.
+- In production, `fly-desk.service` can delegate `/api/search`, `/api/matrix`, polling, cancellation, quotation, and `/api/provider-status` to `fly-desk-search.service` through `FLY_DESK_SEARCH_SERVICE_URL`; that runner stays on loopback and runs providers/workers.
 - With delegation enabled, the web runtime initializes the session cache lazily: autocomplete and preferences do not restore the runner's heavy state.
 - Search admission uses capacity units in the runner: default budget `4`, exact searches cost `1`, and range and matrix searches cost `2`. This permits two simultaneous heavy searches; excess work queues with a timeout.
 - Price reuse expires from `searchMeta.completedAt`; reads and polling do not renew a fare. A separate idle TTL preserves operational sessions and redirects.
@@ -67,7 +68,8 @@ The current React UI does not expose:
 - Active progress uses the same geometric milestones to bound RAM/HTTP/SQLite snapshots. New purchase paths persist separately so `/r/<id>` works between checkpoints, and every terminal state is durable.
 - The web server limits incoming bodies to 1 MiB and materializes each body once to rebuild a trusted request. Delegation reuses that stream without a second copy and retains a bounded timeout during the response. Do not lower `FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS` below the operational default.
 - The stop-search button, tab close/navigation, and orderly process shutdown cancel remote jobs. Tab close and shutdown first materialize any pending delta and request a partial cache to preserve resolved results and purchase paths.
-- Public purchase paths are served as `/r/<id>` to preserve caching without persisting sensitive links in the UI. Agil responds with a direct provider `302`; Click and Book Plus keeps the local handoff to validate or refresh the token before opening the external link.
+- Public purchase paths are served as `/r/<id>` to preserve caching without persisting sensitive links in the UI. Agil responds with a direct provider `302`; Click and Book Plus authenticates its branded purchase URL with a token in the query string, so the local handoff validates or refreshes it immediately before `302` and never persists or logs that resolved URL.
+- Price-only matrix coverage remains coverage: neither the frontend nor `/api/quotation` turns it into a synthetic flight. Transport normalizers require a positive price, currency, and real itinerary before exposing an offer.
 - In production, the platform can route `/r/*` to `fly-desk-redirect.service`, a separate Bun process that reads `FLY_DESK_SESSION_DB_PATH`. Browser requests use a distinct HttpOnly session cookie scoped to `/r`; the main web cookie and bearer credentials are not forwarded to this service. Loopback and fixed API-token access remain available for controlled smokes.
 
 ## Dependencies
@@ -88,7 +90,7 @@ Bun is the supported package manager. Do not add `package-lock.json`, `pnpm-lock
 
 - `frontend/src/App.tsx`: main workspace composition
 - `frontend/src/components/`: top bar, search shell, results, details, and UI components
-- `frontend/src/components/results/`: result card, presentation model, and layout editor
+- `frontend/src/components/results/`: result card, presentation model, migration coverage, and schedule alternatives
 - `frontend/src/hooks/`: search/polling and autocomplete
 - `frontend/src/lib/api.ts`: BFF HTTP client
 - `frontend/src/index.css`: tokens, layout, light/dark themes, and visual states
@@ -106,12 +108,13 @@ Bun is the supported package manager. Do not add `package-lock.json`, `pnpm-lock
 - `src/local-agil.ts`: local session, exact/range/matrix search, pricing, and Agil deep links
 - `src/local-costamar.ts`: Click and Book Plus client, exact/range/matrix search, branded links, and B2B warm-up
 - `src/providers/costamar/search-payloads.ts`: Click and Book Plus payloads; `costamar` remains as a legacy internal alias
-- `src/core/`: normalization, matrix, grouping, ranking, quotation, and shared contracts
-- `src/search-service-client.ts`: optional loopback delegation of search routes to the dedicated runner
+- `src/core/`: normalization, matrix, native schedule groups, ranking, quotation/parser, search limits, and shared contracts
+- `src/search-service-client.ts`: optional loopback delegation of search, quotation, and provider-status routes to the dedicated runner
 - `src/search-worker-client.ts` / `src/search-worker.ts`: Bun child processes that isolate heavy searches
 - `src/session-store.ts`: live jobs, resident budget, local SQLite, redirects, and purchase paths
-- `src/location-suggestion-cache.ts`: SQLite autocomplete cache
-- `src/location-usage-store.ts`: permanent global SQLite counters and top-three ranking for frequent origins/destinations; reads stay coherent between the web and search processes
+- `src/location-suggestion-cache.ts`: bounded SQLite autocomplete cache with query/session/global caps
+- `src/location-usage-store.ts`: permanent global frequency counters plus 24-hour per-session recent locations; reads stay coherent between the web and search processes
+- `src/provider-status.ts`: sanitized in-memory provider readiness tracker with closed states/reasons and evidence precedence
 - `src/runtime-paths.ts`: persistent path resolution; `FLY_DESK_APP_DATA_DIR` keeps caches outside the release when no specific override is set
 
 ## Configuration
@@ -125,7 +128,7 @@ Bun is the supported package manager. Do not add `package-lock.json`, `pnpm-lock
 - Workers/prewarm: `FLY_DESK_SEARCH_WORKER_PROCESSES`, `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS`, `FLY_DESK_PROVIDER_PREWARM`
 - Agil: `AGIL_APIM_SUBSCRIPTION_KEY`, `AGIL_CHROME_USER_DATA_DIR`, `AGIL_CHROME_PROFILE`, `AGIL_BROWSER_URL`, `AGIL_RAW_CHROME_STORAGE_FILE_SCAN`, `AGIL_TEMP_CHROME_STORAGE_FALLBACK`, `AGIL_HTTP_TIMEOUT_MS`
 - Click and Book Plus: `CBPLUS_SEARCH_API_BASE_URL`, `CBPLUS_BRAND_BASE_URL`, `CBPLUS_ENGINE_API_BASE_URL`, `CBPLUS_MARKUP_API_BASE_URL`, `CBPLUS_AIR_API_BASE_URL`, `CBPLUS_TERMINAL_ID`, `CBPLUS_TOKEN`
-- Click and Book Plus B2B: `CBPLUS_B2B_EMAIL`, `CBPLUS_B2B_PASSWORD`, `CBPLUS_B2B_TOTP_SECRET`, `CBPLUS_B2B_TOTP_URI`, `CBPLUS_B2B_AUTOMATION_ENABLED`, `CBPLUS_SESSION_WARMUP_ENABLED`; equivalent `COSTAMAR_*` variables remain supported as legacy fallbacks
+- Click and Book Plus B2B: `CBPLUS_B2B_BASE_URL`, `CBPLUS_B2B_EMAIL`, `CBPLUS_B2B_PASSWORD`, `CBPLUS_B2B_TOTP_SECRET`, `CBPLUS_B2B_TOTP_URI`, `CBPLUS_B2B_AUTOMATION_ENABLED`, `CBPLUS_SESSION_WARMUP_ENABLED`; the base URL must use HTTPS on the exact `b2b.clickandbook.com` origin, and equivalent `COSTAMAR_*` variables remain supported as legacy fallbacks
 
 `CBPLUS_B2B_TOTP_SECRET` accepts Base32, `otpauth://...`, `otpauth-migration://...`, and JSON with `totpUri`; Fly Desk generates the OTP, so do not store temporary codes.
 
@@ -202,6 +205,7 @@ GitHub Actions runs `.github/workflows/ci.yml` on pull requests, pushes to `main
 - [`docs/AGIL_SESSION_RECOVERY.md`](./docs/AGIL_SESSION_RECOVERY.md): Agil session recovery in VPS Chrome/CDP
 - [`docs/CBPLUS_SESSION_RECOVERY.md`](./docs/CBPLUS_SESSION_RECOVERY.md): secure Click and Book Plus regeneration and recovery without copying a session
 - [`docs/FRONTEND_IDENTITY.md`](./docs/FRONTEND_IDENTITY.md): React visual identity and UI rules
+- [`docs/REDESIGN_CONTRACT.md`](./docs/REDESIGN_CONTRACT.md): what the search redesign commits the code to, where it departs from the design manual, and what is still missing
 - [`docs/TESTING.md`](./docs/TESTING.md): test classification, execution, and relevance criteria
 - [`frontend/README.md`](./frontend/README.md): brief frontend workspace notes
 

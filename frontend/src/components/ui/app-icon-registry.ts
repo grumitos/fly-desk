@@ -1,11 +1,15 @@
 import {
   AlertTriangle,
+  ArrowDown,
   ArrowRight,
   ArrowRightLeft,
+  ArrowUp,
   ArrowUpDown,
+  Backpack,
   Briefcase,
   Calendar,
   Check,
+  CornerDownLeft,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -17,14 +21,20 @@ import {
   Copy,
   ExternalLink,
   Funnel,
+  FunnelX,
+  Layers,
   ListChecks,
   Loader2,
+  Luggage,
   MapPin,
   Minus,
   Moon,
   PanelRight,
+  Pencil,
   Plane,
+  PlaneTakeoff,
   Plus,
+  RotateCcw,
   Search,
   ShieldCheck,
   Sun,
@@ -65,11 +75,31 @@ const BrandPlane = forwardRef<SVGSVGElement, LucideProps>(function BrandPlane(
   )
 }) as LucideIcon
 
+/*
+ * Plate 7b closes the pictogram families. Each glyph has exactly one meaning, so
+ * that the agent does not have to read the label to know what a control does:
+ *
+ *   chevron  something opens or closes in place. Never movement.
+ *   arrow    direction or travel: a flight leg, an order, going back, navigating.
+ *   check    confirmation: included, selected, applied.
+ *   ✗ (aspa)  close or remove. Never "error" — errors carry their own colour and
+ *            their own words.
+ *
+ * `arrowDown` is the keyboard arrow, not a sort direction; sorting is a
+ * segmented control with words on it.
+ */
 export const appIconRegistry = {
   alert: AlertTriangle,
   sort: ArrowUpDown,
+  arrowUp: ArrowUp,
+  arrowDown: ArrowDown,
+  enter: CornerDownLeft,
+  backpack: Backpack,
+  luggage: Luggage,
   baggage: Briefcase,
   calendar: Calendar,
+  cityGroup: Layers,
+  airport: PlaneTakeoff,
   check: Check,
   chevronDown: ChevronDown,
   chevronLeft: ChevronLeft,
@@ -83,6 +113,10 @@ export const appIconRegistry = {
   detail: PanelRight,
   externalLink: ExternalLink,
   filters: Funnel,
+  /* Plate 2g: the list emptied *by a filter*, which is a different problem from
+     a search that found nothing — and gets a different glyph and different
+     words. */
+  filtersOff: FunnelX,
   flight: Plane,
   brandPlane: BrandPlane,
   list: ListChecks,
@@ -90,14 +124,21 @@ export const appIconRegistry = {
   location: MapPin,
   migration: ShieldCheck,
   minus: Minus,
+  /* Plate 3c: «Reintentar» after a quotation the provider did not confirm. */
+  rotateCcw: RotateCcw,
   moon: Moon,
   oneWay: ArrowRight,
+  /* Plate 1d: the way back into the search from the mobile summary. */
+  edit: Pencil,
   passengers: Users,
   plus: Plus,
   roundTrip: ArrowRightLeft,
   search: Search,
   sun: Sun,
   swap: ArrowRightLeft,
+  /* Plate 1c: stacked fields need a stacked arrow. Same job, same component —
+     only the axis follows the layout (see `<SwapIcon>`). */
+  swapVertical: ArrowUpDown,
   x: X,
 } satisfies Record<string, LucideIcon>
 
