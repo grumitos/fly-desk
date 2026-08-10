@@ -231,6 +231,86 @@ export function useSearch() {
     [appendDiagnosticLog, cancelActiveJobs, finishActiveJob, registerActiveJob]
   )
 
+  /**
+   * Open a job that already exists instead of asking for it again.
+   *
+   * A migratory sweep is a search per month, and each of those months keeps its
+   * own job on the server. Opening one used to re-run it from scratch — the
+   * agent watched a spinner for work that had already been paid for. Here the
+   * first response is whatever the job holds right now, which is why the list
+   * appears at once, and an unfinished job keeps polling exactly like a search
+   * this tab had started itself.
+   */
+  const restoreJob = useCallback(async (jobId: string): Promise<boolean> => {
+    await pendingCancellationRef.current
+    cancelActiveJobs({ showFeedback: false, setIdle: false })
+    const runId = runIdRef.current + 1
+    runIdRef.current = runId
+    const abortController = new AbortController()
+    abortControllerRef.current = abortController
+    abortRef.current = false
+    setLoading(true)
+    setError(null)
+    setStatusMessage(null)
+    setDiagnosticLog([`Recuperando la búsqueda ${jobId}`])
+
+    const isCurrentRun = () => runIdRef.current === runId && !abortRef.current
+
+    try {
+      const job = await pollSearch(jobId, undefined, { signal: abortController.signal })
+      if (!isCurrentRun()) return false
+
+      latestResultsRef.current = job
+      setResults(job)
+      appendDiagnosticLog(`Búsqueda recuperada ${job.searchJobId}: ${job.searchStatus}`, job.diagnosticLog)
+
+      if (job.searchComplete) {
+        setLoading(false)
+        abortControllerRef.current = null
+        return true
+      }
+
+      registerActiveJob({ id: job.searchJobId, type: "search" })
+      let lastRevision = job.revision
+      const doPoll = async () => {
+        if (!isCurrentRun()) return
+        try {
+          const updated = await pollSearch(job.searchJobId, lastRevision, { signal: abortController.signal })
+          if (!isCurrentRun()) return
+          if (!updated.unchanged) {
+            const hydrated = hydrateSearchJobUpdate(updated, latestResultsRef.current)
+            lastRevision = hydrated.revision
+            latestResultsRef.current = hydrated
+            setResults(hydrated)
+          }
+          if (!updated.searchComplete) {
+            pollRef.current = window.setTimeout(doPoll, POLL_INTERVAL_MS)
+            return
+          }
+          finishActiveJob({ id: job.searchJobId, type: "search" })
+          setLoading(false)
+          abortControllerRef.current = null
+        } catch (err) {
+          if (!isCurrentRun() || err instanceof FlyDeskSearchCancelledError) return
+          appendDiagnosticLog("Error durante actualización", diagnosticLogFromError(err))
+          setStatusMessage(userMessageFromError(err))
+          setLoading(false)
+          abortControllerRef.current = null
+        }
+      }
+      pollRef.current = window.setTimeout(doPoll, POLL_INTERVAL_MS)
+      return true
+    } catch (err) {
+      if (!isCurrentRun() || err instanceof FlyDeskSearchCancelledError) return false
+
+      setLoading(false)
+      abortControllerRef.current = null
+      appendDiagnosticLog("No se pudo recuperar la búsqueda", diagnosticLogFromError(err))
+      setError(userMessageFromError(err))
+      return false
+    }
+  }, [appendDiagnosticLog, cancelActiveJobs, finishActiveJob, registerActiveJob])
+
   const cancel = useCallback(() => {
     cancelActiveJobs({ cachePartial: true, showFeedback: true, setIdle: true })
   }, [cancelActiveJobs])
@@ -244,7 +324,7 @@ export function useSearch() {
     setDiagnosticLog([])
   }, [cancelActiveJobs])
 
-  return { results, loading, error, statusMessage, diagnosticLog, runSearch, cancel, reset }
+  return { results, loading, error, statusMessage, diagnosticLog, runSearch, restoreJob, cancel, reset }
 }
 
 function hydrateSearchJobUpdate(
