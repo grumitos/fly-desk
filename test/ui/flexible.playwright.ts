@@ -295,12 +295,19 @@ test("migratory search sends monthly stay-range requests", async () => {
     // reaching for the fields behind it.
     await page.keyboard.press("Escape");
     await monthSelector.waitFor({ state: "detached" });
+    /* Take the suggestion instead of dismissing it. `Esc` on a location field
+       restores the previous value (11 §2.1), so pressing it after typing empties
+       the field and leaves the CTA disabled — `Enter` is the gesture that
+       commits «IATA + ciudad» and closes the panel. */
     await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
+    await page.getByRole("combobox", { name: "Origen" }).press("Enter");
     await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await page.getByRole("combobox", { name: "Destino" }).press("Enter");
+    await page.waitForFunction(() => document.querySelectorAll('[role="listbox"]').length === 0);
+    /* Wait on the sweep landing rather than on a single response: migratorio is
+       one request per month, so «the search happened» is two of them and the
+       grid is the only place that says both arrived. */
+    await page.getByRole("button", { name: "Buscar" }).click();
     await page.getByTestId("migration-month-card").filter({ hasText: "USD 512.00" }).waitFor();
     const topbarControls = page.getByTestId("topbar-search-controls");
     assert.equal(await segment(topbarControls, "Migratorio").count(), 1);
@@ -352,24 +359,22 @@ test("migratory search sends monthly stay-range requests", async () => {
     assert.equal(secondLeg?.departureStart, "2027-01-01");
     assert.equal(secondLeg?.departureEnd, "2027-01-31");
 
-    /* 06 §1.3 and 11 §5: choosing a month opens that month's ordinary list —
-       the same one-way range search the sweep ran for it, dates already in the
-       form. It used to open the detail panel of the month's best fare instead,
-       leaving `month.searchJobId` stored and read by nothing. */
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      migrationCard.click(),
-    ]);
-    await page.waitForFunction(() => document.querySelectorAll('[data-testid="migration-month-card"]').length === 0);
-    assert.equal(payloads.length, 3);
-    const openedMonth = (payloads[2].request as { searchMode?: string; legs?: Array<Record<string, unknown>> });
-    assert.equal(openedMonth.searchMode, "stay-range");
-    assert.equal(openedMonth.legs?.[0]?.departureStart, "2026-12-01");
-    assert.equal(openedMonth.legs?.[0]?.departureEnd, "2026-12-31");
-    // The form followed: one-way flexible over that month, not the sweep.
-    await waitForSegmentChecked(segment(topbarControls, "Flexible"));
+    /* A month card selects, like a result card: the detail panel says the rest
+       and the sweep stays on screen. This used to assert the opposite — that
+       the click ran a third search — which meant reading one month cost a
+       search and a way back. Opening the month is «Abrir mes», its own control,
+       and it reads the job the sweep already ran; that path has its own case. */
+    await migrationCard.locator(".fd-month-card__hit").click();
+    await page.getByTestId("detail-panel-body").waitFor();
+    assert.equal(await page.getByTestId("migration-month-card").count(), 2);
+    assert.equal(payloads.length, 2);
+    assert.match(await migrationCard.getAttribute("class") ?? "", /is-selected/);
+    /* The form does not follow either: selecting a month reads it, so the sweep
+       and its mode stay exactly where the agent left them. The old flow
+       switched to Flexible here because the click ran a range search. */
+    await waitForSegmentChecked(segment(topbarControls, "Migratorio"));
 
-    // Opening a month is not quoting it.
+    // Reading a month is not quoting it.
     assert.equal(quotationRequests, 0);
   }, { autoOpen: false });
 });
