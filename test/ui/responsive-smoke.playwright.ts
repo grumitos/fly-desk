@@ -616,3 +616,110 @@ async function assertSearchGridContained(
     `${state}: search grid overflow ${JSON.stringify(metrics)}`,
   );
 }
+
+test("the desk card gives the codeshare a line and the trip a single row", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    /*
+     * Three things the plate got wrong for real data, all reported from the
+     * desk. The baggage icons had taken the second line of the carrier column,
+     * which is where the operating airline belongs — the one fact the passenger
+     * meets at the counter. Baggage is a property of the fare, so it travels
+     * with the price. And two stacked legs left a third of a 1920 card empty:
+     * past 980px of list they read side by side.
+     */
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      const base = buildOffer({ id: "codeshare" });
+      const offers = [buildOffer({
+        id: "codeshare",
+        destination: "MAD",
+        itineraries: [
+          {
+            ...base.itineraries[0],
+            segments: [{
+              ...base.itineraries[0].segments[0],
+              marketingCarrier: "AF",
+              marketingCarrierName: "Air France",
+              operatingCarrier: "DL",
+              operatingCarrierName: "Delta",
+            }],
+          },
+          base.itineraries[1],
+        ] as never,
+      })];
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "codeshare-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers,
+          allOffers: offers,
+          searchMeta: {
+            requestedAt: "2026-07-30T12:00:00.000Z",
+            completedAt: "2026-07-30T12:00:01.000Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+          warnings: [],
+        }),
+      });
+    });
+
+    for (const [width, sideBySide] of [[1440, false], [1920, true]] as const) {
+      await page.setViewportSize({ width, height: 940 });
+      await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-09-12&return=2026-09-19&adults=1&children=0&infants=0`, {
+        waitUntil: "domcontentloaded",
+      });
+      await page.getByRole("combobox", { name: "Origen" }).waitFor();
+      await Promise.all([
+        page.waitForResponse("**/api/search"),
+        page.getByRole("button", { name: "Buscar" }).click(),
+      ]);
+      await page.getByTestId("result-card").first().waitFor();
+
+      const card = await page.getByTestId("result-card").first().evaluate((element) => {
+        const legTops = Array.from(element.querySelectorAll<HTMLElement>(".fd-card__leg"))
+          .map((leg) => Math.round(leg.getBoundingClientRect().top));
+        const baggage = element.querySelector<HTMLElement>(".fd-card__baggage");
+        const price = element.querySelector<HTMLElement>(".fd-card__price");
+        const operator = element.querySelector<HTMLElement>(".fd-card__carrier-operator");
+        const carrier = element.querySelector<HTMLElement>(".fd-card__carrier");
+        return {
+          height: Math.round(element.getBoundingClientRect().height),
+          legTops,
+          operator: operator?.textContent?.trim() ?? "",
+          operatorInsideCarrier: Boolean(operator && carrier?.contains(operator)),
+          baggageLeft: baggage ? baggage.getBoundingClientRect().left : 0,
+          priceLeft: price ? price.getBoundingClientRect().left : 0,
+          carrierRight: carrier ? carrier.getBoundingClientRect().right : 0,
+        };
+      });
+
+      // The codeshare is on the carrier column, not squeezed out by luggage.
+      assert.equal(card.operator, "op. Delta", JSON.stringify(card));
+      assert.equal(card.operatorInsideCarrier, true, JSON.stringify(card));
+      // Baggage sits with the fare it belongs to, between the legs and the price.
+      assert.ok(card.baggageLeft > card.carrierRight, JSON.stringify(card));
+      assert.ok(card.baggageLeft < card.priceLeft, JSON.stringify(card));
+      // 8c keeps the 58px row either way.
+      assert.equal(card.height, 58, JSON.stringify(card));
+      assert.equal(card.legTops.length, 2, JSON.stringify(card));
+      assert.equal(card.legTops[0] === card.legTops[1], sideBySide, JSON.stringify(card));
+    }
+  }, { autoOpen: false });
+});
