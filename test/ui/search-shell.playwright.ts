@@ -601,25 +601,38 @@ test("wide desktop shell expands from the idle measure into the workspace width"
       const grid = document.querySelector<HTMLElement>(".fd-results")?.getBoundingClientRect();
       const card = document.querySelector<HTMLElement>('[data-testid="result-card"]')?.getBoundingClientRect();
       const topbar = document.querySelector<HTMLElement>(".fd-topbar > div")?.getBoundingClientRect();
+      const list = document.querySelector<HTMLElement>(".fd-list");
+      const listStyle = list ? getComputedStyle(list) : null;
       return {
         cardWidth: Math.round(card?.width ?? 0),
         frameWidth: Math.round(frame?.width ?? 0),
         gridWidth: Math.round(grid?.width ?? 0),
         topbarWidth: Math.round(topbar?.width ?? 0),
+        listWidth: Math.round(list?.getBoundingClientRect().width ?? 0),
+        listBorder: listStyle?.borderTopWidth ?? "",
+        listRadius: listStyle?.borderTopLeftRadius ?? "",
       };
     });
 
     assert.equal(workspaceBounds.topbarWidth, 1760, JSON.stringify(workspaceBounds));
     assert.ok(workspaceBounds.frameWidth >= 1720 && workspaceBounds.frameWidth <= 1736, JSON.stringify(workspaceBounds));
     assert.ok(workspaceBounds.gridWidth >= 1720 && workspaceBounds.gridWidth <= 1736, JSON.stringify(workspaceBounds));
-    // 1b / 02 §3: the workspace is `248px minmax(0,1fr) 316px` with a 10px gap,
-    // so the card is whatever the middle track leaves — the list column is not
-    // a card any more (8a) and adds no inset of its own.
-    assert.equal(
-      workspaceBounds.cardWidth,
-      workspaceBounds.gridWidth - 248 - 316 - 10 * 2,
-      JSON.stringify(workspaceBounds),
-    );
+    /*
+     * 1b / 02 §3: the workspace is `248px minmax(0,1fr) 316px` with a 10px gap,
+     * so the middle track is whatever is left. Plate 1b then draws that track
+     * as one card — border, radius 12, `--card`, holding the header, the chips
+     * and every result — which is the same surface the 248px filter column
+     * uses. This used to assert the opposite, that the list column was not a
+     * card, and that assertion was the old design defending itself against the
+     * redesign: production showed a header and a stack of rows floating on the
+     * page with no edges. The result card is now the track minus that 1px
+     * border on each side.
+     */
+    const listTrackWidth = workspaceBounds.gridWidth - 248 - 316 - 10 * 2
+    assert.equal(workspaceBounds.listWidth, listTrackWidth, JSON.stringify(workspaceBounds));
+    assert.equal(workspaceBounds.cardWidth, listTrackWidth - 2, JSON.stringify(workspaceBounds));
+    assert.equal(workspaceBounds.listBorder, "1px", JSON.stringify(workspaceBounds));
+    assert.equal(workspaceBounds.listRadius, "12px", JSON.stringify(workspaceBounds));
   }, { autoOpen: false });
 });
 

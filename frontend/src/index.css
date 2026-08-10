@@ -539,12 +539,24 @@
   .fd-list {
     container: fdlist / inline-size;
     grid-area: list;
+    display: flex;
     min-width: 0;
     min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
     border: 1px solid var(--color-border);
     border-radius: var(--fd-radius-12);
     background: var(--color-card);
-    box-shadow: var(--fd-shadow-reposo);
+    box-shadow: var(--fd-shadow-emergente);
+  }
+
+  /* The header is a band of the card, not a line floating above it: hairline
+     underneath and `secondary` at 60%, exactly as the plate writes it. */
+  .fd-list .fd-list-header {
+    flex-shrink: 0;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-secondary) 60%, transparent);
   }
 
   .fd-detail-column {
@@ -1019,10 +1031,16 @@
   /* 8a: on the phone the list column is not a card. It runs edge to edge under
      the 32px status row, so it gives back the surface the desk gives it. */
   .fd-list {
+    overflow: visible;
     border: 0;
     border-radius: 0;
     background: transparent;
     box-shadow: none;
+  }
+
+  .fd-list .fd-list-header {
+    padding: 0 14px;
+    background: var(--color-background);
   }
 
   .fd-search-stage[data-entering] .fd-filter-strip > * {
