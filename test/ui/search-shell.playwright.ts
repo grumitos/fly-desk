@@ -380,6 +380,32 @@ test("search-level notices use the idle search controls width after a failed sea
     assert.ok(Math.abs(noticeBounds.width - noticeBounds.searchGridWidth) <= 2, JSON.stringify(noticeBounds));
     assert.ok(Math.abs(noticeBounds.searchFrameWidth - noticeBounds.width) <= 2, JSON.stringify(noticeBounds));
     assert.ok(Math.abs(noticeBounds.left - noticeBounds.right) <= 24, JSON.stringify(noticeBounds));
+
+    /* 03 §8 · the policy lines are the foot of the idle screen, next to the
+       provider rail. They used to close the form, which put a paragraph about
+       which dates are allowed *above* the error about the date just typed. */
+    const foot = await page.evaluate(() => {
+      const rect = (selector: string) =>
+        document.querySelector<HTMLElement>(selector)?.getBoundingClientRect();
+      const policy = rect(".fd-policy-line");
+      const rail = rect(".fd-provider-rail");
+      const notice = rect(".fd-alert-line");
+      const frame = rect('[data-testid="search-shell-frame"]');
+      return {
+        policyTop: Math.round(policy?.top ?? 0),
+        policyBottom: Math.round(policy?.bottom ?? 0),
+        policyWidth: Math.round(policy?.width ?? 0),
+        railTop: Math.round(rail?.top ?? 0),
+        noticeBottom: Math.round(notice?.bottom ?? 0),
+        frameBottom: Math.round(frame?.bottom ?? 0),
+      };
+    });
+    assert.ok(foot.policyTop > foot.noticeBottom, JSON.stringify(foot));
+    assert.ok(foot.policyTop > foot.frameBottom + 40, JSON.stringify(foot));
+    assert.ok(foot.railTop >= foot.policyBottom, JSON.stringify(foot));
+    assert.ok(foot.railTop - foot.policyBottom <= 12, JSON.stringify(foot));
+    // Still the form's measure, so its rule lines up with the grid above it.
+    assert.ok(Math.abs(foot.policyWidth - noticeBounds.searchFrameWidth) <= 2, JSON.stringify(foot));
   }, { autoOpen: false });
 });
 
@@ -1604,7 +1630,7 @@ test("07 §1 · the desk hands the workspace its cues in the order of the table"
   });
 });
 
-test("11 §2.4 · clicking a field on a desk hands the segments back to the form", async () => {
+test("11 §2.4 · clicking a field on a desk reopens the form and leaves the segments alone", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeChoreographySearch(page, 2);
     await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
@@ -1617,35 +1643,46 @@ test("11 §2.4 · clicking a field on a desk hands the segments back to the form
     ));
     const active = await page.locator(".fd-tools-block").boundingBox();
     assert.ok(active);
+    const controls = page.locator(".fd-trip-mode-controls");
+    /* Measured once the outbound FLIP of 07 §1 has landed. Read while it is
+       still running, the "before" is a frame of the travel and every later
+       comparison is against a position the segments were only passing through. */
+    const settle = () => controls.evaluate(async (node) => {
+      await Promise.all(node.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
+    });
+    await settle();
+    const seated = await controls.boundingBox();
+    assert.ok(seated);
 
-    await recordSchedule(page, 400);
     await page.getByRole("combobox", { name: "Origen" }).click();
     await page.waitForTimeout(450);
+    await settle();
 
-    // «La misma secuencia invertida en 180 ms» — one budget, no cue in front.
-    const scheduled = await readSchedule(page);
-    /* The recorder was armed before the click and the schedule still holds the
-       *outbound* FLIP of 07 §1, so the return is the last of the two. */
-    const controlsFlip = scheduled.findLast((entry) => entry.includes("fd-trip-mode-controls"));
-    assert.match(controlsFlip ?? "", / · 0 · 180$/, JSON.stringify(scheduled, null, 2));
+    /* The segments have two homes, and editing is not a move between them: the
+       form reopens *under* them. They used to travel back down on every click
+       into a field, which read as the title bar spilling its contents. */
+    assert.equal(
+      await controls.evaluate((node) => node.dataset.placement),
+      "topbar",
+    );
+    const still = await controls.boundingBox();
+    assert.ok(still);
+    assert.ok(
+      Math.abs(still.x - seated.x) <= 1 && Math.abs(still.y - seated.y) <= 1,
+      `Las pastillas se movieron ${JSON.stringify({ seated, still })}.`,
+    );
 
-    await page.waitForFunction(() => (
-      document.querySelector<HTMLElement>(".fd-trip-mode-controls")?.dataset.placement === "form"
-    ));
-    /* The form recovers its resting anatomy and the block grows; the results
-       stay behind — they are not cleared. The frequent-station chips do **not**
-       come back: they are furniture of the idle screen, and once a search
-       exists they compete with the results for the same eye. */
+    /* The results stay behind — they are not cleared. The frequent-station
+       chips do **not** come back: they are furniture of the idle screen, and
+       once a search exists they compete with the results for the same eye. */
     assert.equal(await page.locator(".fd-quick-chips").count(), 0);
     assert.equal(await page.locator(".fd-shell-workspace").isVisible(), true);
-    /* 52 → 94 measured: the summary band gives way to the form's resting
-       anatomy. The old threshold was «+60», which only held because the
-       frequent chips were still padding the block; what 11 §2.4 actually asks
-       is that the form come back **whole**, so the clipping check is the one
-       that matters. */
-    await page.waitForFunction((previous) => (
-      (document.querySelector(".fd-tools-block")?.getBoundingClientRect().height ?? 0) > previous + 30
-    ), active.height);
+    /* On a desk the form is already whole in the active state, so going back to
+       edit has nothing to grow: 11 §2.4 asks for the fields to be usable, and
+       they were. The block used to gain the controls row here, which is the
+       jump this test now forbids. */
+    const grown = await page.locator(".fd-tools-block").boundingBox();
+    assert.ok(grown && Math.abs(grown.height - active.height) <= 1, JSON.stringify({ active, grown }));
     const clipped = await page.locator(".fd-tools-block").evaluate(async (node) => {
       await Promise.all(node.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
       return node.scrollHeight - node.clientHeight;

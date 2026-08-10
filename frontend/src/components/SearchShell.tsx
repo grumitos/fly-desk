@@ -90,7 +90,8 @@ interface SearchShellProps {
   controlsPlacement?: "inline" | "topbar"
   compactActive?: boolean
   mobilePresentation?: boolean
-  mobilePolicyTarget?: HTMLElement | null
+  /** The foot of the idle screen, where 03 §8 puts the policy lines. */
+  policyFootTarget?: HTMLElement | null
   showLocationUsageSuggestions?: boolean
   /** The idle screen itself, which is the only place the policy line belongs. */
   idle?: boolean
@@ -116,7 +117,7 @@ export function SearchShell({
   controlsPlacement = "inline",
   compactActive = false,
   mobilePresentation = false,
-  mobilePolicyTarget = null,
+  policyFootTarget = null,
   showLocationUsageSuggestions = false,
   idle = false,
   usageSuggestionsLeaving = false,
@@ -1041,31 +1042,40 @@ export function SearchShell({
               two lines «al pie del reposo», the same clause that keeps the
               provider rail there. Going back to edit (11 §2.4) brings the chips
               back because they are part of the form; it does not bring back the
-              foot of a screen that is no longer on show. */}
-          {idle && mobilePresentation && mobilePolicyTarget
+              foot of a screen that is no longer on show.
+
+              The foot is a slot the stage owns, below the lower spacer — on a
+              desk as much as on a phone. Rendered here, in the form, the lines
+              were not at the foot of anything: they sat between the fields and
+              the notice the fields had just produced, so an error about a date
+              was announced underneath a paragraph about which dates are
+              allowed. */}
+          {idle && policyFootTarget
             ? createPortal(
-                <div className="fd-policy-line fd-policy-line--mobile">
-                  <p className="m-0">
-                    Ventana{" "}
-                    <b>{formatCompactPolicyDateLabel(datePolicy.minSearchDate)} – {formatCompactPolicyDateLabel(datePolicy.maxSearchDate)}</b>
-                    <span className="fd-policy-sep">·</span>
-                    hasta <b>{MAX_STAY_NIGHTS}</b> noches
-                  </p>
-                </div>,
-                mobilePolicyTarget,
+                mobilePresentation ? (
+                  <div className="fd-policy-line fd-policy-line--mobile">
+                    <p className="m-0">
+                      Ventana{" "}
+                      <b>{formatCompactPolicyDateLabel(datePolicy.minSearchDate)} – {formatCompactPolicyDateLabel(datePolicy.maxSearchDate)}</b>
+                      <span className="fd-policy-sep">·</span>
+                      hasta <b>{MAX_STAY_NIGHTS}</b> noches
+                    </p>
+                  </div>
+                ) : (
+                  <div className="fd-policy-line">
+                    <p className="m-0">
+                      Ventana de búsqueda{" "}
+                      <b>{formatDateLabel(datePolicy.minSearchDate)} – {formatDateLabel(datePolicy.maxSearchDate)}</b>
+                      <span className="fd-policy-sep">·</span>
+                      hasta <b>{MAX_STAY_NIGHTS}</b> noches en ida y vuelta
+                      <span className="fd-policy-sep">·</span>
+                      hasta <b>{MAX_PASSENGERS}</b> pasajeros
+                    </p>
+                  </div>
+                ),
+                policyFootTarget,
               )
-            : idle && !mobilePresentation && (
-                <div className="fd-policy-line">
-                  <p className="m-0">
-                    Ventana de búsqueda{" "}
-                    <b>{formatDateLabel(datePolicy.minSearchDate)} – {formatDateLabel(datePolicy.maxSearchDate)}</b>
-                    <span className="fd-policy-sep">·</span>
-                    hasta <b>{MAX_STAY_NIGHTS}</b> noches en ida y vuelta
-                    <span className="fd-policy-sep">·</span>
-                    hasta <b>{MAX_PASSENGERS}</b> pasajeros
-                  </p>
-                </div>
-              )}
+            : null}
         </form>
       </section>
     </>

@@ -29,6 +29,8 @@ repository made on top of the manual.
 | The plate sets the stacked schedule sub-grid gap at 6 | 4 | The plate never loaded Plex Mono 700, so its bold times were synthesised from 600 and kept the narrower advance. With the real face each time measures 42px and the row needs 126 inside a 124px lane. The next gap down keeps every width the plate pins (56/124/46, the 11px arrow lane, the 13px day lane). |
 | 03 §5 reads "the plinth lists the available providers", and "listed = available" | The plinth lists the providers this deployment searches, always, with no state | Health was tried and it backfired: filtering by a live `ready` observation dropped Click and Book Plus from the idle screen entirely, because it cannot reach `ready` until a real search has answered. The rail is coverage — «Buscando en» — and a provider that fails a search is said in one line above the results (04 §8). `GET /api/provider-status` stays as an authenticated diagnostic surface with no UI consumer. |
 | 02 §12 sets a 44px touch minimum for every square icon control on a phone | The two title-bar buttons stay at 36 | 02 §4 and the mockup both draw them at 36, and the mockup is the delivered source. Flagged rather than silently unified. |
+| 11 §2.4 makes editing «`active` with the form back in its resting anatomy», which the mockup draws with the mode and trip segments back above the fields | The segments have two positions and no third: above the form at rest, centred in the title bar for as long as a search exists | Editing is reached by clicking a field, so the inverse FLIP fired on the most ordinary gesture there is and the segments jumped out of the bar and back into the form each time. Nothing about the *mode* of the search is being edited when a date is retyped. On a desk the form is already whole in the active state, so this leaves editing with nothing to move — which is the point. |
+| 03 §8 puts the policy lines «al pie del reposo» | They were the last child of the form; they are now a slot the stage owns, below the lower spacer and above the provider rail, at the form's 1180px measure | Inside the form they were not at the foot of anything: they sat between the fields and the notice those fields produce, so a paragraph naming the allowed window was read *above* the error about the date just typed. The rail drops its own `border-top` when they are present, so the foot opens with one rule instead of framing the line in a box no plate draws. |
 
 Only the result card asks the list container (`fdlist`); the pager, the
 migratory grid and the card cascade answer the shell (`fdshell`) at 719.98,
@@ -111,6 +113,17 @@ and schedules no retry of its own until the next mutation or shutdown, and
 `SEARCH_COMPLETED_SESSION_TTL_MS=0` expires on the first interval with a
 positive age rather than behaving as a synchronous `no-store`. Both deserve an
 explicit policy before being relied on operationally.
+
+**The gate transcribes the catalogues; it does not share them.**
+`renderLoginPage()` in `src/web-auth.ts` is served before any bundle is
+reachable, so it cannot import `frontend/src` and its values are copied by hand:
+the tokens keep the names they have in `design-system.css`, so a value that
+drifts shows up as a difference in a name and not only in a number. The gate
+wears the title bar, the 52px field of 5b with its micro label, the "xl" button,
+3d's focus ring and 11 §3's notice — plus the theme switch, which the old gate
+lacked, so choosing the dark palette no longer requires already being past it.
+`test/web-auth.unit.test.ts` pins the transcription; nothing keeps the two files
+in step automatically.
 
 **Shared Fly environment.** The three Fly units share one environment file and
 the `fly-desk` identity. Splitting privileges or variables is platform work and

@@ -135,7 +135,7 @@ export default function App() {
   ))
   const [workspaceOverlay, setWorkspaceOverlay] = useState<"filters" | "detail" | null>(null)
   const [mobileToolsCollapsed, setMobileToolsCollapsed] = useState(false)
-  const [mobilePolicyTarget, setMobilePolicyTarget] = useState<HTMLDivElement | null>(null)
+  const [policyFootTarget, setPolicyFootTarget] = useState<HTMLDivElement | null>(null)
   /* Armazón B mounts the detail sheet over the results region, so the sheet
      needs the element to position against — a ref would not re-render it. */
   const [workspaceElement, setWorkspaceElement] = useState<HTMLDivElement | null>(null)
@@ -913,12 +913,17 @@ export default function App() {
               loading={loading}
               loadingLabel={loadingLabel}
               onCancelSearch={cancel}
-              /* Editing hands the segments back to the form: the inverse of the
-                 FLIP of 07 §1, and the reason it is the same measurement. */
-              controlsPlacement={searchPhase === "active" && shellSize !== "C" ? "topbar" : "inline"}
+              /* The segments have two homes and no third: above the form while
+                 the screen is at rest, and centred in the title bar for as long
+                 as a search exists. Editing used to hand them back down — the
+                 inverse FLIP of 07 §1 — which meant every click on a field made
+                 the pills jump out of the bar and back into the form. That is
+                 not a state worth drawing: `editing` reopens the *fields*, and
+                 the mode of the search is not one of them. */
+              controlsPlacement={searchPhase !== "idle" && shellSize !== "C" ? "topbar" : "inline"}
               compactActive={shouldShowWorkspace && shellSize === "C"}
               mobilePresentation={shellSize === "C"}
-              mobilePolicyTarget={mobilePolicyTarget}
+              policyFootTarget={policyFootTarget}
               /* Idle only. Editing is the form at rest with results behind
                  it, but the shortcuts are furniture of the empty screen: once a
                  search exists they compete with the results for the same eye.
@@ -968,9 +973,11 @@ export default function App() {
           </div>
 
           {isSearchIdle && <div className="fd-search-stage-spacer-bottom" aria-hidden="true" />}
-          {isSearchIdle && shellSize === "C" && (
-            <div ref={setMobilePolicyTarget} className="fd-mobile-policy-slot" />
-          )}
+          {/* 03 §8 puts the policy lines «al pie del reposo», next to the
+              provider rail — not tucked under the fields, where they came
+              between the form and its own errors. The slot is here on every
+              armazón; only the wording narrows on a phone. */}
+          {isSearchIdle && <div ref={setPolicyFootTarget} className="fd-policy-foot" />}
           {idleChrome.mounted && <ProviderRail leaving={idleChrome.leaving} />}
 
           {shouldShowWorkspace && (
