@@ -24,3 +24,17 @@ test("an absent name stays absent rather than becoming an empty label", () => {
   assert.equal(stationDisplayName(undefined), "")
   assert.equal(stationDisplayName("   "), "")
 })
+
+test("a search concept never survives into an itinerary line", () => {
+  // «todos los aeropuertos» means the query covered a city; a leg departs from
+  // one runway, so it has no business on the station line.
+  assert.equal(stationDisplayName("Lima (Todos los aeropuertos)"), "Lima")
+  assert.equal(stationDisplayName("BUENOS AIRES (TODOS LOS AEROPUERTOS)"), "Buenos Aires")
+  assert.equal(stationDisplayName("Buenos Aires (all airports)"), "Buenos Aires")
+})
+
+test("the code is not printed twice on the line that already carries it", () => {
+  assert.equal(stationDisplayName("LIM · Jorge Chávez"), "Jorge Chávez")
+  assert.equal(stationDisplayName("Jorge Chávez (LIM)"), "Jorge Chávez")
+  assert.equal(stationDisplayName("GRU - Guarulhos"), "Guarulhos")
+})

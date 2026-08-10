@@ -168,10 +168,10 @@ function stopCityLabel(segment: Segment): string {
 }
 
 function normalizeCityLabel(value: unknown): string {
-  const normalized = stripAllAirportsLabel(String(value ?? ""))
-    .replace(/^[A-Z]{3}\s*[·-]\s*/iu, "")
-    .replace(/\(([A-Z]{3})\)\s*$/iu, "")
-    .trim()
+  // One parser for both surfaces: the card's stop label and the detail's
+  // station line used to strip different things, which is how «(todos los
+  // aeropuertos)» survived into the itinerary.
+  const normalized = stripStationNoise(String(value ?? ""))
 
   if (!normalized) return ""
   if (/^[A-Z]{3}$/.test(normalized)) return normalized
@@ -211,8 +211,23 @@ function positiveNumber(value: unknown): number | undefined {
  */
 const SPANISH_CONNECTORS = new Set(["de", "del", "la", "las", "el", "los", "y", "e", "da", "do", "dos"])
 
+/**
+ * Everything a provider bolts onto a station name that is not the station.
+ *
+ * «(todos los aeropuertos)» is a *search* concept — it means the query covered
+ * a whole city — and it has no business on a leg of an itinerary that departs
+ * from one runway. The `LIM ·` prefix and the trailing `(LIM)` are the code the
+ * label is already paired with, so leaving them in prints it twice.
+ */
+function stripStationNoise(value: string): string {
+  return stripAllAirportsLabel(value)
+    .replace(/^[A-Z]{3}\s*[·-]\s*/iu, "")
+    .replace(/\s*\([A-Z]{3}\)\s*$/iu, "")
+    .trim()
+}
+
 export function stationDisplayName(value?: string): string {
-  const name = String(value ?? "").trim()
+  const name = stripStationNoise(String(value ?? "").trim())
   if (!name || /\p{Ll}/u.test(name)) return name
 
   return name

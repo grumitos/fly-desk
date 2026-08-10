@@ -1263,7 +1263,16 @@ test("detail panel mirrors selected result content and omits unknown fare condit
     assert.match(selectedText, /LIM/);
     assert.match(selectedText, /LA2478 · 16h 15m/);
     assert.match(selectedText, /08:25/);
-    assert.match(selectedText, /CDG · París \(Todos los aeropuertos\)/i);
+    /*
+     * The provider labels this station «París (Todos los aeropuertos)», which
+     * is a fact about the *search* — the query covered a whole city — and not
+     * about the runway this leg lands on. It used to be printed verbatim in the
+     * itinerary. One parser now serves the card's stop label and the detail's
+     * station line, and it drops the search concept along with a code that
+     * would otherwise be printed twice.
+     */
+    assert.match(selectedText, /CDG · París\b/);
+    assert.doesNotMatch(selectedText, /Todos los aeropuertos/i);
     // Plate 8a writes the waiting leg station first, wait second.
     assert.match(selectedText, /Escala en CDG · 2h 35m/);
     assert.match(selectedText, /11:00/);
