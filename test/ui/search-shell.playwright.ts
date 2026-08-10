@@ -61,6 +61,44 @@ test("search controls preserve accessible behavior through shadcn primitives", a
   });
 });
 
+test("07 §0 · every popover enters on emergente, and only the outermost one moves", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.goto(`${baseUrl}/`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+
+    /* The movement used to be written on the calendar's own card, which is a
+       child of the popover surface. So the date pickers moved and Pasajeros —
+       plain markup inside the same component — appeared with a hard cut. */
+    const surfaceMotion = () => page.evaluate(() => {
+      const surface = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
+      if (!surface) return null;
+      const read = (node: Element) => node.getAnimations().map((animation) => ({
+        name: (animation as CSSAnimation).animationName,
+        duration: animation.effect?.getComputedTiming().duration,
+      }));
+      return {
+        surface: read(surface),
+        // Anything inside that also animates would double the 6px travel.
+        insiders: [...surface.querySelectorAll("*")]
+          .flatMap((node) => read(node))
+          .filter((entry) => entry.name?.startsWith("fd-enter")),
+      };
+    });
+
+    await page.getByRole("button", { name: "Seleccionar pasajeros" }).click();
+    const passengers = await surfaceMotion();
+    assert.deepEqual(passengers?.surface, [{ name: "fd-enter-emergente", duration: 140 }], JSON.stringify(passengers));
+    assert.deepEqual(passengers?.insiders, [], JSON.stringify(passengers));
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: "Salida", exact: false }).first().click();
+    await page.getByRole("dialog", { name: "Calendario de fechas" }).waitFor();
+    const calendar = await surfaceMotion();
+    assert.deepEqual(calendar?.surface, [{ name: "fd-enter-emergente", duration: 140 }], JSON.stringify(calendar));
+    assert.deepEqual(calendar?.insiders, [], JSON.stringify(calendar));
+  }, { autoOpen: false });
+});
+
 test("location field surfaces focus the input in idle and search layouts", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.route("**/api/locations**", async (route) => {
