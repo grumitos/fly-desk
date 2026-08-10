@@ -159,8 +159,11 @@ test("web auth login page uses the persisted Fly Desk theme", { concurrency: fal
       assert.equal(response.status, 200);
       assert.match(html, /<html lang="es" class="dark" data-theme="dark">/);
       assert.match(html, /<link rel="icon" type="image\/svg\+xml" href="\/favicon\.svg">/);
-      assert.match(html, /class="floating-label">Contraseña<\/span>/);
-      assert.doesNotMatch(html, /Cambiar tema/i);
+      assert.match(html, /class="fd-field-label">Contraseña<\/span>/);
+      /* The gate carries the title bar's switch. It used to have none, which
+         meant the only way to reach the dark palette was to already be past
+         the gate — and the cookie this test sets is the one it writes. */
+      assert.match(html, /aria-label="Cambiar tema"/);
     });
   } finally {
     if (previousWebAuth === undefined) {

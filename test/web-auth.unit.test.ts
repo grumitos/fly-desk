@@ -21,9 +21,28 @@ import { withServer } from "./helpers/server";
 test("login errors are announced without rendering unescaped content", () => {
   const html = renderLoginPage('<strong>Contraseña inválida</strong>');
 
-  assert.match(html, /class="error" role="alert" aria-live="assertive"/);
+  assert.match(html, /class="fd-alert-line fd-alert-line-error" role="alert" aria-live="assertive"/);
   assert.match(html, /&lt;strong&gt;Contraseña inválida&lt;\/strong&gt;/);
   assert.doesNotMatch(html, /<strong>Contraseña inválida<\/strong>/);
+});
+
+/* The gate cannot import the bundle's stylesheet, so the values are
+   transcribed. This is the check that the transcription is of the catalogues
+   and not of whatever looked right: the field is the 52px input of 5b, the
+   focus ring is 3d's, and the theme survives the page it was chosen on. */
+test("the login page is drawn from the design catalogues", () => {
+  const html = renderLoginPage();
+
+  assert.match(html, /--fd-control-primary: 52px/);
+  assert.match(html, /--fd-radius-12: 12px/);
+  assert.match(html, /class="fd-field-control"/);
+  assert.match(html, /class="fd-field-label"/);
+  assert.match(html, /\.fd-focus-ring:focus-visible \{\s*outline: none;\s*box-shadow: 0 0 0 2px color-mix\(in srgb, var\(--color-primary\) 55%, transparent\);/);
+  // The switch writes both places, so the choice survives signing in.
+  assert.match(html, /flydesk-theme/);
+  assert.match(html, /flydesk_theme=/);
+  // Nothing off-catalogue: the old gate had its own 48px field and 8px radius.
+  assert.doesNotMatch(html, /height: 48px/);
 });
 
 test("web authentication accepts only the configured password hash", { concurrency: false }, () => {
