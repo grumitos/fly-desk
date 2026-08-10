@@ -718,6 +718,7 @@ export function SearchShell({
   const passengerButton = (
     <button
       type="button"
+      data-fd-search-menu=""
       aria-label="Seleccionar pasajeros"
       aria-expanded={paxOpen}
       aria-haspopup="dialog"
@@ -775,7 +776,12 @@ export function SearchShell({
                just started. */
             onFocusCapture={(event) => {
               if (!workspaceActive || editing) return
-              if ((event.target as HTMLElement).closest("[data-fd-search-submit]")) return
+              const target = event.target as HTMLElement
+              if (target.closest("[data-fd-search-submit]")) return
+              /* Opening a menu is not editing the search: Pasajeros is a
+                 popover, not a box you retype, and its focus must not send the
+                 segments back down to the form. */
+              if (target.closest("[data-fd-search-menu]")) return
               onEditingChange?.(true)
             }}
           >
@@ -952,7 +958,12 @@ export function SearchShell({
             <Popover open={paxOpen} onOpenChange={handlePaxOpenChange}>
               <Field className={cn("relative", reserveIdleHelperSpace && "fd-search-field-shell")}>
                 <PopoverTrigger asChild>{passengerButton}</PopoverTrigger>
-                <PopoverContent align="end" sideOffset={6} className="fd-pax-popover">
+                {/* Radix moves focus into the content when the popover opens,
+                    and that focus bubbles to the grid below. Without this the
+                    grid read it as «clic en un campo» and handed the mode and
+                    trip segments back to the form, so the pills dropped 46px
+                    the moment the agent reached for the passenger count. */}
+                <PopoverContent data-fd-search-menu="" align="end" sideOffset={6} className="fd-pax-popover">
                   {/* The total against the ceiling, so the agent sees how much room
                       is left before a button goes dim rather than after. */}
                   <div className="fd-pax-popover-head">
