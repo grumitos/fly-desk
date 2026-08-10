@@ -526,11 +526,25 @@
     min-height: 0;
   }
 
+  /*
+   * Plate 1b draws the list as one card: the header, the active-filter chips
+   * and every result live inside a single bordered surface, the same one the
+   * 248px filter column uses (04 §2). Production had the header and the cards
+   * floating straight on the page background, so the column had no edges and
+   * the three-column shell read as three loose stacks.
+   *
+   * Armazón C takes it away again — 8a is explicit that the phone's list column
+   * is not a card, which is why its header is the 32px status row.
+   */
   .fd-list {
     container: fdlist / inline-size;
     grid-area: list;
     min-width: 0;
     min-height: 0;
+    border: 1px solid var(--color-border);
+    border-radius: var(--fd-radius-12);
+    background: var(--color-card);
+    box-shadow: var(--fd-shadow-reposo);
   }
 
   .fd-detail-column {
@@ -1000,6 +1014,15 @@
    */
   .fd-search-stage[data-entering] .fd-list {
     animation: none;
+  }
+
+  /* 8a: on the phone the list column is not a card. It runs edge to edge under
+     the 32px status row, so it gives back the surface the desk gives it. */
+  .fd-list {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
   }
 
   .fd-search-stage[data-entering] .fd-filter-strip > * {
