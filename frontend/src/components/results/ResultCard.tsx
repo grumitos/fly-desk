@@ -104,28 +104,18 @@ export function ResultCard({
 
       <CarrierLogo carrier={model.carrier} />
 
+      {/* Column 2 is «who flies»: the airline, and under it whoever actually
+          operates the metal. The baggage icons used to sit on that second line
+          and push the codeshare out of the card entirely — which is the one
+          thing an agent has to know before the passenger reaches the counter.
+          Baggage is a property of the fare, so it now travels with the price. */}
       <div className="fd-card__carrier" aria-hidden="true">
         <span className="fd-card__carrier-line">
           <span className="fd-card__carrier-name" title={model.carrier.name}>{model.carrier.name}</span>
-          {model.carrier.operatedBy && (
-            <span className="fd-card__carrier-operator">{model.carrier.operatedBy}</span>
-          )}
         </span>
-        {model.baggage.label && (
-          <span className="fd-card__baggage">
-            <span className="fd-card__baggage-icons">
-              {model.baggage.carryOnIncluded !== undefined && (
-                <span className={cn("fd-card__bag", model.baggage.carryOnIncluded ? "is-included" : "is-missing")}>
-                  <Backpack aria-hidden="true" />
-                </span>
-              )}
-              {model.baggage.checkedIncluded !== undefined && (
-                <span className={cn("fd-card__bag", model.baggage.checkedIncluded ? "is-included" : "is-missing")}>
-                  <Luggage aria-hidden="true" />
-                </span>
-              )}
-            </span>
-            <span className="fd-card__baggage-label">{model.baggage.label}</span>
+        {model.carrier.operatedBy && (
+          <span className="fd-card__carrier-operator" title={model.carrier.operatedBy}>
+            {model.carrier.operatedBy}
           </span>
         )}
       </div>
@@ -139,6 +129,21 @@ export function ResultCard({
           <LegRow key={leg.label} leg={leg} />
         ))}
       </div>
+
+      {model.baggage.label && (
+        <span className="fd-card__baggage" title={model.baggage.label} aria-hidden="true">
+          {model.baggage.carryOnIncluded !== undefined && (
+            <span className={cn("fd-card__bag", model.baggage.carryOnIncluded ? "is-included" : "is-missing")}>
+              <Backpack aria-hidden="true" />
+            </span>
+          )}
+          {model.baggage.checkedIncluded !== undefined && (
+            <span className={cn("fd-card__bag", model.baggage.checkedIncluded ? "is-included" : "is-missing")}>
+              <Luggage aria-hidden="true" />
+            </span>
+          )}
+        </span>
+      )}
 
       <div className="fd-card__price" aria-hidden="true">
         <span className="fd-card__price-figure">{model.price.label}</span>
