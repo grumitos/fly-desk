@@ -87,7 +87,10 @@ export function DayRangeCalendar({
 
   return (
     <div
-      className="fd-cal-popover fd-motion-emergente"
+      /* No movement of its own: this card is always inside something that has
+         one — the popover on a desk, the sheet on a phone — and two nested
+         6px entrances travel twelve. */
+      className="fd-cal-popover"
       data-layout={layout}
       onPointerLeave={() => setHoverDay(undefined)}
     >
@@ -222,7 +225,10 @@ export function MonthRangeCalendar({
 
   return (
     <div
-      className="fd-cal-popover fd-motion-emergente"
+      /* No movement of its own: this card is always inside something that has
+         one — the popover on a desk, the sheet on a phone — and two nested
+         6px entrances travel twelve. */
+      className="fd-cal-popover"
       data-layout={layout}
       onPointerLeave={() => setMonthHover(undefined)}
     >
