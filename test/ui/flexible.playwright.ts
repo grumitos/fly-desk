@@ -291,6 +291,10 @@ test("migratory search sends monthly stay-range requests", async () => {
     const monthSelector = page.getByRole("dialog", { name: "Selector de meses" });
     await monthSelector.getByRole("button", { name: /^diciembre de 2026/i }).click();
     await monthSelector.getByRole("button", { name: /^enero de 2027/i }).click();
+    // The sweep starts empty now, so the picker is a real step: close it before
+    // reaching for the fields behind it.
+    await page.keyboard.press("Escape");
+    await monthSelector.waitFor({ state: "detached" });
     await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
     await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
     await Promise.all([
@@ -317,7 +321,8 @@ test("migratory search sends monthly stay-range requests", async () => {
     assert.equal(await page.getByTestId("migration-month-card").count(), 2);
     const migrationCard = page.getByTestId("migration-month-card").filter({ hasText: "USD 512.00" });
     const migrationCardText = await migrationCard.innerText();
-    assert.match(await migrationCard.getAttribute("aria-label") ?? "", /Diciembre de 2026: USD 512\.00/);
+    // The label lives on the card's hit button now that «Abrir mes» is its own control.
+    assert.match(await migrationCard.locator(".fd-month-card__hit").getAttribute("aria-label") ?? "", /Diciembre de 2026: USD 512.00/);
     assert.match(migrationCardText, /14:00/);
     assert.match(migrationCardText, /15:20/);
     assert.doesNotMatch(migrationCardText, /Vta|Vuelta/);
@@ -451,6 +456,10 @@ test("a month still being queried is drawn as searching, and a finished empty mo
     const monthSelector = page.getByRole("dialog", { name: "Selector de meses" });
     await monthSelector.getByRole("button", { name: /^diciembre de 2026/i }).click();
     await monthSelector.getByRole("button", { name: /^enero de 2027/i }).click();
+    // The sweep starts empty now, so the picker is a real step: close it before
+    // reaching for the fields behind it.
+    await page.keyboard.press("Escape");
+    await monthSelector.waitFor({ state: "detached" });
     await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
     await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
     await page.getByRole("button", { name: "Buscar" }).click();
@@ -694,7 +703,7 @@ test("migratory search renders monthly progress and refilters each month locally
     await updatingCard.getByText("Act.", { exact: true }).waitFor();
     assert.equal(await migrationCards.count(), 8);
     assert.equal(await page.getByRole("button", { name: "Detener búsqueda" }).count(), 1);
-    assert.match(await updatingCard.getAttribute("aria-label") ?? "", /USD 90\.00/);
+    assert.match(await updatingCard.locator(".fd-month-card__hit").getAttribute("aria-label") ?? "", /USD 90.00/);
 
     const stopsControl = page.getByRole("radiogroup", { name: "Escalas" });
     await clickSegment(segment(stopsControl, "Directo"));
@@ -720,4 +729,141 @@ test("migratory search renders monthly progress and refilters each month locally
     assert.equal(await resumedSearchButton.isEnabled(), true);
     assert.equal(requestCount, 8);
   });
+});
+
+test("11 §3 · a month card selects like a result card, and «Abrir mes» opens the job the sweep already ran", async () => {
+  await withDesktopPage(async ({ baseUrl, context, page }) => {
+    /*
+     * A month used to be one button that launched the day search, so reading a
+     * month cost a search and a way back. The click now selects and the detail
+     * panel says the rest; opening the month is its own control, and the tab it
+     * opens reads the job that month already has on the server instead of
+     * paying for the same work twice.
+     */
+    const monthKeys = ["2026-04", "2026-05", "2026-06"];
+    const offerFor = (monthKey: string, amount: number) => buildOffer({
+      id: `sweep-${monthKey}`,
+      destination: "MAD",
+      price: {
+        total: { amount, currencyCode: "USD" },
+        base: { amount: amount - 100, currencyCode: "USD" },
+        taxes: { amount: 100, currencyCode: "USD" },
+      },
+    });
+
+    // One job per month, named after the month it swept.
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as {
+        request: { legs: { departureStart?: string }[] };
+        sortMode: string;
+      };
+      const monthKey = (payload.request.legs[0]?.departureStart ?? "2026-04-01").slice(0, 7);
+      const offers = [offerFor(monthKey, 1500)];
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: `month-job-${monthKey}`,
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers,
+          allOffers: offers,
+          searchMeta: {
+            requestedAt: "2026-03-31T12:00:00.000Z",
+            completedAt: "2026-03-31T12:00:01.000Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+          warnings: [],
+        }),
+      });
+    });
+
+    // What the restored tab reads. Routed on the context so the new tab gets it.
+    let restoreRequests = 0;
+    await context.route("**/api/search/month-job-*", async (route) => {
+      restoreRequests += 1;
+      const monthKey = new URL(route.request().url()).pathname.split("month-job-")[1] ?? "";
+      const offers = [offerFor(monthKey, 1500), offerFor(`${monthKey}-b`, 1620)];
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: `month-job-${monthKey}`,
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 7,
+          sortMode: "cheapest",
+          request: {
+            origin: "LIM",
+            destination: "MAD",
+            searchMode: "range",
+            tripType: "one-way",
+            departureStart: `${monthKey}-01`,
+            departureEnd: `${monthKey}-28`,
+            adults: 1,
+            children: 0,
+            infants: 0,
+            cabin: "ECONOMY",
+          },
+          offers,
+          allOffers: offers,
+          searchMeta: {
+            requestedAt: "2026-03-31T12:00:00.000Z",
+            completedAt: "2026-03-31T12:00:01.000Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?mode=migration&trip=one-way&origin=LIM&destination=MAD&adults=1&children=0&infants=0`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await page.getByRole("button", { name: /^Meses:/ }).click();
+    const monthPicker = page.getByRole("dialog", { name: "Selector de meses" });
+    await monthPicker.waitFor();
+    const pickable = monthPicker.locator("button:not([disabled])[aria-label*='de 20']");
+    await pickable.first().click();
+    await pickable.nth(monthKeys.length - 1).click();
+    await page.keyboard.press("Escape");
+    await monthPicker.waitFor({ state: "detached" });
+    await page.getByRole("button", { name: "Buscar" }).click();
+
+    const cards = page.getByTestId("migration-month-card");
+    await cards.first().waitFor();
+    const sweepUrl = page.url();
+
+    // Selecting stays on the sweep and hands the offer to the detail panel.
+    await cards.first().locator(".fd-month-card__hit").click();
+    await page.getByTestId("detail-panel-body").waitFor();
+    assert.equal(page.url(), sweepUrl);
+    assert.ok(await cards.count() >= 2);
+    assert.match(await cards.first().getAttribute("class") ?? "", /is-selected/);
+
+    // Opening is the other gesture, and it goes to that month's own job.
+    const [openedTab] = await Promise.all([
+      context.waitForEvent("page"),
+      page.getByRole("button", { name: "Abrir mes" }).first().click(),
+    ]);
+    await openedTab.waitForLoadState("domcontentloaded");
+    assert.match(new URL(openedTab.url()).search, /^\?job=month-job-\d{4}-\d{2}$/);
+
+    // And it paints from the job rather than starting a search of its own.
+    await openedTab.getByTestId("result-card").first().waitFor();
+    assert.equal(await openedTab.getByTestId("result-card").count(), 2);
+    assert.ok(restoreRequests >= 1);
+  }, { autoOpen: false });
 });
