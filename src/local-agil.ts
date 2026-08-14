@@ -23,6 +23,7 @@ import {
   enumerateUsefulRoundTripPairs,
   enumerateUsefulFlexibleRequests,
 } from "./core/flexible-search";
+import { resolvePersistPath } from "./runtime-paths";
 import { normalizeAirlineDisplayName } from "./core/airline-names";
 import { normalizeLocationSuggestionType } from "./core/location-suggestion";
 import {
@@ -302,6 +303,69 @@ export const AGIL_CONCURRENCY = Object.freeze({
   },
   httpTimeoutMs: AGIL_HTTP_TIMEOUT_MS,
 });
+
+/*
+ * The three values a token is minted from, and why they are worth keeping.
+ *
+ * Agil does not hold a session for us. `refreshAgilToken` mints a bearer over
+ * plain HTTP from `userCode`, `internalCode` and `ip` — no cookie, no browser.
+ * The shared Chrome is only a *bootstrap*: it is where those three values were
+ * first read out of localStorage, and they are account identifiers that do not
+ * change between restarts.
+ *
+ * Keeping them in memory alone meant every restart opened a CDP tab to learn
+ * them again, and the prewarm loop repeated it at startup +10s. On 2026-08-14
+ * the runner was being SIGKILLed every few minutes, so the `finally` that closes
+ * those tabs never ran: renderers went 8 → 30 and Chrome reached 383 of its 384
+ * task ceiling, at which point clone() fails inside it and CDP calls hang.
+ *
+ * The token itself is deliberately NOT persisted. It is short-lived and
+ * re-minted on demand, so a file on disk would be a credential at rest for no
+ * benefit. What is written is the identity needed to ask for a new one.
+ */
+interface AgilIdentity {
+  userCode: number;
+  internalCode: string;
+  ip: string;
+}
+
+const AGIL_IDENTITY_FILE = "agil-identity.json";
+
+function resolveAgilIdentityPath(): string | undefined {
+  return resolvePersistPath("AGIL_IDENTITY_PATH", AGIL_IDENTITY_FILE);
+}
+
+async function readPersistedAgilIdentity(): Promise<AgilIdentity | undefined> {
+  const path = resolveAgilIdentityPath();
+  if (!path) {
+    return undefined;
+  }
+
+  try {
+    const raw = await Bun.file(path).json() as Partial<AgilIdentity> & { token?: unknown };
+    const { userCode, internalCode, ip } = raw;
+    if (typeof userCode !== "number" || !Number.isFinite(userCode)) return undefined;
+    if (typeof internalCode !== "string" || !internalCode) return undefined;
+    if (typeof ip !== "string" || !ip) return undefined;
+    return { userCode, internalCode, ip };
+  } catch {
+    // Absent, unreadable or malformed all mean the same thing: ask the browser.
+    return undefined;
+  }
+}
+
+async function writePersistedAgilIdentity(identity: AgilIdentity): Promise<void> {
+  const path = resolveAgilIdentityPath();
+  if (!path) {
+    return;
+  }
+
+  try {
+    await Bun.write(path, JSON.stringify(identity));
+  } catch {
+    // A restart that has to consult the browser is slower, not broken.
+  }
+}
 
 let playwrightPromise: Promise<typeof import("playwright")> | undefined;
 let cachedSession: AgilSessionData | undefined;
@@ -1861,11 +1925,46 @@ export function shouldReuseAgilSession(
     && now - session.capturedAtMs < AGIL_SESSION_REVALIDATE_MS;
 }
 
+/* A cold process can mint its own token: the identity is all `/auth/api/auth/token`
+   asks for, and it was written to disk the last time the browser was consulted.
+   Only if that fails — no file yet, or the identity has been revoked — is a tab
+   worth opening. */
+async function mintFromPersistedIdentity(now: number): Promise<AgilSessionData | undefined> {
+  const identity = await readPersistedAgilIdentity();
+  if (!identity) {
+    return undefined;
+  }
+
+  try {
+    return await refreshAgilToken({
+      token: "",
+      expiresAtMs: 0,
+      capturedAtMs: now,
+      ...identity,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 async function loadAgilSession(
   now: number,
   options: { forceRefresh?: boolean } = {},
 ): Promise<AgilSessionData> {
+  if (!cachedSession) {
+    const minted = await mintFromPersistedIdentity(now);
+    if (minted) {
+      cachedSession = minted;
+      return cachedSession;
+    }
+  }
+
   const extracted = parseAgilSessionData(await extractBrowserStorageSnapshot());
+  await writePersistedAgilIdentity({
+    userCode: extracted.userCode,
+    internalCode: extracted.internalCode,
+    ip: extracted.ip,
+  });
 
   if (cachedSession && sameAgilSessionIdentity(cachedSession, extracted)) {
     if (!options.forceRefresh && cachedSession.expiresAtMs - now > AGIL_SESSION_EXPIRY_BUFFER_MS) {

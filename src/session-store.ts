@@ -1190,39 +1190,58 @@ export class SearchSessionStore {
       return;
     }
 
+    /*
+     * A running job is resident too.
+     *
+     * The budget used to skip everything that was not `completed`, so the jobs
+     * costing the most memory were exactly the ones it could not see. A
+     * migratory sweep is one server search job per month, up to twelve at once,
+     * each holding its full `allOffers` — and while the later months run, the
+     * finished ones sat resident under a budget that believed it had room.
+     *
+     * Running jobs are counted but never evicted: cancelling live work to save
+     * memory would be answering the wrong question. What they do is bring the
+     * eviction of *completed* jobs forward, which is the relief that was
+     * missing.
+     */
     const candidates: ResidentJobCandidate[] = [];
+    let inFlightBytes = 0;
     for (const job of this.searchJobs.values()) {
-      if (job.status !== "completed") {
+      const bytes = this.persistedResidentBytes(job.id, searchJobPersistenceVersion(job), "search");
+      if (bytes === undefined) {
         continue;
       }
-      const bytes = this.persistedResidentBytes(job.id, searchJobPersistenceVersion(job), "search");
-      if (bytes !== undefined) {
-        candidates.push({
-          id: job.id,
-          kind: "search",
-          bytes,
-          completedAtMs: resolveSearchCompletionTimestampMs(job),
-          lastAccessedAtMs: resolveIdleTimestampMs(job),
-        });
+      if (job.status !== "completed") {
+        inFlightBytes += bytes;
+        continue;
       }
+      candidates.push({
+        id: job.id,
+        kind: "search",
+        bytes,
+        completedAtMs: resolveSearchCompletionTimestampMs(job),
+        lastAccessedAtMs: resolveIdleTimestampMs(job),
+      });
     }
     for (const job of this.matrixJobs.values()) {
-      if (job.status !== "completed") {
+      const bytes = this.persistedResidentBytes(job.id, matrixJobPersistenceVersion(job), "matrix");
+      if (bytes === undefined) {
         continue;
       }
-      const bytes = this.persistedResidentBytes(job.id, matrixJobPersistenceVersion(job), "matrix");
-      if (bytes !== undefined) {
-        candidates.push({
-          id: job.id,
-          kind: "matrix",
-          bytes,
-          completedAtMs: resolveSearchCompletionTimestampMs(job),
-          lastAccessedAtMs: resolveIdleTimestampMs(job),
-        });
+      if (job.status !== "completed") {
+        inFlightBytes += bytes;
+        continue;
       }
+      candidates.push({
+        id: job.id,
+        kind: "matrix",
+        bytes,
+        completedAtMs: resolveSearchCompletionTimestampMs(job),
+        lastAccessedAtMs: resolveIdleTimestampMs(job),
+      });
     }
 
-    let residentBytes = candidates.reduce((total, candidate) => total + candidate.bytes, 0);
+    let residentBytes = candidates.reduce((total, candidate) => total + candidate.bytes, inFlightBytes);
     if (residentBytes <= this.completedResidentBudgetBytes) {
       this.clearResidentBudgetTimer();
       return;
