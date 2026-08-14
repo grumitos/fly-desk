@@ -863,8 +863,13 @@ test("11 §3 · a month card selects like a result card, and «Abrir mes» opens
       context.waitForEvent("page"),
       page.getByRole("button", { name: "Abrir mes" }).first().click(),
     ]);
-    await openedTab.waitForLoadState("domcontentloaded");
-    assert.match(new URL(openedTab.url()).search, /^\?job=month-job-\d{4}-\d{2}$/);
+    /* Wait for the navigation, not for a load state: a tab that has only just
+       been created is still `about:blank`, `domcontentloaded` resolves against
+       that immediately, and `url()` then returns "" — which is what made
+       `new URL()` throw `TypeError: Invalid URL` on a loaded CI runner while
+       passing on a quiet laptop. `waitForURL` waits for the real navigation and
+       asserts its shape in the same step. */
+    await openedTab.waitForURL(/\?job=month-job-\d{4}-\d{2}$/);
 
     // And it paints from the job rather than starting a search of its own.
     await openedTab.getByTestId("result-card").first().waitFor();
