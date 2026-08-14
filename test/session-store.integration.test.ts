@@ -1644,6 +1644,108 @@ test("resident cache budget keeps running and newly completed jobs, then evicts 
   store.close();
 });
 
+test("resident budget counts running jobs, so a live sweep evicts finished ones sooner", async () => {
+  /*
+   * The budget used to skip everything that was not `completed`, so the jobs
+   * costing the most memory were exactly the ones it could not see. A migratory
+   * sweep is one server search job per month, up to twelve at once, each holding
+   * its full `allOffers` — and while the later months ran, the finished ones sat
+   * resident under a budget that believed it had room.
+   *
+   * Running jobs are counted but never evicted: cancelling live work to save
+   * memory answers the wrong question. What they do is bring the eviction of
+   * completed jobs forward.
+   */
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-inflight-budget-"));
+  tempRootsForCleanup.add(tempRoot);
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const completedAtMs = Date.now() - 60_000;
+
+  /* How big one completed job is. The budget has to be expressed in the same
+     units the enforcement counts in, so it is measured rather than guessed —
+     one store per path, reopened, as the LRU case above does. */
+  const measureStore = new SearchSessionStore({ dbPath });
+  const sample = buildOffer("budget-sample", "https://resident.example/sample");
+  measureStore.createSearchJob({
+    request: buildRequest(),
+    offers: [sample],
+    allOffers: [sample],
+    searchMeta: { ...buildSearchMeta(), completedAt: new Date(completedAtMs).toISOString() },
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  // The persist is debounced, so the bytes are not in SQLite the instant the
+  // job is created — and a budget measured before the write is zero.
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  const perJobBytes = measureStore.getDiagnostics().residentCache.completedBytes;
+  // On its own it fits that budget exactly and survives.
+  measureStore.enforceCompletedResidentBudget(Date.now());
+  const measuredJobs = measureStore.getDiagnostics().residentCache.completedJobs;
+  measureStore.close();
+  assert.ok(perJobBytes > 0, "no measurable payload");
+  assert.equal(measuredJobs, 1);
+
+  // Same budget, same completed job — but now with a sweep running beside it.
+  // A separate file in the same root, so the measured job is not restored into
+  // this store and counted twice.
+  const store = new SearchSessionStore({
+    dbPath: join(tempRoot, "sweep.sqlite"),
+    completedResidentBudgetBytes: perJobBytes,
+  });
+  const finishedOffer = buildOffer("budget-finished", "https://resident.example/finished");
+  const finished = store.createSearchJob({
+    request: buildRequest(),
+    offers: [finishedOffer],
+    allOffers: [finishedOffer],
+    searchMeta: { ...buildSearchMeta(), completedAt: new Date(completedAtMs).toISOString() },
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+
+  // Under the old accounting these two were invisible, so `finished` stayed.
+  const runningOffer = buildOffer("budget-running-a", "https://resident.example/running-a");
+  store.createSearchJob({
+    request: { ...buildRequest(), currencyCode: "PEN" },
+    offers: [runningOffer],
+    allOffers: [runningOffer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+  const secondRunningOffer = buildOffer("budget-running-b", "https://resident.example/running-b");
+  const secondRunning = store.createSearchJob({
+    request: { ...buildRequest(), currencyCode: "USD", adults: 2 },
+    offers: [secondRunningOffer],
+    allOffers: [secondRunningOffer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  store.enforceCompletedResidentBudget(Date.now());
+
+  const diagnostics = store.getDiagnostics().residentCache;
+  // The live sweep is untouched — counted, never cancelled — and the finished
+  // job is still served, from disk.
+  const sweepAlive = Boolean(store.getSearchJob(secondRunning.id));
+  const finishedStillServed = Boolean(store.getSearchJob(finished.id));
+  store.close();
+
+  assert.equal(diagnostics.completedJobs, 0, JSON.stringify(diagnostics));
+  assert.equal(diagnostics.diskOnlyJobs, 1, JSON.stringify(diagnostics));
+  assert.ok(sweepAlive);
+  assert.ok(finishedStillServed);
+});
+
 test("resident cache evicts least recently used completed jobs without deleting persisted redirects", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-resident-lru-"));
   tempRootsForCleanup.add(tempRoot);
