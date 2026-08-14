@@ -22,6 +22,30 @@ const SESSION_MAINTENANCE_INTERVAL_MS = 60_000;
 const SHUTDOWN_CANCELLED_WARNING = "Search stopped because Fly Desk was restarted.";
 const SHUTDOWN_CANCEL_GRACE_MS = 1_000;
 
+/*
+ * How long a stop may take, and what happens when it takes longer.
+ *
+ * `server.stop()` with no argument is Bun's graceful stop: it resolves once
+ * in-flight requests and their connections have drained. Under a migratory
+ * sweep the frontend polls without pause and each proxied call carries its own
+ * multi-second timeout, so "drained" can be a minute away — and on 2026-08-14 it
+ * was. Every stop took the full 45s `TimeoutStopSec` and ended in SIGKILL, five
+ * times in eight minutes, while Caddy had no upstream and the site served 503.
+ * The contrast that proves it: at 19:34:23 an idle process with nothing to drain
+ * stopped instantly, same code.
+ *
+ * SIGKILL is not a tidy ending. It skips every `finally`, which is how the
+ * provider paths close the CDP tabs they opened — renderers went from 8 to 30
+ * across the loop.
+ *
+ * So the drain gets a short window and then the connections are closed under it,
+ * and the whole shutdown gets a deadline shorter than the tightest
+ * `TimeoutStopSec` in the unit files (the search runner's 15s). Exiting on our
+ * own terms at 8s runs the cleanup; being killed at 15 or 45 does not.
+ */
+const SHUTDOWN_DRAIN_MS = 3_000;
+const SHUTDOWN_DEADLINE_MS = 8_000;
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -77,6 +101,28 @@ async function main() {
   }, TEMP_ARTIFACT_SWEEP_INTERVAL_MS);
   maintenanceHandle.unref?.();
 
+  /* Give the drain its window, then take the connections down under it.
+     `server.stop(true)` is the same stop with `closeActiveConnections`, which is
+     the difference between a poller deciding to go away and us deciding for it. */
+  const stopServerWithinDrainWindow = async (): Promise<void> => {
+    let drained = false;
+    await Promise.race([
+      server.stop().then(() => {
+        drained = true;
+      }),
+      delay(SHUTDOWN_DRAIN_MS),
+    ]).catch(() => undefined);
+
+    if (drained) {
+      return;
+    }
+
+    console.warn(
+      `Fly Desk shutdown closing active connections after ${SHUTDOWN_DRAIN_MS}ms of drain.`,
+    );
+    await server.stop(true).catch(() => undefined);
+  };
+
   let shuttingDown = false;
   const shutdown = async () => {
     if (shuttingDown) {
@@ -107,19 +153,32 @@ async function main() {
     if (providerPrewarmHandle) {
       clearInterval(providerPrewarmHandle);
     }
-    await server.stop();
+    await stopServerWithinDrainWindow();
     await tempCleanupPromise?.catch(() => undefined);
     activeRuntime?.locationSuggestions.purgeExpired(Number.POSITIVE_INFINITY);
     activeSessions?.close();
     await cleanupPrefixedTempArtifacts(undefined, { olderThanMs: 0 }).catch(() => undefined);
   };
 
-  process.once("SIGINT", () => {
-    void shutdown().finally(() => process.exit(0));
-  });
-  process.once("SIGTERM", () => {
-    void shutdown().finally(() => process.exit(0));
-  });
+  /* The deadline is armed by the signal, not by `shutdown()`, so it covers a
+     hang anywhere — including one before the first await. Nothing below it may
+     be trusted to finish; that is what a deadline is for. */
+  const exitOnSignal = (signal: string) => {
+    const deadline = setTimeout(() => {
+      console.warn(
+        `Fly Desk shutdown exceeded ${SHUTDOWN_DEADLINE_MS}ms after ${signal}; exiting anyway.`,
+      );
+      process.exit(0);
+    }, SHUTDOWN_DEADLINE_MS);
+
+    void shutdown().finally(() => {
+      clearTimeout(deadline);
+      process.exit(0);
+    });
+  };
+
+  process.once("SIGINT", () => exitOnSignal("SIGINT"));
+  process.once("SIGTERM", () => exitOnSignal("SIGTERM"));
 
   logPerfSpan("startup.ready", startupStart, { host, port });
   console.log(`Fly Desk running at http://${host}:${port}`);
