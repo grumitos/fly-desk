@@ -41,10 +41,11 @@ export type ResultLegModel = {
   /** "Directo" · "1 escala · PTY" · "2 escalas · PTY, BOG +1". */
   stopsLabel: string
   /**
-   * The same fact in the 66px the stacked card can spare ("1 esc · PTY").
+   * The same fact in the 57px the stacked card can spare ("1 esc · PTY").
    * Plate 8c abbreviates here for a reason that is arithmetic, not taste: the
    * full wording overflows by a few pixels and takes the airport code with it,
-   * and the code is the part the agent is reading.
+   * and the code is the part the agent is reading. From two stops even the
+   * abbreviation cannot carry the codes, so it stops trying — see below.
    */
   stopsShortLabel: string
   stopsTitle: string
@@ -249,9 +250,17 @@ function stopsForItinerary(itinerary: Itinerary | null) {
     }
   }
 
+  /*
+   * From two stops the short form drops the airports and keeps the count. The
+   * stacked lane is 57px: «2 esc · BOG, PTY» measures 82 and «3 esc · BOG, PTY
+   * +1» 95, so the lane ellipsised them back to «2 esc…» — a dangling ellipsis
+   * that hid the very codes it was cut to show. A bare count says the same
+   * thing and says all of it; the airports are still in the long form the desk
+   * shows, in the `title`, and named one by one in the detail sheet.
+   */
   return {
     label: `${stopCount} escalas${codeSuffix}`,
-    shortLabel: `${stopCount} esc${codeSuffix}`,
+    shortLabel: `${stopCount} esc`,
     title,
     tone: "many-stops" as const,
   }

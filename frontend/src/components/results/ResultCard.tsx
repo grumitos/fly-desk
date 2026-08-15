@@ -44,8 +44,6 @@ interface ResultCardProps {
   onShowAllAlternates?: () => void
   /** True once a chip has been used and before the fare is quoted or dropped. */
   scheduleChanged?: boolean
-  variant?: "regular" | "compact"
-  eyebrow?: string
 }
 
 export function ResultCard({
@@ -59,15 +57,12 @@ export function ResultCard({
   onSelectAlternate,
   onShowAllAlternates,
   scheduleChanged = false,
-  variant = "regular",
-  eyebrow,
 }: ResultCardProps) {
   const model = buildResultCardModel(offer, passengerCount, { showPerPerson })
   const inlineAlternates = alternates.slice(0, 3)
   const hiddenAlternateCount = Math.max(0, alternateCount - inlineAlternates.length)
   const cardLabel = [
     selected ? "Oferta seleccionada" : "Seleccionar oferta",
-    eyebrow,
     model.carrier.name,
     model.carrier.operatedBy,
     ...model.legs.map((leg) => `${leg.ariaLabel}: ${legAriaSchedule(leg)}, ${leg.duration}, ${leg.stopsLabel}`),
@@ -81,10 +76,9 @@ export function ResultCard({
 
   return (
     <article
-      data-testid={variant === "compact" ? "migration-month-card" : "result-card"}
+      data-testid="result-card"
       className={cn(
         "fd-card",
-        variant === "compact" && "fd-card--compact",
         selected && "is-selected",
         scheduleChanged && "is-schedule-changed",
       )}
@@ -99,8 +93,6 @@ export function ResultCard({
         aria-pressed={selected}
         onClick={() => onSelect(offer)}
       />
-
-      {eyebrow && <span className="fd-card__eyebrow" aria-hidden="true">{eyebrow}</span>}
 
       <CarrierLogo carrier={model.carrier} />
 
@@ -220,9 +212,10 @@ function LegRow({ leg }: { leg: ResultLegModel }) {
 
       <span className="fd-card__leg-duration">{leg.duration}</span>
       {/* Both wordings ride along and the container query picks one: the
-          stacked card's stops lane is 66px, which fits "1 esc · BOG" and not
-          "1 escala · BOG" (02 §6). Neither is spoken — the card's label is
-          built from the long form. */}
+          stacked card's stops lane is 57px, which fits "1 esc · BOG" and not
+          "1 escala · BOG" (02 §6). From two stops the short form is the bare
+          count, because no arrangement of «2 esc · BOG, PTY» fits 57. Neither
+          is spoken — the card's label is built from the long form. */}
       <span className="fd-card__leg-stops" title={leg.stopsTitle}>
         <span className="fd-card__leg-stops-long">{leg.stopsLabel}</span>
         <span className="fd-card__leg-stops-short">{leg.stopsShortLabel}</span>

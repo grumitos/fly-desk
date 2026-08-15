@@ -362,7 +362,13 @@ for (const viewport of VIEWPORTS) {
 
       const selectOffer = card.getByRole("button", { name: /^Seleccionar oferta/ });
       if (viewport.shell === "mobile") {
-        await selectOffer.evaluate((button) => button.click());
+        await selectOffer.evaluate((button) => {
+          if (!(button instanceof HTMLElement)) {
+            throw new Error("The card's hit area is not an HTML element.");
+          }
+
+          button.click();
+        });
       } else {
         await selectOffer.click();
       }
@@ -444,26 +450,6 @@ test("mobile search overlays use the shared full and partial sheet patterns", as
         }),
       });
     });
-    await page.route("**/api/provider-status", async (route) => {
-      const observedAt = new Date().toISOString();
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          generatedAt: observedAt,
-          staleAfterMs: 60_000,
-          providers: [{
-            id: "agil-local",
-            configured: true,
-            state: "ready",
-            evidence: "prewarm",
-            reasonCode: null,
-            observedAt,
-            stale: false,
-          }],
-        }),
-      });
-    });
 
     await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
     const routeCard = page.locator(".fd-route-fields");
@@ -542,6 +528,15 @@ test("mobile search overlays use the shared full and partial sheet patterns", as
     await locationOption.click();
     await locationSheet.waitFor({ state: "detached" });
 
+    /* The value line of an empty half, to compare the filled one against once
+       the sheet has committed a range: a date that arrives must land where the
+       «Elegir» it replaces was standing. */
+    const emptyHalfLine = await page.locator(".fd-daterange-control").evaluate((control) => {
+      const value = control.querySelector(".fd-field-value");
+      if (!value) throw new Error("Missing date value line.");
+      return Math.round(value.getBoundingClientRect().top - control.getBoundingClientRect().top);
+    });
+
     await page.getByRole("button", { name: /^Salida:/ }).click();
     const dateSheet = page.getByRole("dialog", { name: "Fechas" });
     await dateSheet.waitFor();
@@ -554,9 +549,77 @@ test("mobile search overlays use the shared full and partial sheet patterns", as
     assert.equal(await dateSheet.getByRole("button", { name: "Aplicar" }).isVisible(), true);
     assert.equal(await dateSheet.getByRole("button", { name: "Cerrar fechas" }).isVisible(), true);
     await assertNoHorizontalOverflow(page, "mobile:calendar-sheet");
+    /*
+     * 02 §7: the pinned head *is* the top edge of the scrolling region, and it
+     * holds the weekday row. Two regressions live here and both were visible
+     * with a scrolled grid: the sheet body used to open with 12px of its own
+     * `padding-top`, which a scroller paints its content through — a strip of
+     * sliding day cells above the header — and the weekday row used to be a
+     * second sticky whose offset was a copy of the header's height, which is
+     * not a constant. Measured while scrolled, because at rest a gap is only a
+     * gap and the strip shows nothing.
+     */
+    const pinnedHead = await dateSheet.locator(".fd-sheet-body").evaluate((body) => {
+      body.scrollTop = 300;
+      const pinned = body.querySelector(".fd-cal-sticky");
+      const head = body.querySelector(".fd-cal-head");
+      const weekdays = body.querySelector(".fd-cal-weekdays");
+      if (!pinned || !head || !weekdays) throw new Error("Missing pinned calendar head.");
+      const bodyRect = body.getBoundingClientRect();
+      const pinnedRect = pinned.getBoundingClientRect();
+      return {
+        scrollTop: body.scrollTop,
+        strip: Math.round(pinnedRect.top - bodyRect.top),
+        headToWeekdays: Math.round(
+          weekdays.getBoundingClientRect().top - head.getBoundingClientRect().bottom,
+        ),
+        weekdaysPinned: pinned.contains(weekdays),
+      };
+    });
+    assert.deepEqual(pinnedHead, { scrollTop: 300, strip: 0, headToWeekdays: 0, weekdaysPinned: true });
     if (captureDir) await page.screenshot({ path: `${captureDir}/mobile-calendar-sheet.png`, fullPage: true });
+
+    /* A range, so the return half grows its cross: 11 §2.2 commits the draft on
+       every way out of the sheet, the closing cross included. */
+    const dayCells = dateSheet.locator(".fd-cal-cell:not([data-blank='true']):not([disabled])");
+    await dayCells.nth(3).click();
+    await dayCells.nth(8).click();
     await dateSheet.getByRole("button", { name: "Cerrar fechas" }).click();
     await dateSheet.waitFor({ state: "detached" });
+
+    /*
+     * 02 §12 grows the cross to 44 and the field stays 58: the half may not
+     * grow with it. It did — the 44px target carried a bottom margin the size
+     * of the label band, its 60px margin box grew the row to 76, the control
+     * clipped that back to 58 and the date rendered near the bottom edge with
+     * the cross cut off.
+     */
+    const filledHalf = await page.locator(".fd-daterange-control").evaluate((control) => {
+      const half = control.querySelector<HTMLElement>('.fd-daterange-half[data-half="end"]');
+      const value = half?.querySelector(".fd-field-value");
+      const clear = half?.querySelector(".fd-daterange-clear");
+      if (!half || !value || !clear) throw new Error("Missing filled return half.");
+      const controlRect = control.getBoundingClientRect();
+      const clearRect = clear.getBoundingClientRect();
+      return {
+        halfFitsControl: half.getBoundingClientRect().height <= controlRect.height,
+        valueLine: Math.round(value.getBoundingClientRect().top - controlRect.top),
+        clearHeight: Math.round(clearRect.height),
+        clearInsideControl: clearRect.top >= controlRect.top - 0.5
+          && clearRect.bottom <= controlRect.bottom + 0.5,
+        /* And on the axis of the control, not of the value line. */
+        clearOffCentre: Math.round(
+          Math.abs((clearRect.top + clearRect.bottom) / 2 - (controlRect.top + controlRect.bottom) / 2),
+        ),
+      };
+    });
+    assert.deepEqual(filledHalf, {
+      halfFitsControl: true,
+      valueLine: emptyHalfLine,
+      clearHeight: 44,
+      clearInsideControl: true,
+      clearOffCentre: 0,
+    });
 
     await page.getByRole("button", { name: "Seleccionar pasajeros" }).click();
     const passengerSheet = page.getByRole("dialog", { name: "Pasajeros" });
@@ -720,6 +783,146 @@ test("the desk card gives the codeshare a line and the trip a single row", async
       assert.equal(card.height, 58, JSON.stringify(card));
       assert.equal(card.legTops.length, 2, JSON.stringify(card));
       assert.equal(card.legTops[0] === card.legTops[1], sideBySide, JSON.stringify(card));
+    }
+  }, { autoOpen: false });
+});
+
+test("the stacked card keeps the baggage on the carrier line and the stops whole", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    /*
+     * The phone counterpart of the test above, and the two things the stacked
+     * anatomy got wrong. The baggage had no placement in the stacked query — it
+     * carried a `flex` that a grid item ignores — so auto-placement opened an
+     * implicit third row and dropped the pair into the 24px logo track, half of
+     * it outside the card's own padding. And the stops lane, 57px, was
+     * ellipsising «2 esc · PTY, MIA» down to a dangling «2 esc…», hiding the
+     * codes it was being cut to show.
+     */
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ suggestions: [] }),
+      });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      const base = buildOffer({ id: "stacked" });
+      const outbound = base.itineraries[0];
+      const offers = [buildOffer({
+        id: "stacked",
+        itineraries: [
+          {
+            ...outbound,
+            stops: 2,
+            layoverMinutes: [90, 70],
+            segments: [
+              { ...outbound.segments[0], destination: "PTY" },
+              {
+                ...outbound.segments[0],
+                id: "stacked-outbound-segment-2",
+                flightNumber: "LA 456",
+                origin: "PTY",
+                destination: "BOG",
+                departureAt: "2026-04-15T17:00:00Z",
+                arrivalAt: "2026-04-15T19:00:00Z",
+              },
+              {
+                ...outbound.segments[0],
+                id: "stacked-outbound-segment-3",
+                flightNumber: "LA 789",
+                origin: "BOG",
+                destination: "MIA",
+                departureAt: "2026-04-15T20:00:00Z",
+                arrivalAt: "2026-04-15T22:00:00Z",
+              },
+            ],
+          },
+          base.itineraries[1],
+        ] as never,
+      })];
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "stacked-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers,
+          allOffers: offers,
+          searchMeta: {
+            requestedAt: "2026-07-30T12:00:00.000Z",
+            completedAt: "2026-07-30T12:00:01.000Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-04-15&return=2026-04-22&adults=1&children=0&infants=0`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+    await page.getByTestId("result-card").first().waitFor();
+
+    const card = await page.getByTestId("result-card").first().evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      const rectOf = (selector: string) => {
+        const node = element.querySelector<HTMLElement>(selector);
+        return node ? node.getBoundingClientRect() : null;
+      };
+      const baggage = rectOf(".fd-card__baggage");
+      const carrier = rectOf(".fd-card__carrier");
+      const price = rectOf(".fd-card__price");
+      const legs = rectOf(".fd-card__legs");
+      return {
+        rows: style.gridTemplateRows.trim().split(/\s+/).length,
+        columns: style.gridTemplateColumns,
+        height: Math.round(box.height),
+        contentLeft: box.left + Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.borderLeftWidth),
+        contentRight: box.right - Number.parseFloat(style.paddingRight) - Number.parseFloat(style.borderRightWidth),
+        baggage: baggage && { left: baggage.left, right: baggage.right, bottom: baggage.bottom },
+        carrierRight: carrier?.right ?? 0,
+        priceLeft: price?.left ?? 0,
+        legsTop: legs?.top ?? 0,
+        stops: Array.from(element.querySelectorAll<HTMLElement>(".fd-card__leg-stops")).map((lane) => ({
+          text: lane.querySelector<HTMLElement>(".fd-card__leg-stops-short")?.textContent?.trim() ?? "",
+          clientWidth: lane.clientWidth,
+          scrollWidth: lane.scrollWidth,
+        })),
+      };
+    });
+
+    // 8c: two rows and no third. The implicit one cost 22px of card height.
+    assert.equal(card.rows, 2, JSON.stringify(card));
+    assert.match(card.columns, /14px$/);
+    // The pair rides the carrier line, between the operator and the price, and
+    // stays inside the card's own padding on both sides.
+    assert.ok(card.baggage, JSON.stringify(card));
+    assert.ok(card.baggage!.left >= card.contentLeft - 0.5, JSON.stringify(card));
+    assert.ok(card.baggage!.right <= card.contentRight + 0.5, JSON.stringify(card));
+    assert.ok(card.baggage!.left >= card.carrierRight, JSON.stringify(card));
+    assert.ok(card.baggage!.right <= card.priceLeft, JSON.stringify(card));
+    assert.ok(card.baggage!.bottom <= card.legsTop, JSON.stringify(card));
+    // 02 §13 forbids clipping a cifra, and an ellipsis here eats the airports.
+    assert.equal(card.stops.length, 2, JSON.stringify(card));
+    assert.equal(card.stops[0].text, "2 esc", JSON.stringify(card));
+    for (const lane of card.stops) {
+      assert.ok(lane.scrollWidth <= lane.clientWidth, JSON.stringify(card));
     }
   }, { autoOpen: false });
 });

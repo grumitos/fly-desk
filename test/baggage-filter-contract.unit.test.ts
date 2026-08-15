@@ -1,17 +1,19 @@
 import { test } from "bun:test"
 import assert from "node:assert/strict"
 import { fromBackendRequest, toBackendPayload } from "../frontend/src/lib/api"
-import {
-  clearSharedSearchFromUrl,
-  decodeSharedSearchPayload,
-  readSharedSearchFromText,
-  readSharedSearchFromUrl,
-  serializeSharedSearchPayload,
-  writeSharedSearchToClipboard,
-  writeSharedSearchToUrl,
-} from "../frontend/src/lib/search-share"
+import { readSharedSearchFromUrl } from "../frontend/src/lib/search-share"
 import type { SearchRequest } from "../frontend/src/types"
 import { prepareSearchContract } from "../src/http-search-contract"
+
+/*
+ * Carry-on and checked baggage as two independent facts, across every boundary
+ * that has to keep them apart: the backend payload, the legacy single
+ * `baggageRequired` flag, and the query params of a shared search.
+ *
+ * The rest of the sharing contract lives in `search-share.unit.test.ts`; it was
+ * written here only because the first shared-URL case happened to be a baggage
+ * one.
+ */
 
 function request(overrides: Partial<SearchRequest> = {}): SearchRequest {
   return {
@@ -90,131 +92,4 @@ test("readSharedSearchFromUrl treats legacy baggage query param as checked bagga
 
   assert.equal(state?.request.carryOnRequired, false)
   assert.equal(state?.request.checkedBaggageRequired, true)
-})
-
-test("writeSharedSearchToUrl emits migration mode and month range params", () => {
-  const globalWindow = globalThis as typeof globalThis & {
-    window?: {
-      history: {
-        replaceState: (_state: unknown, _title: string, url: string) => void
-      }
-      location: {
-        href: string
-      }
-    }
-  }
-  const originalWindow = globalWindow.window
-  const writtenUrls: string[] = []
-  globalWindow.window = {
-    location: {
-      href: "http://localhost/",
-    },
-    history: {
-      replaceState: (_state: unknown, _title: string, url: string) => {
-        writtenUrls.push(url)
-      },
-    },
-  }
-
-  try {
-    const wrote = writeSharedSearchToUrl(request({
-      tripType: "one-way",
-      searchMode: "month-view",
-      departureDate: undefined,
-      returnDate: undefined,
-      departureStart: "2026-06-01",
-      departureEnd: "2026-06-30",
-      migrationMonths: ["2026-06", "2026-07"],
-    }), "cheapest")
-
-    assert.equal(wrote, true)
-    assert.equal(writtenUrls.length, 1)
-
-    const updatedUrl = new URL(`http://localhost${writtenUrls[0] ?? ""}`)
-    assert.equal(updatedUrl.searchParams.get("mode"), "migration")
-    assert.equal(updatedUrl.searchParams.get("trip"), "one-way")
-    assert.equal(updatedUrl.searchParams.get("departureStart"), "2026-06-01")
-    assert.equal(updatedUrl.searchParams.get("departureEnd"), "2026-06-30")
-    assert.equal(updatedUrl.searchParams.get("months"), "2026-06,2026-07")
-  } finally {
-    globalWindow.window = originalWindow
-  }
-})
-
-test("shared search payload round-trips through text and base64url formats", () => {
-  const searchRequest = request()
-  const serialized = serializeSharedSearchPayload(searchRequest, "fastest")
-  const encoded = Buffer.from(serialized).toString("base64url")
-  const fromText = readSharedSearchFromText(serialized)
-
-  assert.equal(fromText?.request.origin, searchRequest.origin)
-  assert.equal(fromText?.request.destination, searchRequest.destination)
-  assert.equal(fromText?.request.departureDate, searchRequest.departureDate)
-  assert.equal(fromText?.request.returnDate, searchRequest.returnDate)
-  assert.equal(fromText?.sortMode, "fastest")
-  assert.deepEqual(decodeSharedSearchPayload(encoded), fromText)
-  assert.equal(decodeSharedSearchPayload("not-json"), null)
-})
-
-test("shared search payload never serializes the browser client session", () => {
-  const clientSessionId = "browser-session-share-a"
-  const searchRequest = {
-    ...request(),
-    clientSessionId,
-  } as ReturnType<typeof request> & { clientSessionId: string }
-
-  const serialized = serializeSharedSearchPayload(searchRequest, "cheapest")
-
-  assert.doesNotMatch(serialized, new RegExp(clientSessionId))
-  assert.equal(Object.hasOwn(JSON.parse(serialized) as object, "clientSessionId"), false)
-})
-
-test("shared search URL cleanup removes only Fly Desk search parameters", () => {
-  const globalWindow = globalThis as typeof globalThis & {
-    window?: {
-      history: {
-        replaceState: (_state: unknown, _title: string, url: string) => void
-      }
-      location: {
-        href: string
-      }
-    }
-  }
-  const originalWindow = globalWindow.window
-  let replacedUrl = ""
-  globalWindow.window = {
-    location: {
-      href: "https://fly-desk.test/?origin=LIM&destination=MIA&keep=1#results",
-    },
-    history: {
-      replaceState: (_state: unknown, _title: string, url: string) => {
-        replacedUrl = url
-      },
-    },
-  }
-
-  try {
-    assert.equal(clearSharedSearchFromUrl(), true)
-    assert.equal(replacedUrl, "/?keep=1#results")
-  } finally {
-    globalWindow.window = originalWindow
-  }
-})
-
-test("clipboard sharing reports unavailable browser support", async () => {
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator")
-  Object.defineProperty(globalThis, "navigator", {
-    configurable: true,
-    value: {},
-  })
-
-  try {
-    assert.equal(await writeSharedSearchToClipboard(request(), "cheapest"), false)
-  } finally {
-    if (descriptor) {
-      Object.defineProperty(globalThis, "navigator", descriptor)
-    } else {
-      delete (globalThis as { navigator?: unknown }).navigator
-    }
-  }
 })

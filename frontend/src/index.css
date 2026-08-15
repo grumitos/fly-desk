@@ -1205,7 +1205,11 @@
     height: var(--fd-control-touch);
   }
 
-  /* The cross of the date control is a square icon target like any other. */
+  /* The cross of the date control is a square icon target like any other, in
+     the merged date halves and in the two location fields alike. Both centre on
+     the field by the band construction in `components.css`, which is what lets
+     a 44px target live inside a 58px field: it is centred by a margin the field
+     cannot feel, not by an overflow the row happens to spread evenly. */
   .fd-daterange-clear,
   .fd-field-clear {
     width: var(--fd-control-touch);
@@ -2109,8 +2113,12 @@
   padding: 16px 14px 8px;
 }
 
+/* The 12px this sheet opens with belong to the pinned calendar head, which
+   carries them itself (`.fd-cal-sticky`): as padding on the scroller they were
+   a gap the scrolled grid showed through, above a header that is meant to close
+   the top of the surface. */
 .fd-calendar-sheet .fd-sheet-body {
-  padding-top: 12px;
+  padding-top: 0;
 }
 
 .fd-passenger-sheet .fd-sheet-body {

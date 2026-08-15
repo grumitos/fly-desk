@@ -206,23 +206,23 @@
    * its stops column starts to exist (02 §2) and two of those do not fit.
    */
   @container fdlist (min-width: 980px) {
-    .fd-card:not(.fd-card--compact) .fd-card__legs {
+    .fd-card .fd-card__legs {
       grid-template-columns:
         58px 126px minmax(50px, max-content) minmax(0, 1fr)
         1px
         58px 126px minmax(50px, max-content) minmax(0, 1fr);
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__leg {
+    .fd-card .fd-card__leg {
       grid-row: 1;
       grid-column: 1 / span 4;
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__leg + .fd-card__leg {
+    .fd-card .fd-card__leg + .fd-card__leg {
       grid-column: 6 / span 4;
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__legs::before {
+    .fd-card .fd-card__legs::before {
       grid-row: 1;
       grid-column: 5;
       align-self: stretch;
@@ -461,10 +461,6 @@
     background: var(--color-accent);
   }
 
-  .fd-card__eyebrow {
-    display: none;
-  }
-
   /* ---- skeleton (2g · 4a) -----------------------------------------------
    * The skeleton is this card with the data switched off: it carries
    * `.fd-card` and the card's own element classes, so the grid, the paddings,
@@ -621,65 +617,11 @@
     color: var(--color-warning-soft-foreground);
   }
 
-  /* ---- migration month card (1i, 2f) ----------------------------------- */
-
-  .fd-card--compact {
-    grid-template-columns: 28px minmax(0, 1fr) 26px;
-    align-items: start;
-    row-gap: 8px;
-    padding: 12px;
-  }
-
-  .fd-card--compact .fd-card__eyebrow {
-    display: block;
-    grid-column: 1 / -1;
-    min-width: 0;
-    overflow: hidden;
-    color: var(--color-primary);
-    font-size: var(--fd-text-micro);
-    font-weight: var(--fd-weight-title);
-    letter-spacing: var(--fd-tracking-micro);
-    text-overflow: ellipsis;
-    text-transform: uppercase;
-    white-space: nowrap;
-  }
-
-  .fd-card--compact .fd-card__logo,
-  .fd-card--compact .fd-card__logo img,
-  .fd-card--compact .fd-card__logo span {
-    width: 28px;
-    height: 28px;
-  }
-
-  .fd-card--compact .fd-card__legs,
-  .fd-card--compact .fd-card__price {
-    grid-column: 1 / -1;
-  }
-
-  .fd-card--compact .fd-card__price {
-    justify-items: start;
-  }
-
-  /* In the month grid the price is the thing being compared, so it takes the
-     display body — the only place in the system that uses 22px. */
-  .fd-card--compact .fd-card__price-figure {
-    font-size: var(--fd-text-display);
-  }
-
-  /* The month card is two lanes, not four, so it opts out of the subgrid. */
-  .fd-card--compact .fd-card__legs {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .fd-card--compact .fd-card__leg {
-    grid-template-columns: 48px minmax(0, 1fr);
-    row-gap: 2px;
-  }
-
-  .fd-card--compact .fd-card__leg-duration,
-  .fd-card--compact .fd-card__leg-stops {
-    grid-column: 2;
-  }
+  /* The migration month card used to be this component in a `--compact`
+     variant, with an eyebrow for the month and a two-lane leg. The month grid
+     was rebuilt on its own `fd-month-card` markup, so the variant lost its last
+     caller and is gone: no eyebrow, no compact block, and no `:not()` guard on
+     the rules below, which existed only to keep the two anatomies apart. */
 
   /* ---- stacked card -----------------------------------------------------
    * The list has one named container and one arithmetic breakpoint: below it
@@ -697,7 +639,7 @@
    * 750. */
 
   @container fdlist (max-width: 749.98px) {
-    .fd-card:not(.fd-card--compact) {
+    .fd-card {
       grid-template-columns: 24px minmax(0, 1fr) auto 14px;
       /* Plate 8c: the four gaps of row 1 are 10. The chevron rides the same
          gap rather than the card's 8 — a 2px difference nobody can see, and
@@ -709,19 +651,39 @@
       border-radius: var(--fd-radius-14);
     }
 
-    .fd-card:not(.fd-card--compact):hover {
+    /* Only the desk row gives its vertical padding back to a strip: there the
+       58px row has none to spend, here the card already carries 11 and keeps
+       it. Written out because `:has()` above outranks the bare `.fd-card` this
+       block now uses — while the stacked rules carried a `:not(--compact)` the
+       two were level and source order settled it, which is exactly the kind of
+       accident the guard was hiding. */
+    .fd-card:has(.fd-card__alts) {
+      padding-block: 11px;
+    }
+
+    /* Plate 8c puts the baggage on the carrier line, between the operator and
+       the price, so it takes a track of its own — and only when the fare has a
+       pair to draw, because an empty `auto` track still spends the 10px gap on
+       either side of it. Everything to its right is placed from the end of the
+       explicit grid (`-3`, `-2`), so the four-track card and the five-track one
+       are the same rule and not two. */
+    .fd-card:has(.fd-card__baggage) {
+      grid-template-columns: 24px minmax(0, 1fr) auto auto 14px;
+    }
+
+    .fd-card:hover {
       border-color: var(--color-border);
     }
 
     /* 07 §4 row 11, the same 12% the buttons take — as a colour, because a card
        is a surface and the plate darkens surfaces, not the words on them. */
-    .fd-card:not(.fd-card--compact):active {
+    .fd-card:active {
       background: color-mix(in srgb, black 12%, var(--color-card));
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__logo,
-    .fd-card:not(.fd-card--compact) .fd-card__logo img,
-    .fd-card:not(.fd-card--compact) .fd-card__logo span {
+    .fd-card .fd-card__logo,
+    .fd-card .fd-card__logo img,
+    .fd-card .fd-card__logo span {
       width: 24px;
       height: 24px;
     }
@@ -729,14 +691,14 @@
     /* Here the operator rejoins the name: one elastic group, and the operator
        shrinks first (`flex: 0 999 auto`) so a long codeshare eats itself before
        it eats the airline. */
-    .fd-card:not(.fd-card--compact) .fd-card__carrier {
+    .fd-card .fd-card__carrier {
       display: flex;
       min-width: 0;
       align-items: center;
       gap: 10px;
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__carrier-line {
+    .fd-card .fd-card__carrier-line {
       display: flex;
       min-width: 0;
       flex: 1 1 auto;
@@ -745,13 +707,13 @@
       overflow: hidden;
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__carrier-name {
+    .fd-card .fd-card__carrier-name {
       grid-column: auto;
       flex: 0 1 auto;
       font-size: var(--fd-text-body);
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__carrier-operator {
+    .fd-card .fd-card__carrier-operator {
       flex: 0 999 auto;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -759,49 +721,63 @@
 
     /* The dot belongs to the layout, not to the data: on a desk the operator
        starts its own line and needs no separator. */
-    .fd-card:not(.fd-card--compact) .fd-card__carrier-operator::before {
+    .fd-card .fd-card__carrier-operator::before {
       content: "· ";
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__baggage {
-      flex: 0 0 auto;
+    /* Here the baggage is a grid item, not a flex child: the `flex` it used to
+       carry was inert, so auto-placement dropped the pair into an implicit
+       third row, right-aligned inside the 24px logo track — two icons on the
+       card's left edge, half of them outside the padding, and 22px of height
+       nobody drew. */
+    .fd-card .fd-card__baggage {
+      grid-column: 3;
+      grid-row: 1;
     }
 
     /* 02 §6: price 16/800 over seats 10/700, stacked. `gap: 2` is the smallest
        rung of the 01 §3 scale; the 1px it carried was off the catalog and only
        ever read as "no gap". */
-    .fd-card:not(.fd-card--compact) .fd-card__price {
-      grid-column: 3;
+    .fd-card .fd-card__price {
+      grid-column: -3;
       grid-row: 1;
       gap: 2px;
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__price-figure {
+    .fd-card .fd-card__price-figure {
       font-size: var(--fd-text-card);
       line-height: 1.2;
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__provider {
+    .fd-card .fd-card__provider {
       display: none;
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__chevron {
+    .fd-card .fd-card__chevron {
       display: block;
-      grid-column: 4;
+      grid-column: -2 / -1;
       grid-row: 1 / span 2;
       align-self: center;
       color: var(--color-muted-foreground);
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__legs {
-      grid-column: 1 / 4;
+    /* The gap is 6, not the 8 of the plate — the same correction, and for the
+       same reason, as the schedule sub-grid below: the plate measured its lanes
+       against a face it never loaded. With the real one the elastic stops lane
+       lands at 51px inside the 301 the row has, and «1 esc · BOG» needs 54, so
+       the airport code the whole 750 threshold exists to protect was the first
+       thing to go. Three gaps at 6 return exactly the 6px that buys it, and
+       every width the plate pins (56/124/46) stays. It also puts the row on the
+       same 6 the stacked skeleton already uses for its lanes. */
+    .fd-card .fd-card__legs {
+      grid-column: 1 / -2;
       grid-row: 2;
       grid-template-columns: 56px 124px minmax(46px, max-content) minmax(0, 1fr);
       row-gap: 4px;
-      column-gap: 8px;
+      column-gap: 6px;
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__leg-date {
+    .fd-card .fd-card__leg-date {
       font-weight: var(--fd-weight-label);
     }
 
@@ -814,37 +790,37 @@
        42+11+42+13 plus three 6px gaps is 126 inside a 124px lane — two pixels
        of clipped digits. Dropping to the next gap down keeps every width the
        plate pins (56/124/46, the 11px arrow lane, the 13px day lane). */
-    .fd-card:not(.fd-card--compact) .fd-card__leg-schedule {
+    .fd-card .fd-card__leg-schedule {
       display: grid;
       grid-template-columns: auto 11px auto 13px;
       align-items: center;
       column-gap: 4px;
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__leg-time {
+    .fd-card .fd-card__leg-time {
       font-size: var(--fd-text-body);
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__leg-duration,
-    .fd-card:not(.fd-card--compact) .fd-card__leg-stops {
+    .fd-card .fd-card__leg-duration,
+    .fd-card .fd-card__leg-stops {
       font-size: var(--fd-text-micro);
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__leg-stops-long {
+    .fd-card .fd-card__leg-stops-long {
       display: none;
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__leg-stops-short {
+    .fd-card .fd-card__leg-stops-short {
       display: inline;
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__alts {
+    .fd-card .fd-card__alts {
       grid-column: 1 / -1;
       grid-row: 3;
       gap: 6px;
     }
 
-    .fd-card:not(.fd-card--compact) .fd-card__alts-label {
+    .fd-card .fd-card__alts-label {
       display: none;
     }
 
@@ -852,7 +828,7 @@
      * The same row, derived from the same grid: 4a redraws it on the phone
      * with the narrower leg lanes of plate 8c and one block per group. */
 
-    .fd-card--skeleton:not(.fd-card--compact) .fd-card__legs {
+    .fd-card--skeleton .fd-card__legs {
       gap: 6px;
     }
 
@@ -863,27 +839,27 @@
        tramo recupera la interlínea del componente real y la fila deja de
        encoger 12px al llegar el dato. Los bloques siguen midiendo 10, 8 y 12
        como los dibuja 4a. */
-    .fd-card--skeleton:not(.fd-card--compact) .fd-card__leg {
+    .fd-card--skeleton .fd-card__leg {
       min-height: 16px;
     }
 
-    .fd-card--skeleton:not(.fd-card--compact) .fd-card__leg > :nth-child(1) {
+    .fd-card--skeleton .fd-card__leg > :nth-child(1) {
       width: 38px;
     }
 
-    .fd-card--skeleton:not(.fd-card--compact) .fd-card__leg > :nth-child(3) {
+    .fd-card--skeleton .fd-card__leg > :nth-child(3) {
       width: 40px;
     }
 
     /* One block for the carrier and one for the price: stacked, the name, the
        operator and the baggage share a single line, and so do the fare and the
        seats — there is no second line left to stand in for. */
-    .fd-card--skeleton:not(.fd-card--compact) .fd-card__carrier > :nth-child(2),
-    .fd-card--skeleton:not(.fd-card--compact) .fd-card__price > :nth-child(2) {
+    .fd-card--skeleton .fd-card__carrier > :nth-child(2),
+    .fd-card--skeleton .fd-card__price > :nth-child(2) {
       display: none;
     }
 
-    .fd-card--skeleton:not(.fd-card--compact) .fd-card__chevron {
+    .fd-card--skeleton .fd-card__chevron {
       width: 8px;
       height: 12px;
     }

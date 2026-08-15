@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { MonthRangeCalendar, type RangePreset } from "@/components/ui/range-calendar"
 import { Sheet } from "@/components/ui/sheet"
+import { scrollCalendarMonthIntoView } from "@/lib/calendar-scroll"
 import { addMonths, isIsoMonth, monthSpan, monthYearLabel } from "@/lib/iso-date"
 import { cn } from "@/lib/utils"
 
@@ -125,9 +126,7 @@ export function MonthRangeField({
     if (!mobile || !open) return
     const anchorYear = String((calendarStart ?? minMonth).slice(0, 4))
     const frame = window.requestAnimationFrame(() => {
-      mobileCalendarRef.current
-        ?.querySelector<HTMLElement>(`[data-calendar-key="${anchorYear}"]`)
-        ?.scrollIntoView({ block: "start" })
+      scrollCalendarMonthIntoView(mobileCalendarRef.current, anchorYear)
     })
     return () => window.cancelAnimationFrame(frame)
   }, [calendarStart, minMonth, mobile, open])

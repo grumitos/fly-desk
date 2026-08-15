@@ -94,14 +94,15 @@ export function DayRangeCalendar({
       data-layout={layout}
       onPointerLeave={() => setHoverDay(undefined)}
     >
-      <CalendarHeader
-        summary={rangeSummary}
-        presets={presets}
-        activePreset={activePreset}
-        onPreset={onPreset}
-      />
-
-      {layout === "continuous" && <WeekdayRow sticky />}
+      <CalendarTop layout={layout}>
+        <CalendarHeader
+          summary={rangeSummary}
+          presets={presets}
+          activePreset={activePreset}
+          onPreset={onPreset}
+        />
+        {layout === "continuous" && <WeekdayRow />}
+      </CalendarTop>
 
       <div className="fd-cal-months">
         {layout === "paged" && (
@@ -171,9 +172,26 @@ export function DayRangeCalendar({
   )
 }
 
-function WeekdayRow({ sticky = false }: { sticky?: boolean }) {
+/*
+ * The sheet pins the header, and the weekday row belongs to what is pinned: a
+ * grid of dates whose columns are named off-screen is a grid you have to
+ * remember. Pinning them as two siblings meant the second one's `top` had to
+ * carry the first one's height as a constant — and that height is not one, the
+ * summary line grows and shrinks with what is chosen. So they travel as one
+ * block and the row's offset is simply where the block puts it.
+ *
+ * The desk pages instead of scrolling (03 §7), so there is nothing to pin: the
+ * header is a header and each month draws its own weekday row.
+ */
+function CalendarTop({ layout, children }: { layout: "paged" | "continuous"; children: ReactNode }) {
+  if (layout !== "continuous") return <>{children}</>
+
+  return <div className="fd-cal-sticky">{children}</div>
+}
+
+function WeekdayRow() {
   return (
-    <div className="fd-cal-weekdays" data-sticky={sticky || undefined} aria-hidden="true">
+    <div className="fd-cal-weekdays" aria-hidden="true">
       {WEEKDAYS.map((weekday) => (
         <span key={weekday} className="fd-cal-weekday">{weekday}</span>
       ))}
@@ -232,12 +250,14 @@ export function MonthRangeCalendar({
       data-layout={layout}
       onPointerLeave={() => setMonthHover(undefined)}
     >
-      <CalendarHeader
-        summary={rangeSummary}
-        presets={presets}
-        activePreset={activePreset}
-        onPreset={onPreset}
-      />
+      <CalendarTop layout={layout}>
+        <CalendarHeader
+          summary={rangeSummary}
+          presets={presets}
+          activePreset={activePreset}
+          onPreset={onPreset}
+        />
+      </CalendarTop>
 
       <div className="fd-cal-months">
         {layout === "paged" && (

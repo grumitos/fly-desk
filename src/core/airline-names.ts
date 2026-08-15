@@ -1,30 +1,60 @@
 const TRAILING_AIRLINE_SUFFIX_PATTERN = /\s+Airlines?\.?$/i;
 const TRAILING_JETSMART_LEGAL_SUFFIX_PATTERN = /\s+S\.?P\.?A\.?$/i;
+/*
+ * A code the map does not know reaches the card, the filter sheet and the
+ * detail as the two raw letters, so this list is read as "which carriers does
+ * a LIM desk see". It stayed at the LATAM group and its neighbours, which left
+ * Copa — the single most frequent connection out of Lima — showing as «CM».
+ * Only codes that are certain go in: a wrong name is worse than a code.
+ */
 const AIRLINE_CODE_DISPLAY_NAMES: Record<string, string> = {
   "4C": "LATAM",
   "4M": "LATAM",
+  AA: "American",
   AC: "Air Canada",
+  AD: "Azul",
+  AF: "Air France",
   AM: "Aeroméxico",
   AR: "Aerolíneas Argentinas",
   AV: "Avianca",
+  B6: "JetBlue",
+  CM: "Copa",
+  DL: "Delta",
+  G3: "Gol",
   H2: "Sky",
   IB: "Iberia",
   JA: "JetSmart",
   JJ: "LATAM",
   JZ: "JetSmart",
+  KL: "KLM",
   LA: "LATAM",
+  LH: "Lufthansa",
   LP: "LATAM",
   LU: "LATAM",
+  NK: "Spirit",
   OB: "Boliviana de Aviación",
   PZ: "LATAM",
   PU: "Plus Ultra",
+  UA: "United",
   UX: "Air Europa",
+  VB: "Viva Aerobus",
   XL: "LATAM",
+  Y4: "Volaris",
 };
+/*
+ * Names whose styled form the suffix stripper cannot reach: it only removes a
+ * trailing «Airline(s)», so «JetBlue Airways» and «Gol Linhas Aéreas» would
+ * each read as a second carrier beside the code they share.
+ */
 const AIRLINE_NAME_VARIANT_DISPLAY_NAMES: Record<string, string> = {
   AEROMEXICO: "Aeroméxico",
+  AZULLINHASAEREASBRASILEIRAS: "Azul",
   DELTAAIRLINES: "Delta",
+  GOLLINHASAEREAS: "Gol",
+  GOLLINHASAEREASINTELIGENTES: "Gol",
+  JETBLUEAIRWAYS: "JetBlue",
   PLUSULTRALINEASAEREAS: "Plus Ultra",
+  VIVAAEROBUS: "Viva Aerobus",
 };
 const LATAM_VARIANT_QUALIFIERS = new Set([
   "AIRLINE",

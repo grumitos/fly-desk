@@ -931,14 +931,21 @@
    * `align-items: center` the row centres inside the padded box, so the cross
    * and the chevron sat about 7px low and read as misplaced.
    *
-   * A bottom margin the size of the band makes the item's margin box fill the
-   * content area, so it centres on the whole field instead of on the value
-   * line. Nothing moves for a field without a trailing control.
+   * What puts them back on the axis is the *difference* between the two block
+   * margins, one band's worth: any pair with that difference centres the item
+   * on the whole field instead of on the value line, whatever its size. So the
+   * band is taken off the top rather than added to the bottom. On a desk the
+   * two are the same drawing; they part company under 02 §12, where the cross
+   * grows to 44 inside a 58px field — a bottom margin made its margin box 60
+   * against a 42px content band, which grew the row to 76 and took the value
+   * line down with it. Removing height instead of adding it can never do that,
+   * so the affordance keeps its touch size without ever setting the height of
+   * the line it stands on. Nothing moves for a field with no trailing control.
    */
   .fd-daterange-clear,
   .fd-field-clear,
   .fd-field-control > .fd-disclosure {
-    margin-block-end: var(--fd-field-label-band, 0px);
+    margin-block-start: calc(-1 * var(--fd-field-label-band, 0px));
   }
 
   .fd-cal-popover {
@@ -1300,13 +1307,31 @@
     padding: 0;
   }
 
-  .fd-cal-popover[data-layout="continuous"] .fd-cal-head {
+  /*
+   * 02 §7: in the sheet the header and the weekday row are one pinned block.
+   * The 12px of air above it is the block's own padding and not the scroller's,
+   * because a scroll container paints its scrolled content *through* its top
+   * padding: as `padding-top` on `.fd-sheet-body` those 12px were a see-through
+   * strip with day cells sliding across it, right above a header that is
+   * supposed to be the top edge of the surface.
+   */
+  .fd-cal-popover[data-layout="continuous"] .fd-cal-sticky {
     position: sticky;
     top: 0;
     z-index: 3;
-    flex-wrap: wrap;
     background: var(--color-popover);
+    padding-top: 12px;
+  }
+
+  .fd-cal-popover[data-layout="continuous"] .fd-cal-head {
+    flex-wrap: wrap;
     padding: 0 0 12px;
+  }
+
+  /* The 2px belong to the paged layout, where the row follows a month caption.
+     Here it follows the header's rule and sits on it. */
+  .fd-cal-popover[data-layout="continuous"] .fd-cal-sticky .fd-cal-weekdays {
+    margin-top: 0;
   }
 
   .fd-cal-popover[data-layout="continuous"] .fd-cal-head > :last-child {
@@ -1326,13 +1351,6 @@
     grid-template-columns: 1fr;
     gap: 18px;
     padding-top: 12px;
-  }
-
-  .fd-cal-popover[data-layout="continuous"] .fd-cal-weekdays {
-    position: sticky;
-    top: 88px;
-    z-index: 2;
-    background: var(--color-popover);
   }
 
   .fd-cal-popover[data-layout="continuous"] .fd-cal-legend {

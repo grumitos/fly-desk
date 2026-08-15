@@ -258,6 +258,10 @@ test("exact results paginate visible offers with hidden minimal result scroll", 
         text: schedule.textContent?.trim(),
       })),
     );
+    /* One schedule per leg, and the count is asserted before the `every`:
+       `[].every()` is true, so a renamed lane would have retired this check
+       without failing it. */
+    assert.equal(scheduleMetrics.length, 2, JSON.stringify(scheduleMetrics));
     assert.ok(
       scheduleMetrics.every((schedule) => schedule.scrollWidth <= schedule.clientWidth),
       JSON.stringify(scheduleMetrics),

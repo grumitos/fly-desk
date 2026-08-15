@@ -1,5 +1,6 @@
 import { afterEach, test } from "bun:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1924,3 +1925,152 @@ test("search session store only writes the search job that changed", async () =>
   rmSync(tempRoot, { recursive: true, force: true });
 });
 
+
+/*
+ * The two durability edges the contract used to list as "still missing": what
+ * happens to a write the disk refuses, and what `SEARCH_COMPLETED_SESSION_TTL_MS=0`
+ * actually means. Both are now policy, and these are what hold them.
+ */
+
+test("a refused session write is owed, not dropped: nothing retries on its own and the next mutation carries it", async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-write-refused-"));
+  tempRootsForCleanup.add(tempRoot);
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const store = new SearchSessionStore({ dbPath });
+  const connection = (store as unknown as { db?: Database }).db;
+  assert.ok(connection);
+
+  let before: ReturnType<SearchSessionStore["createSearchJob"]>;
+  let during: ReturnType<SearchSessionStore["createSearchJob"]>;
+  let after: ReturnType<SearchSessionStore["createSearchJob"]>;
+  try {
+    before = store.createSearchJob({
+      request: buildRequest(),
+      offers: [buildOffer("offer-before-outage", "https://before.example/search")],
+      allOffers: [buildOffer("offer-before-outage", "https://before.example/search")],
+      searchMeta: buildSearchMeta(),
+      providerMeta: buildProviderMeta(),
+      warnings: [],
+      sortMode: "cheapest",
+      status: "completed",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 260));
+    assert.equal(readSqliteCounts(dbPath).searchJobs, 1);
+
+    // The disk refuses everything from here: `query_only` is per connection, so
+    // this is the store's own handle failing its transaction, not a fixture.
+    connection!.run("PRAGMA query_only = ON");
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    };
+    try {
+      during = store.createSearchJob({
+        request: buildRequest(),
+        offers: [buildOffer("offer-during-outage", "https://during.example/search")],
+        allOffers: [buildOffer("offer-during-outage", "https://during.example/search")],
+        searchMeta: buildSearchMeta(),
+        providerMeta: buildProviderMeta(),
+        warnings: [],
+        sortMode: "cheapest",
+        status: "completed",
+      });
+      // Three debounce windows with no mutation in them. A store that armed a
+      // retry of its own would have spoken again inside that stretch.
+      await new Promise((resolve) => setTimeout(resolve, 560));
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.equal(readSqliteCounts(dbPath).searchJobs, 1);
+    // The failure is said out loud exactly once — one refused write, one line.
+    assert.equal(warnings.length, 1, JSON.stringify(warnings));
+    assert.match(warnings[0]!, /session cache write failed/);
+
+    connection!.run("PRAGMA query_only = OFF");
+    after = store.createSearchJob({
+      request: buildRequest(),
+      offers: [buildOffer("offer-after-outage", "https://after.example/search")],
+      allOffers: [buildOffer("offer-after-outage", "https://after.example/search")],
+      searchMeta: buildSearchMeta(),
+      providerMeta: buildProviderMeta(),
+      warnings: [],
+      sortMode: "cheapest",
+      status: "completed",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 260));
+
+    // The write that was refused rides along with the one that follows it: the
+    // diff was still owed, not recomputed and not lost.
+    assert.equal(readSqliteCounts(dbPath).searchJobs, 3);
+  } finally {
+    // Whatever the assertions decide, the handle has to go: a store left open
+    // holds the temp directory and turns a failure into a cleanup error.
+    store.close();
+  }
+
+  const restored = new SearchSessionStore({ dbPath });
+  try {
+    assert.ok(restored.getSearchJob(before!.id));
+    assert.ok(restored.getSearchJob(during!.id));
+    assert.ok(restored.getSearchJob(after!.id));
+  } finally {
+    restored.close();
+  }
+});
+
+test("SEARCH_COMPLETED_SESSION_TTL_MS=0 is the shortest sweep the store can express, not a no-store", () => {
+  const child = spawnSync(process.execPath, ["--no-env-file", "-e", `
+    const store = await import("./src/session-store.ts");
+    const sessions = new store.SearchSessionStore();
+    const job = sessions.createSearchJob({
+      request: ${JSON.stringify(buildRequest())},
+      offers: [],
+      allOffers: [],
+      searchMeta: ${JSON.stringify(buildSearchMeta())},
+      providerMeta: ${JSON.stringify(buildProviderMeta())},
+      warnings: [],
+      sortMode: "cheapest",
+      status: "completed",
+    });
+    const idleAtOf = (record) => Math.max(Date.parse(record.updatedAt), Date.parse(record.lastAccessedAt));
+
+    // Stored the instant it is created: a TTL of zero is not a no-store.
+    const storedOnCreation = Boolean(sessions.getSearchJob(job.id));
+
+    // A sweep that runs at the job's own instant still keeps it.
+    sessions.purgeExpired(idleAtOf(sessions.getSearchJob(job.id)));
+    const survivesItsOwnInstant = Boolean(sessions.getSearchJob(job.id));
+
+    // The first sweep that sees any positive age takes it.
+    sessions.purgeExpired(idleAtOf(sessions.getSearchJob(job.id)) + 1);
+    const goneOnFirstPositiveAge = sessions.getSearchJob(job.id) === undefined;
+
+    sessions.close();
+    console.log(JSON.stringify({
+      ttlMs: store.COMPLETED_SEARCH_SESSION_TTL_MS,
+      storedOnCreation,
+      survivesItsOwnInstant,
+      goneOnFirstPositiveAge,
+    }));
+  `], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      NODE_ENV: "test",
+      SEARCH_COMPLETED_SESSION_TTL_MS: "0",
+      FLY_DESK_APP_DATA_DIR: "",
+      FLY_DESK_SESSION_DB_PATH: "",
+    },
+    encoding: "utf8",
+  });
+
+  assert.equal(child.status, 0, child.stderr);
+  assert.deepEqual(JSON.parse(child.stdout.trim()), {
+    ttlMs: 0,
+    storedOnCreation: true,
+    survivesItsOwnInstant: true,
+    goneOnFirstPositiveAge: true,
+  });
+});

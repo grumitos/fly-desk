@@ -179,8 +179,12 @@ test("baggage filter uses one compact segmented control and maps checked baggage
       page.waitForResponse("**/api/search"),
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
-    assert.equal(submittedFilters?.carryOnRequired, true);
-    assert.equal(submittedFilters?.checkedBaggageRequired, true);
+    // Read through a declared local: the route callback that fills this in is a
+    // closure, so at this point the checker still believes the initialiser.
+    const filters = submittedFilters as Record<string, unknown> | null;
+    assert.ok(filters, "the search was submitted without filters");
+    assert.equal(filters.carryOnRequired, true);
+    assert.equal(filters.checkedBaggageRequired, true);
   }, { autoOpen: false });
 });
 

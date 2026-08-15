@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./frontend/src/*"]
+    }
+  },
+  "include": ["test/helpers/**/*.ts", "test/ui/**/*.ts"]
+}
