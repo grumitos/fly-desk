@@ -3,6 +3,7 @@ import { AppIcon } from "@/components/ui/app-icon"
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { DayRangeCalendar, type RangePreset } from "@/components/ui/range-calendar"
 import { Sheet } from "@/components/ui/sheet"
+import { scrollCalendarMonthIntoView } from "@/lib/calendar-scroll"
 import { addDays, clampIsoDate, isIsoDate, monthKeyOf, nightsBetween } from "@/lib/iso-date"
 import { cn } from "@/lib/utils"
 
@@ -196,9 +197,7 @@ export function DateRangeField({
     if (!mobile || activeHalf === null) return
     const anchorMonth = monthKeyOf((activeHalf === "end" ? calendarEnd ?? calendarStart : calendarStart) ?? minDate)
     const frame = window.requestAnimationFrame(() => {
-      mobileCalendarRef.current
-        ?.querySelector<HTMLElement>(`[data-calendar-key="${anchorMonth}"]`)
-        ?.scrollIntoView({ block: "start" })
+      scrollCalendarMonthIntoView(mobileCalendarRef.current, anchorMonth)
     })
     return () => window.cancelAnimationFrame(frame)
   }, [activeHalf, calendarEnd, calendarStart, minDate, mobile])

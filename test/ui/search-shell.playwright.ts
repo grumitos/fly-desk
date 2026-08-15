@@ -249,7 +249,7 @@ test("idle search form transitions smoothly into the workspace layout", async ()
 
       Element.prototype.animate = function (
         this: Element,
-        keyframes?: Keyframe[] | PropertyIndexedKeyframes | null,
+        keyframes: Keyframe[] | PropertyIndexedKeyframes | null,
         options?: number | KeyframeAnimationOptions,
       ): Animation {
         if (this instanceof HTMLElement && this.dataset.testid === "search-shell-frame") {
@@ -777,6 +777,14 @@ test("the segmented pill belongs to the active option and theme hover inverts co
       });
     });
     const activeMetrics = await readSegmentMetrics();
+    /* The reader drops any option it cannot find, so the five have to be
+       counted before anything is asserted `every`: on an empty array both
+       checks below are true and the geometry would go unmeasured. */
+    assert.deepEqual(
+      activeMetrics.map((metric) => metric.name),
+      ["Exacto", "Flexible", "Migratorio", "Ida y vuelta", "Solo ida"],
+      JSON.stringify(activeMetrics),
+    );
     // 1a draws the desk segmented at 32 with a 1px border, so the option box is
     // 30. 01 §3: `repeat(n,auto)` gives every option the same air, which is
     // what the equal left/right padding checks.
@@ -1925,12 +1933,25 @@ test("11 §2.1 · one letter keeps Recientes, two highlight the first match", as
       document.querySelector('[aria-label="Origen"]')?.getAttribute("aria-activedescendant") !== null
     ));
     const matches = await page.getByRole("option").evaluateAll((items) => items.map((item) => ({
+      id: item.id,
       selected: item.getAttribute("aria-selected"),
       text: item.textContent ?? "",
     })));
-    // «Se resalta la primera fila» — and only it: «resaltado ≠ elegido».
-    assert.equal(matches[0]?.selected, "true");
-    assert.ok(matches.slice(1).every((match) => match.selected === "false"), JSON.stringify(matches));
+    /* «Se resalta la primera fila.» Three letters narrow this fixture to one
+       row, so what is asserted here is the highlight itself and the pointer the
+       keyboard follows — the «only the first» half of the rule needs a list with
+       a second row and is covered where there is one, in
+       `autocomplete.playwright.ts`. Asserting it against a single row would be
+       an empty `slice(1)` that passes whatever the component does. */
+    assert.equal(matches.length, 1, JSON.stringify(matches));
+    assert.match(matches[0].text, /MAD/);
+    assert.equal(matches[0].selected, "true");
+    assert.equal(
+      await origin.getAttribute("aria-activedescendant"),
+      matches[0].id,
+      JSON.stringify(matches),
+    );
+    // «resaltado ≠ elegido»: the field still holds what was typed.
     assert.equal(await origin.inputValue(), "mad");
   });
 });
@@ -2034,5 +2055,148 @@ test("01 §3 · a trailing affordance sits on the axis of its field, not of its 
         assert.ok(Math.abs(offset) <= 1, `${width}: trailing control off centre by ${offset}`);
       });
     }
+  }, { autoOpen: false });
+});
+
+/**
+ * 11 §6 · «La hoja sigue al dedo 1:1 y cae si se suelta pasado un tercio de su
+ * alto.»
+ *
+ * The gesture had no test at all: every suite that opens a sheet closes it with
+ * the cross, the scrim or `Esc`, so the one way a phone actually dismisses one
+ * was the only way nothing exercised. The three things it can get wrong are the
+ * three asserted here — following the finger at all, refusing to follow it
+ * upwards, and where the release turns into a dismissal.
+ */
+async function openMobileLocationSheet(page: Page, baseUrl: string) {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await routeLocationMatches(page);
+  await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
+  const origin = page.getByRole("combobox", { name: "Origen" });
+  await origin.waitFor();
+  await origin.click();
+  const sheet = page.getByRole("dialog", { name: "Origen" });
+  await sheet.waitFor();
+  // The drag lives on the handle, not on the body: the body is the one thing
+  // that scrolls (02 §7).
+  assert.equal(await sheet.locator(".fd-sheet-handle-zone").count(), 1);
+  return sheet;
+}
+
+/**
+ * Plays a downward drag on the sheet's handle and reports what the panel did
+ * while the finger was on it. `release` runs `touchend`; without it the finger
+ * is still down when the measurements are taken.
+ */
+async function dragSheetHandle(
+  page: Page,
+  { by, release }: { by: number[]; release: boolean },
+): Promise<{ transforms: string[]; height: number }> {
+  return page.evaluate(({ by, release }) => {
+    const zone = document.querySelector<HTMLElement>(".fd-sheet-handle-zone");
+    const panel = zone?.closest<HTMLElement>(".fd-sheet");
+    if (!zone || !panel) throw new Error("Missing sheet handle.");
+
+    const startY = 700;
+    const touchAt = (clientY: number) => new Touch({ identifier: 1, target: zone, clientX: 195, clientY });
+    const fire = (type: string, clientY: number) => {
+      zone.dispatchEvent(new TouchEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        touches: type === "touchend" ? [] : [touchAt(clientY)],
+        changedTouches: [touchAt(clientY)],
+      }));
+    };
+
+    const height = panel.getBoundingClientRect().height;
+    fire("touchstart", startY);
+    const transforms: string[] = [];
+    for (const offset of by) {
+      fire("touchmove", startY + offset);
+      transforms.push(panel.style.transform);
+    }
+    if (release) fire("touchend", startY + (by[by.length - 1] ?? 0));
+
+    return { transforms, height };
+  }, { by, release });
+}
+
+test("11 §6 · the sheet follows the finger down, and only down", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const sheet = await openMobileLocationSheet(page, baseUrl);
+
+    const { transforms } = await dragSheetHandle(page, { by: [40, 90, -60, 0], release: false });
+
+    // 1:1, not a fraction of the movement and not a fixed step.
+    assert.deepEqual(transforms.slice(0, 2), ["translateY(40px)", "translateY(90px)"], JSON.stringify(transforms));
+    /* Upwards is clamped at 0 rather than followed: a sheet anchored to the
+       bottom edge would open a gap under itself. */
+    assert.deepEqual(transforms.slice(2), ["translateY(0px)", "translateY(0px)"], JSON.stringify(transforms));
+    // And it is still open — nothing has been released yet.
+    assert.equal(await sheet.isVisible(), true);
+  }, { autoOpen: false });
+});
+
+test("11 §6 · a release short of a third springs back, and past it dismisses", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const sheet = await openMobileLocationSheet(page, baseUrl);
+
+    const short = await dragSheetHandle(page, { by: [Math.round(844 / 4)], release: true });
+    /* The threshold is a third of the sheet's own height, not a fixed 80px: a
+       fixed release with nothing moving under the finger read as a control that
+       had not noticed the gesture at all. */
+    assert.ok(short.height >= 300, JSON.stringify(short));
+    assert.ok(short.height / 4 < short.height / 3, JSON.stringify(short));
+    /* Long enough for the exit to have run if the release had been taken as a
+       dismissal — `waitFor("visible")` on its own resolves against the sheet
+       that is still on screen only because it has not finished leaving. */
+    await page.waitForTimeout(400);
+    assert.equal(await sheet.isVisible(), true);
+    // Sprung back: the panel hands `transform` to the settle animation.
+    assert.equal(
+      await sheet.evaluate((panel) => (panel as HTMLElement).style.transform),
+      "",
+    );
+    assert.equal(await sheet.getAttribute("data-drag"), "settle");
+
+    const far = await dragSheetHandle(page, { by: [Math.round(short.height / 2)], release: true });
+    assert.ok(far.height / 2 > far.height / 3, JSON.stringify(far));
+    await sheet.waitFor({ state: "detached" });
+    // Dismissed by the gesture, not by an unmount that lost the field's value.
+    assert.equal(await page.getByRole("combobox", { name: "Origen" }).isVisible(), true);
+  }, { autoOpen: false });
+});
+
+test("11 §6 · dragging the body of the sheet scrolls it instead of moving it", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const sheet = await openMobileLocationSheet(page, baseUrl);
+
+    const moved = await page.evaluate(() => {
+      const body = document.querySelector<HTMLElement>(".fd-sheet-body");
+      const panel = body?.closest<HTMLElement>(".fd-sheet");
+      if (!body || !panel) throw new Error("Missing sheet body.");
+
+      const touchAt = (clientY: number) => new Touch({ identifier: 2, target: body, clientX: 195, clientY });
+      const fire = (type: string, clientY: number) => {
+        body.dispatchEvent(new TouchEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          touches: type === "touchend" ? [] : [touchAt(clientY)],
+          changedTouches: [touchAt(clientY)],
+        }));
+      };
+
+      fire("touchstart", 700);
+      fire("touchmove", 780);
+      const transform = panel.style.transform;
+      fire("touchend", 780);
+      return { transform, drag: panel.dataset.drag ?? null };
+    });
+
+    // The panel never became the thing being dragged, so 02 §7's scroller keeps
+    // the gesture.
+    assert.equal(moved.transform, "");
+    assert.equal(moved.drag, null);
+    assert.equal(await sheet.isVisible(), true);
   }, { autoOpen: false });
 });

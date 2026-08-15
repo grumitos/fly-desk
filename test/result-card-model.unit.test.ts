@@ -128,10 +128,44 @@ test("the card names the stop by airport and omits the redundant route column", 
   // without opening anything.
   assert.equal(card.legs.length, 1);
   assert.equal(card.legs[0].stopsLabel, "1 escala · PTY");
-  // The stacked card's stops lane is 66px and the full wording does not fit in
+  // The stacked card's stops lane is 57px and the full wording does not fit in
   // it, so plate 8c abbreviates and keeps the airport code (02 §6).
   assert.equal(card.legs[0].stopsShortLabel, "1 esc · PTY");
   assert.equal(card.legs[0].stopsTone, "one-stop");
+});
+
+test("from two stops the short form keeps the count and drops the airports", () => {
+  const base = connectingOffer();
+  const outbound = base.itineraries[0];
+  const twoStops = buildResultCardModel({
+    ...base,
+    itineraries: [
+      {
+        ...outbound,
+        stops: 2,
+        layoverMinutes: [90, 70],
+        segments: [
+          ...outbound.segments,
+          {
+            flightNumber: "CM 300",
+            marketingCarrier: "CM",
+            origin: "MIA",
+            destination: "JFK",
+            departureAt: "2026-06-09T09:30:00+02:00",
+            arrivalAt: "2026-06-09T12:40:00+02:00",
+          },
+        ],
+      },
+    ],
+  } as CanonicalOffer, 1);
+
+  // The desk keeps every airport it has room for.
+  assert.equal(twoStops.legs[0].stopsLabel, "2 escalas · PTY, MIA");
+  // 57px holds neither «2 esc · PTY, MIA» (82) nor the ellipsis it would be cut
+  // to, and an ellipsis there hides exactly the codes it was cut to show. The
+  // airports stay in the long form, in the tooltip and in the detail sheet.
+  assert.equal(twoStops.legs[0].stopsShortLabel, "2 esc");
+  assert.equal(twoStops.legs[0].stopsTone, "many-stops");
 });
 
 test("duration and stops are per leg, not summed across the trip", () => {

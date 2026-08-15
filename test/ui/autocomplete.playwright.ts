@@ -230,7 +230,7 @@ test("empty location field shows separate recent and frequent sections", async (
 
 test("late global ranking data does not recenter or resize the idle search block", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
-    let releaseRanking = () => undefined;
+    let releaseRanking: () => void = () => undefined;
     const rankingGate = new Promise<void>((resolve) => {
       releaseRanking = resolve;
     });

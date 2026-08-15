@@ -19,6 +19,21 @@ const COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
 const PERSISTED_SEARCH_CACHE_RESTORE_BUDGET_BYTES = 128 * 1024 * 1024;
 const COMPLETED_SEARCH_SESSION_RESIDENT_DEFAULT_BUDGET_BYTES = 128 * 1024 * 1024;
 export const COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS = 5_000;
+/*
+ * Durability policy, half two: this is the age a finished job may reach before
+ * a sweep takes it, and nothing else. It is not a switch for whether the desk
+ * stores results at all.
+ *
+ * So `0` is the shortest lifetime the sweep can express, not a `no-store`: a
+ * job is stored the instant it is created, survives a sweep that runs at its
+ * own timestamp, and is taken by the first sweep that sees a positive age —
+ * which on a running desk is the 60s maintenance interval of `src/index.ts`,
+ * not the moment the search ended. Reuse follows the same threshold, so at `0`
+ * a completed search is never handed to a second request; only the retention
+ * window is longer than the number suggests. A deployment that must not keep
+ * finished searches on disk has to say so by not giving the store a database,
+ * not by asking this number for a guarantee it does not make.
+ */
 export const COMPLETED_SEARCH_SESSION_TTL_MS = (() => {
   const raw = Number(process.env.SEARCH_COMPLETED_SESSION_TTL_MS ?? COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS);
   return Number.isFinite(raw) && raw >= 0
@@ -1888,6 +1903,23 @@ export class SearchSessionStore {
     this.residentBudgetTimer.unref?.();
   }
 
+  /*
+   * Durability policy, half one: the debounce is the only thing that schedules
+   * a write, and a write that fails schedules nothing of its own.
+   *
+   * That is deliberate rather than an omission. The three `persisted*` maps
+   * that decide what a write has to carry are updated only after the
+   * transaction commits, so a failed write leaves the whole diff — the changed
+   * rows and the deleted ids alike — still owed. The next mutation's debounce
+   * carries it, and `close()` carries whatever is left at shutdown; nothing is
+   * recomputed and nothing is lost in memory. A retry timer of its own would
+   * add a second schedule that, against a disk that is full or read-only,
+   * would spin every 180ms for the life of the process without writing a byte.
+   *
+   * What the policy costs is the window between a failed write and the next
+   * mutation on an idle desk: for that stretch the results are memory-only, so
+   * the failure is said out loud below rather than swallowed.
+   */
   private schedulePersist(): void {
     if (!this.db || this.bootstrapping || this.persistTimer) {
       return;
@@ -2127,8 +2159,14 @@ export class SearchSessionStore {
         ].reduce((total, entry) => total + entry.state.bytes, 0),
       });
       return true;
-    } catch {
-      // Ignore persistence failures; in-memory store remains usable.
+    } catch (error) {
+      /* The in-memory store stays usable and stays authoritative, so this is
+         not a request failure and must not become one. It is still the one
+         moment where the desk stops being durable, and the operator is the
+         only one who can act on it — see `schedulePersist()` for why no retry
+         is armed here. */
+      const detail = error instanceof Error ? error.message : "unknown persistence failure";
+      console.warn(`Fly Desk session cache write failed; the change stays in memory until the next one: ${detail}`);
       return false;
     }
   }

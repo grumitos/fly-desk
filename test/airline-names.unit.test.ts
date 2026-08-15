@@ -49,11 +49,34 @@ test("normalizeAirlineDisplayName centralizes known carrier code display names",
   assert.equal(normalizeAirlineDisplayName("H2"), "Sky");
 });
 
+test("normalizeAirlineDisplayName names the carriers a Lima desk sees every day", () => {
+  assert.equal(normalizeAirlineDisplayName("CM"), "Copa");
+  assert.equal(normalizeAirlineDisplayName("AA"), "American");
+  assert.equal(normalizeAirlineDisplayName("DL"), "Delta");
+  assert.equal(normalizeAirlineDisplayName("UA"), "United");
+  assert.equal(normalizeAirlineDisplayName("B6"), "JetBlue");
+  assert.equal(normalizeAirlineDisplayName("NK"), "Spirit");
+  assert.equal(normalizeAirlineDisplayName("AF"), "Air France");
+  assert.equal(normalizeAirlineDisplayName("KL"), "KLM");
+  assert.equal(normalizeAirlineDisplayName("LH"), "Lufthansa");
+  assert.equal(normalizeAirlineDisplayName("G3"), "Gol");
+  assert.equal(normalizeAirlineDisplayName("AD"), "Azul");
+  assert.equal(normalizeAirlineDisplayName("VB"), "Viva Aerobus");
+  assert.equal(normalizeAirlineDisplayName("Y4"), "Volaris");
+});
+
 test("normalizeAirlineDisplayName centralizes known carrier name variants", () => {
   assert.equal(normalizeAirlineDisplayName("Aeromexico"), "Aeroméxico");
   assert.equal(normalizeAirlineDisplayName("Aeroméxico"), "Aeroméxico");
   assert.equal(normalizeAirlineDisplayName("Plus Ultra Lineas Aereas"), "Plus Ultra");
   assert.equal(normalizeAirlineDisplayName("Delta Air Lines"), "Delta");
+  assert.equal(normalizeAirlineDisplayName("Copa Airlines"), "Copa");
+  assert.equal(normalizeAirlineDisplayName("American Airlines"), "American");
+  assert.equal(normalizeAirlineDisplayName("Spirit Airlines"), "Spirit");
+  assert.equal(normalizeAirlineDisplayName("JetBlue Airways"), "JetBlue");
+  assert.equal(normalizeAirlineDisplayName("Gol Linhas Aéreas"), "Gol");
+  assert.equal(normalizeAirlineDisplayName("Azul Linhas Aéreas Brasileiras"), "Azul");
+  assert.equal(normalizeAirlineDisplayName("VivaAerobús"), "Viva Aerobus");
 });
 
 test("resolveAirlineDisplayName prefers normalized names and falls back to normalized codes", () => {
@@ -88,4 +111,7 @@ test("airlineNameMatchKey treats styled airline variants as the same carrier", (
   assert.equal(airlineNameMatchKey("JetSmart Airlines SpA"), airlineNameMatchKey("JZ"));
   assert.equal(airlineNameMatchKey("Aeromexico"), airlineNameMatchKey("Aeroméxico"));
   assert.equal(airlineNameMatchKey("Aeromexico"), airlineNameMatchKey("AM"));
+  assert.equal(airlineNameMatchKey("Copa Airlines"), airlineNameMatchKey("CM"));
+  assert.equal(airlineNameMatchKey("American Airlines"), airlineNameMatchKey("AA"));
+  assert.equal(airlineNameMatchKey("JetBlue Airways"), airlineNameMatchKey("B6"));
 });

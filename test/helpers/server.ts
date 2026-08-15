@@ -1,7 +1,14 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { createServer as createTcpServer } from "node:net";
 import { resolve } from "node:path";
+import type { Readable } from "node:stream";
 import { applyEnvironment } from "./environment.ts";
+
+/* `stdio: ["ignore", "pipe", "pipe"]` — no stdin, and both readers are there to
+   be read. That is what `spawn` returns for this exact stdio triple, so it is
+   what the helpers below take: `ChildProcessWithoutNullStreams` promised a
+   writable stdin this child does not have. */
+type TestServerProcess = ChildProcessByStdio<null, Readable, Readable>;
 
 const CHROMIUM_UNSAFE_PORTS = new Set([
   1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79,
@@ -46,9 +53,15 @@ async function listenOnInProcessBunServer(): Promise<ServerHandle> {
 
   for (;;) {
     const server = createServer({ port: 0, hostname: "127.0.0.1" });
-    if (!CHROMIUM_UNSAFE_PORTS.has(server.port)) {
+    const { port } = server;
+    if (port === undefined) {
+      await server.stop();
+      throw new Error("The in-process Bun test server did not report a port.");
+    }
+
+    if (!CHROMIUM_UNSAFE_PORTS.has(port)) {
       return {
-        baseUrl: `http://127.0.0.1:${server.port}`,
+        baseUrl: `http://127.0.0.1:${port}`,
         stop: () => server.stop(),
       };
     }
@@ -63,7 +76,7 @@ function resolveBunExecutable(): string {
 
 async function waitForExternalServer(
   baseUrl: string,
-  child: ChildProcessWithoutNullStreams,
+  child: TestServerProcess,
   getLogs: () => string,
 ): Promise<void> {
   const deadline = Date.now() + 20_000;
@@ -94,7 +107,7 @@ async function waitForExternalServer(
   throw new Error(`Timed out waiting for Bun test server at ${baseUrl}.\n${getLogs()}`);
 }
 
-async function stopExternalServer(child: ChildProcessWithoutNullStreams): Promise<void> {
+async function stopExternalServer(child: TestServerProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) {
     return;
   }
