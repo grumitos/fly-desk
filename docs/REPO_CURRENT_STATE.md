@@ -78,7 +78,7 @@ The React UI must not display simulated controls. The following remain outside t
 
 ### Providers
 
-- Agil uses a persistent Chrome session and a subscription key from the environment or recovered from the Agil bundle; Linux/VPS defaults to the loopback CDP endpoint on port 9222, explicit browser endpoints win, and Windows keeps discovery explicit
+- Agil mints its bearer over plain HTTP from a persisted identity (`agil-identity.json` under the state directory, path override `AGIL_IDENTITY_PATH`); the Chrome profile is consulted only to bootstrap that file when it is absent or the identity is refused. The subscription key comes from the environment or is recovered from the Agil bundle; Linux/VPS defaults to the loopback CDP endpoint on port 9222, explicit browser endpoints win, and Windows keeps discovery explicit
 - Click and Book Plus uses environment-controlled context, a host allowlist, and optional B2B warm-up; B2B automation accepts only HTTPS on the exact `b2b.clickandbook.com` origin and rechecks same-origin navigation before entering credentials or OTP
 - Click and Book Plus does not accept hosts or base URLs per request
 - Click and Book Plus payload statuses 401/403/429/5xx propagate as partial
@@ -235,13 +235,13 @@ Deployed revisions and the live service inventory are maintained in `D:\Dev\VPS\
 - `src/local-agil.ts` concentrates session handling, client behavior, pricing, and mapping
 - `src/local-costamar.ts` concentrates B2B automation, client behavior, mapping, and Click and Book Plus redirects
 - persistence is local SQLite; there is no external store for multiple instances
-- session SQLite uses WAL, `synchronous=NORMAL`, and a five-second busy timeout, but a write that still fails is not independently retried until another mutation or close; add an explicit retry/observability policy before relying on stronger durability
-- `SEARCH_COMPLETED_SESSION_TTL_MS=0` expires on the first positive-age maintenance pass, not synchronously as `no-store`; avoid zero until that semantic is deliberately closed
+- session SQLite uses WAL, `synchronous=NORMAL`, and a five-second busy timeout; a refused write is owed to the next mutation's debounce (with `close()` carrying the remainder) rather than retried on a timer, and is logged. This is explicit policy, registered in `REDESIGN_CONTRACT.md` and pinned by an integration test
+- `SEARCH_COMPLETED_SESSION_TTL_MS` is a sweep threshold, not a storage switch: `0` is the shortest expressible lifetime, taken by the first positive-age maintenance pass, never a synchronous `no-store`. Registered in `REDESIGN_CONTRACT.md` and pinned by a subprocess test
 - provider search failures expose the truthful closed state
   `degraded/partial_results`; distinguishing authentication, throttling, and
   upstream availability in the public rail would require a typed cause across
   every provider/worker transport and remains a separate contract decision
-- persistent Chrome CDP is covered by `fly-desk-chrome.service`; Agil still needs a valid real session in that VPS profile
+- persistent Chrome CDP is covered by `fly-desk-chrome.service`; Agil needs the session in that VPS profile only to bootstrap `agil-identity.json` — once the file exists, cold starts mint their own token without the browser, and the file can also be seeded from a logged-in maintainer browser (see `AGIL_SESSION_RECOVERY.md`)
 - all three Fly application units currently share `/etc/fly-desk.env` and the `fly-desk` identity; separating least privilege would be a platform change and is not justified by this product-only cableado
 - disk-only legacy session rows outside the restore budget may retain historical raw provider URLs until they are restored or expire; current writes and restored paths are sanitized, so a bulk migration was not added without an operational requirement
 - the main router and dedicated redirect service retain parallel `/r/<id>` orchestration around a shared resolver; consolidating them would cross authentication and process boundaries, so it remains an explicit refactor rather than a speculative layer

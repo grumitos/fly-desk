@@ -9,6 +9,39 @@ On Linux, the runtime uses `http://127.0.0.1:9222` when neither
 `fly-desk-chrome.service` on the VPS. An explicit endpoint still wins; Windows
 does not receive this implicit fallback.
 
+## Identity-File Shortcut (preferred)
+
+Since fly-desk PR #52 the runtime mints its Agil bearer over plain HTTP from
+three account identifiers persisted in `agil-identity.json` under
+`/var/lib/fly-desk` (path override: `AGIL_IDENTITY_PATH`). The browser session
+is only the bootstrap source for that file. If the VPS profile lost its session
+but the maintainer's local browser still has one, seeding the file directly is
+enough — no cookie or storage transplant.
+
+1. In the logged-in local browser, on `https://www.agilsmart.com/home-user`,
+   derive the three values from `localStorage` without printing them:
+   `user_data` is base64-encoded UTF-8 JSON (`userCode` =
+   `Usuario.CodigoUsuario`, a number; `internalCode` =
+   `Cliente.Vendedor.CodigoVendedor`, a string) and `ip` is base64-encoded
+   text. Save `{"userCode":…,"internalCode":"…","ip":"…"}` to a private
+   temporary file only. A page opened mid-logout has an empty or foreign-origin
+   `localStorage`; confirm the tab rests on `/home-user` first.
+2. Install it on the VPS through the reviewed deploy wrapper as
+   `/var/lib/fly-desk/agil-identity.json`, owner `fly-desk:fly-desk`, mode
+   `0600`, validating the JSON shape before the move. Delete every local and
+   staged copy afterward.
+3. Restart `fly-desk-search.service`, then `fly-desk.service` (step 8 below).
+4. Verify: the startup provider prewarm logs
+   `provider prewarm skipped … agil-local` only on failure, so silence is
+   success; then run `Fly Desk Production Smoke` in `vps-platform`, which
+   requires a purchase link from both providers.
+
+This shortcut was validated in production on 2026-08-15: a search that
+returned Click and Book Plus offers alone recovered to both providers with no
+Chrome interaction. The full session transplant below remains the fallback
+when identity minting itself is refused and the VPS browser needs a real
+session again.
+
 ## Rules
 
 - Do not print cookies, tokens, storage payloads, passwords, or values from `/etc/fly-desk.env`.
