@@ -162,10 +162,6 @@
     color: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent);
   }
 
-  .fd-card__baggage-label {
-    display: none;
-  }
-
   /* ---- legs -------------------------------------------------------------
    * Fixed lanes so the two rows align down the card: date 58, schedule 126,
    * duration 50, stops elastic.
