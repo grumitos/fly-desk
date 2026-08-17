@@ -745,7 +745,10 @@ test("11 §3 · a month card selects like a result card, and «Abrir mes» opens
      * opens reads the job that month already has on the server instead of
      * paying for the same work twice.
      */
-    const monthKeys = ["2026-04", "2026-05", "2026-06"];
+    /* Three months of sweep, taken from the picker rather than written down:
+       the window it offers starts at the server's pinned `SEARCH_TODAY_OVERRIDE`
+       and the months are whatever that start implies. */
+    const sweepMonthCount = 3;
     const offerFor = (monthKey: string, amount: number) => buildOffer({
       id: `sweep-${monthKey}`,
       destination: "MAD",
@@ -756,13 +759,43 @@ test("11 §3 · a month card selects like a result card, and «Abrir mes» opens
       },
     });
 
+    /*
+     * The two lookups the sweep is gated on.
+     *
+     * `handleSubmit` resolves «LIM» and «MAD» against `/api/locations` *before*
+     * it starts the search, so with the endpoint left live there is an
+     * unbounded round trip against the shared test server sitting between the
+     * click on «Buscar» and the first month card — and nothing in this case was
+     * gating on it. A loaded CI runner is simply more likely to lose that race,
+     * and when it does the only symptom is `migration-month-card` never
+     * appearing, which reads as a grid bug and is not one. The sibling cases in
+     * this file stub the endpoint for the same reason. Routed on the context so
+     * the tab «Abrir mes» opens is covered too.
+     */
+    const knownLocations: Record<string, Record<string, string>> = {
+      LIM: { code: "LIM", city: "Lima", country: "Perú", countryCode: "PE", cityCode: "LIM", searchType: "CI", label: "LIM - Lima, Perú" },
+      MAD: { code: "MAD", city: "Madrid", country: "España", countryCode: "ES", cityCode: "MAD", searchType: "CI", label: "MAD - Madrid, España" },
+    };
+    await context.route("**/api/locations**", async (route) => {
+      const query = (new URL(route.request().url()).searchParams.get("q") ?? "").trim().toUpperCase();
+      const suggestion = knownLocations[query];
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ query, suggestions: suggestion ? [suggestion] : [] }),
+      });
+    });
+
     // One job per month, named after the month it swept.
     await page.route("**/api/search", async (route) => {
       const payload = route.request().postDataJSON() as {
         request: { legs: { departureStart?: string }[] };
         sortMode: string;
       };
-      const monthKey = (payload.request.legs[0]?.departureStart ?? "2026-04-01").slice(0, 7);
+      /* No date fallback: a payload that stopped carrying `departureStart` used
+         to collapse every month onto one job id and pass, which is how the
+         request shape could drift without this case noticing. */
+      const monthKey = (payload.request.legs[0]?.departureStart ?? "sin-fecha").slice(0, 7);
       const offers = [offerFor(monthKey, 1500)];
       await route.fulfill({
         status: 200,
@@ -842,10 +875,17 @@ test("11 §3 · a month card selects like a result card, and «Abrir mes» opens
     await monthPicker.waitFor();
     const pickable = monthPicker.locator("button:not([disabled])[aria-label*='de 20']");
     await pickable.first().click();
-    await pickable.nth(monthKeys.length - 1).click();
+    await pickable.nth(sweepMonthCount - 1).click();
     await page.keyboard.press("Escape");
     await monthPicker.waitFor({ state: "detached" });
-    await page.getByRole("button", { name: "Buscar" }).click();
+    /* Wait for the sweep to leave, not just for the click to land: the form
+       submits asynchronously, so a case that only watches for a card cannot
+       tell «the grid did not render» from «the search never started» — and it
+       was always the second one. */
+    await Promise.all([
+      page.waitForRequest("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
 
     const cards = page.getByTestId("migration-month-card");
     await cards.first().waitFor();
