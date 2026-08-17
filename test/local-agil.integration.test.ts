@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -1706,4 +1706,251 @@ test("fails clearly when neither env nor the Agil frontend expose the subscripti
       process.env.AGIL_APIM_SUBSCRIPTION_KEY = previousKey;
     }
   }
+});
+
+const AGIL_PERSISTED_IDENTITY = {
+  userCode: 1234,
+  internalCode: "ABCD",
+  ip: "1.2.3.4",
+};
+
+/* The staged Chrome profile deliberately holds a *different* identity, so a
+   browser round-trip cannot happen unnoticed: it would mint for this identity
+   and overwrite the identity file with it. */
+const AGIL_BROWSER_IDENTITY = {
+  userCode: 9999,
+  internalCode: "BROWSER",
+  ip: "9.9.9.9",
+};
+
+const AGIL_IDENTITY_RIG_ENV_KEYS = [
+  "AGIL_APIM_SUBSCRIPTION_KEY",
+  "AGIL_IDENTITY_PATH",
+  "AGIL_CHROME_USER_DATA_DIR",
+  "AGIL_CHROME_PROFILE",
+  "AGIL_BROWSER_URL",
+  "AGIL_BROWSER_WS_ENDPOINT",
+  "AGIL_CHROME_PROCESS_DISCOVERY",
+  "AGIL_SCAN_ALL_CHROME_PROFILES",
+  "AGIL_RAW_CHROME_STORAGE_FILE_SCAN",
+  "AGIL_TEMP_CHROME_STORAGE_FALLBACK",
+  "CHROME_USER_DATA_DIR",
+  "COSTAMAR_CHROME_USER_DATA_DIR",
+  "LOCALAPPDATA",
+];
+
+interface AgilIdentityRig {
+  identityPath: string;
+  mintedToken: string;
+  mintedIdentities: Array<{ userCode?: number; internalCode?: string; ip?: string }>;
+  searchAuthorizations: string[];
+  readIdentityFile: () => unknown;
+}
+
+async function withAgilIdentityRig(
+  options: {
+    persistedIdentity?: { userCode: number; internalCode: string; ip: string };
+    refuseMintForUserCode?: number;
+  },
+  run: (rig: AgilIdentityRig) => Promise<void>,
+): Promise<void> {
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-agil-identity-"));
+  const profileName = "Profile 40";
+  const storageDir = join(tempRoot, profileName, "Local Storage", "leveldb");
+  mkdirSync(storageDir, { recursive: true });
+  writeFileSync(
+    join(tempRoot, "Local State"),
+    JSON.stringify({
+      profile: {
+        last_used: profileName,
+        last_active_profiles: [profileName],
+        info_cache: {
+          [profileName]: {},
+        },
+      },
+    }),
+    "utf8",
+  );
+
+  const browserUserPayload = Buffer.from(JSON.stringify({
+    Usuario: {
+      CodigoUsuario: AGIL_BROWSER_IDENTITY.userCode,
+    },
+    Cliente: {
+      Vendedor: {
+        CodigoVendedor: AGIL_BROWSER_IDENTITY.internalCode,
+      },
+    },
+  })).toString("base64");
+  const browserIpPayload = Buffer.from(AGIL_BROWSER_IDENTITY.ip).toString("base64");
+  writeFileSync(
+    join(storageDir, "000001.log"),
+    `https://www.agilsmart.com/home-user\0tokenTravelC browser-token user_data ${browserUserPayload} ip ${browserIpPayload}`,
+    "utf8",
+  );
+
+  const identityPath = join(tempRoot, "agil-identity.json");
+  if (options.persistedIdentity) {
+    writeFileSync(identityPath, JSON.stringify(options.persistedIdentity), "utf8");
+  }
+
+  const previousEnv = new Map<string, string | undefined>(
+    AGIL_IDENTITY_RIG_ENV_KEYS.map((key) => [key, process.env[key]] as const),
+  );
+  const previousFetch = global.fetch;
+  const mintedTokenPayload = Buffer.from(JSON.stringify({ exp: 1893459600 })).toString("base64url");
+  const mintedToken = `header.${mintedTokenPayload}.signature`;
+  const mintedIdentities: AgilIdentityRig["mintedIdentities"] = [];
+  const searchAuthorizations: string[] = [];
+
+  resetAgilSessionCacheForTests();
+  resetAgilApimSubscriptionKeyCacheForTests();
+  process.env.AGIL_APIM_SUBSCRIPTION_KEY = "test-subscription-key";
+  process.env.AGIL_IDENTITY_PATH = identityPath;
+  process.env.AGIL_CHROME_USER_DATA_DIR = tempRoot;
+  process.env.AGIL_CHROME_PROFILE = profileName;
+  process.env.AGIL_CHROME_PROCESS_DISCOVERY = "0";
+  process.env.AGIL_SCAN_ALL_CHROME_PROFILES = "0";
+  process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN = "1";
+  process.env.AGIL_TEMP_CHROME_STORAGE_FALLBACK = "0";
+  process.env.LOCALAPPDATA = join(tempRoot, "isolated-localappdata");
+  delete process.env.AGIL_BROWSER_URL;
+  delete process.env.AGIL_BROWSER_WS_ENDPOINT;
+  delete process.env.CHROME_USER_DATA_DIR;
+  delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+
+  global.fetch = (async (input, init) => {
+    const url = String(input);
+    const headers = new Headers(init?.headers);
+
+    if (url === "https://motorvuelos.expertiatravel.com/auth/api/auth/token") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        userCode?: number;
+        internalCode?: string;
+        caller?: { fromIP?: string };
+      };
+      mintedIdentities.push({
+        userCode: body.userCode,
+        internalCode: body.internalCode,
+        ip: body.caller?.fromIP,
+      });
+
+      if (options.refuseMintForUserCode !== undefined && body.userCode === options.refuseMintForUserCode) {
+        return new Response("", { status: 401 });
+      }
+
+      return new Response(JSON.stringify({ token: mintedToken }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/start-search") {
+      searchAuthorizations.push(headers.get("Authorization") ?? "");
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/search") {
+      searchAuthorizations.push(headers.get("Authorization") ?? "");
+      const body = JSON.parse(String(init?.body ?? "{}")) as { gds?: number };
+      return new Response(JSON.stringify({
+        groups: body.gds === 0 ? [buildAgilOptionsGroup(false)] : [],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    await run({
+      identityPath,
+      mintedToken,
+      mintedIdentities,
+      searchAuthorizations,
+      readIdentityFile: () => JSON.parse(readFileSync(identityPath, "utf8")) as unknown,
+    });
+  } finally {
+    global.fetch = previousFetch;
+    resetAgilSessionCacheForTests();
+    resetAgilApimSubscriptionKeyCacheForTests();
+    previousEnv.forEach((value, key) => restoreEnv(key, value));
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+test("Agil revalidates a stale session from the persisted identity without opening the browser", async () => {
+  await withAgilIdentityRig({ persistedIdentity: AGIL_PERSISTED_IDENTITY }, async (rig) => {
+    const now = Date.now();
+    const expiresAtMs = now + (60 * 60 * 1000);
+    const capturedAtMs = now - (5 * 60 * 1000);
+
+    // Past the revalidate window, so the session is no longer reusable as-is.
+    assert.equal(shouldReuseAgilSession({ expiresAtMs, capturedAtMs }, now), false);
+    setAgilSessionForTests({
+      token: "cached-token",
+      expiresAtMs,
+      capturedAtMs,
+      ...AGIL_PERSISTED_IDENTITY,
+    });
+
+    const result = await searchLocalAgilExact(buildAgilExactRequest("one-way"));
+
+    assert.equal(result.offers.length, 2);
+    assert.deepEqual(rig.mintedIdentities, []);
+    assert.ok(rig.searchAuthorizations.length > 0);
+    assert.ok(rig.searchAuthorizations.every((value) => value === "Bearer cached-token"));
+    assert.deepEqual(rig.readIdentityFile(), AGIL_PERSISTED_IDENTITY);
+  });
+});
+
+test("Agil mints from the persisted identity when the cached token nears expiry, still without the browser", async () => {
+  await withAgilIdentityRig({ persistedIdentity: AGIL_PERSISTED_IDENTITY }, async (rig) => {
+    const now = Date.now();
+    setAgilSessionForTests({
+      token: "cached-token",
+      expiresAtMs: now + 60_000,
+      capturedAtMs: now - (5 * 60 * 1000),
+      ...AGIL_PERSISTED_IDENTITY,
+    });
+
+    const result = await searchLocalAgilExact(buildAgilExactRequest("one-way"));
+
+    assert.equal(result.offers.length, 2);
+    assert.deepEqual(rig.mintedIdentities, [AGIL_PERSISTED_IDENTITY]);
+    assert.ok(rig.searchAuthorizations.length > 0);
+    assert.ok(rig.searchAuthorizations.every((value) => value === `Bearer ${rig.mintedToken}`));
+    assert.deepEqual(rig.readIdentityFile(), AGIL_PERSISTED_IDENTITY);
+  });
+});
+
+test("Agil still bootstraps from the browser when no identity file exists, and persists what it read", async () => {
+  await withAgilIdentityRig({}, async (rig) => {
+    assert.equal(existsSync(rig.identityPath), false);
+
+    await prewarmLocalAgilSession();
+
+    assert.deepEqual(rig.readIdentityFile(), AGIL_BROWSER_IDENTITY);
+    assert.deepEqual(rig.mintedIdentities, [AGIL_BROWSER_IDENTITY]);
+  });
+});
+
+test("Agil falls back to the browser when the persisted identity is refused", async () => {
+  await withAgilIdentityRig({
+    persistedIdentity: AGIL_PERSISTED_IDENTITY,
+    refuseMintForUserCode: AGIL_PERSISTED_IDENTITY.userCode,
+  }, async (rig) => {
+    const result = await searchLocalAgilExact(buildAgilExactRequest("one-way"));
+
+    assert.equal(result.offers.length, 2);
+    assert.deepEqual(rig.mintedIdentities, [AGIL_PERSISTED_IDENTITY, AGIL_BROWSER_IDENTITY]);
+    assert.deepEqual(rig.readIdentityFile(), AGIL_BROWSER_IDENTITY);
+    assert.ok(rig.searchAuthorizations.length > 0);
+    assert.ok(rig.searchAuthorizations.every((value) => value === `Bearer ${rig.mintedToken}`));
+  });
 });

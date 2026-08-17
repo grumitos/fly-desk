@@ -1925,16 +1925,10 @@ export function shouldReuseAgilSession(
     && now - session.capturedAtMs < AGIL_SESSION_REVALIDATE_MS;
 }
 
-/* A cold process can mint its own token: the identity is all `/auth/api/auth/token`
-   asks for, and it was written to disk the last time the browser was consulted.
-   Only if that fails — no file yet, or the identity has been revoked — is a tab
-   worth opening. */
-async function mintFromPersistedIdentity(now: number): Promise<AgilSessionData | undefined> {
-  const identity = await readPersistedAgilIdentity();
-  if (!identity) {
-    return undefined;
-  }
-
+async function mintFromIdentity(
+  identity: AgilIdentity,
+  now: number,
+): Promise<AgilSessionData | undefined> {
   try {
     return await refreshAgilToken({
       token: "",
@@ -1947,12 +1941,46 @@ async function mintFromPersistedIdentity(now: number): Promise<AgilSessionData |
   }
 }
 
+/*
+ * The identity is all `/auth/api/auth/token` asks for, and it was written to disk
+ * the last time the browser was consulted — so the file answers a cold start and
+ * every later revalidation alike. Only if the file cannot answer — none written
+ * yet, or the identity has been revoked and the mint refused — is a tab worth
+ * opening.
+ *
+ * The mint used to be attempted under `if (!cachedSession)`, which sent ordinary
+ * revalidation to the browser: `shouldReuseAgilSession` stops reusing a session
+ * `AGIL_SESSION_REVALIDATE_MS` (60s) after it was captured, while the token it
+ * holds lives about an hour. From the 61st second on, every call arrived here
+ * with a cached session, skipped the mint and went straight to Chrome. On the
+ * VPS, whose shared profile is logged out, that extraction throws — so Agil died
+ * roughly a minute after each restart while still holding a valid token and a
+ * file that mints a new one on demand.
+ *
+ * Re-stamping `capturedAtMs` against an unchanged identity file is the same
+ * confirmation the browser round-trip was there to give (the mirror of the branch
+ * below, which today is only reachable after an extraction), so it costs neither
+ * an HTTP call nor a tab. */
 async function loadAgilSession(
   now: number,
   options: { forceRefresh?: boolean } = {},
 ): Promise<AgilSessionData> {
-  if (!cachedSession) {
-    const minted = await mintFromPersistedIdentity(now);
+  const identity = await readPersistedAgilIdentity();
+  if (identity) {
+    if (
+      cachedSession
+      && !options.forceRefresh
+      && sameAgilSessionIdentity(cachedSession, identity)
+      && cachedSession.expiresAtMs - now > AGIL_SESSION_EXPIRY_BUFFER_MS
+    ) {
+      cachedSession = {
+        ...cachedSession,
+        capturedAtMs: now,
+      };
+      return cachedSession;
+    }
+
+    const minted = await mintFromIdentity(identity, now);
     if (minted) {
       cachedSession = minted;
       return cachedSession;
