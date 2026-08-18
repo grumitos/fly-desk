@@ -2337,14 +2337,73 @@ test("the card keeps a lane for the airport codes at every width a desk can be",
       // And the row it lives in never spills over the columns beside it.
       assert.ok(layout.legsOverflow <= 0, at);
       // The disposition answers the list, and the list alone (02 §2).
-      assert.equal(layout.stacked, layout.listWidth < 819, at);
+      assert.equal(layout.stacked, layout.listWidth < 775, at);
     }
 
     // The headline: a 1366 laptop is a desk, and its list is not 748 any more.
     await page.setViewportSize({ width: 1366, height: 1000 });
     await page.waitForTimeout(320);
     const laptop = await measure();
-    assert.ok(laptop && !laptop.stacked && laptop.listWidth >= 819, JSON.stringify(laptop));
+    assert.ok(laptop && !laptop.stacked && laptop.listWidth >= 775, JSON.stringify(laptop));
+  }, { autoOpen: false });
+});
+
+test("the result cell keeps the whole list minus the card's own 436", async () => {
+  /*
+   * «No solucionaste el cambio erróneo de ancho de celda de resultado, compara
+   * con commits viejos y arréglalo — el correcto es el que tenía en el commit
+   * de rediseño.»
+   *
+   * Only one track of this row is elastic — the legs — so every fixed lane the
+   * card gains is taken out of the result cell and out of nothing else. The
+   * redesign's card was 32/186/1fr/116/26 with four 12px gaps, a fixed measure
+   * of `list - 436`. Giving the baggage its own lane added 32px of track and a
+   * fifth gap and charged the whole 44 to the cell: measured against the same
+   * builds, the legs track fell from 708 to 662 on a 1920 desk and from 484 to
+   * 438 on a 1536 one, and every threshold derived from it rose by the same 44.
+   *
+   * The lane is now paid for out of «who flies», which had the slack: the
+   * widest carrier name this application can draw is «Aerolíneas Argentinas»,
+   * and it still fits its 142px lane unbroken. So the two halves are pinned
+   * together — the cell is the list minus 436 again, and the lane the 44 came
+   * from still holds its own longest label.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeCompletedSearch(page, {
+      offers: Array.from({ length: 6 }, (_, index) =>
+        oneStopOffer(index, { mainCarrier: "AR", validatingCarrier: "AR" })),
+    });
+    await page.setViewportSize({ width: 1920, height: 1000 });
+    await runResultsSearch(page, baseUrl);
+    await page.getByTestId("result-card").first().waitFor();
+
+    for (const [width, height] of [[1920, 1080], [1920, 911], [1536, 864], [1366, 768]]) {
+      await page.setViewportSize({ width, height });
+      await page.waitForTimeout(320);
+      const cell = await page.evaluate(() => {
+        const card = document.querySelector<HTMLElement>("[data-testid='result-card']");
+        const list = document.querySelector<HTMLElement>(".fd-list");
+        const legs = card?.querySelector<HTMLElement>(".fd-card__legs");
+        const name = card?.querySelector<HTMLElement>(".fd-card__carrier-name");
+        if (!card || !list || !legs || !name) return null;
+        return {
+          listWidth: list.clientWidth,
+          legsWidth: Math.round(legs.getBoundingClientRect().width),
+          nameLane: Math.round(name.getBoundingClientRect().width),
+          nameNeeds: name.scrollWidth,
+          name: (name.textContent ?? "").trim(),
+        };
+      });
+      assert.ok(cell, `missing card metrics at ${width}`);
+      const at = `${width}x${height}: ${JSON.stringify(cell)}`;
+
+      /* The card's fixed measure, and the whole point of the change: 436, not
+         the 480 the standalone baggage lane made of it. */
+      assert.equal(cell.listWidth - cell.legsWidth, 436, at);
+      /* And the lane that paid for it still says the whole name. */
+      assert.equal(cell.name, "Aerolíneas Argentinas", at);
+      assert.ok(cell.nameNeeds <= cell.nameLane, at);
+    }
   }, { autoOpen: false });
 });
 

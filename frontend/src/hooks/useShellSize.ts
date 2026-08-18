@@ -37,7 +37,25 @@ const LIST_BORDER_PX = 1
 /* The narrowest list the result card can wear the desk anatomy in, from the
    `@container fdlist` threshold in result-card.css: below it the card is the
    stacked phone row, whatever the shell around it is doing. */
-const CARD_DESK_MIN_LIST_PX = 819
+const CARD_DESK_MIN_LIST_PX = 775
+
+/* The 44px the result cell was given back when the baggage lane stopped being
+   taken out of it — the difference between the card's fixed measure at
+   `list - 480` and at `list - 436`. */
+const RESULT_CELL_RESTORED_PX = 44
+
+/*
+ * What the detail column has to leave behind, which is not the same question as
+ * whether the card survives.
+ *
+ * Admitting the column takes 326px off the list in a single step, so the budget
+ * is measured with the result cell at the width it is meant to have rather than
+ * at the width the stacking rule will merely tolerate. That is also what keeps
+ * the restored cell from costing the list anything: derived straight from a 775
+ * card the column would enter at a 1393 shell and take 326px off every list
+ * between 1393 and 1436 — a narrowing, which is the defect this is fixing.
+ */
+const DETAIL_COLUMN_MIN_LIST_PX = CARD_DESK_MIN_LIST_PX + RESULT_CELL_RESTORED_PX
 
 function listWidthWithDetailColumn(shellWidth: number): number {
   return Math.min(shellWidth, APP_MAX_WIDTH_PX)
@@ -55,7 +73,7 @@ function listWidthWithDetailColumn(shellWidth: number): number {
  * which reads as a statement about the shell. It is not: 1100 is the width the
  * *form* needs for its six mínimos in one row, and the results region inherited
  * it. Measured, the detail column costs the list 326px, so from 1100 to 1436
- * the list was 482–818 — under the card's own 819 — and every result on a
+ * the list was 482–818 — under what the card needs — and every result on a
  * 1366 laptop wore the phone anatomy inside a three-column desk. Worse, the
  * list was *wider* one pixel below 1100 (807) than one pixel above it (482):
  * widening the window collapsed the cards.
@@ -70,7 +88,7 @@ function listWidthWithDetailColumn(shellWidth: number): number {
 function detailPlacementForWidth(width: number, shellSize: ShellSize): DetailPlacement {
   if (shellSize === "C") return "bottom"
   if (shellSize === "B") return "side"
-  return listWidthWithDetailColumn(width) >= CARD_DESK_MIN_LIST_PX ? "column" : "side"
+  return listWidthWithDetailColumn(width) >= DETAIL_COLUMN_MIN_LIST_PX ? "column" : "side"
 }
 
 export function useShellSize(shellRef: RefObject<HTMLElement | null>): {

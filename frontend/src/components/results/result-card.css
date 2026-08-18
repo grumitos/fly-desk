@@ -1,9 +1,9 @@
 /*
  * Plate 1b — the result card, and plate 4a — its skeleton.
  *
- * The grid is 32 / 186 / 1fr / 116 / 26 and the skeleton inherits it, because a
- * skeleton whose columns differ from the component makes every value jump when
- * the data lands.
+ * The grid is 32 / 142 / 1fr / 32 / 116 / 26 and the skeleton inherits it,
+ * because a skeleton whose columns differ from the component makes every value
+ * jump when the data lands.
  */
 
 @layer utilities {
@@ -14,11 +14,27 @@
   .fd-card {
     position: relative;
     display: grid;
-    /* 32 logo · 186 who flies · legs · baggage · 116 price · 26 provider.
+    /* 32 logo · 142 who flies · legs · 32 baggage · 116 price · 26 provider.
        Baggage earns its own track between the legs and the price: it is a
        property of the fare, not of the airline, and while it lived under the
-       carrier name the codeshare had nowhere to go. */
-    grid-template-columns: 32px minmax(0, 186px) minmax(0, 1fr) auto 116px 26px;
+       carrier name the codeshare had nowhere to go.
+
+       142, not the 186 «who flies» carried from the redesign. Only one track in
+       this row is elastic — the legs — so every fixed lane added to the card is
+       taken out of the result cell and out of nothing else. Giving the baggage
+       its own lane cost 32px of track plus a fifth 12px gap, and the whole 44
+       came out of the cell: measured on a 1920 desk the legs track fell from
+       708 to 662, and on a 1536 desk from 484 to 438. Every derived threshold
+       in this file rose by the same 44, which is why the desk anatomy stopped
+       fitting lists it used to fit and each result collapsed into the stacked
+       row on windows that had held the desk card.
+
+       The 44 is paid back out of the lane that measured slack rather than out
+       of the cell. «Who flies» holds one line of carrier name, and the widest
+       name this application can draw is «Aerolíneas Argentinas» at 141px —
+       against a 186px lane. 186 − 44 = 142 still holds it, and the card's fixed
+       measure returns to the `list - 436` the redesign gave it. */
+    grid-template-columns: 32px minmax(0, 142px) minmax(0, 1fr) auto 116px 26px;
     column-gap: 12px;
     align-items: center;
     min-width: 0;
@@ -200,7 +216,8 @@
    * and the card becomes one row of information instead of a two-line block
    * with a hole beside it.
    *
-   * 1117, not the 980 this shipped with. Two legs in one row is the *narrowest*
+   * 1073, not the 980 this shipped with, and not the 1117 the same derivation
+   * gave while the result cell was 44px poorer. Two legs in one row is the *narrowest*
    * disposition the card has, not the widest, and 980 was read off the width
    * where the hole looked bad rather than derived from what the row needs.
    * Measured: each half is 58 + 126 + 50 of fixed lanes, the pair is split by a
@@ -216,11 +233,11 @@
    * lane takes the abbreviated wording, which is what 8c gives a lane too tight
    * for the long one. «1 esc · BOG» measures 60 at 11px against 75 for
    * «1 escala · BOG», so the row costs 2 × 234 + 1 + 48 + 2 × 60 = 637 and the
-   * legs track is `list - 480`: 1117. The widest list this application can draw
-   * is 1142 (`--fd-app-max-width` 1760 less the desk chrome), which leaves each
-   * lane 72 against the 60 it needs.
+   * legs track is `list - 436` again: 1073. The widest list this application can
+   * draw is 1142 (`--fd-app-max-width` 1760 less the desk chrome), which leaves
+   * each lane 94 against the 60 it needs.
    */
-  @container fdlist (min-width: 1117px) {
+  @container fdlist (min-width: 1073px) {
     .fd-card .fd-card__legs {
       grid-template-columns:
         58px 126px minmax(50px, max-content) minmax(0, 1fr)
@@ -653,28 +670,23 @@
    * to the three-row anatomy from plate 8c.
    *
    * 02 §2 derives the number and lands on 660, but its sum leaves out the
-   * card's own `padding: 0 13` and its border. This file has carried 750 since
-   * the geometry correction that first measured it; 819 is the same
-   * measurement re-taken after two things moved underneath it.
+   * card's own `padding: 0 13` and its border. This file carried 750 while the
+   * legs track was `list - 436`, then 819 while the baggage lane was taken out
+   * of the result cell. The lane is now paid for out of «who flies» instead, so
+   * the track is `list - 436` again and the same measurement gives 775.
    *
-   * One, the legs track. It was `list - 436` (32+186+116+26 columns, four 12px
-   * gaps, 26px padding, 2px border) when the 750 was worked out. Giving the
-   * baggage its own `auto` track added 32px of track and a fifth 12px gap, so
-   * it is now `list - 480`: the same list is 44px poorer than the arithmetic
-   * that produced 750 assumed.
-   *
-   * Two, the floor. 750 used 50px for the elastic lane because that is what the
-   * duration lane costs — a catalogue value standing in for a measurement. The
-   * measurement is 75: «1 escala · BOG» at 11px, the one-stop long form, which
-   * is the label §5 says may not lose its airport code. At 50 the lane renders
-   * «1 escala…» and the code is gone, so between 750 and 819 the desk anatomy
-   * was in force over a row that could not say where the flight stops.
+   * The floor in the 750 was 50px, borrowed from the duration lane rather than
+   * measured. The measurement is 75: «1 escala · BOG» at 11px, the one-stop
+   * long form, which is the label §5 says may not lose its airport code. At 50
+   * the lane renders «1 escala…» and the code is gone, so between 750 and 775
+   * the desk anatomy was in force over a row that could not say where the
+   * flight stops.
    *
    * 264 of fixed lanes (58 + 126 + 50 and three 10px gaps) + 75 = 339 of legs
-   * track, and `339 + 480` puts the threshold at 819. The rule is one rule at
+   * track, and `339 + 436` puts the threshold at 775. The rule is one rule at
    * every scale: the anatomy in force must fit its own one-stop label. */
 
-  @container fdlist (max-width: 818.98px) {
+  @container fdlist (max-width: 774.98px) {
     .fd-card {
       grid-template-columns: 24px minmax(0, 1fr) auto 14px;
       /* Plate 8c: the four gaps of row 1 are 10. The chevron rides the same
