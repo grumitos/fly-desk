@@ -3903,6 +3903,72 @@ test("search fan-out can suppress duplicate location usage accounting", { concur
   }
 });
 
+test("matrix fan-out can suppress duplicate location usage accounting", { concurrency: false }, async () => {
+  const previousApiToken = process.env.FLY_DESK_API_TOKEN;
+  process.env.FLY_DESK_API_TOKEN = "test-token";
+  getRuntime().locationUsage.clearForTests();
+
+  try {
+    const departureStart = getSearchDatePolicy().minSearchDate;
+
+    /* Not stamped as proxied: the caller is the web unit itself, asking the
+       matrix route for a grid it has already counted. Only the flag can hold
+       the ranking back here, which is what the search route has always
+       honoured and the matrix route used to ignore. */
+    const accepted = await routeRequest(new Request("http://fly-desk.local/api/matrix", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
+      },
+      body: JSON.stringify({
+        clientSessionId: "browser-session-matrix-fanout",
+        recordLocationUsage: false,
+        request: {
+          tripType: "round-trip",
+          searchMode: "roundtrip-grid",
+          legs: [
+            {
+              origin: "CUZ",
+              destination: "BOG",
+              departureStart,
+              departureEnd: addDays(departureStart, 2),
+              returnStart: addDays(departureStart, 7),
+              returnEnd: addDays(departureStart, 9),
+              minNights: 7,
+              maxNights: 7,
+            },
+          ],
+          passengers: {
+            adults: 1,
+            children: 0,
+            infants: 0,
+          },
+        },
+      }),
+    }));
+
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(getRuntime().locationUsage.getSuggestions(3), {
+      origin: [],
+      destination: [],
+    });
+    assert.deepEqual(
+      getRuntime().locationUsage.getUsageSuggestions("browser-session-matrix-fanout").recent,
+      { origin: [], destination: [] },
+    );
+    assert.equal(getRuntime().locationUsage.getDiagnostics().entries, 0);
+  } finally {
+    getRuntime().locationUsage.clearForTests();
+    if (previousApiToken === undefined) {
+      delete process.env.FLY_DESK_API_TOKEN;
+    } else {
+      process.env.FLY_DESK_API_TOKEN = previousApiToken;
+    }
+  }
+});
+
 test("a delegated search is counted in the store the web unit serves, and only once", { concurrency: false }, async () => {
   const previousApiToken = process.env.FLY_DESK_API_TOKEN;
   const previousSearchUrl = process.env.FLY_DESK_SEARCH_SERVICE_URL;
