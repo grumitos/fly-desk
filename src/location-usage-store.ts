@@ -22,6 +22,14 @@ const CREATE_LOCATION_USAGE_RANK_INDEX_SQL = `
     ON location_usage (role, total_uses DESC, last_used_at_ms DESC, code ASC);
 `;
 
+/* The newest card of each role is a second ordering over the same table, so it
+   gets its own index rather than a scan: the ranking read runs on every idle
+   screen. */
+const CREATE_LOCATION_USAGE_NEWEST_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_location_usage_role_newest
+    ON location_usage (role, last_used_at_ms DESC, code ASC);
+`;
+
 const CREATE_LOCATION_RECENT_USAGE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS location_recent_usage (
     session_id TEXT NOT NULL,
@@ -145,13 +153,36 @@ export function normalizeLocationUsageSessionId(value: unknown): string | undefi
   return value;
 }
 
+/* The row is the agency's ranking, and a ranking that only ever adds has no way
+   of admitting anybody: `total_uses` never falls, so once three stations are
+   ahead the row is settled for good — and the two that settle it are LIM and
+   MAD, the route the production smoke fires on every deployment and rollback.
+   That is «una búsqueda bastaría para agregar otro comodín, y probándolo no
+   aparece» exactly. So the last slot of each role answers to recency instead of
+   to the counter: the stations the desk really lives on hold the slots above
+   it, and one executed search — from any browser, any process — puts a new
+   station on the row for everybody, at once. */
+function withNewestCard(
+  leaders: readonly string[],
+  newest: string | undefined,
+  limit: number,
+): string[] {
+  const ranked = leaders.slice(0, limit);
+  if (limit < 2 || !newest) {
+    return ranked;
+  }
+
+  const head = ranked.slice(0, limit - 1);
+  return head.includes(newest) ? ranked : [...head, newest];
+}
+
 function rankMemoryEntries(
   entries: Iterable<LocationUsageEntry>,
   role: LocationUsageRole,
   limit: number,
 ): string[] {
-  return [...entries]
-    .filter((entry) => entry.role === role)
+  const roleEntries = [...entries].filter((entry) => entry.role === role);
+  const leaders = roleEntries
     .sort((left, right) => {
       const totalDelta = right.totalUses - left.totalUses;
       if (totalDelta !== 0) return totalDelta;
@@ -163,6 +194,12 @@ function rankMemoryEntries(
     })
     .slice(0, limit)
     .map((entry) => entry.code);
+  const newest = [...roleEntries]
+    .sort((left, right) => (
+      right.lastUsedAtMs - left.lastUsedAtMs || left.code.localeCompare(right.code)
+    ))[0]?.code;
+
+  return withNewestCard(leaders, newest, limit);
 }
 
 function rankMemoryRecentEntries(
@@ -249,8 +286,8 @@ export class LocationUsageStore {
     }
 
     const readRanking = this.db.transaction(() => ({
-      origin: this.readPersistedRoleRanking("origin", resolvedLimit),
-      destination: this.readPersistedRoleRanking("destination", resolvedLimit),
+      origin: this.readPersistedRoleCards("origin", resolvedLimit),
+      destination: this.readPersistedRoleCards("destination", resolvedLimit),
     }));
     return readRanking();
   }
@@ -310,7 +347,7 @@ export class LocationUsageStore {
       entries,
       recentEntries,
       persistence: this.dbPath ? "sqlite" : "memory",
-      ranking: "all-time-total-uses",
+      ranking: "global-total-uses-with-newest-card",
       cardLimit: LOCATION_USAGE_CARD_LIMIT,
       recentTtlMs: this.recentTtlMs,
       recentMaxEntries: this.recentMaxEntries,
@@ -352,6 +389,7 @@ export class LocationUsageStore {
     `);
     this.removeLegacyRecentUsageColumn();
     this.db.exec(CREATE_LOCATION_USAGE_RANK_INDEX_SQL);
+    this.db.exec(CREATE_LOCATION_USAGE_NEWEST_INDEX_SQL);
     this.db.exec(CREATE_LOCATION_RECENT_USAGE_INDEXES_SQL);
   }
 
@@ -551,6 +589,32 @@ export class LocationUsageStore {
       `,
       this.recentMaxEntries,
     );
+  }
+
+  private readPersistedRoleCards(role: LocationUsageRole, limit: number): string[] {
+    return withNewestCard(
+      this.readPersistedRoleRanking(role, limit),
+      limit < 2 ? undefined : this.readPersistedRoleNewest(role),
+      limit,
+    );
+  }
+
+  private readPersistedRoleNewest(role: LocationUsageRole): string | undefined {
+    if (!this.db) {
+      return undefined;
+    }
+
+    return getSql<LocationUsageRow>(
+      this.db,
+      `
+        SELECT code
+        FROM location_usage
+        WHERE role = ?
+        ORDER BY last_used_at_ms DESC, code ASC
+        LIMIT 1
+      `,
+      role,
+    )?.code;
   }
 
   private readPersistedRoleRanking(role: LocationUsageRole, limit: number): string[] {

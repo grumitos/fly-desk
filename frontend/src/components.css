@@ -505,6 +505,18 @@
     border-top: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
   }
 
+  /* The skeleton's stand-in for the pager: the same box, holding nothing. Its
+     height comes from the 26px cell the real one is built out of, so the two
+     columns measure the same and the row count survives the handover. */
+  .fd-pager--reserved {
+    /* `content-box` on purpose: the token is the height of a *cell*, and what
+       has to match is the real pager's content, not its border box. Under the
+       global `border-box` the same declaration reserved 33px against the
+       pager's 41 and left the skeleton measuring a column 8px too tall. */
+    box-sizing: content-box;
+    min-height: var(--fd-control-chip);
+  }
+
   .fd-pager-range {
     margin: 0;
     color: var(--color-muted-foreground);

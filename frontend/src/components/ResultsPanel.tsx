@@ -6,6 +6,8 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
+  type RefObject,
 } from "react"
 import { ResultCard, type AlternateSchedule } from "@/components/results/ResultCard"
 import { buildAlternateScheduleModel } from "@/components/results/result-card-model"
@@ -33,6 +35,7 @@ import {
   stillSearchingBody,
   type SearchOutcome,
 } from "@/lib/search-outcome"
+import { cn } from "@/lib/utils"
 import type { CanonicalOffer, SearchJobResponse, SortMode } from "@/types"
 
 /*
@@ -45,7 +48,16 @@ import type { CanonicalOffer, SearchJobResponse, SortMode } from "@/types"
  * for it to tune.
  */
 
-const RESULTS_PAGE_SIZE_MAX = 12
+/*
+ * The ceiling is a guard against a pathological viewport, not a page size. 12
+ * was the fit of a 1440-tall desk when it was written and became a cap the
+ * moment screens grew past it: a 1920×1080 column fits 13 plain rows and a
+ * 1440-tall one fits 19, so the page stopped one and seven rows short of the
+ * space it had just measured — the same half-empty column the skeleton was
+ * reported with. 20 is that 19 plus a row of slack; past it the wins are
+ * hypothetical and the cost of building the cards is not.
+ */
+const RESULTS_PAGE_SIZE_MAX = 20
 const RESULTS_PAGE_SIZE_FALLBACK = 4
 /* The plain card of plate 8c, which is the unit a display weight of 1 means.
    The measurement below replaces this on the first frame. */
@@ -55,8 +67,24 @@ const RESULTS_LIST_TOP_INSET_PX = 4
 /* Kept in step with `resultListItemDisplayWeight`: only used to recover the
    plain-card unit from a page that happens to hold nothing but groups. */
 const RESULTS_GROUP_CARD_WEIGHT = 1.67
-/* A skeleton that never stops is a skeleton that lies. At eight seconds it
-   yields the floor to the incomplete-search notice. */
+/*
+ * When a search stops being a search that is merely starting.
+ *
+ * This used to be the moment the skeleton was taken down and replaced by the
+ * «La búsqueda sigue en curso» notice, on the reasoning that a skeleton which
+ * never stops is a skeleton that lies. The premise was wrong about the clock,
+ * not about the lie: a real search takes 15–40s and more — the production
+ * smoke's fastest case lands around 15 — so eight seconds is not where a search
+ * becomes doubtful, it is where an ordinary one is still working. Every real
+ * search died into a sparse clock screen and the agent watched a stopped page
+ * for the thirty seconds that mattered.
+ *
+ * The skeleton is not what claims progress; the search's own lifecycle does,
+ * and it is bounded — `loading` ends when the job does, and the admission
+ * timeout bounds that at 120s. So the bones stay for as long as the search is
+ * alive, and eight seconds is when the words join them (11 §3's «tarda»,
+ * naming the provider that is slow) rather than when they replace them.
+ */
 const SKELETON_GIVE_UP_MS = 8000
 /* 02 §9: the way back to the top appears past 300px of list scroll. */
 const BACK_TO_TOP_AFTER_PX = 300
@@ -386,9 +414,33 @@ function ResultsBody({
   onMobileToolsCollapsedChange: (collapsed: boolean) => void
   mobileCollapseEnabled: boolean
 }) {
-  const skeletonExpired = useSkeletonTimeout(
+  const stillSearching = useSkeletonTimeout(
     loading && offers.length === 0,
     results?.searchJobId ?? "pending",
+  )
+  const reducedMotion = usePrefersReducedMotion()
+  /*
+   * One measurement, two consumers. The page of results and the skeleton that
+   * stands in for it are drawn in the same column and have to hold the same
+   * number of rows, so the count is taken once here — above the branch that
+   * chooses between them — rather than by each of them separately. The skeleton
+   * is what proves it matters: it renders before a single result exists, and
+   * for as long as it carried a constant of its own it filled half a column its
+   * own results were about to fill.
+   */
+  const resultItems = useMemo(
+    () => buildResultListItems(offers, results?.scheduleGroups),
+    [offers, results?.scheduleGroups],
+  )
+  /* Capacity is measured in card-heights, so what bounds it is the list's total
+     *weight*, not how many items it has: a group card costs 1.67. */
+  const totalDisplayWeight = useMemo(
+    () => resultItems.reduce((total, item) => total + resultListItemDisplayWeight(item), 0),
+    [resultItems],
+  )
+  const { pageBudget, columnRows, viewportRef, attachViewport } = useAdaptiveResultsPageCapacity(
+    totalDisplayWeight,
+    mobileCollapseEnabled,
   )
 
   if (!results && !loading) {
@@ -424,26 +476,36 @@ function ResultsBody({
     )
   }
 
-  if (loading && offers.length === 0 && !skeletonExpired) {
-    return <ResultsSkeleton />
-  }
-
   /*
-   * 04 §7 and 11 §3: at eight seconds the skeleton stops and the state is said
-   * with words. Without this branch the search fell through to an empty
-   * `ResultsPage` — a blank column with no message and no pager, which reads as
-   * "no flights" for a search that is still running.
+   * 04 §7 and 11 §3: a search with nothing to show yet is the skeleton, and at
+   * eight seconds the state is *also* said with words — a status line above the
+   * bones, not instead of them. The words come from the diagnostics rather than
+   * from the timer that raised them: the old copy asserted in the plural that
+   * «los proveedores están tardando», which was simply false when one of the
+   * two had already failed.
    *
-   * The words come from the diagnostics rather than from the timer that raised
-   * them: the old copy asserted in the plural that «los proveedores están
-   * tardando», which was simply false when one of the two had already failed.
+   * The one case that still belongs to words alone is a reader who has asked
+   * for no movement. 04 §7's skeleton is a *pulse*: reduced motion stops it
+   * (rule 5 of the movement system), and a field of grey blocks that does not
+   * breathe says nothing about progress — it reads as a page that failed to
+   * paint. There the notice is the whole message, so it takes the column.
    */
   if (loading && offers.length === 0) {
+    if (stillSearching && reducedMotion) {
+      return (
+        <EmptyState
+          icon="clock"
+          title="La búsqueda sigue en curso"
+          body={stillSearchingBody(outcome)}
+        />
+      )
+    }
+
     return (
-      <EmptyState
-        icon="clock"
-        title="La búsqueda sigue en curso"
-        body={stillSearchingBody(outcome)}
+      <ResultsSkeleton
+        rows={columnRows}
+        attachViewport={attachViewport}
+        searchingNotice={stillSearching ? stillSearchingBody(outcome) : undefined}
       />
     )
   }
@@ -516,7 +578,11 @@ function ResultsBody({
   return (
     <ResultsPage
       offers={offers}
-      scheduleGroups={results?.scheduleGroups}
+      resultItems={resultItems}
+      pageBudget={pageBudget}
+      columnRows={columnRows}
+      viewportRef={viewportRef}
+      attachViewport={attachViewport}
       passengerCount={passengerCount}
       showPerPerson={showPerPerson}
       selectedOfferId={selectedOfferId}
@@ -549,7 +615,11 @@ function spellOutCount(count: number): string {
 
 function ResultsPage({
   offers,
-  scheduleGroups,
+  resultItems,
+  pageBudget,
+  columnRows,
+  viewportRef,
+  attachViewport,
   passengerCount,
   showPerPerson,
   selectedOfferId,
@@ -560,7 +630,14 @@ function ResultsPage({
   mobileCollapseEnabled,
 }: {
   offers: CanonicalOffer[]
-  scheduleGroups: SearchJobResponse["scheduleGroups"]
+  /** Built above, so the skeleton and the page weigh the same list. */
+  resultItems: ResultListItem[]
+  /** Fractional: a group costs 1.67 of it, so flooring here withholds cards. */
+  pageBudget: number
+  /** Whole rows, for the things that draw rows rather than fill a column. */
+  columnRows: number
+  viewportRef: RefObject<HTMLDivElement | null>
+  attachViewport: (node: HTMLDivElement | null) => void
   passengerCount: number
   showPerPerson: boolean
   selectedOfferId?: string
@@ -570,17 +647,6 @@ function ResultsPage({
   onMobileToolsCollapsedChange: (collapsed: boolean) => void
   mobileCollapseEnabled: boolean
 }) {
-  const resultItems = useMemo(
-    () => buildResultListItems(offers, scheduleGroups),
-    [offers, scheduleGroups],
-  )
-  /* Capacity is measured in card-heights, so what bounds it is the list's total
-     *weight*, not how many items it has: a group card costs 1.34. */
-  const totalDisplayWeight = useMemo(
-    () => resultItems.reduce((total, item) => total + resultListItemDisplayWeight(item), 0),
-    [resultItems],
-  )
-  const { pageCapacity, viewportRef } = useAdaptiveResultsPageCapacity(totalDisplayWeight, mobileCollapseEnabled)
   const pageKey = useMemo(() => resultItemsPaginationKey(resultItems), [resultItems])
   /* Which schedule each group is currently showing, and which group has its full
      list open. Both are stamped with the result set they belong to, so a new
@@ -595,8 +661,8 @@ function ResultsPage({
   const expandedGroupId = scheduleState.key === pageKey ? scheduleState.expandedGroupId : null
   const [pageState, setPageState] = useState({ key: "", index: 0 })
   const pages = useMemo(
-    () => paginateResultListItems(resultItems, pageCapacity),
-    [resultItems, pageCapacity],
+    () => paginateResultListItems(resultItems, pageBudget),
+    [resultItems, pageBudget],
   )
   const pageCount = Math.max(1, pages.length)
   const selectedPageIndex = useMemo(() => {
@@ -710,7 +776,7 @@ function ResultsPage({
   return (
     <div className="fd-list-body" data-testid="results-page-shell">
       <div
-        ref={viewportRef}
+        ref={attachViewport}
         onScroll={handleResultsScroll}
         className="fd-list-viewport"
         data-testid="results-page-body"
@@ -769,9 +835,9 @@ function ResultsPage({
 
           {/* In a partial search the skeleton fills only the rows still missing,
               and it fills them at the end. */}
-          {partial && currentPage.items.length > 0 && currentPage.items.length < pageCapacity && (
+          {partial && currentPage.items.length > 0 && currentPage.items.length < columnRows && (
             <ResultsSkeleton
-              rows={pageCapacity - currentPage.items.length}
+              rows={columnRows - currentPage.items.length}
               inline
               startDelayIndex={currentPage.items.length}
             />
@@ -833,7 +899,15 @@ function GroupCard({
   const alternates = group.offers.filter((offer) => offer.id !== shownOffer.id)
 
   return (
-    <div className="relative min-w-0">
+    /* The panel of 3b opens `absolute` out of this row and has to cover the
+       cards below it. Its own `z-30` only orders it inside this row, so the row
+       has to win against its siblings too — while any of them is a stacking
+       context (the entrance cascade makes every row one for the length of its
+       movement, and progressive results can start a fresh one over an open
+       panel), a row at `z-index: auto` loses to whatever comes after it in the
+       list. Only while open: a permanent z-index would order the whole list
+       against itself for a panel that is not there. */
+    <div className={cn("relative min-w-0", expanded && "z-30")}>
       <ResultCard
         offer={shownOffer}
         selected={selectedOfferId === shownOffer.id}
@@ -1072,6 +1146,36 @@ function useSkeletonTimeout(active: boolean, searchKey: string) {
 }
 
 /**
+ * Whether the reader has asked for no movement.
+ *
+ * 07 §0 rule 5 stops the skeleton's pulse under this preference, which leaves a
+ * field of static grey blocks — a drawing of a list, not a claim that one is
+ * arriving. It is the one state where the words carry the whole message, so it
+ * is the one state where they take the column instead of standing above it.
+ */
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)"
+
+function subscribeToReducedMotion(onChange: () => void): () => void {
+  if (typeof window.matchMedia !== "function") return () => undefined
+
+  const query = window.matchMedia(REDUCED_MOTION_QUERY)
+  query.addEventListener("change", onChange)
+  return () => query.removeEventListener("change", onChange)
+}
+
+function readReducedMotion(): boolean {
+  return typeof window.matchMedia === "function" && window.matchMedia(REDUCED_MOTION_QUERY).matches
+}
+
+function usePrefersReducedMotion(): boolean {
+  /* The preference is external state, not a render of ours: subscribing to it
+     is what `useSyncExternalStore` is for, and it reads the media query on the
+     first render rather than a frame later — which for this branch would be a
+     frame of skeleton under a preference that asked for none. */
+  return useSyncExternalStore(subscribeToReducedMotion, readReducedMotion, () => false)
+}
+
+/**
  * How many cards fit without cutting one in half. A page that ends mid-card
  * makes the agent scroll to find out whether there was anything there.
  */
@@ -1090,7 +1194,21 @@ function useSkeletonTimeout(active: boolean, searchKey: string) {
  */
 function useAdaptiveResultsPageCapacity(totalDisplayWeight: number, scrollableList: boolean) {
   const viewportRef = useRef<HTMLDivElement | null>(null)
-  const [pageCapacity, setPageCapacity] = useState(RESULTS_PAGE_SIZE_FALLBACK)
+  /*
+   * The column is measured through a callback ref rather than read off
+   * `viewportRef.current` alone, because the element the count belongs to is
+   * swapped under this hook: the skeleton owns it first and the page takes it
+   * over. Keyed on the weight, a search that starts from an empty column — no
+   * results, then bones, both weighing nothing — would attach a new viewport
+   * without ever re-running the measurement and the page would keep the
+   * fallback of four. The node is state, so a new one is a new measurement.
+   */
+  const [viewportNode, setViewportNode] = useState<HTMLDivElement | null>(null)
+  const attachViewport = useCallback((node: HTMLDivElement | null) => {
+    viewportRef.current = node
+    setViewportNode(node)
+  }, [])
+  const [pageBudget, setPageBudget] = useState(RESULTS_PAGE_SIZE_FALLBACK)
   const rowHeightRef = useRef(RESULTS_CARD_HEIGHT_ESTIMATE_PX)
 
   useLayoutEffect(() => {
@@ -1099,14 +1217,24 @@ function useAdaptiveResultsPageCapacity(totalDisplayWeight: number, scrollableLi
        so a phone never pays for a measurement it does not use. */
     if (scrollableList) return
 
-    const node = viewportRef.current
-    if (!node || totalDisplayWeight <= 0) return
+    const node = viewportNode
+    if (!node) return
 
     let frame = 0
     const update = () => {
       const list = node.querySelector<HTMLElement>(".fd-results-list")
       const availableHeight = Math.max(0, node.clientHeight - RESULTS_LIST_TOP_INSET_PX)
-      const cards = list ? Array.from(list.querySelectorAll<HTMLElement>(".fd-card:not(.fd-card--skeleton)")) : []
+      /*
+       * Real cards when there are any, skeleton rows when there are not. The
+       * skeleton is this card with the data switched off and stands at the same
+       * height by construction, which is what lets the count survive the
+       * handover: the column the bones were counted into is the column the
+       * results land in.
+       */
+      const realCards = list ? Array.from(list.querySelectorAll<HTMLElement>(".fd-card:not(.fd-card--skeleton)")) : []
+      const cards = realCards.length > 0
+        ? realCards
+        : list ? Array.from(list.querySelectorAll<HTMLElement>(".fd-card")) : []
       const listStyle = list ? window.getComputedStyle(list) : null
       const measuredGap = listStyle
         ? Number.parseFloat(listStyle.rowGap || listStyle.gap || `${RESULTS_CARD_GAP_PX}`)
@@ -1134,25 +1262,55 @@ function useAdaptiveResultsPageCapacity(totalDisplayWeight: number, scrollableLi
       }
 
       const rowHeight = rowHeightRef.current
-      const fullRows = Math.max(1, Math.floor((availableHeight + gap) / (rowHeight + gap)))
+      /*
+       * The budget is fractional, and the floor that used to be here was a
+       * defect with a group on the page.
+       *
+       * `fullRows` is a count of *plain* rows, so flooring it is only harmless
+       * when every row is plain. A column of 687 holds 10.76 plain rows; floored
+       * to 10 it can pay for one group (1.67) and eight flights (9.67 of 10) and
+       * refuses a ninth at 10.67 — while in pixels that ninth card had 80px of
+       * empty column under it, more than the 64 it needed. Two roundings in a
+       * row, each losing less than a row, together losing more than one.
+       *
+       * Kept whole, the same budget pays for the group and nine flights (10.67
+       * of 10.76) and the column closes with 16px to spare. Nothing else has to
+       * change: weighing rows against a budget is what the weight system is
+       * already for, and it was only ever handed an integer.
+       */
+      const columnBudget = Math.max(1, (availableHeight + gap) / (rowHeight + gap))
       /*
        * Never claim more room than the list needs — but «what the list needs»
        * is its weight, not its length. Clamping to the item count split a page
        * of one flight and one group of thirteen across two pages: two items,
        * capacity two, weight 2.34. A real LIM–MIA search showed one card and
        * eleven empty rows.
+       *
+       * A search with nothing in it yet needs *everything* the column holds:
+       * that is the skeleton, and it has no weight to be clamped by.
        */
-      const neededRows = Math.ceil(totalDisplayWeight)
-      const next = Math.max(1, Math.min(neededRows, RESULTS_PAGE_SIZE_MAX, fullRows))
+      const needed = totalDisplayWeight > 0 ? totalDisplayWeight : RESULTS_PAGE_SIZE_MAX
+      const next = Math.max(1, Math.min(needed, RESULTS_PAGE_SIZE_MAX, columnBudget))
 
-      setPageCapacity((current) => current === next ? current : next)
+      setPageBudget((current) => Math.abs(current - next) < 0.01 ? current : next)
     }
     const scheduleUpdate = () => {
       window.cancelAnimationFrame(frame)
       frame = window.requestAnimationFrame(update)
     }
 
-    scheduleUpdate()
+    /*
+     * Measured now, not on the next frame. The rAF was the whole of the live
+     * defect: on the skeleton's first mount, and again when the arriving
+     * `searchJobId` re-keys this panel, the column was painted at
+     * `RESULTS_PAGE_SIZE_FALLBACK` and only corrected a frame later — four
+     * bones in a column that holds eleven, and a page of three cards under a
+     * pager that had counted twelve offers. Inside a layout effect the DOM is
+     * laid out and `clientHeight` is final, so the first answer is available
+     * before the first paint; the frame is only needed to coalesce the
+     * observer's later ones.
+     */
+    update()
 
     if (typeof ResizeObserver === "undefined") {
       window.addEventListener("resize", scheduleUpdate)
@@ -1169,9 +1327,21 @@ function useAdaptiveResultsPageCapacity(totalDisplayWeight: number, scrollableLi
       window.cancelAnimationFrame(frame)
       observer.disconnect()
     }
-  }, [scrollableList, totalDisplayWeight])
+  }, [scrollableList, totalDisplayWeight, viewportNode])
 
-  return { pageCapacity: scrollableList ? RESULTS_PAGE_SIZE_MAX : pageCapacity, viewportRef }
+  /*
+   * Two answers from one measurement, because they are two different questions.
+   * Pagination fills a column and asks for the whole budget; the skeleton and
+   * the partial-search filler draw rows and can only ask for whole ones.
+   */
+  const budget = scrollableList ? RESULTS_PAGE_SIZE_MAX : pageBudget
+
+  return {
+    pageBudget: budget,
+    columnRows: Math.max(1, Math.floor(budget + 0.01)),
+    viewportRef,
+    attachViewport,
+  }
 }
 
 function resultItemsPaginationKey(items: ResultListItem[]) {

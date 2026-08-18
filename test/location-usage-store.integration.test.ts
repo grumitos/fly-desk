@@ -79,6 +79,89 @@ test("location usage store never prunes an older counter that remains globally m
   assert.equal(store.getSuggestions(3, nowMs + 100).destination[0], "MAD");
 });
 
+test("one search puts a new station on the global row against entrenched counters", () => {
+  const store = new LocationUsageStore();
+  const nowMs = Date.UTC(2026, 4, 26, 12);
+
+  /* The shape the deployment itself produces: the production smoke fires
+     LIM–MAD on every deploy and rollback, and the desk's own routes pile up
+     behind it. Under a ranking that only ever adds, the three slots were
+     settled for good. */
+  for (let index = 0; index < 40; index += 1) {
+    store.recordFromSearch(buildSearch("LIM", "MAD"), nowMs + index);
+  }
+  for (let index = 0; index < 25; index += 1) {
+    store.recordFromSearch(buildSearch("CUZ", "BOG"), nowMs + 100 + index);
+  }
+  for (let index = 0; index < 12; index += 1) {
+    store.recordFromSearch(buildSearch("AQP", "SCL"), nowMs + 200 + index);
+  }
+
+  assert.deepEqual(store.getSuggestions(3, nowMs + 300), {
+    origin: ["LIM", "CUZ", "AQP"],
+    destination: ["MAD", "BOG", "SCL"],
+  });
+
+  store.recordFromSearch(buildSearch("IQT", "UIO"), nowMs + 400);
+
+  assert.deepEqual(store.getSuggestions(3, nowMs + 401), {
+    origin: ["LIM", "CUZ", "IQT"],
+    destination: ["MAD", "BOG", "UIO"],
+  });
+
+  /* And the slot is a slot, not a queue: the next station searched takes it,
+     while the two stations the desk lives on keep the slots above. */
+  store.recordFromSearch(buildSearch("TPP", "MIA"), nowMs + 500);
+  assert.deepEqual(store.getSuggestions(3, nowMs + 501), {
+    origin: ["LIM", "CUZ", "TPP"],
+    destination: ["MAD", "BOG", "MIA"],
+  });
+});
+
+test("the persisted ranking is one global row for every browser session and process", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "fly-desk-location-usage-global-"));
+  const dbPath = join(tempRoot, "location-usage.sqlite");
+  const nowMs = Date.UTC(2026, 4, 26, 12);
+  let web: LocationUsageStore | undefined;
+  let runner: LocationUsageStore | undefined;
+
+  try {
+    web = new LocationUsageStore({ dbPath });
+    runner = new LocationUsageStore({ dbPath });
+
+    /* Three different browsers, and the search executed in the other process.
+       None of that is allowed to shard the row. */
+    runner.recordFromSearch(buildSearch("LIM", "MAD"), nowMs, 3, "browser-session-desk-0001");
+    runner.recordFromSearch(buildSearch("LIM", "MAD"), nowMs + 1, 3, "browser-session-desk-0002");
+    runner.recordFromSearch(buildSearch("CUZ", "BOG"), nowMs + 2, 3, "browser-session-desk-0003");
+
+    assert.deepEqual(web.getSuggestions(3, nowMs + 3), {
+      origin: ["LIM", "CUZ"],
+      destination: ["MAD", "BOG"],
+    });
+
+    // A station a third browser searched once, read from the first process.
+    runner.recordFromSearch(buildSearch("IQT", "UIO"), nowMs + 4, 3, "browser-session-desk-0003");
+    const groups = web.getUsageSuggestions("browser-session-desk-0001", 3, nowMs + 5);
+    /* Two uses put LIM first; between the two single uses the newer one leads,
+       which is the same recency the last card answers to. */
+    assert.deepEqual(groups.frequent, {
+      origin: ["LIM", "IQT", "CUZ"],
+      destination: ["MAD", "UIO", "BOG"],
+    });
+    /* The per-session strip stays per-session — it is the only thing here that
+       is allowed to differ between browsers. */
+    assert.deepEqual(groups.recent, {
+      origin: ["LIM"],
+      destination: ["MAD"],
+    });
+  } finally {
+    web?.close();
+    runner?.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("location usage store normalizes IATA prefixes and ignores invalid codes", () => {
   const store = new LocationUsageStore();
   const nowMs = Date.UTC(2026, 4, 26, 12);

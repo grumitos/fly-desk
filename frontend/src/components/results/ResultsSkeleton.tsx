@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react"
+import { Spinner } from "@/components/ui/spinner"
 
 /*
  * Plates 2g and 4a — the skeleton system.
@@ -13,8 +14,6 @@ import type { CSSProperties } from "react"
  * the squares — is written in result-card.css. The only thing this file owns is
  * the rhythm: the widths that change from row to row.
  */
-
-const MAX_SKELETON_ROWS = 12
 
 /* The pulse is offset 120ms per row (`--fd-stagger-skeleton`) so the list reads
    as one wave rather than as twelve independent things blinking. It wraps
@@ -45,17 +44,30 @@ const SKELETON_ROW_RHYTHM: SkeletonRowShape[] = [
 ]
 
 export function ResultsSkeleton({
-  rows = 7,
+  rows,
   inline = false,
   startDelayIndex = 0,
+  attachViewport,
+  searchingNotice,
 }: {
-  rows?: number
+  /**
+   * How many rows to draw. 4a asks for «never more rows than the real page»,
+   * and the real page is whatever the column fits — so the count arrives
+   * already measured, from the same hook that sizes the page of results this
+   * skeleton is standing in for. There is no default: a constant here is what
+   * painted seven bones into a column that held eleven.
+   */
+  rows: number
   /** Rendered inside an existing list (partial search) rather than alone. */
   inline?: boolean
   /** Continues the 120ms pulse offset from the last real row. */
   startDelayIndex?: number
+  /** The viewport the row count is measured against, when standing alone. */
+  attachViewport?: (node: HTMLDivElement | null) => void
+  /** 11 §3's «tarda»: which provider is still out, said beside the bones. */
+  searchingNotice?: string
 }) {
-  const rowCount = Math.max(1, Math.min(rows, MAX_SKELETON_ROWS))
+  const rowCount = Math.max(1, Math.round(rows))
   const skeletonRows = Array.from({ length: rowCount }, (_, index) => (
     <SkeletonRow key={index} index={index + startDelayIndex} />
   ))
@@ -64,13 +76,34 @@ export function ResultsSkeleton({
 
   /* Alone, the skeleton is the list: the same body, viewport and list element
      the real page uses, so the rows do not slide sideways when they are
-     replaced. `--skeleton` only caps the page at the real one — 7 rows on a
-     desk, 6 on a phone (4a). */
+     replaced.
+
+     `aria-hidden` sits on the viewport rather than on the body, because the
+     notice above it is the one thing here that has something to say. */
   return (
-    <div className="fd-list-body" aria-hidden="true" data-testid="results-loading-skeleton">
-      <div className="fd-list-viewport">
+    <div className="fd-list-body" data-testid="results-loading-skeleton">
+      {searchingNotice && (
+        <p className="fd-list-searching" role="status" data-testid="results-still-searching">
+          <Spinner size={12} />
+          {searchingNotice}
+        </p>
+      )}
+      <div ref={attachViewport} className="fd-list-viewport" aria-hidden="true">
         <div className="fd-results-list fd-results-list--skeleton">{skeletonRows}</div>
       </div>
+      {/* The pager's strip, empty and reserved.
+
+          Without it the two columns are not the same column: the pager is a
+          sibling of the viewport, so the page's viewport is 41px shorter than
+          the skeleton's, and the bones were counted into a taller box than the
+          results ever get — eleven bones handed over to ten cards, which is the
+          value jump 04 §7 forbids. It is the pager's own class, so the height
+          is the pager's own tokens rather than a number copied next to it.
+
+          A result set that fits on one page has no pager and gives this row
+          back, so there the skeleton is one bone short. That is the case where
+          the count was never the complaint. */}
+      <div className="fd-pager fd-pager--reserved" aria-hidden="true" />
     </div>
   )
 }

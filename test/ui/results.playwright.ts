@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Page, Route } from "playwright";
-import type { Itinerary } from "../../src/core/types";
+import type { CanonicalOffer, Itinerary } from "../../src/core/types";
 import { withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
 
@@ -1884,5 +1884,742 @@ test("cached offers stay non-quotable until a fresh provider result replaces the
       return button instanceof HTMLButtonElement && !button.disabled;
     });
     assert.equal(await quoteButton.isEnabled(), true);
+  }, { autoOpen: false });
+});
+
+test("the open list of schedules takes the click over every card it covers", async () => {
+  /*
+   * Reported from the desk: «+7» opened the full list and the cards below it
+   * showed *through* it — only the 6px gaps between them were the panel.
+   *
+   * Two things put it there, and the test pins both. The cascade of 04 §9 runs
+   * with `both`, so every row kept the final keyframe — an identity transform,
+   * which is still a transform and therefore still a stacking context. The
+   * panel's `z-30` was trapped inside its own row's context, and the rows after
+   * it, painted later in DOM order, went over it. Being visible is not the
+   * claim worth testing: what an agent does with this panel is *click* it, so
+   * the assertion is `elementFromPoint` down the whole surface.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const leg = (id: string, direction: "outbound" | "inbound", departureAt: string, arrivalAt: string) => ({
+      id: `${id}-${direction}`,
+      direction,
+      durationMinutes: 430,
+      stops: 0,
+      layoverMinutes: [],
+      segments: [{
+        id: `${id}-${direction}-1`,
+        flightNumber: direction === "outbound" ? "CM 210" : "CM 211",
+        marketingCarrier: "CM",
+        origin: direction === "outbound" ? "LIM" : "MIA",
+        destination: direction === "outbound" ? "MIA" : "LIM",
+        departureAt,
+        arrivalAt,
+        durationMinutes: 430,
+      }],
+    });
+    // Ten schedules over one outbound: three fit on the strip, the rest are the
+    // «+7» — which is the only way to open the panel.
+    const groupOffers = Array.from({ length: 10 }, (_, index) => {
+      const id = `stack-grouped-${index}`;
+      const hour = String(6 + index).padStart(2, "0");
+      return buildOffer({
+        id,
+        providerSource: "costamar",
+        origin: "LIM",
+        destination: "MIA",
+        price: {
+          total: { amount: 610 + index * 7, currencyCode: "USD" },
+          base: { amount: 580 + index * 7, currencyCode: "USD" },
+          taxes: { amount: 30, currencyCode: "USD" },
+        },
+        itineraries: [
+          leg(id, "outbound", "2026-09-14T09:50:00-05:00", "2026-09-14T17:00:00-04:00"),
+          leg(id, "inbound", `2026-09-24T${hour}:20:00-04:00`, `2026-09-24T${hour}:30:00-05:00`),
+        ],
+      });
+    });
+    // Plain cards *after* the group, so there is something below the panel that
+    // can paint over it. Without them the test would pass on a broken build.
+    const plainOffers = Array.from({ length: 6 }, (_, index) => {
+      const id = `stack-plain-${index}`;
+      const hour = String(17 + index).padStart(2, "0");
+      return buildOffer({
+        id,
+        providerSource: "costamar",
+        origin: "LIM",
+        destination: "MIA",
+        price: {
+          total: { amount: 900 + index * 11, currencyCode: "USD" },
+          base: { amount: 870 + index * 11, currencyCode: "USD" },
+          taxes: { amount: 30, currencyCode: "USD" },
+        },
+        itineraries: [
+          leg(id, "outbound", `2026-09-14T${hour}:05:00-05:00`, `2026-09-15T${hour}:15:00-04:00`),
+          leg(id, "inbound", `2026-09-24T${hour}:40:00-04:00`, `2026-09-25T${hour}:50:00-05:00`),
+        ],
+      });
+    });
+    const offers = [...groupOffers, ...plainOffers];
+    const outboundOptionId = "costamar:STACK:outbound";
+
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suggestions: [] }) });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "stacking-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers,
+          allOffers: offers,
+          scheduleGroups: [{
+            id: "costamar:STACK",
+            providerSource: "costamar",
+            outboundOptions: [{ id: outboundOptionId, itinerary: groupOffers[0].itineraries[0] }],
+            inboundOptions: groupOffers.map((offer, index) => ({
+              id: `costamar:STACK:inbound:${index}`,
+              itinerary: offer.itineraries[1],
+            })),
+            combinations: groupOffers.map((offer, index) => ({
+              outboundOptionId,
+              inboundOptionId: `costamar:STACK:inbound:${index}`,
+              offerId: offer.id,
+            })),
+            truncated: false,
+          }],
+          searchMeta: {
+            requestedAt: "2026-08-01T21:06:13.178Z",
+            completedAt: "2026-08-01T21:06:13.178Z",
+            providersUsed: ["costamar"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: { exactProvider: "costamar", coverageMode: "core" },
+          warnings: [],
+        }),
+      });
+    });
+
+    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-09-14&return=2026-09-24&adults=1&children=0&infants=0&sort=cheapest`, {
+      waitUntil: "domcontentloaded",
+    });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+    await page.getByTestId("result-card").first().waitFor();
+
+    // Nine alternates to the schedule on the card, three of them on the strip.
+    await page.getByRole("button", { name: "Ver los 9 horarios" }).click();
+    const panel = page.getByRole("dialog", { name: /^Todos los horarios/ });
+    await panel.waitFor();
+
+    /* Straight after the click, with the entrance cascade only just settled:
+       the panel has to be the topmost thing at every height it covers, not only
+       where a gap between cards lets it through. */
+    const surface = await page.evaluate(() => {
+      const dialog = document.querySelector<HTMLElement>('[role="dialog"][aria-label^="Todos los horarios"]');
+      if (!dialog) return null;
+
+      const rect = dialog.getBoundingClientRect();
+      const row = dialog.parentElement as HTMLElement;
+      const cardsBelow = Array.from(document.querySelectorAll<HTMLElement>("[data-testid='result-card']"))
+        .filter((card) => !row.contains(card) && card.getBoundingClientRect().top < rect.bottom)
+        .length;
+      const x = rect.x + rect.width / 2;
+      const probes = [0.06, 0.2, 0.35, 0.5, 0.65, 0.8, 0.94].map((fraction) => {
+        const y = rect.y + rect.height * fraction;
+        const top = document.elementFromPoint(x, y);
+        return {
+          fraction,
+          inside: Boolean(top?.closest('[role="dialog"][aria-label^="Todos los horarios"]')),
+          topmost: top?.className || top?.tagName || "?",
+        };
+      });
+
+      return {
+        cardsBelow,
+        probes,
+        rowZIndex: getComputedStyle(row).zIndex,
+        rowTransform: getComputedStyle(row).transform,
+      };
+    });
+
+    assert.ok(surface, "the panel did not open");
+    // The rig is only a rig if cards really do overlap the open panel.
+    assert.ok(surface.cardsBelow >= 4, JSON.stringify(surface));
+    assert.deepEqual(
+      surface.probes.filter((probe) => !probe.inside),
+      [],
+      JSON.stringify(surface, null, 2),
+    );
+    // The row wins on z-index while it is open …
+    assert.equal(surface.rowZIndex, "30", JSON.stringify(surface));
+    // … and the finished cascade left no transform behind to trap the panel in.
+    assert.equal(surface.rowTransform, "none", JSON.stringify(surface));
+
+    // And the click lands: choosing a schedule repaints the card underneath it.
+    const chosen = panel.locator(".fd-schedule-row").nth(4);
+    const chosenTime = (await chosen.innerText()).match(/\d{2}:\d{2}/)?.[0];
+    await chosen.click();
+    await panel.waitFor({ state: "detached" });
+
+    const groupedCard = page.getByTestId("result-card").first();
+    assert.match(await groupedCard.getAttribute("class") ?? "", /is-schedule-changed/);
+    assert.match(await groupedCard.locator(".fd-card__legs").innerText(), new RegExp(chosenTime ?? "never"));
+  }, { autoOpen: false });
+});
+
+/*
+ * A leg that stops once in Bogotá, so the stops lane has an airport code to
+ * lose. Measured against the loaded face: «1 escala · BOG» is 75px at the
+ * desk's 11px, «1 esc · BOG» is 60 there and 54 at the stacked card's 10px.
+ */
+function oneStopOffer(index: number, overrides: Partial<CanonicalOffer> = {}) {
+  return buildOffer({
+    id: `stops-${index}`,
+    destination: "MAD",
+    comparisonMetrics: { totalDurationMinutes: 1390, totalStops: 2, baggageScore: 2, purchasePathScore: 1 },
+    itineraries: [
+      {
+        id: `stops-${index}-outbound`,
+        direction: "outbound",
+        durationMinutes: 700,
+        stops: 1,
+        layoverMinutes: [120],
+        segments: [
+          { id: `stops-${index}-o1`, flightNumber: "LA 123", marketingCarrier: "LA", origin: "LIM", destination: "BOG", departureAt: "2026-05-28T08:00:00Z", arrivalAt: "2026-05-28T11:00:00Z", durationMinutes: 180 },
+          { id: `stops-${index}-o2`, flightNumber: "LA 900", marketingCarrier: "LA", origin: "BOG", destination: "MAD", departureAt: "2026-05-28T13:00:00Z", arrivalAt: "2026-05-28T22:40:00Z", durationMinutes: 400 },
+        ],
+      },
+      {
+        id: `stops-${index}-inbound`,
+        direction: "inbound",
+        durationMinutes: 690,
+        stops: 1,
+        layoverMinutes: [110],
+        segments: [
+          { id: `stops-${index}-i1`, flightNumber: "LA 901", marketingCarrier: "LA", origin: "MAD", destination: "BOG", departureAt: `2026-06-04T${String(6 + (index % 12)).padStart(2, "0")}:10:00Z`, arrivalAt: `2026-06-04T${String(12 + (index % 8)).padStart(2, "0")}:20:00Z`, durationMinutes: 400 },
+          { id: `stops-${index}-i2`, flightNumber: "LA 124", marketingCarrier: "LA", origin: "BOG", destination: "LIM", departureAt: "2026-06-04T20:00:00Z", arrivalAt: "2026-06-04T23:05:00Z", durationMinutes: 185 },
+        ],
+      },
+    ],
+    ...overrides,
+  });
+}
+
+const RESULTS_SEARCH_URL = "/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-05-28&return=2026-06-04&adults=1&children=0&infants=0&sort=cheapest";
+
+async function routeCompletedSearch(
+  page: Page,
+  body: { offers: CanonicalOffer[]; scheduleGroups?: unknown[] },
+): Promise<void> {
+  await page.route("**/api/locations**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suggestions: [] }) });
+  });
+  await page.route("**/api/search", async (route) => {
+    const payload = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        searchJobId: "geometry-search",
+        searchComplete: true,
+        searchStatus: "completed",
+        revision: 1,
+        sortMode: payload.sortMode,
+        request: payload.request,
+        offers: body.offers,
+        allOffers: body.offers,
+        scheduleGroups: body.scheduleGroups ?? [],
+        searchMeta: {
+          requestedAt: "2026-05-04T15:21:48.419Z",
+          completedAt: "2026-05-04T15:21:48.419Z",
+          providersUsed: ["agil-local"],
+          warnings: [],
+          partial: false,
+          searchState: "search_live",
+        },
+        providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+        warnings: [],
+      }),
+    });
+  });
+}
+
+/** A search whose POST never answers: the column belongs to the skeleton. */
+async function routeUnansweredSearch(page: Page): Promise<void> {
+  await page.route("**/api/locations**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suggestions: [] }) });
+  });
+  await page.route("**/api/search", () => {});
+}
+
+/**
+ * A search that answers, but not instantly.
+ *
+ * An instantly-fulfilled route is a test that never sees the skeleton phase or
+ * the handover into results, which is where both halves of the column's
+ * measurement actually live — and is why the first version of these cases
+ * passed against a build that painted four bones in a column of eleven.
+ */
+async function routeDelayedSearch(
+  page: Page,
+  body: { offers: CanonicalOffer[]; scheduleGroups?: unknown[] },
+  delayMs = 2_500,
+): Promise<void> {
+  await page.route("**/api/locations**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suggestions: [] }) });
+  });
+  await page.route("**/api/search", async (route) => {
+    const payload = route.request().postDataJSON() as Record<string, unknown>;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        searchJobId: "delayed-search",
+        searchComplete: true,
+        searchStatus: "completed",
+        revision: 1,
+        sortMode: payload.sortMode,
+        request: payload.request,
+        offers: body.offers,
+        allOffers: body.offers,
+        scheduleGroups: body.scheduleGroups ?? [],
+        searchMeta: {
+          requestedAt: "2026-05-04T15:21:48.419Z",
+          completedAt: "2026-05-04T15:21:48.419Z",
+          providersUsed: ["agil-local"],
+          warnings: [],
+          partial: false,
+          searchState: "search_live",
+        },
+        providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+        warnings: [],
+      }),
+    });
+  });
+}
+
+/**
+ * Every distinct `bones/cards` pair the list actually paints, in order.
+ *
+ * Sampling settled state is what let a fallback of four survive review: it is
+ * gone a frame later, so a test that waits cannot see it, and a person watching
+ * a real search sees it every time. This records the frames themselves, and the
+ * assertions read the sequence rather than its last entry.
+ */
+async function recordListFrames(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const trace: string[] = [];
+    (window as unknown as { __listFrames: string[] }).__listFrames = trace;
+    const tick = () => {
+      const bones = document.querySelectorAll(".fd-card--skeleton").length;
+      const cards = document.querySelectorAll("[data-testid='result-card']").length;
+      const entry = `${bones}/${cards}`;
+      if (trace[trace.length - 1] !== entry) trace.push(entry);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+async function readListFrames(page: Page): Promise<Array<{ bones: number; cards: number }>> {
+  const trace = await page.evaluate(() => (window as unknown as { __listFrames: string[] }).__listFrames ?? []);
+  return trace.map((entry) => {
+    const [bones, cards] = entry.split("/").map(Number);
+    return { bones: bones ?? 0, cards: cards ?? 0 };
+  });
+}
+
+/** What the column holds, in plain rows, from the box the list is drawn in. */
+async function measureColumn(page: Page): Promise<{ viewportHeight: number; row: number; fits: number; blank: number }> {
+  const measured = await page.evaluate(() => {
+    const viewport = document.querySelector<HTMLElement>(".fd-list-viewport");
+    const list = document.querySelector<HTMLElement>(".fd-results-list");
+    const rows = Array.from(document.querySelectorAll<HTMLElement>(".fd-card"));
+    const plain = rows.filter((row) => !row.querySelector(".fd-card__alts"));
+    const last = rows[rows.length - 1];
+    if (!viewport || !list || !last || plain.length === 0) return null;
+    const gap = Number.parseFloat(getComputedStyle(list).rowGap || "6");
+    const row = plain[0].getBoundingClientRect().height + gap;
+    const available = viewport.clientHeight - 4;
+    return {
+      viewportHeight: viewport.clientHeight,
+      row,
+      fits: Math.floor((available + gap) / row),
+      blank: Math.round(viewport.clientHeight - (last.getBoundingClientRect().bottom - list.getBoundingClientRect().top)),
+    };
+  });
+  assert.ok(measured, "missing column metrics");
+  return measured;
+}
+
+async function runResultsSearch(page: Page, baseUrl: string): Promise<void> {
+  await page.goto(`${baseUrl}${RESULTS_SEARCH_URL}`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("combobox", { name: "Origen" }).waitFor();
+  await Promise.all([
+    page.waitForResponse("**/api/search"),
+    page.getByRole("button", { name: "Buscar" }).click(),
+  ]);
+}
+
+test("the card keeps a lane for the airport codes at every width a desk can be", async () => {
+  /*
+   * «Cada resultado colapsa el ancho», reported from a laptop. Measured, three
+   * thresholds were wrong about the same thing — how much room a leg row needs
+   * before its stops lane stops existing:
+   *
+   *   · the detail column took 326px out of a list that had 748 at 1366, so
+   *     every result on the commonest laptop width wore the phone anatomy
+   *     inside a three-column desk. The list was in fact *wider* one pixel
+   *     below 1100 (807) than one pixel above it (482): widening the window
+   *     collapsed the cards;
+   *   · the stacking threshold still read 750, an arithmetic that predates the
+   *     baggage taking a track of its own — 44px off the legs track — and that
+   *     used the duration lane's 50 as a stand-in for the 75 the one-stop label
+   *     actually measures;
+   *   · the side-by-side leg row engaged at 980, where its own fixed lanes do
+   *     not fit: the two stops lanes resolved to zero and the row overflowed
+   *     the legs track by up to 47px, painting over the price.
+   *
+   * One rule settles all three, and this case is that rule: whatever
+   * disposition a width lands in, the stops lane holds the label that
+   * disposition draws.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeCompletedSearch(page, { offers: Array.from({ length: 14 }, (_, index) => oneStopOffer(index)) });
+    await page.setViewportSize({ width: 1920, height: 1000 });
+    await runResultsSearch(page, baseUrl);
+    await page.getByTestId("result-card").first().waitFor();
+
+    const measure = () => page.evaluate(() => {
+      const card = document.querySelector<HTMLElement>("[data-testid='result-card']");
+      const list = document.querySelector<HTMLElement>(".fd-list");
+      const legs = card?.querySelector<HTMLElement>(".fd-card__legs");
+      const stops = card?.querySelector<HTMLElement>(".fd-card__leg-stops");
+      const chevron = card?.querySelector<HTMLElement>(".fd-card__chevron");
+      if (!card || !list || !legs || !stops || !chevron) return null;
+      const shown = Array.from(stops.children)
+        .find((child) => getComputedStyle(child as HTMLElement).display !== "none") as HTMLElement | undefined;
+      return {
+        listWidth: list.clientWidth,
+        stacked: getComputedStyle(chevron).display !== "none",
+        legsOverflow: legs.scrollWidth - legs.clientWidth,
+        laneWidth: stops.getBoundingClientRect().width,
+        labelWidth: shown?.getBoundingClientRect().width ?? 0,
+        label: (shown?.textContent ?? "").trim(),
+      };
+    });
+
+    for (const width of [1920, 1745, 1700, 1600, 1500, 1440, 1437, 1436, 1366, 1280, 1111, 1024, 900]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.waitForTimeout(320);
+      const layout = await measure();
+      assert.ok(layout, `missing card metrics at ${width}`);
+      const at = `${width}: ${JSON.stringify(layout)}`;
+
+      // The airport code has a box, at every width and in every disposition.
+      assert.match(layout.label, /BOG/, at);
+      assert.ok(layout.laneWidth + 0.5 >= layout.labelWidth, at);
+      // And the row it lives in never spills over the columns beside it.
+      assert.ok(layout.legsOverflow <= 0, at);
+      // The disposition answers the list, and the list alone (02 §2).
+      assert.equal(layout.stacked, layout.listWidth < 819, at);
+    }
+
+    // The headline: a 1366 laptop is a desk, and its list is not 748 any more.
+    await page.setViewportSize({ width: 1366, height: 1000 });
+    await page.waitForTimeout(320);
+    const laptop = await measure();
+    assert.ok(laptop && !laptop.stacked && laptop.listWidth >= 819, JSON.stringify(laptop));
+  }, { autoOpen: false });
+});
+
+test("the skeleton draws as many rows as the column it is standing in will hold", async () => {
+  /*
+   * «La cantidad de resultados solo llena la mitad del espacio disponible, lo
+   * mismo con el skeleton.» The page had been measured against its column for
+   * some time; the skeleton had not — it drew a constant seven, capped to six
+   * when stacked by a CSS `nth-child`, into a column that holds eleven or more.
+   * Both now come from one measurement, so the bones stand where the results
+   * will.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    /* Answered, but not instantly: the skeleton phase has to be something the
+       browser actually paints, and the frames are what this case reads. */
+    await routeDelayedSearch(page, { offers: Array.from({ length: 31 }, (_, index) => oneStopOffer(index)) }, 2_500);
+    await page.setViewportSize({ width: 1920, height: 911 });
+    await page.goto(`${baseUrl}${RESULTS_SEARCH_URL}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await recordListFrames(page);
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await page.getByTestId("results-loading-skeleton").waitFor();
+    await page.waitForFunction(() => document.querySelectorAll(".fd-card--skeleton").length > 1);
+
+    // Read while the search is still out, so this is the skeleton's own column
+    // and no results have ever been rendered into it.
+    const column = await measureColumn(page);
+    const bones = await page.locator(".fd-card--skeleton").count();
+    const at = JSON.stringify({ ...column, bones });
+
+    // Seven was the constant. A 911-tall window holds more than that.
+    assert.ok(bones > 7, at);
+    // And the bones fill the column they are standing in, to the row.
+    assert.equal(bones, column.fits, at);
+    assert.ok(column.blank >= 0 && column.blank < column.row, at);
+
+    /*
+     * The frames, not the settled state. Before the measurement was taken
+     * synchronously, the first painted frame was `RESULTS_PAGE_SIZE_FALLBACK`
+     * — four bones in a column of eleven — and the correction landed one frame
+     * later, so every assertion above passed against it.
+     */
+    const frames = await readListFrames(page);
+    const skeletonFrames = frames.filter((frame) => frame.bones > 0);
+    assert.ok(skeletonFrames.length > 0, JSON.stringify(frames));
+    for (const frame of skeletonFrames) {
+      assert.equal(frame.bones, column.fits, `painted ${frame.bones} bones: ${JSON.stringify(frames)}`);
+    }
+
+    /*
+     * And the same number survives the handover. The skeleton is a sibling of
+     * nothing while the page is a sibling of the pager, so without the strip
+     * the skeleton reserves for it the bones were counted into a column 41px
+     * taller than the one the results get — eleven bones replaced by ten cards,
+     * a value jumping the moment the data lands, which is the one thing 04 §7
+     * forbids.
+     */
+    await page.getByTestId("result-card").first().waitFor({ timeout: 20_000 });
+    await page.waitForTimeout(1_200);
+    const arrived = await page.getByTestId("result-card").count();
+    assert.equal(arrived, bones, `${bones} bones handed over to ${arrived} cards`);
+  }, { autoOpen: false });
+});
+
+test("a tall column is filled by the results, not by the old ceiling of twelve", async () => {
+  /*
+   * The page size was capped at 12 when a 1440-tall desk was the tallest thing
+   * it had been measured on. A 1920×1080 column fits 13 plain rows, so the cap
+   * left a row empty on the reporter's own screen and seven on a 1440-tall one
+   * — the same half-filled column, arriving from the other side.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeDelayedSearch(page, { offers: Array.from({ length: 40 }, (_, index) => oneStopOffer(index)) }, 2_000);
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await page.goto(`${baseUrl}${RESULTS_SEARCH_URL}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await recordListFrames(page);
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await page.getByTestId("results-pagination").waitFor({ timeout: 20_000 });
+    // Let the entry cascade finish, so "settled" means settled.
+    await page.waitForTimeout(1_200);
+
+    const column = await measureColumn(page);
+    const cards = await page.getByTestId("result-card").count();
+    const at = JSON.stringify({ ...column, cards });
+
+    assert.ok(cards > 12, at);
+    assert.ok(column.blank >= 0 && column.blank < column.row, at);
+
+    /*
+     * And it was never smaller on the way in. Re-keying this panel on the
+     * arriving `searchJobId` remounts it, which used to reset the column to the
+     * fallback for one painted frame: a page of four cards under a pager that
+     * had already counted the offers of twelve.
+     */
+    const frames = await readListFrames(page);
+    const resultFrames = frames.filter((frame) => frame.cards > 0);
+    assert.ok(resultFrames.length > 0, JSON.stringify(frames));
+    for (const frame of resultFrames) {
+      assert.equal(frame.cards, cards, `painted ${frame.cards} cards: ${JSON.stringify(frames)}`);
+    }
+
+    // What the pager promises is what the column actually holds.
+    const range = await page.locator(".fd-pager-range").innerText();
+    assert.match(range, new RegExp(`^1–${cards} de 40`), `${range} · ${at}`);
+  }, { autoOpen: false });
+});
+
+test("a page carrying a group still closes the column it was measured against", async () => {
+  /*
+   * The rounding that the weight system hides until a group is on the page.
+   * Capacity used to be floored to whole plain rows before the weights were
+   * applied, so a column of 687 became a budget of 10 — and a group at 1.67
+   * plus eight flights is 9.67 of it, with a ninth flight refused at 10.67
+   * while 80px of column, more than the 64 it needed, sat empty beneath it.
+   * Two roundings each losing under a row, together losing more than one.
+   *
+   * The fixture is the reported one: a truncated group of ten, a duplicate of
+   * one of its members, and twenty flights.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const grouped = Array.from({ length: 10 }, (_, index) => oneStopOffer(index, { id: `grp-${index}` }));
+    const plain = Array.from({ length: 20 }, (_, index) => oneStopOffer(index + 40, { id: `plain-${index}` }));
+    const duplicate = oneStopOffer(0, { id: "dup-0" });
+
+    await routeDelayedSearch(page, {
+      offers: [...grouped, duplicate, ...plain],
+      scheduleGroups: [{
+        id: "agil-local:FILL",
+        providerSource: "agil-local",
+        outboundOptions: [{ id: "fill-out", itinerary: grouped[0].itineraries[0] }],
+        inboundOptions: grouped.map((offer, index) => ({ id: `fill-in-${index}`, itinerary: offer.itineraries[1] })),
+        combinations: grouped.map((offer, index) => ({
+          outboundOptionId: "fill-out",
+          inboundOptionId: `fill-in-${index}`,
+          offerId: offer.id,
+        })),
+        truncated: true,
+      }],
+    }, 1_500);
+
+    await page.setViewportSize({ width: 1920, height: 911 });
+    await runResultsSearch(page, baseUrl);
+    await page.getByTestId("results-pagination").waitFor({ timeout: 20_000 });
+    await page.waitForTimeout(1_200);
+
+    const column = await measureColumn(page);
+    const groupCards = await page.locator(".fd-card__alts").count();
+    const at = JSON.stringify({ ...column, groupCards });
+
+    // The mix is what makes the measurement meaningful.
+    assert.equal(groupCards, 1, at);
+    // A card that fits was not withheld.
+    assert.ok(column.blank >= 0 && column.blank < column.row, at);
+  }, { autoOpen: false });
+});
+
+test("a slow provider adds a line to the skeleton instead of taking it away", async () => {
+  /*
+   * «"Esperando resultados" se muestra muy pronto, los proveedores tardan
+   * más.» At eight seconds the whole column was replaced by the incomplete
+   * search notice — but the production smoke's *fastest* case lands around 15s
+   * and a range far later, so nearly every real search died into a sparse clock
+   * screen while it was still working normally. Those eight seconds now buy a
+   * line of words beside the bones, and the bones stay for as long as the
+   * search is alive.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeUnansweredSearch(page);
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await page.goto(`${baseUrl}${RESULTS_SEARCH_URL}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await page.getByTestId("results-loading-skeleton").waitFor();
+
+    // Past the eight seconds that used to end the skeleton.
+    await page.waitForTimeout(9_000);
+
+    await page.getByTestId("results-still-searching").waitFor();
+    assert.equal(await page.getByTestId("results-loading-skeleton").isVisible(), true);
+    assert.ok((await page.locator(".fd-card--skeleton").count()) > 1);
+    // The column is not a clock screen: the line above did not replace it.
+    assert.equal(await page.locator(".fd-list-empty").count(), 0);
+  }, { autoOpen: false });
+});
+
+test("a reader who asked for no movement gets the words instead of still bones", async () => {
+  /*
+   * The remaining home of «La búsqueda sigue en curso». 07 §0 rule 5 stops the
+   * skeleton's pulse under `prefers-reduced-motion`, and a field of grey blocks
+   * that does not breathe is a drawing of a list, not a claim that one is
+   * arriving — so there the sentence takes the column it used to take from
+   * everyone.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await routeUnansweredSearch(page);
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await page.goto(`${baseUrl}${RESULTS_SEARCH_URL}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await page.getByRole("button", { name: "Buscar" }).click();
+    await page.getByTestId("results-loading-skeleton").waitFor();
+
+    await page.waitForTimeout(9_000);
+
+    await page.getByText("La búsqueda sigue en curso").waitFor();
+    assert.equal(await page.getByTestId("results-loading-skeleton").count(), 0);
+  }, { autoOpen: false });
+});
+
+test("an offer whose schedule is already inside a group is not drawn a second time", async () => {
+  /*
+   * «Uno que ya está en otro grupo se muestra como independiente repitiendo los
+   * horarios ya antes mostrados.» Membership was `combinations[].offerId` and
+   * nothing else, which leaks two ways — both of them here. The group is
+   * `truncated`, so the provider stopped enumerating combinations while its
+   * family kept the offers; and one of those offers arrives again under a
+   * second id. Neither may appear as a card of its own: the legs it would show
+   * are the legs the strip above it already shows.
+   *
+   * The third offer is the fare edge and must survive: same metal, same times,
+   * a different price. That is a second thing to sell, not a repeated schedule,
+   * and the list keeps it — on exactly the bar the provider grouped on, since
+   * `offer-schedule-groups.ts::groupKeyForOffer` puts two offers in one group
+   * only when the currency, the amount and the baggage all match.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const inGroupA = oneStopOffer(0, { id: "grouped-a" });
+    const inGroupB = oneStopOffer(1, { id: "grouped-b" });
+    // Leak (a): part of the truncated family, absent from `combinations`.
+    const familyLeak = oneStopOffer(1, { id: "family-leak" });
+    // Leak (b): the same physical flight under a second offer id.
+    const idLeak = oneStopOffer(0, { id: "id-leak" });
+    // Not a leak: the same flight at a different fare.
+    const otherFare = oneStopOffer(0, {
+      id: "other-fare",
+      price: {
+        total: { amount: 421, currencyCode: "USD" },
+        base: { amount: 350, currencyCode: "USD" },
+        taxes: { amount: 71, currencyCode: "USD" },
+      },
+    });
+
+    await routeCompletedSearch(page, {
+      offers: [inGroupA, inGroupB, familyLeak, idLeak, otherFare],
+      scheduleGroups: [{
+        id: "agil-local:LEAK",
+        providerSource: "agil-local",
+        outboundOptions: [{ id: "leak-out", itinerary: inGroupA.itineraries[0] }],
+        inboundOptions: [inGroupA, inGroupB].map((offer, index) => ({ id: `leak-in-${index}`, itinerary: offer.itineraries[1] })),
+        combinations: [inGroupA, inGroupB].map((offer, index) => ({
+          outboundOptionId: "leak-out",
+          inboundOptionId: `leak-in-${index}`,
+          offerId: offer.id,
+        })),
+        truncated: true,
+      }],
+    });
+
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await runResultsSearch(page, baseUrl);
+    await page.getByTestId("result-card").first().waitFor();
+
+    const cards = page.getByTestId("result-card");
+    // The group, and the differently-priced fare. Nothing else.
+    assert.equal(await cards.count(), 2);
+    assert.equal(await page.locator(".fd-card__alts").count(), 1);
+
+    const shown = await cards.evaluateAll((nodes) => nodes.map((node) => ({
+      price: node.querySelector<HTMLElement>(".fd-card__price-figure")?.innerText.trim() ?? "",
+      grouped: Boolean(node.querySelector(".fd-card__alts")),
+    })));
+    const independent = shown.find((card) => !card.grouped);
+    assert.ok(independent, JSON.stringify(shown));
+    // The card that survives on its own is the one that differs on price.
+    assert.match(independent.price, /421/, JSON.stringify(shown));
   }, { autoOpen: false });
 });

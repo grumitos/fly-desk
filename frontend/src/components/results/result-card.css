@@ -195,18 +195,46 @@
    * A wide list reads the trip in one line.
    *
    * Two stacked legs are what left a third of the card empty on a 1920 desk:
-   * the legs track had 700px and used 260 of them, twice. Past 980px of list
-   * the outbound and the return sit side by side, split by a hairline, and the
-   * card becomes one row of information instead of a two-line block with a hole
-   * beside it. Below that they stack, because a leg needs 264px of lanes before
-   * its stops column starts to exist (02 §2) and two of those do not fit.
+   * the legs track had 700px and used 260 of them, twice. Past the threshold
+   * below the outbound and the return sit side by side, split by a hairline,
+   * and the card becomes one row of information instead of a two-line block
+   * with a hole beside it.
+   *
+   * 1117, not the 980 this shipped with. Two legs in one row is the *narrowest*
+   * disposition the card has, not the widest, and 980 was read off the width
+   * where the hole looked bad rather than derived from what the row needs.
+   * Measured: each half is 58 + 126 + 50 of fixed lanes, the pair is split by a
+   * 1px rule, and the elastic stops lane has to hold a label. So the row costs
+   * `2 × 234 + 1 + 8 gaps + 2 × stops`, and at 980 that leaves the stops lanes
+   * **zero** — the airport codes vanish, which is precisely the §5 breach the
+   * stacking threshold below exists to prevent, reintroduced one breakpoint
+   * higher. Between 980 and 1010 the row did not even fit its fixed lanes and
+   * overflowed the legs track by up to 47px, painting over the price.
+   *
+   * Two corrections make it fit. The gaps drop to the 6 the compressed leg row
+   * already uses further down — this is that row, one level up — and the stops
+   * lane takes the abbreviated wording, which is what 8c gives a lane too tight
+   * for the long one. «1 esc · BOG» measures 60 at 11px against 75 for
+   * «1 escala · BOG», so the row costs 2 × 234 + 1 + 48 + 2 × 60 = 637 and the
+   * legs track is `list - 480`: 1117. The widest list this application can draw
+   * is 1142 (`--fd-app-max-width` 1760 less the desk chrome), which leaves each
+   * lane 72 against the 60 it needs.
    */
-  @container fdlist (min-width: 980px) {
+  @container fdlist (min-width: 1117px) {
     .fd-card .fd-card__legs {
       grid-template-columns:
         58px 126px minmax(50px, max-content) minmax(0, 1fr)
         1px
         58px 126px minmax(50px, max-content) minmax(0, 1fr);
+      column-gap: 6px;
+    }
+
+    .fd-card .fd-card__leg-stops-long {
+      display: none;
+    }
+
+    .fd-card .fd-card__leg-stops-short {
+      display: inline;
     }
 
     .fd-card .fd-card__leg {
@@ -625,16 +653,28 @@
    * to the three-row anatomy from plate 8c.
    *
    * 02 §2 derives the number and lands on 660, but its sum leaves out the
-   * card's own `padding: 0 13` and its border. Measured against this card the
-   * legs track is exactly `list - 436` (32+186+116+26 columns, four 12px gaps,
-   * 26px padding, 2px border), so at 660 the track is 224 where the manual's
-   * own minimum is 264: the stops column collapses to zero and the airport
-   * codes disappear, which §5 forbids and §4 says must be answered by stacking.
-   * 264 + a 50px floor for the elastic lane — the width the duration lane
-   * already uses, so no value leaves the catalogue — puts the threshold at
-   * 750. */
+   * card's own `padding: 0 13` and its border. This file has carried 750 since
+   * the geometry correction that first measured it; 819 is the same
+   * measurement re-taken after two things moved underneath it.
+   *
+   * One, the legs track. It was `list - 436` (32+186+116+26 columns, four 12px
+   * gaps, 26px padding, 2px border) when the 750 was worked out. Giving the
+   * baggage its own `auto` track added 32px of track and a fifth 12px gap, so
+   * it is now `list - 480`: the same list is 44px poorer than the arithmetic
+   * that produced 750 assumed.
+   *
+   * Two, the floor. 750 used 50px for the elastic lane because that is what the
+   * duration lane costs — a catalogue value standing in for a measurement. The
+   * measurement is 75: «1 escala · BOG» at 11px, the one-stop long form, which
+   * is the label §5 says may not lose its airport code. At 50 the lane renders
+   * «1 escala…» and the code is gone, so between 750 and 819 the desk anatomy
+   * was in force over a row that could not say where the flight stops.
+   *
+   * 264 of fixed lanes (58 + 126 + 50 and three 10px gaps) + 75 = 339 of legs
+   * track, and `339 + 480` puts the threshold at 819. The rule is one rule at
+   * every scale: the anatomy in force must fit its own one-stop label. */
 
-  @container fdlist (max-width: 749.98px) {
+  @container fdlist (max-width: 818.98px) {
     .fd-card {
       grid-template-columns: 24px minmax(0, 1fr) auto 14px;
       /* Plate 8c: the four gaps of row 1 are 10. The chevron rides the same
@@ -859,12 +899,14 @@
       width: 8px;
       height: 12px;
     }
-
-    /* 4a: never more rows than the real page — 7 on a desk, 6 on a phone. In a
-       partial search the count comes from outside instead, from the rows that
-       are actually missing, so this only ever caps the standalone page. */
-    .fd-results-list--skeleton > .fd-card--skeleton:nth-child(n + 7) {
-      display: none;
-    }
   }
+
+  /* 4a asks for «never more rows than the real page» and this used to answer it
+     with a constant — `nth-child(n+7)`, six rows, written when the real page
+     was seven. The page has been measured against the column it is drawn in
+     ever since, and reaches twenty; the constant stayed, so every load painted
+     six or seven bones into a column that holds eleven and the skeleton filled
+     half the space its own results were about to fill. The count is now the
+     same measurement the page uses, taken by the same hook, so there is nothing
+     left for a CSS cap to be right or wrong about. */
 }

@@ -3903,6 +3903,132 @@ test("search fan-out can suppress duplicate location usage accounting", { concur
   }
 });
 
+test("a delegated search is counted in the store the web unit serves, and only once", { concurrency: false }, async () => {
+  const previousApiToken = process.env.FLY_DESK_API_TOKEN;
+  const previousSearchUrl = process.env.FLY_DESK_SEARCH_SERVICE_URL;
+  const previousSearchToken = process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN;
+  const previousFetch = global.fetch;
+  process.env.FLY_DESK_API_TOKEN = "test-token";
+  process.env.FLY_DESK_SEARCH_SERVICE_URL = "http://127.0.0.1:8101";
+  process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN = "internal-runner-token";
+  getRuntime().locationUsage.clearForTests();
+
+  try {
+    const request = buildCostamarRequest();
+    const departureDate = getSearchDatePolicy().minSearchDate;
+    delete request.providerId;
+    request.legs[0] = {
+      ...request.legs[0],
+      origin: "AQP",
+      destination: "SCL",
+      departureDate,
+      returnDate: addDays(departureDate, 7),
+    };
+
+    let forwardedBody: string | undefined;
+    let forwardedProxyHeader: string | null = null;
+    global.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      assert.equal(String(input), "http://127.0.0.1:8101/api/search");
+      forwardedProxyHeader = new Headers(init?.headers).get("x-flydesk-search-proxy");
+      forwardedBody = await new Response(init?.body).text();
+      return Response.json({ searchJobId: "runner-job", status: "running", revision: 1 });
+    }) as typeof fetch;
+
+    const payload = {
+      clientSessionId: "browser-session-delegated-01",
+      request,
+      sortMode: "cheapest",
+    };
+    const delegated = await routeRequest(new Request("http://fly-desk.local/api/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
+      },
+      body: JSON.stringify(payload),
+    }));
+
+    assert.equal(delegated.status, 200);
+    // The rebuilt request still carries the whole payload to the runner.
+    assert.deepEqual(JSON.parse(forwardedBody ?? "null"), payload);
+    assert.equal(forwardedProxyHeader, "1");
+    /* The point of the case: the search ran in the runner, and the ranking the
+       web unit answers with knows about it. */
+    assert.deepEqual(getRuntime().locationUsage.getSuggestions(3), {
+      origin: ["AQP"],
+      destination: ["SCL"],
+    });
+    assert.deepEqual(
+      getRuntime().locationUsage.getUsageSuggestions("browser-session-delegated-01").recent,
+      { origin: ["AQP"], destination: ["SCL"] },
+    );
+
+    /* And the runner's own half of the arrangement: a request that arrives
+       stamped as proxied has already been counted upstream, so counting it
+       again would give a delegated search twice the weight of a direct one. */
+    delete process.env.FLY_DESK_SEARCH_SERVICE_URL;
+    global.fetch = previousFetch;
+    const atRunner = await routeRequest(new Request("http://fly-desk.local/api/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
+        "x-flydesk-search-proxy": "1",
+      },
+      body: JSON.stringify({
+        ...payload,
+        request: {
+          ...request,
+          legs: [{ ...request.legs[0], origin: "TPP", destination: "MIA" }],
+        },
+      }),
+    }));
+    assert.equal(atRunner.status, 200);
+    assert.deepEqual(getRuntime().locationUsage.getSuggestions(3), {
+      origin: ["AQP"],
+      destination: ["SCL"],
+    });
+    assert.equal(getRuntime().locationUsage.getDiagnostics().entries, 2);
+
+    /* A runner that is down is not a route the desk searched. */
+    process.env.FLY_DESK_SEARCH_SERVICE_URL = "http://127.0.0.1:8101";
+    global.fetch = (async () => {
+      throw new Error("connection refused");
+    }) as typeof fetch;
+    const unavailable = await routeRequest(new Request("http://fly-desk.local/api/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
+      },
+      body: JSON.stringify({
+        ...payload,
+        request: {
+          ...request,
+          legs: [{ ...request.legs[0], origin: "IQT", destination: "UIO" }],
+        },
+      }),
+    }));
+    assert.equal(unavailable.status, 503);
+    assert.deepEqual(getRuntime().locationUsage.getSuggestions(3), {
+      origin: ["AQP"],
+      destination: ["SCL"],
+    });
+  } finally {
+    global.fetch = previousFetch;
+    getRuntime().locationUsage.clearForTests();
+    if (previousApiToken === undefined) delete process.env.FLY_DESK_API_TOKEN;
+    else process.env.FLY_DESK_API_TOKEN = previousApiToken;
+    if (previousSearchUrl === undefined) delete process.env.FLY_DESK_SEARCH_SERVICE_URL;
+    else process.env.FLY_DESK_SEARCH_SERVICE_URL = previousSearchUrl;
+    if (previousSearchToken === undefined) delete process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN;
+    else process.env.FLY_DESK_SEARCH_SERVICE_API_TOKEN = previousSearchToken;
+  }
+});
+
 test("rejects overlong location queries before provider lookup", { concurrency: false }, async () => {
   const previousApiToken = process.env.FLY_DESK_API_TOKEN;
   process.env.FLY_DESK_API_TOKEN = "test-token";

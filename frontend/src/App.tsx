@@ -166,7 +166,7 @@ export default function App() {
   const toolsBlockAnimationRef = useRef<Animation | null>(null)
   const searchLayoutAnimationRef = useRef<Animation | null>(null)
   const searchControlsAnimationRef = useRef<Animation | null>(null)
-  const shellSize = useShellSize(shellRef)
+  const { shellSize, detailPlacement } = useShellSize(shellRef)
   /* What the keyboard layer of 11 §7 reads. Refs rather than dependencies: the
      listener is bound once, and a shortcut that rebinds on every keystroke of a
      progressive search is a listener nobody can reason about. */
@@ -552,8 +552,10 @@ export default function App() {
 
   const handleSelectOffer = useCallback((offer: CanonicalOffer) => {
     setSelectedOfferId(offer.id)
-    if (shellSize !== "A") setWorkspaceOverlay("detail")
-  }, [shellSize])
+    /* Keyed on where the detail is, not on which armazón the form is wearing:
+       between 1100 and 1436 the shell is still A and the detail is a sheet. */
+    if (detailPlacement !== "column") setWorkspaceOverlay("detail")
+  }, [detailPlacement])
 
   useEffect(() => {
     selectOfferRef.current = handleSelectOffer
@@ -1026,11 +1028,12 @@ export default function App() {
                   />
                 </div>
 
-                {/* Armazón A only. In B the detail leaves the grid entirely and
-                    overlays the results as a side sheet (02 §1, plate 8a); in C
-                    it is a full sheet. The column is not hidden with
-                    `display:none` — it is not built. */}
-                {shellSize === "A" && (
+                {/* Only while the list can still afford it. Below that the
+                    detail leaves the grid entirely and overlays the results as
+                    a side sheet (02 §1, plate 8a); on a phone it is a full
+                    sheet. The column is not hidden with `display:none` — it is
+                    not built. */}
+                {detailPlacement === "column" && (
                   <div className="fd-detail-column">
                     <DetailPanel
                       offer={visibleSelectedOffer}
@@ -1088,12 +1091,12 @@ export default function App() {
                 />
               </Sheet>
               <Sheet
-                open={workspaceOverlay === "detail" && shellSize !== "A"}
+                open={workspaceOverlay === "detail" && detailPlacement !== "column"}
                 onOpenChange={(open) => setWorkspaceOverlay(open ? "detail" : null)}
                 title="Oferta"
                 size="full"
-                placement={shellSize === "B" ? "side" : "bottom"}
-                container={shellSize === "B" ? workspaceElement : undefined}
+                placement={detailPlacement === "side" ? "side" : "bottom"}
+                container={detailPlacement === "side" ? workspaceElement : undefined}
                 className="fd-detail-sheet"
                 /* Neither sheet draws chrome of its own: 8a gives the side sheet
                    the detail's header with a 32px cross, and 1f gives the full
