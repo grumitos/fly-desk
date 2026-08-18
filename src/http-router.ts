@@ -2721,7 +2721,7 @@ async function handleMatrixRequest(
 
   const normalizedRequest = contract.request;
   const providerIds = contract.providerIds;
-  if (!isSearchServiceProxiedRequest(request)) {
+  if (shouldRecordLocationUsageInThisUnit(request, payload)) {
     recordLocationUsageForSearchRequest(runtime, normalizedRequest, payload?.clientSessionId);
   }
   const providerDiagnostics = createProviderDiagnosticsForRun(providerIds, "matrix");
