@@ -2020,6 +2020,32 @@ test("the open list of schedules takes the click over every card it covers", asy
     ]);
     await page.getByTestId("result-card").first().waitFor();
 
+    /*
+     * «Es el button ese que colapsa contra el borde del otro»: the inset-0 hit
+     * of a group card ran under the alternates strip to the card's bottom
+     * border, so a press on the strip's ground selected the offer and the
+     * invisible button stood flush against the next card. The select surface
+     * is the 58px fare row, as the redesign drew it.
+     */
+    const hitMetrics = await page.locator(".fd-card", { has: page.locator(".fd-card__alts") }).first().evaluate((card) => {
+      const hit = card.querySelector<HTMLElement>(".fd-card__hit");
+      const strip = card.querySelector<HTMLElement>(".fd-card__alts");
+      if (!hit || !strip) return null;
+      const cardBox = card.getBoundingClientRect();
+      const hitBox = hit.getBoundingClientRect();
+      const stripBox = strip.getBoundingClientRect();
+      const probe = document.elementFromPoint(stripBox.right - 6, stripBox.top + stripBox.height / 2);
+      return {
+        hitHeight: Math.round(hitBox.height),
+        hitReachesCardBottom: Math.round(cardBox.bottom - hitBox.bottom) === 0,
+        stripGroundSelects: Boolean(probe && probe.closest(".fd-card__hit")),
+      };
+    });
+    assert.ok(hitMetrics, "missing group card anatomy");
+    assert.equal(hitMetrics.hitHeight, 58, JSON.stringify(hitMetrics));
+    assert.equal(hitMetrics.hitReachesCardBottom, false, JSON.stringify(hitMetrics));
+    assert.equal(hitMetrics.stripGroundSelects, false, JSON.stringify(hitMetrics));
+
     // Nine alternates to the schedule on the card, three of them on the strip.
     await page.getByRole("button", { name: "Ver los 9 horarios" }).click();
     const panel = page.getByRole("dialog", { name: /^Todos los horarios/ });
@@ -2255,12 +2281,16 @@ async function measureColumn(page: Page): Promise<{ viewportHeight: number; row:
     if (!viewport || !list || !last || plain.length === 0) return null;
     const gap = Number.parseFloat(getComputedStyle(list).rowGap || "6");
     const row = plain[0].getBoundingClientRect().height + gap;
+    /* The same 4px top inset the capacity hook budgets — blank has to be
+       measured against the space a row could actually take, or a column whose
+       leftover lands between `available` and `clientHeight` reads as a missing
+       row that never had room. */
     const available = viewport.clientHeight - 4;
     return {
       viewportHeight: viewport.clientHeight,
       row,
       fits: Math.floor((available + gap) / row),
-      blank: Math.round(viewport.clientHeight - (last.getBoundingClientRect().bottom - list.getBoundingClientRect().top)),
+      blank: Math.round(available - (last.getBoundingClientRect().bottom - list.getBoundingClientRect().top)),
     };
   });
   assert.ok(measured, "missing column metrics");

@@ -683,20 +683,18 @@ test("wide desktop shell expands from the idle measure into the workspace width"
     assert.ok(workspaceBounds.gridWidth >= 1720 && workspaceBounds.gridWidth <= 1736, JSON.stringify(workspaceBounds));
     /*
      * 1b / 02 §3: the workspace is `248px minmax(0,1fr) 316px` with a 10px gap,
-     * so the middle track is whatever is left. Plate 1b then draws that track
-     * as one card — border, radius 12, `--card`, holding the header, the chips
-     * and every result — which is the same surface the 248px filter column
-     * uses. This used to assert the opposite, that the list column was not a
-     * card, and that assertion was the old design defending itself against the
-     * redesign: production showed a header and a stack of rows floating on the
-     * page with no edges. The result card is now the track minus that 1px
-     * border on each side.
+     * so the middle track is whatever is left. Owner-decided, against plate 1b
+     * (REDESIGN_CONTRACT.md): the list column is NOT a card — #45 boxed it
+     * because the plate draws one, and the result cards' borders ran flush
+     * against the wrapper's frame. The redesign commit (5172ea6) had the cards
+     * standing on the stage, so the column carries no paint of its own and the
+     * result card takes the full track.
      */
     const listTrackWidth = workspaceBounds.gridWidth - 248 - 316 - 10 * 2
     assert.equal(workspaceBounds.listWidth, listTrackWidth, JSON.stringify(workspaceBounds));
-    assert.equal(workspaceBounds.cardWidth, listTrackWidth - 2, JSON.stringify(workspaceBounds));
-    assert.equal(workspaceBounds.listBorder, "1px", JSON.stringify(workspaceBounds));
-    assert.equal(workspaceBounds.listRadius, "12px", JSON.stringify(workspaceBounds));
+    assert.equal(workspaceBounds.cardWidth, listTrackWidth, JSON.stringify(workspaceBounds));
+    assert.equal(workspaceBounds.listBorder, "0px", JSON.stringify(workspaceBounds));
+    assert.equal(workspaceBounds.listRadius, "0px", JSON.stringify(workspaceBounds));
   }, { autoOpen: false });
 });
 

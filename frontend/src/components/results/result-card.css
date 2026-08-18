@@ -84,6 +84,16 @@
     cursor: pointer;
   }
 
+  /* The select surface is the fare row, as the redesign drew it. When the card
+     carries an alternates strip, an inset-0 hit ran under the strip to the
+     card's bottom border — an invisible button collapsing against the next
+     card's edge, selecting the offer on a press aimed at the strip. The row is
+     58px by construction (the card's own min-height), so the hit stops there. */
+  .fd-card:has(.fd-card__alts) .fd-card__hit {
+    bottom: auto;
+    height: 58px;
+  }
+
   /* ---- logo ------------------------------------------------------------- */
 
   .fd-card__logo,
