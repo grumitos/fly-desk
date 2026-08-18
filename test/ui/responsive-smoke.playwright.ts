@@ -199,14 +199,15 @@ for (const viewport of VIEWPORTS) {
       /*
        * 02 §2: the disposition answers to the width of the list, not to the
        * shell, so the expectation is read off the same container the CSS asks.
-       * The threshold is 819 — the manual says 660, but its sum omits the
+       * The threshold is 775 — the manual says 660, but its sum omits the
        * card's own padding and border; 750 was the same measurement before the
-       * baggage took a track of its own and before the elastic lane's floor was
-       * measured rather than borrowed from the duration lane. That is the point
-       * of the last assertion: whichever disposition the list lands in, the
-       * airport codes still have a box to live in.
+       * elastic lane's floor was measured rather than borrowed from the
+       * duration lane, and 819 was it while the baggage lane was charged to the
+       * result cell instead of to «who flies». That is the point of the last
+       * assertion: whichever disposition the list lands in, the airport codes
+       * still have a box to live in.
        */
-      const stacked = cardLayout.listWidth < 819;
+      const stacked = cardLayout.listWidth < 775;
       if (stacked) {
         // 02 §6: the provider icon leaves for the detail, the chevron gets its
         // own 14px column.
@@ -214,11 +215,13 @@ for (const viewport of VIEWPORTS) {
         assert.equal(cardLayout.chevronVisible, true, JSON.stringify(cardLayout));
         assert.match(cardLayout.columns, /14px$/);
       } else {
-        // 8c: 32 / 186 / 1fr / 116 / 26 — column 2 stops before the legs track.
+        /* 8c's 32 / 186 / 1fr / 116 / 26, with the baggage lane paid for out of
+           «who flies» rather than out of the result cell: 32 / 142 / 1fr / 32 /
+           116 / 26. Column 2 still stops before the legs track. */
         assert.ok(cardLayout.carrierRight <= cardLayout.legsLeft + 1, JSON.stringify(cardLayout));
         assert.equal(cardLayout.providerVisible, true, JSON.stringify(cardLayout));
         assert.equal(cardLayout.chevronVisible, false, JSON.stringify(cardLayout));
-        assert.match(cardLayout.columns, /^32px 186px /);
+        assert.match(cardLayout.columns, /^32px 142px /);
       }
       assert.ok(cardLayout.stopsWidth >= 32, JSON.stringify(cardLayout));
 

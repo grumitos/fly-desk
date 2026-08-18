@@ -1075,10 +1075,11 @@
  * to. 1100 is the width the *form* stops fitting its six mínimos in one row;
  * the results region inherited that number and paid 326px for a third column
  * out of a list that had nothing to spare. Below 1437 the list would be under
- * the 819 the card needs to stay a desk card, so the detail becomes the same
- * side sheet armazón B gives it and the list keeps its results wide. The
- * placement is decided once, in `useShellSize`, off the same arithmetic; this
- * is the grid agreeing with it.
+ * the 819 `DETAIL_COLUMN_MIN_LIST_PX` asks for — the 775 the card needs to stay
+ * a desk card, plus the 44 the result cell was given back — so the detail
+ * becomes the same side sheet armazón B gives it and the list keeps its results
+ * wide. The placement is decided once, in `useShellSize`, off the same
+ * arithmetic; this is the grid agreeing with it.
  */
 @container fdshell (max-width: 1436.98px) {
   .fd-results {
