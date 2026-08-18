@@ -19,6 +19,9 @@ const COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
 const PERSISTED_SEARCH_CACHE_RESTORE_BUDGET_BYTES = 128 * 1024 * 1024;
 const COMPLETED_SEARCH_SESSION_RESIDENT_DEFAULT_BUDGET_BYTES = 128 * 1024 * 1024;
 export const COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS = 5_000;
+/* The write debounce. Named so a test can advance exactly one debounce rather
+   than sleep for "long enough". */
+export const SESSION_STORE_PERSIST_DEBOUNCE_MS = 180;
 /*
  * Durability policy, half two: this is the age a finished job may reach before
  * a sweep takes it, and nothing else. It is not a switch for whether the desk
@@ -184,10 +187,47 @@ interface PurgeSummary {
   purchasePaths: number;
 }
 
+export type SessionStoreTimerHandle = unknown;
+
+/*
+ * The seam the store reads time through.
+ *
+ * Two timers make the store's observable behaviour depend on the wall clock:
+ * the 180ms persist debounce and the resident-budget grace recheck, which is
+ * armed for a full `COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS` after a job
+ * completes. A test that wanted to watch either had to sleep for real and then
+ * poll against a deadline, which is a race it loses as soon as the machine is
+ * busy — and the grace recheck gave it a five-second wait to win.
+ *
+ * `now` and the timers travel together on purpose. A virtual clock paired with
+ * real `setTimeout` is not a coherent world: the store computes its delays as
+ * `nextEligibleAt - now`, so a caller that could move one without the other
+ * would arm timers against a deadline that no longer means anything.
+ */
+export interface SessionStoreScheduler {
+  now(): number;
+  setTimeout(callback: () => void, delayMs: number): SessionStoreTimerHandle;
+  clearTimeout(handle: SessionStoreTimerHandle): void;
+}
+
+const REAL_SESSION_STORE_SCHEDULER: SessionStoreScheduler = {
+  now: () => Date.now(),
+  setTimeout: (callback, delayMs) => {
+    const handle = setTimeout(callback, delayMs);
+    /* A cache sweep is never a reason to hold the process open. */
+    handle.unref?.();
+    return handle;
+  },
+  clearTimeout: (handle) => {
+    clearTimeout(handle as NodeJS.Timeout);
+  },
+};
+
 interface SearchSessionStoreOptions {
   dbPath?: string;
   persistedRestoreBudgetBytes?: number;
   completedResidentBudgetBytes?: number;
+  scheduler?: SessionStoreScheduler;
 }
 
 interface SqlitePayloadRow {
@@ -539,12 +579,14 @@ export class SearchSessionStore {
   private readonly diskOnlyMatrixJobs = new Map<string, number>();
   private readonly diskOnlyPurchasePathIds = new Set<string>();
   private readonly diskOnlySessionPurchasePathIds = new Map<string, Set<string>>();
-  private persistTimer: NodeJS.Timeout | undefined;
-  private residentBudgetTimer: NodeJS.Timeout | undefined;
+  private readonly scheduler: SessionStoreScheduler;
+  private persistTimer: SessionStoreTimerHandle | undefined;
+  private residentBudgetTimer: SessionStoreTimerHandle | undefined;
   private residentBudgetDueAt = 0;
   private bootstrapping = false;
 
   constructor(options?: SearchSessionStoreOptions) {
+    this.scheduler = options?.scheduler ?? REAL_SESSION_STORE_SCHEDULER;
     const dbPath = options?.dbPath?.trim() || undefined;
     const configuredRestoreBudgetBytes = options?.persistedRestoreBudgetBytes;
     this.persistedRestoreBudgetBytes = typeof configuredRestoreBudgetBytes === "number"
@@ -571,12 +613,12 @@ export class SearchSessionStore {
 
   close(): void {
     if (this.persistTimer) {
-      clearTimeout(this.persistTimer);
+      this.scheduler.clearTimeout(this.persistTimer);
       this.persistTimer = undefined;
     }
     this.persistNow();
     if (this.residentBudgetTimer) {
-      clearTimeout(this.residentBudgetTimer);
+      this.scheduler.clearTimeout(this.residentBudgetTimer);
       this.residentBudgetTimer = undefined;
       this.residentBudgetDueAt = 0;
     }
@@ -707,7 +749,7 @@ export class SearchSessionStore {
       return undefined;
     }
 
-    const nowMs = input.nowMs ?? Date.now();
+    const nowMs = input.nowMs ?? this.scheduler.now();
     const requestKey = serializeForComparison(normalizeSearchRequestForSearchCache(input.request));
     const providerIdsKey = serializeForComparison(input.providerIds);
     const providerContextKey = serializeForComparison(
@@ -780,7 +822,7 @@ export class SearchSessionStore {
       return undefined;
     }
 
-    const nowMs = input.nowMs ?? Date.now();
+    const nowMs = input.nowMs ?? this.scheduler.now();
     const requestKey = serializeForComparison(normalizeSearchRequestForSearchCache(input.request));
     const providerIdsKey = serializeForComparison(input.providerIds);
     const providerContextKey = serializeForComparison(
@@ -1200,7 +1242,7 @@ export class SearchSessionStore {
     return { searchJobs, matrixJobs };
   }
 
-  enforceCompletedResidentBudget(nowMs = Date.now()): void {
+  enforceCompletedResidentBudget(nowMs = this.scheduler.now()): void {
     if (!this.db) {
       return;
     }
@@ -1300,7 +1342,7 @@ export class SearchSessionStore {
     }
   }
 
-  purgeExpired(nowMs = Date.now()): PurgeSummary {
+  purgeExpired(nowMs = this.scheduler.now()): PurgeSummary {
     const beforeSessions = this.sessions.size;
     const beforePurchasePaths = this.purchasePaths.size;
     let removedSearchJobs = 0;
@@ -1600,7 +1642,7 @@ export class SearchSessionStore {
   private isPersistedJobExpired(idleAtMs: number): boolean {
     return !Number.isFinite(idleAtMs)
       || idleAtMs <= 0
-      || (Date.now() - idleAtMs) > COMPLETED_SEARCH_SESSION_TTL_MS;
+      || (this.scheduler.now() - idleAtMs) > COMPLETED_SEARCH_SESSION_TTL_MS;
   }
 
   private rewriteOfferPaths(sessionId: string, offer: CanonicalOffer): CanonicalOffer {
@@ -1881,7 +1923,7 @@ export class SearchSessionStore {
 
   private clearResidentBudgetTimer(): void {
     if (this.residentBudgetTimer) {
-      clearTimeout(this.residentBudgetTimer);
+      this.scheduler.clearTimeout(this.residentBudgetTimer);
       this.residentBudgetTimer = undefined;
     }
     this.residentBudgetDueAt = 0;
@@ -1889,18 +1931,17 @@ export class SearchSessionStore {
 
   private scheduleResidentBudgetEnforcement(delayMs: number): void {
     const boundedDelayMs = Math.max(1, Math.trunc(delayMs));
-    const dueAt = Date.now() + boundedDelayMs;
+    const dueAt = this.scheduler.now() + boundedDelayMs;
     if (this.residentBudgetTimer && this.residentBudgetDueAt <= dueAt) {
       return;
     }
     this.clearResidentBudgetTimer();
     this.residentBudgetDueAt = dueAt;
-    this.residentBudgetTimer = setTimeout(() => {
+    this.residentBudgetTimer = this.scheduler.setTimeout(() => {
       this.residentBudgetTimer = undefined;
       this.residentBudgetDueAt = 0;
       this.enforceCompletedResidentBudget();
     }, boundedDelayMs);
-    this.residentBudgetTimer.unref?.();
   }
 
   /*
@@ -1925,11 +1966,10 @@ export class SearchSessionStore {
       return;
     }
 
-    this.persistTimer = setTimeout(() => {
+    this.persistTimer = this.scheduler.setTimeout(() => {
       this.persistTimer = undefined;
       this.persistNow();
-    }, 180);
-    this.persistTimer.unref?.();
+    }, SESSION_STORE_PERSIST_DEBOUNCE_MS);
   }
 
   private persistNow(): boolean {
@@ -2233,7 +2273,7 @@ export class SearchSessionStore {
   }
 
   private loadPersisted(): void {
-    const nowMs = Date.now();
+    const nowMs = this.scheduler.now();
     this.pruneExpiredSqliteRows(nowMs);
     const restoreCandidates = this.selectPersistedRowsToRestore();
     try {
