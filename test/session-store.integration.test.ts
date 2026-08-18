@@ -8,8 +8,10 @@ import { Database } from "bun:sqlite";
 import {
   COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS,
   COMPLETED_SEARCH_SESSION_TTL_MS,
+  SESSION_STORE_PERSIST_DEBOUNCE_MS,
   SearchSessionStore,
 } from "../src/session-store";
+import type { SessionStoreScheduler } from "../src/session-store";
 import { SEARCH_CACHE_VERSION } from "../src/core/types";
 import type {
   CanonicalOffer,
@@ -21,6 +23,77 @@ import type {
 } from "../src/core/types";
 
 const tempRootsForCleanup = new Set<string>();
+
+/*
+ * A deterministic stand-in for the store's clock and timers.
+ *
+ * Most waits in this file sleep past the 180ms persist debounce and are safe as
+ * they stand: the store's timer and the test's sleep share one event loop, and
+ * the store's is both armed earlier and due sooner, so a stalled loop delays
+ * the pair together without reordering them.
+ *
+ * The resident-budget grace recheck was the exception. It could not be observed
+ * by ordering, only by waiting out a five-second grace and polling until an
+ * absolute `Date.now()` deadline — and an absolute deadline is precisely what a
+ * loaded machine blows through, turning a late sweep into a failed assertion.
+ *
+ * Time moves here only when a test moves it. `advance` runs every timer that
+ * comes due inside the span, in due order, including timers armed by a callback
+ * it just ran — the budget sweep re-arms itself while a job is still inside its
+ * grace, and that re-arm is exactly the behaviour under test.
+ */
+function createManualScheduler(startMs: number) {
+  interface PendingTimer {
+    dueAt: number;
+    callback: () => void;
+  }
+
+  let nowMs = startMs;
+  let nextHandle = 0;
+  const pending = new Map<number, PendingTimer>();
+
+  const scheduler: SessionStoreScheduler = {
+    now: () => nowMs,
+    setTimeout: (callback, delayMs) => {
+      const handle = ++nextHandle;
+      pending.set(handle, { dueAt: nowMs + Math.max(1, Math.trunc(delayMs)), callback });
+      return handle;
+    },
+    clearTimeout: (handle) => {
+      pending.delete(handle as number);
+    },
+  };
+
+  return {
+    scheduler,
+    now: (): number => nowMs,
+    advance(byMs: number): void {
+      const target = nowMs + byMs;
+      /* A callback may arm its successor, so this drains rather than iterates a
+         snapshot. The cap turns a store that re-arms without ever converging
+         into a named failure instead of a hung test. */
+      for (let step = 0; ; step += 1) {
+        assert.ok(step < 1_000, "manual scheduler kept re-arming timers without settling");
+        let dueHandle: number | undefined;
+        let dueAt = Number.POSITIVE_INFINITY;
+        for (const [handle, timer] of pending) {
+          if (timer.dueAt <= target && timer.dueAt < dueAt) {
+            dueHandle = handle;
+            dueAt = timer.dueAt;
+          }
+        }
+        if (dueHandle === undefined) {
+          break;
+        }
+        const timer = pending.get(dueHandle)!;
+        pending.delete(dueHandle);
+        nowMs = timer.dueAt;
+        timer.callback();
+      }
+      nowMs = target;
+    },
+  };
+}
 
 afterEach(() => {
   for (const tempRoot of tempRootsForCleanup) {
@@ -1513,11 +1586,18 @@ test("persisted cache budget counts matrix purchase paths before restoring", () 
   });
 });
 
-test("resident cache budget rechecks automatically when the completion grace expires", async () => {
+test("resident cache budget rechecks automatically when the completion grace expires", () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-resident-timer-"));
   tempRootsForCleanup.add(tempRoot);
   const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
-  const store = new SearchSessionStore({ dbPath, completedResidentBudgetBytes: 0 });
+  /* Seeded from the real clock so the record timestamps the store stamps
+     itself stay consistent with the time it is told. */
+  const clock = createManualScheduler(Date.now());
+  const store = new SearchSessionStore({
+    dbPath,
+    completedResidentBudgetBytes: 0,
+    scheduler: clock.scheduler,
+  });
   const offer = buildOffer("resident-timer", "https://resident.example/timer");
   store.createSearchJob({
     request: buildRequest(),
@@ -1525,7 +1605,7 @@ test("resident cache budget rechecks automatically when the completion grace exp
     allOffers: [offer],
     searchMeta: {
       ...buildSearchMeta(),
-      completedAt: new Date().toISOString(),
+      completedAt: new Date(clock.now()).toISOString(),
     },
     providerMeta: buildProviderMeta(),
     warnings: [],
@@ -1534,13 +1614,14 @@ test("resident cache budget rechecks automatically when the completion grace exp
   });
 
   try {
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    /* The debounce fires the first sweep. The job is still inside its grace, so
+       the sweep has to keep it and arm the recheck rather than evict. */
+    clock.advance(SESSION_STORE_PERSIST_DEBOUNCE_MS);
     assert.equal(store.getDiagnostics().residentCache.completedJobs, 1);
 
-    const deadline = Date.now() + COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS + 2_000;
-    while (store.getDiagnostics().residentCache.completedJobs > 0 && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    /* Nothing below touches the store before the assertions: the recheck the
+       sweep armed is the only thing that can evict, which is the whole claim. */
+    clock.advance(COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS);
 
     assert.equal(store.getDiagnostics().residentCache.completedJobs, 0);
     assert.equal(store.getDiagnostics().residentCache.diskOnlyJobs, 1);
