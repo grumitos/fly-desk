@@ -29,6 +29,7 @@ export function buildResultListItems(
   const groupByOfferId = new Map<string, ResultOfferGroup>()
   const assignedOfferIds = new Set<string>()
   const registeredGroupIds = new Set<string>()
+  const registeredGroups: ResultOfferGroup[] = []
 
   for (const scheduleGroup of scheduleGroups) {
     if (registeredGroupIds.has(scheduleGroup.id)) continue
@@ -47,6 +48,9 @@ export function buildResultListItems(
 
     // A partially filtered or stale group is not a group in the visible list.
     // Its one remaining offer stays selectable as the complete backend offer.
+    // Checked here, on the combinations alone: the absorption below only ever
+    // adds a schedule the group is already showing, so it can never turn a
+    // group the filters emptied back into one.
     if (memberOffers.length <= 1) continue
 
     const id = `result-group:${scheduleGroup.id}`
@@ -54,14 +58,21 @@ export function buildResultListItems(
       id,
       key: scheduleGroup.id,
       providerLabel: providerLabelForScheduleGroup(scheduleGroup.providerSource),
-      offers: orderVisibleGroupOffers(memberOffers),
+      offers: memberOffers,
     }
 
     registeredGroupIds.add(scheduleGroup.id)
+    registeredGroups.push(group)
     for (const offer of memberOffers) {
       assignedOfferIds.add(offer.id)
       groupByOfferId.set(offer.id, group)
     }
+  }
+
+  absorbOffersAlreadyInsideAGroup(offers, registeredGroups, assignedOfferIds, groupByOfferId)
+
+  for (const group of registeredGroups) {
+    group.offers = orderVisibleGroupOffers(group.offers)
   }
 
   const emittedGroups = new Set<string>()
@@ -87,6 +98,114 @@ export function buildResultListItems(
       group,
     }]
   })
+}
+
+/**
+ * The same flight, arriving twice.
+ *
+ * Membership used to be `combinations[].offerId` and nothing else, which trusts
+ * the provider to have listed every offer its own group covers. Two things
+ * break that trust, and both were reported from the desk as «uno que ya está en
+ * otro grupo se muestra como independiente repitiendo los horarios ya antes
+ * mostrados»: a `truncated` group, where the provider stopped enumerating
+ * combinations while the family kept its offers, and the same physical schedule
+ * quoted under two offer ids — a second fare on one flight. Either way the list
+ * drew a card whose two legs the agent had just read inside the panel above it,
+ * and the pager counted it as a further result.
+ *
+ * So an offer is inside a group when its itinerary is, not only when its id is.
+ * The key is the canonical flight signature — every leg, its flight numbers,
+ * airports and times — which is the identity
+ * `src/core/offer-signature.ts::buildOfferSignature` demands when a quotation is
+ * revalidated, and for the same reason: it is what makes two rows the same
+ * flight rather than two flights that resemble each other.
+ *
+ * The fare rides along with it, and that is the edge worth stating. Two offers
+ * on one schedule at two prices are two things to sell, and folding the second
+ * away would hide a price from the agent — so it stays an independent card even
+ * though its times repeat. This is not a new opinion: a group is already
+ * defined that way upstream, where `offer-schedule-groups.ts::groupKeyForOffer`
+ * refuses to put two offers in one group unless their currency, amount and
+ * baggage all match. The browser folds on exactly the bar the provider grouped
+ * on, and never on a looser one.
+ *
+ * It reads the already-filtered offers, so a member the filters removed cannot
+ * come back through this door.
+ */
+function absorbOffersAlreadyInsideAGroup(
+  offers: CanonicalOffer[],
+  groups: ResultOfferGroup[],
+  assignedOfferIds: Set<string>,
+  groupByOfferId: Map<string, ResultOfferGroup>,
+): void {
+  if (groups.length === 0) return
+
+  const groupBySignature = new Map<string, ResultOfferGroup>()
+  for (const group of groups) {
+    for (const offer of group.offers) {
+      const signature = offerCanonicalSignature(offer)
+      if (!signature || groupBySignature.has(signature)) continue
+      groupBySignature.set(signature, group)
+    }
+  }
+
+  for (const offer of offers) {
+    if (assignedOfferIds.has(offer.id)) continue
+
+    const signature = offerCanonicalSignature(offer)
+    const group = signature ? groupBySignature.get(signature) : undefined
+    if (!group) continue
+
+    assignedOfferIds.add(offer.id)
+    groupByOfferId.set(offer.id, group)
+    group.offers.push(offer)
+  }
+}
+
+/**
+ * Every leg of the trip to the flight number and the minute, and the fare it is
+ * sold at.
+ *
+ * The itinerary half is `buildOfferSignature`'s field list and order,
+ * transcribed rather than imported because the browser's `CanonicalOffer` is the
+ * partial facade of the core type and the core function asks for the whole
+ * thing. The commercial half is `commercialTermsSignature`'s, for the same
+ * reason. An offer with no itinerary, or with no price to compare, has no
+ * signature at all and is never folded into anything: silence here costs one
+ * repeated card, and a wrong match costs a fare the agent never sees.
+ */
+function offerCanonicalSignature(offer: CanonicalOffer): string | null {
+  const itineraries = offer.itineraries ?? []
+  const amount = offer.price?.total?.amount
+  const currencyCode = offer.price?.total?.currencyCode?.trim().toUpperCase()
+  if (itineraries.length === 0 || !Number.isFinite(amount) || !currencyCode) return null
+
+  const legs = itineraries
+    .map((itinerary) => (itinerary.segments ?? [])
+      .map((segment) => [
+        segment.marketingCarrier ?? "",
+        segment.flightNumber ?? "",
+        segment.origin,
+        segment.destination,
+        segment.departureAt,
+        segment.arrivalAt,
+      ].join("|"))
+      .join("~"))
+    .join("||")
+
+  return [
+    offer.tripType ?? "",
+    offer.origin ?? "",
+    offer.destination ?? "",
+    legs,
+    offer.validatingCarrier ?? "",
+    currencyCode,
+    amount,
+    offer.baggage?.carryOnIncluded ?? null,
+    offer.baggage?.checkedIncluded ?? null,
+    offer.baggage?.checkedBags ?? null,
+    offer.baggage?.description ?? null,
+  ].join("::")
 }
 
 function providerLabelForScheduleGroup(providerSource: ScheduleGroup["providerSource"]): string {

@@ -502,12 +502,24 @@
     margin-inline: auto;
   }
 
+  /* The idle field reserves every row it can end up holding, because it is not
+     the field that pays for growing: the stage centres the form between a 1fr
+     and a 1.3fr spacer, so eighteen pixels of notice move the whole block up by
+     eight under the agent's hands. The lane is derived from the notice's own
+     declarations (`.fd-control-helper`: 0.25rem of margin over a 1.2 line box
+     of `--fd-text-meta`) rather than rounded, so it stays right when the type
+     scale moves. */
   .fd-search-field-shell {
-    min-height: calc(52px + 1.125rem);
+    min-height: calc(52px + 0.25rem + 1.2 * var(--fd-text-meta));
   }
 
+  /* And where the frequent-station chips hang under the field, the field holds
+     three rows at once: the control, the chips (5px over a standard control)
+     and the notice. Reserving only the chips is what let «Ingresa un destino
+     válido» re-centre the idle screen on every deployment that has a ranking to
+     show. */
   .fd-location-field-shell-reserve-suggestions {
-    min-height: calc(52px + 2.25rem);
+    min-height: calc(52px + 5px + var(--fd-control-standard) + 0.25rem + 1.2 * var(--fd-text-meta));
   }
 
   /* Plate 1a gives the swap its own 34px track, aligned with the top of the
@@ -683,6 +695,23 @@
     overflow: hidden;
   }
 
+  /* 11 §3's «tarda», said beside the skeleton rather than instead of it: one
+     line at the head of the list body, above the bones, naming the provider
+     that is still out. It is not a notice — 04 §8's notice is the strip above
+     the whole workspace and belongs to the search, this belongs to the column
+     — so it takes no border, no surface and no dismissal, only the spinner it
+     shares with the «Parcial» pill. */
+  .fd-list-searching {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 6px;
+    padding: 0 2px 8px;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+  }
+
   /* 02 §9: 44px, r999, anchored to the bottom-right of the list — the corner a
      thumb reaches without moving the hand. It sits over the viewport rather
      than inside it, so it does not scroll away with the content it undoes.
@@ -735,9 +764,21 @@
    *
    * `nth-child` rather than a prop: the list children are two different
    * components, and the position in the list is a fact about the list.
+   *
+   * `backwards`, not `both`: the fill is only needed *in front* of the movement,
+   * to hold the row 6px low and invisible through its share of the stagger.
+   * Behind it, `both` kept applying the final keyframe forever — and that
+   * keyframe lands on `translateY(0)`, which computes to an identity matrix, not
+   * to `none`. A transform of any kind makes the row a stacking context, so the
+   * `z-30` of the schedules panel (3b) was trapped inside the row that opened it
+   * and every row after it painted over the open panel. Dropping the transform
+   * from the `to` keyframe does not help: Chrome fills the missing property from
+   * the element's own value and still applies it, measured as
+   * `matrix(1, 0, 0, 1, 0, 0)`. Ending the fill is what returns the row to
+   * `transform: none`.
    */
   .fd-results-list[data-cascade="true"] > * {
-    animation: fd-enter-row var(--fd-dur-emergente) var(--fd-ease-estructura) both;
+    animation: fd-enter-row var(--fd-dur-emergente) var(--fd-ease-estructura) backwards;
     animation-delay: calc(6 * var(--fd-stagger-row));
   }
 
@@ -1027,7 +1068,19 @@
   .fd-route-fields {
     grid-column: 1 / -1;
   }
+}
 
+/*
+ * The detail column, and only it, leaves earlier than the armazón it belongs
+ * to. 1100 is the width the *form* stops fitting its six mínimos in one row;
+ * the results region inherited that number and paid 326px for a third column
+ * out of a list that had nothing to spare. Below 1437 the list would be under
+ * the 819 the card needs to stay a desk card, so the detail becomes the same
+ * side sheet armazón B gives it and the list keeps its results wide. The
+ * placement is decided once, in `useShellSize`, off the same arithmetic; this
+ * is the grid agreeing with it.
+ */
+@container fdshell (max-width: 1436.98px) {
   .fd-results {
     grid-template-columns: 248px minmax(0, 1fr);
     grid-template-areas: "filters list";

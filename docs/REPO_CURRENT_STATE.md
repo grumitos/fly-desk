@@ -150,7 +150,7 @@ The React UI must not display simulated controls. The following remain outside t
 - `src/search-worker-client.ts` and `src/search-worker.ts`: Bun child processes for heavy provider searches within the runner
 - `src/session-store.ts`: live jobs, cache freshness, resident budget, local SQLite, redirects, and purchase paths
 - `src/location-suggestion-cache.ts`: SQLite autocomplete cache with TTL plus query/session/global bounds
-- `src/location-usage-store.ts`: permanent global frequency counters plus bounded, expiring recent locations per browser session, read directly by both web and search processes
+- `src/location-usage-store.ts`: one global station ranking (frequency for the leading cards, newest station for the last one) plus bounded, expiring recent locations per browser session; the web unit counts the searches it delegates, so the ranking is written in the store that serves it
 - `src/provider-status.ts`: in-memory closed/sanitized provider readiness tracker
 - `src/runtime-paths.ts`: persistent fallback based on `FLY_DESK_APP_DATA_DIR` for SQLite caches when no specific `*_DB_PATH` is set
 

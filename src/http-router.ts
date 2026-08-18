@@ -71,7 +71,12 @@ import {
 } from "./quotation-exchange-rate";
 import { SearchAdmissionError, type SearchAdmissionKind } from "./search-admission";
 import { resolveAcceptedApiAccessTokens } from "./service-auth";
-import { isSearchServiceRoute, maybeProxySearchServiceRequest } from "./search-service-client";
+import {
+  isSearchServiceDelegationConfigured,
+  isSearchServiceProxiedRequest,
+  isSearchServiceRoute,
+  maybeProxySearchServiceRequest,
+} from "./search-service-client";
 import { runProviderMatrixInWorker, runProviderSearchInWorker } from "./search-worker-client";
 import { collectTempArtifactDiagnostics } from "./temp-artifacts";
 import { getRuntime } from "./runtime";
@@ -2319,6 +2324,73 @@ function recordLocationUsageForSearchRequest(
   }, Date.now(), 3, normalizeLocationUsageSessionId(clientSessionId));
 }
 
+/* The unit that answers `GET /api/location-usage-suggestions` is the unit that
+   has to count the search. In production the web unit hands `/api/search` and
+   `/api/matrix` to `fly-desk-search.service` (`FLY_DESK_SEARCH_SERVICE_URL`),
+   so every executed search used to be counted inside the runner — a different
+   process, writing a store the ranking is never read from unless two
+   environment variables happen to name the same file. The chips were global by
+   coincidence, not by construction, and that is what «una búsqueda bastaría
+   para agregar otro comodín» ran into. The web unit now counts the search as it
+   delegates it, and the runner ignores what arrives stamped as proxied, so an
+   executed search is counted exactly once and always where it is served. */
+function isDelegatedLocationUsageRoute(method: string, pathname: string): boolean {
+  return method.toUpperCase() === "POST"
+    && (pathname === "/api/search" || pathname === "/api/matrix");
+}
+
+function shouldRecordLocationUsageInThisUnit(
+  request: Request,
+  payload: SearchPayload | undefined,
+): boolean {
+  return payload?.recordLocationUsage !== false && !isSearchServiceProxiedRequest(request);
+}
+
+async function proxySearchServiceRequestCountingUsage(
+  request: Request,
+  url: URL,
+): Promise<Response | undefined> {
+  if (!isDelegatedLocationUsageRoute(request.method, url.pathname)
+    || isSearchServiceProxiedRequest(request)
+    || !isSearchServiceDelegationConfigured()) {
+    return maybeProxySearchServiceRequest(request, url);
+  }
+
+  /* Read rather than streamed through: the two codes this body carries are what
+     the ranking is made of, and the runner buffers the same few kilobytes to
+     parse them anyway. */
+  const body = await request.text();
+  const headers = new Headers(request.headers);
+  headers.delete("content-length");
+  const response = await maybeProxySearchServiceRequest(
+    new Request(request.url, { method: request.method, headers, body }),
+    url,
+  );
+  /* Only a search the runner accepted counts. A 503 from a runner that is down
+     is not a route the desk searched. */
+  if (!response || !response.ok) {
+    return response;
+  }
+
+  let payload: SearchPayload | undefined;
+  try {
+    payload = JSON.parse(body) as SearchPayload;
+  } catch {
+    return response;
+  }
+
+  if (payload?.recordLocationUsage === false) {
+    return response;
+  }
+
+  recordLocationUsageForSearchRequest(
+    getRuntime(),
+    prepareSearchContract(payload).request,
+    payload?.clientSessionId,
+  );
+  return response;
+}
+
 async function handleSearchRequest(
   runtime: ReturnType<typeof getRuntime>,
   request: Request,
@@ -2340,7 +2412,7 @@ async function handleSearchRequest(
   const sortMode = resolveSortMode(payload?.sortMode);
   const normalizedRequest = contract.request;
   const providerIds = contract.providerIds;
-  if (payload?.recordLocationUsage !== false) {
+  if (shouldRecordLocationUsageInThisUnit(request, payload)) {
     recordLocationUsageForSearchRequest(runtime, normalizedRequest, payload?.clientSessionId);
   }
   const diagnosticKind = providerDiagnosticKindForRequest(normalizedRequest);
@@ -2649,7 +2721,9 @@ async function handleMatrixRequest(
 
   const normalizedRequest = contract.request;
   const providerIds = contract.providerIds;
-  recordLocationUsageForSearchRequest(runtime, normalizedRequest, payload?.clientSessionId);
+  if (!isSearchServiceProxiedRequest(request)) {
+    recordLocationUsageForSearchRequest(runtime, normalizedRequest, payload?.clientSessionId);
+  }
   const providerDiagnostics = createProviderDiagnosticsForRun(providerIds, "matrix");
   const cachedJob = runtime.sessions.findRecentCompletedMatrixJob({
     request: normalizedRequest,
@@ -3000,7 +3074,7 @@ export async function routeRequest(request: Request): Promise<Response> {
     return apiAuthRequiredResponse();
   }
 
-  const searchServiceResponse = await maybeProxySearchServiceRequest(request, url);
+  const searchServiceResponse = await proxySearchServiceRequestCountingUsage(request, url);
   if (searchServiceResponse) {
     return searchServiceResponse;
   }

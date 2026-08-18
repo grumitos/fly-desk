@@ -113,7 +113,7 @@ Bun is the supported package manager. Do not add `package-lock.json`, `pnpm-lock
 - `src/search-worker-client.ts` / `src/search-worker.ts`: Bun child processes that isolate heavy searches
 - `src/session-store.ts`: live jobs, resident budget, local SQLite, redirects, and purchase paths
 - `src/location-suggestion-cache.ts`: bounded SQLite autocomplete cache with query/session/global caps
-- `src/location-usage-store.ts`: permanent global frequency counters plus 24-hour per-session recent locations; reads stay coherent between the web and search processes
+- `src/location-usage-store.ts`: one global station ranking — frequency for the leading cards, the most recently used station for the last one — plus 24-hour per-session recent locations; the unit that serves the ranking is the unit that counts the search
 - `src/provider-status.ts`: sanitized in-memory provider readiness tracker with closed states/reasons and evidence precedence
 - `src/runtime-paths.ts`: persistent path resolution; `FLY_DESK_APP_DATA_DIR` keeps caches outside the release when no specific override is set
 

@@ -194,7 +194,19 @@ test("groups native Agil variants with the same fare", () => {
       inboundDeparture: "2026-06-20T13:05:00-05:00",
       inboundArrival: "2026-06-20T21:10:00-05:00",
     }),
-    offer({ id: "solo", rawRefs: { agilGroupId: "G-200" } }),
+    /* Its own flight, not merely its own `agilGroupId`. The fixture used to
+       reuse the default schedule, which made "solo" the same metal at the same
+       times for the same money as `agil-am` — a duplicate the list now folds
+       into the group it repeats. The distinction this case is about has never
+       been the raw reference: the UI is forbidden from reading those (see the
+       first case in this file), so a lone offer has to be lone on the facts the
+       card shows. */
+    offer({
+      id: "solo",
+      rawRefs: { agilGroupId: "G-200" },
+      outboundDeparture: "2026-06-15T18:40:00-05:00",
+      outboundArrival: "2026-06-16T00:40:00-05:00",
+    }),
   ], [scheduleGroup({ id: "G-100", offerIds: ["agil-am", "agil-pm"] })])
 
   assert.equal(items.length, 2)
@@ -397,4 +409,111 @@ test("paginates compact groups by visual weight instead of raw grouped height", 
   assert.equal(pages[0]?.endOfferIndex, 5)
   assert.equal(pages[1]?.startOfferIndex, 5)
   assert.equal(pages[1]?.endOfferIndex, 7)
+})
+
+test("folds an offer the truncated group never listed back into the group it repeats", () => {
+  /*
+   * Leak (a) of «uno que ya está en otro grupo se muestra como independiente
+   * repitiendo los horarios ya antes mostrados». The provider stopped
+   * enumerating combinations — `truncated` — while its family kept the offers,
+   * so an offer whose legs the group already draws arrived with no combination
+   * pointing at it and became a card of its own.
+   */
+  const first = offer({ id: "listed-am", rawRefs: { agilGroupId: "G-700" } })
+  const second = offer({
+    id: "listed-pm",
+    rawRefs: { agilGroupId: "G-700" },
+    inboundDeparture: "2026-06-20T13:05:00-05:00",
+    inboundArrival: "2026-06-20T21:10:00-05:00",
+  })
+  // The same flight as `listed-pm`, to the minute and to the fare.
+  const unlisted = offer({
+    id: "unlisted-pm",
+    rawRefs: { agilGroupId: "G-700" },
+    inboundDeparture: "2026-06-20T13:05:00-05:00",
+    inboundArrival: "2026-06-20T21:10:00-05:00",
+  })
+
+  const items = buildResultListItems(
+    [first, second, unlisted],
+    [{ ...scheduleGroup({ id: "G-700", offerIds: [first.id, second.id] }), truncated: true }],
+  )
+
+  assert.deepEqual(items.map((item) => item.type), ["group"])
+  if (items[0]?.type !== "group") throw new Error("Expected a single group")
+  // Two schedules, not three rows drawing two schedules. The unlisted offer is
+  // folded in and then collapses onto the schedule it repeats, which is the
+  // same thing that has always happened to a duplicate the provider *did*
+  // list — it leaves no card and no row of its own.
+  assert.deepEqual(items[0].group.offers.map((item) => item.id), ["listed-am", "listed-pm"])
+  assert.equal(items.some((item) => resultListItemContainsOffer(item, "unlisted-pm")), false)
+})
+
+test("folds a second offer id for one physical flight into the group holding it", () => {
+  /* Leak (b): the same schedule quoted twice, once inside the group and once
+     outside it. Nothing the card draws tells the two apart. */
+  const grouped = offer({ id: "grouped", rawRefs: { agilGroupId: "G-710" } })
+  const groupedLate = offer({
+    id: "grouped-late",
+    rawRefs: { agilGroupId: "G-710" },
+    inboundDeparture: "2026-06-20T18:05:00-05:00",
+    inboundArrival: "2026-06-21T02:10:00-05:00",
+  })
+  const twin = offer({ id: "grouped-twin", rawRefs: { agilGroupId: "G-711" } })
+
+  const items = buildResultListItems(
+    [grouped, groupedLate, twin],
+    [scheduleGroup({ id: "G-710", offerIds: [grouped.id, groupedLate.id] })],
+  )
+
+  assert.deepEqual(items.map((item) => item.type), ["group"])
+  if (items[0]?.type !== "group") throw new Error("Expected a single group")
+  assert.deepEqual(items[0].group.offers.map((item) => item.id), ["grouped", "grouped-late"])
+})
+
+test("keeps a different fare on the same schedule as an offer of its own", () => {
+  /*
+   * The edge the fold stops at. Two prices for one flight are two things to
+   * sell, and folding the second away would take a price off the screen —
+   * so the browser folds on the bar the provider grouped on and no looser one
+   * (`offer-schedule-groups.ts::groupKeyForOffer` wants currency, amount and
+   * baggage to match before two offers are one group).
+   */
+  const grouped = offer({ id: "fare-base", rawRefs: { agilGroupId: "G-720" } })
+  const groupedLate = offer({
+    id: "fare-late",
+    rawRefs: { agilGroupId: "G-720" },
+    inboundDeparture: "2026-06-20T18:05:00-05:00",
+    inboundArrival: "2026-06-21T02:10:00-05:00",
+  })
+  const cheaper = offer({ id: "fare-cheaper", rawRefs: { agilGroupId: "G-721" }, amount: 421 })
+
+  const items = buildResultListItems(
+    [grouped, groupedLate, cheaper],
+    [scheduleGroup({ id: "G-720", offerIds: [grouped.id, groupedLate.id] })],
+  )
+
+  assert.deepEqual(items.map((item) => item.type), ["group", "offer"])
+  assert.equal(items[1]?.id, "fare-cheaper")
+  assert.equal(countOffersInResultItems(items), 3)
+})
+
+test("a member the filters removed does not come back through the fold", () => {
+  /*
+   * The fold reads the offers that survived the filters, so it can only ever
+   * point an offer at a schedule that is still on screen. A group the filters
+   * emptied to one is still not a group — that rule is applied to the
+   * combinations, before any folding, so an absorbed twin cannot revive it.
+   */
+  const survivor = offer({ id: "survivor", rawRefs: { agilGroupId: "G-730" } })
+  const twin = offer({ id: "survivor-twin", rawRefs: { agilGroupId: "G-731" } })
+
+  const items = buildResultListItems(
+    // `filtered-out` is in the group's combinations and not in the offers.
+    [survivor, twin],
+    [scheduleGroup({ id: "G-730", offerIds: [survivor.id, "filtered-out"] })],
+  )
+
+  assert.deepEqual(items.map((item) => item.type), ["offer", "offer"])
+  assert.deepEqual(items.map((item) => item.id), ["survivor", "survivor-twin"])
 })

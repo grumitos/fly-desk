@@ -1696,6 +1696,12 @@ test("11 §2.4 · clicking a field on a desk reopens the form and leaves the seg
     const settle = () => controls.evaluate(async (node) => {
       await Promise.all(node.getAnimations().map((animation) => animation.finished.catch(() => undefined)));
     });
+    /* And once the real face has loaded. The two boxes below are compared to
+       the pixel, and a segment whose label is still drawn in the fallback is
+       ~12px narrower than the same segment a moment later — a difference that
+       has nothing to do with the movement this case is about, and that shows up
+       only when the suite is busy enough to delay the font. */
+    await waitForFontsReady(page);
     await settle();
     const seated = await controls.boundingBox();
     assert.ok(seated);

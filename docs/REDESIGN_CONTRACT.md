@@ -25,10 +25,14 @@ repository made on top of the manual.
 | Manual says | Code does | Why |
 |---|---|---|
 | 05 §7 offers «copiar sin tarifa confirmada» as an exit from a failed quotation | The draft is never shown and never copied | A fare that turns out not to exist reaches a customer as a price the agency has to honour. The failure stays in the panel with a retry (11 §4) and the local draft does not survive it. Covered by a Playwright case. |
-| 02 §2 puts the card's stacking threshold at a list width of 660 | 750 | The manual's own sum omits the card's `padding: 0 13` and its border. Measured against this card the legs track is exactly `list - 436`, so at 660 the stops lane is 224 against a stated minimum of 264: the column collapses to zero and the airport codes disappear, which §5 forbids and §4 says must be answered by stacking. 264 plus a 50px floor — the width the duration lane already uses — gives 750. |
+| 02 §2 puts the card's stacking threshold at a list width of 660 | 819 | The manual's own sum omits the card's `padding: 0 13` and its border. This row read 750 for as long as the legs track was `list - 436`; two things then moved under it. Giving the baggage its own `auto` track added 32px of track and a fifth 12px gap, so the legs track is now `list - 480` — the same list is 44px poorer than the arithmetic that produced 750 assumed. And the floor in that arithmetic was 50, borrowed from the duration lane rather than measured: the one-stop long form «1 escala · BOG» measures **75** at 11px, so between 750 and 819 the desk anatomy was in force over a row that rendered «1 escala…» and lost the airport code §5 protects. 264 of fixed lanes + 75 = 339 of legs track, `339 + 480` = 819. |
+| — (the side-by-side leg row is not in the plates) | It engages from a list width of 1117, with the abbreviated stops wording and the compressed 6px lane gap | Two legs in one row is the *narrowest* disposition the card has, not the widest. It shipped at 980, a width read off where the empty space looked bad rather than derived: `2 × 234 + 1px rule + 8 gaps` leaves the two elastic stops lanes at **zero** from 980 to 1064, and between 980 and 1010 the row did not fit its fixed lanes at all and overflowed the legs track by up to 47px, painting over the price. That is the same §5 breach the stacking threshold exists to prevent, reintroduced one breakpoint higher. Made to fit rather than removed: the gaps drop to the 6 the compressed leg row already uses, and the stops lane takes the short wording 8c gives a lane too tight for the long one (60px against 75). The row then costs 637 and the threshold is `637 + 480` = 1117 — reachable, since the widest list this application can draw is 1142. |
+| 02 §1 gives the detail a third column «from 1100» and a side sheet below | The form still reflows at 1100; the detail column waits until 1437 | 1100 is the width the *form* stops fitting its six mínimos in one row, and the results region inherited the number. Measured, the detail column costs the list 326px, so from 1100 to 1436 the list was 482–818 — under the card's own threshold — and every result on a 1366 laptop wore the phone anatomy inside a three-column desk. The list was in fact **wider one pixel below 1100 (807) than one pixel above it (482)**: widening the window collapsed the cards, which is «cada resultado colapsa el ancho» as reported. So armazón B's two mechanical changes to A are separated, each on the threshold that constrains it, and the detail leaves the grid as soon as keeping it would take the list under 819 — the same sheet, the same scrim, 336px earlier. The filter column never yields; that is what still separates this from mobile. |
 | The plate sets the stacked schedule sub-grid gap at 6 | 4 | The plate never loaded Plex Mono 700, so its bold times were synthesised from 600 and kept the narrower advance. With the real face each time measures 42px and the row needs 126 inside a 124px lane. The next gap down keeps every width the plate pins (56/124/46, the 11px arrow lane, the 13px day lane). |
 | The plate sets the stacked leg lane gap at 8 | 6 | Same correction, same cause, one level up. The stacked leg row has 301px; 56+124+46 and three gaps of 8 leave 51 for the elastic stops lane, and «1 esc · BOG» measures 54 — so the airport code that the whole 750 threshold exists to protect was the first thing the ellipsis ate. Three gaps at 6 return exactly the 6px that buys it and keep 56/124/46 intact. It also puts the row on the same 6 the stacked skeleton was already drawing its lanes with. |
 | 8c abbreviates the stops lane but keeps the airports at every count | The stacked short form names the airports for one stop and shows the bare count from two | 57px holds «1 esc · BOG» (54) and nothing near «2 esc · PTY, MIA» (82) or «3 esc · PTY, MIA +1» (95). Cutting those to «2 esc…» hides the codes the abbreviation exists to preserve and adds a dangling ellipsis; the count alone says all of what it says. The desk long form is unchanged, the `title` still carries every layover, and the detail sheet names each stop. |
+| 04 §7's skeleton was read as a claim that expires, so at 8s it was replaced by 11 §3's «La búsqueda sigue en curso» | The skeleton stays for as long as the search is alive; at 8s the words join it as a line above the bones | The premise was right about the lie and wrong about the clock. A real search takes 15–40s and more — the production smoke's *fastest* case lands around 15, ranges and migrations far later — so eight seconds is not where a search becomes doubtful, it is where an ordinary one is still working. Nearly every real search died into a sparse clock screen for the thirty seconds that mattered. What bounds the claim is not a timer of the skeleton's own but the search's lifecycle: `loading` ends when the job does, and the admission timeout bounds that at 120s. The 8s now buys 11 §3's «tarda» — the same `stillSearchingBody` copy, naming which provider is slow or has failed — beside the column instead of instead of it. |
+| — | The «La búsqueda sigue en curso» empty state is kept for one case: `prefers-reduced-motion` | 07 §0 rule 5 stops the skeleton's pulse, and a field of grey blocks that does not breathe is a drawing of a list, not a claim that one is arriving — it reads as a page that failed to paint. That is the one state where the sentence carries the whole message, so it is the one state where it takes the column. Both halves have a Playwright case. |
 | 03 §5 reads "the plinth lists the available providers", and "listed = available" | The plinth lists the providers this deployment searches, always, with no state | Health was tried and it backfired: filtering by a live `ready` observation dropped Click and Book Plus from the idle screen entirely, because it cannot reach `ready` until a real search has answered. The rail is coverage — «Buscando en» — and a provider that fails a search is said in one line above the results (04 §8). `GET /api/provider-status` stays as an authenticated diagnostic surface with no UI consumer. |
 | 02 §12 sets a 44px touch minimum for every square icon control on a phone | The two title-bar buttons stay at 36 | 02 §4 and the mockup both draw them at 36, and the mockup is the delivered source. Flagged rather than silently unified. |
 | 11 §2.4 makes editing «`active` with the form back in its resting anatomy», which the mockup draws with the mode and trip segments back above the fields | The segments have two positions and no third: above the form at rest, centred in the title bar for as long as a search exists | Editing is reached by clicking a field, so the inverse FLIP fired on the most ordinary gesture there is and the segments jumped out of the bar and back into the form each time. Nothing about the *mode* of the search is being edited when a date is retyped. On a desk the form is already whole in the active state, so this leaves editing with nothing to move — which is the point. |
@@ -38,6 +42,130 @@ Only the result card asks the list container (`fdlist`); the pager, the
 migratory grid and the card cascade answer the shell (`fdshell`) at 719.98,
 because the master table describes them as desk-versus-phone shapes.
 
+**One rule sets all three card thresholds:** the disposition in force must fit
+its own one-stop stops label. Measured against the loaded face, that label is 75
+on the desk (`1 escala · BOG`, 11px), 60 for the desk's abbreviated form, and 54
+for the stacked card's (10px). Every number in the three rows above is that rule
+applied to a different row geometry; when a lane, a gap or a track changes, the
+thresholds are re-derived rather than nudged. `test/ui/results.playwright.ts`
+pins the whole sweep — at every width the lane holds the label it is showing,
+the legs track never overflows, and the disposition answers the list width and
+nothing else.
+
+The detail threshold's arithmetic is duplicated in `useShellSize.ts`, because
+the answer decides whether the column is *built* and measuring the list to
+decide whether to shrink it is a loop that oscillates. It is 618px of chrome —
+32 of screen padding, 248 of filters, 316 of detail, two 10px gaps and the list
+card's own two borders — subtracted from `min(shell, --fd-app-max-width)`. The
+default UI-test viewport of 1440 sits 3px above the boundary; a column that
+changes width moves that, and it moves loudly rather than silently, because the
+whole suite runs in armazón A.
+
+## Decisions that bind the idle search form
+
+**A notice never moves the block it belongs to.** The idle stage centres the
+form between a `1fr` and a `1.3fr` spacer, so any row the form gains is paid for
+by the *whole* block travelling: an eighteen-pixel notice lifts it eight pixels,
+which is 07 §0 rule 1 breached by the control's own error message. The stage's
+own `.fd-alert-line` already answers this by leaving the flow; the per-field
+notices answer it by being reserved. Each idle field reserves the rows it can
+end up holding, and the reserve is *derived from the notice's own declarations*
+(`0.25rem` of margin over a `1.2` line box of `--fd-text-meta`) rather than
+rounded to a nice number: `.fd-search-field-shell` is the control plus that lane,
+and `.fd-location-field-shell-reserve-suggestions` is the control plus the chip
+row (`5px` over `--fd-control-standard`) plus that lane. Reserving only the chips
+is what let «Ingresa un destino válido» re-centre the screen on every deployment
+that had a ranking to show — the empty-strip case passed because there was
+nothing under the field to push. Measured in `test/ui/autocomplete.playwright.ts`
+with the strip up, which is the state a working desk is in.
+
+**The chips answer to the screen, not to the focus.** The frequent-station row
+is furniture of the idle form (03 §8, 11 §2.1), so it stays for as long as that
+screen does — including while a field is being edited. Hiding it whenever a
+field had focus assumed the panel below the field replaces it, but the panel
+opens only on an empty field or on two letters of real match: going back to
+correct a *finished* route (11 §2.4) therefore emptied the strip and left a
+blank band, held open by the very reserve above. When a panel does open it
+covers the row, which is the one case where hiding the chips changed nothing
+anybody could see. What still does not come back is the row in the active
+screen: once a search exists the chips compete with the results for the same
+eye.
+
+## Decisions that bind the results column
+
+**The page and its skeleton are one measurement.** 4a asks for «never more rows
+than the real page», and the real page is whatever the column fits. The page had
+been measured against its column for some time; the skeleton had not — it drew a
+constant seven, capped to six when stacked by a CSS `nth-child`, into a column
+that holds eleven or more, so every load painted half the space its own results
+were about to fill. The count is now taken once, above the branch that chooses
+between them, by the hook that sizes the page; the CSS cap is gone and the
+skeleton has no default. A partial search is unchanged: there the count still
+comes from the rows actually missing.
+
+**The column is measured before the first paint, and the skeleton reserves the
+pager's strip.** Two things kept the shared measurement from actually being
+shared. The first answer was scheduled on `requestAnimationFrame`, so the
+skeleton's first mount — and again the arrival, which re-keys the panel on the
+incoming `searchJobId` — painted one frame at `RESULTS_PAGE_SIZE_FALLBACK`: four
+bones in a column of eleven, then a page of four cards under a pager that had
+already counted twelve offers. Inside a layout effect the DOM is laid out, so
+the first measurement is taken synchronously and the frame is kept only to
+coalesce the observer's later ones. The second is that the two columns were not
+the same column: the pager is a sibling of the viewport, so the page's viewport
+is 41px shorter than the skeleton's, and eleven bones were handed over to ten
+cards. The skeleton now renders an empty `.fd-pager--reserved` with the pager's
+own class and token, so both measure one box. A result set that fits on one page
+has no pager and gives that row back, leaving the skeleton one bone short —
+the case where the count was never the complaint.
+
+**The page budget is fractional.** Capacity used to be floored to whole plain
+rows *before* the weights were applied, which is only harmless when every row is
+plain. A column of 687 holds 10.76 rows; floored to 10 it pays for a group
+(1.67) and eight flights and refuses a ninth at 10.67 — with 80px of empty
+column beneath it, more than the 64 that ninth card needed. Two roundings, each
+losing less than a row, together losing more than one. The hook now publishes
+the budget whole for pagination and floored only for the things that draw rows
+(the skeleton, the partial-search filler). Weighing rows against a budget is
+what the weight system was always for; it had only ever been handed an integer.
+
+**These are frame-level facts, so the tests read frames.** The first version of
+these cases fulfilled the search route instantly and asserted settled state,
+which never observes the skeleton phase or the handover — the two moments that
+were broken — and passed against a build that painted four bones every time.
+The cases in `test/ui/results.playwright.ts` now delay the response and record
+every distinct `bones/cards` pair the list paints, asserting on the sequence
+rather than its last entry.
+
+**The page ceiling is a guard, not a page size.** `RESULTS_PAGE_SIZE_MAX` was 12
+because 12 was the fit of a 1440-tall desk when it was written; screens grew and
+it became a cap. A 1920×1080 column fits 13 plain rows and a 1440-tall one fits
+19, so the ceiling left a row empty on the reporter's screen and seven on a
+taller one. It is 20 — that 19 plus a row of slack. It is also what a phone's
+deliberately-taller-than-the-screen page gets, so a mobile page is now 20 cards
+rather than 12.
+
+**An offer is inside a group when its itinerary is, not only when its id is.**
+`combinations[].offerId` trusts the provider to have listed every offer its own
+group covers, and two things break that trust: a `truncated` group, where the
+provider stopped enumerating combinations while the family kept its offers, and
+one physical schedule quoted under two offer ids. Either way the list drew a card
+whose legs the agent had just read inside the strip above it. Membership is now
+also the canonical flight signature — every leg, its flight numbers, airports and
+times, the identity `offer-signature.ts::buildOfferSignature` demands when a
+quotation is revalidated.
+
+**The fold stops at the fare.** Two offers on one schedule at two prices are two
+things to sell, and folding the second away would take a price off the screen —
+so the signature carries the currency, the amount and the baggage as well, and a
+differently-priced twin stays an independent card even though its times repeat.
+This is not a new opinion: `offer-schedule-groups.ts::groupKeyForOffer` already
+refuses to put two offers in one group unless those same terms match. The browser
+folds on exactly the bar the provider grouped on and never on a looser one. The
+fold reads the already-filtered offers and is applied after the «a partially
+filtered or stale group is not a group» rule, so a member the filters removed
+cannot come back through it and an absorbed twin cannot revive an emptied group.
+
 ## Decisions that bind the backend
 
 **One quotation composer.** `src/core/quotation.ts::buildCommercialQuotation()`
@@ -45,6 +173,34 @@ is the only place the commercial text exists. The UI and `POST /api/quotation`
 pass `migrationPlan` to that same function; there is no second template in the
 router or the component. The migratory switch regenerates the text locally from
 that core over the already-revalidated offer, without a second provider call.
+
+**The frequent-station ranking is one global row, written where it is read.**
+The chips are the agency's ranking, not the browser's: `location_usage` is keyed
+by `(role, code)` with no session in it, and the per-session strip is a separate
+table that only ever feeds the panel's «Recientes». Two things make that true in
+the split-service topology rather than by coincidence. First, the unit that
+answers `GET /api/location-usage-suggestions` is the unit that counts the
+search: the web unit records the route as it delegates `/api/search` and
+`/api/matrix` to `fly-desk-search.service`, and the runner skips anything
+stamped `x-flydesk-search-proxy: 1`, so an executed search is counted exactly
+once and always in the store that serves it. Before this the counting happened
+wherever the search *ran*, which is a process that never answers the ranking —
+the row was global only for as long as two environment variables happened to
+name the same file. A search the runner refuses (a 503 from a runner that is
+down) is not counted; it is not a route the desk searched.
+
+**The last card of each role answers to recency.** A ranking that only ever adds
+cannot admit anybody: `total_uses` never falls, so once three stations lead they
+lead for good — and on this deployment two of them are LIM and MAD, because the
+production smoke fires that route on every deploy and every rollback. That is
+the reported «una búsqueda bastaría para agregar otro comodín, y probándolo no
+aparece». So the first slots of each role are the global counter (uses, then
+last use, then code) and the last slot is the station used most recently, unless
+it already holds one of the slots above. One executed search — from any browser,
+any process — therefore puts a new station on everybody's row at once, while the
+two stations the desk really lives on keep the slots above it. At `limit < 2`
+there is no reserved slot and the row is pure frequency. `getDiagnostics()`
+reports the ranking as `global-total-uses-with-newest-card`.
 
 **Quoting always revalidates.** The first «Cotizar» calls `POST /api/quotation`
 with the source search and offer ids. The endpoint only accepts a complete
@@ -125,12 +281,19 @@ store no database.
 ## What is still missing
 
 **Arbitrary leg recombination (plate 3b).** `SearchResponse.scheduleGroups`
-publishes groups backed by native Agil or Click and Book Plus identity, and the
-UI treats `combinations[].offerId` as the only source of membership. Choosing an
-outbound and an inbound independently requires the provider to have quoted that
-exact combination; no fixture shows either provider able to recombine freely, so
-the backend neither promises nor simulates it. Without a native reference there
-is no group, and a lone alternative stays an independent offer.
+publishes groups backed by native Agil or Click and Book Plus identity. Choosing
+an outbound and an inbound independently requires the provider to have quoted
+that exact combination; no fixture shows either provider able to recombine
+freely, so the backend neither promises nor simulates it. Without a native
+reference there is still no group.
+
+What has changed is what counts as being *in* one. Membership was
+`combinations[].offerId` alone; it is now that plus the canonical flight
+signature, so an offer the provider did not list — or listed twice — is folded
+into the group whose schedules it repeats rather than drawn beside it (see
+«Decisions that bind the results column»). A lone alternative is still an
+independent offer: what is no longer independent is an alternative that is not
+lone.
 
 **The gate transcribes the catalogues; it does not share them.**
 `renderLoginPage()` in `src/web-auth.ts` is served before any bundle is
@@ -162,7 +325,14 @@ the desk, tablet and phone viewports end to end: idle and active, console
 errors, global and inner overflow, results, filters, detail, both themes, and
 visible initial focus. It reads the card's disposition off the list container
 rather than the shell, and asserts the stops lane always has a box, which is the
-regression that produced the 750 threshold above.
+regression that produced the stacking threshold above.
+
+It samples three viewports, which is why the side-by-side leg row could starve
+its lanes to zero from 980 to 1064 without the gate noticing: none of the three
+lands there. The width sweep that would have caught it lives in
+`test/ui/results.playwright.ts` («the card keeps a lane for the airport codes at
+every width a desk can be») and walks thirteen widths across both sides of all
+three thresholds.
 
 Set `FLY_DESK_UI_CAPTURE_DIR` to have that gate write screenshots for a review
 next to the plates.

@@ -63,6 +63,14 @@ export function resolveSearchServiceBaseUrl(input = process.env.FLY_DESK_SEARCH_
   return parsed;
 }
 
+/* The header the web unit stamps on what it hands to the runner. The runner
+   reads it to know that the request is already accounted for upstream — the
+   location-usage ranking is written by the process that serves it, not by the
+   one that happens to execute the search. */
+export function isSearchServiceProxiedRequest(request: Request): boolean {
+  return request.headers.get(SEARCH_SERVICE_PROXY_HEADER) === "1";
+}
+
 export function isSearchServiceDelegationConfigured(): boolean {
   return Boolean(resolveSearchServiceBaseUrl());
 }
@@ -167,7 +175,7 @@ export async function maybeProxySearchServiceRequest(
   url: URL,
   options: ProxySearchServiceOptions = {},
 ): Promise<Response | undefined> {
-  if (request.headers.get(SEARCH_SERVICE_PROXY_HEADER) === "1") {
+  if (isSearchServiceProxiedRequest(request)) {
     return undefined;
   }
 

@@ -422,6 +422,119 @@ test("idle validation helpers keep the search block anchored", async () => {
   });
 });
 
+/* The same anchoring, with the row of chips under the fields — which is the
+   state the desk is actually in. The reserve above the chips held the helper's
+   line only while the strip was empty, so on a deployment that has a ranking to
+   show, «Ingresa un destino válido» grew the field by its own line and the
+   asymmetric spacers re-centred the whole block under the agent's hands. */
+test("a validation notice does not move the idle block while the chips are up", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeLocationUsageSuggestions(page, {
+      origin: ["LIM", "TPP", "CUZ"],
+      destination: ["MAD", "MIA", "BUE"],
+    });
+    await openDesktop(page, baseUrl);
+    await waitForFontsReady(page);
+    await page.getByRole("button", { name: "Usar LIM como origen" }).waitFor();
+
+    const readGeometry = () => page.evaluate(() => {
+      const frame = document.querySelector<HTMLElement>('[data-testid="search-shell-frame"]');
+      const field = document.querySelector<HTMLElement>("#location-destino")?.closest(".fd-location-field");
+      const chips = document.querySelectorAll(".fd-route-fields .fd-quick-chip").length;
+      if (!frame || !(field instanceof HTMLElement)) {
+        throw new Error("Missing idle search geometry");
+      }
+
+      return {
+        frameTop: frame.getBoundingClientRect().top,
+        frameHeight: frame.getBoundingClientRect().height,
+        fieldHeight: field.getBoundingClientRect().height,
+        chips,
+      };
+    });
+
+    const before = await readGeometry();
+    assert.equal(before.chips, 6);
+
+    await page.getByRole("combobox", { name: "Destino" }).focus();
+    await page.getByRole("combobox", { name: "Origen" }).focus();
+    await page.getByText("Ingresa un destino válido.").waitFor();
+
+    const after = await readGeometry();
+    // The chips are not what the notice displaces, either: both rows stay.
+    assert.equal(after.chips, 6);
+    assert.ok(
+      Math.abs(after.frameTop - before.frameTop) <= 1,
+      `El bloque se movió ${JSON.stringify({ before, after })}.`,
+    );
+    assert.ok(
+      Math.abs(after.frameHeight - before.frameHeight) <= 1,
+      `El bloque cambió de alto ${JSON.stringify({ before, after })}.`,
+    );
+  }, { autoOpen: false });
+});
+
+/* 11 §2.4 · going back into a finished form. The panel only opens on an empty
+   field or on real matches, so hiding the chips whenever a field had focus left
+   the agent editing a filled route with a blank strip under it. */
+test("the chips stay pressable while a filled field is being edited", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.route("**/api/locations**", async (route) => {
+      const query = (new URL(route.request().url()).searchParams.get("q") ?? "").trim().toUpperCase();
+      const cityByCode: Record<string, string> = {
+        CUZ: "Cusco",
+        LIM: "Lima",
+        MAD: "Madrid",
+        MIA: "Miami",
+      };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          query,
+          suggestions: [{
+            code: query,
+            city: cityByCode[query] ?? query,
+            country: query === "MAD" ? "ES" : "PE",
+            countryCode: query === "MAD" ? "ES" : "PE",
+            label: `${cityByCode[query] ?? query}, ${query === "MAD" ? "ES" : "PE"} (${query})`,
+          }],
+        }),
+      });
+    });
+    await routeLocationUsageSuggestions(page, {
+      origin: ["LIM", "TPP", "CUZ"],
+      destination: ["MAD", "MIA", "BUE"],
+    });
+
+    await openDesktop(page, baseUrl);
+    await page.getByRole("button", { name: "Usar LIM como origen" }).click();
+    await page.waitForFunction(() => (
+      document.querySelector<HTMLInputElement>('[aria-label="Origen"]')?.value === "LIM - Lima, Perú"
+    ));
+    await page.getByRole("button", { name: "Usar MAD como destino" }).click();
+    await page.waitForFunction(() => (
+      document.querySelector<HTMLInputElement>('[aria-label="Destino"]')?.value === "MAD - Madrid, España"
+    ));
+    await page.waitForTimeout(170);
+
+    // Back into the finished form, the way an agent corrects a route.
+    await page.getByRole("combobox", { name: "Origen" }).click();
+    await page.waitForFunction(() => document.activeElement?.id === "location-origen");
+    await page.waitForTimeout(120);
+
+    const originChip = page.getByRole("button", { name: "Usar CUZ como origen" });
+    assert.equal(await originChip.isVisible(), true);
+    assert.equal(await page.getByRole("button", { name: /como destino/ }).count(), 3);
+
+    // And it still replaces the value it is pressed against.
+    await originChip.click();
+    await page.waitForFunction(() => (
+      document.querySelector<HTMLInputElement>('[aria-label="Origen"]')?.value === "CUZ - Cusco, Perú"
+    ));
+  }, { autoOpen: false });
+});
+
 test("passenger steppers have accessible icon-only labels", async () => {
   await withDesktopPage(async ({ page }) => {
     await page.getByRole("button", { name: "Seleccionar pasajeros" }).click();

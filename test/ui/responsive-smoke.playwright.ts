@@ -199,12 +199,14 @@ for (const viewport of VIEWPORTS) {
       /*
        * 02 §2: the disposition answers to the width of the list, not to the
        * shell, so the expectation is read off the same container the CSS asks.
-       * The threshold is 750 — the manual says 660, but its sum omits the
-       * card's own padding and border, and at 660 the stops lane is zero. That
-       * is the point of the last assertion: whichever disposition the list
-       * lands in, the airport codes still have a box to live in.
+       * The threshold is 819 — the manual says 660, but its sum omits the
+       * card's own padding and border; 750 was the same measurement before the
+       * baggage took a track of its own and before the elastic lane's floor was
+       * measured rather than borrowed from the duration lane. That is the point
+       * of the last assertion: whichever disposition the list lands in, the
+       * airport codes still have a box to live in.
        */
-      const stacked = cardLayout.listWidth < 750;
+      const stacked = cardLayout.listWidth < 819;
       if (stacked) {
         // 02 §6: the provider icon leaves for the detail, the chevron gets its
         // own 14px column.

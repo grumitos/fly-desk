@@ -615,6 +615,14 @@ export function SearchShell({
      07 §1 — but only the chips. The space the fields reserve for them is
      released at once, because what the table has travelling upward is the block
      of fields, and it cannot travel while it is still holding their height. */
+  /* The row answers to the screen, not to the field's focus. It used to be
+     hidden while a field was open, on the assumption that the panel below the
+     field replaces it — but the panel only opens on an empty field or on real
+     matches, so going back to correct a *finished* form (11 §2.4) emptied the
+     strip and left a blank band where the chips had been: no panel, no chips,
+     and the row's height held open by the reserve. The chips stay pressable
+     while the agent edits, and when a panel does open it covers them, which is
+     the one case where hiding them changed nothing anybody could see. */
   const shouldRenderQuickChips = shouldShowUsageSuggestions || usageSuggestionsLeaving
   const reserveIdleHelperSpace = shouldShowUsageSuggestions
   const reserveOriginSuggestionSpace = shouldShowUsageSuggestions
@@ -813,7 +821,7 @@ export function SearchShell({
                 setOriginCode(suggestion.code)
                 setTouched((current) => ({ ...current, origin: true }))
               }}
-              quickSuggestions={!mobilePresentation && shouldRenderQuickChips && !origin.open ? usageSuggestions.frequent.origin : []}
+              quickSuggestions={!mobilePresentation && shouldRenderQuickChips ? usageSuggestions.frequent.origin : []}
               recentSuggestions={shouldShowUsageSuggestions ? usageSuggestions.recent.origin : []}
               frequentSuggestions={shouldShowUsageSuggestions ? usageSuggestions.frequent.origin : []}
               quickSuggestionsLeavingIdle={usageSuggestionsLeaving}
@@ -865,7 +873,7 @@ export function SearchShell({
               setDestCode(suggestion.code)
               setTouched((current) => ({ ...current, destination: true }))
             }}
-            quickSuggestions={!mobilePresentation && shouldRenderQuickChips && !destination.open ? usageSuggestions.frequent.destination : []}
+            quickSuggestions={!mobilePresentation && shouldRenderQuickChips ? usageSuggestions.frequent.destination : []}
             recentSuggestions={shouldShowUsageSuggestions ? usageSuggestions.recent.destination : []}
             frequentSuggestions={shouldShowUsageSuggestions ? usageSuggestions.frequent.destination : []}
             quickSuggestionsLeavingIdle={usageSuggestionsLeaving}
