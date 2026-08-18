@@ -564,14 +564,13 @@
   }
 
   /*
-   * Plate 1b draws the list as one card: the header, the active-filter chips
-   * and every result live inside a single bordered surface, the same one the
-   * 248px filter column uses (04 §2). Production had the header and the cards
-   * floating straight on the page background, so the column had no edges and
-   * the three-column shell read as three loose stacks.
-   *
-   * Armazón C takes it away again — 8a is explicit that the phone's list column
-   * is not a card, which is why its header is the 32px status row.
+   * Owner-decided, against plate 1b (see REDESIGN_CONTRACT.md): the list is
+   * NOT a card. #45 wrapped the column in a bordered surface because the plate
+   * draws one, and the result on a desk was the cards' own borders running
+   * flush against the wrapper's — a frame touching a frame. The redesign
+   * commit (5172ea6) had the header and the cards floating on the stage, and
+   * the owner holds that as the reference, so the box is gone again and only
+   * the column's structure (container, flex, overflow) remains.
    */
   .fd-list {
     container: fdlist / inline-size;
@@ -581,19 +580,13 @@
     min-height: 0;
     flex-direction: column;
     overflow: hidden;
-    border: 1px solid var(--color-border);
-    border-radius: var(--fd-radius-12);
-    background: var(--color-card);
-    box-shadow: var(--fd-shadow-emergente);
   }
 
-  /* The header is a band of the card, not a line floating above it: hairline
-     underneath and `secondary` at 60%, exactly as the plate writes it. */
+  /* The header floats above the cards as the redesign commit drew it: a line,
+     not a band of a wrapping card. */
   .fd-list .fd-list-header {
     flex-shrink: 0;
-    padding: 9px 12px;
-    border-bottom: 1px solid var(--color-border);
-    background: color-mix(in srgb, var(--color-secondary) 60%, transparent);
+    padding: 0 2px 9px;
   }
 
   .fd-detail-column {
