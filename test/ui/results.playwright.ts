@@ -2046,7 +2046,26 @@ test("the open list of schedules takes the click over every card it covers", asy
     assert.equal(hitMetrics.hitReachesCardBottom, false, JSON.stringify(hitMetrics));
     assert.equal(hitMetrics.stripGroundSelects, false, JSON.stringify(hitMetrics));
 
-    // Nine alternates to the schedule on the card, three of them on the strip.
+    /* Nine alternates to the schedule on the card, and as many chips on the
+       strip as its measured width holds — three was a constant, and on a desk
+       this wide it drew half of what fitted while «+n» counted the rest as if
+       there were no room. Every chip that is drawn is inside the strip; the
+       ones past the fit are out of flow, which is how the fit stays measurable
+       through a resize. */
+    const strip = await page.locator(".fd-card__alts-strip").first().evaluate((node) => {
+      const chips = Array.from(node.children) as HTMLElement[];
+      const box = node.getBoundingClientRect();
+      const shown = chips.filter((chip) => getComputedStyle(chip).position !== "absolute");
+      return {
+        total: chips.length,
+        shown: shown.length,
+        spills: shown.filter((chip) => chip.getBoundingClientRect().right > box.right + 0.5).length,
+      };
+    });
+    assert.equal(strip.total, 9, JSON.stringify(strip));
+    assert.ok(strip.shown > 3, JSON.stringify(strip));
+    assert.equal(strip.spills, 0, JSON.stringify(strip));
+
     await page.getByRole("button", { name: "Ver los 9 horarios" }).click();
     const panel = page.getByRole("dialog", { name: /^Todos los horarios/ });
     await panel.waitFor();
@@ -2094,6 +2113,19 @@ test("the open list of schedules takes the click over every card it covers", asy
     assert.equal(surface.rowZIndex, "30", JSON.stringify(surface));
     // … and the finished cascade left no transform behind to trap the panel in.
     assert.equal(surface.rowTransform, "none", JSON.stringify(surface));
+
+    /* The list tiles: a schedule is 240px of lanes plus its stops label, and
+       the panel is as wide as the card, so on this desk the rows sit in more
+       than one column instead of one per line. */
+    const columns = await panel.evaluate((node) => {
+      const rows = Array.from(node.querySelectorAll<HTMLElement>(".fd-schedule-row"));
+      const tops = new Set(rows.map((row) => Math.round(row.getBoundingClientRect().top)));
+      return { rows: rows.length, lines: tops.size };
+    });
+    assert.equal(columns.rows, 9, JSON.stringify(columns));
+    assert.ok(columns.lines < columns.rows, JSON.stringify(columns));
+    // And no lane repeats the price the card already states.
+    assert.equal(await panel.getByText(/mismo precio/).count(), 0);
 
     // And the click lands: choosing a schedule repaints the card underneath it.
     const chosen = panel.locator(".fd-schedule-row").nth(4);
@@ -2305,6 +2337,75 @@ async function runResultsSearch(page: Page, baseUrl: string): Promise<void> {
     page.getByRole("button", { name: "Buscar" }).click(),
   ]);
 }
+
+test("a fare the provider said nothing about keeps the card's lanes", async () => {
+  /*
+   * «A veces pierde su distribución», reported with a screenshot of one row
+   * whose price and provider sat a lane to the left of every other row's.
+   *
+   * The baggage lane was `auto` and the pair was hung on the *label*, which
+   * names only what a fare includes. So a fare that includes neither — or that
+   * the provider says nothing about — rendered no pair at all, the lane
+   * collapsed, and auto-placement walked the price into the baggage lane and
+   * the provider into the price's. It also broke `list - legs === 436` for
+   * exactly those fares, silently, because every fixture until this one had
+   * baggage.
+   *
+   * Three fares, three answers from the provider, one geometry.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeCompletedSearch(page, {
+      offers: [
+        oneStopOffer(0, { id: "bags-both" }),
+        oneStopOffer(1, {
+          id: "bags-neither",
+          baggage: { carryOnIncluded: false, checkedIncluded: false },
+        }),
+        oneStopOffer(2, { id: "bags-unknown", baggage: undefined }),
+      ],
+    });
+    await page.setViewportSize({ width: 1920, height: 1000 });
+    await runResultsSearch(page, baseUrl);
+    await page.getByTestId("result-card").first().waitFor();
+
+    const rows = await page.evaluate(() => {
+      const list = document.querySelector<HTMLElement>(".fd-list");
+      const cards = Array.from(document.querySelectorAll<HTMLElement>("[data-testid='result-card']"));
+      return {
+        listWidth: list?.clientWidth ?? 0,
+        cards: cards.map((card) => {
+          const at = (selector: string) => {
+            const node = card.querySelector<HTMLElement>(selector);
+            return node ? Math.round(node.getBoundingClientRect().left) : null;
+          };
+          const legs = card.querySelector<HTMLElement>(".fd-card__legs");
+          return {
+            columns: getComputedStyle(card).gridTemplateColumns,
+            legsWidth: Math.round(legs?.getBoundingClientRect().width ?? 0),
+            priceLeft: at(".fd-card__price"),
+            providerLeft: at(".fd-card__provider"),
+            baggage: Boolean(card.querySelector(".fd-card__baggage")),
+          };
+        }),
+      };
+    });
+
+    const at = JSON.stringify(rows);
+    assert.equal(rows.cards.length, 3, at);
+    // The pair is drawn on evidence, not on inclusion: only the fare nobody
+    // described goes without it.
+    assert.deepEqual(rows.cards.map((card) => card.baggage), [true, true, false], at);
+
+    /* And whatever the answer, the row is the same row: same tracks, same
+       result cell, and the price and the provider in the same lanes. */
+    for (const card of rows.cards) {
+      assert.match(card.columns, /^32px 142px /, at);
+      assert.equal(rows.listWidth - card.legsWidth, 436, at);
+      assert.equal(card.priceLeft, rows.cards[0].priceLeft, at);
+      assert.equal(card.providerLeft, rows.cards[0].providerLeft, at);
+    }
+  }, { autoOpen: false });
+});
 
 test("the card keeps a lane for the airport codes at every width a desk can be", async () => {
   /*
@@ -2591,15 +2692,18 @@ test("a page carrying a group still closes the column it was measured against", 
   }, { autoOpen: false });
 });
 
-test("a slow provider adds a line to the skeleton instead of taking it away", async () => {
+test("a search that is merely slow says nothing beyond the skeleton", async () => {
   /*
-   * «"Esperando resultados" se muestra muy pronto, los proveedores tardan
-   * más.» At eight seconds the whole column was replaced by the incomplete
-   * search notice — but the production smoke's *fastest* case lands around 15s
-   * and a range far later, so nearly every real search died into a sparse clock
-   * screen while it was still working normally. Those eight seconds now buy a
-   * line of words beside the bones, and the bones stay for as long as the
-   * search is alive.
+   * «Esos avisos de demora no deben existir, solo el absoluto de no
+   * funcionar.» The skeleton used to grow a line of words at eight seconds and,
+   * for a reader who had asked for no movement, hand them the whole column. A
+   * real search here takes fifteen to forty seconds and more, so «tarda más de
+   * lo habitual» announced the ordinary case as if it were news, and it said it
+   * while the search was working normally.
+   *
+   * The bones stay for as long as the search is alive, in both motion
+   * preferences, and the only thing that still takes words is failure — which
+   * has its own states and its own cases.
    */
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeUnansweredSearch(page);
@@ -2609,25 +2713,19 @@ test("a slow provider adds a line to the skeleton instead of taking it away", as
     await page.getByRole("button", { name: "Buscar" }).click();
     await page.getByTestId("results-loading-skeleton").waitFor();
 
-    // Past the eight seconds that used to end the skeleton.
+    // Past the eight seconds that used to end the skeleton's silence.
     await page.waitForTimeout(9_000);
 
-    await page.getByTestId("results-still-searching").waitFor();
     assert.equal(await page.getByTestId("results-loading-skeleton").isVisible(), true);
     assert.ok((await page.locator(".fd-card--skeleton").count()) > 1);
-    // The column is not a clock screen: the line above did not replace it.
+    assert.equal(await page.getByTestId("results-still-searching").count(), 0);
+    assert.equal(await page.getByText("La búsqueda sigue en curso").count(), 0);
+    assert.equal(await page.getByText(/tardando más de lo habitual/).count(), 0);
     assert.equal(await page.locator(".fd-list-empty").count(), 0);
   }, { autoOpen: false });
 });
 
-test("a reader who asked for no movement gets the words instead of still bones", async () => {
-  /*
-   * The remaining home of «La búsqueda sigue en curso». 07 §0 rule 5 stops the
-   * skeleton's pulse under `prefers-reduced-motion`, and a field of grey blocks
-   * that does not breathe is a drawing of a list, not a claim that one is
-   * arriving — so there the sentence takes the column it used to take from
-   * everyone.
-   */
+test("the same search under reduced motion still shows bones and no notice", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await routeUnansweredSearch(page);
@@ -2636,11 +2734,11 @@ test("a reader who asked for no movement gets the words instead of still bones",
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
     await page.getByRole("button", { name: "Buscar" }).click();
     await page.getByTestId("results-loading-skeleton").waitFor();
-
     await page.waitForTimeout(9_000);
 
-    await page.getByText("La búsqueda sigue en curso").waitFor();
-    assert.equal(await page.getByTestId("results-loading-skeleton").count(), 0);
+    assert.equal(await page.getByTestId("results-loading-skeleton").isVisible(), true);
+    assert.equal(await page.getByText(/tardando más de lo habitual/).count(), 0);
+    await page.emulateMedia({ reducedMotion: null });
   }, { autoOpen: false });
 });
 

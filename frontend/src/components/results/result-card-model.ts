@@ -71,7 +71,11 @@ export type ResultCardModel = {
   baggage: {
     carryOnIncluded: boolean | undefined
     checkedIncluded: boolean | undefined
+    /** True when the provider said anything at all, included or not. */
+    shown: boolean
     label: string
+    /** What the pair means on hover, including when it means «nothing». */
+    title: string
     ariaLabel: string
   }
   legs: ResultLegModel[]
@@ -138,16 +142,20 @@ export function buildAlternateScheduleModel(
     (leg, index) => !sameDisplayedSchedule(leg, current.legs[index]),
   )
   const leg = alternate.legs[changedLegIndex >= 0 ? changedLegIndex : 0]
-  const delta = (alternateOffer.price?.total?.amount ?? 0)
-    - (currentOffer.price?.total?.amount ?? 0)
-  const meta = Math.abs(delta) < 0.01
-    ? leg?.duration ?? ""
-    : `${delta > 0 ? "+" : "−"}${Math.abs(delta).toLocaleString("es-PE", { maximumFractionDigits: 0 })}`
 
+  /*
+   * The duration, and only the duration. This used to show a price difference
+   * whenever there was one, and there never is: a schedule group refuses to
+   * hold two offers whose currency, amount and baggage do not match
+   * (`offer-schedule-groups.ts::groupKeyForOffer`, and the fold rule in the
+   * contract), so every chip in a strip carries the price the card already
+   * states. The delta was arithmetic that could only ever produce zero, drawn
+   * as «mismo precio» in the full list and as nothing here.
+   */
   return {
     legAriaLabel: leg?.ariaLabel ?? "Tramo",
     time: leg?.departureTime ?? "--:--",
-    meta,
+    meta: leg?.duration ?? "",
   }
 }
 
@@ -355,10 +363,22 @@ function baggageParts(offer: CanonicalOffer) {
       : checkedIncluded === false ? "Equipaje de bodega no incluido" : "",
   ].filter(Boolean)
 
+  /*
+   * `label` names what the fare includes, so it is empty for a fare that
+   * includes neither — and the card used to hang the whole pair on it. But an
+   * explicit `false` is evidence too: it is what the greyed-out icon draws, and
+   * «no lleva bodega» is the fact an agent needs before the counter. What
+   * decides whether the pair is drawn is therefore whether the provider said
+   * anything at all, and only a fare it said nothing about goes without.
+   */
+  const shown = carryOnIncluded !== undefined || checkedIncluded !== undefined
+
   return {
     carryOnIncluded,
     checkedIncluded,
+    shown,
     label: labels.join(" + "),
+    title: labels.length ? labels.join(" + ") : shown ? "Sin equipaje incluido" : "",
     ariaLabel: ariaLabels.join(", "),
   }
 }

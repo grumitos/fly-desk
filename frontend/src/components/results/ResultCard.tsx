@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState, type RefObject } from "react"
 import { Backpack, Luggage } from "lucide-react"
 import { AppIcon } from "@/components/ui/app-icon"
 import { cn } from "@/lib/utils"
@@ -45,7 +46,7 @@ interface ResultCardProps {
   passengerCount: number
   showPerPerson?: boolean
   onSelect: (offer: CanonicalOffer) => void
-  /** Up to three chips inline; the rest live behind "+n". */
+  /** As many chips as the strip fits; the rest live behind "+n". */
   alternates?: AlternateSchedule[]
   alternateCount?: number
   onSelectAlternate?: (offer: CanonicalOffer) => void
@@ -67,8 +68,9 @@ export function ResultCard({
   scheduleChanged = false,
 }: ResultCardProps) {
   const model = buildResultCardModel(offer, passengerCount, { showPerPerson })
-  const inlineAlternates = alternates.slice(0, 3)
-  const hiddenAlternateCount = Math.max(0, alternateCount - inlineAlternates.length)
+  const stripRef = useRef<HTMLSpanElement>(null)
+  const fittingAlternates = useChipsThatFit(stripRef, alternates.length)
+  const hiddenAlternateCount = Math.max(0, alternateCount - fittingAlternates)
   const cardLabel = [
     selected ? "Oferta seleccionada" : "Seleccionar oferta",
     model.carrier.name,
@@ -130,8 +132,8 @@ export function ResultCard({
         ))}
       </div>
 
-      {model.baggage.label && (
-        <span className="fd-card__baggage" title={model.baggage.label} aria-hidden="true">
+      {model.baggage.shown && (
+        <span className="fd-card__baggage" title={model.baggage.title} aria-hidden="true">
           {model.baggage.carryOnIncluded !== undefined && (
             <span className={cn("fd-card__bag", model.baggage.carryOnIncluded ? "is-included" : "is-missing")}>
               <Backpack aria-hidden="true" />
@@ -158,18 +160,24 @@ export function ResultCard({
       <ProviderMark provider={model.provider} />
       <AppIcon name="chevronRight" size={16} className="fd-card__chevron" aria-hidden="true" />
 
-      {inlineAlternates.length > 0 && onSelectAlternate && (
+      {alternates.length > 0 && onSelectAlternate && (
         <div className="fd-card__alts">
           <span className="fd-type-micro fd-card__alts-label">
             {alternateCount === 1 ? "1 horario más" : `${alternateCount} horarios más`}
           </span>
-          <span className="fd-card__alts-strip">
-            {inlineAlternates.map((alternate) => (
+          <span ref={stripRef} className="fd-card__alts-strip">
+            {alternates.map((alternate, index) => (
               <button
                 key={alternate.offer.id}
                 type="button"
-                className={cn("fd-card__alt-chip fd-focus-ring", alternate.selected && "is-selected")}
+                className={cn(
+                  "fd-card__alt-chip fd-focus-ring",
+                  alternate.selected && "is-selected",
+                  index >= fittingAlternates && "is-hidden",
+                )}
                 aria-pressed={alternate.selected}
+                aria-hidden={index >= fittingAlternates || undefined}
+                tabIndex={index >= fittingAlternates ? -1 : undefined}
                 aria-label={`Cambiar la ${alternate.legAriaLabel.toLocaleLowerCase("es-PE")} a las ${alternate.time}, ${alternate.meta}`}
                 onClick={() => onSelectAlternate(alternate.offer)}
               >
@@ -194,6 +202,63 @@ export function ResultCard({
       )}
     </article>
   )
+}
+
+/**
+ * How many chips the strip can hold, measured rather than assumed.
+ *
+ * This was three, whatever the width: on a 1142px list the strip has room for
+ * six and drew half of them, and the «+n» beside it counted schedules the card
+ * had space to show.
+ *
+ * Every chip stays in the DOM and the ones past the fit are taken out of flow
+ * (`is-hidden` below) rather than out of the tree. That is what keeps the
+ * measurement honest through a resize and through a schedule swap: an
+ * out-of-flow chip still measures its own content, so the widths are read fresh
+ * on every pass and there is no cached geometry to go stale — and no state to
+ * reset when the strip is handed a different set of alternatives.
+ *
+ * The «+n» button is a sibling of the strip, so its appearance narrows the
+ * strip and the observer runs again. That settles in one pass and cannot
+ * oscillate: it only ever takes chips away, and it stays for as long as one is
+ * hidden.
+ */
+function useChipsThatFit(stripRef: RefObject<HTMLElement | null>, count: number): number {
+  const [visible, setVisible] = useState(count)
+
+  useLayoutEffect(() => {
+    const strip = stripRef.current
+    if (!strip || count === 0) return
+
+    const measure = () => {
+      const chips = Array.from(strip.children) as HTMLElement[]
+      /* The gap is read from the element so this arithmetic cannot drift from
+         the stylesheet that owns it. */
+      const gap = Number.parseFloat(window.getComputedStyle(strip).columnGap) || 0
+      const available = strip.clientWidth
+      let used = 0
+      let fits = 0
+
+      for (const chip of chips) {
+        const width = chip.getBoundingClientRect().width
+        const next = fits === 0 ? width : used + gap + width
+        if (next > available) break
+        used = next
+        fits += 1
+      }
+
+      /* One chip always, even where it does not fit: a strip labelled «N
+         horarios más» with nothing in it says less than a tight one. */
+      setVisible(Math.min(chips.length, Math.max(1, fits)))
+    }
+
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(strip)
+    return () => observer.disconnect()
+  }, [stripRef, count])
+
+  return Math.min(visible, count)
 }
 
 function LegRow({ leg }: { leg: ResultLegModel }) {

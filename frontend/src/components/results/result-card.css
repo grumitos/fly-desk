@@ -33,8 +33,17 @@
        of the cell. «Who flies» holds one line of carrier name, and the widest
        name this application can draw is «Aerolíneas Argentinas» at 141px —
        against a 186px lane. 186 − 44 = 142 still holds it, and the card's fixed
-       measure returns to the `list - 436` the redesign gave it. */
-    grid-template-columns: 32px minmax(0, 142px) minmax(0, 1fr) auto 116px 26px;
+       measure returns to the `list - 436` the redesign gave it.
+
+       The baggage lane is 32 and not `auto`, and the three lanes after the legs
+       are placed by number below. `auto` made the row's geometry a function of
+       the fare: a provider that says nothing about baggage renders no pair, the
+       lane collapsed, and everything after it moved up a track — the price into
+       the baggage lane, the provider into the price's. That is «a veces pierde
+       su distribución», and it also broke the `list - 436` this comment derives,
+       silently, for exactly those fares. A row of a list is a table row: its
+       lanes are the same in every row or the columns stop being columns. */
+    grid-template-columns: 32px minmax(0, 142px) minmax(0, 1fr) 32px 116px 26px;
     column-gap: 12px;
     align-items: center;
     min-width: 0;
@@ -196,6 +205,7 @@
     position: relative;
     z-index: 0;
     display: inline-flex;
+    grid-column: 4;
     align-items: center;
     justify-self: end;
     gap: 4px;
@@ -517,9 +527,13 @@
 
   /* ---- price ------------------------------------------------------------ */
 
+  /* Placed, not flowed: this lane and the two beside it come after an optional
+     child, and auto-placement made every one of them depend on whether the
+     provider had anything to say about baggage. */
   .fd-card__price {
     display: grid;
     min-width: 0;
+    grid-column: 5;
     align-content: center;
     justify-items: end;
     gap: 2px;
@@ -552,6 +566,10 @@
     height: 26px;
     place-items: center;
     justify-self: end;
+  }
+
+  .fd-card__provider {
+    grid-column: 6;
   }
 
   .fd-card__chevron {
@@ -605,11 +623,24 @@
   }
 
   .fd-card__alts-strip {
+    position: relative;
     display: flex;
     flex: 1;
     min-width: 0;
     gap: 6px;
     overflow: hidden;
+  }
+
+  /* Past the fit, and out of flow rather than out of the tree: the chip keeps
+     measuring its own content, which is what the strip's fit is computed from
+     on every resize. `overflow: hidden` above is what keeps it invisible; the
+     `visibility` is for the reader who would otherwise tab into it. */
+  .fd-card__alt-chip.is-hidden {
+    position: absolute;
+    top: 0;
+    left: 0;
+    visibility: hidden;
+    pointer-events: none;
   }
 
   .fd-card__alt-chip {
@@ -779,12 +810,22 @@
    * The card's own leg lanes, plus the one column the card cannot fit: the
    * price difference against the schedule currently shown. */
 
+  /* 340, not a column count: a schedule is 240px of fixed lanes plus the stops
+     label the disposition draws, and «1 escala · BOG» measures 75. Three
+     columns on the widest list, two from the stacking threshold up, one on a
+     phone — decided by the panel's own width rather than by a breakpoint. */
+  .fd-schedule-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 2px;
+    align-content: start;
+  }
+
   .fd-schedule-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 96px;
+    grid-template-columns: minmax(0, 1fr);
     width: 100%;
     align-items: center;
-    column-gap: 12px;
     padding: 8px 10px;
     border-radius: var(--fd-radius-10);
     text-align: left;
@@ -805,35 +846,6 @@
     align-items: center;
     column-gap: 10px;
     line-height: 16px;
-  }
-
-  .fd-schedule-row__delta {
-    justify-self: end;
-    text-align: right;
-  }
-
-  .fd-schedule-row__delta-same {
-    color: var(--color-muted-foreground);
-    font-size: var(--fd-text-mono-meta);
-    font-weight: var(--fd-weight-label);
-  }
-
-  .fd-schedule-row__delta-value {
-    font-family: var(--font-mono);
-    font-size: var(--fd-text-meta);
-    font-weight: var(--fd-weight-title);
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* Cheaper is the good news, so it stays neutral; more expensive takes the
-     soft warning tone. Neither is an error. `--success` was retired by 01 §10
-     for never diverging from `--secondary-fg`, which is what it reads as. */
-  .fd-schedule-row__delta-value.is-down {
-    color: color-mix(in srgb, var(--color-secondary-foreground) 82%, var(--color-foreground));
-  }
-
-  .fd-schedule-row__delta-value.is-up {
-    color: var(--color-warning-soft-foreground);
   }
 
   /* The migration month card used to be this component in a `--compact`

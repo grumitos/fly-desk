@@ -133,36 +133,9 @@ function buildNotice({
   return [headline, ...uniqueLines(failed.map((entry) => entry.short))].join("\n")
 }
 
-/**
- * The words for a search that is still out past the skeleton's patience.
- *
- * The old copy was a blind timer that claimed, in the plural and as a
- * diagnosis, that «los proveedores están tardando». If one had already failed
- * at two seconds it was simply wrong.
- */
-export function stillSearchingBody(outcome: SearchOutcome): string {
-  const tail = "Los vuelos aparecen aquí en cuanto llega el primero."
-  const reasons = failureSentences(outcome).join(" ")
-
-  if (outcome.waitingLabels.length === 0) {
-    return reasons ? `${reasons} ${tail}` : `La consulta está tardando más de lo habitual. ${tail}`
-  }
-
-  const who = joinLabels(outcome.waitingLabels)
-  const verb = outcome.waitingLabels.length === 1 ? "está" : "están"
-  const waiting = `${who} ${verb} tardando más de lo habitual.`
-
-  return reasons ? `${reasons} ${waiting} ${tail}` : `${waiting} ${tail}`
-}
-
 /** The reasons as prose, for the surfaces with room for a sentence each. */
 export function failureSentences(outcome: SearchOutcome): string[] {
   return uniqueLines(outcome.failed.map((entry) => entry.sentence))
-}
-
-function joinLabels(labels: string[]): string {
-  if (labels.length <= 1) return labels[0] ?? ""
-  return `${labels.slice(0, -1).join(", ")} y ${labels[labels.length - 1]}`
 }
 
 function uniqueLines(values: string[]): string[] {
