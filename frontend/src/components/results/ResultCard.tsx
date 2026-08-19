@@ -219,6 +219,11 @@ function LegRow({ leg }: { leg: ResultLegModel }) {
       <span className="fd-card__leg-stops" title={leg.stopsTitle}>
         <span className="fd-card__leg-stops-long">{leg.stopsLabel}</span>
         <span className="fd-card__leg-stops-short">{leg.stopsShortLabel}</span>
+        {/* The layover, drawn only where the disposition has room to spare: a
+            single leg on a wide list, which is the one case where the plate
+            would otherwise stretch a line of four values across 700px. The CSS
+            owns that decision — this only offers the words. */}
+        {leg.waitLabel && <span className="fd-card__leg-wait"> · {leg.waitLabel}</span>}
       </span>
     </div>
   )

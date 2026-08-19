@@ -49,6 +49,14 @@ export type ResultLegModel = {
    */
   stopsShortLabel: string
   stopsTitle: string
+  /**
+   * "espera 2h 15m" — the layover, and only when there is exactly one, where
+   * the figure is unambiguous. Two stops have two waits and a sum of them is a
+   * number that matches no part of the trip; those stay in the `title` and in
+   * the detail sheet. The card shows it where the disposition has the room for
+   * it — one leg on a wide list — and hides it everywhere else.
+   */
+  waitLabel: string
   stopsTone: "direct" | "one-stop" | "many-stops" | "unknown"
 }
 
@@ -189,6 +197,7 @@ function legModel(
     stopsLabel: stops.label,
     stopsShortLabel: stops.shortLabel,
     stopsTitle: stops.title,
+    waitLabel: stops.waitLabel,
     stopsTone: stops.tone,
   }
 }
@@ -214,6 +223,7 @@ function stopsForItinerary(itinerary: Itinerary | null) {
       label: "Escalas por confirmar",
       shortLabel: "Escalas ?",
       title: "No hay itinerario para confirmar las escalas",
+      waitLabel: "",
       tone: "unknown" as const,
     }
   }
@@ -223,7 +233,13 @@ function stopsForItinerary(itinerary: Itinerary | null) {
     ?? Math.max(0, segments.length - 1)
 
   if (stopCount === 0) {
-    return { label: "Directo", shortLabel: "Directo", title: "Vuelo directo", tone: "direct" as const }
+    return {
+      label: "Directo",
+      shortLabel: "Directo",
+      title: "Vuelo directo",
+      waitLabel: "",
+      tone: "direct" as const,
+    }
   }
 
   const codes = segments
@@ -246,6 +262,7 @@ function stopsForItinerary(itinerary: Itinerary | null) {
       label: codes[0] ? `1 escala · ${codes[0]}` : "1 escala",
       shortLabel: codes[0] ? `1 esc · ${codes[0]}` : "1 esc",
       title,
+      waitLabel: layovers.length === 1 ? `espera ${formatJourneyDuration(layovers[0].minutes)}` : "",
       tone: "one-stop" as const,
     }
   }
@@ -262,6 +279,7 @@ function stopsForItinerary(itinerary: Itinerary | null) {
     label: `${stopCount} escalas${codeSuffix}`,
     shortLabel: `${stopCount} esc`,
     title,
+    waitLabel: "",
     tone: "many-stops" as const,
   }
 }
