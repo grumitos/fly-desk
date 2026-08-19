@@ -97,6 +97,43 @@ function hasCurrentSearchCacheVersion(searchMeta: SearchMeta): boolean {
 
 type SearchJobStatus = "running" | "completed" | "failed" | "cancelled";
 
+/*
+ * The statuses the sweep removes, written out rather than expressed as
+ * «anything but completed».
+ *
+ * `status <> 'completed'` cannot seek an index, so SQLite answered it by
+ * reading the table — and this table's rows carry the payloads, which is how a
+ * prune that deletes nothing came to cost 16.6 seconds of a 22-second boot on
+ * a 1.78 GB store. `IN` over the three seeks `idx_search_jobs_lookup`, which
+ * leads with `status`. The list is exhaustive against the union above; a status
+ * added there and forgotten here is still swept by age, the branch beside it.
+ */
+const SWEEPABLE_JOB_STATUSES: readonly SearchJobStatus[] = ["running", "failed", "cancelled"];
+const SWEEPABLE_JOB_STATUS_LIST = SWEEPABLE_JOB_STATUSES.map((status) => `'${status}'`).join(", ");
+
+/**
+ * What the sweep runs, in order, with the cutoff bound to `?1`.
+ *
+ * Exported so a test can hold them against `EXPLAIN QUERY PLAN`: every one of
+ * them must seek an index. The single `OR` they replaced could not, so SQLite
+ * read the table — and these rows carry the payloads.
+ */
+export const PERSISTED_SWEEP_STATEMENTS: readonly string[] = [
+  `DELETE FROM purchase_paths WHERE session_id IN (
+     SELECT id FROM search_jobs WHERE idle_at_ms < ?1
+     UNION
+     SELECT id FROM search_jobs WHERE status IN (${SWEEPABLE_JOB_STATUS_LIST})
+     UNION
+     SELECT id FROM matrix_jobs WHERE idle_at_ms < ?1
+     UNION
+     SELECT id FROM matrix_jobs WHERE status IN (${SWEEPABLE_JOB_STATUS_LIST})
+   )`,
+  "DELETE FROM search_jobs WHERE idle_at_ms < ?1",
+  `DELETE FROM search_jobs WHERE status IN (${SWEEPABLE_JOB_STATUS_LIST})`,
+  "DELETE FROM matrix_jobs WHERE idle_at_ms < ?1",
+  `DELETE FROM matrix_jobs WHERE status IN (${SWEEPABLE_JOB_STATUS_LIST})`,
+];
+
 interface StoredPurchasePath {
   sessionId: string;
   ownerId: string;
@@ -2282,6 +2319,12 @@ export class SearchSessionStore {
       CREATE INDEX IF NOT EXISTS idx_search_jobs_lookup
         ON search_jobs (status, sort_mode, request_key, provider_ids_key, provider_context_key, idle_at_ms);
 
+      -- The sweep's own index. idx_search_jobs_lookup leads with status, so a
+      -- range on idle_at_ms alone cannot seek it and the prune fell back to
+      -- reading the table: every row, payload and all.
+      CREATE INDEX IF NOT EXISTS idx_search_jobs_idle_at
+        ON search_jobs (idle_at_ms);
+
       CREATE TABLE IF NOT EXISTS matrix_jobs (
         id TEXT PRIMARY KEY,
         idle_at_ms INTEGER NOT NULL,
@@ -2293,6 +2336,9 @@ export class SearchSessionStore {
 
       CREATE INDEX IF NOT EXISTS idx_matrix_jobs_idle
         ON matrix_jobs (status, idle_at_ms);
+
+      CREATE INDEX IF NOT EXISTS idx_matrix_jobs_idle_at
+        ON matrix_jobs (idle_at_ms);
 
       CREATE TABLE IF NOT EXISTS purchase_paths (
         id TEXT PRIMARY KEY,
@@ -2447,12 +2493,23 @@ export class SearchSessionStore {
       return retained;
     }
 
-    const diskOnlyBytes = diskOnly.reduce(
-      (total, candidate) => total + Math.max(0, Number(candidate.payloadBytes) || 0),
-      0,
-    );
+    /* Only what was actually measured is summed. A row written before the size
+       column existed counts as one byte over the budget — a marker, not a
+       weight — and adding those up reported terabytes for a 1.8 GB store. */
+    let diskOnlyBytes = 0;
+    let unmeasuredJobs = 0;
+    for (const candidate of diskOnly) {
+      const bytes = Math.max(0, Number(candidate.payloadBytes) || 0);
+      if (bytes >= unmeasured) {
+        unmeasuredJobs += 1;
+        continue;
+      }
+      diskOnlyBytes += bytes;
+    }
     console.warn(
-      `Fly Desk persisted cache restore budget kept jobs disk-only: jobs=${diskOnly.length} payloadBytes=${diskOnlyBytes} budgetBytes=${this.persistedRestoreBudgetBytes}`,
+      `Fly Desk persisted cache restore budget kept jobs disk-only: jobs=${diskOnly.length}`
+      + ` payloadBytes=${diskOnlyBytes} unmeasuredJobs=${unmeasuredJobs}`
+      + ` budgetBytes=${this.persistedRestoreBudgetBytes}`,
     );
     return retained;
   }
@@ -2464,17 +2521,20 @@ export class SearchSessionStore {
 
     const cutoffMs = nowMs - COMPLETED_SEARCH_SESSION_TTL_MS;
     const db = this.db;
+    /*
+     * The condition is split in two, and the halves are `UNION`ed rather than
+     * `OR`ed, because an `OR` across two columns leaves SQLite nothing to seek:
+     * it read the table, and this table's rows carry the payloads. Measured on
+     * the production box, the prune alone was 16.6s of a 22.1s boot with 55
+     * jobs and 1.78 GB — while deleting nothing, because none of them had
+     * expired. Each half can use an index now: the age against
+     * `idx_*_idle_at`, and the status against the lookup index it already
+     * leads. What the sweep takes is the rows it actually removes.
+     */
     db.transaction(() => {
-      runSql(db, `
-        DELETE FROM purchase_paths
-        WHERE session_id IN (
-          SELECT id FROM search_jobs WHERE status != 'completed' OR idle_at_ms < ?
-          UNION
-          SELECT id FROM matrix_jobs WHERE status != 'completed' OR idle_at_ms < ?
-        )
-      `, cutoffMs, cutoffMs);
-      runSql(db, "DELETE FROM search_jobs WHERE status != 'completed' OR idle_at_ms < ?", cutoffMs);
-      runSql(db, "DELETE FROM matrix_jobs WHERE status != 'completed' OR idle_at_ms < ?", cutoffMs);
+      for (const statement of PERSISTED_SWEEP_STATEMENTS) {
+        runSql(db, statement, cutoffMs);
+      }
       runSql(db, `
         DELETE FROM purchase_paths
         WHERE session_id NOT IN (
