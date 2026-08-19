@@ -26,8 +26,8 @@ type SkeletonRowShape = {
   /** The elastic lane of each of the two legs. */
   stops: [string, string]
   price: string
-  /** The price-per-person line under the price, which only all-adult fares have. */
-  seats: string | null
+  /** The per-person line under the price, which only a multi-passenger fare has. */
+  priceMeta: string | null
 }
 
 /*
@@ -38,9 +38,9 @@ type SkeletonRowShape = {
  * is `auto` in the stacked layout and a percentage there resolves to nothing.
  */
 const SKELETON_ROW_RHYTHM: SkeletonRowShape[] = [
-  { carrier: ["74%", "46%"], stops: ["62%", "48%"], price: "88px", seats: "44px" },
-  { carrier: ["58%", "40%"], stops: ["34%", "54%"], price: "74px", seats: null },
-  { carrier: ["80%", "52%"], stops: ["70%", "40%"], price: "92px", seats: "38px" },
+  { carrier: ["74%", "46%"], stops: ["62%", "48%"], price: "88px", priceMeta: "44px" },
+  { carrier: ["58%", "40%"], stops: ["34%", "54%"], price: "74px", priceMeta: null },
+  { carrier: ["80%", "52%"], stops: ["70%", "40%"], price: "92px", priceMeta: "38px" },
 ]
 
 export function ResultsSkeleton({
@@ -134,8 +134,8 @@ function SkeletonRow({ index }: { index: number }) {
 
       <div className="fd-card__price">
         <span className="fd-skeleton-block fd-skeleton-price" style={{ width: shape.price }} />
-        {shape.seats && (
-          <span className="fd-skeleton-block fd-skeleton-secondary" style={{ width: shape.seats }} />
+        {shape.priceMeta && (
+          <span className="fd-skeleton-block fd-skeleton-secondary" style={{ width: shape.priceMeta }} />
         )}
       </div>
 

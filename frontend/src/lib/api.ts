@@ -221,14 +221,20 @@ export function translateApiMessage(message: string): string {
   /* `providerPublicFailureMessage` builds these from the provider label and the
      reason code. Three of the six fell to the generic message, which dropped
      the name and the reason at once — the two things the notice exists to
-     carry. They come before the loose provider rules below on purpose. */
+     carry. They come before the loose provider rules below on purpose.
+
+     The three labels are every label that function can produce: the two in
+     `PROVIDER_STATUS_DEFINITIONS` and its «Provider» fallback. This pattern
+     also matched «Agil» and «Costamar», neither of which the backend has been
+     able to emit since the rebrand — a dead alternative that kept a retired
+     brand alive in the one place a user would have read it. */
   const providerFailure = normalized.match(
-    /^(Agilsmart|Agil|Click and Book Plus|Costamar|Provider) (authentication or session is unavailable|is temporarily unavailable|request timed out|returned an invalid response|request failed)\.$/,
+    /^(Agilsmart|Click and Book Plus|Provider) (authentication or session is unavailable|is temporarily unavailable|request timed out|returned an invalid response|request failed)\.$/,
   )
   if (providerFailure) {
-    const provider = /costamar|click and book/i.test(providerFailure[1])
+    const provider = providerFailure[1] === "Click and Book Plus"
       ? providerDisplayName("costamar")
-      : /agil/i.test(providerFailure[1])
+      : providerFailure[1] === "Agilsmart"
         ? providerDisplayName("agil-local")
         : "El proveedor"
     switch (providerFailure[2]) {
