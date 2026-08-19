@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   type RefObject,
 } from "react"
 import { ResultCard, type AlternateSchedule } from "@/components/results/ResultCard"
@@ -33,7 +32,6 @@ import { ShortcutTooltip } from "@/components/ui/tooltip"
 import {
   describeSearchOutcome,
   failureSentences,
-  stillSearchingBody,
   type SearchOutcome,
 } from "@/lib/search-outcome"
 import { cn } from "@/lib/utils"
@@ -66,25 +64,6 @@ const RESULTS_PAGE_SIZE_FALLBACK = 4
 const RESULTS_CARD_HEIGHT_ESTIMATE_PX = 58
 const RESULTS_CARD_GAP_PX = 6
 const RESULTS_LIST_TOP_INSET_PX = 4
-/*
- * When a search stops being a search that is merely starting.
- *
- * This used to be the moment the skeleton was taken down and replaced by the
- * «La búsqueda sigue en curso» notice, on the reasoning that a skeleton which
- * never stops is a skeleton that lies. The premise was wrong about the clock,
- * not about the lie: a real search takes 15–40s and more — the production
- * smoke's fastest case lands around 15 — so eight seconds is not where a search
- * becomes doubtful, it is where an ordinary one is still working. Every real
- * search died into a sparse clock screen and the agent watched a stopped page
- * for the thirty seconds that mattered.
- *
- * The skeleton is not what claims progress; the search's own lifecycle does,
- * and it is bounded — `loading` ends when the job does, and the admission
- * timeout bounds that at 120s. So the bones stay for as long as the search is
- * alive, and eight seconds is when the words join them (11 §3's «tarda»,
- * naming the provider that is slow) rather than when they replace them.
- */
-const SKELETON_GIVE_UP_MS = 8000
 /* 02 §9: the way back to the top appears past 300px of list scroll. */
 const BACK_TO_TOP_AFTER_PX = 300
 
@@ -413,11 +392,6 @@ function ResultsBody({
   onMobileToolsCollapsedChange: (collapsed: boolean) => void
   mobileCollapseEnabled: boolean
 }) {
-  const stillSearching = useSkeletonTimeout(
-    loading && offers.length === 0,
-    results?.searchJobId ?? "pending",
-  )
-  const reducedMotion = usePrefersReducedMotion()
   /*
    * One measurement, two consumers. The page of results and the skeleton that
    * stands in for it are drawn in the same column and have to hold the same
@@ -476,37 +450,19 @@ function ResultsBody({
   }
 
   /*
-   * 04 §7 and 11 §3: a search with nothing to show yet is the skeleton, and at
-   * eight seconds the state is *also* said with words — a status line above the
-   * bones, not instead of them. The words come from the diagnostics rather than
-   * from the timer that raised them: the old copy asserted in the plural that
-   * «los proveedores están tardando», which was simply false when one of the
-   * two had already failed.
+   * 04 §7: a search with nothing to show yet is the skeleton, and the skeleton
+   * stands for as long as the search is alive.
    *
-   * The one case that still belongs to words alone is a reader who has asked
-   * for no movement. 04 §7's skeleton is a *pulse*: reduced motion stops it
-   * (rule 5 of the movement system), and a field of grey blocks that does not
-   * breathe says nothing about progress — it reads as a page that failed to
-   * paint. There the notice is the whole message, so it takes the column.
+   * It used to grow a line of words at eight seconds — «X está tardando más de
+   * lo habitual» — and hand the whole column to those words for a reader who
+   * had asked for no movement. Both are gone by decision: a real search here
+   * takes fifteen to forty seconds and more, so «tarda» is the ordinary case
+   * and a notice that announces it tells the agent nothing they can act on.
+   * What still speaks is failure, and it speaks in the states below: a provider
+   * that fell, or a search that reached nobody.
    */
   if (loading && offers.length === 0) {
-    if (stillSearching && reducedMotion) {
-      return (
-        <EmptyState
-          icon="clock"
-          title="La búsqueda sigue en curso"
-          body={stillSearchingBody(outcome)}
-        />
-      )
-    }
-
-    return (
-      <ResultsSkeleton
-        rows={columnRows}
-        attachViewport={attachViewport}
-        searchingNotice={stillSearching ? stillSearchingBody(outcome) : undefined}
-      />
-    )
+    return <ResultsSkeleton rows={columnRows} attachViewport={attachViewport} />
   }
 
   if (offers.length === 0 && results) {
@@ -1124,55 +1080,6 @@ function EmptyState({
   )
 }
 
-/**
- * True once the skeleton has been up long enough to stop claiming progress.
- *
- * The flag is stamped with the search it belongs to, so the next search starts
- * fresh without an effect having to clear it first — a stale `true` would skip
- * the skeleton entirely on the following search.
- */
-function useSkeletonTimeout(active: boolean, searchKey: string) {
-  const [expiredKey, setExpiredKey] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!active) return
-
-    const timer = window.setTimeout(() => setExpiredKey(searchKey), SKELETON_GIVE_UP_MS)
-    return () => window.clearTimeout(timer)
-  }, [active, searchKey])
-
-  return active && expiredKey === searchKey
-}
-
-/**
- * Whether the reader has asked for no movement.
- *
- * 07 §0 rule 5 stops the skeleton's pulse under this preference, which leaves a
- * field of static grey blocks — a drawing of a list, not a claim that one is
- * arriving. It is the one state where the words carry the whole message, so it
- * is the one state where they take the column instead of standing above it.
- */
-const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)"
-
-function subscribeToReducedMotion(onChange: () => void): () => void {
-  if (typeof window.matchMedia !== "function") return () => undefined
-
-  const query = window.matchMedia(REDUCED_MOTION_QUERY)
-  query.addEventListener("change", onChange)
-  return () => query.removeEventListener("change", onChange)
-}
-
-function readReducedMotion(): boolean {
-  return typeof window.matchMedia === "function" && window.matchMedia(REDUCED_MOTION_QUERY).matches
-}
-
-function usePrefersReducedMotion(): boolean {
-  /* The preference is external state, not a render of ours: subscribing to it
-     is what `useSyncExternalStore` is for, and it reads the media query on the
-     first render rather than a frame later — which for this branch would be a
-     frame of skeleton under a preference that asked for none. */
-  return useSyncExternalStore(subscribeToReducedMotion, readReducedMotion, () => false)
-}
 
 /**
  * How many cards fit without cutting one in half. A page that ends mid-card

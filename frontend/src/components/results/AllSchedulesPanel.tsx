@@ -7,9 +7,19 @@ import type { CanonicalOffer } from "@/types"
 /*
  * Plate 3b — what the "+n" on the alternative-schedules strip opens.
  *
- * Same columns as the card, plus the one column the card has no room for: the
- * price difference against the schedule currently shown. Each row is a complete
- * provider offer, and choosing one repaints the card and the detail panel.
+ * Same columns as the card. Each row is a complete provider offer, and choosing
+ * one repaints the card and the detail panel.
+ *
+ * The rows tile instead of stacking: a schedule is 240px of fixed lanes plus a
+ * stops label, and the panel is as wide as the card — one row per line left two
+ * thirds of a 1142px panel empty and pushed the tenth schedule out of a 19rem
+ * box that could have held them all.
+ *
+ * The price column the plate drew is gone. A schedule group refuses to hold two
+ * offers whose currency, amount and baggage differ, so every row here carries
+ * the price the card already states: the column could only ever say «mismo
+ * precio». Which row is the one on the card is said by its tint and by
+ * `aria-current`, not by a word in a lane of its own.
  */
 
 export function AllSchedulesPanel({
@@ -28,7 +38,6 @@ export function AllSchedulesPanel({
   onClose: () => void
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null)
-  const currentPrice = offers.find((offer) => offer.id === currentOfferId)?.price?.total?.amount ?? 0
 
   // Esc closes, and a click anywhere else does too: this opens in place over the
   // list, so leaving it open while the agent works elsewhere would hide rows.
@@ -73,10 +82,9 @@ export function AllSchedulesPanel({
         </button>
       </div>
 
-      <div className="fd-scrollbar-hidden max-h-[15.5rem] overflow-y-auto p-1.5">
+      <div className="fd-scrollbar-hidden fd-schedule-grid max-h-[15.5rem] overflow-y-auto p-1.5">
         {offers.map((offer) => {
           const model = buildResultCardModel(offer, passengerCount)
-          const delta = (offer.price?.total?.amount ?? 0) - currentPrice
           const isCurrent = offer.id === currentOfferId
 
           return (
@@ -105,30 +113,10 @@ export function AllSchedulesPanel({
                   </span>
                 ))}
               </span>
-
-              <span className="fd-schedule-row__delta">
-                {isCurrent
-                  ? <span className="fd-status-pill">Actual</span>
-                  : <PriceDelta delta={delta} />}
-              </span>
             </button>
           )
         })}
       </div>
     </div>
-  )
-}
-
-/** The difference, not the price: the card already shows the price. */
-function PriceDelta({ delta }: { delta: number }) {
-  if (Math.abs(delta) < 0.01) {
-    return <span className="fd-schedule-row__delta-same">mismo precio</span>
-  }
-
-  const amount = Math.abs(delta).toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  return (
-    <span className={cn("fd-schedule-row__delta-value", delta > 0 ? "is-up" : "is-down")}>
-      {delta > 0 ? "+" : "−"}{amount}
-    </span>
   )
 }

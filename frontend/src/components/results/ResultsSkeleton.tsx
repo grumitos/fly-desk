@@ -1,5 +1,4 @@
 import type { CSSProperties } from "react"
-import { Spinner } from "@/components/ui/spinner"
 
 /*
  * Plates 2g and 4a — the skeleton system.
@@ -48,7 +47,6 @@ export function ResultsSkeleton({
   inline = false,
   startDelayIndex = 0,
   attachViewport,
-  searchingNotice,
 }: {
   /**
    * How many rows to draw. 4a asks for «never more rows than the real page»,
@@ -64,8 +62,6 @@ export function ResultsSkeleton({
   startDelayIndex?: number
   /** The viewport the row count is measured against, when standing alone. */
   attachViewport?: (node: HTMLDivElement | null) => void
-  /** 11 §3's «tarda»: which provider is still out, said beside the bones. */
-  searchingNotice?: string
 }) {
   const rowCount = Math.max(1, Math.round(rows))
   const skeletonRows = Array.from({ length: rowCount }, (_, index) => (
@@ -78,16 +74,11 @@ export function ResultsSkeleton({
      the real page uses, so the rows do not slide sideways when they are
      replaced.
 
-     `aria-hidden` sits on the viewport rather than on the body, because the
-     notice above it is the one thing here that has something to say. */
+     The status line that used to stand above the bones is gone with the timer
+     that raised it: «tarda más de lo habitual» is the ordinary shape of a
+     search here, and the bones already say one is running. */
   return (
     <div className="fd-list-body" data-testid="results-loading-skeleton">
-      {searchingNotice && (
-        <p className="fd-list-searching" role="status" data-testid="results-still-searching">
-          <Spinner size={12} />
-          {searchingNotice}
-        </p>
-      )}
       <div ref={attachViewport} className="fd-list-viewport" aria-hidden="true">
         <div className="fd-results-list fd-results-list--skeleton">{skeletonRows}</div>
       </div>

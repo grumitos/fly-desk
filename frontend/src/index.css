@@ -686,16 +686,6 @@
      the whole workspace and belongs to the search, this belongs to the column
      — so it takes no border, no surface and no dismissal, only the spinner it
      shares with the «Parcial» pill. */
-  .fd-list-searching {
-    display: flex;
-    flex-shrink: 0;
-    align-items: center;
-    gap: 6px;
-    padding: 0 2px 8px;
-    color: var(--color-muted-foreground);
-    font-size: var(--fd-text-meta);
-    font-weight: var(--fd-weight-label);
-  }
 
   /* 02 §9: 44px, r999, anchored to the bottom-right of the list — the corner a
      thumb reaches without moving the hand. It sits over the viewport rather

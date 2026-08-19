@@ -3,7 +3,6 @@ import assert from "node:assert/strict"
 import {
   describeSearchOutcome,
   failureSentences,
-  stillSearchingBody,
 } from "../frontend/src/lib/search-outcome"
 import type { SearchJobResponse } from "../frontend/src/types"
 
@@ -133,37 +132,6 @@ test("a job the meta calls failed is failed even when the status has not caught 
   }))
 
   assert.equal(outcome.jobFailed, true)
-})
-
-test("the still-searching copy names who is late instead of accusing everyone", () => {
-  /* The old line claimed, in the plural and as a diagnosis, that «los
-     proveedores están tardando». With one of them already down at two seconds
-     that was simply wrong. */
-  const oneWaiting = describeSearchOutcome(job([
-    { providerId: "agil-local", status: "failed", error: "Agilsmart is temporarily unavailable." },
-    { providerId: "costamar", status: "running" },
-  ]))
-  assert.equal(
-    stillSearchingBody(oneWaiting),
-    "Agilsmart no está disponible. Click and Book Plus está tardando más de lo habitual."
-      + " Los vuelos aparecen aquí en cuanto llega el primero.",
-  )
-
-  const bothWaiting = describeSearchOutcome(job([
-    { providerId: "agil-local", status: "running" },
-    { providerId: "costamar", status: "queued" },
-  ]))
-  assert.equal(
-    stillSearchingBody(bothWaiting),
-    "Agilsmart y Click and Book Plus están tardando más de lo habitual."
-      + " Los vuelos aparecen aquí en cuanto llega el primero.",
-  )
-
-  const nobodyKnown = describeSearchOutcome(job([]))
-  assert.equal(
-    stillSearchingBody(nobodyKnown),
-    "La consulta está tardando más de lo habitual. Los vuelos aparecen aquí en cuanto llega el primero.",
-  )
 })
 
 test("two providers failing the same way are one line, not two identical ones", () => {

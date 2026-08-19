@@ -353,7 +353,9 @@ test("card model does not invent missing baggage evidence", () => {
   assert.deepEqual(withoutBaggage.baggage, {
     carryOnIncluded: undefined,
     checkedIncluded: undefined,
+    shown: false,
     label: "",
+    title: "",
     ariaLabel: "",
   });
   assert.deepEqual(withUnknownPieces.baggage, withoutBaggage.baggage);
@@ -371,7 +373,9 @@ test("card model exposes only explicit baggage inclusion evidence", () => {
   assert.deepEqual(card.baggage, {
     carryOnIncluded: true,
     checkedIncluded: undefined,
+    shown: true,
     label: "Cabina",
+    title: "Cabina",
     ariaLabel: "Equipaje de mano incluido",
   });
 });
@@ -391,11 +395,18 @@ test("card model preserves explicit baggage exclusion evidence", () => {
    * read as a fare *with* luggage until its last word. The two dimmed icons
    * carry the absence (04 §4), and the screen-reader label still spells it out
    * because there the icons say nothing.
+   *
+   * `shown` is what the card hangs the pair on, and it is the reason this case
+   * exists twice over: the card used to test the empty label instead, so the
+   * dimmed pair this test pins was never drawn — and with it went the lane it
+   * stands in, which moved every value after it one track to the left.
    */
   assert.deepEqual(card.baggage, {
     carryOnIncluded: false,
     checkedIncluded: false,
+    shown: true,
     label: "",
+    title: "Sin equipaje incluido",
     ariaLabel: "Equipaje de mano no incluido, Equipaje de bodega no incluido",
   });
 });
