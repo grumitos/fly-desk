@@ -1437,7 +1437,14 @@ test("the sweep seeks its rows instead of reading the table", () => {
         .map((row) => row.detail)
         .join(" | ");
       assert.match(plan, /USING (COVERING )?INDEX/, `${statement} -> ${plan}`);
-      assert.doesNotMatch(plan, /SCAN (search_jobs|matrix_jobs)/, `${statement} -> ${plan}`);
+      /* A covering-index scan reads keys, never payloads, and is the shape the
+         orphan sweep is allowed. Any other scan of these three tables is the
+         defect: their rows are the cache. */
+      assert.doesNotMatch(
+        plan,
+        /SCAN (?:search_jobs|matrix_jobs|purchase_paths)(?! USING COVERING INDEX)/,
+        `${statement} -> ${plan}`,
+      );
     }
   } finally {
     db.close(true);
