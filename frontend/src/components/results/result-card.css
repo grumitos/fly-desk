@@ -38,17 +38,20 @@
     column-gap: 12px;
     align-items: center;
     min-width: 0;
+    /* The card's own surface, named so the plate can be mixed against it: a
+       selected card carries a 7% primary tint (below) and a plate mixed with
+       `--card` would punch a neutral hole through it. */
+    --fd-card-surface: var(--color-card);
     /* The plate's ground. `--secondary` is the surface the system already uses
-       for a quiet fill; at 62% it lands two steps off the card — enough to
-       bound the block, not enough to turn forty rows into a striped page:
-       measured on the built page, 62% read as nothing at all against white.
+       for a quiet fill; at 82% it lands two steps off the card — enough to
+       bound the block, not enough to turn forty rows into a striped page.
+       (62% was the first try and read as nothing at all against white.)
 
-       Mixed with `transparent` rather than with `--card`, so the plate sits on
-       whatever the card is painted: a selected card carries a 7% primary tint
-       and an opaque neutral plate would punch a hole through it. Dark needs
-       more of the token to separate at all, because there the card *is*
-       `--background`. */
-    --fd-card-plate: color-mix(in srgb, var(--color-secondary) 82%, transparent);
+       Opaque, not a mix with `transparent`: the wings that widen it are box
+       shadows, and a shadow shows through a translucent fill — the plate would
+       have carried a darker band everywhere the two overlap. Dark needs more of
+       the token to separate at all, because there the card *is* `--background`. */
+    --fd-card-plate: color-mix(in srgb, var(--color-secondary) 82%, var(--fd-card-surface));
     /* Plate 8c: 58 tall, and the padding is horizontal only — the row centres
        itself in the 58. A card that owns a strip of alternative schedules takes
        its vertical padding back below. */
@@ -56,7 +59,7 @@
     padding: 0 13px;
     border: 1px solid var(--color-border);
     border-radius: var(--fd-radius-12);
-    background: var(--color-card);
+    background: var(--fd-card-surface);
     box-shadow: 0 1px 2px color-mix(in srgb, var(--color-foreground) 4%, transparent);
     color: var(--color-foreground);
     cursor: pointer;
@@ -68,16 +71,18 @@
   }
 
   .dark .fd-card {
-    --fd-card-plate: color-mix(in srgb, var(--color-secondary) 88%, transparent);
+    --fd-card-plate: color-mix(in srgb, var(--color-secondary) 88%, var(--fd-card-surface));
   }
 
   .fd-card:hover {
     border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
   }
 
+  /* Only the surface is restated: the plate mixes against it, so the block keeps
+     the card's tint underneath instead of standing on a neutral rectangle. */
   .fd-card.is-selected {
     border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-border));
-    background: color-mix(in srgb, var(--color-primary) 7%, var(--color-card));
+    --fd-card-surface: color-mix(in srgb, var(--color-primary) 7%, var(--color-card));
   }
 
   /* A card whose schedule was swapped from the strip stays marked until it is
@@ -201,9 +206,16 @@
     z-index: -1;
     border-radius: var(--fd-radius-8);
     background: var(--fd-card-plate);
+    /* Same rule as the schedule block: the box stops at the icons and the two
+       7px wings are ink. Nothing measures this element's scroll area today, but
+       one leak of this kind already reached CI and the technique costs nothing
+       to keep uniform. */
+    box-shadow:
+      7px 0 0 var(--fd-card-plate),
+      -7px 0 0 var(--fd-card-plate);
     content: "";
     /* 14px of icon plus 6 above and below is the 26 of `--fd-control-chip`. */
-    inset: -6px -7px;
+    inset: -6px 0;
   }
 
   .fd-card__bag {
@@ -259,12 +271,20 @@
    * it had not moved by a pixel. It also cost the row height it did not need:
    * 8px per card on a phone, where the page is counted in rows.
    *
-   * An absolutely positioned `::before`, inset by the bleed, owes nothing to
-   * the layout: the content box, the lanes, the row height and every
-   * derivation below stay exactly where they were, and the paint reaches into
-   * the card's own 13px padding on one side and the 12px gap before the
-   * baggage lane on the other. `z-index: 0` on the wrapper is what keeps the
-   * `-1` inside this element instead of behind the card's own background.
+   * An absolutely positioned `::before` owes nothing to the layout: the content
+   * box, the lanes, the row height and every derivation below stay exactly
+   * where they were. `z-index: 0` on the wrapper is what keeps the `-1` inside
+   * this element instead of behind the card's own background.
+   *
+   * Its box stops at the track, and the 8px it reaches into the card's padding
+   * on one side and into the gap before the baggage on the other are box
+   * shadows — ink, never layout. An absolutely positioned child that overhangs
+   * to the inline end *is* scrollable overflow of its containing block, and
+   * `results.playwright.ts`'s «the card keeps a lane for the airport codes»
+   * measures exactly that: `legs.scrollWidth - legs.clientWidth`, which the
+   * inset version pushed to 8 at every desk width in this band. A shadow never
+   * enters that region, and it takes the ::before's radius with it, so the
+   * ground is one rounded block 16px wider than its own box.
    */
   .fd-card__legs {
     position: relative;
@@ -281,8 +301,11 @@
     z-index: -1;
     border-radius: var(--fd-radius-8);
     background: var(--fd-card-plate);
+    box-shadow:
+      8px 0 0 var(--fd-card-plate),
+      -8px 0 0 var(--fd-card-plate);
     content: "";
-    inset: -4px -8px;
+    inset: -4px 0;
   }
 
   .fd-card__leg {
@@ -993,7 +1016,9 @@
        12 on this side and the gap to the chevron is 10, so 8 would leave the
        paint 4px and 2px from them; 6 keeps a visible margin on both. */
     .fd-card .fd-card__legs::before {
-      inset: -4px -6px;
+      box-shadow:
+        6px 0 0 var(--fd-card-plate),
+        -6px 0 0 var(--fd-card-plate);
     }
 
     .fd-card .fd-card__leg-date {
