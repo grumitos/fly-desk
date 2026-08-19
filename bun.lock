@@ -9,7 +9,6 @@
         "@typescript/native": "npm:typescript@7.0.2",
         "bun-plugin-tailwind": "^0.1.2",
         "playwright": "1.61.1",
-        "typescript": "6.0.3",
       },
     },
     "frontend": {

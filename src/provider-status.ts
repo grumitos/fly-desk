@@ -1,14 +1,23 @@
 import type { ProviderId } from "./core/types";
+import { PROVIDER_LABELS } from "./core/offer-grouping";
 
 export interface ProviderStatusDefinition {
   readonly id: ProviderId;
   readonly label: string;
 }
 
+/*
+ * The order is the plinth's reading order and stays written out; the names come
+ * from `PROVIDER_LABELS`, which is the one place on the backend an id becomes a
+ * name. This file used to carry its own copy, and every public failure message
+ * is built from the label it found here — so a rebrand that reached one map and
+ * not the other would have shown the agent two names for one provider, one of
+ * them in the notice that explains why a search came back short.
+ */
 export const PROVIDER_STATUS_DEFINITIONS: readonly ProviderStatusDefinition[] =
   Object.freeze([
-    Object.freeze({ id: "agil-local", label: "Agilsmart" }),
-    Object.freeze({ id: "costamar", label: "Click and Book Plus" }),
+    Object.freeze({ id: "agil-local", label: PROVIDER_LABELS["agil-local"] }),
+    Object.freeze({ id: "costamar", label: PROVIDER_LABELS.costamar }),
   ]);
 
 export const PROVIDER_STATUS_STATES = Object.freeze([

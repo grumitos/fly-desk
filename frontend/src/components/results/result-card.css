@@ -38,6 +38,20 @@
     column-gap: 12px;
     align-items: center;
     min-width: 0;
+    /* The card's own surface, named so the plate can be mixed against it: a
+       selected card carries a 7% primary tint (below) and a plate mixed with
+       `--card` would punch a neutral hole through it. */
+    --fd-card-surface: var(--color-card);
+    /* The plate's ground. `--secondary` is the surface the system already uses
+       for a quiet fill; at 82% it lands two steps off the card — enough to
+       bound the block, not enough to turn forty rows into a striped page.
+       (62% was the first try and read as nothing at all against white.)
+
+       Opaque, not a mix with `transparent`: the wings that widen it are box
+       shadows, and a shadow shows through a translucent fill — the plate would
+       have carried a darker band everywhere the two overlap. Dark needs more of
+       the token to separate at all, because there the card *is* `--background`. */
+    --fd-card-plate: color-mix(in srgb, var(--color-secondary) 82%, var(--fd-card-surface));
     /* Plate 8c: 58 tall, and the padding is horizontal only — the row centres
        itself in the 58. A card that owns a strip of alternative schedules takes
        its vertical padding back below. */
@@ -45,7 +59,7 @@
     padding: 0 13px;
     border: 1px solid var(--color-border);
     border-radius: var(--fd-radius-12);
-    background: var(--color-card);
+    background: var(--fd-card-surface);
     box-shadow: 0 1px 2px color-mix(in srgb, var(--color-foreground) 4%, transparent);
     color: var(--color-foreground);
     cursor: pointer;
@@ -56,13 +70,19 @@
       border-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
+  .dark .fd-card {
+    --fd-card-plate: color-mix(in srgb, var(--color-secondary) 88%, var(--fd-card-surface));
+  }
+
   .fd-card:hover {
     border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
   }
 
+  /* Only the surface is restated: the plate mixes against it, so the block keeps
+     the card's tint underneath instead of standing on a neutral rectangle. */
   .fd-card.is-selected {
     border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-border));
-    background: color-mix(in srgb, var(--color-primary) 7%, var(--color-card));
+    --fd-card-surface: color-mix(in srgb, var(--color-primary) 7%, var(--color-card));
   }
 
   /* A card whose schedule was swapped from the strip stays marked until it is
@@ -159,11 +179,43 @@
     white-space: nowrap;
   }
 
+  /* The pair is a property of the fare, and now it is drawn as one: the same
+     ground the schedule block stands on, at the 26px control height, so two
+     loose glyphs stop floating between the block and the price.
+
+     Painted, never built, and here the rule is not a preference. This lane is
+     `auto`, so anything its box gains is taken out of the elastic legs track
+     and out of nothing else: measured, a 7px inset with a hairline cost the
+     stops lane 13 of the 75 the 775 threshold is derived from, and the
+     one-stop label — the one §5 says may not lose its airport code — clipped
+     at every width down the band. The `::before` leaves the track measuring
+     the two icons and puts the paint in the 12px gaps either side. No hairline
+     for the same reason the schedule block has none: this card bounds things
+     with grounds, not with borders. */
   .fd-card__baggage {
+    position: relative;
+    z-index: 0;
     display: inline-flex;
     align-items: center;
     justify-self: end;
     gap: 4px;
+  }
+
+  .fd-card__baggage::before {
+    position: absolute;
+    z-index: -1;
+    border-radius: var(--fd-radius-8);
+    background: var(--fd-card-plate);
+    /* Same rule as the schedule block: the box stops at the icons and the two
+       7px wings are ink. Nothing measures this element's scroll area today, but
+       one leak of this kind already reached CI and the technique costs nothing
+       to keep uniform. */
+    box-shadow:
+      7px 0 0 var(--fd-card-plate),
+      -7px 0 0 var(--fd-card-plate);
+    content: "";
+    /* 14px of icon plus 6 above and below is the 26 of `--fd-control-chip`. */
+    inset: -6px 0;
   }
 
   .fd-card__bag {
@@ -201,12 +253,59 @@
    * duration is a cifra and 02 §13 forbids clipping one — and takes it from the
    * elastic stops lane, which already ellipsises by design. */
 
+  /*
+   * The schedule block stands on a plate: its own ground, so «cuándo» reads as
+   * one object and the row stops being a ribbon of loose values floating
+   * between the airline and the price.
+   *
+   * One ground per block while the legs are stacked, one per leg when they sit
+   * side by side (below): the ground exists to bound the block, and two legs on
+   * one row would merge into a single band if they shared it.
+   *
+   * The ground is paint, so it is painted and never built into the box. Padding
+   * plus a negative margin gives the same picture and lies about the geometry:
+   * it grows the element's border box by 16px, and this box is measured — the
+   * result cell is pinned at `list - legs === 436` (#61), which reads
+   * `getBoundingClientRect()`, so the bleed version failed that assertion at
+   * every list between the stacking threshold and 1073 while the lanes inside
+   * it had not moved by a pixel. It also cost the row height it did not need:
+   * 8px per card on a phone, where the page is counted in rows.
+   *
+   * An absolutely positioned `::before` owes nothing to the layout: the content
+   * box, the lanes, the row height and every derivation below stay exactly
+   * where they were. `z-index: 0` on the wrapper is what keeps the `-1` inside
+   * this element instead of behind the card's own background.
+   *
+   * Its box stops at the track, and the 8px it reaches into the card's padding
+   * on one side and into the gap before the baggage on the other are box
+   * shadows — ink, never layout. An absolutely positioned child that overhangs
+   * to the inline end *is* scrollable overflow of its containing block, and
+   * `results.playwright.ts`'s «the card keeps a lane for the airport codes»
+   * measures exactly that: `legs.scrollWidth - legs.clientWidth`, which the
+   * inset version pushed to 8 at every desk width in this band. A shadow never
+   * enters that region, and it takes the ::before's radius with it, so the
+   * ground is one rounded block 16px wider than its own box.
+   */
   .fd-card__legs {
+    position: relative;
+    z-index: 0;
     display: grid;
     grid-template-columns: 58px 126px minmax(50px, max-content) minmax(0, 1fr);
     min-width: 0;
     row-gap: 4px;
     column-gap: 10px;
+  }
+
+  .fd-card__legs::before {
+    position: absolute;
+    z-index: -1;
+    border-radius: var(--fd-radius-8);
+    background: var(--fd-card-plate);
+    box-shadow:
+      8px 0 0 var(--fd-card-plate),
+      -8px 0 0 var(--fd-card-plate);
+    content: "";
+    inset: -4px 0;
   }
 
   .fd-card__leg {
@@ -218,67 +317,117 @@
   }
 
   /*
-   * A wide list reads the trip in one line.
+   * A wide list reads the trip as two plates, side by side.
    *
    * Two stacked legs are what left a third of the card empty on a 1920 desk:
    * the legs track had 700px and used 260 of them, twice. Past the threshold
-   * below the outbound and the return sit side by side, split by a hairline,
-   * and the card becomes one row of information instead of a two-line block
-   * with a hole beside it.
+   * below the outbound and the return sit side by side, each on its own
+   * ground, and the card reads as two blocks of «cuándo» instead of a two-line
+   * ribbon with a hole beside it.
    *
-   * 1073, not the 980 this shipped with, and not the 1117 the same derivation
-   * gave while the result cell was 44px poorer. Two legs in one row is the *narrowest*
-   * disposition the card has, not the widest, and 980 was read off the width
-   * where the hole looked bad rather than derived from what the row needs.
-   * Measured: each half is 58 + 126 + 50 of fixed lanes, the pair is split by a
-   * 1px rule, and the elastic stops lane has to hold a label. So the row costs
-   * `2 × 234 + 1 + 8 gaps + 2 × stops`, and at 980 that leaves the stops lanes
-   * **zero** — the airport codes vanish, which is precisely the §5 breach the
-   * stacking threshold below exists to prevent, reintroduced one breakpoint
-   * higher. Between 980 and 1010 the row did not even fit its fixed lanes and
-   * overflowed the legs track by up to 47px, painting over the price.
+   * The threshold stays at 1073 and its derivation is now slack rather than
+   * fit. It was measured for the nine-track row this disposition used to be:
+   * each half 58 + 126 + 50 of fixed lanes, a 1px rule between the pair, gaps
+   * at 6 and the abbreviated «1 esc · BOG» at 60, which cost
+   * `2 × 234 + 1 + 48 + 2 × 60 = 637` of legs track — `list - 436`, so 1073.
+   * The plate costs less than that: 20px of inset, a schedule of 127 at
+   * `--body` and the long «1 escala · BOG» at 75 measure 222 per plate, so the
+   * pair with its 8px gap needs 452 against the 637 the threshold already
+   * grants. The 185 of slack is what buys back the wording 8c had to
+   * abbreviate here, and it is why this file no longer switches to the short
+   * form on a desk at all — only the phone does, where the lane really is too
+   * tight (§5's rule is unchanged: the disposition in force must fit its own
+   * one-stop label).
    *
-   * Two corrections make it fit. The gaps drop to the 6 the compressed leg row
-   * already uses further down — this is that row, one level up — and the stops
-   * lane takes the abbreviated wording, which is what 8c gives a lane too tight
-   * for the long one. «1 esc · BOG» measures 60 at 11px against 75 for
-   * «1 escala · BOG», so the row costs 2 × 234 + 1 + 48 + 2 × 60 = 637 and the
-   * legs track is `list - 436` again: 1073. The widest list this application can
-   * draw is 1142 (`--fd-app-max-width` 1760 less the desk chrome), which leaves
-   * each lane 94 against the 60 it needs.
+   * Lowering the threshold to what the plate alone needs is left alone
+   * deliberately: below 1073 the pair fits but the two plates stop being
+   * legible as two, and the stacked pair below reads better in that band.
    */
   @container fdlist (min-width: 1073px) {
     .fd-card .fd-card__legs {
-      grid-template-columns:
-        58px 126px minmax(50px, max-content) minmax(0, 1fr)
-        1px
-        58px 126px minmax(50px, max-content) minmax(0, 1fr);
-      column-gap: 6px;
+      display: flex;
+      column-gap: 8px;
+      row-gap: 0;
     }
 
-    .fd-card .fd-card__leg-stops-long {
-      display: none;
-    }
-
-    .fd-card .fd-card__leg-stops-short {
-      display: inline;
-    }
-
-    .fd-card .fd-card__leg {
-      grid-row: 1;
-      grid-column: 1 / span 4;
-    }
-
-    .fd-card .fd-card__leg + .fd-card__leg {
-      grid-column: 6 / span 4;
-    }
-
+    /* The ground moves down to each leg here: one band behind a pair that sits
+       side by side would draw the two tramos as one. */
     .fd-card .fd-card__legs::before {
-      grid-row: 1;
-      grid-column: 5;
-      align-self: stretch;
-      background: var(--color-border);
-      content: "";
+      content: none;
+    }
+
+    /*
+     * Here the plate stops being a strip and becomes a block of two lines:
+     * day and duration above, schedule and stops below. The card row is 58 and
+     * a single line of leg used 16 of them, so the second line is drawn out of
+     * height the row already had — 3 + 14 + 2 + 16 + 3 = 38, still inside the
+     * 58 and still centred by the card's own `align-items`.
+     *
+     * `flex: 1 1 0` is what closes the hole this disposition was reported
+     * with: the plates split the elastic track between them, so two legs fill
+     * it and one leg fills it, and there is no arrangement left where a lane
+     * sized for a second leg sits empty. The 1px rule that used to separate
+     * the halves is gone with it — the 8px gap says the same thing, and the
+     * rule was drawn from the nine-track grid whether or not a return existed,
+     * which is why a one-way card carried a divider down the middle of an
+     * empty half.
+     *
+     * The inset is real padding here, not the base's bleed: each plate owns
+     * half of a track that measures 637 at this threshold, so the 20px it
+     * spends leaves the stops lane 157 against the 112 of «2 escalas · BOG,
+     * PTY» — which is why this disposition can afford the long wording the
+     * nine-track one had to abbreviate.
+     */
+    .fd-card .fd-card__leg {
+      display: grid;
+      min-width: 0;
+      flex: 1 1 0;
+      grid-template-rows: 14px 16px;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: center;
+      padding: 3px 10px;
+      row-gap: 2px;
+      column-gap: 10px;
+      border-radius: var(--fd-radius-8);
+      background: var(--fd-card-plate);
+    }
+
+    .fd-card .fd-card__leg-label {
+      grid-area: 1 / 1;
+    }
+
+    .fd-card .fd-card__leg-duration {
+      grid-area: 1 / 2;
+    }
+
+    .fd-card .fd-card__leg-schedule,
+    .fd-card .fd-card__leg-unknown {
+      grid-area: 2 / 1;
+    }
+
+    .fd-card .fd-card__leg-stops {
+      grid-area: 2 / 2;
+      text-align: right;
+    }
+
+    /* The hour is the figure this row is read for, and the second line has the
+       16px to give it: the same `--body` the stacked card already uses for it. */
+    .fd-card .fd-card__leg-time {
+      font-size: var(--fd-text-body);
+    }
+
+    /*
+     * One leg, and the plate takes the whole track: 706px at the widest list,
+     * where a line of four values sits at the two extremes with half a card
+     * between them. That is the width the layover fills — «1 escala · CDG ·
+     * espera 2h 15m», a fact the agent otherwise opens the panel for, and the
+     * one the model only offers when a single stop makes it unambiguous.
+     *
+     * A pair of legs never shows it: there each plate has half the track and
+     * the stops lane is already the tightest thing on the row.
+     */
+    .fd-card .fd-card__legs:not(:has(.fd-card__leg + .fd-card__leg)) .fd-card__leg-wait {
+      display: inline;
     }
   }
 
@@ -356,6 +505,13 @@
   }
 
   .fd-card__leg-stops-short {
+    display: none;
+  }
+
+  /* The layover is off by default and earns its way in one case only (below):
+     it is the least urgent thing the row can say, so it appears where the row
+     has width nobody else is asking for and nowhere else. */
+  .fd-card__leg-wait {
     display: none;
   }
 
@@ -559,6 +715,18 @@
   .fd-card--skeleton .fd-card__legs,
   .fd-card--skeleton .fd-card__price {
     gap: 6px;
+  }
+
+  /* The plate is paint, not layout, and 4a draws bones straight on the card:
+     a grey block on a grey ground reads as a row that has already loaded. The
+     geometry never depended on it, so only the paint goes. */
+  .fd-card--skeleton .fd-card__legs::before,
+  .fd-card--skeleton .fd-card__baggage::before {
+    content: none;
+  }
+
+  .fd-card--skeleton .fd-card__leg {
+    background: none;
   }
 
   /* Two stacked lines rather than the card's name-and-operator pair of tracks:
@@ -793,6 +961,14 @@
       grid-row: 1;
     }
 
+    /* Bare here. The chip's ground would sit on the carrier row, 10px from the
+       price and 10 from the operator, where it reads as a third block on a row
+       that already carries two. The pair keeps the desk's meaning and loses
+       only its ground. */
+    .fd-card .fd-card__baggage::before {
+      content: none;
+    }
+
     /* 02 §6: price 16/800 over seats 10/700, stacked. `gap: 2` is the smallest
        rung of the 01 §3 scale; the 1px it carried was off the catalog and only
        ever read as "no gap". */
@@ -833,6 +1009,16 @@
       grid-template-columns: 56px 124px minmax(46px, max-content) minmax(0, 1fr);
       row-gap: 4px;
       column-gap: 6px;
+    }
+
+    /* The block keeps its ground here — the legs are stacked, so one band
+       bounds them — but the bleed drops from 8 to 6. The card's own padding is
+       12 on this side and the gap to the chevron is 10, so 8 would leave the
+       paint 4px and 2px from them; 6 keeps a visible margin on both. */
+    .fd-card .fd-card__legs::before {
+      box-shadow:
+        6px 0 0 var(--fd-card-plate),
+        -6px 0 0 var(--fd-card-plate);
     }
 
     .fd-card .fd-card__leg-date {

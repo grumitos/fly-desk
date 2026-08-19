@@ -693,7 +693,7 @@ test("the desk card gives the codeshare a line and the trip a single row", async
      * which is where the operating airline belongs — the one fact the passenger
      * meets at the counter. Baggage is a property of the fare, so it travels
      * with the price. And two stacked legs left a third of a 1920 card empty:
-     * past 980px of list they read side by side.
+     * past 1073px of list they read side by side.
      */
     await page.route("**/api/locations**", async (route) => {
       await route.fulfill({

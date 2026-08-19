@@ -12,6 +12,12 @@
  *
  * Adding a value that is not in a catalog is the bug the plates were drawn to
  * prevent. Widen the catalog instead.
+ *
+ * A rung with no consumer today is not dead code here: a scale missing the
+ * sizes nobody happens to use this month is no longer a scale, and the next
+ * screen that needs one would invent a value beside it — which is the bug
+ * above. The tokens and the utility classes below are complete on purpose and
+ * are removed only when a plate retires them.
  */
 
 @layer base {

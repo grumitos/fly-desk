@@ -1,4 +1,5 @@
 import type { CanonicalOffer, SearchJobResponse } from "@/types"
+import { providerDisplayName } from "@/lib/providers"
 import { buildResultCardModel } from "./result-card-model"
 
 export type ResultListItem =
@@ -209,9 +210,13 @@ function offerCanonicalSignature(offer: CanonicalOffer): string | null {
 }
 
 function providerLabelForScheduleGroup(providerSource: ScheduleGroup["providerSource"]): string {
-  if (providerSource === "costamar") return "Click and Book Plus"
-  if (providerSource === "agil-local") return "Agilsmart"
-  return providerSource
+  /* The two names the desk shows come from `providerDisplayName`, so the group
+     heading and the card badge cannot drift apart. An id that helper does not
+     know is still shown verbatim here rather than as its «Proveedor» stand-in:
+     inside a group heading a bare id is a legible symptom, a placeholder is not. */
+  return providerSource === "costamar" || providerSource === "agil-local"
+    ? providerDisplayName(providerSource)
+    : providerSource
 }
 
 export function resultListItemContainsOffer(item: ResultListItem, offerId: string): boolean {
@@ -280,24 +285,28 @@ export function paginateResultListItems(
 }
 
 /**
- * How much vertical room an item asks for, in card-heights.
+ * What a group row costs, in plain-card slots.
  *
  * A group used to cost one card per alternative schedule. Plate 1b folds them
  * into a single strip inside the card that owns them, so the whole group is now
- * one card plus roughly a third of one — regardless of how many alternatives it
- * holds, because the strip scrolls sideways instead of growing.
- */
-/**
- * What a row costs, in plain-card slots.
+ * one card and part of another — regardless of how many alternatives it holds,
+ * because the strip scrolls sideways instead of growing.
  *
  * A card that carries the alternatives strip takes back its vertical padding
  * and adds the strip itself, so it measures 101px against the plain card's 58.
  * With the list's 6px gap a slot is 64 and a group is 107, which is 1.67 — the
  * 1.34 this used to claim under-priced every group and let a page promise room
  * it did not have.
+ *
+ * Exported because `ResultsPanel` divides a measured card height by the same
+ * number to recover the plain-card unit from a page that holds nothing but
+ * groups. It restated the literal instead, which left the two one edit apart
+ * from disagreeing about what a group costs.
  */
+export const RESULT_GROUP_CARD_WEIGHT = 1.67
+
 export function resultListItemDisplayWeight(item: ResultListItem): number {
-  return item.type === "offer" ? 1 : 1.67
+  return item.type === "offer" ? 1 : RESULT_GROUP_CARD_WEIGHT
 }
 
 function orderVisibleGroupOffers(offers: CanonicalOffer[]): CanonicalOffer[] {

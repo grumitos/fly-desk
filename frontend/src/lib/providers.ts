@@ -21,6 +21,19 @@ const PROVIDER_DEFINITIONS = [
 
 export type SearchProviderId = (typeof PROVIDER_DEFINITIONS)[number]["id"]
 
+/**
+ * The icon file a provider is painted with, by id.
+ *
+ * The paths live once, in `PROVIDER_DEFINITIONS` above, so the rail on the idle
+ * screen and the badge on a result card cannot end up pointing at different
+ * files for the same provider. An id with no definition gets "", which is what
+ * the badge reads as «no icon» before it falls back to its short label.
+ */
+export function providerIconPath(providerId?: string | null): string {
+  const id = String(providerId ?? "").trim().toLowerCase()
+  return PROVIDER_DEFINITIONS.find((provider) => provider.id === id)?.icon ?? ""
+}
+
 export type SearchProvider = {
   id: SearchProviderId
   label: string

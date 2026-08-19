@@ -174,10 +174,6 @@
     }
   }
 
-  .text-balance {
-    text-wrap: balance;
-  }
-
   .fd-theme-toggle {
     --fd-theme-toggle-hover-bg: var(--fd-theme-dark-background);
     --fd-theme-toggle-hover-fg: var(--fd-theme-dark-foreground);
@@ -191,10 +187,6 @@
   .fd-theme-toggle:hover {
     background-color: var(--fd-theme-toggle-hover-bg) !important;
     color: var(--fd-theme-toggle-hover-fg) !important;
-  }
-
-  .fd-app-width {
-    max-width: var(--fd-app-max-width);
   }
 
   .fd-shell {
@@ -983,19 +975,6 @@
      one implementation for all six fields, including both halves of the merged
      date control. The second one that used to sit here (radius 12 via `@apply`,
      but 16px of top padding instead of 15) is gone. */
-
-  .fd-control-quiet {
-    @apply rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40;
-    transition:
-      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
-      color var(--fd-dur-tacto) var(--fd-ease-tacto),
-      opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
-  }
-
-  /* 3d: the ring sits outside the border and never changes the control's size. */
-  .fd-control-quiet:focus-visible {
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 55%, transparent);
-  }
 
   .fd-control-helper {
     margin: 0.25rem 0 0;

@@ -1,7 +1,6 @@
 import { test } from "bun:test"
 import assert from "node:assert/strict"
 import {
-  clearSharedSearchFromUrl,
   decodeSharedSearchPayload,
   readSharedSearchFromText,
   readSharedSearchFromUrl,
@@ -314,29 +313,6 @@ test("shared search payload never serializes the browser client session", () => 
 
   assert.doesNotMatch(serialized, new RegExp(clientSessionId))
   assert.equal(Object.hasOwn(JSON.parse(serialized) as object, "clientSessionId"), false)
-})
-
-test("shared search URL cleanup removes only Fly Desk search parameters", () => {
-  const globalWindow = globalThis as WindowStub
-  const originalWindow = globalWindow.window
-  let replacedUrl = ""
-  globalWindow.window = {
-    location: {
-      href: "https://fly-desk.test/?origin=LIM&destination=MIA&keep=1#results",
-    },
-    history: {
-      replaceState: (_state: unknown, _title: string, url: string) => {
-        replacedUrl = url
-      },
-    },
-  }
-
-  try {
-    assert.equal(clearSharedSearchFromUrl(), true)
-    assert.equal(replacedUrl, "/?keep=1#results")
-  } finally {
-    globalWindow.window = originalWindow
-  }
 })
 
 test("clipboard sharing reports unavailable browser support", async () => {

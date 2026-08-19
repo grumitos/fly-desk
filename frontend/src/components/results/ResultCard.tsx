@@ -12,8 +12,16 @@ import "./result-card.css"
 /*
  * Plate 1b — the result card.
  *
- * Grid: 32 / 186 / 1fr / 116 / 26. The logo, the carrier with its baggage, the
- * two schedule rows, the price with its seat count, and the provider icon.
+ * Grid: 32 / 142 / 1fr / auto / 116 / 26. The logo, «who flies», the two legs,
+ * the baggage, the price with its per-person line, and the provider icon.
+ * Baggage holds a track of its own because it is a property of the fare and not
+ * of the airline; the lane it cost was taken out of «who flies», which fell from
+ * 186 to 142, and not out of the result cell.
+ *
+ * Past 1073px of list the legs stop stacking inside their track: each becomes a
+ * plate with `flex: 1 1 0`, so a pair splits the one elastic track between them
+ * and a one way fills it alone — no lane is left sized for a leg that is not
+ * there. Every number above is derived in `result-card.css`.
  *
  * The alternative schedules used to be N further rows, each repeating a carrier
  * and a price that had not changed. They are now a single strip inside the card
@@ -219,6 +227,11 @@ function LegRow({ leg }: { leg: ResultLegModel }) {
       <span className="fd-card__leg-stops" title={leg.stopsTitle}>
         <span className="fd-card__leg-stops-long">{leg.stopsLabel}</span>
         <span className="fd-card__leg-stops-short">{leg.stopsShortLabel}</span>
+        {/* The layover, drawn only where the disposition has room to spare: a
+            single leg on a wide list, which is the one case where the plate
+            would otherwise stretch a line of four values across 700px. The CSS
+            owns that decision — this only offers the words. */}
+        {leg.waitLabel && <span className="fd-card__leg-wait"> · {leg.waitLabel}</span>}
       </span>
     </div>
   )

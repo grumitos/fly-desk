@@ -69,47 +69,6 @@ export interface PassengerMix {
   infants: number;
 }
 
-export type BookingPassengerKind = "adult" | "child" | "infant_without_seat";
-export type BookingPassengerTitle = "mr" | "mrs" | "ms" | "miss" | "mx";
-export type BookingPassengerGender = "m" | "f" | "x";
-
-export interface BookingContact {
-  email: string;
-  phoneNumber: string;
-}
-
-export interface BookingPassengerInput {
-  kind: BookingPassengerKind;
-  givenName: string;
-  familyName: string;
-  bornOn: string;
-  title: BookingPassengerTitle;
-  gender: BookingPassengerGender;
-  email?: string;
-  phoneNumber?: string;
-  infantResponsibleAdultIndex?: number;
-}
-
-export interface CreateOrderInput {
-  type: "instant" | "hold";
-  contact: BookingContact;
-  passengers: BookingPassengerInput[];
-}
-
-export interface OrderResult {
-  orderId: string;
-  bookingReference?: string;
-  type: "instant" | "hold";
-  liveMode?: boolean;
-  totalAmount?: string;
-  totalCurrency?: string;
-  paymentStatus?: string;
-  paymentRequiredBy?: string;
-  ownerName?: string;
-  passengerNames: string[];
-  raw: Record<string, unknown>;
-}
-
 export interface SearchLeg {
   origin: string;
   destination: string;
