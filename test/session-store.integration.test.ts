@@ -10,7 +10,9 @@ import {
   COMPLETED_SEARCH_SESSION_TTL_MS,
   SESSION_STORE_PERSIST_DEBOUNCE_MS,
   SearchSessionStore,
+  PERSISTED_RESTORE_SELECT_SQL,
   PERSISTED_SWEEP_STATEMENTS,
+  RESTORE_INDEX_STATEMENTS,
 } from "../src/session-store";
 import type { SessionStoreScheduler } from "../src/session-store";
 import { SEARCH_CACHE_VERSION } from "../src/core/types";
@@ -1399,6 +1401,43 @@ test("search session store persists completed cache and running redirect snapsho
   secondStore.close();
 
   rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test("the restore reads its budget from indexes, not from the payloads", () => {
+  /*
+   * Picking what fits the resident budget means reading `idle_at_ms`, `id` and
+   * `payload_bytes` from every job. Those three did not sit in one index, so
+   * SQLite walked the age index and fetched each row — and a row here is a
+   * payload. On the production box, once the sweep stopped warming the page
+   * cache for it, that select was 15.5s of a 20.5s boot.
+   *
+   * The covering indexes are built after the port opens (the boot is where
+   * that cannot happen), so this case builds them the same way and holds the
+   * query against the planner: every access covering, none of them a row.
+   */
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-restore-plan-"));
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const store = new SearchSessionStore({ dbPath });
+  store.close();
+
+  const db = new Database(dbPath);
+  try {
+    for (const statement of RESTORE_INDEX_STATEMENTS) {
+      db.run(statement);
+    }
+    const plan = db.query<{ detail: string }, [number]>(`EXPLAIN QUERY PLAN ${PERSISTED_RESTORE_SELECT_SQL}`)
+      .all(1)
+      .map((row) => row.detail)
+      .join(" | ");
+    assert.doesNotMatch(
+      plan,
+      /(SCAN|SEARCH) (?:search_jobs|matrix_jobs|path|purchase_paths)(?! USING COVERING INDEX)/,
+      plan,
+    );
+  } finally {
+    db.close(true);
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("the sweep seeks its rows instead of reading the table", () => {
