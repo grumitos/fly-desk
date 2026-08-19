@@ -10,6 +10,7 @@ import {
   COMPLETED_SEARCH_SESSION_TTL_MS,
   SESSION_STORE_PERSIST_DEBOUNCE_MS,
   SearchSessionStore,
+  PERSISTED_SWEEP_STATEMENTS,
 } from "../src/session-store";
 import type { SessionStoreScheduler } from "../src/session-store";
 import { SEARCH_CACHE_VERSION } from "../src/core/types";
@@ -1398,6 +1399,50 @@ test("search session store persists completed cache and running redirect snapsho
   secondStore.close();
 
   rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test("the sweep seeks its rows instead of reading the table", () => {
+  /*
+   * The prune used to say «status != 'completed' OR idle_at_ms < ?», which
+   * SQLite cannot seek: it answered by scanning the table, and this table's
+   * rows carry the payloads. On the production box that was 16.6 seconds of a
+   * 22-second boot — spent deleting nothing, because nothing had expired — and
+   * the boot is what the port waits for, so it was also a failed deployment
+   * and a rollback that could not recover inside its own health window.
+   *
+   * Each statement is held against the planner here. A scan is the defect.
+   */
+  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-sweep-plan-"));
+  const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const store = new SearchSessionStore({ dbPath });
+  const offer = buildOffer("offer-plan", "https://plan.example/search");
+  store.createSearchJob({
+    request: buildRequest(),
+    offers: [offer],
+    allOffers: [offer],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+  store.close();
+
+  const db = new Database(dbPath);
+  try {
+    assert.ok(PERSISTED_SWEEP_STATEMENTS.length >= 5);
+    for (const statement of PERSISTED_SWEEP_STATEMENTS) {
+      const plan = db.query<{ detail: string }, [number]>(`EXPLAIN QUERY PLAN ${statement}`)
+        .all(0)
+        .map((row) => row.detail)
+        .join(" | ");
+      assert.match(plan, /USING (COVERING )?INDEX/, `${statement} -> ${plan}`);
+      assert.doesNotMatch(plan, /SCAN (search_jobs|matrix_jobs)/, `${statement} -> ${plan}`);
+    }
+  } finally {
+    db.close(true);
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("search session store prunes expired sqlite rows before loading their payloads", () => {
