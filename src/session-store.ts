@@ -118,6 +118,58 @@ const SWEEPABLE_JOB_STATUS_LIST = SWEEPABLE_JOB_STATUSES.map((status) => `'${sta
  * them must seek an index. The single `OR` they replaced could not, so SQLite
  * read the table — and these rows carry the payloads.
  */
+/** How long after the port opens the covering indexes are built. */
+const RESTORE_INDEX_BUILD_DELAY_MS = 10_000;
+
+/**
+ * The covering indexes the restore reads, and nothing else does.
+ *
+ * Each carries exactly what `selectPersistedRowsToRestore` asks for, so the
+ * query is answered from the index and never fetches a row. `id` is spelled out
+ * because these are rowid tables: a secondary index carries the rowid, not the
+ * TEXT primary key.
+ */
+export const RESTORE_INDEX_STATEMENTS: readonly string[] = [
+  "CREATE INDEX IF NOT EXISTS idx_search_jobs_restore ON search_jobs (idle_at_ms, id, payload_bytes)",
+  "CREATE INDEX IF NOT EXISTS idx_matrix_jobs_restore ON matrix_jobs (idle_at_ms, id, payload_bytes)",
+  "CREATE INDEX IF NOT EXISTS idx_purchase_paths_restore ON purchase_paths (session_id, payload_bytes)",
+];
+
+/**
+ * What the restore reads to decide what fits its budget, and nothing more.
+ *
+ * Exported for the same reason as the sweep below: a case holds it against
+ * `EXPLAIN QUERY PLAN`, and with `RESTORE_INDEX_STATEMENTS` in place every
+ * access must be covering. It is one query over three tables whose rows are
+ * the cache, so a plan that fetches a row is a plan that reads a payload.
+ */
+export const PERSISTED_RESTORE_SELECT_SQL = `
+  SELECT
+    search_jobs.id,
+    'search' AS kind,
+    search_jobs.idle_at_ms AS idleAtMs,
+    COALESCE(search_jobs.payload_bytes, ?1)
+      + COALESCE((
+        SELECT SUM(COALESCE(path.payload_bytes, ?1))
+        FROM purchase_paths AS path
+        WHERE path.session_id = search_jobs.id
+      ), 0) AS payloadBytes
+  FROM search_jobs
+  UNION ALL
+  SELECT
+    matrix_jobs.id,
+    'matrix' AS kind,
+    matrix_jobs.idle_at_ms AS idleAtMs,
+    COALESCE(matrix_jobs.payload_bytes, ?1)
+      + COALESCE((
+        SELECT SUM(COALESCE(path.payload_bytes, ?1))
+        FROM purchase_paths AS path
+        WHERE path.session_id = matrix_jobs.id
+      ), 0) AS payloadBytes
+  FROM matrix_jobs
+  ORDER BY idleAtMs DESC, kind ASC, id ASC
+`;
+
 export const PERSISTED_SWEEP_STATEMENTS: readonly string[] = [
   /*
    * The jobs go first and their purchase paths follow as orphans, which is the
@@ -658,6 +710,7 @@ export class SearchSessionStore {
   private readonly matrixJobs = new Map<string, MatrixJobRecord>();
   private readonly searchJobs = new Map<string, SearchJobRecord>();
   private db: Database | undefined;
+  private restoreIndexTimer: SessionStoreTimerHandle | undefined;
   private readonly persistedRestoreBudgetBytes: number;
   private readonly completedResidentBudgetBytes: number;
   private readonly persistedSearchJobs = new Map<string, PersistedEntryState>();
@@ -695,10 +748,57 @@ export class SearchSessionStore {
       this.db.run("PRAGMA foreign_keys = ON;");
       this.initializeDatabase();
       this.loadPersisted();
+      this.scheduleRestoreIndexBuild();
     }
   }
 
+  /*
+   * The indexes that make the next boot cheap, built after this one.
+   *
+   * The restore picks what fits its budget by reading `idle_at_ms`,`id` and
+   * `payload_bytes` from every job, and those three do not sit in one index, so
+   * SQLite walks the age index and fetches each row — and a row here is a
+   * payload. Measured on the box once the prune stopped warming the page cache
+   * for it, that select was 15.5s of a 20.5s boot.
+   *
+   * Covering indexes answer it without touching a row, but building them reads
+   * every table once, and the boot is exactly where that cannot happen: the
+   * port waits for it and the release engine waits for the port. So they are
+   * built a few seconds *after* the process is serving, once, and every boot
+   * after this one finds them already there. The build blocks while it runs and
+   * says how long it took.
+   */
+  private scheduleRestoreIndexBuild(): void {
+    this.restoreIndexTimer = this.scheduler.setTimeout(() => {
+      this.restoreIndexTimer = undefined;
+      const db = this.db;
+      if (!db) {
+        return;
+      }
+
+      const startedAt = Date.now();
+      try {
+        for (const statement of RESTORE_INDEX_STATEMENTS) {
+          runSql(db, statement);
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "unknown failure";
+        console.warn(`Fly Desk persisted cache restore indexes skipped: ${detail}`);
+        return;
+      }
+
+      const elapsedMs = Date.now() - startedAt;
+      if (elapsedMs >= BOOT_TIMING_REPORT_MS) {
+        console.warn(`Fly Desk persisted cache restore indexes built: ms=${elapsedMs}`);
+      }
+    }, RESTORE_INDEX_BUILD_DELAY_MS);
+  }
+
   close(): void {
+    if (this.restoreIndexTimer) {
+      this.scheduler.clearTimeout(this.restoreIndexTimer);
+      this.restoreIndexTimer = undefined;
+    }
     if (this.persistTimer) {
       this.scheduler.clearTimeout(this.persistTimer);
       this.persistTimer = undefined;
@@ -2458,32 +2558,11 @@ export class SearchSessionStore {
     }
 
     const unmeasured = this.unmeasuredPayloadBytes;
-    const candidates = allSql<PersistedJobRestoreCandidate>(this.db, `
-      SELECT
-        search_jobs.id,
-        'search' AS kind,
-        search_jobs.idle_at_ms AS idleAtMs,
-        COALESCE(search_jobs.payload_bytes, ?1)
-          + COALESCE((
-            SELECT SUM(COALESCE(path.payload_bytes, ?1))
-            FROM purchase_paths AS path
-            WHERE path.session_id = search_jobs.id
-          ), 0) AS payloadBytes
-      FROM search_jobs
-      UNION ALL
-      SELECT
-        matrix_jobs.id,
-        'matrix' AS kind,
-        matrix_jobs.idle_at_ms AS idleAtMs,
-        COALESCE(matrix_jobs.payload_bytes, ?1)
-          + COALESCE((
-            SELECT SUM(COALESCE(path.payload_bytes, ?1))
-            FROM purchase_paths AS path
-            WHERE path.session_id = matrix_jobs.id
-          ), 0) AS payloadBytes
-      FROM matrix_jobs
-      ORDER BY idleAtMs DESC, kind ASC, id ASC
-    `, unmeasured);
+    const candidates = allSql<PersistedJobRestoreCandidate>(
+      this.db,
+      PERSISTED_RESTORE_SELECT_SQL,
+      unmeasured,
+    );
     let retainedBytes = 0;
     const retained: PersistedJobRestoreCandidate[] = [];
     const diskOnly: PersistedJobRestoreCandidate[] = [];
