@@ -2122,7 +2122,10 @@ test("the open list of schedules takes the click over every card it covers", asy
       const tops = new Set(rows.map((row) => Math.round(row.getBoundingClientRect().top)));
       return { rows: rows.length, lines: tops.size };
     });
-    assert.equal(columns.rows, 9, JSON.stringify(columns));
+    /* Ten, not the nine on the strip: «+n» counts the schedules the card is
+       not showing, and this list draws every schedule in the group including
+       the one it is. */
+    assert.equal(columns.rows, 10, JSON.stringify(columns));
     assert.ok(columns.lines < columns.rows, JSON.stringify(columns));
     // And no lane repeats the price the card already states.
     assert.equal(await panel.getByText(/mismo precio/).count(), 0);
