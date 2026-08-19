@@ -119,19 +119,32 @@ const SWEEPABLE_JOB_STATUS_LIST = SWEEPABLE_JOB_STATUSES.map((status) => `'${sta
  * read the table — and these rows carry the payloads.
  */
 export const PERSISTED_SWEEP_STATEMENTS: readonly string[] = [
-  `DELETE FROM purchase_paths WHERE session_id IN (
-     SELECT id FROM search_jobs WHERE idle_at_ms < ?1
-     UNION
-     SELECT id FROM search_jobs WHERE status IN (${SWEEPABLE_JOB_STATUS_LIST})
-     UNION
-     SELECT id FROM matrix_jobs WHERE idle_at_ms < ?1
-     UNION
-     SELECT id FROM matrix_jobs WHERE status IN (${SWEEPABLE_JOB_STATUS_LIST})
-   )`,
+  /*
+   * The jobs go first and their purchase paths follow as orphans, which is the
+   * same set in a cheaper order. Deleting the paths first meant naming the
+   * doomed jobs inside an `IN (… UNION …)`, and there the planner stopped
+   * seeking: to keep the union's branches in id order it walked the primary
+   * key and read every row to test its age — the table again, payloads and all.
+   */
   "DELETE FROM search_jobs WHERE idle_at_ms < ?1",
   `DELETE FROM search_jobs WHERE status IN (${SWEEPABLE_JOB_STATUS_LIST})`,
   "DELETE FROM matrix_jobs WHERE idle_at_ms < ?1",
   `DELETE FROM matrix_jobs WHERE status IN (${SWEEPABLE_JOB_STATUS_LIST})`,
+  /*
+   * By rowid, so the search for orphans runs inside `idx_purchase_paths_session`
+   * — session_id and rowid, no payloads — and only the rows that are actually
+   * going get read. Asking for them directly made SQLite scan the table, and
+   * this is the widest table of the three.
+   */
+  `DELETE FROM purchase_paths
+     WHERE rowid IN (
+       SELECT rowid FROM purchase_paths
+       WHERE session_id NOT IN (
+         SELECT id FROM search_jobs
+         UNION
+         SELECT id FROM matrix_jobs
+       )
+     )`,
 ];
 
 interface StoredPurchasePath {
@@ -2535,14 +2548,6 @@ export class SearchSessionStore {
       for (const statement of PERSISTED_SWEEP_STATEMENTS) {
         runSql(db, statement, cutoffMs);
       }
-      runSql(db, `
-        DELETE FROM purchase_paths
-        WHERE session_id NOT IN (
-          SELECT id FROM search_jobs
-          UNION
-          SELECT id FROM matrix_jobs
-        )
-      `);
     })();
   }
 
