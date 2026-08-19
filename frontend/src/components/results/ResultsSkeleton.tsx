@@ -26,7 +26,7 @@ type SkeletonRowShape = {
   /** The elastic lane of each of the two legs. */
   stops: [string, string]
   price: string
-  /** Seats remaining only show at four or fewer, so not every row has one. */
+  /** The price-per-person line under the price, which only all-adult fares have. */
   seats: string | null
 }
 

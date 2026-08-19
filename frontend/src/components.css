@@ -21,7 +21,8 @@
     align-items: center;
     gap: 8px;
     /* The top band belongs to the floating label (03 §2). Named because the
-       trailing affordances have to cancel it — see `.fd-field-trailing`. */
+       trailing affordances have to cancel it — see `.fd-daterange-clear`,
+       `.fd-field-clear` and `.fd-field-control > .fd-disclosure` below. */
     --fd-field-label-band: 15px;
     padding: var(--fd-field-label-band) 12px 0;
     border: 1px solid var(--color-input);

@@ -1,9 +1,7 @@
 import {
-  CreateOrderInput,
   CanonicalOffer,
   LocationSuggestion,
   MatrixCell,
-  OrderResult,
   ProviderContext,
   ProviderId,
   PurchasePath,
@@ -42,12 +40,6 @@ export interface SearchProvider {
     request: SearchRequest,
     context?: ProviderExecutionContext,
   ): Promise<ProviderMatrixResult>;
-  createOrder?(
-    offer: CanonicalOffer,
-    request: SearchRequest,
-    input: CreateOrderInput,
-    context?: ProviderExecutionContext,
-  ): Promise<OrderResult>;
   resolvePurchasePaths?(
     offer: CanonicalOffer,
     request: SearchRequest,

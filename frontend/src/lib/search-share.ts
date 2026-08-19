@@ -106,17 +106,6 @@ export function writeSharedSearchToUrl(request: SearchRequest, sortMode: SortMod
   return true
 }
 
-export function clearSharedSearchFromUrl(): boolean {
-  if (typeof window === "undefined") return false
-
-  const url = new URL(window.location.href)
-  for (const key of SHARED_SEARCH_QUERY_PARAMS) {
-    url.searchParams.delete(key)
-  }
-  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`)
-  return true
-}
-
 export function serializeSharedSearchPayload(request: SearchRequest, sortMode: SortMode): string {
   const backendPayload = toBackendPayload(request, sortMode)
 

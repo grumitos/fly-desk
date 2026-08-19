@@ -12,6 +12,7 @@ import {
 import { ResultCard, type AlternateSchedule } from "@/components/results/ResultCard"
 import { buildAlternateScheduleModel } from "@/components/results/result-card-model"
 import {
+  RESULT_GROUP_CARD_WEIGHT,
   buildResultListItems,
   paginateResultListItems,
   resultListItemContainsOffer,
@@ -44,8 +45,9 @@ import type { CanonicalOffer, SearchJobResponse, SortMode } from "@/types"
  *
  * The panel is one header, one strip of active filters, one page of cards and
  * one pager. The column-width editor that used to live here is gone: plate 1b
- * closes the card grid at 32 / 186 / 1fr / 116 / 26, so there is nothing left
- * for it to tune.
+ * closes the card grid at 32 / 142 / 1fr / auto / 116 / 26 — the baggage in a
+ * track of its own, and past 1073px of list the two legs as plates that split
+ * the single elastic track — so there is nothing left for it to tune.
  */
 
 /*
@@ -64,9 +66,6 @@ const RESULTS_PAGE_SIZE_FALLBACK = 4
 const RESULTS_CARD_HEIGHT_ESTIMATE_PX = 58
 const RESULTS_CARD_GAP_PX = 6
 const RESULTS_LIST_TOP_INSET_PX = 4
-/* Kept in step with `resultListItemDisplayWeight`: only used to recover the
-   plain-card unit from a page that happens to hold nothing but groups. */
-const RESULTS_GROUP_CARD_WEIGHT = 1.67
 /*
  * When a search stops being a search that is merely starting.
  *
@@ -1253,7 +1252,7 @@ function useAdaptiveResultsPageCapacity(totalDisplayWeight: number, scrollableLi
       const measuredHeight = plainCards.length > 0
         ? Math.min(...plainCards.map((card) => card.getBoundingClientRect().height))
         : cards.reduce(
-          (min, card) => Math.min(min, card.getBoundingClientRect().height / RESULTS_GROUP_CARD_WEIGHT),
+          (min, card) => Math.min(min, card.getBoundingClientRect().height / RESULT_GROUP_CARD_WEIGHT),
           Number.POSITIVE_INFINITY,
         )
       if (Number.isFinite(measuredHeight) && measuredHeight > 0

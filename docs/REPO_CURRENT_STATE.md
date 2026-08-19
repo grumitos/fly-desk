@@ -122,7 +122,7 @@ The React UI must not display simulated controls. The following remain outside t
 - `frontend/src/components/`: `TopBar`, `SearchShell`, `ResultsPanel`, `DetailPanel`, and UI components
 - `frontend/src/components/results/`: `ResultCard`, card model, CSS, migration coverage, and schedule alternatives
 - `frontend/src/hooks/`: `useSearch` and `useAutocomplete`
-- `frontend/src/lib/api.ts`: HTTP client, search/polling, matrix, migratory search, autocomplete, quotation, and provider status
+- `frontend/src/lib/api.ts`: HTTP client, search/polling, matrix, migratory search, autocomplete, and quotation
 - `frontend/src/lib/location-usage-suggestions.ts`: compatible HTTP client for per-session recent and global frequent locations
 - `frontend/src/lib/browser-client-session.ts`: opaque `sessionStorage` identifier used only for recent-location isolation
 - `frontend/src/lib/providers.ts`: canonical provider metadata and strict public-status normalization
@@ -137,7 +137,7 @@ The React UI must not display simulated controls. The following remain outside t
 - `src/login-admission.ts`: bounded per-client failed-login admission before password derivation
 - `src/web-auth.ts`: web password, signed cookie, and session validation
 - `src/core/quotation.ts`: shared quotation rendering; by default it preserves the local time encoded by each segment
-- `src/core/quotation-parser.ts`: bounded, tested pasted-quotation contract with field/line trace and no inherited price/default filters; its deferred reconstruction panel has no production consumer yet
+- `src/core/quotation-parser.ts`: bounded, tested pasted-quotation contract with field/line trace and no inherited price/default filters; the clipboard paste flow in `frontend/src/App.tsx` opens its reconstruction in `QuotationPastePreview`, from which the agent reviews or launches the search
 - `src/core/offer-schedule-groups.ts`: provider-native schedule group contract without synthetic combinations
 - `src/core/search-limits.ts`: canonical stay, passenger, and lap-infant limits shared by validation and public runtime
 - `src/search-date-policy.ts`: moving date window and embedded public configuration

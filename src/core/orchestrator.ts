@@ -1,5 +1,5 @@
 import { applySearchFilters } from "./filtering";
-import { groupExactProviderOffers } from "./offer-grouping";
+import { PROVIDER_LABELS, groupExactProviderOffers } from "./offer-grouping";
 import { buildOfferScheduleGroups } from "./offer-schedule-groups";
 import { ProviderExecutionContext, SearchProvider } from "./provider";
 import { enrichComparisonMetrics, sortOffers } from "./ranking";
@@ -19,10 +19,6 @@ function buildProviderMeta(request: SearchRequest, exactProviderId: ProviderId):
     exactProvider: exactProviderId,
     coverageMode: request.coverageMode,
   };
-}
-
-function providerDisplayName(providerId: ProviderId): string {
-  return providerId === "costamar" ? "Click and Book Plus" : "Agilsmart";
 }
 
 export function buildSearchMeta(
@@ -145,7 +141,7 @@ export class SearchOrchestrator {
       },
       confidenceSummary,
       recommendations: [
-        `Matrix cells come from live ${providerDisplayName(provider.id)} searches.`,
+        `Matrix cells come from live ${PROVIDER_LABELS[provider.id]} searches.`,
         "Abre una celda para relanzar una busqueda exacta con esas fechas.",
       ],
       searchMeta: buildSearchMeta(

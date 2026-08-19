@@ -11,7 +11,7 @@ import {
   stopsCountFromItinerary,
   timeOfIso,
 } from "@/lib/offer-display"
-import { providerDisplayName } from "@/lib/providers"
+import { providerDisplayName, providerIconPath } from "@/lib/providers"
 
 /*
  * The card model for plate 1b.
@@ -106,8 +106,6 @@ export type ResultRedirectStatus = {
 }
 
 export type ResultProviderBadge = ResultCardModel["provider"]
-
-/** Below this the count is worth interrupting the agent for; above it, noise. */
 
 export function buildResultCardModel(
   offer: CanonicalOffer,
@@ -459,7 +457,7 @@ export function providerBadgeForId(providerId?: string): ResultProviderBadge {
     return {
       label: providerDisplayName(providerId),
       shortLabel: "CB+",
-      icon: "/assets/provider-icons/click-and-book-plus-128.png",
+      icon: providerIconPath(providerId),
     }
   }
 
@@ -467,7 +465,7 @@ export function providerBadgeForId(providerId?: string): ResultProviderBadge {
     return {
       label: providerDisplayName(providerId),
       shortLabel: "AG",
-      icon: "/assets/provider-icons/agilsmart-128.png",
+      icon: providerIconPath(providerId),
     }
   }
 

@@ -247,16 +247,21 @@ search — is precisely why filtering the plinth by readiness was wrong.
 
 **Data the cards need.** `faredDays`/`queriedDays` per month (absent on partial
 results, so an under-sampled month never looks verified), the two next fares per
-month, `fareMeta.seatsRemaining` (a real `0` shows as «0 asientos»; Click and
-Book Plus does not publish the field and it stays absent rather than invented),
+month, `fareMeta.seatsRemaining` (kept in the payload and never rendered: a
+live Agil LATAM fare came back with a real `0` for a flight that was on sale,
+and Click and Book Plus does not publish the field at all, so the one number the
+card used to state was the one neither provider could stand behind —
+`test/result-card-model.unit.test.ts` pins that the card names no seat count,
+and the price-per-person line has the slot it used to take),
 the operating carrier for codeshares, and per-leg duration and stops — the old
 `comparisonMetrics.totalDurationMinutes` and `stopsCountForOffer` summed both
 legs, which is why the pre-redesign card said «21h 05m · 2 escalas» for a flight
 with one stop each way.
 
 **`/api/results-layout` is gone.** The column-width editor existed to tune the
-card grid; plate 1b closes that grid at `32 / 186 / 1fr / 116 / 26`, so there is
-nothing to tune. Routes, types, persistence, helpers and the HTTP client were
+card grid; plate 1b closes that grid — `32 / 142 / 1fr / auto / 116 / 26`, with
+the two legs as plates that split the elastic track past 1073 (rows above) — so
+there is nothing to tune. Routes, types, persistence, helpers and the HTTP client were
 removed and a negative test pins both methods at 404.
 
 **A refused session write is owed, not retried.** The 180ms debounce in

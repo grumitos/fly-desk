@@ -11,6 +11,7 @@ import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/ai
 import { getBrowserClientSessionId } from "@/lib/browser-client-session"
 import { isIsoDate } from "@/lib/iso-date"
 import { filterLocationSuggestions, normalizeLocationSearchText, normalizeLocationSuggestions } from "@/lib/locations"
+import { providerDisplayName } from "@/lib/providers"
 import {
   firstSegmentForItinerary,
   formatOfferBaggageLabel,
@@ -226,9 +227,9 @@ export function translateApiMessage(message: string): string {
   )
   if (providerFailure) {
     const provider = /costamar|click and book/i.test(providerFailure[1])
-      ? "Click and Book Plus"
+      ? providerDisplayName("costamar")
       : /agil/i.test(providerFailure[1])
-        ? "Agilsmart"
+        ? providerDisplayName("agil-local")
         : "El proveedor"
     switch (providerFailure[2]) {
       case "authentication or session is unavailable":
@@ -387,7 +388,13 @@ function toDiagnosticLines(messages: string[]): string[] {
 }
 
 function providerDiagnosticLabel(providerId: string): string {
-  return providerId === "costamar" ? "Click and Book Plus" : "Agilsmart"
+  /* Anything that is not Costamar is Agilsmart here, and deliberately so: the
+     backend only ever reports the two, and a diagnostic line naming a raw id
+     would read as noise in a panel the agent scans for a provider name. The two
+     names themselves come from `providerDisplayName`. */
+  return providerId === "costamar"
+    ? providerDisplayName("costamar")
+    : providerDisplayName("agil-local")
 }
 
 function providerDiagnosticLines(
