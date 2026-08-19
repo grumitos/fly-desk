@@ -16,7 +16,47 @@ import {
 } from "./core/types";
 
 const COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
-const PERSISTED_SEARCH_CACHE_RESTORE_BUDGET_BYTES = 128 * 1024 * 1024;
+/* Past this, the boot is worth a line in the journal on its own. */
+const BOOT_TIMING_REPORT_MS = 1_000;
+/*
+ * How much of the persisted cache is parsed back into memory before the process
+ * can serve anything, and why it is not 128 MB any more.
+ *
+ * This budget is paid on the boot path: `loadPersisted()` runs in the store's
+ * constructor, the runtime is built before `createServer()`, and the port opens
+ * only once both are done. On 2026-08-19 the production search runner took **84
+ * seconds** to reach `Fly Desk running at http://127.0.0.1:8101` with 55 jobs
+ * and 1.78 GB on disk, burning 65s of CPU and peaking at 912 MB with 256 MB of
+ * swap on a 3.8 GB box. The release engine's health window is shorter than
+ * that, so the deployment failed activation, rolled back — and the rollback
+ * restarted the previous release into the same 84 seconds, which is what
+ * «previous release did not recover cleanly» meant.
+ *
+ * Measured on a 382 MB store of the same shape, boot falls with the budget:
+ * 2.56s at 128 MB, 1.85s at 32, 1.24s at 8. The rest is the fixed floor (prune,
+ * the metadata queries, the first persist), and the part that scales with this
+ * number is `JSON.parse` and the memory it holds — the exact cost that turns
+ * into swap on the box.
+ *
+ * 16 MB, then, and it is only a *pre-warm*: what is not restored stays on disk
+ * and is read on demand, transparently, which is what the disk-only tier has
+ * always done for everything past the budget. What a running desk keeps in
+ * memory is a different number with its own env var
+ * (`SEARCH_COMPLETED_SESSION_RESIDENT_BUDGET_BYTES`), unchanged at 128 MB.
+ */
+const PERSISTED_SEARCH_CACHE_RESTORE_DEFAULT_BUDGET_BYTES = 16 * 1024 * 1024;
+
+function persistedRestoreBudgetBytes(configured?: number): number {
+  if (typeof configured === "number" && Number.isFinite(configured) && configured >= 0) {
+    return configured;
+  }
+
+  const raw = process.env.SEARCH_PERSISTED_RESTORE_BUDGET_BYTES?.trim();
+  const parsed = raw ? Number(raw) : undefined;
+  return typeof parsed === "number" && Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : PERSISTED_SEARCH_CACHE_RESTORE_DEFAULT_BUDGET_BYTES;
+}
 const COMPLETED_SEARCH_SESSION_RESIDENT_DEFAULT_BUDGET_BYTES = 128 * 1024 * 1024;
 export const COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS = 5_000;
 /* The write debounce. Named so a test can advance exactly one debounce rather
@@ -588,12 +628,9 @@ export class SearchSessionStore {
   constructor(options?: SearchSessionStoreOptions) {
     this.scheduler = options?.scheduler ?? REAL_SESSION_STORE_SCHEDULER;
     const dbPath = options?.dbPath?.trim() || undefined;
-    const configuredRestoreBudgetBytes = options?.persistedRestoreBudgetBytes;
-    this.persistedRestoreBudgetBytes = typeof configuredRestoreBudgetBytes === "number"
-      && Number.isFinite(configuredRestoreBudgetBytes)
-      && configuredRestoreBudgetBytes >= 0
-      ? configuredRestoreBudgetBytes
-      : PERSISTED_SEARCH_CACHE_RESTORE_BUDGET_BYTES;
+    this.persistedRestoreBudgetBytes = persistedRestoreBudgetBytes(
+      options?.persistedRestoreBudgetBytes,
+    );
     this.completedResidentBudgetBytes = completedResidentBudgetBytes(
       options?.completedResidentBudgetBytes,
     );
@@ -2072,8 +2109,9 @@ export class SearchSessionStore {
           request_key,
           provider_ids_key,
           provider_context_key,
-          payload
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          payload,
+          payload_bytes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           idle_at_ms = excluded.idle_at_ms,
           status = excluded.status,
@@ -2081,7 +2119,8 @@ export class SearchSessionStore {
           request_key = excluded.request_key,
           provider_ids_key = excluded.provider_ids_key,
           provider_context_key = excluded.provider_context_key,
-          payload = excluded.payload
+          payload = excluded.payload,
+          payload_bytes = excluded.payload_bytes
       `);
       const upsertMatrixJob = db.prepare(`
         INSERT INTO matrix_jobs (
@@ -2090,14 +2129,16 @@ export class SearchSessionStore {
           status,
           request_key,
           provider_context_key,
-          payload
-        ) VALUES (?, ?, ?, ?, ?, ?)
+          payload,
+          payload_bytes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           idle_at_ms = excluded.idle_at_ms,
           status = excluded.status,
           request_key = excluded.request_key,
           provider_context_key = excluded.provider_context_key,
-          payload = excluded.payload
+          payload = excluded.payload,
+          payload_bytes = excluded.payload_bytes
       `);
       const upsertPurchasePath = db.prepare(`
         INSERT INTO purchase_paths (
@@ -2105,13 +2146,15 @@ export class SearchSessionStore {
           session_id,
           owner_id,
           fingerprint,
-          payload
-        ) VALUES (?, ?, ?, ?, ?)
+          payload,
+          payload_bytes
+        ) VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           session_id = excluded.session_id,
           owner_id = excluded.owner_id,
           fingerprint = excluded.fingerprint,
-          payload = excluded.payload
+          payload = excluded.payload,
+          payload_bytes = excluded.payload_bytes
       `);
       const deleteSearchJob = db.prepare("DELETE FROM search_jobs WHERE id = ?");
       const deleteMatrixJob = db.prepare("DELETE FROM matrix_jobs WHERE id = ?");
@@ -2138,6 +2181,7 @@ export class SearchSessionStore {
               serializeForComparison(entry.job.searchMeta.providersUsed ?? []),
               serializeForComparison(normalizeProviderContextForSearchCache(entry.job.providerContext)),
               entry.payload,
+              Buffer.byteLength(entry.payload, "utf8"),
             );
           }
 
@@ -2149,6 +2193,7 @@ export class SearchSessionStore {
               serializeForComparison(normalizeSearchRequestForSearchCache(entry.job.request)),
               serializeForComparison(normalizeProviderContextForSearchCache(entry.job.providerContext)),
               entry.payload,
+              Buffer.byteLength(entry.payload, "utf8"),
             );
           }
 
@@ -2159,6 +2204,7 @@ export class SearchSessionStore {
               entry.path.ownerId,
               entry.path.fingerprint,
               entry.payload,
+              Buffer.byteLength(entry.payload, "utf8"),
             );
           }
 
@@ -2270,21 +2316,81 @@ export class SearchSessionStore {
     if (!matrixColumns.has("provider_context_key")) {
       runSql(this.db, "ALTER TABLE matrix_jobs ADD COLUMN provider_context_key TEXT");
     }
+
+    /*
+     * What a row's payload weighs, written down instead of weighed at boot.
+     *
+     * The restore used to ask SQLite for `length(payload)` on every row of
+     * every table — twice: once to pick what fits the resident budget, once to
+     * fill the maps that decide what a later write owes. `length` on a stored
+     * value is a read, so booting measured the whole store: on the production
+     * box that is 55 jobs and 1.78 GB, and the search runner took **84 seconds
+     * to open its port**, of which 47 went to the first scan and the rest to
+     * the second. The release engine's health window is shorter than that, so
+     * every deployment failed activation, rolled back, and paid the same 84
+     * seconds again on the way out — «previous release did not recover
+     * cleanly», with the port closed throughout.
+     *
+     * The column is filled on write. A row written before it existed keeps
+     * `NULL`, and every read below coalesces that to one byte over the resident
+     * budget: an unmeasured row is treated as too big to hold in memory, which
+     * is what it was being treated as anyway, and no boot ever reads a payload
+     * again to find out.
+     */
+    for (const table of ["search_jobs", "matrix_jobs", "purchase_paths"] as const) {
+      const columns = new Set(
+        allSql<{ name: string }>(this.db, `PRAGMA table_info(${table})`)
+          .map((column) => column.name),
+      );
+      if (!columns.has("payload_bytes")) {
+        runSql(this.db, `ALTER TABLE ${table} ADD COLUMN payload_bytes INTEGER`);
+      }
+    }
+  }
+
+  /** One byte over the budget: what an unmeasured row is worth to the restore. */
+  private get unmeasuredPayloadBytes(): number {
+    return this.persistedRestoreBudgetBytes + 1;
   }
 
   private loadPersisted(): void {
+    /*
+     * Timed by phase, and said out loud when it is slow.
+     *
+     * This runs before the port opens, so a slow boot is an outage and a failed
+     * deployment (see the restore budget above). Two rounds of local
+     * measurement pointed at the wrong phase before the box's own numbers
+     * settled it, so the phases now report themselves: one line, no perf flag
+     * to remember, and only when the total is worth reading.
+     */
+    const startedAt = Date.now();
     const nowMs = this.scheduler.now();
     this.pruneExpiredSqliteRows(nowMs);
+    const prunedAt = Date.now();
     const restoreCandidates = this.selectPersistedRowsToRestore();
+    const selectedAt = Date.now();
     try {
       this.bootstrapping = true;
       this.loadSqlitePayload(restoreCandidates);
     } finally {
       this.bootstrapping = false;
     }
+    const loadedAt = Date.now();
 
     this.purgeExpired(nowMs);
+    const purgedAt = Date.now();
     this.persistNow();
+    const finishedAt = Date.now();
+
+    const totalMs = finishedAt - startedAt;
+    if (totalMs >= BOOT_TIMING_REPORT_MS) {
+      console.warn(
+        "Fly Desk persisted cache boot: "
+        + `totalMs=${totalMs} pruneMs=${prunedAt - startedAt} selectMs=${selectedAt - prunedAt} `
+        + `loadMs=${loadedAt - selectedAt} purgeMs=${purgedAt - loadedAt} persistMs=${finishedAt - purgedAt} `
+        + `restored=${restoreCandidates.length} budgetBytes=${this.persistedRestoreBudgetBytes}`,
+      );
+    }
   }
 
   private selectPersistedRowsToRestore(): PersistedJobRestoreCandidate[] {
@@ -2292,14 +2398,15 @@ export class SearchSessionStore {
       return [];
     }
 
+    const unmeasured = this.unmeasuredPayloadBytes;
     const candidates = allSql<PersistedJobRestoreCandidate>(this.db, `
       SELECT
         search_jobs.id,
         'search' AS kind,
         search_jobs.idle_at_ms AS idleAtMs,
-        length(CAST(search_jobs.payload AS BLOB))
+        COALESCE(search_jobs.payload_bytes, ?1)
           + COALESCE((
-            SELECT SUM(length(CAST(path.payload AS BLOB)))
+            SELECT SUM(COALESCE(path.payload_bytes, ?1))
             FROM purchase_paths AS path
             WHERE path.session_id = search_jobs.id
           ), 0) AS payloadBytes
@@ -2309,15 +2416,15 @@ export class SearchSessionStore {
         matrix_jobs.id,
         'matrix' AS kind,
         matrix_jobs.idle_at_ms AS idleAtMs,
-        length(CAST(matrix_jobs.payload AS BLOB))
+        COALESCE(matrix_jobs.payload_bytes, ?1)
           + COALESCE((
-            SELECT SUM(length(CAST(path.payload AS BLOB)))
+            SELECT SUM(COALESCE(path.payload_bytes, ?1))
             FROM purchase_paths AS path
             WHERE path.session_id = matrix_jobs.id
           ), 0) AS payloadBytes
       FROM matrix_jobs
       ORDER BY idleAtMs DESC, kind ASC, id ASC
-    `);
+    `, unmeasured);
     let retainedBytes = 0;
     const retained: PersistedJobRestoreCandidate[] = [];
     const diskOnly: PersistedJobRestoreCandidate[] = [];
@@ -2384,18 +2491,21 @@ export class SearchSessionStore {
       return;
     }
 
+    const unmeasured = this.unmeasuredPayloadBytes;
     const searchRows = allSql<{ id: string; payloadBytes: number }>(
       this.db,
-      "SELECT id, length(CAST(payload AS BLOB)) AS payloadBytes FROM search_jobs",
+      "SELECT id, COALESCE(payload_bytes, ?1) AS payloadBytes FROM search_jobs",
+      unmeasured,
     );
     const matrixRows = allSql<{ id: string; payloadBytes: number }>(
       this.db,
-      "SELECT id, length(CAST(payload AS BLOB)) AS payloadBytes FROM matrix_jobs",
+      "SELECT id, COALESCE(payload_bytes, ?1) AS payloadBytes FROM matrix_jobs",
+      unmeasured,
     );
     const pathRows = allSql<{ id: string; sessionId: string; payloadBytes: number }>(this.db, `
-      SELECT id, session_id AS sessionId, length(CAST(payload AS BLOB)) AS payloadBytes
+      SELECT id, session_id AS sessionId, COALESCE(payload_bytes, ?1) AS payloadBytes
       FROM purchase_paths
-    `);
+    `, unmeasured);
     searchRows.forEach((row) => this.persistedSearchJobs.set(row.id, {
       version: "",
       bytes: Math.max(0, Number(row.payloadBytes) || 0),
