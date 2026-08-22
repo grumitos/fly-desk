@@ -52,21 +52,27 @@ test("the itinerary names a station by its code, not by the provider that sent i
   assert.equal(stationPlaceName("MAD", "ADOLFO SUAREZ MADRID BARAJAS"), "Madrid")
 })
 
+test("a catalogued code answers the same however long the provider wrote it", () => {
+  /* Both airports of one city, and both providers' habits, on one answer. */
+  assert.equal(stationPlaceName("GRU", "Aeroporto Internacional de Guarulhos"), "São Paulo")
+  assert.equal(stationPlaceName("CGH", "CONGONHAS"), "São Paulo")
+  assert.equal(stationPlaceName("CDG", "Charles de Gaulle"), "París")
+})
+
 test("a code the catalogue does not know keeps the provider's own name, cleaned", () => {
-  assert.equal(stationPlaceName("GRU", "SAO PAULO GUARULHOS"), "Sao Paulo Guarulhos")
-  assert.equal(stationPlaceName("GRU", "GRU - Guarulhos"), "Guarulhos")
-  assert.equal(stationPlaceName("GRU", undefined), "")
+  assert.equal(stationPlaceName("NRT", "TOKIO NARITA"), "Tokio Narita")
+  assert.equal(stationPlaceName("NRT", "NRT - Narita"), "Narita")
+  assert.equal(stationPlaceName("NRT", undefined), "")
   assert.equal(stationPlaceName(undefined, "Lima (Todos los aeropuertos)"), "Lima")
 })
 
 test("the facility is not the place, so its words come off an unknown code", () => {
   /* Plate 1b's «LIM · Jorge Chávez»: two providers writing the same runway at
      two lengths converge once the designation goes. */
-  assert.equal(stationPlaceName("GRU", "Aeroporto Internacional de Guarulhos"), "Guarulhos")
-  assert.equal(stationPlaceName("DFW", "Dallas Fort Worth International Airport"), "Dallas Fort Worth")
-  assert.equal(stationPlaceName("FCO", "AEROPUERTO INTERNACIONAL LEONARDO DA VINCI"), "Leonardo da Vinci")
+  assert.equal(stationPlaceName("SYD", "Sydney Kingsford Smith International Airport"), "Sydney Kingsford Smith")
+  assert.equal(stationPlaceName("DXB", "AEROPUERTO INTERNACIONAL DE DUBÁI"), "Dubái")
   // A label that is nothing but the facility names no place; the code says which.
-  assert.equal(stationPlaceName("XXX", "Aeropuerto Internacional"), "")
+  assert.equal(stationPlaceName("HKG", "Aeropuerto Internacional"), "")
   // And a real name is never trimmed for being long.
-  assert.equal(stationPlaceName("CDG", "Charles de Gaulle"), "Charles de Gaulle")
+  assert.equal(stationPlaceName("ICN", "Incheon"), "Incheon")
 })
