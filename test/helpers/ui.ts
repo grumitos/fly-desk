@@ -1,3 +1,4 @@
+import { after, before } from "node:test";
 import {
   chromium,
   type Browser,
@@ -76,6 +77,17 @@ export async function withDesktopPage<T>(
   } finally {
     await context.close();
   }
+}
+
+/*
+ * Every `test/ui/*.playwright.ts` file is its own `node --test` process, so
+ * every file owns a harness of its own — its own Bun test server on a free
+ * Chromium-safe port and its own headless browser — and the files can run in
+ * parallel. Calling this at the top of a UI file registers that lifecycle.
+ */
+export function registerDesktopHarness(): void {
+  before(startDesktopTestHarness);
+  after(stopDesktopTestHarness);
 }
 
 export async function startDesktopTestHarness(): Promise<void> {

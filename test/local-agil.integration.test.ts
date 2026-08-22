@@ -29,6 +29,8 @@ import {
   resolveAgilChromeDevToolsBrowserWsEndpointForTests,
   sameAgilSessionIdentity,
   resetAgilApimSubscriptionKeyCacheForTests,
+  resetAgilInflightLimiterForTests,
+  readAgilInflightLimiterStateForTests,
   setAgilSessionForTests,
   searchLocalAgilExact,
   shouldReuseAgilSession,
@@ -2126,4 +2128,171 @@ test("Agil progressive exact search keeps mapping the surviving GDS when one of 
     resetAgilApimSubscriptionKeyCacheForTests();
     restoreEnv("AGIL_APIM_SUBSCRIPTION_KEY", previousKey);
   }
+});
+
+const AGIL_GDS_ORDER_FOR_TESTS = [0, 1, 3, 7, 10, 21, 22];
+
+interface DeferredAgilSearchCall {
+  gds: number;
+  settle: (error?: Error) => void;
+}
+
+async function flushAgilSearchQueue(): Promise<void> {
+  // setImmediate keeps this cheap; the limiter hands slots over on microtasks,
+  // so a handful of macrotask turns is enough to settle every admitted wave.
+  for (let tick = 0; tick < 12; tick += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+interface DeferredAgilSearchHarness {
+  startedGds: number[];
+  pending: DeferredAgilSearchCall[];
+  maxObservedInFlight: () => number;
+}
+
+async function withDeferredAgilSearches<T>(
+  maxInflight: string,
+  run: (harness: DeferredAgilSearchHarness) => Promise<T>,
+): Promise<T> {
+  const previousFetch = global.fetch;
+  const previousKey = process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+  const previousMaxInflight = process.env.AGIL_MAX_INFLIGHT_SEARCH_REQUESTS;
+
+  resetAgilSessionCacheForTests();
+  resetAgilApimSubscriptionKeyCacheForTests();
+  resetAgilInflightLimiterForTests();
+  process.env.AGIL_APIM_SUBSCRIPTION_KEY = "test-subscription-key";
+  process.env.AGIL_MAX_INFLIGHT_SEARCH_REQUESTS = maxInflight;
+  setAgilSessionForTests();
+
+  const startedGds: number[] = [];
+  const pending: DeferredAgilSearchCall[] = [];
+  let inFlight = 0;
+  let maxInFlight = 0;
+
+  global.fetch = (async (input, init) => {
+    const url = String(input);
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/start-search") {
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/search") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { gds?: number };
+      const gds = Number(body.gds ?? -1);
+      startedGds.push(gds);
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+
+      return await new Promise<Response>((resolve, reject) => {
+        pending.push({
+          gds,
+          settle: (error?: Error) => {
+            inFlight -= 1;
+            if (error) {
+              reject(error);
+              return;
+            }
+
+            resolve(new Response(JSON.stringify({ groups: [] }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }));
+          },
+        });
+      });
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    return await run({
+      startedGds,
+      pending,
+      maxObservedInFlight: () => maxInFlight,
+    });
+  } finally {
+    global.fetch = previousFetch;
+    resetAgilSessionCacheForTests();
+    resetAgilApimSubscriptionKeyCacheForTests();
+    resetAgilInflightLimiterForTests();
+    restoreEnv("AGIL_APIM_SUBSCRIPTION_KEY", previousKey);
+    restoreEnv("AGIL_MAX_INFLIGHT_SEARCH_REQUESTS", previousMaxInflight);
+  }
+}
+
+test("Agil /mv/search calls never exceed the process-wide in-flight ceiling", async () => {
+  await withDeferredAgilSearches("7", async (harness) => {
+    assert.equal(AGIL_CONCURRENCY.maxInflightSearchRequests, 7);
+
+    const first = searchLocalAgilExact(buildAgilExactRequest("one-way"));
+    await flushAgilSearchQueue();
+    // The first search alone already saturates the ceiling, so everything the
+    // second one asks for has to queue behind it.
+    assert.deepEqual(harness.startedGds, AGIL_GDS_ORDER_FOR_TESTS);
+
+    const second = searchLocalAgilExact(buildAgilExactRequest("one-way"));
+    await flushAgilSearchQueue();
+    assert.equal(harness.startedGds.length, 7);
+    assert.equal(readAgilInflightLimiterStateForTests().inFlight, 7);
+    assert.equal(readAgilInflightLimiterStateForTests().queued, 7);
+
+    for (let index = 0; index < 14; index += 1) {
+      const call = harness.pending[index];
+      assert.ok(call, `call ${index} should have started`);
+      call.settle();
+      await flushAgilSearchQueue();
+      assert.ok(
+        harness.maxObservedInFlight() <= 7,
+        `in-flight peaked at ${harness.maxObservedInFlight()}`,
+      );
+      assert.equal(harness.startedGds.length, Math.min(14, 8 + index));
+    }
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    // Every queued call was admitted in the order it asked for a slot: the
+    // first search's whole wave, then the second search's whole wave.
+    assert.deepEqual(harness.startedGds, [
+      ...AGIL_GDS_ORDER_FOR_TESTS,
+      ...AGIL_GDS_ORDER_FOR_TESTS,
+    ]);
+    assert.equal(harness.maxObservedInFlight(), 7);
+    assert.equal(firstResult.offers.length, 0);
+    assert.equal(secondResult.offers.length, 0);
+    assert.equal(readAgilInflightLimiterStateForTests().inFlight, 0);
+    assert.equal(readAgilInflightLimiterStateForTests().queued, 0);
+  });
+});
+
+test("a rejected Agil /mv/search releases its in-flight slot", async () => {
+  await withDeferredAgilSearches("7", async (harness) => {
+    const first = searchLocalAgilExact(buildAgilExactRequest("one-way"));
+    await flushAgilSearchQueue();
+    const second = searchLocalAgilExact(buildAgilExactRequest("one-way"));
+    await flushAgilSearchQueue();
+    assert.equal(harness.startedGds.length, 7);
+
+    harness.pending[0]?.settle(new Error("socket hang up"));
+    await flushAgilSearchQueue();
+    assert.equal(harness.startedGds.length, 8);
+
+    for (let index = 1; index < 14; index += 1) {
+      harness.pending[index]?.settle();
+      await flushAgilSearchQueue();
+    }
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    assert.equal(harness.startedGds.length, 14);
+    assert.ok(harness.maxObservedInFlight() <= 7);
+    assert.equal(firstResult.partial, true);
+    assert.ok(firstResult.warnings.some((warning) => /GDS 0/.test(warning)));
+    assert.equal(secondResult.offers.length, 0);
+    assert.equal(readAgilInflightLimiterStateForTests().inFlight, 0);
+  });
 });

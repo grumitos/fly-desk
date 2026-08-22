@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Page, Route } from "playwright";
-import { withDesktopPage } from "../helpers/ui.ts";
+import { registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
 import {
   clickSegment,
@@ -9,6 +9,8 @@ import {
   waitForFontsReady,
   waitForSegmentChecked,
 } from "./support.ts";
+
+registerDesktopHarness();
 
 async function clickLocationFieldSurface(page: Page, fieldId: string): Promise<void> {
   const control = page.locator(`#${fieldId}`).locator("..");
@@ -952,6 +954,11 @@ test("search field labels and filled rows share a consistent vertical center", a
 
 test("running search button cancels the active job and returns to editing", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
+    /* The poll cadence after a cancel is the app's own 50ms timer, and the
+       count below is the count of one 150ms window. Under a fake clock that
+       window is 150ms of app time on any machine, instead of however long the
+       gestures happened to take under load. */
+    await page.clock.install();
     let cancelRequests = 0;
     let pollRequests = 0;
     let searchRequests = 0;
@@ -1101,7 +1108,7 @@ test("running search button cancels the active job and returns to editing", asyn
     await cancelStarted;
 
     await page.getByRole("button", { name: "Buscar" }).click();
-    await page.waitForTimeout(150);
+    await page.clock.runFor(150);
 
     assert.equal(cancelRequests, 1);
     assert.equal(searchRequests, 1, "A repeated search must wait until partial-cache cancellation finishes.");

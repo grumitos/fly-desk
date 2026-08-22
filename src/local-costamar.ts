@@ -366,6 +366,14 @@ const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Googl
 const pendingCostamarSessionWarmups = new Map<string, Promise<CostamarProviderContext>>();
 const recentCostamarSessionWarmups = new Map<string, number>();
 let costamarWarmupOpener: typeof openUrlLocally = openUrlLocally;
+/*
+ * How long the browser fallback lets Chrome settle between the B2B page and the
+ * branded one. A real Chrome needs the pause; a stubbed opener writes its
+ * artifact synchronously and only pays for it, so tests may shorten it. The
+ * default is the production value and nothing outside a test changes it.
+ */
+const COSTAMAR_WARMUP_BROWSER_SETTLE_MS = 750;
+let costamarWarmupBrowserSettleMs = COSTAMAR_WARMUP_BROWSER_SETTLE_MS;
 let playwrightPromise: Promise<typeof import("playwright")> | undefined;
 let liveCostamarBrowserConnection:
   | { endpoint: string; browser: Browser; context: BrowserContext }
@@ -2442,7 +2450,7 @@ export async function warmCostamarRedirectContext(
           "chrome",
           resolveCostamarChromeLaunchOptions(),
         );
-        await sleep(750);
+        await sleep(costamarWarmupBrowserSettleMs);
         await costamarWarmupOpener(
           buildCostamarBrandedSearchUrl(request, seedContext),
           "chrome",
@@ -2487,11 +2495,20 @@ export function setCostamarWarmupGeneratorForTests(
   costamarWarmupGenerator = generator ?? generateCostamarRedirectContextViaB2B;
 }
 
+export function setCostamarWarmupBrowserSettleMsForTests(
+  settleMs?: number,
+): void {
+  costamarWarmupBrowserSettleMs = settleMs === undefined
+    ? COSTAMAR_WARMUP_BROWSER_SETTLE_MS
+    : Math.max(0, Math.trunc(settleMs));
+}
+
 export function resetCostamarWarmupStateForTests(): void {
   engineCache.clear();
   pendingCostamarSessionWarmups.clear();
   recentCostamarSessionWarmups.clear();
   costamarWarmupOpener = openUrlLocally;
+  costamarWarmupBrowserSettleMs = COSTAMAR_WARMUP_BROWSER_SETTLE_MS;
   costamarWarmupGenerator = generateCostamarRedirectContextViaB2B;
   costamarB2bPromptProvider = promptCostamarB2bViaTerminal;
   cachedInteractiveCostamarB2bCredentials = {};

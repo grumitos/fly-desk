@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { withDesktopPage } from "../helpers/ui.ts";
+import { registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
 import { clickSegment, segment } from "./support.ts";
+
+registerDesktopHarness();
 
 const VIEWPORTS = [
   { label: "desktop", width: 1440, height: 900, shell: "wide" },

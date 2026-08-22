@@ -15,7 +15,7 @@ Bun test files must end in `.unit.test.ts` or `.integration.test.ts`; the script
 
 ## UI Suite
 
-`test/ui.playwright.ts` registers the shared lifecycle and loads capability-based modules from `test/ui/`. The suite starts one server instance and one Chromium instance. Each test receives a fresh `BrowserContext` to isolate cookies, storage, routes, and pages.
+`scripts/run-ui-tests.ts` runs every capability-based module in `test/ui/` as an independent `node --test` file, in parallel. Each file calls `registerDesktopHarness()` from `test/helpers/ui.ts` and therefore owns its own server instance and its own Chromium instance; each test receives a fresh `BrowserContext` to isolate cookies, storage, routes, and pages. The number of files running at once is `FLY_DESK_UI_TEST_CONCURRENCY` when set, and otherwise one less than the available parallelism, capped at four.
 
 `test/ui/responsive-smoke.playwright.ts` fixes the frontend QA viewports at
 desktop `1440x900`, tablet `1024x768`, and mobile `390x844`. Each case drives the

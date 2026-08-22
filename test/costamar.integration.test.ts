@@ -1,4 +1,4 @@
-import { test } from "bun:test";
+import { afterAll, beforeEach, test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   applyCostamarB2bKeyboardInput,
@@ -25,6 +25,7 @@ import {
   searchLocalCostamarExact,
   searchLocalCostamarRange,
   prepareTemporaryCostamarChromeProfileForTests,
+  setCostamarWarmupBrowserSettleMsForTests,
   setCostamarWarmupGeneratorForTests,
   setCostamarWarmupOpenerForTests,
   shouldWarnCostamarRedirectUnavailable,
@@ -46,6 +47,27 @@ import { generateTotpCode, generateTotpCodeWithMetadata, totpCanSubmitSafely } f
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+/*
+ * Chrome discovery is part of the search path these tests exercise, and with no
+ * user-data directory configured it walks whatever Chrome profile the machine
+ * happens to have: a few hundred milliseconds of disk per search on a developer
+ * laptop, and a different input on every machine.
+ *
+ * The tests that care about a seeded profile point the variable at their own
+ * fixture and restore what they found. Everyone else gets this empty directory,
+ * so the scan comes back empty deterministically instead of by luck.
+ */
+const isolatedChromeUserDataDir = mkdtempSync(join(tmpdir(), "flydesk-costamar-no-chrome-"));
+
+beforeEach(() => {
+  process.env.COSTAMAR_CHROME_USER_DATA_DIR = isolatedChromeUserDataDir;
+});
+
+afterAll(() => {
+  delete process.env.COSTAMAR_CHROME_USER_DATA_DIR;
+  rmSync(isolatedChromeUserDataDir, { recursive: true, force: true });
+});
 
 function buildRequest(): SearchRequest {
   return {
@@ -2246,6 +2268,9 @@ test("searchLocalCostamarExact can warm a missing branded token from a seeded Ch
   resetCostamarWarmupStateForTests();
 
   setCostamarWarmupGeneratorForTests(async () => undefined);
+  /* The stubbed opener writes its artifact synchronously, so the pause the real
+     browser fallback needs to let Chrome settle is pure wall clock here. */
+  setCostamarWarmupBrowserSettleMsForTests(0);
   const openedUrls: string[] = [];
   setCostamarWarmupOpenerForTests(async (targetUrl, preferredBrowser, chromeOptions) => {
     openedUrls.push(targetUrl);
