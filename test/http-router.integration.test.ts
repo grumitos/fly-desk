@@ -3737,6 +3737,142 @@ test("matrix job polling returns a lightweight unchanged payload when revision h
   });
 });
 
+/*
+ * The poll that waits for the news instead of asking again for it.
+ *
+ * `wait=<ms>` parks the request in the session store, so a revision that lands
+ * mid-flight answers it immediately rather than on the browser's next tick. The
+ * timing assertions are one-sided on purpose: the first case only claims the
+ * answer beat the wait it asked for, and the second only claims it did not come
+ * back before its own timeout.
+ */
+test("search job polling with wait returns as soon as the revision moves", async () => {
+  const runtime = getRuntime();
+  const job = runtime.sessions.createSearchJob({
+    request: buildCostamarRequest(),
+    offers: [],
+    allOffers: [],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+
+  await withServer(async (baseUrl) => {
+    const offer = buildCostamarOffer(
+      "https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=test",
+    );
+    const startedAt = Date.now();
+    const pending = fetch(`${baseUrl}/api/search/${job.id}?sinceRevision=${job.revision}&wait=2000`);
+    const bump = setTimeout(() => {
+      runtime.sessions.updateSearchJob(job.id, (current) => ({
+        ...current,
+        offers: [offer],
+        allOffers: [offer],
+        status: "completed",
+      }));
+    }, 100);
+
+    try {
+      const response = await pending;
+      const elapsedMs = Date.now() - startedAt;
+      assert.equal(response.status, 200);
+      const payload = await response.json() as {
+        unchanged?: boolean;
+        revision?: number;
+        searchComplete?: boolean;
+        offers?: unknown[];
+      };
+
+      assert.equal(payload.unchanged, false);
+      assert.equal(payload.revision, job.revision + 1);
+      assert.equal(payload.searchComplete, true);
+      assert.equal(payload.offers?.length, 1);
+      assert.ok(elapsedMs < 1500, `long poll returned late: ms=${elapsedMs}`);
+    } finally {
+      clearTimeout(bump);
+    }
+  });
+});
+
+test("search job polling with wait returns unchanged once the wait elapses", async () => {
+  const runtime = getRuntime();
+  const job = runtime.sessions.createSearchJob({
+    request: buildCostamarRequest(),
+    offers: [],
+    allOffers: [],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+
+  await withServer(async (baseUrl) => {
+    const startedAt = Date.now();
+    const response = await fetch(`${baseUrl}/api/search/${job.id}?sinceRevision=${job.revision}&wait=300`);
+    const elapsedMs = Date.now() - startedAt;
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { unchanged?: boolean; revision?: number };
+    assert.equal(payload.unchanged, true);
+    assert.equal(payload.revision, job.revision);
+    assert.ok(elapsedMs >= 250, `long poll returned before its wait: ms=${elapsedMs}`);
+  });
+});
+
+test("matrix job polling with wait returns as soon as the revision moves", async () => {
+  const runtime = getRuntime();
+  const cell = buildCostamarMatrixCell(
+    "https://booking.clickandbook.com/vuelos/b/LIM/MAD/2026-06-01/2026-06-08/1/0/0?terminalId=0721808110&lang=es&token=test",
+  );
+  const job = runtime.sessions.createMatrixJob({
+    request: {
+      ...buildCostamarRequest(),
+      searchMode: "roundtrip-grid",
+      flexibleMode: "exact-stay",
+    },
+    cells: [],
+    axes: { departureDates: [cell.departureDate], returnDates: [cell.returnDate!] },
+    confidenceSummary: {},
+    recommendations: [],
+    providerMeta: buildProviderMeta(),
+    searchMeta: buildSearchMeta(),
+    warnings: [],
+    status: "running",
+  });
+
+  await withServer(async (baseUrl) => {
+    const startedAt = Date.now();
+    const pending = fetch(`${baseUrl}/api/matrix/${job.id}?sinceRevision=${job.revision}&wait=2000`);
+    const bump = setTimeout(() => {
+      runtime.sessions.updateMatrixJob(job.id, (current) => ({
+        ...current,
+        cells: [cell],
+        confidenceSummary: { live: 1 },
+      }));
+    }, 100);
+
+    try {
+      const response = await pending;
+      const elapsedMs = Date.now() - startedAt;
+      assert.equal(response.status, 200);
+      const payload = await response.json() as {
+        unchanged?: boolean;
+        revision?: number;
+        cells?: Array<{ key?: string }>;
+      };
+
+      assert.equal(payload.unchanged, false);
+      assert.equal(payload.revision, job.revision + 1);
+      assert.deepEqual(payload.cells?.map((entry) => entry.key), [cell.key]);
+      assert.ok(elapsedMs < 1500, `long poll returned late: ms=${elapsedMs}`);
+    } finally {
+      clearTimeout(bump);
+    }
+  });
+});
+
 test("matrix polling omits cells without results from progressive payloads", async () => {
   const runtime = getRuntime();
   const resolved = buildCostamarMatrixCell(

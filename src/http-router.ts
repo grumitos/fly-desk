@@ -1727,6 +1727,30 @@ function parseSinceRevision(value: string | null): number | undefined {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
 
+/*
+ * How long a job poll may be parked before it has to answer.
+ *
+ * The browser asks with `wait=<ms>` and the store holds the request open until
+ * the job moves, which is what removes the polling interval from the latency of
+ * a finished search. The ceiling stays well under the search-service proxy
+ * timeout (120s by default), and `wait=0` — the default for any client that
+ * does not ask — is exactly the old behaviour.
+ */
+export const JOB_POLL_MAX_WAIT_MS = 20_000;
+
+function parseJobPollWaitMs(value: string | null): number {
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 0;
+  }
+
+  return Math.min(parsed, JOB_POLL_MAX_WAIT_MS);
+}
+
 function resolveLocationSuggestionSessionId(value: string | null): string | undefined {
   return normalizeLocationUsageSessionId(value);
 }
@@ -3274,13 +3298,19 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     const jobId = url.pathname.slice("/api/search/".length);
+    const sinceRevision = parseSinceRevision(url.searchParams.get("sinceRevision"));
+    const waitMs = parseJobPollWaitMs(url.searchParams.get("wait"));
+    if (waitMs > 0 && typeof sinceRevision === "number") {
+      await runtime.sessions.waitForSearchJobChange(jobId, sinceRevision, waitMs);
+    }
+
     const job = runtime.sessions.getSearchJob(jobId);
 
     if (!job) {
       return json({ error: "Search job not found." }, { status: 404 });
     }
 
-    return json(searchJobResponse(job, parseSinceRevision(url.searchParams.get("sinceRevision"))));
+    return json(searchJobResponse(job, sinceRevision));
   }
 
   if (request.method === "POST" && url.pathname === "/api/matrix") {
@@ -3306,13 +3336,19 @@ export async function routeRequest(request: Request): Promise<Response> {
     }
 
     const jobId = url.pathname.slice("/api/matrix/".length);
+    const sinceRevision = parseSinceRevision(url.searchParams.get("sinceRevision"));
+    const waitMs = parseJobPollWaitMs(url.searchParams.get("wait"));
+    if (waitMs > 0 && typeof sinceRevision === "number") {
+      await runtime.sessions.waitForMatrixJobChange(jobId, sinceRevision, waitMs);
+    }
+
     const job = runtime.sessions.getMatrixJob(jobId);
 
     if (!job) {
       return json({ error: "Matrix job not found." }, { status: 404 });
     }
 
-    return json(matrixJobResponse(job, parseSinceRevision(url.searchParams.get("sinceRevision"))));
+    return json(matrixJobResponse(job, sinceRevision));
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/r/")) {

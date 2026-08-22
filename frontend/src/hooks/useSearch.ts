@@ -11,8 +11,8 @@ import {
   startSearch,
   userMessageFromError,
 } from "@/lib/api"
+import { nextPollDelayMs, POLL_FAST_MS } from "@/lib/poll-schedule"
 
-const POLL_INTERVAL_MS = 900
 const CANCELLED_SEARCH_MESSAGE = "Búsqueda detenida. Puedes ajustar los campos y buscar de nuevo."
 type ActiveJob = { id: string; type: "search" | "matrix" }
 
@@ -179,6 +179,7 @@ export function useSearch() {
           let lastRevision = job.revision
           const doPoll = async () => {
             if (!isCurrentRun()) return
+            const startedAt = Date.now()
             try {
               const updated = flexibleMatrix
                 ? await pollMatrix(job.searchJobId, sortMode, lastRevision, { signal: abortController.signal })
@@ -192,7 +193,10 @@ export function useSearch() {
                 appendDiagnosticLog(`Actualización ${hydratedUpdate.searchJobId}: revisión ${hydratedUpdate.revision}`, hydratedUpdate.diagnosticLog)
               }
               if (!updated.searchComplete) {
-                pollRef.current = window.setTimeout(doPoll, POLL_INTERVAL_MS)
+                pollRef.current = window.setTimeout(doPoll, nextPollDelayMs({
+                  unchanged: Boolean(updated.unchanged),
+                  elapsedMs: Date.now() - startedAt,
+                }))
               } else if (updated.searchComplete) {
                 finishActiveJob({ id: job.searchJobId, type: flexibleMatrix ? "matrix" : "search" })
                 setLoading(false)
@@ -209,7 +213,7 @@ export function useSearch() {
               abortControllerRef.current = null
             }
           }
-          pollRef.current = window.setTimeout(doPoll, POLL_INTERVAL_MS)
+          pollRef.current = window.setTimeout(doPoll, POLL_FAST_MS)
         } else {
           finishActiveJob({ id: job.searchJobId, type: flexibleMatrix ? "matrix" : "search" })
           setLoading(false)
@@ -274,6 +278,7 @@ export function useSearch() {
       let lastRevision = job.revision
       const doPoll = async () => {
         if (!isCurrentRun()) return
+        const startedAt = Date.now()
         try {
           const updated = await pollSearch(job.searchJobId, lastRevision, { signal: abortController.signal })
           if (!isCurrentRun()) return
@@ -284,7 +289,10 @@ export function useSearch() {
             setResults(hydrated)
           }
           if (!updated.searchComplete) {
-            pollRef.current = window.setTimeout(doPoll, POLL_INTERVAL_MS)
+            pollRef.current = window.setTimeout(doPoll, nextPollDelayMs({
+              unchanged: Boolean(updated.unchanged),
+              elapsedMs: Date.now() - startedAt,
+            }))
             return
           }
           finishActiveJob({ id: job.searchJobId, type: "search" })
@@ -298,7 +306,7 @@ export function useSearch() {
           abortControllerRef.current = null
         }
       }
-      pollRef.current = window.setTimeout(doPoll, POLL_INTERVAL_MS)
+      pollRef.current = window.setTimeout(doPoll, POLL_FAST_MS)
       return true
     } catch (err) {
       if (!isCurrentRun() || err instanceof FlyDeskSearchCancelledError) return false

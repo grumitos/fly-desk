@@ -661,6 +661,10 @@ function redactMatrixJobForPersistence(job: MatrixJobRecord): MatrixJobRecord {
   };
 }
 
+function isTerminalJobStatus(status: SearchJobStatus): boolean {
+  return status !== "running";
+}
+
 function isPersistableStatus(status: SearchJobStatus): boolean {
   return status === "completed" || status === "running";
 }
@@ -701,6 +705,18 @@ function sumPersistedBytes(entries: Map<string, PersistedEntryState>): number {
   return total;
 }
 
+/*
+ * One parked poll.
+ *
+ * `settle` is idempotent: whichever comes first — the job's next revision, the
+ * job leaving the store, or the timeout — resolves the caller once and drops
+ * the registration, so the losing paths become no-ops instead of double
+ * resolves.
+ */
+interface JobChangeWaiter {
+  settle(): void;
+}
+
 export class SearchSessionStore {
   private readonly sessions = new Map<string, SearchSessionMetadata>();
   private readonly purchasePaths = new Map<string, StoredPurchasePath>();
@@ -722,6 +738,8 @@ export class SearchSessionStore {
   private readonly diskOnlyMatrixJobs = new Map<string, number>();
   private readonly diskOnlyPurchasePathIds = new Set<string>();
   private readonly diskOnlySessionPurchasePathIds = new Map<string, Set<string>>();
+  private readonly searchJobWaiters = new Map<string, Set<JobChangeWaiter>>();
+  private readonly matrixJobWaiters = new Map<string, Set<JobChangeWaiter>>();
   private readonly scheduler: SessionStoreScheduler;
   private persistTimer: SessionStoreTimerHandle | undefined;
   private residentBudgetTimer: SessionStoreTimerHandle | undefined;
@@ -794,7 +812,97 @@ export class SearchSessionStore {
     }, RESTORE_INDEX_BUILD_DELAY_MS);
   }
 
+  /*
+   * Hold a poll open until the job it asks about actually moves.
+   *
+   * The UI used to ask every 900ms and so learned about a finished search
+   * ~450ms plus one round trip after it finished. Parking the request here
+   * instead makes the answer leave the moment `updateSearchJob` bumps the
+   * revision. Everything that cannot move — a job the store no longer holds,
+   * one already past the caller's revision, one that has already finished —
+   * resolves at once, so a caller never waits for news that will not come.
+   */
+  waitForSearchJobChange(jobId: string, sinceRevision: number, timeoutMs: number): Promise<void> {
+    const job = this.searchJobs.get(jobId);
+    if (!job || job.revision > sinceRevision || isTerminalJobStatus(job.status) || timeoutMs <= 0) {
+      return Promise.resolve();
+    }
+
+    return this.registerJobChangeWaiter(this.searchJobWaiters, jobId, timeoutMs);
+  }
+
+  waitForMatrixJobChange(jobId: string, sinceRevision: number, timeoutMs: number): Promise<void> {
+    const job = this.matrixJobs.get(jobId);
+    if (!job || job.revision > sinceRevision || isTerminalJobStatus(job.status) || timeoutMs <= 0) {
+      return Promise.resolve();
+    }
+
+    return this.registerJobChangeWaiter(this.matrixJobWaiters, jobId, timeoutMs);
+  }
+
+  private registerJobChangeWaiter(
+    waiters: Map<string, Set<JobChangeWaiter>>,
+    jobId: string,
+    timeoutMs: number,
+  ): Promise<void> {
+    return new Promise<void>((resolve) => {
+      let bucket = waiters.get(jobId);
+      if (!bucket) {
+        bucket = new Set<JobChangeWaiter>();
+        waiters.set(jobId, bucket);
+      }
+
+      const registered = bucket;
+      let timer: SessionStoreTimerHandle | undefined;
+      const waiter: JobChangeWaiter = {
+        settle: () => {
+          if (!registered.delete(waiter)) {
+            return;
+          }
+          if (registered.size === 0 && waiters.get(jobId) === registered) {
+            waiters.delete(jobId);
+          }
+          if (timer !== undefined) {
+            this.scheduler.clearTimeout(timer);
+            timer = undefined;
+          }
+          resolve();
+        },
+      };
+
+      registered.add(waiter);
+      /* The scheduler's timers are unref'd: a parked poll never holds the
+         process open through a shutdown. */
+      timer = this.scheduler.setTimeout(() => {
+        timer = undefined;
+        waiter.settle();
+      }, timeoutMs);
+    });
+  }
+
+  private wakeJobChangeWaiters(waiters: Map<string, Set<JobChangeWaiter>>, jobId: string): void {
+    const bucket = waiters.get(jobId);
+    if (!bucket) {
+      return;
+    }
+
+    waiters.delete(jobId);
+    for (const waiter of [...bucket]) {
+      waiter.settle();
+    }
+  }
+
+  private wakeAllJobChangeWaiters(): void {
+    for (const jobId of [...this.searchJobWaiters.keys()]) {
+      this.wakeJobChangeWaiters(this.searchJobWaiters, jobId);
+    }
+    for (const jobId of [...this.matrixJobWaiters.keys()]) {
+      this.wakeJobChangeWaiters(this.matrixJobWaiters, jobId);
+    }
+  }
+
   close(): void {
+    this.wakeAllJobChangeWaiters();
     if (this.restoreIndexTimer) {
       this.scheduler.clearTimeout(this.restoreIndexTimer);
       this.restoreIndexTimer = undefined;
@@ -1123,6 +1231,7 @@ export class SearchSessionStore {
 
     this.searchJobs.set(jobId, next);
     this.syncSearchSessionMetadata(next);
+    this.wakeJobChangeWaiters(this.searchJobWaiters, jobId);
     if (!offersUnchanged) {
       this.pruneSessionOwners(jobId, new Set([
         ...rewrittenAllOffers.map((offer) => offer.id),
@@ -1356,6 +1465,7 @@ export class SearchSessionStore {
     };
 
     this.matrixJobs.set(jobId, next);
+    this.wakeJobChangeWaiters(this.matrixJobWaiters, jobId);
     if (!cellsUnchanged) {
       this.pruneSessionOwners(jobId, new Set(rewrittenCells.map((cell) => cell.key)));
     }
@@ -1548,6 +1658,7 @@ export class SearchSessionStore {
       this.searchJobs.delete(jobId);
       this.deferredSearchJobs.delete(jobId);
       this.sessions.delete(jobId);
+      this.wakeJobChangeWaiters(this.searchJobWaiters, jobId);
       this.forgetSessionPurchasePaths(jobId);
     }
 
@@ -1563,6 +1674,7 @@ export class SearchSessionStore {
       removedMatrixJobs += 1;
       this.matrixJobs.delete(jobId);
       this.deferredMatrixJobs.delete(jobId);
+      this.wakeJobChangeWaiters(this.matrixJobWaiters, jobId);
       this.forgetSessionPurchasePaths(jobId);
     }
 
@@ -1687,10 +1799,12 @@ export class SearchSessionStore {
       this.deferredSearchJobs.delete(candidate.id);
       this.sessions.delete(candidate.id);
       this.diskOnlySearchJobs.set(candidate.id, candidate.lastAccessedAtMs);
+      this.wakeJobChangeWaiters(this.searchJobWaiters, candidate.id);
     } else {
       this.matrixJobs.delete(candidate.id);
       this.deferredMatrixJobs.delete(candidate.id);
       this.diskOnlyMatrixJobs.set(candidate.id, candidate.lastAccessedAtMs);
+      this.wakeJobChangeWaiters(this.matrixJobWaiters, candidate.id);
     }
 
     const purchasePathIds = new Set(this.sessionPurchasePathIds.get(candidate.id) ?? []);

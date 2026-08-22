@@ -15,6 +15,7 @@ import {
 } from "./temp-artifacts";
 import { startProviderPrewarmLoop } from "./provider-prewarm";
 import { isSearchServiceDelegationConfigured } from "./search-service-client";
+import { startSearchWorkerPool, stopSearchWorkerPool } from "./search-worker-client";
 import { flushPendingProgressForShutdown } from "./http-router";
 
 const STARTUP_BACKGROUND_TASK_DELAY_MS = 10_000;
@@ -153,6 +154,7 @@ async function main() {
     if (providerPrewarmHandle) {
       clearInterval(providerPrewarmHandle);
     }
+    stopSearchWorkerPool();
     await stopServerWithinDrainWindow();
     await tempCleanupPromise?.catch(() => undefined);
     activeRuntime?.locationSuggestions.purgeExpired(Number.POSITIVE_INFINITY);
@@ -188,6 +190,9 @@ async function main() {
   }, STARTUP_BACKGROUND_TASK_DELAY_MS);
   startupCleanupTimer.unref?.();
   if (!delegatesSearch) {
+    /* Start the pooled workers with the server, so the first search pays for a
+       warm worker instead of a Bun startup. */
+    startSearchWorkerPool();
     providerPrewarmStartTimer = setTimeout(() => {
       providerPrewarmStartTimer = undefined;
       providerPrewarmHandle = startProviderPrewarmLoop(startupRuntime?.providerStatus);

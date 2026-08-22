@@ -293,7 +293,7 @@ export const AGIL_CONCURRENCY = Object.freeze({
     return SHARED_SEARCH_CONCURRENCY.rangeMinimum;
   },
   get gdsSearch() {
-    return resolveProviderSubrequestConcurrency("AGIL_GDS_SEARCH_CONCURRENCY", 4);
+    return resolveProviderSubrequestConcurrency("AGIL_GDS_SEARCH_CONCURRENCY", AGIL_GDS_LIST.length);
   },
   get matrixCell() {
     return resolveMatrixCellConcurrency("AGIL_MATRIX_CELL_CONCURRENCY");
@@ -3118,7 +3118,11 @@ export async function resolveLocalAgilExactProgressive(
   onUpdate?: (result: ProviderSearchResult) => boolean | void,
 ): Promise<ProviderSearchResult> {
   let session = await getAgilSession();
-  const groups: AgilSearchGroup[] = [];
+  // Mapping is quadratic when it re-runs over every accumulated group after each
+  // GDS reply, so the mapped offers are memoized and only the newly resolved
+  // groups are appended. Groups still land in completion order, which keeps the
+  // deduped result identical to mapping everything at the end.
+  const mappedOffers: CanonicalOffer[] = [];
   const warnings: string[] = [];
   let partial = false;
   let stopRequested = false;
@@ -3129,13 +3133,12 @@ export async function resolveLocalAgilExactProgressive(
     await mapConcurrent(AGIL_GDS_LIST, AGIL_CONCURRENCY.gdsSearch, async (gds) => {
       try {
         const resolvedGroups = await searchGroupsWithGds(session, request, gds);
-        groups.push(...resolvedGroups);
-        const offers = dedupeAgilOffers(
-          groups.flatMap((group) => mapGroupToOffers(group, request)),
-        );
+        for (const group of resolvedGroups) {
+          mappedOffers.push(...mapGroupToOffers(group, request));
+        }
 
         if (onUpdate?.({
-          offers,
+          offers: dedupeAgilOffers(mappedOffers),
           warnings: uniqueStrings([...warnings]),
           partial: true,
         }) === false) {
@@ -3148,12 +3151,8 @@ export async function resolveLocalAgilExactProgressive(
           : `Agil GDS ${gds} omitted due to an unknown error.`;
         warnings.push(warning);
 
-        const offers = dedupeAgilOffers(
-          groups.flatMap((group) => mapGroupToOffers(group, request)),
-        );
-
         if (onUpdate?.({
-          offers,
+          offers: dedupeAgilOffers(mappedOffers),
           warnings: uniqueStrings([...warnings]),
           partial: true,
         }) === false) {
@@ -3171,15 +3170,15 @@ export async function resolveLocalAgilExactProgressive(
     if (error instanceof Error && error.message === "AGIL_TOKEN_EXPIRED") {
       session = await refreshAgilToken(session);
       cachedSession = session;
+      // The retry keeps whatever was already mapped, exactly as the group
+      // accumulator did; dedupeAgilOffers drops the replayed duplicates.
       await searchAll();
     } else {
       throw error;
     }
   }
 
-  const offers = dedupeAgilOffers(
-    groups.flatMap((group) => mapGroupToOffers(group, request)),
-  );
+  const offers = dedupeAgilOffers(mappedOffers);
   const finalWarnings = uniqueStrings([...warnings]);
 
   if (offers.length === 0 && finalWarnings.length === 0) {
