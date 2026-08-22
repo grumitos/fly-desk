@@ -158,6 +158,33 @@ function resolveSearchServiceTimeoutMs(input?: number): number {
   );
 }
 
+/**
+ * How long this hop waits, for a request that asks the runner to wait too.
+ *
+ * A job poll carries `wait=<ms>`: the runner holds the response until the job
+ * moves or that long passes, so the answer is *expected* not to arrive for the
+ * length of the hold. The base timeout is the budget for the request itself —
+ * the round trip and a body that can be thousands of offers — and the hold is
+ * on top of it. Taking the base alone put a 15s abort against a 15s hold and
+ * made the outcome a race the proxy usually won: a search whose providers went
+ * quiet for fifteen seconds reached the agent as «Search service is
+ * unavailable» while the runner was still working, and any client asking for
+ * the 20s the runner permits failed every time.
+ *
+ * Read from the request rather than from a shared constant, so this cannot go
+ * stale the next time the runner's ceiling moves: whatever hold is being asked
+ * for is the hold this timeout covers.
+ */
+export function resolveProxyTimeoutMsForRequest(url: URL, configured?: number): number {
+  const base = resolveSearchServiceTimeoutMs(configured);
+  const requestedWait = Number.parseInt(url.searchParams.get("wait") ?? "", 10);
+  if (!Number.isFinite(requestedWait) || requestedWait <= 0) {
+    return base;
+  }
+
+  return Math.min(MAX_SEARCH_SERVICE_TIMEOUT_MS, base + requestedWait);
+}
+
 function searchServiceUnavailableResponse(): Response {
   return Response.json(
     { error: "Search service is unavailable." },
@@ -220,7 +247,7 @@ export async function maybeProxySearchServiceRequest(
     method: request.method,
     headers,
     body,
-    signal: AbortSignal.timeout(resolveSearchServiceTimeoutMs(options.timeoutMs)),
+    signal: AbortSignal.timeout(resolveProxyTimeoutMsForRequest(url, options.timeoutMs)),
     duplex: body ? "half" : undefined,
   };
 

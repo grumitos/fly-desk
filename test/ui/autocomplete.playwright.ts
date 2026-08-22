@@ -591,19 +591,28 @@ test("search fields show invalid outline and inline helper text", async () => {
     await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
     await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
     await assert.equal(await page.getByRole("button", { name: "Buscar" }).isDisabled(), true);
+    /* Each calendar is opened, dismissed, and *seen out* before the next one
+       is reached for: the sheet leaves over 160ms (02 §7), and while it is
+       leaving it is still in the document — so the second click could land on
+       the half-closed first dialog instead of on the field behind it. That is
+       the race this case failed under parallel load. */
+    const calendar = page.getByRole("dialog", { name: "Calendario de fechas" });
     await page.getByRole("button", { name: "Salida desde" }).click();
+    await calendar.waitFor();
     await page.keyboard.press("Escape");
+    await calendar.waitFor({ state: "detached" });
     await page.getByRole("button", { name: "Salida hasta" }).click();
+    await calendar.waitFor();
     await page.keyboard.press("Escape");
+    await calendar.waitFor({ state: "detached" });
 
     await assert.equal(await page.getByRole("button", { name: "Salida desde" }).getAttribute("aria-invalid"), "true");
     await assert.equal(await page.getByText("Selecciona el inicio del rango.").count(), 1);
     await assert.equal(await page.getByText("Selecciona el fin del rango.").count(), 0);
 
     await page.getByRole("button", { name: "Salida desde" }).click();
-    await page.getByRole("dialog", { name: "Calendario de fechas" })
-      .getByRole("button", { name: /^31 de marzo de 2026/ })
-      .click();
+    await calendar.waitFor();
+    await calendar.getByRole("button", { name: /^31 de marzo de 2026/ }).click();
     await assert.equal(await page.getByRole("button", { name: "Salida hasta" }).getAttribute("aria-invalid"), "true");
     await assert.equal(await page.getByText("Selecciona el fin del rango.").count(), 1);
   });

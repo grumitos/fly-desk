@@ -5,6 +5,8 @@ import {
   POLL_FAST_MS,
   POLL_INTERVAL_MS,
   POLL_LONG_WAIT_MS,
+  POLL_MAX_CONSECUTIVE_FAILURES,
+  POLL_RETRY_DELAY_MS,
 } from "../frontend/src/lib/poll-schedule"
 
 /*
@@ -35,4 +37,22 @@ test("the requested wait stays under the router's ceiling", async () => {
   const { JOB_POLL_MAX_WAIT_MS } = await import("../src/http-router")
   assert.ok(POLL_LONG_WAIT_MS > 0)
   assert.ok(POLL_LONG_WAIT_MS <= JOB_POLL_MAX_WAIT_MS)
+})
+
+test("the hold the UI asks for is covered by the hop that forwards it", async () => {
+  /*
+   * The two numbers that made a long-haul search read as «Search service is
+   * unavailable»: the runner was asked to hold for 15s and the proxy in front
+   * of it aborted at 15s, so the answer arriving on time was a coin toss.
+   */
+  const { resolveProxyTimeoutMsForRequest } = await import("../src/search-service-client")
+  const url = new URL(`http://fly-desk.test/api/search/job-1?sinceRevision=1&wait=${POLL_LONG_WAIT_MS}`)
+  assert.ok(resolveProxyTimeoutMsForRequest(url) > POLL_LONG_WAIT_MS)
+})
+
+test("a lost answer is retried before the search is called failed", () => {
+  assert.ok(POLL_MAX_CONSECUTIVE_FAILURES >= 2)
+  assert.ok(POLL_RETRY_DELAY_MS > 0)
+  // Short enough that a runner which is really gone is reported promptly.
+  assert.ok(POLL_MAX_CONSECUTIVE_FAILURES * POLL_RETRY_DELAY_MS <= 2_000)
 })
