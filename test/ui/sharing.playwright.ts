@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Page, Route } from "playwright";
-import { openDesktop, withDesktopPage } from "../helpers/ui.ts";
+import { openDesktop, registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
 import { clickSegment, segment, waitForLocationFieldsClosed } from "./support.ts";
+
+registerDesktopHarness();
 
 test("invalid shared dates do not roll over in the search form", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {

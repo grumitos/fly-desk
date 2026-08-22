@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Page, Route } from "playwright";
-import { openDesktop, withDesktopPage } from "../helpers/ui.ts";
+import { openDesktop, registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { clickSegment, routeLocationUsageSuggestions, segment, waitForFontsReady } from "./support.ts";
+
+registerDesktopHarness();
 
 test("autocomplete uses combobox, listbox, and option semantics", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {

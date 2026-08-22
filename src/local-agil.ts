@@ -285,6 +285,20 @@ const AGIL_RANGE_DAY_RETRY_DELAY_MS = Math.max(
   Math.trunc(Number(process.env.AGIL_RANGE_DAY_RETRY_DELAY_MS ?? 250)) || 0,
 );
 
+// An exact search fans out over every GDS id at once, so the ceiling can never
+// drop below that or a single search would need more than one wave to finish.
+const AGIL_MIN_INFLIGHT_SEARCH_REQUESTS = AGIL_GDS_LIST.length;
+const AGIL_DEFAULT_MAX_INFLIGHT_SEARCH_REQUESTS = 32;
+
+function resolveAgilMaxInflightSearchRequests(): number {
+  const raw = process.env.AGIL_MAX_INFLIGHT_SEARCH_REQUESTS?.trim();
+  const parsed = raw ? Number(raw) : Number.NaN;
+  const requested = Number.isFinite(parsed)
+    ? Math.trunc(parsed)
+    : AGIL_DEFAULT_MAX_INFLIGHT_SEARCH_REQUESTS;
+  return Math.max(AGIL_MIN_INFLIGHT_SEARCH_REQUESTS, requested);
+}
+
 export const AGIL_CONCURRENCY = Object.freeze({
   get matrixMinimum() {
     return SHARED_SEARCH_CONCURRENCY.matrixMinimum;
@@ -301,8 +315,98 @@ export const AGIL_CONCURRENCY = Object.freeze({
   get rangeSearch() {
     return resolveRangeSearchConcurrency("AGIL_RANGE_SEARCH_CONCURRENCY");
   },
+  get maxInflightSearchRequests() {
+    return resolveAgilMaxInflightSearchRequests();
+  },
   httpTimeoutMs: AGIL_HTTP_TIMEOUT_MS,
 });
+
+/*
+ * One matrix already puts up to `rangeSearch` x `matrixCell` x `gdsSearch`
+ * /mv/search requests in flight, and every Agil search in this process shares a
+ * single pooled worker, so concurrent searches from several callers used to add
+ * up with no ceiling. This FIFO semaphore is that ceiling: a slot is held from
+ * before the request starts until its body has been consumed, and only
+ * /mv/search goes through it (start-search, the token mint and the location
+ * suggestions stay unthrottled).
+ */
+interface AgilInflightLimiter {
+  acquire: () => Promise<() => void>;
+  readonly inFlight: number;
+  readonly queued: number;
+  reset: () => void;
+}
+
+function createAgilInflightLimiter(resolveLimit: () => number): AgilInflightLimiter {
+  let inFlight = 0;
+  let waiters: Array<() => void> = [];
+
+  const drain = (): void => {
+    while (waiters.length > 0 && inFlight < resolveLimit()) {
+      const next = waiters.shift();
+      if (!next) {
+        break;
+      }
+
+      inFlight += 1;
+      next();
+    }
+  };
+
+  const makeRelease = (): (() => void) => {
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+
+      released = true;
+      inFlight = Math.max(0, inFlight - 1);
+      drain();
+    };
+  };
+
+  return {
+    acquire: () => {
+      if (waiters.length === 0 && inFlight < resolveLimit()) {
+        inFlight += 1;
+        return Promise.resolve(makeRelease());
+      }
+
+      return new Promise<() => void>((resolve) => {
+        waiters.push(() => resolve(makeRelease()));
+      });
+    },
+    get inFlight() {
+      return inFlight;
+    },
+    get queued() {
+      return waiters.length;
+    },
+    reset: () => {
+      inFlight = 0;
+      waiters = [];
+    },
+  };
+}
+
+const agilSearchRequestLimiter = createAgilInflightLimiter(resolveAgilMaxInflightSearchRequests);
+
+export function resetAgilInflightLimiterForTests(): void {
+  agilSearchRequestLimiter.reset();
+}
+
+export function readAgilInflightLimiterStateForTests(): {
+  inFlight: number;
+  queued: number;
+  max: number;
+} {
+  return {
+    inFlight: agilSearchRequestLimiter.inFlight,
+    queued: agilSearchRequestLimiter.queued,
+    max: AGIL_CONCURRENCY.maxInflightSearchRequests,
+  };
+}
 
 /*
  * The three values a token is minted from, and why they are worth keeping.
@@ -2867,31 +2971,37 @@ async function searchCellWithGds(
   request: SearchRequest,
   gds: number,
 ): Promise<AgilCellQuote | undefined> {
-  const response = await fetchAgil(`${AGIL_BASE_URL}/mv/search`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${session.token}`,
-      "not-loading": "true",
-    },
-    body: JSON.stringify(buildAgilSearchPayload(request, gds)),
-  }, `Agil matrix search GDS ${gds}`);
+  const release = await agilSearchRequestLimiter.acquire();
 
-  if (response.status === 401) {
-    throw new Error("AGIL_TOKEN_EXPIRED");
+  try {
+    const response = await fetchAgil(`${AGIL_BASE_URL}/mv/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.token}`,
+        "not-loading": "true",
+      },
+      body: JSON.stringify(buildAgilSearchPayload(request, gds)),
+    }, `Agil matrix search GDS ${gds}`);
+
+    if (response.status === 401) {
+      throw new Error("AGIL_TOKEN_EXPIRED");
+    }
+
+    if (!response.ok) {
+      return undefined;
+    }
+
+    const json = await response.json() as AgilSearchResponse;
+    const groups = scopeAgilSearchGroups(
+      Array.isArray(json.groups) ? json.groups : [],
+      request,
+      gds,
+    );
+    return selectAgilMatrixQuote(groups, request);
+  } finally {
+    release();
   }
-
-  if (!response.ok) {
-    return undefined;
-  }
-
-  const json = await response.json() as AgilSearchResponse;
-  const groups = scopeAgilSearchGroups(
-    Array.isArray(json.groups) ? json.groups : [],
-    request,
-    gds,
-  );
-  return selectAgilMatrixQuote(groups, request);
 }
 
 async function searchGroupsWithGds(
@@ -2899,26 +3009,32 @@ async function searchGroupsWithGds(
   request: SearchRequest,
   gds: number,
 ): Promise<AgilSearchGroup[]> {
-  const response = await fetchAgil(`${AGIL_BASE_URL}/mv/search`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${session.token}`,
-      "not-loading": "true",
-    },
-    body: JSON.stringify(buildAgilSearchPayload(request, gds)),
-  }, `Agil search GDS ${gds}`);
+  const release = await agilSearchRequestLimiter.acquire();
 
-  if (!response.ok) {
-    await throwAgilHttpResponseError(response, `Agil GDS ${gds}`);
+  try {
+    const response = await fetchAgil(`${AGIL_BASE_URL}/mv/search`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.token}`,
+        "not-loading": "true",
+      },
+      body: JSON.stringify(buildAgilSearchPayload(request, gds)),
+    }, `Agil search GDS ${gds}`);
+
+    if (!response.ok) {
+      await throwAgilHttpResponseError(response, `Agil GDS ${gds}`);
+    }
+
+    const json = await response.json() as AgilSearchResponse;
+    return scopeAgilSearchGroups(
+      Array.isArray(json.groups) ? json.groups : [],
+      request,
+      gds,
+    );
+  } finally {
+    release();
   }
-
-  const json = await response.json() as AgilSearchResponse;
-  return scopeAgilSearchGroups(
-    Array.isArray(json.groups) ? json.groups : [],
-    request,
-    gds,
-  );
 }
 
 async function startAgilSearch(
