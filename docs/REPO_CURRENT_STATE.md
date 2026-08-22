@@ -67,9 +67,10 @@ The React UI must not display simulated controls. The following remain outside t
 
 ### Supply Chain
 
-- supported package manager: Bun (`packageManager: "bun@1.3.14"`)
+- supported package manager: Bun (`packageManager: "bun@1.4.0"`)
 - current lockfile: `bun.lock`
 - `bunfig.toml` disables lifecycle scripts during installation and filters versions published less than three days ago
+- `bunfig.toml` also disables peer auto-install (`peer = false`): every real peer is declared explicitly, and `bun-plugin-tailwind`'s `bun >= 1.0.0` peer used to pull the npm `bun` package with ~350 MB of platform binaries into every release; the runtime is the system Bun
 - TypeScript 7 performs typechecking and builds through `@typescript/native`; `typescript-eslint` uses TypeScript 6 only as a development API because TypeScript 7 does not yet expose a stable programmatic API
 - `.npmrc` sets `ignore-scripts=true` as protection against accidental npm/pnpm installations
 - pnpm is not adopted as a normal workflow because the repository is Bun-only and has no `pnpm-lock.yaml`
