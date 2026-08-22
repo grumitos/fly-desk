@@ -2,11 +2,6 @@
 # Supply-chain hardening: keep dependency lifecycle scripts disabled and avoid
 # very new package versions during installs unless a package is deliberately exempted.
 ignoreScripts = true
-# Do not auto-install peer dependencies. Every real peer (react, typescript,
-# eslint) is declared explicitly; the only implicit one was `bun-plugin-tailwind`'s
-# `bun >= 1.0.0` peer, which pulled the npm `bun` package and ~350 MB of
-# platform binaries into every release. The runtime is the system Bun.
-peer = false
 minimumReleaseAge = 259200
 # Security override: 5.0.8 fixes GHSA-mh99-v99m-4gvg and was published
 # inside the normal age window. Keep the exemption scoped to this package.
