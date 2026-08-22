@@ -756,9 +756,7 @@ export function SearchShell({
         <PaxRow label="Bebés" detail="Menos de 2 años" value={infants} onInc={() => updateInfants(infants + 1)} onDec={() => updateInfants(infants - 1)} decDisabled={infants <= 0} incDisabled={infants >= adults * MAX_LAP_INFANTS_PER_ADULT || passengerSlotsRemaining <= 0} />
       </div>
       <p className="fd-pax-note">
-        Máximo {MAX_PASSENGERS} por búsqueda · {MAX_LAP_INFANTS_PER_ADULT === 1
-          ? "un bebé en falda por adulto"
-          : `hasta ${MAX_LAP_INFANTS_PER_ADULT} bebés en falda por adulto`}
+        Máximo {MAX_PASSENGERS} por búsqueda
       </p>
     </>
   )
