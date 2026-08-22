@@ -1,5 +1,11 @@
 import type { BaggageSummary, CanonicalOffer, Itinerary, Segment } from "@/types"
-import { cityNameForIataCode, normalizeIataCode, stripAllAirportsLabel } from "../../../src/core/location-display"
+import {
+  cityNameForIataCode,
+  isAirportFacilityLabel,
+  normalizeIataCode,
+  stripAirportFacilityWords,
+  stripAllAirportsLabel,
+} from "../../../src/core/location-display"
 
 export type LayoverItem = {
   city: string
@@ -224,6 +230,34 @@ function stripStationNoise(value: string): string {
     .replace(/^[A-Z]{3}\s*[·-]\s*/iu, "")
     .replace(/\s*\([A-Z]{3}\)\s*$/iu, "")
     .trim()
+}
+
+/**
+ * What the itinerary calls the place a code names.
+ *
+ * The code decides it, not the provider: Agil answers «Lima» for LIM and Click
+ * and Book Plus answers «Aeropuerto Internacional Jorge Chávez», and the same
+ * flight read one way in one search and the other way in the next. The
+ * catalogue behind `cityNameForIataCode` is the one the card's stop label
+ * already falls back to, so this is the *same* parser reaching the detail
+ * rather than a second opinion about the same station.
+ *
+ * A code the catalogue does not know keeps the provider's own name, cleaned:
+ * no catalogue can derive «Lima» from «Jorge Chávez», and a name is more than
+ * three letters of nothing.
+ */
+export function stationPlaceName(code?: string, name?: string): string {
+  const city = cityNameForIataCode(code)
+  if (city) return city
+
+  /* Plate 1b writes «LIM · Jorge Chávez», not «LIM · Aeropuerto Internacional
+     Jorge Chávez»: the words that name the facility are not the name of the
+     place, and dropping them is what makes two providers describing the same
+     runway at different lengths read alike. Only applied to a label that
+     announces itself as one, so a station whose real name happens to be long
+     is left as the provider wrote it. */
+  const provider = stationDisplayName(name)
+  return isAirportFacilityLabel(provider) ? stripAirportFacilityWords(provider) : provider
 }
 
 export function stationDisplayName(value?: string): string {
