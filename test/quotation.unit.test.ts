@@ -592,7 +592,8 @@ test("migration package pairs known destination cities with their country flags"
   const cases = [
     { code: "MAD", city: "Madrid", flag: "🇪🇸" },
     { code: "MIA", city: "Miami", flag: "🇺🇸" },
-    { code: "BOG", city: "Bogota", flag: "🇨🇴" },
+    { code: "BOG", city: "Bogotá", flag: "🇨🇴" },
+    { code: "GRU", city: "São Paulo", flag: "🇧🇷" },
   ];
 
   for (const destination of cases) {

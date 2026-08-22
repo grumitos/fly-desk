@@ -34,16 +34,17 @@ repository made on top of the manual.
 | 8c abbreviates the stops lane but keeps the airports at every count | The stacked short form names the airports for one stop and shows the bare count from two | 57px holds «1 esc · BOG» (54) and nothing near «2 esc · PTY, MIA» (82) or «3 esc · PTY, MIA +1» (95). Cutting those to «2 esc…» hides the codes the abbreviation exists to preserve and adds a dangling ellipsis; the count alone says all of what it says. The desk long form is unchanged, the `title` still carries every layover, and the detail sheet names each stop. |
 | 04 §7's skeleton was read as a claim that expires, and 11 §3 gives a «tarda» notice for a search that is late | Neither exists. The skeleton stands, silent, for as long as the search is alive | **Owner-decided, against the plates.** «Esos avisos de demora no deben existir, solo el absoluto de no funcionar.» Two surfaces went: the status line the skeleton grew at eight seconds, and the empty state that took the whole column from a reader who had asked for no movement. The reasoning behind the 8s was already that a real search takes 15–40s and more — the production smoke's *fastest* case lands around 15 — which makes «está tardando más de lo habitual» an announcement of the ordinary case, at the moment the agent can do least about it. What still speaks is failure, and it has its own states: a provider that fell reaches the one-line notice (04 §8) and a search that reached nobody takes the column with «No se pudo consultar a los proveedores». `stillSearchingBody`, the 8s timer and the reduced-motion branch are deleted rather than disabled; a Playwright case asserts the absence at nine seconds in both motion preferences. |
 | 03 §5 reads "the plinth lists the available providers", and "listed = available" | The plinth lists the providers this deployment searches, always, with no state | Health was tried and it backfired: filtering by a live `ready` observation dropped Click and Book Plus from the idle screen entirely, because it cannot reach `ready` until a real search has answered. The rail is coverage — «Buscando en» — and a provider that fails a search is said in one line above the results (04 §8). `GET /api/provider-status` stays as an authenticated diagnostic surface with no UI consumer. |
-| 02 §12 sets a 44px touch minimum for every square icon control on a phone | The two title-bar buttons stay at 36 | 02 §4 and the mockup both draw them at 36, and the mockup is the delivered source. Flagged rather than silently unified. |
+| 02 §12 sets a 44px touch minimum for every square icon control on a phone | The mobile catalogue is 34 / 40 / 46, and the two title-bar buttons stay one step below it | **Owner-decided, against the plates.** «Muchos botones se ven muy sobredimensionados espacialmente en tamaño de altura, la idea inicial era reducir el clic incorrecto pero se exageró.» Read as a floor for *every* square control, 44 stopped being a defence against a mis-tap and became the height of the screen: a 44px row per airline, a 44px cell per date, a 44px square per glyph, stacked. 40 is still comfortably clear of the 24px floor of WCAG 2.5.8 and within a finger of Apple's 44pt, and it returns 4px per control and 6 per counter — most of a card per screen. The three sizes keep their relationship, so nothing built on them is re-thought; only `--fd-control-touch{,-sm,-lg}` move, which is why the QA cases now read the token instead of restating the number. |
+| 02 §4 and plate 1c give the phone a title bar at every moment | It is drawn at rest and gone once a search exists; its copy action moves to the end of the filter row | **Owner-decided, against the plates.** «Puedes quitar la barra de marca (conservando solo el botón de copiar y moverlo) cuando se hace una búsqueda … puedes aprovechar el espacio derecho de filtros.» At rest the bar has the top of the screen to itself and belongs there. Once the results exist the same 48px is the most expensive strip on the display — a wordmark, a link to the page already open and a theme switch, above a list that already spends a summary row, a filter row and a status row before its first card. 02 §5 protects controls, not furniture, and the one control in the bar that was not furniture is not hidden: `.fd-filter-strip-copy` rehouses it in the free right of the filter row, pinned with `position: sticky` so the chips scroll under it instead of carrying it away. The bar is hidden rather than unmounted because the theme preference lives in it. |
 | 11 §2.4 makes editing «`active` with the form back in its resting anatomy», which the mockup draws with the mode and trip segments back above the fields | The segments have two positions and no third: above the form at rest, centred in the title bar for as long as a search exists | Editing is reached by clicking a field, so the inverse FLIP fired on the most ordinary gesture there is and the segments jumped out of the bar and back into the form each time. Nothing about the *mode* of the search is being edited when a date is retyped. On a desk the form is already whole in the active state, so this leaves editing with nothing to move — which is the point. |
 | 03 §8 puts the policy lines «al pie del reposo» | They were the last child of the form; they are now a slot the stage owns, below the lower spacer and above the provider rail, at the form's 1180px measure | Inside the form they were not at the foot of anything: they sat between the fields and the notice those fields produce, so a paragraph naming the allowed window was read *above* the error about the date just typed. The rail drops its own `border-top` when they are present, so the foot opens with one rule instead of framing the line in a box no plate draws. |
 | 1b and 8c draw the schedule as loose values on the card's own surface, in fixed lanes | The two legs stand on a `--secondary` ground: one plate per leg where they sit side by side, one band behind the pair where they stack | **Owner-decided, from the redesign canvas** («se ve tosco … distribuir bien todo el espacio disponible, tanto para ida y vuelta como solo ida»). What read as crude was not the paint but the nine fixed lanes: with two legs each elastic stops lane held ~94 for a label of 60, two twin holes at mid-row; with one leg the row kept all nine tracks, so a one-way card carried **half an empty row and a divider down the middle of it** — the rule was drawn from the grid whether or not a return existed. The plate answers both: `flex: 1 1 0` splits the track, so two legs fill it and one leg fills it, and the ground bounds «cuándo» as one object. It buys back information as well as order — the wide row now has 164–210 in its stops lane against the 60–95 it had, which is the long wording the side-by-side row above had to abbreviate. Painted, never built: every ground (`__legs`, `__baggage`, and the side-by-side `__leg`) is an absolutely positioned `::before` inset by the bleed, so content boxes, lanes, row heights and every threshold in `result-card.css` are pixel-identical to before. The first pass did it with `padding` plus a negative `margin-inline`, which paints the same picture and lies about the geometry: the element's border box grows by 16px, and this box is measured — the #61 pin reads `getBoundingClientRect()` and asserts `list − legs === 436`, which the bleed version failed at every list between the stacking threshold and 1073, with the lanes inside it unmoved. It also charged 8px of card height to a phone that counts its page in rows. Re-measured with the `::before`: `list − legs` is 436 at 1142, 1074, 1073, 1072, 918, 900, 795 and 775; the plain card is 58 in every disposition; the group card is 101 in both, so `resultListItemDisplayWeight` keeps the 1.67 its own derivation gives it; the phone card is unchanged at 94. The elastic stops lane never moves, which is why the wide row can now afford the long wording — 164 to 210 against the 60 to 95 it had — while the phone keeps the abbreviation its 57px lane needs. On a phone the pair of legs shares one ground and the baggage keeps its bare icons: the chip's ground there would read as a third block on a row that already carries two. |
 | 8c hangs the baggage pair on what the fare includes, in an `auto` lane | The pair is drawn whenever the provider said anything, included or not, and the lane is a fixed 32 | «A veces pierde su distribución», reported with a screenshot of one row whose price and provider sat a lane left of every other row's. Two faults, one cause. The card gated the pair on `baggage.label`, which names only what is *included*, so a fare that includes neither — or that no provider described — rendered nothing, even though 04 §4's dimmed icons are exactly how «no lleva bodega» is drawn and the model had kept that evidence all along. And with the pair gone the `auto` lane collapsed, so auto-placement moved the price into the baggage lane and the provider into the price's. `list − legs === 436` broke for those fares too, silently: every fixture in the case that pins it had baggage. The skeleton had the same shape all along — it draws no pair — so it had been standing in the wrong lanes since the baggage got its track, which is the value jump 04 §7 forbids. Fixed lane, explicit `grid-column` for baggage, price and provider, and `shown` on the model instead of the label; a Playwright case now draws the three answers a provider can give and asserts one geometry. |
 | Plate 1b draws the list column as one bordered card holding the header, the chips and every result | The list has no box of its own: the header floats above the cards, which stand on the stage, exactly as the redesign commit (`5172ea6`) rendered it | **Owner-decided, against the plates.** #45 gave the column the card the plate draws, and on a desk the outcome was the result cards' own borders running flush against the wrapper's border — a frame touching a frame («el borde llega hasta el borde de la tarjeta de resultados; eso no era así en el commit de rediseño»). The paint (border, radius, fill, shadow, header band) is removed; the column keeps only its structure (container query, flex, overflow). Armazón C was never boxed, so the phone is untouched. |
 
-Only the result card asks the list container (`fdlist`); the pager, the
-migratory grid and the card cascade answer the shell (`fdshell`) at 719.98,
-because the master table describes them as desk-versus-phone shapes.
+Only the result card asks the list container (`fdlist`); the migratory grid and
+the card cascade answer the shell (`fdshell`) at 719.98, because the master
+table describes them as desk-versus-phone shapes.
 
 **One rule sets all three card thresholds:** the disposition in force must fit
 its own one-stop stops label. Measured against the loaded face, that label is 75
@@ -96,41 +97,53 @@ eye.
 
 ## Decisions that bind the results column
 
-**The page and its skeleton are one measurement.** 4a asks for «never more rows
-than the real page», and the real page is whatever the column fits. The page had
-been measured against its column for some time; the skeleton had not — it drew a
-constant seven, capped to six when stacked by a CSS `nth-child`, into a column
-that holds eleven or more, so every load painted half the space its own results
-were about to fill. The count is now taken once, above the branch that chooses
-between them, by the hook that sizes the page; the CSS cap is gone and the
-skeleton has no default. A partial search is unchanged: there the count still
+**The list and its skeleton are one measurement.** 4a asks for «never more rows
+than the real list», and what the list opens on is whatever the column fits. The
+list had been measured against its column for some time; the skeleton had not —
+it drew a constant seven, capped to six when stacked by a CSS `nth-child`, into a
+column that holds eleven or more, so every load painted half the space its own
+results were about to fill. The count is now taken once, above the branch that
+chooses between them, by the hook that opens the list; the CSS cap is gone and
+the skeleton has no default. A partial search is unchanged: there the count still
 comes from the rows actually missing.
 
-**The column is measured before the first paint, and the skeleton reserves the
-pager's strip.** Two things kept the shared measurement from actually being
-shared. The first answer was scheduled on `requestAnimationFrame`, so the
-skeleton's first mount — and again the arrival, which re-keys the panel on the
-incoming `searchJobId` — painted one frame at `RESULTS_PAGE_SIZE_FALLBACK`: four
-bones in a column of eleven, then a page of four cards under a pager that had
-already counted twelve offers. Inside a layout effect the DOM is laid out, so
-the first measurement is taken synchronously and the frame is kept only to
-coalesce the observer's later ones. The second is that the two columns were not
-the same column: the pager is a sibling of the viewport, so the page's viewport
-is 41px shorter than the skeleton's, and eleven bones were handed over to ten
-cards. The skeleton now renders an empty `.fd-pager--reserved` with the pager's
-own class and token, so both measure one box. A result set that fits on one page
-has no pager and gives that row back, leaving the skeleton one bone short —
-the case where the count was never the complaint.
+**The column is measured before the first paint.** The first answer used to be
+scheduled on `requestAnimationFrame`, so the skeleton's first mount — and again
+the arrival, which re-keys the panel on the incoming `searchJobId` — painted one
+frame at the fallback: four bones in a column of eleven, and four cards in a
+column that had already been measured for twelve. Inside a layout effect the DOM
+is laid out, so the first measurement is taken synchronously and the frame is
+kept only to coalesce the observer's later ones. The two columns are the same
+box now that neither the skeleton nor the list reserves a strip beneath itself
+— the pager that made them differ by 41px is gone (below).
 
-**The page budget is fractional.** Capacity used to be floored to whole plain
-rows *before* the weights were applied, which is only harmless when every row is
-plain. A column of 687 holds 10.76 rows; floored to 10 it pays for a group
-(1.67) and eight flights and refuses a ninth at 10.67 — with 80px of empty
-column beneath it, more than the 64 that ninth card needed. Two roundings, each
-losing less than a row, together losing more than one. The hook now publishes
-the budget whole for pagination and floored only for the things that draw rows
-(the skeleton, the partial-search filler). Weighing rows against a budget is
-what the weight system was always for; it had only ever been handed an integer.
+**The results are one list that grows, not a run of pages.** **Owner-decided,
+against the plates.** 04 §6 draws a pager in two forms and 1b gives it a strip
+at the foot of the column; both are removed. A page is a promise about a fixed
+amount of screen, and this column no longer makes one: it opens on what the
+column fits, adds two columns' worth whenever the end of the window comes within
+900px of the viewport, and never takes anything back. What that buys is the
+strip itself — 41px on every armazón, which is most of a card on a phone — and
+the gesture: reaching offer 40 of 520 is a scroll rather than four taps on a
+26px cell. The weights survive the pager that motivated them, because the
+question they answer survives it: `resultItemsFillingCapacity` still measures
+the opening window in plain-card slots, since five items that happen to be
+groups are eight slots and five that are flights are five.
+
+The window is grown by an `IntersectionObserver` on a zero-height sentinel
+rather than by the scroll handler already on the viewport: a handler fires on
+every frame of every flick and each crossing is a state change, while the
+observer fires once per crossing and the batch it renders pushes the sentinel
+out of range until the reader keeps going. The prefetch margin is a column, not
+a screenful, because a batch is a render and not a fetch — every offer is
+already in memory when the job answers. On a desk the growth stays inside the
+list's own scroller (`.fd-list-viewport`), which is what keeps the plates'
+three-column workspace intact; the shell itself never scrolls.
+
+11 §3's «cada filtro y cada orden devuelve la lista al principio» used to happen
+as a side effect of landing on page 1. It is now said outright, keyed on the
+view rather than on the offers, so the progressive batches that re-render this
+list all the way through a search leave the reader where they were.
 
 **These are frame-level facts, so the tests read frames.** The first version of
 these cases fulfilled the search route instantly and asserted settled state,
@@ -140,13 +153,12 @@ The cases in `test/ui/results.playwright.ts` now delay the response and record
 every distinct `bones/cards` pair the list paints, asserting on the sequence
 rather than its last entry.
 
-**The page ceiling is a guard, not a page size.** `RESULTS_PAGE_SIZE_MAX` was 12
-because 12 was the fit of a 1440-tall desk when it was written; screens grew and
-it became a cap. A 1920×1080 column fits 13 plain rows and a 1440-tall one fits
-19, so the ceiling left a row empty on the reporter's screen and seven on a
-taller one. It is 20 — that 19 plus a row of slack. It is also what a phone's
-deliberately-taller-than-the-screen page gets, so a mobile page is now 20 cards
-rather than 12.
+**The column ceiling is a guard, not a window size.** `RESULTS_COLUMN_ROWS_MAX`
+was 12 because 12 was the fit of a 1440-tall desk when it was written; screens
+grew and it became a cap. A 1920×1080 column fits 13 plain rows and a 1440-tall
+one fits 19, so the ceiling left a row empty on the reporter's screen and seven
+on a taller one. It is 20 — that 19 plus a row of slack. It bounds the bones and
+the opening window; past it the list grows by scrolling like everywhere else.
 
 **An offer is inside a group when its itinerary is, not only when its id is.**
 `combinations[].offerId` trusts the provider to have listed every offer its own

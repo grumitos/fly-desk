@@ -1800,10 +1800,9 @@ test("02 §11 · the list keeps its exact scrollTop across the detail sheet", as
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
     await page.getByRole("button", { name: "Buscar" }).click();
     await page.getByTestId("result-card").first().waitFor();
-    /* The page size is measured from the viewport, so it settles a frame or two
-       after the cards land — and settling changes `pageCount`, which is one of
-       the two things 02 §11 *does* send the list back to 0. Scrolling before
-       that is testing the wrong moment. */
+    /* The window is measured from the viewport, so it settles a frame or two
+       after the cards land. Scrolling before that is testing the wrong
+       moment. */
     await waitForListSettled(page);
 
     await page.locator(".fd-list-viewport").evaluate((node) => { node.scrollTop = node.scrollHeight; });
@@ -1828,11 +1827,24 @@ test("02 §11 · the list keeps its exact scrollTop across the detail sheet", as
       .evaluate((node) => Math.round(node.scrollTop));
     assert.ok(scrolled > 0, `the mobile list has no scroll to restore: ${scrolled}`);
 
-    /* The *last* card, because it is the one on screen at this position.
-       Clicking one further up would have the runner scroll it into view first,
-       and then the position under test is lost by the gesture rather than by
-       the sheet — which is a way of measuring nothing. */
-    await page.getByTestId("result-card").last().click();
+    /* A card that is *on screen at this position*. Clicking one anywhere else
+       would have the runner scroll it into view first, and then the position
+       under test is lost by the gesture rather than by the sheet — which is a
+       way of measuring nothing. The last card of the list is no longer that
+       card: an infinite list keeps a batch below the fold, so the end of the
+       DOM is a screen or more past the end of the view. */
+    const onScreenIndex = await page.evaluate(() => {
+      const viewport = document.querySelector(".fd-list-viewport");
+      if (!viewport) return -1;
+      const bounds = viewport.getBoundingClientRect();
+      const cards = Array.from(document.querySelectorAll('[data-testid="result-card"]'));
+      return cards.findLastIndex((card) => {
+        const rect = card.getBoundingClientRect();
+        return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
+      });
+    });
+    assert.ok(onScreenIndex >= 0, "no result card is fully on screen");
+    await page.getByTestId("result-card").nth(onScreenIndex).click();
     await page.getByRole("dialog").waitFor();
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => document.querySelectorAll('[role="dialog"]').length === 0);
@@ -1843,7 +1855,14 @@ test("02 §11 · the list keeps its exact scrollTop across the detail sheet", as
   });
 });
 
-test("02 §11 · changing page returns the list to 0 with no animated scroll", async () => {
+test("02 §11 · re-sorting returns the list to 0 with no animated scroll", async () => {
+  /*
+   * The pager used to be what sent the list back to the top, as a side effect
+   * of landing on page 1. With one continuous list the gesture that does it is
+   * the one that makes it a different list: 11 §3's «cada filtro y cada orden
+   * devuelve la lista al principio». Scrolling itself must not — that is the
+   * case above.
+   */
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeChoreographySearch(page, 60);
     await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
@@ -1853,13 +1872,20 @@ test("02 §11 · changing page returns the list to 0 with no animated scroll", a
     await waitForListSettled(page);
 
     await page.locator(".fd-list-viewport").evaluate((node) => { node.scrollTop = node.scrollHeight; });
-    const nextPage = page.getByRole("button", { name: "Página siguiente" });
-    await nextPage.waitFor();
-    await nextPage.click();
+    await page.waitForFunction(() => {
+      const node = document.querySelector(".fd-list-viewport");
+      return Boolean(node && node.scrollTop > 0);
+    });
 
-    /* 07 §0 rule 2 and 07 §5: the page change is a crossfade at fixed height,
-       and the scroll back to the top is not animated — so there is no
+    await page.getByRole("radio", { name: "Ordenar por duración" }).click();
+
+    /* 07 §0 rule 2 and 07 §5: the sort is a crossfade at fixed height, and the
+       scroll back to the top is not animated — so there is no
        `scroll-behavior: smooth` to wait out and no animation on the viewport. */
+    await page.waitForFunction(() => {
+      const node = document.querySelector(".fd-list-viewport");
+      return Boolean(node && Math.round(node.scrollTop) === 0);
+    });
     const settled = await page.locator(".fd-list-viewport").evaluate((node) => ({
       scrollTop: Math.round(node.scrollTop),
       scrollBehavior: getComputedStyle(node).scrollBehavior,

@@ -49,11 +49,15 @@ export function ResultsSkeleton({
   attachViewport,
 }: {
   /**
-   * How many rows to draw. 4a asks for «never more rows than the real page»,
-   * and the real page is whatever the column fits — so the count arrives
-   * already measured, from the same hook that sizes the page of results this
+   * How many rows to draw. 4a asks for «never more rows than the real list»,
+   * and what the real list opens on is whatever the column fits — so the count
+   * arrives already measured, from the same hook that opens the list this
    * skeleton is standing in for. There is no default: a constant here is what
    * painted seven bones into a column that held eleven.
+
+   * The two columns are the same column now that neither ends in a pager: the
+   * viewport the bones are counted into is the viewport the cards land in,
+   * with nothing reserved below either of them.
    */
   rows: number
   /** Rendered inside an existing list (partial search) rather than alone. */
@@ -71,7 +75,7 @@ export function ResultsSkeleton({
   if (inline) return <>{skeletonRows}</>
 
   /* Alone, the skeleton is the list: the same body, viewport and list element
-     the real page uses, so the rows do not slide sideways when they are
+     the real list uses, so the rows do not slide sideways when they are
      replaced.
 
      The status line that used to stand above the bones is gone with the timer
@@ -82,19 +86,6 @@ export function ResultsSkeleton({
       <div ref={attachViewport} className="fd-list-viewport" aria-hidden="true">
         <div className="fd-results-list fd-results-list--skeleton">{skeletonRows}</div>
       </div>
-      {/* The pager's strip, empty and reserved.
-
-          Without it the two columns are not the same column: the pager is a
-          sibling of the viewport, so the page's viewport is 41px shorter than
-          the skeleton's, and the bones were counted into a taller box than the
-          results ever get — eleven bones handed over to ten cards, which is the
-          value jump 04 §7 forbids. It is the pager's own class, so the height
-          is the pager's own tokens rather than a number copied next to it.
-
-          A result set that fits on one page has no pager and gives this row
-          back, so there the skeleton is one bone short. That is the case where
-          the count was never the complaint. */}
-      <div className="fd-pager fd-pager--reserved" aria-hidden="true" />
     </div>
   )
 }

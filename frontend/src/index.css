@@ -687,9 +687,10 @@
      — so it takes no border, no surface and no dismissal, only the spinner it
      shares with the «Parcial» pill. */
 
-  /* 02 §9: 44px, r999, anchored to the bottom-right of the list — the corner a
-     thumb reaches without moving the hand. It sits over the viewport rather
-     than inside it, so it does not scroll away with the content it undoes.
+  /* 02 §9: one touch square, r999, anchored to the bottom-right of the list —
+     the corner a thumb reaches without moving the hand. It sits over the
+     viewport rather than inside it, so it does not scroll away with the content
+     it undoes.
      The shadow is the `emergente` level of 01 §4: §9 writes a fourth shadow,
      and the elevation catalog is closed at three. */
   .fd-back-to-top {
@@ -733,9 +734,11 @@
   /*
    * 04 §9 / 07 §4 row 12: cards arrive 6px low and in cascade, 30ms apart, and
    * the cascade is capped — seven on a desk, six on a phone. The cap is why the
-   * delay is written per position instead of from an index: past the cap every
-   * remaining card shares the last delay, so a long page still finishes in the
-   * same beat as a short one.
+   * delay is written per position instead of from an index, and why the rule
+   * selects those positions rather than every child: a card past the cap is
+   * drawn the frame it exists, which is what makes the cascade an arrival and
+   * not something the list replays on every batch it appends while it is
+   * scrolled.
    *
    * `nth-child` rather than a prop: the list children are two different
    * components, and the position in the list is a fact about the list.
@@ -752,7 +755,7 @@
    * `matrix(1, 0, 0, 1, 0, 0)`. Ending the fill is what returns the row to
    * `transform: none`.
    */
-  .fd-results-list[data-cascade="true"] > * {
+  .fd-results-list[data-cascade="true"] > *:nth-child(-n+7) {
     animation: fd-enter-row var(--fd-dur-emergente) var(--fd-ease-estructura) backwards;
     animation-delay: calc(6 * var(--fd-stagger-row));
   }
@@ -782,12 +785,12 @@
   }
 
   /* 04 §9: seven on a desk, six on a phone. The stacked card is taller, so the
-     seventh is below the fold and its delay would only postpone a card nobody
-     is looking at. Only the catch-all moves — positions 1 to 6 already carry
-     their own delay. */
+     seventh is below the fold and animating it would only postpone a card
+     nobody is looking at. Only the seventh position moves — 1 to 6 already
+     carry their own delay. */
   @container fdshell (max-width: 719.98px) {
-    .fd-results-list[data-cascade="true"] > * {
-      animation-delay: calc(5 * var(--fd-stagger-row));
+    .fd-results-list[data-cascade="true"] > *:nth-child(7) {
+      animation: none;
     }
   }
 
@@ -1119,6 +1122,27 @@
     padding: 0 12px;
   }
 
+  /*
+   * And gone the moment there is a search to read.
+   *
+   * Plate 1c gives the brand the top of the *resting* screen, which is the
+   * screen it belongs to: at rest there is nothing else competing for it. Once
+   * the results exist the same 48px is the most expensive strip on the display
+   * — it holds a wordmark, a link to the page already open and a theme switch,
+   * above a list that has to show flights through a search summary, a filter
+   * row and a status row. 02 §5 lists what a phone may hide and the title bar
+   * is furniture, not one of the controls it protects; the one action that was
+   * not furniture — copy — is not hidden, it is rehoused on the filter row
+   * (`.fd-filter-strip-copy`).
+   *
+   * Hidden rather than unmounted: the theme lives in this component, and a
+   * `data-workspace-active` that unmounted it would drop the stored preference
+   * the next search restored.
+   */
+  .fd-topbar[data-workspace-active="true"] {
+    display: none;
+  }
+
   .fd-topbar-brand-mark {
     width: 23px;
     height: 23px;
@@ -1152,15 +1176,9 @@
     background: var(--color-secondary);
   }
 
-  /* Plate 1d gives the same buttons a 44px reach once the list is behind them,
-     where they are hit while scrolling rather than while reading. */
-  .fd-topbar[data-workspace-active="true"] .fd-capsule-cell {
-    height: var(--fd-control-touch);
-  }
-
-  /* Segmented controls go full width at the touch minimum. The pill moves in
-     by a third pixel because at 44px a 2px inset reads as a hairline
-     (plates 1e and 8d; 01 §3). */
+  /* Segmented controls go full width at the mobile control height. The pill
+     moves in by a third pixel because at this size a 2px inset reads as a
+     hairline (plates 1e and 8d; 01 §3). */
   .fd-segmented {
     height: var(--fd-control-touch);
   }
@@ -1177,15 +1195,15 @@
     inset: 3px;
   }
 
-  /* 01 §5 ties the pictogram to the height of the control it sits in: a 44px
-     control takes 18, not the 16 of its 32px desktop twin. Sized here rather
-     than by a prop, because the height is decided here too. */
+  /* 01 §5 ties the pictogram to the height of the control it sits in: a
+     mobile control takes 18, not the 16 of its 32px desktop twin. Sized here
+     rather than by a prop, because the height is decided here too. */
   .fd-segmented-item svg {
     width: var(--fd-icon-18);
     height: var(--fd-icon-18);
   }
 
-  /* Plate 1c stacks both segments full width at 44px, one under the other. */
+  /* Plate 1c stacks both segments full width, one under the other. */
   .fd-trip-mode-controls {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -1204,14 +1222,15 @@
 
   /*
    * 05 §1 and 02 §7.6: on a phone the detail's actions are anchored at the foot
-   * of the sheet, at 44px, with the sheet footer's padding and the home
-   * indicator absorbed. They stay inside the panel — one component, three
-   * mounts (rule 1) — and take the anchoring from `position: sticky` against
+   * of the sheet, at the mobile control height, with the sheet footer's
+   * padding and the home indicator absorbed. They stay inside the panel — one
+   * component, three mounts (rule 1) — and take the anchoring from `position: sticky` against
    * the sheet body, which is the only thing that scrolls.
    */
-  /* 02 §12: every square icon control reaches 44px here, «sin excepciones».
-     The counter grows with its buttons — a 44px ± inside a 32px frame would
-     spill. */
+  /* 02 §12: every square icon control takes the mobile touch height here,
+     «sin excepciones» — see the catalogue in `design-system.css` for why that
+     height is 40 and no longer 44. The counter grows with its buttons: a touch
+     ± inside a 32px frame would spill. */
   .fd-stay-counter {
     height: var(--fd-control-touch-lg);
   }
@@ -1224,16 +1243,17 @@
   /* The cross of the date control is a square icon target like any other, in
      the merged date halves and in the two location fields alike. Both centre on
      the field by the band construction in `components.css`, which is what lets
-     a 44px target live inside a 58px field: it is centred by a margin the field
-     cannot feel, not by an overflow the row happens to spread evenly. */
+     a touch target live inside a 58px field: it is centred by a margin the
+     field cannot feel, not by an overflow the row happens to spread evenly. */
   .fd-daterange-clear,
   .fd-field-clear {
     width: var(--fd-control-touch);
     height: var(--fd-control-touch);
   }
 
-  .fd-topbar[data-workspace-active="false"] .fd-topbar-copy,
-  .fd-topbar[data-workspace-active="true"] .fd-topbar-paste {
+  /* At rest there is nothing to copy yet, so the bar carries paste alone; the
+     active half of this pair went with the bar itself. */
+  .fd-topbar[data-workspace-active="false"] .fd-topbar-copy {
     display: none;
   }
 
@@ -1331,7 +1351,8 @@
     min-height: 0;
   }
 
-  /* 60px on the right is the 44px swap plus its 10px inset and 6px of air: the
+  /* 60px on the right is the swap button plus its 10px inset and 6px of air:
+     the
      value has to stop before the button, not run under it. */
   .fd-route-fields .fd-field-control {
     height: 100%;
@@ -1371,12 +1392,12 @@
   }
 
   .fd-route-fields .fd-route-swap-cell > button {
-    width: 44px;
-    height: 44px;
+    width: var(--fd-control-touch);
+    height: var(--fd-control-touch);
     border-radius: var(--fd-radius-12);
   }
 
-  /* 18px is the size a 44px control takes (7b). */
+  /* 18px is the size a mobile control takes (7b). */
   .fd-route-fields .fd-swap-icon > svg {
     width: var(--fd-icon-18);
     height: var(--fd-icon-18);
@@ -1556,9 +1577,9 @@
     font-size: var(--fd-text-meta);
   }
 
-  /* 02 §9 and 04 §8 both put the notice at 44px inside the retractable block;
-     it was inheriting the desk's 36px bar height, which also put the dismiss
-     target under the touch minimum of 02 §12. */
+  /* 02 §9 and 04 §8 both put the notice at the touch height inside the
+     retractable block; it was inheriting the desk's 36px bar height, which also
+     put the dismiss target under the minimum of 02 §12. */
   .fd-alert-line {
     height: var(--fd-control-touch);
   }
@@ -1593,9 +1614,40 @@
     display: grid;
   }
 
-  /* Plate 1d: the strip is the middle band of the block — 44px chips on one
-     line that scrolls sideways, never wrapping into a second row that would
-     push the list down. */
+  /*
+   * The copy action at the end of the filter row: pushed to the free right by
+   * the auto margin, and held there by `sticky` once the chips are wide enough
+   * to scroll under it. It carries the row's own surface so the chips passing
+   * beneath it do not show through, and the same 1px `--input` border the
+   * capsule cells wore in the bar it came from.
+   */
+  .fd-filter-strip-copy {
+    position: sticky;
+    right: 0;
+    display: grid;
+    width: var(--fd-control-touch);
+    height: var(--fd-control-touch);
+    flex: 0 0 auto;
+    place-items: center;
+    margin-left: auto;
+    border: 1px solid var(--color-input);
+    border-radius: var(--fd-radius-10);
+    background: var(--color-secondary);
+    color: var(--color-muted-foreground);
+    transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-filter-strip-copy:disabled {
+    opacity: 0.45;
+  }
+
+  .fd-filter-strip-copy:not(:disabled):hover {
+    color: var(--color-foreground);
+  }
+
+  /* Plate 1d: the strip is the middle band of the block — touch-height chips
+     on one line that scrolls sideways, never wrapping into a second row that
+     would push the list down. */
   .fd-filter-strip {
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -2111,8 +2163,8 @@
 
 .fd-sheet-close {
   display: grid;
-  width: 44px;
-  height: 44px;
+  width: var(--fd-control-touch);
+  height: var(--fd-control-touch);
   flex: 0 0 auto;
   place-items: center;
   border: 0;
@@ -2142,7 +2194,7 @@
 }
 
 .fd-filter-sheet .fd-airline-row {
-  height: 44px;
+  height: var(--fd-control-touch);
 }
 
 .fd-location-sheet .fd-sheet-body {
