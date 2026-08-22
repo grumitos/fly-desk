@@ -62,9 +62,9 @@ function buildJwt(payload: Record<string, unknown>): string {
   return `${encode({ alg: "HS256", typ: "JWT" })}.${encode(payload)}.signature`;
 }
 
-test("range progress flushes geometric milestones without cumulative polling churn", async () => {
+test("progress flushes geometric milestones without cumulative polling churn", async () => {
   let syncs = 0;
-  const progress = createTrailingProgressSync("stay-range", () => {
+  const progress = createTrailingProgressSync(() => {
     syncs += 1;
   }, 20);
 
@@ -94,22 +94,34 @@ test("range progress flushes geometric milestones without cumulative polling chu
   progress.dispose();
 });
 
-test("exact progress stays hidden until a forced partial-cache flush", async () => {
+test("an exact search publishes as it resolves, like every other mode", async () => {
+  /*
+   * It used to be the exception: `mark()` returned early for `exact`, so a
+   * provider that answers in parts — Agil reports each of its seven GDS ids —
+   * showed nothing until the last part landed. On a long-haul route that was
+   * the whole wait. The schedule is the same one every mode gets.
+   */
   let syncs = 0;
-  const progress = createTrailingProgressSync("exact", () => {
+  const progress = createTrailingProgressSync(() => {
     syncs += 1;
   }, 10);
 
   progress.mark();
   await Bun.sleep(20);
-  assert.equal(syncs, 0);
-  progress.flush();
   assert.equal(syncs, 1);
-
-  progress.mark();
   progress.dispose();
-  progress.flush();
-  assert.equal(syncs, 1);
+
+  // A job that ends takes its pending publish with it.
+  let abandoned = 0;
+  const pending = createTrailingProgressSync(() => {
+    abandoned += 1;
+  }, 50);
+  pending.mark();
+  pending.dispose();
+  await Bun.sleep(70);
+  assert.equal(abandoned, 0);
+  pending.flush();
+  assert.equal(abandoned, 0);
 });
 
 test("progress snapshots persist geometrically instead of rewriting every growing result set", () => {
@@ -121,7 +133,7 @@ test("progress snapshots persist geometrically instead of rewriting every growin
 
 test("five thousand progress callbacks publish only logarithmic full snapshots", () => {
   let syncs = 0;
-  const progress = createTrailingProgressSync("roundtrip-grid", () => {
+  const progress = createTrailingProgressSync(() => {
     syncs += 1;
   }, 0);
 

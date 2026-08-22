@@ -42,6 +42,7 @@ The React UI must not display simulated controls. The following remain outside t
 ### Loading Feedback
 
 - exact search: inline placeholder and one stable publication of offers after providers finish
+- every search mode publishes its partial results as they resolve, on a trailing schedule capped to one flush per 900 ms and to geometric milestones (1, 2, 4, 8). Exact used to be withheld until its providers had finished, which on a long-haul route was the whole wait: Agil resolves its seven GDS ids separately and reports each one
 - polling and revalidation: `Actualizando` badge; `GET /api/search/:id` and `GET /api/matrix/:id` accept `wait=<ms>` (clamped to 20 s) with `sinceRevision` and hold the response until the job moves, so the UI long-polls with `wait=15000` and re-polls 50 ms after each answer, falling back to 900 ms only against a server that answers `unchanged` immediately
 - partial range/matrix results: `Parcial` badge, geometric milestones coalesced for 900 ms, immediate final state, and cards with stable DOM identity
 - quotation: the first action calls `/api/quotation`, accepts only a validated/verified offer with `priceVerifiedAt`, and uses the returned commercial text; the immediate migratory toggle then runs the same shared compositor over that verified offer

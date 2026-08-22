@@ -281,8 +281,24 @@ function progressSyncKey(kind: "search" | "matrix", jobId: string): string {
   return `${kind}:${jobId}`;
 }
 
+/**
+ * Publishes a running job's progress on a trailing schedule.
+ *
+ * Every search mode is published as it resolves. Exact used to be the one that
+ * was not: `mark()` returned early for it, so a search whose provider answered
+ * in seven parts — Agil resolves its seven GDS ids separately and reports each
+ * one — showed nothing until all seven were in. On a long-haul route that is
+ * the whole wait: a LIM–MIL round trip published one revision, at 15.3s, while
+ * the first GDS had answered around five. Withholding it bought a list that
+ * never re-sorts under the reader, which is worth less than seeing the flights:
+ * the «Parcial» pill already says more is coming, and the range searches have
+ * always worked this way.
+ *
+ * The trailing schedule is what keeps that from becoming churn: a flush lands
+ * at most every `intervalMs`, and only on a geometric milestone — 1, 2, 4, 8 —
+ * so seven GDS replies are three publishes, not seven.
+ */
 export function createTrailingProgressSync(
-  searchMode: SearchRequest["searchMode"],
   sync: () => void,
   intervalMs = SEARCH_PROGRESS_SYNC_INTERVAL_MS,
 ): ProgressSyncController {
@@ -310,7 +326,7 @@ export function createTrailingProgressSync(
   const mark = () => {
     progressCount += 1;
     dirty = true;
-    if (searchMode === "exact" || progressCount < nextPublishCount) {
+    if (progressCount < nextPublishCount) {
       return;
     }
 
@@ -2522,7 +2538,7 @@ async function handleSearchRequest(
   };
 
   if (shouldRunBackgroundSearchJobs()) {
-    const searchProgressSync = createTrailingProgressSync(normalizedRequest.searchMode, () => {
+    const searchProgressSync = createTrailingProgressSync(() => {
       if (isSearchJobRunning(runtime, job.id)) {
         syncSearchJob("running");
       }
@@ -2835,7 +2851,7 @@ async function handleMatrixRequest(
   };
 
   if (shouldRunBackgroundSearchJobs()) {
-    const matrixProgressSync = createTrailingProgressSync(normalizedRequest.searchMode, () => {
+    const matrixProgressSync = createTrailingProgressSync(() => {
       if (isMatrixJobRunning(runtime, job.id)) {
         syncMatrixJob("running");
       }
