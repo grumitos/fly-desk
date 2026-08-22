@@ -301,11 +301,19 @@ test("migratory search sends monthly stay-range requests", async () => {
        restores the previous value (11 §2.1), so pressing it after typing empties
        the field and leaves the CTA disabled — `Enter` is the gesture that
        commits «IATA + ciudad» and closes the panel. */
-    await page.getByRole("combobox", { name: "Origen" }).fill("LIM");
-    await page.getByRole("combobox", { name: "Origen" }).press("Enter");
-    await page.getByRole("combobox", { name: "Destino" }).fill("MIA");
-    await page.getByRole("combobox", { name: "Destino" }).press("Enter");
-    await page.waitForFunction(() => document.querySelectorAll('[role="listbox"]').length === 0);
+    /* `Enter` commits whatever row is highlighted, so the panel has to be open
+       before the key goes down: under load the suggestions can land after the
+       keypress and leave a listbox the wait below never sees closed. */
+    const origin = page.getByRole("combobox", { name: "Origen" });
+    await origin.fill("LIM");
+    await page.getByRole("listbox").waitFor();
+    await origin.press("Enter");
+    await page.getByRole("listbox").waitFor({ state: "detached" });
+    const destination = page.getByRole("combobox", { name: "Destino" });
+    await destination.fill("MIA");
+    await page.getByRole("listbox").waitFor();
+    await destination.press("Enter");
+    await page.getByRole("listbox").waitFor({ state: "detached" });
     /* Wait on the sweep landing rather than on a single response: migratorio is
        one request per month, so «the search happened» is two of them and the
        grid is the only place that says both arrived. */

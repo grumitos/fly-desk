@@ -1101,6 +1101,10 @@ test("running search button cancels the active job and returns to editing", asyn
     assert.equal(await stopButton.evaluate((button) => button.matches(":hover")), true);
     assert.match(await stopButton.innerText(), /Detener/);
 
+    /* Freeze the app clock here: the 50 ms poll timer stops firing on real
+       time, so from this point a poll happens only when the test runs the
+       clock, and the count below is exactly the count of the 150 ms it runs. */
+    await page.clock.pauseAt(Date.now() + 1_000);
     pollRequests = 0;
     await stopButton.click();
     await page.getByRole("button", { name: "Buscar" }).waitFor();

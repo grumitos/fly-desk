@@ -334,6 +334,15 @@ function buildProviderDiagnostics(kind: ProviderDiagnostics["kind"]): ProviderDi
   }];
 }
 
+/* Waits until `Date.now()` has moved, so a wall-clock stamp taken after this
+   cannot equal one taken before it. */
+async function settleWallClockMs(): Promise<void> {
+  const before = Date.now();
+  while (Date.now() === before) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+}
+
 function readSqliteSavedAt(dbPath: string): string | undefined {
   const db = new Database(dbPath, { readonly: true });
   try {
@@ -763,6 +772,10 @@ test("material progress stays in memory until a durable final update persists it
       status: "completed",
     });
 
+    /* `savedAt` is a wall-clock millisecond, not scheduler time: with the
+       persist driven by `clock.advance` two flushes can land in the same one.
+       Step the real clock past it so "changed" keeps meaning a new flush. */
+    await settleWallClockMs();
     clock.advance(260);
     assert.notEqual(readSqliteSavedAt(dbPath), savedAt);
     assert.deepEqual(readPersisted().search, {
