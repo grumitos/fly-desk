@@ -954,6 +954,10 @@ export default function App() {
                 hiddenByFiltersCount={hiddenByFiltersCount}
                 onOpenFilters={() => setWorkspaceOverlay("filters")}
                 onRemoveFilter={handleRemoveFilterChip}
+                /* The title bar is gone from this armazón once a search
+                   exists, so its one surviving action lives here. */
+                onCopySearchConfig={handleCopySearchConfig}
+                copyDisabled={!hasSearchConfig}
               />
             )}
 

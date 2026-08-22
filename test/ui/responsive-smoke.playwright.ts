@@ -1,10 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { Page } from "playwright";
 import { registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
 import { clickSegment, segment } from "./support.ts";
 
 registerDesktopHarness();
+
+/**
+ * The one mobile control height, read from the catalogue that defines it
+ * (`--fd-control-touch`) rather than restated per assertion. 02 §12 is about
+ * every square control agreeing on a height, which is a claim about the token;
+ * a literal in each test turns one decision into twenty-seven of them.
+ */
+async function mobileTouchHeight(page: Page): Promise<number> {
+  return page.evaluate(() => Number.parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue("--fd-control-touch"),
+  ));
+}
 
 const VIEWPORTS = [
   { label: "desktop", width: 1440, height: 900, shell: "wide" },
@@ -279,16 +292,20 @@ for (const viewport of VIEWPORTS) {
         await filtersSheet.waitFor();
         assert.equal(await page.getByRole("heading", { name: "Filtros" }).isVisible(), true);
         assert.equal(await filtersSheet.getByRole("button", { name: "Limpiar" }).isVisible(), true);
-        // 04 §2 draws the sheet's segmented at 44, and 01 §10 closes the
-        // 38/40/36 spread across the plates at 44 in all 27 places: the touch
-        // minimum. 40 is not even in the mobile height catalogue (01 §3).
+        /* 04 §2 draws the sheet's segmented at the mobile control height and
+           01 §10 closes the 38/40/36 spread across the plates at that one
+           height in all 27 places. The height itself is the catalogue's, not a
+           number copied here — it moved from 44 to 40 when three of these in a
+           column proved to be more room than a mis-tap is worth. */
+        const touchHeight = await mobileTouchHeight(page);
+        assert.equal(touchHeight, 40);
         assert.equal(
           Math.round((await filtersSheet.locator(".fd-segmented").first().boundingBox())?.height ?? 0),
-          44,
+          touchHeight,
         );
         assert.equal(
           Math.round((await filtersSheet.locator(".fd-airline-row").first().boundingBox())?.height ?? 0),
-          44,
+          touchHeight,
         );
         // 1e writes the primary action of the sheet as «Ver 386 vuelos»: the
         // count is the label, not a badge after it. The drawing overrides the
@@ -320,7 +337,7 @@ for (const viewport of VIEWPORTS) {
         assert.equal(filterStripLayout.flexWrap, "nowrap");
         assert.equal(filterStripLayout.overflowX, "auto");
 
-        const resultsBody = page.getByTestId("results-page-body");
+        const resultsBody = page.getByTestId("results-list-body");
         const scrollMetrics = await resultsBody.evaluate((element) => {
           const spacer = document.createElement("div");
           spacer.style.cssText = "height:1200px;flex:0 0 1200px";
@@ -359,7 +376,7 @@ for (const viewport of VIEWPORTS) {
 
       let preservedMobileScroll: number | undefined;
       if (viewport.shell === "mobile") {
-        const resultsBody = page.getByTestId("results-page-body");
+        const resultsBody = page.getByTestId("results-list-body");
         await resultsBody.evaluate((element) => {
           element.scrollTop = 64;
         });
@@ -389,7 +406,7 @@ for (const viewport of VIEWPORTS) {
         assert.equal(await detailSheet.getByRole("button", { name: /^Cerrar/ }).isVisible(), true);
         if (viewport.shell === "mobile") {
           assert.equal(
-            await page.getByTestId("results-page-body").evaluate((element) => element.scrollTop),
+            await page.getByTestId("results-list-body").evaluate((element) => element.scrollTop),
             preservedMobileScroll,
           );
         }
@@ -406,7 +423,7 @@ for (const viewport of VIEWPORTS) {
         await detailSheet.getByRole("button", { name: "Cerrar oferta" }).click();
         await detailSheet.waitFor({ state: "detached" });
         assert.equal(
-          await page.getByTestId("results-page-body").evaluate((element) => element.scrollTop),
+          await page.getByTestId("results-list-body").evaluate((element) => element.scrollTop),
           preservedMobileScroll,
         );
 
@@ -465,11 +482,11 @@ test("mobile search overlays use the shared full and partial sheet patterns", as
        same `.fd-quick-chips` strip the desk puts under each field, merged into
        one and titled. There is no `Mobile…` copy of it to look for. */
     await page.locator(".fd-mobile-quick-block .fd-quick-chips").waitFor();
-    // 1c draws both segmenteds full width at 44, and 01 §10 closes the plate
-    // spread (38 in 1c/2b, 40 in 1e/8d, 36 in 2c/1d) at 44 everywhere: the
-    // touch minimum of 02 §12, "sin excepciones".
+    // 1c draws both segmenteds full width, and 01 §10 closes the plate spread
+    // (38 in 1c/2b, 40 in 1e/8d, 36 in 2c/1d) at one height everywhere: the
+    // mobile control of 02 §12, "sin excepciones".
     for (const segmented of await page.locator(".fd-search-controls-row .fd-segmented").all()) {
-      assert.equal(Math.round((await segmented.boundingBox())?.height ?? 0), 44);
+      assert.equal(Math.round((await segmented.boundingBox())?.height ?? 0), await mobileTouchHeight(page));
     }
     // 1c: origin and destination are ONE card — 58 + 1px of divider + 58.
     assert.equal(Math.round((await routeCard.boundingBox())?.height ?? 0), 117);
@@ -484,10 +501,10 @@ test("mobile search overlays use the shared full and partial sheet patterns", as
     assert.equal(await routeCard.locator(".fd-quick-chips").count(), 0);
     assert.equal(await page.locator(".fd-mobile-quick-block .fd-quick-chip").count(), 5);
     assert.equal(await page.getByText("Frecuentes", { exact: true }).isVisible(), true);
-    // 1c: five elastic chips at the touch minimum, no separator (02 §4).
+    // 1c: five elastic chips at the mobile control height, no separator (02 §4).
     assert.equal(
       Math.round((await page.locator(".fd-mobile-quick-block .fd-quick-chips").boundingBox())?.height ?? 0),
-      44,
+      await mobileTouchHeight(page),
     );
     const searchButtonBox = await page.getByRole("button", { name: "Buscar", exact: true }).boundingBox();
     const quickChipsBox = await page.locator(".fd-mobile-quick-block .fd-quick-chips").boundingBox();
@@ -551,7 +568,10 @@ test("mobile search overlays use the shared full and partial sheet patterns", as
     assert.ok(dateSheetBox && dateSheetBox.height >= 790, JSON.stringify(dateSheetBox));
     assert.equal(await dateSheet.getByRole("button", { name: "Mes anterior" }).count(), 0);
     assert.equal(await dateSheet.locator(".fd-cal-weekdays").count(), 1);
-    assert.equal(Math.round((await dateSheet.locator(".fd-cal-cell:not([data-blank='true'])").first().boundingBox())?.height ?? 0), 44);
+    assert.equal(
+      Math.round((await dateSheet.locator(".fd-cal-cell:not([data-blank='true'])").first().boundingBox())?.height ?? 0),
+      await mobileTouchHeight(page),
+    );
     assert.equal(await dateSheet.getByRole("button", { name: "Borrar" }).isVisible(), true);
     assert.equal(await dateSheet.getByRole("button", { name: "Aplicar" }).isVisible(), true);
     assert.equal(await dateSheet.getByRole("button", { name: "Cerrar fechas" }).isVisible(), true);
@@ -623,7 +643,7 @@ test("mobile search overlays use the shared full and partial sheet patterns", as
     assert.deepEqual(filledHalf, {
       halfFitsControl: true,
       valueLine: emptyHalfLine,
-      clearHeight: 44,
+      clearHeight: await mobileTouchHeight(page),
       clearInsideControl: true,
       clearOffCentre: 0,
     });
@@ -635,7 +655,10 @@ test("mobile search overlays use the shared full and partial sheet patterns", as
     assert.ok(passengerSheetBox && passengerSheetBox.height >= 560 && passengerSheetBox.height <= 570, JSON.stringify(passengerSheetBox));
     // 2d: the same passenger row the popover uses, at 64 inside the sheet.
     assert.equal(Math.round((await passengerSheet.locator(".fd-pax-rows > .fd-pax-row").first().boundingBox())?.height ?? 0), 64);
-    assert.equal(Math.round((await passengerSheet.getByRole("button", { name: "Agregar adultos" }).boundingBox())?.height ?? 0), 44);
+    assert.equal(
+      Math.round((await passengerSheet.getByRole("button", { name: "Agregar adultos" }).boundingBox())?.height ?? 0),
+      await mobileTouchHeight(page),
+    );
     await assertNoHorizontalOverflow(page, "mobile:passenger-sheet");
     if (captureDir) await page.screenshot({ path: `${captureDir}/mobile-passenger-sheet.png`, fullPage: true });
     await passengerSheet.getByRole("button", { name: "Cerrar pasajeros" }).click();
@@ -646,7 +669,10 @@ test("mobile search overlays use the shared full and partial sheet patterns", as
     const monthSheet = page.getByRole("dialog", { name: "Meses" });
     await monthSheet.waitFor();
     assert.equal(await monthSheet.getByRole("button", { name: "Mes anterior" }).count(), 0);
-    assert.equal(Math.round((await monthSheet.locator(".fd-cal-cell-month").first().boundingBox())?.height ?? 0), 44);
+    assert.equal(
+      Math.round((await monthSheet.locator(".fd-cal-cell-month").first().boundingBox())?.height ?? 0),
+      await mobileTouchHeight(page),
+    );
     assert.equal(await monthSheet.getByRole("button", { name: "Borrar" }).isVisible(), true);
     assert.equal(await monthSheet.getByRole("button", { name: "Aplicar" }).isVisible(), true);
     await assertNoHorizontalOverflow(page, "mobile:month-sheet");

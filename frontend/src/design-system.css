@@ -50,10 +50,26 @@
     --fd-control-input: 40px; /* secondary inputs */
     --fd-control-primary: 52px; /* search fields · primary action */
 
-    /* Mobile: 36 / 44 / 52, where 44 is the touch minimum. */
-    --fd-control-touch-sm: 36px;
-    --fd-control-touch: 44px;
-    --fd-control-touch-lg: 52px;
+    /*
+     * Mobile: 34 / 40 / 46.
+     *
+     * It was 36 / 44 / 52, and 44 was carried into «every square icon control
+     * on a phone, sin excepciones» (02 §12). Built out, that reading is what
+     * the screen actually looks like: a 44px row for a checkbox, a 44px cell
+     * for a date, a 44px square for a glyph, stacked — every one of them sized
+     * for the worst case of a mis-tap rather than for what it holds. The
+     * mis-tap was worth designing against; paying for it three times in a
+     * column was not.
+     *
+     * 40 is still a comfortable target — well clear of the 24px floor of WCAG
+     * 2.5.8 and within a finger of Apple's 44pt recommendation — and it gives
+     * back 4px on every control and 6 on every counter, which is most of a card
+     * per screen. The three sizes keep their relationship, so nothing that was
+     * built out of them has to be re-thought: only the numbers moved.
+     */
+    --fd-control-touch-sm: 34px;
+    --fd-control-touch: 40px;
+    --fd-control-touch-lg: 46px;
 
     /* ---- 5b · radii ------------------------------------------------------ */
     --fd-radius-4: 4px; /* checkboxes · skeleton blocks */

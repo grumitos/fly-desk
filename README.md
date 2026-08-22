@@ -31,7 +31,7 @@ Fly Desk is a Bun-only application prepared for VPS deployment:
 - up to three recent origins/destinations per browser session and three frequent origins/destinations from permanent global counters, recorded by the backend when a search is accepted
 - an idle provider rail that names the providers the desk searches, always and without health copy; readiness stays on the authenticated `/api/provider-status` surface that the router uses internally
 - visible filters for stops, maximum layover time, baggage, and airlines
-- paginated results with backend warnings
+- one continuous list of results, grown as it is scrolled, with backend warnings
 - a side panel with details, known conditions, purchase paths, and quotation from the shared core; the first quote calls `/api/quotation`, requires a complete provider-validated response for the exact stored flight, and may reuse it for at most 15 minutes before revalidation; the migratory switch updates that same verified offer immediately through the shared compositor
 
 The current React UI does not expose:
