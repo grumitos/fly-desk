@@ -5,8 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SearchRequest } from "../src/core/types";
 import {
+  prewarmProviderInWorker,
   resolveSearchWorkerBunExecutableForTests,
   runProviderSearchInWorker,
+  searchWorkerPoolPidForTests,
+  stopSearchWorkerPool,
 } from "../src/search-worker-client";
 
 const ENV_KEYS = [
@@ -19,9 +22,36 @@ const ENV_KEYS = [
   "BUN_EXECUTABLE_PATH",
   "CHROME_USER_DATA_DIR",
   "COSTAMAR_CHROME_USER_DATA_DIR",
+  "FLY_DESK_SEARCH_WORKER_POOL",
   "FLY_DESK_SEARCH_WORKER_PROCESSES",
   "LOCALAPPDATA",
 ] as const;
+
+function createEmptyChromeProfile(prefix: string): { tempRoot: string; chromeUserDataDir: string } {
+  const tempRoot = mkdtempSync(join(tmpdir(), prefix));
+  const chromeUserDataDir = join(tempRoot, "Google", "Chrome", "User Data");
+  mkdirSync(join(chromeUserDataDir, "Default"), { recursive: true });
+  return { tempRoot, chromeUserDataDir };
+}
+
+function emptyProfileEnv(
+  chromeUserDataDir: string,
+  tempRoot: string,
+): Partial<Record<typeof ENV_KEYS[number], string | undefined>> {
+  return {
+    AGIL_BROWSER_URL: undefined,
+    AGIL_BROWSER_WS_ENDPOINT: undefined,
+    AGIL_CHROME_PROFILE: undefined,
+    AGIL_CHROME_USER_DATA_DIR: chromeUserDataDir,
+    AGIL_CHROME_PROCESS_DISCOVERY: "0",
+    AGIL_TEMP_CHROME_STORAGE_FALLBACK: "0",
+    BUN_EXECUTABLE_PATH: process.execPath,
+    CHROME_USER_DATA_DIR: chromeUserDataDir,
+    COSTAMAR_CHROME_USER_DATA_DIR: chromeUserDataDir,
+    FLY_DESK_SEARCH_WORKER_PROCESSES: "1",
+    LOCALAPPDATA: tempRoot,
+  };
+}
 
 function buildAgilRequest(): SearchRequest {
   return {
@@ -96,25 +126,17 @@ test("search workers resolve Bun instead of inheriting a Node executable", () =>
   assert.equal(resolved, expectedBunPath);
 });
 
-test("provider search workers surface provider errors after starting under Bun", async () => {
-  const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-empty-agil-profile-"));
-  const chromeUserDataDir = join(tempRoot, "Google", "Chrome", "User Data");
-  mkdirSync(join(chromeUserDataDir, "Default"), { recursive: true });
+test("spawn-per-search workers surface provider errors after starting under Bun", async () => {
+  const { tempRoot, chromeUserDataDir } = createEmptyChromeProfile("flydesk-empty-agil-profile-");
 
   try {
     await withTemporaryEnv({
-      AGIL_BROWSER_URL: undefined,
-      AGIL_BROWSER_WS_ENDPOINT: undefined,
-      AGIL_CHROME_PROFILE: undefined,
-      AGIL_CHROME_USER_DATA_DIR: chromeUserDataDir,
-      AGIL_CHROME_PROCESS_DISCOVERY: "0",
-      AGIL_TEMP_CHROME_STORAGE_FALLBACK: "0",
-      BUN_EXECUTABLE_PATH: process.execPath,
-      CHROME_USER_DATA_DIR: chromeUserDataDir,
-      COSTAMAR_CHROME_USER_DATA_DIR: chromeUserDataDir,
-      FLY_DESK_SEARCH_WORKER_PROCESSES: "1",
-      LOCALAPPDATA: tempRoot,
+      ...emptyProfileEnv(chromeUserDataDir, tempRoot),
+      FLY_DESK_SEARCH_WORKER_POOL: "0",
     }, async () => {
+      /* Another test file may have left the default pool running in this
+         process; the assertion below is about this path, not about them. */
+      stopSearchWorkerPool();
       await assert.rejects(
         () => runProviderSearchInWorker({
           kind: "exact",
@@ -128,6 +150,72 @@ test("provider search workers surface provider errors after starting under Bun",
           return true;
         },
       );
+
+      /* With the pool off nothing is kept around between searches. */
+      assert.equal(searchWorkerPoolPidForTests("agil-local"), undefined);
+    });
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("pooled workers survive a failed search and serve the next one from the same process", async () => {
+  const { tempRoot, chromeUserDataDir } = createEmptyChromeProfile("flydesk-pooled-agil-profile-");
+
+  try {
+    await withTemporaryEnv({
+      ...emptyProfileEnv(chromeUserDataDir, tempRoot),
+      FLY_DESK_SEARCH_WORKER_POOL: undefined,
+    }, async () => {
+      try {
+        const runOnce = () => assert.rejects(
+          () => runProviderSearchInWorker({
+            kind: "exact",
+            providerId: "agil-local",
+            request: buildAgilRequest(),
+          }),
+          (error: unknown) => {
+            assert.ok(error instanceof Error);
+            assert.match(error.message, /Unable to extract Agil session from Chrome profiles/);
+            return true;
+          },
+        );
+
+        await runOnce();
+        const firstPid = searchWorkerPoolPidForTests("agil-local");
+        assert.ok(typeof firstPid === "number" && firstPid > 0);
+
+        await runOnce();
+        assert.equal(searchWorkerPoolPidForTests("agil-local"), firstPid);
+      } finally {
+        stopSearchWorkerPool();
+      }
+    });
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("a prewarm message is answered by the pooled worker", async () => {
+  const { tempRoot, chromeUserDataDir } = createEmptyChromeProfile("flydesk-prewarm-agil-profile-");
+
+  try {
+    await withTemporaryEnv({
+      ...emptyProfileEnv(chromeUserDataDir, tempRoot),
+      FLY_DESK_SEARCH_WORKER_POOL: undefined,
+    }, async () => {
+      try {
+        await assert.rejects(
+          () => prewarmProviderInWorker("agil-local"),
+          (error: unknown) => {
+            assert.ok(error instanceof Error);
+            assert.match(error.message, /Unable to extract Agil session from Chrome profiles/);
+            return true;
+          },
+        );
+      } finally {
+        stopSearchWorkerPool();
+      }
     });
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });

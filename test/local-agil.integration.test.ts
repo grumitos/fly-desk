@@ -23,6 +23,7 @@ import {
   readAgilChromeProfileCandidatesForTests,
   readAgilStorageSnapshotFromPage,
   resetAgilSessionCacheForTests,
+  resolveLocalAgilExactProgressive,
   resolveLocalAgilMatrixProgressive,
   resolveAgilBrowserEndpoint,
   resolveAgilChromeDevToolsBrowserWsEndpointForTests,
@@ -1953,4 +1954,176 @@ test("Agil falls back to the browser when the persisted identity is refused", as
     assert.ok(rig.searchAuthorizations.length > 0);
     assert.ok(rig.searchAuthorizations.every((value) => value === `Bearer ${rig.mintedToken}`));
   });
+});
+
+function buildAgilOneWayGroupForGds(gds: number) {
+  const flightNumber = 1000 + gds;
+  return {
+    id: `agil-gds-${gds}`,
+    display: true,
+    airline: { code: "UX", name: "Air Europa" },
+    departure: [
+      {
+        segments: [
+          buildAgilCandidate(
+            flightNumber,
+            "LIM",
+            "MAD",
+            "2026-05-21T08:00:00",
+            "2026-05-21T16:00:00",
+            flightNumber,
+          ),
+        ],
+      },
+    ],
+    pricingInfo: {
+      totalFare: 950 + gds,
+      itinTotalFare: {
+        validatingCarrier: "UX",
+        fareBreakDowns: [
+          {
+            passengerType: { quantity: 1 },
+            passengerFare: {
+              baseFare: 700 + gds,
+              taxes: 250,
+              totalFare: 950 + gds,
+              feeNMV: 0,
+              feePTA: 0,
+              dsctoTaxes: 0,
+            },
+          },
+        ],
+      },
+      tipoCambio: {
+        code: "USD",
+        rate: 3.7531,
+      },
+    },
+  };
+}
+
+async function withMockedAgilPerGdsSearch<T>(run: () => Promise<T>): Promise<T> {
+  const previousFetch = global.fetch;
+  const previousKey = process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+
+  resetAgilSessionCacheForTests();
+  resetAgilApimSubscriptionKeyCacheForTests();
+  process.env.AGIL_APIM_SUBSCRIPTION_KEY = "test-subscription-key";
+  setAgilSessionForTests();
+  global.fetch = (async (input, init) => {
+    const url = String(input);
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/start-search") {
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/search") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { gds?: number };
+      const gds = Number(body.gds ?? 0);
+      return new Response(JSON.stringify({
+        groups: [buildAgilOneWayGroupForGds(gds)],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    return await run();
+  } finally {
+    global.fetch = previousFetch;
+    resetAgilSessionCacheForTests();
+    resetAgilApimSubscriptionKeyCacheForTests();
+    restoreEnv("AGIL_APIM_SUBSCRIPTION_KEY", previousKey);
+  }
+}
+
+test("Agil progressive exact search grows its offers monotonically and ends where the plain search does", async () => {
+  const request = buildAgilExactRequest("one-way");
+  const progressCounts: number[] = [];
+
+  const progressive = await withMockedAgilPerGdsSearch(async () =>
+    resolveLocalAgilExactProgressive(request, (update) => {
+      progressCounts.push(update.offers.length);
+      assert.equal(update.partial, true);
+    }));
+  const plain = await withMockedAgilPerGdsSearch(async () => searchLocalAgilExact(request));
+
+  // One update per GDS, each adding exactly the offers of the GDS that resolved.
+  assert.equal(progressCounts.length, 7);
+  assert.deepEqual(progressCounts, [1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(progressive.offers.length, 7);
+  assert.equal(progressive.partial, false);
+  assert.deepEqual(progressive.warnings, []);
+
+  const sortedIds = (result: { offers: Array<{ id: string }> }) =>
+    result.offers.map((offer) => offer.id).sort();
+  assert.deepEqual(sortedIds(progressive), sortedIds(plain));
+});
+
+test("Agil progressive exact search keeps mapping the surviving GDS when one of them fails", async () => {
+  const previousFetch = global.fetch;
+  const previousKey = process.env.AGIL_APIM_SUBSCRIPTION_KEY;
+  const request = buildAgilExactRequest("one-way");
+  const progressCounts: number[] = [];
+
+  resetAgilSessionCacheForTests();
+  resetAgilApimSubscriptionKeyCacheForTests();
+  process.env.AGIL_APIM_SUBSCRIPTION_KEY = "test-subscription-key";
+  setAgilSessionForTests();
+  global.fetch = (async (input, init) => {
+    const url = String(input);
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/start-search") {
+      return new Response("{}", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url === "https://motorvuelos.expertiatravel.com/mv/search") {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { gds?: number };
+      const gds = Number(body.gds ?? 0);
+      if (gds === 3) {
+        return new Response("{}", { status: 503 });
+      }
+
+      return new Response(JSON.stringify({
+        groups: [buildAgilOneWayGroupForGds(gds)],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const result = await resolveLocalAgilExactProgressive(request, (update) => {
+      progressCounts.push(update.offers.length);
+    });
+
+    assert.equal(result.offers.length, 6);
+    assert.equal(result.partial, true);
+    assert.ok(result.warnings.some((warning) => /Agil GDS 3 omitted/.test(warning)));
+    // The failed GDS still reports progress, but adds no offer to the memo, so
+    // the offer count never decreases and repeats once for the omitted GDS.
+    assert.equal(progressCounts.length, 7);
+    assert.equal(progressCounts.at(-1), 6);
+    progressCounts.forEach((count, index) => {
+      assert.ok(index === 0 || count >= (progressCounts[index - 1] ?? 0));
+    });
+  } finally {
+    global.fetch = previousFetch;
+    resetAgilSessionCacheForTests();
+    resetAgilApimSubscriptionKeyCacheForTests();
+    restoreEnv("AGIL_APIM_SUBSCRIPTION_KEY", previousKey);
+  }
 });

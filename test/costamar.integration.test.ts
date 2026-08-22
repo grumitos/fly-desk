@@ -3591,3 +3591,136 @@ test("createLocalCostamarMatrixDraft leaves only useful stay combinations active
   ]);
   assert.equal(draft.cells.some((cell) => cell.confidence === "empty"), false);
 });
+
+test("Click and Book Plus issues the engine metadata and the search at the same time", async () => {
+  const previousFetch = global.fetch;
+  const previousWarmupEnabled = process.env.CBPLUS_SESSION_WARMUP_ENABLED;
+  const terminalId = "0721808111";
+  const request = buildExactRequest();
+  const calls: string[] = [];
+  let releaseEngine: (() => void) | undefined;
+  let releaseSearch: (() => void) | undefined;
+  const enginePending = new Promise<void>((resolve) => {
+    releaseEngine = resolve;
+  });
+  const searchPending = new Promise<void>((resolve) => {
+    releaseSearch = resolve;
+  });
+
+  process.env.CBPLUS_SESSION_WARMUP_ENABLED = "0";
+  resetCostamarWarmupStateForTests();
+  resetCostamarSessionCacheForTests();
+
+  global.fetch = (async (input) => {
+    const url = String(input);
+
+    if (url === `https://api-zneith.zdev.tech/api-engine/engines/${terminalId}`) {
+      calls.push("engine");
+      await enginePending;
+      return new Response(
+        JSON.stringify(buildEngine()),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (url === "https://air-search-service-zneith.zdev.tech/v2/searchFlights") {
+      calls.push("search");
+      await searchPending;
+      return new Response(
+        JSON.stringify({ status: 200, data: [buildRecommendation()] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    const pending = searchLocalCostamarExact(request, {
+      costamar: {
+        apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+        brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+        terminalId,
+        token: "secret-token",
+        lang: "es",
+      },
+    });
+
+    // Both requests must be in flight before either of them answers.
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual([...calls].sort(), ["engine", "search"]);
+
+    releaseSearch?.();
+    releaseEngine?.();
+    const result = await pending;
+    assert.equal(result.offers.length > 0, true);
+  } finally {
+    releaseSearch?.();
+    releaseEngine?.();
+    global.fetch = previousFetch;
+    resetCostamarWarmupStateForTests();
+    resetCostamarSessionCacheForTests();
+    if (previousWarmupEnabled === undefined) {
+      delete process.env.CBPLUS_SESSION_WARMUP_ENABLED;
+    } else {
+      process.env.CBPLUS_SESSION_WARMUP_ENABLED = previousWarmupEnabled;
+    }
+  }
+});
+
+test("Click and Book Plus still fails with the engine metadata error when that request fails", async () => {
+  const previousFetch = global.fetch;
+  const previousWarmupEnabled = process.env.CBPLUS_SESSION_WARMUP_ENABLED;
+  const terminalId = "0721808112";
+  const request = buildExactRequest();
+
+  process.env.CBPLUS_SESSION_WARMUP_ENABLED = "0";
+  resetCostamarWarmupStateForTests();
+  resetCostamarSessionCacheForTests();
+
+  global.fetch = (async (input) => {
+    const url = String(input);
+
+    if (url === `https://api-zneith.zdev.tech/api-engine/engines/${terminalId}`) {
+      return new Response("{}", { status: 500 });
+    }
+
+    if (url === "https://air-search-service-zneith.zdev.tech/v2/searchFlights") {
+      return new Response(
+        JSON.stringify({ status: 200, data: [buildRecommendation()] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    throw new Error(`Unexpected fetch url: ${url}`);
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      searchLocalCostamarExact(request, {
+        costamar: {
+          apiBaseUrl: "https://costamar.com.pe/vuelos/api",
+          brandBaseUrl: "https://booking.clickandbook.com/vuelos",
+          terminalId,
+          token: "secret-token",
+          lang: "es",
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /engine metadata/i);
+        return true;
+      },
+    );
+  } finally {
+    global.fetch = previousFetch;
+    resetCostamarWarmupStateForTests();
+    resetCostamarSessionCacheForTests();
+    if (previousWarmupEnabled === undefined) {
+      delete process.env.CBPLUS_SESSION_WARMUP_ENABLED;
+    } else {
+      process.env.CBPLUS_SESSION_WARMUP_ENABLED = previousWarmupEnabled;
+    }
+  }
+});

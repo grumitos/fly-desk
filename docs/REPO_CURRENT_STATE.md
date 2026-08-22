@@ -39,7 +39,7 @@ The React UI must not display simulated controls. The following remain outside t
 ### Loading Feedback
 
 - exact search: inline placeholder and one stable publication of offers after providers finish
-- polling and revalidation: `Actualizando` badge
+- polling and revalidation: `Actualizando` badge; `GET /api/search/:id` and `GET /api/matrix/:id` accept `wait=<ms>` (clamped to 20 s) with `sinceRevision` and hold the response until the job moves, so the UI long-polls with `wait=15000` and re-polls 50 ms after each answer, falling back to 900 ms only against a server that answers `unchanged` immediately
 - partial range/matrix results: `Parcial` badge, geometric milestones coalesced for 900 ms, immediate final state, and cards with stable DOM identity
 - quotation: the first action calls `/api/quotation`, accepts only a validated/verified offer with `priceVerifiedAt`, and uses the returned commercial text; the immediate migratory toggle then runs the same shared compositor over that verified offer
 - the idle search frame reserves the ranking-card geometry before the global response arrives; search notices render below without recentering the form in idle or active layouts, while the intentional idle-to-active transition remains animated
@@ -87,6 +87,8 @@ The React UI must not display simulated controls. The following remain outside t
   provider `degraded` rather than `ready`
 - silent provider prewarm is enabled by default and can be disabled with `FLY_DESK_PROVIDER_PREWARM=0`
 - provider searches must run in the dedicated runner when `FLY_DESK_SEARCH_SERVICE_URL` is configured; within the runner, `FLY_DESK_SEARCH_WORKER_PROCESSES=1` keeps providers in child processes
+- with `FLY_DESK_SEARCH_WORKER_POOL=1` (default) those child processes are a pool of one long-lived worker per provider, started with the runner, multiplexing jobs by id over stdin/stdout, cancelled cooperatively per job, recycled once idle after `FLY_DESK_SEARCH_WORKER_MAX_JOBS` (default 500) jobs, and respawned on death; the prewarm loop warms the pooled workers, not the runner, so the Agil bearer, the Click and Book Plus engine metadata, and provider TLS connections survive between searches. `FLY_DESK_SEARCH_WORKER_POOL=0` restores one cold worker per provider per search
+- an Agil exact search fans out over its seven GDS ids in one wave (`SEARCH_PROVIDER_SUBREQUEST_CONCURRENCY` and `AGIL_GDS_SEARCH_CONCURRENCY` default to 7; `AGIL_GDS_SEARCH_CONCURRENCY=4` restores two waves), and the progressive mapping only maps newly resolved groups; Click and Book Plus requests its engine metadata alongside `searchFlights` instead of before it
 - `FLY_DESK_SEARCH_WORKER_PROCESSES=0` remains a temporary QA exception, and external QA must be repeated before changing worker counts, the runner, or warm-up
 - every public search waits for Agil and Click and Book Plus and retains all offers returned by both; visible filters are materialized without trimming `allOffers`, and concurrency limits regulate only batch requests
 - a fresh offer receives `quotationPreparedAt` once, when it first contains the data required for local quotation; cached SWR drafts remove that marker until fresh data is ready. It is distinct from provider revalidation in `priceVerifiedAt`

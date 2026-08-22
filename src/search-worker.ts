@@ -1,11 +1,13 @@
 import {
   createLocalAgilMatrixDraft,
+  prewarmLocalAgilSession,
   resolveLocalAgilExactProgressive,
   resolveLocalAgilMatrixProgressive,
   resolveLocalAgilRangeProgressive,
 } from "./local-agil";
 import {
   createLocalCostamarMatrixDraft,
+  prewarmLocalCostamarContext,
   resolveLocalCostamarExactProgressive,
   resolveLocalCostamarMatrixProgressive,
   resolveLocalCostamarRangeProgressive,
@@ -20,9 +22,21 @@ import { providerPublicFailureMessage } from "./provider-status";
 import type {
   ProviderSearchWorkerComplete,
   ProviderSearchWorkerError,
+  ProviderSearchWorkerInbound,
   ProviderSearchWorkerMessage,
+  ProviderSearchWorkerPrewarm,
   ProviderSearchWorkerRequest,
 } from "./search-worker-protocol";
+
+/* Jobs the client gave up on. The provider callbacks answer `false` from here
+   on, which is what stops the remaining fan-out inside a pooled worker that
+   must stay alive for the other jobs it is multiplexing. */
+const cancelledJobIds = new Set<string>();
+const activeJobIds = new Set<string>();
+
+function jobIsLive(id: string): boolean {
+  return !cancelledJobIds.has(id);
+}
 
 function send(message: ProviderSearchWorkerMessage): void {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -71,11 +85,11 @@ async function runProviderSearch(input: ProviderSearchWorkerRequest): Promise<Pr
       const response = input.providerId === "costamar"
         ? await resolveLocalCostamarMatrixProgressive(input.request, input.providerContext, draft, (cell) => {
             send({ id: input.id, type: "matrix-progress", cell });
-            return true;
+            return jobIsLive(input.id);
           })
         : await resolveLocalAgilMatrixProgressive(input.request, draft, (cell) => {
             send({ id: input.id, type: "matrix-progress", cell });
-            return true;
+            return jobIsLive(input.id);
           });
 
       return {
@@ -94,7 +108,7 @@ async function runProviderSearch(input: ProviderSearchWorkerRequest): Promise<Pr
         partial: partialResult.partial,
         incremental: partialResult.incremental,
       });
-      return true;
+      return jobIsLive(input.id);
     };
 
     const result = input.providerId === "costamar"
@@ -127,13 +141,53 @@ function maybeExit(): void {
 
 function handleWorkerRequest(message: ProviderSearchWorkerRequest): void {
   pendingMessages += 1;
+  activeJobIds.add(message.id);
   void runProviderSearch(message)
     .then((result) => send(result))
+    .catch((error) => send(serializeError(message.id, message.providerId, error)))
+    .finally(() => {
+      activeJobIds.delete(message.id);
+      cancelledJobIds.delete(message.id);
+      pendingMessages -= 1;
+      maybeExit();
+    });
+}
+
+function handlePrewarmRequest(message: ProviderSearchWorkerPrewarm): void {
+  pendingMessages += 1;
+  const prewarmed = message.providerId === "costamar"
+    ? Promise.resolve().then(() => prewarmLocalCostamarContext())
+    : Promise.resolve().then(() => prewarmLocalAgilSession());
+  void prewarmed
+    .then(() => send({ id: message.id, type: "prewarm-complete" }))
     .catch((error) => send(serializeError(message.id, message.providerId, error)))
     .finally(() => {
       pendingMessages -= 1;
       maybeExit();
     });
+}
+
+function handleInboundMessage(message: ProviderSearchWorkerInbound): void {
+  if (!("type" in message)) {
+    handleWorkerRequest(message);
+    return;
+  }
+
+  if (message.type === "cancel") {
+    /* A cancel that lands after the job settled has nothing to stop; recording
+       it would only pin the id in memory for the worker's lifetime. */
+    if (activeJobIds.has(message.id)) {
+      cancelledJobIds.add(message.id);
+    }
+    return;
+  }
+
+  if (message.type === "prewarm") {
+    handlePrewarmRequest(message);
+    return;
+  }
+
+  send(serializeError("unknown", undefined, new Error("Unsupported worker message.")));
 }
 
 process.stdin.setEncoding("utf8");
@@ -152,7 +206,7 @@ process.stdin.on("data", (chunk) => {
     }
 
     try {
-      handleWorkerRequest(JSON.parse(line) as ProviderSearchWorkerRequest);
+      handleInboundMessage(JSON.parse(line) as ProviderSearchWorkerInbound);
     } catch (error) {
       send(serializeError("unknown", undefined, error));
     }
@@ -164,7 +218,7 @@ process.stdin.on("end", () => {
   inputBuffer = "";
   if (line) {
     try {
-      handleWorkerRequest(JSON.parse(line) as ProviderSearchWorkerRequest);
+      handleInboundMessage(JSON.parse(line) as ProviderSearchWorkerInbound);
     } catch (error) {
       send(serializeError("unknown", undefined, error));
     }

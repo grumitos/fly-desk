@@ -4191,7 +4191,12 @@ async function searchRecommendations(
 
   ensureCostamarCredentials(context);
 
-  const engine = await getEngineMetadata(context);
+  // The engine metadata is only needed when mapping, so it travels alongside the
+  // search instead of gating it. Awaiting it after the search keeps today's error
+  // semantics (an engine failure still fails the whole search); the no-op catch
+  // only prevents an unhandled rejection while the search is in flight.
+  const enginePromise = getEngineMetadata(context);
+  enginePromise.catch(() => undefined);
   const search = (searchContext: CostamarProviderContext) => fetchCostamarJson<CostamarSearchResponse>(
     searchContext,
     "/searchFlights",
@@ -4202,7 +4207,13 @@ async function searchRecommendations(
     "Click and Book Plus flight search",
   );
 
-  let payload = await search(context);
+  // Start the search without waiting for the metadata, then await the metadata
+  // first so an engine failure still wins over a search failure, as it did when
+  // the two calls were sequential.
+  const initialSearch = (async () => search(context))();
+  initialSearch.catch(() => undefined);
+  const engine = await enginePromise;
+  let payload = await initialSearch;
   let tokenSearchRejected = false;
   if (
     context.token

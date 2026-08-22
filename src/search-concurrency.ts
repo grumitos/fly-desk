@@ -30,7 +30,10 @@ function atLeast(value: number | undefined, minimum: number): number {
 
 export const SHARED_SEARCH_CONCURRENCY = Object.freeze({
   get providerSubrequestDefault() {
-    return atLeast(readIntegerEnv("SEARCH_PROVIDER_SUBREQUEST_CONCURRENCY"), 4);
+    // Agil fans out over seven GDS ids, so seven keeps an exact search in a
+    // single wave. This default is also the floor, so a provider that throttles
+    // is slowed down through its own env value (AGIL_GDS_SEARCH_CONCURRENCY).
+    return atLeast(readIntegerEnv("SEARCH_PROVIDER_SUBREQUEST_CONCURRENCY"), 7);
   },
   matrixMinimum: 4,
   get matrixCellDefault() {

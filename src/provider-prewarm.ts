@@ -6,6 +6,11 @@ import {
   providerDegradedReasonFromError,
   type ProviderStatusTracker,
 } from "./provider-status";
+import {
+  prewarmProviderInWorker,
+  searchWorkerPathAvailable,
+  searchWorkerPoolEnabled,
+} from "./search-worker-client";
 
 const DEFAULT_PROVIDER_PREWARM_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -28,10 +33,17 @@ export async function prewarmProvidersSilently(providerStatus?: ProviderStatusTr
   const prewarmStart = startPerfTimer();
   const providerIds = ["agil-local", "costamar"] as const satisfies readonly ProviderId[];
   providerIds.forEach((providerId) => providerStatus?.markChecking(providerId, "prewarm"));
-  const outcomes = await Promise.allSettled([
-    prewarmLocalAgilSession(),
-    Promise.resolve().then(() => prewarmLocalCostamarContext()),
-  ]);
+  /* With the pool on, provider searches run inside the pooled workers, so
+     warming this process warms nothing that a search will ever read. */
+  const warmsPooledWorkers = searchWorkerPoolEnabled() && searchWorkerPathAvailable();
+  const outcomes = await Promise.allSettled(
+    warmsPooledWorkers
+      ? providerIds.map((providerId) => prewarmProviderInWorker(providerId))
+      : [
+          prewarmLocalAgilSession(),
+          Promise.resolve().then(() => prewarmLocalCostamarContext()),
+        ],
+  );
 
   outcomes.forEach((outcome, index) => {
     const providerId = providerIds[index]!;

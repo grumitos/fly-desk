@@ -2246,3 +2246,132 @@ test("SEARCH_COMPLETED_SESSION_TTL_MS=0 is the shortest sweep the store can expr
     goneOnFirstPositiveAge: true,
   });
 });
+
+/*
+ * The parked poll.
+ *
+ * `waitForSearchJobChange` is what turns the browser's 900ms tick into an
+ * answer that leaves when the job moves. These cases pin the four ways it is
+ * allowed to end: a new revision, a job that has already finished, a caller
+ * that is already behind, and the timeout. The timeout runs on the manual
+ * scheduler so it is observed by moving time rather than by sleeping.
+ */
+test("waitForSearchJobChange resolves as soon as the job gains a revision", async () => {
+  const store = new SearchSessionStore();
+  const job = store.createSearchJob({
+    request: buildRequest(),
+    offers: [],
+    allOffers: [],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+
+  let resolved = false;
+  const waiting = store.waitForSearchJobChange(job.id, job.revision, 5_000).then(() => {
+    resolved = true;
+  });
+
+  await Promise.resolve();
+  assert.equal(resolved, false);
+
+  const offer = buildOffer("waiter-offer", "https://provider.example/waiter");
+  store.updateSearchJob(job.id, (current) => ({ ...current, offers: [offer], allOffers: [offer] }));
+
+  await waiting;
+  assert.equal(resolved, true);
+  assert.equal(store.getSearchJob(job.id)?.revision, job.revision + 1);
+  store.close();
+});
+
+test("waitForSearchJobChange returns at once for finished, ahead, missing and zero-wait jobs", async () => {
+  const store = new SearchSessionStore();
+  const running = store.createSearchJob({
+    request: buildRequest(),
+    offers: [],
+    allOffers: [],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+  const completed = store.createSearchJob({
+    request: buildRequest(),
+    offers: [],
+    allOffers: [],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "completed",
+  });
+
+  await store.waitForSearchJobChange(completed.id, completed.revision, 5_000);
+  await store.waitForSearchJobChange(running.id, running.revision - 1, 5_000);
+  await store.waitForSearchJobChange("missing-job", 0, 5_000);
+  await store.waitForSearchJobChange(running.id, running.revision, 0);
+  store.close();
+});
+
+test("waitForMatrixJobChange resolves on a revision bump and on its own timeout", async () => {
+  const clock = createManualScheduler(1_700_000_000_000);
+  const store = new SearchSessionStore({ scheduler: clock.scheduler });
+  const job = store.createMatrixJob({
+    request: { ...buildRequest(), tripType: "round-trip", searchMode: "roundtrip-grid" },
+    cells: [],
+    axes: { departureDates: ["2026-04-15"], returnDates: ["2026-04-22"] },
+    confidenceSummary: {},
+    recommendations: [],
+    providerMeta: buildProviderMeta(),
+    searchMeta: buildSearchMeta(),
+    warnings: [],
+    status: "running",
+  });
+
+  let bumped = false;
+  const onBump = store.waitForMatrixJobChange(job.id, job.revision, 5_000).then(() => {
+    bumped = true;
+  });
+  store.updateMatrixJob(job.id, (current) => ({
+    ...current,
+    cells: [buildMatrixCell("waiter-cell", "https://provider.example/matrix-waiter")],
+  }));
+  await onBump;
+  assert.equal(bumped, true);
+
+  const revision = store.getMatrixJob(job.id)!.revision;
+  let timedOut = false;
+  const onTimeout = store.waitForMatrixJobChange(job.id, revision, 5_000).then(() => {
+    timedOut = true;
+  });
+  await Promise.resolve();
+  assert.equal(timedOut, false);
+
+  clock.advance(5_000);
+  await onTimeout;
+  assert.equal(timedOut, true);
+  assert.equal(store.getMatrixJob(job.id)?.revision, revision);
+  store.close();
+});
+
+test("closing the store releases parked job polls", async () => {
+  const clock = createManualScheduler(1_700_000_000_000);
+  const store = new SearchSessionStore({ scheduler: clock.scheduler });
+  const job = store.createSearchJob({
+    request: buildRequest(),
+    offers: [],
+    allOffers: [],
+    searchMeta: buildSearchMeta(),
+    providerMeta: buildProviderMeta(),
+    warnings: [],
+    sortMode: "cheapest",
+    status: "running",
+  });
+
+  const waiting = store.waitForSearchJobChange(job.id, job.revision, 20_000);
+  store.close();
+  await waiting;
+});

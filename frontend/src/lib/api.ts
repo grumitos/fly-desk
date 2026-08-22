@@ -10,6 +10,7 @@ import type {
 import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
 import { getBrowserClientSessionId } from "@/lib/browser-client-session"
 import { isIsoDate } from "@/lib/iso-date"
+import { POLL_LONG_WAIT_MS } from "@/lib/poll-schedule"
 import { filterLocationSuggestions, normalizeLocationSearchText, normalizeLocationSuggestions } from "@/lib/locations"
 import { providerDisplayName } from "@/lib/providers"
 import {
@@ -1447,7 +1448,7 @@ export async function startSearch(
 
 export async function pollSearch(jobId: string, sinceRevision?: number, options: RequestOptions = {}): Promise<SearchJobResponse> {
   let url = `${API_BASE}/api/search/${jobId}`
-  if (sinceRevision !== undefined) url += `?sinceRevision=${sinceRevision}`
+  if (sinceRevision !== undefined) url += `?sinceRevision=${sinceRevision}&wait=${POLL_LONG_WAIT_MS}`
   const data = await getJson<BackendSearchJobResponse>(url, options)
   return normalizeSearchJob(data)
 }
@@ -1472,7 +1473,7 @@ export async function pollMatrix(
   options: RequestOptions = {}
 ): Promise<SearchJobResponse> {
   let url = `${API_BASE}/api/matrix/${jobId}`
-  if (sinceRevision !== undefined) url += `?sinceRevision=${sinceRevision}`
+  if (sinceRevision !== undefined) url += `?sinceRevision=${sinceRevision}&wait=${POLL_LONG_WAIT_MS}`
   const data = await getJson<BackendMatrixJobResponse>(url, options)
   return normalizeMatrixJob(data, sortMode)
 }
