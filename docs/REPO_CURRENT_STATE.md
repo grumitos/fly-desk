@@ -30,6 +30,8 @@ The repository does not version generated artifacts:
 - per-person price only for all-adult groups; mixed adult/child/infant searches
   keep the provider total until a real passenger-type breakdown exists
 - side panel with price, known baggage/conditions, purchase paths, and exact-flight provider-revalidated quotation through the shared quotation core; verified prices are reusable for at most 15 minutes
+- a station on the itinerary is named by its IATA code and not by the provider that sent it: the shared catalogue in `src/core/location-display.ts` decides, and a code it does not know keeps the provider's own name with the facility words («Aeropuerto», «International») removed, so two providers describing one runway read alike
+- carrier marks are the codes in `src/core/airline-assets.ts`, one PNG each under `frontend/public/assets/airline-icons`; a carrier the catalogue names but has no mark for falls back to its two-letter code, which is legible in the card's 32px slot where a wordmark is not. `bun run airline-icons:extract <codes>` is the only way marks enter the repository
 
 The React UI must not display simulated controls. The following remain outside the visible interface:
 

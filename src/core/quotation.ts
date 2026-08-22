@@ -1,5 +1,11 @@
 import type { CanonicalOffer, Itinerary, QuotationUsdToPenRateInfo, SearchRequest, Segment } from "./types";
-import { cityNameForIataCode, countryCodeForIataCode, normalizeIataCode, stripAllAirportsLabel } from "./location-display";
+import {
+  cityNameForIataCode,
+  countryCodeForIataCode,
+  isAirportFacilityLabel,
+  normalizeIataCode,
+  stripAllAirportsLabel,
+} from "./location-display";
 import { resolveAirlineDisplayName } from "./airline-names";
 
 export const QUOTATION_FARE_STALE_MINUTES = 15;
@@ -243,10 +249,6 @@ function locationLabel(value?: string): string {
   }
 
   return titleCase(base);
-}
-
-function isAirportFacilityLabel(value: string): boolean {
-  return /\b(?:airport|intl|international|aeropuerto|internacional)\b/i.test(value);
 }
 
 function isUsefulCityLabel(value: string, iata: string): boolean {
