@@ -1732,9 +1732,18 @@ function parseSinceRevision(value: string | null): number | undefined {
  *
  * The browser asks with `wait=<ms>` and the store holds the request open until
  * the job moves, which is what removes the polling interval from the latency of
- * a finished search. The ceiling stays well under the search-service proxy
- * timeout (120s by default), and `wait=0` — the default for any client that
- * does not ask — is exactly the old behaviour.
+ * a finished search. `wait=0` — the default for any client that does not ask —
+ * is exactly the old behaviour.
+ *
+ * The hop in front of this one covers the hold rather than racing it: the web
+ * unit's proxy reads the same `wait` off the request and adds it to its own
+ * timeout (`resolveProxyTimeoutMsForRequest`). This comment used to claim that
+ * ceiling stayed "well under the search-service proxy timeout (120s by
+ * default)", which was a misreading of `FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS`:
+ * the proxy's own default is 15s, so a 20s ceiling sat above it and a 15s hold
+ * tied with it. A search that went quiet for fifteen seconds — a long-haul
+ * route with slow providers is exactly that — reached the agent as an error
+ * while the runner was still working.
  */
 export const JOB_POLL_MAX_WAIT_MS = 20_000;
 

@@ -11,7 +11,12 @@ import {
   startSearch,
   userMessageFromError,
 } from "@/lib/api"
-import { nextPollDelayMs, POLL_FAST_MS } from "@/lib/poll-schedule"
+import {
+  nextPollDelayMs,
+  POLL_FAST_MS,
+  POLL_MAX_CONSECUTIVE_FAILURES,
+  POLL_RETRY_DELAY_MS,
+} from "@/lib/poll-schedule"
 
 const CANCELLED_SEARCH_MESSAGE = "Búsqueda detenida. Puedes ajustar los campos y buscar de nuevo."
 type ActiveJob = { id: string; type: "search" | "matrix" }
@@ -177,6 +182,16 @@ export function useSearch() {
 
         if (!job.searchComplete) {
           let lastRevision = job.revision
+          /*
+           * A poll that fails does not end a search that is still running.
+           *
+           * The job lives on the server and keeps working; this loop is only
+           * the window onto it, and one lost answer — a hop that timed out, a
+           * network blip while the agent's laptop changed wifi — used to close
+           * that window for good and report a failure the search had not had.
+           * Two more tries, then the error is real and is shown.
+           */
+          let consecutiveFailures = 0
           const doPoll = async () => {
             if (!isCurrentRun()) return
             const startedAt = Date.now()
@@ -192,6 +207,7 @@ export function useSearch() {
                 setResults(hydratedUpdate)
                 appendDiagnosticLog(`Actualización ${hydratedUpdate.searchJobId}: revisión ${hydratedUpdate.revision}`, hydratedUpdate.diagnosticLog)
               }
+              consecutiveFailures = 0
               if (!updated.searchComplete) {
                 pollRef.current = window.setTimeout(doPoll, nextPollDelayMs({
                   unchanged: Boolean(updated.unchanged),
@@ -207,7 +223,16 @@ export function useSearch() {
                 return
               }
 
-              appendDiagnosticLog("Error durante actualización", diagnosticLogFromError(err))
+              consecutiveFailures += 1
+              appendDiagnosticLog(
+                `Error durante actualización (intento ${consecutiveFailures} de ${POLL_MAX_CONSECUTIVE_FAILURES})`,
+                diagnosticLogFromError(err),
+              )
+              if (consecutiveFailures < POLL_MAX_CONSECUTIVE_FAILURES) {
+                pollRef.current = window.setTimeout(doPoll, POLL_RETRY_DELAY_MS)
+                return
+              }
+
               setStatusMessage(userMessageFromError(err))
               setLoading(false)
               abortControllerRef.current = null

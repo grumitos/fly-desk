@@ -13,6 +13,18 @@
  * spin. A response that comes back faster than `LONG_POLL_MIN_ELAPSED_MS` with
  * nothing new is read as exactly that, and falls back to the old interval.
  */
+/*
+ * How many answers in a row have to be lost before the search is called failed.
+ *
+ * The job runs on the server; this loop is the window onto it. One lost answer
+ * is a hop that timed out or a network blip, not a search that stopped — and
+ * ending it there reports a failure that did not happen while the runner is
+ * still working. Three is enough to ride out a blip and short enough that a
+ * runner which is really gone is reported in about a second.
+ */
+export const POLL_MAX_CONSECUTIVE_FAILURES = 3
+export const POLL_RETRY_DELAY_MS = 400
+
 export const POLL_INTERVAL_MS = 900
 export const POLL_FAST_MS = 50
 export const POLL_LONG_WAIT_MS = 15_000

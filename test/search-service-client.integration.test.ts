@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   isSearchServiceRoute,
   maybeProxySearchServiceRequest,
+  resolveProxyTimeoutMsForRequest,
   resolveSearchServiceBaseUrl,
 } from "../src/search-service-client";
 import { resolveSearchServiceProxyApiToken } from "../src/service-auth";
@@ -395,6 +396,75 @@ test("search service proxy clamps env timeout to avoid immediate production abor
     assert.equal(aborted, false);
     assert.equal(response?.status, 200);
     assert.deepEqual(await response?.json(), { ok: true });
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("the proxy outlasts the hold it is forwarding, for every wait the runner honours", async () => {
+  /*
+   * The defect this pins: a long-haul search whose providers went quiet for
+   * fifteen seconds reached the agent as «Search service is unavailable» while
+   * the runner was still working. The poll asks the runner to hold for `wait`,
+   * and the proxy was aborting at its own base timeout — 15s against a 15s
+   * hold, decided by whichever fired first, and a certain failure for the 20s
+   * the runner permits.
+   */
+  const { JOB_POLL_MAX_WAIT_MS } = await import("../src/http-router");
+  const { POLL_LONG_WAIT_MS } = await import("../frontend/src/lib/poll-schedule");
+  const restoreEnv = overrideEnv({ FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS: undefined });
+
+  try {
+    for (const wait of [POLL_LONG_WAIT_MS, JOB_POLL_MAX_WAIT_MS]) {
+      const url = new URL(`http://fly-desk.test/api/search/job-1?sinceRevision=2&wait=${wait}`);
+      assert.ok(
+        resolveProxyTimeoutMsForRequest(url) > wait,
+        `a hold of ${wait}ms is not covered by ${resolveProxyTimeoutMsForRequest(url)}ms`,
+      );
+    }
+
+    // A request that asks for no hold keeps the base budget, unchanged.
+    const plain = new URL("http://fly-desk.test/api/search");
+    assert.equal(resolveProxyTimeoutMsForRequest(plain), 15_000);
+    // And a client asking for more than the runner will ever hold cannot push
+    // this past the ceiling the proxy is allowed.
+    const greedy = new URL("http://fly-desk.test/api/search/job-1?sinceRevision=2&wait=600000");
+    assert.equal(resolveProxyTimeoutMsForRequest(greedy), 60_000);
+  } finally {
+    restoreEnv();
+  }
+});
+
+test("a poll parked for longer than the base timeout still reaches the agent", async () => {
+  const restoreEnv = overrideEnv({
+    FLY_DESK_API_TOKEN: "test-api-token",
+    FLY_DESK_SEARCH_SERVICE_API_TOKEN: undefined,
+    /* The floor the env clamp allows, so the case runs in milliseconds while
+       standing for the production shape: a hold longer than the base budget. */
+    FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS: "1",
+  });
+
+  try {
+    const request = new Request("http://fly-desk.test/api/search/job-1?sinceRevision=2&wait=120", {
+      method: "GET",
+    });
+    let aborted = false;
+    const response = await maybeProxySearchServiceRequest(request, new URL(request.url), {
+      serviceUrl: "http://127.0.0.1:8101",
+      timeoutMs: 40,
+      fetchImpl: async (_input, init) => {
+        const signal = init?.signal as AbortSignal | undefined;
+        signal?.addEventListener("abort", () => { aborted = true; });
+        // Parked past the 40ms budget, inside the 40 + 120 the hold is worth.
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        if (signal?.aborted) throw new Error("aborted");
+        return Response.json({ unchanged: true });
+      },
+    });
+
+    assert.equal(aborted, false);
+    assert.equal(response?.status, 200);
+    assert.deepEqual(await response?.json(), { unchanged: true });
   } finally {
     restoreEnv();
   }
