@@ -2,8 +2,7 @@ import { test } from "bun:test"
 import assert from "node:assert/strict"
 import {
   buildResultListItems,
-  countOffersInResultItems,
-  paginateResultListItems,
+  resultItemsFillingCapacity,
   resultListItemContainsOffer,
 } from "../frontend/src/components/results/result-groups"
 import type { CanonicalOffer, SearchJobResponse } from "../frontend/src/types"
@@ -215,7 +214,7 @@ test("groups native Agil variants with the same fare", () => {
 
   assert.equal(items[0].group.providerLabel, "Agilsmart")
   assert.deepEqual(items[0].group.offers.map((item) => item.id), ["agil-am", "agil-pm"])
-  assert.equal(countOffersInResultItems(items.slice(0, 1)), 2)
+  assert.equal(items[0].offerCount, 2)
   assert.equal(resultListItemContainsOffer(items[0], "agil-pm"), true)
 })
 
@@ -380,7 +379,7 @@ test("keeps exact provider matches inside the native schedule group", () => {
   )
 })
 
-test("paginates compact groups by visual weight instead of raw grouped height", () => {
+test("opens the list on visual weight instead of raw item count", () => {
   const items = buildResultListItems([
     offer({ id: "group-3", rawRefs: { agilGroupId: "G-500" } }),
     offer({
@@ -401,14 +400,16 @@ test("paginates compact groups by visual weight instead of raw grouped height", 
     offer({ id: "solo-4", rawRefs: { agilGroupId: "G-504" }, amount: 540 }),
   ], [scheduleGroup({ id: "G-500", offerIds: ["group-3", "group-1", "group-2"] })])
 
-  const pages = paginateResultListItems(items, 4)
-
-  assert.equal(pages.length, 2)
-  assert.equal(pages[0]?.items.length, 3)
-  assert.equal(pages[0]?.startOfferIndex, 0)
-  assert.equal(pages[0]?.endOfferIndex, 5)
-  assert.equal(pages[1]?.startOfferIndex, 5)
-  assert.equal(pages[1]?.endOfferIndex, 7)
+  /* Four plain-card slots against a group (1.67) and three flights: the third
+     flight is what reaches four, so the window opens on four items and not on
+     the four *cards* a count would have asked for. */
+  assert.deepEqual(items.map((item) => item.type), ["group", "offer", "offer", "offer", "offer"])
+  assert.equal(resultItemsFillingCapacity(items, 4), 4)
+  /* One card of the column is one item, however heavy that item is. */
+  assert.equal(resultItemsFillingCapacity(items, 1), 1)
+  /* A column nothing can fill is the whole list, not an endless window. */
+  assert.equal(resultItemsFillingCapacity(items, 99), items.length)
+  assert.equal(resultItemsFillingCapacity([], 4), 0)
 })
 
 test("folds an offer the truncated group never listed back into the group it repeats", () => {
@@ -495,7 +496,7 @@ test("keeps a different fare on the same schedule as an offer of its own", () =>
 
   assert.deepEqual(items.map((item) => item.type), ["group", "offer"])
   assert.equal(items[1]?.id, "fare-cheaper")
-  assert.equal(countOffersInResultItems(items), 3)
+  assert.equal(items.reduce((total, item) => total + item.offerCount, 0), 3)
 })
 
 test("a member the filters removed does not come back through the fold", () => {

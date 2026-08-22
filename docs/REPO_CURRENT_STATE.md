@@ -25,7 +25,8 @@ The repository does not version generated artifacts:
 - month cards with complete-only queried/fared-day coverage and retained real alternatives
 - an idle provider rail that names the providers this deployment searches, always and without health copy; readiness stays on the authenticated `/api/provider-status` surface, which the router uses internally and no UI consumes
 - filters for stops, maximum layover time, baggage, and airlines
-- paginated results with backend warnings
+- one continuous list of results, with backend warnings: it opens on what the column measures and grows by two columns whenever the end of the window comes within 900 px of the viewport, inside the list's own scroller on every armazón. There is no pager and no page state; a filter or a sort returns the list to its first row, a provider answering does not
+- on a phone the title bar is drawn at rest only: once a search exists it is hidden and its copy action is rehoused at the right end of the filter row, which is 48 px of screen returned to the list
 - per-person price only for all-adult groups; mixed adult/child/infant searches
   keep the provider total until a real passenger-type breakdown exists
 - side panel with price, known baggage/conditions, purchase paths, and exact-flight provider-revalidated quotation through the shared quotation core; verified prices are reusable for at most 15 minutes

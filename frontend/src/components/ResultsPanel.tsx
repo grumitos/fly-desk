@@ -13,9 +13,8 @@ import { buildAlternateScheduleModel } from "@/components/results/result-card-mo
 import {
   RESULT_GROUP_CARD_WEIGHT,
   buildResultListItems,
-  paginateResultListItems,
+  resultItemsFillingCapacity,
   resultListItemContainsOffer,
-  resultListItemDisplayWeight,
   type ResultListItem,
   type ResultOfferGroup,
 } from "@/components/results/result-groups"
@@ -41,24 +40,43 @@ import type { CanonicalOffer, SearchJobResponse, SortMode } from "@/types"
  * Plates 1b (active desktop), 2g (list states), 3b (all schedules), 4a
  * (skeletons) and 1i (migration grid).
  *
- * The panel is one header, one strip of active filters, one page of cards and
- * one pager. The column-width editor that used to live here is gone: plate 1b
- * closes the card grid at 32 / 142 / 1fr / auto / 116 / 26 — the baggage in a
- * track of its own, and past 1073px of list the two legs as plates that split
- * the single elastic track — so there is nothing left for it to tune.
+ * The panel is one header, one strip of active filters and one list of cards
+ * that grows as it is scrolled. The column-width editor that used to live here
+ * is gone: plate 1b closes the card grid at 32 / 142 / 1fr / auto / 116 / 26 —
+ * the baggage in a track of its own, and past 1073px of list the two legs as
+ * plates that split the single elastic track — so there is nothing left for it
+ * to tune.
  */
 
 /*
- * The ceiling is a guard against a pathological viewport, not a page size. 12
+ * The ceiling is a guard against a pathological viewport, not a window size. 12
  * was the fit of a 1440-tall desk when it was written and became a cap the
  * moment screens grew past it: a 1920×1080 column fits 13 plain rows and a
- * 1440-tall one fits 19, so the page stopped one and seven rows short of the
+ * 1440-tall one fits 19, so the column stopped one and seven rows short of the
  * space it had just measured — the same half-empty column the skeleton was
  * reported with. 20 is that 19 plus a row of slack; past it the wins are
- * hypothetical and the cost of building the cards is not.
+ * hypothetical and the cost of drawing the bones is not.
  */
-const RESULTS_PAGE_SIZE_MAX = 20
-const RESULTS_PAGE_SIZE_FALLBACK = 4
+const RESULTS_COLUMN_ROWS_MAX = 20
+const RESULTS_COLUMN_ROWS_FALLBACK = 4
+/*
+ * What the list adds each time the reader reaches the end of it.
+ *
+ * A search here answers with hundreds of offers — 520 on a plain LIM–MIA, 2,500
+ * on a week-long range — and building every card up front is the one thing an
+ * infinite list must not do. The window opens at whatever fills the column and
+ * grows by two columns at a time, which is the amount that keeps the sentinel
+ * out of reach for a whole flick of the thumb; the floor covers the case where
+ * the column has not been measured yet.
+ */
+const RESULTS_WINDOW_MIN_BATCH = 12
+/*
+ * How far below the last card the list starts building the next batch. A batch
+ * is already in memory — this is a render, not a fetch — so the margin only has
+ * to cover the frame it costs, and one column of slack does that at any scroll
+ * speed a thumb produces.
+ */
+const RESULTS_WINDOW_PREFETCH_PX = 900
 /* The plain card of plate 8c, which is the unit a display weight of 1 means.
    The measurement below replaces this on the first frame. */
 const RESULTS_CARD_HEIGHT_ESTIMATE_PX = 58
@@ -405,16 +423,7 @@ function ResultsBody({
     () => buildResultListItems(offers, results?.scheduleGroups),
     [offers, results?.scheduleGroups],
   )
-  /* Capacity is measured in card-heights, so what bounds it is the list's total
-     *weight*, not how many items it has: a group card costs 1.67. */
-  const totalDisplayWeight = useMemo(
-    () => resultItems.reduce((total, item) => total + resultListItemDisplayWeight(item), 0),
-    [resultItems],
-  )
-  const { pageBudget, columnRows, viewportRef, attachViewport } = useAdaptiveResultsPageCapacity(
-    totalDisplayWeight,
-    mobileCollapseEnabled,
-  )
+  const { columnRows, viewportRef, attachViewport } = useResultsColumnCapacity()
 
   if (!results && !loading) {
     return (
@@ -531,10 +540,8 @@ function ResultsBody({
   }
 
   return (
-    <ResultsPage
-      offers={offers}
+    <ResultsList
       resultItems={resultItems}
-      pageBudget={pageBudget}
       columnRows={columnRows}
       viewportRef={viewportRef}
       attachViewport={attachViewport}
@@ -568,10 +575,8 @@ function spellOutCount(count: number): string {
   return COUNT_WORDS[count] ?? String(count)
 }
 
-function ResultsPage({
-  offers,
+function ResultsList({
   resultItems,
-  pageBudget,
   columnRows,
   viewportRef,
   attachViewport,
@@ -584,12 +589,9 @@ function ResultsPage({
   onMobileToolsCollapsedChange,
   mobileCollapseEnabled,
 }: {
-  offers: CanonicalOffer[]
-  /** Built above, so the skeleton and the page weigh the same list. */
+  /** Built above, so the skeleton and the list weigh the same column. */
   resultItems: ResultListItem[]
-  /** Fractional: a group costs 1.67 of it, so flooring here withholds cards. */
-  pageBudget: number
-  /** Whole rows, for the things that draw rows rather than fill a column. */
+  /** Whole rows: what the column fits, for the things that draw rows. */
   columnRows: number
   viewportRef: RefObject<HTMLDivElement | null>
   attachViewport: (node: HTMLDivElement | null) => void
@@ -602,7 +604,7 @@ function ResultsPage({
   onMobileToolsCollapsedChange: (collapsed: boolean) => void
   mobileCollapseEnabled: boolean
 }) {
-  const pageKey = useMemo(() => resultItemsPaginationKey(resultItems), [resultItems])
+  const listKey = useMemo(() => resultItemsIdentityKey(resultItems), [resultItems])
   /* Which schedule each group is currently showing, and which group has its full
      list open. Both are stamped with the result set they belong to, so a new
      search drops them in the same render instead of briefly pinning a stale
@@ -612,39 +614,60 @@ function ResultsPage({
     choice: Record<string, string>
     expandedGroupId: string | null
   }>({ key: "", choice: {}, expandedGroupId: null })
-  const scheduleChoice = scheduleState.key === pageKey ? scheduleState.choice : {}
-  const expandedGroupId = scheduleState.key === pageKey ? scheduleState.expandedGroupId : null
-  const [pageState, setPageState] = useState({ key: "", index: 0 })
-  const pages = useMemo(
-    () => paginateResultListItems(resultItems, pageBudget),
-    [resultItems, pageBudget],
+  const scheduleChoice = scheduleState.key === listKey ? scheduleState.choice : {}
+  const expandedGroupId = scheduleState.key === listKey ? scheduleState.expandedGroupId : null
+  /*
+   * The first window is what the column holds; every flick of the thumb adds
+   * two more. `batchSize` is whole cards because a batch is an amount to add,
+   * not a column to fit — the fitting is the first window's job alone.
+   */
+  const batchSize = Math.max(RESULTS_WINDOW_MIN_BATCH, columnRows * 2)
+  const firstWindowSize = useMemo(
+    () => resultItemsFillingCapacity(resultItems, columnRows),
+    [columnRows, resultItems],
   )
-  const pageCount = Math.max(1, pages.length)
-  const selectedPageIndex = useMemo(() => {
-    if (!selectedOfferId) return
-    const index = pages.findIndex((page) => page.items.some((item) => resultListItemContainsOffer(item, selectedOfferId)))
-    return index >= 0 ? index : undefined
-  }, [pages, selectedOfferId])
 
   /*
-   * 11 §3: every filter and sort gesture returns the list to page 1 — but a
+   * 11 §3: every filter and sort gesture returns the list to the top — but a
    * provider answering does not. Keyed on `viewKey` rather than on the offers,
-   * so a progressive batch leaves the page where the agent left it.
+   * so a progressive batch leaves the reader where they were and keeps whatever
+   * they had already scrolled past.
    *
    * The exception is the first view: a shared link arrives with an offer
-   * already selected, and opening on page 1 would hide the flight the link was
-   * sent about.
+   * already selected, and opening one column short of it would hide the flight
+   * the link was sent about.
    */
   const [firstViewKey] = useState(viewKey)
   const isFirstView = firstViewKey === viewKey
+  const selectedItemIndex = useMemo(() => {
+    if (!selectedOfferId) return -1
+    return resultItems.findIndex((item) => resultListItemContainsOffer(item, selectedOfferId))
+  }, [resultItems, selectedOfferId])
 
-  const requestedPageIndex = pageState.key === viewKey
-    ? pageState.index
-    : isFirstView
-      ? selectedPageIndex ?? 0
-      : 0
-  const safePageIndex = Math.max(0, Math.min(requestedPageIndex, pageCount - 1))
-  const currentPage = pages[safePageIndex] ?? pages[0] ?? { items: [], startOfferIndex: 0, endOfferIndex: 0, displayWeight: 0 }
+  const [windowState, setWindowState] = useState({ key: "", size: 0 })
+  const requestedWindowSize = windowState.key === viewKey ? windowState.size : 0
+  const visibleCount = Math.min(
+    resultItems.length,
+    Math.max(
+      firstWindowSize,
+      requestedWindowSize,
+      /* Only on arrival: past the first view the reader's own scrolling owns
+         the window, and jumping it to a selection they made themselves would
+         build hundreds of cards nobody asked to see. */
+      isFirstView && selectedItemIndex >= 0 ? selectedItemIndex + 1 : 0,
+    ),
+  )
+  const visibleItems = useMemo(() => resultItems.slice(0, visibleCount), [resultItems, visibleCount])
+  const hasMore = visibleCount < resultItems.length
+
+  const showMore = useCallback(() => {
+    setWindowState((current) => {
+      const base = current.key === viewKey ? current.size : 0
+      return { key: viewKey, size: Math.max(base, visibleCount) + batchSize }
+    })
+  }, [batchSize, viewKey, visibleCount])
+
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
   const scrollStateRef = useRef({
     lastTop: 0,
     accumulated: 0,
@@ -658,9 +681,19 @@ function ResultsPage({
      more thing floating over the results. */
   const [backToTopVisible, setBackToTopVisible] = useState(false)
 
-  const handlePageChange = useCallback((nextPageIndex: number) => {
-    setPageState({ key: viewKey, index: Math.max(0, Math.min(nextPageIndex, pageCount - 1)) })
-    // 02 §11: back to the top with no animated scroll (07 §0 rule 2).
+  /*
+   * A filter or a sort is a new list, and the reader reads a new list from its
+   * first row. The pager used to do this as a side effect of landing on page 1;
+   * with one continuous list it is said outright — and only for `viewKey`, so
+   * the progressive batches that re-render this list all the way through a
+   * search never move anybody.
+   *
+   * 02 §11: back to the top with no animated scroll (07 §0 rule 2).
+   */
+  const viewKeyRef = useRef(viewKey)
+  useEffect(() => {
+    if (viewKeyRef.current === viewKey) return
+    viewKeyRef.current = viewKey
     viewportRef.current?.scrollTo({ top: 0 })
     scrollStateRef.current = {
       lastTop: 0,
@@ -671,7 +704,7 @@ function ResultsPage({
     }
     setBackToTopVisible(false)
     onMobileToolsCollapsedChange(false)
-  }, [onMobileToolsCollapsedChange, pageCount, viewKey, viewportRef])
+  }, [onMobileToolsCollapsedChange, viewKey, viewportRef])
 
   const handleBackToTop = useCallback(() => {
     viewportRef.current?.scrollTo({ top: 0 })
@@ -726,32 +759,62 @@ function ResultsPage({
       collapsed: false,
     }
     onMobileToolsCollapsedChange(false)
-  }, [onMobileToolsCollapsedChange, pageKey])
+  }, [onMobileToolsCollapsedChange, listKey])
+
+  /*
+   * The window grows when the end of it comes within a column of the viewport.
+   *
+   * The observer is re-created whenever the sentinel is remounted or the batch
+   * changes, and `showMore` is re-created whenever the window moves, so one
+   * crossing adds exactly one batch: the sentinel is pushed a column further
+   * down by the cards that batch renders, and only comes back into range when
+   * the reader keeps going. Where there is no `IntersectionObserver` the list
+   * still works — it just opens at the size of the column, which is the whole
+   * list on every viewport small enough for that to be an issue.
+   */
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    const viewport = viewportRef.current
+    if (!sentinel || !viewport || typeof IntersectionObserver === "undefined") return
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) showMore()
+    }, {
+      root: viewport,
+      rootMargin: `0px 0px ${RESULTS_WINDOW_PREFETCH_PX}px 0px`,
+    })
+    observer.observe(sentinel)
+
+    return () => observer.disconnect()
+  }, [hasMore, showMore, viewportRef])
 
   return (
-    <div className="fd-list-body" data-testid="results-page-shell">
+    <div className="fd-list-body" data-testid="results-list-shell">
       <div
         ref={attachViewport}
         onScroll={handleResultsScroll}
         className="fd-list-viewport"
-        data-testid="results-page-body"
+        data-testid="results-list-body"
       >
-        {/* Keyed on the requested view *and* the page, so a filter, a sort
-            and a page change each cross-fade in 140ms rather than animating a
-            height (rule 2). Keyed on the page alone, applying a filter swapped
-            the cards with no transition at all, because the page index usually
-            stays at 0 (04 §2).
+        {/* Keyed on the requested view, so a filter and a sort each cross-fade
+            in 140ms rather than animating a height (rule 2), while the batches
+            this list appends do not: they are the same view with more of it on
+            screen.
 
-            The cascade of 04 §9 belongs to *arrival* — the first page of a new
-            search. A filter, a sort and a page change are repaints, and 04 §2
-            and §6 give those the cross-fade alone; replaying seven staggered
-            entries on every filter click turns a refinement into an event. */}
+            The cascade of 04 §9 belongs to *arrival* — the first cards of a new
+            search. A filter and a sort are repaints, and 04 §2 and §6 give
+            those the cross-fade alone; replaying seven staggered entries on
+            every filter click turns a refinement into an event. An appended
+            batch is left out of the cascade by its cap rather than by turning
+            the cascade off — 04 §9 stops at seven cards on a desk and six on a
+            phone, so a card appended past those positions is drawn the frame it
+            exists, which is what a card the reader has scrolled to has to be. */}
         <div
-          key={`${viewKey}:${safePageIndex}`}
+          key={viewKey}
           className="fd-results-list fd-motion-crossfade"
-          data-cascade={isFirstView && safePageIndex === 0}
+          data-cascade={isFirstView}
         >
-          {currentPage.items.map((item) => (
+          {visibleItems.map((item) => (
             item.type === "group" ? (
               <GroupCard
                 key={item.id}
@@ -763,16 +826,16 @@ function ResultsPage({
                 expanded={expandedGroupId === item.id}
                 onChooseSchedule={(offer) => {
                   setScheduleState((current) => ({
-                    key: pageKey,
-                    choice: { ...(current.key === pageKey ? current.choice : {}), [item.id]: offer.id },
-                    expandedGroupId: current.key === pageKey ? current.expandedGroupId : null,
+                    key: listKey,
+                    choice: { ...(current.key === listKey ? current.choice : {}), [item.id]: offer.id },
+                    expandedGroupId: current.key === listKey ? current.expandedGroupId : null,
                   }))
                   onSelectOffer(offer)
                 }}
                 onToggleExpanded={() => setScheduleState((current) => ({
-                  key: pageKey,
-                  choice: current.key === pageKey ? current.choice : {},
-                  expandedGroupId: current.key === pageKey && current.expandedGroupId === item.id ? null : item.id,
+                  key: listKey,
+                  choice: current.key === listKey ? current.choice : {},
+                  expandedGroupId: current.key === listKey && current.expandedGroupId === item.id ? null : item.id,
                 }))}
                 onSelectOffer={onSelectOffer}
               />
@@ -789,15 +852,32 @@ function ResultsPage({
           ))}
 
           {/* In a partial search the skeleton fills only the rows still missing,
-              and it fills them at the end. */}
-          {partial && currentPage.items.length > 0 && currentPage.items.length < columnRows && (
+              and it fills them at the end. Only while the whole list is still
+              shorter than the column: once it scrolls, the end of the list is
+              wherever the reader is, and bones down there would be a promise
+              about offers that have already arrived. */}
+          {partial && !hasMore && visibleItems.length > 0 && visibleItems.length < columnRows && (
             <ResultsSkeleton
-              rows={columnRows - currentPage.items.length}
+              rows={columnRows - visibleItems.length}
               inline
-              startDelayIndex={currentPage.items.length}
+              startDelayIndex={visibleItems.length}
             />
           )}
         </div>
+
+        {/* The end of the window, one column of slack above the end of the
+            cards. Reaching it is what asks for the next batch — a scroll
+            handler would ask on every frame of every flick instead, and asking
+            is a state change. `aria-hidden` because it says nothing: what it
+            does is already announced by the count in the header. */}
+        {hasMore && (
+          <div
+            ref={sentinelRef}
+            className="fd-list-sentinel"
+            data-testid="results-more-sentinel"
+            aria-hidden="true"
+          />
+        )}
       </div>
 
       {mobileCollapseEnabled && backToTopVisible && (
@@ -812,16 +892,6 @@ function ResultsPage({
         </button>
       )}
 
-      {pageCount > 1 && (
-        <ResultsPager
-          pageIndex={safePageIndex}
-          pageCount={pageCount}
-          startIndex={currentPage.startOfferIndex}
-          endIndex={currentPage.endOfferIndex}
-          totalCount={offers.length}
-          onPageChange={handlePageChange}
-        />
-      )}
     </div>
   )
 }
@@ -917,116 +987,6 @@ function alternateChip(offer: CanonicalOffer, currentOffer: CanonicalOffer): Alt
   }
 }
 
-function ResultsPager({
-  pageIndex,
-  pageCount,
-  startIndex,
-  endIndex,
-  totalCount,
-  onPageChange,
-}: {
-  pageIndex: number
-  pageCount: number
-  startIndex: number
-  endIndex: number
-  totalCount: number
-  onPageChange: (index: number) => void
-}) {
-  return (
-    <nav className="fd-pager" aria-label="Paginación de resultados" data-testid="results-pagination">
-      <p className="fd-pager-range">
-        {startIndex + 1}–{endIndex} de {totalCount.toLocaleString("es-PE")}
-      </p>
-      <span className="fd-pager-divider" aria-hidden="true" />
-      {/* Two modes, one component (04 §6). The nested control needs room for
-          seven 26px cells and two ellipses; a phone has neither the room nor a
-          finger fine enough for a 26px target, so below the list threshold it
-          is replaced by ‹ · 6/65 · › at the touch minimum. Both are always in
-          the DOM: which one shows is a container query, so the choice follows
-          the width of the list and not a guess about the device. */}
-      <div className="fd-pager-nested">
-        <button
-          type="button"
-          className="fd-pager-cell fd-focus-ring"
-          aria-label="Página anterior"
-          disabled={pageIndex <= 0}
-          onClick={() => onPageChange(pageIndex - 1)}
-        >
-          <AppIcon name="chevronLeft" />
-        </button>
-
-        {pagerCells(pageIndex, pageCount).map((cell) => (
-          typeof cell === "number" ? (
-            <button
-              key={cell}
-              type="button"
-              className="fd-pager-cell fd-focus-ring"
-              aria-label={`Página ${cell + 1}`}
-              aria-current={cell === pageIndex ? "page" : undefined}
-              onClick={() => onPageChange(cell)}
-            >
-              {cell + 1}
-            </button>
-          ) : (
-            <span key={cell} className="fd-pager-gap" aria-hidden="true">…</span>
-          )
-        ))}
-
-        <button
-          type="button"
-          className="fd-pager-cell fd-focus-ring"
-          aria-label="Página siguiente"
-          disabled={pageIndex >= pageCount - 1}
-          onClick={() => onPageChange(pageIndex + 1)}
-        >
-          <AppIcon name="chevronRight" />
-        </button>
-      </div>
-
-      <div className="fd-pager-compact" data-testid="results-pagination-compact">
-        <button
-          type="button"
-          className="fd-pager-step fd-focus-ring"
-          aria-label="Página anterior"
-          disabled={pageIndex <= 0}
-          onClick={() => onPageChange(pageIndex - 1)}
-        >
-          <AppIcon name="chevronLeft" size={18} />
-        </button>
-        <span className="fd-pager-position" aria-current="page">
-          {pageIndex + 1} / {pageCount}
-        </span>
-        <button
-          type="button"
-          className="fd-pager-step fd-focus-ring"
-          aria-label="Página siguiente"
-          disabled={pageIndex >= pageCount - 1}
-          onClick={() => onPageChange(pageIndex + 1)}
-        >
-          <AppIcon name="chevronRight" size={18} />
-        </button>
-      </div>
-    </nav>
-  )
-}
-
-/** `1 … 5 6 7 … 56` — first and last always reachable, three around current. */
-function pagerCells(pageIndex: number, pageCount: number): Array<number | "gap-left" | "gap-right"> {
-  if (pageCount <= 7) {
-    return Array.from({ length: pageCount }, (_, index) => index)
-  }
-
-  if (pageIndex <= 2) {
-    return [0, 1, 2, 3, "gap-right", pageCount - 1]
-  }
-
-  if (pageIndex >= pageCount - 3) {
-    return [0, "gap-left", pageCount - 4, pageCount - 3, pageCount - 2, pageCount - 1]
-  }
-
-  return [0, "gap-left", pageIndex - 1, pageIndex, pageIndex + 1, "gap-right", pageCount - 1]
-}
-
 type EmptyStateAction = { label: string; onClick: () => void; icon?: "x" | "search" }
 
 function EmptyState({
@@ -1082,47 +1042,37 @@ function EmptyState({
 
 
 /**
- * How many cards fit without cutting one in half. A page that ends mid-card
- * makes the agent scroll to find out whether there was anything there.
- */
-/**
- * How many results a page holds.
+ * How many plain cards the column holds.
  *
- * On a desk it is whatever fits: plates 1b and 8a draw the list ending on the
- * pager with no scroll, and the measurement agrees — 11 cards at 1440 leave 1px
- * of slack. A phone is the opposite. Plate `1d` is annotated «interactiva:
- * desliza la lista», 02 §9 retracts the tools after **88px** of travel and 11 §6
- * raises the back-to-top button after **300px**. Fitted to the viewport the
- * mobile list had 43px of travel in total (6 cards of 94px in 583px), so both
- * of those were unreachable outside a test that injected a spacer. A page that
- * is longer than the screen is what makes that whole section of the handoff
- * exist; the pager (`‹ 6/65 ›`, 04 §6) is unchanged either way.
+ * Two consumers, one measurement. The skeleton draws exactly this many bones,
+ * so the column the reader waits in is the column the results land in; and the
+ * list opens on exactly this much, so the first screen is full and nothing
+ * below it has been built yet.
+ *
+ * It is a count of *plain* cards — a group card is 1.67 of one — because that
+ * is the unit both consumers work in. The list is scrollable on every armazón
+ * now, so unlike the page it replaces this is not a fit to be exact about: it
+ * is the amount that has to exist before the reader can scroll at all.
  */
-function useAdaptiveResultsPageCapacity(totalDisplayWeight: number, scrollableList: boolean) {
+function useResultsColumnCapacity() {
   const viewportRef = useRef<HTMLDivElement | null>(null)
   /*
    * The column is measured through a callback ref rather than read off
    * `viewportRef.current` alone, because the element the count belongs to is
-   * swapped under this hook: the skeleton owns it first and the page takes it
-   * over. Keyed on the weight, a search that starts from an empty column — no
-   * results, then bones, both weighing nothing — would attach a new viewport
-   * without ever re-running the measurement and the page would keep the
-   * fallback of four. The node is state, so a new one is a new measurement.
+   * swapped under this hook: the skeleton owns it first and the list takes it
+   * over. The node is state, so a new one is a new measurement — read off the
+   * ref alone, the handover happened without one and the column kept the
+   * fallback of four.
    */
   const [viewportNode, setViewportNode] = useState<HTMLDivElement | null>(null)
   const attachViewport = useCallback((node: HTMLDivElement | null) => {
     viewportRef.current = node
     setViewportNode(node)
   }, [])
-  const [pageBudget, setPageBudget] = useState(RESULTS_PAGE_SIZE_FALLBACK)
+  const [columnRows, setColumnRows] = useState(RESULTS_COLUMN_ROWS_FALLBACK)
   const rowHeightRef = useRef(RESULTS_CARD_HEIGHT_ESTIMATE_PX)
 
   useLayoutEffect(() => {
-    /* Nothing to measure when the page is deliberately taller than the screen:
-       the answer is the ceiling, and it is returned below rather than stored,
-       so a phone never pays for a measurement it does not use. */
-    if (scrollableList) return
-
     const node = viewportNode
     if (!node) return
 
@@ -1149,11 +1099,11 @@ function useAdaptiveResultsPageCapacity(totalDisplayWeight: number, scrollableLi
       /*
        * The unit is the plain card, because that is what a weight of 1 means.
        * Taking the tallest card instead made one group card — 101px against 58
-       * — the row height for the whole page: capacity fell from eleven rows to
-       * six and the list stopped less than two thirds of the way down the
-       * column, which is exactly the empty space the desk was reported with.
-       * A page of nothing but groups is rare, and dividing by the group weight
-       * recovers the same unit from it.
+       * — the row height for the whole column: capacity fell from eleven rows
+       * to six and the list opened less than two thirds of the way down, which
+       * is exactly the empty space the desk was reported with. A column of
+       * nothing but groups is rare, and dividing by the group weight recovers
+       * the same unit from it.
        */
       const plainCards = cards.filter((card) => !card.querySelector(".fd-card__alts"))
       const measuredHeight = plainCards.length > 0
@@ -1168,37 +1118,16 @@ function useAdaptiveResultsPageCapacity(totalDisplayWeight: number, scrollableLi
       }
 
       const rowHeight = rowHeightRef.current
-      /*
-       * The budget is fractional, and the floor that used to be here was a
-       * defect with a group on the page.
-       *
-       * `fullRows` is a count of *plain* rows, so flooring it is only harmless
-       * when every row is plain. A column of 687 holds 10.76 plain rows; floored
-       * to 10 it can pay for one group (1.67) and eight flights (9.67 of 10) and
-       * refuses a ninth at 10.67 — while in pixels that ninth card had 80px of
-       * empty column under it, more than the 64 it needed. Two roundings in a
-       * row, each losing less than a row, together losing more than one.
-       *
-       * Kept whole, the same budget pays for the group and nine flights (10.67
-       * of 10.76) and the column closes with 16px to spare. Nothing else has to
-       * change: weighing rows against a budget is what the weight system is
-       * already for, and it was only ever handed an integer.
-       */
-      const columnBudget = Math.max(1, (availableHeight + gap) / (rowHeight + gap))
-      /*
-       * Never claim more room than the list needs — but «what the list needs»
-       * is its weight, not its length. Clamping to the item count split a page
-       * of one flight and one group of thirteen across two pages: two items,
-       * capacity two, weight 2.34. A real LIM–MIA search showed one card and
-       * eleven empty rows.
-       *
-       * A search with nothing in it yet needs *everything* the column holds:
-       * that is the skeleton, and it has no weight to be clamped by.
-       */
-      const needed = totalDisplayWeight > 0 ? totalDisplayWeight : RESULTS_PAGE_SIZE_MAX
-      const next = Math.max(1, Math.min(needed, RESULTS_PAGE_SIZE_MAX, columnBudget))
+      /* Whole rows, and never the one that would be cut in half: 04 §7 asks the
+         skeleton for «never more rows than the real list», and a bone hanging
+         off the bottom of the column is the value jump it forbids. The list
+         opens on the same count and reaches the rest through the sentinel,
+         which starts a column below the fold and so fires straight away on a
+         column this exact. */
+      const rows = Math.floor((availableHeight + gap) / (rowHeight + gap) + 0.01)
+      const next = Math.max(1, Math.min(RESULTS_COLUMN_ROWS_MAX, rows))
 
-      setPageBudget((current) => Math.abs(current - next) < 0.01 ? current : next)
+      setColumnRows((current) => (current === next ? current : next))
     }
     const scheduleUpdate = () => {
       window.cancelAnimationFrame(frame)
@@ -1209,9 +1138,8 @@ function useAdaptiveResultsPageCapacity(totalDisplayWeight: number, scrollableLi
      * Measured now, not on the next frame. The rAF was the whole of the live
      * defect: on the skeleton's first mount, and again when the arriving
      * `searchJobId` re-keys this panel, the column was painted at
-     * `RESULTS_PAGE_SIZE_FALLBACK` and only corrected a frame later — four
-     * bones in a column that holds eleven, and a page of three cards under a
-     * pager that had counted twelve offers. Inside a layout effect the DOM is
+     * `RESULTS_COLUMN_ROWS_FALLBACK` and only corrected a frame later — four
+     * bones in a column that holds eleven. Inside a layout effect the DOM is
      * laid out and `clientHeight` is final, so the first answer is available
      * before the first paint; the frame is only needed to coalesce the
      * observer's later ones.
@@ -1233,24 +1161,13 @@ function useAdaptiveResultsPageCapacity(totalDisplayWeight: number, scrollableLi
       window.cancelAnimationFrame(frame)
       observer.disconnect()
     }
-  }, [scrollableList, totalDisplayWeight, viewportNode])
+  }, [viewportNode])
 
-  /*
-   * Two answers from one measurement, because they are two different questions.
-   * Pagination fills a column and asks for the whole budget; the skeleton and
-   * the partial-search filler draw rows and can only ask for whole ones.
-   */
-  const budget = scrollableList ? RESULTS_PAGE_SIZE_MAX : pageBudget
-
-  return {
-    pageBudget: budget,
-    columnRows: Math.max(1, Math.floor(budget + 0.01)),
-    viewportRef,
-    attachViewport,
-  }
+  return { columnRows, viewportRef, attachViewport }
 }
 
-function resultItemsPaginationKey(items: ResultListItem[]) {
+/** Cheap identity of the current list, for the state that belongs to it. */
+function resultItemsIdentityKey(items: ResultListItem[]) {
   if (items.length === 0) return "empty"
   if (items.length <= 6) return items.map((item) => item.id).join("|")
 

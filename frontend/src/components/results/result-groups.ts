@@ -13,13 +13,6 @@ export interface ResultOfferGroup {
   offers: CanonicalOffer[]
 }
 
-export interface ResultListPage {
-  items: ResultListItem[]
-  startOfferIndex: number
-  endOfferIndex: number
-  displayWeight: number
-}
-
 type ScheduleGroup = NonNullable<SearchJobResponse["scheduleGroups"]>[number]
 
 export function buildResultListItems(
@@ -225,65 +218,6 @@ export function resultListItemContainsOffer(item: ResultListItem, offerId: strin
     : item.group.offers.some((offer) => offer.id === offerId)
 }
 
-export function countOffersInResultItems(items: ResultListItem[]): number {
-  return items.reduce((total, item) => total + item.offerCount, 0)
-}
-
-export function paginateResultListItems(
-  items: ResultListItem[],
-  pageCapacity: number,
-): ResultListPage[] {
-  if (items.length === 0) {
-    return [{
-      items: [],
-      startOfferIndex: 0,
-      endOfferIndex: 0,
-      displayWeight: 0,
-    }]
-  }
-
-  const safeCapacity = Math.max(1, pageCapacity)
-  const pages: ResultListPage[] = []
-  let pageItems: ResultListItem[] = []
-  let pageWeight = 0
-  let offerCursor = 0
-  let pageStartOfferIndex = 0
-
-  for (const item of items) {
-    const itemWeight = resultListItemDisplayWeight(item)
-    const shouldStartNextPage = pageItems.length > 0 && pageWeight + itemWeight > safeCapacity
-
-    if (shouldStartNextPage) {
-      const offerCount = countOffersInResultItems(pageItems)
-      pages.push({
-        items: pageItems,
-        startOfferIndex: pageStartOfferIndex,
-        endOfferIndex: pageStartOfferIndex + offerCount,
-        displayWeight: pageWeight,
-      })
-      pageStartOfferIndex = offerCursor
-      pageItems = []
-      pageWeight = 0
-    }
-
-    pageItems.push(item)
-    pageWeight += itemWeight
-    offerCursor += item.offerCount
-  }
-
-  if (pageItems.length > 0) {
-    const offerCount = countOffersInResultItems(pageItems)
-    pages.push({
-      items: pageItems,
-      startOfferIndex: pageStartOfferIndex,
-      endOfferIndex: pageStartOfferIndex + offerCount,
-      displayWeight: pageWeight,
-    })
-  }
-
-  return pages
-}
-
 /**
  * What a group row costs, in plain-card slots.
  *
@@ -294,12 +228,10 @@ export function paginateResultListItems(
  *
  * A card that carries the alternatives strip takes back its vertical padding
  * and adds the strip itself, so it measures 101px against the plain card's 58.
- * With the list's 6px gap a slot is 64 and a group is 107, which is 1.67 — the
- * 1.34 this used to claim under-priced every group and let a page promise room
- * it did not have.
+ * With the list's 6px gap a slot is 64 and a group is 107, which is 1.67.
  *
  * Exported because `ResultsPanel` divides a measured card height by the same
- * number to recover the plain-card unit from a page that holds nothing but
+ * number to recover the plain-card unit from a column that holds nothing but
  * groups. It restated the literal instead, which left the two one edit apart
  * from disagreeing about what a group costs.
  */
@@ -307,6 +239,29 @@ export const RESULT_GROUP_CARD_WEIGHT = 1.67
 
 export function resultListItemDisplayWeight(item: ResultListItem): number {
   return item.type === "offer" ? 1 : RESULT_GROUP_CARD_WEIGHT
+}
+
+/**
+ * How many leading items it takes to cover `capacity` plain-card slots.
+ *
+ * The list scrolls now, so the first window is not a page to be fitted exactly
+ * — it is the part of the list that has to be on screen before the reader can
+ * scroll at all. Counting items would get that wrong in the one case the
+ * weights exist for: five items that happen to be groups are eight slots, and
+ * five that are flights are five. Reaching the capacity is what matters, so a
+ * window overshoots by at most the last item rather than opening a column with
+ * a gap under the cards.
+ */
+export function resultItemsFillingCapacity(items: ResultListItem[], capacity: number): number {
+  const target = Math.max(1, capacity)
+  let weight = 0
+
+  for (let index = 0; index < items.length; index += 1) {
+    weight += resultListItemDisplayWeight(items[index]!)
+    if (weight >= target) return index + 1
+  }
+
+  return items.length
 }
 
 function orderVisibleGroupOffers(offers: CanonicalOffer[]): CanonicalOffer[] {

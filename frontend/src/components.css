@@ -445,9 +445,9 @@
     padding: 0;
   }
 
-  /* On a phone the rows are a ruled list rather than a spaced one: 44px each,
-     separated by a hairline instead of by air, with the name a notch up and
-     the count in 34 because the mono is a bigger body (01 §10). */
+  /* On a phone the rows are a ruled list rather than a spaced one: one touch
+     height each, separated by a hairline instead of by air, with the name a
+     notch up and the count in 34 because the mono is a bigger body (01 §10). */
   .fd-filter-sheet .fd-airline-list {
     gap: 0;
   }
@@ -491,147 +491,16 @@
     opacity: 1;
   }
 
-  /* ===== Pagination (1b) =================================================
-   * Range on the left, nested control on the right: 1 … 5 6 7 … 56.
-   * 26px cells, mono 12/600, the active one at 700. */
+  /* ===== The end of the window (infinite list) ===========================
+   * Not a control and not a row: a zero-height mark the list watches for, one
+   * column above the last card. It takes no space of its own — the space it
+   * would take is the space this list exists to give back. */
 
-  .fd-pager {
-    display: flex;
-    flex-shrink: 0;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    margin-top: 7px;
-    padding-top: 7px;
-    border-top: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
-  }
-
-  /* The skeleton's stand-in for the pager: the same box, holding nothing. Its
-     height comes from the 26px cell the real one is built out of, so the two
-     columns measure the same and the row count survives the handover. */
-  .fd-pager--reserved {
-    /* `content-box` on purpose: the token is the height of a *cell*, and what
-       has to match is the real pager's content, not its border box. Under the
-       global `border-box` the same declaration reserved 33px against the
-       pager's 41 and left the skeleton measuring a column 8px too tall. */
-    box-sizing: content-box;
-    min-height: var(--fd-control-chip);
-  }
-
-  .fd-pager-range {
+  .fd-list-sentinel {
+    height: 0;
     margin: 0;
-    color: var(--color-muted-foreground);
-    font-family: var(--font-mono);
-    font-size: var(--fd-text-meta);
-    font-weight: var(--fd-weight-label);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .fd-pager-divider {
-    width: 1px;
-    height: 16px;
-    background: var(--color-border);
-  }
-
-  .fd-pager-cell {
-    display: grid;
-    min-width: var(--fd-control-chip);
-    height: var(--fd-control-chip);
-    place-items: center;
-    padding: 0 6px;
-    border-radius: var(--fd-radius-8);
-    color: var(--color-foreground);
-    font-family: var(--font-mono);
-    font-size: var(--fd-text-meta);
-    font-weight: var(--fd-weight-label);
-    font-variant-numeric: tabular-nums;
-    transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
-  }
-
-  .fd-pager-cell:hover:not(:disabled):not([aria-current="page"]) {
-    background: var(--color-accent);
-  }
-
-  .fd-pager-cell[aria-current="page"] {
-    background: var(--color-secondary);
-    font-weight: var(--fd-weight-title);
-  }
-
-  .fd-pager-cell:disabled {
-    color: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent);
-  }
-
-  .fd-pager-gap {
-    display: grid;
-    min-width: var(--fd-control-chip);
-    height: var(--fd-control-chip);
-    place-items: center;
-    color: var(--color-muted-foreground);
-    font-family: var(--font-mono);
-    font-size: var(--fd-text-meta);
-  }
-
-  .fd-pager-nested {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-  }
-
-  /* The compact mode of 04 §6: ‹ 44 · píldora 40 · › 44. It asks the list, not
-     the shell, because what decides it is whether seven cells and two ellipses
-     fit — the same arithmetic that stacks the card (02 §2). */
-  .fd-pager-compact {
-    display: none;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .fd-pager-step {
-    display: grid;
-    width: var(--fd-control-touch);
-    height: var(--fd-control-touch);
-    place-items: center;
-    border-radius: var(--fd-radius-12);
-    background: var(--color-secondary);
-    color: var(--color-foreground);
-    transition:
-      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
-      opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
-  }
-
-  .fd-pager-position {
-    display: grid;
-    min-width: 40px;
-    height: 40px;
-    place-items: center;
-    padding-inline: 8px;
-    color: var(--color-foreground);
-    font-family: var(--font-mono);
-    font-size: var(--fd-text-base);
-    font-weight: var(--fd-weight-label);
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* 02 §4: the pager has two forms, one for the desk and one for the phone, so
-     it answers the shell like every other row of the master table. The result
-     card is the one piece that asks the list instead (02 §2). */
-  @container fdshell (max-width: 719.98px) {
-    .fd-pager-nested {
-      display: none;
-    }
-
-    .fd-pager-compact {
-      display: flex;
-    }
-
-    .fd-pager-divider {
-      display: none;
-    }
-
-    .fd-pager {
-      justify-content: space-between;
-      gap: 8px;
-    }
+    padding: 0;
+    pointer-events: none;
   }
 
   /* ===== Suggestions (2a) ================================================
@@ -719,8 +588,9 @@
 
   /* ===== Passengers (1g, 2d) =============================================
    * Row 44, steppers 32, figure mono 15/700 in a 28px column so the row does
-   * not twitch between 9 and 10. Inside the sheet the same row is 64 with 44px
-   * steppers and a 17px figure (2d) — one component, two surfaces. */
+   * not twitch between 9 and 10. Inside the sheet the same row is 64 with
+   * touch-height steppers and a 17px figure (2d) — one component, two
+   * surfaces. */
 
   .fd-pax-popover {
     width: 288px;
@@ -1352,7 +1222,7 @@
     width: 100%;
   }
 
-  /* 03 §7: on a phone the shortcuts are 44px and elastic — they are the only
+  /* 03 §7: on a phone the shortcuts take the touch height and are elastic — they are the only
      way to move the return date without scrolling a year of months. */
   .fd-cal-popover[data-layout="continuous"] .fd-cal-preset {
     height: var(--fd-control-touch);
@@ -1370,9 +1240,9 @@
     display: none;
   }
 
-  /* Sheet calendars use the 44px touch grid from the handoff. */
+  /* Sheet calendars use the same touch grid as every other mobile control. */
   .fd-calendar-sheet .fd-cal-cell {
-    height: 44px;
+    height: var(--fd-control-touch);
     font-size: var(--fd-text-action);
   }
 
@@ -2057,8 +1927,8 @@
       height: var(--fd-icon-16);
     }
 
-    /* 02 §7.6: the actions are anchored at the foot of the sheet at 44px with
-       the home indicator absorbed. They stay inside the panel — one component,
+    /* 02 §7.6: the actions are anchored at the foot of the sheet at the touch
+       height with the home indicator absorbed. They stay inside the panel — one component,
        three mounts — because the sheet body is the only thing that scrolls. */
     .fd-detail-footer {
       padding: 12px 14px max(22px, env(safe-area-inset-bottom));
@@ -2093,8 +1963,8 @@
       display: inline;
     }
 
-    /* 1f drops the provider label: at 44px the row has room for one set of
-       words, and they belong to «Cotizar». */
+    /* 1f drops the provider label: at the touch height the row has room for
+       one set of words, and they belong to «Cotizar». */
     .fd-detail-provider-action {
       width: var(--fd-control-touch);
       height: var(--fd-control-touch);

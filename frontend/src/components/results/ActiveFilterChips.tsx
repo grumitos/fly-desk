@@ -13,6 +13,12 @@ import type { ActiveFilterChip } from "@/components/ResultsPanel"
  *
  * The "Filtros" chip only exists where the filter column does not: on a desk
  * the panel is always on screen, so a button to open it would open nothing.
+ *
+ * Copy travels the same way. Once a search exists there is no title bar on a
+ * phone to keep it in — the brand, the theme switch and the 48px they sat on
+ * are the first thing a screen this size should spend on the results — so the
+ * one action worth keeping moves to the free end of this row. It is given, not
+ * assumed: the desk mount passes no handler and grows no button.
  */
 export function ActiveFilterChips({
   chips,
@@ -20,14 +26,19 @@ export function ActiveFilterChips({
   hiddenByFiltersCount,
   onOpenFilters,
   onRemoveFilter,
+  onCopySearchConfig,
+  copyDisabled = false,
 }: {
   chips: ActiveFilterChip[]
   activeFilterCount: number
   hiddenByFiltersCount: number
   onOpenFilters?: () => void
   onRemoveFilter?: (id: string) => void
+  /** Phone only: the title bar's copy action, rehoused at the end of the row. */
+  onCopySearchConfig?: () => void
+  copyDisabled?: boolean
 }) {
-  if (!onOpenFilters && chips.length === 0 && hiddenByFiltersCount === 0) return null
+  if (!onOpenFilters && !onCopySearchConfig && chips.length === 0 && hiddenByFiltersCount === 0) return null
 
   /* On a phone the strip is a row of 07 §1: it enters 12px from the left with
      40ms between one item and the next. The position is counted here because
@@ -76,6 +87,25 @@ export function ActiveFilterChips({
             ? "1 vuelo oculto por filtros"
             : `${hiddenByFiltersCount.toLocaleString("es-PE")} vuelos ocultos por filtros`}
         </span>
+      )}
+
+      {/* Last in the row and pinned to its right edge: the chips scroll under
+          it rather than carrying it out of reach, which is the whole reason
+          this row had room to spare in the first place. */}
+      {onCopySearchConfig && (
+        <button
+          type="button"
+          className="fd-filter-strip-copy fd-focus-ring"
+          data-testid="filter-strip-copy"
+          aria-label="Copiar configuración"
+          title={copyDisabled
+            ? "Completa una búsqueda para copiar la configuración"
+            : "Copiar configuración"}
+          disabled={copyDisabled}
+          onClick={onCopySearchConfig}
+        >
+          <AppIcon name="copy" size={16} />
+        </button>
       )}
     </div>
   )

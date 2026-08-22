@@ -95,7 +95,7 @@ test("topbar brand opens the current instance root without hardcoding the port",
   }, { autoOpen: false });
 });
 
-test("exact results paginate visible offers with hidden minimal result scroll", async () => {
+test("the list opens on a column of offers and scrolls to the rest inside it", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 1440, height: 700 });
     await page.route("**/api/locations**", async (route) => {
@@ -201,21 +201,27 @@ test("exact results paginate visible offers with hidden minimal result scroll", 
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
 
-    const pagination = page.getByTestId("results-pagination");
-    await pagination.waitFor({ state: "visible" });
+    const resultsBody = page.getByTestId("results-list-body");
+    /* Only that cards exist. How many are on screen at this instant is the
+       window's business and it moves within a frame of arriving — waiting for
+       an intermediate count is waiting for a paint the browser is free to
+       coalesce away. */
     await page.waitForFunction(() => {
-      const body = document.querySelector<HTMLElement>('[data-testid="results-page-body"]');
+      const body = document.querySelector<HTMLElement>('[data-testid="results-list-body"]');
       const cards = document.querySelectorAll('[data-testid="result-card"]').length;
-      return Boolean(body && cards > 0 && cards < 18 && getComputedStyle(body).scrollbarWidth === "none");
+      return Boolean(body && cards > 0 && getComputedStyle(body).scrollbarWidth === "none");
     });
 
-    const visibleCards = await page.locator('[data-testid="result-card"]').count();
-    const paginationText = await pagination.innerText();
-    assert.ok(visibleCards > 0);
-    assert.ok(visibleCards < 18);
-    assert.match(paginationText, new RegExp(`^1–${visibleCards} de 18`));
+    /* There is no control anywhere that hands out the rest of the list:
+       reaching it is scrolling, and nothing else. (Eighteen offers all fit
+       within the first window and its slack — what a set too long for that
+       does is the case below.) */
+    const openingCards = await page.locator('[data-testid="result-card"]').count();
+    assert.ok(openingCards > 0, `opened on ${openingCards}`);
+    assert.equal(await page.getByTestId("results-pagination").count(), 0);
+    assert.equal(await page.getByRole("button", { name: /^Página / }).count(), 0);
 
-    const metrics = await page.getByTestId("results-page-body").evaluate((element) => ({
+    const metrics = await resultsBody.evaluate((element) => ({
       clientHeight: element.clientHeight,
       listHeight: element.querySelector<HTMLElement>(".fd-results-list")?.getBoundingClientRect().height ?? 0,
       overflowY: getComputedStyle(element).overflowY,
@@ -224,29 +230,35 @@ test("exact results paginate visible offers with hidden minimal result scroll", 
     }));
     assert.equal(metrics.overflowY, "auto");
     assert.equal(metrics.scrollbarWidth, "none");
-    assert.ok(metrics.scrollHeight >= metrics.clientHeight || metrics.clientHeight - metrics.listHeight < 72, JSON.stringify(metrics));
+    assert.ok(metrics.scrollHeight >= metrics.clientHeight, JSON.stringify(metrics));
 
-    const resultsBody = page.getByTestId("results-page-body");
-    await resultsBody.evaluate((element) => {
-      element.style.paddingBottom = "320px";
-      element.scrollTop = 123;
-      element.dispatchEvent(new Event("scroll"));
-    });
-    assert.equal(await resultsBody.evaluate((element) => element.scrollTop), 123);
+    /*
+     * On a desk the list grows inside its own column and nowhere else: the
+     * window it scrolls in is the one the plates draw beside the filters and
+     * the detail, so the page behind it must never gain a scroll of its own.
+     */
+    const pageScroll = await page.evaluate(() => ({
+      documentScrollable: document.scrollingElement
+        ? document.scrollingElement.scrollHeight > document.scrollingElement.clientHeight + 1
+        : false,
+      shellOverflow: getComputedStyle(document.querySelector(".fd-shell") as HTMLElement).overflow,
+    }));
+    assert.deepEqual(pageScroll, { documentScrollable: false, shellOverflow: "hidden" });
 
-    await page.getByRole("button", { name: "Página siguiente" }).click();
+    /* Scrolling the column reaches the whole set, and never by starting over:
+       the cards already read stay where they were read. */
     const pagedCards = page.locator('[data-testid="result-card"]');
-    await pagedCards.filter({ hasText: `P${String(visibleCards + 1).padStart(2, "0")}` }).first().waitFor();
-    assert.match(await pagination.innerText(), new RegExp(`^${visibleCards + 1}–\\d+ de 18`));
-    assert.equal(await pagedCards.filter({ hasText: "P01" }).count(), 0);
-    assert.equal(await resultsBody.evaluate((element) => element.scrollTop), 0);
-
-    await page.getByRole("button", { name: "Página anterior" }).click();
-    await pagedCards.filter({ hasText: "P01" }).first().waitFor();
-    assert.equal(await resultsBody.evaluate((element) => element.scrollTop), 0);
-
-    await page.getByRole("button", { name: "Página siguiente" }).click();
-    await pagedCards.filter({ hasText: `P${String(visibleCards + 1).padStart(2, "0")}` }).first().waitFor();
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      if (await pagedCards.count() >= 18) break;
+      await resultsBody.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      await page.waitForTimeout(120);
+    }
+    assert.equal(await pagedCards.count(), 18);
+    assert.equal(await pagedCards.filter({ hasText: "P01" }).count(), 1);
+    await pagedCards.filter({ hasText: "P18" }).first().waitFor();
+    /* The whole set is in the column, so there is nothing left to reach for —
+       the mark the list watches is gone with the reason for it. */
+    assert.equal(await page.getByTestId("results-more-sentinel").count(), 0);
 
     const firstVisibleCard = pagedCards.first();
     assert.equal(await firstVisibleCard.locator(".fd-card__leg").count(), 2);
@@ -464,7 +476,7 @@ test("native schedule groups expose complete return-flight alternatives", async 
   }, { autoOpen: false });
 });
 
-test("a page with more results to give fills the column it was measured against", async () => {
+test("a list with more results to give covers the column it was measured against", async () => {
   /*
    * Reported from the desk at 1920: five cards and a third of the column blank
    * below them. Capacity is counted in plain-card slots, so it has to be
@@ -554,11 +566,12 @@ test("a page with more results to give fills the column it was measured against"
       page.getByRole("button", { name: "Buscar" }).click(),
     ]);
     await page.getByTestId("result-card").first().waitFor();
-    // There is a second page, so the first one has no excuse to be short.
-    await page.getByTestId("results-pagination").waitFor();
+    // There is more of the list below, so what is on screen has no excuse to
+    // stop short of the bottom of the column.
+    await page.waitForTimeout(400);
 
     const fill = await page.evaluate(() => {
-      const body = document.querySelector<HTMLElement>("[data-testid='results-page-body']");
+      const body = document.querySelector<HTMLElement>("[data-testid='results-list-body']");
       const list = document.querySelector<HTMLElement>(".fd-results-list");
       const cards = Array.from(document.querySelectorAll<HTMLElement>("[data-testid='result-card']"));
       const plain = cards.find((card) => !card.querySelector(".fd-card__alts"));
@@ -579,12 +592,13 @@ test("a page with more results to give fills the column it was measured against"
     assert.ok(fill, "missing list metrics");
     // The mix is what makes the measurement meaningful.
     assert.ok(fill.groupHeight > fill.row, JSON.stringify(fill));
-    assert.ok(fill.used <= fill.available + 1, JSON.stringify(fill));
-    assert.ok(fill.available - fill.used < fill.row, JSON.stringify(fill));
+    /* Covered, not fitted: the list runs past the bottom of the column now, and
+       what the column must never show is a gap where a card would fit. */
+    assert.ok(fill.used >= fill.available, JSON.stringify(fill));
   }, { autoOpen: false });
 });
 
-test("a page sized to its items still fits a group card, which is taller than one", async () => {
+test("a list sized to its items still fits a group card, which is taller than one", async () => {
   /*
    * Found by running the app against the live providers: a real LIM–MIA search
    * came back as one standalone flight plus a group of thirteen — two list
@@ -705,9 +719,9 @@ test("a page sized to its items still fits a group card, which is taller than on
     ]);
     await page.getByTestId("result-card").first().waitFor();
 
-    // Both items belong on the one page there is room for.
+    // Both items are the whole list, and a list that fits needs nothing below it.
     await page.waitForFunction(() => document.querySelectorAll('[data-testid="result-card"]').length === 2);
-    assert.equal(await page.getByTestId("results-pagination").count(), 0);
+    assert.equal(await page.getByTestId("results-more-sentinel").count(), 0);
     assert.equal(await page.locator(".fd-card__alts-label").innerText(), "2 HORARIOS MÁS");
   }, { autoOpen: false });
 });
@@ -2590,26 +2604,33 @@ test("the skeleton draws as many rows as the column it is standing in will hold"
     }
 
     /*
-     * And the same number survives the handover. The skeleton is a sibling of
-     * nothing while the page is a sibling of the pager, so without the strip
-     * the skeleton reserves for it the bones were counted into a column 41px
-     * taller than the one the results get — eleven bones replaced by ten cards,
-     * a value jumping the moment the data lands, which is the one thing 04 §7
-     * forbids.
+     * And the column survives the handover. Both are drawn in the same box now
+     * that neither reserves a strip below itself, so the row a bone stands in
+     * is the row a card lands in — which is what 04 §7 is about: no value
+     * jumping the moment the data arrives.
+     *
+     * The count is a floor rather than an equality, because the list does not
+     * stop where the skeleton did: what the reader sees is the same column of
+     * cards, and the batch waiting under the fold is the list already being
+     * ready for the scroll that asks for it.
      */
     await page.getByTestId("result-card").first().waitFor({ timeout: 20_000 });
     await page.waitForTimeout(1_200);
     const arrived = await page.getByTestId("result-card").count();
-    assert.equal(arrived, bones, `${bones} bones handed over to ${arrived} cards`);
+    assert.ok(arrived >= bones, `${bones} bones handed over to ${arrived} cards`);
+    const arrivedColumn = await measureColumn(page);
+    assert.equal(arrivedColumn.fits, column.fits, JSON.stringify({ column, arrivedColumn }));
+    assert.ok(arrivedColumn.blank <= 0, JSON.stringify(arrivedColumn));
   }, { autoOpen: false });
 });
 
 test("a tall column is filled by the results, not by the old ceiling of twelve", async () => {
   /*
-   * The page size was capped at 12 when a 1440-tall desk was the tallest thing
-   * it had been measured on. A 1920×1080 column fits 13 plain rows, so the cap
-   * left a row empty on the reporter's own screen and seven on a 1440-tall one
-   * — the same half-filled column, arriving from the other side.
+   * The window the list opens on was capped at 12 when a 1440-tall desk was the
+   * tallest thing it had been measured on. A 1920×1080 column fits 13 plain
+   * rows, so the cap left a row empty on the reporter's own screen and seven on
+   * a 1440-tall one — the same half-filled column, arriving from the other
+   * side.
    */
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeDelayedSearch(page, { offers: Array.from({ length: 40 }, (_, index) => oneStopOffer(index)) }, 2_000);
@@ -2618,8 +2639,9 @@ test("a tall column is filled by the results, not by the old ceiling of twelve",
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
     await recordListFrames(page);
     await page.getByRole("button", { name: "Buscar" }).click();
-    await page.getByTestId("results-pagination").waitFor({ timeout: 20_000 });
-    // Let the entry cascade finish, so "settled" means settled.
+    await page.getByTestId("result-card").first().waitFor({ timeout: 20_000 });
+    // Let the entry cascade and the first batches finish, so "settled" means
+    // settled.
     await page.waitForTimeout(1_200);
 
     const column = await measureColumn(page);
@@ -2627,30 +2649,83 @@ test("a tall column is filled by the results, not by the old ceiling of twelve",
     const at = JSON.stringify({ ...column, cards });
 
     assert.ok(cards > 12, at);
-    assert.ok(column.blank >= 0 && column.blank < column.row, at);
+    // The column is covered from its first row to its last pixel.
+    assert.ok(column.blank <= 0, at);
 
     /*
      * And it was never smaller on the way in. Re-keying this panel on the
      * arriving `searchJobId` remounts it, which used to reset the column to the
-     * fallback for one painted frame: a page of four cards under a pager that
-     * had already counted the offers of twelve.
+     * fallback for one painted frame: four cards in a column that had already
+     * been measured for twelve.
+     *
+     * A window that grows is the point of this list, so what is asserted is
+     * that it only ever grew — and that the first frame carrying cards already
+     * carried a column's worth of them.
      */
     const frames = await readListFrames(page);
     const resultFrames = frames.filter((frame) => frame.cards > 0);
     assert.ok(resultFrames.length > 0, JSON.stringify(frames));
-    for (const frame of resultFrames) {
-      assert.equal(frame.cards, cards, `painted ${frame.cards} cards: ${JSON.stringify(frames)}`);
+    assert.ok(resultFrames[0].cards >= column.fits, `opened on ${resultFrames[0].cards}: ${at}`);
+    for (const [index, frame] of resultFrames.entries()) {
+      if (index === 0) continue;
+      assert.ok(
+        frame.cards >= resultFrames[index - 1].cards,
+        `list shrank: ${JSON.stringify(frames)}`,
+      );
     }
-
-    // What the pager promises is what the column actually holds.
-    const range = await page.locator(".fd-pager-range").innerText();
-    assert.match(range, new RegExp(`^1–${cards} de 40`), `${range} · ${at}`);
   }, { autoOpen: false });
 });
 
-test("a page carrying a group still closes the column it was measured against", async () => {
+test("a list of hundreds is built a column at a time, and only downwards", async () => {
   /*
-   * The rounding that the weight system hides until a group is on the page.
+   * The reason this list is a window and not a `map` over the offers.
+   *
+   * A plain LIM–MIA search comes back with 520 offers and a week-long range
+   * with 2,500; rendering every card up front is the one thing an infinite list
+   * must not do, and it is invisible in a fixture of eighteen — they all fit
+   * inside the first window and its slack. 240 is past that by an order of
+   * magnitude, so what the column holds and what the DOM holds are two
+   * different numbers and this case can read both.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeDelayedSearch(page, { offers: Array.from({ length: 240 }, (_, index) => oneStopOffer(index)) }, 800);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await runResultsSearch(page, baseUrl);
+    await page.getByTestId("result-card").first().waitFor({ timeout: 20_000 });
+    await page.waitForTimeout(900);
+
+    const column = await measureColumn(page);
+    const opened = await page.getByTestId("result-card").count();
+    const at = JSON.stringify({ ...column, opened });
+
+    // A column's worth on screen, a batch of slack under it, and 240 nowhere.
+    assert.ok(opened >= column.fits, at);
+    assert.ok(opened < 120, at);
+    // The count in the header is the whole set, not the part that was built.
+    assert.match(await page.locator(".fd-panel-count").innerText(), /^240$/);
+
+    /* Every flick adds to what is there rather than replacing it: the first
+       card of the list is still the first card of the list at the bottom of
+       three screens of scrolling. */
+    const body = page.getByTestId("results-list-body");
+    const firstCardBefore = await page.getByTestId("result-card").first().innerText();
+    let previous = opened;
+    for (let flick = 0; flick < 3; flick += 1) {
+      await body.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      await page.waitForTimeout(200);
+      const grown = await page.getByTestId("result-card").count();
+      assert.ok(grown > previous, `flick ${flick} added nothing: ${grown} of 240`);
+      previous = grown;
+    }
+    assert.ok(previous < 240, `built the whole list in three flicks: ${previous}`);
+    assert.equal(await page.getByTestId("result-card").first().innerText(), firstCardBefore);
+    assert.equal(await page.getByTestId("results-more-sentinel").count(), 1);
+  }, { autoOpen: false });
+});
+
+test("a list carrying a group still closes the column it was measured against", async () => {
+  /*
+   * The rounding that the weight system hides until a group is in the window.
    * Capacity used to be floored to whole plain rows before the weights were
    * applied, so a column of 687 became a budget of 10 — and a group at 1.67
    * plus eight flights is 9.67 of it, with a ninth flight refused at 10.67
@@ -2683,7 +2758,7 @@ test("a page carrying a group still closes the column it was measured against", 
 
     await page.setViewportSize({ width: 1920, height: 911 });
     await runResultsSearch(page, baseUrl);
-    await page.getByTestId("results-pagination").waitFor({ timeout: 20_000 });
+    await page.getByTestId("result-card").first().waitFor({ timeout: 20_000 });
     await page.waitForTimeout(1_200);
 
     const column = await measureColumn(page);
@@ -2693,7 +2768,7 @@ test("a page carrying a group still closes the column it was measured against", 
     // The mix is what makes the measurement meaningful.
     assert.equal(groupCards, 1, at);
     // A card that fits was not withheld.
-    assert.ok(column.blank >= 0 && column.blank < column.row, at);
+    assert.ok(column.blank <= 0, at);
   }, { autoOpen: false });
 });
 
