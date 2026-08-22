@@ -237,7 +237,9 @@ export function resultListItemContainsOffer(item: ResultListItem, offerId: strin
  */
 export const RESULT_GROUP_CARD_WEIGHT = 1.67
 
-export function resultListItemDisplayWeight(item: ResultListItem): number {
+/* Module-private: the window below is the only thing that weighs an item now.
+   It was exported for the paginator, which is gone. */
+function resultListItemDisplayWeight(item: ResultListItem): number {
   return item.type === "offer" ? 1 : RESULT_GROUP_CARD_WEIGHT
 }
 
