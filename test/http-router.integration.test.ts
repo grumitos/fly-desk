@@ -2251,8 +2251,11 @@ test("costamar redirect returns a controlled block when refresh hangs", async ()
     exp: 1700003600,
   });
 
+  /* The refresh only has to outlast the redirect deadline above, which the
+     router floors at one second: this is an upper bound, not a measured
+     duration, so it is kept just past that floor instead of far beyond it. */
   setCostamarWarmupGeneratorForTests(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
     return undefined;
   });
 

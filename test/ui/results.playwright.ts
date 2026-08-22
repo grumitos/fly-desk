@@ -2,8 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Page, Route } from "playwright";
 import type { CanonicalOffer, Itinerary } from "../../src/core/types";
-import { withDesktopPage } from "../helpers/ui.ts";
+import { registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
+
+registerDesktopHarness();
 
 test("topbar brand opens the current instance root without hardcoding the port", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
@@ -2709,6 +2711,9 @@ test("a search that is merely slow says nothing beyond the skeleton", async () =
    * has its own states and its own cases.
    */
   await withDesktopPage(async ({ baseUrl, page }) => {
+    // The eight seconds are the app's own timer, so the clock is faked and the
+    // suite does not spend nine real seconds waiting for words to not appear.
+    await page.clock.install();
     await routeUnansweredSearch(page);
     await page.setViewportSize({ width: 1440, height: 960 });
     await page.goto(`${baseUrl}${RESULTS_SEARCH_URL}`, { waitUntil: "domcontentloaded" });
@@ -2717,7 +2722,7 @@ test("a search that is merely slow says nothing beyond the skeleton", async () =
     await page.getByTestId("results-loading-skeleton").waitFor();
 
     // Past the eight seconds that used to end the skeleton's silence.
-    await page.waitForTimeout(9_000);
+    await page.clock.runFor(9_000);
 
     assert.equal(await page.getByTestId("results-loading-skeleton").isVisible(), true);
     assert.ok((await page.locator(".fd-card--skeleton").count()) > 1);
@@ -2730,6 +2735,7 @@ test("a search that is merely slow says nothing beyond the skeleton", async () =
 
 test("the same search under reduced motion still shows bones and no notice", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.clock.install();
     await page.emulateMedia({ reducedMotion: "reduce" });
     await routeUnansweredSearch(page);
     await page.setViewportSize({ width: 1440, height: 960 });
@@ -2737,7 +2743,7 @@ test("the same search under reduced motion still shows bones and no notice", asy
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
     await page.getByRole("button", { name: "Buscar" }).click();
     await page.getByTestId("results-loading-skeleton").waitFor();
-    await page.waitForTimeout(9_000);
+    await page.clock.runFor(9_000);
 
     assert.equal(await page.getByTestId("results-loading-skeleton").isVisible(), true);
     assert.equal(await page.getByText(/tardando más de lo habitual/).count(), 0);

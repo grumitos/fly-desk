@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Page, Route } from "playwright";
-import { withDesktopPage } from "../helpers/ui.ts";
+import { registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
 import { clickSegment, segment } from "./support.ts";
+
+registerDesktopHarness();
 
 test("result filters refine loaded offers without restarting the search", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {

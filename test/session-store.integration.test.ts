@@ -30,15 +30,16 @@ const tempRootsForCleanup = new Set<string>();
 /*
  * A deterministic stand-in for the store's clock and timers.
  *
- * Most waits in this file sleep past the 180ms persist debounce and are safe as
- * they stand: the store's timer and the test's sleep share one event loop, and
- * the store's is both armed earlier and due sooner, so a stalled loop delays
- * the pair together without reordering them.
+ * Every wait in this file that exists only to let the 180ms persist debounce
+ * fire is spent here rather than in real time: the store's timer is the thing
+ * being waited on, so moving the store's clock past it is the same observation
+ * without the sleep — and it takes the file from six seconds to under two.
  *
- * The resident-budget grace recheck was the exception. It could not be observed
- * by ordering, only by waiting out a five-second grace and polling until an
- * absolute `Date.now()` deadline — and an absolute deadline is precisely what a
- * loaded machine blows through, turning a late sweep into a failed assertion.
+ * The resident-budget grace recheck needs it for correctness, not speed. It
+ * could not be observed by ordering, only by waiting out a five-second grace
+ * and polling until an absolute `Date.now()` deadline — and an absolute
+ * deadline is precisely what a loaded machine blows through, turning a late
+ * sweep into a failed assertion.
  *
  * Time moves here only when a test moves it. `advance` runs every timer that
  * comes due inside the span, in due order, including timers armed by a callback
@@ -333,6 +334,15 @@ function buildProviderDiagnostics(kind: ProviderDiagnostics["kind"]): ProviderDi
   }];
 }
 
+/* Waits until `Date.now()` has moved, so a wall-clock stamp taken after this
+   cannot equal one taken before it. */
+async function settleWallClockMs(): Promise<void> {
+  const before = Date.now();
+  while (Date.now() === before) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+}
+
 function readSqliteSavedAt(dbPath: string): string | undefined {
   const db = new Database(dbPath, { readonly: true });
   try {
@@ -620,7 +630,8 @@ test("diagnostics-only updates skip sqlite rewrites without hiding pending mater
   assert.ok(savedAt);
   await new Promise((resolve) => setTimeout(resolve, 25));
 
-  const secondStore = new SearchSessionStore({ dbPath });
+  const clock = createManualScheduler(Date.now());
+  const secondStore = new SearchSessionStore({ dbPath, scheduler: clock.scheduler });
   try {
     const searchDiagnostics = buildProviderDiagnostics("exact");
     const matrixDiagnostics = buildProviderDiagnostics("matrix");
@@ -635,7 +646,7 @@ test("diagnostics-only updates skip sqlite rewrites without hiding pending mater
 
     assert.equal(updatedSearch?.revision, searchJob.revision);
     assert.equal(updatedMatrix?.revision, matrixJob.revision);
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    clock.advance(260);
     assert.equal(readSqliteSavedAt(dbPath), savedAt);
 
     const materialSearch = secondStore.updateSearchJob(searchJob.id, (current) => ({
@@ -650,7 +661,7 @@ test("diagnostics-only updates skip sqlite rewrites without hiding pending mater
     assert.equal(materialMatrix?.revision, matrixJob.revision + 1);
     assert.deepEqual(materialSearch?.providerDiagnostics, searchDiagnostics);
     assert.deepEqual(materialMatrix?.providerDiagnostics, matrixDiagnostics);
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    clock.advance(260);
   } finally {
     secondStore.close();
   }
@@ -670,7 +681,8 @@ test("material progress stays in memory until a durable final update persists it
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-memory-progress-"));
   tempRootsForCleanup.add(tempRoot);
   const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
-  const store = new SearchSessionStore({ dbPath });
+  const clock = createManualScheduler(Date.now());
+  const store = new SearchSessionStore({ dbPath, scheduler: clock.scheduler });
   const offer = buildOffer("memory-progress", "https://provider.example/memory-progress");
   const searchJob = store.createSearchJob({
     request: buildRequest(),
@@ -728,7 +740,7 @@ test("material progress stays in memory until a durable final update persists it
   };
 
   try {
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    clock.advance(260);
     const savedAt = readSqliteSavedAt(dbPath);
     assert.ok(savedAt);
 
@@ -760,7 +772,11 @@ test("material progress stays in memory until a durable final update persists it
       status: "completed",
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    /* `savedAt` is a wall-clock millisecond, not scheduler time: with the
+       persist driven by `clock.advance` two flushes can land in the same one.
+       Step the real clock past it so "changed" keeps meaning a new flush. */
+    await settleWallClockMs();
+    clock.advance(260);
     assert.notEqual(readSqliteSavedAt(dbPath), savedAt);
     assert.deepEqual(readPersisted().search, {
       status: "running",
@@ -801,7 +817,7 @@ test("material progress stays in memory until a durable final update persists it
       warnings: [...current.warnings, "durable-final-matrix"],
     }));
 
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    clock.advance(260);
     assert.notEqual(readSqliteSavedAt(dbPath), savedAt);
     assert.deepEqual(readPersisted().search, {
       status: "completed",
@@ -822,7 +838,8 @@ test("memory-only progress is not captured by the job creation timer", async () 
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-deferred-create-"));
   tempRootsForCleanup.add(tempRoot);
   const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
-  const store = new SearchSessionStore({ dbPath });
+  const clock = createManualScheduler(Date.now());
+  const store = new SearchSessionStore({ dbPath, scheduler: clock.scheduler });
   const initialOffer = buildOffer("deferred-initial", "https://provider.example/deferred-initial");
   const progressOffer = buildOffer("deferred-progress", "https://provider.example/deferred-progress");
   const job = store.createSearchJob({
@@ -842,7 +859,7 @@ test("memory-only progress is not captured by the job creation timer", async () 
       offers: [progressOffer],
       allOffers: [progressOffer],
     }), { persist: false });
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    clock.advance(260);
 
     const beforeCommit = new Database(dbPath, { readonly: true });
     try {
@@ -852,7 +869,7 @@ test("memory-only progress is not captured by the job creation timer", async () 
     }
 
     store.updateSearchJob(job.id, (current) => current);
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    clock.advance(260);
 
     const afterCommit = new Database(dbPath, { readonly: true });
     try {
@@ -873,7 +890,8 @@ test("matrix checkpoints persist result cells without empty placeholders", async
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-matrix-checkpoint-"));
   tempRootsForCleanup.add(tempRoot);
   const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
-  const store = new SearchSessionStore({ dbPath });
+  const clock = createManualScheduler(Date.now());
+  const store = new SearchSessionStore({ dbPath, scheduler: clock.scheduler });
   const resolved = buildMatrixCell("checkpoint-resolved", "https://provider.example/checkpoint-resolved");
   const loading: MatrixCell = {
     ...resolved,
@@ -902,7 +920,7 @@ test("matrix checkpoints persist result cells without empty placeholders", async
   });
 
   try {
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    clock.advance(260);
     const db = new Database(dbPath, { readonly: true });
     try {
       const row = getSql<{ payload: string }>(db, "SELECT payload FROM matrix_jobs WHERE id = ?", job.id);
@@ -1338,7 +1356,8 @@ test("search session store persists completed cache and running redirect snapsho
   const meta = buildSearchMeta();
   const providerMeta = buildProviderMeta();
 
-  const firstStore = new SearchSessionStore({ dbPath });
+  const clock = createManualScheduler(Date.now());
+  const firstStore = new SearchSessionStore({ dbPath, scheduler: clock.scheduler });
   const completedOffer = buildOffer("offer-persisted", "https://persisted.example/search");
   const completedSearchJob = firstStore.createSearchJob({
     request,
@@ -1379,7 +1398,7 @@ test("search session store persists completed cache and running redirect snapsho
     status: "completed",
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 260));
+  clock.advance(260);
   firstStore.close();
 
   const counts = readSqliteCounts(dbPath);
@@ -1725,9 +1744,11 @@ test("resident cache budget keeps running and newly completed jobs, then evicts 
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-resident-grace-"));
   tempRootsForCleanup.add(tempRoot);
   const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
+  const clock = createManualScheduler(Date.now());
   const store = new SearchSessionStore({
     dbPath,
     completedResidentBudgetBytes: 0,
+    scheduler: clock.scheduler,
   });
   const completedAtMs = Date.now();
   const completedOffer = buildOffer("resident-completed", "https://resident.example/completed");
@@ -1777,7 +1798,7 @@ test("resident cache budget keeps running and newly completed jobs, then evicts 
   assert.ok(completedPathId);
   assert.ok(matrixPathId);
 
-  await new Promise((resolve) => setTimeout(resolve, 260));
+  clock.advance(260);
   store.enforceCompletedResidentBudget(completedAtMs + 4_999);
   const completedBeforeEviction = store.getSearchJob(completed.id);
   assert.ok(completedBeforeEviction);
@@ -1837,7 +1858,8 @@ test("resident budget counts running jobs, so a live sweep evicts finished ones 
   /* How big one completed job is. The budget has to be expressed in the same
      units the enforcement counts in, so it is measured rather than guessed —
      one store per path, reopened, as the LRU case above does. */
-  const measureStore = new SearchSessionStore({ dbPath });
+  const measureClock = createManualScheduler(Date.now());
+  const measureStore = new SearchSessionStore({ dbPath, scheduler: measureClock.scheduler });
   const sample = buildOffer("budget-sample", "https://resident.example/sample");
   measureStore.createSearchJob({
     request: buildRequest(),
@@ -1851,7 +1873,7 @@ test("resident budget counts running jobs, so a live sweep evicts finished ones 
   });
   // The persist is debounced, so the bytes are not in SQLite the instant the
   // job is created — and a budget measured before the write is zero.
-  await new Promise((resolve) => setTimeout(resolve, 260));
+  measureClock.advance(260);
   const perJobBytes = measureStore.getDiagnostics().residentCache.completedBytes;
   // On its own it fits that budget exactly and survives.
   measureStore.enforceCompletedResidentBudget(Date.now());
@@ -1863,9 +1885,11 @@ test("resident budget counts running jobs, so a live sweep evicts finished ones 
   // Same budget, same completed job — but now with a sweep running beside it.
   // A separate file in the same root, so the measured job is not restored into
   // this store and counted twice.
+  const clock = createManualScheduler(Date.now());
   const store = new SearchSessionStore({
     dbPath: join(tempRoot, "sweep.sqlite"),
     completedResidentBudgetBytes: perJobBytes,
+    scheduler: clock.scheduler,
   });
   const finishedOffer = buildOffer("budget-finished", "https://resident.example/finished");
   const finished = store.createSearchJob({
@@ -1903,7 +1927,7 @@ test("resident budget counts running jobs, so a live sweep evicts finished ones 
     status: "running",
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 260));
+  clock.advance(260);
   store.enforceCompletedResidentBudget(Date.now());
 
   const diagnostics = store.getDiagnostics().residentCache;
@@ -2025,7 +2049,8 @@ test("search session store avoids rewriting an unchanged sqlite snapshot after l
   const meta = buildSearchMeta();
   const providerMeta = buildProviderMeta();
 
-  const firstStore = new SearchSessionStore({ dbPath });
+  const clock = createManualScheduler(Date.now());
+  const firstStore = new SearchSessionStore({ dbPath, scheduler: clock.scheduler });
   const offer = buildOffer("offer-stable", "https://stable.example/search");
   firstStore.createSearchJob({
     request,
@@ -2037,7 +2062,7 @@ test("search session store avoids rewriting an unchanged sqlite snapshot after l
     sortMode: "cheapest",
     status: "completed",
   });
-  await new Promise((resolve) => setTimeout(resolve, 260));
+  clock.advance(260);
   firstStore.close();
 
   const firstSavedAt = readSqliteSavedAt(dbPath);
@@ -2079,12 +2104,13 @@ test("search session store only writes the search job that changed", async () =>
   firstStore.close();
   installSearchJobWriteAudit(dbPath);
 
-  const secondStore = new SearchSessionStore({ dbPath });
+  const clock = createManualScheduler(Date.now());
+  const secondStore = new SearchSessionStore({ dbPath, scheduler: clock.scheduler });
   secondStore.updateSearchJob(changedJob.id, (current) => ({
     ...current,
     warnings: ["updated"],
   }));
-  await new Promise((resolve) => setTimeout(resolve, 260));
+  clock.advance(260);
   secondStore.close();
 
   assert.deepEqual(readSearchJobWriteAudit(dbPath), [
@@ -2108,7 +2134,8 @@ test("a refused session write is owed, not dropped: nothing retries on its own a
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-session-store-write-refused-"));
   tempRootsForCleanup.add(tempRoot);
   const dbPath = join(tempRoot, "fly-desk-cache.sqlite");
-  const store = new SearchSessionStore({ dbPath });
+  const clock = createManualScheduler(Date.now());
+  const store = new SearchSessionStore({ dbPath, scheduler: clock.scheduler });
   const connection = (store as unknown as { db?: Database }).db;
   assert.ok(connection);
 
@@ -2126,7 +2153,7 @@ test("a refused session write is owed, not dropped: nothing retries on its own a
       sortMode: "cheapest",
       status: "completed",
     });
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    clock.advance(260);
     assert.equal(readSqliteCounts(dbPath).searchJobs, 1);
 
     // The disk refuses everything from here: `query_only` is per connection, so
@@ -2150,7 +2177,7 @@ test("a refused session write is owed, not dropped: nothing retries on its own a
       });
       // Three debounce windows with no mutation in them. A store that armed a
       // retry of its own would have spoken again inside that stretch.
-      await new Promise((resolve) => setTimeout(resolve, 560));
+      clock.advance(560);
     } finally {
       console.warn = originalWarn;
     }
@@ -2171,7 +2198,7 @@ test("a refused session write is owed, not dropped: nothing retries on its own a
       sortMode: "cheapest",
       status: "completed",
     });
-    await new Promise((resolve) => setTimeout(resolve, 260));
+    clock.advance(260);
 
     // The write that was refused rides along with the one that follows it: the
     // diff was still owed, not recomputed and not lost.
