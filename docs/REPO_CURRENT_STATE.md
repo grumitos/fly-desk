@@ -238,6 +238,14 @@ Deployed revisions and the live service inventory are maintained in `D:\Dev\VPS\
 
 ## Current Technical Debt
 
+- two latency knobs are still at their conservative values and both are now safe
+  to try, but neither has been measured since the worker pool and long-poll
+  landed. `SEARCH_RANGE_SEARCH_CONCURRENCY` is 2 (two days at a time) and the
+  global Agil in-flight ceiling now makes 3 safe to attempt; intermediate
+  milestone coalescing is 900 ms in `src/http-router.ts` and could drop to
+  roughly 400 ms if the UI benefits. Change one at a time and keep the
+  measurement, or leave them as they are - they are deliberate settings, not
+  oversights
 - `frontend/src/App.tsx` still concentrates substantial composition, filtering, and selection
 - `src/local-agil.ts` concentrates session handling, client behavior, pricing, and mapping
 - `src/local-costamar.ts` concentrates B2B automation, client behavior, mapping, and Click and Book Plus redirects
