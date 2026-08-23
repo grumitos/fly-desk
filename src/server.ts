@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 import * as path from "node:path";
 import type { Server as BunServer } from "bun";
+import { ensureAirlineMark } from "./airline-mark-store";
 import { routeRequest } from "./http-router";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import { getPublicRuntimeConfig } from "./search-date-policy";
@@ -144,6 +145,13 @@ async function resolvePublicAsset(pathname: string): Promise<string | undefined>
   } catch {
     return undefined;
   }
+}
+
+const AIRLINE_MARK_PATH_PATTERN = /^\/assets\/airline-icons\/([A-Z0-9]{2})\.png$/;
+
+async function resolveHarvestedAirlineMark(pathname: string): Promise<string | undefined> {
+  const code = AIRLINE_MARK_PATH_PATTERN.exec(pathname)?.[1];
+  return code ? ensureAirlineMark(code) : undefined;
 }
 
 function escapeInlineScriptJson(value: string): string {
@@ -324,6 +332,15 @@ async function routeServerRequest(request: Request, server: BunServer<undefined>
     const assetPath = await resolvePublicAsset(pathname);
     if (assetPath) {
       return serveStaticFile(assetPath, pathname.startsWith("/assets/"));
+    }
+
+    /* A carrier the release has no mark for: the provider that returned the
+       flight also publishes the artwork, so it is fetched once here and is a
+       local file from then on. Only after the release has been asked, so a
+       bundled mark is never reached for over the network. */
+    const harvestedMark = await resolveHarvestedAirlineMark(pathname);
+    if (harvestedMark) {
+      return serveStaticFile(harvestedMark, true);
     }
   }
 

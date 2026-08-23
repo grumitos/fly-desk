@@ -1,27 +1,36 @@
 /*
- * Which carriers have a mark, which is not the same list as the one that has a
- * *name*: `airline-names.ts` knows more codes than there are files here, and a
- * code with no file falls back to the two letters — legible at 32px, which the
- * marks that are wordmarks rather than symbols are not.
+ * The marks that ship with the release.
  *
- * That is the whole criterion, and it is applied by looking: `AM`, `UA` and
- * `LH` are symbols and read cleanly in a 32px slot; the six carriers the name
- * catalogue knows and this list omits — `AD`, `B6`, `G3`, `NK`, `VB`, `Y4` —
- * ship a wordmark as their only artwork, and «jetBlue» rendered 32px wide is
- * less legible than «B6». The gap is a decision about the card, not an
- * omission, and a code with no file is a supported state rather than a bug.
+ * Not the marks that exist: a code missing from this list is fetched once from
+ * the provider and cached (`airline-mark-store.ts`), so this is the set that is
+ * available offline, on the first request, and without trusting anything the
+ * network says that day. It holds the carriers eight ordinary LIM routes
+ * actually return, which is where a cold fetch would otherwise be paid.
+ *
+ * It used to be the gate as well, and hand-kept: those same eight routes return
+ * 38 distinct carriers, and gating on a list of 23 drew British Airways,
+ * Turkish, Vueling, Alitalia, TAP and Emirates as their bare two letters. A
+ * list nobody can finish should not decide what gets drawn.
  */
 export const AIRLINE_LOGO_CODES = [
   "4C",
   "4M",
+  "A5",
   "AA",
   "AC",
   "AF",
   "AM",
   "AR",
   "AV",
+  "AZ",
+  "B6",
+  "BA",
   "CM",
   "DL",
+  "DM",
+  "EK",
+  "EN",
+  "G3",
   "H2",
   "IB",
   "JA",
@@ -35,9 +44,13 @@ export const AIRLINE_LOGO_CODES = [
   "OB",
   "PU",
   "PZ",
+  "TK",
+  "TP",
   "UA",
   "UX",
+  "VY",
   "XL",
+  "Y4",
 ] as const;
 
 const AIRLINE_LOGO_CODE_SET = new Set<string>(AIRLINE_LOGO_CODES);
@@ -47,7 +60,48 @@ export function normalizeAirlineAssetCode(value: unknown): string {
   return /^[A-Z0-9]{2}$/.test(normalized) ? normalized : "";
 }
 
+/**
+ * Where the card asks for a carrier's mark.
+ *
+ * Any well-formed code gets a path, not only the ones bundled above: the server
+ * answers a code it has no file for by fetching it once from the provider that
+ * returned the flight, and a code with no artwork anywhere answers `404`, which
+ * the card draws as the two letters. Gating this on the bundled list instead is
+ * what left British Airways, Turkish and Vueling as bare codes — the list was
+ * hand-kept and the carriers a search returns are not.
+ */
 export function airlineLogoAssetPath(value: unknown): string {
   const code = normalizeAirlineAssetCode(value);
-  return code && AIRLINE_LOGO_CODE_SET.has(code) ? `/assets/airline-icons/${code}.png` : "";
+  return code ? `/assets/airline-icons/${code}.png` : "";
+}
+
+/** Whether the release itself carries the mark, with nothing to fetch. */
+export function isBundledAirlineLogoCode(value: unknown): boolean {
+  return AIRLINE_LOGO_CODE_SET.has(normalizeAirlineAssetCode(value));
+}
+
+/**
+ * The edge of a square PNG, or `undefined` for anything else.
+ *
+ * The one check that decides whether bytes off a provider CDN may be written
+ * next to the marks that shipped with the release: the signature says it is a
+ * PNG and the header says it is square, which is the shape the 32px slot draws
+ * without distorting. Shared by the extractor and the runtime store so a mark
+ * entering the repository and a mark entering the cache clear the same bar.
+ */
+export function readSquarePngSize(bytes: Uint8Array): number | undefined {
+  const SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (bytes.length < 24 || SIGNATURE.some((value, index) => bytes[index] !== value)) {
+    return undefined;
+  }
+
+  const readUint32BE = (offset: number): number => (
+    bytes[offset]! * 0x1000000
+    + bytes[offset + 1]! * 0x10000
+    + bytes[offset + 2]! * 0x100
+    + bytes[offset + 3]!
+  );
+  const width = readUint32BE(16);
+  const height = readUint32BE(20);
+  return width > 0 && width === height ? width : undefined;
 }

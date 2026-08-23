@@ -303,10 +303,29 @@ function LegRow({ leg }: { leg: ResultLegModel }) {
 }
 
 function CarrierLogo({ carrier }: { carrier: ResultCardModel["carrier"] }) {
+  /* The card asks for a mark for every carrier now, and the server fetches one
+     the release does not carry. A code with no artwork anywhere answers 404,
+     and the two letters are what stands in — decided by the image failing
+     rather than by a list this component would have to be told about.
+     What is remembered is the source that failed, not that one did: a
+     different carrier in a recycled row is a different source and starts over
+     without anything having to reset it. */
+  const source = carrier.logo
+  const [failedSource, setFailedSource] = useState<string | null>(null)
+  const failed = Boolean(source) && failedSource === source
+
   return (
     <div className="fd-card__logo" title={carrier.name} aria-hidden="true">
-      {carrier.logo
-        ? <img src={carrier.logo} alt="" decoding="async" loading="lazy" />
+      {source && !failed
+        ? (
+          <img
+            src={source}
+            alt=""
+            decoding="async"
+            loading="lazy"
+            onError={() => setFailedSource(source)}
+          />
+        )
         : <span>{carrier.code || carrier.name.slice(0, 2).toUpperCase()}</span>}
     </div>
   )

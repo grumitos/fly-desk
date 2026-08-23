@@ -2,7 +2,12 @@ import { test } from "bun:test"
 import assert from "node:assert/strict"
 import { readdirSync } from "node:fs"
 import { join } from "node:path"
-import { AIRLINE_LOGO_CODES, airlineLogoAssetPath, normalizeAirlineAssetCode } from "../src/core/airline-assets"
+import {
+  AIRLINE_LOGO_CODES,
+  airlineLogoAssetPath,
+  isBundledAirlineLogoCode,
+  normalizeAirlineAssetCode,
+} from "../src/core/airline-assets"
 import { normalizeAirlineDisplayName } from "../src/core/airline-names"
 
 const ICON_DIR = join("frontend", "public", "assets", "airline-icons")
@@ -29,17 +34,20 @@ test("the carriers the desk was missing resolve to their own marks", () => {
   assert.equal(normalizeAirlineDisplayName("UA"), "United")
 })
 
-test("a carrier with a name but no mark falls back to its code rather than to a broken image", () => {
+test("a carrier the release does not bundle is asked for anyway, not written off", () => {
   /*
-   * The name catalogue is deliberately the longer of the two: a mark that is a
-   * wordmark rather than a symbol is illegible in the card's 32px slot, where
-   * the two letters are not. So this is a supported state, not a gap to close
-   * by adding files.
+   * The two lists used to have to agree, and neither could be finished by hand:
+   * eight ordinary LIM routes return 38 carriers, and a search can always
+   * return one more. So a code missing from the bundle is no longer a carrier
+   * without a mark — it is one whose mark has not been fetched yet.
    */
-  const named = ["AD", "B6", "G3", "NK", "VB", "Y4"]
-  for (const code of named) {
-    assert.notEqual(normalizeAirlineDisplayName(code), code, `${code} should have a name`)
-    assert.equal(airlineLogoAssetPath(code), "", `${code} should have no mark`)
+  for (const code of ["QR", "SQ", "ET"]) {
+    assert.equal(isBundledAirlineLogoCode(code), false, `${code} is not bundled`)
+    assert.equal(
+      airlineLogoAssetPath(code),
+      `/assets/airline-icons/${code}.png`,
+      `${code} should still be asked for`,
+    )
   }
 })
 
@@ -47,5 +55,22 @@ test("only a two-character alphanumeric code can name an asset", () => {
   assert.equal(normalizeAirlineAssetCode(" la "), "LA")
   assert.equal(normalizeAirlineAssetCode("LATAM"), "")
   assert.equal(airlineLogoAssetPath("../../etc/passwd"), "")
-  assert.equal(airlineLogoAssetPath("ZZ"), "")
+  assert.equal(airlineLogoAssetPath("LATAM"), "")
+})
+
+test("a carrier the release does not bundle still gets a path to ask for", () => {
+  /*
+   * The gate used to be this list, which is why British Airways and Turkish —
+   * 290 and 91 segments across eight ordinary routes — were drawn as their two
+   * letters. The card asks for every well-formed code now; the server answers
+   * one it has no file for by fetching it once, and a code with no artwork
+   * anywhere answers 404, which the card draws as the letters.
+   */
+  assert.equal(airlineLogoAssetPath("QR"), "/assets/airline-icons/QR.png")
+  assert.equal(isBundledAirlineLogoCode("QR"), false)
+  assert.equal(isBundledAirlineLogoCode("LA"), true)
+  // And the carriers those routes did return are bundled, so no cold fetch.
+  for (const code of ["BA", "TK", "VY", "AZ", "TP", "EK"]) {
+    assert.equal(isBundledAirlineLogoCode(code), true, `${code} should ship with the release`)
+  }
 })
