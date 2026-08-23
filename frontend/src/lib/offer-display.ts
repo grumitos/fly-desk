@@ -250,12 +250,16 @@ export function stationPlaceName(code?: string, name?: string): string {
   const city = cityNameForIataCode(code)
   if (city) return city
 
-  /* Plate 1b writes «LIM · Jorge Chávez», not «LIM · Aeropuerto Internacional
-     Jorge Chávez»: the words that name the facility are not the name of the
-     place, and dropping them is what makes two providers describing the same
-     runway at different lengths read alike. Only applied to a label that
-     announces itself as one, so a station whose real name happens to be long
-     is left as the provider wrote it. */
+  /* Plate 1b's shape, for a code the catalogue cannot answer: «SYD · Sydney
+     Kingsford Smith», not «SYD · Sydney Kingsford Smith International
+     Airport». The words that name the facility are not the name of the place,
+     and dropping them is what makes two providers describing the same runway
+     at different lengths read alike. Only applied to a label that announces
+     itself as one, so a station whose real name happens to be long is left as
+     the provider wrote it.
+
+     LIM is deliberately not the example: it is catalogued, so it never reaches
+     this branch — the line above answers «Lima» whichever provider asked. */
   const provider = stationDisplayName(name)
   return isAirportFacilityLabel(provider) ? stripAirportFacilityWords(provider) : provider
 }

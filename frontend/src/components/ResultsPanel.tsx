@@ -542,6 +542,7 @@ function ResultsBody({
   return (
     <ResultsList
       resultItems={resultItems}
+      jobKey={results?.searchJobId ?? ""}
       columnRows={columnRows}
       viewportRef={viewportRef}
       attachViewport={attachViewport}
@@ -577,6 +578,7 @@ function spellOutCount(count: number): string {
 
 function ResultsList({
   resultItems,
+  jobKey,
   columnRows,
   viewportRef,
   attachViewport,
@@ -591,6 +593,15 @@ function ResultsList({
 }: {
   /** Built above, so the skeleton and the list weigh the same column. */
   resultItems: ResultListItem[]
+  /**
+   * The search these items belong to.
+   *
+   * What the per-job state below is stamped with. It used to be a digest of the
+   * items themselves, which changes on every progressive batch — so a search
+   * that answers in parts, which is every search now, dropped that state
+   * several times while the reader was using it.
+   */
+  jobKey: string
   /** Whole rows: what the column fits, for the things that draw rows. */
   columnRows: number
   viewportRef: RefObject<HTMLDivElement | null>
@@ -604,7 +615,7 @@ function ResultsList({
   onMobileToolsCollapsedChange: (collapsed: boolean) => void
   mobileCollapseEnabled: boolean
 }) {
-  const listKey = useMemo(() => resultItemsIdentityKey(resultItems), [resultItems])
+
   /* Which schedule each group is currently showing, and which group has its full
      list open. Both are stamped with the result set they belong to, so a new
      search drops them in the same render instead of briefly pinning a stale
@@ -614,8 +625,8 @@ function ResultsList({
     choice: Record<string, string>
     expandedGroupId: string | null
   }>({ key: "", choice: {}, expandedGroupId: null })
-  const scheduleChoice = scheduleState.key === listKey ? scheduleState.choice : {}
-  const expandedGroupId = scheduleState.key === listKey ? scheduleState.expandedGroupId : null
+  const scheduleChoice = scheduleState.key === jobKey ? scheduleState.choice : {}
+  const expandedGroupId = scheduleState.key === jobKey ? scheduleState.expandedGroupId : null
   /*
    * The first window is what the column holds; every flick of the thumb adds
    * two more. `batchSize` is whole cards because a batch is an amount to add,
@@ -637,8 +648,16 @@ function ResultsList({
    * already selected, and opening one column short of it would hide the flight
    * the link was sent about.
    */
+  /*
+   * Once, on arrival — not "whenever the view happens to look like the one we
+   * mounted with". Comparing keys made a filter and its undo, or a sort and its
+   * undo, count as arriving again: the entrance cascade replayed on a plain
+   * re-sort, and the selected-offer reveal below re-engaged, which on a set of
+   * hundreds means building every card down to the selection a second time.
+   */
   const [firstViewKey] = useState(viewKey)
-  const isFirstView = firstViewKey === viewKey
+  const [leftFirstView, setLeftFirstView] = useState(false)
+  const isFirstView = !leftFirstView && firstViewKey === viewKey
   const selectedItemIndex = useMemo(() => {
     if (!selectedOfferId) return -1
     return resultItems.findIndex((item) => resultListItemContainsOffer(item, selectedOfferId))
@@ -694,6 +713,7 @@ function ResultsList({
   useEffect(() => {
     if (viewKeyRef.current === viewKey) return
     viewKeyRef.current = viewKey
+    setLeftFirstView(true)
     viewportRef.current?.scrollTo({ top: 0 })
     scrollStateRef.current = {
       lastTop: 0,
@@ -759,7 +779,7 @@ function ResultsList({
       collapsed: false,
     }
     onMobileToolsCollapsedChange(false)
-  }, [onMobileToolsCollapsedChange, listKey])
+  }, [onMobileToolsCollapsedChange, jobKey])
 
   /*
    * The window grows when the end of it comes within a column of the viewport.
@@ -826,16 +846,16 @@ function ResultsList({
                 expanded={expandedGroupId === item.id}
                 onChooseSchedule={(offer) => {
                   setScheduleState((current) => ({
-                    key: listKey,
-                    choice: { ...(current.key === listKey ? current.choice : {}), [item.id]: offer.id },
-                    expandedGroupId: current.key === listKey ? current.expandedGroupId : null,
+                    key: jobKey,
+                    choice: { ...(current.key === jobKey ? current.choice : {}), [item.id]: offer.id },
+                    expandedGroupId: current.key === jobKey ? current.expandedGroupId : null,
                   }))
                   onSelectOffer(offer)
                 }}
                 onToggleExpanded={() => setScheduleState((current) => ({
-                  key: listKey,
-                  choice: current.key === listKey ? current.choice : {},
-                  expandedGroupId: current.key === listKey && current.expandedGroupId === item.id ? null : item.id,
+                  key: jobKey,
+                  choice: current.key === jobKey ? current.choice : {},
+                  expandedGroupId: current.key === jobKey && current.expandedGroupId === item.id ? null : item.id,
                 }))}
                 onSelectOffer={onSelectOffer}
               />
@@ -1164,21 +1184,6 @@ function useResultsColumnCapacity() {
   }, [viewportNode])
 
   return { columnRows, viewportRef, attachViewport }
-}
-
-/** Cheap identity of the current list, for the state that belongs to it. */
-function resultItemsIdentityKey(items: ResultListItem[]) {
-  if (items.length === 0) return "empty"
-  if (items.length <= 6) return items.map((item) => item.id).join("|")
-
-  const middleIndex = Math.floor(items.length / 2)
-  return [
-    items.length,
-    items[0]?.id,
-    items[1]?.id,
-    items[middleIndex]?.id,
-    items[items.length - 1]?.id,
-  ].join("|")
 }
 
 function passengerCountForRequest(request: SearchJobResponse["request"] | undefined) {

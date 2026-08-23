@@ -56,3 +56,21 @@ test("a lost answer is retried before the search is called failed", () => {
   // Short enough that a runner which is really gone is reported promptly.
   assert.ok(POLL_MAX_CONSECUTIVE_FAILURES * POLL_RETRY_DELAY_MS <= 2_000)
 })
+
+test("both poll loops retry, not just the one that starts a search", async () => {
+  /*
+   * The retry was added to `runSearch` and not to `restoreJob`, so reopening a
+   * running job kept the old behaviour: one lost answer ended the search while
+   * the runner was still working. Read as source because the loops are closures
+   * inside a hook with no seam to drive them from a unit test.
+   */
+  const source = await Bun.file("frontend/src/hooks/useSearch.ts").text()
+  const count = (needle: string) => source.split(needle).length - 1
+  assert.equal(count("let consecutiveFailures = 0"), 2, "both loops count their failures")
+  assert.equal(count("consecutiveFailures += 1"), 2, "both loops count a lost answer")
+  assert.equal(
+    count("consecutiveFailures < POLL_MAX_CONSECUTIVE_FAILURES"),
+    2,
+    "both loops retry before reporting",
+  )
+})

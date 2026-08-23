@@ -301,12 +301,16 @@ export function useSearch() {
 
       registerActiveJob({ id: job.searchJobId, type: "search" })
       let lastRevision = job.revision
+      /* Same rule as the search loop above: the job runs on the server, and one
+         lost answer is a hop that timed out, not a search that stopped. */
+      let consecutiveFailures = 0
       const doPoll = async () => {
         if (!isCurrentRun()) return
         const startedAt = Date.now()
         try {
           const updated = await pollSearch(job.searchJobId, lastRevision, { signal: abortController.signal })
           if (!isCurrentRun()) return
+          consecutiveFailures = 0
           if (!updated.unchanged) {
             const hydrated = hydrateSearchJobUpdate(updated, latestResultsRef.current)
             lastRevision = hydrated.revision
@@ -325,7 +329,16 @@ export function useSearch() {
           abortControllerRef.current = null
         } catch (err) {
           if (!isCurrentRun() || err instanceof FlyDeskSearchCancelledError) return
-          appendDiagnosticLog("Error durante actualización", diagnosticLogFromError(err))
+          consecutiveFailures += 1
+          appendDiagnosticLog(
+            `Error durante actualización (intento ${consecutiveFailures} de ${POLL_MAX_CONSECUTIVE_FAILURES})`,
+            diagnosticLogFromError(err),
+          )
+          if (consecutiveFailures < POLL_MAX_CONSECUTIVE_FAILURES) {
+            pollRef.current = window.setTimeout(doPoll, POLL_RETRY_DELAY_MS)
+            return
+          }
+
           setStatusMessage(userMessageFromError(err))
           setLoading(false)
           abortControllerRef.current = null
