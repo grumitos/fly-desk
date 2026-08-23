@@ -21,9 +21,10 @@ test("every code the card promises a mark for has one on disk, and no file is or
   assert.deepEqual(files, codes.map((code) => `${code}.png`))
 })
 
-test("the two carriers the desk was missing resolve to their own marks", () => {
+test("the carriers the desk was missing resolve to their own marks", () => {
   assert.equal(airlineLogoAssetPath("AM"), "/assets/airline-icons/AM.png")
   assert.equal(airlineLogoAssetPath("UA"), "/assets/airline-icons/UA.png")
+  assert.equal(airlineLogoAssetPath("LH"), "/assets/airline-icons/LH.png")
   assert.equal(normalizeAirlineDisplayName("AM"), "Aeroméxico")
   assert.equal(normalizeAirlineDisplayName("UA"), "United")
 })
@@ -35,7 +36,7 @@ test("a carrier with a name but no mark falls back to its code rather than to a 
    * the two letters are not. So this is a supported state, not a gap to close
    * by adding files.
    */
-  const named = ["AD", "B6", "G3", "LH", "NK", "VB", "Y4"]
+  const named = ["AD", "B6", "G3", "NK", "VB", "Y4"]
   for (const code of named) {
     assert.notEqual(normalizeAirlineDisplayName(code), code, `${code} should have a name`)
     assert.equal(airlineLogoAssetPath(code), "", `${code} should have no mark`)
