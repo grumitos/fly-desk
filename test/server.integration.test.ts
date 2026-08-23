@@ -267,10 +267,14 @@ test("server trusts the Worker login client IP only through a loopback peer", { 
 
 test("a carrier mark the release lacks is fetched once and then served locally", { concurrency: false }, async () => {
   /*
-   * Eight ordinary routes return 38 carriers and the release ships marks for 23
-   * of them, so British Airways and Turkish were drawn as their two letters.
-   * The provider that returns the flight also publishes the artwork, so the
-   * first card to ask for one pays for it and every card after reads a file.
+   * Eight ordinary routes return 38 carriers and a search can always return one
+   * more, so the release cannot bundle them all. The provider that returns the
+   * flight also publishes the artwork: the first card to ask for a mark the
+   * release lacks pays for it, and every card after reads a file.
+   *
+   * `QR` on purpose — a carrier the bundle does not carry. A bundled code is
+   * served by the release before this path is reached, which is the point of
+   * bundling it.
    */
   const directory = mkdtempSync(join(tmpdir(), "flydesk-server-marks-"));
   const previousDir = process.env.FLY_DESK_AIRLINE_MARK_DIR;
@@ -292,7 +296,7 @@ test("a carrier mark the release lacks is fetched once and then served locally",
 
   try {
     const ask = () => handleRequest(
-      new Request("http://fly-desk.test/assets/airline-icons/BA.png"),
+      new Request("http://fly-desk.test/assets/airline-icons/QR.png"),
       { requestIP: () => null } as never,
     );
 
