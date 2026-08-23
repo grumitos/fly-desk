@@ -2,9 +2,14 @@
  * Which carriers have a mark, which is not the same list as the one that has a
  * *name*: `airline-names.ts` knows more codes than there are files here, and a
  * code with no file falls back to the two letters — legible at 32px, which the
- * marks that are wordmarks rather than symbols would not be. `AM` and
- * `UA` were the two the desk actually met and the two the extractor returns as
- * symbols; the rest of that gap is a decision about the card, not an omission.
+ * marks that are wordmarks rather than symbols are not.
+ *
+ * That is the whole criterion, and it is applied by looking: `AM`, `UA` and
+ * `LH` are symbols and read cleanly in a 32px slot; the six carriers the name
+ * catalogue knows and this list omits — `AD`, `B6`, `G3`, `NK`, `VB`, `Y4` —
+ * ship a wordmark as their only artwork, and «jetBlue» rendered 32px wide is
+ * less legible than «B6». The gap is a decision about the card, not an
+ * omission, and a code with no file is a supported state rather than a bug.
  */
 export const AIRLINE_LOGO_CODES = [
   "4C",
@@ -24,6 +29,7 @@ export const AIRLINE_LOGO_CODES = [
   "JZ",
   "KL",
   "LA",
+  "LH",
   "LP",
   "LU",
   "OB",
