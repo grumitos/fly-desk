@@ -7,7 +7,7 @@ import type { ActiveFilterChip } from "@/components/ResultsPanel"
  *
  * One component with two mounting points, like `TripModeControls` (02 §4). On a
  * desk it lives under the list header as 26px chips; on a phone it is the
- * middle band of the retractable tools block, at the 44px touch minimum and
+ * middle band of the retractable tools block, at the mobile control height and
  * scrolling horizontally. It is the *same* strip either way — the geometry
  * comes from the container query, never from a `Mobile` copy of the component.
  *

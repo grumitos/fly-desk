@@ -1351,13 +1351,14 @@
     min-height: 0;
   }
 
-  /* 60px on the right is the swap button plus its 10px inset and 6px of air:
-     the
-     value has to stop before the button, not run under it. */
+  /* The swap button plus its 10px inset and 6px of air: the value has to stop
+     before the button, not run under it. Derived rather than written out,
+     because the button is a token — the literal 60 this used to be was the sum
+     for a 44px button and stayed behind when the catalogue moved to 40. */
   .fd-route-fields .fd-field-control {
     height: 100%;
     min-height: 0;
-    padding-right: 60px;
+    padding-right: calc(var(--fd-control-touch) + 16px);
     border: 0;
     border-radius: 0;
     background: transparent;
