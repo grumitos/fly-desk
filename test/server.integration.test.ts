@@ -1,6 +1,10 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { handleRequest, resolveServerIdleTimeoutSeconds } from "../src/server";
+import { resetAirlineMarkStoreForTests } from "../src/airline-mark-store";
 import { resetWebLoginAdmission } from "../src/login-admission";
 import { createScryptPasswordHash } from "../src/web-auth";
 import { withServer } from "./helpers/server";
@@ -258,5 +262,61 @@ test("server trusts the Worker login client IP only through a loopback peer", { 
     else process.env.FLY_DESK_WEB_PASSWORD_HASH = previousPasswordHash;
     if (previousSessionSecret === undefined) delete process.env.FLY_DESK_WEB_SESSION_SECRET;
     else process.env.FLY_DESK_WEB_SESSION_SECRET = previousSessionSecret;
+  }
+});
+
+test("a carrier mark the release lacks is fetched once and then served locally", { concurrency: false }, async () => {
+  /*
+   * Eight ordinary routes return 38 carriers and the release ships marks for 23
+   * of them, so British Airways and Turkish were drawn as their two letters.
+   * The provider that returns the flight also publishes the artwork, so the
+   * first card to ask for one pays for it and every card after reads a file.
+   */
+  const directory = mkdtempSync(join(tmpdir(), "flydesk-server-marks-"));
+  const previousDir = process.env.FLY_DESK_AIRLINE_MARK_DIR;
+  process.env.FLY_DESK_AIRLINE_MARK_DIR = directory;
+  const realFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    if (String(input).includes("/web/airlines/")) {
+      fetches += 1;
+      const bytes = new Uint8Array(64);
+      bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
+      bytes[19] = 70;
+      bytes[23] = 70;
+      return new Response(bytes, { status: 200, headers: { "content-type": "image/png" } });
+    }
+    return realFetch(input as never);
+  }) as typeof fetch;
+  resetAirlineMarkStoreForTests();
+
+  try {
+    const ask = () => handleRequest(
+      new Request("http://fly-desk.test/assets/airline-icons/BA.png"),
+      { requestIP: () => null } as never,
+    );
+
+    const first = await ask();
+    assert.equal(first.status, 200);
+    assert.match(first.headers.get("content-type") ?? "", /image\/png/);
+    assert.equal(fetches, 1);
+
+    const second = await ask();
+    assert.equal(second.status, 200);
+    assert.equal(fetches, 1, "the second card read the file rather than the network");
+
+    // A path that is not a carrier code is not a licence to fetch anything.
+    const notACode = await handleRequest(
+      new Request("http://fly-desk.test/assets/airline-icons/LATAM.png"),
+      { requestIP: () => null } as never,
+    );
+    assert.equal(notACode.status, 404);
+    assert.equal(fetches, 1);
+  } finally {
+    globalThis.fetch = realFetch;
+    resetAirlineMarkStoreForTests();
+    if (previousDir === undefined) delete process.env.FLY_DESK_AIRLINE_MARK_DIR;
+    else process.env.FLY_DESK_AIRLINE_MARK_DIR = previousDir;
+    rmSync(directory, { recursive: true, force: true });
   }
 });
