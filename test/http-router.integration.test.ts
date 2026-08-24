@@ -51,7 +51,7 @@ import {
   providerStatusTtlMsFor,
 } from "../src/provider-status";
 import { providerPrewarmEnabled, providerPrewarmIntervalMs } from "../src/provider-prewarm";
-import { createScryptPasswordHash } from "../src/web-auth";
+import { createScryptPasswordHash, createWebSessionCookie } from "../src/web-auth";
 import { resetWebLoginAdmission } from "../src/login-admission";
 import { applyEnvironment } from "./helpers/environment";
 import { withServer } from "./helpers/server";
@@ -4353,4 +4353,131 @@ test("rejects oversized JSON bodies before routing", async () => {
     const payload = await response.json() as { error?: string };
     assert.match(payload.error ?? "", /byte limit/i);
   });
+});
+
+/*
+ * A shared search link is entirely query string, and the gate used to drop it:
+ * the redirect to `/login` kept the path and nothing else, so signing in landed
+ * the agent on an empty workspace. The return path is now carried through, and
+ * because it arrives from whoever sent the link it is only ever a path here.
+ */
+test("the gate returns the agent to the link they followed", { concurrency: false }, async () => {
+  const restore = applyEnvironment({
+    FLY_DESK_WEB_AUTH: "1",
+    FLY_DESK_WEB_PASSWORD: undefined,
+    FLY_DESK_WEB_PASSWORD_HASH: createScryptPasswordHash("test-password", Buffer.alloc(16, 21)),
+    FLY_DESK_WEB_SESSION_SECRET: "test-session-secret-32-characters-minimum",
+  });
+
+  const signIn = async (client: string, password: string, next?: string) => {
+    resetWebLoginAdmission(client);
+    const body = new URLSearchParams({ password });
+    if (next !== undefined) {
+      body.set("next", next);
+    }
+
+    return routeRequest(new Request("https://fly-desk.local/login", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "x-flydesk-client-address": client,
+      },
+      body: body.toString(),
+    }));
+  };
+
+  try {
+    const shared = await signIn("next-a", "test-password", "/?mode=exact&trip=one-way&origin=LIM&destination=MIA");
+    assert.equal(shared.status, 303);
+    assert.equal(shared.headers.get("location"), "/?mode=exact&trip=one-way&origin=LIM&destination=MIA");
+
+    const plain = await signIn("next-b", "test-password");
+    assert.equal(plain.headers.get("location"), "/");
+
+    /* An open redirect here would be a real one: the gate is reachable from
+       any link, and the browser follows whatever comes back. Every shape below
+       has to fall back to this origin. */
+    for (const hostile of [
+      "https://evil.com/",
+      "http://evil.com",
+      "//evil.com",
+      "//evil.com/path",
+      "/\\evil.com",
+      "\\\\evil.com",
+      "javascript:alert(1)",
+      "evil.com",
+    ]) {
+      const attempt = await signIn(`next-hostile-${hostile}`, "test-password", hostile);
+      assert.equal(attempt.status, 303);
+      assert.equal(
+        attempt.headers.get("location"),
+        "/",
+        `expected ${hostile} to be refused as a return path`,
+      );
+    }
+
+    /* A wrong password costs the attempt, not the link. */
+    const refused = await signIn("next-c", "wrong-password", "/?origin=LIM");
+    assert.equal(refused.status, 303);
+    assert.equal(refused.headers.get("location"), "/login?error=1&next=%2F%3Forigin%3DLIM");
+
+    const refusedHostile = await signIn("next-d", "wrong-password", "https://evil.com/");
+    assert.equal(refusedHostile.headers.get("location"), "/login?error=1");
+  } finally {
+    restore();
+  }
+});
+
+/*
+ * The other half of the same fix: while the agent works, the window moves.
+ * Nothing is written until the session is more than half spent, so an ordinary
+ * response is unchanged and stays as cacheable as it was.
+ */
+test("an authenticated request slides the session forward once it is half spent", { concurrency: false }, async () => {
+  const restore = applyEnvironment({
+    FLY_DESK_WEB_AUTH: "1",
+    FLY_DESK_TRUST_LOOPBACK_CLIENT: "0",
+    FLY_DESK_WEB_PASSWORD: undefined,
+    FLY_DESK_WEB_PASSWORD_HASH: createScryptPasswordHash("test-password", Buffer.alloc(16, 22)),
+    FLY_DESK_WEB_SESSION_SECRET: "test-session-secret-32-characters-minimum",
+    FLY_DESK_WEB_SESSION_TTL_SECONDS: "300",
+  });
+
+  const call = (cookie: string) => routeRequest(new Request("https://fly-desk.local/api/locations?q=", {
+    headers: { "x-flydesk-client-loopback": "0", Cookie: cookie },
+  }));
+
+  try {
+    const freshCookie = createWebSessionCookie(new Request("https://fly-desk.local/"), Date.now())
+      .split(";", 1)[0]!;
+    const fresh = await call(freshCookie);
+    assert.equal(fresh.status, 200);
+    assert.equal(fresh.headers.getSetCookie().length, 0);
+
+    /* The same session, seen from far enough into its window that renewal is
+       due. `createWebSessionCookie` takes the clock, so the wait is skipped. */
+    const agedCookie = createWebSessionCookie(
+      new Request("https://fly-desk.local/"),
+      Date.now() - 151_000,
+    ).split(";", 1)[0]!;
+    const aged = await call(agedCookie);
+    assert.equal(aged.status, 200);
+    const renewed = aged.headers.getSetCookie();
+    assert.equal(renewed.length, 2);
+    assert.ok(renewed.some((value) => value.startsWith("flydesk_session=v2.")));
+    assert.ok(renewed.some((value) => value.startsWith("flydesk_redirect_session=")));
+    assert.ok(renewed.every((value) => value.includes("HttpOnly")));
+    assert.ok(renewed.every((value) => value.includes("SameSite=Lax")));
+
+    /* Signing out has to win over renewal, or the request that ends the
+       session would be the one that extends it. */
+    const logout = await routeRequest(new Request("https://fly-desk.local/logout", {
+      method: "POST",
+      headers: { Cookie: agedCookie },
+    }));
+    assert.equal(logout.headers.getSetCookie().length, 2);
+    assert.ok(logout.headers.getSetCookie().every((value) => value.includes("Max-Age=0")));
+  } finally {
+    restore();
+  }
 });

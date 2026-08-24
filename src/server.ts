@@ -5,7 +5,15 @@ import { ensureAirlineMark } from "./airline-mark-store";
 import { routeRequest } from "./http-router";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import { getPublicRuntimeConfig } from "./search-date-policy";
-import { hasValidWebSession, isWebAuthEnabled, renderLoginPage, resolveWebTheme } from "./web-auth";
+import {
+  hasValidWebSession,
+  isWebAuthEnabled,
+  loginPageLocation,
+  renderLoginPage,
+  renewWebSessionCookies,
+  resolveSafeNextPath,
+  resolveWebTheme,
+} from "./web-auth";
 
 const publicDir = path.resolve(process.cwd(), "frontend", "dist");
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
@@ -106,6 +114,15 @@ function redirect(location: string, status = 302): Response {
       "Cache-Control": "no-store",
     },
   });
+}
+
+function withWebSessionRenewal(request: Request, response: Response): Response {
+  const renewal = renewWebSessionCookies(request);
+  if (renewal) {
+    response.headers.append("Set-Cookie", renewal.sessionCookie);
+    response.headers.append("Set-Cookie", renewal.redirectSessionCookie);
+  }
+  return response;
 }
 
 function noStoreHeaders(contentType: string): Record<string, string> {
@@ -297,19 +314,20 @@ async function routeServerRequest(request: Request, server: BunServer<undefined>
   const pathname = url.pathname;
 
   if (request.method === "GET" && pathname === "/login") {
+    const next = resolveSafeNextPath(url.searchParams.get("next"));
+
     if (!isWebAuthEnabled()) {
-      return redirect("/");
+      return redirect(next ?? "/");
     }
 
     if (hasValidWebSession(request)) {
-      return redirect("/");
+      return redirect(next ?? "/");
     }
 
-    const loginUrl = new URL(request.url);
-    const error = loginUrl.searchParams.get("error")
+    const error = url.searchParams.get("error")
       ? "Password invalido."
       : undefined;
-    return new Response(renderLoginPage(error, resolveWebTheme(request)), {
+    return new Response(renderLoginPage(error, resolveWebTheme(request), next), {
       status: 200,
       headers: noStoreHeaders("text/html; charset=utf-8"),
     });
@@ -321,11 +339,16 @@ async function routeServerRequest(request: Request, server: BunServer<undefined>
     && (pathname === "/" || pathname === "/index.html")
     && !hasValidWebSession(request)
   ) {
-    return redirect("/login");
+    /* The query string is the whole of a shared search link, so the gate
+       carries it and hands it back after the sign-in rather than dropping
+       the user on an empty workspace. */
+    return redirect(loginPageLocation(`${pathname}${url.search}`));
   }
 
   if (request.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
-    return serveIndexHtml();
+    /* Loading the workspace is activity too, so a session more than half
+       spent slides forward here as well as on the API calls. */
+    return withWebSessionRenewal(request, await serveIndexHtml());
   }
 
   if (request.method === "GET") {
