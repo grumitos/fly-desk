@@ -17,7 +17,7 @@ Fly Desk is a Bun-only application prepared for VPS deployment:
 - web authentication with a signed httpOnly cookie
 - Agil integration that reuses a real Chrome session when available on the host
 - Click and Book Plus integration using environment-controlled context and B2B warm-up when applicable
-- SQLite persistence through `bun:sqlite`: expiring caches for sessions, matrices, purchase paths, autocomplete, and per-browser recent locations, plus a permanent global route ranking
+- SQLite persistence through `bun:sqlite`: expiring caches for sessions, matrices, purchase paths, autocomplete, and per-browser recent locations, plus a global route ranking over a rolling 30-day window
 
 ## Current Scope
 
@@ -113,7 +113,7 @@ Bun is the supported package manager. Do not add `package-lock.json`, `pnpm-lock
 - `src/search-worker-client.ts` / `src/search-worker.ts`: Bun child processes that isolate heavy searches
 - `src/session-store.ts`: live jobs, resident budget, local SQLite, redirects, and purchase paths
 - `src/location-suggestion-cache.ts`: bounded SQLite autocomplete cache with query/session/global caps
-- `src/location-usage-store.ts`: one global station ranking — frequency for the leading cards, the most recently used station for the last one — plus 24-hour per-session recent locations; the unit that serves the ranking is the unit that counts the search
+- `src/location-usage-store.ts`: one global station ranking — uses within a rolling 30-day window for the leading cards, the most recently used station for the last one — plus 30-day per-session recent locations; the unit that serves the ranking is the unit that counts the search
 - `src/provider-status.ts`: sanitized in-memory provider readiness tracker with closed states/reasons and evidence precedence
 - `src/runtime-paths.ts`: persistent path resolution; `FLY_DESK_APP_DATA_DIR` keeps caches outside the release when no specific override is set
 

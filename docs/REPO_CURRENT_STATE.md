@@ -157,7 +157,7 @@ The React UI must not display simulated controls. The following remain outside t
 - `src/search-worker-client.ts` and `src/search-worker.ts`: Bun child processes for heavy provider searches within the runner
 - `src/session-store.ts`: live jobs, cache freshness, resident budget, local SQLite, redirects, and purchase paths
 - `src/location-suggestion-cache.ts`: SQLite autocomplete cache with TTL plus query/session/global bounds
-- `src/location-usage-store.ts`: one global station ranking (frequency for the leading cards, newest station for the last one) plus bounded, expiring recent locations per browser session; the web unit counts the searches it delegates, so the ranking is written in the store that serves it
+- `src/location-usage-store.ts`: one global station ranking (uses within a rolling 30-day window for the leading cards, newest station for the last one) plus bounded, expiring recent locations per browser session; the web unit counts the searches it delegates, so the ranking is written in the store that serves it
 - `src/provider-status.ts`: in-memory closed/sanitized provider readiness tracker
 - `src/runtime-paths.ts`: persistent fallback based on `FLY_DESK_APP_DATA_DIR` for SQLite caches when no specific `*_DB_PATH` is set
 
@@ -203,7 +203,7 @@ Current important coverage:
 - Bun workers enabled by default to isolate heavy provider searches
 - SQLite persistence for sessions/autocomplete
 - resident budget with disk-only fallback and lazy web runtime when search is delegated
-- server-side all-time ranking of frequent suggestions plus 24-hour per-session recents, both capped at three cards per role, recorded from `/api/search` and `/api/matrix`, and shared coherently by the web and search processes
+- server-side ranking of frequent suggestions over a rolling 30-day window plus 30-day per-session recents, both capped at three cards per role, recorded from `/api/search` and `/api/matrix`, and shared coherently by the web and search processes
 - authenticated/no-store provider status with runner proxying, closed reason codes, prewarm/search precedence, and no provider diagnostic payloads
 - removed `/api/results-layout` returns 404 for GET and POST
 - search rail, stable ranking/notice geometry, filters, theme, autocomplete, provider links, and quotation
