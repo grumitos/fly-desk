@@ -204,18 +204,40 @@ the row was global only for as long as two environment variables happened to
 name the same file. A search the runner refuses (a 503 from a runner that is
 down) is not counted; it is not a route the desk searched.
 
-**The last card of each role answers to recency.** A ranking that only ever adds
-cannot admit anybody: `total_uses` never falls, so once three stations lead they
-lead for good — and on this deployment two of them are LIM and MAD, because the
-production smoke fires that route on every deploy and every rollback. That is
-the reported «una búsqueda bastaría para agregar otro comodín, y probándolo no
-aparece». So the first slots of each role are the global counter (uses, then
-last use, then code) and the last slot is the station used most recently, unless
-it already holds one of the slots above. One executed search — from any browser,
-any process — therefore puts a new station on everybody's row at once, while the
-two stations the desk really lives on keep the slots above it. At `limit < 2`
-there is no reserved slot and the row is pure frequency. `getDiagnostics()`
-reports the ranking as `global-total-uses-with-newest-card`.
+**A use counts for a month and then stops counting.** «La idea de mantener una
+media es que el conteo expire en un mes, es decir si se buscó 30 veces el mes
+pasado y este 10, y hay otro con 20 en el mes actual, entonces pasaría a segundo
+puesto.» A running total cannot do that — an individual use cannot be taken back
+out of one — so the count lives in `location_usage_daily (role, code, day,
+uses)`, one row per station per day, and the ranking is `SUM(uses)` over the
+last thirty-one UTC day numbers. A use recorded on day D counts for the whole of
+day D and the thirty days after it, and stops counting when the day rolls past
+that; rounding to the day is deliberate, so no card moves because a use turned
+thirty days old mid-afternoon. Pruning deletes the days that left the window and
+happens on the write path, which keeps the table bounded — the stations seen in
+the window, times the days in it — and keeps the read every idle screen makes
+read-only.
+
+`location_usage` stays as it was: it owns `last_used_at_ms`, which is what the
+reserved newest card reads, and `total_uses`, which is now the lifetime figure
+and orders nothing. Nothing was seeded into the daily table from it, because a
+total says how often and never when — dating MAD's 1425 uses to its
+`last_used_at_ms` would drop the whole backlog onto one day and hand it the very
+window it is meant to lose. The count therefore starts empty and refills from
+live searches within hours.
+
+**The last card of each role answers to recency.** Even a count that falls
+admits nobody quickly: a station searched twenty times this month is a month of
+searching away from a station searched once. That is the reported «una búsqueda
+bastaría para agregar otro comodín, y probándolo no aparece». So the first slots
+of each role are the live count (uses in the window, then last use, then code)
+and the last slot is the station used most recently, unless it already holds one
+of the slots above. One executed search — from any browser, any process —
+therefore puts a new station on everybody's row at once, while the two stations
+the desk really lives on keep the slots above it. At `limit < 2` there is no
+reserved slot and the row is pure frequency. `getDiagnostics()` reports the
+ranking as `rolling-window-uses-with-newest-card` alongside its
+`rankingWindowDays`.
 
 **Quoting always revalidates.** The first «Cotizar» calls `POST /api/quotation`
 with the source search and offer ids. The endpoint only accepts a complete
