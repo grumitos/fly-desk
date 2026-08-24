@@ -14,6 +14,7 @@ import {
   resolveLatestCostamarProviderContext,
 } from "../src/provider-context";
 import {
+  describePrewarmFailure,
   providerPrewarmEnabled,
   providerPrewarmIntervalMs,
   startProviderPrewarmLoop,
@@ -183,4 +184,35 @@ test("provider prewarm settings use safe defaults and reject invalid intervals",
   } finally {
     restoreEnvironment();
   }
+});
+
+test("prewarm failure detail masks credential-like material and stays short", () => {
+  /* The old log line said "skipped N provider(s)" and listed only the ids, so a
+     provider that had been unreachable for two days left no reason behind. The
+     reason is reported now, which means an error message reaches the journal -
+     and provider errors carry URLs with tokens in them. */
+  const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJpZCI6IjA3MjE4MDgxMTAifQ.c2lnbmF0dXJlLXZhbHVl";
+  const masked = describePrewarmFailure(
+    new Error(`GET https://provider.example/search?token=${jwt} failed`),
+  );
+  assert.ok(!masked.includes(jwt), "the token survived into the log line");
+  assert.ok(!masked.includes("c2lnbmF0dXJlLXZhbHVl"), "a token segment survived");
+  assert.ok(masked.includes("[redacted]"), "nothing was masked at all");
+  assert.ok(masked.includes("provider.example"), "the useful part was lost");
+
+  /* The eight-per-segment rule exists so hostnames survive; prove it does. */
+  assert.equal(
+    describePrewarmFailure(new Error("connect ETIMEDOUT www.agilsmart.com:443")),
+    "connect ETIMEDOUT www.agilsmart.com:443",
+  );
+
+  const longMessage = describePrewarmFailure(new Error("x".repeat(5_000)));
+  assert.ok(longMessage.length <= 200, `detail was ${longMessage.length} chars`);
+
+  assert.equal(describePrewarmFailure(new Error("")), "(no message)");
+  assert.equal(
+    describePrewarmFailure(new Error("connect  ETIMEDOUT\n  190.12.80.177:443")),
+    "connect ETIMEDOUT 190.12.80.177:443",
+  );
+  assert.equal(describePrewarmFailure("plain string reason"), "plain string reason");
 });

@@ -29,6 +29,24 @@ export function providerPrewarmIntervalMs(): number {
   return readNonNegativeMs("FLY_DESK_PROVIDER_PREWARM_INTERVAL_MS", DEFAULT_PROVIDER_PREWARM_INTERVAL_MS);
 }
 
+/* A provider error can carry a URL with a token in it, so anything long enough
+   to be credential material is masked before it reaches the journal, and the
+   message is truncated: this is a breadcrumb for an operator, not a payload. */
+export function describePrewarmFailure(reason: unknown): string {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  const scrubbed = message
+    /* A JWT first, as one unit. Its segments are individually short enough to
+       slip a plain length rule - the header of a typical token is twenty
+       characters - so masking by run length alone leaves two thirds of the
+       credential in the log. Requiring eight characters per segment keeps
+       hostnames out of it: no real TLD is that long. */
+    .replace(/[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, "[redacted]")
+    .replace(/[A-Za-z0-9_-]{24,}/g, "[redacted]")
+    .replace(/\s+/g, " ")
+    .trim();
+  return scrubbed.slice(0, 200) || "(no message)";
+}
+
 export async function prewarmProvidersSilently(providerStatus?: ProviderStatusTracker): Promise<void> {
   const prewarmStart = startPerfTimer();
   const providerIds = ["agil-local", "costamar"] as const satisfies readonly ProviderId[];
@@ -60,17 +78,26 @@ export async function prewarmProvidersSilently(providerStatus?: ProviderStatusTr
     }
   });
 
-  const failed = outcomes.filter((outcome) => outcome.status === "rejected");
-  if (failed.length > 0) {
-    const failedProviderIds = outcomes.flatMap((outcome, index) =>
-      outcome.status === "rejected" ? [providerIds[index]] : []);
+  /* These are failures, not skips. The old line said "skipped N provider(s)"
+     and listed only the ids, which reads as a benign optimisation - and the
+     reason had been computed one block above and then thrown away. Agil was
+     unreachable for two days and this line was the entire trace of it: no
+     reason, no error, and a word that invited the reader to move on. */
+  const failures = outcomes.flatMap((outcome, index) =>
+    outcome.status === "rejected"
+      ? [{ providerId: providerIds[index]!, reason: outcome.reason }]
+      : []);
+
+  for (const { providerId, reason } of failures) {
     console.warn(
-      `Fly Desk provider prewarm skipped ${failed.length} provider(s): ${failedProviderIds.join(", ")}`,
+      `Fly Desk provider prewarm failed: ${providerId} `
+      + `reason=${providerDegradedReasonFromError(reason)} `
+      + `detail=${describePrewarmFailure(reason)}`,
     );
   }
 
   logPerfSpan("providers.prewarm", prewarmStart, {
-    failed: failed.length,
+    failed: failures.length,
   });
 }
 
