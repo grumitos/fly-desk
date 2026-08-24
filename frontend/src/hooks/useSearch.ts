@@ -4,6 +4,7 @@ import {
   cancelSearchJob,
   diagnosticLogFromError,
   FlyDeskSearchCancelledError,
+  FlyDeskSessionExpiredError,
   pollMatrix,
   pollSearch,
   startMatrix,
@@ -228,7 +229,11 @@ export function useSearch() {
                 `Error durante actualización (intento ${consecutiveFailures} de ${POLL_MAX_CONSECUTIVE_FAILURES})`,
                 diagnosticLogFromError(err),
               )
-              if (consecutiveFailures < POLL_MAX_CONSECUTIVE_FAILURES) {
+              /* The retries are for a lost answer — a hop that timed out, a
+                 laptop changing wifi. An expired session is not that: the
+                 browser is already on its way to the gate, and the attempts
+                 would only be spent on answers that cannot come. */
+              if (consecutiveFailures < POLL_MAX_CONSECUTIVE_FAILURES && !(err instanceof FlyDeskSessionExpiredError)) {
                 pollRef.current = window.setTimeout(doPoll, POLL_RETRY_DELAY_MS)
                 return
               }
@@ -334,7 +339,7 @@ export function useSearch() {
             `Error durante actualización (intento ${consecutiveFailures} de ${POLL_MAX_CONSECUTIVE_FAILURES})`,
             diagnosticLogFromError(err),
           )
-          if (consecutiveFailures < POLL_MAX_CONSECUTIVE_FAILURES) {
+          if (consecutiveFailures < POLL_MAX_CONSECUTIVE_FAILURES && !(err instanceof FlyDeskSessionExpiredError)) {
             pollRef.current = window.setTimeout(doPoll, POLL_RETRY_DELAY_MS)
             return
           }

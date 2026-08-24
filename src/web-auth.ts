@@ -7,6 +7,18 @@ export const WEB_THEME_COOKIE_NAME = "flydesk_theme";
 const DEFAULT_WEB_SESSION_TTL_SECONDS = 12 * 60 * 60;
 const MIN_WEB_SESSION_TTL_SECONDS = 5 * 60;
 const MAX_WEB_SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
+
+/*
+ * Two limits, because they answer different questions. The window above is how
+ * long a session survives with nobody touching it, and it slides forward while
+ * the agent works. The cap below is measured from the sign-in itself and never
+ * slides, so a tab left open indefinitely still has to authenticate again.
+ */
+const DEFAULT_WEB_SESSION_MAX_LIFETIME_SECONDS = 7 * 24 * 60 * 60;
+const MIN_WEB_SESSION_MAX_LIFETIME_SECONDS = 5 * 60;
+const MAX_WEB_SESSION_MAX_LIFETIME_SECONDS = 90 * 24 * 60 * 60;
+const MAX_NEXT_PATH_LENGTH = 512;
+
 const SCRYPT_KEY_BYTES = 32;
 const DEFAULT_WEB_THEME: WebTheme = "light";
 
@@ -132,6 +144,20 @@ export function resolveWebSessionTtlSeconds(): number {
   );
 }
 
+export function resolveWebSessionMaxLifetimeSeconds(): number {
+  const configured = Number(
+    process.env.FLY_DESK_WEB_SESSION_MAX_LIFETIME_SECONDS ?? DEFAULT_WEB_SESSION_MAX_LIFETIME_SECONDS,
+  );
+  if (!Number.isFinite(configured)) {
+    return DEFAULT_WEB_SESSION_MAX_LIFETIME_SECONDS;
+  }
+
+  return Math.max(
+    MIN_WEB_SESSION_MAX_LIFETIME_SECONDS,
+    Math.min(MAX_WEB_SESSION_MAX_LIFETIME_SECONDS, Math.trunc(configured)),
+  );
+}
+
 function parseCookies(headerValue: string | null): Map<string, string> {
   const cookies = new Map<string, string>();
 
@@ -146,9 +172,33 @@ function parseCookies(headerValue: string | null): Map<string, string> {
   return cookies;
 }
 
-function signSessionPayload(expiresAtMs: number, nonce: string, secret: string): string {
+/*
+ * The web session carries two stamps. `expiresAtMs` is the sliding one: it is
+ * pushed forward while the agent works, so a session dies of inactivity rather
+ * than of the clock it was born on. `issuedAtMs` is the sign-in itself and
+ * never moves, which is what keeps the sliding from becoming perpetual — see
+ * `renewWebSessionCookies`.
+ *
+ * Both are inside the signature, so neither can be edited by the browser. The
+ * older `v1.<expiresAtMs>.<nonce>.<signature>` shape had no `issuedAtMs`, and
+ * so no cap that could be trusted; a cookie still in that shape is rejected
+ * rather than upgraded, which costs its holder one sign-in and nothing else.
+ */
+const WEB_SESSION_COOKIE_VERSION = "v2";
+
+interface WebSession {
+  issuedAtMs: number;
+  expiresAtMs: number;
+}
+
+function signWebSessionPayload(
+  issuedAtMs: number,
+  expiresAtMs: number,
+  nonce: string,
+  secret: string,
+): string {
   return createHmac("sha256", secret)
-    .update(`${expiresAtMs}.${nonce}`)
+    .update(`${WEB_SESSION_COOKIE_VERSION}.${issuedAtMs}.${expiresAtMs}.${nonce}`)
     .digest("base64url");
 }
 
@@ -158,18 +208,55 @@ function signRedirectSessionPayload(expiresAtMs: number, nonce: string, secret: 
     .digest("base64url");
 }
 
-function validSessionExpiry(
-  request: Request,
-  cookieName: string,
-  signer: typeof signSessionPayload,
-  nowMs: number,
-): number | undefined {
+function readWebSession(request: Request, nowMs: number): WebSession | undefined {
   const secret = resolveWebSessionSecret();
   if (!secret) {
     return undefined;
   }
 
-  const session = parseCookies(request.headers.get("cookie")).get(cookieName);
+  const session = parseCookies(request.headers.get("cookie")).get(WEB_SESSION_COOKIE_NAME);
+  const parts = session?.split(".") ?? [];
+  if (parts.length !== 5 || parts[0] !== WEB_SESSION_COOKIE_VERSION) {
+    return undefined;
+  }
+
+  const issuedAtMs = Number(parts[1]);
+  const expiresAtMs = Number(parts[2]);
+  const nonce = parts[3];
+  const signature = parts[4];
+  if (
+    !Number.isFinite(issuedAtMs)
+    || issuedAtMs <= 0
+    || !Number.isFinite(expiresAtMs)
+    || expiresAtMs <= nowMs
+    || !nonce
+    || !signature
+  ) {
+    return undefined;
+  }
+
+  const expected = signWebSessionPayload(issuedAtMs, expiresAtMs, nonce, secret);
+  if (!safeEqualString(signature, expected)) {
+    return undefined;
+  }
+
+  /* Belt and braces. The cap is already applied wherever the cookie is
+     written, so a signed value can only fail this if the operator shortened
+     the limit since — and then the shorter limit takes effect at once. */
+  if (nowMs >= issuedAtMs + resolveWebSessionMaxLifetimeSeconds() * 1000) {
+    return undefined;
+  }
+
+  return { issuedAtMs, expiresAtMs };
+}
+
+function validRedirectSessionExpiry(request: Request, nowMs: number): number | undefined {
+  const secret = resolveWebSessionSecret();
+  if (!secret) {
+    return undefined;
+  }
+
+  const session = parseCookies(request.headers.get("cookie")).get(REDIRECT_SESSION_COOKIE_NAME);
   const parts = session?.split(".") ?? [];
   if (parts.length !== 4 || parts[0] !== "v1") {
     return undefined;
@@ -182,7 +269,7 @@ function validSessionExpiry(
     return undefined;
   }
 
-  const expected = signer(expiresAtMs, nonce, secret);
+  const expected = signRedirectSessionPayload(expiresAtMs, nonce, secret);
   return safeEqualString(signature, expected) ? expiresAtMs : undefined;
 }
 
@@ -202,18 +289,84 @@ function isCookieSecure(request: Request): boolean {
   return forwardedProto === "https" || new URL(request.url).protocol === "https:";
 }
 
-export function createWebSessionCookie(request: Request, nowMs = Date.now()): string {
+function writeWebSessionCookie(
+  request: Request,
+  issuedAtMs: number,
+  expiresAtMs: number,
+  nowMs: number,
+): string {
   const secret = resolveWebSessionSecret();
   if (!secret) {
     throw new Error("Fly Desk web session secret is not configured.");
   }
 
-  const ttlSeconds = resolveWebSessionTtlSeconds();
-  const expiresAtMs = nowMs + ttlSeconds * 1000;
   const nonce = randomBytes(18).toString("base64url");
-  const signature = signSessionPayload(expiresAtMs, nonce, secret);
+  const signature = signWebSessionPayload(issuedAtMs, expiresAtMs, nonce, secret);
+  const maxAgeSeconds = Math.max(0, Math.floor((expiresAtMs - nowMs) / 1000));
   const secure = isCookieSecure(request) ? "; Secure" : "";
-  return `${WEB_SESSION_COOKIE_NAME}=v1.${expiresAtMs}.${nonce}.${signature}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${ttlSeconds}${secure}`;
+  return `${WEB_SESSION_COOKIE_NAME}=${WEB_SESSION_COOKIE_VERSION}.${issuedAtMs}.${expiresAtMs}.${nonce}.${signature}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure}`;
+}
+
+/* The window a session gets from `nowMs`, never reaching past the cap that
+   `issuedAtMs` fixed at sign-in. */
+function slidingExpiryMs(issuedAtMs: number, nowMs: number): number {
+  return Math.min(
+    nowMs + resolveWebSessionTtlSeconds() * 1000,
+    issuedAtMs + resolveWebSessionMaxLifetimeSeconds() * 1000,
+  );
+}
+
+export function createWebSessionCookie(request: Request, nowMs = Date.now()): string {
+  return writeWebSessionCookie(request, nowMs, slidingExpiryMs(nowMs, nowMs), nowMs);
+}
+
+export interface WebSessionRenewal {
+  sessionCookie: string;
+  redirectSessionCookie: string;
+  expiresAtMs: number;
+}
+
+/*
+ * Re-issue an authenticated session once it is past the halfway mark of its
+ * window, and only then. Renewing on every request would put a `Set-Cookie` on
+ * every API response and make each one uncacheable for no gain; renewing only
+ * near the very end would let a tab that polls quietly expire anyway. Half is
+ * far enough from the edge that someone working never meets the expiry, and
+ * far enough from the start that the header stays rare — in practice once per
+ * half-window per browser.
+ *
+ * Returns nothing when there is no session, when the window is not yet half
+ * spent, or when the absolute cap has already pinned the expiry. That last
+ * case is the point of the cap: sliding is refused, and the session ends on
+ * the schedule the sign-in set.
+ */
+export function renewWebSessionCookies(
+  request: Request,
+  nowMs = Date.now(),
+): WebSessionRenewal | undefined {
+  if (!isWebAuthEnabled()) {
+    return undefined;
+  }
+
+  const session = readWebSession(request, nowMs);
+  if (!session) {
+    return undefined;
+  }
+
+  if ((session.expiresAtMs - nowMs) * 2 >= resolveWebSessionTtlSeconds() * 1000) {
+    return undefined;
+  }
+
+  const expiresAtMs = slidingExpiryMs(session.issuedAtMs, nowMs);
+  if (expiresAtMs <= session.expiresAtMs) {
+    return undefined;
+  }
+
+  return {
+    sessionCookie: writeWebSessionCookie(request, session.issuedAtMs, expiresAtMs, nowMs),
+    redirectSessionCookie: createRedirectSessionCookie(request, nowMs, expiresAtMs),
+    expiresAtMs,
+  };
 }
 
 export function createRedirectSessionCookie(
@@ -237,15 +390,10 @@ export function createRedirectSessionCookieForWebSession(
   request: Request,
   nowMs = Date.now(),
 ): string | undefined {
-  const expiresAtMs = validSessionExpiry(
-    request,
-    WEB_SESSION_COOKIE_NAME,
-    signSessionPayload,
-    nowMs,
-  );
-  return expiresAtMs === undefined
+  const session = readWebSession(request, nowMs);
+  return session === undefined
     ? undefined
-    : createRedirectSessionCookie(request, nowMs, expiresAtMs);
+    : createRedirectSessionCookie(request, nowMs, session.expiresAtMs);
 }
 
 export function clearWebSessionCookie(request: Request): string {
@@ -262,24 +410,83 @@ export function hasValidWebSession(request: Request, nowMs = Date.now()): boolea
   if (!isWebAuthEnabled()) {
     return false;
   }
-  return validSessionExpiry(
-    request,
-    WEB_SESSION_COOKIE_NAME,
-    signSessionPayload,
-    nowMs,
-  ) !== undefined;
+  return readWebSession(request, nowMs) !== undefined;
 }
 
 export function hasValidRedirectSession(request: Request, nowMs = Date.now()): boolean {
   if (!isWebAuthEnabled()) {
     return false;
   }
-  return validSessionExpiry(
-    request,
-    REDIRECT_SESSION_COOKIE_NAME,
-    signRedirectSessionPayload,
-    nowMs,
-  ) !== undefined;
+  return validRedirectSessionExpiry(request, nowMs) !== undefined;
+}
+
+/*
+ * Where to send someone once they have signed in. The value arrives in a query
+ * string, which means it arrives from anyone able to put a link in front of the
+ * user, so it is treated as hostile: only a path on this very origin is ever
+ * returned. An absolute URL, a protocol-relative `//host`, a backslash that
+ * browsers fold into one, a control character, or anything not beginning with a
+ * single `/` is discarded, and the caller falls back to `/`.
+ *
+ * The parse is what enforces it. Resolving against a throwaway base and then
+ * insisting the origin came back unchanged catches the shapes a prefix test
+ * misses, because the URL parser normalises them the way a browser would.
+ */
+const NEXT_PATH_BASE = "https://next-path.invalid";
+
+export function resolveSafeNextPath(rawNext: unknown): string | undefined {
+  if (typeof rawNext !== "string") {
+    return undefined;
+  }
+
+  const candidate = rawNext.trim();
+  if (
+    !candidate
+    || candidate.length > MAX_NEXT_PATH_LENGTH
+    || !candidate.startsWith("/")
+    || candidate.startsWith("//")
+    || candidate.startsWith("/\\")
+    || /[\u0000-\u001f\u007f]/.test(candidate)
+  ) {
+    return undefined;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate, NEXT_PATH_BASE);
+  } catch {
+    return undefined;
+  }
+
+  if (parsed.origin !== NEXT_PATH_BASE) {
+    return undefined;
+  }
+
+  /* Returning to the gate would loop, and returning to the handler that
+     clears the session would undo the sign-in that just happened. */
+  if (parsed.pathname === "/login" || parsed.pathname === "/logout") {
+    return undefined;
+  }
+
+  return `${parsed.pathname}${parsed.search}`;
+}
+
+/* The gate's own URL, carrying whatever of the return path survived. */
+export function loginPageLocation(next?: string, error = false): string {
+  const params = new URLSearchParams();
+  if (error) {
+    params.set("error", "1");
+  }
+
+  /* `/` is where the sign-in lands anyway, so carrying it would add a query
+     parameter that changes nothing. */
+  const safeNext = resolveSafeNextPath(next);
+  if (safeNext && safeNext !== "/") {
+    params.set("next", safeNext);
+  }
+
+  const query = params.toString();
+  return query ? `/login?${query}` : "/login";
 }
 
 export function resolveWebTheme(request: Request): WebTheme {
@@ -302,7 +509,11 @@ export function resolveWebTheme(request: Request): WebTheme {
  * the notice is `.fd-alert-line`, the brand is the title bar's, and the focus
  * ring is 3d's — 2px of primary at 55 %, outside the border, keyboard only.
  */
-export function renderLoginPage(error?: string, theme: WebTheme = DEFAULT_WEB_THEME): string {
+export function renderLoginPage(
+  error?: string,
+  theme: WebTheme = DEFAULT_WEB_THEME,
+  next?: string,
+): string {
   const errorMarkup = error
     ? `<p class="fd-alert-line fd-alert-line-error" role="alert" aria-live="assertive">
           <svg class="fd-alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
@@ -310,6 +521,12 @@ export function renderLoginPage(error?: string, theme: WebTheme = DEFAULT_WEB_TH
         </p>`
     : "";
   const initialTheme = theme === "dark" ? "dark" : "light";
+  /* Re-sanitised on the way out as well as on the way in: whatever put this
+     string here, only a same-origin path is ever written into the page. */
+  const safeNext = resolveSafeNextPath(next);
+  const nextMarkup = safeNext
+    ? `<input type="hidden" name="next" value="${escapeHtml(safeNext)}">`
+    : "";
 
   return `<!doctype html>
 <html lang="es" class="${initialTheme === "dark" ? "dark" : ""}" data-theme="${initialTheme}">
@@ -696,6 +913,7 @@ export function renderLoginPage(error?: string, theme: WebTheme = DEFAULT_WEB_TH
       <main>
         <h1>Acceso</h1>
         <form method="post" action="/login">
+          ${nextMarkup}
           ${errorMarkup}
           <label class="fd-field-control" for="password">
             <span class="fd-field-label">Contraseña</span>

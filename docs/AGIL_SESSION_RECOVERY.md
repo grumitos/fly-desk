@@ -115,7 +115,7 @@ session again.
    fi
    ```
 
-9. Run a search from the VPS against Fly Desk. If `FLY_DESK_API_TOKEN` is unavailable, generate a valid web cookie within the remote process using `FLY_DESK_WEB_SESSION_SECRET` loaded from `/etc/fly-desk.env`; do not print the cookie.
+9. Run a search from the VPS against Fly Desk. If `FLY_DESK_API_TOKEN` is unavailable, generate a valid web cookie within the remote process using `FLY_DESK_WEB_SESSION_SECRET` loaded from `/etc/fly-desk.env`; do not print the cookie. Mint it through `createWebSessionCookie` from `src/web-auth.ts` rather than by hand: the payload is `v2.<issuedAtMs>.<expiresAtMs>.<nonce>.<signature>` and a cookie in the earlier `v1` shape is refused.
 
    Recommended minimal smoke payload:
 
