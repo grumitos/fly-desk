@@ -281,13 +281,13 @@ test("browser session id is attached to locations, search, and matrix transports
   const clientSessionId = "browser-session-transport-a";
   const postedPayloads: Array<BackendSearchPayload & { clientSessionId?: string }> = [];
   const locationUrls: URL[] = [];
-  const sessionStorage = {
+  const localStorage = {
     getItem: () => clientSessionId,
     setItem: () => undefined,
   };
   Object.defineProperty(globalThis, "window", {
     configurable: true,
-    value: { sessionStorage },
+    value: { localStorage },
   });
 
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -1125,6 +1125,7 @@ function withStubbedWindow(location: Record<string, unknown>): {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
+      localStorage: { getItem: () => null, setItem: () => undefined },
       sessionStorage: { getItem: () => null, setItem: () => undefined },
       location: {
         origin: "https://fly-desk.test",
