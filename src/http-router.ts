@@ -625,6 +625,16 @@ function stringValue(input: unknown, fallback = ""): string {
 }
 
 function integerParam(input: string | null, fallback: number, min: number, max: number): number {
+  /* `searchParams.get` returns null for a parameter that is not there, and
+     `Number(null)` is 0, not NaN - so an absent parameter used to sail past the
+     finite check and get clamped up to `min` instead of falling back. Every
+     caller that relies on the fallback silently received its minimum: the
+     location ranking asked for three cards and was given one, which is why two
+     of the three slots under each field were always empty. */
+  if (input === null || input.trim() === "") {
+    return fallback;
+  }
+
   const parsed = Number(input);
   if (!Number.isFinite(parsed)) {
     return fallback;

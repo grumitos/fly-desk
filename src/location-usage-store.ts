@@ -4,7 +4,11 @@ import { Database } from "bun:sqlite";
 
 const LOCATION_USAGE_CARD_LIMIT = 3;
 const LOCATION_USAGE_SQLITE_BUSY_TIMEOUT_MS = 5_000;
-export const LOCATION_USAGE_RECENT_TTL_MS = 24 * 60 * 60 * 1000;
+/* A month, not a day. A day is shorter than the gap between two ordinary
+   working sessions, so the strip an agent had built up was routinely empty
+   again by the next morning. A month keeps a useful average over time and
+   still lets a route that stopped being searched fall out of it. */
+export const LOCATION_USAGE_RECENT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export const LOCATION_USAGE_RECENT_MAX_ENTRIES = 2_048;
 
 const CREATE_LOCATION_USAGE_TABLE_SQL = `

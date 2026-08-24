@@ -1441,6 +1441,23 @@ test("location usage ranking is read-only, uncached by HTTP, and capped at three
       destination: ["MIA", "SCL", "BOG"],
     });
 
+    /* The browser never sends `limit`. An absent parameter read as 0 and was
+       clamped up to the minimum of one card, so two of the three slots under
+       each field stayed empty however much history there was. Every assertion
+       above passes `limit` explicitly, which is why this survived. */
+    const withoutLimit = await routeRequest(new Request(`http://fly-desk.local/api/location-usage-suggestions?clientSessionId=${clientSessionId}`, {
+      method: "GET",
+      headers: {
+        "x-flydesk-client-loopback": "0",
+        "x-flydesk-api-token": "test-token",
+      },
+    }));
+    const withoutLimitPayload = await withoutLimit.json() as {
+      suggestions?: { origin?: string[]; destination?: string[] };
+    };
+    assert.deepEqual(withoutLimitPayload.suggestions?.origin, ["TPP", "AQP", "CUZ"]);
+    assert.deepEqual(withoutLimitPayload.suggestions?.destination, ["MIA", "SCL", "BOG"]);
+
     const invalidSession = await routeRequest(new Request("http://fly-desk.local/api/location-usage-suggestions?clientSessionId=invalid/id", {
       method: "GET",
       headers: {
