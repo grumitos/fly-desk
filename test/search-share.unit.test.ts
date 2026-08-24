@@ -4,6 +4,7 @@ import {
   decodeSharedSearchPayload,
   readSharedSearchFromText,
   readSharedSearchFromUrl,
+  searchUrlWasWrittenHere,
   serializeSharedSearchPayload,
   writeSharedSearchToClipboard,
   writeSharedSearchToUrl,
@@ -42,10 +43,13 @@ function request(overrides: Partial<SearchRequest> = {}): SearchRequest {
   }
 }
 
+type TabStorageStub = Pick<Storage, "getItem" | "setItem">
+
 type WindowStub = typeof globalThis & {
   window?: {
     history: { replaceState: (_state: unknown, _title: string, url: string) => void }
     location: { href: string }
+    sessionStorage?: TabStorageStub
   }
 }
 
@@ -331,4 +335,91 @@ test("clipboard sharing reports unavailable browser support", async () => {
       delete (globalThis as { navigator?: unknown }).navigator
     }
   }
+})
+
+/*
+ * Which URL is a link, and which one is this tab's own address bar.
+ *
+ * `App` refuses to launch a shared search when the query on screen is the one
+ * this tab wrote for itself, so what this memory answers is whether a reload
+ * costs a provider search. Every way of not knowing — a tab that has not
+ * searched, a tab whose storage is denied, a link edited by hand — has to
+ * answer «not mine», which degrades to a filled form rather than to a surprise.
+ */
+
+/** A `window` whose address bar and tab storage the case can read back. */
+function withStubbedTab<T>(
+  href: string,
+  sessionStorage: TabStorageStub | undefined,
+  run: (tab: { href: string }) => T,
+): T {
+  const globalWindow = globalThis as WindowStub
+  const originalWindow = globalWindow.window
+  const location = { href }
+  globalWindow.window = {
+    location,
+    history: {
+      replaceState: (_state: unknown, _title: string, url: string) => {
+        location.href = new URL(url, href).href
+      },
+    },
+    sessionStorage,
+  }
+
+  try {
+    return run(location)
+  } finally {
+    globalWindow.window = originalWindow
+  }
+}
+
+function tabStorage() {
+  const entries = new Map<string, string>()
+
+  return {
+    entries,
+    getItem: (key: string) => entries.get(key) ?? null,
+    setItem: (key: string, value: string) => { entries.set(key, value) },
+  }
+}
+
+test("the query a search wrote is remembered as this tab's own", () => {
+  const storage = tabStorage()
+  let writtenSearch = ""
+
+  withStubbedTab("http://localhost/", storage, (tab) => {
+    assert.equal(writeSharedSearchToUrl(request(), "cheapest"), true)
+    writtenSearch = new URL(tab.href).search
+    assert.equal(searchUrlWasWrittenHere(new URL(tab.href)), true)
+    // A different link pasted into the same tab is still a link.
+    assert.equal(searchUrlWasWrittenHere(new URL("http://localhost/?origin=CUZ&destination=BOG")), false)
+  })
+
+  // The query itself, not merely the fact that something was written.
+  assert.ok(writtenSearch.includes("origin=LIM"), writtenSearch)
+  assert.deepEqual([...storage.entries.values()], [writtenSearch])
+})
+
+test("a tab that has not searched, or cannot remember, owns no URL", () => {
+  const url = new URL("http://localhost/?mode=exact&origin=LIM&destination=MIA&departure=2026-06-15")
+
+  withStubbedTab(url.href, tabStorage(), () => {
+    assert.equal(searchUrlWasWrittenHere(url), false)
+  })
+
+  const denied: TabStorageStub = {
+    getItem: () => { throw new Error("Storage is denied in this context.") },
+    setItem: () => { throw new Error("Storage is denied in this context.") },
+  }
+  withStubbedTab(url.href, denied, (tab) => {
+    /* The URL is what the share *is*, so writing it has to survive the refusal.
+       Losing the memory only costs the reload a search it used to cost anyway. */
+    assert.equal(writeSharedSearchToUrl(request(), "cheapest"), true)
+    assert.equal(searchUrlWasWrittenHere(new URL(tab.href)), false)
+  })
+
+  withStubbedTab(url.href, undefined, (tab) => {
+    assert.equal(writeSharedSearchToUrl(request(), "cheapest"), true)
+    assert.equal(searchUrlWasWrittenHere(new URL(tab.href)), false)
+  })
 })

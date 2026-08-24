@@ -1,7 +1,10 @@
 import { afterEach, test } from "bun:test";
 import assert from "node:assert/strict";
 import {
+  FlyDeskApiError,
+  FlyDeskSessionExpiredError,
   requestQuotation,
+  resetLoginRedirectForTests,
   startMatrix,
   startMigrationSearch,
   startSearch,
@@ -278,13 +281,13 @@ test("browser session id is attached to locations, search, and matrix transports
   const clientSessionId = "browser-session-transport-a";
   const postedPayloads: Array<BackendSearchPayload & { clientSessionId?: string }> = [];
   const locationUrls: URL[] = [];
-  const sessionStorage = {
+  const localStorage = {
     getItem: () => clientSessionId,
     setItem: () => undefined,
   };
   Object.defineProperty(globalThis, "window", {
     configurable: true,
-    value: { sessionStorage },
+    value: { localStorage },
   });
 
   globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
@@ -1104,4 +1107,106 @@ test("matrix offer normalization suppresses provider status warnings in selected
   assert.equal(realWarningOffer?.priceConfidence, "live");
   assert.equal(realWarningOffer?.priceStatus, "unverified");
   assert.deepEqual(realWarningOffer?.warnings ?? [], ["Click and Book Plus no devolvió vuelos para esta búsqueda."]);
+});
+
+/*
+ * A 401 used to fall through to the generic branch, so the workspace painted
+ * an English sentence over a page that still looked signed in and left the
+ * agent to work out that the session had gone. It now goes to the gate, and
+ * carries where it was so the sign-in comes back to the same screen.
+ */
+function withStubbedWindow(location: Record<string, unknown>): {
+  assigned: string[];
+  restore: () => void;
+} {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const assigned: string[] = [];
+
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage: { getItem: () => null, setItem: () => undefined },
+      sessionStorage: { getItem: () => null, setItem: () => undefined },
+      location: {
+        origin: "https://fly-desk.test",
+        assign: (url: string) => { assigned.push(url); },
+        ...location,
+      },
+    },
+  });
+  resetLoginRedirectForTests();
+
+  return {
+    assigned,
+    restore: () => {
+      resetLoginRedirectForTests();
+      if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+      else delete (globalThis as typeof globalThis & { window?: Window }).window;
+    },
+  };
+}
+
+test("an expired session sends the browser to the gate, once, carrying the search", async () => {
+  const stub = withStubbedWindow({
+    pathname: "/",
+    search: "?mode=exact&trip=one-way&origin=LIM&destination=MIA",
+  });
+  let calls = 0;
+  globalThis.fetch = (() => {
+    calls += 1;
+    return Promise.resolve(Response.json({ error: "Authentication required." }, { status: 401 }));
+  }) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      suggestLocations("lima"),
+      (error: unknown) => error instanceof FlyDeskSessionExpiredError,
+    );
+    assert.deepEqual(
+      stub.assigned,
+      ["/login?next=%2F%3Fmode%3Dexact%26trip%3Done-way%26origin%3DLIM%26destination%3DMIA"],
+    );
+
+    /* A workspace mid-search has several polls in flight, and every one of
+       them sees the 401 before the page unloads. Only the first navigates. */
+    await assert.rejects(suggestLocations("cusco"));
+    await assert.rejects(startSearch(buildExactRequest(), "cheapest"));
+    assert.equal(stub.assigned.length, 1);
+    assert.equal(calls, 3);
+  } finally {
+    stub.restore();
+  }
+});
+
+test("a 401 while the gate is already on screen does not bounce", async () => {
+  const stub = withStubbedWindow({ pathname: "/login", search: "" });
+  globalThis.fetch = (() => Promise.resolve(
+    Response.json({ error: "Authentication required." }, { status: 401 }),
+  )) as typeof fetch;
+
+  try {
+    await assert.rejects(suggestLocations("lima"));
+    assert.deepEqual(stub.assigned, []);
+  } finally {
+    stub.restore();
+  }
+});
+
+test("only a 401 is read as an expired session", async () => {
+  const stub = withStubbedWindow({ pathname: "/", search: "" });
+  globalThis.fetch = (() => Promise.resolve(
+    Response.json({ error: "This endpoint requires localhost access or a valid API token." }, { status: 403 }),
+  )) as typeof fetch;
+
+  try {
+    await assert.rejects(
+      suggestLocations("lima"),
+      (error: unknown) => error instanceof FlyDeskApiError
+        && !(error instanceof FlyDeskSessionExpiredError)
+        && error.message === "Esta acción requiere acceso local o un token válido.",
+    );
+    assert.deepEqual(stub.assigned, []);
+  } finally {
+    stub.restore();
+  }
 });

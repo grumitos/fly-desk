@@ -4,6 +4,7 @@ import type { Page, Route } from "playwright";
 import type { CanonicalOffer, Itinerary } from "../../src/core/types";
 import { registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
+import { openSearchUrlWithoutLaunching, openSharedSearchLink } from "./support.ts";
 
 registerDesktopHarness();
 
@@ -47,10 +48,7 @@ test("topbar brand opens the current instance root without hardcoding the port",
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`);
     await page.waitForFunction(() => {
       const origin = document.querySelector<HTMLInputElement>('[aria-label="Origen"]');
       const destination = document.querySelector<HTMLInputElement>('[aria-label="Destino"]');
@@ -192,14 +190,7 @@ test("the list opens on a column of offers and scrolls to the rest inside it", a
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`);
 
     const resultsBody = page.getByTestId("results-list-body");
     /* Only that cards exist. How many are on screen at this instant is the
@@ -443,14 +434,7 @@ test("native schedule groups expose complete return-flight alternatives", async 
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-05-28&return=2026-06-04&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-05-28&return=2026-06-04&adults=1&children=0&infants=0&sort=cheapest`);
 
     const card = page.getByTestId("result-card");
     await card.waitFor();
@@ -557,14 +541,7 @@ test("a list with more results to give covers the column it was measured against
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-05-28&return=2026-06-04&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-05-28&return=2026-06-04&adults=1&children=0&infants=0&sort=cheapest`);
     await page.getByTestId("result-card").first().waitFor();
     // There is more of the list below, so what is on screen has no excuse to
     // stop short of the bottom of the column.
@@ -709,14 +686,7 @@ test("a list sized to its items still fits a group card, which is taller than on
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-09-14&return=2026-09-24&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-09-14&return=2026-09-24&adults=1&children=0&infants=0&sort=cheapest`);
     await page.getByTestId("result-card").first().waitFor();
 
     // Both items are the whole list, and a list that fits needs nothing below it.
@@ -886,14 +856,7 @@ test("provider offers open the highest-ranked Agilsmart and Click and Book Plus 
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-04-15&return=2026-04-22&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-04-15&return=2026-04-22&adults=1&children=0&infants=0&sort=cheapest`);
 
     const cards = page.getByTestId("result-card");
     await cards.nth(1).waitFor();
@@ -1046,14 +1009,7 @@ test("result cards reserve matching airline and provider logo slots", async () =
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-06-08&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-06-08&adults=1&children=0&infants=0&sort=cheapest`);
 
     const card = page.getByTestId("result-card").first();
     await card.waitFor();
@@ -1257,14 +1213,7 @@ test("detail panel mirrors selected result content and omits unknown fare condit
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-05-28&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-05-28&adults=1&children=0&infants=0&sort=cheapest`);
 
     await page.getByTestId("result-card").getByRole("button", { name: /^Seleccionar oferta/ }).click();
     const detailBody = page.getByTestId("detail-panel-body");
@@ -1451,11 +1400,7 @@ test("domestic Costamar quotation uses the verified endpoint response", async ()
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=CUZ&departure=2026-06-08&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await page.getByRole("button", { name: "Buscar" }).click();
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=CUZ&departure=2026-06-08&adults=1&children=0&infants=0&sort=cheapest`);
     await page.getByTestId("result-card").click();
     await page.getByRole("button", { name: "Cotizar" }).click();
 
@@ -1573,11 +1518,7 @@ test("a confirmed fare replaces the one on screen and the toggle never borrows a
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=CUZ&departure=2026-06-08&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await page.getByRole("button", { name: "Buscar" }).click();
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=CUZ&departure=2026-06-08&adults=1&children=0&infants=0&sort=cheapest`);
     await page.getByTestId("result-card").first().click();
 
     const detailPrice = page.locator(".fd-detail-price");
@@ -1679,11 +1620,7 @@ test("quotation failure never exposes or copies an unvalidated local quote", asy
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MIA&departure=2026-06-08&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await page.getByRole("button", { name: "Buscar" }).click();
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MIA&departure=2026-06-08&adults=1&children=0&infants=0&sort=cheapest`);
     await page.getByTestId("result-card").click();
     await page.getByRole("button", { name: "Cotizar" }).click();
 
@@ -1791,11 +1728,7 @@ test("progressive results preserve existing cards when the remaining offers arri
       await route.continue();
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-05-28&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await page.getByRole("button", { name: "Buscar" }).click();
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-05-28&adults=1&children=0&infants=0&sort=cheapest`);
     await page.getByTestId("result-card").first().waitFor();
     await page.evaluate(() => {
       (window as unknown as { __firstResultCard?: Element }).__firstResultCard = document.querySelector('[data-testid="result-card"]') ?? undefined;
@@ -1885,11 +1818,7 @@ test("cached offers stay non-quotable until a fresh provider result replaces the
       await route.continue();
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-05-28&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await page.getByRole("button", { name: "Buscar" }).click();
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-05-28&adults=1&children=0&infants=0&sort=cheapest`);
     await page.getByTestId("result-card").click();
     const quoteButton = page.getByRole("button", { name: "Cotizar" });
     assert.equal(await quoteButton.isDisabled(), true);
@@ -2026,14 +1955,7 @@ test("the open list of schedules takes the click over every card it covers", asy
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-09-14&return=2026-09-24&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-09-14&return=2026-09-24&adults=1&children=0&infants=0&sort=cheapest`);
     await page.getByTestId("result-card").first().waitFor();
 
     /*
@@ -2348,15 +2270,6 @@ async function measureColumn(page: Page): Promise<{ viewportHeight: number; row:
   return measured;
 }
 
-async function runResultsSearch(page: Page, baseUrl: string): Promise<void> {
-  await page.goto(`${baseUrl}${RESULTS_SEARCH_URL}`, { waitUntil: "domcontentloaded" });
-  await page.getByRole("combobox", { name: "Origen" }).waitFor();
-  await Promise.all([
-    page.waitForResponse("**/api/search"),
-    page.getByRole("button", { name: "Buscar" }).click(),
-  ]);
-}
-
 test("a fare the provider said nothing about keeps the card's lanes", async () => {
   /*
    * «A veces pierde su distribución», reported with a screenshot of one row
@@ -2384,7 +2297,7 @@ test("a fare the provider said nothing about keeps the card's lanes", async () =
       ],
     });
     await page.setViewportSize({ width: 1920, height: 1000 });
-    await runResultsSearch(page, baseUrl);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
     await page.getByTestId("result-card").first().waitFor();
 
     const rows = await page.evaluate(() => {
@@ -2452,7 +2365,7 @@ test("the card keeps a lane for the airport codes at every width a desk can be",
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeCompletedSearch(page, { offers: Array.from({ length: 14 }, (_, index) => oneStopOffer(index)) });
     await page.setViewportSize({ width: 1920, height: 1000 });
-    await runResultsSearch(page, baseUrl);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
     await page.getByTestId("result-card").first().waitFor();
 
     const measure = () => page.evaluate(() => {
@@ -2524,7 +2437,7 @@ test("the result cell keeps the whole list minus the card's own 436", async () =
         oneStopOffer(index, { mainCarrier: "AR", validatingCarrier: "AR" })),
     });
     await page.setViewportSize({ width: 1920, height: 1000 });
-    await runResultsSearch(page, baseUrl);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
     await page.getByTestId("result-card").first().waitFor();
 
     for (const [width, height] of [[1920, 1080], [1920, 911], [1536, 864], [1366, 768]]) {
@@ -2571,7 +2484,7 @@ test("the skeleton draws as many rows as the column it is standing in will hold"
        browser actually paints, and the frames are what this case reads. */
     await routeDelayedSearch(page, { offers: Array.from({ length: 31 }, (_, index) => oneStopOffer(index)) }, 2_500);
     await page.setViewportSize({ width: 1920, height: 911 });
-    await page.goto(`${baseUrl}${RESULTS_SEARCH_URL}`, { waitUntil: "domcontentloaded" });
+    await openSearchUrlWithoutLaunching(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
     await recordListFrames(page);
     await page.getByRole("button", { name: "Buscar" }).click();
@@ -2635,7 +2548,7 @@ test("a tall column is filled by the results, not by the old ceiling of twelve",
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeDelayedSearch(page, { offers: Array.from({ length: 40 }, (_, index) => oneStopOffer(index)) }, 2_000);
     await page.setViewportSize({ width: 1920, height: 1080 });
-    await page.goto(`${baseUrl}${RESULTS_SEARCH_URL}`, { waitUntil: "domcontentloaded" });
+    await openSearchUrlWithoutLaunching(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
     await recordListFrames(page);
     await page.getByRole("button", { name: "Buscar" }).click();
@@ -2690,7 +2603,7 @@ test("a list of hundreds is built a column at a time, and only downwards", async
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeDelayedSearch(page, { offers: Array.from({ length: 240 }, (_, index) => oneStopOffer(index)) }, 800);
     await page.setViewportSize({ width: 1440, height: 900 });
-    await runResultsSearch(page, baseUrl);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
     await page.getByTestId("result-card").first().waitFor({ timeout: 20_000 });
     await page.waitForTimeout(900);
 
@@ -2757,7 +2670,7 @@ test("a list carrying a group still closes the column it was measured against", 
     }, 1_500);
 
     await page.setViewportSize({ width: 1920, height: 911 });
-    await runResultsSearch(page, baseUrl);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
     await page.getByTestId("result-card").first().waitFor({ timeout: 20_000 });
     await page.waitForTimeout(1_200);
 
@@ -2791,7 +2704,7 @@ test("a search that is merely slow says nothing beyond the skeleton", async () =
     await page.clock.install();
     await routeUnansweredSearch(page);
     await page.setViewportSize({ width: 1440, height: 960 });
-    await page.goto(`${baseUrl}${RESULTS_SEARCH_URL}`, { waitUntil: "domcontentloaded" });
+    await openSearchUrlWithoutLaunching(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
     await page.getByRole("button", { name: "Buscar" }).click();
     await page.getByTestId("results-loading-skeleton").waitFor();
@@ -2814,7 +2727,7 @@ test("the same search under reduced motion still shows bones and no notice", asy
     await page.emulateMedia({ reducedMotion: "reduce" });
     await routeUnansweredSearch(page);
     await page.setViewportSize({ width: 1440, height: 960 });
-    await page.goto(`${baseUrl}${RESULTS_SEARCH_URL}`, { waitUntil: "domcontentloaded" });
+    await openSearchUrlWithoutLaunching(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
     await page.getByRole("button", { name: "Buscar" }).click();
     await page.getByTestId("results-loading-skeleton").waitFor();
@@ -2876,7 +2789,7 @@ test("an offer whose schedule is already inside a group is not drawn a second ti
     });
 
     await page.setViewportSize({ width: 1440, height: 960 });
-    await runResultsSearch(page, baseUrl);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
     await page.getByTestId("result-card").first().waitFor();
 
     const cards = page.getByTestId("result-card");

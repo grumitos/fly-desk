@@ -93,11 +93,15 @@ import {
   getWebAuthConfigError,
   hasValidWebSession,
   isWebAuthEnabled,
+  loginPageLocation,
   renderLoginPage,
+  renewWebSessionCookies,
+  resolveSafeNextPath,
   resolveWebTheme,
   shouldTrustReverseProxyLoopbackClient,
   shouldTrustLoopbackClient,
   verifyWebPassword,
+  WEB_SESSION_COOKIE_NAME,
 } from "./web-auth";
 import {
   checkWebLoginAdmission,
@@ -1586,19 +1590,39 @@ function apiAuthRequiredResponse(): Response {
   );
 }
 
-async function readLoginPassword(request: Request): Promise<string> {
+interface LoginFields {
+  password: string;
+  next?: string;
+}
+
+/*
+ * The gate posts `next` in the body rather than in the action URL, so the page
+ * the user was on does not travel through a referrer or a proxy log line. It is
+ * still accepted from the query string, because that is the only place a plain
+ * `GET /login` can carry it. Either way `resolveSafeNextPath` decides: anything
+ * that is not a path on this origin comes back undefined.
+ */
+async function readLoginFields(request: Request): Promise<LoginFields> {
+  const urlNext = resolveSafeNextPath(new URL(request.url).searchParams.get("next"));
   const contentType = request.headers.get("content-type") ?? "";
+
   if (contentType.includes("application/json")) {
-    const payload = await request.json() as { password?: unknown };
-    return typeof payload.password === "string" ? payload.password : "";
+    const payload = await request.json() as { password?: unknown; next?: unknown };
+    return {
+      password: typeof payload.password === "string" ? payload.password : "",
+      next: resolveSafeNextPath(payload.next) ?? urlNext,
+    };
   }
 
   if (contentType.includes("application/x-www-form-urlencoded")) {
     const form = new URLSearchParams(await request.text());
-    return form.get("password") ?? "";
+    return {
+      password: form.get("password") ?? "",
+      next: resolveSafeNextPath(form.get("next")) ?? urlNext,
+    };
   }
 
-  return "";
+  return { password: "", next: urlNext };
 }
 
 async function handleWebLogin(request: Request, options: { jsonResponse?: boolean } = {}): Promise<Response> {
@@ -1614,7 +1638,7 @@ async function handleWebLogin(request: Request, options: { jsonResponse?: boolea
     );
   }
 
-  const password = await readLoginPassword(request);
+  const { password, next } = await readLoginFields(request);
   const loginClientKey = request.headers.get("x-flydesk-client-address")?.trim() || "unknown";
   const admission = checkWebLoginAdmission(loginClientKey);
   if (!admission.allowed) {
@@ -1629,7 +1653,7 @@ async function handleWebLogin(request: Request, options: { jsonResponse?: boolea
       );
     }
     return new Response(
-      renderLoginPage("Demasiados intentos. Intenta de nuevo mas tarde.", resolveWebTheme(request)),
+      renderLoginPage("Demasiados intentos. Intenta de nuevo mas tarde.", resolveWebTheme(request), next),
       {
         status: 429,
         headers: {
@@ -1653,7 +1677,8 @@ async function handleWebLogin(request: Request, options: { jsonResponse?: boolea
     return new Response(null, {
       status: 303,
       headers: {
-        Location: "/login?error=1",
+        /* A wrong password should cost the attempt, not the return path. */
+        Location: loginPageLocation(next, true),
         "Cache-Control": "no-store",
       },
     });
@@ -1679,7 +1704,9 @@ async function handleWebLogin(request: Request, options: { jsonResponse?: boolea
   const response = new Response(null, {
     status: 303,
     headers: {
-      Location: "/",
+      /* `next` has already been through `resolveSafeNextPath`, so it is a path
+         on this origin or it is nothing. */
+      Location: next ?? "/",
       "Cache-Control": "no-store",
     },
   });
@@ -3088,7 +3115,46 @@ async function handleMatrixRequest(
   return json(matrixJobResponse(job));
 }
 
+/* The routes that write the session cookie themselves. Renewal has to keep its
+   hands off them, or a logout would be undone by the very request that asked
+   for it: the cookie is still on the way in while the response is clearing it. */
+const SESSION_WRITING_PATHS = new Set([
+  "/login",
+  "/logout",
+  "/api/auth/login",
+  "/api/auth/logout",
+]);
+
+function alreadyWritesWebSessionCookie(response: Response): boolean {
+  const setCookies = typeof response.headers.getSetCookie === "function"
+    ? response.headers.getSetCookie()
+    : [response.headers.get("set-cookie") ?? ""];
+  return setCookies.some((cookie) => cookie.startsWith(`${WEB_SESSION_COOKIE_NAME}=`));
+}
+
+/*
+ * Every authenticated call through here is a sign that somebody is working, and
+ * that is what a sliding session is measured in. `renewWebSessionCookies` holds
+ * the policy — it returns nothing until the window is more than half spent, so
+ * the ordinary response carries no `Set-Cookie` at all and stays as cacheable
+ * as it was.
+ */
 export async function routeRequest(request: Request): Promise<Response> {
+  const response = await routeApplicationRequest(request);
+  if (SESSION_WRITING_PATHS.has(new URL(request.url).pathname)) {
+    return response;
+  }
+
+  const renewal = renewWebSessionCookies(request);
+  if (renewal && !alreadyWritesWebSessionCookie(response)) {
+    response.headers.append("Set-Cookie", renewal.sessionCookie);
+    response.headers.append("Set-Cookie", renewal.redirectSessionCookie);
+  }
+
+  return response;
+}
+
+async function routeApplicationRequest(request: Request): Promise<Response> {
   const url = new URL(request.url);
 
   if (request.method === "POST" && url.pathname === "/login") {

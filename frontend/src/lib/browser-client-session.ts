@@ -25,6 +25,17 @@ function generateBrowserClientSessionId(): string | undefined {
   return [...bytes].map((value) => value.toString(16).padStart(2, "0")).join("")
 }
 
+/*
+ * `localStorage`, not `sessionStorage`. This id is what «Recientes» is keyed by,
+ * and `sessionStorage` dies with the tab: every new tab minted a new id, so the
+ * panel opened empty for everyone, always, and no server-side retention could
+ * change that - the history was being thrown away at the client. Recientes is
+ * meant to be "what you have been looking at lately", which outlives a tab.
+ *
+ * Not to be confused with the deliberately per-tab marker in `search-share.ts`:
+ * that one answers "did THIS tab write this URL", where dying with the tab is
+ * the whole point.
+ */
 export function getBrowserClientSessionId(): string | undefined {
   if (typeof window === "undefined") {
     return undefined
@@ -32,7 +43,7 @@ export function getBrowserClientSessionId(): string | undefined {
 
   try {
     const stored = normalizeBrowserClientSessionId(
-      window.sessionStorage.getItem(BROWSER_CLIENT_SESSION_STORAGE_KEY),
+      window.localStorage.getItem(BROWSER_CLIENT_SESSION_STORAGE_KEY),
     )
     if (stored) {
       return stored
@@ -43,7 +54,7 @@ export function getBrowserClientSessionId(): string | undefined {
       return undefined
     }
 
-    window.sessionStorage.setItem(BROWSER_CLIENT_SESSION_STORAGE_KEY, generated)
+    window.localStorage.setItem(BROWSER_CLIENT_SESSION_STORAGE_KEY, generated)
     return generated
   } catch {
     return undefined
