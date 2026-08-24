@@ -3,15 +3,13 @@ import assert from "node:assert/strict";
 import type { Page, Route } from "playwright";
 import { openDesktop, registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
-import { clickSegment, segment, waitForLocationFieldsClosed } from "./support.ts";
+import { clickSegment, openSharedSearchLink, segment, waitForLocationFieldsClosed } from "./support.ts";
 
 registerDesktopHarness();
 
 test("invalid shared dates do not roll over in the search form", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-06-31&return=2026-07-10&adults=1&children=0&infants=0`, {
-      waitUntil: "domcontentloaded",
-    });
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-06-31&return=2026-07-10&adults=1&children=0&infants=0`);
 
     const departureButton = page.locator('button[aria-label^="Salida:"]');
     await departureButton.waitFor();
@@ -115,7 +113,19 @@ test("one-way flexible search sends the selected stay-range payload without hidd
   });
 });
 
-test("search URL stores the payload and reopens it without auto-searching", async () => {
+/*
+ * Both halves of what the address bar means.
+ *
+ * A link carries a whole request and now runs it, which is the point of the
+ * change. But `handleSearch` writes those same parameters onto the address bar
+ * as it goes, so afterwards the URL is letter for letter the link the agent
+ * would share — and a reload is not somebody opening a link. `pagehide`
+ * cancels the running search on the way out precisely so it is not paid for
+ * twice; re-running it on the way back in would undo that at the price of a
+ * provider search per F5. The tab remembers the query it wrote, and only the
+ * tab that wrote it is spared.
+ */
+test("the URL a search writes is a link elsewhere and a reload here", async () => {
   await withDesktopPage(async ({ baseUrl, context, page }) => {
     const payloads: Record<string, unknown>[] = [];
     const routeLocations = async (route: Route) => {
@@ -196,26 +206,31 @@ test("search URL stores the payload and reopens it without auto-searching", asyn
     assert.equal(sharedUrl.searchParams.get("children"), "0");
     assert.equal(sharedUrl.searchParams.get("infants"), "0");
 
+    // Reloading it in the tab that wrote it: the form comes back filled and
+    // waits, exactly as it did before a link meant anything.
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await waitForLocationFieldsClosed(page, {
+      origin: "LIM - Lima, Perú",
+      destination: "MIA - FL, Estados Unidos",
+    });
+    await page.waitForTimeout(500);
+    assert.equal(payloads.length, 1);
+    assert.equal(new URL(page.url()).searchParams.has("launchPayload"), false);
+    assert.equal(await page.getByRole("button", { name: "Buscar" }).isVisible(), true);
+    assert.equal(await page.getByTestId("results-list-body").count(), 0);
+
+    // The same URL in another tab is a link somebody was sent, and it runs.
     const replayPage = await context.newPage();
     await replayPage.route("**/api/locations**", routeLocations);
     await replayPage.route("**/api/search", routeSearch);
 
-    await replayPage.goto(reusableUrl, { waitUntil: "domcontentloaded" });
-    await replayPage.getByRole("combobox", { name: "Origen" }).waitFor();
-
-    assert.equal(new URL(replayPage.url()).searchParams.has("launchPayload"), false);
-    assert.equal(payloads.length, 1);
+    const replaySearch = replayPage.waitForResponse("**/api/search");
+    await openSharedSearchLink(replayPage, reusableUrl);
+    await replaySearch;
     await waitForLocationFieldsClosed(replayPage, {
       origin: "LIM - Lima, Perú",
       destination: "MIA - FL, Estados Unidos",
     });
-    assert.equal(await replayPage.getByRole("combobox", { name: "Origen" }).inputValue(), "LIM - Lima, Perú");
-    assert.equal(await replayPage.getByRole("combobox", { name: "Destino" }).inputValue(), "MIA - FL, Estados Unidos");
-
-    await Promise.all([
-      replayPage.waitForResponse("**/api/search"),
-      replayPage.getByRole("button", { name: "Buscar" }).click(),
-    ]);
 
     const replayRequest = payloads[1].request as {
       tripType?: string;
@@ -225,7 +240,6 @@ test("search URL stores the payload and reopens it without auto-searching", asyn
     };
     const replayLeg = replayRequest.legs?.[0];
 
-    assert.equal(payloads.length, 2);
     assert.equal(replayRequest.tripType, "round-trip");
     assert.equal(replayRequest.searchMode, "exact");
     assert.equal(replayLeg?.origin, "LIM");
@@ -233,6 +247,192 @@ test("search URL stores the payload and reopens it without auto-searching", asyn
     assert.equal(replayLeg?.departureDate, "2026-03-31");
     assert.equal(replayLeg?.returnDate, "2026-04-01");
     assert.equal(replayRequest.passengers?.adults, 1);
+
+    // Once, not once per render: the effect is guarded, not merely deferred.
+    await replayPage.waitForTimeout(800);
+    assert.equal(payloads.length, 2);
+    assert.equal(await replayPage.getByRole("button", { name: "Buscar" }).isVisible(), true);
+  }, { autoOpen: false });
+});
+
+/** Answers every search with an empty result and counts the ones that arrive. */
+async function routeCountedSearch(page: Page, counter: { searches: number }): Promise<void> {
+  await page.route("**/api/locations**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        suggestions: [
+          { code: "LIM", label: "LIM - Lima, Perú" },
+          { code: "MIA", label: "MIA - FL, Estados Unidos" },
+        ],
+      }),
+    });
+  });
+  await page.route("**/api/search", async (route) => {
+    counter.searches += 1;
+    const payload = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        searchJobId: "shared-link-search",
+        searchComplete: true,
+        searchStatus: "completed",
+        revision: 1,
+        sortMode: payload.sortMode,
+        request: payload.request,
+        offers: [],
+        allOffers: [],
+        searchMeta: {
+          requestedAt: "2026-03-31T00:00:00.000Z",
+          completedAt: "2026-03-31T00:00:00.000Z",
+          providersUsed: ["agil-local"],
+          warnings: [],
+          partial: false,
+          searchState: "search_live",
+        },
+        providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+        warnings: [],
+      }),
+    });
+  });
+}
+
+/**
+ * What a link has to carry before it is allowed to spend a search.
+ *
+ * The readable parameters guarantee an origin and a destination and nothing
+ * else, so half of these links describe a form rather than a request. Those
+ * arrive filled and wait for the gesture — which is what every link did until
+ * now, and is still the right answer whenever the form itself would refuse.
+ */
+const LINKS_THAT_ONLY_FILL_THE_FORM = [
+  {
+    what: "no departure date",
+    query: "mode=exact&trip=one-way&origin=LIM&destination=MIA&adults=1&children=0&infants=0",
+  },
+  {
+    what: "a day that does not exist",
+    query: "mode=exact&trip=one-way&origin=LIM&destination=MIA&departure=2026-06-31&adults=1&children=0&infants=0",
+  },
+  {
+    what: "a departure the runtime has already passed",
+    query: "mode=exact&trip=one-way&origin=LIM&destination=MIA&departure=2026-03-30&adults=1&children=0&infants=0",
+  },
+  {
+    what: "a round trip with no return",
+    query: "mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-06-08&adults=1&children=0&infants=0",
+  },
+  {
+    what: "a flexible sweep, which costs many searches",
+    query: "mode=flexible&trip=one-way&origin=LIM&destination=MIA&departureStart=2026-06-08&departureEnd=2026-06-14&adults=1&children=0&infants=0",
+  },
+  {
+    what: "a migratory sweep, which costs many more",
+    query: "mode=migration&trip=one-way&origin=LIM&destination=MIA&months=2026-06,2026-07&adults=1&children=0&infants=0",
+  },
+] as const;
+
+for (const link of LINKS_THAT_ONLY_FILL_THE_FORM) {
+  test(`a shared link with ${link.what} fills the form and waits`, async () => {
+    await withDesktopPage(async ({ baseUrl, page }) => {
+      const counter = { searches: 0 };
+      await routeCountedSearch(page, counter);
+
+      await openSharedSearchLink(page, `${baseUrl}/?${link.query}`);
+      await waitForLocationFieldsClosed(page, {
+        origin: "LIM - Lima, Perú",
+        destination: "MIA - FL, Estados Unidos",
+      });
+      /* Long enough for the launch to have happened: the effect defers by a
+         tick, so an assertion taken on the first paint would pass against a
+         build that launches everything. */
+      await page.waitForTimeout(800);
+
+      assert.equal(counter.searches, 0);
+      assert.equal(await page.getByTestId("results-list-body").count(), 0);
+      assert.equal(await page.getByTestId("results-loading-skeleton").count(), 0);
+    }, { autoOpen: false });
+  });
+}
+
+test("a complete exact link runs its search, once, without anybody pressing anything", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const counter = { searches: 0 };
+    await routeCountedSearch(page, counter);
+
+    const search = page.waitForResponse("**/api/search");
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MIA&departure=2026-06-08&adults=1&children=0&infants=0&sort=cheapest`);
+    const payload = (await search).request().postDataJSON() as {
+      sortMode?: string;
+      request?: { tripType?: string; searchMode?: string; legs?: Array<Record<string, unknown>> };
+    };
+
+    // The search the link describes, not a near-miss of it.
+    assert.equal(payload.sortMode, "cheapest");
+    assert.equal(payload.request?.tripType, "one-way");
+    assert.equal(payload.request?.searchMode, "exact");
+    assert.equal(payload.request?.legs?.[0]?.origin, "LIM");
+    assert.equal(payload.request?.legs?.[0]?.destination, "MIA");
+    assert.equal(payload.request?.legs?.[0]?.departureDate, "2026-06-08");
+
+    await page.getByText("Sin resultados para esta consulta").waitFor();
+    await page.waitForTimeout(800);
+    assert.equal(counter.searches, 1);
+  }, { autoOpen: false });
+});
+
+test("«?job=» reads the search it names rather than paying for the one on the URL", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const counter = { searches: 0 };
+    await routeCountedSearch(page, counter);
+    const offer = buildOffer({ id: "restored-job-offer", origin: "LIM", destination: "MIA", tripType: "one-way" });
+    await page.route("**/api/search/shared-link-job*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "shared-link-job",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 3,
+          sortMode: "cheapest",
+          request: {
+            origin: "LIM",
+            destination: "MIA",
+            searchMode: "exact",
+            tripType: "one-way",
+            departureDate: "2026-06-08",
+            adults: 1,
+            children: 0,
+            infants: 0,
+            cabin: "ECONOMY",
+          },
+          offers: [offer],
+          allOffers: [offer],
+          searchMeta: {
+            requestedAt: "2026-03-31T00:00:00.000Z",
+            completedAt: "2026-03-31T00:00:01.000Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+          warnings: [],
+        }),
+      });
+    });
+
+    /* Both on one URL, which is the case that has to be decided: the job is
+       results to read, the parameters are a search to pay for. */
+    await openSharedSearchLink(page, `${baseUrl}/?job=shared-link-job&mode=exact&trip=one-way&origin=LIM&destination=MIA&departure=2026-06-08&adults=1&children=0&infants=0&sort=cheapest`);
+    await page.getByTestId("result-card").first().waitFor();
+    await page.waitForTimeout(800);
+
+    assert.equal(counter.searches, 0);
+    assert.equal(await page.getByTestId("result-card").count(), 1);
   }, { autoOpen: false });
 });
 

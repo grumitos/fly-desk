@@ -4,6 +4,8 @@ import type { SearchRequest, SortMode } from "@/types"
 const SEARCH_SHARE_PAYLOAD_TYPE = "fly-desk-search-config"
 const SEARCH_SHARE_PAYLOAD_VERSION = 2
 export const SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM = "launchPayload"
+/** Read by `test/ui/support.ts` too, which cannot import this module. */
+export const OWN_SEARCH_URL_SESSION_KEY = "fly-desk:search-url-written-here:v1"
 const SHARED_SEARCH_QUERY_PARAMS = [
   SEARCH_LAUNCH_PAYLOAD_QUERY_PARAM,
   "mode",
@@ -103,7 +105,45 @@ export function writeSharedSearchToUrl(request: SearchRequest, sortMode: SortMod
   const url = new URL(window.location.href)
   writeReadableSharedSearchParams(url, request, sortMode)
   window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`)
+  rememberSearchUrlWrittenHere(url.search)
   return true
+}
+
+/**
+ * Whether the URL on screen is the one this tab wrote for itself.
+ *
+ * A search puts itself on the address bar, so afterwards the URL is letter for
+ * letter the link the agent would share — and a shared link runs its search. If
+ * nothing told the two apart, F5 would buy the search again, moments after
+ * `pagehide` cancelled it precisely so that it would not be paid for twice. A
+ * link is a request; the address bar is a record of one already made.
+ *
+ * `sessionStorage` is the scope that says this: it dies with the tab and is not
+ * carried into the tab the link is pasted into. `history.state` would have been
+ * the tighter scope, but the sheet layer already owns it (`fdSheet` in
+ * `components/ui/sheet.tsx`) and the `replaceState` above deliberately clears
+ * it; sharing that object between two unrelated concerns is how the back button
+ * stops closing sheets.
+ *
+ * The query is stored whole rather than a bare flag, so that pasting a
+ * different link into a tab that has already searched is still a link.
+ */
+export function searchUrlWasWrittenHere(url: URL): boolean {
+  try {
+    return window.sessionStorage.getItem(OWN_SEARCH_URL_SESSION_KEY) === url.search
+  } catch {
+    return false
+  }
+}
+
+function rememberSearchUrlWrittenHere(search: string) {
+  try {
+    window.sessionStorage.setItem(OWN_SEARCH_URL_SESSION_KEY, search)
+  } catch {
+    /* Storage can be denied, and a tab that cannot remember reads its own
+       address bar as a link and searches again on reload. That is the cost of
+       one extra search in a hardened context, not a broken page. */
+  }
 }
 
 export function serializeSharedSearchPayload(request: SearchRequest, sortMode: SortMode): string {

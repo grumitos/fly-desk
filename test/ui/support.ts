@@ -67,3 +67,41 @@ export async function routeLocationUsageSuggestions(
     });
   });
 }
+
+/**
+ * Open a shared link, which runs the search it carries.
+ *
+ * Named rather than inlined precisely because there is no gesture left to see:
+ * the cases that call it navigate and then wait for a list, and nothing between
+ * those two lines would otherwise say where the search came from.
+ */
+export async function openSharedSearchLink(page: Page, url: string): Promise<void> {
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+}
+
+/**
+ * The session key `frontend/src/lib/search-share.ts` writes whenever a search
+ * puts itself on the address bar. Spelled out here because a Playwright file
+ * cannot import the app's modules — the same reason `filters.playwright.ts`
+ * spells out the workspace preferences key.
+ */
+const OWN_SEARCH_URL_SESSION_KEY = "fly-desk:search-url-written-here:v1";
+
+/**
+ * Open a search URL the way a reload does: the form arrives filled and idle,
+ * because the tab is looking at its own address bar rather than at a link.
+ *
+ * A link runs the search it carries, so this is how a case that is really about
+ * the idle form — its geometry, its choreography, or the gesture that starts a
+ * search — still gets a form with a route already in it.
+ */
+export async function openSearchUrlWithoutLaunching(page: Page, url: string): Promise<void> {
+  await page.addInitScript(([key, search]) => {
+    try {
+      window.sessionStorage.setItem(key, search);
+    } catch {
+      // A tab that cannot remember runs the search; the case will say so.
+    }
+  }, [OWN_SEARCH_URL_SESSION_KEY, new URL(url).search] as [string, string]);
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+}

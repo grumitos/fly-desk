@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Page, Route } from "playwright";
 import { openDesktop, registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
-import { clickSegment, segment } from "./support.ts";
+import { clickSegment, openSharedSearchLink, segment } from "./support.ts";
 
 registerDesktopHarness();
 
@@ -153,15 +153,7 @@ test("baggage filter uses one compact segmented control and maps checked baggage
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-05-28&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MAD&departure=2026-05-28&adults=1&children=0&infants=0&sort=cheapest`);
     // 04 §2: one segmented of three options, no separators between groups.
     const baggageControl = page.getByRole("radiogroup", { name: "Equipaje incluido" });
     await baggageControl.waitFor({ state: "visible" });

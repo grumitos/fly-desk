@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { Page, Route } from "playwright";
 import { registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
-import { clickSegment, segment } from "./support.ts";
+import { clickSegment, openSharedSearchLink, segment } from "./support.ts";
 
 registerDesktopHarness();
 
@@ -109,14 +109,7 @@ test("result filters refine loaded offers without restarting the search", async 
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`);
     await page.getByTestId("result-card").first().waitFor();
 
     await page.getByRole("checkbox", { name: "Sky" }).click();
@@ -267,14 +260,7 @@ test("the header counts against the whole search, not against what the request a
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=BIO&departure=2026-06-08&adults=1&children=0&infants=0&sort=cheapest&nonStop=1`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=BIO&departure=2026-06-08&adults=1&children=0&infants=0&sort=cheapest&nonStop=1`);
     await page.getByTestId("result-card").first().waitFor();
 
     await page.waitForFunction(() =>
@@ -397,14 +383,7 @@ test("empty local filter results do not blame a provider that already reported n
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=TPP&destination=LIM&departure=2026-05-13&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=one-way&origin=TPP&destination=LIM&departure=2026-05-13&adults=1&children=0&infants=0&sort=cheapest`);
     await page.getByTestId("result-card").first().waitFor();
 
     await clickSegment(segment(page, "Bodega"));
@@ -475,15 +454,7 @@ test("empty exact results stay factual without inventing flight data", async () 
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`);
 
     await page.getByText("Sin resultados para esta consulta").waitFor();
     await page.getByText("Ajusta fechas, escalas, equipaje o aerolíneas para ampliar la cobertura.").waitFor();
