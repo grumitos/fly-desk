@@ -57,6 +57,74 @@ export class FlyDeskSearchCancelledError extends Error {
   }
 }
 
+/* A 401 from our own API means the Fly Desk session is gone. It is worth its
+   own type because nothing the page can do will fix it: a poll must stop
+   retrying instead of spending its attempts on an answer that will not come. */
+export class FlyDeskSessionExpiredError extends FlyDeskApiError {
+  constructor(diagnosticLog: string[]) {
+    super("La sesión expiró. Te llevamos al acceso.", diagnosticLog)
+    this.name = "FlyDeskSessionExpiredError"
+  }
+}
+
+/*
+ * Where an expired session sends the browser.
+ *
+ * The tab still looks signed in when the session dies, and the 401 body is an
+ * English sentence in a Spanish workspace, so showing it was never useful.
+ * Going to the gate is, and carrying the current path means the sign-in comes
+ * back to the same screen rather than to an empty workspace — the same return
+ * path the server-side redirect uses, so a shared search link survives either
+ * way in.
+ *
+ * Once is enough. Navigation is asynchronous and a workspace mid-search has
+ * several polls in flight, so every one of them sees the 401 before the page
+ * unloads; the flag makes the first the only one that navigates. Being on the
+ * gate already is the other way this could loop.
+ */
+let redirectingToLogin = false
+
+export function resetLoginRedirectForTests(): void {
+  redirectingToLogin = false
+}
+
+function isOwnApiRequest(url: string): boolean {
+  if (typeof window === "undefined") {
+    return false
+  }
+
+  try {
+    const parsed = new URL(url, window.location.origin)
+    return parsed.origin === window.location.origin && parsed.pathname.startsWith("/api/")
+  } catch {
+    return false
+  }
+}
+
+function redirectToLogin(): void {
+  if (redirectingToLogin || typeof window === "undefined") {
+    return
+  }
+
+  const { pathname, search } = window.location
+  if (pathname === "/login") {
+    return
+  }
+
+  redirectingToLogin = true
+  const next = `${pathname}${search}`
+  window.location.assign(next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`)
+}
+
+function sessionExpiredError(url: string, res: Response, data: unknown): FlyDeskSessionExpiredError | undefined {
+  if (res.status !== 401 || !isOwnApiRequest(url)) {
+    return undefined
+  }
+
+  redirectToLogin()
+  return new FlyDeskSessionExpiredError(buildHttpDiagnosticLog(url, res, data))
+}
+
 type RequestOptions = {
   signal?: AbortSignal
 }
@@ -511,7 +579,7 @@ async function postJson<T>(url: string, payload: unknown, options: RequestOption
   }
   throwIfAborted(options.signal)
   const data = await readJsonBody(res)
-  if (!res.ok) throw new FlyDeskApiError(apiErrorMessage(data), buildHttpDiagnosticLog(url, res, data))
+  if (!res.ok) throw sessionExpiredError(url, res, data) ?? new FlyDeskApiError(apiErrorMessage(data), buildHttpDiagnosticLog(url, res, data))
   if (data === undefined) throw new FlyDeskApiError("El servidor devolvió una respuesta no válida.", buildHttpDiagnosticLog(url, res, data))
   return data as T
 }
@@ -530,7 +598,7 @@ async function getJson<T>(url: string, options: RequestOptions = {}): Promise<T>
   }
   throwIfAborted(options.signal)
   const data = await readJsonBody(res)
-  if (!res.ok) throw new FlyDeskApiError(apiErrorMessage(data), buildHttpDiagnosticLog(url, res, data))
+  if (!res.ok) throw sessionExpiredError(url, res, data) ?? new FlyDeskApiError(apiErrorMessage(data), buildHttpDiagnosticLog(url, res, data))
   if (data === undefined) throw new FlyDeskApiError("El servidor devolvió una respuesta no válida.", buildHttpDiagnosticLog(url, res, data))
   return data as T
 }

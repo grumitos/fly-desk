@@ -30,6 +30,7 @@ Fly Desk is a Bun-only application prepared for VPS deployment:
 - origin and destination autocomplete with explicit city/airport types
 - up to three recent origins/destinations per browser session and three frequent origins/destinations from permanent global counters, recorded by the backend when a search is accepted
 - an idle provider rail that names the providers the desk searches, always and without health copy; readiness stays on the authenticated `/api/provider-status` surface that the router uses internally
+- a shareable search URL: every search writes its parameters onto the address bar, and opening that link runs the exact search it describes, once. Sweeps, incomplete links and dates the form would refuse arrive filled and wait for «Buscar»; `?job=` reads the job it names instead; and reloading in the tab that wrote the URL does not re-run it
 - visible filters for stops, maximum layover time, baggage, and airlines
 - one continuous list of results, grown as it is scrolled, with backend warnings
 - a side panel with details, known conditions, purchase paths, and quotation from the shared core; the first quote calls `/api/quotation`, requires a complete provider-validated response for the exact stored flight, and may reuse it for at most 15 minutes before revalidation; the migratory switch updates that same verified offer immediately through the shared compositor
@@ -46,6 +47,20 @@ The current React UI does not expose:
 - The server listens on `127.0.0.1` by default.
 - In production it must remain behind Caddy with `HOST=127.0.0.1`.
 - `FLY_DESK_WEB_AUTH=1` enables web login with an httpOnly cookie.
+- The session cookie measures inactivity, not time since the sign-in. An
+  authenticated request more than halfway through `FLY_DESK_WEB_SESSION_TTL_SECONDS`
+  (default 12 h) re-issues it; requests earlier in the window write no
+  `Set-Cookie` at all. `FLY_DESK_WEB_SESSION_MAX_LIFETIME_SECONDS` (default
+  7 days) is the ceiling the sliding never passes, measured from the sign-in, so
+  an unattended tab still has to authenticate again. The `/r` cookie is re-issued
+  with it and never outlives it.
+- The cookie payload is `v2.<issuedAtMs>.<expiresAtMs>.<nonce>.<signature>`; the
+  signature covers all of it. A cookie in the earlier `v1` shape carried no
+  sign-in stamp and is refused, which costs its holder one sign-in.
+- An unauthenticated `GET /` redirects to `/login?next=<path+query>`, and a `401`
+  from `/api/*` sends the browser to the same place. Only a path on this origin is
+  accepted as `next`: an absolute URL, `//host`, a backslash, or anything not
+  starting with a single `/` falls back to `/`.
 - Login admission rejects the sixth failed attempt for one client within 15
   minutes with `429` and `Retry-After` before running scrypt. A successful
   login resets only that client's bucket. Pages overwrites the login client IP
@@ -122,7 +137,7 @@ Bun is the supported package manager. Do not add `package-lock.json`, `pnpm-lock
 `.env.example` is the operational reference for variables. The most common are:
 
 - Runtime/API: `HOST`, `PORT`, `FLY_DESK_API_TOKEN`, `FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS`, `FLY_DESK_SEARCH_SERVICE_URL`, `FLY_DESK_SEARCH_SERVICE_API_TOKEN`, `FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS`, `FLY_DESK_REDIRECT_HOST`, `FLY_DESK_REDIRECT_PORT`, `FLY_DESK_REDIRECT_CACHE_LOOKUP_TIMEOUT_MS`
-- Web auth: `FLY_DESK_WEB_AUTH`, `FLY_DESK_WEB_PASSWORD_HASH`, `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_TRUST_LOOPBACK_CLIENT`, `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK`
+- Web auth: `FLY_DESK_WEB_AUTH`, `FLY_DESK_WEB_PASSWORD_HASH`, `FLY_DESK_WEB_SESSION_SECRET`, `FLY_DESK_WEB_SESSION_TTL_SECONDS`, `FLY_DESK_WEB_SESSION_MAX_LIFETIME_SECONDS`, `FLY_DESK_COOKIE_SECURE`, `FLY_DESK_TRUST_LOOPBACK_CLIENT`, `FLY_DESK_TRUST_REVERSE_PROXY_LOOPBACK`
 - Search/persistence: `SEARCH_MAX_FUTURE_DAYS`, `SEARCH_REVALIDATION_CACHE_TTL_MS`, `SEARCH_COMPLETED_SESSION_TTL_MS`, `SEARCH_COMPLETED_SESSION_RESIDENT_BUDGET_BYTES`, `FLY_DESK_QUOTATION_RATE_TIMEOUT_MS`, `FLY_DESK_SESSION_DB_PATH`, `FLY_DESK_LOCATION_SUGGESTION_DB_PATH`, `FLY_DESK_LOCATION_USAGE_DB_PATH`, `FLY_DESK_MIGRATION_CONCURRENT_MONTHS`, `FLY_DESK_SEARCH_CAPACITY_UNITS`, `FLY_DESK_SEARCH_EXACT_COST_UNITS`, `FLY_DESK_SEARCH_RANGE_COST_UNITS`, `FLY_DESK_SEARCH_MATRIX_COST_UNITS`, `FLY_DESK_SEARCH_MAX_QUEUED`, `FLY_DESK_SEARCH_QUEUE_TIMEOUT_MS`
 - Application data: `FLY_DESK_APP_DATA_DIR`, `FLY_DESK_QUOTATION_RATE_CACHE_PATH`
 - Workers/prewarm: `FLY_DESK_SEARCH_WORKER_PROCESSES`, `FLY_DESK_SEARCH_WORKER_POOL`, `FLY_DESK_SEARCH_WORKER_MAX_JOBS`, `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS`, `FLY_DESK_PROVIDER_PREWARM`

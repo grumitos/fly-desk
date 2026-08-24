@@ -23,6 +23,7 @@ The repository does not version generated artifacts:
 - origin and destination autocomplete with an explicit `CITY`/`AIRPORT` discriminator when the provider supplies it
 - up to three recent origin/destination suggestions per opaque browser session (24-hour TTL), plus three frequent suggestions ranked by permanent global counters; the backend records a route when it accepts a search
 - month cards with complete-only queried/fared-day coverage and retained real alternatives
+- a search writes its own parameters onto the address bar, so the URL of a workspace is the link that describes it. Opening such a link runs the search it carries, once — but only an `exact` one whose route and dates the form would itself accept: a sweep costs many searches and is not started from a pasted URL, and an incomplete, impossible or already-past date arrives in the form with the sentence that explains it. `?job=` wins over both, having results to read rather than a search to pay for. The tab that wrote a URL remembers it (`sessionStorage`, `frontend/src/lib/search-share.ts`), so reloading is not opening a link: the form comes back filled and waits. The page exit already cancels the running search with `cachePartial=1` rather than let it be paid for twice, and re-running it on the way back in would undo that
 - an idle provider rail that names the providers this deployment searches, always and without health copy; readiness stays on the authenticated `/api/provider-status` surface, which the router uses internally and no UI consumes
 - filters for stops, maximum layover time, baggage, and airlines
 - one continuous list of results, with backend warnings: it opens on what the column measures and grows by two columns whenever the end of the window comes within 900 px of the viewport, inside the list's own scroller on every armazón. There is no pager and no page state; a filter or a sort returns the list to its first row, a provider answering does not
@@ -55,6 +56,16 @@ The React UI must not display simulated controls. The following remain outside t
 - the server listens on `127.0.0.1` by default
 - in production it remains behind Caddy with `HOST=127.0.0.1`
 - `FLY_DESK_WEB_AUTH=1` enables web login with a signed httpOnly cookie
+- the session cookie slides: an authenticated request more than halfway through
+  `FLY_DESK_WEB_SESSION_TTL_SECONDS` (default 12 h) re-issues it, so the window
+  measures inactivity rather than time since the sign-in, and earlier requests
+  write no `Set-Cookie`. `FLY_DESK_WEB_SESSION_MAX_LIFETIME_SECONDS` (default
+  7 days) caps it from the sign-in itself and the sliding never passes it
+- the payload is `v2.<issuedAtMs>.<expiresAtMs>.<nonce>.<signature>`, all of it
+  signed; a cookie in the earlier `v1` shape is refused rather than upgraded
+- an unauthenticated `GET /` redirects to `/login?next=<path+query>` and a `401`
+  from `/api/*` sends the browser to the same place, so a shared search link
+  survives the gate; `next` is accepted only as a path on this origin
 - login admission retains at most five failures per validated client in a
   15-minute window, returns `429` with `Retry-After` before scrypt on further
   attempts, expires old failures, and resets only the successful client
@@ -142,7 +153,7 @@ The React UI must not display simulated controls. The following remain outside t
 - `src/redirect-service.ts` and `src/redirect-index.ts`: dedicated `/r/<id>` resolver from the SQLite cache, independent of the main runtime for provider clicks
 - `src/http-router.ts`: HTTP routes, web/loopback/token authentication, jobs, matrix, quotation, provider status, redirects, and diagnostics
 - `src/login-admission.ts`: bounded per-client failed-login admission before password derivation
-- `src/web-auth.ts`: web password, signed cookie, and session validation
+- `src/web-auth.ts`: web password, signed cookie, session validation and sliding renewal, and the same-origin check on the post-login return path
 - `src/core/quotation.ts`: shared quotation rendering; by default it preserves the local time encoded by each segment
 - `src/core/quotation-parser.ts`: bounded, tested pasted-quotation contract with field/line trace and no inherited price/default filters; the clipboard paste flow in `frontend/src/App.tsx` opens its reconstruction in `QuotationPastePreview`, from which the agent reviews or launches the search
 - `src/core/offer-schedule-groups.ts`: provider-native schedule group contract without synthetic combinations

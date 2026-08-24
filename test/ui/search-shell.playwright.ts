@@ -5,6 +5,8 @@ import { registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
 import {
   clickSegment,
+  openSearchUrlWithoutLaunching,
+  openSharedSearchLink,
   segment,
   waitForFontsReady,
   waitForSegmentChecked,
@@ -154,14 +156,7 @@ test("location field surfaces focus the input in idle and search layouts", async
     await page.keyboard.type("lim");
     await page.getByRole("listbox").waitFor();
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Destino" }).waitFor();
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest`);
     await page.locator(".fd-results").waitFor({ state: "visible" });
 
     await clickLocationFieldSurface(page, "location-destino");
@@ -211,9 +206,7 @@ test("idle search form transitions smoothly into the workspace layout", async ()
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`, {
-      waitUntil: "domcontentloaded",
-    });
+    await openSearchUrlWithoutLaunching(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`);
     await page.setViewportSize({ width: 1440, height: 760 });
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
 
@@ -375,9 +368,7 @@ test("search-level notices use the idle search controls width after a failed sea
       await route.abort("failed");
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-05-28&return=2026-06-04&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
+    await openSearchUrlWithoutLaunching(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-05-28&return=2026-06-04&adults=1&children=0&infants=0&sort=cheapest`);
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
 
     const searchTopBeforeNotice = await page.locator(".fd-search-grid").evaluate((element) =>
@@ -501,13 +492,7 @@ test("repeated clipboard notice failures keep the workspace from remounting the 
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-05-28&return=2026-06-04&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-05-28&return=2026-06-04&adults=1&children=0&infants=0&sort=cheapest`);
     await page.getByTestId("result-card").waitFor();
 
     /*
@@ -630,9 +615,7 @@ test("wide desktop shell expands from the idle measure into the workspace width"
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
+    await openSearchUrlWithoutLaunching(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest`);
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
 
     const idleBounds = await page.evaluate(() => {
@@ -912,9 +895,7 @@ test("the segmented pill belongs to the active option and theme hover inverts co
 
 test("search field labels and filled rows share a consistent vertical center", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`, {
-      waitUntil: "domcontentloaded",
-    });
+    await openSearchUrlWithoutLaunching(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`);
     await clickSegment(segment(page, "Flexible"));
     await page.getByRole("button", { name: "Salida desde" }).waitFor();
 
@@ -1083,14 +1064,7 @@ test("running search button cancels the active job and returns to editing", asyn
       await route.continue();
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse((response) => response.url().endsWith("/api/search") && response.request().method() === "POST"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`);
 
     const stopButton = page.getByRole("button", { name: "Detener búsqueda" });
     await stopButton.waitFor();
@@ -1205,14 +1179,7 @@ test("generic operation warning never becomes a search-level failure notice", as
       await route.continue();
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse((response) => response.url().endsWith("/api/search") && response.request().method() === "POST"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`);
     await page.getByRole("button", { name: "Detener búsqueda" }).waitFor();
 
     await page.clock.fastForward(13_000);
@@ -1320,14 +1287,7 @@ test("a provider that fails is said in one line, and the empty list stops blamin
       await route.continue();
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse((response) => response.url().endsWith("/api/search") && response.request().method() === "POST"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest`);
 
     searchComplete = true;
     await page.getByRole("button", { name: "Buscar" }).waitFor();
@@ -1411,14 +1371,7 @@ test("page refresh cancels the active search and asks the server to cache partia
       await route.continue();
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse((response) => response.url().endsWith("/api/search") && response.request().method() === "POST"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=BIO&departure=2026-06-08&return=2026-06-20&adults=1&children=0&infants=0&sort=cheapest&maxStops=1`);
 
     await page.getByRole("button", { name: "Detener búsqueda" }).waitFor();
     const refreshCancelRequest = page.waitForRequest((request) => {
@@ -1651,7 +1604,7 @@ async function waitForListSettled(page: Page): Promise<void> {
 test("07 §1 · the desk hands the workspace its cues in the order of the table", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeChoreographySearch(page, 2, 900);
-    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
+    await openSearchUrlWithoutLaunching(page, `${baseUrl}${CHOREOGRAPHY_URL}`);
     await page.getByRole("combobox", { name: "Origen" }).waitFor();
     await page.locator(".fd-quick-chips").first().waitFor();
 
@@ -1688,10 +1641,7 @@ test("07 §1 · the desk hands the workspace its cues in the order of the table"
 test("11 §2.4 · clicking a field on a desk reopens the form and leaves the segments alone", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeChoreographySearch(page, 2);
-    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-
-    await page.getByRole("button", { name: "Buscar" }).click();
+    await openSharedSearchLink(page, `${baseUrl}${CHOREOGRAPHY_URL}`);
     await page.locator(".fd-shell-workspace").waitFor();
     await page.waitForFunction(() => (
       document.querySelector<HTMLElement>(".fd-trip-mode-controls")?.dataset.placement === "topbar"
@@ -1758,10 +1708,7 @@ test("11 §2.4 · the phone's summary reopens the whole form, not a clipped one"
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await routeChoreographySearch(page, 2);
-    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-
-    await page.getByRole("button", { name: "Buscar" }).click();
+    await openSharedSearchLink(page, `${baseUrl}${CHOREOGRAPHY_URL}`);
     await page.locator(".fd-mobile-search-summary").waitFor();
 
     await page.getByRole("button", { name: "Editar búsqueda" }).click();
@@ -1796,9 +1743,7 @@ test("02 §11 · the list keeps its exact scrollTop across the detail sheet", as
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await routeChoreographySearch(page, 24);
-    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await page.getByRole("button", { name: "Buscar" }).click();
+    await openSharedSearchLink(page, `${baseUrl}${CHOREOGRAPHY_URL}`);
     await page.getByTestId("result-card").first().waitFor();
     /* The window is measured from the viewport, so it settles a frame or two
        after the cards land. Scrolling before that is testing the wrong
@@ -1865,9 +1810,7 @@ test("02 §11 · re-sorting returns the list to 0 with no animated scroll", asyn
    */
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeChoreographySearch(page, 60);
-    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await page.getByRole("button", { name: "Buscar" }).click();
+    await openSharedSearchLink(page, `${baseUrl}${CHOREOGRAPHY_URL}`);
     await page.getByTestId("result-card").first().waitFor();
     await waitForListSettled(page);
 
@@ -1931,7 +1874,7 @@ async function routeLocationMatches(page: Page): Promise<void> {
 test("11 §2.2 · the cross on the return half empties both dates and hands focus back", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeLocationMatches(page);
-    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
+    await openSearchUrlWithoutLaunching(page, `${baseUrl}${CHOREOGRAPHY_URL}`);
     await page.getByRole("button", { name: /^Regreso:/ }).waitFor();
 
     await page.getByRole("button", { name: "Quitar regreso" }).click();
@@ -1956,7 +1899,7 @@ test("11 §2.2 · the cross on the return half empties both dates and hands focu
 test("11 §2.1 · one letter keeps Recientes, two highlight the first match", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeLocationMatches(page);
-    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
+    await openSearchUrlWithoutLaunching(page, `${baseUrl}${CHOREOGRAPHY_URL}`);
     const origin = page.getByRole("combobox", { name: "Origen" });
     await origin.waitFor();
 
@@ -2000,7 +1943,7 @@ test("11 §2.1 · one letter keeps Recientes, two highlight the first match", as
 test("11 §2.1 · the cross on a field empties it and reopens Recientes", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeLocationMatches(page);
-    await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
+    await openSearchUrlWithoutLaunching(page, `${baseUrl}${CHOREOGRAPHY_URL}`);
     const origin = page.getByRole("combobox", { name: "Origen" });
     await origin.waitFor();
     await origin.click();
@@ -2065,9 +2008,7 @@ test("01 §3 · a trailing affordance sits on the axis of its field, not of its 
 
     for (const [width, height] of [[1440, 900], [390, 844]] as const) {
       await page.setViewportSize({ width, height });
-      await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-09-12&return=2026-09-19&adults=1&children=0&infants=0`, {
-        waitUntil: "domcontentloaded",
-      });
+      await openSearchUrlWithoutLaunching(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-09-12&return=2026-09-19&adults=1&children=0&infants=0`);
       await page.getByRole("combobox", { name: "Origen" }).waitFor();
 
       /*
@@ -2112,7 +2053,7 @@ test("01 §3 · a trailing affordance sits on the axis of its field, not of its 
 async function openMobileLocationSheet(page: Page, baseUrl: string) {
   await page.setViewportSize({ width: 390, height: 844 });
   await routeLocationMatches(page);
-  await page.goto(`${baseUrl}${CHOREOGRAPHY_URL}`, { waitUntil: "domcontentloaded" });
+  await openSearchUrlWithoutLaunching(page, `${baseUrl}${CHOREOGRAPHY_URL}`);
   const origin = page.getByRole("combobox", { name: "Origen" });
   await origin.waitFor();
   await origin.click();

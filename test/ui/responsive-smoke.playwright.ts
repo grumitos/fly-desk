@@ -3,7 +3,7 @@ import test from "node:test";
 import type { Page } from "playwright";
 import { registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
-import { clickSegment, segment } from "./support.ts";
+import { clickSegment, openSearchUrlWithoutLaunching, openSharedSearchLink, segment } from "./support.ts";
 
 registerDesktopHarness();
 
@@ -127,9 +127,7 @@ for (const viewport of VIEWPORTS) {
         });
       });
 
-      await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MIA&departure=2026-06-08&adults=1&children=0&infants=0`, {
-        waitUntil: "domcontentloaded",
-      });
+      await openSearchUrlWithoutLaunching(page, `${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MIA&departure=2026-06-08&adults=1&children=0&infants=0`);
       await page.getByRole("combobox", { name: "Origen" }).waitFor();
       await assertNoHorizontalOverflow(page, `${viewport.label}:idle`);
       await assertSearchGridContained(page, `${viewport.label}:idle`);
@@ -778,14 +776,7 @@ test("the desk card gives the codeshare a line and the trip a single row", async
 
     for (const [width, sideBySide] of [[1440, false], [1920, true]] as const) {
       await page.setViewportSize({ width, height: 940 });
-      await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-09-12&return=2026-09-19&adults=1&children=0&infants=0`, {
-        waitUntil: "domcontentloaded",
-      });
-      await page.getByRole("combobox", { name: "Origen" }).waitFor();
-      await Promise.all([
-        page.waitForResponse("**/api/search"),
-        page.getByRole("button", { name: "Buscar" }).click(),
-      ]);
+      await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-09-12&return=2026-09-19&adults=1&children=0&infants=0`);
       await page.getByTestId("result-card").first().waitFor();
 
       const card = await page.getByTestId("result-card").first().evaluate((element) => {
@@ -901,14 +892,7 @@ test("the stacked card keeps the baggage on the carrier line and the stops whole
     });
 
     await page.setViewportSize({ width: 375, height: 812 });
-    await page.goto(`${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-04-15&return=2026-04-22&adults=1&children=0&infants=0`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("combobox", { name: "Origen" }).waitFor();
-    await Promise.all([
-      page.waitForResponse("**/api/search"),
-      page.getByRole("button", { name: "Buscar" }).click(),
-    ]);
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MIA&departure=2026-04-15&return=2026-04-22&adults=1&children=0&infants=0`);
     await page.getByTestId("result-card").first().waitFor();
 
     const card = await page.getByTestId("result-card").first().evaluate((element) => {
