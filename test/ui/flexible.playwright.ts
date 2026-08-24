@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { Page, Route } from "playwright";
 import { openDesktop, registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
-import { clickSegment, segment, waitForSegmentChecked } from "./support.ts";
+import { clickSegment, openSharedSearchLink, segment, waitForSegmentChecked } from "./support.ts";
 
 registerDesktopHarness();
 
@@ -544,10 +544,7 @@ test("mobile workspace replaces search modes with the compact active-search summ
       });
     });
 
-    await page.goto(`${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MIA&departure=2026-06-08&adults=1&children=0&infants=0`, {
-      waitUntil: "domcontentloaded",
-    });
-    await page.getByRole("button", { name: "Buscar" }).click();
+    await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=one-way&origin=LIM&destination=MIA&departure=2026-06-08&adults=1&children=0&infants=0`);
     await page.getByTestId("result-card").waitFor();
 
     assert.equal(await segment(page.getByTestId("topbar-search-controls"), "Exacto").count(), 0);

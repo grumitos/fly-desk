@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { useSearch } from "@/hooks/useSearch"
 import { useShellSize } from "@/hooks/useShellSize"
 import { resolveAirlineDisplayName } from "@/lib/airline-names"
+import { isIsoDate } from "@/lib/iso-date"
 import { hasOpenOverlay } from "@/lib/overlay-stack"
 import { motionToken } from "@/lib/reduced-motion"
 import {
@@ -32,6 +33,7 @@ import { parseCommercialQuotation, type CommercialQuotationParseResult } from ".
 import {
   readSharedSearchFromText,
   readSharedSearchFromUrl,
+  searchUrlWasWrittenHere,
   writeSharedSearchToClipboard,
   writeSharedSearchToUrl,
   type SharedSearchState,
@@ -110,6 +112,8 @@ const BAGGAGE_SEGMENTS: Array<{ value: BaggageFilterValue; label: string; icon?:
 export default function App() {
   const { results, loading, error, statusMessage, diagnosticLog, runSearch, restoreJob, cancel } = useSearch()
   const [initialSharedSearch] = useState<SharedSearchState | null>(() => readInitialSharedSearch())
+  /* Read before the first search of this tab overwrites the answer. */
+  const [openedOwnSearchUrl] = useState(() => readSearchUrlWasWrittenHere())
   const [sessionPreferences] = useState<WorkspacePreferences>(() => readWorkspacePreferences())
   const initialSharedRequest = initialSharedSearch?.request ?? null
   const [sortMode, setSortMode] = useState<SortMode>(() => initialSharedSearch?.sortMode ?? sessionPreferences.sortMode)
@@ -462,6 +466,35 @@ export default function App() {
     },
     [captureChoreographyRects, runSearch]
   )
+
+  /*
+   * A shared link carries a whole request, but until now it only filled the
+   * form. Whoever opened one saw a page that looked ready and did nothing,
+   * which reads as "the link is broken" rather than "press Buscar" — the link
+   * always implied the search, so it runs it, once.
+   *
+   * Only `exact` launches. The other three modes are sweeps that cost many
+   * searches, and starting one from a pasted URL is a surprise nobody asked
+   * for; those still arrive with the form filled and wait for the gesture.
+   * `?job=` wins over both: it has results to read rather than a search to pay
+   * for. And a reload is not a link — see `searchUrlWasWrittenHere`.
+   */
+  const sharedSearchLaunched = useRef(false)
+  useEffect(() => {
+    if (sharedSearchLaunched.current) return
+    if (!initialSharedRequest || !isLaunchableSharedRequest(initialSharedRequest)) return
+    if (readRestorableJobIdFromUrl()) return
+    if (openedOwnSearchUrl) return
+    /* Deferred a tick for the same reason `restoreJob` above gets away with it:
+       the launch belongs after the paint that shows the filled form, not inside
+       it. The guard is set in the callback, not here, so React's development
+       double-invoke cancels the first timer and still leaves one that fires. */
+    const timer = window.setTimeout(() => {
+      sharedSearchLaunched.current = true
+      handleSearch(initialSharedRequest, initialSharedSearch?.sortMode)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [handleSearch, initialSharedRequest, initialSharedSearch, openedOwnSearchUrl])
 
   /* 06 §1.3 and 11 §5: «al elegir un mes se entra en la lista normal de ese mes»
      — the same one-way range search the sweep ran for it, dates already in the
@@ -1813,6 +1846,42 @@ function readInitialSharedSearch(): SharedSearchState | null {
   } catch {
     return null
   }
+}
+
+/** Whether this tab is looking at its own address bar rather than at a link. */
+function readSearchUrlWasWrittenHere(): boolean {
+  try {
+    return searchUrlWasWrittenHere(new URL(window.location.href))
+  } catch {
+    return false
+  }
+}
+
+/*
+ * The readable share parameters only guarantee an origin and a destination, so
+ * a link can arrive without the dates a search needs — or with dates the form
+ * itself refuses, since `?departure=2026-06-31` reads as a date and is not one.
+ * Those still fill the form; they just do not launch anything on their own, and
+ * the form says why in the place it always says it.
+ *
+ * The runtime's floor is read from the same global `SearchShell` reads, so a
+ * link shared last month prefills a route instead of paying for a search of a
+ * day that has gone. Everything above that floor — the far end of the window,
+ * the longest stay — stays the form's to judge: it has the whole ladder and the
+ * words for each rung, and a link that trips one of those arrives filled with
+ * the sentence that explains it.
+ */
+function isLaunchableSharedRequest(request: SearchRequest): boolean {
+  if (request.searchMode !== "exact") return false
+  if (!/^[A-Z]{3}$/.test(request.origin ?? "")) return false
+  if (!/^[A-Z]{3}$/.test(request.destination ?? "")) return false
+  if (request.origin === request.destination) return false
+  if (!isIsoDate(request.departureDate)) return false
+  if (request.tripType === "round-trip" && !isIsoDate(request.returnDate)) return false
+  if (request.returnDate && request.returnDate < request.departureDate) return false
+
+  const minSearchDate = window.__FLYDESK_RUNTIME__?.searchDatePolicy?.minSearchDate
+  return !isIsoDate(minSearchDate) || request.departureDate >= minSearchDate
 }
 
 export const RESTORE_JOB_QUERY_PARAM = "job"
