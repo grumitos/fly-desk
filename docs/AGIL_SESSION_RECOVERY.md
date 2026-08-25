@@ -32,9 +32,19 @@ enough — no cookie or storage transplant.
    staged copy afterward.
 3. Restart `fly-desk-search.service`, then `fly-desk.service` (step 8 below).
 4. Verify: the startup provider prewarm logs
-   `provider prewarm skipped … agil-local` only on failure, so silence is
-   success; then run `Fly Desk Production Smoke` in `vps-platform`, which
-   requires a purchase link from both providers.
+   `provider prewarm failed: agil-local reason=… detail=…` only on failure, so
+   silence is success; then run `Fly Desk Production Smoke` in `vps-platform`,
+   which requires a purchase link from both providers.
+
+   The line used to read `provider prewarm skipped … agil-local` and carried no
+   reason at all. It is worth knowing why that changed, because the old wording
+   cost real time: a provider that had been failing every ten minutes for hours
+   left behind one word that reads like a benign optimisation, and the reason
+   had been computed and discarded before the line was built. `reason` is the
+   classifier's code and `detail` is the provider error itself, with anything
+   that looks like credential material masked. An `HTTP 500` from
+   `/auth/api/auth/token` now appears on that line rather than having to be
+   reproduced by hand.
 
 This shortcut was validated in production on 2026-08-15: a search that
 returned Click and Book Plus offers alone recovered to both providers with no
