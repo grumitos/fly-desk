@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react"
+import type { CSSProperties, ReactNode } from "react"
 import { Spinner } from "@/components/ui/spinner"
 import { buildResultCardModel, providerBadgeForId } from "@/components/results/result-card-model"
 import { cn } from "@/lib/utils"
@@ -207,7 +207,7 @@ function MonthCard({
         ))}
         {coverage && (
           <span className="fd-month-days">
-            {coverage.faredDays} de {coverage.queriedDays} días con tarifa
+            <MonthCoverage coverage={coverage} />
           </span>
         )}
       </span>
@@ -246,6 +246,20 @@ function nextFaresForMonth(month: DisplayMonth, shownOffer: CanonicalOffer) {
 }
 
 type MonthFareCoverage = { faredDays: number; queriedDays: number }
+
+/*
+ * "12 de 30 días con tarifa" — a mixed value, so it splits: the two figures are
+ * counters and take the alphabet for figures, and "días con tarifa" is prose and
+ * stays in sans. On one line on purpose: breaking the JSX collapses the literal
+ * spaces and leaves «12de30días».
+ */
+function MonthCoverage({ coverage }: { coverage: MonthFareCoverage }) {
+  return (
+    <>
+      <span className="fd-count">{coverage.faredDays}</span> de <span className="fd-count">{coverage.queriedDays}</span> días con tarifa
+    </>
+  )
+}
 
 /**
  * "12 de 30 días con tarifa" — how much of the month was actually priced, which
@@ -293,12 +307,12 @@ function EmptyMonthCard({ month, index }: { month: DisplayMonth; index: number }
      month can say — it separates «this month has no fares» from «this month was
      barely sampled» — and it used to be computed, correct, and never drawn,
      because the coverage line lived only on the card that has a fare. */
-  const days = searching
+  const days: ReactNode = searching
     ? "consultando el mes"
     : month.filtered
       ? "descartado por filtros"
       : coverage
-        ? `${coverage.faredDays} de ${coverage.queriedDays} días con tarifa`
+        ? <MonthCoverage coverage={coverage} />
         : month.status === "error" || month.status === "cancelled"
           ? "sin consultar"
           : "sin tarifa en el mes"

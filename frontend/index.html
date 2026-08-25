@@ -8,10 +8,20 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <!--
-      Plate 5a puts every hard figure in mono at weight 800 and titles in Inter at
-      700/800. Loading Inter only to 700 and Plex Mono only to 600 meant every
-      price was drawn with a synthesised bold instead of the real face. These are
-      the exact axes the mockup itself requests.
+      The axes the two families really have, which are not the ones plate 5a
+      asks for.
+
+      Inter goes to 900 and 900 is what is requested here, so titles at 700/800
+      are drawn with the real face. IBM Plex Mono does not: it is a static
+      family that stops at Bold, and asked for `wght@400;500;600;700;800` it
+      answers with four faces — 400, 500, 600 and 700 — and no 800. So the 800
+      the plate gives every figure does not exist in this font and was never
+      loaded, however firmly this comment used to claim these were "the exact
+      axes the mockup requests".
+
+      A weight that is not there is not requested: `--fd-weight-figure` came
+      down to 700, which is the face the price was already being drawn with. If
+      a real 800 ever ships, it is added here and the token goes back up.
     -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <!-- __FLYDESK_RUNTIME_CONFIG__ -->

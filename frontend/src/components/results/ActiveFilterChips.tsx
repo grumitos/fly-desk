@@ -19,6 +19,14 @@ import type { ActiveFilterChip } from "@/components/ResultsPanel"
  * are the first thing a screen this size should spend on the results — so the
  * one action worth keeping moves to the free end of this row. It is given, not
  * assumed: the desk mount passes no handler and grows no button.
+ *
+ * The icon rungs come from the law in 7b — "each icon size is bound to a
+ * control height, so the icon is never chosen by taste" — which this strip broke
+ * three times over: 26 takes 12, and every 40px control on a phone takes 18.
+ * "Filtros" and copy are phone-only and only ever exist at 40, so their 18 is
+ * written here; the chip's cross serves both surfaces, so it carries the desk's
+ * 12 and the container query in `index.css` lifts it to 18 — that rule is the
+ * one that knows how tall the chip around it is.
  */
 export function ActiveFilterChips({
   chips,
@@ -57,7 +65,7 @@ export function ActiveFilterChips({
           style={stagger()}
           onClick={onOpenFilters}
         >
-          <AppIcon name="filters" size={14} />
+          <AppIcon name="filters" size={18} />
           Filtros
           {activeFilterCount > 0 && (
             <span className="fd-filter-strip-count">{activeFilterCount}</span>
@@ -75,7 +83,7 @@ export function ActiveFilterChips({
               aria-label={`Quitar filtro ${chip.label}`}
               onClick={() => onRemoveFilter(chip.id)}
             >
-              <AppIcon name="x" size={14} />
+              <AppIcon name="x" size={12} />
             </button>
           )}
         </span>
@@ -83,9 +91,11 @@ export function ActiveFilterChips({
 
       {hiddenByFiltersCount > 0 && (
         <span className="fd-filter-strip-hidden" style={stagger()}>
-          {hiddenByFiltersCount === 1
-            ? "1 vuelo oculto por filtros"
-            : `${hiddenByFiltersCount.toLocaleString("es-PE")} vuelos ocultos por filtros`}
+          {/* A mixed value splits: the figure is the system's counter and the
+              rest is prose, which has no reason to move into the monospace just
+              for sharing a line with a number. */}
+          <span className="fd-count">{hiddenByFiltersCount.toLocaleString("es-PE")}</span>{" "}
+          {hiddenByFiltersCount === 1 ? "vuelo oculto por filtros" : "vuelos ocultos por filtros"}
         </span>
       )}
 
@@ -104,7 +114,7 @@ export function ActiveFilterChips({
           disabled={copyDisabled}
           onClick={onCopySearchConfig}
         >
-          <AppIcon name="copy" size={16} />
+          <AppIcon name="copy" size={18} />
         </button>
       )}
     </div>
