@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
   type RefObject,
 } from "react"
 import { ResultCard, type AlternateSchedule } from "@/components/results/ResultCard"
@@ -24,7 +25,6 @@ import { migrationSweepSummary, type DisplayMonth } from "@/components/results/m
 import { ResultsSkeleton } from "@/components/results/ResultsSkeleton"
 import { ActiveFilterChips } from "@/components/results/ActiveFilterChips"
 import { AppIcon } from "@/components/ui/app-icon"
-import { SegmentedControl, SegmentedOption } from "@/components/ui/segmented-control"
 import { Spinner } from "@/components/ui/spinner"
 import { Kbd } from "@/components/ui/kbd"
 import { ShortcutTooltip } from "@/components/ui/tooltip"
@@ -40,12 +40,17 @@ import type { CanonicalOffer, SearchJobResponse, SortMode } from "@/types"
  * Plates 1b (active desktop), 2g (list states), 3b (all schedules), 4a
  * (skeletons) and 1i (migration grid).
  *
- * The panel is one header, one strip of active filters and one list of cards
- * that grows as it is scrolled. The column-width editor that used to live here
- * is gone: plate 1b closes the card grid at 32 / 142 / 1fr / auto / 116 / 26 —
- * the baggage in a track of its own, and past 1073px of list the two legs as
- * plates that split the single elastic track — so there is nothing left for it
- * to tune.
+ * The panel is one header, one column header and one list of rows that grows as
+ * it is scrolled. The strip of active filters left the desk with this change:
+ * on a desk the filter column is on screen the whole time and the strip was
+ * repeating it 250px away, so only its one original sentence — «N ocultos por
+ * filtros» — survives, on the count line. On a phone the strip is the only
+ * voice the filters have and it stays, mounted by the shell.
+ *
+ * The column-width editor that used to live here is gone: plate 1b closes the
+ * row grid at 28 / 142 / 1fr / 36 / 116 / 26, with the baggage in a track of
+ * its own and the duration lane fixed so the header above can name it, so there
+ * is nothing left for it to tune.
  */
 
 /*
@@ -77,10 +82,12 @@ const RESULTS_WINDOW_MIN_BATCH = 12
  * speed a thumb produces.
  */
 const RESULTS_WINDOW_PREFETCH_PX = 900
-/* The plain card of plate 8c, which is the unit a display weight of 1 means.
-   The measurement below replaces this on the first frame. */
-const RESULTS_CARD_HEIGHT_ESTIMATE_PX = 58
-const RESULTS_CARD_GAP_PX = 6
+/* The plain row of plate 1b, which is the unit a display weight of 1 means:
+   52 of row with its own hairline inside it, and nothing between one row and
+   the next — the list's 6px gap went with the card frame the gap existed to
+   separate. The measurement below replaces both on the first frame. */
+const RESULTS_CARD_HEIGHT_ESTIMATE_PX = 52
+const RESULTS_CARD_GAP_PX = 0
 const RESULTS_LIST_TOP_INSET_PX = 4
 /* 02 §9: the way back to the top appears past 300px of list scroll. */
 const BACK_TO_TOP_AFTER_PX = 300
@@ -126,12 +133,16 @@ interface ResultsPanelProps {
   onMobileToolsCollapsedChange?: (collapsed: boolean) => void
   mobileCollapseEnabled?: boolean
   /**
-   * Where the strip of active filters mounts. On a desk it belongs to the list
-   * header; in armazón C it is the middle band of the retractable tools block,
-   * which the shell owns because the search summary above it retracts with it
-   * as one piece (plate 1d, 02 §9).
+   * Where the strip of active filters mounts — or whether it mounts at all.
+   * In armazón C it is the middle band of the retractable tools block, which
+   * the shell owns because the search summary above it retracts with it as one
+   * piece (plate 1d, 02 §9). In A and B it is `"none"`: the filter column is
+   * always on screen there, so the strip was saying a second time, in 35px of
+   * list height, what the rail 250px to its left already said. `"list"` is the
+   * third mount and the one nothing passes today; it is kept because the
+   * component still supports it and the default has to be something.
    */
-  chipsPlacement?: "list" | "external"
+  chipsPlacement?: "list" | "external" | "none"
 }
 
 function ResultsPanelBase({
@@ -226,6 +237,7 @@ function ResultsPanelBase({
               loading={loading}
               hasResults={Boolean(results)}
               searchFailed={outcome.allFailed || outcome.jobFailed}
+              hiddenByFilters={chipsPlacement === "none" ? hiddenByFiltersCount : 0}
             />
           )}
           {/* A sweep says how many months are still out rather than that it is
@@ -263,19 +275,13 @@ function ResultsPanelBase({
 
         {!isMigration && (
           <div className="fd-list-header-trail">
-            <span className="fd-result-sort-label fd-type-micro">Ordenar</span>
-            <SegmentedControl
-              aria-label="Orden de resultados"
-              value={sort}
-              className="fd-result-sort-segmented"
-              onValueChange={(value) => {
-                if (value === "cheapest" || value === "fastest") onSort(value)
-              }}
-            >
-              <SegmentedOption value="cheapest" aria-label="Ordenar por precio">Precio</SegmentedOption>
-              <SegmentedOption value="fastest" aria-label="Ordenar por duración">Duración</SegmentedOption>
-            </SegmentedControl>
-            {/* Plate 1d: a 32px status row has no space for a segmented, so the
+            {/* The desk's «Ordenar · Precio | Duración» is gone from this row:
+                a column header already sorts, in the place everybody looks for
+                it, so the two sortable columns became the control (see
+                `ResultsColumnHead`). What is left here is the phone's, because
+                a phone has no column header to put it in.
+
+                Plate 1d: a 32px status row has no space for a segmented, so the
                 two modes collapse into whichever is on and tapping swaps them.
                 The order never disappears on a phone — 02 §5 lists what may,
                 and this is not on the list. */}
@@ -317,6 +323,8 @@ function ResultsPanelBase({
       )}
 
       <ResultsBody
+        sort={sort}
+        onSort={onSort}
         results={results}
         outcome={outcome}
         offers={offers}
@@ -341,12 +349,67 @@ function ResultsPanelBase({
   )
 }
 
+/**
+ * The column header — plate 1b's answer to what the grey plinth was doing.
+ *
+ * It carries `.fd-card` so the lanes come from the row's own stylesheet rather
+ * than from a copy of it, and the order lives in it: «Duración» and «Precio»
+ * are the two radios of the same group the segmented used to be, with the same
+ * accessible names, so what changed is the shape and not the semantics.
+ */
+function ResultsColumnHead({ sort, onSort }: { sort: SortMode; onSort: (sort: SortMode) => void }) {
+  return (
+    <div
+      className="fd-card fd-card--head"
+      role="radiogroup"
+      aria-label="Orden de resultados"
+      data-testid="results-column-head"
+    >
+      {/* The logo lane has no name: a mark is not a column of values. */}
+      <span aria-hidden="true" />
+      <span className="fd-card__head-label">Aerolínea</span>
+      <div className="fd-card__legs">
+        <div className="fd-card__leg">
+          <span className="fd-card__head-label">Tramo</span>
+          <span className="fd-card__head-label">Horario</span>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={sort === "fastest"}
+            aria-label="Ordenar por duración"
+            className="fd-card__head-label fd-card__head-label--end fd-card__head-sort fd-focus-ring"
+            onClick={() => onSort("fastest")}
+          >
+            Duración
+            {sort === "fastest" && <AppIcon name="arrowUp" size={12} />}
+          </button>
+          <span className="fd-card__head-label">Escalas</span>
+        </div>
+      </div>
+      <span className="fd-card__head-label fd-card__head-label--center">Eq.</span>
+      <button
+        type="button"
+        role="radio"
+        aria-checked={sort === "cheapest"}
+        aria-label="Ordenar por precio"
+        className="fd-card__head-label fd-card__head-label--end fd-card__head-sort fd-focus-ring"
+        onClick={() => onSort("cheapest")}
+      >
+        Precio
+        {sort === "cheapest" && <AppIcon name="arrowUp" size={12} />}
+      </button>
+      <span className="fd-card__head-label fd-card__head-label--end">Prov.</span>
+    </div>
+  )
+}
+
 function ResultCount({
   visible,
   total,
   loading,
   hasResults,
   searchFailed,
+  hiddenByFilters,
 }: {
   visible: number
   total: number
@@ -354,6 +417,13 @@ function ResultCount({
   hasResults: boolean
   /** Nothing was searched, so there is no count to state — only a notice. */
   searchFailed: boolean
+  /**
+   * The one sentence the desk's chip strip said that the filter rail does not.
+   * It moves here when the strip does not mount: a rail full of active filters
+   * says which constraints are on, and nothing on the screen said what they
+   * cost until this line did.
+   */
+  hiddenByFilters: number
 }) {
   if (visible === 0) {
     if (loading || searchFailed) return null
@@ -366,10 +436,25 @@ function ResultCount({
     ? `${visible.toLocaleString("es-PE")} de ${total.toLocaleString("es-PE")}`
     : visible.toLocaleString("es-PE")
 
-  return <span className="fd-panel-count">{label}</span>
+  return (
+    <>
+      <span className="fd-panel-count">{label}</span>
+      {hiddenByFilters > 0 && (
+        /* Its own class, not a second `.fd-panel-count`: that one is the mono
+           figure beside a heading, and this is a sentence. */
+        <span className="fd-list-hidden-count">
+          {hiddenByFilters === 1
+            ? "· 1 vuelo oculto por filtros"
+            : `· ${hiddenByFilters.toLocaleString("es-PE")} vuelos ocultos por filtros`}
+        </span>
+      )}
+    </>
+  )
 }
 
 function ResultsBody({
+  sort,
+  onSort,
   results,
   outcome,
   offers,
@@ -390,6 +475,8 @@ function ResultsBody({
   onMobileToolsCollapsedChange,
   mobileCollapseEnabled,
 }: {
+  sort: SortMode
+  onSort: (sort: SortMode) => void
   results: SearchJobResponse | null
   outcome: SearchOutcome
   offers: CanonicalOffer[]
@@ -424,6 +511,25 @@ function ResultsBody({
     [offers, results?.scheduleGroups],
   )
   const { columnRows, viewportRef, attachViewport } = useResultsColumnCapacity()
+  /*
+   * The mode the rows are drawn in, stamped on the list for the stylesheet to
+   * read. It decides one thing — whether the stacked leg keeps the date in its
+   * rótulo — and it is an attribute rather than a prop threaded down to every
+   * leg because that is a fact about the list, not about a row: in Exacto both
+   * dates are already on the search bar above, and the rótulo would repeat them
+   * twice per row for the length of the list.
+   *
+   * The default matters. A search that has not answered yet has no request, and
+   * the skeleton is drawn in that gap; Exacto is what the app opens on and what
+   * the overwhelming majority of searches are, so it is what the bones stand
+   * in for.
+   */
+  const mode = results?.request.searchMode ?? "exact"
+  /* Built here, above the branch, because the bones and the rows are drawn in
+     the same box and the header is part of that box: a column that gains 27px
+     of header when the data lands is the value jump 04 §7 forbids, and the row
+     count both of them are measured into would change with it. */
+  const head = <ResultsColumnHead sort={sort} onSort={onSort} />
 
   if (!results && !loading) {
     return (
@@ -471,7 +577,7 @@ function ResultsBody({
    * that fell, or a search that reached nobody.
    */
   if (loading && offers.length === 0) {
-    return <ResultsSkeleton rows={columnRows} attachViewport={attachViewport} />
+    return <ResultsSkeleton rows={columnRows} mode={mode} head={head} attachViewport={attachViewport} />
   }
 
   if (offers.length === 0 && results) {
@@ -543,6 +649,8 @@ function ResultsBody({
     <ResultsList
       resultItems={resultItems}
       jobKey={results?.searchJobId ?? ""}
+      mode={mode}
+      head={head}
       columnRows={columnRows}
       viewportRef={viewportRef}
       attachViewport={attachViewport}
@@ -579,6 +687,8 @@ function spellOutCount(count: number): string {
 function ResultsList({
   resultItems,
   jobKey,
+  mode,
+  head,
   columnRows,
   viewportRef,
   attachViewport,
@@ -602,6 +712,10 @@ function ResultsList({
    * several times while the reader was using it.
    */
   jobKey: string
+  /** Which search this list is drawing, for the lanes that answer to it. */
+  mode: string
+  /** The column header, built above so the skeleton and the list share one. */
+  head: ReactNode
   /** Whole rows: what the column fits, for the things that draw rows. */
   columnRows: number
   viewportRef: RefObject<HTMLDivElement | null>
@@ -810,6 +924,7 @@ function ResultsList({
 
   return (
     <div className="fd-list-body" data-testid="results-list-shell">
+      {head}
       <div
         ref={attachViewport}
         onScroll={handleResultsScroll}
@@ -832,6 +947,7 @@ function ResultsList({
         <div
           key={viewKey}
           className="fd-results-list fd-motion-crossfade"
+          data-mode={mode}
           data-cascade={isFirstView}
         >
           {visibleItems.map((item) => (
@@ -1069,7 +1185,7 @@ function EmptyState({
  * list opens on exactly this much, so the first screen is full and nothing
  * below it has been built yet.
  *
- * It is a count of *plain* cards — a group card is 1.67 of one — because that
+ * It is a count of *plain* rows — a group row is 1.62 of one — because that
  * is the unit both consumers work in. The list is scrollable on every armazón
  * now, so unlike the page it replaces this is not a fit to be exact about: it
  * is the amount that has to exist before the reader can scroll at all.
@@ -1118,12 +1234,11 @@ function useResultsColumnCapacity() {
       const gap = Number.isFinite(measuredGap) ? measuredGap : RESULTS_CARD_GAP_PX
       /*
        * The unit is the plain card, because that is what a weight of 1 means.
-       * Taking the tallest card instead made one group card — 101px against 58
-       * — the row height for the whole column: capacity fell from eleven rows
-       * to six and the list opened less than two thirds of the way down, which
-       * is exactly the empty space the desk was reported with. A column of
-       * nothing but groups is rare, and dividing by the group weight recovers
-       * the same unit from it.
+       * Taking the tallest row instead made one group row — 84px against 52 —
+       * the row height for the whole column: capacity fell by a third and the
+       * list opened well short of the bottom, which is exactly the empty space
+       * the desk was reported with. A column of nothing but groups is rare, and
+       * dividing by the group weight recovers the same unit from it.
        */
       const plainCards = cards.filter((card) => !card.querySelector(".fd-card__alts"))
       const measuredHeight = plainCards.length > 0

@@ -480,7 +480,11 @@ test("a list with more results to give covers the column it was measured against
     });
     await page.route("**/api/search", async (route) => {
       const payload = route.request().postDataJSON() as Record<string, unknown>;
-      const offers = Array.from({ length: 14 }, (_, index) => {
+      /* Twenty, not fourteen. The claim is that a list with more to give covers
+         the column, so the fixture has to hold more than the column does — and
+         a 940-tall desk holds thirteen 52px rows where it held eleven 58px
+         cards with 6px of air between them. */
+      const offers = Array.from({ length: 20 }, (_, index) => {
         const base = buildOffer({ id: `fill-${index}`, destination: "MAD" });
         // The first three share an outbound and differ on the return, which is
         // what makes them one group with a strip instead of three plain cards.
@@ -495,8 +499,11 @@ test("a list with more results to give covers the column it was measured against
               id: `fill-${index}-inbound`,
               segments: inbound.segments.map((segment) => ({
                 ...segment,
-                departureAt: `2026-06-04T${String(12 + index).padStart(2, "0")}:30:00Z`,
-                arrivalAt: `2026-06-04T${String(18 + index).padStart(2, "0")}:30:00Z`,
+                /* Wrapped, so twenty offers still name twenty valid hours: the
+                   two schedules only have to differ, and `12 + index` walked
+                   past 23 as soon as the fixture grew. */
+                departureAt: `2026-06-04T${String((4 + index) % 24).padStart(2, "0")}:30:00Z`,
+                arrivalAt: `2026-06-04T${String((10 + index) % 24).padStart(2, "0")}:30:00Z`,
               })),
             },
           ] as never,
@@ -556,7 +563,12 @@ test("a list with more results to give covers the column it was measured against
       const last = cards[cards.length - 1];
       if (!body || !list || !plain || !grouped || !last) return null;
 
-      const gap = Number.parseFloat(getComputedStyle(list).rowGap || "0");
+      /* `rowGap` computes to `normal` where nothing declares one, and the list
+         declares none any more — rows are separated by their own hairline. A
+         bare `parseFloat` returns NaN there and every comparison against `row`
+         below silently becomes false. */
+      const declaredGap = Number.parseFloat(getComputedStyle(list).rowGap);
+      const gap = Number.isFinite(declaredGap) ? declaredGap : 0;
       return {
         available: body.clientHeight,
         used: last.getBoundingClientRect().bottom - list.getBoundingClientRect().top,
@@ -1036,7 +1048,10 @@ test("result cards reserve matching airline and provider logo slots", async () =
         provider: rectOf(".fd-card__provider"),
       };
     });
-    assert.equal(geometry.airline.width, 32, JSON.stringify(geometry));
+    /* 28, not 32: the four pixels the logo gave up are the four the baggage
+       lane took to carry «Eq.» in the column header above it. The provider mark
+       is unchanged at 26. */
+    assert.equal(geometry.airline.width, 28, JSON.stringify(geometry));
     assert.equal(geometry.provider.width, 26, JSON.stringify(geometry));
     assert.ok(geometry.airline.left < geometry.provider.left, JSON.stringify(geometry));
   }, { autoOpen: false });
@@ -1219,7 +1234,12 @@ test("detail panel mirrors selected result content and omits unknown fare condit
     const detailBody = page.getByTestId("detail-panel-body");
     await detailBody.waitFor();
     const detailPanel = detailBody.locator("..");
-    await detailPanel.getByRole("heading", { name: "LATAM" }).waitFor();
+    /* The panel's heading is «Oferta» now — the 28px line it shares with
+       «Filtros» and «Resultados», so one rule crosses the screen — and the
+       carrier is the first line of the hero under it. The claim is the same:
+       the panel has landed and it is showing this fare. */
+    await detailPanel.getByRole("heading", { name: "Oferta" }).waitFor();
+    await detailPanel.locator(".fd-detail-carrier", { hasText: "LATAM" }).waitFor();
     assert.equal(quotationRequests, 0);
 
     const selectedText = await detailPanel.innerText();
@@ -1962,8 +1982,9 @@ test("the open list of schedules takes the click over every card it covers", asy
      * «Es el button ese que colapsa contra el borde del otro»: the inset-0 hit
      * of a group card ran under the alternates strip to the card's bottom
      * border, so a press on the strip's ground selected the offer and the
-     * invisible button stood flush against the next card. The select surface
-     * is the 58px fare row, as the redesign drew it.
+     * invisible button stood flush against the next card. The select surface is
+     * the fare row, which is 52 now that the row is a table row rather than a
+     * 58px card with 13px of padding and a border.
      */
     const hitMetrics = await page.locator(".fd-card", { has: page.locator(".fd-card__alts") }).first().evaluate((card) => {
       const hit = card.querySelector<HTMLElement>(".fd-card__hit");
@@ -1980,7 +2001,7 @@ test("the open list of schedules takes the click over every card it covers", asy
       };
     });
     assert.ok(hitMetrics, "missing group card anatomy");
-    assert.equal(hitMetrics.hitHeight, 58, JSON.stringify(hitMetrics));
+    assert.equal(hitMetrics.hitHeight, 52, JSON.stringify(hitMetrics));
     assert.equal(hitMetrics.hitReachesCardBottom, false, JSON.stringify(hitMetrics));
     assert.equal(hitMetrics.stripGroundSelects, false, JSON.stringify(hitMetrics));
 
@@ -2244,15 +2265,31 @@ async function readListFrames(page: Page): Promise<Array<{ bones: number; cards:
 }
 
 /** What the column holds, in plain rows, from the box the list is drawn in. */
-async function measureColumn(page: Page): Promise<{ viewportHeight: number; row: number; fits: number; blank: number }> {
+async function measureColumn(page: Page): Promise<{
+  viewportHeight: number;
+  cards: number;
+  hasMore: boolean;
+  row: number;
+  fits: number;
+  blank: number;
+}> {
   const measured = await page.evaluate(() => {
     const viewport = document.querySelector<HTMLElement>(".fd-list-viewport");
     const list = document.querySelector<HTMLElement>(".fd-results-list");
-    const rows = Array.from(document.querySelectorAll<HTMLElement>(".fd-card"));
+    /* Scoped to the list, not to the document. The column header wears
+       `.fd-card` too — that is how it takes the row's lanes without restating
+       them — and it stands outside the scroller, so a document-wide query made
+       a 26px header the unit the whole column was counted in. */
+    const rows = list ? Array.from(list.querySelectorAll<HTMLElement>(".fd-card")) : [];
     const plain = rows.filter((row) => !row.querySelector(".fd-card__alts"));
     const last = rows[rows.length - 1];
     if (!viewport || !list || !last || plain.length === 0) return null;
-    const gap = Number.parseFloat(getComputedStyle(list).rowGap || "6");
+    /* The list has no gap any more: rows are separated by their own hairline.
+       `rowGap` computes to `normal` when nothing declares one, and
+       `parseFloat("normal")` is NaN — which propagated into `row` and `fits`
+       and turned every column assertion into a comparison against NaN. */
+    const declaredGap = Number.parseFloat(getComputedStyle(list).rowGap);
+    const gap = Number.isFinite(declaredGap) ? declaredGap : 0;
     const row = plain[0].getBoundingClientRect().height + gap;
     /* The same 4px top inset the capacity hook budgets — blank has to be
        measured against the space a row could actually take, or a column whose
@@ -2261,6 +2298,11 @@ async function measureColumn(page: Page): Promise<{ viewportHeight: number; row:
     const available = viewport.clientHeight - 4;
     return {
       viewportHeight: viewport.clientHeight,
+      /* In the payload because every assertion below is about the relationship
+         between them, and «blank: 117» on its own says nothing about whether
+         the column was short or the fixture was. */
+      cards: rows.length,
+      hasMore: Boolean(document.querySelector("[data-testid='results-more-sentinel']")),
       row,
       fits: Math.floor((available + gap) / row),
       blank: Math.round(available - (last.getBoundingClientRect().bottom - list.getBoundingClientRect().top)),
@@ -2279,7 +2321,7 @@ test("a fare the provider said nothing about keeps the card's lanes", async () =
    * names only what a fare includes. So a fare that includes neither — or that
    * the provider says nothing about — rendered no pair at all, the lane
    * collapsed, and auto-placement walked the price into the baggage lane and
-   * the provider into the price's. It also broke `list - legs === 436` for
+   * the provider into the price's. It also broke `list - legs === 428` for
    * exactly those fares, silently, because every fixture until this one had
    * baggage.
    *
@@ -2329,10 +2371,16 @@ test("a fare the provider said nothing about keeps the card's lanes", async () =
     assert.deepEqual(rows.cards.map((card) => card.baggage), [true, true, false], at);
 
     /* And whatever the answer, the row is the same row: same tracks, same
-       result cell, and the price and the provider in the same lanes. */
+       result cell, and the price and the provider in the same lanes.
+
+       28 where the card drew 32, and the fixed measure 428 where the card's was
+       436: the lanes still sum to 348 — the logo gave four pixels to the
+       baggage, which has a column name to carry now — and the eight that came
+       off are the card's own 13px padding and 1px border, which a row with one
+       hairline under it and 10px of padding no longer spends. */
     for (const card of rows.cards) {
-      assert.match(card.columns, /^32px 142px /, at);
-      assert.equal(rows.listWidth - card.legsWidth, 436, at);
+      assert.match(card.columns, /^28px 142px /, at);
+      assert.equal(rows.listWidth - card.legsWidth, 428, at);
       assert.equal(card.priceLeft, rows.cards[0].priceLeft, at);
       assert.equal(card.providerLeft, rows.cards[0].providerLeft, at);
     }
@@ -2361,6 +2409,14 @@ test("the card keeps a lane for the airport codes at every width a desk can be",
    * One rule settles all three, and this case is that rule: whatever
    * disposition a width lands in, the stops lane holds the label that
    * disposition draws.
+   *
+   * The third of those dispositions is gone — the side-by-side pair went with
+   * the card frame, because a table row with an elastic lane has no empty half
+   * to fill — so there are two left and the rule is unchanged. The threshold
+   * moved to 787, which is the same sum with the row's numbers: 428 of fixed
+   * measure, 284 of fixed leg lanes (56 + 126 + 66 and three 12px gaps) and the
+   * 75 of «1 escala · BOG». And the width the detail column leaves at moved
+   * with it, from 1437 to 1440, so this sweep walks 1441/1440/1439 instead.
    */
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeCompletedSearch(page, { offers: Array.from({ length: 14 }, (_, index) => oneStopOffer(index)) });
@@ -2373,13 +2429,17 @@ test("the card keeps a lane for the airport codes at every width a desk can be",
       const list = document.querySelector<HTMLElement>(".fd-list");
       const legs = card?.querySelector<HTMLElement>(".fd-card__legs");
       const stops = card?.querySelector<HTMLElement>(".fd-card__leg-stops");
-      const chevron = card?.querySelector<HTMLElement>(".fd-card__chevron");
-      if (!card || !list || !legs || !stops || !chevron) return null;
+      /* The chevron used to be the tell, and it no longer exists: it was
+         decorative, `aria-hidden`, and its 14px lane was 24 of the 310 a 360px
+         phone has to spend. The provider mark answers the same question from
+         the other side — the desk draws it, the stacked row does not. */
+      const provider = card?.querySelector<HTMLElement>(".fd-card__provider");
+      if (!card || !list || !legs || !stops || !provider) return null;
       const shown = Array.from(stops.children)
         .find((child) => getComputedStyle(child as HTMLElement).display !== "none") as HTMLElement | undefined;
       return {
         listWidth: list.clientWidth,
-        stacked: getComputedStyle(chevron).display !== "none",
+        stacked: getComputedStyle(provider).display === "none",
         legsOverflow: legs.scrollWidth - legs.clientWidth,
         laneWidth: stops.getBoundingClientRect().width,
         labelWidth: shown?.getBoundingClientRect().width ?? 0,
@@ -2387,7 +2447,7 @@ test("the card keeps a lane for the airport codes at every width a desk can be",
       };
     });
 
-    for (const width of [1920, 1745, 1700, 1600, 1500, 1440, 1437, 1436, 1366, 1280, 1111, 1024, 900]) {
+    for (const width of [1920, 1745, 1700, 1600, 1500, 1441, 1440, 1439, 1366, 1280, 1111, 1024, 900]) {
       await page.setViewportSize({ width, height: 1000 });
       await page.waitForTimeout(320);
       const layout = await measure();
@@ -2400,25 +2460,25 @@ test("the card keeps a lane for the airport codes at every width a desk can be",
       // And the row it lives in never spills over the columns beside it.
       assert.ok(layout.legsOverflow <= 0, at);
       // The disposition answers the list, and the list alone (02 §2).
-      assert.equal(layout.stacked, layout.listWidth < 775, at);
+      assert.equal(layout.stacked, layout.listWidth < 787, at);
     }
 
     // The headline: a 1366 laptop is a desk, and its list is not 748 any more.
     await page.setViewportSize({ width: 1366, height: 1000 });
     await page.waitForTimeout(320);
     const laptop = await measure();
-    assert.ok(laptop && !laptop.stacked && laptop.listWidth >= 775, JSON.stringify(laptop));
+    assert.ok(laptop && !laptop.stacked && laptop.listWidth >= 787, JSON.stringify(laptop));
   }, { autoOpen: false });
 });
 
-test("the result cell keeps the whole list minus the card's own 436", async () => {
+test("the result cell keeps the whole list minus the row's own 428", async () => {
   /*
    * «No solucionaste el cambio erróneo de ancho de celda de resultado, compara
    * con commits viejos y arréglalo — el correcto es el que tenía en el commit
    * de rediseño.»
    *
    * Only one track of this row is elastic — the legs — so every fixed lane the
-   * card gains is taken out of the result cell and out of nothing else. The
+   * row gains is taken out of the result cell and out of nothing else. The
    * redesign's card was 32/186/1fr/116/26 with four 12px gaps, a fixed measure
    * of `list - 436`. Giving the baggage its own lane added 32px of track and a
    * fifth gap and charged the whole 44 to the cell: measured against the same
@@ -2427,9 +2487,15 @@ test("the result cell keeps the whole list minus the card's own 436", async () =
    *
    * The lane is now paid for out of «who flies», which had the slack: the
    * widest carrier name this application can draw is «Aerolíneas Argentinas»,
-   * and it still fits its 142px lane unbroken. So the two halves are pinned
-   * together — the cell is the list minus 436 again, and the lane the 44 came
-   * from still holds its own longest label.
+   * measured at 141 against a 142px lane, and it still fits unbroken.
+   *
+   * 428, not 436, since the recipient stopped being a card. The five fixed
+   * lanes are unchanged in sum — 28 + 142 + 36 + 116 + 26 = 348, the logo's
+   * four pixels having moved to the baggage lane so it can carry «Eq.» in the
+   * column header — and so are the five 12px gaps. What came off is the frame:
+   * 13px of padding and a 1px border on each side became 10px of padding and
+   * no border, which is 428. The cell is *wider* than it was, by eight pixels,
+   * at every width; the two halves are still pinned together here.
    */
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeCompletedSearch(page, {
@@ -2460,9 +2526,9 @@ test("the result cell keeps the whole list minus the card's own 436", async () =
       assert.ok(cell, `missing card metrics at ${width}`);
       const at = `${width}x${height}: ${JSON.stringify(cell)}`;
 
-      /* The card's fixed measure, and the whole point of the change: 436, not
-         the 480 the standalone baggage lane made of it. */
-      assert.equal(cell.listWidth - cell.legsWidth, 436, at);
+      /* The row's fixed measure, and the whole point of the change: 428, and
+         not the 480 the standalone baggage lane once made of it. */
+      assert.equal(cell.listWidth - cell.legsWidth, 428, at);
       /* And the lane that paid for it still says the whole name. */
       assert.equal(cell.name, "Aerolíneas Argentinas", at);
       assert.ok(cell.nameNeeds <= cell.nameLane, at);
@@ -2645,12 +2711,18 @@ test("a list carrying a group still closes the column it was measured against", 
    * while 80px of column, more than the 64 it needed, sat empty beneath it.
    * Two roundings each losing under a row, together losing more than one.
    *
-   * The fixture is the reported one: a truncated group of ten, a duplicate of
-   * one of its members, and twenty flights.
+   * The fixture is the reported one, less the part of it that was never in the
+   * list: a truncated group of ten, a duplicate of one of its members, and
+   * fourteen flights. Twenty was the reported number, but `oneStopOffer` draws
+   * twenty-four distinct schedules and the group holds ten of them, so twelve
+   * of those twenty were the group's own schedules again and the list absorbed
+   * them. At 58px rows the eleven items that survived happened to cover the
+   * column anyway; at 52 they do not, which is the fixture being short and not
+   * the column being unfilled. Fourteen is every schedule the group leaves.
    */
   await withDesktopPage(async ({ baseUrl, page }) => {
     const grouped = Array.from({ length: 10 }, (_, index) => oneStopOffer(index, { id: `grp-${index}` }));
-    const plain = Array.from({ length: 20 }, (_, index) => oneStopOffer(index + 40, { id: `plain-${index}` }));
+    const plain = Array.from({ length: 14 }, (_, index) => oneStopOffer(index + 10, { id: `plain-${index}` }));
     const duplicate = oneStopOffer(0, { id: "dup-0" });
 
     await routeDelayedSearch(page, {

@@ -310,10 +310,10 @@ export function DetailPanel({
 
   if (!offer) {
     return (
-      <section className={cn("fd-panel flex h-full min-h-0 flex-col overflow-hidden", embedded && "fd-panel--embedded")}>
-        {!embedded && <div className="fd-panel-header">
-          <h2 className="fd-panel-title">Oferta</h2>
-          <p className="fd-panel-subtitle">Sin selección</p>
+      <section className={cn("fd-detail-panel flex h-full min-h-0 flex-col overflow-hidden", embedded && "fd-detail-panel--embedded")}>
+        {!embedded && <div className="fd-detail-header">
+          <h2 className="fd-detail-title">Oferta</h2>
+          <p className="fd-detail-provider">Sin selección</p>
         </div>}
         <div className="grid min-h-0 flex-1 place-items-center p-6 text-center">
           <div>
@@ -346,16 +346,26 @@ export function DetailPanel({
          column is always mounted, so without it the animation would play once
          in the life of the page and never for a selection. */
       key={offer.id}
-      className={cn("fd-panel flex h-full min-h-0 flex-col overflow-hidden", embedded && "fd-panel--embedded")}
+      className={cn("fd-detail-panel flex h-full min-h-0 flex-col overflow-hidden", embedded && "fd-detail-panel--embedded")}
       /* 3c dims the conditions while the failure is up: the work is still
          there, it just is not the thing to read right now. */
       data-quote-error={quotationFailed || undefined}
     >
+      {/*
+        * The header is two blocks, and the first of them is the reason: a 28px
+        * line with «Oferta» on the left and the provider on the right, drawn
+        * with the same rule at the same height as «Filtros» and «Resultados»,
+        * so one line crosses the whole screen and the three columns read as one
+        * material rather than as three boxes of different weights.
+        *
+        * One close, two shapes. 8a draws a 32px cross at the head of the line;
+        * 1f draws a 44px back chevron in the same place. Which glyph shows is a
+        * container query, so the accessible name — and the gesture the sheet
+        * answers — stay the same on every surface. The desk column has no close
+        * at all: it is mounted without `onClose` because selecting another fare
+        * already replaces what is in it.
+        */}
       <div className="fd-detail-header">
-        {/* One close, two shapes. 8a draws a 32px cross to the right of the
-            price; 1f draws a 44px back chevron at the head of the row. Which
-            glyph shows is a container query, so the accessible name — and the
-            gesture the sheet answers — stay the same on every surface. */}
         {onClose && (
           <button
             type="button"
@@ -367,20 +377,29 @@ export function DetailPanel({
             <AppIcon name="x" size={16} className="fd-detail-close-cross" />
           </button>
         )}
-        {embedded && model.carrier.logo && (
-          <img src={model.carrier.logo} alt="" className="fd-detail-logo" decoding="async" />
-        )}
-        <div className="fd-detail-head">
-          <h2 className="fd-detail-title">{model.carrier.name}</h2>
+        <h2 className="fd-detail-title">Oferta</h2>
+        <p className="fd-detail-provider">
+          {provider.icon && (
+            <img src={provider.icon} alt="" className="fd-detail-provider-icon" decoding="async" />
+          )}
+          <span className="truncate">{provider.label}</span>
+        </p>
+      </div>
+
+      {/* And the second: the fare itself, on no band at all. What used to be a
+          title line inside a grey header is a block — airline, price and who
+          the price is for, stacked at the left, with the carrier's mark at 32
+          on the right. Nothing here is a control, so nothing here needs a
+          surface to sit on. */}
+      <div className="fd-detail-hero">
+        <div className="fd-detail-hero-lead">
+          <span className="fd-detail-carrier" title={model.carrier.name}>{model.carrier.name}</span>
           <span className="fd-detail-price">{model.price.label}</span>
-          <p className="fd-detail-provider">
-            {provider.icon && (
-              <img src={provider.icon} alt="" className="fd-detail-provider-icon" decoding="async" />
-            )}
-            <span className="truncate">{provider.label}</span>
-          </p>
           <span className="fd-detail-pax">{passengerSummary(request)}</span>
         </div>
+        {model.carrier.logo && (
+          <img src={model.carrier.logo} alt="" className="fd-detail-logo" decoding="async" />
+        )}
       </div>
 
       <div className="fd-detail-body fd-scrollbar-hidden min-h-0 flex-1 overflow-y-auto" data-testid="detail-panel-body">

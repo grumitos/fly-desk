@@ -19,9 +19,17 @@ function shellSizeForWidth(width: number): ShellSize {
 /*
  * What the three-column shell costs the list, from `.fd-results` and its stage:
  * 16px of screen padding on each side, the 248px filter column, the 316px
- * detail column, the two 10px gaps between them, and the list card's own 1px
- * border on each side — 618px before a single result is drawn. The stage is
- * capped at `--fd-app-max-width` first.
+ * detail column and the two 10px gaps between them — 616px before a single
+ * result is drawn. The stage is capped at `--fd-app-max-width` first.
+ *
+ * `LIST_BORDER_PX` is gone rather than kept as slack, and it is worth saying
+ * why, because the two pixels decide something. It was the list card's own
+ * border, and the list has not been a card since #45 removed the frame; the
+ * subtraction survived as a two-pixel margin nobody had derived. Kept, a 1440
+ * desk measures 822 against the 824 the row below asks for and loses its third
+ * column — the commonest desk there is, dropping to a side sheet because of a
+ * border that is not drawn. Slack has to be measured too, or it is just a
+ * number that happens to be there.
  *
  * Kept here rather than read off the DOM on purpose: the answer decides whether
  * the detail column is built, and measuring the list to decide whether to
@@ -32,30 +40,61 @@ const SHELL_PADDING_PX = 16
 const FILTER_COLUMN_PX = 248
 const DETAIL_COLUMN_PX = 316
 const RESULTS_COLUMN_GAP_PX = 10
-const LIST_BORDER_PX = 1
-
-/* The narrowest list the result card can wear the desk anatomy in, from the
-   `@container fdlist` threshold in result-card.css: below it the card is the
-   stacked phone row, whatever the shell around it is doing. */
-const CARD_DESK_MIN_LIST_PX = 775
-
-/* The 44px the result cell was given back when the baggage lane stopped being
-   taken out of it — the difference between the card's fixed measure at
-   `list - 480` and at `list - 436`. */
-const RESULT_CELL_RESTORED_PX = 44
 
 /*
- * What the detail column has to leave behind, which is not the same question as
- * whether the card survives.
- *
- * Admitting the column takes 326px off the list in a single step, so the budget
- * is measured with the result cell at the width it is meant to have rather than
- * at the width the stacking rule will merely tolerate. That is also what keeps
- * the restored cell from costing the list anything: derived straight from a 775
- * card the column would enter at a 1393 shell and take 326px off every list
- * between 1393 and 1436 — a narrowing, which is the defect this is fixing.
+ * The row's fixed measure — everything in it that is not the elastic legs
+ * track. 28 + 142 + 36 + 116 + 26 of lanes, five 12px gaps and the row's own
+ * 10px of padding on each side: 428. It was 436 while the row was a card, whose
+ * 13px padding and 1px border it also had to carry.
  */
-const DETAIL_COLUMN_MIN_LIST_PX = CARD_DESK_MIN_LIST_PX + RESULT_CELL_RESTORED_PX
+const RESULT_ROW_FIXED_PX = 428
+
+/*
+ * And the leg's, inside that track: 56 + 126 + 66 with three 12px gaps.
+ */
+const RESULT_LEG_FIXED_PX = 284
+
+/*
+ * The two labels the elastic lane is sized against, measured against the loaded
+ * face at the 11px the desk row draws them in.
+ *
+ * The floor is the one-stop long form, which 02 §5 says may not lose its
+ * airport code. The comfortable case is the widest label the row can be asked
+ * to draw while still naming every airport in it — from three stops the label
+ * gives up and writes `+n`, so it is not a width anything can be sized to.
+ */
+const STOPS_ONE_STOP_PX = 75
+const STOPS_TWO_STOPS_PX = 112
+
+/* The narrowest list the result row can wear the desk anatomy in, and the same
+   arithmetic as the `@container fdlist` threshold in result-card.css: below it
+   the row is the stacked phone card, whatever the shell around it is doing. */
+const CARD_DESK_MIN_LIST_PX = RESULT_ROW_FIXED_PX + RESULT_LEG_FIXED_PX + STOPS_ONE_STOP_PX
+
+/*
+ * The difference between the two labels, which is the margin the detail column
+ * has to leave the list on top of the stacking floor.
+ *
+ * This used to be `RESULT_CELL_RESTORED_PX = 44` — the gap between the card's
+ * fixed measure with the baggage lane charged to the result cell and with it
+ * charged to «who flies». That accounting is over: the lane has been paid for
+ * out of «who flies» for two changes now, so there is nothing left to restore
+ * and the constant had become a number with a story instead of a derivation.
+ *
+ * What the margin is *for* has not changed. Admitting the column takes 326px
+ * off the list in a single step, so the budget is measured with the result cell
+ * at the width it is meant to have rather than at the width the stacking rule
+ * will merely tolerate. Measured, that is the same row with its elastic lane
+ * holding the widest stops label it draws instead of the narrowest one it must:
+ * 112 − 75 = 37. Derived straight from the 787 row instead, the column would
+ * enter at a 1403 shell and take 326px off every list between 1403 and 1439 —
+ * a narrowing, which is the defect this exists to prevent.
+ */
+const RESULT_CELL_COMFORTABLE_PX = STOPS_TWO_STOPS_PX - STOPS_ONE_STOP_PX
+
+/* What the detail column has to leave behind, which is not the same question as
+   whether the row survives. */
+const DETAIL_COLUMN_MIN_LIST_PX = CARD_DESK_MIN_LIST_PX + RESULT_CELL_COMFORTABLE_PX
 
 function listWidthWithDetailColumn(shellWidth: number): number {
   return Math.min(shellWidth, APP_MAX_WIDTH_PX)
@@ -63,7 +102,6 @@ function listWidthWithDetailColumn(shellWidth: number): number {
     - FILTER_COLUMN_PX
     - DETAIL_COLUMN_PX
     - RESULTS_COLUMN_GAP_PX * 2
-    - LIST_BORDER_PX * 2
 }
 
 /**
@@ -72,18 +110,18 @@ function listWidthWithDetailColumn(shellWidth: number): number {
  * 02 §1 hands the detail a third column «from 1100» and a side sheet below,
  * which reads as a statement about the shell. It is not: 1100 is the width the
  * *form* needs for its six mínimos in one row, and the results region inherited
- * it. Measured, the detail column costs the list 326px, so from 1100 to 1436
- * the list was 482–818 — under what the card needs — and every result on a
- * 1366 laptop wore the phone anatomy inside a three-column desk. Worse, the
- * list was *wider* one pixel below 1100 (807) than one pixel above it (482):
- * widening the window collapsed the cards.
+ * it. Measured, the detail column costs the list 326px, so from 1100 to 1439
+ * the list is 484–823 — under what the row needs — and every result on a 1366
+ * laptop wore the phone anatomy inside a three-column desk. Worse, the list was
+ * *wider* one pixel below 1100 (809) than one pixel above it (484): widening
+ * the window collapsed the cards.
  *
  * So the two mechanical changes armazón B makes to A are separated, each on the
  * threshold that constrains it. The form still reflows at 1100. The detail
  * leaves the grid as soon as keeping it would take the list below the width the
- * card needs to stay a desk card — the same sheet, the same scrim, 336px
- * earlier. The filter column never yields; that is what still separates this
- * from mobile.
+ * row needs to stay a desk row — the same sheet, the same scrim, 340px earlier.
+ * The filter column never yields; that is what still separates this from
+ * mobile.
  */
 function detailPlacementForWidth(width: number, shellSize: ShellSize): DetailPlacement {
   if (shellSize === "C") return "bottom"

@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react"
+import type { CSSProperties, ReactNode } from "react"
 
 /*
  * Plates 2g and 4a — the skeleton system.
@@ -44,6 +44,8 @@ const SKELETON_ROW_RHYTHM: SkeletonRowShape[] = [
 
 export function ResultsSkeleton({
   rows,
+  mode,
+  head,
   inline = false,
   startDelayIndex = 0,
   attachViewport,
@@ -60,6 +62,21 @@ export function ResultsSkeleton({
    * with nothing reserved below either of them.
    */
   rows: number
+  /**
+   * The search mode the bones are standing in for, stamped on the list exactly
+   * as the real list stamps it. The stacked leg's rótulo lane is 22 in Exacto
+   * and 56 where the dates vary per offer, so a skeleton that did not carry the
+   * mode would hand over to a list whose four lanes start 34px further along —
+   * the value jump 04 §7 forbids, in the one place the whole component exists
+   * to prevent it.
+   */
+  mode?: string
+  /**
+   * The list's column header, handed in rather than built here for the same
+   * reason as the mode: it is part of the box the bones are counted into, so
+   * the skeleton and the list have to be standing in the same one.
+   */
+  head?: ReactNode
   /** Rendered inside an existing list (partial search) rather than alone. */
   inline?: boolean
   /** Continues the 120ms pulse offset from the last real row. */
@@ -83,8 +100,9 @@ export function ResultsSkeleton({
      search here, and the bones already say one is running. */
   return (
     <div className="fd-list-body" data-testid="results-loading-skeleton">
+      {head}
       <div ref={attachViewport} className="fd-list-viewport" aria-hidden="true">
-        <div className="fd-results-list fd-results-list--skeleton">{skeletonRows}</div>
+        <div className="fd-results-list fd-results-list--skeleton" data-mode={mode}>{skeletonRows}</div>
       </div>
     </div>
   )
@@ -121,10 +139,9 @@ function SkeletonRow({ index }: { index: number }) {
         )}
       </div>
 
-      {/* The provider square on a desk, the chevron on a phone: the card hides
-          whichever of the two does not belong to the layout in force. */}
+      {/* The provider square, which the stacked row hides on its own — there is
+          no second glyph to stand in for since the chevron went. */}
       <span className="fd-card__provider fd-skeleton-block" />
-      <span className="fd-card__chevron" />
     </article>
   )
 }

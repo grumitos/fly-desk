@@ -28,6 +28,14 @@
   --color-destructive-foreground: #ffffff;
 
   --color-border: #1f1f1e26;
+  /* The rule that crosses the screen. `--color-border` is 15% ink: right for a
+     hairline that only has to bound a control, and invisible as the single line
+     that now separates «Filtros», «Resultados» and «Oferta» from what they head
+     — three columns of the same material, tied together by one line at one
+     height. 25% is the weight the maquetas draw that line at, and it is a token
+     rather than a raw `#1f1f1e40` in six places because it also has to flip in
+     dark, where the ink is `--color-border`'s `#e2e1da`, not `#1f1f1e`. */
+  --color-rule: #1f1f1e40;
   --color-input: #1f1f1e26;
   --color-ring: #d97757;
 
@@ -147,6 +155,7 @@
     --color-destructive-foreground: #ffffff;
 
     --color-border: #e2e1da26;
+    --color-rule: #e2e1da40;
     --color-input: #e2e1da26;
     --color-ring: #d97757;
 
@@ -438,7 +447,7 @@
 
   /* The detail already owns `fd-enter-right`; giving the column a second one
      would play the row twice and travel 16px. Only the cue is added. */
-  .fd-search-stage[data-entering] .fd-detail-column > .fd-panel {
+  .fd-search-stage[data-entering] .fd-detail-column > .fd-detail-panel {
     animation-delay: var(--fd-cue-paneles);
   }
 
@@ -549,10 +558,17 @@
     min-height: 0;
   }
 
+  /* The rail's own inset and the line that ends it. Both columns beside the
+     list carry them, in mirror, so the list is bounded left and right by a
+     hairline instead of by two card edges — and the 248 and the 316 the grid
+     hands out are unchanged, because the inset is inside them and the list's
+     width is derived from those two numbers. */
   .fd-filter-column {
     grid-area: filters;
     min-width: 0;
     min-height: 0;
+    padding-right: 12px;
+    border-right: 1px solid var(--color-border);
   }
 
   /*
@@ -585,12 +601,19 @@
     grid-area: detail;
     min-width: 0;
     min-height: 0;
+    padding-left: 12px;
+    border-left: 1px solid var(--color-border);
   }
 
   /* 05 §8: the panel arrives with `estructura`, 8px from the right. Only here —
      in armazón B and C the detail is a sheet and the sheet owns its own
-     arrival, so animating the panel too would play the movement twice. */
-  .fd-detail-column > .fd-panel {
+     arrival, so animating the panel too would play the movement twice.
+
+     Named `.fd-detail-panel` since the column stopped being a card: this used
+     to read `.fd-panel`, and `.fd-panel` no longer exists anywhere. A selector
+     that matches nothing loses the entrance in silence, which is why the
+     choreography case names this class outright. */
+  .fd-detail-column > .fd-detail-panel {
     animation: fd-enter-right var(--fd-dur-estructura) var(--fd-ease-estructura) both;
   }
 
@@ -635,6 +658,20 @@
     font-size: var(--fd-text-body);
     font-weight: var(--fd-weight-title);
     letter-spacing: -0.01em;
+  }
+
+  /* What the chip strip used to say and the filter rail does not: how much the
+     constraints are costing. It rides the count line on a desk, where the strip
+     no longer mounts, and it is prose rather than a figure — so it takes the
+     sans face at the count's own size, not `.fd-panel-count`'s mono. */
+  .fd-list-hidden-count {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-label);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* Plate 1d's «↕ Precio»: the same order control with the same state, worn
@@ -723,12 +760,14 @@
     height: 0;
   }
 
-  /* 6px, which is what plates 1b and 2g both draw between cards — and what
-     `RESULTS_CARD_GAP_PX` already assumed when working out how many rows fit. */
+  /* No gap. The 6px between cards was air between forty framed objects; with
+     one hairline under each row the air *is* the separation, and a gap on top
+     of it draws a line floating in the middle of nothing. `RESULTS_CARD_GAP_PX`
+     is 0 for the same reason and reads this back off the element, so the row
+     count and this rule cannot drift apart. */
   .fd-results-list {
     display: grid;
     align-content: start;
-    gap: 6px;
   }
 
   /*
@@ -903,13 +942,10 @@
   }
 
   /* Sized by their own content, so here the padding is the air. Plate 1b: 13px
-     in the title bar, 12px in the list header. */
+     in the title bar. The 12 that used to sit beside it belonged to the list
+     header's order segmented, which is now the column header. */
   .fd-trip-mode-controls .fd-segmented-item {
     padding-inline: 13px;
-  }
-
-  .fd-result-sort-segmented .fd-segmented-item {
-    padding-inline: 12px;
   }
 
   .fd-inline-reveal {
@@ -943,26 +979,13 @@
      palette does not have. */
 
 
-  .fd-panel {
-    @apply rounded-xl border border-border bg-card text-card-foreground;
-    box-shadow: var(--fd-shadow-reposo);
-    transition:
-      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
-      border-color var(--fd-dur-tacto) var(--fd-ease-tacto),
-      box-shadow var(--fd-dur-tacto) var(--fd-ease-tacto);
-  }
-
-  .fd-panel-header {
-    @apply shrink-0 border-b border-border bg-secondary/60 px-3 py-2.5;
-  }
-
-  .fd-panel-title {
-    @apply truncate text-sm font-bold;
-  }
-
-  .fd-panel-subtitle {
-    @apply truncate text-xs text-muted-foreground;
-  }
+  /* `.fd-panel` — the card with its border, radius, shadow and grey header band
+     — had exactly two callers, the filter rail and the detail column, and both
+     have stopped being boxes: three levels of frame on one screen where none of
+     them meant anything. The class and its header, title and subtitle went with
+     them; what is left of the two headers is a 28px line each, declared where
+     the component that owns it is declared. `.fd-panel-count` stays: it is the
+     figure beside a heading, not part of any frame. */
 
   /* The 52px search field lives in `components.css` as `.fd-field-control` —
      one implementation for all six fields, including both halves of the merged
@@ -1039,14 +1062,15 @@
  * The detail column, and only it, leaves earlier than the armazón it belongs
  * to. 1100 is the width the *form* stops fitting its six mínimos in one row;
  * the results region inherited that number and paid 326px for a third column
- * out of a list that had nothing to spare. Below 1437 the list would be under
- * the 819 `DETAIL_COLUMN_MIN_LIST_PX` asks for — the 775 the card needs to stay
- * a desk card, plus the 44 the result cell was given back — so the detail
+ * out of a list that had nothing to spare. Below 1440 the list would be under
+ * the 824 `DETAIL_COLUMN_MIN_LIST_PX` asks for — the row's 428 of fixed
+ * measure, the leg's 284, and the 112 of «2 escalas · BOG, PTY», the widest
+ * stops label the row draws while still naming its airports — so the detail
  * becomes the same side sheet armazón B gives it and the list keeps its results
  * wide. The placement is decided once, in `useShellSize`, off the same
  * arithmetic; this is the grid agreeing with it.
  */
-@container fdshell (max-width: 1436.98px) {
+@container fdshell (max-width: 1439.98px) {
   .fd-results {
     grid-template-columns: 248px minmax(0, 1fr);
     grid-template-areas: "filters list";
@@ -1590,12 +1614,12 @@
     height: var(--fd-control-touch);
   }
 
-  /* The label goes (it names a control that is no longer a group) and the
-     segmented gives way to the compact swap of plate 1d. The order itself
-     stays: 02 §5 is a closed list of what may be hidden on a phone and the
-     order is not in it. */
-  .fd-result-sort-label,
-  .fd-result-sort-segmented {
+  /* The label goes: it names a control that is no longer here at all — the
+     desk's segmented moved into the column header, which a phone does not
+     draw — and what is left of it on this row is the sweep's «Rango». The
+     order itself stays as the compact swap of plate 1d: 02 §5 is a closed list
+     of what may be hidden on a phone and the order is not in it. */
+  .fd-result-sort-label {
     display: none;
   }
 
@@ -2283,11 +2307,8 @@
   display: contents;
 }
 
-.fd-sheet-body > .fd-panel {
+.fd-sheet-body > .fd-detail-panel {
   height: 100%;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
 }
 
 /*
@@ -2303,11 +2324,13 @@
   overflow: hidden;
 }
 
-.fd-panel--embedded {
-  border: 0;
-  border-radius: 0;
+/* Kept as a hook rather than deleted with the frame it used to strip: the
+   panel is flat everywhere now, so there is nothing left to undo here, and the
+   two sheets that mount it still need a name for «this one is inside a sheet».
+   The declaration that remains is the one thing a sheet does change — it owns
+   the surface, so the panel must not paint one of its own. */
+.fd-detail-panel--embedded {
   background: transparent;
-  box-shadow: none;
 }
 
 

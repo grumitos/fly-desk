@@ -49,14 +49,6 @@ export type ResultLegModel = {
    */
   stopsShortLabel: string
   stopsTitle: string
-  /**
-   * "espera 2h 15m" — the layover, and only when there is exactly one, where
-   * the figure is unambiguous. Two stops have two waits and a sum of them is a
-   * number that matches no part of the trip; those stay in the `title` and in
-   * the detail sheet. The card shows it where the disposition has the room for
-   * it — one leg on a wide list — and hides it everywhere else.
-   */
-  waitLabel: string
   stopsTone: "direct" | "one-stop" | "many-stops" | "unknown"
 }
 
@@ -203,7 +195,6 @@ function legModel(
     stopsLabel: stops.label,
     stopsShortLabel: stops.shortLabel,
     stopsTitle: stops.title,
-    waitLabel: stops.waitLabel,
     stopsTone: stops.tone,
   }
 }
@@ -229,7 +220,6 @@ function stopsForItinerary(itinerary: Itinerary | null) {
       label: "Escalas por confirmar",
       shortLabel: "Escalas ?",
       title: "No hay itinerario para confirmar las escalas",
-      waitLabel: "",
       tone: "unknown" as const,
     }
   }
@@ -243,7 +233,6 @@ function stopsForItinerary(itinerary: Itinerary | null) {
       label: "Directo",
       shortLabel: "Directo",
       title: "Vuelo directo",
-      waitLabel: "",
       tone: "direct" as const,
     }
   }
@@ -268,14 +257,14 @@ function stopsForItinerary(itinerary: Itinerary | null) {
       label: codes[0] ? `1 escala · ${codes[0]}` : "1 escala",
       shortLabel: codes[0] ? `1 esc · ${codes[0]}` : "1 esc",
       title,
-      waitLabel: layovers.length === 1 ? `espera ${formatJourneyDuration(layovers[0].minutes)}` : "",
       tone: "one-stop" as const,
     }
   }
 
   /*
    * From two stops the short form drops the airports and keeps the count. The
-   * stacked lane is 57px: «2 esc · BOG, PTY» measures 82 and «3 esc · BOG, PTY
+   * stacked lane is 60px on the narrowest phone this application draws, and
+   * «2 esc · BOG, PTY» measures 82 and «3 esc · BOG, PTY
    * +1» 95, so the lane ellipsised them back to «2 esc…» — a dangling ellipsis
    * that hid the very codes it was cut to show. A bare count says the same
    * thing and says all of it; the airports are still in the long form the desk
@@ -285,7 +274,6 @@ function stopsForItinerary(itinerary: Itinerary | null) {
     label: `${stopCount} escalas${codeSuffix}`,
     shortLabel: `${stopCount} esc`,
     title,
-    waitLabel: "",
     tone: "many-stops" as const,
   }
 }

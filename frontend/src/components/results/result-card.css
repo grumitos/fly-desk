@@ -1,9 +1,15 @@
 /*
- * Plate 1b — the result card, and plate 4a — its skeleton.
+ * Plate 1b — the result row, its column header, and plate 4a — its skeleton.
  *
- * The grid is 32 / 142 / 1fr / 32 / 116 / 26 and the skeleton inherits it,
- * because a skeleton whose columns differ from the component makes every value
- * jump when the data lands.
+ * The grid is 28 / 142 / 1fr / 36 / 116 / 26, and three things wear it: the
+ * row, the skeleton and the header. The skeleton, because a skeleton whose
+ * columns differ from the component makes every value jump when the data
+ * lands; the header, because a lane that is not named in the same track it is
+ * drawn in is not a column.
+ *
+ * The recipient stopped being a box and became a rule. Nothing inside moved —
+ * same lanes, same type, same order — but a list of fares is a series compared
+ * lane by lane, not a collection of objects, and a table row is what says so.
  */
 
 @layer utilities {
@@ -14,123 +20,134 @@
   .fd-card {
     position: relative;
     display: grid;
-    /* 32 logo · 142 who flies · legs · 32 baggage · 116 price · 26 provider.
+    /* 28 logo · 142 who flies · legs · 36 baggage · 116 price · 26 provider.
        Baggage earns its own track between the legs and the price: it is a
        property of the fare, not of the airline, and while it lived under the
        carrier name the codeshare had nowhere to go.
 
-       142, not the 186 «who flies» carried from the redesign. Only one track in
-       this row is elastic — the legs — so every fixed lane added to the card is
-       taken out of the result cell and out of nothing else. Giving the baggage
-       its own lane cost 32px of track plus a fifth 12px gap, and the whole 44
-       came out of the cell: measured on a 1920 desk the legs track fell from
-       708 to 662, and on a 1536 desk from 484 to 438. Every derived threshold
-       in this file rose by the same 44, which is why the desk anatomy stopped
-       fitting lists it used to fit and each result collapsed into the stacked
-       row on windows that had held the desk card.
+       142, not the 132 the maqueta draws and not the 186 «who flies» carried
+       from the redesign. Only one track in this row is elastic — the legs — so
+       every fixed lane added to the row is taken out of the result cell and out
+       of nothing else, which is why «who flies» is the lane that pays for the
+       others: it holds one line of carrier name, and the widest name this
+       application can draw is «Aerolíneas Argentinas», measured against the
+       loaded face at 141px. 132 would clip it; 142 holds it unbroken, and the
+       10px the maqueta wanted come out of the fixed measure below instead.
 
-       The 44 is paid back out of the lane that measured slack rather than out
-       of the cell. «Who flies» holds one line of carrier name, and the widest
-       name this application can draw is «Aerolíneas Argentinas» at 141px —
-       against a 186px lane. 186 − 44 = 142 still holds it, and the card's fixed
-       measure returns to the `list - 436` the redesign gave it.
+       The five fixed lanes still sum to 348 — the logo gives 4 to the baggage,
+       which needs 36 to carry «Eq.» in the header above it — so the whole of
+       the change to the row's fixed measure is the frame coming off:
+       `348 + 5×12 gaps + 2×10 padding = 428`, against the `2×13` of padding
+       and `2×1` of border that made it 436 while it was a card.
 
-       The baggage lane is 32 and not `auto`, and the three lanes after the legs
-       are placed by number below. `auto` made the row's geometry a function of
-       the fare: a provider that says nothing about baggage renders no pair, the
-       lane collapsed, and everything after it moved up a track — the price into
-       the baggage lane, the provider into the price's. That is «a veces pierde
-       su distribución», and it also broke the `list - 436` this comment derives,
-       silently, for exactly those fares. A row of a list is a table row: its
-       lanes are the same in every row or the columns stop being columns. */
-    grid-template-columns: 32px minmax(0, 142px) minmax(0, 1fr) 32px 116px 26px;
+       The baggage lane is a fixed 36 and not `auto`, and the three lanes after
+       the legs are placed by number below. `auto` made the row's geometry a
+       function of the fare: a provider that says nothing about baggage renders
+       no pair, the lane collapsed, and everything after it moved up a track —
+       the price into the baggage lane, the provider into the price's. That is
+       «a veces pierde su distribución», and it also broke the `list - 428` this
+       comment derives, silently, for exactly those fares. A row of a list is a
+       table row: its lanes are the same in every row or the columns stop being
+       columns — and now that a header names them, that is not a preference. */
+    grid-template-columns: 28px minmax(0, 142px) minmax(0, 1fr) 36px 116px 26px;
     column-gap: 12px;
     align-items: center;
     min-width: 0;
-    /* The card's own surface, named so the plate can be mixed against it: a
-       selected card carries a 7% primary tint (below) and a plate mixed with
-       `--card` would punch a neutral hole through it. */
-    --fd-card-surface: var(--color-card);
-    /* The plate's ground. `--secondary` is the surface the system already uses
-       for a quiet fill; at 82% it lands two steps off the card — enough to
-       bound the block, not enough to turn forty rows into a striped page.
-       (62% was the first try and read as nothing at all against white.)
-
-       Opaque, not a mix with `transparent`: the wings that widen it are box
-       shadows, and a shadow shows through a translucent fill — the plate would
-       have carried a darker band everywhere the two overlap. Dark needs more of
-       the token to separate at all, because there the card *is* `--background`. */
-    --fd-card-plate: color-mix(in srgb, var(--color-secondary) 82%, var(--fd-card-surface));
-    /* Plate 8c: 58 tall, and the padding is horizontal only — the row centres
-       itself in the 58. A card that owns a strip of alternative schedules takes
-       its vertical padding back below. */
-    min-height: 58px;
-    padding: 0 13px;
-    border: 1px solid var(--color-border);
-    border-radius: var(--fd-radius-12);
-    background: var(--fd-card-surface);
-    box-shadow: 0 1px 2px color-mix(in srgb, var(--color-foreground) 4%, transparent);
+    /* Plate 1b: 52 tall, and the padding is horizontal only — the row centres
+       itself in the 52. 58 was the card, whose border and 13px padding were
+       part of the height; 52 with one hairline under it puts twelve fares on a
+       1440×900 desk where ten fitted. */
+    min-height: 52px;
+    padding: 0 10px;
+    /* One rule, and it is the whole recipient: no radius, no shadow, no fill.
+       Forty rounded borders separate exactly what the agent came here to
+       compare, and the hairline that replaces them is also what the header
+       above the list is drawn with — one vocabulary for the whole column. */
+    border-bottom: 1px solid var(--color-border);
+    background: transparent;
     color: var(--color-foreground);
     cursor: pointer;
-    /* `tacto`: colour only. The card does not lift, scale or shadow-bloom on
-       hover — a list of 40 cards that each move is a list that shimmers. */
-    transition:
-      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
-      border-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+    /* `tacto`: colour only. The row does not lift, scale or shadow-bloom on
+       hover — a list of 40 rows that each move is a list that shimmers. */
+    transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .dark .fd-card {
-    --fd-card-plate: color-mix(in srgb, var(--color-secondary) 88%, var(--fd-card-surface));
-  }
+  /* Selection and hover move from the border to the surface, because there is
+     no border left to carry them: a row cannot be outlined without becoming a
+     box again. The selected row takes a 7% primary wash and a 2px primary edge
+     at its left, which is the one mark a table row can wear without closing.
 
+     `--secondary` for the hover and not `--accent`: the row is transparent over
+     `--background`, so what a hover has to do is lift it one step off that
+     ground. In dark `--accent` is darker than the ground and the row would have
+     read as a hole. */
   .fd-card:hover {
-    border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
+    background: var(--color-secondary);
   }
 
-  /* Only the surface is restated: the plate mixes against it, so the block keeps
-     the card's tint underneath instead of standing on a neutral rectangle. */
   .fd-card.is-selected {
-    border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-border));
-    --fd-card-surface: color-mix(in srgb, var(--color-primary) 7%, var(--color-card));
+    background: color-mix(in srgb, var(--color-primary) 7%, var(--color-card));
   }
 
-  /* A card whose schedule was swapped from the strip stays marked until it is
+  .fd-card.is-selected::before {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 2px;
+    background: var(--color-primary);
+    content: "";
+  }
+
+  /* A row whose schedule was swapped from the strip stays marked until it is
      quoted or dropped, so the agent cannot quote a fare they did not read. The
-     mark is the primary border plus the active chip in the strip; the 3px rail
-     that used to sit inside the left edge is not drawn anywhere in the plates
-     and is not one of the three elevations 01 §4 allows. */
-  .fd-card.is-schedule-changed {
-    border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-border));
+     mark was the primary border; with no border it is the same primary edge the
+     selection wears, which is the only elevation-free mark 01 §4 leaves. */
+  .fd-card.is-schedule-changed::before {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 2px;
+    background: var(--color-primary);
+    content: "";
   }
 
   .fd-card__hit {
     position: absolute;
-    inset: 0;
+    /* Not `inset: 0`. The ring `.fd-focus-ring` draws sits outside the box, and
+       with the row's radius now 0 an edge-to-edge hit put it under
+       `.fd-list`'s `overflow: hidden`, which clipped it on all four sides. 1px
+       of inset is what the ring needs to stay inside the scroller. */
+    inset: 1px;
     z-index: 1;
     border: 0;
-    border-radius: inherit;
+    border-radius: var(--fd-radius-4);
     background: transparent;
     cursor: pointer;
   }
 
-  /* The select surface is the fare row, as the redesign drew it. When the card
-     carries an alternates strip, an inset-0 hit ran under the strip to the
-     card's bottom border — an invisible button collapsing against the next
-     card's edge, selecting the offer on a press aimed at the strip. The row is
-     58px by construction (the card's own min-height), so the hit stops there. */
+  /* The select surface is the fare row. When the row carries an alternates
+     strip, a full-height hit ran under the strip to the row's bottom rule — an
+     invisible button selecting the offer on a press aimed at the strip. The
+     fare row is 52 by construction (the row's own min-height), so the hit
+     stops there. */
   .fd-card:has(.fd-card__alts) .fd-card__hit {
     bottom: auto;
-    height: 58px;
+    height: 52px;
   }
 
   /* ---- logo ------------------------------------------------------------- */
 
+  /* 28, not the card's 32: the four pixels went to the baggage lane, which now
+     has a column name to carry, and a mark is the one thing on this row that
+     loses nothing by being read a size smaller. */
   .fd-card__logo,
   .fd-card__logo img,
   .fd-card__logo span {
     display: grid;
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     place-items: center;
   }
 
@@ -188,44 +205,24 @@
     white-space: nowrap;
   }
 
-  /* The pair is a property of the fare, and now it is drawn as one: the same
-     ground the schedule block stands on, at the 26px control height, so two
-     loose glyphs stop floating between the block and the price.
+  /* The pair is a property of the fare and it has a column of its own, named
+     «Eq.» in the header. The ground it used to stand on is gone with every
+     other ground on this row: a header that names the lane does the bounding
+     the grey did, once for the whole list instead of once per fare.
 
-     Painted, never built, and here the rule is not a preference. This lane is
-     `auto`, so anything its box gains is taken out of the elastic legs track
-     and out of nothing else: measured, a 7px inset with a hairline cost the
-     stops lane 13 of the 75 the 775 threshold is derived from, and the
-     one-stop label — the one §5 says may not lose its airport code — clipped
-     at every width down the band. The `::before` leaves the track measuring
-     the two icons and puts the paint in the 12px gaps either side. No hairline
-     for the same reason the schedule block has none: this card bounds things
-     with grounds, not with borders. */
+     Centred in its lane rather than pushed to its end, because the header
+     centres «Eq.» over it and a column reads from its middle when its two
+     glyphs are narrower than its name. The pair measures 32 — two 14px icons
+     and the 4px between them — and the lane is 36, the four pixels the logo
+     gave up, so the icons are not flush against the elastic lane beside them. */
   .fd-card__baggage {
     position: relative;
     z-index: 0;
     display: inline-flex;
     grid-column: 4;
     align-items: center;
-    justify-self: end;
+    justify-self: center;
     gap: 4px;
-  }
-
-  .fd-card__baggage::before {
-    position: absolute;
-    z-index: -1;
-    border-radius: var(--fd-radius-8);
-    background: var(--fd-card-plate);
-    /* Same rule as the schedule block: the box stops at the icons and the two
-       7px wings are ink. Nothing measures this element's scroll area today, but
-       one leak of this kind already reached CI and the technique costs nothing
-       to keep uniform. */
-    box-shadow:
-      7px 0 0 var(--fd-card-plate),
-      -7px 0 0 var(--fd-card-plate);
-    content: "";
-    /* 14px of icon plus 6 above and below is the 26 of `--fd-control-chip`. */
-    inset: -6px 0;
   }
 
   .fd-card__bag {
@@ -251,71 +248,61 @@
   }
 
   /* ---- legs -------------------------------------------------------------
-   * Fixed lanes so the two rows align down the card: date 58, schedule 126,
-   * duration 50, stops elastic.
+   * Fixed lanes so the two rows align down the row and, now, down the whole
+   * list: tramo 56, horario 126, duración 66, escalas elastic, gaps of 12.
    *
    * The lanes live on the wrapper and both rows take them with `subgrid`, so
    * the alignment is a fact of the layout rather than two grids that happen to
-   * agree. That is also what lets the duration lane grow: the plate only ever
-   * drew sub-24h flights, so 50px fits «9h 30m» but not «1d 11h 10m», which
-   * overflowed its track and painted straight over the stops. `max-content`
-   * keeps 50 as the floor, gives the longer figure the room it needs — a
-   * duration is a cifra and 02 §13 forbids clipping one — and takes it from the
-   * elastic stops lane, which already ellipsises by design. */
-
-  /*
-   * The schedule block stands on a plate: its own ground, so «cuándo» reads as
-   * one object and the row stops being a ribbon of loose values floating
-   * between the airline and the price.
+   * agree — and the header above the list takes the same four lanes for the
+   * same reason.
    *
-   * One ground per block while the legs are stacked, one per leg when they sit
-   * side by side (below): the ground exists to bound the block, and two legs on
-   * one row would merge into a single band if they shared it.
+   * Every number here is measured against the loaded face, never estimated:
    *
-   * The ground is paint, so it is painted and never built into the box. Padding
-   * plus a negative margin gives the same picture and lies about the geometry:
-   * it grows the element's border box by 16px, and this box is measured — the
-   * result cell is pinned at `list - legs === 436` (#61), which reads
-   * `getBoundingClientRect()`, so the bleed version failed that assertion at
-   * every list between the stacking threshold and 1073 while the lanes inside
-   * it had not moved by a pixel. It also cost the row height it did not need:
-   * 8px per card on a phone, where the page is counted in rows.
+   *   · 56 for the tramo, where «IDA 28/05» measures 51.06 — the label is
+   *     Inter micro with 0.04em of tracking and the date is Plex Mono micro,
+   *     so it cannot be read off either face alone. 58 was the old lane; the
+   *     two pixels it gives up go into the duration's, which needed sixteen.
+   *   · 126 for the horario, where the desk row measures 114: two times at
+   *     13px, an 11px arrow lane, the day jump, and three 6px gaps.
+   *   · 66 for the duration, **fixed**, which is the one lane the header
+   *     changes. It was `minmax(50px, max-content)`, and `max-content`
+   *     resolves per row: a list where one fare says «1d 11h 10m» and the next
+   *     says «9h 30m» has two different geometries, and a column whose width
+   *     depends on the fare in it is not a column. `formatJourneyDuration`
+   *     emits `Nd Hh Mm` with no ceiling on the days, so the lane is fixed at
+   *     the measured worst case the application can put in it: «2d 11h 45m» is
+   *     ten characters, Plex Mono advances 0.6em, and 11 × 0.6 × 10 = 66.0
+   *     exactly — measured in the browser with the 600 weight loaded by name,
+   *     because `document.fonts.check` answers false for a weight the page has
+   *     not painted yet and `getComputedStyle` hands back the declared stack
+   *     rather than the painted face. The same string in the generic monospace
+   *     fallback measures 60.48, which is how the measurement knows it was the
+   *     real face that answered.
    *
-   * An absolutely positioned `::before` owes nothing to the layout: the content
-   * box, the lanes, the row height and every derivation below stay exactly
-   * where they were. `z-index: 0` on the wrapper is what keeps the `-1` inside
-   * this element instead of behind the card's own background.
+   * The ground under the block is gone, and it is gone from the phone in the
+   * same commit. It entered because nine fixed lanes left holes and «cuándo»
+   * did not read as one object; a header that names the lanes does that job
+   * once for the whole list instead of once per fare, and on the phone — where
+   * 360px has nowhere to put a header — a rule inside the card says the same
+   * thing. Neither surface is left with a fill the other does not have, which
+   * is the point: `--fd-card-plate` has no consumers left and is deleted with
+   * its dark-mode correction.
    *
-   * Its box stops at the track, and the 8px it reaches into the card's padding
-   * on one side and into the gap before the baggage on the other are box
-   * shadows — ink, never layout. An absolutely positioned child that overhangs
-   * to the inline end *is* scrollable overflow of its containing block, and
-   * `results.playwright.ts`'s «the card keeps a lane for the airport codes»
-   * measures exactly that: `legs.scrollWidth - legs.clientWidth`, which the
-   * inset version pushed to 8 at every desk width in this band. A shadow never
-   * enters that region, and it takes the ::before's radius with it, so the
-   * ground is one rounded block 16px wider than its own box.
+   * The side-by-side disposition is gone too, and with it ~87 lines and
+   * `__leg-wait`. It existed to fill a row too wide and too empty — the legs
+   * track had 700px on a 1920 desk and used 260 of them twice — and a table row
+   * with elastic lanes does not have that problem: the stops lane simply takes
+   * the slack, which is where the long wording lives anyway. Closing the second
+   * anatomy is what lets the header hold at every desk width; two dispositions
+   * would need two headers.
    */
   .fd-card__legs {
     position: relative;
-    z-index: 0;
     display: grid;
-    grid-template-columns: 58px 126px minmax(50px, max-content) minmax(0, 1fr);
+    grid-template-columns: 56px 126px 66px minmax(0, 1fr);
     min-width: 0;
     row-gap: 4px;
-    column-gap: 10px;
-  }
-
-  .fd-card__legs::before {
-    position: absolute;
-    z-index: -1;
-    border-radius: var(--fd-radius-8);
-    background: var(--fd-card-plate);
-    box-shadow:
-      8px 0 0 var(--fd-card-plate),
-      -8px 0 0 var(--fd-card-plate);
-    content: "";
-    inset: -4px 0;
+    column-gap: 12px;
   }
 
   .fd-card__leg {
@@ -324,121 +311,6 @@
     grid-template-columns: subgrid;
     align-items: center;
     line-height: 16px;
-  }
-
-  /*
-   * A wide list reads the trip as two plates, side by side.
-   *
-   * Two stacked legs are what left a third of the card empty on a 1920 desk:
-   * the legs track had 700px and used 260 of them, twice. Past the threshold
-   * below the outbound and the return sit side by side, each on its own
-   * ground, and the card reads as two blocks of «cuándo» instead of a two-line
-   * ribbon with a hole beside it.
-   *
-   * The threshold stays at 1073 and its derivation is now slack rather than
-   * fit. It was measured for the nine-track row this disposition used to be:
-   * each half 58 + 126 + 50 of fixed lanes, a 1px rule between the pair, gaps
-   * at 6 and the abbreviated «1 esc · BOG» at 60, which cost
-   * `2 × 234 + 1 + 48 + 2 × 60 = 637` of legs track — `list - 436`, so 1073.
-   * The plate costs less than that: 20px of inset, a schedule of 127 at
-   * `--body` and the long «1 escala · BOG» at 75 measure 222 per plate, so the
-   * pair with its 8px gap needs 452 against the 637 the threshold already
-   * grants. The 185 of slack is what buys back the wording 8c had to
-   * abbreviate here, and it is why this file no longer switches to the short
-   * form on a desk at all — only the phone does, where the lane really is too
-   * tight (§5's rule is unchanged: the disposition in force must fit its own
-   * one-stop label).
-   *
-   * Lowering the threshold to what the plate alone needs is left alone
-   * deliberately: below 1073 the pair fits but the two plates stop being
-   * legible as two, and the stacked pair below reads better in that band.
-   */
-  @container fdlist (min-width: 1073px) {
-    .fd-card .fd-card__legs {
-      display: flex;
-      column-gap: 8px;
-      row-gap: 0;
-    }
-
-    /* The ground moves down to each leg here: one band behind a pair that sits
-       side by side would draw the two tramos as one. */
-    .fd-card .fd-card__legs::before {
-      content: none;
-    }
-
-    /*
-     * Here the plate stops being a strip and becomes a block of two lines:
-     * day and duration above, schedule and stops below. The card row is 58 and
-     * a single line of leg used 16 of them, so the second line is drawn out of
-     * height the row already had — 3 + 14 + 2 + 16 + 3 = 38, still inside the
-     * 58 and still centred by the card's own `align-items`.
-     *
-     * `flex: 1 1 0` is what closes the hole this disposition was reported
-     * with: the plates split the elastic track between them, so two legs fill
-     * it and one leg fills it, and there is no arrangement left where a lane
-     * sized for a second leg sits empty. The 1px rule that used to separate
-     * the halves is gone with it — the 8px gap says the same thing, and the
-     * rule was drawn from the nine-track grid whether or not a return existed,
-     * which is why a one-way card carried a divider down the middle of an
-     * empty half.
-     *
-     * The inset is real padding here, not the base's bleed: each plate owns
-     * half of a track that measures 637 at this threshold, so the 20px it
-     * spends leaves the stops lane 157 against the 112 of «2 escalas · BOG,
-     * PTY» — which is why this disposition can afford the long wording the
-     * nine-track one had to abbreviate.
-     */
-    .fd-card .fd-card__leg {
-      display: grid;
-      min-width: 0;
-      flex: 1 1 0;
-      grid-template-rows: 14px 16px;
-      grid-template-columns: auto minmax(0, 1fr);
-      align-items: center;
-      padding: 3px 10px;
-      row-gap: 2px;
-      column-gap: 10px;
-      border-radius: var(--fd-radius-8);
-      background: var(--fd-card-plate);
-    }
-
-    .fd-card .fd-card__leg-label {
-      grid-area: 1 / 1;
-    }
-
-    .fd-card .fd-card__leg-duration {
-      grid-area: 1 / 2;
-    }
-
-    .fd-card .fd-card__leg-schedule,
-    .fd-card .fd-card__leg-unknown {
-      grid-area: 2 / 1;
-    }
-
-    .fd-card .fd-card__leg-stops {
-      grid-area: 2 / 2;
-      text-align: right;
-    }
-
-    /* The hour is the figure this row is read for, and the second line has the
-       16px to give it: the same `--body` the stacked card already uses for it. */
-    .fd-card .fd-card__leg-time {
-      font-size: var(--fd-text-body);
-    }
-
-    /*
-     * One leg, and the plate takes the whole track: 706px at the widest list,
-     * where a line of four values sits at the two extremes with half a card
-     * between them. That is the width the layover fills — «1 escala · CDG ·
-     * espera 2h 15m», a fact the agent otherwise opens the panel for, and the
-     * one the model only offers when a single stop makes it unambiguous.
-     *
-     * A pair of legs never shows it: there each plate has half the track and
-     * the stops lane is already the tightest thing on the row.
-     */
-    .fd-card .fd-card__legs:not(:has(.fd-card__leg + .fd-card__leg)) .fd-card__leg-wait {
-      display: inline;
-    }
   }
 
   .fd-card__leg-label {
@@ -518,13 +390,6 @@
     display: none;
   }
 
-  /* The layover is off by default and earns its way in one case only (below):
-     it is the least urgent thing the row can say, so it appears where the row
-     has width nobody else is asking for and nowhere else. */
-  .fd-card__leg-wait {
-    display: none;
-  }
-
   /* ---- price ------------------------------------------------------------ */
 
   /* Placed, not flowed: this lane and the two beside it come after an optional
@@ -572,10 +437,6 @@
     grid-column: 6;
   }
 
-  .fd-card__chevron {
-    display: none;
-  }
-
   .fd-card__provider {
     position: relative;
     z-index: 2;
@@ -595,15 +456,14 @@
     font-weight: var(--fd-weight-figure);
   }
 
-  /* ---- alternative schedules strip ------------------------------------- */
-
-  /* The 58px row is the card without a strip. A card that carries one takes
-     back the 10px of vertical padding, which is what put plate 1b's grouped
-     card at 68. */
-  .fd-card:has(.fd-card__alts) {
-    padding-block: 10px;
-  }
-
+  /* ---- alternative schedules strip -------------------------------------
+   * The row has no vertical padding to give back any more — it never had any
+   * to begin with, and 52 is a `min-height` a plain fare row reaches on its
+   * own. So a row that carries a strip is the fare row plus the strip and
+   * nothing else: 38 of legs (the tallest thing on the row, and what the row
+   * really measures once the `min-height` stops binding), 8 of air, the strip's
+   * own rule, 8 above the chips, the 26px chip and 2 below it, and the row's
+   * own hairline — 84, which is the 1.62 `RESULT_GROUP_CARD_WEIGHT` carries. */
   .fd-card__alts {
     position: relative;
     z-index: 2;
@@ -612,8 +472,8 @@
     min-width: 0;
     align-items: center;
     gap: 10px;
-    margin-top: 7px;
-    padding-top: 7px;
+    margin-top: 8px;
+    padding: 8px 0 2px;
     border-top: 1px solid var(--color-border);
   }
 
@@ -699,6 +559,99 @@
     background: var(--color-accent);
   }
 
+  /* ---- column header ----------------------------------------------------
+   *
+   * What replaces the grey plinth, and what makes the row a table row: the
+   * lanes are named once, above the list, instead of being bounded once per
+   * fare. «8h 05m» and «Directo» stop being patterns to decipher.
+   *
+   * It is the row's own class plus a modifier, so it takes the row's
+   * `grid-template-columns` and the legs block's four lanes from the rules
+   * above rather than restating them — a header whose tracks are a copy of the
+   * row's tracks is a header that goes stale on the first edit. That is also
+   * the reason the duration lane had to stop being `max-content`: a header
+   * lives in its own grid, so a lane sized to its own row's content resolves to
+   * a different width in the header than in every row below it.
+   *
+   * 26 tall against the row's 52, with the same 25% rule the three column
+   * headings across the screen use. No fill: the plinth is what this replaces,
+   * not what it becomes.
+   */
+  .fd-card--head {
+    min-height: 26px;
+    /* It is a flex item of `.fd-list-body`, beside the scroller and never
+       inside it: a header that scrolls with the rows is not a header, and one
+       mounted inside `.fd-results-list` would become that list's first child
+       and push the entrance cascade of `index.css` one position down. */
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--color-rule);
+    cursor: default;
+  }
+
+  .fd-card--head:hover {
+    background: transparent;
+  }
+
+  .fd-card--head .fd-card__legs {
+    row-gap: 0;
+  }
+
+  .fd-card__head-label {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-title);
+    letter-spacing: var(--fd-tracking-micro);
+    line-height: 1;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  /* Right over the lane it names, because the values under it are right-aligned
+     figures; «Eq.» is centred over its pair for the same reason. */
+  .fd-card__head-label--end {
+    justify-self: end;
+    text-align: right;
+  }
+
+  .fd-card__head-label--center {
+    justify-self: center;
+    text-align: center;
+  }
+
+  /*
+   * The order lives here now. «Ordenar · Precio | Duración» was a control of
+   * its own for something a column header already does, in the place everybody
+   * looks for it — so the two sortable columns became the control and the
+   * segmented one left the list header. It is still a radio group of two, which
+   * is what choosing one order out of two is (01 §3, 11 §8); only its shape
+   * changed, and the accessible names did not.
+   */
+  .fd-card__head-sort {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    border-radius: var(--fd-radius-4);
+    color: var(--color-muted-foreground);
+    cursor: pointer;
+    transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-card__head-sort:hover {
+    color: var(--color-foreground);
+  }
+
+  .fd-card__head-sort[aria-checked="true"] {
+    color: var(--color-foreground);
+  }
+
+  .fd-card__head-sort svg {
+    flex-shrink: 0;
+    color: var(--color-primary);
+  }
+
   /* ---- skeleton (2g · 4a) -----------------------------------------------
    * The skeleton is this card with the data switched off: it carries
    * `.fd-card` and the card's own element classes, so the grid, the paddings,
@@ -707,23 +660,23 @@
    * price, 10 title and time, 8 secondary — and the only thing that varies is
    * width, never a column. */
 
-  /* The card's own `background` and `box-shadow` stay: 2g and 4a draw the
-     skeleton row with a border and nothing else, but there the row sits on a
-     `var(--card)` panel, so the drawing says "the same as its container", not
-     "transparent". This list sits on `--color-background`, where copying the
-     drawing literally would flip the row to white the moment the data lands —
-     the one thing 04 §7 forbids. Do not "fix" this to transparent. */
+  /* The row is transparent with one hairline under it, and so is the bone row
+     — which is the whole of 04 §7's rule here: nothing may change when the
+     data lands, and the surface a skeleton stands on is the first thing that
+     would. The `background` and `box-shadow` this block used to restate went
+     with the card frame; there is nothing left to hold on to.
+
+     The `:hover` correction that used to sit here went with the border it
+     protected. It could not have fired anyway — `pointer-events: none` keeps
+     a bone row out of `:hover` entirely — and the row's hover is now a fill,
+     which the same declaration already suppresses. */
   .fd-card--skeleton {
     cursor: default;
     pointer-events: none;
     /* 2g draws the pulse on the row, not on each block: one breath per line,
-       border included, offset 120ms per row so the list reads as a wave. */
+       rule included, offset 120ms per row so the list reads as a wave. */
     animation: fd-pulso var(--fd-dur-pulso) ease-in-out infinite;
     animation-delay: calc(var(--fd-stagger-skeleton) * var(--fd-skeleton-row, 0));
-  }
-
-  .fd-card--skeleton:hover {
-    border-color: var(--color-border);
   }
 
   /* The blocks do not breathe on their own: two opacities multiplied would
@@ -732,7 +685,7 @@
     animation: none;
   }
 
-  /* The squares take their size from the card — 32 and 26 here, 24 and hidden
+  /* The squares take their size from the row — 28 and 26 here, 24 and hidden
      when stacked — and only their radius from the skeleton: 4a draws both at
      r8, like the logo and provider tiles they stand in for. */
   .fd-card--skeleton .fd-card__logo,
@@ -741,23 +694,17 @@
   }
 
   /* Inside the row every group breathes on 6: the blocks are shorter than the
-     lines they replace, so the card's own 2 and 4 would bunch them together. */
+     lines they replace, so the row's own 2 and 4 would bunch them together.
+     Rows only, for the legs — a `gap` here also moved the four lanes 2px off
+     the ones the real leg draws, and the lanes are the whole reason the
+     skeleton wears this component instead of being a grey rectangle. */
   .fd-card--skeleton .fd-card__carrier,
-  .fd-card--skeleton .fd-card__legs,
   .fd-card--skeleton .fd-card__price {
     gap: 6px;
   }
 
-  /* The plate is paint, not layout, and 4a draws bones straight on the card:
-     a grey block on a grey ground reads as a row that has already loaded. The
-     geometry never depended on it, so only the paint goes. */
-  .fd-card--skeleton .fd-card__legs::before,
-  .fd-card--skeleton .fd-card__baggage::before {
-    content: none;
-  }
-
-  .fd-card--skeleton .fd-card__leg {
-    background: none;
+  .fd-card--skeleton .fd-card__legs {
+    row-gap: 6px;
   }
 
   /* Two stacked lines rather than the card's name-and-operator pair of tracks:
@@ -778,7 +725,7 @@
 
   .fd-card--skeleton .fd-card__leg > :nth-child(3) {
     width: 44px;
-    /* The card right-aligns the duration inside its 50px lane; so does the
+    /* The row right-aligns the duration inside its 66px lane; so does the
        block, or the two leg rows stop lining up at the lane's right edge. */
     justify-self: end;
   }
@@ -787,15 +734,6 @@
      detail panel, whose price is a bigger figure. */
   .fd-card--skeleton .fd-skeleton-price {
     height: 12px;
-  }
-
-  /* The chevron exists only in the stacked layout, where 4a draws it as an
-     8 × 12 block instead of the 26px square of the provider. It is painted
-     here rather than with `.fd-skeleton-block` so the card keeps deciding,
-     unaided, which of the two is shown at each scale. */
-  .fd-card--skeleton .fd-card__chevron {
-    border-radius: var(--fd-radius-4);
-    background: var(--color-muted);
   }
 
   /* Rule 5 of the movement system: loops stop. The stagger token is already
@@ -810,7 +748,7 @@
    * The card's own leg lanes, plus the one column the card cannot fit: the
    * price difference against the schedule currently shown. */
 
-  /* 340, not a column count: a schedule is 240px of fixed lanes plus the stops
+  /* 340, not a column count: a schedule is 256px of fixed lanes plus the stops
      label the disposition draws, and «1 escala · BOG» measures 75. Three
      columns on the widest list, two from the stacking threshold up, one on a
      phone — decided by the panel's own width rather than by a breakpoint. */
@@ -843,9 +781,15 @@
     background: color-mix(in srgb, var(--color-primary) 7%, transparent);
   }
 
+  /* This panel borrows `.fd-card__leg-*` outside `.fd-card`, so it takes the
+     base type and none of the container-qualified rules — which is why its
+     lanes are restated here rather than inherited. The duration lane follows
+     the row's: 50 was the old floor and «2d 11h 45m» measures 66, so a fare
+     over a day long painted over the stops in this panel exactly as it did on
+     the row. 34 + 126 + 66 and three 10px gaps is the 256 above. */
   .fd-schedule-row__leg {
     display: grid;
-    grid-template-columns: 34px 126px 50px minmax(0, 1fr);
+    grid-template-columns: 34px 126px 66px minmax(0, 1fr);
     align-items: center;
     column-gap: 10px;
     line-height: 16px;
@@ -863,61 +807,84 @@
    * to the three-row anatomy from plate 8c.
    *
    * 02 §2 derives the number and lands on 660, but its sum leaves out the
-   * card's own `padding: 0 13` and its border. This file carried 750 while the
-   * legs track was `list - 436`, then 819 while the baggage lane was taken out
-   * of the result cell. The lane is now paid for out of «who flies» instead, so
-   * the track is `list - 436` again and the same measurement gives 775.
+   * row's own padding. This file carried 750 while the legs track was
+   * `list - 436`, then 819 while the baggage lane was taken out of the result
+   * cell, then 775 once the lane was paid for out of «who flies» instead.
    *
-   * The floor in the 750 was 50px, borrowed from the duration lane rather than
-   * measured. The measurement is 75: «1 escala · BOG» at 11px, the one-stop
-   * long form, which is the label §5 says may not lose its airport code. At 50
-   * the lane renders «1 escala…» and the code is gone, so between 750 and 775
-   * the desk anatomy was in force over a row that could not say where the
-   * flight stops.
+   * The rule behind all four is one rule: the anatomy in force must fit its own
+   * one-stop label. Measured against the loaded face that label is 75
+   * («1 escala · BOG» at 11px), and the row's fixed lanes are now 56 + 126 + 66
+   * with three 12px gaps — 284. So the desk anatomy needs `284 + 75 = 359` of
+   * legs track, and with the row's fixed measure at 428 the threshold is
+   * `359 + 428 = 787`.
    *
-   * 264 of fixed lanes (58 + 126 + 50 and three 10px gaps) + 75 = 339 of legs
-   * track, and `339 + 436` puts the threshold at 775. The rule is one rule at
-   * every scale: the anatomy in force must fit its own one-stop label. */
+   * It rose by 12 rather than falling with the frame, and the two halves say
+   * why: the row gave back 8 when it stopped being a card (436 → 428), and the
+   * duration lane took 20 when it stopped being `max-content` and became the
+   * fixed 66 the column header requires (264 → 284).
+   *
+   * The phone keeps the card. Deciding that the list is a table is a statement
+   * about a desk — 360px has no room for a column header, and with no header
+   * there is nothing to name the lanes a rule would have to bound. What the
+   * phone does give up is the grey plinth, in the same commit as the desk, so
+   * neither surface is left with a fill the other does not have; the rule
+   * inside the card is what replaces it here. */
 
-  @container fdlist (max-width: 774.98px) {
+  @container fdlist (max-width: 786.98px) {
+    /* No header below the threshold, which is also the answer for armazón C:
+       the stacked anatomy has three lanes and two rows, so a header drawn on
+       the desk's six would name lanes that are not there. It goes with the
+       disposition, not with a shell breakpoint. */
+    .fd-card--head {
+      display: none;
+    }
+
     .fd-card {
-      grid-template-columns: 24px minmax(0, 1fr) auto 14px;
-      /* Plate 8c: the four gaps of row 1 are 10. The chevron rides the same
-         gap rather than the card's 8 — a 2px difference nobody can see, and
-         the alternative is a negative margin on an icon. */
+      /* Three lanes, not four: the chevron is gone. It was decorative and
+         `aria-hidden`, the whole card has been the target since the hit was
+         introduced, and its 14px lane plus a 10px gap was 24 of the 310 a
+         360px phone has to spend — which is most of what buys the airport
+         code back below. */
+      grid-template-columns: 24px minmax(0, 1fr) auto;
       column-gap: 10px;
       row-gap: 8px;
       min-height: 0;
       padding: 11px 12px;
+      /* The frame the desk row dropped is restated here rather than inherited,
+         because on this surface it is still the right shape. */
+      border: 1px solid var(--color-border);
       border-radius: var(--fd-radius-14);
+      background: var(--color-card);
+      box-shadow: 0 1px 2px color-mix(in srgb, var(--color-foreground) 4%, transparent);
     }
 
-    /* Only the desk row gives its vertical padding back to a strip: there the
-       58px row has none to spend, here the card already carries 11 and keeps
-       it. Written out because `:has()` above outranks the bare `.fd-card` this
-       block now uses — while the stacked rules carried a `:not(--compact)` the
-       two were level and source order settled it, which is exactly the kind of
-       accident the guard was hiding. */
-    .fd-card:has(.fd-card__alts) {
-      padding-block: 11px;
+    .fd-card__hit {
+      border-radius: var(--fd-radius-12);
     }
 
-    /* Plate 8c puts the baggage on the carrier line, between the operator and
-       the price, so it takes a track of its own — and only when the fare has a
-       pair to draw, because an empty `auto` track still spends the 10px gap on
-       either side of it. Everything to its right is placed from the end of the
-       explicit grid (`-3`, `-2`), so the four-track card and the five-track one
-       are the same rule and not two. */
-    .fd-card:has(.fd-card__baggage) {
-      grid-template-columns: 24px minmax(0, 1fr) auto auto 14px;
-    }
-
+    /* A card has a border to mark with, so selection goes back to it: the desk
+       row's 2px left edge would cut across a 14px radius. Order matters — the
+       two are level in specificity, and the selected fill has to land after
+       the hover one. */
     .fd-card:hover {
-      border-color: var(--color-border);
+      background: var(--color-card);
+    }
+
+    .fd-card.is-selected {
+      border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-border));
+    }
+
+    .fd-card.is-schedule-changed {
+      border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-border));
+    }
+
+    .fd-card.is-selected::before,
+    .fd-card.is-schedule-changed::before {
+      content: none;
     }
 
     /* 07 §4 row 11, the same 12% the buttons take — as a colour, because a card
-       is a surface and the plate darkens surfaces, not the words on them. */
+       is a surface and the press darkens surfaces, not the words on them. */
     .fd-card:active {
       background: color-mix(in srgb, black 12%, var(--color-card));
     }
@@ -966,29 +933,37 @@
       content: "· ";
     }
 
-    /* Here the baggage is a grid item, not a flex child: the `flex` it used to
-       carry was inert, so auto-placement dropped the pair into an implicit
-       third row, right-aligned inside the 24px logo track — two icons on the
-       card's left edge, half of them outside the padding, and 22px of height
-       nobody drew. */
+    /*
+     * The pair comes down off the carrier line and stands at the end of the
+     * legs block, centred over the two tramos — where it is a property of the
+     * fare among the other properties of the fare, and where the carrier line
+     * gets its whole elastic lane back for the name.
+     *
+     * It is a sibling of the legs block, not a child of it, so it cannot be a
+     * track of that grid. It takes the same cell instead: both occupy card
+     * row 2 across every column, the legs block reserves a 32px fifth lane it
+     * never fills, and the pair right-aligns into exactly that lane. Nothing is
+     * positioned out of flow, so the legs block's scroll area — which CI
+     * measures — is untouched.
+     *
+     * `align-self: stretch` with the block's own 9px of rule-and-padding
+     * repeated on top is what centres the icons over the two leg rows rather
+     * than over the cell: the cell includes the filete above it, and centring
+     * in the cell would sit the pair 4.5px high.
+     */
     .fd-card .fd-card__baggage {
-      grid-column: 3;
-      grid-row: 1;
-    }
-
-    /* Bare here. The chip's ground would sit on the carrier row, 10px from the
-       price and 10 from the operator, where it reads as a third block on a row
-       that already carries two. The pair keeps the desk's meaning and loses
-       only its ground. */
-    .fd-card .fd-card__baggage::before {
-      content: none;
+      grid-column: 1 / -1;
+      grid-row: 2;
+      align-self: stretch;
+      justify-self: end;
+      padding-top: 9px;
     }
 
     /* 02 §6: price 16/800 over seats 10/700, stacked. `gap: 2` is the smallest
        rung of the 01 §3 scale; the 1px it carried was off the catalog and only
        ever read as "no gap". */
     .fd-card .fd-card__price {
-      grid-column: -3;
+      grid-column: 3;
       grid-row: 1;
       gap: 2px;
     }
@@ -1002,38 +977,63 @@
       display: none;
     }
 
-    .fd-card .fd-card__chevron {
-      display: block;
-      grid-column: -2 / -1;
-      grid-row: 1 / span 2;
-      align-self: center;
-      color: var(--color-muted-foreground);
-    }
-
-    /* The gap is 6, not the 8 of the plate — the same correction, and for the
-       same reason, as the schedule sub-grid below: the plate measured its lanes
-       against a face it never loaded. With the real one the elastic stops lane
-       lands at 51px inside the 301 the row has, and «1 esc · BOG» needs 54, so
-       the airport code the whole 750 threshold exists to protect was the first
-       thing to go. Three gaps at 6 return exactly the 6px that buys it, and
-       every width the plate pins (56/124/46) stays. It also puts the row on the
-       same 6 the stacked skeleton already uses for its lanes. */
+    /*
+     * The lanes, and the filete that replaces the plinth.
+     *
+     * Every number measured in the row itself, not on a bench — a bench with no
+     * tracking, no tabular figures and no loaded face has been wrong here three
+     * times already:
+     *
+     *   · 22 for the tramo in Exacto, where «VTA» measures 21.92. In Exacto the
+     *     rótulo loses its date (below): the search bar above the list already
+     *     states both dates, and repeating them twice per card down hundreds of
+     *     cards buys nothing. Flexible and Migratorio vary the dates per offer,
+     *     so there they stay and the lane is 56 — «VTA 28/05» measures 54.7,
+     *     the label and the date being two faces with two tracking values.
+     *   · 120 for the horario. The maqueta fixes it at 116 and claims 113
+     *     measured; the row measures 120 — two times at 14px (42 each, Plex
+     *     Mono at 0.6em), the 11px arrow lane, the 13px day lane and three 4px
+     *     gaps — so 116 would clip two digits. Measured, not copied.
+     *   · 60 for the duration, fixed for the same reason the desk's is: the
+     *     lane was `minmax(46px, max-content)` and resolved per row, so the
+     *     row's geometry was a function of the fare — the exact fault the
+     *     baggage lane was already fixed for. «2d 11h 45m» is ten characters at
+     *     10px, and 10 × 0.6 × 10 = 60.0 exactly.
+     *   · 32 for the pair: two 14px icons and the 4px between them.
+     *
+     * The gap goes from 6 to 4, and this is the third time the same arithmetic
+     * has moved it — the plate drew 8, the loaded face took it to 6, and the
+     * lanes above take it to 4. A 360px Android gives this block 310 (the
+     * viewport, less 12 of list padding and 12 of card padding on each side,
+     * less the card's two borders). 22 + 120 + 60 + 32 is 234, and four gaps at
+     * 6 leave the elastic stops lane 52 against the 54 «1 esc · BOG» measures —
+     * so the airport code the whole threshold exists to protect would have been
+     * the first thing the ellipsis ate, again. Four gaps at 4 leave 60, which
+     * also clears the widest three-letter code the label can carry
+     * («1 esc · MMM», 59.9).
+     *
+     * Flexible and Migratorio keep the date, so there the block needs 388px of
+     * viewport rather than 354 to hold the same code. That is 16px worse than
+     * the 372 this row asked for before, and it is the price of the pair coming
+     * down into the block; the alternative was a second anatomy chosen by mode,
+     * which is the kind of fork this change exists to close.
+     */
     .fd-card .fd-card__legs {
-      grid-column: 1 / -2;
+      grid-column: 1 / -1;
       grid-row: 2;
-      grid-template-columns: 56px 124px minmax(46px, max-content) minmax(0, 1fr);
+      grid-template-columns: 56px 120px 60px minmax(0, 1fr) 32px;
+      padding-top: 8px;
+      border-top: 1px solid var(--color-border);
       row-gap: 4px;
-      column-gap: 6px;
+      column-gap: 4px;
     }
 
-    /* The block keeps its ground here — the legs are stacked, so one band
-       bounds them — but the bleed drops from 8 to 6. The card's own padding is
-       12 on this side and the gap to the chevron is 10, so 8 would leave the
-       paint 4px and 2px from them; 6 keeps a visible margin on both. */
-    .fd-card .fd-card__legs::before {
-      box-shadow:
-        6px 0 0 var(--fd-card-plate),
-        -6px 0 0 var(--fd-card-plate);
+    .fd-results-list[data-mode="exact"] .fd-card .fd-card__legs {
+      grid-template-columns: 22px 120px 60px minmax(0, 1fr) 32px;
+    }
+
+    .fd-results-list[data-mode="exact"] .fd-card .fd-card__leg-date {
+      display: none;
     }
 
     .fd-card .fd-card__leg-date {
@@ -1046,9 +1046,8 @@
        The gap is 4, not the 6 of the plate: the plate never loaded Plex Mono
        700, so its bold times were synthesised from 600 and kept the 41px
        advance of the lighter face. With the real 700 each time measures 42, and
-       42+11+42+13 plus three 6px gaps is 126 inside a 124px lane — two pixels
-       of clipped digits. Dropping to the next gap down keeps every width the
-       plate pins (56/124/46, the 11px arrow lane, the 13px day lane). */
+       42+11+42+13 plus three 6px gaps is 126 — six pixels the lane above no
+       longer has. At 4 the block measures 120, which is exactly that lane. */
     .fd-card .fd-card__leg-schedule {
       display: grid;
       grid-template-columns: auto 11px auto 13px;
@@ -1085,11 +1084,9 @@
 
     /* ---- skeleton, stacked (4a) -----------------------------------------
      * The same row, derived from the same grid: 4a redraws it on the phone
-     * with the narrower leg lanes of plate 8c and one block per group. */
-
-    .fd-card--skeleton .fd-card__legs {
-      gap: 6px;
-    }
+     * with the narrower leg lanes of plate 8c and one block per group. The
+     * `gap: 6` that used to open this block restated the base rule and nothing
+     * else, so it went with the base rule's column half. */
 
     /* 04 §7 sobre el dibujo de 4a: los 82px que salen de la lámina móvil son
        emergentes de dibujar bloques de 10 donde el texto ocupa 16, no una
@@ -1102,8 +1099,12 @@
       min-height: 16px;
     }
 
+    /* The rótulo's lane is 22 in Exacto and 56 everywhere else, so a fixed
+       block would overflow one of the two. It fills whichever lane the mode in
+       force gives it — which is the only width that cannot jump when the data
+       lands. */
     .fd-card--skeleton .fd-card__leg > :nth-child(1) {
-      width: 38px;
+      width: 100%;
     }
 
     .fd-card--skeleton .fd-card__leg > :nth-child(3) {
@@ -1118,10 +1119,6 @@
       display: none;
     }
 
-    .fd-card--skeleton .fd-card__chevron {
-      width: 8px;
-      height: 12px;
-    }
   }
 
   /* 4a asks for «never more rows than the real page» and this used to answer it

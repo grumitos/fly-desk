@@ -174,12 +174,15 @@ test("round-trip flexible search sends matrix exact-stay payload", async () => {
     assert.match(bodyText, /5h 45m/);
     assert.match(bodyText, /6h 10m/);
     assert.doesNotMatch(bodyText, /Horario por confirmar/);
-    // 04 §3: the order is one segmented of two options — a radio group, so
-    // the chosen one carries `aria-checked` (01 §3, 11 §8).
+    /* 04 §3: the order is still one group of two options — a radio group, so
+       the chosen one carries `aria-checked` (01 §3, 11 §8) — but the group is
+       the column header now: «Duración» and «Precio» are the two sortable
+       columns and the order lives where everybody looks for it. So the two
+       radios arrive in column order rather than in the segmented's. */
     const sortControl = page.getByRole("radiogroup", { name: "Orden de resultados" });
     assert.deepEqual(
       (await sortControl.getByRole("radio").allTextContents()).map((label) => label.trim()),
-      ["Precio", "Duración"],
+      ["Duración", "Precio"],
     );
     assert.equal(await segment(page, "Ordenar por precio").getAttribute("aria-checked"), "true");
     assert.equal(await segment(page, "Ordenar por duración").getAttribute("aria-checked"), "false");

@@ -266,11 +266,18 @@ test("the header counts against the whole search, not against what the request a
     await page.waitForFunction(() =>
       document.querySelector(".fd-panel-count")?.textContent?.trim() === "2 de 5"
     );
+    /* The sentence moved. On a desk the strip of active chips is gone — the
+       filter rail is on screen the whole time and the strip was repeating it
+       250px away — and the one thing the strip said that the rail does not now
+       rides the count line beside «2 de 5». */
     await page.getByText("3 vuelos ocultos por filtros").waitFor();
     assert.equal(await page.getByTestId("result-card").count(), 2);
 
-    // Dropping the chip reveals the rest without a second request.
-    await page.getByRole("button", { name: /^Quitar filtro/ }).first().click();
+    /* And so did the way out of the filter: the chip's «x» is the phone's,
+       where the strip is the only voice the filters have. On a desk the rail's
+       own «Limpiar» is the gesture, and the claim is unchanged — dropping the
+       constraint reveals the rest without a second request. */
+    await page.getByRole("button", { name: "Limpiar filtros" }).click();
     await page.waitForFunction(() =>
       document.querySelectorAll('[data-testid="result-card"]').length === 5
     );

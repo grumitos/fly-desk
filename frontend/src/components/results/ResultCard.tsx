@@ -11,21 +11,21 @@ import {
 import "./result-card.css"
 
 /*
- * Plate 1b — the result card.
+ * Plate 1b — the result row.
  *
- * Grid: 32 / 142 / 1fr / auto / 116 / 26. The logo, «who flies», the two legs,
+ * Grid: 28 / 142 / 1fr / 36 / 116 / 26. The logo, «who flies», the two legs,
  * the baggage, the price with its per-person line, and the provider icon.
  * Baggage holds a track of its own because it is a property of the fare and not
  * of the airline; the lane it cost was taken out of «who flies», which fell from
  * 186 to 142, and not out of the result cell.
  *
- * Past 1073px of list the legs stop stacking inside their track: each becomes a
- * plate with `flex: 1 1 0`, so a pair splits the one elastic track between them
- * and a one way fills it alone — no lane is left sized for a leg that is not
- * there. Every number above is derived in `result-card.css`.
+ * Same lanes, same type, same order as the card this used to be — what changed
+ * is the recipient: a border, a radius and a shadow per fare became one rule
+ * under each, and a header above the list that names the lanes. Nothing in this
+ * file decides that; every number is derived in `result-card.css`.
  *
  * The alternative schedules used to be N further rows, each repeating a carrier
- * and a price that had not changed. They are now a single strip inside the card
+ * and a price that had not changed. They are now a single strip inside the row
  * that owns them, so the list stays one row per fare.
  */
 
@@ -158,7 +158,6 @@ export function ResultCard({
       </div>
 
       <ProviderMark provider={model.provider} />
-      <AppIcon name="chevronRight" size={16} className="fd-card__chevron" aria-hidden="true" />
 
       {alternates.length > 0 && onSelectAlternate && (
         <div className="fd-card__alts">
@@ -285,18 +284,14 @@ function LegRow({ leg }: { leg: ResultLegModel }) {
 
       <span className="fd-card__leg-duration">{leg.duration}</span>
       {/* Both wordings ride along and the container query picks one: the
-          stacked card's stops lane is 57px, which fits "1 esc · BOG" and not
-          "1 escala · BOG" (02 §6). From two stops the short form is the bare
-          count, because no arrangement of «2 esc · BOG, PTY» fits 57. Neither
-          is spoken — the card's label is built from the long form. */}
+          stacked row's stops lane is 60px on a 360px phone, which fits
+          "1 esc · BOG" (54) and not "1 escala · BOG" (68). From two stops the
+          short form is the bare count, because no arrangement of
+          «2 esc · BOG, PTY» fits 60. Neither is spoken — the row's label is
+          built from the long form. */}
       <span className="fd-card__leg-stops" title={leg.stopsTitle}>
         <span className="fd-card__leg-stops-long">{leg.stopsLabel}</span>
         <span className="fd-card__leg-stops-short">{leg.stopsShortLabel}</span>
-        {/* The layover, drawn only where the disposition has room to spare: a
-            single leg on a wide list, which is the one case where the plate
-            would otherwise stretch a line of four values across 700px. The CSS
-            owns that decision — this only offers the words. */}
-        {leg.waitLabel && <span className="fd-card__leg-wait"> · {leg.waitLabel}</span>}
       </span>
     </div>
   )

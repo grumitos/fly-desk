@@ -1623,9 +1623,12 @@ test("07 §1 · the desk hands the workspace its cues in the order of the table"
     // 60 ms · the block of fields and the segments travel on `estructura`.
     assert.match(find("fd-search-frame") ?? "", / · 60 · 220$/, all);
     assert.match(find("fd-trip-mode-controls") ?? "", / · 60 · 220$/, all);
-    // 140 ms · filters from the left, detail from the right, the list by opacity.
+    /* 140 ms · filters from the left, detail from the right, the list by
+       opacity. The detail's own class, not `.fd-panel`: the column stopped
+       being a card and `.fd-panel` no longer exists anywhere, so a selector
+       naming it would match nothing and lose this row in silence. */
     assert.match(find("fd-filter-column") ?? "", /fd-enter-left · 140 · 220$/, all);
-    assert.match(find("fd-panel") ?? "", /fd-enter-right · 140 · 220$/, all);
+    assert.match(find("fd-detail-panel") ?? "", /fd-enter-right · 140 · 220$/, all);
     assert.match(find("div.fd-list ·") ?? "", /fd-crossfade · 140 · 220$/, all);
     // 180 ms · the skeleton, with the real grid. 180 + 220 = 400, inside 420.
     assert.match(find("fd-results-list--skeleton") ?? "", /fd-crossfade · 180 · 220$/, all);

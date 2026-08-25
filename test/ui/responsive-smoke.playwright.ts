@@ -183,7 +183,7 @@ for (const viewport of VIEWPORTS) {
        */
       const cardLayout = await card.evaluate((element) => {
         const provider = element.querySelector<HTMLElement>(".fd-card__provider");
-        const chevron = element.querySelector<HTMLElement>(".fd-card__chevron");
+        const baggage = element.querySelector<HTMLElement>(".fd-card__baggage");
         const carrier = element.querySelector<HTMLElement>(".fd-card__carrier");
         const carrierName = element.querySelector<HTMLElement>(".fd-card__carrier-name");
         const carrierOperator = element.querySelector<HTMLElement>(".fd-card__carrier-operator");
@@ -197,7 +197,11 @@ for (const viewport of VIEWPORTS) {
         return {
           columns: getComputedStyle(element).gridTemplateColumns,
           providerVisible: provider ? getComputedStyle(provider).display !== "none" : false,
-          chevronVisible: chevron ? getComputedStyle(chevron).display !== "none" : false,
+          baggageRow: baggage ? getComputedStyle(baggage).gridRow : "",
+          headVisible: (() => {
+            const head = document.querySelector<HTMLElement>("[data-testid='results-column-head']");
+            return Boolean(head) && getComputedStyle(head as HTMLElement).display !== "none";
+          })(),
           carrierRight: carrierBox?.right ?? 0,
           carrierNameWidth: carrierNameBox?.width ?? 0,
           carrierOperatorRight: carrierOperatorBox?.right ?? 0,
@@ -212,29 +216,38 @@ for (const viewport of VIEWPORTS) {
       /*
        * 02 §2: the disposition answers to the width of the list, not to the
        * shell, so the expectation is read off the same container the CSS asks.
-       * The threshold is 775 — the manual says 660, but its sum omits the
-       * card's own padding and border; 750 was the same measurement before the
-       * elastic lane's floor was measured rather than borrowed from the
-       * duration lane, and 819 was it while the baggage lane was charged to the
-       * result cell instead of to «who flies». That is the point of the last
-       * assertion: whichever disposition the list lands in, the airport codes
-       * still have a box to live in.
+       * The threshold is 787 — the manual says 660, but its sum omits the row's
+       * own padding; 750 was the same measurement before the elastic lane's
+       * floor was measured rather than borrowed from the duration lane, 819 was
+       * it while the baggage lane was charged to the result cell instead of to
+       * «who flies», and 775 was it while the row was still a card with a
+       * `max-content` duration lane. It is `428 + 284 + 75` now. That is the
+       * point of the last assertion: whichever disposition the list lands in,
+       * the airport codes still have a box to live in.
        */
-      const stacked = cardLayout.listWidth < 775;
+      const stacked = cardLayout.listWidth < 787;
       if (stacked) {
-        // 02 §6: the provider icon leaves for the detail, the chevron gets its
-        // own 14px column.
+        /* 02 §6: the provider icon leaves for the detail. The chevron left with
+           it — it was decorative and `aria-hidden`, and its lane was 24 of the
+           310 a 360px phone has — so the stacked row is three lanes, and the
+           baggage pair has come down to the legs block, centred over the two
+           tramos on the card's second row. There is no column header here
+           either: three lanes and two rows have nothing a six-lane header
+           could name. */
         assert.equal(cardLayout.providerVisible, false, JSON.stringify(cardLayout));
-        assert.equal(cardLayout.chevronVisible, true, JSON.stringify(cardLayout));
-        assert.match(cardLayout.columns, /14px$/);
+        assert.equal(cardLayout.headVisible, false, JSON.stringify(cardLayout));
+        assert.match(cardLayout.columns, /^24px [\d.]+px [\d.]+px$/);
+        assert.equal(cardLayout.baggageRow, "2", JSON.stringify(cardLayout));
       } else {
         /* 8c's 32 / 186 / 1fr / 116 / 26, with the baggage lane paid for out of
-           «who flies» rather than out of the result cell: 32 / 142 / 1fr / 32 /
-           116 / 26. Column 2 still stops before the legs track. */
+           «who flies» rather than out of the result cell, and the logo's four
+           pixels moved into the baggage lane so the header above can name it:
+           28 / 142 / 1fr / 36 / 116 / 26. Column 2 still stops before the legs
+           track, and the header is drawn on the same six lanes. */
         assert.ok(cardLayout.carrierRight <= cardLayout.legsLeft + 1, JSON.stringify(cardLayout));
         assert.equal(cardLayout.providerVisible, true, JSON.stringify(cardLayout));
-        assert.equal(cardLayout.chevronVisible, false, JSON.stringify(cardLayout));
-        assert.match(cardLayout.columns, /^32px 142px /);
+        assert.equal(cardLayout.headVisible, true, JSON.stringify(cardLayout));
+        assert.match(cardLayout.columns, /^28px 142px /);
       }
       assert.ok(cardLayout.stopsWidth >= 32, JSON.stringify(cardLayout));
 
@@ -718,8 +731,14 @@ test("the desk card gives the codeshare a line and the trip a single row", async
      * desk. The baggage icons had taken the second line of the carrier column,
      * which is where the operating airline belongs — the one fact the passenger
      * meets at the counter. Baggage is a property of the fare, so it travels
-     * with the price. And two stacked legs left a third of a 1920 card empty:
-     * past 1073px of list they read side by side.
+     * with the price.
+     *
+     * The third was two stacked legs leaving a third of a 1920 card empty, and
+     * the answer was a side-by-side pair past 1073px of list. That disposition
+     * is retired: a table row's stops lane takes the slack by itself — it is
+     * 432px at 1920 — and a second anatomy would need a second column header.
+     * So the legs stack at every desk width now, and this case pins that: the
+     * two leg rows have different tops at 1440 *and* at 1920.
      */
     await page.route("**/api/locations**", async (route) => {
       await route.fulfill({
@@ -774,7 +793,7 @@ test("the desk card gives the codeshare a line and the trip a single row", async
       });
     });
 
-    for (const [width, sideBySide] of [[1440, false], [1920, true]] as const) {
+    for (const width of [1440, 1920] as const) {
       await page.setViewportSize({ width, height: 940 });
       await openSharedSearchLink(page, `${baseUrl}/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-09-12&return=2026-09-19&adults=1&children=0&infants=0`);
       await page.getByTestId("result-card").first().waitFor();
@@ -803,15 +822,17 @@ test("the desk card gives the codeshare a line and the trip a single row", async
       // Baggage sits with the fare it belongs to, between the legs and the price.
       assert.ok(card.baggageLeft > card.carrierRight, JSON.stringify(card));
       assert.ok(card.baggageLeft < card.priceLeft, JSON.stringify(card));
-      // 8c keeps the 58px row either way.
-      assert.equal(card.height, 58, JSON.stringify(card));
+      /* 52 either way: plate 1b's row, with its hairline inside the height and
+         no padding but the horizontal 10. It was 58 while the row was a card
+         whose 13px padding and 1px border were part of it. */
+      assert.equal(card.height, 52, JSON.stringify(card));
       assert.equal(card.legTops.length, 2, JSON.stringify(card));
-      assert.equal(card.legTops[0] === card.legTops[1], sideBySide, JSON.stringify(card));
+      assert.equal(card.legTops[0] === card.legTops[1], false, JSON.stringify(card));
     }
   }, { autoOpen: false });
 });
 
-test("the stacked card keeps the baggage on the carrier line and the stops whole", async () => {
+test("the stacked card keeps the baggage over its legs and the stops whole", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     /*
      * The phone counterpart of the test above, and the two things the stacked
@@ -821,6 +842,13 @@ test("the stacked card keeps the baggage on the carrier line and the stops whole
      * it outside the card's own padding. And the stops lane, 57px, was
      * ellipsising «2 esc · PTY, MIA» down to a dangling «2 esc…», hiding the
      * codes it was being cut to show.
+     *
+     * The pair has moved since: it is the fifth lane of the legs block now,
+     * centred over the two tramos, where it is a property of the fare among the
+     * other properties of the fare — and where it gives the carrier line its
+     * whole elastic lane back for the name. It is still a grid item with an
+     * explicit placement, which is the half of this case that catches the
+     * original defect, and it is still inside the card's own padding.
      */
     await page.route("**/api/locations**", async (route) => {
       await route.fulfill({
@@ -902,6 +930,7 @@ test("the stacked card keeps the baggage on the carrier line and the stops whole
         const node = element.querySelector<HTMLElement>(selector);
         return node ? node.getBoundingClientRect() : null;
       };
+      const baggageNode = element.querySelector<HTMLElement>(".fd-card__baggage");
       const baggage = rectOf(".fd-card__baggage");
       const carrier = rectOf(".fd-card__carrier");
       const price = rectOf(".fd-card__price");
@@ -912,10 +941,12 @@ test("the stacked card keeps the baggage on the carrier line and the stops whole
         height: Math.round(box.height),
         contentLeft: box.left + Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.borderLeftWidth),
         contentRight: box.right - Number.parseFloat(style.paddingRight) - Number.parseFloat(style.borderRightWidth),
-        baggage: baggage && { left: baggage.left, right: baggage.right, bottom: baggage.bottom },
+        baggage: baggage && { left: baggage.left, right: baggage.right, top: baggage.top, bottom: baggage.bottom },
+        baggageRow: baggageNode ? getComputedStyle(baggageNode).gridRow : "",
         carrierRight: carrier?.right ?? 0,
         priceLeft: price?.left ?? 0,
         legsTop: legs?.top ?? 0,
+        legsRight: legs?.right ?? 0,
         stops: Array.from(element.querySelectorAll<HTMLElement>(".fd-card__leg-stops")).map((lane) => ({
           text: lane.querySelector<HTMLElement>(".fd-card__leg-stops-short")?.textContent?.trim() ?? "",
           clientWidth: lane.clientWidth,
@@ -926,15 +957,18 @@ test("the stacked card keeps the baggage on the carrier line and the stops whole
 
     // 8c: two rows and no third. The implicit one cost 22px of card height.
     assert.equal(card.rows, 2, JSON.stringify(card));
-    assert.match(card.columns, /14px$/);
-    // The pair rides the carrier line, between the operator and the price, and
-    // stays inside the card's own padding on both sides.
+    /* Three lanes, and the last of them is the price rather than a 14px
+       chevron: the chevron was decorative, `aria-hidden`, and its lane plus its
+       gap was 24 of the 310 a 360px phone has to spend on a row. */
+    assert.match(card.columns, /^24px [\d.]+px [\d.]+px$/);
+    /* The pair stands at the end of the legs block, centred over the two leg
+       rows, and inside the card's own padding on both sides. */
     assert.ok(card.baggage, JSON.stringify(card));
     assert.ok(card.baggage!.left >= card.contentLeft - 0.5, JSON.stringify(card));
     assert.ok(card.baggage!.right <= card.contentRight + 0.5, JSON.stringify(card));
-    assert.ok(card.baggage!.left >= card.carrierRight, JSON.stringify(card));
-    assert.ok(card.baggage!.right <= card.priceLeft, JSON.stringify(card));
-    assert.ok(card.baggage!.bottom <= card.legsTop, JSON.stringify(card));
+    assert.equal(card.baggageRow, "2", JSON.stringify(card));
+    assert.ok(card.baggage!.top >= card.legsTop - 0.5, JSON.stringify(card));
+    assert.ok(card.baggage!.left >= card.legsRight - 40, JSON.stringify(card));
     // 02 §13 forbids clipping a cifra, and an ellipsis here eats the airports.
     assert.equal(card.stops.length, 2, JSON.stringify(card));
     assert.equal(card.stops[0].text, "2 esc", JSON.stringify(card));

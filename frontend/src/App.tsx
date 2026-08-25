@@ -1061,7 +1061,7 @@ export default function App() {
                     onOpenFilters={shellSize === "C" ? () => setWorkspaceOverlay("filters") : undefined}
                     onMobileToolsCollapsedChange={setMobileToolsCollapsed}
                     mobileCollapseEnabled={shellSize === "C"}
-                    chipsPlacement={shellSize === "C" ? "external" : "list"}
+                    chipsPlacement={shellSize === "C" ? "external" : "none"}
                   />
                 </div>
 
@@ -1274,15 +1274,19 @@ const FiltersPanel = memo(function FiltersPanel({
   const baggageValue = baggageFilterValue(filters)
 
   return (
-    /* One component, two containers (rule of 02 §7): on a desk it is the 248px
-       card of plate 8a; inside the partial sheet of plate 1e it drops the card
-       chrome and its own padding, because there the sheet's body is the only
-       thing that scrolls and the sheet's 16/14/8 padding is the one the plate
-       measures the segmented air against. */
-    <aside className={embedded ? "fd-filter-panel fd-filter-panel--sheet" : "fd-panel fd-filter-panel"}>
-      {!embedded && <header className="fd-panel-header fd-filter-panel-header">
+    /* One component, two containers (rule of 02 §7), and the fork between them
+       is one class shorter than it was. The desk column used to be a card and
+       the sheet was not, so the panel carried `.fd-panel` in one branch and
+       dropped it in the other; the column is now the same flat rail the sheet
+       has always drawn — a filter panel is not an object, it is the control of
+       the list beside it, and a box around it presents it as a thing apart from
+       the results it governs. What is left in the branch is what the sheet
+       genuinely does differently: it does not scroll itself and it has no
+       header, because the sheet draws one. */
+    <aside className={embedded ? "fd-filter-panel fd-filter-panel--sheet" : "fd-filter-panel"}>
+      {!embedded && <header className="fd-filter-panel-header">
         <div className="fd-filter-panel-heading">
-          <h2 className="fd-panel-title">Filtros</h2>
+          <h2 className="fd-filter-panel-title">Filtros</h2>
           {activeFilterCount > 0 && (
             <span className="fd-status-pill fd-status-pill-count">{activeFilterCount}</span>
           )}

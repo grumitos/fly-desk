@@ -219,23 +219,32 @@ export function resultListItemContainsOffer(item: ResultListItem, offerId: strin
 }
 
 /**
- * What a group row costs, in plain-card slots.
+ * What a group row costs, in plain-row slots.
  *
  * A group used to cost one card per alternative schedule. Plate 1b folds them
- * into a single strip inside the card that owns them, so the whole group is now
- * one card and part of another — regardless of how many alternatives it holds,
+ * into a single strip inside the row that owns them, so the whole group is now
+ * one row and part of another — regardless of how many alternatives it holds,
  * because the strip scrolls sideways instead of growing.
  *
- * A card that carries the alternatives strip takes back its vertical padding
- * and adds the strip itself, so it measures 101px against the plain card's 58.
- * With the list's 6px gap a slot is 64 and a group is 107, which is 1.67.
+ * A row that carries the strip has no vertical padding to give back — the row
+ * never had any — so it is the fare row plus the strip. Measured in the running
+ * app, the two grid rows are 38 and 45: 38 is the legs block, the tallest thing
+ * on a fare row and the reason a group row is shorter than the 52 a plain one
+ * is held at; 45 is the strip's 8px of margin plus its own 37 (a 1px rule, 8
+ * above the chips, the 26px chip, 2 below it). With the row's hairline that is
+ * 84 against the plain row's 52, and with the list's gap now 0 a slot is 52 and
+ * a group is 84, which is 1.62.
  *
- * Exported because `ResultsPanel` divides a measured card height by the same
- * number to recover the plain-card unit from a column that holds nothing but
+ * It was 1.67 (107 over 64) while the row was a 58px card with a 6px gap under
+ * it. Left alone, the column would have been measured with a group counted 3%
+ * heavier than it is, and a list that opens on a measured number opens short.
+ *
+ * Exported because `ResultsPanel` divides a measured row height by the same
+ * number to recover the plain-row unit from a column that holds nothing but
  * groups. It restated the literal instead, which left the two one edit apart
  * from disagreeing about what a group costs.
  */
-export const RESULT_GROUP_CARD_WEIGHT = 1.67
+export const RESULT_GROUP_CARD_WEIGHT = 1.62
 
 /* Module-private: the window below is the only thing that weighs an item now.
    It was exported for the paginator, which is gone. */
