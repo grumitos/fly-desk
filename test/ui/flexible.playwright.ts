@@ -174,12 +174,15 @@ test("round-trip flexible search sends matrix exact-stay payload", async () => {
     assert.match(bodyText, /5h 45m/);
     assert.match(bodyText, /6h 10m/);
     assert.doesNotMatch(bodyText, /Horario por confirmar/);
-    // 04 §3: the order is one segmented of two options — a radio group, so
-    // the chosen one carries `aria-checked` (01 §3, 11 §8).
+    // 04 §3: the order is one segmented — a radio group, so the chosen one
+    // carries `aria-checked` (01 §3, 11 §8). Its options are the closed
+    // catalogue of `SORT_MODES`: what the backend can order by is what the
+    // control is allowed to offer, and this list is the assertion that the two
+    // have not drifted apart on the screen.
     const sortControl = page.getByRole("radiogroup", { name: "Orden de resultados" });
     assert.deepEqual(
       (await sortControl.getByRole("radio").allTextContents()).map((label) => label.trim()),
-      ["Precio", "Duración"],
+      ["Precio", "Duración", "Salida", "Escalas"],
     );
     assert.equal(await segment(page, "Ordenar por precio").getAttribute("aria-checked"), "true");
     assert.equal(await segment(page, "Ordenar por duración").getAttribute("aria-checked"), "false");

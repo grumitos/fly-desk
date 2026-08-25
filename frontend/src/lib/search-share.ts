@@ -1,5 +1,5 @@
 import { fromBackendRequest, toBackendPayload, type BackendSearchRequest } from "@/lib/api"
-import type { SearchRequest, SortMode } from "@/types"
+import { isSortMode, type SearchRequest, type SortMode } from "@/types"
 
 const SEARCH_SHARE_PAYLOAD_TYPE = "fly-desk-search-config"
 const SEARCH_SHARE_PAYLOAD_VERSION = 2
@@ -324,10 +324,15 @@ function normalizeFrontendRequest(value: unknown): SearchRequest | null {
   }
 }
 
+/*
+ * A shared link carries its order in `?sort=`, so this list and the backend's
+ * have to be the same one or the link arrives saying one order and the search
+ * runs in another. That is why it comes from the catalogue, and why an unknown
+ * `sort` — a link from a later build, or a tampered one — falls back to price
+ * instead of breaking the link on the way in.
+ */
 function normalizeSortMode(value: unknown): SortMode {
-  return value === "cheapest" || value === "fastest"
-    ? value
-    : "cheapest"
+  return isSortMode(value) ? value : "cheapest"
 }
 
 function normalizeSearchMode(value: unknown): SearchRequest["searchMode"] {

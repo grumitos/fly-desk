@@ -1884,6 +1884,47 @@ test("search endpoint defaults unsupported sort mode to cheapest", async () => {
   });
 });
 
+test("search endpoint accepts the departure and stops orders end to end", async () => {
+  /* The order criterion crosses the contract: it leaves the browser in the
+     request body, comes in through `resolveSortMode`, is stored on the job and
+     comes back in the response. The job answering with it is what proves the
+     backend took it rather than quietly degrading it to price on the way. */
+  for (const sortMode of ["departure", "stops"] as const) {
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/search`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sortMode,
+          request: {
+            tripType: "round-trip",
+            searchMode: "exact",
+            legs: [
+              {
+                origin: "LIM",
+                destination: "MAD",
+                departureDate: "2026-04-15",
+                returnDate: "2026-04-22",
+              },
+            ],
+            passengers: {
+              adults: 1,
+              children: 0,
+              infants: 0,
+            },
+          },
+        }),
+      });
+
+      assert.equal(response.status, 200);
+      const payload = await response.json() as { sortMode?: string };
+      assert.equal(payload.sortMode, sortMode);
+    });
+  }
+});
+
 test("costamar redirect refreshes the stored token with the latest Chrome session", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "flydesk-costamar-redirect-"));
   const profileName = "Profile 40";

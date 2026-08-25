@@ -2,9 +2,11 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   prepareSearchContract,
+  resolveSortMode,
   validateSearchContract,
   type SearchPayload,
 } from "../src/http-search-contract";
+import { SORT_MODES } from "../src/core/types";
 import {
   MAX_LAP_INFANTS_PER_ADULT,
   MAX_SEARCH_PASSENGERS,
@@ -111,4 +113,23 @@ test("round-trip stay-range rejects excessive stay length and fan-out", () => {
 
   assert.ok(excessiveStay.some((message) => message.includes("Stay length cannot exceed 90 nights.")));
   assert.ok(excessiveFanOut.some((message) => message.includes("cannot exceed 5000 combinations")));
+});
+
+test("the sort catalogue is what the request is validated against", () => {
+  /* The order criterion travels in the request and the backend applies it,
+     so what this resolver accepts IS the contract: if the catalogue and this
+     door drift apart, the frontend offers an order the server cannot serve. */
+  for (const mode of SORT_MODES) {
+    assert.equal(resolveSortMode(mode), mode);
+  }
+
+  assert.deepEqual([...SORT_MODES], ["cheapest", "fastest", "departure", "stops"]);
+});
+
+test("an unknown sort mode falls back to price instead of failing the search", () => {
+  /* An older client, or a link shared before the two new orders existed,
+     still gets its list. */
+  for (const mode of ["unsupported", "", null, undefined, 7, { mode: "stops" }, ["stops"]]) {
+    assert.equal(resolveSortMode(mode), "cheapest");
+  }
 });

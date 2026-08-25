@@ -4,7 +4,7 @@ import type { Page, Route } from "playwright";
 import type { CanonicalOffer, Itinerary } from "../../src/core/types";
 import { registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
-import { openSearchUrlWithoutLaunching, openSharedSearchLink } from "./support.ts";
+import { clickSegment, openSearchUrlWithoutLaunching, openSharedSearchLink, segment } from "./support.ts";
 
 registerDesktopHarness();
 
@@ -2805,5 +2805,307 @@ test("an offer whose schedule is already inside a group is not drawn a second ti
     assert.ok(independent, JSON.stringify(shown));
     // The card that survives on its own is the one that differs on price.
     assert.match(independent.price, /421/, JSON.stringify(shown));
+  }, { autoOpen: false });
+});
+
+/*
+ * The order, which is a contract and not a screen preference.
+ *
+ * The criterion travels in the body of `POST /api/search` and the backend is
+ * what sorts (`src/core/ranking.ts::sortOffers`). These two cases cover the two
+ * halves a browser can check: that the control offers exactly the four criteria
+ * the server knows how to serve, and that a link asking for one of the new ones
+ * reaches the list in the order the server gave it — without the client
+ * reshuffling it on its own.
+ */
+test("the order offers the four criteria the backend can serve", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, { offers: [oneStopOffer(1), oneStopOffer(2)] });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+
+    const order = page.getByRole("radiogroup", { name: "Orden de resultados" });
+    assert.deepEqual(
+      await order.getByRole("radio").evaluateAll((nodes) => nodes.map((node) => ({
+        value: node.getAttribute("data-segment"),
+        label: node.textContent?.trim() ?? "",
+      }))),
+      [
+        { value: "cheapest", label: "Precio" },
+        { value: "fastest", label: "Duración" },
+        { value: "departure", label: "Salida" },
+        { value: "stops", label: "Escalas" },
+      ],
+    );
+
+    /* The control is a radiogroup: choosing one of the new options leaves it
+       chosen and rewrites the workspace link, which is what lets the same list
+       be reopened in the same order. */
+    await clickSegment(segment(page, "Ordenar por número de escalas"));
+    await page.waitForFunction(() => new URL(location.href).searchParams.get("sort") === "stops");
+  }, { autoOpen: false });
+});
+
+test("a link that asks for departure order gets the list the backend ordered", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    /* The test server really sorts: it answers with the offers by departure
+       time, which is not their order by price. If the client reordered what
+       arrives already ordered, this case would see it. */
+    const byDeparture = [
+      { id: "dep-0600", amount: 900, departureAt: "2026-05-28T06:00:00Z" },
+      { id: "dep-0900", amount: 700, departureAt: "2026-05-28T09:00:00Z" },
+      { id: "dep-1400", amount: 600, departureAt: "2026-05-28T14:00:00Z" },
+      { id: "dep-2000", amount: 500, departureAt: "2026-05-28T20:00:00Z" },
+    ];
+    let requestedSortMode: unknown;
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suggestions: [] }) });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      requestedSortMode = payload.sortMode;
+      const offers = byDeparture.map((entry) => buildOffer({
+        id: entry.id,
+        destination: "MAD",
+        price: {
+          total: { amount: entry.amount, currencyCode: "USD" },
+          base: { amount: entry.amount - 90, currencyCode: "USD" },
+          taxes: { amount: 90, currencyCode: "USD" },
+        },
+        comparisonMetrics: { totalDurationMinutes: 1390, totalStops: 0, baggageScore: 2, purchasePathScore: 1 },
+        itineraries: [
+          {
+            id: `${entry.id}-outbound`,
+            direction: "outbound",
+            durationMinutes: 700,
+            stops: 0,
+            layoverMinutes: [],
+            segments: [{
+              id: `${entry.id}-o1`,
+              flightNumber: "LA 123",
+              marketingCarrier: "LA",
+              origin: "LIM",
+              destination: "MAD",
+              departureAt: entry.departureAt,
+              arrivalAt: "2026-05-28T23:40:00Z",
+              durationMinutes: 700,
+            }],
+          },
+          /* The return is the same for all four, on purpose: what orders them
+             is the first leg, not this one. */
+          {
+            id: `${entry.id}-inbound`,
+            direction: "inbound",
+            durationMinutes: 690,
+            stops: 0,
+            layoverMinutes: [],
+            segments: [{
+              id: `${entry.id}-i1`,
+              flightNumber: "LA 124",
+              marketingCarrier: "LA",
+              origin: "MAD",
+              destination: "LIM",
+              departureAt: "2026-06-04T10:00:00Z",
+              arrivalAt: "2026-06-04T21:30:00Z",
+              durationMinutes: 690,
+            }],
+          },
+        ],
+      }));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "departure-order-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers,
+          allOffers: offers,
+          searchMeta: {
+            requestedAt: "2026-05-04T15:21:48.419Z",
+            completedAt: "2026-05-04T15:21:48.419Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+          warnings: [],
+        }),
+      });
+    });
+
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL.replace("sort=cheapest", "sort=departure")}`);
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid="result-card"]').length === 4);
+
+    assert.equal(requestedSortMode, "departure");
+    assert.equal(await segment(page, "Ordenar por hora de salida").getAttribute("aria-checked"), "true");
+    /* By departure time, which here is the exact reverse of price. */
+    assert.deepEqual(
+      await page.getByTestId("result-card").evaluateAll((nodes) => nodes.map(
+        (node) => node.querySelector<HTMLElement>(".fd-card__price-figure")?.innerText.trim() ?? "",
+      )),
+      ["USD 900.00", "USD 700.00", "USD 600.00", "USD 500.00"],
+    );
+  }, { autoOpen: false });
+});
+
+/*
+ * The drawn scrollbar (`ResultsScrollbar`).
+ *
+ * Three things only a browser can say: that the new sheet really wins — it is
+ * unlayered, and in this project a rule in `@layer utilities` can sit inert
+ * without warning because the tail of `index.css` is in no layer —, that the
+ * thumb measures the real viewport and not a row count, and that dragging it
+ * scrolls the list.
+ */
+async function routeLongCompletedSearch(page: Page, count: number): Promise<void> {
+  await routeCompletedSearch(page, {
+    offers: Array.from({ length: count }, (_, index) => oneStopOffer(index)),
+  });
+}
+
+test("the list draws its own scrollbar, and the sheet that draws it wins", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 820 });
+    await routeLongCompletedSearch(page, 40);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("results-scrollbar-thumb").waitFor();
+
+    const drawn = await page.evaluate(() => {
+      const bar = document.querySelector<HTMLElement>('[data-testid="results-scrollbar"]')!;
+      const thumb = document.querySelector<HTMLElement>('[data-testid="results-scrollbar-thumb"]')!;
+      const viewport = document.querySelector<HTMLElement>('[data-testid="results-list-body"]')!;
+      const barStyle = getComputedStyle(bar);
+      const thumbStyle = getComputedStyle(thumb);
+
+      return {
+        display: barStyle.display,
+        /* If these three are not the new sheet's, the sheet is in a layer that
+           loses and the bar is being drawn with whatever it inherits. */
+        barWidth: barStyle.width,
+        thumbWidth: thumbStyle.width,
+        thumbRadius: thumbStyle.borderRadius,
+        thumbOpaque: thumbStyle.backgroundColor !== "rgba(0, 0, 0, 0)",
+        /* The thumb is not animated: it goes where the reader is, not after. */
+        transitionProperty: thumbStyle.transitionProperty,
+        ariaHidden: bar.getAttribute("aria-hidden"),
+        focusable: bar.hasAttribute("tabindex") || thumb.hasAttribute("tabindex"),
+        trackHeight: Math.round(bar.getBoundingClientRect().height),
+        thumbHeight: Math.round(thumb.getBoundingClientRect().height),
+        clientHeight: viewport.clientHeight,
+        scrollHeight: viewport.scrollHeight,
+        /* Inside the clipped body, never hanging off the edge. */
+        withinListBody: bar.getBoundingClientRect().right
+          <= (viewport.parentElement as HTMLElement).getBoundingClientRect().right,
+        documentOverflows: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+      };
+    });
+
+    assert.equal(drawn.display, "block");
+    assert.equal(drawn.barWidth, "14px");
+    assert.equal(drawn.thumbWidth, "6px");
+    assert.equal(drawn.thumbRadius, "4px");
+    assert.equal(drawn.thumbOpaque, true);
+    assert.equal(drawn.transitionProperty, "background-color");
+    assert.equal(drawn.ariaHidden, "true");
+    assert.equal(drawn.focusable, false);
+    assert.equal(drawn.withinListBody, true);
+    assert.equal(drawn.documentOverflows, false);
+
+    /* The proportion comes from the viewport, not from how many cards there
+       are: visible height over total height. One point of slack for the
+       rounding to whole pixels. */
+    assert.equal(drawn.trackHeight, drawn.clientHeight);
+    const expected = Math.round(drawn.trackHeight * (drawn.clientHeight / drawn.scrollHeight));
+    assert.ok(
+      Math.abs(drawn.thumbHeight - expected) <= 1,
+      `thumb ${drawn.thumbHeight} against ${expected}: ${JSON.stringify(drawn)}`,
+    );
+  }, { autoOpen: false });
+});
+
+test("dragging the drawn thumb scrolls the list it belongs to", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 820 });
+    await routeLongCompletedSearch(page, 40);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    const thumb = page.getByTestId("results-scrollbar-thumb");
+    await thumb.waitFor();
+
+    const before = await page.getByTestId("results-list-body").evaluate((node) => node.scrollTop);
+    assert.equal(before, 0);
+
+    const box = (await thumb.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 120, { steps: 6 });
+    await page.mouse.up();
+
+    const after = await page.getByTestId("results-list-body").evaluate((node) => ({
+      scrollTop: node.scrollTop,
+      maxScroll: node.scrollHeight - node.clientHeight,
+      thumbTop: document.querySelector<HTMLElement>('[data-testid="results-scrollbar-thumb"]')
+        ?.getBoundingClientRect().top ?? 0,
+      trackTop: document.querySelector<HTMLElement>('[data-testid="results-scrollbar"]')
+        ?.getBoundingClientRect().top ?? 0,
+    }));
+
+    /* It went down, and the thumb went down with it: the bar did not stay put
+       while the list moved underneath it. */
+    assert.ok(after.scrollTop > 0, JSON.stringify(after));
+    assert.ok(after.scrollTop <= after.maxScroll + 1, JSON.stringify(after));
+    assert.ok(after.thumbTop > after.trackTop, JSON.stringify(after));
+  }, { autoOpen: false });
+});
+
+test("a list that fits its column draws no bar at all", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await routeLongCompletedSearch(page, 2);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await page.waitForFunction(() => {
+      const viewport = document.querySelector<HTMLElement>('[data-testid="results-list-body"]');
+      return Boolean(viewport) && viewport!.scrollHeight <= viewport!.clientHeight + 1;
+    });
+
+    assert.equal(await page.getByTestId("results-scrollbar").count(), 0);
+  }, { autoOpen: false });
+});
+
+test("on a phone the gesture is the convention and the drawn bar stands down", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await routeLongCompletedSearch(page, 40);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    /* Mounted but off, which is the claim: what hides it is the sheet, not a
+       JavaScript branch deciding what a phone is. The measurement lands a frame
+       after the content — it is `rAF` — so this waits for the node instead of
+       reading one that does not exist yet. */
+    await page.getByTestId("results-scrollbar").waitFor({ state: "attached" });
+
+    const phone = await page.evaluate(() => {
+      const bar = document.querySelector<HTMLElement>('[data-testid="results-scrollbar"]');
+      const viewport = document.querySelector<HTMLElement>('[data-testid="results-list-body"]')!;
+      return {
+        display: bar ? getComputedStyle(bar).display : "absent",
+        scrolls: viewport.scrollHeight > viewport.clientHeight + 1,
+        documentOverflows: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+      };
+    });
+
+    /* The list does scroll; what there is not is a drawn bar competing with
+       the edge of the screen. */
+    assert.equal(phone.scrolls, true);
+    assert.equal(phone.display, "none");
+    assert.equal(phone.documentOverflows, false);
   }, { autoOpen: false });
 });

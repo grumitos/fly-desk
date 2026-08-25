@@ -22,6 +22,7 @@ import { AllSchedulesPanel } from "@/components/results/AllSchedulesPanel"
 import { MigrationMonthGrid } from "@/components/results/MigrationMonthGrid"
 import { migrationSweepSummary, type DisplayMonth } from "@/components/results/migration-month-model"
 import { ResultsSkeleton } from "@/components/results/ResultsSkeleton"
+import { ResultsScrollbar } from "@/components/results/ResultsScrollbar"
 import { ActiveFilterChips } from "@/components/results/ActiveFilterChips"
 import { AppIcon } from "@/components/ui/app-icon"
 import { SegmentedControl, SegmentedOption } from "@/components/ui/segmented-control"
@@ -269,11 +270,13 @@ function ResultsPanelBase({
               value={sort}
               className="fd-result-sort-segmented"
               onValueChange={(value) => {
-                if (value === "cheapest" || value === "fastest") onSort(value)
+                if (value === "cheapest" || value === "fastest" || value === "departure" || value === "stops") onSort(value)
               }}
             >
               <SegmentedOption value="cheapest" aria-label="Ordenar por precio">Precio</SegmentedOption>
               <SegmentedOption value="fastest" aria-label="Ordenar por duración">Duración</SegmentedOption>
+              <SegmentedOption value="departure" aria-label="Ordenar por hora de salida">Salida</SegmentedOption>
+              <SegmentedOption value="stops" aria-label="Ordenar por número de escalas">Escalas</SegmentedOption>
             </SegmentedControl>
             {/* Plate 1d: a 32px status row has no space for a segmented, so the
                 two modes collapse into whichever is on and tapping swaps them.
@@ -899,6 +902,8 @@ function ResultsList({
           />
         )}
       </div>
+
+      <ResultsScrollbar viewportRef={viewportRef} />
 
       {mobileCollapseEnabled && backToTopVisible && (
         <button

@@ -9,6 +9,17 @@ export type Cabin =
 
 export type ProviderId = "agil-local" | "costamar";
 
+/*
+ * The closed catalogue of orders, and the one list the type, the request
+ * validation and the sort `sortOffers` applies all come from. It was written
+ * four times as an inline union — the HTTP contract, `ranking`, `orchestrator`
+ * and the job record in `session-store` — and a copied union is a union that
+ * gets widened in three places out of four.
+ */
+export const SORT_MODES = ["cheapest", "fastest", "departure", "stops"] as const;
+
+export type SortMode = (typeof SORT_MODES)[number];
+
 export type SearchState =
   | "search_live"
   | "search_cached"
