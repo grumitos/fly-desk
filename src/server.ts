@@ -267,7 +267,54 @@ function parseRequestUrl(request: Request): URL {
   }
 }
 
-async function proxyToRouter(request: Request, server: BunServer<undefined>): Promise<Response> {
+/* `path.resolve` inside `resolvePublicAsset` collapses duplicate slashes and
+   trailing slashes, so `//index.html`, `///index.html` and `/index.html/` all
+   name the same file. Every route `routeServerRequest` tries before reaching
+   it compares the pathname with `===`, so none of those spellings matched the
+   web-auth gate and the signed-out app shell was served to anyone who asked
+   for it with a slash too many. Two
+   representations of one path is the defect, and patching a comparison would
+   only leave it waiting for the next route somebody writes with `===`.
+
+   So the path is reduced to one spelling here, once, before anything routes on
+   it, and to exactly what `path.resolve` collapses — which is what makes the
+   gates agree with the filesystem underneath them. Normalising rather than
+   rejecting keeps a client that sends a redundant slash working, and leaves
+   one path for a gate to compare, a proxy to forward and a cache header to key
+   on: `//assets/main.js` used to be served with `no-cache` because it failed
+   the `startsWith("/assets/")` test that decides the header.
+
+   Dot segments are handled here too, though nothing reaches this function
+   carrying them: Bun resolves `/a/../index.html` to `/index.html` while it
+   parses the request. That is a property of the URL parser, not a promise to
+   this file, and one line is cheap next to relying on it.
+
+   Percent-encoding is deliberately left alone. `%2F` is a literal slash inside
+   a segment and not a separator, so decoding it here would manufacture the
+   traversal this is closing; `/%2Findex.html` names a file that does not exist
+   and gets the ordinary 404. `..` cannot climb past the root either, which
+   keeps the guard in `resolvePublicAsset` a second line of defence rather than
+   the only one. */
+function normalizeRequestPathname(pathname: string): string {
+  const segments: string[] = [];
+
+  for (const segment of pathname.split("/")) {
+    if (segment === "" || segment === ".") {
+      continue;
+    }
+
+    if (segment === "..") {
+      segments.pop();
+      continue;
+    }
+
+    segments.push(segment);
+  }
+
+  return `/${segments.join("/")}`;
+}
+
+async function proxyToRouter(request: Request, server: BunServer<undefined>, url: URL): Promise<Response> {
   const body = await readBody(request);
   const headers = new Headers();
 
@@ -299,7 +346,9 @@ async function proxyToRouter(request: Request, server: BunServer<undefined>): Pr
 
   let webResponse: Response;
   try {
-    webResponse = await routeRequest(new Request(request.url, requestInit));
+    /* The normalized URL, not `request.url`: the router compares its own
+       pathnames with `===` too, so it has to be handed the one spelling. */
+    webResponse = await routeRequest(new Request(url, requestInit));
   } catch (error) {
     if (error instanceof SyntaxError) {
       throw new BadRequestError("Invalid JSON payload.");
@@ -371,7 +420,7 @@ async function routeServerRequest(request: Request, server: BunServer<undefined>
     return new Response(null, { status: 204 });
   }
 
-  return proxyToRouter(request, server);
+  return proxyToRouter(request, server, url);
 }
 
 export async function handleRequest(request: Request, server: BunServer<undefined>): Promise<Response> {
@@ -381,6 +430,7 @@ export async function handleRequest(request: Request, server: BunServer<undefine
 
   try {
     const url = parseRequestUrl(request);
+    url.pathname = normalizeRequestPathname(url.pathname);
     pathname = url.pathname;
     const response = await routeServerRequest(request, server, url);
     status = response.status;

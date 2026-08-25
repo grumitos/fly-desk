@@ -13,12 +13,37 @@ const templatePath = join(frontendDir, "index.html");
 rmSync(distDir, { recursive: true, force: true });
 mkdirSync(distDir, { recursive: true });
 
+/* React ships two copies of itself and chooses between them with a bare
+   `process.env.NODE_ENV === "production"` test inside its CommonJS entry
+   points (`react/index.js`, `react-dom/client.js`, `react/jsx-runtime.js`).
+   Its `exports` map has no development/production condition — only
+   `react-server` — so neither `conditions` nor `env` can reach that switch:
+   substituting the literal is the only thing that moves it.
+
+   Bun inlines the *ambient* `process.env.NODE_ENV` into browser bundles and
+   falls back to "development" when the shell has none. Neither the deploy
+   workflow nor `bun run build` sets it, so without the line below the
+   released bundle is `react.development.js`: every development-only warning
+   shipped to users, `StrictMode` double-invoking effects in production,
+   error messages kept as full strings instead of collapsing to codes, and
+   236 KB of dead instrumentation that `minify` only compresses. `minify`
+   does not imply production — this is the flag that does.
+
+   The bundle is therefore a production one unless `NODE_ENV=development`
+   asks for the other, which is how a local `frontend/dist` keeps its
+   warnings. The frontend dev server (`bun ./index.html`) never runs this
+   script and is unaffected. */
+const nodeEnv = process.env.NODE_ENV === "development" ? "development" : "production";
+
 const result = await Bun.build({
   entrypoints: [join(frontendDir, "src", "main.tsx")],
   outdir: distDir,
   target: "browser",
   minify: true,
   sourcemap: "none",
+  define: {
+    "process.env.NODE_ENV": JSON.stringify(nodeEnv),
+  },
   plugins: [tailwind],
   naming: {
     entry: "assets/[name]-[hash].[ext]",
