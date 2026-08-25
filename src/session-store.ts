@@ -13,6 +13,7 @@ import {
   SEARCH_CACHE_VERSION,
   SearchMeta,
   SearchRequest,
+  SortMode,
 } from "./core/types";
 
 const COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
@@ -276,7 +277,7 @@ export interface SearchJobRecord {
   providerMeta: ProviderMeta;
   warnings: string[];
   providerDiagnostics?: ProviderDiagnostics[];
-  sortMode: "cheapest" | "fastest";
+  sortMode: SortMode;
   status: SearchJobStatus;
   error?: string;
   createdAt: string;

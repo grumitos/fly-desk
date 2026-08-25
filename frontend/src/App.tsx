@@ -38,7 +38,7 @@ import {
   writeSharedSearchToUrl,
   type SharedSearchState,
 } from "@/lib/search-share"
-import type { CanonicalOffer, MigrationMonthSummary, SearchJobResponse, SearchRequest, Segment, SortMode } from "@/types"
+import { isSortMode, type CanonicalOffer, type MigrationMonthSummary, type SearchJobResponse, type SearchRequest, type Segment, type SortMode } from "@/types"
 
 /** The three shapes the search takes: 07 §1's two ends, plus 11 §2.4's return. */
 type SearchPhase = "idle" | "editing" | "active"
@@ -449,7 +449,15 @@ export default function App() {
         baggageRequired: undefined,
         includedAirlineCodes: selectedAirlinesRef.current,
       }
-      const nextSort = sort ?? defaultSortForRequest()
+      /* The order survives the search. It used to reset to price on every
+         «Buscar» — the agent chose «Escalas», pressed the button that runs the
+         same search again, and got the list back by price with the header
+         saying so. A chosen order is a way of reading the list, not a property
+         of one search's results, so it is carried, and price is only the
+         default while nothing has been chosen. The callers that pass a sort
+         explicitly still win: a shared link brings its own, and loading a
+         quotation is the one way back to the idle screen and resets it. */
+      const nextSort = sort ?? sortModeRef.current
       setClipboardError(null)
       setSelectedOfferId(null)
       setRevalidatedOffers(new Map())
@@ -1698,7 +1706,10 @@ function readWorkspacePreferences(): WorkspacePreferences {
     }
 
     return {
-      sortMode: parsed.sortMode === "fastest" ? "fastest" : DEFAULT_SORT_MODE,
+      /* From the catalogue, not from a pair written out here: this read was
+         still narrowing every order but price and duration back to price, so a
+         tab that had been sorting by departure came back sorted by price. */
+      sortMode: isSortMode(parsed.sortMode) ? parsed.sortMode : DEFAULT_SORT_MODE,
       filters,
       selectedAirlines: Array.isArray(parsed.selectedAirlines)
         ? parsed.selectedAirlines
@@ -1765,10 +1776,6 @@ export function applyMigrationFilters(results: SearchJobResponse, filteredOffers
   }
 }
 
-function defaultSortForRequest(): SortMode {
-  return DEFAULT_SORT_MODE
-}
-
 function cheapestOfferForMonth(offers: CanonicalOffer[]) {
   return offers.reduce<CanonicalOffer | undefined>((best, offer) => {
     if (!best) return offer
@@ -1790,6 +1797,26 @@ function sortOffersForDisplay(offers: CanonicalOffer[], sortMode: SortMode): Can
     .map((item) => item.offer)
 }
 
+/*
+ * The order, applied a second time — here, on what is on screen.
+ *
+ * The backend sorts (`src/core/ranking.ts::sortOffers`) and this is not a copy
+ * of it doing the same work twice: what the list draws is that answer filtered
+ * by the rail, with revalidated offers swapped in and a sweep's months folded
+ * to one row each, so the order has to survive all of that. It did not for two
+ * of the four criteria — this function knew `cheapest` and `fastest` and
+ * returned 0 for everything else, and because the re-sort is stable, returning
+ * 0 for every pair leaves the list exactly where it was. The header said
+ * «Escalas» and nothing moved.
+ *
+ * The tie-breaks of the two new criteria are `ranking.ts`'s, copied rather than
+ * invented: price, then the offer's own dates, then its id. Two surfaces that
+ * order the same offers differently would be worse than one that does not
+ * order at all — the link would open the list in a sequence the desk that
+ * shared it never saw. `cheapest` and `fastest` keep the second key they
+ * already had, for the same reason `ranking.ts` left them alone: changing it
+ * would move lists nobody is disputing.
+ */
 function compareOffersForDisplay(left: CanonicalOffer, right: CanonicalOffer, sortMode: SortMode): number {
   if (sortMode === "cheapest") {
     return compareNumber(priceAmount(left), priceAmount(right))
@@ -1801,7 +1828,97 @@ function compareOffersForDisplay(left: CanonicalOffer, right: CanonicalOffer, so
       || compareNumber(priceAmount(left), priceAmount(right))
   }
 
+  if (sortMode === "departure") {
+    return compareNumber(departureInstantForDisplay(left), departureInstantForDisplay(right))
+      || compareNumber(priceAmount(left), priceAmount(right))
+      || compareOfferTravelDates(left, right)
+  }
+
+  if (sortMode === "stops") {
+    return compareNumber(totalStopsForDisplay(left), totalStopsForDisplay(right))
+      || compareNumber(priceAmount(left), priceAmount(right))
+      || compareOfferTravelDates(left, right)
+  }
+
   return 0
+}
+
+function outboundItinerary(offer: CanonicalOffer) {
+  const itineraries = offer.itineraries ?? []
+  return itineraries.find((itinerary) => itinerary.direction === "outbound") ?? itineraries[0]
+}
+
+/*
+ * What «Horario» orders by: the departure of the first leg, as a whole instant.
+ *
+ * The same leg the backend picks and for the same reason — a round trip has two
+ * departures and only the outbound is the one being chosen; ordering by the
+ * return would put a trip that starts next month at the top. It is also the leg
+ * the departure filters already read, so ordering and filtering by departure
+ * talk about one flight.
+ *
+ * The instant and not the time of day, because a flexible search spreads its
+ * offers over different days and «07:00» on two of them is not one value.
+ *
+ * A departure that cannot be read sinks to the end rather than leading the list
+ * as a 0 would. `compareNumber` compares with `<` instead of subtracting, so
+ * two of those tie at 0 rather than producing the `NaN` that
+ * `Infinity - Infinity` gives — and a comparator that returns `NaN` leaves the
+ * order to whatever the engine feels like.
+ */
+function departureInstantForDisplay(offer: CanonicalOffer): number {
+  const departureAt = outboundItinerary(offer)?.segments?.[0]?.departureAt
+  const parsed = departureAt ? Date.parse(departureAt) : Number.NaN
+  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY
+}
+
+/*
+ * What «Escalas» orders by: the stops of the whole trip with both legs added,
+ * which is `ranking.ts::totalStops`. The enriched metric first, so the figure
+ * is the one the backend computed, and the sum of the itineraries when a
+ * provider answered without it — the fallback `totalDurationForDisplay` uses.
+ *
+ * Not `maxStopsForFilter`, which takes the maximum across the legs: «directo»
+ * is a promise about every leg, which is the right question for a filter and
+ * the wrong one for an order. By the maximum, a trip out direct and back
+ * through two stops sorts level with one that stops twice each way.
+ */
+function totalStopsForDisplay(offer: CanonicalOffer): number {
+  const metricStops = normalizedNumber(offer.comparisonMetrics?.totalStops)
+  if (metricStops !== null) return metricStops
+
+  return (offer.itineraries ?? []).reduce((sum, itinerary) => {
+    const stops = normalizedNumber(itinerary.stops)
+    return sum + (stops ?? Math.max(0, (itinerary.segments?.length ?? 1) - 1))
+  }, 0)
+}
+
+/*
+ * The last key of both new orders, and it is `ranking.ts::compareOffersByDate`
+ * written for the offers this side holds: the outbound date, the return date,
+ * and then the offer id, which is unique.
+ *
+ * It ends at a total key on purpose. Stops ties constantly — half an ordinary
+ * route is direct — and a criterion that stopped at its primary key would hand
+ * that whole block back in whatever sequence the two providers happened to
+ * answer in, which is not the same sequence twice.
+ */
+function compareOfferTravelDates(left: CanonicalOffer, right: CanonicalOffer): number {
+  const leftDates = offerTravelDatesForDisplay(left)
+  const rightDates = offerTravelDatesForDisplay(right)
+
+  return leftDates.departureDate.localeCompare(rightDates.departureDate)
+    || leftDates.returnDate.localeCompare(rightDates.returnDate)
+    || left.id.localeCompare(right.id)
+}
+
+function offerTravelDatesForDisplay(offer: CanonicalOffer): { departureDate: string; returnDate: string } {
+  const inbound = (offer.itineraries ?? []).find((itinerary) => itinerary.direction === "inbound")
+
+  return {
+    departureDate: outboundItinerary(offer)?.segments?.[0]?.departureAt?.slice(0, 10) ?? "",
+    returnDate: inbound?.segments?.[0]?.departureAt?.slice(0, 10) ?? "",
+  }
 }
 
 function compareNumber(left: number, right: number): number {

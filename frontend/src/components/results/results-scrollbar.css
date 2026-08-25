@@ -1,0 +1,97 @@
+/*
+ * The results list's drawn scrollbar.
+ *
+ * Why this sheet is UNLAYERED
+ * ---------------------------
+ * There are four stylesheets in this project and only one of them really
+ * wins. `design-system.css`, `components.css` and the bulk of `index.css` live
+ * in `@layer base` / `@layer utilities` — there is no `@layer components` —
+ * and from line 1011 `index.css` stops being in a layer at all and outranks
+ * everything above it however specific that is. A new rule written inside
+ * `@layer utilities` can sit there inert without saying so.
+ *
+ * This sheet enters no layer: unlayered beats every layer, so these rules sit
+ * at the same level as the tail of `index.css` and resolve by specificity like
+ * ordinary CSS. There is no collision — both classes are new and nothing else
+ * selects them — but the guarantee is what matters, and
+ * `test/ui/results.playwright.ts` checks it with `getComputedStyle` instead of
+ * assuming it.
+ *
+ * Where it sits
+ * -------------
+ * Inside `.fd-list-body`, which is `position: relative` and already houses the
+ * back-to-top button that way. The box is positioned against the measured
+ * viewport (`top` and `height` arrive inline from the component) rather than
+ * stretched to `inset: 0`, so it stays the bar of *what is seen* if anything
+ * ever appears in the list body above the scroller.
+ *
+ * `.fd-list-shell` and `.fd-list-body` both clip with `overflow: hidden`, so
+ * the bar goes inside the right edge and not hanging off it: a badly anchored
+ * drawn bar is the classic way to give the document a horizontal scrollbar,
+ * and `responsive-smoke.playwright.ts` checks that on all three armazones.
+ */
+
+.fd-list-scrollbar {
+  position: absolute;
+  right: 4px;
+  /* 14px wide for the pointer, 6px of drawing. The thumb is not a 6px line to
+     be hunted down: what responds is this whole width, which is what a finger
+     or an imprecise mouse finds first time. */
+  width: 14px;
+  z-index: 15;
+  touch-action: none;
+}
+
+.fd-list-scrollbar-thumb {
+  width: 6px;
+  margin-inline: auto;
+  border-radius: var(--fd-radius-4);
+  background: color-mix(in srgb, var(--color-foreground) 20%, transparent);
+  transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+}
+
+/*
+ * `translateY` and not `top`: the thumb's position is rewritten on every
+ * scroll event and the offset is the only thing that changes, so moving it by
+ * transform keeps it on the compositor instead of asking for a layout per
+ * frame in the middle of a flick.
+ *
+ * And no transition at all on that transform: the thumb is not animated, it
+ * goes where the reader is. A transition here would be the bar arriving late
+ * to its own list, which is exactly the effect `prefers-reduced-motion`
+ * forbids.
+ */
+
+.fd-list-body:hover .fd-list-scrollbar-thumb,
+.fd-list-scrollbar[data-dragging] .fd-list-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-foreground) 34%, transparent);
+}
+
+.fd-list-scrollbar[data-dragging] {
+  cursor: grabbing;
+}
+
+/*
+ * 02 §5 and the convention of the system: on a phone the native bar and the
+ * gesture are what the reader expects, and a drawn bar 14px off the right edge
+ * competes with the edge of the screen itself. It goes — through the same
+ * `@container fdshell` the list header changes shape at, so the bar and the
+ * rest of the column cross the threshold together.
+ */
+@container fdshell (max-width: 719.98px) {
+  .fd-list-scrollbar {
+    display: none;
+  }
+}
+
+/*
+ * Rule 5 of the motion system. The only thing that moves here is the thumb's
+ * colour under the pointer, which at 90ms is `tacto` and is allowed; it still
+ * goes, because with reduced motion an element that already follows the scroll
+ * does not also need to be changing tone on its own.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .fd-list-scrollbar-thumb {
+    transition: none;
+  }
+}

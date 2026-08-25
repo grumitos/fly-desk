@@ -17,11 +17,18 @@ import {
   ProviderId,
   SearchMode,
   SearchRequest,
+  SORT_MODES,
+  SortMode,
   TripType,
 } from "./core/types";
 import { getSearchDatePolicy, validateSearchDateInPolicy } from "./search-date-policy";
 
-export type SortMode = "cheapest" | "fastest";
+/*
+ * Re-exported, not redeclared: the catalogue lives in `core/types` next to the
+ * `sortOffers` that applies it, and this line only keeps the existing
+ * `import { SortMode } from "./http-search-contract"` sites standing.
+ */
+export type { SortMode };
 
 export interface SearchPayload {
   // Backward-compatible ignored input: public flight searches always aggregate both providers.
@@ -482,10 +489,15 @@ export function validateSearchContract(
   return validateRequest(contract.request);
 }
 
+/*
+ * The one door the order criterion enters the backend through.
+ *
+ * It is checked against the catalogue rather than against a list written out
+ * again here, which is what made widening the order a change in two places
+ * that were forgotten separately. What is not in the catalogue is not a bad
+ * request: it is an older client, or a link shared before the order existed,
+ * and it gets the list by price instead of a 400.
+ */
 export function resolveSortMode(mode: unknown): SortMode {
-  if (mode === "cheapest" || mode === "fastest") {
-    return mode;
-  }
-
-  return "cheapest";
+  return SORT_MODES.includes(mode as SortMode) ? mode as SortMode : "cheapest";
 }

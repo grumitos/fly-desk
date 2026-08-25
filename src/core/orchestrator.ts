@@ -12,6 +12,7 @@ import {
   SearchMeta,
   SearchRequest,
   SearchResponse,
+  SortMode,
 } from "./types";
 
 function buildProviderMeta(request: SearchRequest, exactProviderId: ProviderId): ProviderMeta {
@@ -40,7 +41,7 @@ export function buildSearchMeta(
 
 export function materializeSearchResponse(
   request: SearchRequest,
-  sortMode: "cheapest" | "fastest",
+  sortMode: SortMode,
   exactProviderId: ProviderId,
   exactResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean },
   startedAt = new Date().toISOString(),
@@ -98,7 +99,7 @@ export class SearchOrchestrator {
 
   async search(
     request: SearchRequest,
-    sortMode: "cheapest" | "fastest" = "cheapest",
+    sortMode: SortMode = "cheapest",
     options?: SearchExecutionOptions,
   ): Promise<SearchResponse> {
     const startedAt = new Date().toISOString();

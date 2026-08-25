@@ -4,7 +4,7 @@ import type { Page, Route } from "playwright";
 import type { CanonicalOffer, Itinerary } from "../../src/core/types";
 import { registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
-import { openSearchUrlWithoutLaunching, openSharedSearchLink } from "./support.ts";
+import { clickSegment, openSearchUrlWithoutLaunching, openSharedSearchLink, segment, waitForFontsReady } from "./support.ts";
 
 registerDesktopHarness();
 
@@ -3010,5 +3010,573 @@ test("an offer whose schedule is already inside a group is not drawn a second ti
     assert.ok(independent, JSON.stringify(shown));
     // The card that survives on its own is the one that differs on price.
     assert.match(independent.price, /421/, JSON.stringify(shown));
+  }, { autoOpen: false });
+});
+
+/*
+ * The order, which is a contract and not a screen preference.
+ *
+ * The criterion travels in the body of `POST /api/search` and the backend is
+ * what sorts (`src/core/ranking.ts::sortOffers`) — but the client sorts the
+ * same list again for display (`App.tsx::compareOffersForDisplay`), because
+ * what is on screen is a filtered, revalidated, batched version of what
+ * arrived. Both surfaces order by the same keys and break ties the same way,
+ * so these cases can read the screen and be talking about the contract.
+ *
+ * The control offers exactly the four criteria the server knows how to serve,
+ * a link asking for one of the new ones reaches the list in that order, and
+ * pressing one of the four really moves the rows.
+ */
+test("the order offers the four criteria the backend can serve", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, { offers: [oneStopOffer(1), oneStopOffer(2)] });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+
+    const order = page.getByRole("radiogroup", { name: "Orden de resultados" });
+    assert.deepEqual(
+      await order.getByRole("radio").evaluateAll((nodes) => nodes.map((node) => ({
+        value: node.getAttribute("data-segment"),
+        label: node.textContent?.trim() ?? "",
+      }))),
+      [
+        { value: "departure", label: "Horario" },
+        { value: "fastest", label: "Duración" },
+        { value: "stops", label: "Escalas" },
+        { value: "cheapest", label: "Precio" },
+      ],
+    );
+
+    /* The control is a radiogroup: choosing one of the new options leaves it
+       chosen and rewrites the workspace link, which is what lets the same list
+       be reopened in the same order. */
+    await clickSegment(segment(page, "Ordenar por número de escalas"));
+    await page.waitForFunction(() => new URL(location.href).searchParams.get("sort") === "stops");
+  }, { autoOpen: false });
+});
+
+test("a link that asks for departure order gets the list the backend ordered", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    /* The test server really sorts: it answers with the offers by departure
+       time, which is not their order by price. If the client reordered what
+       arrives already ordered, this case would see it. */
+    const byDeparture = [
+      { id: "dep-0600", amount: 900, departureAt: "2026-05-28T06:00:00Z" },
+      { id: "dep-0900", amount: 700, departureAt: "2026-05-28T09:00:00Z" },
+      { id: "dep-1400", amount: 600, departureAt: "2026-05-28T14:00:00Z" },
+      { id: "dep-2000", amount: 500, departureAt: "2026-05-28T20:00:00Z" },
+    ];
+    let requestedSortMode: unknown;
+    await page.route("**/api/locations**", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suggestions: [] }) });
+    });
+    await page.route("**/api/search", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      requestedSortMode = payload.sortMode;
+      const offers = byDeparture.map((entry) => buildOffer({
+        id: entry.id,
+        destination: "MAD",
+        price: {
+          total: { amount: entry.amount, currencyCode: "USD" },
+          base: { amount: entry.amount - 90, currencyCode: "USD" },
+          taxes: { amount: 90, currencyCode: "USD" },
+        },
+        comparisonMetrics: { totalDurationMinutes: 1390, totalStops: 0, baggageScore: 2, purchasePathScore: 1 },
+        itineraries: [
+          {
+            id: `${entry.id}-outbound`,
+            direction: "outbound",
+            durationMinutes: 700,
+            stops: 0,
+            layoverMinutes: [],
+            segments: [{
+              id: `${entry.id}-o1`,
+              flightNumber: "LA 123",
+              marketingCarrier: "LA",
+              origin: "LIM",
+              destination: "MAD",
+              departureAt: entry.departureAt,
+              arrivalAt: "2026-05-28T23:40:00Z",
+              durationMinutes: 700,
+            }],
+          },
+          /* The return is the same for all four, on purpose: what orders them
+             is the first leg, not this one. */
+          {
+            id: `${entry.id}-inbound`,
+            direction: "inbound",
+            durationMinutes: 690,
+            stops: 0,
+            layoverMinutes: [],
+            segments: [{
+              id: `${entry.id}-i1`,
+              flightNumber: "LA 124",
+              marketingCarrier: "LA",
+              origin: "MAD",
+              destination: "LIM",
+              departureAt: "2026-06-04T10:00:00Z",
+              arrivalAt: "2026-06-04T21:30:00Z",
+              durationMinutes: 690,
+            }],
+          },
+        ],
+      }));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          searchJobId: "departure-order-search",
+          searchComplete: true,
+          searchStatus: "completed",
+          revision: 1,
+          sortMode: payload.sortMode,
+          request: payload.request,
+          offers,
+          allOffers: offers,
+          searchMeta: {
+            requestedAt: "2026-05-04T15:21:48.419Z",
+            completedAt: "2026-05-04T15:21:48.419Z",
+            providersUsed: ["agil-local"],
+            warnings: [],
+            partial: false,
+            searchState: "search_live",
+          },
+          providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+          warnings: [],
+        }),
+      });
+    });
+
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL.replace("sort=cheapest", "sort=departure")}`);
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid="result-card"]').length === 4);
+
+    assert.equal(requestedSortMode, "departure");
+    assert.equal(await segment(page, "Ordenar por hora de salida").getAttribute("aria-checked"), "true");
+    /* By departure time, which here is the exact reverse of price. */
+    assert.deepEqual(
+      await page.getByTestId("result-card").evaluateAll((nodes) => nodes.map(
+        (node) => node.querySelector<HTMLElement>(".fd-card__price-figure")?.innerText.trim() ?? "",
+      )),
+      ["USD 900.00", "USD 700.00", "USD 600.00", "USD 500.00"],
+    );
+  }, { autoOpen: false });
+});
+
+/*
+ * One offer per order, built so the four criteria give four different
+ * sequences — which is the only way a case can tell «the list was re-laid» from
+ * «the list happened to already be in that order».
+ *
+ *   price   duration   stops   departure
+ *   900     600        1       20:00
+ *   700     900        0       06:00
+ *   500     750        2       14:00
+ *
+ * price → 500 700 900 · duration → 900 500 700
+ * departure → 700 500 900 · stops → 700 900 500
+ */
+const SORTABLE_OFFERS = [
+  { amount: 900, durationMinutes: 600, stops: 1, departureAt: "2026-05-28T20:00:00Z" },
+  { amount: 700, durationMinutes: 900, stops: 0, departureAt: "2026-05-28T06:00:00Z" },
+  { amount: 500, durationMinutes: 750, stops: 2, departureAt: "2026-05-28T14:00:00Z" },
+];
+
+function sortableOffer(entry: typeof SORTABLE_OFFERS[number]): CanonicalOffer {
+  const id = `sortable-${entry.amount}`;
+  return buildOffer({
+    id,
+    destination: "MAD",
+    price: {
+      total: { amount: entry.amount, currencyCode: "USD" },
+      base: { amount: entry.amount - 90, currencyCode: "USD" },
+      taxes: { amount: 90, currencyCode: "USD" },
+    },
+    comparisonMetrics: {
+      totalDurationMinutes: entry.durationMinutes,
+      totalStops: entry.stops,
+      baggageScore: 2,
+      purchasePathScore: 1,
+    },
+    itineraries: [
+      {
+        id: `${id}-outbound`,
+        direction: "outbound",
+        durationMinutes: entry.durationMinutes,
+        stops: entry.stops,
+        layoverMinutes: Array.from({ length: entry.stops }, () => 90),
+        segments: [{
+          id: `${id}-o1`,
+          flightNumber: "LA 123",
+          marketingCarrier: "LA",
+          origin: "LIM",
+          destination: "MAD",
+          departureAt: entry.departureAt,
+          arrivalAt: "2026-05-29T05:40:00Z",
+          durationMinutes: entry.durationMinutes,
+        }],
+      },
+      /* One return for all three, on purpose: the leg that orders them is the
+         first one, and a return that moved with it would leave the case unable
+         to say which of the two the order read. */
+      {
+        id: `${id}-inbound`,
+        direction: "inbound",
+        durationMinutes: 690,
+        stops: 0,
+        layoverMinutes: [],
+        segments: [{
+          id: `${id}-i1`,
+          flightNumber: "LA 124",
+          marketingCarrier: "LA",
+          origin: "MAD",
+          destination: "LIM",
+          departureAt: "2026-06-04T10:00:00Z",
+          arrivalAt: "2026-06-04T21:30:00Z",
+          durationMinutes: 690,
+        }],
+      },
+    ],
+  });
+}
+
+/*
+ * The server answers in one fixed sequence whatever `sortMode` it is asked for,
+ * so anything the list does with the order is the client doing it. That is the
+ * half these cases are about: `sortOffers` has unit coverage of its own, and
+ * what was broken was `App.tsx::compareOffersForDisplay`, which knew two
+ * criteria and returned 0 — no movement at all — for the other two.
+ */
+async function routeUnsortedSearch(page: Page, seen: { sortModes: unknown[] }): Promise<void> {
+  const offers = SORTABLE_OFFERS.map(sortableOffer);
+  await page.route("**/api/locations**", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suggestions: [] }) });
+  });
+  await page.route("**/api/search", async (route) => {
+    const payload = route.request().postDataJSON() as Record<string, unknown>;
+    seen.sortModes.push(payload.sortMode);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        searchJobId: `unsorted-${seen.sortModes.length}`,
+        searchComplete: true,
+        searchStatus: "completed",
+        revision: 1,
+        sortMode: payload.sortMode,
+        request: payload.request,
+        offers,
+        allOffers: offers,
+        searchMeta: {
+          requestedAt: "2026-05-04T15:21:48.419Z",
+          completedAt: "2026-05-04T15:21:48.419Z",
+          providersUsed: ["agil-local"],
+          warnings: [],
+          partial: false,
+          searchState: "search_live",
+        },
+        providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+        warnings: [],
+      }),
+    });
+  });
+}
+
+function shownPrices(page: Page): Promise<number[]> {
+  return page.getByTestId("result-card").evaluateAll((nodes) => nodes.map((node) => Number.parseFloat(
+    (node.querySelector<HTMLElement>(".fd-card__price-figure")?.innerText ?? "").replace(/[^\d.]/g, ""),
+  )));
+}
+
+test("pressing each of the four columns re-lays the list, and not just the radio", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const seen = { sortModes: [] as unknown[] };
+    await routeUnsortedSearch(page, seen);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid="result-card"]').length === 3);
+
+    /* The link asks for price, and price is what the list is in. */
+    assert.deepEqual(await shownPrices(page), [500, 700, 900]);
+
+    const expected: Array<[string, number[]]> = [
+      ["Ordenar por duración", [900, 500, 700]],
+      ["Ordenar por hora de salida", [700, 500, 900]],
+      ["Ordenar por número de escalas", [700, 900, 500]],
+      ["Ordenar por precio", [500, 700, 900]],
+    ];
+
+    for (const [name, order] of expected) {
+      await clickSegment(segment(page, name));
+      await page.waitForFunction((prices) => {
+        const shown = Array.from(document.querySelectorAll('[data-testid="result-card"]')).map((node) => Number.parseFloat(
+          (node.querySelector<HTMLElement>(".fd-card__price-figure")?.innerText ?? "").replace(/[^\d.]/g, ""),
+        ));
+        return shown.length === prices.length && shown.every((value, index) => value === prices[index]);
+      }, order).catch(() => undefined);
+      assert.deepEqual(await shownPrices(page), order, `«${name}» left the list in the wrong sequence`);
+    }
+
+    /* And no order asked the server for a second list: the criterion travels on
+       the request of the *next* search, but re-reading the list that is already
+       here is the client's job. */
+    assert.equal(seen.sortModes.length, 1);
+  }, { autoOpen: false });
+});
+
+test("the order the agent chose survives the next «Buscar»", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const seen = { sortModes: [] as unknown[] };
+    await routeUnsortedSearch(page, seen);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid="result-card"]').length === 3);
+
+    await clickSegment(segment(page, "Ordenar por número de escalas"));
+    assert.deepEqual(await shownPrices(page), [700, 900, 500]);
+
+    /* «Buscar» runs the same search again. It used to reset the order to price
+       on the way out — `defaultSortForRequest()` answered `cheapest` and
+       nothing else — so the agent got the list back by price, and the header
+       said so only once they looked. */
+    await Promise.all([
+      page.waitForResponse("**/api/search"),
+      page.getByRole("button", { name: "Buscar" }).click(),
+    ]);
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid="result-card"]').length === 3);
+
+    assert.deepEqual(seen.sortModes, ["cheapest", "stops"]);
+    assert.equal(await segment(page, "Ordenar por número de escalas").getAttribute("aria-checked"), "true");
+    assert.deepEqual(await shownPrices(page), [700, 900, 500]);
+    assert.equal(await page.evaluate(() => new URL(location.href).searchParams.get("sort")), "stops");
+  }, { autoOpen: false });
+});
+
+/*
+ * The header's labels against the lanes they name.
+ *
+ * Four of the cells are radios now, and the active one draws a 12px arrow
+ * beside its label — which changes that cell's width at the moment it is
+ * pressed. The lanes are fixed, so «it fits» is arithmetic a case can do: every
+ * cell is measured against the track under it and against the cell beside it,
+ * in each of the four states.
+ *
+ * Measured, at the 1440 desk where the list is 824: «Horario» 49.09 in a lane
+ * of 126, «Escalas» 49.53 in 112, «Precio» 39.44 in 116 — and «Duración» 56.89
+ * in 66, which with the arrow is 71.89 and hangs 5.89 into the 12px gap on its
+ * left. That is allowed and the rest of the row is why: the lane cannot grow
+ * without moving `RESULT_LEG_FIXED_PX`, and a 1440 desk sits exactly on the 824
+ * the detail column asks for.
+ */
+test("every column header fits the lane it names, arrow included", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, { offers: [oneStopOffer(1), oneStopOffer(2)] });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await waitForFontsReady(page);
+
+    for (const criterion of ["precio", "duración", "hora de salida", "número de escalas"]) {
+      await clickSegment(segment(page, `Ordenar por ${criterion}`));
+
+      const cells = await page.evaluate(() => {
+        const head = document.querySelector<HTMLElement>('[data-testid="results-column-head"]')!;
+        const legs = head.querySelector<HTMLElement>(".fd-card__legs")!;
+        const leg = head.querySelector<HTMLElement>(".fd-card__leg")!;
+        const tracksOf = (node: HTMLElement) =>
+          getComputedStyle(node).gridTemplateColumns.split(" ").map(Number.parseFloat);
+        const headTracks = tracksOf(head);
+        const legTracks = tracksOf(legs);
+
+        const read = (node: HTMLElement, tracks: number[], index: number) => ({
+          text: (node.textContent ?? "").trim(),
+          lane: tracks[index] ?? Number.NaN,
+          box: Math.round(node.getBoundingClientRect().width * 100) / 100,
+          left: Math.round(node.getBoundingClientRect().left * 100) / 100,
+          right: Math.round(node.getBoundingClientRect().right * 100) / 100,
+        });
+
+        return [
+          ...Array.from(head.children).map((node, index) =>
+            node === legs ? null : read(node as HTMLElement, headTracks, index)),
+          ...Array.from(leg.children).map((node, index) => read(node as HTMLElement, legTracks, index)),
+        ]
+          .filter((cell): cell is NonNullable<typeof cell> => Boolean(cell?.text))
+          .sort((left, right) => left.left - right.left);
+      });
+
+      /* Every gap in this row is 12, so a cell that runs past its track has at
+         most that much room before it reaches its neighbour's. */
+      for (const cell of cells) {
+        assert.ok(
+          cell.box <= cell.lane + 12,
+          `«${cell.text}» is ${cell.box} wide in a lane of ${cell.lane}, ordering by ${criterion}`,
+        );
+      }
+
+      for (let index = 1; index < cells.length; index += 1) {
+        assert.ok(
+          cells[index]!.left >= cells[index - 1]!.right,
+          `«${cells[index]!.text}» starts at ${cells[index]!.left} and «${cells[index - 1]!.text}» `
+            + `ends at ${cells[index - 1]!.right}, ordering by ${criterion}`,
+        );
+      }
+    }
+  }, { autoOpen: false });
+});
+
+/*
+ * The drawn scrollbar (`ResultsScrollbar`).
+ *
+ * Three things only a browser can say: that the new sheet really wins — it is
+ * unlayered, and in this project a rule in `@layer utilities` can sit inert
+ * without warning because the tail of `index.css` is in no layer —, that the
+ * thumb measures the real viewport and not a row count, and that dragging it
+ * scrolls the list.
+ */
+async function routeLongCompletedSearch(page: Page, count: number): Promise<void> {
+  await routeCompletedSearch(page, {
+    offers: Array.from({ length: count }, (_, index) => oneStopOffer(index)),
+  });
+}
+
+test("the list draws its own scrollbar, and the sheet that draws it wins", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 820 });
+    await routeLongCompletedSearch(page, 40);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("results-scrollbar-thumb").waitFor();
+
+    const drawn = await page.evaluate(() => {
+      const bar = document.querySelector<HTMLElement>('[data-testid="results-scrollbar"]')!;
+      const thumb = document.querySelector<HTMLElement>('[data-testid="results-scrollbar-thumb"]')!;
+      const viewport = document.querySelector<HTMLElement>('[data-testid="results-list-body"]')!;
+      const barStyle = getComputedStyle(bar);
+      const thumbStyle = getComputedStyle(thumb);
+
+      return {
+        display: barStyle.display,
+        /* If these three are not the new sheet's, the sheet is in a layer that
+           loses and the bar is being drawn with whatever it inherits. */
+        barWidth: barStyle.width,
+        thumbWidth: thumbStyle.width,
+        thumbRadius: thumbStyle.borderRadius,
+        thumbOpaque: thumbStyle.backgroundColor !== "rgba(0, 0, 0, 0)",
+        /* The thumb is not animated: it goes where the reader is, not after. */
+        transitionProperty: thumbStyle.transitionProperty,
+        ariaHidden: bar.getAttribute("aria-hidden"),
+        focusable: bar.hasAttribute("tabindex") || thumb.hasAttribute("tabindex"),
+        trackHeight: Math.round(bar.getBoundingClientRect().height),
+        thumbHeight: Math.round(thumb.getBoundingClientRect().height),
+        clientHeight: viewport.clientHeight,
+        scrollHeight: viewport.scrollHeight,
+        /* Inside the clipped body, never hanging off the edge. */
+        withinListBody: bar.getBoundingClientRect().right
+          <= (viewport.parentElement as HTMLElement).getBoundingClientRect().right,
+        documentOverflows: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+      };
+    });
+
+    assert.equal(drawn.display, "block");
+    assert.equal(drawn.barWidth, "14px");
+    assert.equal(drawn.thumbWidth, "6px");
+    assert.equal(drawn.thumbRadius, "4px");
+    assert.equal(drawn.thumbOpaque, true);
+    assert.equal(drawn.transitionProperty, "background-color");
+    assert.equal(drawn.ariaHidden, "true");
+    assert.equal(drawn.focusable, false);
+    assert.equal(drawn.withinListBody, true);
+    assert.equal(drawn.documentOverflows, false);
+
+    /* The proportion comes from the viewport, not from how many cards there
+       are: visible height over total height. One point of slack for the
+       rounding to whole pixels. */
+    assert.equal(drawn.trackHeight, drawn.clientHeight);
+    const expected = Math.round(drawn.trackHeight * (drawn.clientHeight / drawn.scrollHeight));
+    assert.ok(
+      Math.abs(drawn.thumbHeight - expected) <= 1,
+      `thumb ${drawn.thumbHeight} against ${expected}: ${JSON.stringify(drawn)}`,
+    );
+  }, { autoOpen: false });
+});
+
+test("dragging the drawn thumb scrolls the list it belongs to", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 820 });
+    await routeLongCompletedSearch(page, 40);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    const thumb = page.getByTestId("results-scrollbar-thumb");
+    await thumb.waitFor();
+
+    const before = await page.getByTestId("results-list-body").evaluate((node) => node.scrollTop);
+    assert.equal(before, 0);
+
+    const box = (await thumb.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 120, { steps: 6 });
+    await page.mouse.up();
+
+    const after = await page.getByTestId("results-list-body").evaluate((node) => ({
+      scrollTop: node.scrollTop,
+      maxScroll: node.scrollHeight - node.clientHeight,
+      thumbTop: document.querySelector<HTMLElement>('[data-testid="results-scrollbar-thumb"]')
+        ?.getBoundingClientRect().top ?? 0,
+      trackTop: document.querySelector<HTMLElement>('[data-testid="results-scrollbar"]')
+        ?.getBoundingClientRect().top ?? 0,
+    }));
+
+    /* It went down, and the thumb went down with it: the bar did not stay put
+       while the list moved underneath it. */
+    assert.ok(after.scrollTop > 0, JSON.stringify(after));
+    assert.ok(after.scrollTop <= after.maxScroll + 1, JSON.stringify(after));
+    assert.ok(after.thumbTop > after.trackTop, JSON.stringify(after));
+  }, { autoOpen: false });
+});
+
+test("a list that fits its column draws no bar at all", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await routeLongCompletedSearch(page, 2);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await page.waitForFunction(() => {
+      const viewport = document.querySelector<HTMLElement>('[data-testid="results-list-body"]');
+      return Boolean(viewport) && viewport!.scrollHeight <= viewport!.clientHeight + 1;
+    });
+
+    assert.equal(await page.getByTestId("results-scrollbar").count(), 0);
+  }, { autoOpen: false });
+});
+
+test("on a phone the gesture is the convention and the drawn bar stands down", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await routeLongCompletedSearch(page, 40);
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    /* Mounted but off, which is the claim: what hides it is the sheet, not a
+       JavaScript branch deciding what a phone is. The measurement lands a frame
+       after the content — it is `rAF` — so this waits for the node instead of
+       reading one that does not exist yet. */
+    await page.getByTestId("results-scrollbar").waitFor({ state: "attached" });
+
+    const phone = await page.evaluate(() => {
+      const bar = document.querySelector<HTMLElement>('[data-testid="results-scrollbar"]');
+      const viewport = document.querySelector<HTMLElement>('[data-testid="results-list-body"]')!;
+      return {
+        display: bar ? getComputedStyle(bar).display : "absent",
+        scrolls: viewport.scrollHeight > viewport.clientHeight + 1,
+        documentOverflows: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+      };
+    });
+
+    /* The list does scroll; what there is not is a drawn bar competing with
+       the edge of the screen. */
+    assert.equal(phone.scrolls, true);
+    assert.equal(phone.display, "none");
+    assert.equal(phone.documentOverflows, false);
   }, { autoOpen: false });
 });

@@ -9,7 +9,7 @@ import {
   writeSharedSearchToClipboard,
   writeSharedSearchToUrl,
 } from "../frontend/src/lib/search-share"
-import type { SearchRequest, SortMode } from "../frontend/src/types"
+import { SORT_MODES, type SearchRequest, type SortMode } from "../frontend/src/types"
 
 /*
  * The shareable search, both halves of it.
@@ -422,4 +422,22 @@ test("a tab that has not searched, or cannot remember, owns no URL", () => {
     assert.equal(writeSharedSearchToUrl(request(), "cheapest"), true)
     assert.equal(searchUrlWasWrittenHere(new URL(tab.href)), false)
   })
+})
+
+test("a shared link carries every order the backend knows how to serve", () => {
+  /* The link carries its order in `?sort=`, and whoever opens it runs the
+     search the link describes. If this list and the backend's drift apart, the
+     link arrives saying «Escalas» and the search goes out by price. */
+  for (const sortMode of SORT_MODES) {
+    const { state, url } = roundTrip(request(), sortMode)
+    assert.equal(url.searchParams.get("sort"), sortMode)
+    assert.equal(state.sortMode, sortMode)
+  }
+})
+
+test("an unknown order in a link opens the search by price instead of failing", () => {
+  const url = urlWrittenFor(request(), "stops")
+  url.searchParams.set("sort", "by-airline")
+
+  assert.equal(readSharedSearchFromUrl(url)?.sortMode, "cheapest")
 })

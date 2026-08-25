@@ -23,6 +23,7 @@ import { AllSchedulesPanel } from "@/components/results/AllSchedulesPanel"
 import { MigrationMonthGrid } from "@/components/results/MigrationMonthGrid"
 import { migrationSweepSummary, type DisplayMonth } from "@/components/results/migration-month-model"
 import { ResultsSkeleton } from "@/components/results/ResultsSkeleton"
+import { ResultsScrollbar } from "@/components/results/ResultsScrollbar"
 import { ActiveFilterChips } from "@/components/results/ActiveFilterChips"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Spinner } from "@/components/ui/spinner"
@@ -34,7 +35,7 @@ import {
   type SearchOutcome,
 } from "@/lib/search-outcome"
 import { cn } from "@/lib/utils"
-import type { CanonicalOffer, SearchJobResponse, SortMode } from "@/types"
+import { SORT_MODES, type CanonicalOffer, type SearchJobResponse, type SortMode } from "@/types"
 
 /*
  * Plates 1b (active desktop), 2g (list states), 3b (all schedules), 4a
@@ -277,23 +278,20 @@ function ResultsPanelBase({
           <div className="fd-list-header-trail">
             {/* The desk's «Ordenar · Precio | Duración» is gone from this row:
                 a column header already sorts, in the place everybody looks for
-                it, so the two sortable columns became the control (see
+                it, so the sortable columns became the control (see
                 `ResultsColumnHead`). What is left here is the phone's, because
                 a phone has no column header to put it in.
 
                 Plate 1d: a 32px status row has no space for a segmented, so the
-                two modes collapse into whichever is on and tapping swaps them.
-                The order never disappears on a phone — 02 §5 lists what may,
-                and this is not on the list. */}
-            <button
-              type="button"
-              className="fd-result-sort-compact fd-focus-ring"
-              aria-label={`Ordenar por ${sort === "cheapest" ? "duración" : "precio"}`}
-              onClick={() => onSort(sort === "cheapest" ? "fastest" : "cheapest")}
-            >
-              <AppIcon name="sort" size={14} />
-              {sort === "cheapest" ? "Precio" : "Duración"}
-            </button>
+                order collapses into whichever criterion is on and tapping moves
+                to the next. The order never disappears on a phone — 02 §5 lists
+                what may, and this is not on the list.
+
+                All four, not two. The desk reaches «Salida» and «Escalas»
+                through the column header, and this surface has no header — so
+                on a phone those two orders could only be arrived at by opening
+                someone else's link, which is not reaching them. */}
+            <SortCompactButton sort={sort} onSort={onSort} />
             {/* 02 §9 step 6: once the tools retract, the status row grows a
                 26px filter button so the filters are never out of reach. */}
             {onOpenFilters && (
@@ -350,12 +348,71 @@ function ResultsPanelBase({
 }
 
 /**
+ * The phone's order control: one button that names the order in force and
+ * moves to the next one when it is pressed.
+ *
+ * The cycle is `SORT_MODES` itself rather than a list written out here, so the
+ * button cannot come to offer fewer criteria than the backend serves — which
+ * is what had already happened: the catalogue grew to four and this stayed a
+ * two-way switch between price and duration.
+ *
+ * The words are the criterion's and not the desk column's — «Salida», not the
+ * header's «Horario» — because the header labels name columns and this surface
+ * draws none of them. The accessible name is the same sentence on both.
+ *
+ * That name says what pressing does, not what is on: the visible label is the
+ * state and the label a screen reader hears is the action, which is the shape
+ * plate 1d gives a control that is its own toggle.
+ */
+const SORT_COMPACT_LABELS: Record<SortMode, string> = {
+  cheapest: "Precio",
+  fastest: "Duración",
+  departure: "Salida",
+  stops: "Escalas",
+}
+
+const SORT_COMPACT_CRITERIA: Record<SortMode, string> = {
+  cheapest: "precio",
+  fastest: "duración",
+  departure: "hora de salida",
+  stops: "número de escalas",
+}
+
+function SortCompactButton({ sort, onSort }: { sort: SortMode; onSort: (sort: SortMode) => void }) {
+  const next = SORT_MODES[(SORT_MODES.indexOf(sort) + 1) % SORT_MODES.length] ?? "cheapest"
+  return (
+    <button
+      type="button"
+      className="fd-result-sort-compact fd-focus-ring"
+      data-sort={sort}
+      aria-label={`Ordenar por ${SORT_COMPACT_CRITERIA[next]}`}
+      onClick={() => onSort(next)}
+    >
+      <AppIcon name="sort" size={14} />
+      {SORT_COMPACT_LABELS[sort]}
+    </button>
+  )
+}
+
+/**
  * The column header — plate 1b's answer to what the grey plinth was doing.
  *
  * It carries `.fd-card` so the lanes come from the row's own stylesheet rather
- * than from a copy of it, and the order lives in it: «Duración» and «Precio»
- * are the two radios of the same group the segmented used to be, with the same
+ * than from a copy of it, and the order lives in it: the sortable columns are
+ * the radios of the same group the segmented used to be, with the same
  * accessible names, so what changed is the shape and not the semantics.
+ *
+ * Four of them, not two. «Salida» and «Escalas» arrived as two more options of
+ * a segmented control that no longer exists — but they did not need controls of
+ * their own: «Horario» and «Escalas» are already columns of this header, and
+ * making a column sort is what the header of a table is for. So the group grew
+ * where the data already is instead of growing a second control beside it, and
+ * the four arrive in column order rather than in the segmented's.
+ *
+ * The lanes that do not sort stay labels. A header where everything is a
+ * button says every column can be ordered, and «Aerolínea», «Tramo», «Eq.» and
+ * «Prov.» cannot: the backend has four criteria and this group offers exactly
+ * those four.
  */
 function ResultsColumnHead({ sort, onSort }: { sort: SortMode; onSort: (sort: SortMode) => void }) {
   return (
@@ -371,35 +428,97 @@ function ResultsColumnHead({ sort, onSort }: { sort: SortMode; onSort: (sort: So
       <div className="fd-card__legs">
         <div className="fd-card__leg">
           <span className="fd-card__head-label">Tramo</span>
-          <span className="fd-card__head-label">Horario</span>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={sort === "fastest"}
-            aria-label="Ordenar por duración"
-            className="fd-card__head-label fd-card__head-label--end fd-card__head-sort fd-focus-ring"
-            onClick={() => onSort("fastest")}
-          >
-            Duración
-            {sort === "fastest" && <AppIcon name="arrowUp" size={12} />}
-          </button>
-          <span className="fd-card__head-label">Escalas</span>
+          <SortableColumnHead
+            sort={sort}
+            onSort={onSort}
+            mode="departure"
+            label="Horario"
+            criterion="hora de salida"
+          />
+          <SortableColumnHead
+            sort={sort}
+            onSort={onSort}
+            mode="fastest"
+            label="Duración"
+            criterion="duración"
+            align="end"
+          />
+          <SortableColumnHead
+            sort={sort}
+            onSort={onSort}
+            mode="stops"
+            label="Escalas"
+            criterion="número de escalas"
+          />
         </div>
       </div>
       <span className="fd-card__head-label fd-card__head-label--center">Eq.</span>
-      <button
-        type="button"
-        role="radio"
-        aria-checked={sort === "cheapest"}
-        aria-label="Ordenar por precio"
-        className="fd-card__head-label fd-card__head-label--end fd-card__head-sort fd-focus-ring"
-        onClick={() => onSort("cheapest")}
-      >
-        Precio
-        {sort === "cheapest" && <AppIcon name="arrowUp" size={12} />}
-      </button>
+      <SortableColumnHead
+        sort={sort}
+        onSort={onSort}
+        mode="cheapest"
+        label="Precio"
+        criterion="precio"
+        align="end"
+      />
       <span className="fd-card__head-label fd-card__head-label--end">Prov.</span>
     </div>
+  )
+}
+
+/**
+ * One sortable column of the header.
+ *
+ * The active mark is the arrow the redesign drew beside «Precio», and it is
+ * drawn only on the column that is ordering — one arrow on screen, on the lane
+ * the list is sorted by.
+ *
+ * It costs the cell 15px (12 of icon, 3 of gap) and one lane cannot pay it out
+ * of its own track: «Duración» measures 56.89 in a lane of 66, so with the
+ * arrow the cell is 71.89 and hangs 5.89px past its track. That is left as an
+ * overflow rather than repaired, and the reason is that the alternatives are
+ * worse: widening the duration lane moves `RESULT_LEG_FIXED_PX`, which moves
+ * the 787 stacking threshold and the 824 the detail column asks for, and a
+ * 1440 desk sits *on* 824 — the commonest desk there is would lose its third
+ * column to a 12px arrow. The 5.89 falls into the 12px column gap that follows
+ * the lane and reaches nothing; `test/ui/results.playwright.ts` measures it
+ * against the neighbouring label rather than trusting the arithmetic.
+ *
+ * The label follows the lane it names: right over the figures, left over the
+ * text, which is where the values under it already are.
+ */
+function SortableColumnHead({
+  sort,
+  onSort,
+  mode,
+  label,
+  criterion,
+  align,
+}: {
+  sort: SortMode
+  onSort: (sort: SortMode) => void
+  mode: SortMode
+  label: string
+  criterion: string
+  align?: "end"
+}) {
+  const active = sort === mode
+  return (
+    <button
+      type="button"
+      role="radio"
+      data-segment={mode}
+      aria-checked={active}
+      aria-label={`Ordenar por ${criterion}`}
+      className={cn(
+        "fd-card__head-label fd-card__head-sort fd-focus-ring",
+        align === "end" && "fd-card__head-label--end",
+      )}
+      onClick={() => onSort(mode)}
+    >
+      {label}
+      {active && <AppIcon name="arrowUp" size={12} />}
+    </button>
   )
 }
 
@@ -1015,6 +1134,8 @@ function ResultsList({
           />
         )}
       </div>
+
+      <ResultsScrollbar viewportRef={viewportRef} />
 
       {mobileCollapseEnabled && backToTopVisible && (
         <button

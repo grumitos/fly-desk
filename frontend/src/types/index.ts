@@ -15,6 +15,7 @@ import type {
   SearchResponse as CoreSearchResponse,
   Segment as CoreSegment,
 } from "../../../src/core/types"
+import { SORT_MODES } from "../../../src/core/types"
 
 type OpenString<T extends string> = T | (string & {})
 
@@ -201,4 +202,18 @@ export interface MatrixCell extends Omit<
   offer?: CanonicalOffer
 }
 
-export type SortMode = "cheapest" | "fastest"
+/*
+ * The order is a contract, not a screen preference: the criterion travels in
+ * `POST /api/search` and the backend is what sorts. So the type is not written
+ * out again here as a union of its own — it comes from the same catalogue that
+ * validates the request, the way `airline-names` and `location-display` come
+ * from the core. A hand-copied union is what leaves the frontend offering an
+ * order the server does not know how to serve.
+ */
+export { SORT_MODES }
+
+export type SortMode = (typeof SORT_MODES)[number]
+
+export function isSortMode(value: unknown): value is SortMode {
+  return SORT_MODES.includes(value as SortMode)
+}
