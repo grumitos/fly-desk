@@ -229,15 +229,17 @@ for (const viewport of VIEWPORTS) {
       if (stacked) {
         /* 02 §6: the provider icon leaves for the detail. The chevron left with
            it — it was decorative and `aria-hidden`, and its lane was 24 of the
-           310 a 360px phone has — so the stacked row is three lanes, and the
-           baggage pair has come down to the legs block, centred over the two
-           tramos on the card's second row. There is no column header here
-           either: three lanes and two rows have nothing a six-lane header
+           310 a 360px phone has — so the stacked row is four lanes: logo, name,
+           the pair's own fixed 32, and the price. The pair keeps the carrier
+           line, where 8c and `Deriva.dc.html` draw it; carrying it in the legs
+           block instead costs the elastic stops lane 36 and takes the airport
+           code away from Flexible on a narrow phone. There is no column header
+           here either: four lanes and two rows have nothing a six-lane header
            could name. */
         assert.equal(cardLayout.providerVisible, false, JSON.stringify(cardLayout));
         assert.equal(cardLayout.headVisible, false, JSON.stringify(cardLayout));
-        assert.match(cardLayout.columns, /^24px [\d.]+px [\d.]+px$/);
-        assert.equal(cardLayout.baggageRow, "2", JSON.stringify(cardLayout));
+        assert.match(cardLayout.columns, /^24px [\d.]+px 32px [\d.]+px$/);
+        assert.equal(cardLayout.baggageRow, "1", JSON.stringify(cardLayout));
       } else {
         /* 8c's 32 / 186 / 1fr / 116 / 26, with the baggage lane paid for out of
            «who flies» rather than out of the result cell, and the logo's four
@@ -832,7 +834,7 @@ test("the desk card gives the codeshare a line and the trip a single row", async
   }, { autoOpen: false });
 });
 
-test("the stacked card keeps the baggage over its legs and the stops whole", async () => {
+test("the stacked card keeps the baggage on the carrier line and the stops whole", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     /*
      * The phone counterpart of the test above, and the two things the stacked
@@ -843,12 +845,15 @@ test("the stacked card keeps the baggage over its legs and the stops whole", asy
      * ellipsising «2 esc · PTY, MIA» down to a dangling «2 esc…», hiding the
      * codes it was being cut to show.
      *
-     * The pair has moved since: it is the fifth lane of the legs block now,
-     * centred over the two tramos, where it is a property of the fare among the
-     * other properties of the fare — and where it gives the carrier line its
-     * whole elastic lane back for the name. It is still a grid item with an
-     * explicit placement, which is the half of this case that catches the
-     * original defect, and it is still inside the card's own padding.
+     * The pair has not moved: it keeps the carrier line, between the name and
+     * the price, which is where 8c and `Deriva.dc.html` draw it. `MovilCompacta`
+     * moves it down into the legs block as a fifth lane and this file shipped
+     * that first — but the maqueta can afford the move only because it also
+     * drops the airport code from the stops label, which decision 3 forbids.
+     * What changed is that its lane is a fixed 32 rather than an `auto` that
+     * exists only when the provider said something: the placement is still
+     * explicit, which is the half of this case that catches the original
+     * defect, and the geometry no longer depends on the fare.
      */
     await page.route("**/api/locations**", async (route) => {
       await route.fulfill({
@@ -946,7 +951,6 @@ test("the stacked card keeps the baggage over its legs and the stops whole", asy
         carrierRight: carrier?.right ?? 0,
         priceLeft: price?.left ?? 0,
         legsTop: legs?.top ?? 0,
-        legsRight: legs?.right ?? 0,
         stops: Array.from(element.querySelectorAll<HTMLElement>(".fd-card__leg-stops")).map((lane) => ({
           text: lane.querySelector<HTMLElement>(".fd-card__leg-stops-short")?.textContent?.trim() ?? "",
           clientWidth: lane.clientWidth,
@@ -957,18 +961,20 @@ test("the stacked card keeps the baggage over its legs and the stops whole", asy
 
     // 8c: two rows and no third. The implicit one cost 22px of card height.
     assert.equal(card.rows, 2, JSON.stringify(card));
-    /* Three lanes, and the last of them is the price rather than a 14px
+    /* Four lanes, and the last of them is the price rather than a 14px
        chevron: the chevron was decorative, `aria-hidden`, and its lane plus its
-       gap was 24 of the 310 a 360px phone has to spend on a row. */
-    assert.match(card.columns, /^24px [\d.]+px [\d.]+px$/);
-    /* The pair stands at the end of the legs block, centred over the two leg
-       rows, and inside the card's own padding on both sides. */
+       gap was 24 of the 310 a 360px phone has to spend on a row. The third is
+       the pair's, a fixed 32 whether or not this fare has one. */
+    assert.match(card.columns, /^24px [\d.]+px 32px [\d.]+px$/);
+    /* The pair rides the carrier line, between the name and the price, and
+       stays inside the card's own padding on both sides. */
     assert.ok(card.baggage, JSON.stringify(card));
     assert.ok(card.baggage!.left >= card.contentLeft - 0.5, JSON.stringify(card));
     assert.ok(card.baggage!.right <= card.contentRight + 0.5, JSON.stringify(card));
-    assert.equal(card.baggageRow, "2", JSON.stringify(card));
-    assert.ok(card.baggage!.top >= card.legsTop - 0.5, JSON.stringify(card));
-    assert.ok(card.baggage!.left >= card.legsRight - 40, JSON.stringify(card));
+    assert.equal(card.baggageRow, "1", JSON.stringify(card));
+    assert.ok(card.baggage!.left >= card.carrierRight, JSON.stringify(card));
+    assert.ok(card.baggage!.right <= card.priceLeft, JSON.stringify(card));
+    assert.ok(card.baggage!.bottom <= card.legsTop, JSON.stringify(card));
     // 02 §13 forbids clipping a cifra, and an ellipsis here eats the airports.
     assert.equal(card.stops.length, 2, JSON.stringify(card));
     assert.equal(card.stops[0].text, "2 esc", JSON.stringify(card));

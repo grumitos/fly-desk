@@ -2141,15 +2141,32 @@ function oneStopOffer(index: number, overrides: Partial<CanonicalOffer> = {}) {
 
 const RESULTS_SEARCH_URL = "/?mode=exact&trip=round-trip&origin=LIM&destination=MAD&departure=2026-05-28&return=2026-06-04&adults=1&children=0&infants=0&sort=cheapest";
 
+/* One link per mode, because a tab that recognises its own address bar fills
+   the form and waits instead of running the search again — so a case that
+   sweeps four modes has to arrive somewhere new each time. Only the return date
+   moves; nothing in the row is drawn from it. */
+function searchUrlForMode(searchMode: string): string {
+  const day = { exact: "04", "stay-range": "05", "roundtrip-grid": "06", "month-view": "07" }[searchMode] ?? "04";
+  return RESULTS_SEARCH_URL.replace("return=2026-06-04", `return=2026-06-${day}`);
+}
+
 async function routeCompletedSearch(
   page: Page,
-  body: { offers: CanonicalOffer[]; scheduleGroups?: unknown[] },
+  /* `searchMode` overrides the one the request carries. What reads it is the
+     list — it stamps `data-mode` for the stylesheet — so a case about the row's
+     geometry under each mode drives it here rather than through the six fields
+     of the form that produce it. `flexible.playwright.ts` covers the request
+     path itself. */
+  body: { offers: CanonicalOffer[]; scheduleGroups?: unknown[]; searchMode?: string },
 ): Promise<void> {
   await page.route("**/api/locations**", async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ suggestions: [] }) });
   });
   await page.route("**/api/search", async (route) => {
     const payload = route.request().postDataJSON() as Record<string, unknown>;
+    const request = body.searchMode
+      ? { ...(payload.request as Record<string, unknown>), searchMode: body.searchMode }
+      : payload.request;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -2159,7 +2176,7 @@ async function routeCompletedSearch(
         searchStatus: "completed",
         revision: 1,
         sortMode: payload.sortMode,
-        request: payload.request,
+        request,
         offers: body.offers,
         allOffers: body.offers,
         scheduleGroups: body.scheduleGroups ?? [],
@@ -2468,6 +2485,122 @@ test("the card keeps a lane for the airport codes at every width a desk can be",
     await page.waitForTimeout(320);
     const laptop = await measure();
     assert.ok(laptop && !laptop.stacked && laptop.listWidth >= 787, JSON.stringify(laptop));
+  }, { autoOpen: false });
+});
+
+test("the stops label keeps its airport code in every mode, on the narrowest phone", async () => {
+  /*
+   * The defect this closes was not a width, it was that a width could move
+   * without anything saying so.
+   *
+   * §5's rule — the disposition in force must fit its own one-stop stops label
+   * — is pinned by «the card keeps a lane for the airport codes», and that case
+   * sweeps thirteen desk widths in the one mode the app opens on. The stacked
+   * row's rótulo, though, is *narrower in Exacto than anywhere else*: there the
+   * search bar above the list already states both dates, so the leg drops its
+   * own copy and the lane falls from 56 to 22. Flexible and Migratorio vary the
+   * dates per offer — the date is what those modes are for — so there the lane
+   * is 56, and the 34px difference comes straight out of the elastic lane the
+   * airport code lives in.
+   *
+   * So the geometry was a function of the mode, no case ran in the wide one,
+   * and a change that fitted the code at 360 in Exacto shipped it broken from
+   * 388 down in Flexible — iPhone SE, 6, 7 and 8. What buys it back is the
+   * baggage pair staying on the carrier line instead of taking a fifth lane of
+   * the legs block; the rule is that **no mode may ask for more phone than
+   * another**, and 360 is the number, because that is the common Android.
+   *
+   * Three modes and four `searchMode`s: Flexible sends two of them, and
+   * Migratorio sends a fourth that draws the month grid instead of rows — so no
+   * row can ever carry it, which the last block here asserts rather than
+   * assumes. Migratorio reaches a row only through the month it opens, and that
+   * is an ordinary search covered by the sweep above it.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    for (const [searchMode, datedRotulo] of [
+      ["exact", false],
+      ["stay-range", true],
+      ["roundtrip-grid", true],
+    ] as const) {
+      await routeCompletedSearch(page, {
+        offers: Array.from({ length: 6 }, (_, index) => oneStopOffer(index)),
+        searchMode,
+      });
+      /* A link the tab has already written is a link the tab does not run
+         again, so each mode arrives on a return date of its own. Once is
+         enough: the widths below are a resize, which is what a rotation is. */
+      await page.setViewportSize({ width: 360, height: 800 });
+      await openSharedSearchLink(page, `${baseUrl}${searchUrlForMode(searchMode)}`);
+      await page.getByTestId("result-card").first().waitFor();
+
+      /* 360 is the floor and 375 is the phone the previous arithmetic broke
+         first; 390 is the QA viewport, so a regression that only shows up on
+         the narrow two is still visible beside a width that passes. */
+      for (const width of [360, 375, 390]) {
+        await page.setViewportSize({ width, height: 800 });
+        await page.waitForTimeout(320);
+
+        const row = await page.evaluate(() => {
+          const card = document.querySelector<HTMLElement>("[data-testid='result-card']");
+          const list = document.querySelector<HTMLElement>(".fd-results-list");
+          const legs = card?.querySelector<HTMLElement>(".fd-card__legs");
+          const stops = card?.querySelector<HTMLElement>(".fd-card__leg-stops");
+          const label = card?.querySelector<HTMLElement>(".fd-card__leg-label");
+          const date = card?.querySelector<HTMLElement>(".fd-card__leg-date");
+          const provider = card?.querySelector<HTMLElement>(".fd-card__provider");
+          if (!card || !list || !legs || !stops || !label || !provider) return null;
+          const shown = Array.from(stops.children)
+            .find((child) => getComputedStyle(child as HTMLElement).display !== "none") as HTMLElement | undefined;
+          return {
+            mode: list.dataset.mode ?? "",
+            stacked: getComputedStyle(provider).display === "none",
+            legsOverflow: legs.scrollWidth - legs.clientWidth,
+            laneWidth: stops.getBoundingClientRect().width,
+            labelWidth: shown?.getBoundingClientRect().width ?? 0,
+            laneClips: stops.scrollWidth > stops.clientWidth,
+            label: (shown?.textContent ?? "").trim(),
+            rotuloClips: label.scrollWidth > label.clientWidth,
+            dateShown: Boolean(date) && getComputedStyle(date as HTMLElement).display !== "none",
+            dateText: (date?.textContent ?? "").trim(),
+          };
+        });
+
+        assert.ok(row, `missing row metrics at ${width} in ${searchMode}`);
+        const at = `${searchMode} @ ${width}: ${JSON.stringify(row)}`;
+
+        assert.equal(row.mode, searchMode, at);
+        assert.equal(row.stacked, true, at);
+        // The whole of it: the airport code has a box, in every mode, at 360.
+        assert.match(row.label, /BOG/, at);
+        assert.ok(row.laneWidth + 0.5 >= row.labelWidth, at);
+        assert.equal(row.laneClips, false, at);
+        // And the row it lives in never spills over the lanes beside it.
+        assert.ok(row.legsOverflow <= 0, at);
+        assert.equal(row.rotuloClips, false, at);
+        /* The other half of the rule, or the next fix buys its width by taking
+           the date out of Flexible — where the date is the offer. */
+        assert.equal(row.dateShown, datedRotulo, at);
+        if (datedRotulo) assert.match(row.dateText, /^\d{2}\/\d{2}$/, at);
+      }
+    }
+
+    /* And the fourth `searchMode` reaches no row at all: it is the sweep, and
+       the sweep is a grid of months. Asserted so «every mode» above stays a
+       complete statement — if `month-view` ever starts drawing rows, this is
+       the line that says the sweep is one short. */
+    await routeCompletedSearch(page, {
+      offers: Array.from({ length: 6 }, (_, index) => oneStopOffer(index)),
+      searchMode: "month-view",
+    });
+    await page.setViewportSize({ width: 360, height: 800 });
+    await openSharedSearchLink(page, `${baseUrl}${searchUrlForMode("month-view")}`);
+    /* By the grid and not by the heading: on a phone the list title is not
+       drawn at all (02 §5 spends that strip on results). Attached rather than
+       visible, because this fixture carries no months — what is being read is
+       which branch the mode took, and the branch is the grid's. */
+    await page.locator(".fd-month-grid").waitFor({ state: "attached" });
+    assert.equal(await page.getByTestId("result-card").count(), 0);
+    assert.equal(await page.locator(".fd-results-list").count(), 0);
   }, { autoOpen: false });
 });
 

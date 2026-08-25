@@ -840,12 +840,17 @@
     }
 
     .fd-card {
-      /* Three lanes, not four: the chevron is gone. It was decorative and
-         `aria-hidden`, the whole card has been the target since the hit was
-         introduced, and its 14px lane plus a 10px gap was 24 of the 310 a
-         360px phone has to spend — which is most of what buys the airport
-         code back below. */
-      grid-template-columns: 24px minmax(0, 1fr) auto;
+      /* The chevron's lane is gone. It was decorative and `aria-hidden`, the
+         whole card has been the target since the hit was introduced, and its
+         14px plus a 10px gap was 24 of the 310 a 360px phone has to spend —
+         which is part of what buys the airport code back below.
+
+         The pair keeps its own fixed 32 rather than an `auto` that only exists
+         when the fare has something to say: an empty `auto` still spends its
+         gap, and a lane that comes and goes with the fare is the fault the desk
+         row was already fixed for. 32 always, so the carrier lane is 128 on a
+         360px phone whatever the provider answered. */
+      grid-template-columns: 24px minmax(0, 1fr) 32px auto;
       column-gap: 10px;
       row-gap: 8px;
       min-height: 0;
@@ -934,36 +939,28 @@
     }
 
     /*
-     * The pair comes down off the carrier line and stands at the end of the
-     * legs block, centred over the two tramos — where it is a property of the
-     * fare among the other properties of the fare, and where the carrier line
-     * gets its whole elastic lane back for the name.
+     * The pair stays on the carrier line, between the name and the price, which
+     * is where plate 8c puts it and where `Deriva.dc.html` draws it.
      *
-     * It is a sibling of the legs block, not a child of it, so it cannot be a
-     * track of that grid. It takes the same cell instead: both occupy card
-     * row 2 across every column, the legs block reserves a 32px fifth lane it
-     * never fills, and the pair right-aligns into exactly that lane. Nothing is
-     * positioned out of flow, so the legs block's scroll area — which CI
-     * measures — is untouched.
-     *
-     * `align-self: stretch` with the block's own 9px of rule-and-padding
-     * repeated on top is what centres the icons over the two leg rows rather
-     * than over the cell: the cell includes the filete above it, and centring
-     * in the cell would sit the pair 4.5px high.
+     * `MovilCompacta` moves it down into the legs block as a fifth lane, and
+     * that is what this file shipped first — but the maqueta can afford the
+     * move only because it also drops the airport code from the stops label
+     * («1 escala», not «1 escala · GRU»), and decision 3 forbids exactly that.
+     * Measured, the two cannot both be had: the pair costs the block 32 of lane
+     * and one 4px gap, and with the date in the rótulo that took the elastic
+     * lane to 41 on a 375px phone against the 54 the code needs. The code is
+     * pinned in CI and the pair's placement is not, so the pair gives way.
      */
     .fd-card .fd-card__baggage {
-      grid-column: 1 / -1;
-      grid-row: 2;
-      align-self: stretch;
-      justify-self: end;
-      padding-top: 9px;
+      grid-column: 3;
+      grid-row: 1;
     }
 
     /* 02 §6: price 16/800 over seats 10/700, stacked. `gap: 2` is the smallest
        rung of the 01 §3 scale; the 1px it carried was off the catalog and only
        ever read as "no gap". */
     .fd-card .fd-card__price {
-      grid-column: 3;
+      grid-column: 4;
       grid-row: 1;
       gap: 2px;
     }
@@ -987,9 +984,10 @@
      *   · 22 for the tramo in Exacto, where «VTA» measures 21.92. In Exacto the
      *     rótulo loses its date (below): the search bar above the list already
      *     states both dates, and repeating them twice per card down hundreds of
-     *     cards buys nothing. Flexible and Migratorio vary the dates per offer,
-     *     so there they stay and the lane is 56 — «VTA 28/05» measures 54.7,
-     *     the label and the date being two faces with two tracking values.
+     *     cards buys nothing. Flexible and Migratorio vary the dates per offer —
+     *     there the date *is* what the mode is for — so there it stays and the
+     *     lane is 56: «VTA 28/05» measures 54.7, the label and the date being
+     *     two faces with two tracking values.
      *   · 120 for the horario. The maqueta fixes it at 116 and claims 113
      *     measured; the row measures 120 — two times at 14px (42 each, Plex
      *     Mono at 0.6em), the 11px arrow lane, the 13px day lane and three 4px
@@ -999,29 +997,39 @@
      *     row's geometry was a function of the fare — the exact fault the
      *     baggage lane was already fixed for. «2d 11h 45m» is ten characters at
      *     10px, and 10 × 0.6 × 10 = 60.0 exactly.
-     *   · 32 for the pair: two 14px icons and the 4px between them.
      *
-     * The gap goes from 6 to 4, and this is the third time the same arithmetic
-     * has moved it — the plate drew 8, the loaded face took it to 6, and the
-     * lanes above take it to 4. A 360px Android gives this block 310 (the
+     * The gap is 4, and this is the third time the same arithmetic has moved
+     * it: the plate drew 8, the loaded face took it to 6, and the lanes above
+     * take it to 4.
+     *
+     * **Every mode has to hold the airport code at the same width, and the
+     * width is 360.** That is the rule this block is sized by, and it is the
+     * one CI pins (`results.playwright.ts`, «the stops label keeps its airport
+     * code in every mode»). A 360px Android gives this block 310 — the
      * viewport, less 12 of list padding and 12 of card padding on each side,
-     * less the card's two borders). 22 + 120 + 60 + 32 is 234, and four gaps at
-     * 6 leave the elastic stops lane 52 against the 54 «1 esc · BOG» measures —
-     * so the airport code the whole threshold exists to protect would have been
-     * the first thing the ellipsis ate, again. Four gaps at 4 leave 60, which
-     * also clears the widest three-letter code the label can carry
-     * («1 esc · MMM», 59.9).
+     * less the card's two borders — and the fixed lanes are `120 + 60` plus the
+     * rótulo, with three 4px gaps:
      *
-     * Flexible and Migratorio keep the date, so there the block needs 388px of
-     * viewport rather than 354 to hold the same code. That is 16px worse than
-     * the 372 this row asked for before, and it is the price of the pair coming
-     * down into the block; the alternative was a second anatomy chosen by mode,
-     * which is the kind of fork this change exists to close.
+     *     Exacto            22 + 192 = 214   →   elastic 96
+     *     Flexible/Migrat.  56 + 192 = 248   →   elastic 62
+     *
+     * against the 54 «1 esc · BOG» measures, and the 59.9 of the widest
+     * three-letter code the label can carry («1 esc · MMM»). Both clear it at
+     * 360, so no mode asks for more phone than another.
+     *
+     * That is what the baggage pair's placement paid for. Carrying it as a
+     * fifth lane here — the way `MovilCompacta` draws it — costs 32 of lane and
+     * a fourth gap, which takes Exacto to 60 and Flexible to **26**: below 54,
+     * so the label fell to «1 esc · …» on every phone narrower than 388 and the
+     * mode that varies its dates was the mode that lost the code. Exacto's own
+     * case did not catch it, because Exacto had 60. The pair went back to the
+     * carrier line (above), which is where 8c and `Deriva.dc.html` draw it
+     * anyway, and the two modes came back level.
      */
     .fd-card .fd-card__legs {
       grid-column: 1 / -1;
       grid-row: 2;
-      grid-template-columns: 56px 120px 60px minmax(0, 1fr) 32px;
+      grid-template-columns: 56px 120px 60px minmax(0, 1fr);
       padding-top: 8px;
       border-top: 1px solid var(--color-border);
       row-gap: 4px;
@@ -1029,7 +1037,7 @@
     }
 
     .fd-results-list[data-mode="exact"] .fd-card .fd-card__legs {
-      grid-template-columns: 22px 120px 60px minmax(0, 1fr) 32px;
+      grid-template-columns: 22px 120px 60px minmax(0, 1fr);
     }
 
     .fd-results-list[data-mode="exact"] .fd-card .fd-card__leg-date {
