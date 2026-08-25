@@ -525,9 +525,10 @@
   /* The list of matches and the list of Recientes/Frecuentes are the same
      scroller under two conditions, and both open over the workspace: running
      off the last suggestion used to scroll the results behind the panel.
-     It is a class of its own rather than another job for `.fd-scrollbar-hidden`
-     — that one says «hide the bar» and would start meaning two things, and it
-     is worn by lanes that have no panel behind them to protect. */
+     It is a class of its own rather than another job for `.fd-scrollbar-hidden`:
+     that one says «hide the bar», and a utility that also decided where a
+     gesture stops would be two rules wearing one name — which the lanes that
+     want the first and not the second would have no way to say. */
   .fd-suggest-scroll {
     overscroll-behavior: contain;
   }
@@ -784,10 +785,16 @@
   }
 
   /* A date is a figure: it is compared and it is typed, and the product already
-     writes it as one everywhere it *reports* a date — `28 MAY` on the card, the
-     cell in the calendar. The three surfaces that *receive* one — the two halves
-     and the month field of Migratorio — wrote it in sans, so the same date came
-     in as a word and went out as a figure.
+     writes it as one everywhere it *reports* one — `28/05` on the card at mono
+     10/700, `28 may` in the detail's leg summary at 12/600, the day in the
+     calendar. The three surfaces that *receive* a date — the two halves and the
+     month field of Migratorio — wrote it in sans, so the same date came in as a
+     word and went out as a figure.
+     The unit is the string, not the word. `28 may 2026` carries figures and goes
+     mono with its month abbreviation, which is exactly how the leg summary
+     already writes it; a month standing alone carries none, and that is why
+     `.fd-cal-cell-month` keeps its sans. The two are not in disagreement — they
+     are the same rule at its two ends.
      Only once there is a date there. Empty, all three say «Elegir» (and the
      return half «No aplica»), and that is a word whatever the field holds, so
      the placeholder keeps the sans it shares with Origen and Destino.
@@ -1390,11 +1397,12 @@
     display: none;
   }
 
-  /* A scroller nested inside another one hands the gesture on when it runs out
-     of content, so reaching the end of the detail dragged the sheet — or the
-     page — behind it. `contain` stops the chain at this edge, which is what the
-     agent already expects from `.fd-list-viewport` and `.fd-sheet-body`; the
-     same line is on every other nested lane for the same reason. */
+  /* A scroller hands the gesture on when it runs out of content, and nothing
+     above this one can take it: on a desk the panel clips and the stage does not
+     scroll, and inside a sheet `.fd-detail-sheet .fd-sheet-body` is already
+     `overflow: hidden`. So the chain does not stop one level up — it runs past
+     every ancestor to the viewport and pulls the whole page with it. `contain`
+     ends it at this edge, the same line every other nested lane carries. */
   .fd-detail-body {
     overscroll-behavior: contain;
     padding: 12px;
@@ -2702,8 +2710,8 @@
        On a phone it is the only target in the month row that is not the row
        itself, and 26 is fourteen under the floor the system set for a thumb, so
        it takes the touch height and the radius and body that go with it. The row
-       grows by those fourteen pixels plus the 10px it already carries above the
-       control; that is the price of the target, and it is meant. */
+       grows by those fourteen pixels — the 10px above the control were already
+       there and do not move. That is the price of the target, and it is meant. */
     .fd-month-open {
       height: var(--fd-control-touch);
       padding-inline: 14px;
