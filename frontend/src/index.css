@@ -1847,15 +1847,33 @@
  * go — an animation with `both` fill outranks an inline style. Once a drag has
  * happened the animation stays off for the life of the sheet: turning it back
  * on at release would replay the entry from the bottom of the screen.
+ *
+ * Until it closes: the `:not()` is what gives the exit its animation back.
+ * Without it a sheet released by the gesture had none — `[data-drag]` outranks
+ * the closing rule — and vanished on the spot right after having followed the
+ * finger, which is half of the gesture.
  */
-.fd-sheet[data-drag="active"] {
+.fd-sheet-layer:not([data-closing="true"]) .fd-sheet[data-drag="active"] {
   animation: none;
   transition: none;
 }
 
-.fd-sheet[data-drag="settle"] {
+.fd-sheet-layer:not([data-closing="true"]) .fd-sheet[data-drag="settle"] {
   animation: none;
+  /* The elastic return: the sheet goes back on its own when the finger let go
+     short of the threshold. It is `estructura` because it reorders the screen —
+     and because at 0ms, under reduced motion, it still returns, only at once. */
   transition: transform var(--fd-dur-estructura) var(--fd-ease-estructura);
+}
+
+/*
+ * The split of axes, declared. `pan-y` leaves the vertical scroll to the body's
+ * own scroller and takes the horizontal one from the browser, which is the one
+ * that dismisses. Sheets without a swipe dismissal do not declare it: there the
+ * horizontal axis means nothing, and there is no reason to take it from anyone.
+ */
+.fd-sheet[data-back-swipe] {
+  touch-action: pan-y;
 }
 
 .fd-sheet--bottom {
@@ -1899,6 +1917,13 @@
 
 .fd-sheet-layer[data-closing="true"] .fd-sheet--modal {
   animation: fd-exit-opacity var(--fd-dur-exit-emergente) var(--fd-ease-tacto) both;
+}
+
+/* Thrown sideways: it leaves by the edge it came in through, whatever the
+   placement, and starts where the finger left it. It comes after the three
+   above on purpose — same specificity, and the last one written wins. */
+.fd-sheet-layer[data-closing="true"] .fd-sheet[data-dismiss="swipe"] {
+  animation: fd-exit-swipe var(--fd-dur-exit-hoja) var(--fd-ease-estructura) both;
 }
 
 .fd-sheet--bottom.fd-sheet--partial {
@@ -2111,6 +2136,9 @@
 }
 
 .fd-sheet-handle-zone {
+  --fd-sheet-handle-width: 38px;
+
+  position: relative;
   display: grid;
   flex: 0 0 auto;
   height: 16px;
@@ -2119,8 +2147,35 @@
   touch-action: pan-y;
 }
 
+/*
+ * The grabber draws 4px and its box measures 16: under the 24px the geometry
+ * itself cites as WCAG 2.5.8's floor, and it is the one place on a sheet where
+ * the thumb has to land to be able to close it. The 16 are the plate's and they
+ * stay; what grows is the sensitive area, downwards, because there is nothing
+ * above it.
+ *
+ * And it grows down the middle only. Across the full width it ate the first two
+ * pixels of the header's cross — measured: a 40px control left at 38 — which is
+ * trading one gesture for another. Centred on the bar with a finger of margin on
+ * each side it reaches the 24px exactly where the thumb looks for them, and
+ * leaves the far ends as they were.
+ *
+ * `::after` rather than real height so nothing drawn moves by a pixel, and
+ * `position: relative` on the zone so the extension paints over the header and
+ * is the one that takes the touch.
+ */
+.fd-sheet-handle-zone::after {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: calc(var(--fd-sheet-handle-width) + 2 * var(--fd-control-touch));
+  height: 8px;
+  content: "";
+  transform: translateX(-50%);
+}
+
 .fd-sheet-handle {
-  width: 38px;
+  width: var(--fd-sheet-handle-width);
   height: 4px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--color-muted-foreground) 40%, transparent);

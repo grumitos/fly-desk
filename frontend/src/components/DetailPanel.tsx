@@ -9,6 +9,7 @@ import { ShortcutTooltip } from "@/components/ui/tooltip"
 import { requestQuotation, toBackendPayload } from "@/lib/api"
 import { diffDaysIso, formatJourneyDuration, formatOfferDate, isoDatePart, stationPlaceName } from "@/lib/offer-display"
 import { bestPurchasePath, normalizeSafePurchaseUrl } from "@/lib/purchase-path"
+import { motionToken } from "@/lib/reduced-motion"
 import { providerBadgeForId } from "@/components/results/result-card-model"
 import { cn } from "@/lib/utils"
 import type { CanonicalOffer, Itinerary, SearchRequest, Segment } from "@/types"
@@ -41,10 +42,19 @@ const LEG_DATE_FORMATTER = new Intl.DateTimeFormat("es-PE", {
 })
 const MIGRATION_PLAN_SESSION_KEY = "fly-desk:migration-plan:v1"
 /* 07 §4 row 6 / 05 §6: the copy confirmation enters in 180 ms, stays 2.4 s and
-   leaves in 140 ms. The two waits live here because they are timers; the two
-   animations live on `--fd-dur-confirmacion` / `--fd-dur-exit-confirmacion`. */
-const CONFIRMATION_HOLD_MS = 2400
-const CONFIRMATION_EXIT_MS = 140
+   leaves in 140 ms. The two waits are timers and live here, but the numbers do
+   not: all three are in the catalog, and a copy in JS of a row of the table is a
+   row that can fall behind. The long wait is read from `--fd-hold-confirmacion`,
+   which deliberately does **not** go to zero under reduced motion — it is not
+   movement, it is how long it takes to read that the text was copied — and the
+   exit from `--fd-dur-exit-confirmacion`, which does. */
+function confirmationHold(): number {
+  return motionToken("--fd-hold-confirmacion")
+}
+
+function confirmationExit(): number {
+  return motionToken("--fd-dur-exit-confirmacion")
+}
 /* Plate 3c: the two facts an agent needs, in the order they need them, and it
    is *about* the quotation — never *instead of* it (11 §4). The phone gets the
    shorter pair because the notice shares its row with the retry. Which one
@@ -204,8 +214,8 @@ export function DetailPanel({
       setConfirmation((current) => (current?.key === key ? { key, closing: true } : current))
       confirmationTimers.current.push(window.setTimeout(() => {
         setConfirmation((current) => (current?.key === key ? null : current))
-      }, CONFIRMATION_EXIT_MS))
-    }, CONFIRMATION_HOLD_MS))
+      }, confirmationExit()))
+    }, confirmationHold()))
   }, [clearConfirmationTimers])
 
   const setMigrationPlanChoice = useCallback((nextChoice: boolean) => {

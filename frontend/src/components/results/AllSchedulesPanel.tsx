@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react"
 import { AppIcon } from "@/components/ui/app-icon"
 import { buildResultCardModel } from "@/components/results/result-card-model"
+import { useOverlayHistory } from "@/hooks/useOverlayHistory"
 import { cn } from "@/lib/utils"
 import type { CanonicalOffer } from "@/types"
 
@@ -39,17 +40,30 @@ export function AllSchedulesPanel({
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null)
 
+  /*
+   * The other surface the gesture plate counts outside the history. It opens
+   * over the list and covers the cards below it, and the system back did not
+   * close it: the application was left with it open. Now it pushes its entry,
+   * and its three ways out — `Esc`, a tap outside, and the cross — consume that
+   * entry down the same road as the gesture.
+   *
+   * Choosing a schedule does not come through here and does not need to: the
+   * parent unmounts the panel on the spot, and the unmount consumes the entry
+   * just the same.
+   */
+  const { requestClose } = useOverlayHistory(true, onClose, "fd-schedules")
+
   // Esc closes, and a click anywhere else does too: this opens in place over the
   // list, so leaving it open while the agent works elsewhere would hide rows.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.stopPropagation()
-        onClose()
+        requestClose()
       }
     }
     const handlePointerDown = (event: PointerEvent) => {
-      if (!panelRef.current?.contains(event.target as Node)) onClose()
+      if (!panelRef.current?.contains(event.target as Node)) requestClose()
     }
 
     document.addEventListener("keydown", handleKeyDown)
@@ -58,7 +72,7 @@ export function AllSchedulesPanel({
       document.removeEventListener("keydown", handleKeyDown)
       document.removeEventListener("pointerdown", handlePointerDown)
     }
-  }, [onClose])
+  }, [requestClose])
 
   return (
     <div
@@ -69,14 +83,19 @@ export function AllSchedulesPanel({
     >
       <div className="flex items-center justify-between gap-3 border-b border-border bg-secondary/60 px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2.5">
-          <h3 className="fd-type-base font-bold">Todos los horarios</h3>
+          {/* No `font-bold`: measured, the utility painted nothing. `.fd-type-base`
+              declares the weight and wins, so the title came out at 600 — the
+              label weight — while the markup said 700. The type scale owns the
+              weight; a utility that promises another one and does not deliver it
+              is worse than absent. */}
+          <h3 className="fd-type-base">Todos los horarios</h3>
           <span className="fd-panel-count">{offers.length}</span>
         </div>
         <button
           type="button"
           className="fd-alert-line-dismiss fd-focus-ring"
           aria-label="Cerrar la lista de horarios"
-          onClick={onClose}
+          onClick={requestClose}
         >
           <AppIcon name="x" size={14} />
         </button>

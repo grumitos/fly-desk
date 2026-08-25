@@ -101,6 +101,17 @@
     --fd-ease-tacto: cubic-bezier(0.2, 0, 0.4, 1);
     --fd-ease-estructura: cubic-bezier(0.22, 1, 0.36, 1);
 
+    /* Rule 2 closes the *transition* curves at two, and two is what they stay.
+       A loop is not a transition: it comes from nowhere and goes nowhere, so
+       neither of the two serves it and its own curve was written by hand —
+       `linear` once, `ease-in-out` in two separate sheets. Naming them does not
+       reopen the rule, it finishes it: no curve in the application lives inside
+       a declaration any more. The plate fixes both — the spinner is linear and
+       infinite, and the pulse travels between 45% and 100% and back, which is
+       what `ease-in-out` says. */
+    --fd-ease-giro: linear;
+    --fd-ease-pulso: ease-in-out;
+
     --fd-dur-tacto: 90ms; /* hover, pressed, checkbox, chip, segment */
     --fd-dur-emergente: 140ms; /* popovers and strips; enters 6px down */
     --fd-dur-estructura: 220ms; /* idle → active, tool retraction, detail */
@@ -598,6 +609,24 @@
     }
   }
 
+  /* The exit a swipe dismissal asks for. `fd-exit-right` is rule 1's 8px — a
+     sheet going out where it stands — while this is row 7, the one exit that
+     keeps its displacement, and on top of that it has to start where the finger
+     let go: returning to zero to leave again would have the gesture and the
+     movement telling two different stories. `--fd-sheet-drag-x` is written by
+     the sheet on release and is 0 when nothing dragged it. */
+  @keyframes fd-exit-swipe {
+    from {
+      opacity: 1;
+      transform: translateX(var(--fd-sheet-drag-x, 0px));
+    }
+
+    to {
+      opacity: 0;
+      transform: translateX(100%);
+    }
+  }
+
   /* 07 §4 row 5 · the range fill (drawn in 9a, moment 4).
    *
    * A width animation would relayout the calendar grid seven times; the plate
@@ -683,7 +712,7 @@
   }
 
   .fd-motion-giro {
-    animation: spin var(--fd-dur-giro) linear infinite;
+    animation: spin var(--fd-dur-giro) var(--fd-ease-giro) infinite;
   }
 
   /* The one movement of the catalog that grows instead of entering. Put it on

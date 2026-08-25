@@ -2302,7 +2302,7 @@
     display: block;
     border-radius: var(--fd-radius-4);
     background: var(--color-muted);
-    animation: fd-pulso var(--fd-dur-pulso) ease-in-out infinite;
+    animation: fd-pulso var(--fd-dur-pulso) var(--fd-ease-pulso) infinite;
   }
 
   .fd-skeleton-price {

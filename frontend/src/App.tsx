@@ -1137,10 +1137,18 @@ export default function App() {
                 className="fd-detail-sheet"
                 /* Neither sheet draws chrome of its own: 8a gives the side sheet
                    the detail's header with a 32px cross, and 1f gives the full
-                   sheet the same header with a 44px back chevron — no grabber,
-                   no second title bar saying less than the first. So the close
-                   comes from the panel on both, and the dialog keeps its name. */
+                   sheet the same header with a 44px back chevron — no second
+                   title bar saying less than the first. So the close comes from
+                   the panel on both, and the dialog keeps its name. The grabber
+                   does come back: it is the gesture, not the chrome, and without
+                   it this was the sheet that opens most often and the only one a
+                   thumb could not dismiss. */
                 chrome={false}
+                /* The one sheet where the whole vocabulary already said «atrás»:
+                   the 44px chevron points left, and on the desk this same sheet
+                   arrives and leaves from the right. Only the gesture was
+                   missing. */
+                backSwipe
               >
                 <DetailPanel
                   offer={visibleSelectedOffer}
