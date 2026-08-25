@@ -3,6 +3,7 @@ import { createPortal } from "react-dom"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
+import { useOverlayHistory } from "@/hooks/useOverlayHistory"
 import { isTopOverlay, popOverlay, pushOverlay } from "@/lib/overlay-stack"
 import { QUOTATION_FARE_STALE_MINUTES } from "../../../src/core/quotation"
 
@@ -78,6 +79,16 @@ export function QuotationOverlay({
   const close = useCallback(() => onCloseRef.current(), [])
 
   /*
+   * The gesture plate counts this layer among the two that pushed no history.
+   * It opens over the view, and the system back — Android's button, the edge
+   * gesture that drives it, the browser's own — took the agent out of the
+   * application with the quotation open, in the middle of a call. Now it pushes
+   * its entry and consumes it on the way out, and the cross and the scrim leave
+   * down that same road: the tap does what the gesture does.
+   */
+  const { requestClose } = useOverlayHistory(true, close, "fd-quote")
+
+  /*
    * 01 §8: `Esc` closes the most recent layer. In armazón B and C this panel
    * sits on top of the detail sheet, and both listened on `document` — one
    * keypress closed the quotation *and* the offer underneath it, so the agent
@@ -97,7 +108,7 @@ export function QuotationOverlay({
       if (event.key === "Escape") {
         if (!isTopOverlay(layer)) return
         event.preventDefault()
-        close()
+        requestClose()
         return
       }
       if (event.key !== "Tab" || !isTopOverlay(layer)) return
@@ -135,7 +146,7 @@ export function QuotationOverlay({
       document.removeEventListener("keydown", handleKeyDown)
       openerRef.current?.focus({ preventScroll: true })
     }
-  }, [close])
+  }, [requestClose])
 
   const fareAge = fareAgeLabel(state.preparedAt)
 
@@ -143,7 +154,7 @@ export function QuotationOverlay({
     <div
       className="fd-quote-layer"
       onPointerDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
+        if (event.target === event.currentTarget) requestClose()
       }}
     >
       <div
@@ -185,7 +196,7 @@ export function QuotationOverlay({
               type="button"
               className="fd-quote-close fd-focus-ring"
               aria-label="Cerrar la cotización"
-              onClick={onClose}
+              onClick={requestClose}
             >
               <AppIcon name="x" size={16} />
             </button>
