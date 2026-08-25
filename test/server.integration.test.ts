@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleRequest, resolveServerIdleTimeoutSeconds } from "../src/server";
@@ -137,6 +137,141 @@ test("web auth redirects the app shell to login before serving frontend assets",
     } else {
       process.env.FLY_DESK_WEB_SESSION_SECRET = previousSessionSecret;
     }
+  }
+});
+
+/* The gate compares the pathname with `===` while `resolvePublicAsset` hands
+   its argument to `path.resolve`, which collapses duplicate and trailing
+   slashes. `//index.html` therefore missed the gate and was served the
+   signed-out app shell. What is pinned here is the property that closes it —
+   one spelling of a path reaches the routes — rather than the one spelling
+   that was reported, because the next route written with `===` inherits the
+   property and would not inherit a patched comparison. */
+test("redundant slashes cannot step around the web auth gate", { concurrency: false }, async () => {
+  const previousWebAuth = process.env.FLY_DESK_WEB_AUTH;
+  const previousTrustLoopback = process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
+  const previousPasswordHash = process.env.FLY_DESK_WEB_PASSWORD_HASH;
+  const previousSessionSecret = process.env.FLY_DESK_WEB_SESSION_SECRET;
+
+  process.env.FLY_DESK_WEB_AUTH = "1";
+  process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = "0";
+  process.env.FLY_DESK_WEB_PASSWORD_HASH = createScryptPasswordHash("test-password", Buffer.alloc(16, 8));
+  process.env.FLY_DESK_WEB_SESSION_SECRET = "test-session-secret-32-characters-minimum";
+  resetWebLoginAdmission();
+
+  try {
+    await withServer(async (baseUrl) => {
+      /* Bun resolves `.` and `..` out of the request target while it parses,
+         so the spellings that reach the server are the slashes. Each of these
+         used to be served the shell; each has to arrive at the same gate, and
+         at the same `next`, or there is still more than one path here. */
+      for (const target of ["/index.html", "//index.html", "///index.html", "/index.html/", "//index.html//"]) {
+        const gated = await fetch(`${baseUrl}${target}`, { redirect: "manual" });
+
+        assert.equal(gated.status, 302, `${target} was not gated`);
+        assert.equal(gated.headers.get("location"), "/login?next=%2Findex.html", `${target} carried a different next`);
+      }
+
+      for (const target of ["/", "//", "////"]) {
+        const gated = await fetch(`${baseUrl}${target}`, { redirect: "manual" });
+
+        assert.equal(gated.status, 302, `${target} was not gated`);
+        assert.equal(gated.headers.get("location"), "/login", `${target} carried a different next`);
+      }
+
+      /* A percent-encoded slash is a character inside a segment and not a
+         separator. Decoding it would manufacture the traversal the gate is
+         closing, so it stays a filename, and there is no such file. */
+      const encoded = await fetch(`${baseUrl}/%2Findex.html`, { redirect: "manual" });
+      assert.equal(encoded.status, 404);
+
+      /* The same one spelling has to reach the router behind the proxy, which
+         compares its own pathnames with `===` as well. `//api/health` was a
+         404 for exactly that reason. */
+      for (const target of ["/api/health", "//api/health", "///api/health"]) {
+        const health = await fetch(`${baseUrl}${target}`);
+
+        assert.equal(health.status, 200, `${target} did not reach the router`);
+        assert.deepEqual(await health.json(), { ok: true });
+      }
+
+      /* Assets stay public, and now carry the immutable header whichever way
+         they are asked for — `//assets/...` used to fail the `startsWith`
+         test that picks it and was served `no-cache`. */
+      const assetName = readdirSync(join(process.cwd(), "frontend", "dist", "assets"))
+        .find((name) => name.endsWith(".js"));
+      assert.ok(assetName, "the built frontend has no JavaScript asset to serve");
+
+      for (const prefix of ["/assets/", "//assets/"]) {
+        const asset = await fetch(`${baseUrl}${prefix}${assetName}`);
+
+        assert.equal(asset.status, 200, `${prefix} did not serve the asset`);
+        assert.equal(asset.headers.get("cache-control"), "public, max-age=31536000, immutable");
+      }
+
+      /* And the positive case: a real session still gets the workspace, at the
+         canonical path and at the redundant one. */
+      const login = await fetch(`${baseUrl}/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ password: "test-password" }).toString(),
+        redirect: "manual",
+      });
+      assert.equal(login.status, 303);
+      const sessionCookie = login.headers.getSetCookie()
+        .map((value) => value.match(/flydesk_session=[^;,]+/)?.[0])
+        .find(Boolean) ?? "";
+      assert.match(sessionCookie, /^flydesk_session=./);
+
+      for (const target of ["/", "/index.html", "//index.html"]) {
+        const shell = await fetch(`${baseUrl}${target}`, {
+          headers: { Cookie: sessionCookie },
+          redirect: "manual",
+        });
+
+        assert.equal(shell.status, 200, `${target} was not served to a signed-in session`);
+        assert.match(await shell.text(), /<div id="root">/);
+      }
+
+      /* Parameterised routes carry the same property, and it matters more
+         there: the delegation predicate is a strict `^/api/search/[^/]+$`
+         while the handler under it only asks `startsWith`, so a job id with a
+         slash too many was answered by this unit instead of the runner that
+         owns the job. The generic «Not found» is what a path that reached no
+         route at all gets. */
+      const job = await fetch(`${baseUrl}//api/search/absent-job`, {
+        headers: { Cookie: sessionCookie },
+      });
+
+      assert.equal(job.status, 404);
+      assert.deepEqual(await job.json(), { error: "Search job not found." });
+    });
+  } finally {
+    if (previousWebAuth === undefined) {
+      delete process.env.FLY_DESK_WEB_AUTH;
+    } else {
+      process.env.FLY_DESK_WEB_AUTH = previousWebAuth;
+    }
+
+    if (previousTrustLoopback === undefined) {
+      delete process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT;
+    } else {
+      process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT = previousTrustLoopback;
+    }
+
+    if (previousPasswordHash === undefined) {
+      delete process.env.FLY_DESK_WEB_PASSWORD_HASH;
+    } else {
+      process.env.FLY_DESK_WEB_PASSWORD_HASH = previousPasswordHash;
+    }
+
+    if (previousSessionSecret === undefined) {
+      delete process.env.FLY_DESK_WEB_SESSION_SECRET;
+    } else {
+      process.env.FLY_DESK_WEB_SESSION_SECRET = previousSessionSecret;
+    }
+
+    resetWebLoginAdmission();
   }
 });
 
