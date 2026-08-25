@@ -798,13 +798,17 @@
      Only once there is a date there. Empty, all three say «Elegir» (and the
      return half «No aplica»), and that is a word whatever the field holds, so
      the placeholder keeps the sans it shares with Origen and Destino.
-     Family, weight and figure spacing only: the body of the line is set without
-     a layer in `index.css` and is not this rule's business. */
+     Family and figure spacing only — not weight. Every date the product writes at
+     12px or over is already mono 600: the leg summary at 12, the calendar cell at
+     13 and 15. The one that is 700 is the card's `28/05` at 10, where the weight
+     is paying for the size. And every value in a field is 600, so a date at 700
+     would be the only one heavier than the destination beside it, which is a
+     claim about importance that nothing here is making. The body of the line is
+     set without a layer in `index.css` and is not this rule's business either. */
   .fd-daterange-half .fd-field-value:not(.fd-field-value-placeholder),
   .fd-monthrange-value:not(.fd-field-value-placeholder) {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
-    font-weight: var(--fd-weight-title);
   }
 
   .fd-daterange-divider {
