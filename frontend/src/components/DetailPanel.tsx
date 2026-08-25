@@ -556,11 +556,13 @@ export function DetailPanel({
               aria-label="Paquete migratorio"
               onCheckedChange={setMigrationPlanChoice}
             />
-            {/* 1b spells it «Migratorio» in the 316 column; 8a and 1f spell it in
-                full where the row has the width for it. Which one shows is a
-                container query, and the switch keeps the full name either way. */}
-            <span className="fd-detail-migration-short">Migratorio</span>
-            <span className="fd-detail-migration-full">Paquete migratorio</span>
+            {/* One word on every surface. The label used to swap between
+                «Migratorio» and «Paquete migratorio» by container query, which
+                made the same control read differently depending on how wide the
+                panel happened to be. The switch keeps the long form as its
+                accessible name on purpose: the visible word is contained in it,
+                so voice control still reaches it by what is written (2.5.3). */}
+            <span>Migratorio</span>
           </label>
           <div className="fd-detail-action-group">
             {purchasePath && (

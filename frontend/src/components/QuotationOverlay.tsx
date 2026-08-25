@@ -177,7 +177,9 @@ export function QuotationOverlay({
                 aria-label="Paquete migratorio"
                 onCheckedChange={onToggleMigrationPlan}
               />
-              <span>Paquete migratorio</span>
+              {/* The same word the detail footer writes; the switch keeps the
+                  long form as its accessible name, which contains it. */}
+              <span>Migratorio</span>
             </label>
             <button
               type="button"

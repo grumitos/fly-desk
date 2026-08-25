@@ -147,9 +147,6 @@
     padding-inline: 6px;
     font-size: var(--fd-text-base);
     flex: 1;
-    min-width: 0;
-    height: var(--fd-control-touch);
-    font-size: var(--fd-text-base);
   }
 
   /* ===== Date policy footer (1a) =========================================
@@ -525,6 +522,16 @@
     padding: 10px 12px 8px;
   }
 
+  /* The list of matches and the list of Recientes/Frecuentes are the same
+     scroller under two conditions, and both open over the workspace: running
+     off the last suggestion used to scroll the results behind the panel.
+     It is a class of its own rather than another job for `.fd-scrollbar-hidden`
+     — that one says «hide the bar» and would start meaning two things, and it
+     is worn by lanes that have no panel behind them to protect. */
+  .fd-suggest-scroll {
+    overscroll-behavior: contain;
+  }
+
   .fd-suggest-row {
     display: grid;
     grid-template-columns: 18px 40px minmax(0, 1fr);
@@ -587,10 +594,11 @@
   }
 
   /* ===== Passengers (1g, 2d) =============================================
-   * Row 44, steppers 32, figure mono 15/700 in a 28px column so the row does
-   * not twitch between 9 and 10. Inside the sheet the same row is 64 with
-   * touch-height steppers and a 17px figure (2d) — one component, two
-   * surfaces. */
+   * Row 40 — `--fd-control-touch`, named rather than restated, because the
+   * catalogue moved that floor from 44 to 40 and this line stayed behind —
+   * steppers 32, figure mono 15/700 in a 28px column so the row does not twitch
+   * between 9 and 10. Inside the sheet the same row is 64 with touch-height
+   * steppers and a 17px figure (2d) — one component, two surfaces. */
 
   .fd-pax-popover {
     width: 288px;
@@ -773,6 +781,23 @@
   .fd-daterange-half[data-active="true"] .fd-field-label,
   .fd-daterange-half[data-active="true"] .fd-daterange-icon {
     color: var(--color-primary);
+  }
+
+  /* A date is a figure: it is compared and it is typed, and the product already
+     writes it as one everywhere it *reports* a date — `28 MAY` on the card, the
+     cell in the calendar. The three surfaces that *receive* one — the two halves
+     and the month field of Migratorio — wrote it in sans, so the same date came
+     in as a word and went out as a figure.
+     Only once there is a date there. Empty, all three say «Elegir» (and the
+     return half «No aplica»), and that is a word whatever the field holds, so
+     the placeholder keeps the sans it shares with Origen and Destino.
+     Family, weight and figure spacing only: the body of the line is set without
+     a layer in `index.css` and is not this rule's business. */
+  .fd-daterange-half .fd-field-value:not(.fd-field-value-placeholder),
+  .fd-monthrange-value:not(.fd-field-value-placeholder) {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--fd-weight-title);
   }
 
   .fd-daterange-divider {
@@ -1365,7 +1390,13 @@
     display: none;
   }
 
+  /* A scroller nested inside another one hands the gesture on when it runs out
+     of content, so reaching the end of the detail dragged the sheet — or the
+     page — behind it. `contain` stops the chain at this edge, which is what the
+     agent already expects from `.fd-list-viewport` and `.fd-sheet-body`; the
+     same line is on every other nested lane for the same reason. */
   .fd-detail-body {
+    overscroll-behavior: contain;
     padding: 12px;
   }
 
@@ -1599,12 +1630,6 @@
     flex-shrink: 0;
   }
 
-  /* 1b spells it «Migratorio» in the 316 column; 8a and 1f spell it in full
-     where the row has the width for it. */
-  .fd-detail-migration-full {
-    display: none;
-  }
-
   .fd-detail-action-group {
     display: flex;
     align-items: center;
@@ -1798,14 +1823,6 @@
       background: transparent;
     }
 
-    .fd-detail-migration-short {
-      display: none;
-    }
-
-    .fd-detail-migration-full {
-      display: inline;
-    }
-
     /* 05 §5 and both plates: 30 × 17 with a 13px knob once the row is 36 or 44
        tall. The knob's travel is the track minus its own width and the 2px of
        padding — written on Tailwind's own variable so the utility that put it
@@ -1953,14 +1970,6 @@
 
     .fd-detail-migration:hover {
       background: transparent;
-    }
-
-    .fd-detail-migration-short {
-      display: none;
-    }
-
-    .fd-detail-migration-full {
-      display: inline;
     }
 
     /* 1f drops the provider label: at the touch height the row has room for
@@ -2211,6 +2220,7 @@
     flex: 1;
     padding: 14px;
     overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .fd-quote-text {
@@ -2313,6 +2323,7 @@
     flex: 1;
     padding: 4px 12px 12px;
     overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .fd-month-grid {
@@ -2685,6 +2696,20 @@
     .fd-month-flight,
     .fd-month-foot {
       margin-top: 0;
+    }
+
+    /* On a desk this is a 26px chip inside a card the pointer can hit anywhere.
+       On a phone it is the only target in the month row that is not the row
+       itself, and 26 is fourteen under the floor the system set for a thumb, so
+       it takes the touch height and the radius and body that go with it. The row
+       grows by those fourteen pixels plus the 10px it already carries above the
+       control; that is the price of the target, and it is meant. */
+    .fd-month-open {
+      height: var(--fd-control-touch);
+      padding-inline: 14px;
+      border-radius: var(--fd-radius-10);
+      font-size: var(--fd-text-base);
+      font-weight: var(--fd-weight-title);
     }
   }
 

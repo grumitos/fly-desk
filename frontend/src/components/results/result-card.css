@@ -819,6 +819,9 @@
     grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
     gap: 2px;
     align-content: start;
+    /* The panel floats over the list it belongs to, so the end of this grid used
+       to hand the gesture straight to the results behind it. */
+    overscroll-behavior: contain;
   }
 
   .fd-schedule-row {

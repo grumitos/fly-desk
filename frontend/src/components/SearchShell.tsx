@@ -634,7 +634,7 @@ export function SearchShell({
   /* No transition on the tracks: no plate animates a grid re-flowing. Plate 2h
      moves the block of fields with `translateY`, and the tracks simply arrive
      at their new widths. */
-  const searchGridClassName = "fd-search-grid grid gap-1.5"
+  const searchGridClassName = "fd-search-grid"
   const visibleMigrationMonthsError = mode === "migration" && touched.migrationMonths
     ? validation.migrationMonths
     : undefined
@@ -742,8 +742,11 @@ export function SearchShell({
     >
       <FieldLabel>Pasajeros</FieldLabel>
       <AppIcon name="passengers" className="text-muted-foreground" />
+      {/* A mixed value splits: the count is a figure and goes to mono, the noun
+          beside it is a word and stays in sans. One line on purpose — JSX drops
+          the literal space between them if the element is broken across two. */}
       <span className={SEARCH_FIELD_VALUE_CLASS}>
-        {passengerTotal} pasajero{passengerTotal > 1 ? "s" : ""}
+        <span className="fd-mono">{passengerTotal}</span> pasajero{passengerTotal > 1 ? "s" : ""}
       </span>
       <DisclosureIcon open={paxOpen} className="text-muted-foreground" />
     </button>
@@ -1362,7 +1365,7 @@ function LocationField({
   const suggestionList = (
     <>
       {shouldShowUsagePanel ? (
-        <div id={listboxId} role="listbox" className="fd-scrollbar-hidden grid max-h-[288px] overflow-y-auto pb-1.5">
+        <div id={listboxId} role="listbox" className="fd-scrollbar-hidden fd-suggest-scroll grid max-h-[288px] overflow-y-auto pb-1.5">
           <LocationUsageSuggestionSection
             fieldId={fieldId}
             listboxId={listboxId}
@@ -1388,7 +1391,7 @@ function LocationField({
             <span className="fd-type-micro">Coincidencias</span>
             <span className="fd-mono text-xs font-semibold text-muted-foreground">{suggestions.length}</span>
           </div>
-          <div id={listboxId} role="listbox" className="fd-scrollbar-hidden grid max-h-[288px] overflow-y-auto px-1.5 pb-1.5">
+          <div id={listboxId} role="listbox" className="fd-scrollbar-hidden fd-suggest-scroll grid max-h-[288px] overflow-y-auto px-1.5 pb-1.5">
             {suggestions.map((suggestion, index) => (
               <button
                 id={`${listboxId}-${index}`}
@@ -1777,7 +1780,13 @@ function FlexibleOptionsBar({
           <AppIcon name="minus" />
         </Button>
         <ButtonGroupText className={cn("min-w-14 px-1 text-center text-xs font-semibold transition-colors duration-[var(--fd-dur-tacto)] ease-[var(--fd-ease-tacto)]", stayControlsDisabled ? "text-muted-foreground" : "text-foreground")}>
-          {stayNights} noche{stayNights === 1 ? "" : "s"}
+          {/* Same split as Pasajeros. The wrapper is not decoration: this slot is
+              an `inline-flex`, so a bare figure and a bare noun would be two flex
+              items and flex drops the whitespace between them — «7noches». One
+              child keeps them in a single inline run, space and all. */}
+          <span>
+            <span className="fd-mono">{stayNights}</span> noche{stayNights === 1 ? "" : "s"}
+          </span>
         </ButtonGroupText>
         <Button
           type="button"
@@ -1796,11 +1805,12 @@ function FlexibleOptionsBar({
 }
 
 /*
- * Plates 1g and 2d: one row, two surfaces. The popover gives it 44px with 32px
- * steppers and a mono 15 figure; inside the sheet the same row grows to 64 with
- * 44px steppers and a mono 17 figure. That growth is CSS on the surface, not a
- * prop — a row that reads the viewport to pick its own height is the platform
- * duplication rule 10 forbids.
+ * Plates 1g and 2d: one row, two surfaces. The popover gives it the 40px touch
+ * row with 32px steppers and a mono 15 figure; inside the sheet the same row
+ * grows to 64 with 40px steppers and a mono 17 figure. Both 40s were written as
+ * 44 here until the catalogue lowered the touch floor and this text did not
+ * follow. That growth is CSS on the surface, not a prop — a row that reads the
+ * viewport to pick its own height is the platform duplication rule 10 forbids.
  */
 function PaxRow({
   label,

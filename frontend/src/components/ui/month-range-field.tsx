@@ -143,7 +143,10 @@ export function MonthRangeField({
       />
       <span className="fd-field-label" data-active={open || undefined}>{label}</span>
       <AppIcon name="calendar" className={open ? "text-primary" : "text-muted-foreground"} />
-      <span className={cn("fd-field-value", !validStart && "fd-field-value-placeholder")}>
+      {/* The class of its own is what lets the sweep be written like the dates
+          it replaces: `.fd-field-value` alone is shared with Origen, Destino and
+          Pasajeros, which carry names and stay in sans. */}
+      <span className={cn("fd-field-value fd-monthrange-value", !validStart && "fd-field-value-placeholder")}>
         {rangeLabel(validStart, validEnd)}
       </span>
     </div>

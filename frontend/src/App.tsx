@@ -893,7 +893,7 @@ export default function App() {
   return (
     <div
       ref={shellRef}
-      className="fd-shell flex h-[100dvh] min-h-0 flex-col overflow-hidden bg-background text-foreground"
+      className="fd-shell flex h-[100dvh] flex-col overflow-hidden bg-background text-foreground"
       data-shell-size={shellSize}
       data-fd-sheet-root=""
     >
