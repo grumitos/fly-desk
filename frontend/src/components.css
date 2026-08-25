@@ -2338,14 +2338,33 @@
     overscroll-behavior: contain;
   }
 
+  /*
+   * 06 §2 asks for four columns and that is right at the width the plate was
+   * drawn at — but four was written as a constant, and the sweep keeps it from
+   * 1437 all the way down to 720. Measured at 1440, where the detail column is
+   * present and the list is left with 821: the card comes out 192 wide, 166 of
+   * it usable, and the hero it has to hold — `USD 1,132.05` at mono 22/800 plus
+   * the 10 gap and the 28 logo — needs 196. Neither the cell nor the card clips,
+   * so the price paints over the card beside it. At 1024 it is 52 short, at 768
+   * it is 116.
+   *
+   * So the count is asked for instead of stated: a column is 226 or it is not a
+   * column — the hero's 196.4 plus the card's own 26 of padding, rounded up so
+   * the last one does not land on the boundary and spill two pixels. Four
+   * columns survive wherever four fit — 1600 and up — and below that the sweep
+   * gives up a column rather than the price. One pixel of window still swings
+   * the list width when the detail leaves at 1437, but now the swing changes how
+   * many columns there are and not whether the fare is legible.
+   */
   .fd-month-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(226px, 1fr));
     /* 190 is the height 06 §2 states as a rule. 1i writes `1fr` instead, but
        that number is emergent from the 560px frame it happens to be drawn in:
        stretched into a real 900px window the same declaration gives 362px
        cards with a 117px hole in the middle of each. The rule wins, the rows
-       size to their content, and the sweep stays a straight line. */
+       size to their content, and the sweep stays a straight line. It only ever
+       applies to a month with no fare: a priced card measures about 243. */
     grid-auto-rows: minmax(190px, auto);
     gap: 10px;
   }
@@ -2478,7 +2497,13 @@
     column-gap: 10px;
   }
 
+  /* The column above guarantees the room, and this is the backstop for the day
+     a currency arrives that is wider than the one we sized for: a price that no
+     longer fits is cut at its own edge instead of printing over the month next
+     to it. */
   .fd-month-price {
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
