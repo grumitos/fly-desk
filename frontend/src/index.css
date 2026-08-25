@@ -855,6 +855,23 @@
     white-space: nowrap;
   }
 
+  /*
+   * The collapsed bar is the search said in one line, and touching it opens the
+   * form that says exactly the same thing. It wrote the route, the date and the
+   * count in sans and the form writes them in mono: the same data changing
+   * alphabet inside a single gesture, which is the most expensive incoherence
+   * in the system because the agent sees both spellings back to back.
+   *
+   * All three are figures — a station code, a date, a counter — so they go mono
+   * and tabular, at the weight each line already carries: 700 for the route
+   * heading and 600 for the summary line, which is the same 600 that
+   * `.fd-daterange-half .fd-field-value` and `.fd-monthrange-value` use for the
+   * date in the form. The mode — "Exacto" — and the noun "pasajeros" stay in
+   * sans: they are names, not figures.
+   *
+   * The route's 15 does not move. It is the rung the catalogue reserves for
+   * station codes and it was already right; what it lacked was the alphabet.
+   */
   .fd-mobile-search-route {
     display: flex;
     align-items: center;
@@ -864,11 +881,20 @@
     line-height: 1.2;
   }
 
+  .fd-mobile-search-route > span {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
   .fd-mobile-search-meta {
     color: var(--color-muted-foreground);
     font-size: var(--fd-text-meta);
     font-weight: var(--fd-weight-value);
     line-height: 1.3;
+  }
+
+  .fd-mobile-search-meta .fd-mono {
+    font-weight: var(--fd-weight-label);
   }
 
   .fd-mobile-search-edit {
@@ -974,7 +1000,7 @@
     min-height: 0.875rem;
     color: var(--color-destructive);
     font-size: var(--fd-text-meta);
-    font-weight: 700;
+    font-weight: var(--fd-weight-title);
     line-height: 1.2;
   }
 
@@ -1420,11 +1446,16 @@
   }
 
 
+  /* It wrote a raw 11, and 11 is also the catalogue's mono rung being spent
+     here on running text. The line is prose and belongs on the 12 rung, which
+     is the one it already uses on a desk: the phone shortens by text — "Ventana
+     … hasta 90 noches", without the third clause — and did not need to shrink
+     on top of being cut. Measured at 12px with `nowrap`: the line asks for
+     314px and the lane gives 332 at a 360 viewport, so it fits. */
   .fd-policy-line {
     gap: 6px 10px;
     margin-top: 8px;
     padding-top: 8px;
-    font-size: 11px;
   }
 
   .fd-policy-foot {
@@ -1661,6 +1692,26 @@
     height: 0;
   }
 
+  /*
+   * ===== The icon law, in the band the thumb travels most =================
+   *
+   * "Each icon size is bound to a control height, so the icon is never chosen
+   * by taste" (7b). The binding is: 26 → 12, desktop 32–52 → 16, dense rows →
+   * 14, and **every 40 or 46 control on a phone → 18**.
+   *
+   * This strip broke it three times in a row, in the one band the thumb never
+   * leaves: "Filtros" drew 14 inside 40, the active chip's cross drew 14 inside
+   * 40 — the same 14 it draws inside 26 on a desk, which means the icon was not
+   * looking at its control on either surface — and copy drew 16 inside 40. One
+   * icon chosen by taste barely shows; three in the same row make the row look
+   * like it came from another screen.
+   *
+   * The size is corrected where the control lives rather than in the markup,
+   * because the same component mounts in two armazones: the active chip is 26
+   * on a desk and 40 here, so its cross cannot carry a fixed number in the JSX.
+   * The JSX sets the desk rung; this container query sets the phone's, because
+   * it is the one that knows the height.
+   */
   .fd-filter-strip-open {
     display: inline-flex;
     height: var(--fd-control-touch);
@@ -1676,14 +1727,26 @@
     font-weight: var(--fd-weight-title);
   }
 
+  /* "Filtros" and copy only exist here, so the JSX sets their rung. The cross
+     does not: the active chip mounts in both armazones — 26 on a desk, 40 here
+     — and a number in the markup could only be right in one of them. */
+  .fd-active-chip-remove > svg {
+    width: var(--fd-icon-18);
+    height: var(--fd-icon-18);
+  }
+
+  /* The strip's counter. The 17px box is the plate's — a badge inside the
+     button, not a control — which is why it is not in the height catalogue; its
+     type does come from the catalogue, through the shared counter rule in
+     `components.css`. The minimum takes the larger of the two: the box the
+     plate draws, and the two-digit column the counter asks for. */
   .fd-filter-strip-count {
     display: inline-grid;
-    min-width: 17px;
+    min-width: max(17px, 2ch);
     height: 17px;
     place-items: center;
     border-radius: var(--fd-radius-6);
     background: color-mix(in srgb, #ffffff 20%, transparent);
-    font-family: var(--font-mono);
     font-size: var(--fd-text-micro);
   }
 
@@ -2246,16 +2309,15 @@
   height: 18px;
 }
 
+/* Three loose literals where the catalogue already has the two rungs: 15 is
+   the one for actions and station codes, 12 the one for metadata. The detail no
+   longer needs to be lowered here — the desk rung is 12 too. */
 .fd-mobile-suggest-panel .fd-suggest-code {
-  font-size: 15px;
+  font-size: var(--fd-text-action);
 }
 
 .fd-mobile-suggest-panel .fd-suggest-city {
-  font-size: 15px;
-}
-
-.fd-mobile-suggest-panel .fd-suggest-detail {
-  font-size: 12px;
+  font-size: var(--fd-text-action);
 }
 
 .fd-mobile-suggest-panel .fd-suggest-foot {

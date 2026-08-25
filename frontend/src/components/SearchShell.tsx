@@ -71,6 +71,20 @@ const MAX_CHILDREN = 8
 /* The Migratorio sweep is capped at twelve months, which is also the length of
    the search window, so the picker can never offer a range it cannot search. */
 const MAX_MIGRATION_MONTHS = 12
+
+/*
+ * The plural of a counter, in one place.
+ *
+ * This file built it two ways — `n === 1 ? "" : "s"` in the collapsed summary
+ * and `n > 1 ? "s" : ""` in the passenger trigger. For every n ≥ 1 they agree,
+ * so the divergence never showed; they stop agreeing the moment a counter
+ * reaches zero, and then one of them writes «0 pasajero». Two expressions for
+ * one rule is one too many even while they happen to match.
+ */
+function plural(count: number, singular: string): string {
+  return count === 1 ? singular : `${singular}s`
+}
+
 type SearchModeControl = "exact" | "flexible" | "migration"
 type SearchTouchedField = "origin" | "destination" | "departureDate" | "returnDate" | "passengers" | "migrationMonths"
 type SearchLocationMeta = Partial<Pick<LocationSuggestion, "label" | "countryCode">>
@@ -689,8 +703,13 @@ export function SearchShell({
           <AppIcon name="swap" size={14} className="text-muted-foreground" />
           <span>{destCode || "Destino"}</span>
         </span>
+        {/* The date and the count are figures and take the same alphabet as
+            the form this bar opens when it is touched; the mode and the noun
+            are names and stay in sans. Each mixed value on one line: breaking
+            the JSX collapses the literal space and glues the figure to the
+            noun. */}
         <span className="fd-mobile-search-meta">
-          {dateSummary || "Fechas"} · {passengerTotal} pasajero{passengerTotal === 1 ? "" : "s"} · {modeLabel}
+          <span className="fd-mono">{dateSummary || "Fechas"}</span> · <span className="fd-mono">{passengerTotal}</span> {plural(passengerTotal, "pasajero")} · {modeLabel}
         </span>
       </span>
       <span className="fd-mobile-search-edit" aria-hidden="true">
@@ -746,7 +765,7 @@ export function SearchShell({
           beside it is a word and stays in sans. One line on purpose — JSX drops
           the literal space between them if the element is broken across two. */}
       <span className={SEARCH_FIELD_VALUE_CLASS}>
-        <span className="fd-mono">{passengerTotal}</span> pasajero{passengerTotal > 1 ? "s" : ""}
+        <span className="fd-mono">{passengerTotal}</span> {plural(passengerTotal, "pasajero")}
       </span>
       <DisclosureIcon open={paxOpen} className="text-muted-foreground" />
     </button>
@@ -978,7 +997,7 @@ export function SearchShell({
                       is left before a button goes dim rather than after. */}
                   <div className="fd-pax-popover-head">
                     <span className="fd-type-micro">Pasajeros</span>
-                    <span className="fd-mono text-xs font-bold">{passengerTotal} de {MAX_PASSENGERS}</span>
+                    <span className="fd-count">{passengerTotal} de {MAX_PASSENGERS}</span>
                   </div>
                   {passengerPickerBody}
                 </PopoverContent>
@@ -1389,7 +1408,7 @@ function LocationField({
         <>
           <div className="fd-suggest-head">
             <span className="fd-type-micro">Coincidencias</span>
-            <span className="fd-mono text-xs font-semibold text-muted-foreground">{suggestions.length}</span>
+            <span className="fd-count text-muted-foreground">{suggestions.length}</span>
           </div>
           <div id={listboxId} role="listbox" className="fd-scrollbar-hidden fd-suggest-scroll grid max-h-[288px] overflow-y-auto px-1.5 pb-1.5">
             {suggestions.map((suggestion, index) => (
@@ -1610,7 +1629,7 @@ function LocationUsageSuggestionSection({
     <section aria-label={heading}>
       <div className="fd-suggest-head">
         <span className="fd-type-micro">{heading}</span>
-        <span className="fd-mono text-xs font-semibold text-muted-foreground">{suggestions.length}</span>
+        <span className="fd-count text-muted-foreground">{suggestions.length}</span>
       </div>
       <div className="grid px-1.5">
         {suggestions.map((code, index) => {
@@ -1765,7 +1784,7 @@ function FlexibleOptionsBar({
           stayControlsDisabled && "fd-disabled",
         )}
       >
-        <ButtonGroupText id="flexible-stay-nights-label" className="px-2 text-xs font-semibold text-muted-foreground">
+        <ButtonGroupText id="flexible-stay-nights-label" className="fd-stay-label px-2 text-muted-foreground">
           Estadía
         </ButtonGroupText>
         <Button
@@ -1779,13 +1798,13 @@ function FlexibleOptionsBar({
         >
           <AppIcon name="minus" />
         </Button>
-        <ButtonGroupText className={cn("min-w-14 px-1 text-center text-xs font-semibold transition-colors duration-[var(--fd-dur-tacto)] ease-[var(--fd-ease-tacto)]", stayControlsDisabled ? "text-muted-foreground" : "text-foreground")}>
+        <ButtonGroupText className={cn("fd-stay-value px-1 text-center transition-colors duration-[var(--fd-dur-tacto)] ease-[var(--fd-ease-tacto)]", stayControlsDisabled ? "text-muted-foreground" : "text-foreground")}>
           {/* Same split as Pasajeros. The wrapper is not decoration: this slot is
               an `inline-flex`, so a bare figure and a bare noun would be two flex
               items and flex drops the whitespace between them — «7noches». One
               child keeps them in a single inline run, space and all. */}
           <span>
-            <span className="fd-mono">{stayNights}</span> noche{stayNights === 1 ? "" : "s"}
+            <span className="fd-mono fd-stay-figure">{stayNights}</span> {plural(stayNights, "noche")}
           </span>
         </ButtonGroupText>
         <Button

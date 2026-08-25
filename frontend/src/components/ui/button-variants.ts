@@ -5,6 +5,15 @@ import { cva } from "class-variance-authority"
  * 26 · 32 · 36 · 40 · 52, each with the radius its family uses. The 30/32 pair
  * the app used to carry was merged into a single 32px control.
  *
+ * And they are the tokens, not the numbers: the height scale and the type scale
+ * live in `design-system.css` and are read from here. Written out as Tailwind
+ * literals they were a second catalogue — one that had already fallen behind,
+ * since `icon-touch` still drew the 44px the catalogue retired. The weight is
+ * the one thing that stays a Tailwind class (`font-semibold`, which is
+ * `--fd-weight-label`), because that is what lets a surface raise it with
+ * `font-bold` through `cn()`; a weight written as an arbitrary property would
+ * beat that override instead of losing to it.
+ *
  * `tacto` is colour and opacity only, so there is no press-scale here — a
  * button that shrinks under the cursor is the fake inertia rule 6 forbids.
  * Pressed is one step darker for the length of `tacto` (08 §1, 07 §4 row 11);
@@ -30,23 +39,28 @@ const buttonVariants = cva(
       },
       size: {
         /** 26 · r8 — fare chips, night counters, stop labels, pagination cells. */
-        chip: "h-[26px] rounded-md px-2.5 text-xs",
+        chip: "h-[var(--fd-control-chip)] rounded-md px-2.5 text-[length:var(--fd-text-meta)]",
         /** 32 · r10 — the standard control: buttons, chips, filter rows. */
-        sm: "h-8 rounded-lg px-3 text-xs",
+        sm: "h-[var(--fd-control-standard)] rounded-lg px-3 text-[length:var(--fd-text-meta)]",
         /** 36 · r10 — bar actions: Buscar, Filtros, date presets. */
-        default: "h-9 rounded-lg px-4 text-[13px]",
+        default: "h-[var(--fd-control-bar)] rounded-lg px-4 text-[length:var(--fd-text-base)]",
         /** 40 · r12 — secondary inputs. */
-        lg: "h-10 rounded-xl px-5 text-[13px]",
+        lg: "h-[var(--fd-control-input)] rounded-xl px-5 text-[length:var(--fd-text-base)]",
         /** 52 · r12 — the primary action, and every search field. */
-        xl: "h-[52px] rounded-xl px-5 text-sm",
+        xl: "h-[var(--fd-control-primary)] rounded-xl px-5 text-[length:var(--fd-text-body)]",
         /** 32 square · r10 — icon button in the top bar and dense rows. */
-        icon: "size-8 rounded-lg",
+        icon: "size-[var(--fd-control-standard)] rounded-lg",
         /** 26 square · r8 — icon button inside a 26px row. */
-        "icon-chip": "size-[26px] rounded-md",
-        /** 20 square · r6 — badge-scale affordances only. */
+        "icon-chip": "size-[var(--fd-control-chip)] rounded-md",
+        /** 20 square · r6 — badge-scale affordances only. The 20 belongs to
+         * the key/badge piece of 7b, not to the catalogue of control heights:
+         * there is no token for it, and one is not invented here. */
         "icon-xs": "size-5 rounded-sm",
-        /** 44 square · r12 — the mobile touch minimum. */
-        "icon-touch": "size-11 rounded-xl",
+        /** 40 square · r12 — the mobile touch floor. It said 44 and drew 44,
+         * which is the height the catalogue retired: 02 §12 was read as «44 on
+         * every square control on a phone» and that came out three times per
+         * column. The floor is `--fd-control-touch`. */
+        "icon-touch": "size-[var(--fd-control-touch)] rounded-xl",
       },
     },
     defaultVariants: {

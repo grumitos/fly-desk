@@ -253,15 +253,86 @@
     background: color-mix(in srgb, var(--color-primary) 15%, transparent);
   }
 
+  /* ===== The counter · one way of writing it =============================
+   *
+   * "A number that counts things" was written six ways: the list header, the
+   * airline row, the active-filter pill, the phone's filter strip, the month's
+   * coverage line and the flights a filter is hiding. Two alphabets, four
+   * bodies and two weights for one job. None of them was wrong on its own; the
+   * problem was that there was no way to tell which one was right, because it
+   * had never been written down. It is written down here.
+   *
+   * **Alphabet.** A counter is a figure, so mono and tabular. The two that had
+   * left mono — the month's coverage and the hidden flights — come back, but
+   * only the figure: those are mixed strings, and a mixed value splits ("12 de
+   * 30 días con tarifa"). Prose does not inherit the monospace for sharing an
+   * element with a number, which is exactly what `.fd-count` on the bare figure
+   * prevents.
+   *
+   * **Body.** Not unified, and that is the rule rather than the exception: a
+   * figure takes its body from the height of the control it lives in, the same
+   * way the icon has taken its since 7b. These six live in controls from 40 to
+   * 17px tall, which is why they are at 13, 12, 11 and 10. The calendar was
+   * already doing it without anyone asking: a 32px cell with a 13px figure, a
+   * 40px cell with a 15px one.
+   *
+   * **Weight.** 700. The catalogue gives 800 to the price, 700 to what is read
+   * at a glance — a time, a counter, a code — and 600 to what accompanies it. A
+   * counter on the results surface is the second of those. The form is a
+   * different surface and stays at 600: there every field value is 600 and none
+   * of them claims importance over the one beside it. In a monospace the weight
+   * does not move the advance, so none of this re-lays a single box.
+   *
+   * **Width.** The digit column is reserved so the block does not jump between
+   * 9 and 10, which is what the passenger counter already did with its
+   * `min-width: 28px`. Here it is measured in `ch` rather than pixels because
+   * these six live at four different bodies and one fixed number would only fit
+   * one of them: in a monospace 1ch *is* the digit's advance, so `2ch` is
+   * exactly two digits at any of the four. Measured in the browser with the
+   * fonts loaded, at 12px: one digit is 7.20px and two are 14.41 — and `2ch`
+   * gives 14.41. Two digits is the real ceiling for all six: 90 nights, 30
+   * days, and a list of more than 99 airlines does not exist.
+   */
+
+  .fd-count,
+  .fd-panel-count,
+  .fd-airline-row-count,
+  .fd-status-pill-count,
+  .fd-filter-strip-count {
+    font-family: var(--font-mono);
+    font-weight: var(--fd-weight-title);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The digit column, for the counter written bare in the markup. The three
+     that own a box express the same reservation in it — a 32px column, a pill's
+     padding, a 17px badge — because there the reservation is not the digit
+     alone; the `2ch` inside it is the same one. The list header is the one that
+     reserves nothing: it holds "386 de 1,240", whose length varies by far more
+     than a digit, so a two-digit floor would buy it nothing. */
+  .fd-count {
+    display: inline-block;
+    min-width: 2ch;
+    text-align: center;
+  }
+
   /* ===== Panel chrome (1b) =============================================== */
 
+  /* The list header's counter. Body 13 because the row that carries it is the
+     title row; on a phone it drops to 12 with the 32px status row. Alphabet and
+     weight come from the block above. */
   .fd-panel-count {
     flex-shrink: 0;
     color: var(--color-muted-foreground);
-    font-family: var(--font-mono);
     font-size: var(--fd-text-base);
+  }
+
+  /* "con tarifa" is not a figure: it shares an element with the month counter
+     and inherited the monospace from it. Two words of prose in IBM Plex Mono
+     because the number in front of them sits in the same `<span>`. */
+  .fd-month-count-tail {
+    font-family: var(--font-sans);
     font-weight: var(--fd-weight-label);
-    font-variant-numeric: tabular-nums;
   }
 
   /* Status pill: 20px, radius 6, micro type. Carries the spinner when the
@@ -284,11 +355,15 @@
   }
 
   /* The count of active filters. Mono 11/700 in primary, in both the desk
-     header (8a) and the sheet header (1e). */
+     header (8a) and the sheet header (1e). The pill is entirely the figure, so
+     the digit column is its own minimum: two digits plus the 7px of padding on
+     each side, so it does not change width between the ninth filter and the
+     tenth. */
   .fd-status-pill-count {
+    min-width: calc(2ch + 14px);
+    justify-content: center;
     background: var(--color-primary);
     color: var(--color-primary-foreground);
-    font-family: var(--font-mono);
     font-size: var(--fd-text-mono-meta);
     letter-spacing: 0;
     text-transform: none;
@@ -419,14 +494,14 @@
     white-space: nowrap;
   }
 
+  /* The airline row's counter. Body 12 because the row is 32; the 32px column
+     is already its width mechanism — four and a half digits at this body — so
+     it does not repeat the two-digit minimum. */
   .fd-airline-row-count {
     width: 32px;
     flex-shrink: 0;
     color: var(--color-muted-foreground);
-    font-family: var(--font-mono);
     font-size: var(--fd-text-meta);
-    font-weight: var(--fd-weight-label);
-    font-variant-numeric: tabular-nums;
     text-align: right;
   }
 
@@ -522,6 +597,16 @@
     padding: 10px 12px 8px;
   }
 
+  /* The two counters that sit beside a micro label in a popover header — how
+     many matches there are, how many passengers still fit. They were Tailwind
+     literals, and two different weights between them; now they are the system's
+     counter. Body 12, the metadata rung: the header that carries them is not a
+     control with a height of its own to take it from. */
+  .fd-suggest-head .fd-count,
+  .fd-pax-popover-head .fd-count {
+    font-size: var(--fd-text-meta);
+  }
+
   /* The list of matches and the list of Recientes/Frecuentes are the same
      scroller under two conditions, and both open over the workspace: running
      off the last suggestion used to scroll the results behind the panel.
@@ -570,10 +655,14 @@
     white-space: nowrap;
   }
 
+  /* 11 is the catalogue's mono rung — "mono metadata · schedules · specs" —
+     and this is a city and a country, running text in sans. The rung it belongs
+     on is 12. The token said one thing and the line did another, which is the
+     quiet way to spend a scale. */
   .fd-suggest-detail {
     overflow: hidden;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-meta);
     line-height: 1.25;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -642,10 +731,14 @@
     line-height: 1.2;
   }
 
+  /* "12 años o más" is text, not a monospaced spec: the 11 rung is reserved
+     for mono metadata and was being spent here on sans. It goes up to 12, which
+     is what the sheet already used — so the row stops writing its detail two
+     ways depending on the surface. */
   .fd-pax-row-detail {
     display: block;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-meta);
     line-height: 1.2;
   }
 
@@ -681,12 +774,13 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* The same rung correction as the row's detail: this is a sentence. */
   .fd-pax-note {
     margin: 8px 4px 2px;
     padding-top: 8px;
     border-top: 1px solid var(--color-border);
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-meta);
     line-height: 1.45;
   }
 
@@ -705,8 +799,8 @@
     line-height: 1.25;
   }
 
+  /* The body is now the same on both surfaces; only the air changes here. */
   .fd-passenger-sheet .fd-pax-row-detail {
-    font-size: var(--fd-text-meta);
     line-height: 1.25;
   }
 
@@ -730,7 +824,6 @@
     margin: 0;
     padding: 10px 0 0;
     border-top: 0;
-    font-size: var(--fd-text-meta);
     line-height: 1.5;
   }
 
@@ -1045,6 +1138,50 @@
 
   .fd-stay-counter--stretch {
     width: max-content;
+  }
+
+  /*
+   * The value slot of the stay counter, and its digit column.
+   *
+   * Body and weight came from Tailwind literals — `text-xs` and `font-semibold`
+   * — which are 12 and 600: the catalogue's own two rungs, written by hand.
+   * They come from the tokens now, and that is all that changes: the drawing
+   * does not move.
+   *
+   * The digit does get a column of its own, which is what this counter lacked
+   * and Pasajeros had. Measured in the browser with the fonts loaded, at 12/600
+   * in IBM Plex Mono: one digit takes 7.20px and two take 14.41. The slot was
+   * therefore 60.9px at "7 noches" and 68.1 at "10 noches", so the whole bar
+   * shifted 7.2px on reaching the tenth night — and this counter goes up to
+   * ninety, so the jump happens once and stays.
+   *
+   * The reservation is written in `ch` rather than pixels because in a
+   * monospace 1ch is exactly the digit's advance: `2ch` gives the same 14.41px
+   * at this body and would still give two digits if the rung moved.
+   * `.fd-pax-figure` reserves the same thing in pixels because it lives at one
+   * fixed body. With the column in place the slot measures 68.1px from the
+   * second night to the ninetieth: the digit's jump is gone.
+   *
+   * One step is left that this does not close: between "1 noche" and "2 noches"
+   * the slot goes from 61.5 to 68.1px. What changes there is the noun, not the
+   * figure, and reserving the width of a word asks for a number that comes from
+   * no scale. The 56px floor is the plate's — it no longer bites, because the
+   * content already clears it — and it stays as a floor.
+   */
+  .fd-stay-label,
+  .fd-stay-value {
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
+  }
+
+  .fd-stay-value {
+    min-width: 56px;
+  }
+
+  .fd-stay-figure {
+    display: inline-block;
+    min-width: 2ch;
+    text-align: center;
   }
 
   /* The ± of the stay counter. 32px, the standard control of 5b — it used to be
@@ -2591,10 +2728,27 @@
     object-fit: contain;
   }
 
+  /*
+   * The two lines under the month's flight. They were the same body and the
+   * same weight in different alphabets — 11/400 both, one mono and one sans —
+   * because neither declared a weight and both inherited the document's 400.
+   * Adjacent lines of the same card cannot differ only in family: that is not
+   * hierarchy, it is oversight.
+   *
+   * The schedule is a figure — two times, a day offset and a duration — so it
+   * takes the mono rung the catalogue wrote for exactly this: mono 11/600,
+   * which is `.fd-type-mono-meta` to the letter. Nobody was using it.
+   *
+   * The meta is text — "Directo · Cabina + Bodega" — so it frees the 11 rung,
+   * which is reserved for mono metadata, and moves up to 12. It keeps the muted
+   * grey: the hierarchy between the two is carried by colour, where it does not
+   * compete with the alphabet.
+   */
   .fd-month-schedule {
     overflow: hidden;
     font-family: var(--font-mono);
     font-size: var(--fd-text-mono-meta);
+    font-weight: var(--fd-weight-label);
     font-variant-numeric: tabular-nums;
     line-height: 1.3;
     text-overflow: ellipsis;
@@ -2604,7 +2758,8 @@
   .fd-month-meta {
     overflow: hidden;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
     line-height: 1.3;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2627,24 +2782,40 @@
     column-gap: 8px;
   }
 
+  /* "sáb, 22 · Avianca" is the same shape of data as the "vie, 14 · LATAM
+     Airlines" forty pixels above it, and it was written at 11/400 grey while
+     that one is 12/600 black: one shape, two hierarchies. One shape now — the
+     12 rung at 600 — and the grey carries the hierarchy, which is the only
+     thing that really separates an alternative from the main one. */
   .fd-month-alt-label {
     overflow: hidden;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
     line-height: 1.3;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
+  /* The month's two alternative fares are prices, compared against each other
+     and against the hero, so they carry the figure weight like every other
+     price in the product. They were at metadata weight: the only two money
+     figures in the system that were. The hierarchy against the hero is carried
+     by the body — 12 against 22 — which is where it shows. */
   .fd-month-alt-price {
     font-family: var(--font-mono);
     font-size: var(--fd-text-meta);
-    font-weight: var(--fd-weight-label);
+    font-weight: var(--fd-weight-figure);
     font-variant-numeric: tabular-nums;
     line-height: 1.3;
     white-space: nowrap;
   }
 
+  /* The month's coverage: "12 de 30 días con tarifa". The line is a sentence
+     and stays in sans; the two figures inside it take `.fd-count`, the system's
+     counter. Splitting the mixed value is what keeps "días con tarifa" out of
+     the monospace it would otherwise inherit for sharing an element with a
+     number, which is how prose gets into the font for figures. */
   .fd-month-days {
     overflow: hidden;
     color: var(--color-muted-foreground);
@@ -2685,11 +2856,13 @@
     color: color-mix(in srgb, var(--color-muted-foreground) 70%, transparent);
   }
 
-  /* The sweep's price range, beside the month counter. */
+  /* The sweep's price range, beside the month counter. It is a price and it
+     shares a line with that counter, so both take the figure weight — otherwise
+     one row would write two numbers at two weights. */
   .fd-month-range {
     font-family: var(--font-mono);
     font-size: var(--fd-text-base);
-    font-weight: var(--fd-weight-label);
+    font-weight: var(--fd-weight-figure);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }

@@ -25,9 +25,9 @@
     /* ---- 5a · type scale ------------------------------------------------- */
     /* Every body has one job. The "uso único" column of the plate is the test:
        if a size needs a second job, the scale is wrong, not the usage. */
-    --fd-text-display: 22px; /* migration hero price only, mono 800 */
-    --fd-text-sheet: 17px; /* mobile sheet titles · detail price (mono 800) */
-    --fd-text-card: 16px; /* card titles · list price (mono 800) · mobile input */
+    --fd-text-display: 22px; /* migration hero price only, at figure weight */
+    --fd-text-sheet: 17px; /* mobile sheet titles · detail price (mono, figure) */
+    --fd-text-card: 16px; /* card titles · list price (mono, figure) · mobile input */
     --fd-text-action: 15px; /* Cotizar · Aplicar · station codes */
     --fd-text-body: 14px; /* form values · names · long copy */
     --fd-text-base: 13px; /* buttons · chips · rows · cells */
@@ -38,7 +38,22 @@
     --fd-weight-value: 400;
     --fd-weight-label: 600;
     --fd-weight-title: 700;
-    --fd-weight-figure: 800;
+    /*
+     * The plate asks for 800 on the price, and 800 is a weight this font does
+     * not have. Every consumer of this token is mono — `.fd-type-display`,
+     * `.fd-figure`, `.fd-detail-price`, `.fd-card__price-figure` and the two
+     * logo squares — and IBM Plex Mono is a static family that stops at Bold:
+     * asked for `wght@400;500;600;700;800`, Google Fonts answers with four
+     * faces, 400/500/600/700, and no 800 among them. So the 800 was not picking
+     * a heavier face; it fell back on the 700 and, depending on the browser,
+     * smeared it. A synthesised weight is not a weight.
+     *
+     * 700 is the face the price was already being drawn with, so nothing moves
+     * and the token stops lying. The price is still the heaviest thing on the
+     * card because it is the largest — 22px against 13. If the family ever
+     * ships a real 800, this goes back up and `index.html` asks for the axis.
+     */
+    --fd-weight-figure: 700;
 
     --fd-tracking-micro: 0.04em;
 
@@ -221,14 +236,25 @@
     text-transform: uppercase;
   }
 
-  /* Figures: always mono 800 and tabular, so columns of prices line up. */
+  /* Figures: always mono, tabular, and at the heaviest weight the family
+     actually ships, so columns of prices line up. */
   .fd-figure {
     font-family: var(--font-mono);
     font-weight: var(--fd-weight-figure);
     font-variant-numeric: tabular-nums;
   }
 
-  /* Counters and schedules: mono 600 tabular. */
+  /*
+   * Mono and tabular, and no weight: the surface supplies that.
+   *
+   * This is the half of a figure's alphabet that does not depend on where it
+   * lands — the family and the tabular spacing. The body comes from the height
+   * of the control it lives in, exactly as the icon's does (7b), and the weight
+   * from the surface: 600 for form values, which are all 600 and none of which
+   * claims importance over the one beside it; 700 for the counters of the
+   * results surface, which are what gets read at a glance. The counter itself,
+   * with its digit column, is `.fd-count` in `components.css`.
+   */
   .fd-mono {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
