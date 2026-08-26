@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -39,6 +39,7 @@ import {
   extractAgilUsdToPenRate,
 } from "../src/local-agil";
 import type { SearchRequest } from "../src/core/types";
+import { removeTempRoot } from "./helpers/temp";
 
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) {
@@ -337,7 +338,7 @@ test("Agil provider prewarm forces a token refresh even when the cached session 
     restoreEnv("CHROME_USER_DATA_DIR", previousChromeUserDataDir);
     restoreEnv("COSTAMAR_CHROME_USER_DATA_DIR", previousCostamarChromeUserDataDir);
     restoreEnv("LOCALAPPDATA", previousLocalAppData);
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -383,7 +384,7 @@ test("Agil profile discovery tries the configured Chrome profile before automati
       process.env.AGIL_CHROME_PROFILE = previousProfile;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -416,7 +417,7 @@ test("Agil can resolve an active Chrome DevTools browser endpoint from a user da
       "ws://127.0.0.1:9222/devtools/browser/session-id",
     );
   } finally {
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -492,7 +493,7 @@ test("Agil temporary Chrome profile staging is private and copies only minimal s
     }
   } finally {
     await cleanupTemporaryAgilChromeProfileForTests(tempProfile);
-    rmSync(sourceRoot, { recursive: true, force: true });
+    removeTempRoot(sourceRoot);
   }
 });
 
@@ -622,7 +623,7 @@ test("Agil session extraction keeps the configured profile when cross-profile sc
     restoreEnv("COSTAMAR_CHROME_USER_DATA_DIR", previousCostamarChromeUserDataDir);
     restoreEnv("LOCALAPPDATA", previousLocalAppData);
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -751,7 +752,7 @@ test("Agil session extraction ignores non-Agil origin storage in the configured 
     restoreEnv("COSTAMAR_CHROME_USER_DATA_DIR", previousCostamarChromeUserDataDir);
     restoreEnv("LOCALAPPDATA", previousLocalAppData);
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -840,7 +841,7 @@ test("Agil default extraction ignores planted arbitrary-origin raw storage with 
     restoreEnv("CHROME_USER_DATA_DIR", previousChromeUserDataDir);
     restoreEnv("COSTAMAR_CHROME_USER_DATA_DIR", previousCostamarChromeUserDataDir);
     restoreEnv("LOCALAPPDATA", previousLocalAppData);
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -1883,7 +1884,7 @@ async function withAgilIdentityRig(
     resetAgilSessionCacheForTests();
     resetAgilApimSubscriptionKeyCacheForTests();
     previousEnv.forEach((value, key) => restoreEnv(key, value));
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 }
 

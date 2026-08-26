@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,6 +10,7 @@ import {
   TEMP_ARTIFACT_SWEEP_MIN_AGE_MS,
   unregisterActiveTempArtifact,
 } from "../src/temp-artifacts";
+import { removeTempRoot } from "./helpers/temp";
 
 test("cleanupPrefixedTempArtifacts removes known temp artifacts without touching unrelated files", async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), "fly-desk-temp-artifacts-"));
@@ -54,7 +55,7 @@ test("cleanupPrefixedTempArtifacts removes known temp artifacts without touching
       process.env.TMP = previousTmp;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -103,7 +104,7 @@ test("cleanupPrefixedTempArtifacts only removes stale inactive artifacts during 
       process.env.TMP = previousTmp;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -149,6 +150,6 @@ test("cleanupPrefixedTempArtifacts preserves artifacts marked as active by anoth
       process.env.TMP = previousTmp;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });

@@ -1,7 +1,7 @@
 import { afterEach, test } from "bun:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -24,6 +24,7 @@ import type {
   SearchMeta,
   SearchRequest,
 } from "../src/core/types";
+import { removeTempRoot } from "./helpers/temp";
 
 const tempRootsForCleanup = new Set<string>();
 
@@ -101,7 +102,7 @@ function createManualScheduler(startMs: number) {
 
 afterEach(() => {
   for (const tempRoot of tempRootsForCleanup) {
-    rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    removeTempRoot(tempRoot);
     tempRootsForCleanup.delete(tempRoot);
   }
 });
@@ -500,7 +501,7 @@ test("partial cacheable results survive a shutdown persistence cycle", () => {
   assert.equal(restored?.offers.length, 1);
   secondStore.close();
 
-  rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  removeTempRoot(tempRoot);
 });
 
 test("search job refresh preserves stable purchase path ids when the underlying path did not change", () => {
@@ -1419,7 +1420,7 @@ test("search session store persists completed cache and running redirect snapsho
   assert.ok(secondStore.resolvePurchasePath(restoredPathId!));
   secondStore.close();
 
-  rmSync(tempRoot, { recursive: true, force: true });
+  removeTempRoot(tempRoot);
 });
 
 test("the restore reads its budget from indexes, not from the payloads", () => {
@@ -1455,7 +1456,7 @@ test("the restore reads its budget from indexes, not from the payloads", () => {
     );
   } finally {
     db.close(true);
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -1506,7 +1507,7 @@ test("the sweep seeks its rows instead of reading the table", () => {
     }
   } finally {
     db.close(true);
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -1544,7 +1545,7 @@ test("search session store prunes expired sqlite rows before loading their paylo
     purchasePaths: 0,
   });
 
-  rmSync(tempRoot, { recursive: true, force: true });
+  removeTempRoot(tempRoot);
 });
 
 test("search session store hydrates only the newest jobs and keeps the rest available from disk", () => {
@@ -2039,7 +2040,7 @@ test("search session store persists completed search jobs without truncating off
   assert.equal(restored?.allOffers[389]?.id, "offer-390");
   secondStore.close();
 
-  rmSync(tempRoot, { recursive: true, force: true });
+  removeTempRoot(tempRoot);
 });
 
 test("search session store avoids rewriting an unchanged sqlite snapshot after load", async () => {
@@ -2074,7 +2075,7 @@ test("search session store avoids rewriting an unchanged sqlite snapshot after l
 
   assert.equal(readSqliteSavedAt(dbPath), firstSavedAt);
 
-  rmSync(tempRoot, { recursive: true, force: true });
+  removeTempRoot(tempRoot);
 });
 
 test("search session store only writes the search job that changed", async () => {
@@ -2120,7 +2121,7 @@ test("search session store only writes the search job that changed", async () =>
   assert.ok(verificationStore.getSearchJob(untouchedJob.id));
   verificationStore.close();
 
-  rmSync(tempRoot, { recursive: true, force: true });
+  removeTempRoot(tempRoot);
 });
 
 

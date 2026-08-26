@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SearchRequest } from "../src/core/types";
@@ -11,6 +11,7 @@ import {
   searchWorkerPoolPidForTests,
   stopSearchWorkerPool,
 } from "../src/search-worker-client";
+import { removeTempRoot } from "./helpers/temp";
 
 const ENV_KEYS = [
   "AGIL_BROWSER_URL",
@@ -155,7 +156,7 @@ test("spawn-per-search workers surface provider errors after starting under Bun"
       assert.equal(searchWorkerPoolPidForTests("agil-local"), undefined);
     });
   } finally {
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -192,7 +193,7 @@ test("pooled workers survive a failed search and serve the next one from the sam
       }
     });
   } finally {
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -218,6 +219,6 @@ test("a prewarm message is answered by the pooled worker", async () => {
       }
     });
   } finally {
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });

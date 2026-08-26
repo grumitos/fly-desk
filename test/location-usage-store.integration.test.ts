@@ -1,10 +1,11 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { LocationUsageStore } from "../src/location-usage-store";
+import { removeTempRoot } from "./helpers/temp";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -123,7 +124,7 @@ test("the rolling window ranks a station the same in memory as in sqlite", () =>
     });
   } finally {
     persisted?.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -162,7 +163,7 @@ test("a use leaves the count on the day it crosses the window, not before", () =
     }
   } finally {
     persisted?.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -208,7 +209,7 @@ test("pruning drops the days that left the window and nothing else", () => {
     assert.equal(lifetime.total_uses, 7);
   } finally {
     store?.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -361,7 +362,7 @@ test("the persisted ranking is one global row for every browser session and proc
   } finally {
     web?.close();
     runner?.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -403,7 +404,7 @@ test("location usage store shares fresh global counters across already-running p
   } finally {
     first?.close();
     second?.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -447,7 +448,7 @@ test("location usage store migrates the former recent-use cache into permanent c
       ["role", "code", "total_uses", "last_used_at_ms"],
     );
   } finally {
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -541,7 +542,7 @@ test("a database written before the window opens, serves, and starts the count e
     assert.deepEqual(staleIndex, []);
   } finally {
     store?.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -620,7 +621,7 @@ test("location usage store bounds the persisted recent table globally", () => {
     assert.equal(recentCount.entries, 5);
   } finally {
     store?.close();
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -650,6 +651,6 @@ test("location usage store persists session recents across restarts and expires 
     });
     reopened.close();
   } finally {
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });

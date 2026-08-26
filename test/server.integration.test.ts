@@ -1,13 +1,15 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleRequest, resolveServerIdleTimeoutSeconds } from "../src/server";
 import { resetAirlineMarkStoreForTests } from "../src/airline-mark-store";
 import { resetWebLoginAdmission } from "../src/login-admission";
 import { createScryptPasswordHash } from "../src/web-auth";
+import { realPng } from "./helpers/png";
 import { withServer } from "./helpers/server";
+import { removeTempRoot } from "./helpers/temp";
 
 test("server idle timeout defaults above Bun's short request timeout", () => {
   assert.equal(resolveServerIdleTimeoutSeconds(undefined), 120);
@@ -416,14 +418,14 @@ test("a carrier mark the release lacks is fetched once and then served locally",
   process.env.FLY_DESK_AIRLINE_MARK_DIR = directory;
   const realFetch = globalThis.fetch;
   let fetches = 0;
+  /* A mark that really decodes. The guard this route harvests through reads
+     past the header now, so a signature and an IHDR are no longer enough to
+     stand in for artwork — which is the whole point of it. */
+  const markBytes = await realPng(70);
   globalThis.fetch = (async (input: string | URL | Request) => {
     if (String(input).includes("/web/airlines/")) {
       fetches += 1;
-      const bytes = new Uint8Array(64);
-      bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
-      bytes[19] = 70;
-      bytes[23] = 70;
-      return new Response(bytes, { status: 200, headers: { "content-type": "image/png" } });
+      return new Response(markBytes, { status: 200, headers: { "content-type": "image/png" } });
     }
     return realFetch(input as never);
   }) as typeof fetch;
@@ -456,6 +458,6 @@ test("a carrier mark the release lacks is fetched once and then served locally",
     resetAirlineMarkStoreForTests();
     if (previousDir === undefined) delete process.env.FLY_DESK_AIRLINE_MARK_DIR;
     else process.env.FLY_DESK_AIRLINE_MARK_DIR = previousDir;
-    rmSync(directory, { recursive: true, force: true });
+    removeTempRoot(directory);
   }
 });

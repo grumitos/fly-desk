@@ -246,7 +246,7 @@ function runInWorker(
     }
 
     const stderrPromise = new Response(child.stderr).text();
-    void readJsonLines(child.stdout, (line) => {
+    const stdoutDrained = readJsonLines(child.stdout, (line) => {
       const message = parseWorkerMessage(line);
       if (!message || message.id !== input.id) {
         return;
@@ -263,6 +263,14 @@ function runInWorker(
     });
 
     void Promise.resolve(child.exited).then(async (code) => {
+      /* A worker writes its answer to stdout and then exits, and those are two
+         events this process can observe in either order. On a loaded machine
+         the exit arrives first often enough to matter, and answering it
+         immediately reports "the worker stopped" over a provider error the
+         worker had already sent — which is how the reason a search failed gets
+         replaced by the fact that it did. Reading what is left first costs
+         nothing: this path only runs when the process is already gone. */
+      await stdoutDrained;
       if (settled) {
         return;
       }
@@ -437,7 +445,7 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
     };
     workers.set(providerId, worker);
 
-    void readJsonLines(child.stdout, (line) => {
+    const stdoutDrained = readJsonLines(child.stdout, (line) => {
       const message = parseWorkerMessage(line);
       if (!message) {
         return;
@@ -456,6 +464,9 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
         workers.delete(providerId);
       }
 
+      /* Same order-of-arrival as the spawn-per-search path above: what the
+         pool has left to read decides which of these jobs are still pending. */
+      await stdoutDrained;
       const pending = [...worker.jobs.values()];
       if (pending.length === 0) {
         return;

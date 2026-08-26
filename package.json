@@ -26,13 +26,13 @@
     "test": "bun run test:core && bun run test:ui",
     "test:unit": "bun test --timeout=600000 unit.test.ts",
     "test:integration": "bun test --timeout=600000 integration.test.ts",
-    "test:core": "bun test --timeout=600000 unit.test.ts integration.test.ts",
+    "test:core": "bun test --parallel --timeout=600000 unit.test.ts integration.test.ts",
     "test:ui": "bun run build:frontend && bun scripts/run-ui-tests.ts",
     "test:coverage": "bun test --timeout=600000 --coverage unit.test.ts integration.test.ts"
   },
   "devDependencies": {
     "@typescript/native": "npm:typescript@7.0.2",
-    "@types/bun": "^1.3.14",
+    "@types/bun": "^1.4.0",
     "bun-plugin-tailwind": "^0.1.2",
     "playwright": "1.61.1"
   },

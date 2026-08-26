@@ -1,6 +1,6 @@
 import { mkdir, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { normalizeAirlineAssetCode, readSquarePngSize } from "./core/airline-assets";
+import { normalizeAirlineAssetCode } from "./core/airline-assets";
 import { resolvePersistPath } from "./runtime-paths";
 
 /*
@@ -140,7 +140,7 @@ async function harvestAirlineMark(
   /* Checked, not trusted. What arrives here is served from this origin
      afterwards, so it has to be a square PNG and nothing else — the same bar
      `scripts/extract-airline-icons.ts` applies to a mark entering the repo. */
-  const size = readSquarePngSize(bytes);
+  const size = await readSquarePngSize(bytes);
   if (!size || size < MARK_MIN_EDGE || size > MARK_MAX_EDGE) {
     return undefined;
   }
@@ -159,6 +159,48 @@ async function harvestAirlineMark(
     }
     return filePath;
   } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The edge of a square PNG, or `undefined` for anything else.
+ *
+ * The one check that decides whether bytes off a provider CDN may be written
+ * next to the marks that shipped with the release and served from this origin
+ * afterwards. Shared with `scripts/extract-airline-icons.ts` so a mark entering
+ * the repository and a mark entering the cache clear the same bar.
+ *
+ * It used to read the signature and the two IHDR numbers by hand, which
+ * answered for the header and nothing else: bytes that announced 70x70 and then
+ * stopped — a truncated response, a CDN error page with a PNG magic number, a
+ * corrupt body — passed, were written, and left the card drawing a broken image
+ * instead of the two letters it is supposed to fall back to. `Bun.Image`
+ * reads the same header and stops in the same place (`metadata()` is documented
+ * as decoding just enough for width, height and format), so the decode below is
+ * the part that is new. It is what proves there are pixels behind the header.
+ *
+ * The decode costs about a millisecond and is paid once per carrier, ever —
+ * afterwards the mark is a local file. It runs on a worker thread, so it is not
+ * a millisecond of the request either.
+ *
+ * This lives here rather than in `core/`, where it sat next to the code the
+ * browser bundle imports. `Bun.Image` has no meaning in a browser, and both
+ * callers are server-side.
+ */
+export async function readSquarePngSize(bytes: Uint8Array): Promise<number | undefined> {
+  try {
+    const image = new Bun.Image(bytes);
+    const { width, height, format } = await image.metadata();
+    if (format !== "png" || width <= 0 || width !== height) {
+      return undefined;
+    }
+
+    await image.bytes();
+    return width;
+  } catch {
+    /* `Bun.Image` throws both for bytes that are no image at all and for an
+       image whose body will not decode. Here those are the same answer. */
     return undefined;
   }
 }

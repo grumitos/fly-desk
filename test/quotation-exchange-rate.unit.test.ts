@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as exchangeRate from "../src/quotation-exchange-rate";
 import { buildOffer } from "./helpers/ui-fixtures";
+import { removeTempRoot } from "./helpers/temp";
 
 test("resolveStandaloneUsdToPenRate uses the selected offer rate before an external lookup", async () => {
   exchangeRate.resetQuotationUsdToPenRateCacheForTests();
@@ -181,6 +182,6 @@ test("standalone rate lookup restores the same-day cache after a process-like re
     } else {
       process.env.FLY_DESK_QUOTATION_RATE_CACHE_PATH = previousCachePath;
     }
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
