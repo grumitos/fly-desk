@@ -226,8 +226,24 @@
   /* The select surface is the fare row. When the row carries an alternates
      strip, a full-height hit ran under the strip to the row's bottom rule — an
      invisible button selecting the offer on a press aimed at the strip. The
-     fare row is 52 by construction (the row's own min-height), so the hit
-     stops there. */
+     fare row is 52, so the hit stops there.
+
+     That 52 used to be asserted rather than built. `min-height` belongs to the
+     whole row, so it stops binding the moment a strip carries the content past
+     it: the fare band collapsed to its own content — 26 with two legs — and
+     `align-items: center` had nothing left to centre, which put the legs hard
+     against the top rule with none of the 12.5px of air a plain row gets and
+     13.5 still under the strip. A row with an extra schedule read as cropped,
+     and only at the top, which is exactly what it was.
+
+     Naming the track fixes it where the intent already was: the fare band is a
+     fare row, 52 like any other, and the existing centring fills it. `minmax`
+     rather than a flat 52 so that a band which one day needs more than 52 grows
+     instead of overflowing. */
+  .fd-card:has(.fd-card__alts) {
+    grid-template-rows: minmax(52px, auto) auto;
+  }
+
   .fd-card:has(.fd-card__alts) .fd-card__hit {
     bottom: auto;
     height: 52px;
