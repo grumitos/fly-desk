@@ -1380,6 +1380,24 @@
     height: var(--fd-control-touch);
   }
 
+  /*
+   * 7b, one more time, and in the last three places the phone still broke it.
+   *
+   * `Controles` lists five controls whose glyph does not answer to the height
+   * it sits in and says four of them are in the filter strip; those were fixed
+   * where the strip is declared. These three are the same fault one screen
+   * over, in the form the thumb uses to correct a search: all three were taken
+   * to the 40px touch height and all three kept the 14 and 16 a 26px chip and
+   * a 32px desktop control take. Swept for with `getComputedStyle` over every
+   * pressable on all four phone surfaces rather than read off the sheet.
+   */
+  .fd-daterange-clear svg,
+  .fd-field-clear svg,
+  .fd-stay-counter-step svg {
+    width: var(--fd-icon-18);
+    height: var(--fd-icon-18);
+  }
+
   /* At rest there is nothing to copy yet, so the bar carries paste alone; the
      active half of this pair went with the bar itself. */
   .fd-topbar[data-workspace-active="false"] .fd-topbar-copy {

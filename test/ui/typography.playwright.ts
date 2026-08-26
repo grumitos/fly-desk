@@ -370,6 +370,81 @@ test("the phone's filter strip binds every icon size to the height of its contro
 });
 
 /*
+ * The same law, over the whole phone rather than over one band of it.
+ *
+ * The case above pins the filter strip, which is where `Controles` found four
+ * of the five controls whose glyph does not answer to the height it sits in.
+ * The fifth was the month row, and a sweep of every pressable on all four phone
+ * surfaces found three more that nothing had looked at: the two stay-counter
+ * steps and the clears of the location and date fields, all taken to the 40px
+ * touch height and all still drawing the 14 and 16 a 26px chip and a 32px
+ * desktop control take.
+ *
+ * So the assertion is the law itself and not a list of controls: walk what is
+ * on screen, and for every control whose height is a rung of the mobile
+ * catalogue, the icon inside it is that rung's icon. A control the phone grows
+ * later is covered the day it is drawn.
+ */
+test("every icon on the phone is the size of the control it sits in", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 360, height: 800 });
+    await routeSingleOfferSearch(page);
+    await openSharedSearchLink(page, `${baseUrl}${SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await waitForFontsReady(page);
+
+    const sweep = async (where: string) => {
+      const broken = await page.evaluate(() => {
+        /* 7b's own table: 26 → 12, mobile 34 → 16, mobile 40 and 46 → 18. A
+           height that is not a rung is not this law's business — a card, a
+           sheet and a scrim are not controls. */
+        const law: Record<number, number> = { 26: 12, 34: 16, 40: 18, 46: 18 };
+        const out: string[] = [];
+        const seen = new Set<string>();
+        for (const node of Array.from(document.querySelectorAll<HTMLElement>("button, [role='button'], label"))) {
+          const style = getComputedStyle(node);
+          if (style.display === "none" || style.visibility === "hidden") continue;
+          const svg = node.querySelector("svg");
+          if (!svg) continue;
+          const icon = Math.round(svg.getBoundingClientRect().width);
+          if (icon === 0) continue;
+          const height = Math.round(node.getBoundingClientRect().height);
+          const rung = law[height];
+          if (!rung || icon === rung) continue;
+          const name = (node.className || "").toString().split(/\s+/).find((token) => token.startsWith("fd-"))
+            ?? node.getAttribute("aria-label")
+            ?? node.tagName.toLowerCase();
+          const entry = `${name}: ${icon} inside ${height}, the rung is ${rung}`;
+          if (seen.has(entry)) continue;
+          seen.add(entry);
+          out.push(entry);
+        }
+        return out;
+      });
+      assert.deepEqual(broken, [], `${where}: ${broken.join(" | ")}`);
+    };
+
+    await sweep("the results");
+
+    await page.locator(".fd-filter-strip-open").click();
+    await page.locator(".fd-filter-sheet").waitFor();
+    await sweep("the filters sheet");
+    await page.keyboard.press("Escape");
+    await page.locator(".fd-filter-sheet").waitFor({ state: "detached" });
+
+    await page.getByTestId("result-card").first().click();
+    await page.getByTestId("detail-panel-body").waitFor();
+    await sweep("the detail sheet");
+    await page.keyboard.press("Escape");
+    await page.getByTestId("detail-panel-body").waitFor({ state: "detached" });
+
+    await page.getByRole("button", { name: "Editar búsqueda" }).click();
+    await page.getByRole("combobox", { name: "Origen" }).waitFor();
+    await sweep("the form, reopened");
+  }, { autoOpen: false });
+});
+
+/*
  * 11 is the monospace's rung.
  *
  * `--fd-text-mono-meta` is the body the catalogue gives figures and specs *in
