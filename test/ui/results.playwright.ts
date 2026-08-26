@@ -3530,6 +3530,74 @@ test("every column heading begins where the values it names begin", async () => 
   }, { autoOpen: false });
 });
 
+test("the row draws the airline and its operator at the rungs the plate gives them", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, {
+      offers: [oneStopOffer(1, {
+        id: "codeshare-1",
+        itineraries: oneStopOffer(1).itineraries.map((leg) => ({
+          ...leg,
+          segments: leg.segments.map((segment) => ({
+            ...segment,
+            marketingCarrierName: "Iberia",
+            operatingCarrier: "4O",
+            operatingCarrierName: "Level",
+          })),
+        })),
+      })],
+    });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await waitForFontsReady(page);
+
+    const type = await page.evaluate(() => {
+      const read = (selector: string) => {
+        const node = document.querySelector<HTMLElement>(selector);
+        if (!node) return null;
+        const style = getComputedStyle(node);
+        return `${style.fontSize}/${style.fontWeight}`;
+      };
+      return {
+        name: read(".fd-card:not(.fd-card--head) .fd-card__carrier-name"),
+        operator: read(".fd-card:not(.fd-card--head) .fd-card__carrier-operator"),
+      };
+    });
+
+    /* `Main.dc.html` and `Actual.dc.html` both draw 13/600 over 10/600 here.
+       The row carried 13/700 over 12/400, which made the airline louder than
+       the price it is compared by and the codeshare larger than the row's own
+       metadata. */
+    assert.equal(type.name, "13px/600");
+    assert.equal(type.operator, "10px/600");
+  }, { autoOpen: false });
+});
+
+test("the second price line states the amount and leaves the currency to the figure above it", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, { offers: [oneStopOffer(1)] });
+    await openSharedSearchLink(
+      page,
+      `${baseUrl}${RESULTS_SEARCH_URL.replace("adults=1", "adults=2")}`,
+    );
+    await page.getByTestId("result-card").first().waitFor();
+
+    const price = await page.evaluate(() => ({
+      figure: document.querySelector<HTMLElement>(".fd-card__price-figure")?.textContent ?? "",
+      meta: document.querySelector<HTMLElement>(".fd-card__price-meta")?.textContent ?? "",
+      /* And the reader, who has no line above to carry the code, still hears
+         it. */
+      spoken: document.querySelector<HTMLElement>(".fd-card__hit")?.getAttribute("aria-label") ?? "",
+    }));
+
+    assert.match(price.figure, /^USD [\d,]+\.\d\d$/);
+    assert.match(price.meta, /^[\d,]+\.\d\d p\/p$/);
+    assert.doesNotMatch(price.meta, /USD/);
+    assert.match(price.spoken, /USD [\d,]+\.\d\d por persona/);
+  }, { autoOpen: false });
+});
+
 test("the three headings across the desk are one line with one rule", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });

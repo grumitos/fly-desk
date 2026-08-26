@@ -189,20 +189,32 @@
     grid-template-columns: minmax(0, 1fr);
     min-width: 0;
     align-content: center;
-    gap: 2px;
+    /* 3, which is the `margin-top` the plate hangs the operator on. */
+    gap: 3px;
   }
 
   .fd-card__carrier-line {
     display: contents;
   }
 
+  /* 13/600 and 10/600, which is what `Main.dc.html` draws and what
+     `Actual.dc.html` drew before it — the row has carried 13/700 over 12/400
+     since the redesign and neither plate ever asked for it. The pair is a name
+     and a footnote, not a heading and a caption: at 700 the airline shouted
+     over a price that is the thing being compared, and at 12/400 the codeshare
+     was both larger and lighter than the row's own metadata.
+
+     The phone reverses both, and the plate reverses them too: `Movil.dc.html`
+     puts the name at 14/700 and the operator at 12/400 on one line, because
+     there they are the only text on the card's first row. That is restated in
+     the stacked block at the foot of this file, not inherited from here. */
   .fd-card__carrier-name {
     min-width: 0;
     grid-column: 1 / -1;
     overflow: hidden;
     font-size: var(--fd-text-base);
-    font-weight: var(--fd-weight-title);
-    line-height: 1.25;
+    font-weight: var(--fd-weight-label);
+    line-height: 1.2;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -211,11 +223,18 @@
     min-width: 0;
     overflow: hidden;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-meta);
-    font-weight: var(--fd-weight-value);
-    line-height: 1.25;
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-label);
+    line-height: 1.2;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* On a line of its own the name needs saying what it is; the phone, where it
+     rides the airline's own line, replaces this with the middle dot. Both are
+     the disposition speaking, which is why neither is in the model. */
+  .fd-card__carrier-operator::before {
+    content: "Operado por ";
   }
 
   /* The pair is a property of the fare and it has a column of its own, named
@@ -959,11 +978,16 @@
       grid-column: auto;
       flex: 0 1 auto;
       font-size: var(--fd-text-body);
+      font-weight: var(--fd-weight-title);
+      line-height: 1.25;
     }
 
     .fd-card .fd-card__carrier-operator {
       flex: 0 999 auto;
       overflow: hidden;
+      font-size: var(--fd-text-meta);
+      font-weight: var(--fd-weight-value);
+      line-height: 1.25;
       text-overflow: ellipsis;
     }
 

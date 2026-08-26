@@ -57,7 +57,7 @@ export type ResultCardModel = {
     code: string
     name: string
     logo: string
-    /** "op. LATAM" — the codeshare operator, when it differs from the marketer. */
+    /** "LATAM" — the codeshare operator, when it differs from the marketer. */
     operatedBy: string
   }
   baggage: {
@@ -301,9 +301,15 @@ function carrierParts(offer: CanonicalOffer) {
 }
 
 /**
- * The codeshare operator, phrased "op. LATAM" — the agent needs to know who
- * actually flies it, because that is who the passenger will deal with at the
- * gate. Only the operators that differ from the marketing carrier appear.
+ * The codeshare operator, bare — the agent needs to know who actually flies
+ * it, because that is who the passenger will deal with at the gate. Only the
+ * operators that differ from the marketing carrier appear.
+ *
+ * The name and nothing else, because the two surfaces introduce it differently
+ * and neither wording is data: `Main.dc.html` writes «Operado por Level» on
+ * its own line under the airline, and `Movil.dc.html` writes «· Level» glued
+ * to it. Both prefixes live in `result-card.css`, where the disposition that
+ * chooses between them already lives.
  */
 function operatingCopy(offer: CanonicalOffer, knownTokens: Set<string>): string {
   const operators = new Set<string>()
@@ -321,7 +327,7 @@ function operatingCopy(offer: CanonicalOffer, knownTokens: Set<string>): string 
     })
   })
 
-  return operators.size > 0 ? `op. ${Array.from(operators).join(" / ")}` : ""
+  return operators.size > 0 ? Array.from(operators).join(" / ") : ""
 }
 
 /*
@@ -379,14 +385,19 @@ function priceParts(offer: CanonicalOffer, passengerCount: number, showPerPerson
 
   const label = formatMoney(money)
   const canShowPerPerson = showPerPerson && Number.isFinite(passengerCount) && passengerCount > 1
-  const perPersonLabel = canShowPerPerson
-    ? formatMoney({ ...money, amount: money.amount / passengerCount })
-    : ""
+  /* The figure above it already says which currency this is, and every plate
+     that draws the pair — `Main`, `Movil`, `MovilCompacta` — writes the second
+     line bare: «512.00 p/p». Repeating the code under a total that carries it
+     spends 30 of the 116px lane restating what the eye read a line earlier. It
+     stays in the spoken label, where there is no line above to carry it. */
+  const perPersonLabel = canShowPerPerson ? formatAmount(money.amount / passengerCount) : ""
 
   return {
     label,
     perPersonLabel,
-    ariaLabel: perPersonLabel ? `${label} total, ${perPersonLabel} por persona` : `${label} total`,
+    ariaLabel: perPersonLabel
+      ? `${label} total, ${money.currencyCode} ${perPersonLabel} por persona`
+      : `${label} total`,
   }
 }
 
@@ -430,10 +441,14 @@ function resolveCostamarRedirectVerification(offer: CanonicalOffer): RedirectVer
 }
 
 function formatMoney(money: CanonicalOffer["price"]["total"]) {
-  return `${money.currencyCode} ${money.amount.toLocaleString("es-PE", {
+  return `${money.currencyCode} ${formatAmount(money.amount)}`
+}
+
+function formatAmount(amount: number) {
+  return amount.toLocaleString("es-PE", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  })}`
+  })
 }
 
 function dayMonthLabel(isoDate: string): string {

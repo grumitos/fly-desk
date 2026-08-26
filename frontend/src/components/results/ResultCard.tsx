@@ -74,7 +74,10 @@ export function ResultCard({
   const cardLabel = [
     selected ? "Oferta seleccionada" : "Seleccionar oferta",
     model.carrier.name,
-    model.carrier.operatedBy,
+    /* The prefix the two dispositions draw in CSS, said in full here: a reader
+       hears one list and has no line break or middle dot to tell it that the
+       second name is the operator. */
+    model.carrier.operatedBy && `Operado por ${model.carrier.operatedBy}`,
     ...model.legs.map((leg) => `${leg.ariaLabel}: ${legAriaSchedule(leg)}, ${leg.duration}, ${leg.stopsLabel}`),
     model.baggage.ariaLabel,
     model.price.ariaLabel,
