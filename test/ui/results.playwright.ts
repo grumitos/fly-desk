@@ -2786,6 +2786,133 @@ test("the stacked row wears the lanes and the baselines MovilCompacta draws", as
   }, { autoOpen: false });
 });
 
+test("the phone's detail sheet is the anatomy MovilDetalle draws, block by block", async () => {
+  /*
+   * The desk column was brought to the plates and almost none of it reached
+   * the phone, because nothing here measured the phone. Read against
+   * `MovilDetalle.dc.html` at the same width, seven things disagreed:
+   *
+   *   · the four blocks were inset by 14 — armazón B's 380px sheet number,
+   *     inherited because nothing restated it — where the plate pads the whole
+   *     screen by 16;
+   *   · the header's gap was 8 and the plate opens it to 10 for the 40px back;
+   *   · a section arrived behind 18 over 18 where the plate draws 16 over 14;
+   *   · the conditions were spaced 10 apart, so four 32px lines read as four
+   *     blocks, and the value was written twice — the second copy at 14
+   *     against its label's 13;
+   *   · the two foot actions were 15/700 in 12 of padding at radius 12, where
+   *     the plate draws both at 13/700 in 14 at radius 10 — and radius 10 is
+   *     what every other 40px control on this phone wears;
+   *   · «Abrir» had lost its word to a 40px square, on the grounds that the row
+   *     had room for one set of words, which was true only while «Cotizar» was
+   *     stretching to fill it;
+   *   · the switch was 30 × 17 with a 13px knob, two numbers `Controles` names
+   *     as being in no catalogue, where the plate draws 34 × 20 over a 16px
+   *     knob — `--fd-control-touch-sm`, the pill's height, and the box a
+   *     checkbox and a knob share.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeCompletedSearch(page, {
+      offers: [oneStopOffer(1, {
+        id: "detail-phone",
+        fareMeta: { changeable: true, refundable: false, lastTicketingDate: "2026-05-26" },
+      })],
+    });
+    await page.setViewportSize({ width: 360, height: 800 });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().click();
+    await page.getByTestId("detail-panel-body").waitFor();
+    await waitForFontsReady(page);
+
+    for (const width of [360, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.waitForTimeout(320);
+
+      const sheet = await page.evaluate(() => {
+        const read = (selector: string) => document.querySelector<HTMLElement>(selector);
+        const style = (selector: string, property: string) => {
+          const node = read(selector);
+          return node ? getComputedStyle(node).getPropertyValue(property) : "";
+        };
+        const type = (selector: string) => {
+          const node = read(selector);
+          if (!node) return "";
+          const cs = getComputedStyle(node);
+          return `${cs.fontSize}/${cs.fontWeight}`;
+        };
+        const conditions = Array.from(document.querySelectorAll<HTMLElement>(".fd-condition-row"));
+        const row = read(".fd-detail-action-row")!;
+        const track = read(".fd-detail-migration-switch");
+        const thumb = read('.fd-detail-migration-switch [data-slot="switch-thumb"]');
+        const box = (node: HTMLElement | null) =>
+          node ? `${Math.round(node.getBoundingClientRect().width)}x${Math.round(node.getBoundingClientRect().height)}` : "";
+        return {
+          insets: [".fd-detail-header", ".fd-detail-hero", ".fd-detail-body", ".fd-detail-footer"]
+            .map((selector) => style(selector, "padding-left") + "/" + style(selector, "padding-right")),
+          headHeight: style(".fd-detail-header", "height"),
+          headGap: style(".fd-detail-header", "gap"),
+          sectionTop: style(".fd-detail-section", "margin-top") + "/" + style(".fd-detail-section", "padding-top"),
+          conditions: conditions.length,
+          conditionStep: conditions.length > 1
+            ? Math.round(conditions[1]!.getBoundingClientRect().top - conditions[0]!.getBoundingClientRect().top)
+            : 0,
+          conditionHeight: Math.round(conditions[0]!.getBoundingClientRect().height),
+          conditionLabel: type(".fd-condition-label"),
+          conditionValue: type(".fd-condition-value"),
+          quote: [
+            style(".fd-detail-quote-action", "height"),
+            type(".fd-detail-quote-action"),
+            style(".fd-detail-quote-action", "border-radius"),
+            style(".fd-detail-quote-action", "padding-left"),
+            style(".fd-detail-quote-action", "column-gap"),
+          ].join(" "),
+          open: [
+            style(".fd-detail-provider-action", "height"),
+            type(".fd-detail-provider-action"),
+            style(".fd-detail-provider-action", "border-radius"),
+            style(".fd-detail-provider-action", "padding-left"),
+          ].join(" "),
+          openLabel: (read(".fd-detail-provider-action-label")?.textContent ?? "").trim(),
+          openLabelShown: style(".fd-detail-provider-action-label", "display"),
+          footIcons: [style(".fd-detail-provider-action svg", "width"), style(".fd-detail-quote-action svg", "width")].join(" "),
+          switchBox: box(track),
+          thumbBox: box(thumb),
+          rowFits: row.scrollWidth <= row.clientWidth,
+        };
+      });
+
+      const at = `${width}: ${JSON.stringify(sheet)}`;
+
+      // One screen inset for the whole sheet, and the plate's is 16.
+      assert.deepEqual(sheet.insets, Array.from({ length: 4 }, () => "16px/16px"), at);
+      assert.equal(sheet.headHeight, "40px", at);
+      assert.equal(sheet.headGap, "10px", at);
+      assert.equal(sheet.sectionTop, "16px/14px", at);
+
+      // Four conditions that touch, in one body at one weight.
+      assert.equal(sheet.conditions, 4, at);
+      assert.equal(sheet.conditionHeight, 32, at);
+      assert.equal(sheet.conditionStep, 32, at);
+      assert.equal(sheet.conditionLabel, "13px/600", at);
+      assert.equal(sheet.conditionValue, "13px/600", at);
+
+      // Two exits, one box, and the word the square had eaten.
+      assert.equal(sheet.quote, "40px 13px/700 10px 14px 6px", at);
+      assert.equal(sheet.open, "40px 13px/700 10px 14px", at);
+      assert.equal(sheet.openLabel, "Abrir", at);
+      assert.notEqual(sheet.openLabelShown, "none", at);
+      /* 7b: an icon is chosen by the height of the control it sits in, and on a
+         phone a 40 takes 18. */
+      assert.equal(sheet.footIcons, "18px 18px", at);
+      assert.equal(sheet.rowFits, true, at);
+
+      // The switch, at three numbers the catalogue already has.
+      assert.equal(sheet.switchBox, "34x20", at);
+      assert.equal(sheet.thumbBox, "16x16", at);
+    }
+  }, { autoOpen: false });
+});
+
 test("the result cell keeps the whole list minus the row's own 428, and every pixel past it is somebody's", async () => {
   /*
    * «No solucionaste el cambio erróneo de ancho de celda de resultado, compara

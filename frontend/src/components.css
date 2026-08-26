@@ -2168,11 +2168,24 @@
 
   /* --- armazón C · the edge-to-edge sheet (1f, 3c) ---------------------- */
   @container fdshell (max-width: 719.98px) {
+    /* The sheet's own screen inset. Armazón B gives the four blocks the 14 its
+       380px sheet is drawn with, and the phone was taking that number because
+       nothing here restated it; `MovilDetalle` pads the whole screen by 16.
+       Two pixels on each flank, on every block of the sheet at once. */
+    .fd-detail-header,
+    .fd-detail-hero,
+    .fd-detail-body,
+    .fd-detail-footer {
+      padding-inline: 16px;
+    }
+
     /* `MovilDetalle` confirms the phone takes the same anatomy as the column:
        the 28px line grows to 40 to hold a 40px back chevron and nothing else
-       about it changes. */
+       about it changes — except the gap, which the plate opens to 10 for the
+       larger button. */
     .fd-detail-header {
       height: var(--fd-control-touch);
+      gap: 10px;
     }
 
     /* Same button, the other glyph: a phone goes back, it does not dismiss. */
@@ -2196,9 +2209,12 @@
       display: none;
     }
 
+    /* 16 over the rule and 14 under it, which is what `MovilDetalle` draws and
+       what the desk column already had; the 18/18 here was a phone number
+       nothing measured. */
     .fd-detail-section {
-      margin-top: 18px;
-      padding-top: 18px;
+      margin-top: 16px;
+      padding-top: 14px;
     }
 
     .fd-rail {
@@ -2214,6 +2230,15 @@
       font-size: var(--fd-text-base);
     }
 
+    .fd-condition-heading {
+      margin-bottom: 10px;
+    }
+
+    /* No gap: the plate's four conditions are four 32px lines that touch, so
+       the pairs read as one column of answers. The 10 that used to open them
+       turned four rows into four blocks, and it was written twice — the second
+       copy also took the value to 14 against the label's 13, which is the one
+       place in this sheet where a pair of words on one line had two bodies. */
     .fd-condition-label,
     .fd-condition-value {
       font-size: var(--fd-text-base);
@@ -2221,22 +2246,6 @@
 
     .fd-condition-value--figure {
       font-size: var(--fd-text-meta);
-    }
-
-    .fd-condition-heading {
-      margin-bottom: 10px;
-    }
-
-    .fd-condition-list {
-      gap: 10px;
-    }
-
-    .fd-condition-label {
-      font-size: var(--fd-text-base);
-    }
-
-    .fd-condition-value {
-      font-size: var(--fd-text-body);
     }
 
     .fd-condition-bags svg {
@@ -2251,20 +2260,27 @@
       padding-bottom: max(22px, env(safe-area-inset-bottom));
     }
 
+    /* The switch at one end, the two exits at the other: `MovilDetalle` hangs
+       the pair on an `auto` margin and lets each of them be its own words wide.
+       Armazón B's `flex: 1` belongs to a 380px sheet where «Cotizar» is the
+       whole row; here it stretched one button across whatever the other two
+       left. */
     .fd-detail-action-row {
-      justify-content: flex-start;
+      justify-content: space-between;
     }
 
     .fd-detail-action-group {
       min-width: 0;
-      flex: 1;
+      flex: 0 0 auto;
       gap: 8px;
     }
 
     .fd-detail-migration {
       height: var(--fd-control-touch);
       border-radius: var(--fd-radius-12);
-      padding-inline: 4px;
+      /* Flush with the sheet's own inset, which is where the plate starts it:
+         the label has no fill of its own to need room for. */
+      padding-inline: 0;
       font-size: var(--fd-text-base);
     }
 
@@ -2272,15 +2288,42 @@
       background: transparent;
     }
 
-    /* 1f drops the provider label: at the touch height the row has room for
-       one set of words, and they belong to «Cotizar». */
+    /*
+     * 05 §5 gives the switch two sizes and `Controles` names both as defects:
+     * «El interruptor tiene dos contratos … Ninguna de esas cuatro medidas está
+     * en el catálogo de geometría». `MovilDetalle` draws the phone's at 34 × 20
+     * over a 16px knob, and all three of those are catalogue values — 34 is
+     * `--fd-control-touch-sm`, 20 is the pill's height, and 16 is the box a
+     * checkbox and a switch's knob share. The travel is what is left:
+     * 34 − 16 − 2 × 2 = 14.
+     */
+    .fd-detail-migration-switch {
+      width: var(--fd-control-touch-sm);
+      height: 20px;
+    }
+
+    .fd-detail-migration-switch [data-slot="switch-thumb"] {
+      width: 16px;
+      height: 16px;
+    }
+
+    .fd-detail-migration-switch[data-state="checked"] [data-slot="switch-thumb"] {
+      --tw-translate-x: 14px;
+    }
+
+    /*
+     * The provider keeps its word.
+     *
+     * This block dropped the label «because at the touch height the row has
+     * room for one set of words», which was measured against a «Cotizar» that
+     * was stretching to fill the row. `MovilDetalle` draws both exits as
+     * ordinary buttons — «Abrir» is 82 wide and «Cotizar» 96, which with the
+     * switch's 107 and two 8px gaps is 301 of a 328px row at 360.
+     */
     .fd-detail-provider-action {
-      width: var(--fd-control-touch);
       height: var(--fd-control-touch);
       flex-shrink: 0;
-      border-radius: var(--fd-radius-12);
-      padding-inline: 0;
-      background: var(--color-card);
+      background: var(--color-secondary);
     }
 
     .fd-detail-provider-action svg {
@@ -2288,16 +2331,22 @@
       height: var(--fd-icon-18);
     }
 
-    .fd-detail-provider-action-label {
-      display: none;
+    /* Both exits, one box: `MovilDetalle` draws `.btn` and `.btn-p` with the
+       same 13/700 in 14 of padding at radius 10 — which is also the radius
+       every other 40px control on this phone wears, from the filter strip's
+       «Filtros» to its chips. This sheet had them at 15 in 12 at radius 12,
+       one rung and one radius away from the surface they stand on. */
+    .fd-detail-provider-action,
+    .fd-detail-quote-action {
+      gap: 6px;
+      border-radius: var(--fd-radius-10);
+      padding-inline: 14px;
+      font-size: var(--fd-text-base);
     }
 
     .fd-detail-quote-action {
       height: var(--fd-control-touch);
-      flex: 1;
-      gap: 8px;
-      border-radius: var(--fd-radius-12);
-      font-size: var(--fd-text-action);
+      flex: 0 0 auto;
     }
 
     /* 7b, the same 40 → 18 the button beside it already reads. This one had
@@ -2316,7 +2365,7 @@
       display: flex;
       align-items: flex-start;
       gap: 10px;
-      margin: 0 14px 8px;
+      margin: 0 16px 8px;
       padding: 11px 12px;
       border-top: 0;
       border-radius: var(--fd-radius-12);
