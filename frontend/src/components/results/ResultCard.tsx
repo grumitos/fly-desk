@@ -1,5 +1,4 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from "react"
-import { Backpack, Luggage } from "lucide-react"
 import { AppIcon } from "@/components/ui/app-icon"
 import { cn } from "@/lib/utils"
 import type { CanonicalOffer } from "@/types"
@@ -137,14 +136,17 @@ export function ResultCard({
 
       {model.baggage.shown && (
         <span className="fd-card__baggage" title={model.baggage.title} aria-hidden="true">
+          {/* Through the registry, so the pair is the same two marks the filter
+              and the detail panel draw — and so the size comes from the closed
+              catalogue instead of from the stylesheet reaching into the svg. */}
           {model.baggage.carryOnIncluded !== undefined && (
             <span className={cn("fd-card__bag", model.baggage.carryOnIncluded ? "is-included" : "is-missing")}>
-              <Backpack aria-hidden="true" />
+              <AppIcon name="cabinBag" size={14} />
             </span>
           )}
           {model.baggage.checkedIncluded !== undefined && (
             <span className={cn("fd-card__bag", model.baggage.checkedIncluded ? "is-included" : "is-missing")}>
-              <Luggage aria-hidden="true" />
+              <AppIcon name="holdBag" size={14} />
             </span>
           )}
         </span>

@@ -264,19 +264,22 @@
     place-items: center;
   }
 
-  .fd-card__bag svg {
-    width: var(--fd-icon-14);
-    height: var(--fd-icon-14);
-    stroke-width: 2;
-  }
+  /* No rule for the glyph itself: it arrives through `AppIcon`, which is where
+     the four sizes and the stroke are closed. This sheet restating 14 and 2
+     was a second place for them to be right or wrong. */
 
+  /* `--color-secondary-foreground`, which is the ink the plate gives every
+     mark that is not text: this pair, the logo tile's letters, the swap
+     button, the topbar's glyphs. Full foreground made two 14px pictograms as
+     black as the price. */
   .fd-card__bag.is-included {
-    color: var(--color-foreground);
+    color: var(--color-secondary-foreground);
   }
 
-  /* Not included is a fact, not a warning: it goes grey, not red. */
+  /* Not included is a fact, not a warning: it goes grey, not red. 38%, the
+     plate's, not the 45% this carried. */
   .fd-card__bag.is-missing {
-    color: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent);
+    color: color-mix(in srgb, var(--color-muted-foreground) 38%, transparent);
   }
 
   /* ---- legs -------------------------------------------------------------

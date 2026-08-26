@@ -440,12 +440,12 @@ export function DetailPanel({
                     {pair.label === "Equipaje" && (
                       <span className="fd-condition-bags" aria-hidden="true">
                         <AppIcon
-                          name="backpack"
+                          name="cabinBag"
                           size={16}
                           className={cn(model.baggage.carryOnIncluded === false && "fd-condition-bag--absent")}
                         />
                         <AppIcon
-                          name="luggage"
+                          name="holdBag"
                           size={16}
                           className={cn(model.baggage.checkedIncluded === false && "fd-condition-bag--absent")}
                         />

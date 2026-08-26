@@ -3598,6 +3598,49 @@ test("the second price line states the amount and leaves the currency to the fig
   }, { autoOpen: false });
 });
 
+test("the two baggage marks are the plate's, and the same two on every surface", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, { offers: [oneStopOffer(1)] });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await page.getByTestId("result-card").first().click();
+    await page.locator(".fd-condition-bags").waitFor();
+
+    const marks = await page.evaluate(() => {
+      /* The geometry, in the order the glyph declares it: what a mark *is*.
+         Two icons of the same size in the same lane say nothing about whether
+         they are the right two. */
+      const shapeOf = (svg: Element | null | undefined) =>
+        svg
+          ? Array.from(svg.children)
+            .map((node) => node.tagName.toLowerCase() === "rect"
+              ? `rect ${node.getAttribute("x")},${node.getAttribute("y")} ${node.getAttribute("width")}x${node.getAttribute("height")} r${node.getAttribute("rx")}`
+              : node.getAttribute("d") ?? "")
+            .join(" | ")
+          : "";
+      const rowBags = Array.from(document.querySelectorAll(".fd-card__bag svg"));
+      const detailBags = Array.from(document.querySelectorAll(".fd-condition-bags svg"));
+      const filterBags = Array.from(document.querySelectorAll('[data-segment="carry"] svg, [data-segment="checked"] svg'));
+      return {
+        row: rowBags.map(shapeOf),
+        detail: detailBags.map(shapeOf),
+        filter: filterBags.map(shapeOf),
+      };
+    });
+
+    /* A soft cabin bag with a hoop handle, and a hold case with a flat one.
+       Lucide's `Backpack` and `Luggage` — a rucksack and a wheeled trolley —
+       are what these were, and no plate in the set has ever drawn either. */
+    const cabin = "M7 8h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2Z | M9 8V6a3 3 0 0 1 6 0v2";
+    const hold = "rect 5,7 14x14 r2 | M9 7V4h6v3";
+
+    assert.deepEqual(marks.row, [cabin, hold]);
+    assert.deepEqual(marks.detail, [cabin, hold]);
+    assert.deepEqual(marks.filter, [cabin, hold]);
+  }, { autoOpen: false });
+});
+
 test("the three headings across the desk are one line with one rule", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
