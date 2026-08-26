@@ -507,7 +507,8 @@ export function resolveWebTheme(request: Request): WebTheme {
  * Nothing here is off-catalogue: the field is `.fd-field-control` (52 · r12 ·
  * micro label at 9/12), the action is the `xl` button (52 · r12 · pressed 12 %),
  * the notice is `.fd-alert-line`, the brand is the title bar's, and the focus
- * ring is 3d's — 2px of primary at 55 %, outside the border, keyboard only.
+ * ring is 3d's — 2px of primary at 55 %, keyboard only, drawn inside the border
+ * for the reason written where it is drawn.
  */
 export function renderLoginPage(
   error?: string,
@@ -532,7 +533,14 @@ export function renderLoginPage(
 <html lang="es" class="${initialTheme === "dark" ? "dark" : ""}" data-theme="${initialTheme}">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <!-- interactive-widget, because the default resizes-visual lets the
+         keyboard shrink the visual viewport only: the layout viewport, and the
+         fixed body sized from it, stay at the full height of the phone. The
+         card then centres itself in a box roughly twice the visible area and
+         the foot of the form goes under the keyboard. resizes-content makes the
+         layout viewport track what is visible, which is what centring was
+         asking for all along. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
     <title>Fly Desk</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -755,9 +763,12 @@ export function renderLoginPage(
       .fd-field-control:hover {
         border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
       }
+      /* Inset, like the ring below and for the same reason: the glow is 2px of
+         ink, and outside the box those 2px come out of the 10px between the
+         field and the button under it. */
       .fd-field-control:focus-within {
         border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
-        box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
+        box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
       }
       .fd-field-label {
         position: absolute;
@@ -821,17 +832,23 @@ export function renderLoginPage(
       .fd-button:hover { background: color-mix(in srgb, var(--color-primary) 90%, black); }
       .fd-button:active { box-shadow: inset 0 0 0 100px rgb(0 0 0 / 12%); }
 
-      /* ---- 3d · one ring, outside the border, keyboard only --------------- */
+      /* ---- 3d · one ring, inside the border, keyboard only ----------------
+       * 3d draws its ring outside the border box. That reflows nothing, but it
+       * paints: the submit reached 4px past its own edge and left 6 of the 10px
+       * between it and the field, so the focused control read taller than its
+       * neighbour and the form looked like it had moved. Inside the box the
+       * ring cannot change a footprint, whatever the gap above it turns out to
+       * be. An outline rather than a shadow, because the capsule clips what
+       * overflows it and Windows high contrast drops box-shadow but keeps
+       * outline — and this is the one screen nobody gets to skip. */
       .fd-focus-ring:focus-visible {
-        outline: none;
-        box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 55%, transparent);
+        outline: 2px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+        outline-offset: -2px;
       }
-      /* On a primary fill the ring needs 2px of page colour behind it to read
-         as a ring and not as a thicker button. */
+      /* Inside a filled control the ring has to contrast with the fill and not
+         with the page, so it takes the colour the label is already written in. */
       .fd-button.fd-focus-ring:focus-visible {
-        box-shadow:
-          0 0 0 2px var(--color-background),
-          0 0 0 4px color-mix(in srgb, var(--color-primary) 55%, transparent);
+        outline-color: var(--color-primary-foreground);
       }
 
       /* ---- the notice (11 §3) ---------------------------------------------
@@ -925,6 +942,18 @@ export function renderLoginPage(
     </div>
     <script>
       (() => {
+        /* The compensation below is what the meta above makes unnecessary —
+           everywhere the meta is read. It stays because Safari does not read
+           it: iOS implements no interactive-widget at all, so there the
+           keyboard still shrinks the visual viewport alone and the layout
+           viewport keeps the full height of the phone. Measured on this page,
+           the two regimes are: obscured 0, so the shift computes 0px and main
+           is left where the stylesheet put it; against obscured 320, where it
+           computes 20px and lifts the field from y=330 to y=310. It is not a
+           second opinion about the same problem, it is the only opinion left
+           on the one platform the directive cannot reach — and it costs
+           nothing where the browser does the work, because there is no
+           obscured height to divide. */
         const root = document.documentElement;
         const isTextInputFocused = () => {
           const active = document.activeElement;

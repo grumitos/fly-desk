@@ -175,11 +175,22 @@ async function listenOnTestServer(): Promise<ServerHandle> {
     : listenOnExternalBunServer();
 }
 
-export async function startTestServer(): Promise<ServerHandle> {
+/*
+ * `overrides` reaches both shapes of test server from this one place: the
+ * in-process one reads `process.env` when it builds the app, and the child of
+ * `listenOnExternalBunServer` inherits the same `process.env`. A test that
+ * needs a configuration — the sign-in gate is the one that does, since it only
+ * exists while `FLY_DESK_WEB_AUTH` is on — states it here rather than teaching
+ * a second spawn about it.
+ */
+export async function startTestServer(
+  overrides: Record<string, string | undefined> = {},
+): Promise<ServerHandle> {
   const restoreEnvironment = applyEnvironment({
     SEARCH_TODAY_OVERRIDE: process.env.SEARCH_TODAY_OVERRIDE ?? "2026-03-31",
     FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS: "1",
     FLY_DESK_TRUST_LOOPBACK_CLIENT: process.env.FLY_DESK_TRUST_LOOPBACK_CLIENT ?? "1",
+    ...overrides,
   });
 
   let server: ServerHandle;
