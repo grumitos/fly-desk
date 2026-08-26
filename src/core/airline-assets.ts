@@ -79,29 +79,3 @@ export function airlineLogoAssetPath(value: unknown): string {
 export function isBundledAirlineLogoCode(value: unknown): boolean {
   return AIRLINE_LOGO_CODE_SET.has(normalizeAirlineAssetCode(value));
 }
-
-/**
- * The edge of a square PNG, or `undefined` for anything else.
- *
- * The one check that decides whether bytes off a provider CDN may be written
- * next to the marks that shipped with the release: the signature says it is a
- * PNG and the header says it is square, which is the shape the 32px slot draws
- * without distorting. Shared by the extractor and the runtime store so a mark
- * entering the repository and a mark entering the cache clear the same bar.
- */
-export function readSquarePngSize(bytes: Uint8Array): number | undefined {
-  const SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-  if (bytes.length < 24 || SIGNATURE.some((value, index) => bytes[index] !== value)) {
-    return undefined;
-  }
-
-  const readUint32BE = (offset: number): number => (
-    bytes[offset]! * 0x1000000
-    + bytes[offset + 1]! * 0x10000
-    + bytes[offset + 2]! * 0x100
-    + bytes[offset + 3]!
-  );
-  const width = readUint32BE(16);
-  const height = readUint32BE(20);
-  return width > 0 && width === height ? width : undefined;
-}

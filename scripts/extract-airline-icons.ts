@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { AIRLINE_LOGO_CODES, normalizeAirlineAssetCode, readSquarePngSize } from "../src/core/airline-assets";
+import { AIRLINE_LOGO_CODES, normalizeAirlineAssetCode } from "../src/core/airline-assets";
+import { readSquarePngSize } from "../src/airline-mark-store";
 
 const SOURCE_BASE_URL = "https://static.costamar.com.pe/web/airlines";
 const TARGET_DIR = join("frontend", "public", "assets", "airline-icons");
@@ -22,7 +23,7 @@ for (const code of codes) {
 
   const contentType = response.headers.get("content-type") ?? "";
   const bytes = new Uint8Array(await response.arrayBuffer());
-  const size = readSquarePngSize(bytes);
+  const size = await readSquarePngSize(bytes);
   if (!contentType.includes("image/png") || !size) {
     console.warn(`${code}: skipped (not square PNG)`);
     continue;
