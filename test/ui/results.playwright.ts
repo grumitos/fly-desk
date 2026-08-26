@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { Page, Route } from "playwright";
+import type { Page } from "playwright";
 import type { CanonicalOffer, Itinerary } from "../../src/core/types";
 import { registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";

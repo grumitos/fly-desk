@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { Page, Route } from "playwright";
+import type { Route } from "playwright";
 import { openDesktop, registerDesktopHarness, withDesktopPage } from "../helpers/ui.ts";
 import { buildOffer } from "../helpers/ui-fixtures.ts";
 import { clickSegment, openSharedSearchLink, segment, waitForSegmentChecked } from "./support.ts";
