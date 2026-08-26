@@ -80,5 +80,5 @@ export async function mapConcurrent<T, R>(
   }
 
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  return results.filter((result): result is R => result !== undefined);
+  return results.filter((result) => result !== undefined);
 }
