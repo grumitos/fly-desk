@@ -198,3 +198,24 @@ test("the keyboard leaves nothing behind the fold at the reference phone", async
     assert.ok((await boxOf(page, ".fd-button")).bottom > KEYBOARD_OPEN);
   });
 });
+
+test("the square glyph control takes the rung of the column it is in", async () => {
+  /*
+   * 7b binds the size of a pictogram to the height of the control holding it.
+   * The mobile column is 34 / 40 / 46 and its smallest rung takes 16, the same
+   * as the 32 of its desktop twin; the 36 · 18 pair this page carried was read
+   * off the retired 36 / 44 / 52 and had no row left in either table.
+   */
+  const glyph = (page: Page) => page.evaluate(() => {
+    const cell = getComputedStyle(document.querySelector(".fd-capsule-cell")!);
+    const icon = getComputedStyle(document.querySelector(".fd-capsule-cell svg")!);
+    return { cell: cell.height, icon: icon.height, square: cell.width === cell.height };
+  });
+
+  await withLoginPage({ width: 1440, height: 960 }, async (page) => {
+    assert.deepEqual(await glyph(page), { cell: "32px", icon: "16px", square: true });
+  });
+  await withLoginPage({ width: 360, height: 720 }, async (page) => {
+    assert.deepEqual(await glyph(page), { cell: "34px", icon: "16px", square: true });
+  });
+});

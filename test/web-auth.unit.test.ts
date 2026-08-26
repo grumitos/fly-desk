@@ -40,6 +40,10 @@ test("the login page is drawn from the design catalogues", () => {
   assert.match(html, /--fd-radius-12: 12px/);
   assert.match(html, /class="fd-field-control"/);
   assert.match(html, /class="fd-field-label"/);
+  // 5b's mobile column is 34 / 40 / 46, and the 36 this page used to give its
+  // one square control belonged to the column this one replaced.
+  assert.match(html, /--fd-control-touch-sm: 34px/);
+  assert.doesNotMatch(html, /width: 36px/);
   /* 3d's ring, drawn inside the border box. An outline rather than a shadow so
      that Windows high contrast keeps it, and inset so that a focused control
      cannot paint into the gap it shares with the control beside it —
