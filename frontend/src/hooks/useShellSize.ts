@@ -43,9 +43,17 @@ const RESULTS_COLUMN_GAP_PX = 10
 
 /*
  * The row's fixed measure — everything the list spends that is not the elastic
- * legs track. 28 + 142 + 36 + 116 + 26 of lanes, five 12px gaps, and 10px on
- * each side of the row: 428. It was 436 while the row was a card, whose 13px
- * padding and 1px border it also had to carry.
+ * legs track, with every lane at its floor. 28 + 142 + 36 + 116 + 26 of lanes,
+ * five 12px gaps, and 10px on each side of the row: 428. It was 436 while the
+ * row was a card, whose 13px padding and 1px border it also had to carry.
+ *
+ * At its floor, because three of the row's six lanes grow on a desk wider than
+ * the one this number is for: «who flies» to 170 and the price to 135, the
+ * stops lane inside the legs track to 143, and what none of them can use is
+ * split as spacing between the columns (`result-card.css` derives all of it).
+ * Every one of those is *slack* — the row is already whole at 428 — so both
+ * thresholds below, which are questions about the narrow end, are asked at the
+ * floors and are the same numbers they were.
  *
  * The two tens are no longer the same kind of thing, and it does not change the
  * sum: the left one is still the row's padding, the right one is the drawn
@@ -93,10 +101,17 @@ const CARD_DESK_MIN_LIST_PX = RESULT_ROW_FIXED_PX + RESULT_LEG_FIXED_PX + STOPS_
  * off the list in a single step, so the budget is measured with the result cell
  * at the width it is meant to have rather than at the width the stacking rule
  * will merely tolerate. Measured, that is the same row with its elastic lane
- * holding the widest stops label it draws instead of the narrowest one it must:
- * 112 − 75 = 37. Derived straight from the 787 row instead, the column would
- * enter at a 1403 shell and take 326px off every list between 1403 and 1439 —
- * a narrowing, which is the defect this exists to prevent.
+ * holding the widest stops label it draws while still naming its airports
+ * instead of the narrowest one it must: 112 − 75 = 37. Derived straight from
+ * the 787 row instead, the column would enter at a 1403 shell and take 326px
+ * off every list between 1403 and 1439 — a narrowing, which is the defect this
+ * exists to prevent.
+ *
+ * The 37 is a claim on a particular lane, and it is only true because that lane
+ * is the first the row's slack reaches: «who flies» and the price do not start
+ * growing until the stops lane is full at 143, which is a list of 855. So a
+ * 1440 desk still measures exactly 824 and its stops lane still measures
+ * exactly 112, which is what `test/ui/results.playwright.ts` pins.
  */
 const RESULT_CELL_COMFORTABLE_PX = STOPS_TWO_STOPS_PX - STOPS_ONE_STOP_PX
 
