@@ -252,17 +252,20 @@
     color: var(--color-primary);
   }
 
+  /* 20, and it starts at the shell's own 16: the brand is a mark and a name,
+     and at 24 the mark was the largest glyph on a 44px bar. */
   .fd-topbar-brand-mark {
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
     color: var(--color-primary);
   }
 
   .fd-topbar-brand-name {
     min-width: 0;
     overflow: hidden;
-    font-size: var(--fd-text-body);
+    font-size: var(--fd-text-action);
     font-weight: var(--fd-weight-title);
+    letter-spacing: -0.01em;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -270,19 +273,23 @@
   .fd-topbar-actions {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
   }
 
-  /* Copy + paste as one capsule, the theme toggle as another (plate 1b). */
+  /* Three 32px squares, and nothing around them. Both plates draw the bar's
+     actions as bare glyphs on the bar's own fill — the capsule's border and
+     `--secondary` fill drew two boxes on a band that is already a box, and
+     with `--secondary` being the bar's own colour the border was the whole of
+     what they said. What marks a square as pressable is the hover fill the
+     cell already carries. */
   .fd-capsule {
     display: inline-flex;
     height: var(--fd-control-standard);
     align-items: stretch;
     overflow: hidden;
-    border: 1px solid var(--color-input);
+    gap: 4px;
     border-radius: var(--fd-radius-10);
-    background: var(--color-secondary);
-    color: var(--color-muted-foreground);
+    color: var(--color-secondary-foreground);
   }
 
   .fd-capsule-cell {

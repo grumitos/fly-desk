@@ -359,12 +359,21 @@
      the digit column is its own minimum: two digits plus the 7px of padding on
      each side, so it does not change width between the ninth filter and the
      tenth. */
+  /* 18 square at 10, which is what both plates draw beside «Filtros»: it is a
+     badge on a heading, not a pill on a row, and at the pill's 20 × 11 it was
+     the loudest thing in the rail. The two-digit floor stays — a badge that
+     changes width between the ninth filter and the tenth moves the heading it
+     hangs off — and at this body the plates' own two-digit box is 22, so the
+     reservation and the drawing agree wherever there is more than one filter
+     on. */
   .fd-status-pill-count {
-    min-width: calc(2ch + 14px);
+    height: 18px;
+    min-width: calc(2ch + 10px);
     justify-content: center;
+    padding: 0 5px;
     background: var(--color-primary);
     color: var(--color-primary-foreground);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-micro);
     letter-spacing: 0;
     text-transform: none;
   }
@@ -433,14 +442,18 @@
     min-height: 0;
     flex: 1;
     align-content: start;
-    gap: 12px;
+    /* 14 between groups against the 6 inside one: the pair has to read as a
+       group before the rail reads as a list of controls, and at 12 over 8 the
+       two spacings were within two pixels of each other. */
+    gap: 14px;
     overflow: auto;
     padding-top: 14px;
   }
 
+  /* 6, the plate's: a group rótulo and the control it names are one thing. */
   .fd-filter-group {
     display: grid;
-    gap: 8px;
+    gap: 6px;
     transition: opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
@@ -457,10 +470,19 @@
     gap: 8px;
   }
 
+  /* «sin usar» shares a baseline with the group rótulo beside it, so it shares
+     its three properties: 10/700, uppercase, tracked. `Controles` names this
+     one outright — «va junto a un rótulo de grupo a 10/700 en versales con
+     seguimiento, y se escribe a 10/600 en minúsculas y sin seguimiento. Misma
+     línea base, tres propiedades de diferencia». The surface plates draw the
+     broken version, which is the version that sheet is naming. */
   .fd-filter-group-unused {
     color: var(--color-muted-foreground);
     font-size: var(--fd-text-micro);
-    font-weight: var(--fd-weight-label);
+    font-weight: var(--fd-weight-title);
+    letter-spacing: var(--fd-tracking-micro);
+    line-height: 1;
+    text-transform: uppercase;
   }
 
   /* The only separator in the panel. */
@@ -473,19 +495,29 @@
   .fd-airline-total {
     color: var(--color-muted-foreground);
     font-family: var(--font-mono);
-    font-size: var(--fd-text-meta);
+    font-size: var(--fd-text-mono-meta);
     font-weight: var(--fd-weight-label);
     font-variant-numeric: tabular-nums;
   }
 
+  /* No gap: the rows are 28 and the pitch is 28, which is how both plates
+     stack them. Six pixels between each pair made eight airlines a list a
+     third longer than the panel draws. */
   .fd-airline-list {
     display: grid;
-    gap: 6px;
   }
 
   /* Airline row: checkbox 16, logo 18, name 13/600, count mono in a fixed
      32px column so the digits line up. Flush with the group, so the checkbox
-     shares a left edge with the segmented controls above it (8a).
+     shares a left edge with the segmented controls above it (8a) — and flush
+     with the row above it, which is what the missing gap is for: the plates
+     draw eight airlines at a pitch of 28 and this list was running at 38.
+
+     The row itself stays 32 and not the plates' 28. 28 is not in the closed
+     table of control heights, `Controles` puts this exact row at «32 → 40»
+     between the two densities, and the 16px checkbox in it is derived from the
+     32 by the icon law — so the plates' 28 costs the rule that sizes the one
+     control inside the row. What was worth fixing was the pitch.
 
      The 16 is 7b rather than a preference. The row is `--fd-control-standard`,
      32 on a desk, and the table gives a 32 the 16 rung — which is the size the
@@ -530,14 +562,15 @@
     white-space: nowrap;
   }
 
-  /* The airline row's counter. Body 12 because the row is 32; the 32px column
-     is already its width mechanism — four and a half digits at this body — so
-     it does not repeat the two-digit minimum. */
+  /* The airline row's counter, at the monospace's own 11 — the plates' body,
+     and one rung under the 13 of the name it follows. The 32px column is
+     already its width mechanism — five digits at this body — so it does not
+     repeat the two-digit minimum. */
   .fd-airline-row-count {
     width: 32px;
     flex-shrink: 0;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-meta);
+    font-size: var(--fd-text-mono-meta);
     text-align: right;
   }
 
