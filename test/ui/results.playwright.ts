@@ -2029,6 +2029,12 @@ test("the open list of schedules takes the click over every card it covers", asy
      * a plain row rather than against a number, because what has to match is
      * the two rows, not a constant either of them happens to have today.
      */
+    /* Measured after the faces land, because the air is what is left of 52
+       once the legs block has taken its share, and the legs block is type: on
+       the fallback the block is tall enough that `min-height` stops binding on
+       the plain row too, both rows read 0, and the comparison passes for the
+       wrong reason — or trips the `plain > 0` guard below at random. */
+    await waitForFontsReady(page);
     const bandAir = await page.evaluate(() => {
       const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-testid='result-card']"));
       const air = (row: HTMLElement | undefined) => {
