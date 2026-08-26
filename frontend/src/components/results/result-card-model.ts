@@ -27,7 +27,7 @@ import { providerDisplayName, providerIconPath } from "@/lib/providers"
  */
 
 export type ResultLegModel = {
-  /** "Ida" / "Vta" — the short form the 58px label column can hold. */
+  /** "Ida" / "Vta" — the short form the 56px label column can hold. */
   label: string
   ariaLabel: string
   /** dd/MM next to the label, so the row says which day it departs. */

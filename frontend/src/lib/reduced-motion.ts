@@ -3,14 +3,15 @@
  *
  * 07 §0 rule 5 applies to WAAPI and to any timer that keeps a node alive for an
  * exit animation: neither is CSS, so neither is covered by the
- * `prefers-reduced-motion` block in `design-system.css`. `matchMedia` is the
- * only sanctioned use of a media query in JS (02 §2) — it decides duration,
- * never shape.
+ * `prefers-reduced-motion` block in `design-system.css`.
+ *
+ * Nothing here asks `matchMedia` any more, and that is the point rather than an
+ * omission: `motionToken` reads the duration out of the cascade, where the
+ * `prefers-reduced-motion` block has already zeroed it, so the setting reaches
+ * JavaScript without JavaScript having a second opinion about it. A
+ * `prefersReducedMotion()` helper sat here with no caller for exactly that
+ * reason and is gone.
  */
-export function prefersReducedMotion(): boolean {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches
-}
 
 /**
  * Read one of the `--fd-dur-*` / `--fd-cue-*` tokens, in milliseconds.

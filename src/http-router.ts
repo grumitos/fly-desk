@@ -83,7 +83,7 @@ import { getRuntime } from "./runtime";
 import { normalizeLocationUsageSessionId } from "./location-usage-store";
 import { LOCATION_SUGGESTION_CACHE_MAX_QUERY_CHARS } from "./location-suggestion-cache";
 import { logPerfSpan, startPerfTimer } from "./perf";
-import { DEFAULT_PROVIDER_STATUS_TTL_MS, providerPublicFailureMessage } from "./provider-status";
+import { providerPublicFailureMessage } from "./provider-status";
 import {
   clearRedirectSessionCookie,
   clearWebSessionCookie,

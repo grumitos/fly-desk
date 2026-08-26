@@ -902,7 +902,12 @@
    * One control with two halves, and one cell treatment shared by all four
    * calendars — days and months, desktop and mobile. What changes between
    * them is the grid (7 columns of days, 4 of months) and the cell height
-   * (32 desktop, 44 mobile). Nothing else. */
+   * (32 desktop — `--fd-control-standard` — and 40 on a phone —
+   * `--fd-control-touch`, measured). Nothing else.
+   *
+   * The mobile number was written 44, which is the touch floor the catalogue
+   * retired when it became 34/40/46; the sheet rule below has read the token
+   * all along, so only this line was wrong. */
 
   .fd-daterange-control {
     display: grid;

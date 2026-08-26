@@ -2625,9 +2625,18 @@
   background: color-mix(in srgb, var(--color-secondary) 60%, var(--color-popover));
 }
 
-/* Plate 8d: the anchored action of a sheet. 52px primary; a pair of secondaries
-   drops to 44 (`--fd-sheet-action-secondary`). One shape for every sheet, so
-   the thumb finds the same target in filters, passengers and the calendar. */
+/* Plate 8d: the anchored action of a sheet. 46 — `--fd-control-touch-lg`, the
+   top of the mobile column of the geometry catalogue — for every action in
+   every sheet, so the thumb finds the same target in filters, passengers and
+   the calendar. Only the filter sheet says otherwise, and it says so below.
+
+   This read «52px primary; a pair of secondaries drops to 44
+   (`--fd-sheet-action-secondary`)», which was two errors in one line: 44/52 is
+   the mobile pair the catalogue retired in favour of 34/40/46 (see the
+   pictogram table in `design-system.css`, which had the same numbers and lost
+   them), and there is no `--fd-sheet-action-secondary` token — the smaller
+   action is the class `.fd-sheet-action--secondary`. Measured at 390 and 360:
+   46 here, 40 for the filter sheet's «Limpiar». */
 .fd-sheet-action {
   display: inline-flex;
   height: var(--fd-control-touch-lg);
@@ -2651,8 +2660,8 @@
   height: var(--fd-icon-18);
 }
 
-/* Colour only. The height stays 52 unless a sheet says otherwise — the filter
-   sheet drops its «Limpiar» to 44 (04 §2), the calendar keeps both at 52. */
+/* Colour only. The height stays 46 unless a sheet says otherwise — the filter
+   sheet drops its «Limpiar» to 40 (04 §2), the calendar keeps both at 46. */
 .fd-sheet-action--secondary {
   border: 1px solid var(--color-input);
   background: var(--color-secondary);
@@ -2661,7 +2670,7 @@
 }
 
 /* The filter sheet is the one that says otherwise (plate 1e, 04 §2): «Limpiar»
-   is 44 and sized by its label, so «Ver N vuelos» — the button that carries the
+   is 40 and sized by its label, so «Ver N vuelos» — the button that carries the
    count — takes the rest of the row. */
 .fd-filter-sheet .fd-sheet-action--secondary {
   height: var(--fd-control-touch);

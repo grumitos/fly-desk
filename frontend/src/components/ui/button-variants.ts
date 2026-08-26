@@ -38,7 +38,9 @@ const buttonVariants = cva(
         destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
       },
       size: {
-        /** 26 · r8 — fare chips, night counters, stop labels, pagination cells. */
+        /** 26 · r8 — fare chips, night counters, stop labels. The pagination
+         * cells this used to name last went with the paginator; the list
+         * scrolls (see `result-groups.ts`). */
         chip: "h-[var(--fd-control-chip)] rounded-md px-2.5 text-[length:var(--fd-text-meta)]",
         /** 32 · r10 — the standard control: buttons, chips, filter rows. */
         sm: "h-[var(--fd-control-standard)] rounded-lg px-3 text-[length:var(--fd-text-meta)]",

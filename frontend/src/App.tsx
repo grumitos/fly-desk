@@ -920,7 +920,6 @@ export default function App() {
           className={`fd-search-stage ${
             isSearchIdle ? "fd-search-stage-idle" : "fd-search-stage-active"
           }`}
-          data-tools-collapsed={visibleMobileToolsCollapsed}
           data-entering={workspaceEntering ? "" : undefined}
         >
           {/* Plate 1a spaces the idle screen with two unequal spacers — 1 above
@@ -1099,9 +1098,10 @@ export default function App() {
                 meta={activeFilterChips.length > 0
                   ? <span className="fd-status-pill fd-status-pill-count">{activeFilterChips.length}</span>
                   : undefined}
-                /* Plate 1e: the shared sheet-footer pattern — «Limpiar» at 44 and
-                   content-sized, the primary at 52 taking the rest of the row and
-                   saying how many flights survive the filters. */
+                /* Plate 1e: the shared sheet-footer pattern — «Limpiar» at 40 and
+                   content-sized, the primary at 46 taking the rest of the row and
+                   saying how many flights survive the filters. (It said 44 and 52,
+                   the mobile pair the geometry catalogue retired.) */
                 footer={(
                   <>
                     <button

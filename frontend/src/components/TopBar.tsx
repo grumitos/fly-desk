@@ -166,7 +166,7 @@ export function TopBar({
                 size="icon"
                 onClick={onPasteSearchConfig}
                 aria-label="Pegar configuración"
-                className={`fd-capsule-cell fd-topbar-paste${pasteSearchDimmed ? " fd-capsule-cell-dim" : ""}`}
+                className={`fd-capsule-cell${pasteSearchDimmed ? " fd-capsule-cell-dim" : ""}`}
               >
                 <AppIcon name="clipboard" />
               </Button>

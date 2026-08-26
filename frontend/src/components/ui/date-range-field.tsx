@@ -320,8 +320,10 @@ export function DateRangeField({
           className="fd-calendar-sheet"
           footer={(
             <>
-              {/* 03 §7: both actions at 52 here, unlike the filter sheet where
-                  «Limpiar» is the lesser of the two. */}
+              {/* 03 §7: both actions at the sheet's own 46 here, unlike the
+                  filter sheet where «Limpiar» drops to 40 and is the lesser of
+                  the two. (This said 52, which is the desktop primary, not the
+                  mobile one a sheet is drawn at.) */}
               <button
                 type="button"
                 className="fd-sheet-action fd-sheet-action--secondary fd-focus-ring"
