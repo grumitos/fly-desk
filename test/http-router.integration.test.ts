@@ -1,7 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { request as httpRequest } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -55,6 +55,7 @@ import { createScryptPasswordHash, createWebSessionCookie } from "../src/web-aut
 import { resetWebLoginAdmission } from "../src/login-admission";
 import { applyEnvironment } from "./helpers/environment";
 import { withServer } from "./helpers/server";
+import { removeTempRoot } from "./helpers/temp";
 
 function buildJwt(payload: Record<string, unknown>): string {
   const encode = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value))
@@ -2012,7 +2013,7 @@ test("costamar redirect refreshes the stored token with the latest Chrome sessio
       process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -2086,7 +2087,7 @@ test("costamar redirect rejects an external stored location before token validat
     resetCostamarWarmupStateForTests();
     resetCostamarSessionCacheForTests();
     restoreEnvironment();
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -2179,7 +2180,7 @@ test("costamar redirect refreshes an unverified stored token before opening Cost
       process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -2292,7 +2293,7 @@ test("costamar redirect warms a missing token through the B2B flow", async () =>
       process.env.COSTAMAR_SESSION_WARMUP_COOLDOWN_MS = previousWarmupCooldown;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -2419,7 +2420,7 @@ test("costamar redirect returns a controlled block when refresh hangs", async ()
       process.env.COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS = previousRedirectTimeout;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -2534,7 +2535,7 @@ test("costamar matrix redirects refresh the stored token with the matrix job pro
       process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -2675,7 +2676,7 @@ test("costamar redirect blocks locally when no fresh token is available", async 
       process.env.COSTAMAR_SESSION_WARMUP_ENABLED = previousWarmupEnabled;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 

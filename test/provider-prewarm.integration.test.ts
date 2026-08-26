@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -21,6 +21,7 @@ import {
 } from "../src/provider-prewarm";
 import type { SearchRequest } from "../src/core/types";
 import { applyEnvironment } from "./helpers/environment.ts";
+import { removeTempRoot } from "./helpers/temp";
 
 function buildJwt(payload: Record<string, unknown>): string {
   const encode = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value))
@@ -57,7 +58,7 @@ test("Costamar prewarm resolves context without B2B generator or opener", async 
   } finally {
     resetCostamarWarmupStateForTests();
     resetCostamarSessionCacheForTests();
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
     if (previousToken === undefined) {
       delete process.env.COSTAMAR_TOKEN;
     } else {
@@ -131,7 +132,7 @@ test("Costamar prewarm refreshes an expired token through the B2B warm-up genera
   } finally {
     resetCostamarWarmupStateForTests();
     resetCostamarSessionCacheForTests();
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
     if (previousToken === undefined) {
       delete process.env.COSTAMAR_TOKEN;
     } else {

@@ -1,22 +1,34 @@
 import { rmSync } from "node:fs";
 
 /*
- * Delete a test's temp root, waiting out Windows.
+ * Delete a test's temp root, waiting out Windows, and never failing the test
+ * over it.
  *
- * Every caller has just closed a `bun:sqlite` database that lives inside the
- * directory it is deleting, and on Windows closing the handle is not the same
- * as the file being free: for a few milliseconds afterwards the delete answers
- * `EBUSY`. Sequentially that was an occasional flake in
- * `redirect-service.integration`. Under `bun test --parallel` the machine is
- * busy enough to widen that window, and the occasional flake became a failure
- * on every run — which is how it was found.
+ * Every caller has just closed a `bun:sqlite` database that lived inside the
+ * directory it is deleting — properly closed, with a `wal_checkpoint(TRUNCATE)`
+ * before `close(true)`. On Windows that still is not the same as the file being
+ * free: for a while afterwards the delete answers `EBUSY`, and how long is
+ * whatever the machine and its file scanner decide. Sequentially it was an
+ * occasional flake in `redirect-service.integration`; under
+ * `bun test --parallel` the machine is busy enough that it became a failure on
+ * nearly every run, in a different suite each time.
  *
- * `maxRetries` is the wait `rm` already knows how to do, and it backs off on
- * exactly the errors this races with: `EBUSY`, `EMFILE`, `ENFILE`, `ENOTEMPTY`
- * and `EPERM`. Ten attempts at 50ms is half a second before a real failure is
- * reported as one, which is far longer than the handle takes and far shorter
- * than the test that would otherwise hang.
+ * So two things. `maxRetries` is the wait `rm` already knows how to do and it
+ * backs off on exactly this — `EBUSY`, `EMFILE`, `ENFILE`, `ENOTEMPTY`,
+ * `EPERM`. And if it still loses, the directory is left behind rather than
+ * thrown over: this runs from `finally` and `afterEach`, where a throw fails a
+ * test that already passed and reports an operating system's timing as a defect
+ * in the code under test. `src/temp-artifacts.ts` answers the same race the
+ * same way in production, for the same reason.
+ *
+ * What is given up is a directory under `%TEMP%` on a developer machine, which
+ * the OS reclaims. What is kept is a suite that only goes red for its own
+ * reasons.
  */
 export function removeTempRoot(path: string): void {
-  rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
+  } catch {
+    // Deliberately swallowed; see above. Cleanup is not one of the assertions.
+  }
 }

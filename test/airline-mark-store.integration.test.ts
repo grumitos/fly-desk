@@ -1,10 +1,11 @@
 import { test } from "bun:test"
 import assert from "node:assert/strict"
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ensureAirlineMark, readSquarePngSize, resetAirlineMarkStoreForTests } from "../src/airline-mark-store"
 import { headerOnlyPng, realPng } from "./helpers/png"
+import { removeTempRoot } from "./helpers/temp"
 
 /** What the directory holds, counting "not created at all" as empty. */
 function filesIn(directory: string): string[] {
@@ -33,7 +34,7 @@ async function withDirectory<T>(run: (directory: string) => Promise<T>): Promise
     return await run(directory)
   } finally {
     resetAirlineMarkStoreForTests()
-    rmSync(directory, { recursive: true, force: true })
+    removeTempRoot(directory)
   }
 }
 

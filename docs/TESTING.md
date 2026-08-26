@@ -26,13 +26,17 @@ from `mkdtempSync`, so files do not compete for names.
 Two things it did surface, both now fixed rather than worked around:
 
 - Deleting a temp directory that just held an open `bun:sqlite` database answers
-  `EBUSY` on Windows for a few milliseconds. That was an occasional flake in
-  `redirect-service.integration`; a busy machine made it a failure on every run.
-  `test/helpers/temp.ts` waits it out — use `removeTempRoot()` for any temp root
-  with a database in it, never a bare `rmSync`.
+  `EBUSY` on Windows, for as long as the machine and its file scanner feel like.
+  That was an occasional flake in `redirect-service.integration`; a busy machine
+  made it a failure on nearly every run, in a different suite each time. Use
+  `removeTempRoot()` from `test/helpers/temp.ts` for any temp root with a
+  database in it, never a bare `rmSync`. It retries and then, if it still loses,
+  leaves the directory behind: this runs from `finally` and `afterEach`, where
+  throwing fails a test that already passed and blames the code under test for
+  an operating system's timing.
 - What `--parallel` cannot do is beat its slowest file, and this suite is nearly
   one file long: `http-router.integration.test.ts` is 84 tests and about 120s of
-  a ~145s sequential run, because 46 of them stand up a server of their own.
+  a ~145s sequential run, because 45 of them stand up a server of their own.
   Splitting that file is what would make the rest of the parallelism visible.
 
 Do **not** add `--concurrent`. It runs the tests inside a file at the same time,

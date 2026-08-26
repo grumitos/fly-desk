@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { handleRequest, resolveServerIdleTimeoutSeconds } from "../src/server";
@@ -9,6 +9,7 @@ import { resetWebLoginAdmission } from "../src/login-admission";
 import { createScryptPasswordHash } from "../src/web-auth";
 import { realPng } from "./helpers/png";
 import { withServer } from "./helpers/server";
+import { removeTempRoot } from "./helpers/temp";
 
 test("server idle timeout defaults above Bun's short request timeout", () => {
   assert.equal(resolveServerIdleTimeoutSeconds(undefined), 120);
@@ -457,6 +458,6 @@ test("a carrier mark the release lacks is fetched once and then served locally",
     resetAirlineMarkStoreForTests();
     if (previousDir === undefined) delete process.env.FLY_DESK_AIRLINE_MARK_DIR;
     else process.env.FLY_DESK_AIRLINE_MARK_DIR = previousDir;
-    rmSync(directory, { recursive: true, force: true });
+    removeTempRoot(directory);
   }
 });

@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -17,6 +17,7 @@ import {
   resolveCostamarProviderContext,
 } from "../src/provider-context";
 import type { ProviderConfigInput } from "../src/core/types";
+import { removeTempRoot } from "./helpers/temp";
 
 function buildJwt(payload: Record<string, unknown>): string {
   const encode = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -154,7 +155,7 @@ test("buildProviderContextAsync coalesces concurrent Costamar scans in-flight", 
       process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -199,7 +200,7 @@ test("resolveCostamarProviderContext reads Current Session files from Chrome ses
       process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -257,7 +258,7 @@ test("resolveCostamarProviderContext falls back to other Chrome profiles when th
       process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -332,7 +333,7 @@ test("resolveLatestCostamarProviderContext prefers the repo-local Costamar agent
       process.env.AGIL_CHROME_PROFILE = previousAgilProfile;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -419,7 +420,7 @@ test("resolveLatestCostamarProviderContext falls back across Chrome user-data ro
       process.env.AGIL_CHROME_PROFILE = previousAgilProfile;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -480,7 +481,7 @@ test("resolveLatestCostamarProviderContext ignores Costamar URLs planted in brow
       process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
@@ -548,7 +549,7 @@ test("resolveLatestCostamarProviderContext bypasses the cached token when it is 
       process.env.COSTAMAR_CHROME_PROFILE = previousProfile;
     }
 
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 });
 
