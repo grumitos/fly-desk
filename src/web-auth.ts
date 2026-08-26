@@ -507,7 +507,8 @@ export function resolveWebTheme(request: Request): WebTheme {
  * Nothing here is off-catalogue: the field is `.fd-field-control` (52 · r12 ·
  * micro label at 9/12), the action is the `xl` button (52 · r12 · pressed 12 %),
  * the notice is `.fd-alert-line`, the brand is the title bar's, and the focus
- * ring is 3d's — 2px of primary at 55 %, outside the border, keyboard only.
+ * ring is 3d's — 2px of primary at 55 %, keyboard only, drawn inside the border
+ * for the reason written where it is drawn.
  */
 export function renderLoginPage(
   error?: string,
@@ -532,7 +533,14 @@ export function renderLoginPage(
 <html lang="es" class="${initialTheme === "dark" ? "dark" : ""}" data-theme="${initialTheme}">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <!-- interactive-widget, because the default resizes-visual lets the
+         keyboard shrink the visual viewport only: the layout viewport, and the
+         fixed body sized from it, stay at the full height of the phone. The
+         card then centres itself in a box roughly twice the visible area and
+         the foot of the form goes under the keyboard. resizes-content makes the
+         layout viewport track what is visible, which is what centring was
+         asking for all along. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
     <title>Fly Desk</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -570,12 +578,22 @@ export function renderLoginPage(
         --color-warning-soft: #d977571a;
         --color-warning-soft-foreground: #6f321f;
 
-        /* 5b · the two control heights this page needs, and three radii. */
+        /* 5b · the three control heights this page needs, and two radii. The
+           mobile column is 34 / 40 / 46; the square glyph control of a title
+           bar is its smallest rung, the same one .fd-capsule-cell takes in
+           the application. */
         --fd-control-standard: 32px;
+        --fd-control-touch-sm: 34px;
         --fd-control-primary: 52px;
-        --fd-radius-8: 8px;
         --fd-radius-10: 10px;
         --fd-radius-12: 12px;
+
+        /* 7b · the one pictogram rung this page uses. Named rather than
+           written out, because 7b binds the size of a glyph to the height of
+           the control holding it, and a binding whose two ends are bare
+           numbers is one nobody can check. Desktop 32 and mobile 34 both
+           take 16. */
+        --fd-icon-16: 16px;
 
         /* 5a · four bodies of the scale and its four weights. */
         --fd-text-sheet: 17px;
@@ -660,6 +678,10 @@ export function renderLoginPage(
         margin-left: -4px;
         padding-inline: 4px;
       }
+      /* 24, which is not a rung of 7b, and stays: the mark is the wordmark's
+         glyph and not a pictogram, and 24 is what the title bar of the
+         application draws it at. A brand that changed size across the sign-in
+         would be the one thing the agent noticed. */
       .fd-topbar-brand-mark {
         width: 24px;
         height: 24px;
@@ -696,7 +718,7 @@ export function renderLoginPage(
         background: var(--fd-theme-toggle-hover-bg);
         color: var(--fd-theme-toggle-hover-fg);
       }
-      .fd-capsule-cell svg { width: 16px; height: 16px; }
+      .fd-capsule-cell svg { width: var(--fd-icon-16); height: var(--fd-icon-16); }
       /* One glyph per theme, both in the same cell so the swap costs no
          layout — the chevron pattern of 7b, applied to the switch. */
       :root:not(.dark) .fd-theme-moon, :root.dark .fd-theme-sun { display: none; }
@@ -755,9 +777,12 @@ export function renderLoginPage(
       .fd-field-control:hover {
         border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
       }
+      /* Inset, like the ring below and for the same reason: the glow is 2px of
+         ink, and outside the box those 2px come out of the 10px between the
+         field and the button under it. */
       .fd-field-control:focus-within {
         border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
-        box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
+        box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
       }
       .fd-field-label {
         position: absolute;
@@ -821,17 +846,23 @@ export function renderLoginPage(
       .fd-button:hover { background: color-mix(in srgb, var(--color-primary) 90%, black); }
       .fd-button:active { box-shadow: inset 0 0 0 100px rgb(0 0 0 / 12%); }
 
-      /* ---- 3d · one ring, outside the border, keyboard only --------------- */
+      /* ---- 3d · one ring, inside the border, keyboard only ----------------
+       * 3d draws its ring outside the border box. That reflows nothing, but it
+       * paints: the submit reached 4px past its own edge and left 6 of the 10px
+       * between it and the field, so the focused control read taller than its
+       * neighbour and the form looked like it had moved. Inside the box the
+       * ring cannot change a footprint, whatever the gap above it turns out to
+       * be. An outline rather than a shadow, because the capsule clips what
+       * overflows it and Windows high contrast drops box-shadow but keeps
+       * outline — and this is the one screen nobody gets to skip. */
       .fd-focus-ring:focus-visible {
-        outline: none;
-        box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 55%, transparent);
+        outline: 2px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+        outline-offset: -2px;
       }
-      /* On a primary fill the ring needs 2px of page colour behind it to read
-         as a ring and not as a thicker button. */
+      /* Inside a filled control the ring has to contrast with the fill and not
+         with the page, so it takes the colour the label is already written in. */
       .fd-button.fd-focus-ring:focus-visible {
-        box-shadow:
-          0 0 0 2px var(--color-background),
-          0 0 0 4px color-mix(in srgb, var(--color-primary) 55%, transparent);
+        outline-color: var(--color-primary-foreground);
       }
 
       /* ---- the notice (11 §3) ---------------------------------------------
@@ -856,12 +887,21 @@ export function renderLoginPage(
       .fd-alert-line-error {
         border-color: color-mix(in srgb, var(--color-destructive) 50%, transparent);
       }
-      .fd-alert-icon { width: 16px; height: 16px; flex-shrink: 0; margin-top: 1px; }
+      .fd-alert-icon { width: var(--fd-icon-16); height: var(--fd-icon-16); flex-shrink: 0; margin-top: 1px; }
 
       /* ---- armazón C (02 §4) ----------------------------------------------
        * The same 719.98 the shell's container query uses, as a media query —
        * this page has no shell to ask. The capsule breaks into a loose button
-       * with its own border, at the 36px of the mobile height column. */
+       * with its own border, at the smallest rung of the mobile column.
+       *
+       * That rung was 36 here, and 36 has not been a mobile height since the
+       * column became 34 / 40 / 46: it was read off the retired 36 / 44 / 52,
+       * and the 18px glyph it carried was the row 7b bound to the retired 44.
+       * A page served before the bundle exists is a page no pass over the
+       * bundle can reach, which is how a stale pair of numbers outlived both
+       * catalogues it came from. The token below is what the application gives
+       * the same control, and 7b binds 34 to 16 — the size the desktop rule
+       * above already sets, so there is no override left to write. */
       @media (max-width: 719.98px) {
         .fd-capsule {
           height: auto;
@@ -871,15 +911,12 @@ export function renderLoginPage(
           background: transparent;
         }
         .fd-capsule-cell {
-          width: 36px;
-          height: 36px;
+          width: var(--fd-control-touch-sm);
+          height: var(--fd-control-touch-sm);
           border: 1px solid var(--color-input);
           border-radius: var(--fd-radius-10);
           background: var(--color-secondary);
         }
-        /* 7b: a 36px control takes the 18px pictogram, not the 16 of its 32px
-           desktop twin. */
-        .fd-capsule-cell svg { width: 18px; height: 18px; }
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -925,6 +962,18 @@ export function renderLoginPage(
     </div>
     <script>
       (() => {
+        /* The compensation below is what the meta above makes unnecessary —
+           everywhere the meta is read. It stays because Safari does not read
+           it: iOS implements no interactive-widget at all, so there the
+           keyboard still shrinks the visual viewport alone and the layout
+           viewport keeps the full height of the phone. Measured on this page,
+           the two regimes are: obscured 0, so the shift computes 0px and main
+           is left where the stylesheet put it; against obscured 320, where it
+           computes 20px and lifts the field from y=330 to y=310. It is not a
+           second opinion about the same problem, it is the only opinion left
+           on the one platform the directive cannot reach — and it costs
+           nothing where the browser does the work, because there is no
+           obscured height to divide. */
         const root = document.documentElement;
         const isTextInputFocused = () => {
           const active = document.activeElement;

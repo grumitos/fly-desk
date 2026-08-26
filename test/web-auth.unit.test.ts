@@ -40,12 +40,33 @@ test("the login page is drawn from the design catalogues", () => {
   assert.match(html, /--fd-radius-12: 12px/);
   assert.match(html, /class="fd-field-control"/);
   assert.match(html, /class="fd-field-label"/);
-  assert.match(html, /\.fd-focus-ring:focus-visible \{\s*outline: none;\s*box-shadow: 0 0 0 2px color-mix\(in srgb, var\(--color-primary\) 55%, transparent\);/);
+  // 5b's mobile column is 34 / 40 / 46, and the 36 this page used to give its
+  // one square control belonged to the column this one replaced.
+  assert.match(html, /--fd-control-touch-sm: 34px/);
+  assert.doesNotMatch(html, /width: 36px/);
+  /* 3d's ring, drawn inside the border box. An outline rather than a shadow so
+     that Windows high contrast keeps it, and inset so that a focused control
+     cannot paint into the gap it shares with the control beside it —
+     `test/ui/login.playwright.ts` measures that it does not. */
+  assert.match(html, /\.fd-focus-ring:focus-visible \{\s*outline: 2px solid color-mix\(in srgb, var\(--color-primary\) 55%, transparent\);\s*outline-offset: -2px;/);
+  assert.doesNotMatch(html, /\.fd-focus-ring:focus-visible \{[^}]*box-shadow/);
   // The switch writes both places, so the choice survives signing in.
   assert.match(html, /flydesk-theme/);
   assert.match(html, /flydesk_theme=/);
   // Nothing off-catalogue: the old gate had its own 48px field and 8px radius.
   assert.doesNotMatch(html, /height: 48px/);
+});
+
+/* Without this the keyboard shrinks the visual viewport only: the layout
+   viewport keeps the full height of the phone, the card centres itself in a box
+   twice the visible area, and the foot of the form goes under the keyboard.
+   Measured at 360x400 in `test/ui/login.playwright.ts`; asserted here because
+   it is one attribute and every render carries it. */
+test("the gate lets the virtual keyboard shrink the layout viewport", () => {
+  assert.match(
+    renderLoginPage(),
+    /<meta name="viewport" content="[^"]*interactive-widget=resizes-content[^"]*">/,
+  );
 });
 
 test("web authentication accepts only the configured password hash", { concurrency: false }, () => {
