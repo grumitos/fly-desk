@@ -1144,6 +1144,28 @@
       display: inline;
     }
 
+    /*
+     * Except in Exacto, where the rótulo gives up its date and the 34 pixels it
+     * gives back land in this lane: 96 on a 360 phone against the 74 the widest
+     * one-stop label can measure («1 escala · MMM»), where Flexible has 62 and
+     * cannot. So the abbreviation is not paying for anything there, and
+     * `Movil.dc.html` — which draws Exacto — writes «1 escala · GRU» on a
+     * 360px card. The lane has held 96 since the chevron's went; the wording
+     * stayed at the 60 it was chosen for.
+     *
+     * From two stops it goes back to the short form in every mode: «2 escalas ·
+     * BOG, PTY» measures 101 against the 96, and the ellipsis it would take
+     * would eat exactly the codes the label exists to carry. That is what the
+     * count is on the element for.
+     */
+    .fd-results-list[data-mode="exact"] .fd-card .fd-card__leg-stops:not([data-stops="many-stops"]) .fd-card__leg-stops-long {
+      display: inline;
+    }
+
+    .fd-results-list[data-mode="exact"] .fd-card .fd-card__leg-stops:not([data-stops="many-stops"]) .fd-card__leg-stops-short {
+      display: none;
+    }
+
     .fd-card .fd-card__alts {
       grid-column: 1 / -1;
       grid-row: 3;

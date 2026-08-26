@@ -2586,6 +2586,11 @@ test("the stops label keeps its airport code in every mode, on the narrowest pho
         assert.equal(row.stacked, true, at);
         // The whole of it: the airport code has a box, in every mode, at 360.
         assert.match(row.label, /BOG/, at);
+        /* And in Exacto it is not abbreviated either: the rótulo gives up its
+           date there, so the lane holds 96 against the 74 the widest one-stop
+           label measures — which is the wording `Movil.dc.html` draws. The
+           abbreviation is what Flexible's 62 buys, not a phone-wide rule. */
+        assert.match(row.label, searchMode === "exact" ? /^1 escala · BOG$/ : /^1 esc · BOG$/, at);
         assert.ok(row.laneWidth + 0.5 >= row.labelWidth, at);
         assert.equal(row.laneClips, false, at);
         // And the row it lives in never spills over the lanes beside it.

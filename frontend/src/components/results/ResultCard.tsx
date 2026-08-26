@@ -288,13 +288,12 @@ function LegRow({ leg }: { leg: ResultLegModel }) {
       )}
 
       <span className="fd-card__leg-duration">{leg.duration}</span>
-      {/* Both wordings ride along and the container query picks one: the
-          stacked row's stops lane is 60px on a 360px phone, which fits
-          "1 esc · BOG" (54) and not "1 escala · BOG" (68). From two stops the
-          short form is the bare count, because no arrangement of
-          «2 esc · BOG, PTY» fits 60. Neither is spoken — the row's label is
-          built from the long form. */}
-      <span className="fd-card__leg-stops" title={leg.stopsTitle}>
+      {/* Both wordings ride along and the stylesheet picks one by measure. The
+          stop count comes with them, because the choice depends on it: from
+          two stops the short form is the bare count, and there is no width at
+          which the long one can be had on a phone. Neither is spoken — the
+          row's label is built from the long form. */}
+      <span className="fd-card__leg-stops" data-stops={leg.stopsTone} title={leg.stopsTitle}>
         <span className="fd-card__leg-stops-long">{leg.stopsLabel}</span>
         <span className="fd-card__leg-stops-short">{leg.stopsShortLabel}</span>
       </span>
