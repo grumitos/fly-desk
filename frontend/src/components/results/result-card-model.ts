@@ -339,15 +339,19 @@ function operatingCopy(offer: CanonicalOffer, knownTokens: Set<string>): string 
  * icons the card dims (04 §4: «Nunca texto»). The screen-reader label below
  * still states both, because there the icons say nothing.
  *
- * Plate 1b writes the included pair as «Cabina + Bodega».
+ * «Mano y bodega», which is what `Main.dc.html` and `MovilDetalle.dc.html`
+ * both write in the detail's condition row. Not «Cabina + Bodega»: the filter
+ * that switches this fact on is labelled «Mano», so the panel that reports it
+ * has to use the same word, and «y» is the conjunction the sentence takes —
+ * the «+» belonged to a list of tokens, not to a phrase an agent reads.
  */
 function baggageParts(offer: CanonicalOffer) {
   const carryOnIncluded = offer.baggage?.carryOnIncluded
   const checkedIncluded = offer.baggage?.checkedIncluded
-  const labels = [
-    carryOnIncluded === true ? "Cabina" : "",
-    checkedIncluded === true ? "Bodega" : "",
-  ].filter(Boolean)
+  const included = [carryOnIncluded === true, checkedIncluded === true]
+  const label = included[0] && included[1]
+    ? "Mano y bodega"
+    : included[0] ? "Mano" : included[1] ? "Bodega" : ""
   const ariaLabels = [
     carryOnIncluded === true
       ? "Equipaje de mano incluido"
@@ -371,8 +375,8 @@ function baggageParts(offer: CanonicalOffer) {
     carryOnIncluded,
     checkedIncluded,
     shown,
-    label: labels.join(" + "),
-    title: labels.length ? labels.join(" + ") : shown ? "Sin equipaje incluido" : "",
+    label,
+    title: label || (shown ? "Sin equipaje incluido" : ""),
     ariaLabel: ariaLabels.join(", "),
   }
 }

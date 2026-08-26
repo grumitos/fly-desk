@@ -454,7 +454,11 @@ test("native schedule groups expose complete return-flight alternatives", async 
     assert.match(await selectedCard.locator(".fd-card__legs").innerText(), /VTA 04\/06[\s\S]*20:30[\s\S]*15:25[\s\S]*\+1/);
 
     const detailText = await page.getByTestId("detail-panel-body").innerText();
-    assert.match(detailText, /Vuelta · 4 jun/i);
+    /* «VUELTA» alone over «4 jun · …»: both detail plates keep the eyebrow to
+       the word and hand the date to the summary on the right, which is where
+       the rest of the leg's facts already are. It read «Vuelta · 4 jun» while
+       the date was glued to the eyebrow. */
+    assert.match(detailText, /VUELTA\n4 jun · /);
     assert.match(detailText, /20:30/);
     assert.match(detailText, /15:25/);
   }, { autoOpen: false });
@@ -1246,11 +1250,14 @@ test("detail panel mirrors selected result content and omits unknown fare condit
     assert.match(selectedText, /LATAM/);
     assert.match(selectedText, /USD 812\.35/);
     assert.match(selectedText, /Agilsmart/);
-    assert.match(selectedText, /Ida · 28 may/i);
-    assert.match(selectedText, /21h 50m · 1 escala/);
+    /* Same as above: the eyebrow is the word and the date opens the summary. */
+    assert.match(selectedText, /IDA\n28 may · 21h 50m · 1 escala/);
     assert.match(selectedText, /09:10/);
     assert.match(selectedText, /LIM/);
-    assert.match(selectedText, /LA2478 · 16h 15m/);
+    /* «16h 15m · LATAM 2478»: how long the passenger is aboard comes first,
+       because that is what the line is for, and the flight is named rather
+       than coded — both plates write the rail this way round. */
+    assert.match(selectedText, /16h 15m · LATAM 2478/);
     assert.match(selectedText, /08:25/);
     /*
      * The provider labels this station «París (Todos los aeropuertos)», which
@@ -1262,15 +1269,22 @@ test("detail panel mirrors selected result content and omits unknown fare condit
      */
     assert.match(selectedText, /CDG · París\b/);
     assert.doesNotMatch(selectedText, /Todos los aeropuertos/i);
-    // Plate 8a writes the waiting leg station first, wait second.
-    assert.match(selectedText, /Escala en CDG · 2h 35m/);
+    /* «Escala 2h 35m», with no station: `Main.dc.html` and
+       `MovilDetalle.dc.html` both leave it out, and the two rail rows this
+       line sits between already say CDG — the aeroplane lands at «CDG · París»
+       and the next one leaves from «CDG · París». Naming it a third time in
+       between made the longest line on the rail the one saying the least. */
+    assert.match(selectedText, /CDG · París \+1\nEscala 2h 35m\n/);
     assert.match(selectedText, /11:00/);
-    assert.match(selectedText, /LA806 · 3h/);
+    assert.match(selectedText, /3h 0m · LATAM 806/);
     assert.match(selectedText, /14:00/);
     assert.match(selectedText, /MAD/);
     assert.match(selectedText, /Equipaje/);
-    // Only what the fare includes is named; the absence is the dimmed icon.
-    assert.match(selectedText, /Cabina/);
+    /* Only what the fare includes is named; the absence is the dimmed icon.
+       «Mano», the word the filter that switches this fact on already uses, and
+       the word both detail plates write — «Cabina» named the same thing twice
+       in the product. */
+    assert.match(selectedText, /Equipaje\nMano\n/);
     assert.doesNotMatch(selectedText, /no incluido/);
     assert.doesNotMatch(selectedText, /Cambios|Reembolso|Asientos|Emisión/);
 
@@ -3638,6 +3652,57 @@ test("the two baggage marks are the plate's, and the same two on every surface",
     assert.deepEqual(marks.row, [cabin, hold]);
     assert.deepEqual(marks.detail, [cabin, hold]);
     assert.deepEqual(marks.filter, [cabin, hold]);
+  }, { autoOpen: false });
+});
+
+test("the detail states every condition the provider confirmed, on the plate's line", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, {
+      offers: [oneStopOffer(1, {
+        id: "conditions-1",
+        fareMeta: { changeable: true, refundable: false, lastTicketingDate: "2026-05-26" },
+      })],
+    });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await page.getByTestId("result-card").first().click();
+    await page.locator(".fd-condition-row").first().waitFor();
+
+    const conditions = await page.evaluate(() => {
+      const panel = document.querySelector<HTMLElement>('[data-testid="detail-panel-body"]')!;
+      const rows = Array.from(panel.querySelectorAll<HTMLElement>(".fd-condition-row"));
+      return {
+        rows: rows.map((row) => ({
+          label: row.querySelector<HTMLElement>(".fd-condition-label")?.textContent ?? "",
+          value: row.querySelector<HTMLElement>(".fd-condition-value")?.textContent ?? "",
+          height: Math.round(row.getBoundingClientRect().height),
+          /* The value block ends where the row ends: both plates set these as a
+             label at the left and an answer at the right, and they were a
+             ragged left-aligned second column. */
+          flushRight: Math.abs(
+            row.getBoundingClientRect().right
+              - row.querySelector<HTMLElement>(".fd-condition-value")!.getBoundingClientRect().right,
+          ) < 1,
+        })),
+      };
+    });
+
+    /* All four, in the plate's order. The panel omits a row the provider said
+       nothing about — that stays — but a fare that states its conditions has
+       to show them, and nothing here was checking that it did. */
+    assert.deepEqual(
+      conditions.rows.map((row) => row.label),
+      ["Equipaje", "Cambios", "Reembolso", "Emisión"],
+    );
+    assert.deepEqual(
+      conditions.rows.map((row) => row.value),
+      ["Mano y bodega", "Permitido", "No permitido", "26 may 2026"],
+    );
+    for (const row of conditions.rows) {
+      assert.equal(row.height, 26, `«${row.label}» is ${row.height} tall`);
+      assert.ok(row.flushRight, `«${row.label}» does not end at the row's edge`);
+    }
   }, { autoOpen: false });
 });
 
