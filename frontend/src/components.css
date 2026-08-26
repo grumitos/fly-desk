@@ -359,12 +359,21 @@
      the digit column is its own minimum: two digits plus the 7px of padding on
      each side, so it does not change width between the ninth filter and the
      tenth. */
+  /* 18 square at 10, which is what both plates draw beside «Filtros»: it is a
+     badge on a heading, not a pill on a row, and at the pill's 20 × 11 it was
+     the loudest thing in the rail. The two-digit floor stays — a badge that
+     changes width between the ninth filter and the tenth moves the heading it
+     hangs off — and at this body the plates' own two-digit box is 22, so the
+     reservation and the drawing agree wherever there is more than one filter
+     on. */
   .fd-status-pill-count {
-    min-width: calc(2ch + 14px);
+    height: 18px;
+    min-width: calc(2ch + 10px);
     justify-content: center;
+    padding: 0 5px;
     background: var(--color-primary);
     color: var(--color-primary-foreground);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-micro);
     letter-spacing: 0;
     text-transform: none;
   }
@@ -433,14 +442,18 @@
     min-height: 0;
     flex: 1;
     align-content: start;
-    gap: 12px;
+    /* 14 between groups against the 6 inside one: the pair has to read as a
+       group before the rail reads as a list of controls, and at 12 over 8 the
+       two spacings were within two pixels of each other. */
+    gap: 14px;
     overflow: auto;
     padding-top: 14px;
   }
 
+  /* 6, the plate's: a group rótulo and the control it names are one thing. */
   .fd-filter-group {
     display: grid;
-    gap: 8px;
+    gap: 6px;
     transition: opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
@@ -457,10 +470,19 @@
     gap: 8px;
   }
 
+  /* «sin usar» shares a baseline with the group rótulo beside it, so it shares
+     its three properties: 10/700, uppercase, tracked. `Controles` names this
+     one outright — «va junto a un rótulo de grupo a 10/700 en versales con
+     seguimiento, y se escribe a 10/600 en minúsculas y sin seguimiento. Misma
+     línea base, tres propiedades de diferencia». The surface plates draw the
+     broken version, which is the version that sheet is naming. */
   .fd-filter-group-unused {
     color: var(--color-muted-foreground);
     font-size: var(--fd-text-micro);
-    font-weight: var(--fd-weight-label);
+    font-weight: var(--fd-weight-title);
+    letter-spacing: var(--fd-tracking-micro);
+    line-height: 1;
+    text-transform: uppercase;
   }
 
   /* The only separator in the panel. */
@@ -473,19 +495,29 @@
   .fd-airline-total {
     color: var(--color-muted-foreground);
     font-family: var(--font-mono);
-    font-size: var(--fd-text-meta);
+    font-size: var(--fd-text-mono-meta);
     font-weight: var(--fd-weight-label);
     font-variant-numeric: tabular-nums;
   }
 
+  /* No gap: the rows are 28 and the pitch is 28, which is how both plates
+     stack them. Six pixels between each pair made eight airlines a list a
+     third longer than the panel draws. */
   .fd-airline-list {
     display: grid;
-    gap: 6px;
   }
 
   /* Airline row: checkbox 16, logo 18, name 13/600, count mono in a fixed
      32px column so the digits line up. Flush with the group, so the checkbox
-     shares a left edge with the segmented controls above it (8a).
+     shares a left edge with the segmented controls above it (8a) — and flush
+     with the row above it, which is what the missing gap is for: the plates
+     draw eight airlines at a pitch of 28 and this list was running at 38.
+
+     The row itself stays 32 and not the plates' 28. 28 is not in the closed
+     table of control heights, `Controles` puts this exact row at «32 → 40»
+     between the two densities, and the 16px checkbox in it is derived from the
+     32 by the icon law — so the plates' 28 costs the rule that sizes the one
+     control inside the row. What was worth fixing was the pitch.
 
      The 16 is 7b rather than a preference. The row is `--fd-control-standard`,
      32 on a desk, and the table gives a 32 the 16 rung — which is the size the
@@ -530,14 +562,15 @@
     white-space: nowrap;
   }
 
-  /* The airline row's counter. Body 12 because the row is 32; the 32px column
-     is already its width mechanism — four and a half digits at this body — so
-     it does not repeat the two-digit minimum. */
+  /* The airline row's counter, at the monospace's own 11 — the plates' body,
+     and one rung under the 13 of the name it follows. The 32px column is
+     already its width mechanism — five digits at this body — so it does not
+     repeat the two-digit minimum. */
   .fd-airline-row-count {
     width: 32px;
     flex-shrink: 0;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-meta);
+    font-size: var(--fd-text-mono-meta);
     text-align: right;
   }
 
@@ -1501,10 +1534,13 @@
     border-bottom: 1px solid var(--color-rule);
   }
 
+  /* The same 14/700 with -0.01em that «Filtros» and «Resultados» carry: three
+     headings on one line have to be one heading three times. */
   .fd-detail-title {
     overflow: hidden;
     font-size: var(--fd-text-body);
     font-weight: var(--fd-weight-title);
+    letter-spacing: -0.01em;
     line-height: 1.2;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1648,10 +1684,16 @@
     margin-bottom: 8px;
   }
 
+  /* «28 may · 15h 15m · 1 escala». Muted at the monospace's own 11, not the
+     foreground 12 it carried: it is the caption of the eyebrow beside it, and
+     drawn in full ink it read as a second title on the same line. Mono because
+     `Cifras` §01 decides the alphabet by what a value is — a date and a
+     duration are figures — and the plate's sans here is the system sheet
+     losing an argument to the surface one. */
   .fd-leg-summary {
-    color: var(--color-foreground);
+    color: var(--color-muted-foreground);
     font-family: var(--font-mono);
-    font-size: var(--fd-text-meta);
+    font-size: var(--fd-text-mono-meta);
     font-weight: var(--fd-weight-label);
     font-variant-numeric: tabular-nums;
   }
@@ -1659,19 +1701,19 @@
   .fd-rail {
     /* The four numbers the three surfaces disagree on, named once so the
        overrides below restate only what actually changes. */
-    --fd-rail-dot: 8px;
-    --fd-rail-dot-top: 4px;
+    --fd-rail-dot: 7px;
     --fd-rail-stop-line: 18px;
-    --fd-rail-leg-line: 20px;
+    --fd-rail-leg-line: 24px;
     display: grid;
-    grid-template-columns: 44px 13px minmax(0, 1fr);
-    column-gap: 10px;
+    grid-template-columns: 44px 12px minmax(0, 1fr);
+    align-items: center;
+    column-gap: 8px;
   }
 
   .fd-rail-time {
     color: var(--color-foreground);
     font-family: var(--font-mono);
-    font-size: var(--fd-text-base);
+    font-size: var(--fd-text-mono-meta);
     font-weight: var(--fd-weight-title);
     font-variant-numeric: tabular-nums;
     line-height: var(--fd-rail-stop-line);
@@ -1679,54 +1721,55 @@
 
   .fd-rail-track {
     position: relative;
-    display: flex;
-    justify-content: center;
+    display: grid;
+    height: 100%;
+    place-items: center;
   }
 
   /* The line lives on the track cell, so it is continuous between stops
-     regardless of how tall the text next to it is. */
+     regardless of how tall the text next to it is. One pixel, and one
+     treatment for the whole rail: `Main.dc.html` and `MovilDetalle.dc.html`
+     draw a single hairline from the first dot to the last, and dotting the
+     waiting stretch made the rail change material half way down a journey
+     that never leaves the ground. */
   .fd-rail-track::before {
     position: absolute;
     top: 0;
     bottom: 0;
     left: 50%;
-    width: 1.5px;
+    width: 1px;
     background: var(--color-border);
     content: "";
     transform: translateX(-50%);
   }
 
-  /* The waiting leg is the one thing on the rail that is not flying, and the
-     handoff says so twice: dotted line, text in primary at 80%. Both drawings
-     dot it in `--border` — the colour belongs to the text. */
-  .fd-rail-track[data-kind="layover"]::before {
-    background: repeating-linear-gradient(var(--color-border) 0 3px, transparent 3px 6px);
-  }
-
   /* The rail starts and ends at the centre of a dot, never a stub past it. */
   .fd-rail-track[data-kind="first"]::before {
-    top: calc(var(--fd-rail-dot-top) + var(--fd-rail-dot) / 2);
+    top: 50%;
   }
 
   .fd-rail-track[data-kind="last"]::before {
-    bottom: calc(100% - var(--fd-rail-dot-top) - var(--fd-rail-dot) / 2);
+    bottom: 50%;
   }
 
+  /* Outlined, not filled: seven pixels with a 1.5px muted ring and the card
+     behind it, which is how both plates draw every stop. A filled dot in full
+     foreground put eight black discs down a column whose text is 12px. */
   .fd-rail-dot {
     position: relative;
     z-index: 1;
     width: var(--fd-rail-dot);
     height: var(--fd-rail-dot);
-    margin-top: var(--fd-rail-dot-top);
+    border: 1.5px solid var(--color-muted-foreground);
     border-radius: 999px;
-    background: var(--color-foreground);
+    background: var(--color-card);
   }
 
   .fd-rail-stop {
     min-width: 0;
     overflow: hidden;
-    font-size: var(--fd-text-base);
-    font-weight: var(--fd-weight-title);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
     line-height: var(--fd-rail-stop-line);
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1738,22 +1781,35 @@
      the smallest text in the product for no reason anyone wrote down. The
      phone was already at 12 (the container query below), so this only brings
      the desk to where the phone had been. */
+  /* 600, not 400: both plates draw this line at the same weight as the station
+     above it and separate the two with colour alone. At 400 it was the only
+     text in the panel lighter than the document's own body.
+
+     The waiting stretch takes no colour of its own either. It was primary at
+     80%, which put the one orange thing in the panel on the fact the agent
+     cares least about — and neither plate tints it. */
   .fd-rail-leg {
     min-width: 0;
     overflow: hidden;
     color: var(--color-muted-foreground);
     font-size: var(--fd-text-meta);
-    font-weight: var(--fd-weight-value);
+    font-weight: var(--fd-weight-label);
     line-height: var(--fd-rail-leg-line);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .fd-rail-leg--layover {
-    color: color-mix(in srgb, var(--color-primary) 80%, var(--color-foreground));
+  /* The day jump on a stop: the micro rung, muted, beside a station at 12/600
+     — its own leaf, so it does not take the station's body. */
+  .fd-rail-day {
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-title);
   }
 
-  /* Conditions, in pairs: label 12 muted / value 13 semibold. */
+  /* Conditions, in pairs, on a 26px line: the label muted at the left and the
+     value at the right, which is how both plates set them and what makes four
+     of them a column of answers instead of two ragged columns. */
   .fd-condition-heading {
     display: block;
     margin-bottom: 8px;
@@ -1761,35 +1817,39 @@
 
   .fd-condition-list {
     display: grid;
-    gap: 6px;
   }
 
   .fd-condition-row {
-    display: grid;
-    grid-template-columns: 88px minmax(0, 1fr);
-    align-items: baseline;
+    display: flex;
+    height: 26px;
+    align-items: center;
+    justify-content: space-between;
     gap: 8px;
   }
 
   .fd-condition-label {
     color: var(--color-muted-foreground);
     font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-label);
   }
 
   .fd-condition-value {
     display: flex;
     min-width: 0;
     align-items: center;
-    gap: 8px;
-    font-size: var(--fd-text-base);
+    gap: 6px;
+    font-size: var(--fd-text-meta);
     font-weight: var(--fd-weight-label);
   }
 
   /* One typography rule across the whole app: a hard figure — a time, a price, a
-     date, a calendar day, a counter, a page number — is mono at 600; interface
-     text is Inter. Seat counts and ticketing dates are figures. */
+     date, a calendar day, a counter, a page number — is mono; interface text is
+     Inter. A ticketing date is a figure, and it takes the monospace's own 11
+     and the 700 `Cifras` §03 gives a date, one rung off the words beside it. */
   .fd-condition-value--figure {
     font-family: var(--font-mono);
+    font-size: var(--fd-text-mono-meta);
+    font-weight: var(--fd-weight-title);
     font-variant-numeric: tabular-nums;
   }
 
@@ -1797,7 +1857,7 @@
     display: inline-flex;
     flex-shrink: 0;
     align-items: center;
-    gap: 8px;
+    gap: 3px;
   }
 
   .fd-condition-bags svg {
@@ -1852,7 +1912,9 @@
     gap: 8px;
     border-radius: var(--fd-radius-10);
     padding-inline: 6px;
-    color: var(--color-muted-foreground);
+    /* The plate's `#373734`: this is a control's label, not the panel's
+       metadata, and muted put it a step below the two buttons beside it. */
+    color: var(--color-secondary-foreground);
     cursor: pointer;
     font-size: var(--fd-text-meta);
     font-weight: var(--fd-weight-label);
@@ -1879,20 +1941,22 @@
     gap: 6px;
   }
 
-  /* Both foot actions are the 32px control of 1b and differ in the only two
-     things the plate draws differently: the padding around the label, and the
-     weight of the label itself. */
-  .fd-detail-provider-action,
-  .fd-detail-quote-error-open {
-    gap: 6px;
-    padding-inline: 11px;
-    font-weight: var(--fd-weight-label);
-  }
+  /* Both foot actions are the 32px control of 1b, and both are 13/700 in 12 of
+     padding: `Main.dc.html` and `MovilDetalle.dc.html` draw `.btn` and
+     `.btn-p` with the same type and the same box, and differ only in the fill.
+     They were 12/600 and 12/700 here, so the secondary exit read a rung below
+     the primary one and both read a rung below everything else in the panel.
 
+     Scoped to the two of them rather than moved into the button itself: the
+     search form's controls are 600 by decision and this is the results
+     surface, where what is read at a glance is 700. */
+  .fd-detail-provider-action,
+  .fd-detail-quote-error-open,
   .fd-detail-quote-action,
   .fd-detail-quote-error-retry {
     gap: 6px;
-    padding-inline: 13px;
+    padding-inline: 12px;
+    font-size: var(--fd-text-base);
     font-weight: var(--fd-weight-title);
   }
 
@@ -2024,17 +2088,17 @@
     }
 
     .fd-rail {
-      grid-template-columns: 48px 14px minmax(0, 1fr);
-      column-gap: 12px;
-    }
-
-    .fd-condition-list {
-      gap: 8px;
+      column-gap: 10px;
     }
 
     .fd-condition-row {
-      grid-template-columns: 96px minmax(0, 1fr);
+      height: 32px;
       gap: 10px;
+    }
+
+    .fd-condition-bags svg {
+      width: var(--fd-icon-16);
+      height: var(--fd-icon-16);
     }
 
     .fd-detail-quote-error {
@@ -2138,18 +2202,24 @@
     }
 
     .fd-rail {
-      --fd-rail-dot: 9px;
-      --fd-rail-dot-top: 5px;
       --fd-rail-stop-line: 20px;
-      --fd-rail-leg-line: 22px;
+      --fd-rail-leg-line: 27px;
     }
 
-    .fd-rail-time,
+    .fd-rail-time {
+      font-size: var(--fd-text-meta);
+    }
+
     .fd-rail-stop {
-      font-size: var(--fd-text-body);
+      font-size: var(--fd-text-base);
     }
 
-    .fd-rail-leg {
+    .fd-condition-label,
+    .fd-condition-value {
+      font-size: var(--fd-text-base);
+    }
+
+    .fd-condition-value--figure {
       font-size: var(--fd-text-meta);
     }
 

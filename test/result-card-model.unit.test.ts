@@ -333,8 +333,11 @@ test("card model derives baggage and preserves provider-local ISO offset times",
   const card = buildResultCardModel(offer, 1);
 
   assert.equal(card.legs[0].departureTime, "23:50");
-  // Plate 1b writes the included pair as «Cabina + Bodega».
-  assert.equal(card.baggage.label, "Cabina + Bodega");
+  /* «Mano y bodega», the phrase both detail plates write. Not «Cabina +
+     Bodega»: the filter that switches this fact on is labelled «Mano», so two
+     surfaces were naming the same thing with two words, and the «+» belonged
+     to a list of tokens rather than to a sentence an agent reads. */
+  assert.equal(card.baggage.label, "Mano y bodega");
 });
 
 test("card model does not invent missing baggage evidence", () => {
@@ -374,8 +377,8 @@ test("card model exposes only explicit baggage inclusion evidence", () => {
     carryOnIncluded: true,
     checkedIncluded: undefined,
     shown: true,
-    label: "Cabina",
-    title: "Cabina",
+    label: "Mano",
+    title: "Mano",
     ariaLabel: "Equipaje de mano incluido",
   });
 });

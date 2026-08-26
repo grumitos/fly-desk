@@ -811,6 +811,13 @@ test("the desk card gives the codeshare a line and the trip a single row", async
           height: Math.round(element.getBoundingClientRect().height),
           legTops,
           operator: operator?.textContent?.trim() ?? "",
+          operatorDrawn: operator
+            ? `${getComputedStyle(operator, "::before").content.replace(/^"|"$/g, "")}${operator.textContent ?? ""}`.trim()
+            : "",
+          operatorSpoken: (element.querySelector<HTMLElement>(".fd-card__hit")
+            ?.getAttribute("aria-label") ?? "")
+            .split(". ")
+            .find((part) => part.startsWith("Operado por")) ?? "",
           operatorInsideCarrier: Boolean(operator && carrier?.contains(operator)),
           baggageLeft: baggage ? baggage.getBoundingClientRect().left : 0,
           priceLeft: price ? price.getBoundingClientRect().left : 0,
@@ -818,8 +825,15 @@ test("the desk card gives the codeshare a line and the trip a single row", async
         };
       });
 
-      // The codeshare is on the carrier column, not squeezed out by luggage.
-      assert.equal(card.operator, "op. Delta", JSON.stringify(card));
+      /* The codeshare is on the carrier column, not squeezed out by luggage.
+         «Operado por Delta», not the «op. Delta» this asserted: `Main.dc.html`
+         writes the phrase out on the line it gives the operator, and the model
+         now carries the bare name so the phone can glue it to the airline with
+         a middle dot instead. The prefix is drawn by the sheet, which is why
+         `textContent` alone would read «Delta». */
+      assert.equal(card.operator, "Delta", JSON.stringify(card));
+      assert.equal(card.operatorDrawn, "Operado por Delta", JSON.stringify(card));
+      assert.equal(card.operatorSpoken, "Operado por Delta", JSON.stringify(card));
       assert.equal(card.operatorInsideCarrier, true, JSON.stringify(card));
       // Baggage sits with the fare it belongs to, between the legs and the price.
       assert.ok(card.baggageLeft > card.carrierRight, JSON.stringify(card));

@@ -103,10 +103,10 @@ const LAYOVER_SEGMENTS: Array<{ value: LayoverFilterValue; label: string; chip?:
   { value: "240", label: "≤4h", chip: "Escala ≤ 4 h", relaxTo: "360", relaxLabel: "Permitir escalas de hasta 6 h" },
   { value: "360", label: "≤6h", chip: "Escala ≤ 6 h" },
 ]
-const BAGGAGE_SEGMENTS: Array<{ value: BaggageFilterValue; label: string; icon?: "backpack" | "luggage"; chip?: string; relaxTo?: BaggageFilterValue; relaxLabel?: string }> = [
+const BAGGAGE_SEGMENTS: Array<{ value: BaggageFilterValue; label: string; icon?: "cabinBag" | "holdBag"; chip?: string; relaxTo?: BaggageFilterValue; relaxLabel?: string }> = [
   { value: "any", label: "Todos" },
-  { value: "carry", label: "Mano", icon: "backpack", chip: "Mano incluida" },
-  { value: "checked", label: "Bodega", icon: "luggage", chip: "Bodega incluida", relaxTo: "carry", relaxLabel: "Permitir vuelos sin bodega" },
+  { value: "carry", label: "Mano", icon: "cabinBag", chip: "Mano incluida" },
+  { value: "checked", label: "Bodega", icon: "holdBag", chip: "Bodega incluida", relaxTo: "carry", relaxLabel: "Permitir vuelos sin bodega" },
 ]
 
 export default function App() {

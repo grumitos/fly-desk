@@ -83,13 +83,26 @@ export function formatJourneyDuration(minutes: number): string {
   return parts.join(" ")
 }
 
+const OFFER_DATE_MONTHS = [
+  "ene", "feb", "mar", "abr", "may", "jun",
+  "jul", "ago", "sep", "oct", "nov", "dic",
+]
+
+/**
+ * «26 may 2026», the way both detail plates write a ticketing date.
+ *
+ * Not `26/05/2026`. A slashed date is a field the agent types into; this one is
+ * read, and the month in letters is what stops it being confused with the
+ * day — the panel it sits in already carries four other figures.
+ */
 export function formatOfferDate(value?: string): string {
   const date = isoDatePart(value)
   if (!date) return "-"
 
   const [year, month, day] = date.split("-")
   if (!year || !month || !day) return date
-  return `${day}/${month}/${year}`
+  const name = OFFER_DATE_MONTHS[Number(month) - 1]
+  return name ? `${Number(day)} ${name} ${year}` : `${day}/${month}/${year}`
 }
 
 export function timeOfIso(value?: string): string {

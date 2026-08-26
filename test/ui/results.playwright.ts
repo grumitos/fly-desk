@@ -454,7 +454,11 @@ test("native schedule groups expose complete return-flight alternatives", async 
     assert.match(await selectedCard.locator(".fd-card__legs").innerText(), /VTA 04\/06[\s\S]*20:30[\s\S]*15:25[\s\S]*\+1/);
 
     const detailText = await page.getByTestId("detail-panel-body").innerText();
-    assert.match(detailText, /Vuelta · 4 jun/i);
+    /* «VUELTA» alone over «4 jun · …»: both detail plates keep the eyebrow to
+       the word and hand the date to the summary on the right, which is where
+       the rest of the leg's facts already are. It read «Vuelta · 4 jun» while
+       the date was glued to the eyebrow. */
+    assert.match(detailText, /VUELTA\n4 jun · /);
     assert.match(detailText, /20:30/);
     assert.match(detailText, /15:25/);
   }, { autoOpen: false });
@@ -1246,11 +1250,14 @@ test("detail panel mirrors selected result content and omits unknown fare condit
     assert.match(selectedText, /LATAM/);
     assert.match(selectedText, /USD 812\.35/);
     assert.match(selectedText, /Agilsmart/);
-    assert.match(selectedText, /Ida · 28 may/i);
-    assert.match(selectedText, /21h 50m · 1 escala/);
+    /* Same as above: the eyebrow is the word and the date opens the summary. */
+    assert.match(selectedText, /IDA\n28 may · 21h 50m · 1 escala/);
     assert.match(selectedText, /09:10/);
     assert.match(selectedText, /LIM/);
-    assert.match(selectedText, /LA2478 · 16h 15m/);
+    /* «16h 15m · LATAM 2478»: how long the passenger is aboard comes first,
+       because that is what the line is for, and the flight is named rather
+       than coded — both plates write the rail this way round. */
+    assert.match(selectedText, /16h 15m · LATAM 2478/);
     assert.match(selectedText, /08:25/);
     /*
      * The provider labels this station «París (Todos los aeropuertos)», which
@@ -1262,15 +1269,22 @@ test("detail panel mirrors selected result content and omits unknown fare condit
      */
     assert.match(selectedText, /CDG · París\b/);
     assert.doesNotMatch(selectedText, /Todos los aeropuertos/i);
-    // Plate 8a writes the waiting leg station first, wait second.
-    assert.match(selectedText, /Escala en CDG · 2h 35m/);
+    /* «Escala 2h 35m», with no station: `Main.dc.html` and
+       `MovilDetalle.dc.html` both leave it out, and the two rail rows this
+       line sits between already say CDG — the aeroplane lands at «CDG · París»
+       and the next one leaves from «CDG · París». Naming it a third time in
+       between made the longest line on the rail the one saying the least. */
+    assert.match(selectedText, /CDG · París \+1\nEscala 2h 35m\n/);
     assert.match(selectedText, /11:00/);
-    assert.match(selectedText, /LA806 · 3h/);
+    assert.match(selectedText, /3h 0m · LATAM 806/);
     assert.match(selectedText, /14:00/);
     assert.match(selectedText, /MAD/);
     assert.match(selectedText, /Equipaje/);
-    // Only what the fare includes is named; the absence is the dimmed icon.
-    assert.match(selectedText, /Cabina/);
+    /* Only what the fare includes is named; the absence is the dimmed icon.
+       «Mano», the word the filter that switches this fact on already uses, and
+       the word both detail plates write — «Cabina» named the same thing twice
+       in the product. */
+    assert.match(selectedText, /Equipaje\nMano\n/);
     assert.doesNotMatch(selectedText, /no incluido/);
     assert.doesNotMatch(selectedText, /Cambios|Reembolso|Asientos|Emisión/);
 
@@ -2572,6 +2586,11 @@ test("the stops label keeps its airport code in every mode, on the narrowest pho
         assert.equal(row.stacked, true, at);
         // The whole of it: the airport code has a box, in every mode, at 360.
         assert.match(row.label, /BOG/, at);
+        /* And in Exacto it is not abbreviated either: the rótulo gives up its
+           date there, so the lane holds 96 against the 74 the widest one-stop
+           label measures — which is the wording `Movil.dc.html` draws. The
+           abbreviation is what Flexible's 62 buys, not a phone-wide rule. */
+        assert.match(row.label, searchMode === "exact" ? /^1 escala · BOG$/ : /^1 esc · BOG$/, at);
         assert.ok(row.laneWidth + 0.5 >= row.labelWidth, at);
         assert.equal(row.laneClips, false, at);
         // And the row it lives in never spills over the lanes beside it.
@@ -3424,6 +3443,317 @@ test("every column header fits the lane it names, arrow included", async () => {
         );
       }
     }
+  }, { autoOpen: false });
+});
+
+/*
+ * What nothing in this suite asserted, and what let a header that does not
+ * head its columns reach production green: that the header's geometry *is* the
+ * row's geometry, and that each name starts where the values it names start.
+ *
+ * The case above only checks a cell against its own declared track, so a header
+ * drawn on tracks of its own — or one whose labels float in the middle of the
+ * lane — passes it without ever being compared to a row.
+ */
+test("the column header wears the row's own lanes and starts at the row's own edge", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, { offers: [oneStopOffer(1), oneStopOffer(2)] });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await waitForFontsReady(page);
+
+    const geometry = await page.evaluate(() => {
+      const head = document.querySelector<HTMLElement>('[data-testid="results-column-head"]')!;
+      const row = document.querySelector<HTMLElement>('[data-testid="result-card"]')!;
+      const read = (node: HTMLElement) => {
+        const style = getComputedStyle(node);
+        const legs = node.querySelector<HTMLElement>(".fd-card__legs")!;
+        return {
+          tracks: style.gridTemplateColumns,
+          gap: style.columnGap,
+          left: Math.round(node.getBoundingClientRect().left * 100) / 100,
+          right: Math.round(node.getBoundingClientRect().right * 100) / 100,
+          legTracks: getComputedStyle(legs).gridTemplateColumns,
+          legGap: getComputedStyle(legs).columnGap,
+          legLeft: Math.round(legs.getBoundingClientRect().left * 100) / 100,
+        };
+      };
+      return { head: read(head), row: read(row) };
+    });
+
+    assert.equal(geometry.head.tracks, geometry.row.tracks);
+    assert.equal(geometry.head.gap, geometry.row.gap);
+    assert.equal(geometry.head.legTracks, geometry.row.legTracks);
+    assert.equal(geometry.head.legGap, geometry.row.legGap);
+    /* Same box, so the same tracks resolve to the same pixels: a header padded
+       differently from the rows names lanes that are 8px away from the ones
+       drawn. */
+    assert.equal(geometry.head.left, geometry.row.left);
+    assert.equal(geometry.head.right, geometry.row.right);
+    assert.equal(geometry.head.legLeft, geometry.row.legLeft);
+  }, { autoOpen: false });
+});
+
+test("every column heading begins where the values it names begin", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, { offers: [oneStopOffer(1), oneStopOffer(2)] });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await waitForFontsReady(page);
+
+    const columns = await page.evaluate(() => {
+      const head = document.querySelector<HTMLElement>('[data-testid="results-column-head"]')!;
+      const row = document.querySelector<HTMLElement>('[data-testid="result-card"]')!;
+      const headLeg = head.querySelector<HTMLElement>(".fd-card__leg")!;
+      const rowLeg = row.querySelector<HTMLElement>(".fd-card__leg")!;
+
+      /* The ink, not the box. Every one of these labels is a grid item as wide
+         as its lane, so its box tells us nothing about where the word is
+         painted — which is the whole of the defect this case exists for. */
+      const ink = (node: Element) => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const box = range.getBoundingClientRect();
+        return { left: Math.round(box.left * 100) / 100, right: Math.round(box.right * 100) / 100 };
+      };
+
+      const pair = (name: string, label: Element, value: Element, edge: "left" | "right") => ({
+        name,
+        edge,
+        label: ink(label)[edge],
+        value: ink(value)[edge],
+      });
+
+      return [
+        pair("Aerolínea", head.children[1]!, row.querySelector(".fd-card__carrier-name")!, "left"),
+        pair("Tramo", headLeg.children[0]!, rowLeg.querySelector(".fd-card__leg-label")!, "left"),
+        pair("Horario", headLeg.children[1]!, rowLeg.querySelector(".fd-card__leg-schedule")!, "left"),
+        pair("Duración", headLeg.children[2]!, rowLeg.querySelector(".fd-card__leg-duration")!, "right"),
+        pair("Escalas", headLeg.children[3]!, rowLeg.querySelector(".fd-card__leg-stops")!, "left"),
+        pair("Precio", head.querySelector('[data-segment="cheapest"]')!, row.querySelector(".fd-card__price-figure")!, "right"),
+      ];
+    });
+
+    for (const column of columns) {
+      /* A pixel of tolerance and no more: these are the same track, so the only
+         thing that may differ between the two edges is the sub-pixel the glyph
+         itself starts at. */
+      assert.ok(
+        Math.abs(column.label - column.value) <= 1,
+        `«${column.name}» is painted with its ${column.edge} edge at ${column.label} `
+          + `over values whose ${column.edge} edge is ${column.value}`,
+      );
+    }
+  }, { autoOpen: false });
+});
+
+test("the row draws the airline and its operator at the rungs the plate gives them", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, {
+      offers: [oneStopOffer(1, {
+        id: "codeshare-1",
+        itineraries: oneStopOffer(1).itineraries.map((leg) => ({
+          ...leg,
+          segments: leg.segments.map((segment) => ({
+            ...segment,
+            marketingCarrierName: "Iberia",
+            operatingCarrier: "4O",
+            operatingCarrierName: "Level",
+          })),
+        })),
+      })],
+    });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await waitForFontsReady(page);
+
+    const type = await page.evaluate(() => {
+      const read = (selector: string) => {
+        const node = document.querySelector<HTMLElement>(selector);
+        if (!node) return null;
+        const style = getComputedStyle(node);
+        return `${style.fontSize}/${style.fontWeight}`;
+      };
+      return {
+        name: read(".fd-card:not(.fd-card--head) .fd-card__carrier-name"),
+        operator: read(".fd-card:not(.fd-card--head) .fd-card__carrier-operator"),
+      };
+    });
+
+    /* `Main.dc.html` and `Actual.dc.html` both draw 13/600 over 10/600 here.
+       The row carried 13/700 over 12/400, which made the airline louder than
+       the price it is compared by and the codeshare larger than the row's own
+       metadata. */
+    assert.equal(type.name, "13px/600");
+    assert.equal(type.operator, "10px/600");
+  }, { autoOpen: false });
+});
+
+test("the second price line states the amount and leaves the currency to the figure above it", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, { offers: [oneStopOffer(1)] });
+    await openSharedSearchLink(
+      page,
+      `${baseUrl}${RESULTS_SEARCH_URL.replace("adults=1", "adults=2")}`,
+    );
+    await page.getByTestId("result-card").first().waitFor();
+
+    const price = await page.evaluate(() => ({
+      figure: document.querySelector<HTMLElement>(".fd-card__price-figure")?.textContent ?? "",
+      meta: document.querySelector<HTMLElement>(".fd-card__price-meta")?.textContent ?? "",
+      /* And the reader, who has no line above to carry the code, still hears
+         it. */
+      spoken: document.querySelector<HTMLElement>(".fd-card__hit")?.getAttribute("aria-label") ?? "",
+    }));
+
+    assert.match(price.figure, /^USD [\d,]+\.\d\d$/);
+    assert.match(price.meta, /^[\d,]+\.\d\d p\/p$/);
+    assert.doesNotMatch(price.meta, /USD/);
+    assert.match(price.spoken, /USD [\d,]+\.\d\d por persona/);
+  }, { autoOpen: false });
+});
+
+test("the two baggage marks are the plate's, and the same two on every surface", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, { offers: [oneStopOffer(1)] });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await page.getByTestId("result-card").first().click();
+    await page.locator(".fd-condition-bags").waitFor();
+
+    const marks = await page.evaluate(() => {
+      /* The geometry, in the order the glyph declares it: what a mark *is*.
+         Two icons of the same size in the same lane say nothing about whether
+         they are the right two. */
+      const shapeOf = (svg: Element | null | undefined) =>
+        svg
+          ? Array.from(svg.children)
+            .map((node) => node.tagName.toLowerCase() === "rect"
+              ? `rect ${node.getAttribute("x")},${node.getAttribute("y")} ${node.getAttribute("width")}x${node.getAttribute("height")} r${node.getAttribute("rx")}`
+              : node.getAttribute("d") ?? "")
+            .join(" | ")
+          : "";
+      const rowBags = Array.from(document.querySelectorAll(".fd-card__bag svg"));
+      const detailBags = Array.from(document.querySelectorAll(".fd-condition-bags svg"));
+      const filterBags = Array.from(document.querySelectorAll('[data-segment="carry"] svg, [data-segment="checked"] svg'));
+      return {
+        row: rowBags.map(shapeOf),
+        detail: detailBags.map(shapeOf),
+        filter: filterBags.map(shapeOf),
+      };
+    });
+
+    /* A soft cabin bag with a hoop handle, and a hold case with a flat one.
+       Lucide's `Backpack` and `Luggage` — a rucksack and a wheeled trolley —
+       are what these were, and no plate in the set has ever drawn either. */
+    const cabin = "M7 8h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2Z | M9 8V6a3 3 0 0 1 6 0v2";
+    const hold = "rect 5,7 14x14 r2 | M9 7V4h6v3";
+
+    assert.deepEqual(marks.row, [cabin, hold]);
+    assert.deepEqual(marks.detail, [cabin, hold]);
+    assert.deepEqual(marks.filter, [cabin, hold]);
+  }, { autoOpen: false });
+});
+
+test("the detail states every condition the provider confirmed, on the plate's line", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, {
+      offers: [oneStopOffer(1, {
+        id: "conditions-1",
+        fareMeta: { changeable: true, refundable: false, lastTicketingDate: "2026-05-26" },
+      })],
+    });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await page.getByTestId("result-card").first().click();
+    await page.locator(".fd-condition-row").first().waitFor();
+
+    const conditions = await page.evaluate(() => {
+      const panel = document.querySelector<HTMLElement>('[data-testid="detail-panel-body"]')!;
+      const rows = Array.from(panel.querySelectorAll<HTMLElement>(".fd-condition-row"));
+      return {
+        rows: rows.map((row) => ({
+          label: row.querySelector<HTMLElement>(".fd-condition-label")?.textContent ?? "",
+          value: row.querySelector<HTMLElement>(".fd-condition-value")?.textContent ?? "",
+          height: Math.round(row.getBoundingClientRect().height),
+          /* The value block ends where the row ends: both plates set these as a
+             label at the left and an answer at the right, and they were a
+             ragged left-aligned second column. */
+          flushRight: Math.abs(
+            row.getBoundingClientRect().right
+              - row.querySelector<HTMLElement>(".fd-condition-value")!.getBoundingClientRect().right,
+          ) < 1,
+        })),
+      };
+    });
+
+    /* All four, in the plate's order. The panel omits a row the provider said
+       nothing about — that stays — but a fare that states its conditions has
+       to show them, and nothing here was checking that it did. */
+    assert.deepEqual(
+      conditions.rows.map((row) => row.label),
+      ["Equipaje", "Cambios", "Reembolso", "Emisión"],
+    );
+    assert.deepEqual(
+      conditions.rows.map((row) => row.value),
+      ["Mano y bodega", "Permitido", "No permitido", "26 may 2026"],
+    );
+    for (const row of conditions.rows) {
+      assert.equal(row.height, 26, `«${row.label}» is ${row.height} tall`);
+      assert.ok(row.flushRight, `«${row.label}» does not end at the row's edge`);
+    }
+  }, { autoOpen: false });
+});
+
+test("the three headings across the desk are one line with one rule", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, { offers: [oneStopOffer(1), oneStopOffer(2)] });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await page.getByTestId("result-card").first().click();
+    await page.locator(".fd-detail-header").waitFor();
+    await waitForFontsReady(page);
+
+    const headings = await page.evaluate(() => {
+      const read = (selector: string) => {
+        const node = document.querySelector<HTMLElement>(selector)!;
+        const style = getComputedStyle(node);
+        const box = node.getBoundingClientRect();
+        return {
+          selector,
+          top: Math.round(box.top * 100) / 100,
+          height: Math.round(box.height * 100) / 100,
+          rule: `${style.borderBottomWidth} ${style.borderBottomColor}`,
+        };
+      };
+      const title = document.querySelector<HTMLElement>(".fd-list-title")!;
+      const row = document.querySelector<HTMLElement>('[data-testid="result-card"]')!;
+      return {
+        filters: read(".fd-filter-panel-header"),
+        list: read(".fd-list-header"),
+        detail: read(".fd-detail-header"),
+        titleLeft: Math.round(title.getBoundingClientRect().left * 100) / 100,
+        rowContentLeft: Math.round(
+          row.querySelector<HTMLElement>(".fd-card__logo")!.getBoundingClientRect().left * 100,
+        ) / 100,
+      };
+    });
+
+    for (const heading of [headings.filters, headings.list, headings.detail]) {
+      assert.equal(heading.height, 28, `${heading.selector} is ${heading.height} tall`);
+      assert.equal(heading.top, headings.filters.top, `${heading.selector} sits at ${heading.top}`);
+      assert.equal(heading.rule, headings.filters.rule, `${heading.selector} draws ${heading.rule}`);
+    }
+    /* And the middle one names a table, so its title starts over the table's
+       first lane rather than at the column's own edge. */
+    assert.equal(headings.titleLeft, headings.rowContentLeft);
   }, { autoOpen: false });
 });
 

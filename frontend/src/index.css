@@ -252,17 +252,20 @@
     color: var(--color-primary);
   }
 
+  /* 20, and it starts at the shell's own 16: the brand is a mark and a name,
+     and at 24 the mark was the largest glyph on a 44px bar. */
   .fd-topbar-brand-mark {
-    width: 24px;
-    height: 24px;
+    width: 20px;
+    height: 20px;
     color: var(--color-primary);
   }
 
   .fd-topbar-brand-name {
     min-width: 0;
     overflow: hidden;
-    font-size: var(--fd-text-body);
+    font-size: var(--fd-text-action);
     font-weight: var(--fd-weight-title);
+    letter-spacing: -0.01em;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -270,19 +273,23 @@
   .fd-topbar-actions {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
   }
 
-  /* Copy + paste as one capsule, the theme toggle as another (plate 1b). */
+  /* Three 32px squares, and nothing around them. Both plates draw the bar's
+     actions as bare glyphs on the bar's own fill — the capsule's border and
+     `--secondary` fill drew two boxes on a band that is already a box, and
+     with `--secondary` being the bar's own colour the border was the whole of
+     what they said. What marks a square as pressable is the hover fill the
+     cell already carries. */
   .fd-capsule {
     display: inline-flex;
     height: var(--fd-control-standard);
     align-items: stretch;
     overflow: hidden;
-    border: 1px solid var(--color-input);
+    gap: 4px;
     border-radius: var(--fd-radius-10);
-    background: var(--color-secondary);
-    color: var(--color-muted-foreground);
+    color: var(--color-secondary-foreground);
   }
 
   .fd-capsule-cell {
@@ -319,6 +326,12 @@
      10px active — the plates give it a slightly tighter foot than flanks
      because the list already ends in a rule. The sides never change with the
      viewport; the armazón does that, and it does it by container query. */
+  /* The stage's own rhythm, from the plate: 12 under the title bar, 10 between
+     the form and the workspace, 16 to the bottom edge. It was 8 · 8 · 10, so
+     the form sat closer to the bar than the results sat to the form and the
+     screen ended tighter than it began — three spacings the drawing takes
+     apart on purpose. The idle screen and the phone override all three below;
+     this is the active desk. */
   .fd-search-stage {
     position: relative;
     display: flex;
@@ -328,9 +341,9 @@
     max-width: var(--fd-app-max-width);
     min-height: 0;
     margin-inline: auto;
-    padding: 8px 16px 10px;
+    padding: 12px 16px 16px;
     box-sizing: border-box;
-    gap: 8px;
+    gap: 10px;
   }
 
   /* Plate 1a: idle is a flex column — a `1fr` spacer, the 1180px form column, a
@@ -590,11 +603,22 @@
     overflow: hidden;
   }
 
-  /* The header floats above the cards as the redesign commit drew it: a line,
-     not a band of a wrapping card. */
+  /* The header is the first of the three headings that cross the screen, and
+     the plate draws all three the same: 28 tall, one 25% rule under them, and
+     the title starting where the column's content starts. This one was the
+     odd one out — 30px of line box, no rule, and 2px of padding that put
+     «Resultados» eight pixels to the left of the «Aerolínea» it heads. Three
+     headings, one line: `Main.dc.html` puts the filter rail's, the list's and
+     the detail's at the same y with the same rule, and only two of them were
+     drawn that way. */
   .fd-list .fd-list-header {
+    height: 28px;
     flex-shrink: 0;
-    padding: 0 2px 9px;
+    /* 10 left, so the title stands over the row's first lane; 10 right, which
+       is the scrollbar channel `.fd-list-body` reserves, so the two boxes end
+       at the same pixel. */
+    padding: 0 10px;
+    border-bottom: 1px solid var(--color-rule);
   }
 
   .fd-detail-column {
@@ -621,13 +645,17 @@
    * Not a card: filters and detail are panels because they sit beside the
    * list; the list is the page itself. */
 
+  /* No gap: the heading's rule is the separation, exactly as it is under the
+     filter rail's and the detail's. Eight pixels of air under a rule reads as
+     a rule belonging to nothing. The phone, whose header is a status row and
+     not a heading, keeps its own gap in the `fdshell` block below. */
   .fd-list-shell {
     display: flex;
     height: 100%;
     min-width: 0;
     min-height: 0;
     flex-direction: column;
-    gap: 8px;
+    gap: 0;
     overflow: hidden;
   }
 
@@ -660,6 +688,20 @@
     letter-spacing: -0.01em;
   }
 
+  /* The count beside the title is a figure at the rung under it, not at the
+     title's own: 12 muted against «Resultados» at 14/700, which is what
+     `Main.dc.html` draws and what the phone's status row was already using.
+     The 13 it had made two headings out of one line.
+
+     The weight stays 700. The plate writes this figure at 600, but `Cifras`
+     §03 puts a counter with the hour and the code in the 700 rung — «lo que se
+     lee de un vistazo» — and 600 is the rung of what accompanies. Between a
+     surface plate and the system sheet that closes the weights, the system
+     sheet wins; the plate is what has to be corrected. */
+  .fd-list-header .fd-panel-count {
+    font-size: var(--fd-text-meta);
+  }
+
   /* What the chip strip used to say and the filter rail does not: how much the
      constraints are costing. It rides the count line on a desk, where the strip
      no longer mounts, and it is prose rather than a figure — so it takes the
@@ -668,7 +710,7 @@
     min-width: 0;
     overflow: hidden;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-base);
+    font-size: var(--fd-text-meta);
     font-weight: var(--fd-weight-label);
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1133,8 +1175,16 @@
   }
 
   .fd-list .fd-list-header {
+    height: 32px;
     padding: 0 14px;
     background: var(--color-background);
+  }
+
+  /* The desk closed this gap because there its header is a heading and the
+     rule under it is the separation. A phone's is a status row: the 8px is
+     what `Movil.dc.html` draws between the count line and the first card. */
+  .fd-list-shell {
+    gap: 8px;
   }
 
   .fd-search-stage[data-entering] .fd-filter-strip > * {
@@ -1624,13 +1674,6 @@
   .fd-list-header .fd-status-pill {
     height: 18px;
     padding-inline: 6px;
-  }
-
-  /* 04 §3: the phone count is 12/600 — one step down from the desk's 13,
-     because the status row it lives in is 32px and shares the line with the
-     order and the filter button. */
-  .fd-list-header .fd-panel-count {
-    font-size: var(--fd-text-meta);
   }
 
   /* 02 §9 and 04 §8 both put the notice at the touch height inside the
