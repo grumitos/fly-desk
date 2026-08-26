@@ -12,11 +12,16 @@ import "./result-card.css"
 /*
  * Plate 1b — the result row.
  *
- * Grid: 28 / 142 / 1fr / 36 / 116 / 26. The logo, «who flies», the two legs,
- * the baggage, the price with its per-person line, and the provider icon.
- * Baggage holds a track of its own because it is a property of the fare and not
- * of the airline; the lane it cost was taken out of «who flies», which fell from
- * 186 to 142, and not out of the result cell.
+ * Grid: 28 / 142‥170 / 359‥427 / 36 / 116‥135 / 26. The logo, «who flies», the
+ * two legs, the baggage, the price with its per-person line, and the provider
+ * icon. Baggage holds a track of its own because it is a property of the fare
+ * and not of the airline; the lane it cost was taken out of «who flies», which
+ * fell from 186 to 142, and not out of the result cell.
+ *
+ * Three of the six tracks grow with the desk, each stopping at the widest
+ * string it can be handed; what a desk has past that is spacing, split evenly
+ * between the columns rather than piled into one of them. Every number is
+ * derived in `result-card.css`.
  *
  * Same lanes, same type, same order as the card this used to be — what changed
  * is the recipient: a border, a radius and a shadow per fare became one rule

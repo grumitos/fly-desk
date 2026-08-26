@@ -1,9 +1,11 @@
 /*
  * Plate 1b — the result row, its column header, and plate 4a — its skeleton.
  *
- * The grid is 28 / 142 / 1fr / 36 / 116 / 26, and three things wear it: the
- * row, the skeleton and the header. The skeleton, because a skeleton whose
- * columns differ from the component makes every value jump when the data
+ * The grid is 28 / 142‥170 / 359‥427 / 36 / 116‥135 / 26 — three of the six
+ * lanes grow with the desk, each to the widest string it can be handed, and
+ * four of them carry an equal share of what no lane can use. Three things wear
+ * it: the row, the skeleton and the header. The skeleton, because a skeleton
+ * whose columns differ from the component makes every value jump when the data
  * lands; the header, because a lane that is not named in the same track it is
  * drawn in is not a column.
  *
@@ -20,29 +22,102 @@
   .fd-card {
     position: relative;
     display: grid;
-    /* 28 logo · 142 who flies · legs · 36 baggage · 116 price · 26 provider.
+    /* 28 logo · who flies · legs · 36 baggage · price · 26 provider.
        Baggage earns its own track between the legs and the price: it is a
        property of the fare, not of the airline, and while it lived under the
        carrier name the codeshare had nowhere to go.
 
        142, not the 132 the maqueta draws and not the 186 «who flies» carried
-       from the redesign. Only one track in this row is elastic — the legs — so
-       every fixed lane added to the row is taken out of the result cell and out
-       of nothing else, which is why «who flies» is the lane that pays for the
-       others: it holds one line of carrier name, and the widest name this
-       application can draw is «Aerolíneas Argentinas», measured against the
-       loaded face at 141px. 132 would clip it; 142 holds it unbroken, and the
-       10px the maqueta wanted come out of the fixed measure below instead.
+       from the redesign: the lane holds one line of carrier name, and the
+       widest name this application can draw is «Aerolíneas Argentinas», which
+       measures 138.86 against the painted 13/600 face — the 141 this comment
+       used to carry was measured while the name was still 13/700. 132 would
+       clip it; 142 holds it unbroken.
 
-       The five fixed lanes still sum to 348 — the logo gives 4 to the baggage,
-       which needs 36 to carry «Eq.» in the header above it — so the whole of
-       the change to the row's fixed measure is the frame coming off:
-       `348 + 5×12 gaps + 2×10 padding = 428`, against the `2×13` of padding
-       and `2×1` of border that made it 436 while it was a card. The 428 is
-       unchanged now that the right 10 of that padding has become the
-       scrollbar's channel on `.fd-list-body`: the list still spends the same
-       twenty pixels on something that is not a lane, and the elastic track is
-       still `list - 428`.
+       The floors of the six lanes sum to 707 — 28 + 142 + 359 + 36 + 116 + 26,
+       the logo having given 4 to the baggage, which needs 36 to carry «Eq.» in
+       the header above it — so `707 + 5×12 gaps + 2×10 padding = 787`, which is
+       the width at which the row is exactly full and, not by coincidence, the
+       `@container fdlist` threshold below which it stops being a desk row at
+       all. Take the legs' own 359 off it and what is left is the row's fixed
+       measure, `RESULT_ROW_FIXED_PX = 428`, against the `2×13` of padding and
+       `2×1` of border that made it 436 while it was a card. The right 10 of
+       that padding is the scrollbar's channel on `.fd-list-body` now; the list
+       still spends the same twenty pixels on something that is not a lane.
+
+       ---- what a desk wider than that does with the difference ----
+
+       Until this change exactly one track was elastic — the legs — and inside
+       it exactly one more, the stops label. So every pixel a desk had past 787
+       landed in the same place: measured on the deployed application, the stops
+       lane held 112 at 1440, 272 at 1600 and 432 from 1920 up (the list stops
+       growing at `--fd-app-max-width`), against a label that measures 75. At
+       1920 the row drew 418px of content, then 357px of nothing, then the
+       baggage, the price and the provider. `Main.dc.html` is drawn at 1440 and
+       only at 1440, where that hole is 37px and invisible, so the plate cannot
+       be copied here: it is under-specified for a wide desk, and this is the
+       derivation that replaces it.
+
+       The slack is `100% - 767px` — the content box is the list less the 10 of
+       padding and the 10 of channel, so this is `list - 787`, zero at the
+       threshold. Three lanes can use it, and they take it in the order in which
+       their own data is being cut, each stopping at the widest string it can be
+       asked to paint (every width below measured with a `Range` over the real
+       node, against the faces loaded by name — `document.fonts.status` answers
+       "loaded" before a sheet's faces have been requested at all, and a page
+       read on that alone is read in the fallback 5–7% narrow):
+
+         · the stops lane, +68 (75 → 143), and it is first because it already
+           was: it is the only lane that starts below what its own data needs,
+           and it had every pixel of the slack before this change. 75 is
+           «1 escala · BOG», the floor 02 §5 sets; the widest label the model
+           can emit is `N escalas · AAA, BBB +n` at 142.63 («9 escalas ·
+           MMM, MMM +7»), and that is where it now stops instead of going on to
+           432. Nothing it used to have is taken from it — «3 escalas · BOG,
+           PTY +1» measures 126.61 and needs a 1455 desk, before and after.
+           First in line is also what keeps `DETAIL_COLUMN_MIN_LIST_PX` true:
+           824 is 787 plus the 37 that takes this lane from 75 to the 112 of
+           «2 escalas · BOG, PTY», and it only means that if this lane is the
+           one the first 37 reach.
+         · «who flies», +28 (142 → 170). Its first line fits at 142; its second
+           does not, and it is cut on every codeshare there is: «Operado por
+           Aerolíneas Argentinas» measures 169.94 at the 10/600 the operator
+           line is painted in — the prefix is drawn by this sheet, so it is part
+           of the string and not of the data — and the operator is the one thing
+           an agent has to know before the passenger reaches the counter.
+         · the price, +19 (116 → 135), and it is last because it is the only one
+           of the three whose datum survives its lane: the figure is `nowrap`
+           with no ellipsis, so a fare wider than its track bleeds into the gap
+           instead of losing digits. 116 holds «USD 1,234.00» (115.2); 135 holds
+           «USD 123,456.78» (134.41), the widest total the formatter can be
+           handed for the nine passengers `MAX_SEARCH_PASSENGERS` allows.
+
+       Nothing else grows, because nothing else can be handed a longer string:
+       the logo and the provider are 28 and 26 of artwork, the baggage lane is
+       32 of pictogram in 36, and the leg's own three fixed lanes are measured
+       to their worst case in `.fd-card__legs` below.
+
+       ---- and what no lane can use ----
+
+       That is 115 of slack spoken for (68 + 28 + 19), and the widest list this
+       application can draw is 1144 (`--fd-app-max-width`), whose slack is 357.
+       The remaining 242 belongs to no lane: every one of them is already
+       holding the widest string it can be asked to paint, and a lane wider than
+       that is the hole this change removes rather than a lane that grew.
+
+       So it is spent as spacing, `--fd-row-share`, split four ways — one share
+       for each boundary between two *named* columns. Four and not five: the
+       mark's lane is the one the header leaves unnamed («a mark is not a column
+       of values», below), so the 12 between a carrier's mark and its name is
+       not a column gap and does not grow. Each share is carried by the lane
+       whose content is aligned away from that boundary, which is where a gap
+       would have gone anyway: «who flies» is left-aligned and carries the one
+       before «Tramo», the legs block ends in the stops label and carries the
+       one before «Eq.», the price is right-aligned and carries the one after
+       it, and the provider mark is `justify-self: end` and carries the one
+       after the price. Four equal shares of 60.5 at 1144, zero at 902 and
+       below, and the tracks and gaps then sum to the row exactly at every
+       width in between.
 
        The baggage lane is a fixed 36 and not `auto`, and the three lanes after
        the legs are placed by number below. `auto` made the row's geometry a
@@ -53,7 +128,15 @@
        comment derives, silently, for exactly those fares. A row of a list is a
        table row: its lanes are the same in every row or the columns stop being
        columns — and now that a header names them, that is not a preference. */
-    grid-template-columns: 28px minmax(0, 142px) minmax(0, 1fr) 36px 116px 26px;
+    --fd-row-slack: max(0px, 100% - 767px);
+    --fd-row-share: calc(max(0px, var(--fd-row-slack) - 115px) / 4);
+    grid-template-columns:
+      28px
+      calc(clamp(142px, calc(142px + var(--fd-row-slack) - 68px), 170px) + var(--fd-row-share))
+      calc(clamp(359px, calc(359px + var(--fd-row-slack)), 427px) + var(--fd-row-share))
+      36px
+      calc(clamp(116px, calc(116px + var(--fd-row-slack) - 96px), 135px) + var(--fd-row-share))
+      calc(26px + var(--fd-row-share));
     column-gap: 12px;
     align-items: center;
     min-width: 0;
@@ -286,6 +369,12 @@
    * Fixed lanes so the two rows align down the row and, now, down the whole
    * list: tramo 56, horario 126, duración 66, escalas elastic, gaps of 12.
    *
+   * The elastic one stays `1fr` here and is bounded from above instead: this
+   * whole block is the row's third track, which is `clamp(359px, …, 427px)`, so
+   * `1fr` resolves to 427 - 284 = 143 at the widest and 359 - 284 = 75 at the
+   * narrowest. Written as a `minmax(75px, 143px)` here it would be the same
+   * number twice, in two files, with nothing keeping them equal.
+   *
    * The lanes live on the wrapper and both rows take them with `subgrid`, so
    * the alignment is a fact of the layout rather than two grids that happen to
    * agree — and the header above the list takes the same four lanes for the
@@ -419,12 +508,14 @@
      a detail of this rule: «1 escala · BOG» measures 75 at this body and that
      75 is the floor the `@container fdlist` threshold is derived from
      (`284 + 75 + 428 = 787`), while «2 escalas · BOG, PTY» measures 112 and
-     that 112 is the margin `useShellSize.ts` gives the detail column. At 12 the
-     two labels grow by about a twelfth, both thresholds rise with them, and a
-     1440 desk — which measures exactly 824 against the 824 it needs — loses its
-     third column. A rung is worth less than that. Moving it is a re-derivation
-     of the row's geometry and belongs to a change that is willing to pay for
-     it. */
+     that 112 is the margin `useShellSize.ts` gives the detail column. The
+     ceiling of the lane is on the same rung: «9 escalas · MMM, MMM +7», the
+     widest string the model can emit, measures 142.63 and the lane stops at
+     143. At 12 all three grow by about a twelfth, both thresholds rise with the
+     first two, and a 1440 desk — which measures exactly 824 against the 824 it
+     needs — loses its third column. A rung is worth less than that. Moving it
+     is a re-derivation of the row's geometry and belongs to a change that is
+     willing to pay for it. */
   .fd-card__leg-stops {
     min-width: 0;
     overflow: hidden;

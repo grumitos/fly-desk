@@ -39,10 +39,12 @@
  * usually forgiven for and a *list of clickable rows* is not.
  *
  * So the column reserves it a lane of its own. What the lane may not do is
- * come out of the row's content: the row's elastic track is the only one that
- * gives, every pixel taken from it is taken from the stops label, and the two
- * thresholds derived from that label — 787 for the stacked anatomy and 824 for
- * the detail column — would both have to rise by the width of the channel. A
+ * come out of the row's content: at the width both thresholds are asked at,
+ * every lane of the row is on its floor and the stops label is the only thing
+ * with a pixel to give, so the two thresholds derived from it — 787 for the
+ * stacked anatomy and 824 for the detail column — would both have to rise by
+ * the width of the channel. (Wider than that the row has slack and three lanes
+ * share it, but slack is not what a threshold is made of.) A
  * 1440 desk measures **exactly 824**, with zero slack (`useShellSize.ts`), so
  * any channel charged to the row's content takes the commonest desk there is
  * off its third column. That is the number that decides this: the branch that

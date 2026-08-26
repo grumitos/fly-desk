@@ -2386,7 +2386,9 @@ test("a fare the provider said nothing about keeps the card's lanes", async () =
           const legs = card.querySelector<HTMLElement>(".fd-card__legs");
           return {
             columns: getComputedStyle(card).gridTemplateColumns,
-            legsWidth: Math.round(legs?.getBoundingClientRect().width ?? 0),
+            /* Not rounded: the legs track carries a quarter of what no lane can
+               use, and a quarter of an odd number lands on a half pixel. */
+            legsWidth: Math.round((legs?.getBoundingClientRect().width ?? 0) * 100) / 100,
             priceLeft: at(".fd-card__price"),
             providerLeft: at(".fd-card__provider"),
             baggage: Boolean(card.querySelector(".fd-card__baggage")),
@@ -2404,14 +2406,26 @@ test("a fare the provider said nothing about keeps the card's lanes", async () =
     /* And whatever the answer, the row is the same row: same tracks, same
        result cell, and the price and the provider in the same lanes.
 
-       28 where the card drew 32, and the fixed measure 428 where the card's was
-       436: the lanes still sum to 348 — the logo gave four pixels to the
-       baggage, which has a column name to carry now — and the eight that came
-       off are the card's own 13px padding and 1px border, which a row with one
-       hairline under it and 10px of padding no longer spends. */
+       28 where the card drew 32, and the row's fixed measure 428 where the
+       card's was 436: the lanes still sum to 348 at their floors — the logo
+       gave four pixels to the baggage, which has a column name to carry now —
+       and the eight that came off are the card's own 13px padding and 1px
+       border, which a row with one hairline under it and 10px of padding no
+       longer spends.
+
+       This case drives 1920, where the list is 1144: all three elastic lanes
+       are full — 170 for «who flies», 427 for the legs, 135 for the price — and
+       the 242 no lane can use is four shares of 60.5, carried by every lane but
+       the mark's and the baggage's. So the tracks are 28 / 230.5 / 487.5 / 36 /
+       195.5 / 86.5, and what that leaves the fixed measure is `1144 - 487.5 =
+       656.5`. The 428 itself is pinned where it is 428, in «the result cell
+       keeps the whole list minus the row's own 428»; what this one is for is
+       that every fare resolves to the *same* tracks whatever the provider said
+       about baggage, which is the defect it was written for. */
     for (const card of rows.cards) {
-      assert.match(card.columns, /^28px 142px /, at);
-      assert.equal(rows.listWidth - card.legsWidth, 428, at);
+      assert.equal(card.columns, rows.cards[0].columns, at);
+      assert.match(card.columns, /^28px 230\.5px 487\.5px 36px 195\.5px 86\.5px$/, at);
+      assert.equal(rows.listWidth - card.legsWidth, 656.5, at);
       assert.equal(card.priceLeft, rows.cards[0].priceLeft, at);
       assert.equal(card.providerLeft, rows.cards[0].providerLeft, at);
     }
@@ -2623,31 +2637,46 @@ test("the stops label keeps its airport code in every mode, on the narrowest pho
   }, { autoOpen: false });
 });
 
-test("the result cell keeps the whole list minus the row's own 428", async () => {
+test("the result cell keeps the whole list minus the row's own 428, and every pixel past it is somebody's", async () => {
   /*
    * «No solucionaste el cambio erróneo de ancho de celda de resultado, compara
    * con commits viejos y arréglalo — el correcto es el que tenía en el commit
    * de rediseño.»
    *
-   * Only one track of this row is elastic — the legs — so every fixed lane the
-   * row gains is taken out of the result cell and out of nothing else. The
-   * redesign's card was 32/186/1fr/116/26 with four 12px gaps, a fixed measure
-   * of `list - 436`. Giving the baggage its own lane added 32px of track and a
-   * fifth gap and charged the whole 44 to the cell: measured against the same
-   * builds, the legs track fell from 708 to 662 on a 1920 desk and from 484 to
-   * 438 on a 1536 one, and every threshold derived from it rose by the same 44.
+   * The redesign's card was 32/186/1fr/116/26 with four 12px gaps, a fixed
+   * measure of `list - 436`. Giving the baggage its own lane added 32px of
+   * track and a fifth gap and charged the whole 44 to the result cell: measured
+   * against the same builds, the legs track fell from 708 to 662 on a 1920 desk
+   * and from 484 to 438 on a 1536 one, and every threshold derived from it rose
+   * by the same 44.
    *
    * The lane is now paid for out of «who flies», which had the slack: the
    * widest carrier name this application can draw is «Aerolíneas Argentinas»,
-   * measured at 141 against a 142px lane, and it still fits unbroken.
+   * measured at 138.86 against a 142px lane — the 141 this used to say was
+   * measured while the name was still 13/700 — and it still fits unbroken.
    *
-   * 428, not 436, since the recipient stopped being a card. The five fixed
-   * lanes are unchanged in sum — 28 + 142 + 36 + 116 + 26 = 348, the logo's
-   * four pixels having moved to the baggage lane so it can carry «Eq.» in the
-   * column header — and so are the five 12px gaps. What came off is the frame:
-   * 13px of padding and a 1px border on each side became 10px of padding and
-   * no border, which is 428. The cell is *wider* than it was, by eight pixels,
-   * at every width; the two halves are still pinned together here.
+   * 428, not 436, since the recipient stopped being a card. The five lanes
+   * beside the legs are unchanged in sum at their floors — 28 + 142 + 36 + 116
+   * + 26 = 348, the logo's four pixels having moved to the baggage lane so it
+   * can carry «Eq.» in the column header — and so are the five 12px gaps. What
+   * came off is the frame: 13px of padding and a 1px border on each side became
+   * 10px of padding and no border, which is 428.
+   *
+   * What is re-derived here rather than deleted is *when* it is 428. The row
+   * used to have one elastic track, so `list - legs` was 428 at every width and
+   * the whole of a wide desk's slack piled into the stops lane — 432px of it on
+   * a 1920 desk, holding a label of 75. Three lanes share it now, in the order
+   * `result-card.css` derives, and what none of them can use is split four ways
+   * as spacing, so:
+   *
+   *   · 428 exactly for as long as nothing past the legs has grown, which
+   *     includes 787 (the row exactly full) and 1440 (the slack is 37 and the
+   *     stops lane, first in line, takes all of it);
+   *   · and past that, the identity below — `144 + carrier + price + provider`,
+   *     the 144 being the 20 of padding and channel, the logo's 28, the
+   *     baggage's 36 and the five 12px gaps, none of which grows. A pixel that
+   *     is not in the legs track is in one of those three lanes, and there is
+   *     no fourth place for one to hide.
    */
   await withDesktopPage(async ({ baseUrl, page }) => {
     await routeCompletedSearch(page, {
@@ -2658,7 +2687,11 @@ test("the result cell keeps the whole list minus the row's own 428", async () =>
     await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
     await page.getByTestId("result-card").first().waitFor();
 
-    for (const [width, height] of [[1920, 1080], [1920, 911], [1536, 864], [1366, 768]]) {
+    /* 1077 is the narrowest desk row there is: armazón B, no detail column, and
+       a list of exactly 787 — the width at which every elastic lane sits on its
+       floor. 1366 has no detail column either, so its list is 1076 and not the
+       750 the subtraction would give. */
+    for (const [width, height] of [[1077, 900], [1440, 900], [1920, 1080], [1920, 911], [1536, 864], [1366, 768]]) {
       await page.setViewportSize({ width, height });
       await page.waitForTimeout(320);
       const cell = await page.evaluate(() => {
@@ -2666,10 +2699,20 @@ test("the result cell keeps the whole list minus the row's own 428", async () =>
         const list = document.querySelector<HTMLElement>(".fd-list");
         const legs = card?.querySelector<HTMLElement>(".fd-card__legs");
         const name = card?.querySelector<HTMLElement>(".fd-card__carrier-name");
-        if (!card || !list || !legs || !name) return null;
+        const logo = card?.querySelector<HTMLElement>(".fd-card__logo");
+        const carrier = card?.querySelector<HTMLElement>(".fd-card__carrier");
+        const price = card?.querySelector<HTMLElement>(".fd-card__price");
+        if (!card || !list || !legs || !name || !logo || !carrier || !price) return null;
+        const tracks = getComputedStyle(card).gridTemplateColumns.split(" ").map(Number.parseFloat);
         return {
           listWidth: list.clientWidth,
-          legsWidth: Math.round(legs.getBoundingClientRect().width),
+          legsWidth: Math.round(legs.getBoundingClientRect().width * 100) / 100,
+          carrierLane: tracks[1] ?? Number.NaN,
+          priceLane: tracks[4] ?? Number.NaN,
+          providerLane: tracks[5] ?? Number.NaN,
+          /* The gap between the mark and the name it names, which is the one
+             boundary in this row that never grows. */
+          gap: Math.round((carrier.getBoundingClientRect().left - logo.getBoundingClientRect().right) * 100) / 100,
           nameLane: Math.round(name.getBoundingClientRect().width),
           nameNeeds: name.scrollWidth,
           name: (name.textContent ?? "").trim(),
@@ -2678,12 +2721,192 @@ test("the result cell keeps the whole list minus the row's own 428", async () =>
       assert.ok(cell, `missing card metrics at ${width}`);
       const at = `${width}x${height}: ${JSON.stringify(cell)}`;
 
-      /* The row's fixed measure, and the whole point of the change: 428, and
-         not the 480 the standalone baggage lane once made of it. */
-      assert.equal(cell.listWidth - cell.legsWidth, 428, at);
-      /* And the lane that paid for it still says the whole name. */
+      /* The row's fixed measure, and the whole point of the change it was
+         written for: 428, and not the 480 the standalone baggage lane once made
+         of it. It reads 428 for as long as the lanes past the legs are on their
+         floors, which is every desk up to 1518. */
+      if (cell.carrierLane === 142 && cell.priceLane === 116) {
+        assert.equal(cell.listWidth - cell.legsWidth, 428, at);
+        assert.equal(cell.providerLane, 26, at);
+      }
+      /* And wherever they are not, the difference is exactly theirs. */
+      assert.ok(
+        Math.abs((cell.listWidth - cell.legsWidth) - (144 + cell.carrierLane + cell.priceLane + cell.providerLane)) <= 0.5,
+        at,
+      );
+      /* The mark and the name it names are one datum and the header names them
+         once, so the 12 between them is not a column gap and never grows. */
+      assert.equal(cell.gap, 12, at);
+      /* And the lane that paid for the baggage still says the whole name. */
       assert.equal(cell.name, "Aerolíneas Argentinas", at);
       assert.ok(cell.nameNeeds <= cell.nameLane, at);
+    }
+  }, { autoOpen: false });
+});
+
+/*
+ * What nothing asserted, and what let a row that heaps its slack in one lane
+ * reach production: that a lane grows because its own data can be longer.
+ *
+ * The row had one elastic track and, inside it, one more — so a desk wider than
+ * 1440 put every pixel it had into the stops label's lane, which does not want
+ * them: measured on the deployed application the lane held 112 at 1440, 272 at
+ * 1600 and 432 from 1920 up, against «1 escala · BOG» at 75. The row drew 418px
+ * of content, then 357px of nothing, then the fare.
+ *
+ * Three lanes can use slack and each stops at the widest string it can be
+ * handed. Those three widths are measured here rather than written down —
+ * `Range` over a probe hung inside the real node, so it inherits the family,
+ * the body, the weight and the tracking of the element that paints the datum —
+ * and the rule this case pins is the one the defect broke: no lane is ever
+ * wider than what its own data can fill, at any width a desk can be.
+ */
+test("the row's slack goes to the lanes whose data can use it, and no lane takes more than that", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeCompletedSearch(page, {
+      offers: [oneStopOffer(1, {
+        id: "slack-codeshare",
+        itineraries: oneStopOffer(1).itineraries.map((leg) => ({
+          ...leg,
+          segments: leg.segments.map((segment) => ({
+            ...segment,
+            marketingCarrierName: "Iberia",
+            operatingCarrier: "4O",
+            operatingCarrierName: "Level",
+          })),
+        })),
+      }), oneStopOffer(2)],
+    });
+    await page.setViewportSize({ width: 1920, height: 1000 });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await waitForFontsReady(page);
+
+    /* `document.fonts.status` answers "loaded" before a sheet's faces have been
+       requested at all (docs/REDESIGN_CONTRACT.md), so the page above may still
+       be painted in the fallback and every width below would come out 5–7%
+       narrow. Ask for the faces by name and wait until Inter stops measuring
+       the same string as `system-ui`. */
+    const faces = await page.evaluate(async () => {
+      const probe = document.createElement("span");
+      probe.style.cssText = "position:absolute;top:-4000px;left:0;white-space:pre;font-size:13px;font-weight:600;";
+      probe.textContent = "Aerolineas Argentinas";
+      document.body.appendChild(probe);
+      const widthWith = (family: string) => {
+        probe.style.fontFamily = family;
+        const range = document.createRange();
+        range.selectNodeContents(probe);
+        return range.getBoundingClientRect().width;
+      };
+      const deadline = Date.now() + 15_000;
+      let inter = 0;
+      let system = 0;
+      for (;;) {
+        await Promise.all([
+          document.fonts.load('600 13px "Inter"', "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz").catch(() => undefined),
+          document.fonts.load('600 10px "Inter"', "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz").catch(() => undefined),
+          document.fonts.load('700 16px "IBM Plex Mono"', "0123456789USD,.").catch(() => undefined),
+        ]);
+        inter = widthWith("Inter");
+        system = widthWith("system-ui");
+        if (Math.abs(inter - system) > 0.5) break;
+        if (Date.now() > deadline) break;
+        await new Promise((settle) => setTimeout(settle, 100));
+      }
+      probe.remove();
+      return { inter, system };
+    });
+    assert.ok(
+      Math.abs(faces.inter - faces.system) > 0.5,
+      `Inter never separated from system-ui (${JSON.stringify(faces)}): the widths below would be the fallback's`,
+    );
+
+    /* The widest string each elastic lane can be asked to paint.
+       · «who flies» carries two lines and the second is the long one: the
+         prefix «Operado por » is drawn by the sheet, so it is measured here as
+         part of the string rather than read off `textContent`.
+       · the stops label is `N escalas · AAA, BBB +n`, every part of it bounded:
+         one digit, two three-letter codes, one more digit.
+       · the price is `USD` and the widest total nine passengers can be quoted.
+    */
+    const ceilings = await page.evaluate(() => {
+      const inkIn = (selector: string, text: string) => {
+        const node = document.querySelector<HTMLElement>(selector);
+        if (!node) return null;
+        const probe = document.createElement("span");
+        probe.style.cssText = "position:absolute;top:-4000px;left:0;white-space:pre;";
+        probe.textContent = text;
+        node.appendChild(probe);
+        const range = document.createRange();
+        range.selectNodeContents(probe);
+        const width = Math.round(range.getBoundingClientRect().width * 100) / 100;
+        probe.remove();
+        return width;
+      };
+      return {
+        carrier: inkIn(".fd-card:not(.fd-card--head) .fd-card__carrier-operator", "Operado por Aerolíneas Argentinas"),
+        stops: inkIn(".fd-card:not(.fd-card--head) .fd-card__leg-stops", "9 escalas · MMM, MMM +7"),
+        price: inkIn(".fd-card:not(.fd-card--head) .fd-card__price-figure", "USD 123,456.78"),
+      };
+    });
+    const at0 = JSON.stringify(ceilings);
+    assert.ok(ceilings.carrier && ceilings.stops && ceilings.price, at0);
+    /* The three numbers `result-card.css` derives its ceilings from. Asserted
+       here so a type change that moves them fails on the derivation rather than
+       silently leaving a lane too short or too long. */
+    assert.ok(Math.abs(ceilings.carrier! - 169.94) <= 1, at0);
+    assert.ok(Math.abs(ceilings.stops! - 142.63) <= 1, at0);
+    assert.ok(Math.abs(ceilings.price! - 134.41) <= 1, at0);
+
+    for (const width of [1077, 1440, 1600, 1920, 2560]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.waitForTimeout(320);
+      const row = await page.evaluate(() => {
+        const card = document.querySelector<HTMLElement>("[data-testid='result-card']")!;
+        const list = document.querySelector<HTMLElement>(".fd-list")!;
+        const logo = card.querySelector<HTMLElement>(".fd-card__logo")!;
+        const carrier = card.querySelector<HTMLElement>(".fd-card__carrier")!;
+        const tracks = getComputedStyle(card).gridTemplateColumns.split(" ").map(Number.parseFloat);
+        const legTracks = getComputedStyle(card.querySelector<HTMLElement>(".fd-card__legs")!)
+          .gridTemplateColumns.split(" ").map(Number.parseFloat);
+        return {
+          list: list.clientWidth,
+          carrierLane: tracks[1] ?? Number.NaN,
+          priceLane: tracks[4] ?? Number.NaN,
+          providerLane: tracks[5] ?? Number.NaN,
+          stopsLane: legTracks[3] ?? Number.NaN,
+          markGap: Math.round((carrier.getBoundingClientRect().left - logo.getBoundingClientRect().right) * 100) / 100,
+        };
+      });
+      const at = `${width}: ${JSON.stringify(row)}`;
+
+      /* The order `result-card.css` derives: the stops lane is starved at its
+         floor and goes first, «who flies» loses its second line on every
+         codeshare and goes next, and the price — which bleeds into the gap
+         rather than losing digits — goes last. 68 + 28 + 19 = 115, and what is
+         left after that is not a lane's: it is four equal shares of spacing,
+         one for each boundary between two named columns. */
+      const slack = Math.max(0, row.list - 787);
+      const grown = (floor: number, taken: number, headroom: number) =>
+        floor + Math.min(Math.max(slack - taken, 0), headroom);
+      const share = Math.max(0, slack - 115) / 4;
+      assert.ok(Math.abs(row.stopsLane - (grown(75, 0, 68) + share)) <= 0.5, at);
+      assert.ok(Math.abs(row.carrierLane - (grown(142, 68, 28) + share)) <= 0.5, at);
+      assert.ok(Math.abs(row.priceLane - (grown(116, 96, 19) + share)) <= 0.5, at);
+      assert.ok(Math.abs(row.providerLane - (26 + share)) <= 0.5, at);
+
+      /* Which is the defect stated as a measurement: no lane holds more than
+         the widest thing it can be asked to paint, plus the one share of
+         spacing every other column is holding too. Before this, the stops lane
+         held 432 of a label that measures 75 while «who flies» held 142 of a
+         line that needs 170. */
+      assert.ok(row.stopsLane - share <= ceilings.stops! + 1, at);
+      assert.ok(row.carrierLane - share <= ceilings.carrier! + 1, at);
+      assert.ok(row.priceLane - share <= ceilings.price! + 1, at);
+
+      /* And the mark keeps its 12: the header leaves its lane unnamed, so the
+         space between a carrier's mark and its name is not a column gap. */
+      assert.equal(row.markGap, 12, at);
     }
   }, { autoOpen: false });
 });
