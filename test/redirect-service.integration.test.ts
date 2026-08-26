@@ -1,6 +1,6 @@
 import { spyOn, test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -13,6 +13,7 @@ import {
   resetCostamarWarmupStateForTests,
   setCostamarWarmupGeneratorForTests,
 } from "../src/local-costamar";
+import { removeTempRoot } from "./helpers/temp";
 
 function buildJwt(payload: Record<string, unknown>): string {
   const encode = (value: Record<string, unknown>) => Buffer.from(JSON.stringify(value))
@@ -183,7 +184,7 @@ async function withTempDb<T>(run: (dbPath: string) => Promise<T> | T): Promise<T
   try {
     return await run(dbPath);
   } finally {
-    rmSync(tempRoot, { recursive: true, force: true });
+    removeTempRoot(tempRoot);
   }
 }
 

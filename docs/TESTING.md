@@ -6,12 +6,39 @@ Fly Desk separates tests by the resources they consume and the type of contract 
 
 - `bun run test:unit`: pure logic and small contracts, without external processes.
 - `bun run test:integration`: HTTP, SQLite, filesystem, workers, and controlled providers.
-- `bun run test:core`: unit and integration tests in a single Bun run.
+- `bun run test:core`: unit and integration tests in one `bun test --parallel` run.
 - `bun run test:ui`: React flows in Chromium against the local build.
 - `bun run test:coverage`: coverage for the Bun suites. Browser coverage is not included in this report.
 - `bun run test`: complete core and UI gate.
 
 Bun test files must end in `.unit.test.ts` or `.integration.test.ts`; the scripts pass those suffixes directly to `bun test`.
+
+## Core Suite Parallelism
+
+`test:core` runs `bun test --parallel`: one worker process per core, one test file
+at a time inside each. `--parallel` implies `--isolate`, so a file gets a fresh
+global and module registry and cannot be reached by another file's leftovers —
+which is a stronger guarantee than the single shared process the suite used to
+run in, not a weaker one. Nothing in the suite binds a fixed port
+(`test/helpers/server.ts` asks for port 0) and every temporary directory comes
+from `mkdtempSync`, so files do not compete for names.
+
+Two things it did surface, both now fixed rather than worked around:
+
+- Deleting a temp directory that just held an open `bun:sqlite` database answers
+  `EBUSY` on Windows for a few milliseconds. That was an occasional flake in
+  `redirect-service.integration`; a busy machine made it a failure on every run.
+  `test/helpers/temp.ts` waits it out — use `removeTempRoot()` for any temp root
+  with a database in it, never a bare `rmSync`.
+- What `--parallel` cannot do is beat its slowest file, and this suite is nearly
+  one file long: `http-router.integration.test.ts` is 84 tests and about 120s of
+  a ~145s sequential run, because 46 of them stand up a server of their own.
+  Splitting that file is what would make the rest of the parallelism visible.
+
+Do **not** add `--concurrent`. It runs the tests inside a file at the same time,
+and it ignores the per-test `{ concurrency: false }` option some tests here carry
+— Bun 1.4 accepts that option and does nothing with it, so it protects nothing.
+Measured on `http-router.integration.test.ts`, `--concurrent` fails 14 of 84.
 
 ## UI Suite
 

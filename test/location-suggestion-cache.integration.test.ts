@@ -1,6 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -10,6 +10,7 @@ import {
   LOCATION_SUGGESTION_CACHE_MAX_QUERY_CHARS,
   LOCATION_SUGGESTION_CACHE_TTL_MS,
 } from "../src/location-suggestion-cache";
+import { removeTempRoot } from "./helpers/temp";
 
 test("location suggestion cache remains the seven-day autocomplete exception", () => {
   assert.equal(LOCATION_SUGGESTION_CACHE_TTL_MS, 7 * 24 * 60 * 60 * 1000);
@@ -165,7 +166,7 @@ test("location suggestion cache survives process-like restarts when persisted", 
 
   first.close();
   second.close();
-  rmSync(tempRoot, { recursive: true, force: true });
+  removeTempRoot(tempRoot);
 });
 
 test("location suggestion cache keeps valid persisted entries while reloading expired ones", async () => {
@@ -214,5 +215,5 @@ test("location suggestion cache keeps valid persisted entries while reloading ex
 
   bootstrap.close();
   cache.close();
-  rmSync(tempRoot, { recursive: true, force: true });
+  removeTempRoot(tempRoot);
 });
