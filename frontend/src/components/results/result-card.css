@@ -577,9 +577,11 @@
     background: color-mix(in srgb, var(--color-primary) 8%, transparent);
   }
 
+  /* 11, the monospace's own rung and the plate's: a departure time inside a
+     26px chip, one step under the 12 of a schedule on the row itself. */
   .fd-card__alt-time {
     font-family: var(--font-mono);
-    font-size: var(--fd-text-meta);
+    font-size: var(--fd-text-mono-meta);
     font-weight: var(--fd-weight-title);
     font-variant-numeric: tabular-nums;
   }

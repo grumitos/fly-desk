@@ -326,6 +326,12 @@
      10px active — the plates give it a slightly tighter foot than flanks
      because the list already ends in a rule. The sides never change with the
      viewport; the armazón does that, and it does it by container query. */
+  /* The stage's own rhythm, from the plate: 12 under the title bar, 10 between
+     the form and the workspace, 16 to the bottom edge. It was 8 · 8 · 10, so
+     the form sat closer to the bar than the results sat to the form and the
+     screen ended tighter than it began — three spacings the drawing takes
+     apart on purpose. The idle screen and the phone override all three below;
+     this is the active desk. */
   .fd-search-stage {
     position: relative;
     display: flex;
@@ -335,9 +341,9 @@
     max-width: var(--fd-app-max-width);
     min-height: 0;
     margin-inline: auto;
-    padding: 8px 16px 10px;
+    padding: 12px 16px 16px;
     box-sizing: border-box;
-    gap: 8px;
+    gap: 10px;
   }
 
   /* Plate 1a: idle is a flex column — a `1fr` spacer, the 1180px form column, a
