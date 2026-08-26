@@ -2663,6 +2663,129 @@ test("the stops label keeps its airport code in every mode, on the narrowest pho
   }, { autoOpen: false });
 });
 
+test("the stacked row wears the lanes and the baselines MovilCompacta draws", async () => {
+  /*
+   * The phone had no geometry case of its own, and that is why its anatomy
+   * drifted while the desk was brought to the plates: every number below was
+   * measured against `MovilCompacta.dc.html` opened at the same width, and
+   * four of them disagreed.
+   *
+   *   · the card centred its first row where the plate starts it, so the 24px
+   *     mark sat 4.5px below the airline it belongs to and moved again with
+   *     every fare that had no per-person line;
+   *   · the airline, the operator and the fare figure were set on three
+   *     different lines (17.5, 15 and 19.2) where the plate sets all three on
+   *     one line of 20;
+   *   · the baggage pair, which rides the airline's line here, was centred in
+   *     the whole row instead;
+   *   · a grouped card took the desk's `minmax(52px, auto)` fare band, which
+   *     is a desk number: it put the airline 29.25px down from the card's edge
+   *     while the plain card beside it had it at 11.
+   *
+   * 360 is the common Android and the width every phone rule in this file is
+   * sized against; 390 is the QA viewport.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const grouped = Array.from({ length: 4 }, (_, index) => oneStopOffer(index, { id: `grp-${index}` }));
+    const plain = Array.from({ length: 6 }, (_, index) => oneStopOffer(index + 10, { id: `plain-${index}` }));
+    /* One codeshare, because the operator's line is one of the three the plate
+       sets on a single 20px line and no other fixture in this file draws it. */
+    const codeshare = oneStopOffer(20, { id: "codeshare" });
+    codeshare.itineraries[0].segments[0].marketingCarrierName = "LATAM";
+    codeshare.itineraries[0].segments[0].operatingCarrier = "IB";
+    codeshare.itineraries[0].segments[0].operatingCarrierName = "Level";
+    await routeCompletedSearch(page, {
+      offers: [...grouped, codeshare, ...plain],
+      scheduleGroups: [{
+        id: "agil-local:FILL",
+        providerSource: "agil-local",
+        outboundOptions: [{ id: "fill-out", itinerary: grouped[0].itineraries[0] }],
+        inboundOptions: grouped.map((offer, index) => ({ id: `fill-in-${index}`, itinerary: offer.itineraries[1] })),
+        combinations: grouped.map((offer, index) => ({
+          outboundOptionId: "fill-out",
+          inboundOptionId: `fill-in-${index}`,
+          offerId: offer.id,
+        })),
+        truncated: true,
+      }],
+    });
+    await page.setViewportSize({ width: 360, height: 800 });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+
+    for (const width of [360, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.waitForTimeout(320);
+
+      const row = await page.evaluate(() => {
+        const cards = Array.from(document.querySelectorAll<HTMLElement>("[data-testid='result-card']"));
+        const card = cards.find((node) => !node.querySelector(".fd-card__alts"));
+        const grouped = cards.find((node) => node.querySelector(".fd-card__alts"));
+        if (!card || !grouped) return null;
+        const top = (node: Element | null) => (node ? +node.getBoundingClientRect().top.toFixed(2) : -1);
+        const middle = (node: Element | null) => {
+          if (!node) return -1;
+          const box = node.getBoundingClientRect();
+          return +(box.top + box.height / 2).toFixed(2);
+        };
+        const style = (selector: string, property: string) => {
+          const node = card.querySelector<HTMLElement>(selector);
+          return node ? getComputedStyle(node).getPropertyValue(property) : "";
+        };
+        const operator = document.querySelector<HTMLElement>(".fd-card__carrier-operator");
+        const legs = card.querySelector<HTMLElement>(".fd-card__legs")!;
+        const name = card.querySelector<HTMLElement>(".fd-card__carrier-name")!;
+        return {
+          lanes: getComputedStyle(card).gridTemplateColumns,
+          legLanes: getComputedStyle(legs).gridTemplateColumns,
+          legGap: getComputedStyle(legs).columnGap,
+          /* The filete that replaced the plinth, which `Deriva.dc.html` draws
+             on this surface because 360px has nowhere to put a header. */
+          fileteBorder: getComputedStyle(legs).borderTopWidth,
+          filetePad: getComputedStyle(legs).paddingTop,
+          markTop: top(card.querySelector(".fd-card__logo")),
+          nameTop: top(name),
+          priceTop: top(card.querySelector(".fd-card__price")),
+          nameLine: getComputedStyle(name).lineHeight,
+          figureLine: style(".fd-card__price-figure", "line-height"),
+          operatorLine: operator ? getComputedStyle(operator).lineHeight : "",
+          bagsMiddle: middle(card.querySelector(".fd-card__baggage")),
+          nameMiddle: middle(name),
+          /* A grouped row is a fare row plus a strip; its fare row is the same
+             fare row. */
+          plainFirstRow: top(card.querySelector(".fd-card__legs")) - top(card),
+          groupedFirstRow: top(grouped.querySelector(".fd-card__legs")) - top(grouped),
+        };
+      });
+
+      assert.ok(row, `missing stacked metrics at ${width}`);
+      const at = `${width}: ${JSON.stringify(row)}`;
+
+      // 24 of mark, the elastic name, the pair's fixed 32 and the price.
+      assert.match(row.lanes, /^24px [\d.]+px 32px [\d.]+px$/, at);
+      assert.match(row.legLanes, /^22px 120px 60px [\d.]+px$/, at);
+      assert.equal(row.legGap, "4px", at);
+      assert.equal(row.fileteBorder, "1px", at);
+      assert.equal(row.filetePad, "8px", at);
+
+      // One top edge for the mark, the airline and the fare.
+      assert.equal(row.markTop, row.nameTop, at);
+      assert.equal(row.priceTop, row.nameTop, at);
+
+      // One line for the three values the plate sets on one line.
+      assert.equal(row.nameLine, "20px", at);
+      assert.equal(row.figureLine, "20px", at);
+      assert.equal(row.operatorLine, "20px", at);
+
+      // And the pair rides that line rather than the middle of the row.
+      assert.ok(Math.abs(row.bagsMiddle - row.nameMiddle) < 0.51, at);
+
+      // The desk's 52px fare band does not reach this surface.
+      assert.equal(row.groupedFirstRow, row.plainFirstRow, at);
+    }
+  }, { autoOpen: false });
+});
+
 test("the result cell keeps the whole list minus the row's own 428, and every pixel past it is somebody's", async () => {
   /*
    * «No solucionaste el cambio erróneo de ancho de celda de resultado, compara
