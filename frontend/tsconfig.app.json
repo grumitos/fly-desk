@@ -6,8 +6,24 @@
     "module": "esnext",
     "types": [],
     "skipLibCheck": true,
+    /* `lucide-react` is the one dependency whose types come from a separate
+       `@types` package it never declares, so nothing links `@types/react`
+       next to it and TypeScript can only find React's types by walking up
+       from wherever the package physically sits. That walk leaves the project
+       under any install layout that keeps packages outside it, and React's
+       runtime package carries no types of its own: `LucideProps` then quietly
+       loses everything `SVGProps` gave it. Naming the types here answers the
+       question once, for every layout, instead of relying on where the
+       installer happened to put the files. Both spellings are listed because
+       a workspace dependency lands in `frontend/node_modules` when it is
+       linked and in the root one when it is hoisted.
+
+       This belongs to the type check alone. The bundler reads
+       `frontend/tsconfig.json`, which deliberately does not carry it: `react`
+       must keep resolving to the package that has the code in it. */
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "react": ["./node_modules/@types/react", "../node_modules/@types/react"]
     },
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
