@@ -2019,6 +2019,32 @@ test("the open list of schedules takes the click over every card it covers", asy
     assert.equal(hitMetrics.hitReachesCardBottom, false, JSON.stringify(hitMetrics));
     assert.equal(hitMetrics.stripGroundSelects, false, JSON.stringify(hitMetrics));
 
+    /*
+     * And the fare band it covers has to be that same 52, which is the half the
+     * hit could not assert about itself. `min-height` belongs to the whole row,
+     * so a strip carrying the content past 52 stopped it binding: the band
+     * collapsed onto the legs block and `align-items: center` had nothing left
+     * to centre, putting the offer against the top rule with none of the air a
+     * plain row is centred in — cropped, and only at the top. Compared against
+     * a plain row rather than against a number, because what has to match is
+     * the two rows, not a constant either of them happens to have today.
+     */
+    const bandAir = await page.evaluate(() => {
+      const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-testid='result-card']"));
+      const air = (row: HTMLElement | undefined) => {
+        const legs = row?.querySelector<HTMLElement>(".fd-card__legs");
+        if (!row || !legs) return null;
+        return Math.round(legs.getBoundingClientRect().top - row.getBoundingClientRect().top);
+      };
+      return {
+        plain: air(rows.find((row) => !row.querySelector(".fd-card__alts"))),
+        grouped: air(rows.find((row) => row.querySelector(".fd-card__alts"))),
+      };
+    });
+    assert.ok(bandAir.plain !== null && bandAir.grouped !== null, JSON.stringify(bandAir));
+    assert.ok(bandAir.plain > 0, `a plain row centres its offer: ${JSON.stringify(bandAir)}`);
+    assert.equal(bandAir.grouped, bandAir.plain, JSON.stringify(bandAir));
+
     /* Nine alternates to the schedule on the card, and as many chips on the
        strip as its measured width holds — three was a constant, and on a desk
        this wide it drew half of what fitted while «+n» counted the rest as if

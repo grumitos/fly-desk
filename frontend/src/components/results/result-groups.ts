@@ -226,25 +226,29 @@ export function resultListItemContainsOffer(item: ResultListItem, offerId: strin
  * one row and part of another — regardless of how many alternatives it holds,
  * because the strip scrolls sideways instead of growing.
  *
- * A row that carries the strip has no vertical padding to give back — the row
- * never had any — so it is the fare row plus the strip. Measured in the running
- * app, the two grid rows are 38 and 45: 38 is the legs block, the tallest thing
- * on a fare row and the reason a group row is shorter than the 52 a plain one
- * is held at; 45 is the strip's 8px of margin plus its own 37 (a 1px rule, 8
- * above the chips, the 26px chip, 2 below it). With the row's hairline that is
- * 84 against the plain row's 52, and with the list's gap now 0 a slot is 52 and
- * a group is 84, which is 1.62.
+ * A row that carries the strip is the fare row plus the strip, and its two grid
+ * rows are now 52 and 45. 52 because the fare band is a fare row: the row's
+ * `min-height` belongs to the whole row and stopped binding the moment the
+ * strip carried the content past it, so the band used to collapse to the legs
+ * block — 38 with the tallest leg pair, 26 with two plain ones — and the offer
+ * sat against the top rule with none of the air a plain row centres it in.
+ * `result-card.css` names the track instead (`minmax(52px, auto)`), which is
+ * also what the hit area has claimed all along. 45 is the strip's 8px of margin
+ * plus its own 37 (a 1px rule, 8 above the chips, the 26px chip, 2 below it).
+ * With the row's hairline that is 98 against the plain row's 52, and with the
+ * list's gap now 0 a slot is 52 and a group is 98, which is 1.88.
  *
- * It was 1.67 (107 over 64) while the row was a 58px card with a 6px gap under
- * it. Left alone, the column would have been measured with a group counted 3%
- * heavier than it is, and a list that opens on a measured number opens short.
+ * It was 1.62 (84 over 52) while the fare band collapsed, and 1.67 (107 over
+ * 64) while the row was a 58px card with a 6px gap under it. Left alone at
+ * either number the column would be measured with a group counted lighter than
+ * it is, and a list that opens on a measured number opens short.
  *
  * Exported because `ResultsPanel` divides a measured row height by the same
  * number to recover the plain-row unit from a column that holds nothing but
  * groups. It restated the literal instead, which left the two one edit apart
  * from disagreeing about what a group costs.
  */
-export const RESULT_GROUP_CARD_WEIGHT = 1.62
+export const RESULT_GROUP_CARD_WEIGHT = 1.88
 
 /* Module-private: the window below is the only thing that weighs an item now.
    It was exported for the paginator, which is gone. */
