@@ -1354,10 +1354,11 @@
     /* 04 §7 sobre el dibujo de 4a: los 82px que salen de la lámina móvil son
        emergentes de dibujar bloques de 10 donde el texto ocupa 16, no una
        altura decidida. Aquí la tarjeta no tiene alto fijo que absorba la
-       diferencia —lo tiene el escritorio, con sus 58—, así que la fila de
-       tramo recupera la interlínea del componente real y la fila deja de
-       encoger 12px al llegar el dato. Los bloques siguen midiendo 10, 8 y 12
-       como los dibuja 4a. */
+       diferencia —lo tiene el escritorio, con su `min-height` de 52—, así que
+       la fila de tramo recupera la interlínea del componente real y la fila
+       deja de encoger 12px al llegar el dato. Los bloques siguen midiendo 10,
+       8 y 12 como los dibuja 4a. (Decía 58: el alto que la fila tenía mientras
+       era tarjeta, y que `.fd-card` jubila al principio de esta misma hoja.) */
     .fd-card--skeleton .fd-card__leg {
       min-height: 16px;
     }

@@ -6,9 +6,15 @@
  * There are four stylesheets in this project and only one of them really
  * wins. `design-system.css`, `components.css` and the bulk of `index.css` live
  * in `@layer base` / `@layer utilities` — there is no `@layer components` —
- * and from line 1011 `index.css` stops being in a layer at all and outranks
- * everything above it however specific that is. A new rule written inside
- * `@layer utilities` can sit there inert without saying so.
+ * and where `index.css` closes its `@layer utilities` block, everything left in
+ * the file (the `@container fdshell` armazones and all that follows them) is
+ * unlayered and outranks everything above it however specific that is. A new
+ * rule written inside `@layer utilities` can sit there inert without saying so.
+ *
+ * That boundary used to be named here by line number. It was right when it was
+ * written and wrong by a hundred and twenty lines two changes later, which is
+ * worse than not saying it: a reader who goes to the line lands inside the
+ * layer and concludes the opposite. The block it closes is what does not move.
  *
  * This sheet enters no layer: unlayered beats every layer, so these rules sit
  * at the same level as the tail of `index.css` and resolve by specificity like
