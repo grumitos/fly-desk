@@ -42,10 +42,18 @@ const DETAIL_COLUMN_PX = 316
 const RESULTS_COLUMN_GAP_PX = 10
 
 /*
- * The row's fixed measure — everything in it that is not the elastic legs
- * track. 28 + 142 + 36 + 116 + 26 of lanes, five 12px gaps and the row's own
- * 10px of padding on each side: 428. It was 436 while the row was a card, whose
- * 13px padding and 1px border it also had to carry.
+ * The row's fixed measure — everything the list spends that is not the elastic
+ * legs track. 28 + 142 + 36 + 116 + 26 of lanes, five 12px gaps, and 10px on
+ * each side of the row: 428. It was 436 while the row was a card, whose 13px
+ * padding and 1px border it also had to carry.
+ *
+ * The two tens are no longer the same kind of thing, and it does not change the
+ * sum: the left one is still the row's padding, the right one is the drawn
+ * scrollbar's channel, reserved on `.fd-list-body` so the header reserves it
+ * with the rows. The row gave up its right padding to pay for it, so the number
+ * here, the `@container fdlist` threshold and every lane's position are
+ * untouched — which is the reason the channel is ten and not the fourteen the
+ * bar was drawn at. See `results-scrollbar.css`.
  */
 const RESULT_ROW_FIXED_PX = 428
 

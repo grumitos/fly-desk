@@ -50,7 +50,16 @@ export function QuotationPastePreview({
           <span className="fd-type-micro">Búsqueda reconstruida</span>
           <span className="fd-paste-read-count">
             <AppIcon name="check" size={12} />
-            {readCount} de {fields.length} campos leídos
+            {/* The two figures are the system's counter and the rest is prose.
+                The sentence stays inside one element rather than becoming four
+                children of the badge: the badge is `inline-flex`, so every
+                child of it is separated by its 5px gap, and a sentence laid out
+                by the gap that holds an icon off its label is not a sentence
+                any more. */}
+            <span>
+              <span className="fd-count">{readCount}</span> de{" "}
+              <span className="fd-count">{fields.length}</span> campos leídos
+            </span>
           </span>
         </div>
 

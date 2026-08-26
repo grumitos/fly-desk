@@ -246,7 +246,18 @@ function ResultsPanelBase({
           {sweep && sweep.searching > 0 && (
             <span className="fd-status-pill">
               <Spinner size={12} />
-              {sweep.searching} buscando
+              {/* A mixed value splits: the figure is the system's counter and
+                  the rest is prose, which has no reason to move into the
+                  monospace just for sharing a pill with a number.
+
+                  The phrase stays inside one element. The pill is
+                  `inline-flex`, so a figure and a noun left as two children of
+                  it become two flex items and the literal space between them is
+                  dropped — 4px of gap would still draw them apart, and the pill
+                  would read «1buscando» to anything that takes its text. */}
+              <span>
+                <span className="fd-count">{sweep.searching}</span> buscando
+              </span>
             </span>
           )}
           {isPartial && !sweep && (

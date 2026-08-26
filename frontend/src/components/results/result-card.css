@@ -38,7 +38,11 @@
        which needs 36 to carry «Eq.» in the header above it — so the whole of
        the change to the row's fixed measure is the frame coming off:
        `348 + 5×12 gaps + 2×10 padding = 428`, against the `2×13` of padding
-       and `2×1` of border that made it 436 while it was a card.
+       and `2×1` of border that made it 436 while it was a card. The 428 is
+       unchanged now that the right 10 of that padding has become the
+       scrollbar's channel on `.fd-list-body`: the list still spends the same
+       twenty pixels on something that is not a lane, and the elastic track is
+       still `list - 428`.
 
        The baggage lane is a fixed 36 and not `auto`, and the three lanes after
        the legs are placed by number below. `auto` made the row's geometry a
@@ -56,9 +60,18 @@
     /* Plate 1b: 52 tall, and the padding is horizontal only — the row centres
        itself in the 52. 58 was the card, whose border and 13px padding were
        part of the height; 52 with one hairline under it puts twelve fares on a
-       1440×900 desk where ten fitted. */
+       1440×900 desk where ten fitted.
+
+       Left only. The 10px that used to sit on the right is the list's
+       scrollbar channel now (`results-scrollbar.css`), reserved on
+       `.fd-list-body` so the header reserves it too. The row's border box
+       shrinks by exactly the padding it gave up, so every lane in it is at the
+       same pixel it was at and the fixed measure below is the same 428 — ten
+       of which is the channel instead of this padding. What moves is the row's
+       own rule and its hover fill, which now stop where the channel begins,
+       and the hit area, which stops reaching under the track. */
     min-height: 52px;
-    padding: 0 10px;
+    padding: 0 0 0 10px;
     /* One rule, and it is the whole recipient: no radius, no shadow, no fill.
        Forty rounded borders separate exactly what the agent came here to
        compare, and the hairline that replaces them is also what the header
@@ -357,9 +370,11 @@
     font-weight: var(--fd-weight-title);
   }
 
+  /* «Horario por confirmar»: a sentence, in sans, so it takes the metadata
+     rung. The mono 11 beside it belongs to the duration, which is a figure. */
   .fd-card__leg-unknown {
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-meta);
     font-weight: var(--fd-weight-label);
   }
 
@@ -375,7 +390,19 @@
 
   /* One colour for every stop count. Plate 8c draws direct, one stop and three
      stops in the same muted grey: the number of stops is a fact the agent
-     reads, not a verdict the card passes. */
+     reads, not a verdict the card passes.
+
+     This one is sans on the monospace's 11 rung and it **stays there**, which
+     is the single exception in the pass that moved the others. Its width is not
+     a detail of this rule: «1 escala · BOG» measures 75 at this body and that
+     75 is the floor the `@container fdlist` threshold is derived from
+     (`284 + 75 + 428 = 787`), while «2 escalas · BOG, PTY» measures 112 and
+     that 112 is the margin `useShellSize.ts` gives the detail column. At 12 the
+     two labels grow by about a twelfth, both thresholds rise with them, and a
+     1440 desk — which measures exactly 824 against the 824 it needs — loses its
+     third column. A rung is worth less than that. Moving it is a re-derivation
+     of the row's geometry and belongs to a change that is willing to pay for
+     it. */
   .fd-card__leg-stops {
     min-width: 0;
     overflow: hidden;
@@ -550,7 +577,9 @@
     padding: 0 9px;
     border-radius: var(--fd-radius-8);
     color: var(--color-primary);
-    font-size: var(--fd-text-mono-meta);
+    /* «+3 más» is sans, so the metadata rung. The figure in it is not a
+       counter either — it is part of the label the chip *is*. */
+    font-size: var(--fd-text-meta);
     font-weight: var(--fd-weight-title);
     transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }

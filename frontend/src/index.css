@@ -2341,6 +2341,23 @@
   height: var(--fd-control-touch);
 }
 
+/*
+ * 7b: the pictogram takes its size from the height of the control it sits in,
+ * and every 40 takes 18. This row is the 40 — the rule above is what makes it
+ * one — and its box was still the 16 the desk's 32px row gives it, in the band
+ * a thumb travels most. The logo beside it was already 18; the box the finger
+ * is actually aiming at was not.
+ *
+ * Written here, unlayered, and not beside the row in `components.css`: the size
+ * it has to beat is a Tailwind utility on the component itself (`h-4 w-4`), and
+ * `@layer utilities` is exactly where that utility lives. The tick inside stays
+ * at 12, which is what the catalogue gives a checkbox at any of its sizes.
+ */
+.fd-filter-sheet .fd-airline-row [data-slot="checkbox"] {
+  width: var(--fd-icon-18);
+  height: var(--fd-icon-18);
+}
+
 .fd-location-sheet .fd-sheet-body {
   padding: 0 14px 8px;
 }

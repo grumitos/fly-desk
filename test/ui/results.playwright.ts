@@ -3476,11 +3476,30 @@ test("the list draws its own scrollbar, and the sheet that draws it wins", async
         withinListBody: bar.getBoundingClientRect().right
           <= (viewport.parentElement as HTMLElement).getBoundingClientRect().right,
         documentOverflows: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+        /* The channel. Its `padding-right` is declared in the same unlayered
+           sheet and nowhere else, so reading it back at 10 is a second proof
+           that the sheet wins — and the bar sitting clear of the row is what
+           the channel is *for*: 18px of every row used to be the track's. */
+        channel: getComputedStyle(viewport.parentElement as HTMLElement).paddingRight,
+        rowRight: document.querySelector<HTMLElement>(".fd-results-list .fd-card")!
+          .getBoundingClientRect().right,
+        headRight: document.querySelector<HTMLElement>(".fd-card--head")!
+          .getBoundingClientRect().right,
+        barLeft: bar.getBoundingClientRect().left,
       };
     });
 
     assert.equal(drawn.display, "block");
-    assert.equal(drawn.barWidth, "14px");
+    assert.equal(drawn.barWidth, "10px");
+    assert.equal(drawn.channel, "10px");
+    /* Not one pixel of the row under the bar — and the header still ends where
+       the rows do, because the channel is reserved on the body they are both
+       in, so the columns stay under the names that title them. */
+    assert.ok(
+      drawn.barLeft >= drawn.rowRight,
+      `the bar starts at ${drawn.barLeft} and the row ends at ${drawn.rowRight}`,
+    );
+    assert.equal(Math.round(drawn.headRight), Math.round(drawn.rowRight));
     assert.equal(drawn.thumbWidth, "6px");
     assert.equal(drawn.thumbRadius, "4px");
     assert.equal(drawn.thumbOpaque, true);

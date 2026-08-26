@@ -347,3 +347,228 @@ test("the phone's filter strip binds every icon size to the height of its contro
     }
   });
 });
+
+/*
+ * 11 is the monospace's rung.
+ *
+ * `--fd-text-mono-meta` is the body the catalogue gives figures and specs *in
+ * the monospace*; `--fd-text-meta` is the sans one beside it. Six sans lines
+ * had taken the mono rung and were the smallest text in the product for a
+ * reason nobody had written down — the detail's ladder, the row's «Horario por
+ * confirmar», its «+n más» chip, the calendar's legend.
+ *
+ * The probes are mounted inside `.fd-shell`, under the same container queries
+ * as in production, because these lines live in states that never coincide on
+ * one screen. The family is measured and not read: `getComputedStyle` returns
+ * the declared list, which says «IBM Plex Mono, ui-monospace» whether or not
+ * anything monospaced was painted.
+ */
+test("the monospace's rung is not spent on sans text", async () => {
+  await withDesktopPage(async ({ page }) => {
+    await waitForFontsReady(page);
+
+    const readings = await page.evaluate(() => {
+      const shell = document.querySelector(".fd-shell")!;
+      const host = document.createElement("div");
+      host.style.cssText = "position:absolute;top:-4000px;left:0;width:420px;";
+      host.innerHTML = `
+        <span data-probe="rail" class="fd-rail-leg">2 h 15 min en BOG</span>
+        <span data-probe="unknown" class="fd-card__leg-unknown">Horario por confirmar</span>
+        <span data-probe="alts" class="fd-card__alts-more">+3 más</span>
+        <span data-probe="legend" class="fd-cal-legend">Sin tarifa</span>
+        <span data-probe="stops" class="fd-card__leg-stops">1 escala · BOG</span>
+        <span data-probe="duration" class="fd-card__leg-duration">8h 05m</span>`;
+      shell.appendChild(host);
+      const out: Record<string, { size: string; monospaced: boolean }> = {};
+      for (const node of host.querySelectorAll<HTMLElement>("[data-probe]")) {
+        const probe = document.createElement("span");
+        probe.style.cssText = "position:absolute;top:-4000px;left:0;white-space:pre;";
+        node.appendChild(probe);
+        const inkOf = (text: string) => {
+          probe.textContent = text;
+          const range = document.createRange();
+          range.selectNodeContents(probe);
+          return range.getBoundingClientRect().width;
+        };
+        const monospaced = Math.abs(inkOf("iiiiiiii") - inkOf("mmmmmmmm")) < 0.5;
+        probe.remove();
+        out[node.dataset.probe!] = { size: getComputedStyle(node).fontSize, monospaced };
+      }
+      host.remove();
+      return out;
+    });
+
+    for (const name of ["rail", "unknown", "alts", "legend"] as const) {
+      assert.equal(readings[name]!.monospaced, false, `«${name}» is painted in the monospace`);
+      assert.equal(readings[name]!.size, "12px", `«${name}» is sans at ${readings[name]!.size}`);
+    }
+
+    /* The rung is not wrong, it is the monospace's — so the figure beside them
+       keeps it. If this one had moved too, the four above would be passing for
+       the wrong reason. */
+    assert.equal(readings.duration!.monospaced, true);
+    assert.equal(readings.duration!.size, "11px");
+
+    /* And the one exception, asserted so it is a decision and not an oversight.
+       The stops label is sans on the mono rung and stays there: «1 escala ·
+       BOG» measures 75 at this body, that 75 is the floor `787` is derived
+       from, and `useShellSize.ts` gives the detail column its margin out of the
+       same label at 112. At 12 both thresholds rise and a 1440 desk — which
+       measures exactly 824 against the 824 it needs — loses its third column.
+       Moving it is a re-derivation of the row, not a typographic pass. */
+    assert.equal(readings.stops!.monospaced, false);
+    assert.equal(readings.stops!.size, "11px");
+  });
+});
+
+/*
+ * 7b again, on the surface the previous case's sibling covers for the filter
+ * strip: an icon takes its size from the height of the control it sits in, and
+ * on a phone every 40 takes 18.
+ */
+test("the airline row of the filter sheet binds its box to the 40 it lives in", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await routeSingleOfferSearch(page);
+    await openSharedSearchLink(page, `${baseUrl}${SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+
+    await page.getByRole("button", { name: "Abrir filtros" }).click();
+    const sheet = page.locator(".fd-filter-sheet");
+    await sheet.locator(".fd-airline-row").first().waitFor();
+
+    const law = await page.evaluate(() => {
+      const row = document.querySelector<HTMLElement>(".fd-filter-sheet .fd-airline-row")!;
+      const box = row.querySelector<HTMLElement>('[data-slot="checkbox"]')!;
+      const logo = row.querySelector<HTMLElement>(".fd-airline-row-logo");
+      const read = (node: Element | null) => node
+        ? Math.round(node.getBoundingClientRect().width * 10) / 10
+        : null;
+      return {
+        floor: Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--fd-control-touch")),
+        rung: Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--fd-icon-18")),
+        rowHeight: Math.round(row.getBoundingClientRect().height * 10) / 10,
+        box: read(box),
+        logo: read(logo),
+      };
+    });
+
+    assert.equal(law.rowHeight, law.floor, `the row is ${law.rowHeight} tall against a touch floor of ${law.floor}`);
+    assert.equal(law.box, law.rung, `the box is ${law.box} inside a control of ${law.rowHeight}`);
+    /* The mark beside it was already at the rung; if it were not, the case
+       above would be pinning half a row. */
+    assert.equal(law.logo, law.rung);
+  });
+});
+
+/*
+ * The other half of the same row. On a desk it is `--fd-control-standard`, and
+ * the table gives a 32 the 16 rung — which is exactly what the shared
+ * `Checkbox` ships, so the desk is right for free and nothing in this
+ * stylesheet says so. That is the whole reason for this case: the number is
+ * held by a Tailwind utility on a component four other surfaces mount, and one
+ * bump of that utility would break the law here with every rule in the repo
+ * still reading as written.
+ */
+test("the same airline row takes the 16 its 32 asks for on a desk", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeSingleOfferSearch(page);
+    await openSharedSearchLink(page, `${baseUrl}${SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await page.locator(".fd-airline-row").first().waitFor();
+
+    const law = await page.evaluate(() => {
+      const row = document.querySelector<HTMLElement>(".fd-airline-row")!;
+      const box = row.querySelector<HTMLElement>('[data-slot="checkbox"]')!;
+      const read = (node: Element) => Math.round(node.getBoundingClientRect().width * 10) / 10;
+      const token = (name: string) =>
+        Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
+      return {
+        standard: token("--fd-control-standard"),
+        rung: token("--fd-icon-16"),
+        inSheet: Boolean(row.closest(".fd-filter-sheet")),
+        rowHeight: Math.round(row.getBoundingClientRect().height * 10) / 10,
+        box: read(box),
+      };
+    });
+
+    /* The desk's panel, not the phone's sheet under another name — otherwise
+       this case and the one above would be measuring the same row twice. */
+    assert.equal(law.inSheet, false);
+    assert.equal(law.rowHeight, law.standard, `the row is ${law.rowHeight} tall against a standard of ${law.standard}`);
+    assert.equal(law.box, law.rung, `the box is ${law.box} inside a control of ${law.rowHeight}`);
+  });
+});
+
+/*
+ * The same law on the surface where the sale is closed. The detail's action bar
+ * is two 40px controls on a phone and one of them — «Cotizar», the one that
+ * matters — was drawing a 16 icon inside its 40 while «Abrir» beside it, in the
+ * same block of the same stylesheet, already read the 18.
+ */
+test("the detail's action bar binds both its icons to the 40 it is on a phone", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await routeSingleOfferSearch(page);
+    await openSharedSearchLink(page, `${baseUrl}${SEARCH_URL}`);
+    await page.getByTestId("result-card").first().click();
+    await page.locator(".fd-detail-quote-action").waitFor();
+
+    const bar = await page.evaluate(() => {
+      const read = (selector: string) => {
+        const node = document.querySelector<HTMLElement>(selector);
+        const svg = node?.querySelector("svg");
+        return node && svg
+          ? {
+              height: Math.round(node.getBoundingClientRect().height * 10) / 10,
+              icon: Math.round(svg.getBoundingClientRect().width * 10) / 10,
+            }
+          : null;
+      };
+      return {
+        floor: Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--fd-control-touch")),
+        rung: Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--fd-icon-18")),
+        quote: read(".fd-detail-quote-action"),
+        provider: read(".fd-detail-provider-action"),
+      };
+    });
+
+    for (const name of ["quote", "provider"] as const) {
+      const control = bar[name];
+      assert.ok(control, `The action bar has no ${name}`);
+      assert.equal(control.height, bar.floor, `«${name}» is ${control.height} tall`);
+      assert.equal(control.icon, bar.rung, `«${name}» draws a ${control.icon} icon inside ${control.height}`);
+    }
+  });
+});
+
+/*
+ * The calendar's two literals, which were a 32 and a 40 that happened to equal
+ * the catalogue rather than reading it. The sheet's 40 was already a token; the
+ * desk's 32 is one now, and this is what says the substitution was of an
+ * identical value. The legend beside it is the same sans-on-the-mono-rung fix
+ * as the case above, asserted here on the real surface.
+ */
+test("the calendar cell is the catalogue's control and its legend is sans metadata", async () => {
+  await withDesktopPage(async ({ page }) => {
+    await waitForFontsReady(page);
+    await page.getByRole("button", { name: /^Salida:/ }).click();
+    const calendar = page.getByRole("dialog", { name: "Calendario de fechas" });
+    await calendar.waitFor();
+    await calendar.locator(".fd-cal-cell:not([data-blank='true'])").first().waitFor();
+
+    const geometry = await page.evaluate(() => {
+      const cell = document.querySelector<HTMLElement>(".fd-cal-cell:not([data-blank='true'])")!;
+      const legend = document.querySelector<HTMLElement>(".fd-cal-legend");
+      return {
+        standard: getComputedStyle(document.documentElement).getPropertyValue("--fd-control-standard").trim(),
+        cellHeight: getComputedStyle(cell).height,
+        legendSize: legend ? getComputedStyle(legend).fontSize : null,
+      };
+    });
+
+    assert.equal(geometry.standard, "32px");
+    assert.equal(geometry.cellHeight, geometry.standard);
+    assert.equal(geometry.legendSize, "12px");
+  });
+});

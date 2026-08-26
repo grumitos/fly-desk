@@ -96,8 +96,12 @@
 
     /* ---- 7b · pictogram sizes ------------------------------------------- */
     /* Each size is bound to a control height, so the icon is never chosen by
-       taste. Mobile 44/52 take 18; desktop 32–52 take 16; dense desktop rows
-       take 14; keys, badges and 20px checkboxes take 12. */
+       taste. Mobile 40/46 take 18 and mobile 34 takes 16; desktop 32–52 take
+       16; dense desktop rows take 14; keys, badges and 20px checkboxes take 12.
+       The mobile pair read 44/52 for as long as the touch heights did. They
+       became 34/40/46 a few lines above and this table kept the retired
+       numbers, so the sites that had to size an icon on a phone were deriving
+       it from a row the table no longer has. */
     --fd-icon-18: 18px;
     --fd-icon-16: 16px;
     --fd-icon-14: 14px;

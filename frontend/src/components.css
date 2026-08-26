@@ -485,7 +485,19 @@
 
   /* Airline row: checkbox 16, logo 18, name 13/600, count mono in a fixed
      32px column so the digits line up. Flush with the group, so the checkbox
-     shares a left edge with the segmented controls above it (8a). */
+     shares a left edge with the segmented controls above it (8a).
+
+     The 16 is 7b rather than a preference. The row is `--fd-control-standard`,
+     32 on a desk, and the table gives a 32 the 16 rung — which is the size the
+     shared `Checkbox` already ships (`h-4 w-4`), so the desk gets it without a
+     rule. The same row is `--fd-control-touch` on a phone, 40, whose rung is
+     18, and that one has to be written down: it is in `index.css`, unlayered,
+     beside the rule that makes the row 40, because the 16 it has to beat is a
+     Tailwind utility and `@layer utilities` is where this file lives.
+
+     The logo is 18 on both surfaces. It is a carrier's mark and not a pictogram
+     from the set, so the icon table does not size it — it is the smallest box
+     a two-colour livery is still readable in, and it does not follow the row. */
   .fd-airline-row {
     display: flex;
     min-width: 0;
@@ -1125,7 +1137,12 @@
    */
   .fd-cal-cell {
     display: flex;
-    height: 32px;
+    /* The catalogue's standard control, not a literal that happens to equal it.
+       The sheet's cell below already reads `--fd-control-touch` for its 40, and
+       these two heights are what the law of the counter cites when it says a
+       figure takes its body from the control it lives in — a 32 cell with a 13
+       figure, a 40 cell with a 15. */
+    height: var(--fd-control-standard);
     align-items: center;
     justify-content: center;
     border-radius: var(--fd-radius-8);
@@ -1352,6 +1369,11 @@
     visibility: hidden;
   }
 
+  /* The legend under the calendar. Sans text, so the metadata rung: the mono
+     11 is the monospace's body and this line has no figure in it at all.
+     The swatch's geometry is deliberately left alone — the plate asks for it
+     to be a calendar cell at scale, which is a change to the shape and not to
+     the body, and that is not what this pass is. */
   .fd-cal-legend {
     display: flex;
     align-items: center;
@@ -1361,7 +1383,7 @@
     padding-top: 10px;
     border-top: 1px solid var(--color-border);
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-meta);
   }
 
   .fd-cal-legend-item {
@@ -1710,11 +1732,17 @@
     white-space: nowrap;
   }
 
+  /* The ladder's own line — «2 h 15 min en BOG», «llegada al día siguiente».
+     Sans, so it takes the metadata rung and not the mono one: 11 is the body
+     the catalogue reserves for the monospace, and a sans line borrowing it is
+     the smallest text in the product for no reason anyone wrote down. The
+     phone was already at 12 (the container query below), so this only brings
+     the desk to where the phone had been. */
   .fd-rail-leg {
     min-width: 0;
     overflow: hidden;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-mono-meta);
+    font-size: var(--fd-text-meta);
     font-weight: var(--fd-weight-value);
     line-height: var(--fd-rail-leg-line);
     text-overflow: ellipsis;
@@ -2202,9 +2230,13 @@
       font-size: var(--fd-text-action);
     }
 
+    /* 7b, the same 40 → 18 the button beside it already reads. This one had
+       stayed at 16 inside the same 40, in the action bar of the surface where
+       the sale is closed — and «Cotizar» is the one control on this screen
+       that must not be the hardest to hit. */
     .fd-detail-quote-action svg {
-      width: var(--fd-icon-16);
-      height: var(--fd-icon-16);
+      width: var(--fd-icon-18);
+      height: var(--fd-icon-18);
     }
 
     /* 3c on a phone: the failure takes the confirmation's slot — same margins,

@@ -495,6 +495,19 @@ test("a month still being queried is drawn as searching, and a finished empty mo
     assert.doesNotMatch(januaryText, /sin tarifa en el mes/);
     assert.doesNotMatch(januaryText, /No se pudo completar la operación/);
 
+    /* The header says the same fact as a count: «N buscando». The figure is
+       the system's counter and the word beside it is prose, and the two stay
+       inside one element — the pill is `inline-flex`, so left as two of its
+       children the literal space between them would be dropped and the pill
+       would read «1buscando» to anything that takes its text. */
+    const searchingPill = page.locator(".fd-list-header .fd-status-pill").filter({ hasText: "buscando" });
+    await searchingPill.waitFor();
+    /* Case-insensitive: the pill is `text-transform: uppercase` and `innerText`
+       gives the rendered text, so what comes back is «1 BUSCANDO» — which is
+       exactly the point, since the space is what the assertion is about. */
+    assert.match((await searchingPill.innerText()).trim(), /^1 buscando$/i);
+    assert.equal((await searchingPill.locator(".fd-count").innerText()).trim(), "1");
+
     // Finished with nothing: the coverage line is the informative part.
     const december = cards.filter({ hasText: "Diciembre de 2026" });
     await december.getByText("0 de 31 días con tarifa").waitFor();
