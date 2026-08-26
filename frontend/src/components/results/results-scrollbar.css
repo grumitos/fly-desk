@@ -120,21 +120,50 @@
 }
 
 /*
- * 02 §5 and the convention of the system: on a phone the native bar and the
- * gesture are what the reader expects, and a drawn bar 14px off the right edge
- * competes with the edge of the screen itself. It goes — through the same
- * `@container fdshell` the list header changes shape at, so the bar and the
- * rest of the column cross the threshold together.
+ * On a phone the bar stops being a control and becomes a message.
+ *
+ * It used to be hidden here, on the argument that «a drawn bar 14px off the
+ * right edge competes with the edge of the screen itself». That is true of the
+ * bar this file draws on a desk — 10px of pointer target that a fare row has to
+ * pay a channel for — and it is not what either phone plate draws.
+ * `Movil.dc.html` and `MovilCompacta.dc.html` both draw four pixels overlaid
+ * three from the edge, and say what for: «con desplazamiento infinito, ver lo
+ * que falta *es* el mensaje». A list that never ends and never says how far in
+ * you are is the one place a bar earns its ink.
+ *
+ * So: the plate's geometry, and `pointer-events: none`, which is the whole
+ * difference between the two surfaces. The gesture is the convention here, the
+ * bar is not a thing to grab, and an indicator that cannot be touched needs no
+ * channel — which is why the row keeps its symmetric padding below.
  */
 @container fdshell (max-width: 719.98px) {
   .fd-list-scrollbar {
-    display: none;
+    right: 3px;
+    width: 4px;
+    /* 10% of the same grey the thumb is 45% of, which is the channel the plate
+       draws under it — on a desk the track is bare because the whole 10px is a
+       target and a fill would read as a second column. */
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-muted-foreground) 10%, transparent);
+    pointer-events: none;
   }
 
-  /* And the channel goes with it, on the same threshold rather than one of its
-     own: a lane reserved for a bar that is not drawn is 10px the phone spends
-     on nothing. Below here the row is the stacked card, which carries its own
-     symmetric padding. */
+  /* One tone, and it stays: the desk darkens the thumb while the pointer is
+     over the list, which is a hover state on a surface that has no pointer.
+     Restated at the hover rule's own specificity, later in the same sheet, so
+     an emulated pointer cannot repaint it either. */
+  .fd-list-scrollbar-thumb,
+  .fd-list-body:hover .fd-list-scrollbar-thumb {
+    width: 4px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent);
+  }
+
+  /* And the channel goes, on the same threshold rather than one of its own: a
+     lane reserved for a bar nothing can touch is 10px the phone spends on
+     nothing. Below here the row is the stacked card, which carries its own
+     symmetric padding, and the bar rides over its last three pixels the way an
+     overlay bar does. */
   .fd-list-body {
     padding-right: 0;
   }

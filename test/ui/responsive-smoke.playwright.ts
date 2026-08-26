@@ -268,11 +268,16 @@ for (const viewport of VIEWPORTS) {
           scrollWidth: element.scrollWidth,
         }));
         assert.ok(summaryMetrics.scrollWidth <= summaryMetrics.clientWidth + 1);
-        // 1d: the list column is not a card (8a), so its header is the 32px
-        // status row — count and pill left, order right — and it never retracts.
+        /* 1d: the list column is not a card (8a), so its header is the status
+           row — count and pill left, order right — and it never retracts. 37
+           and not the 32 it was fixed at: both phone plates write this row as
+           `12px 12px 8px` around one 17px line and draw no rule under it, so
+           its height is the line's, and the 8 under it is the air over the
+           first card. Fixed at 32 it was the header of a list that has no
+           title. */
         assert.equal(
           Math.round((await page.locator(".fd-list .fd-list-header").boundingBox())?.height ?? 0),
-          32,
+          37,
         );
         // 1d: the desk's "Ordenar" label does not survive the 32px status row.
         assert.equal(await page.locator(".fd-list-header .fd-result-sort-label").isVisible(), false);

@@ -386,6 +386,7 @@ behind it.
 | `Main`: «sin usar» at 10/600, lowercase, untracked | 10/700, uppercase, tracked | `Controles` names this one as a defect in as many words — «va junto a un rótulo de grupo a 10/700 en versales con seguimiento … Misma línea base, tres propiedades de diferencia» — and the surface plates draw the version it is naming. |
 | `Reposo` §1: «Buscar» at 15/700 | 14/600 | Owner-decided. The 700 rung governs the results surface — hour, counter, code — not the form's values and controls, where every value is 600. |
 | `Movil`: a 14px chevron lane on the card, and «1 escala» without the code | No chevron; the code is kept | The chevron was decorative and `aria-hidden` over a card that has been the whole target since the hit was introduced, and its 24px is part of what buys the airport code back. The code is pinned in CI and the chevron is not. |
+| `MovilCompacta`: the baggage pair in the legs block, as a fifth lane | On the carrier line, in a fixed 32 | The plate can afford the move only because it also drops the airport code, which the row above forbids. Measured, the lane and its fourth gap take Flexible's elastic lane to 26 against the 54 «1 esc · BOG» needs, so the mode that varies its dates is the mode that loses the code on every phone under 388. `Deriva.dc.html` and 8c both draw the pair on the carrier line. |
 | `Main`: the brand mark as a stroked outline; the provider and carrier marks as two-letter tiles | The filled brand asset; real carrier and provider artwork | The plate draws placeholders for artwork the application ships. Only the sizes were the plate's to give: the brand mark came down from 24 to 20. |
 
 Everything else the pass found is now the plate's: the list heading's line and
@@ -398,6 +399,85 @@ the workspace's 12 · 10 · 16.
 the shell's rhythm; `Campos`, `Calendario`, `Pasajeros`, `Gestos`,
 `Movimiento`, `Tanda` and `Migratorio` were read for the rules they state but
 their surfaces were not measured element by element against the application.
+**And it did not sweep the phone at all** — see the section below, which is
+that pass.
+
+## The phone's parity pass against the plates (2026-08-26)
+
+The pass above brought the desk to the drawings and said, honestly, that it had
+not measured the phone's surfaces element by element. Read afterwards, its seven
+commits contain no change inside `@container fdshell (max-width: 719.98px)` or
+`@container fdlist (max-width: 786.98px)`: the phone stood where it had been
+while the desk moved. This pass is that measurement, taken the same way —
+`MovilCompacta.dc.html`, `MovilDetalle.dc.html` and `Movil.dc.html` open in one
+context and the application in another, at 360 and 390, under Chromium's device
+emulation so the coarse-pointer rules are the ones in force, with the faces
+requested by name and the ink measured with a `Range`.
+
+What it changed is in the four commits and in the sheets. What it found that
+nobody had named is here, because each one is a place where the phone was
+carrying a number that belonged to another surface:
+
+- **The desk's fare band reached the phone.** `.fd-card:has(.fd-card__alts)`
+  names the first track `minmax(52px, auto)` because a desk fare row is 52. A
+  phone's is its content — 33 — and it has no `min-height` for the named track
+  to be protecting, so the 52 was not holding a row up, it was inflating one: a
+  grouped card put its airline 29.25px below the card's edge while the plain
+  card beside it had it at 11.
+- **The eight pixels over the first card were paid twice.** `.fd-list-shell`
+  took a gap of 8 «which is what `Movil.dc.html` draws between the count line
+  and the first card», and `.fd-list-viewport` took a further 10 «of air above
+  the first card» off the same plate. Both plates draw the air once, as the
+  status row's own `padding-bottom`. With the status row's own 32-plus-hairline
+  against the plates' 37, the phone spent 160 pixels of chrome where the
+  drawing spends 149.
+- **The fares stopped having air between them.** The 6px gap went out of
+  `.fd-results-list` when the desk row stopped being a framed object — «with one
+  hairline under each row the air *is* the separation» — and the phone, where
+  the fare is still a card, lost it in the same change and stood forty rounded
+  borders on top of one another.
+- **The collapsed bar wrote one line that did not fit.** Measured at 360, the
+  meta line asked for 304px of a 262px box, so «Exacto» was the word the
+  ellipsis ate on every search. Both phone plates split it — dates at the left,
+  the count and the mode stacked in the width the two station codes leave over
+  — and `Movil.dc.html` says so in as many words.
+- **Three more glyphs did not answer to their control.** `Controles` lists five
+  and says four of them are in the filter strip. A sweep of every pressable on
+  all four phone surfaces found the two stay-counter steps and the clears of the
+  location and date fields drawing 16 and 14 inside 40.
+- **The sheet's «Limpiar» and the detail's «Abrir».** The first had lost the
+  weight and the glyph `Controles` says it may not lose; the second had lost its
+  word to a 40px square, for room «Cotizar» was only taking because it was
+  stretching to fill the row.
+
+**The numbers this pass renegotiated**, each against the drawing rather than
+against taste: the phone status row from 32 to **37** (`responsive-smoke`), the
+phone's drawn scrollbar from `display: none` to the **4px** both plates draw
+(`results`, and it is `pointer-events: none`, which is what keeps the old
+argument answered), and the collapsed bar's `/· 1 pasajero · Exacto$/` on one
+line to two blocks (`typography`).
+
+**The airport code is where it was.** The constraint this pass was most at risk
+of breaking is unmoved: at 360, 375 and 390 the stops lane is 96 in Exacto
+against the 68.19 «1 escala · BOG» measures, and 62 in Flexible and Migratorio
+against the 53.98 of «1 esc · BOG»; nothing clips and the legs block never
+overflows. **And the desk did not move**: the same probe run against `main` and
+against this branch reports byte-identical readings at 1440, 1920 and 1366 —
+every lane, every gap, the row's `list − legs`, the header, the scrollbar and
+the detail. The two widths that do differ, 1024 and 820, are widths where the
+list is already under 787 and the row is already the stacked anatomy, which is
+the anatomy this pass is about.
+
+**What the phone still does not take from its plates.** The exceptions above
+apply here too — the pictogram catalogue over `MovilCompacta`'s 15px bags and
+11px arrow and `MovilDetalle`'s 20px back chevron, the counters' 700 over the
+plates' 600, mono over sans for the leg summary, real artwork over the plates'
+placeholder tiles — plus one this pass added, and one it left standing:
+
+| The plate draws | The code does | Why the code wins |
+|---|---|---|
+| `MovilCompacta`: the grouped row as one quiet line, «3 horarios más · desde + USD 42.00», in place of the chip strip | The chips stay | **The price in that line cannot exist.** `offer-schedule-groups.ts::groupKeyForOffer` refuses to put two offers in one group unless the currency, the amount and the baggage all match — «The fold stops at the fare», above — so every schedule in a strip carries the price the card already states and the delta is arithmetic that can only produce zero. `buildAlternateScheduleModel` says so where it stopped computing one. What is left of the plate's line without it is a count, and taking three departure times off the screen to draw a count is the trade the other way round: the times are the only thing that differs between the members of a group. |
+| `MovilDetalle`: the sheet's ground at `#f8f8f6`, the airline at a 20px line over a 22px price | `--color-popover`, and both at 1.2 | The ground belongs to the sheet primitive, which every phone overlay shares, and the plate simply drew the page it sits on. The hero's two lines are 2.8px of a block the desk column and the phone sheet share leaf for leaf; moving them here would fork one component's type between two surfaces for less than three pixels. Measured, not adopted. |
 
 ## What is still missing
 

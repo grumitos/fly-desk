@@ -1016,9 +1016,29 @@
          gap, and a lane that comes and goes with the fare is the fault the desk
          row was already fixed for. 32 always, so the carrier lane is 128 on a
          360px phone whatever the provider answered. */
+      /*
+       * The first row's line box, and the one number three of its cells are
+       * measured against. `MovilCompacta` sets the airline, the operator and
+       * the fare figure solid at 20 and hangs the baggage pair on the same
+       * line; this block had 14 × 1.25 = 17.5 for the name, 12 × 1.25 = 15 for
+       * the operator and 16 × 1.2 = 19.2 for the figure — three different
+       * lines for values the plate draws on one, which is what left the mark
+       * and the name at two different heights below.
+       */
+      --fd-card-stacked-line: 20px;
+
       grid-template-columns: 24px minmax(0, 1fr) 32px auto;
       column-gap: 10px;
       row-gap: 8px;
+      /* `start`, which is what `MovilCompacta` draws and what the desk's
+         `center` was overriding here: the mark, the airline and the fare all
+         begin at the row's top edge and what hangs below is the second price
+         line. Measured at 360 before this: the 24px mark started 4.5px below
+         the card's first row and the name 6.5px below it, against the plate's
+         0 for all three — and both offsets moved with the fare, because a
+         fare with no per-person line is a shorter price block to centre
+         against. */
+      align-items: start;
       min-height: 0;
       padding: 11px 12px;
       /* The frame the desk row dropped is restated here rather than inherited,
@@ -1041,12 +1061,19 @@
       background: var(--color-card);
     }
 
+    /* The second colour is the card's own ground and not the hairline:
+       `--color-border` is 15% ink, so mixing into it left the mark 68%
+       opaque and let whatever was behind the card decide the rest. Measured
+       at 360 against `MovilCompacta`'s `#e3a992`: this painted rgb(218, 155,
+       134) and the plate draws rgb(227, 169, 146); the same 62% over an
+       opaque ground paints rgb(230, 167, 146). The percentage does not
+       move — only what it is 62% of. */
     .fd-card.is-selected {
-      border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-border));
+      border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-card));
     }
 
     .fd-card.is-schedule-changed {
-      border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-border));
+      border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-card));
     }
 
     .fd-card.is-selected::before,
@@ -1091,7 +1118,7 @@
       flex: 0 1 auto;
       font-size: var(--fd-text-body);
       font-weight: var(--fd-weight-title);
-      line-height: 1.25;
+      line-height: var(--fd-card-stacked-line);
     }
 
     .fd-card .fd-card__carrier-operator {
@@ -1099,7 +1126,7 @@
       overflow: hidden;
       font-size: var(--fd-text-meta);
       font-weight: var(--fd-weight-value);
-      line-height: 1.25;
+      line-height: var(--fd-card-stacked-line);
       text-overflow: ellipsis;
     }
 
@@ -1125,6 +1152,13 @@
     .fd-card .fd-card__baggage {
       grid-column: 3;
       grid-row: 1;
+      /* On the name's line, not in the middle of the row: with the cells top
+         aligned above, a pair centred in a 33px row would sit 6.5px below the
+         name it belongs to. The box it rides is the line the name is set on,
+         and the desk's own `align-items: center` centres the two glyphs
+         inside it. */
+      align-self: start;
+      height: var(--fd-card-stacked-line);
     }
 
     /* 02 §6: price 16/800 over seats 10/700, stacked. `gap: 2` is the smallest
@@ -1138,7 +1172,7 @@
 
     .fd-card .fd-card__price-figure {
       font-size: var(--fd-text-card);
-      line-height: 1.2;
+      line-height: var(--fd-card-stacked-line);
     }
 
     .fd-card .fd-card__provider {
@@ -1271,6 +1305,34 @@
 
     .fd-results-list[data-mode="exact"] .fd-card .fd-card__leg-stops:not([data-stops="many-stops"]) .fd-card__leg-stops-short {
       display: none;
+    }
+
+    /*
+     * The fare band is not 52 here, so it is not named 52 here.
+     *
+     * `.fd-card:has(.fd-card__alts)` names the desk's first track
+     * `minmax(52px, auto)` because there a fare row is 52 and the row's own
+     * `min-height` stops binding the moment a strip carries the content past
+     * it. On a phone the row has no `min-height` at all and its first row is
+     * its content — the 24px mark over a 33px price block — so the named 52
+     * was not holding anything up, it was inflating it: measured at 360, a
+     * grouped card resolved `52px 45px 45px` and put the airline 29.25px down
+     * from the card's edge while the plain card beside it had it at 11.
+     * `MovilCompacta` draws both rows' first line at the same height, and the
+     * grouped card 28px taller than the plain one rather than 73.
+     */
+    .fd-card:has(.fd-card__alts) {
+      grid-template-rows: auto;
+    }
+
+    /* And with the band no longer 52, neither is the hit. The whole card is
+       the target on this surface — that is what buying the chevron's lane
+       back was for — and the strip keeps its own presses through the
+       `z-index: 2` it already carries, which is what stops a press aimed at a
+       chip from selecting the offer underneath it. */
+    .fd-card:has(.fd-card__alts) .fd-card__hit {
+      bottom: 1px;
+      height: auto;
     }
 
     .fd-card .fd-card__alts {

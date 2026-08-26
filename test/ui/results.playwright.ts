@@ -2029,6 +2029,12 @@ test("the open list of schedules takes the click over every card it covers", asy
      * a plain row rather than against a number, because what has to match is
      * the two rows, not a constant either of them happens to have today.
      */
+    /* Measured after the faces land, because the air is what is left of 52
+       once the legs block has taken its share, and the legs block is type: on
+       the fallback the block is tall enough that `min-height` stops binding on
+       the plain row too, both rows read 0, and the comparison passes for the
+       wrong reason — or trips the `plain > 0` guard below at random. */
+    await waitForFontsReady(page);
     const bandAir = await page.evaluate(() => {
       const rows = Array.from(document.querySelectorAll<HTMLElement>("[data-testid='result-card']"));
       const air = (row: HTMLElement | undefined) => {
@@ -2660,6 +2666,340 @@ test("the stops label keeps its airport code in every mode, on the narrowest pho
     await page.locator(".fd-month-grid").waitFor({ state: "attached" });
     assert.equal(await page.getByTestId("result-card").count(), 0);
     assert.equal(await page.locator(".fd-results-list").count(), 0);
+  }, { autoOpen: false });
+});
+
+test("the stacked row wears the lanes and the baselines MovilCompacta draws", async () => {
+  /*
+   * The phone had no geometry case of its own, and that is why its anatomy
+   * drifted while the desk was brought to the plates: every number below was
+   * measured against `MovilCompacta.dc.html` opened at the same width, and
+   * four of them disagreed.
+   *
+   *   · the card centred its first row where the plate starts it, so the 24px
+   *     mark sat 4.5px below the airline it belongs to and moved again with
+   *     every fare that had no per-person line;
+   *   · the airline, the operator and the fare figure were set on three
+   *     different lines (17.5, 15 and 19.2) where the plate sets all three on
+   *     one line of 20;
+   *   · the baggage pair, which rides the airline's line here, was centred in
+   *     the whole row instead;
+   *   · a grouped card took the desk's `minmax(52px, auto)` fare band, which
+   *     is a desk number: it put the airline 29.25px down from the card's edge
+   *     while the plain card beside it had it at 11.
+   *
+   * 360 is the common Android and the width every phone rule in this file is
+   * sized against; 390 is the QA viewport.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    const grouped = Array.from({ length: 4 }, (_, index) => oneStopOffer(index, { id: `grp-${index}` }));
+    const plain = Array.from({ length: 6 }, (_, index) => oneStopOffer(index + 10, { id: `plain-${index}` }));
+    /* One codeshare, because the operator's line is one of the three the plate
+       sets on a single 20px line and no other fixture in this file draws it. */
+    const codeshare = oneStopOffer(20, { id: "codeshare" });
+    codeshare.itineraries[0].segments[0].marketingCarrierName = "LATAM";
+    codeshare.itineraries[0].segments[0].operatingCarrier = "IB";
+    codeshare.itineraries[0].segments[0].operatingCarrierName = "Level";
+    await routeCompletedSearch(page, {
+      offers: [...grouped, codeshare, ...plain],
+      scheduleGroups: [{
+        id: "agil-local:FILL",
+        providerSource: "agil-local",
+        outboundOptions: [{ id: "fill-out", itinerary: grouped[0].itineraries[0] }],
+        inboundOptions: grouped.map((offer, index) => ({ id: `fill-in-${index}`, itinerary: offer.itineraries[1] })),
+        combinations: grouped.map((offer, index) => ({
+          outboundOptionId: "fill-out",
+          inboundOptionId: `fill-in-${index}`,
+          offerId: offer.id,
+        })),
+        truncated: true,
+      }],
+    });
+    await page.setViewportSize({ width: 360, height: 800 });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+
+    for (const width of [360, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.waitForTimeout(320);
+
+      const row = await page.evaluate(() => {
+        const cards = Array.from(document.querySelectorAll<HTMLElement>("[data-testid='result-card']"));
+        const card = cards.find((node) => !node.querySelector(".fd-card__alts"));
+        const grouped = cards.find((node) => node.querySelector(".fd-card__alts"));
+        if (!card || !grouped) return null;
+        const top = (node: Element | null) => (node ? +node.getBoundingClientRect().top.toFixed(2) : -1);
+        const middle = (node: Element | null) => {
+          if (!node) return -1;
+          const box = node.getBoundingClientRect();
+          return +(box.top + box.height / 2).toFixed(2);
+        };
+        const style = (selector: string, property: string) => {
+          const node = card.querySelector<HTMLElement>(selector);
+          return node ? getComputedStyle(node).getPropertyValue(property) : "";
+        };
+        const operator = document.querySelector<HTMLElement>(".fd-card__carrier-operator");
+        const legs = card.querySelector<HTMLElement>(".fd-card__legs")!;
+        const name = card.querySelector<HTMLElement>(".fd-card__carrier-name")!;
+        return {
+          lanes: getComputedStyle(card).gridTemplateColumns,
+          legLanes: getComputedStyle(legs).gridTemplateColumns,
+          legGap: getComputedStyle(legs).columnGap,
+          /* The filete that replaced the plinth, which `Deriva.dc.html` draws
+             on this surface because 360px has nowhere to put a header. */
+          fileteBorder: getComputedStyle(legs).borderTopWidth,
+          filetePad: getComputedStyle(legs).paddingTop,
+          markTop: top(card.querySelector(".fd-card__logo")),
+          nameTop: top(name),
+          priceTop: top(card.querySelector(".fd-card__price")),
+          nameLine: getComputedStyle(name).lineHeight,
+          figureLine: style(".fd-card__price-figure", "line-height"),
+          operatorLine: operator ? getComputedStyle(operator).lineHeight : "",
+          bagsMiddle: middle(card.querySelector(".fd-card__baggage")),
+          nameMiddle: middle(name),
+          /* A grouped row is a fare row plus a strip; its fare row is the same
+             fare row. */
+          plainFirstRow: top(card.querySelector(".fd-card__legs")) - top(card),
+          groupedFirstRow: top(grouped.querySelector(".fd-card__legs")) - top(grouped),
+        };
+      });
+
+      assert.ok(row, `missing stacked metrics at ${width}`);
+      const at = `${width}: ${JSON.stringify(row)}`;
+
+      // 24 of mark, the elastic name, the pair's fixed 32 and the price.
+      assert.match(row.lanes, /^24px [\d.]+px 32px [\d.]+px$/, at);
+      assert.match(row.legLanes, /^22px 120px 60px [\d.]+px$/, at);
+      assert.equal(row.legGap, "4px", at);
+      assert.equal(row.fileteBorder, "1px", at);
+      assert.equal(row.filetePad, "8px", at);
+
+      // One top edge for the mark, the airline and the fare.
+      assert.equal(row.markTop, row.nameTop, at);
+      assert.equal(row.priceTop, row.nameTop, at);
+
+      // One line for the three values the plate sets on one line.
+      assert.equal(row.nameLine, "20px", at);
+      assert.equal(row.figureLine, "20px", at);
+      assert.equal(row.operatorLine, "20px", at);
+
+      // And the pair rides that line rather than the middle of the row.
+      assert.ok(Math.abs(row.bagsMiddle - row.nameMiddle) < 0.51, at);
+
+      // The desk's 52px fare band does not reach this surface.
+      assert.equal(row.groupedFirstRow, row.plainFirstRow, at);
+    }
+  }, { autoOpen: false });
+});
+
+test("the phone's detail sheet is the anatomy MovilDetalle draws, block by block", async () => {
+  /*
+   * The desk column was brought to the plates and almost none of it reached
+   * the phone, because nothing here measured the phone. Read against
+   * `MovilDetalle.dc.html` at the same width, seven things disagreed:
+   *
+   *   · the four blocks were inset by 14 — armazón B's 380px sheet number,
+   *     inherited because nothing restated it — where the plate pads the whole
+   *     screen by 16;
+   *   · the header's gap was 8 and the plate opens it to 10 for the 40px back;
+   *   · a section arrived behind 18 over 18 where the plate draws 16 over 14;
+   *   · the conditions were spaced 10 apart, so four 32px lines read as four
+   *     blocks, and the value was written twice — the second copy at 14
+   *     against its label's 13;
+   *   · the two foot actions were 15/700 in 12 of padding at radius 12, where
+   *     the plate draws both at 13/700 in 14 at radius 10 — and radius 10 is
+   *     what every other 40px control on this phone wears;
+   *   · «Abrir» had lost its word to a 40px square, on the grounds that the row
+   *     had room for one set of words, which was true only while «Cotizar» was
+   *     stretching to fill it;
+   *   · the switch was 30 × 17 with a 13px knob, two numbers `Controles` names
+   *     as being in no catalogue, where the plate draws 34 × 20 over a 16px
+   *     knob — `--fd-control-touch-sm`, the pill's height, and the box a
+   *     checkbox and a knob share.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeCompletedSearch(page, {
+      offers: [oneStopOffer(1, {
+        id: "detail-phone",
+        fareMeta: { changeable: true, refundable: false, lastTicketingDate: "2026-05-26" },
+      })],
+    });
+    await page.setViewportSize({ width: 360, height: 800 });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().click();
+    await page.getByTestId("detail-panel-body").waitFor();
+    await waitForFontsReady(page);
+
+    for (const width of [360, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      await page.waitForTimeout(320);
+
+      const sheet = await page.evaluate(() => {
+        const read = (selector: string) => document.querySelector<HTMLElement>(selector);
+        const style = (selector: string, property: string) => {
+          const node = read(selector);
+          return node ? getComputedStyle(node).getPropertyValue(property) : "";
+        };
+        const type = (selector: string) => {
+          const node = read(selector);
+          if (!node) return "";
+          const cs = getComputedStyle(node);
+          return `${cs.fontSize}/${cs.fontWeight}`;
+        };
+        const conditions = Array.from(document.querySelectorAll<HTMLElement>(".fd-condition-row"));
+        const row = read(".fd-detail-action-row")!;
+        const track = read(".fd-detail-migration-switch");
+        const thumb = read('.fd-detail-migration-switch [data-slot="switch-thumb"]');
+        const box = (node: HTMLElement | null) =>
+          node ? `${Math.round(node.getBoundingClientRect().width)}x${Math.round(node.getBoundingClientRect().height)}` : "";
+        return {
+          insets: [".fd-detail-header", ".fd-detail-hero", ".fd-detail-body", ".fd-detail-footer"]
+            .map((selector) => style(selector, "padding-left") + "/" + style(selector, "padding-right")),
+          headHeight: style(".fd-detail-header", "height"),
+          headGap: style(".fd-detail-header", "gap"),
+          sectionTop: style(".fd-detail-section", "margin-top") + "/" + style(".fd-detail-section", "padding-top"),
+          conditions: conditions.length,
+          conditionStep: conditions.length > 1
+            ? Math.round(conditions[1]!.getBoundingClientRect().top - conditions[0]!.getBoundingClientRect().top)
+            : 0,
+          conditionHeight: Math.round(conditions[0]!.getBoundingClientRect().height),
+          conditionLabel: type(".fd-condition-label"),
+          conditionValue: type(".fd-condition-value"),
+          quote: [
+            style(".fd-detail-quote-action", "height"),
+            type(".fd-detail-quote-action"),
+            style(".fd-detail-quote-action", "border-radius"),
+            style(".fd-detail-quote-action", "padding-left"),
+            style(".fd-detail-quote-action", "column-gap"),
+          ].join(" "),
+          open: [
+            style(".fd-detail-provider-action", "height"),
+            type(".fd-detail-provider-action"),
+            style(".fd-detail-provider-action", "border-radius"),
+            style(".fd-detail-provider-action", "padding-left"),
+          ].join(" "),
+          openLabel: (read(".fd-detail-provider-action-label")?.textContent ?? "").trim(),
+          openLabelShown: style(".fd-detail-provider-action-label", "display"),
+          footIcons: [style(".fd-detail-provider-action svg", "width"), style(".fd-detail-quote-action svg", "width")].join(" "),
+          switchBox: box(track),
+          thumbBox: box(thumb),
+          rowFits: row.scrollWidth <= row.clientWidth,
+        };
+      });
+
+      const at = `${width}: ${JSON.stringify(sheet)}`;
+
+      // One screen inset for the whole sheet, and the plate's is 16.
+      assert.deepEqual(sheet.insets, Array.from({ length: 4 }, () => "16px/16px"), at);
+      assert.equal(sheet.headHeight, "40px", at);
+      assert.equal(sheet.headGap, "10px", at);
+      assert.equal(sheet.sectionTop, "16px/14px", at);
+
+      // Four conditions that touch, in one body at one weight.
+      assert.equal(sheet.conditions, 4, at);
+      assert.equal(sheet.conditionHeight, 32, at);
+      assert.equal(sheet.conditionStep, 32, at);
+      assert.equal(sheet.conditionLabel, "13px/600", at);
+      assert.equal(sheet.conditionValue, "13px/600", at);
+
+      // Two exits, one box, and the word the square had eaten.
+      assert.equal(sheet.quote, "40px 13px/700 10px 14px 6px", at);
+      assert.equal(sheet.open, "40px 13px/700 10px 14px", at);
+      assert.equal(sheet.openLabel, "Abrir", at);
+      assert.notEqual(sheet.openLabelShown, "none", at);
+      /* 7b: an icon is chosen by the height of the control it sits in, and on a
+         phone a 40 takes 18. */
+      assert.equal(sheet.footIcons, "18px 18px", at);
+      assert.equal(sheet.rowFits, true, at);
+
+      // The switch, at three numbers the catalogue already has.
+      assert.equal(sheet.switchBox, "34x20", at);
+      assert.equal(sheet.thumbBox, "16x16", at);
+    }
+  }, { autoOpen: false });
+});
+
+test("the phone spends 149 pixels before its first fare, and every one of them is somebody's", async () => {
+  /*
+   * The one number that pins the whole rhythm of `MovilCompacta`, because it
+   * is the sum of every band above the list:
+   *
+   *     12  over the collapsed bar   (was 10)
+   *     52  the collapsed bar itself
+   *      8  over the filter strip
+   *     40  the strip, at the touch height
+   *     37  the status row — 12 over one 17px line and 8 under it (was 32
+   *         plus a hairline, and the 8 was being paid twice: once as the
+   *         shell's gap and again as the viewport's own top padding)
+   *    ---
+   *    149
+   *
+   * Measured against the plate opened at the same width, the application was
+   * spending 160. Asserted as the sum and as its parts, so a band that moves
+   * says which one it was.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeCompletedSearch(page, { offers: Array.from({ length: 8 }, (_, index) => oneStopOffer(index)) });
+    await page.setViewportSize({ width: 360, height: 800 });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await waitForFontsReady(page);
+    await page.waitForTimeout(320);
+
+    const shell = await page.evaluate(() => {
+      const read = (selector: string) => document.querySelector<HTMLElement>(selector);
+      const top = (selector: string) => {
+        const node = read(selector);
+        return node ? Math.round(node.getBoundingClientRect().top) : -1;
+      };
+      const header = read(".fd-list-header")!;
+      const count = read(".fd-list-header .fd-panel-count");
+      const sort = read(".fd-result-sort-compact");
+      const type = (node: HTMLElement | null) => {
+        if (!node) return "";
+        const cs = getComputedStyle(node);
+        return `${cs.fontSize}/${cs.fontWeight}`;
+      };
+      return {
+        firstCard: top("[data-testid='result-card']"),
+        summary: top(".fd-mobile-search-summary"),
+        strip: top(".fd-filter-strip"),
+        statusRow: top(".fd-list-header"),
+        statusHeight: Math.round(header.getBoundingClientRect().height),
+        statusPadding: getComputedStyle(header).padding,
+        statusRule: getComputedStyle(header).borderBottomWidth,
+        count: type(count),
+        sort: type(sort),
+        sortColour: sort ? getComputedStyle(sort).color : "",
+        foreground: getComputedStyle(document.documentElement).getPropertyValue("--color-foreground").trim(),
+        viewportPadding: getComputedStyle(read(".fd-list-viewport")!).padding,
+        listGap: getComputedStyle(read(".fd-results-list")!).rowGap,
+      };
+    });
+
+    const at = JSON.stringify(shell);
+    assert.equal(shell.summary, 12, at);
+    /* The strip's own box opens where the bar closes; the 8 is its padding. */
+    assert.equal(shell.strip, 64, at);
+    assert.equal(shell.statusRow, 112, at);
+    assert.equal(shell.statusHeight, 37, at);
+    assert.equal(shell.statusPadding, "12px 12px 8px", at);
+    // Both phone plates draw this row on nothing: no rule, no band.
+    assert.equal(shell.statusRule, "0px", at);
+    assert.equal(shell.firstCard, 149, at);
+
+    /* The row's two values, at the body the plates give them: the counter
+       stays at the 700 «the counters of the results surface share one weight»
+       pins, and the order is full ink beside it. */
+    assert.equal(shell.count, "13px/700", at);
+    assert.equal(shell.sort, "13px/700", at);
+    assert.equal(shell.sortColour, "rgb(18, 18, 18)", at);
+
+    /* And the fares are still cards on this surface, so the 6px between them
+       comes back — the desk dropped it with the frame and the phone lost it in
+       the same change, which left forty rounded borders touching. */
+    assert.equal(shell.viewportPadding, "0px 12px 22px", at);
+    assert.equal(shell.listGap, "6px", at);
   }, { autoOpen: false });
 });
 
@@ -4149,32 +4489,56 @@ test("a list that fits its column draws no bar at all", async () => {
   }, { autoOpen: false });
 });
 
-test("on a phone the gesture is the convention and the drawn bar stands down", async () => {
+test("on a phone the drawn bar is four pixels of message and nothing to grab", async () => {
+  /*
+   * This case used to assert the bar was `display: none` here, on the
+   * argument that a drawn bar competes with the edge of the screen. That is
+   * true of the ten-pixel pointer target a desk row pays a channel for, and it
+   * is not what the phone plates draw: `Movil.dc.html` and
+   * `MovilCompacta.dc.html` both draw four pixels three from the edge and say
+   * what for — «con desplazamiento infinito, ver lo que falta *es* el
+   * mensaje». So the number is renegotiated against the drawing, and what
+   * keeps the old argument answered is `pointer-events: none`: the gesture is
+   * still the convention, the bar is only ever read.
+   */
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await routeLongCompletedSearch(page, 40);
     await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
     await page.getByTestId("result-card").first().waitFor();
-    /* Mounted but off, which is the claim: what hides it is the sheet, not a
-       JavaScript branch deciding what a phone is. The measurement lands a frame
-       after the content — it is `rAF` — so this waits for the node instead of
-       reading one that does not exist yet. */
+    /* The measurement lands a frame after the content — it is `rAF` — so this
+       waits for the node instead of reading one that does not exist yet. */
     await page.getByTestId("results-scrollbar").waitFor({ state: "attached" });
 
     const phone = await page.evaluate(() => {
-      const bar = document.querySelector<HTMLElement>('[data-testid="results-scrollbar"]');
+      const bar = document.querySelector<HTMLElement>('[data-testid="results-scrollbar"]')!;
+      const thumb = document.querySelector<HTMLElement>(".fd-list-scrollbar-thumb");
       const viewport = document.querySelector<HTMLElement>('[data-testid="results-list-body"]')!;
+      const card = document.querySelector<HTMLElement>("[data-testid='result-card']")!;
+      const style = getComputedStyle(bar);
       return {
-        display: bar ? getComputedStyle(bar).display : "absent",
+        display: style.display,
+        width: style.width,
+        right: style.right,
+        pointerEvents: style.pointerEvents,
+        thumbWidth: thumb ? getComputedStyle(thumb).width : "absent",
+        /* And it stays out of the row: the phone reserves no channel, so what
+           keeps a thumb off the last column of a fare is the list's own 12px
+           of side padding. */
+        clearsTheCard: bar.getBoundingClientRect().left >= card.getBoundingClientRect().right,
         scrolls: viewport.scrollHeight > viewport.clientHeight + 1,
         documentOverflows: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
       };
     });
 
-    /* The list does scroll; what there is not is a drawn bar competing with
-       the edge of the screen. */
-    assert.equal(phone.scrolls, true);
-    assert.equal(phone.display, "none");
-    assert.equal(phone.documentOverflows, false);
+    const at = JSON.stringify(phone);
+    assert.equal(phone.scrolls, true, at);
+    assert.notEqual(phone.display, "none", at);
+    assert.equal(phone.width, "4px", at);
+    assert.equal(phone.right, "3px", at);
+    assert.equal(phone.thumbWidth, "4px", at);
+    assert.equal(phone.pointerEvents, "none", at);
+    assert.equal(phone.clearsTheCard, true, at);
+    assert.equal(phone.documentOverflows, false, at);
   }, { autoOpen: false });
 });
