@@ -93,9 +93,16 @@ export function ActiveFilterChips({
         <span className="fd-filter-strip-hidden" style={stagger()}>
           {/* A mixed value splits: the figure is the system's counter and the
               rest is prose, which has no reason to move into the monospace just
-              for sharing a line with a number. */}
+              for sharing a line with a number.
+
+              «N vuelos ocultos», which is what both phone plates write, and not
+              the count line's «N vuelos ocultos por filtros»: this strip *is*
+              the filters, said in chips two positions to its left, so the last
+              two words are the row repeating itself in the one band that
+              scrolls. The desk's line keeps them — there the chips do not
+              mount and the sentence has to name what is hiding them. */}
           <span className="fd-count">{hiddenByFiltersCount.toLocaleString("es-PE")}</span>{" "}
-          {hiddenByFiltersCount === 1 ? "vuelo oculto por filtros" : "vuelos ocultos por filtros"}
+          {hiddenByFiltersCount === 1 ? "vuelo oculto" : "vuelos ocultos"}
         </span>
       )}
 

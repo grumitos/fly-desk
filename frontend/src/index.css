@@ -922,9 +922,40 @@
     text-align: left;
   }
 
+  /* The route and its dates at the left, who is flying and in which mode at
+     the right: plate 1d puts the second pair in the width the two station
+     codes leave over, and the whole reason it does is that on one line the
+     mode was the word the ellipsis ate. */
   .fd-mobile-search-lead {
+    display: flex;
     min-width: 0;
     flex: 1;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .fd-mobile-search-block {
+    min-width: 0;
+  }
+
+  .fd-mobile-search-aside {
+    display: grid;
+    flex-shrink: 0;
+    justify-items: end;
+    gap: 2px;
+  }
+
+  .fd-mobile-search-trip {
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-meta);
+    font-weight: var(--fd-weight-value);
+    line-height: 1.3;
+    white-space: nowrap;
+  }
+
+  .fd-mobile-search-trip .fd-mono {
+    font-weight: var(--fd-weight-label);
   }
 
   .fd-mobile-search-route,
@@ -1174,17 +1205,15 @@
     box-shadow: none;
   }
 
-  .fd-list .fd-list-header {
-    height: 32px;
-    padding: 0 14px;
-    background: var(--color-background);
-  }
-
   /* The desk closed this gap because there its header is a heading and the
-     rule under it is the separation. A phone's is a status row: the 8px is
-     what `Movil.dc.html` draws between the count line and the first card. */
+     rule under it is the separation. A phone's is a status row, and both phone
+     plates draw its air as the row's own padding — 12 over the count and 8
+     under it — rather than as a gap between two boxes. Carried by the row
+     itself, the 8 survives a row that grows a pill; carried by the shell, it
+     was paid again by the viewport's own 10 and the first card sat 18px under
+     the count instead of 8. */
   .fd-list-shell {
-    gap: 8px;
+    gap: 0;
   }
 
   .fd-search-stage[data-entering] .fd-filter-strip > * {
@@ -1653,18 +1682,28 @@
     transform: translateY(0);
   }
 
+  /* 12 over the collapsed bar, which is the same 12 the flanks take and what
+     both phone plates draw above it. */
   .fd-tools-block[data-active="true"] > .fd-search-frame {
-    padding: 10px 12px 0;
+    padding: 12px 12px 0;
   }
 
-  /* The status row: 32px, never retracts, and the one place the count and the
-     order live once the title is gone (04 §3). */
+  /*
+   * The status row: it never retracts, and it is the one place the count and
+   * the order live once the title is gone (04 §3).
+   *
+   * 37 and not the 32 it was fixed at, and drawn on nothing. Both phone plates
+   * write this row as `padding: 12px 12px 8px` around a single 17px line and
+   * no rule under it — the count and the order are two values on the stage,
+   * not a band. Fixed at 32 with a hairline it was a header of a list that has
+   * no title, 14px in from an edge the cards below it start 12px from.
+   */
   .fd-list-header {
-    height: 32px;
-    min-height: 32px;
-    padding-inline: 14px;
-    border-bottom: 1px solid var(--color-border);
-    background: var(--color-background);
+    height: auto;
+    min-height: 0;
+    padding: 12px 12px 8px;
+    border-bottom: 0;
+    background: transparent;
   }
 
   .fd-list-title {
@@ -1697,8 +1736,27 @@
     display: none;
   }
 
+  /* Plate 1d's «↕ Precio» is the loud half of this row: 13/700 in full ink
+     with the glyph muted behind it, against the count's 13/600 muted. It was
+     12/600 and muted throughout, which put the one control on the row a rung
+     below the figure beside it. */
   .fd-result-sort-compact {
     display: inline-flex;
+    color: var(--color-foreground);
+    font-size: var(--fd-text-base);
+    font-weight: var(--fd-weight-title);
+  }
+
+  .fd-result-sort-compact svg {
+    color: var(--color-muted-foreground);
+  }
+
+  /* 13, not the desk's 12: there the count sits beside «Resultados» at 14 and
+     a second 13 made two headings out of one line. Here the title is not
+     drawn at all, so the row is one line of two values and both plates set it
+     at the order's own body. */
+  .fd-list-header .fd-panel-count {
+    font-size: var(--fd-text-base);
   }
 
   /* On a phone the notice is a band of the retractable block (plate 1d), so it
@@ -1796,7 +1854,16 @@
 
   /* "Filtros" and copy only exist here, so the JSX sets their rung. The cross
      does not: the active chip mounts in both armazones — 26 on a desk, 40 here
-     — and a number in the markup could only be right in one of them. */
+     — and a number in the markup could only be right in one of them.
+
+     The ink is the plate's too. Both phone plates draw this cross muted at
+     65%, and it was inheriting the chip's own foreground: full black over a
+     7% primary wash, which made the way to drop a filter the darkest thing in
+     the strip. Only the opacity was ever right. */
+  .fd-active-chip-remove {
+    color: var(--color-muted-foreground);
+  }
+
   .fd-active-chip-remove > svg {
     width: var(--fd-icon-18);
     height: var(--fd-icon-18);
@@ -1835,11 +1902,30 @@
     padding-right: 12px;
   }
 
-  /* Plate 1d: 10px of air above the first card, 12px at the flanks — the same
-     12px the title bar uses — and 22px at the foot to clear the home
-     indicator. */
+  /* 12px at the flanks — the same 12px the title bar uses — and 22px at the
+     foot to clear the home indicator. Nothing at the top: the air over the
+     first card is the status row's own 8px of padding, and this 10 was a
+     second helping of it read off the same plate. */
   .fd-list-viewport {
-    padding: 10px 12px 22px;
+    padding: 0 12px 22px;
+  }
+
+  /* And the 6px between fares comes back, because on this surface they are
+     still cards. The desk dropped it when the row stopped being a framed
+     object — «with one hairline under each row the air *is* the separation» —
+     and the phone lost it in the same change, which left forty rounded borders
+     touching. Both phone plates draw 6. `RESULTS_CARD_GAP_PX` reads the gap
+     off the element, so the column's own arithmetic follows this. */
+  .fd-results-list {
+    row-gap: 6px;
+  }
+
+  /* The status row's two values are set on one line, and it is the line the
+     collapsed bar above it already uses. Left at the document's 1.5 the row
+     measured 39.5 where both plates draw 37 — 12 over a 17px line and 8
+     under it. */
+  .fd-list-header {
+    line-height: 1.3;
   }
 
   .fd-provider-rail {
@@ -2538,6 +2624,15 @@
   font-weight: var(--fd-weight-title);
 }
 
+/* 7b, the law the catalogue states: an icon is chosen by the height of the
+   control it sits in, and a sheet's action is 46 — so 18, not the 16 the two
+   call sites were passing. A sheet only ever opens on a phone, so this is the
+   whole population of the rule. */
+.fd-sheet-action svg {
+  width: var(--fd-icon-18);
+  height: var(--fd-icon-18);
+}
+
 /* Colour only. The height stays 52 unless a sheet says otherwise — the filter
    sheet drops its «Limpiar» to 44 (04 §2), the calendar keeps both at 52. */
 .fd-sheet-action--secondary {
@@ -2555,7 +2650,13 @@
   flex: 0 0 auto;
   padding-inline: 18px;
   font-size: var(--fd-text-body);
-  font-weight: var(--fd-weight-label);
+  /* `Controles` names this one: «“Limpiar” cambia de forma entre superficies …
+     Es la misma acción; que cambie de tamaño está bien, que cambie de peso y
+     pierda el icono no». On a desk it is 12/700 in primary with a cross; here
+     it was 14/600 with nothing. The size is the surface's to change and the
+     other two are not, so the weight comes back and the cross comes back with
+     it, at the 18 a 40px control takes. */
+  font-weight: var(--fd-weight-title);
 }
 
 /*

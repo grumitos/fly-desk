@@ -697,19 +697,33 @@ export function SearchShell({
       aria-label="Editar búsqueda"
       onClick={() => onEditingChange?.(true)}
     >
+      {/*
+        * Two blocks, not one line. `Movil.dc.html` says why in as many words:
+        * «Los IATAs miden 98 px y el renglón tiene 264: el resto del ancho
+        * estaba vacío mientras la línea de abajo se cortaba en “Exa…”.
+        * Pasajeros y modalidad suben a ese hueco y las fechas se quedan
+        * solas.» Measured at 360, the single line asked for 304px of a 262px
+        * box and lost the mode to the ellipsis on every search.
+        *
+        * The date and the count are figures and take the same alphabet as the
+        * form this bar opens when it is touched; the mode and the noun are
+        * names and stay in sans. Each mixed value on one line: breaking the
+        * JSX collapses the literal space and glues the figure to the noun.
+        */}
       <span className="fd-mobile-search-lead">
-        <span className="fd-mobile-search-route">
-          <span>{originCode || "Origen"}</span>
-          <AppIcon name="swap" size={14} className="text-muted-foreground" />
-          <span>{destCode || "Destino"}</span>
+        <span className="fd-mobile-search-block">
+          <span className="fd-mobile-search-route">
+            <span>{originCode || "Origen"}</span>
+            <AppIcon name="swap" size={14} className="text-muted-foreground" />
+            <span>{destCode || "Destino"}</span>
+          </span>
+          <span className="fd-mobile-search-meta">
+            <span className="fd-mono">{dateSummary || "Fechas"}</span>
+          </span>
         </span>
-        {/* The date and the count are figures and take the same alphabet as
-            the form this bar opens when it is touched; the mode and the noun
-            are names and stay in sans. Each mixed value on one line: breaking
-            the JSX collapses the literal space and glues the figure to the
-            noun. */}
-        <span className="fd-mobile-search-meta">
-          <span className="fd-mono">{dateSummary || "Fechas"}</span> · <span className="fd-mono">{passengerTotal}</span> {plural(passengerTotal, "pasajero")} · {modeLabel}
+        <span className="fd-mobile-search-aside">
+          <span className="fd-mobile-search-trip"><span className="fd-mono">{passengerTotal}</span> {plural(passengerTotal, "pasajero")}</span>
+          <span className="fd-mobile-search-trip">{modeLabel}</span>
         </span>
       </span>
       <span className="fd-mobile-search-edit" aria-hidden="true">

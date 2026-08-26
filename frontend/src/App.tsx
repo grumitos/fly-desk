@@ -1109,6 +1109,11 @@ export default function App() {
                       className="fd-sheet-action fd-sheet-action--secondary fd-focus-ring"
                       onClick={handleClearFilters}
                     >
+                      {/* The same cross the rail's «Limpiar» wears: `Controles`
+                          allows this action to change size between surfaces and
+                          not to change weight or lose its glyph. The size comes
+                          from the sheet, which binds it to the control. */}
+                      <AppIcon name="x" size={18} />
                       Limpiar
                     </button>
                     <button

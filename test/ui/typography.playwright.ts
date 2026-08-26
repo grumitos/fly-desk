@@ -280,23 +280,44 @@ test("the phone's collapsed bar writes the same data in the same alphabet as the
        the same data changing alphabet inside a single gesture. */
     assert.equal(await isMonospaced(page, ".fd-mobile-search-route > span"), true);
     assert.equal(await isMonospaced(page, ".fd-mobile-search-meta .fd-mono"), true);
-    /* «Exacto» and «pasajero» are names and stay proportional: the line that
-       carries them did not move alphabet wholesale. */
+    /* «Exacto» and «pasajero» are names and stay proportional: the lines that
+       carry them did not move alphabet wholesale. */
     assert.equal(await isMonospaced(page, ".fd-mobile-search-meta"), false);
 
     const weights = await page.evaluate(() => {
       const meta = document.querySelector<HTMLElement>(".fd-mobile-search-meta");
       const figure = meta?.querySelector<HTMLElement>(".fd-mono");
+      const aside = Array.from(document.querySelectorAll<HTMLElement>(".fd-mobile-search-trip"));
       return {
         line: meta ? getComputedStyle(meta).fontWeight : "",
         figure: figure ? getComputedStyle(figure).fontWeight : "",
         numeric: figure ? getComputedStyle(figure).fontVariantNumeric : "",
         text: meta?.innerText ?? "",
+        aside: aside.map((node) => node.innerText.trim()),
+        asideFigure: aside[0]?.querySelector<HTMLElement>(".fd-mono")
+          ? getComputedStyle(aside[0].querySelector<HTMLElement>(".fd-mono")!).fontWeight
+          : "",
+        clips: (() => {
+          const bar = document.querySelector<HTMLElement>(".fd-mobile-search-summary")!;
+          return bar.scrollWidth > bar.clientWidth + 1
+            || (meta ? meta.scrollWidth > meta.clientWidth + 1 : false);
+        })(),
       };
     });
     assert.equal(weights.figure, "600");
+    assert.equal(weights.asideFigure, "600");
     assert.equal(weights.numeric, "tabular-nums");
-    assert.match(weights.text, /· 1 pasajero · Exacto$/);
+    /*
+     * Two blocks, and the dates keep the left one to themselves. Plate 1d puts
+     * the count and the mode in the width the two station codes leave over,
+     * because on one line they did not fit: measured at 360 the single meta
+     * line asked for 304px of a 262px box and «Exacto» was the word the
+     * ellipsis ate. This used to read `/· 1 pasajero · Exacto$/` off the meta
+     * line, which is the shape the plate replaces.
+     */
+    assert.match(weights.text, /^\d{2} \w{3} \d{4} – \d{2} \w{3} \d{4}$/);
+    assert.deepEqual(weights.aside, ["1 pasajero", "Exacto"]);
+    assert.equal(weights.clips, false);
   });
 });
 

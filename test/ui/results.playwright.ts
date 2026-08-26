@@ -2913,6 +2913,90 @@ test("the phone's detail sheet is the anatomy MovilDetalle draws, block by block
   }, { autoOpen: false });
 });
 
+test("the phone spends 149 pixels before its first fare, and every one of them is somebody's", async () => {
+  /*
+   * The one number that pins the whole rhythm of `MovilCompacta`, because it
+   * is the sum of every band above the list:
+   *
+   *     12  over the collapsed bar   (was 10)
+   *     52  the collapsed bar itself
+   *      8  over the filter strip
+   *     40  the strip, at the touch height
+   *     37  the status row — 12 over one 17px line and 8 under it (was 32
+   *         plus a hairline, and the 8 was being paid twice: once as the
+   *         shell's gap and again as the viewport's own top padding)
+   *    ---
+   *    149
+   *
+   * Measured against the plate opened at the same width, the application was
+   * spending 160. Asserted as the sum and as its parts, so a band that moves
+   * says which one it was.
+   */
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await routeCompletedSearch(page, { offers: Array.from({ length: 8 }, (_, index) => oneStopOffer(index)) });
+    await page.setViewportSize({ width: 360, height: 800 });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await waitForFontsReady(page);
+    await page.waitForTimeout(320);
+
+    const shell = await page.evaluate(() => {
+      const read = (selector: string) => document.querySelector<HTMLElement>(selector);
+      const top = (selector: string) => {
+        const node = read(selector);
+        return node ? Math.round(node.getBoundingClientRect().top) : -1;
+      };
+      const header = read(".fd-list-header")!;
+      const count = read(".fd-list-header .fd-panel-count");
+      const sort = read(".fd-result-sort-compact");
+      const type = (node: HTMLElement | null) => {
+        if (!node) return "";
+        const cs = getComputedStyle(node);
+        return `${cs.fontSize}/${cs.fontWeight}`;
+      };
+      return {
+        firstCard: top("[data-testid='result-card']"),
+        summary: top(".fd-mobile-search-summary"),
+        strip: top(".fd-filter-strip"),
+        statusRow: top(".fd-list-header"),
+        statusHeight: Math.round(header.getBoundingClientRect().height),
+        statusPadding: getComputedStyle(header).padding,
+        statusRule: getComputedStyle(header).borderBottomWidth,
+        count: type(count),
+        sort: type(sort),
+        sortColour: sort ? getComputedStyle(sort).color : "",
+        foreground: getComputedStyle(document.documentElement).getPropertyValue("--color-foreground").trim(),
+        viewportPadding: getComputedStyle(read(".fd-list-viewport")!).padding,
+        listGap: getComputedStyle(read(".fd-results-list")!).rowGap,
+      };
+    });
+
+    const at = JSON.stringify(shell);
+    assert.equal(shell.summary, 12, at);
+    /* The strip's own box opens where the bar closes; the 8 is its padding. */
+    assert.equal(shell.strip, 64, at);
+    assert.equal(shell.statusRow, 112, at);
+    assert.equal(shell.statusHeight, 37, at);
+    assert.equal(shell.statusPadding, "12px 12px 8px", at);
+    // Both phone plates draw this row on nothing: no rule, no band.
+    assert.equal(shell.statusRule, "0px", at);
+    assert.equal(shell.firstCard, 149, at);
+
+    /* The row's two values, at the body the plates give them: the counter
+       stays at the 700 «the counters of the results surface share one weight»
+       pins, and the order is full ink beside it. */
+    assert.equal(shell.count, "13px/700", at);
+    assert.equal(shell.sort, "13px/700", at);
+    assert.equal(shell.sortColour, "rgb(18, 18, 18)", at);
+
+    /* And the fares are still cards on this surface, so the 6px between them
+       comes back — the desk dropped it with the frame and the phone lost it in
+       the same change, which left forty rounded borders touching. */
+    assert.equal(shell.viewportPadding, "0px 12px 22px", at);
+    assert.equal(shell.listGap, "6px", at);
+  }, { autoOpen: false });
+});
+
 test("the result cell keeps the whole list minus the row's own 428, and every pixel past it is somebody's", async () => {
   /*
    * «No solucionaste el cambio erróneo de ancho de celda de resultado, compara
@@ -4399,32 +4483,56 @@ test("a list that fits its column draws no bar at all", async () => {
   }, { autoOpen: false });
 });
 
-test("on a phone the gesture is the convention and the drawn bar stands down", async () => {
+test("on a phone the drawn bar is four pixels of message and nothing to grab", async () => {
+  /*
+   * This case used to assert the bar was `display: none` here, on the
+   * argument that a drawn bar competes with the edge of the screen. That is
+   * true of the ten-pixel pointer target a desk row pays a channel for, and it
+   * is not what the phone plates draw: `Movil.dc.html` and
+   * `MovilCompacta.dc.html` both draw four pixels three from the edge and say
+   * what for — «con desplazamiento infinito, ver lo que falta *es* el
+   * mensaje». So the number is renegotiated against the drawing, and what
+   * keeps the old argument answered is `pointer-events: none`: the gesture is
+   * still the convention, the bar is only ever read.
+   */
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await routeLongCompletedSearch(page, 40);
     await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
     await page.getByTestId("result-card").first().waitFor();
-    /* Mounted but off, which is the claim: what hides it is the sheet, not a
-       JavaScript branch deciding what a phone is. The measurement lands a frame
-       after the content — it is `rAF` — so this waits for the node instead of
-       reading one that does not exist yet. */
+    /* The measurement lands a frame after the content — it is `rAF` — so this
+       waits for the node instead of reading one that does not exist yet. */
     await page.getByTestId("results-scrollbar").waitFor({ state: "attached" });
 
     const phone = await page.evaluate(() => {
-      const bar = document.querySelector<HTMLElement>('[data-testid="results-scrollbar"]');
+      const bar = document.querySelector<HTMLElement>('[data-testid="results-scrollbar"]')!;
+      const thumb = document.querySelector<HTMLElement>(".fd-list-scrollbar-thumb");
       const viewport = document.querySelector<HTMLElement>('[data-testid="results-list-body"]')!;
+      const card = document.querySelector<HTMLElement>("[data-testid='result-card']")!;
+      const style = getComputedStyle(bar);
       return {
-        display: bar ? getComputedStyle(bar).display : "absent",
+        display: style.display,
+        width: style.width,
+        right: style.right,
+        pointerEvents: style.pointerEvents,
+        thumbWidth: thumb ? getComputedStyle(thumb).width : "absent",
+        /* And it stays out of the row: the phone reserves no channel, so what
+           keeps a thumb off the last column of a fare is the list's own 12px
+           of side padding. */
+        clearsTheCard: bar.getBoundingClientRect().left >= card.getBoundingClientRect().right,
         scrolls: viewport.scrollHeight > viewport.clientHeight + 1,
         documentOverflows: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
       };
     });
 
-    /* The list does scroll; what there is not is a drawn bar competing with
-       the edge of the screen. */
-    assert.equal(phone.scrolls, true);
-    assert.equal(phone.display, "none");
-    assert.equal(phone.documentOverflows, false);
+    const at = JSON.stringify(phone);
+    assert.equal(phone.scrolls, true, at);
+    assert.notEqual(phone.display, "none", at);
+    assert.equal(phone.width, "4px", at);
+    assert.equal(phone.right, "3px", at);
+    assert.equal(phone.thumbWidth, "4px", at);
+    assert.equal(phone.pointerEvents, "none", at);
+    assert.equal(phone.clearsTheCard, true, at);
+    assert.equal(phone.documentOverflows, false, at);
   }, { autoOpen: false });
 });
