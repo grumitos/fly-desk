@@ -395,7 +395,6 @@ function SortCompactButton({ sort, onSort }: { sort: SortMode; onSort: (sort: So
     <button
       type="button"
       className="fd-result-sort-compact fd-focus-ring"
-      data-sort={sort}
       aria-label={`Ordenar por ${SORT_COMPACT_CRITERIA[next]}`}
       onClick={() => onSort(next)}
     >

@@ -920,7 +920,6 @@ export default function App() {
           className={`fd-search-stage ${
             isSearchIdle ? "fd-search-stage-idle" : "fd-search-stage-active"
           }`}
-          data-tools-collapsed={visibleMobileToolsCollapsed}
           data-entering={workspaceEntering ? "" : undefined}
         >
           {/* Plate 1a spaces the idle screen with two unequal spacers — 1 above
