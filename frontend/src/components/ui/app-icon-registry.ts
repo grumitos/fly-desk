@@ -5,8 +5,6 @@ import {
   ArrowRightLeft,
   ArrowUp,
   ArrowUpDown,
-  Backpack,
-  Briefcase,
   Calendar,
   Check,
   CornerDownLeft,
@@ -25,7 +23,6 @@ import {
   Layers,
   ListChecks,
   Loader2,
-  Luggage,
   MapPin,
   Minus,
   Moon,
@@ -75,6 +72,61 @@ const BrandPlane = forwardRef<SVGSVGElement, LucideProps>(function BrandPlane(
   )
 }) as LucideIcon
 
+/**
+ * The two baggage marks, drawn here rather than taken from lucide.
+ *
+ * Every plate in the set draws the same two — `Main`, `Movil`,
+ * `MovilCompacta`, `MovilDetalle`, and the `Actual` they replace: a soft cabin
+ * bag with a hoop handle, and a plain hold case with a flat one. Lucide's
+ * nearest neighbours are a rucksack with shoulder straps and a wheeled trolley
+ * with a telescopic handle, and those are what the row, the detail panel and
+ * the baggage filter have been drawing. They are the one mark on the row that
+ * an agent reads without a label, at 14px, twice per fare.
+ *
+ * Caps and joins are the system's round and not the plate's default: the plate
+ * sets neither, so it took SVG's, which is an omission rather than a drawing
+ * decision — and a second cap convention inside a closed pictogram family is a
+ * cost with nothing on the other side of it.
+ */
+function bagIcon(displayName: string, shapes: Array<[string, Record<string, string | number>]>): LucideIcon {
+  const Icon = forwardRef<SVGSVGElement, LucideProps>(function BagIcon(
+    { color = "currentColor", size = 24, strokeWidth = 2, absoluteStrokeWidth: _absoluteStrokeWidth, ...props },
+    ref,
+  ) {
+    void _absoluteStrokeWidth
+
+    return createElement(
+      "svg",
+      {
+        ...props,
+        ref,
+        xmlns: "http://www.w3.org/2000/svg",
+        width: size,
+        height: size,
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: color,
+        strokeWidth,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+      },
+      ...shapes.map(([tag, attributes], index) => createElement(tag, { key: index, ...attributes })),
+    )
+  })
+  Icon.displayName = displayName
+  return Icon as LucideIcon
+}
+
+const CabinBag = bagIcon("CabinBag", [
+  ["path", { d: "M7 8h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2Z" }],
+  ["path", { d: "M9 8V6a3 3 0 0 1 6 0v2" }],
+])
+
+const HoldBag = bagIcon("HoldBag", [
+  ["rect", { x: 5, y: 7, width: 14, height: 14, rx: 2 }],
+  ["path", { d: "M9 7V4h6v3" }],
+])
+
 /*
  * Plate 7b closes the pictogram families. Each glyph has exactly one meaning, so
  * that the agent does not have to read the label to know what a control does:
@@ -94,9 +146,8 @@ export const appIconRegistry = {
   arrowUp: ArrowUp,
   arrowDown: ArrowDown,
   enter: CornerDownLeft,
-  backpack: Backpack,
-  luggage: Luggage,
-  baggage: Briefcase,
+  cabinBag: CabinBag,
+  holdBag: HoldBag,
   calendar: Calendar,
   cityGroup: Layers,
   airport: PlaneTakeoff,

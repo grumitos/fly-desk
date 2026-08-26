@@ -24,10 +24,11 @@ import { normalizeQuotationOfferSnapshot, normalizeQuotationRequestSnapshot } fr
  * the column, the side sheet and the full sheet differ only in the container
  * query that `components.css` answers (02 §2).
  *
- * The itinerary is a rail: a 1.5px line, a filled dot at every stop, and the
- * layover leg dotted with its text in primary at 80%. It replaced a list of
- * label/value pairs because an itinerary is a sequence, and a sequence drawn as
- * a table makes the agent reconstruct the order in their head.
+ * The itinerary is a rail: one hairline from the first stop to the last, with
+ * an outlined dot at every stop and no change of material at the waiting
+ * stretch — a journey that is one line is drawn as one line. It replaced a
+ * list of label/value pairs because an itinerary is a sequence, and a sequence
+ * drawn as a table makes the agent reconstruct the order in their head.
  *
  * The quote error is the only error resolved *inside* this panel rather than in
  * the notice at the top of the page (11 §4): it is the one failure that happens
@@ -440,12 +441,12 @@ export function DetailPanel({
                     {pair.label === "Equipaje" && (
                       <span className="fd-condition-bags" aria-hidden="true">
                         <AppIcon
-                          name="backpack"
+                          name="cabinBag"
                           size={16}
                           className={cn(model.baggage.carryOnIncluded === false && "fd-condition-bag--absent")}
                         />
                         <AppIcon
-                          name="luggage"
+                          name="holdBag"
                           size={16}
                           className={cn(model.baggage.checkedIncluded === false && "fd-condition-bag--absent")}
                         />
@@ -736,13 +737,14 @@ type RailRow = {
   time: string
   kind: "first" | "stop" | "last" | "flight" | "layover"
   text: string
+  /** "+1" on a stop the aeroplane reaches after midnight. Its own leaf, so the
+      station keeps the station's type and the jump keeps the micro rung both
+      plates draw it at. */
+  dayOffset?: string
 }
 
-/*
- * Three kinds of row, three treatments. The layover tint used to reach the
- * flight rows too, which painted a plain segment's number and duration as if
- * the passenger were waiting in a terminal.
- */
+/* Two kinds of row, two treatments: the stops the aeroplane touches and the
+   lines between them. */
 function RailRow({ row }: { row: RailRow }) {
   const isStop = row.kind === "first" || row.kind === "stop" || row.kind === "last"
 
@@ -752,13 +754,12 @@ function RailRow({ row }: { row: RailRow }) {
       <span className="fd-rail-track" data-kind={row.kind}>
         {isStop && <span className="fd-rail-dot" />}
       </span>
-      <span
-        className={cn(
-          isStop ? "fd-rail-stop" : "fd-rail-leg",
-          row.kind === "layover" && "fd-rail-leg--layover",
-        )}
-      >
+      <span className={isStop ? "fd-rail-stop" : "fd-rail-leg"}>
         {row.text}
+        {/* Two children with a literal space between them: the parent is not a
+            flex container, so this space survives — and it is the space the
+            plate draws between «MAD · Madrid» and «+1». */}
+        {row.dayOffset ? <> <span className="fd-rail-day">{row.dayOffset}</span></> : null}
       </span>
     </>
   )
@@ -797,7 +798,8 @@ function detailLeg(itinerary: Itinerary, label: string): DetailLeg {
     rows.push({
       time: timeOf(segment.departureAt),
       kind: isFirst ? "first" : "stop",
-      text: stationLabel(segment.origin, segment.originName, dayOffsetOf(departureDate, segment.departureAt)),
+      text: stationLabel(segment.origin, segment.originName),
+      dayOffset: dayOffsetOf(departureDate, segment.departureAt),
     })
     rows.push({
       time: "",
@@ -810,7 +812,8 @@ function detailLeg(itinerary: Itinerary, label: string): DetailLeg {
       rows.push({
         time: timeOf(segment.arrivalAt),
         kind: "last",
-        text: stationLabel(segment.destination, segment.destinationName, dayOffsetOf(departureDate, segment.arrivalAt)),
+        text: stationLabel(segment.destination, segment.destinationName),
+        dayOffset: dayOffsetOf(departureDate, segment.arrivalAt),
       })
       return
     }
@@ -820,7 +823,8 @@ function detailLeg(itinerary: Itinerary, label: string): DetailLeg {
     rows.push({
       time: timeOf(segment.arrivalAt),
       kind: "stop",
-      text: stationLabel(segment.destination, segment.destinationName, dayOffsetOf(departureDate, segment.arrivalAt)),
+      text: stationLabel(segment.destination, segment.destinationName),
+      dayOffset: dayOffsetOf(departureDate, segment.arrivalAt),
     })
     rows.push({
       time: "",
@@ -831,8 +835,17 @@ function detailLeg(itinerary: Itinerary, label: string): DetailLeg {
 
   return {
     key: `${itinerary.direction}-${label}`,
-    title: departureDate ? `${label} · ${LEG_DATE_FORMATTER.format(new Date(`${departureDate}T00:00:00Z`))}` : label,
-    summary: [duration, stops === 0 ? "directo" : stops === 1 ? "1 escala" : `${stops} escalas`]
+    /* The eyebrow is «Ida», and the date rides with the rest of the facts on
+       the right — which is where both plates put it: «IDA» over
+       «28 may · 15h 15m · 1 escala». The date had been glued to the eyebrow,
+       so a micro rótulo in tracked uppercase was carrying a figure and the
+       line on the right was one fact short of the summary it is. */
+    title: label,
+    summary: [
+      departureDate ? LEG_DATE_FORMATTER.format(new Date(`${departureDate}T00:00:00Z`)).replace(/\.$/, "") : "",
+      duration,
+      stops === 0 ? "directo" : stops === 1 ? "1 escala" : `${stops} escalas`,
+    ]
       .filter(Boolean)
       .join(" · "),
     rows,
@@ -847,17 +860,31 @@ function dayOffsetOf(legDate: string | undefined, at?: string): string {
   return days > 0 ? `+${days}` : ""
 }
 
-function stationLabel(code?: string, name?: string, dayOffset = ""): string {
+function stationLabel(code?: string, name?: string): string {
   const iata = String(code ?? "").trim().toUpperCase()
   const place = stationPlaceName(iata, name)
-  const station = iata && place ? `${iata} · ${place}` : iata || place || "Estación por confirmar"
-  return dayOffset ? `${station} ${dayOffset}` : station
+  return iata && place ? `${iata} · ${place}` : iata || place || "Estación por confirmar"
 }
 
+/**
+ * «5h 50m · LATAM 8062», which is the order both plates write it in.
+ *
+ * How long the passenger is on this aeroplane comes first, because that is the
+ * fact the line exists for and the one the eye is running down; the flight is
+ * what identifies it afterwards, and it is named — «LATAM 8062», not the
+ * «LA800» the code was writing, because the airline is spelled out everywhere
+ * else on this panel and a two-letter code is one more thing to decode.
+ */
 function flightLabel(segment: Segment): string {
   const carrier = String(segment.marketingCarrier ?? "").trim().toUpperCase()
+  const carrierName = segment.marketingCarrierName?.trim() ?? ""
   const number = String(segment.flightNumber ?? "").trim().toUpperCase().replace(/\s+/g, "")
-  const code = number ? (carrier && !number.startsWith(carrier) ? `${carrier}${number}` : number) : ""
+  const bareNumber = carrier && number.startsWith(carrier) ? number.slice(carrier.length) : number
+  /* Named when the provider sent a name; a bare code otherwise, and then it
+     closes up — «LA800» is a flight number, «LA 800» is a name and a figure. */
+  const flight = carrierName
+    ? `${carrierName} ${bareNumber}`.trim()
+    : `${carrier}${bareNumber}` || carrier
   const duration = typeof segment.durationMinutes === "number" && segment.durationMinutes > 0
     ? formatJourneyDuration(segment.durationMinutes)
     : ""
@@ -865,18 +892,24 @@ function flightLabel(segment: Segment): string {
     ? `op. ${segment.operatingCarrierName.trim()}`
     : ""
 
-  return [code, duration, operator].filter(Boolean).join(" · ") || "Vuelo"
+  return [duration, flight, operator].filter(Boolean).join(" · ") || "Vuelo"
 }
 
-/** "Escala en PTY · 2h 05m", the wording plate 8a settles on. */
+/**
+ * «Escala 2h 10m».
+ *
+ * Without the airport, which both plates leave out and which the two rail rows
+ * this line sits between already carry — the aeroplane lands at «GRU · São
+ * Paulo» and the next one leaves from «GRU · São Paulo». Naming it a third
+ * time between them was the longest line on the rail saying the least.
+ */
 function layoverLabel(itinerary: Itinerary, segmentIndex: number, destination?: string): string {
   const minutes = itinerary.layoverMinutes?.[segmentIndex]
   const station = String(destination ?? "").trim().toUpperCase()
   const wait = typeof minutes === "number" && minutes > 0 ? formatJourneyDuration(minutes) : ""
 
-  if (station && wait) return `Escala en ${station} · ${wait}`
-  if (station) return `Escala en ${station}`
-  return wait ? `Escala · ${wait}` : "Escala"
+  if (wait) return `Escala ${wait}`
+  return station ? `Escala en ${station}` : "Escala"
 }
 
 /*

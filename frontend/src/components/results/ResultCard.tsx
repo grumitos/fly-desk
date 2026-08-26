@@ -1,5 +1,4 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from "react"
-import { Backpack, Luggage } from "lucide-react"
 import { AppIcon } from "@/components/ui/app-icon"
 import { cn } from "@/lib/utils"
 import type { CanonicalOffer } from "@/types"
@@ -74,7 +73,10 @@ export function ResultCard({
   const cardLabel = [
     selected ? "Oferta seleccionada" : "Seleccionar oferta",
     model.carrier.name,
-    model.carrier.operatedBy,
+    /* The prefix the two dispositions draw in CSS, said in full here: a reader
+       hears one list and has no line break or middle dot to tell it that the
+       second name is the operator. */
+    model.carrier.operatedBy && `Operado por ${model.carrier.operatedBy}`,
     ...model.legs.map((leg) => `${leg.ariaLabel}: ${legAriaSchedule(leg)}, ${leg.duration}, ${leg.stopsLabel}`),
     model.baggage.ariaLabel,
     model.price.ariaLabel,
@@ -134,14 +136,17 @@ export function ResultCard({
 
       {model.baggage.shown && (
         <span className="fd-card__baggage" title={model.baggage.title} aria-hidden="true">
+          {/* Through the registry, so the pair is the same two marks the filter
+              and the detail panel draw — and so the size comes from the closed
+              catalogue instead of from the stylesheet reaching into the svg. */}
           {model.baggage.carryOnIncluded !== undefined && (
             <span className={cn("fd-card__bag", model.baggage.carryOnIncluded ? "is-included" : "is-missing")}>
-              <Backpack aria-hidden="true" />
+              <AppIcon name="cabinBag" size={14} />
             </span>
           )}
           {model.baggage.checkedIncluded !== undefined && (
             <span className={cn("fd-card__bag", model.baggage.checkedIncluded ? "is-included" : "is-missing")}>
-              <Luggage aria-hidden="true" />
+              <AppIcon name="holdBag" size={14} />
             </span>
           )}
         </span>
@@ -283,13 +288,12 @@ function LegRow({ leg }: { leg: ResultLegModel }) {
       )}
 
       <span className="fd-card__leg-duration">{leg.duration}</span>
-      {/* Both wordings ride along and the container query picks one: the
-          stacked row's stops lane is 60px on a 360px phone, which fits
-          "1 esc · BOG" (54) and not "1 escala · BOG" (68). From two stops the
-          short form is the bare count, because no arrangement of
-          «2 esc · BOG, PTY» fits 60. Neither is spoken — the row's label is
-          built from the long form. */}
-      <span className="fd-card__leg-stops" title={leg.stopsTitle}>
+      {/* Both wordings ride along and the stylesheet picks one by measure. The
+          stop count comes with them, because the choice depends on it: from
+          two stops the short form is the bare count, and there is no width at
+          which the long one can be had on a phone. Neither is spoken — the
+          row's label is built from the long form. */}
+      <span className="fd-card__leg-stops" data-stops={leg.stopsTone} title={leg.stopsTitle}>
         <span className="fd-card__leg-stops-long">{leg.stopsLabel}</span>
         <span className="fd-card__leg-stops-short">{leg.stopsShortLabel}</span>
       </span>

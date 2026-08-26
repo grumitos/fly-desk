@@ -32,7 +32,7 @@ repository made on top of the manual.
 | The plate sets the stacked schedule sub-grid gap at 6 | 4 | The plate never loaded Plex Mono 700, so its bold times were synthesised from 600 and kept the narrower advance. With the real face each time measures 42px and the block needs 126 where the lane can afford 120. The next gap down brings it to exactly 120, which is what the horario lane is: `MovilCompacta` fixes that lane at 116 and states 113 measured, and the block measures **120** in the row — two 42px times, the 11px arrow lane, the 13px day lane and three 4px gaps. Measured, not copied. |
 | The plate sets the stacked leg lane gap at 8 | 4 | Same correction, same cause, one level up, and this is the third time the same arithmetic has moved this number. At 8 the stacked leg row's elastic stops lane was 51 against the 54 «1 esc · BOG» measures, so the airport code the whole threshold exists to protect was the first thing the ellipsis ate; 6 returned exactly the 6px that bought it while 56/124/46 stood. The lanes have moved since — 120 for the horario (the maqueta says 116 and claims 113 measured; the block measures **120**), a fixed 60 for the duration, and 22 for the rótulo in Exacto, where the leg drops its own copy of a date the search bar above the list already states. So the block is `rótulo + 120 + 60` with three 4px gaps, and a 360px Android gives it 310: **96** of elastic lane in Exacto and **62** in Flexible and Migratorio, where the rótulo keeps its date at 56 because there the date is what the mode is *for*. Both clear the 54, and the 59.9 of the widest three-letter code the label can carry. |
 | — | **No mode may ask for more phone than another to keep the airport code, and the width is 360** | The rule §5 states — the disposition in force must fit its own one-stop label — was pinned across thirteen desk widths in one mode, and the stacked rótulo is *narrower in Exacto than anywhere else*. So the geometry was a function of the mode with no case in the wide one, and carrying the baggage pair into the legs block as `MovilCompacta` draws it — 32 of lane and a fourth gap — fitted the code at 360 in Exacto (60) while taking Flexible to **26**: the label fell to «1 esc · …» on every phone under 388, which is the iPhone SE, 6, 7 and 8, and it is the mode that *varies its dates* that lost the code. `MovilCompacta` can afford that move only because it also drops the code («1 escala», not «1 escala · GRU»), which is what decision 3 refuses; `Deriva.dc.html` keeps the pair on the carrier line, and so does 8c. The pair stays there, in a lane fixed at 32 rather than an `auto` that comes and goes with the fare, and the two modes come back level at 360. Pinned by «the stops label keeps its airport code in every mode, on the narrowest phone», which sweeps all four `searchMode`s at 360, 375 and 390 — and asserts the date is still drawn in the three that vary it, so the next fix cannot buy width by taking it away. |
-| 8c abbreviates the stops lane but keeps the airports at every count | The stacked short form names the airports for one stop and shows the bare count from two | The narrowest phone lane is 60 and it holds «1 esc · BOG» (54) and nothing near «2 esc · PTY, MIA» (82) or «3 esc · PTY, MIA +1» (95). Cutting those to «2 esc…» hides the codes the abbreviation exists to preserve and adds a dangling ellipsis; the count alone says all of what it says. The desk long form is unchanged, the `title` still carries every layover, and the detail sheet names each stop. |
+| 8c abbreviates the stops lane but keeps the airports at every count | The stacked row writes the long form in Exacto for one stop, the short form everywhere else, and the bare count from two | Three lanes, one rule: the wording in force must fit the lane the mode gives it. Exacto's rótulo drops its date, so the lane is **96** on a 360 phone and holds «1 escala · MMM» (74) — the wording `Movil.dc.html` draws. Flexible and Migratorio keep the date, so the lane is **62** and holds only «1 esc · BOG» (54). From two stops no mode holds the long form — «2 escalas · BOG, PTY» measures 101 — and the ellipsis would eat exactly the codes the label exists to carry, so the short form there is the bare count: «2 esc · PTY, MIA» (82) and «3 esc · PTY, MIA +1» (95) do not fit 62 either, and the count alone says all of what it says. The choice is made in the sheet against `data-stops` on the element rather than by a hard `display: none`, so a lane that changes re-decides it. The desk long form is unchanged, the `title` still carries every layover, and the detail sheet names each stop. |
 | 04 §7's skeleton was read as a claim that expires, and 11 §3 gives a «tarda» notice for a search that is late | Neither exists. The skeleton stands, silent, for as long as the search is alive | **Owner-decided, against the plates.** «Esos avisos de demora no deben existir, solo el absoluto de no funcionar.» Two surfaces went: the status line the skeleton grew at eight seconds, and the empty state that took the whole column from a reader who had asked for no movement. The reasoning behind the 8s was already that a real search takes 15–40s and more — the production smoke's *fastest* case lands around 15 — which makes «está tardando más de lo habitual» an announcement of the ordinary case, at the moment the agent can do least about it. What still speaks is failure, and it has its own states: a provider that fell reaches the one-line notice (04 §8) and a search that reached nobody takes the column with «No se pudo consultar a los proveedores». `stillSearchingBody`, the 8s timer and the reduced-motion branch are deleted rather than disabled; a Playwright case asserts the absence at nine seconds in both motion preferences. |
 | 03 §5 reads "the plinth lists the available providers", and "listed = available" | The plinth lists the providers this deployment searches, always, with no state | Health was tried and it backfired: filtering by a live `ready` observation dropped Click and Book Plus from the idle screen entirely, because it cannot reach `ready` until a real search has answered. The rail is coverage — «Buscando en» — and a provider that fails a search is said in one line above the results (04 §8). `GET /api/provider-status` stays as an authenticated diagnostic surface with no UI consumer. |
 | 02 §12 sets a 44px touch minimum for every square icon control on a phone | The mobile catalogue is 34 / 40 / 46, and the two title-bar buttons stay one step below it | **Owner-decided, against the plates.** «Muchos botones se ven muy sobredimensionados espacialmente en tamaño de altura, la idea inicial era reducir el clic incorrecto pero se exageró.» Read as a floor for *every* square control, 44 stopped being a defence against a mis-tap and became the height of the screen: a 44px row per airline, a 44px cell per date, a 44px square per glyph, stacked. 40 is still comfortably clear of the 24px floor of WCAG 2.5.8 and within a finger of Apple's 44pt, and it returns 4px per control and 6 per counter — most of a card per screen. The three sizes keep their relationship, so nothing built on them is re-thought; only `--fd-control-touch{,-sm,-lg}` move, which is why the QA cases now read the token instead of restating the number. |
@@ -351,6 +351,52 @@ search ended. Reuse uses the same threshold, so at `0` a completed search is
 never handed to a second request; only retention outlives the number. A
 deployment that must not keep finished searches on disk says so by giving the
 store no database.
+
+## The parity pass against the plates (2026-08-25)
+
+The plates were re-measured against the running application, region by region,
+with a probe that opens the plate in one tab and the application in another at
+the same width and reads `getComputedStyle` and `getBoundingClientRect` off
+both. What that found is committed above and in the sheets; what it left
+standing is here, because each one is a place where the drawing and the code
+disagree and the code won.
+
+The method matters as much as the result. Two traps cost measurements before
+they were caught: `document.fonts.status` answers `"loaded"` while a
+stylesheet's faces have not been requested at all, so a page read on that alone
+is read in the fallback and every width is 5–7% wrong; and
+`getComputedStyle().fontFamily` returns the declared stack rather than the
+painted face. Both are settled the same way — ask for the faces by name, then
+wait until Inter and `system-ui` stop measuring the same string the same way,
+and measure ink with a `Range` over the real node.
+
+**Where the plate still loses, and why.** The default is the opposite: the
+drawing wins, and a difference from it is a defect until it is shown not to be.
+These are the exceptions, each with the measurement or the pinned contract
+behind it.
+
+| The plate draws | The code does | Why the code wins |
+|---|---|---|
+| `Main`: the results counter «24» at 12/**600** | 12/700 | `Cifras` §03 puts a counter in the 700 rung with the hour and the code, and «the counters of the results surface share one alphabet, one weight and one column» pins all six of them at 700 in CI. A surface plate does not outrank the system sheet that closes the weights. |
+| `Main`: the baggage pair at **15px**, the leg arrow at **11px** | 14 and 12 | The pictogram catalogue is 12 / 14 / 16 / 18 and `AppIconSize` is that union, checked by `bun run typecheck`. 15 and 11 are not sizes this system has, and the pair's pitch is 18 either way. |
+| `Main`: the rail's flight and layover lines at **11px** sans | 12px sans | «The monospace's rung is not spent on sans text» pins the four sans lines of the product at 12, 11 being the body the catalogue reserves for the monospace. The weight was the part that was wrong here, and it moved: 400 → 600. |
+| `Main`: the leg summary «28 may · 15h 15m · 1 escala» in **sans** | mono | `Cifras` §01 decides the alphabet by what a value *is* — a date and a duration are figures — and that rule is the one the sheet says decides its own five cases. |
+| `Main`, `Actual`: the airline row at **28** tall | 32, with the 6px gap between rows removed | 28 is not in the closed table of control heights, `Controles` puts this exact row at «32 → 40» between its two densities, and the 16px checkbox inside it is derived from the 32 by the icon law. What was worth fixing was the pitch, which was 38. |
+| `Main`: «sin usar» at 10/600, lowercase, untracked | 10/700, uppercase, tracked | `Controles` names this one as a defect in as many words — «va junto a un rótulo de grupo a 10/700 en versales con seguimiento … Misma línea base, tres propiedades de diferencia» — and the surface plates draw the version it is naming. |
+| `Reposo` §1: «Buscar» at 15/700 | 14/600 | Owner-decided. The 700 rung governs the results surface — hour, counter, code — not the form's values and controls, where every value is 600. |
+| `Movil`: a 14px chevron lane on the card, and «1 escala» without the code | No chevron; the code is kept | The chevron was decorative and `aria-hidden` over a card that has been the whole target since the hit was introduced, and its 24px is part of what buys the airport code back. The code is pinned in CI and the chevron is not. |
+| `Main`: the brand mark as a stroked outline; the provider and carrier marks as two-letter tiles | The filled brand asset; real carrier and provider artwork | The plate draws placeholders for artwork the application ships. Only the sizes were the plate's to give: the brand mark came down from 24 to 20. |
+
+Everything else the pass found is now the plate's: the list heading's line and
+rule, the column header's hairline, the row's carrier type, the bare
+per-person line, the two baggage glyphs, the detail column's rail, conditions
+and foot, the bar's three bare squares, the rail's spacing and counters, and
+the workspace's 12 · 10 · 16.
+
+**What it did not sweep.** The idle screen was measured only where it touches
+the shell's rhythm; `Campos`, `Calendario`, `Pasajeros`, `Gestos`,
+`Movimiento`, `Tanda` and `Migratorio` were read for the rules they state but
+their surfaces were not measured element by element against the application.
 
 ## What is still missing
 

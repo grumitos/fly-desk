@@ -189,20 +189,32 @@
     grid-template-columns: minmax(0, 1fr);
     min-width: 0;
     align-content: center;
-    gap: 2px;
+    /* 3, which is the `margin-top` the plate hangs the operator on. */
+    gap: 3px;
   }
 
   .fd-card__carrier-line {
     display: contents;
   }
 
+  /* 13/600 and 10/600, which is what `Main.dc.html` draws and what
+     `Actual.dc.html` drew before it — the row has carried 13/700 over 12/400
+     since the redesign and neither plate ever asked for it. The pair is a name
+     and a footnote, not a heading and a caption: at 700 the airline shouted
+     over a price that is the thing being compared, and at 12/400 the codeshare
+     was both larger and lighter than the row's own metadata.
+
+     The phone reverses both, and the plate reverses them too: `Movil.dc.html`
+     puts the name at 14/700 and the operator at 12/400 on one line, because
+     there they are the only text on the card's first row. That is restated in
+     the stacked block at the foot of this file, not inherited from here. */
   .fd-card__carrier-name {
     min-width: 0;
     grid-column: 1 / -1;
     overflow: hidden;
     font-size: var(--fd-text-base);
-    font-weight: var(--fd-weight-title);
-    line-height: 1.25;
+    font-weight: var(--fd-weight-label);
+    line-height: 1.2;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -211,11 +223,18 @@
     min-width: 0;
     overflow: hidden;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-meta);
-    font-weight: var(--fd-weight-value);
-    line-height: 1.25;
+    font-size: var(--fd-text-micro);
+    font-weight: var(--fd-weight-label);
+    line-height: 1.2;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* On a line of its own the name needs saying what it is; the phone, where it
+     rides the airline's own line, replaces this with the middle dot. Both are
+     the disposition speaking, which is why neither is in the model. */
+  .fd-card__carrier-operator::before {
+    content: "Operado por ";
   }
 
   /* The pair is a property of the fare and it has a column of its own, named
@@ -245,19 +264,22 @@
     place-items: center;
   }
 
-  .fd-card__bag svg {
-    width: var(--fd-icon-14);
-    height: var(--fd-icon-14);
-    stroke-width: 2;
-  }
+  /* No rule for the glyph itself: it arrives through `AppIcon`, which is where
+     the four sizes and the stroke are closed. This sheet restating 14 and 2
+     was a second place for them to be right or wrong. */
 
+  /* `--color-secondary-foreground`, which is the ink the plate gives every
+     mark that is not text: this pair, the logo tile's letters, the swap
+     button, the topbar's glyphs. Full foreground made two 14px pictograms as
+     black as the price. */
   .fd-card__bag.is-included {
-    color: var(--color-foreground);
+    color: var(--color-secondary-foreground);
   }
 
-  /* Not included is a fact, not a warning: it goes grey, not red. */
+  /* Not included is a fact, not a warning: it goes grey, not red. 38%, the
+     plate's, not the 45% this carried. */
   .fd-card__bag.is-missing {
-    color: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent);
+    color: color-mix(in srgb, var(--color-muted-foreground) 38%, transparent);
   }
 
   /* ---- legs -------------------------------------------------------------
@@ -555,9 +577,11 @@
     background: color-mix(in srgb, var(--color-primary) 8%, transparent);
   }
 
+  /* 11, the monospace's own rung and the plate's: a departure time inside a
+     26px chip, one step under the 12 of a schedule on the row itself. */
   .fd-card__alt-time {
     font-family: var(--font-mono);
-    font-size: var(--fd-text-meta);
+    font-size: var(--fd-text-mono-meta);
     font-weight: var(--fd-weight-title);
     font-variant-numeric: tabular-nums;
   }
@@ -602,9 +626,15 @@
    * lives in its own grid, so a lane sized to its own row's content resolves to
    * a different width in the header than in every row below it.
    *
-   * 26 tall against the row's 52, with the same 25% rule the three column
-   * headings across the screen use. No fill: the plinth is what this replaces,
-   * not what it becomes.
+   * 26 tall against the row's 52, and the rule under it is the row's own
+   * `--color-border` and not the 25% `--color-rule`. The 25% belongs to the
+   * three headings that cross the screen — «Filtros», «Resultados», «Oferta» —
+   * and this is not one of them: it is the first row of the table, drawn with
+   * the same hairline as every row after it. `Main.dc.html` overrides the 25%
+   * it declares on `.thead` with `#1f1f1e26` on the element itself, which is
+   * the value that gets painted. Two weights of rule 26px apart read as two
+   * headings. No fill either: the plinth is what this replaces, not what it
+   * becomes.
    */
   .fd-card--head {
     min-height: 26px;
@@ -613,7 +643,7 @@
        mounted inside `.fd-results-list` would become that list's first child
        and push the entrance cascade of `index.css` one position down. */
     flex-shrink: 0;
-    border-bottom: 1px solid var(--color-rule);
+    border-bottom: 1px solid var(--color-border);
     cursor: default;
   }
 
@@ -953,11 +983,16 @@
       grid-column: auto;
       flex: 0 1 auto;
       font-size: var(--fd-text-body);
+      font-weight: var(--fd-weight-title);
+      line-height: 1.25;
     }
 
     .fd-card .fd-card__carrier-operator {
       flex: 0 999 auto;
       overflow: hidden;
+      font-size: var(--fd-text-meta);
+      font-weight: var(--fd-weight-value);
+      line-height: 1.25;
       text-overflow: ellipsis;
     }
 
@@ -1107,6 +1142,28 @@
 
     .fd-card .fd-card__leg-stops-short {
       display: inline;
+    }
+
+    /*
+     * Except in Exacto, where the rótulo gives up its date and the 34 pixels it
+     * gives back land in this lane: 96 on a 360 phone against the 74 the widest
+     * one-stop label can measure («1 escala · MMM»), where Flexible has 62 and
+     * cannot. So the abbreviation is not paying for anything there, and
+     * `Movil.dc.html` — which draws Exacto — writes «1 escala · GRU» on a
+     * 360px card. The lane has held 96 since the chevron's went; the wording
+     * stayed at the 60 it was chosen for.
+     *
+     * From two stops it goes back to the short form in every mode: «2 escalas ·
+     * BOG, PTY» measures 101 against the 96, and the ellipsis it would take
+     * would eat exactly the codes the label exists to carry. That is what the
+     * count is on the element for.
+     */
+    .fd-results-list[data-mode="exact"] .fd-card .fd-card__leg-stops:not([data-stops="many-stops"]) .fd-card__leg-stops-long {
+      display: inline;
+    }
+
+    .fd-results-list[data-mode="exact"] .fd-card .fd-card__leg-stops:not([data-stops="many-stops"]) .fd-card__leg-stops-short {
+      display: none;
     }
 
     .fd-card .fd-card__alts {
