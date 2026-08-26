@@ -602,9 +602,15 @@
    * lives in its own grid, so a lane sized to its own row's content resolves to
    * a different width in the header than in every row below it.
    *
-   * 26 tall against the row's 52, with the same 25% rule the three column
-   * headings across the screen use. No fill: the plinth is what this replaces,
-   * not what it becomes.
+   * 26 tall against the row's 52, and the rule under it is the row's own
+   * `--color-border` and not the 25% `--color-rule`. The 25% belongs to the
+   * three headings that cross the screen — «Filtros», «Resultados», «Oferta» —
+   * and this is not one of them: it is the first row of the table, drawn with
+   * the same hairline as every row after it. `Main.dc.html` overrides the 25%
+   * it declares on `.thead` with `#1f1f1e26` on the element itself, which is
+   * the value that gets painted. Two weights of rule 26px apart read as two
+   * headings. No fill either: the plinth is what this replaces, not what it
+   * becomes.
    */
   .fd-card--head {
     min-height: 26px;
@@ -613,7 +619,7 @@
        mounted inside `.fd-results-list` would become that list's first child
        and push the entrance cascade of `index.css` one position down. */
     flex-shrink: 0;
-    border-bottom: 1px solid var(--color-rule);
+    border-bottom: 1px solid var(--color-border);
     cursor: default;
   }
 

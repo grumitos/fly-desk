@@ -3428,6 +3428,155 @@ test("every column header fits the lane it names, arrow included", async () => {
 });
 
 /*
+ * What nothing in this suite asserted, and what let a header that does not
+ * head its columns reach production green: that the header's geometry *is* the
+ * row's geometry, and that each name starts where the values it names start.
+ *
+ * The case above only checks a cell against its own declared track, so a header
+ * drawn on tracks of its own — or one whose labels float in the middle of the
+ * lane — passes it without ever being compared to a row.
+ */
+test("the column header wears the row's own lanes and starts at the row's own edge", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, { offers: [oneStopOffer(1), oneStopOffer(2)] });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await waitForFontsReady(page);
+
+    const geometry = await page.evaluate(() => {
+      const head = document.querySelector<HTMLElement>('[data-testid="results-column-head"]')!;
+      const row = document.querySelector<HTMLElement>('[data-testid="result-card"]')!;
+      const read = (node: HTMLElement) => {
+        const style = getComputedStyle(node);
+        const legs = node.querySelector<HTMLElement>(".fd-card__legs")!;
+        return {
+          tracks: style.gridTemplateColumns,
+          gap: style.columnGap,
+          left: Math.round(node.getBoundingClientRect().left * 100) / 100,
+          right: Math.round(node.getBoundingClientRect().right * 100) / 100,
+          legTracks: getComputedStyle(legs).gridTemplateColumns,
+          legGap: getComputedStyle(legs).columnGap,
+          legLeft: Math.round(legs.getBoundingClientRect().left * 100) / 100,
+        };
+      };
+      return { head: read(head), row: read(row) };
+    });
+
+    assert.equal(geometry.head.tracks, geometry.row.tracks);
+    assert.equal(geometry.head.gap, geometry.row.gap);
+    assert.equal(geometry.head.legTracks, geometry.row.legTracks);
+    assert.equal(geometry.head.legGap, geometry.row.legGap);
+    /* Same box, so the same tracks resolve to the same pixels: a header padded
+       differently from the rows names lanes that are 8px away from the ones
+       drawn. */
+    assert.equal(geometry.head.left, geometry.row.left);
+    assert.equal(geometry.head.right, geometry.row.right);
+    assert.equal(geometry.head.legLeft, geometry.row.legLeft);
+  }, { autoOpen: false });
+});
+
+test("every column heading begins where the values it names begin", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, { offers: [oneStopOffer(1), oneStopOffer(2)] });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await waitForFontsReady(page);
+
+    const columns = await page.evaluate(() => {
+      const head = document.querySelector<HTMLElement>('[data-testid="results-column-head"]')!;
+      const row = document.querySelector<HTMLElement>('[data-testid="result-card"]')!;
+      const headLeg = head.querySelector<HTMLElement>(".fd-card__leg")!;
+      const rowLeg = row.querySelector<HTMLElement>(".fd-card__leg")!;
+
+      /* The ink, not the box. Every one of these labels is a grid item as wide
+         as its lane, so its box tells us nothing about where the word is
+         painted — which is the whole of the defect this case exists for. */
+      const ink = (node: Element) => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const box = range.getBoundingClientRect();
+        return { left: Math.round(box.left * 100) / 100, right: Math.round(box.right * 100) / 100 };
+      };
+
+      const pair = (name: string, label: Element, value: Element, edge: "left" | "right") => ({
+        name,
+        edge,
+        label: ink(label)[edge],
+        value: ink(value)[edge],
+      });
+
+      return [
+        pair("Aerolínea", head.children[1]!, row.querySelector(".fd-card__carrier-name")!, "left"),
+        pair("Tramo", headLeg.children[0]!, rowLeg.querySelector(".fd-card__leg-label")!, "left"),
+        pair("Horario", headLeg.children[1]!, rowLeg.querySelector(".fd-card__leg-schedule")!, "left"),
+        pair("Duración", headLeg.children[2]!, rowLeg.querySelector(".fd-card__leg-duration")!, "right"),
+        pair("Escalas", headLeg.children[3]!, rowLeg.querySelector(".fd-card__leg-stops")!, "left"),
+        pair("Precio", head.querySelector('[data-segment="cheapest"]')!, row.querySelector(".fd-card__price-figure")!, "right"),
+      ];
+    });
+
+    for (const column of columns) {
+      /* A pixel of tolerance and no more: these are the same track, so the only
+         thing that may differ between the two edges is the sub-pixel the glyph
+         itself starts at. */
+      assert.ok(
+        Math.abs(column.label - column.value) <= 1,
+        `«${column.name}» is painted with its ${column.edge} edge at ${column.label} `
+          + `over values whose ${column.edge} edge is ${column.value}`,
+      );
+    }
+  }, { autoOpen: false });
+});
+
+test("the three headings across the desk are one line with one rule", async () => {
+  await withDesktopPage(async ({ baseUrl, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await routeCompletedSearch(page, { offers: [oneStopOffer(1), oneStopOffer(2)] });
+    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
+    await page.getByTestId("result-card").first().waitFor();
+    await page.getByTestId("result-card").first().click();
+    await page.locator(".fd-detail-header").waitFor();
+    await waitForFontsReady(page);
+
+    const headings = await page.evaluate(() => {
+      const read = (selector: string) => {
+        const node = document.querySelector<HTMLElement>(selector)!;
+        const style = getComputedStyle(node);
+        const box = node.getBoundingClientRect();
+        return {
+          selector,
+          top: Math.round(box.top * 100) / 100,
+          height: Math.round(box.height * 100) / 100,
+          rule: `${style.borderBottomWidth} ${style.borderBottomColor}`,
+        };
+      };
+      const title = document.querySelector<HTMLElement>(".fd-list-title")!;
+      const row = document.querySelector<HTMLElement>('[data-testid="result-card"]')!;
+      return {
+        filters: read(".fd-filter-panel-header"),
+        list: read(".fd-list-header"),
+        detail: read(".fd-detail-header"),
+        titleLeft: Math.round(title.getBoundingClientRect().left * 100) / 100,
+        rowContentLeft: Math.round(
+          row.querySelector<HTMLElement>(".fd-card__logo")!.getBoundingClientRect().left * 100,
+        ) / 100,
+      };
+    });
+
+    for (const heading of [headings.filters, headings.list, headings.detail]) {
+      assert.equal(heading.height, 28, `${heading.selector} is ${heading.height} tall`);
+      assert.equal(heading.top, headings.filters.top, `${heading.selector} sits at ${heading.top}`);
+      assert.equal(heading.rule, headings.filters.rule, `${heading.selector} draws ${heading.rule}`);
+    }
+    /* And the middle one names a table, so its title starts over the table's
+       first lane rather than at the column's own edge. */
+    assert.equal(headings.titleLeft, headings.rowContentLeft);
+  }, { autoOpen: false });
+});
+
+/*
  * The drawn scrollbar (`ResultsScrollbar`).
  *
  * Three things only a browser can say: that the new sheet really wins — it is
