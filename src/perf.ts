@@ -40,7 +40,7 @@ function formatFields(fields: PerfFields | undefined): string {
   }
 
   return Object.entries(fields)
-    .filter((entry): entry is [string, Exclude<PerfFieldValue, undefined | null>] =>
+    .filter((entry) =>
       entry[1] !== undefined && entry[1] !== null)
     .map(([key, value]) => `${key}=${formatFieldValue(value)}`)
     .join(" ");

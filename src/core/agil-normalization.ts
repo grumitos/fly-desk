@@ -47,7 +47,7 @@ export function parseAgilDurationMinutes(value?: string, start?: string, end?: s
 }
 
 export function minimumNumber(values: Array<number | undefined>): number | undefined {
-  const numeric = values.filter((value): value is number => typeof value === "number");
+  const numeric = values.filter((value) => typeof value === "number");
   if (numeric.length === 0) {
     return undefined;
   }
@@ -76,7 +76,7 @@ export function parseAgilNumericValue(value: unknown): number | undefined {
 }
 
 export function combineIncludedFlags(values: Array<boolean | undefined>): boolean | undefined {
-  const known = values.filter((value): value is boolean => typeof value === "boolean");
+  const known = values.filter((value) => typeof value === "boolean");
   if (known.length === 0) {
     return undefined;
   }

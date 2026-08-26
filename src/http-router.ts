@@ -3305,7 +3305,7 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
     );
 
     const fulfilled = settled
-      .filter((result): result is PromiseFulfilledResult<{ providerId: ProviderId; suggestions: LocationSuggestion[] }> => result.status === "fulfilled")
+      .filter((result) => result.status === "fulfilled")
       .map((result) => result.value.suggestions);
 
     if (fulfilled.length === 0) {
