@@ -15,8 +15,8 @@ import "./results-scrollbar.css"
  * The tempting version is `visible rows / total rows`, and in this list it
  * lies in both directions:
  *
- * - a group card weighs 1.67 plain cards (`RESULT_GROUP_CARD_WEIGHT`) and
- *   stands at about 101px against 58, so ten rows can be two screens or five
+ * - a group card weighs 1.77 plain cards (`RESULT_GROUP_CARD_WEIGHT`) and
+ *   stands at 92px against 52, so ten rows can be two screens or five
  *   depending on how many of them are groups;
  * - the window grows itself by batches as it is scrolled, and a partial
  *   search's skeleton takes real height while being no offer at all.

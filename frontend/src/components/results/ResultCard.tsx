@@ -299,7 +299,13 @@ function LegRow({ leg }: { leg: ResultLegModel }) {
           which the long one can be had on a phone. Neither is spoken — the
           row's label is built from the long form. */}
       <span className="fd-card__leg-stops" data-stops={leg.stopsTone} title={leg.stopsTitle}>
-        <span className="fd-card__leg-stops-long">{leg.stopsLabel}</span>
+        {/* Two lanes on a desk, one string on a phone. The count and the
+            airports are separate cells so the row's grid can give the count a
+            track of its own, shared by both legs — see the stylesheet. */}
+        <span className="fd-card__leg-stops-long">
+          <span className="fd-card__leg-stops-count">{leg.stopsCountLabel}</span>
+          <span className="fd-card__leg-stops-codes">{leg.stopsCodesLabel}</span>
+        </span>
         <span className="fd-card__leg-stops-short">{leg.stopsShortLabel}</span>
       </span>
     </div>

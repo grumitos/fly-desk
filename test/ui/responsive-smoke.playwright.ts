@@ -207,7 +207,14 @@ for (const viewport of VIEWPORTS) {
           carrierOperatorRight: carrierOperatorBox?.right ?? 0,
           legsLeft: legsBox?.left ?? 0,
           listWidth: list?.getBoundingClientRect().width ?? 0,
-          stopsWidth: stops?.getBoundingClientRect().width ?? 0,
+          /* The ink, not the box: on a desk the label is two cells of the
+             row's own grid and its wrapper draws none of its own. */
+          stopsWidth: (() => {
+            if (!stops) return 0;
+            const range = document.createRange();
+            range.selectNodeContents(stops);
+            return range.getBoundingClientRect().width;
+          })(),
         };
       });
       assert.ok(cardLayout.carrierNameWidth > 0, JSON.stringify(cardLayout));
