@@ -443,8 +443,8 @@ test("native schedule groups expose complete return-flight alternatives", async 
 
     const alternatives = card.locator(".fd-card__alt-chip");
     assert.equal(await alternatives.count(), 2);
-    assert.match(await alternatives.nth(0).getAttribute("aria-label") ?? "", /^Cambiar la vuelta a las 20:30, 1d 1h 55m$/);
-    assert.match(await alternatives.nth(1).getAttribute("aria-label") ?? "", /^Cambiar la vuelta a las 13:05, 1d 9h 20m$/);
+    assert.match(await alternatives.nth(0).getAttribute("aria-label") ?? "", /^Cambiar la vuelta a las 20:30, 25h 55m$/);
+    assert.match(await alternatives.nth(1).getAttribute("aria-label") ?? "", /^Cambiar la vuelta a las 13:05, 33h 20m$/);
     assert.doesNotMatch(await alternatives.allInnerTexts().then((items) => items.join(" ")), /KLM|Click and Book|USD|Equipaje/);
 
     await alternatives.nth(0).click();

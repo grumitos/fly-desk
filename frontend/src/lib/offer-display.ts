@@ -70,17 +70,27 @@ export function formatOfferBaggageLabel(baggage: unknown): string | undefined {
   return parts.length ? parts.join(" + ") : undefined
 }
 
+/**
+ * Hours and minutes, however many hours it takes.
+ *
+ * It used to break a day out — «1d 5h 50m» — and for as long as every duration
+ * in the product was silently reduced modulo 24 hours, no row ever reached the
+ * branch. With the clocks read properly a Lima-Madrid connection is 29h 50m,
+ * and the column that names it is the one the agent sorts on: «19h 55m» over
+ * «1d 5h 50m» over «22h 20m» cannot be compared by eye, and two of those three
+ * need arithmetic before they can even be ranked. One unit, always the same
+ * one, and the figures line up as figures.
+ *
+ * The minutes stay when they are zero — «32h 0m», beside «19h 55m» — because
+ * this is a lane of tabular numerals and a row that drops its last term is a
+ * row that stops lining up with the rest.
+ */
 export function formatJourneyDuration(minutes: number): string {
   const total = Math.round(minutes)
-  const days = Math.floor(total / 1440)
-  const hours = Math.floor((total % 1440) / 60)
+  const hours = Math.floor(total / 60)
   const mins = total % 60
-  const parts: string[] = []
 
-  if (days > 0) parts.push(`${days}d`)
-  if (hours > 0 || days > 0) parts.push(`${hours}h`)
-  parts.push(`${mins}m`)
-  return parts.join(" ")
+  return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`
 }
 
 const OFFER_DATE_MONTHS = [
