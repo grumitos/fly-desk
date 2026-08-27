@@ -406,11 +406,10 @@
    *     13px, an 11px arrow lane, the day jump, and three 6px gaps.
    *   · 66 for the duration, **fixed**, which is the one lane the header
    *     changes. It was `minmax(50px, max-content)`, and `max-content`
-   *     resolves per row: a list where one fare says «1d 11h 10m» and the next
+   *     resolves per row: a list where one fare says «35h 10m» and the next
    *     says «9h 30m» has two different geometries, and a column whose width
-   *     depends on the fare in it is not a column. `formatJourneyDuration`
-   *     emits `Nd Hh Mm` with no ceiling on the days, so the lane is fixed at
-   *     the measured worst case the application can put in it: «2d 11h 45m» is
+   *     depends on the fare in it is not a column. The lane is fixed at the
+   *     measured worst case the application could put in it: «2d 11h 45m» is
    *     ten characters, Plex Mono advances 0.6em, and 11 × 0.6 × 10 = 66.0
    *     exactly — measured in the browser with the 600 weight loaded by name,
    *     because `document.fonts.check` answers false for a weight the page has
@@ -418,6 +417,14 @@
    *     rather than the painted face. The same string in the generic monospace
    *     fallback measures 60.48, which is how the measurement knows it was the
    *     real face that answered.
+   *
+   *     `formatJourneyDuration` no longer breaks a day out, so the widest
+   *     string this lane can be handed is «71h 55m» and 66 is now a ceiling
+   *     with room over it rather than one measured to the pixel. It keeps the
+   *     66: the figure is right-aligned, so the slack falls on its left where
+   *     the gap to the schedule already is, and 56 + 126 + 66 is the 284 every
+   *     threshold in this sheet is derived from. Narrowing it is a
+   *     re-derivation of the row, not a tidy-up.
    *
    * The ground under the block is gone, and it is gone from the phone in the
    * same commit. It entered because nine fixed lanes left holes and «cuándo»
@@ -1003,9 +1010,11 @@
   /* This panel borrows `.fd-card__leg-*` outside `.fd-card`, so it takes the
      base type and none of the container-qualified rules — which is why its
      lanes are restated here rather than inherited. The duration lane follows
-     the row's: 50 was the old floor and «2d 11h 45m» measures 66, so a fare
+     the row's: 50 was the old floor and «2d 11h 45m» measured 66, so a fare
      over a day long painted over the stops in this panel exactly as it did on
-     the row. 34 + 126 + 66 and three 10px gaps is the 256 above. */
+     the row. 34 + 126 + 66 and three 10px gaps is the 256 above. The widest
+     string is «71h 55m» since the day term went, and the lane follows the
+     row's rather than being re-derived on its own. */
   .fd-schedule-row__leg {
     display: grid;
     grid-template-columns: 34px 126px 66px minmax(0, 1fr);
@@ -1254,7 +1263,9 @@
      *     lane was `minmax(46px, max-content)` and resolved per row, so the
      *     row's geometry was a function of the fare — the exact fault the
      *     baggage lane was already fixed for. «2d 11h 45m» is ten characters at
-     *     10px, and 10 × 0.6 × 10 = 60.0 exactly.
+     *     10px, and 10 × 0.6 × 10 = 60.0 exactly — a ceiling with room over it
+     *     now that the widest the format emits is «71h 55m», and kept for the
+     *     same reason the desk's 66 is.
      *
      * The gap is 4, and this is the third time the same arithmetic has moved
      * it: the plate drew 8, the loaded face took it to 6, and the lanes above
@@ -1405,10 +1416,18 @@
       height: auto;
     }
 
+    /* The stacked card frames itself with 11px of padding and separates its
+       rows with 8 of gap, so a strip that also paid 6 of its own underneath
+       the chips left 18 below them where a card with no strip has 12 — the
+       hole the desk had, rebuilt out of the card's own frame.
+       The rule keeps the 8 every other row boundary has, and the chips are
+       centred under it by the two paddings that are already there: 11 from
+       the rule, and the card's own 11 to its edge. */
     .fd-card .fd-card__alts {
       grid-column: 1 / -1;
       grid-row: 3;
       gap: 6px;
+      padding: 11px 0 0;
     }
 
     .fd-card .fd-card__alts-label {
