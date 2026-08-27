@@ -3240,7 +3240,12 @@ test("the row's slack goes to the lanes whose data can use it, and no lane takes
           carrierLane: tracks[1] ?? Number.NaN,
           priceLane: tracks[4] ?? Number.NaN,
           providerLane: tracks[5] ?? Number.NaN,
-          stopsLane: legTracks[3] ?? Number.NaN,
+          /* Two tracks and the gutter between them: the count and the
+             airports. The count gives that gutter back in a negative margin,
+             so the three together are the one lane the derivation below is
+             written against, exactly as they were while it was a single
+             `minmax(0, 1fr)`. */
+          stopsLane: (legTracks[3] ?? Number.NaN) + 12 + (legTracks[4] ?? Number.NaN),
           markGap: Math.round((carrier.getBoundingClientRect().left - logo.getBoundingClientRect().right) * 100) / 100,
         };
       });
@@ -4073,8 +4078,24 @@ test("the column header wears the row's own lanes and starts at the row's own ed
 
     assert.equal(geometry.head.tracks, geometry.row.tracks);
     assert.equal(geometry.head.gap, geometry.row.gap);
-    assert.equal(geometry.head.legTracks, geometry.row.legTracks);
     assert.equal(geometry.head.legGap, geometry.row.legGap);
+
+    /* The leg's first three lanes are fixed and have to match to the pixel.
+       The fourth does not: the stops lane is two tracks now, and the first of
+       them is sized by the widest count the card in front of it carries —
+       «Escalas» in the header, «2 escalas» in a row that has one. What has to
+       hold is that the pair still spends the same total, so the header's
+       «Escalas» and a row's count begin on the same pixel (which is what «every
+       column heading begins where the values it names begin» measures) and
+       nothing after them moves. */
+    const legTracksOf = (tracks: string) => tracks.split(" ").map(Number.parseFloat);
+    const headLegs = legTracksOf(geometry.head.legTracks);
+    const rowLegs = legTracksOf(geometry.row.legTracks);
+    assert.deepEqual(headLegs.slice(0, 3), rowLegs.slice(0, 3), geometry.head.legTracks);
+    assert.ok(
+      Math.abs((headLegs[3]! + headLegs[4]!) - (rowLegs[3]! + rowLegs[4]!)) <= 0.5,
+      `${geometry.head.legTracks} vs ${geometry.row.legTracks}`,
+    );
     /* Same box, so the same tracks resolve to the same pixels: a header padded
        differently from the rows names lanes that are 8px away from the ones
        drawn. */

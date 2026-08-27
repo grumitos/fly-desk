@@ -31,6 +31,12 @@ import { buildOfferVariantGroupKey } from "./core/variant-group-key";
 import { ProviderSearchResult } from "./core/provider";
 import { enrichComparisonMetrics, totalDuration } from "./core/ranking";
 import {
+  resolveItineraryDurationMinutes,
+  resolveSegmentDurationMinutes,
+  wallClockMinutesBetween,
+  zonedMinutesBetween,
+} from "./core/flight-duration";
+import {
   BaggageSummary,
   CanonicalOffer,
   CostamarProviderContext,
@@ -2645,7 +2651,12 @@ function numberValue(value: unknown): number | undefined {
   return parseProviderAmount(value);
 }
 
-function parseDurationMinutes(value: unknown, departureAt?: string, arrivalAt?: string): number {
+/**
+ * Only what the provider actually said. A duration it did not send is 0 here,
+ * not a subtraction of two wall clocks — `flight-duration.ts` owns that, and
+ * owns it with the time zones the subtraction needs.
+ */
+function parseDurationMinutes(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) {
     return Math.max(0, Math.trunc(value));
   }
@@ -2672,13 +2683,6 @@ function parseDurationMinutes(value: unknown, departureAt?: string, arrivalAt?: 
     const iso = trimmed.match(/^PT(?:(\d+)H)?(?:(\d+)M)?$/i);
     if (iso) {
       return (Number(iso[1] ?? 0) * 60) + Number(iso[2] ?? 0);
-    }
-  }
-
-  if (departureAt && arrivalAt) {
-    const diff = new Date(arrivalAt).getTime() - new Date(departureAt).getTime();
-    if (Number.isFinite(diff) && diff > 0) {
-      return Math.round(diff / 60000);
     }
   }
 
@@ -3227,7 +3231,14 @@ function mapCbPlusOptionToCostamarFlight(
   const first = segments[0];
   const last = segments[segments.length - 1];
   const elapsedTime = cbPlusSegmentElapsedTime(aggregateSegment)
-    ?? parseDurationMinutes(undefined, first.departureDateTime, last.arrivalDateTime);
+    ?? zonedMinutesBetween(
+      first.departureAirport?.code,
+      first.departureDateTime,
+      last.arrivalAirport?.code,
+      last.arrivalDateTime,
+    )
+    ?? wallClockMinutesBetween(first.departureDateTime, last.arrivalDateTime)
+    ?? 0;
   const brandedFareName = cbPlusBrandedFareName(aggregateSegment);
 
   return {
@@ -3632,7 +3643,10 @@ function normalizeSegment(
     destinationName: normalizeCostamarAirportCityName(value.arrivalAirport),
     departureAt,
     arrivalAt,
-    durationMinutes: parseDurationMinutes(value.elapsedTime, departureAt, arrivalAt),
+    durationMinutes: resolveSegmentDurationMinutes(
+      { origin, destination, departureAt, arrivalAt },
+      parseDurationMinutes(value.elapsedTime),
+    ),
   };
 }
 
@@ -3700,10 +3714,13 @@ function normalizeItinerary(
     itinerary: {
       id: `${recommendation.id ?? "recommendation"}-${direction}-${index}`,
       direction,
-      durationMinutes: parseDurationMinutes(
-        selectedFlight.elapsedTime,
-        first.departureAt,
-        last.arrivalAt,
+      /* Click and Book stamps `-0500` on every timestamp, Madrid's included,
+         so the difference of the two ends is short by the time zones it
+         crossed. The clock catalogue is what answers here. */
+      durationMinutes: resolveItineraryDurationMinutes(
+        segments,
+        layoverMinutes,
+        parseDurationMinutes(selectedFlight.elapsedTime),
       ),
       stops: Math.max(0, segments.length - 1),
       layoverMinutes,

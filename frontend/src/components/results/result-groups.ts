@@ -233,22 +233,23 @@ export function resultListItemContainsOffer(item: ResultListItem, offerId: strin
  * block — 38 with the tallest leg pair, 26 with two plain ones — and the offer
  * sat against the top rule with none of the air a plain row centres it in.
  * `result-card.css` names the track instead (`minmax(52px, auto)`), which is
- * also what the hit area has claimed all along. 45 is the strip's 8px of margin
- * plus its own 37 (a 1px rule, 8 above the chips, the 26px chip, 2 below it).
- * With the row's hairline that is 98 against the plain row's 52, and with the
- * list's gap now 0 a slot is 52 and a group is 98, which is 1.88.
+ * also what the hit area has claimed all along. 39 is the strip: a 1px rule on
+ * the fare band's own edge, 6 above the chips, the 26px chip, 6 below it. With
+ * the row's hairline that is 92 against the plain row's 52, and with the list's
+ * gap now 0 a slot is 52 and a group is 92, which is 1.77.
  *
- * It was 1.62 (84 over 52) while the fare band collapsed, and 1.67 (107 over
- * 64) while the row was a 58px card with a 6px gap under it. Left alone at
- * either number the column would be measured with a group counted lighter than
- * it is, and a list that opens on a measured number opens short.
+ * It was 1.88 (98 over 52) while the strip carried 8 of margin and 8 of padding
+ * over 2, 1.62 (84 over 52) while the fare band collapsed, and 1.67 (107 over
+ * 64) while the row was a 58px card with a 6px gap under it. Left alone at any
+ * of those the column would be measured with a group counted heavier or lighter
+ * than it is, and a list that opens on a measured number opens wrong.
  *
  * Exported because `ResultsPanel` divides a measured row height by the same
  * number to recover the plain-row unit from a column that holds nothing but
  * groups. It restated the literal instead, which left the two one edit apart
  * from disagreeing about what a group costs.
  */
-export const RESULT_GROUP_CARD_WEIGHT = 1.88
+export const RESULT_GROUP_CARD_WEIGHT = 1.77
 
 /* Module-private: the window below is the only thing that weighs an item now.
    It was exported for the paginator, which is gone. */

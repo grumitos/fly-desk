@@ -41,6 +41,23 @@ export type ResultLegModel = {
   /** "Directo" · "1 escala · PTY" · "2 escalas · PTY, BOG +1". */
   stopsLabel: string
   /**
+   * The same wording, cut where the desk reads it in two lanes: the count on
+   * its own and the airports on theirs. A card's two legs rarely carry the
+   * same count, and «2 escalas · CDG, AMS» over «1 escala · CDG» pushed the
+   * second row's codes a whole word to the left of the first row's — the
+   * airports are what the agent scans down, so they are what has to line up.
+   */
+  stopsCountLabel: string
+  /**
+   * " · PTY, BOG +1" — the separator travels with the codes, and so does the
+   * space in front of it. On a desk the two are separate cells and a leading
+   * space at the start of a cell is dropped, so the lane pays for that space
+   * once, in `padding-left`; on a phone they are one string again and the
+   * space is the one that was always there. Either way the text a reader
+   * selects, and a screen reader speaks, is «1 escala · BOG».
+   */
+  stopsCodesLabel: string
+  /**
    * The same fact in the 57px the stacked card can spare ("1 esc · PTY").
    * Plate 8c abbreviates here for a reason that is arithmetic, not taste: the
    * full wording overflows by a few pixels and takes the airport code with it,
@@ -193,6 +210,8 @@ function legModel(
     dayOffset: dayOffset > 0 ? `+${dayOffset}` : "",
     duration: legDuration(itinerary),
     stopsLabel: stops.label,
+    stopsCountLabel: stops.countLabel,
+    stopsCodesLabel: stops.codesLabel,
     stopsShortLabel: stops.shortLabel,
     stopsTitle: stops.title,
     stopsTone: stops.tone,
@@ -218,6 +237,8 @@ function stopsForItinerary(itinerary: Itinerary | null) {
   if (!itinerary) {
     return {
       label: "Escalas por confirmar",
+      countLabel: "Escalas por confirmar",
+      codesLabel: "",
       shortLabel: "Escalas ?",
       title: "No hay itinerario para confirmar las escalas",
       tone: "unknown" as const,
@@ -231,6 +252,8 @@ function stopsForItinerary(itinerary: Itinerary | null) {
   if (stopCount === 0) {
     return {
       label: "Directo",
+      countLabel: "Directo",
+      codesLabel: "",
       shortLabel: "Directo",
       title: "Vuelo directo",
       tone: "direct" as const,
@@ -255,6 +278,8 @@ function stopsForItinerary(itinerary: Itinerary | null) {
     // column reads as one shape whatever the count (plate 8c).
     return {
       label: codes[0] ? `1 escala · ${codes[0]}` : "1 escala",
+      countLabel: "1 escala",
+      codesLabel: codes[0] ? ` · ${codes[0]}` : "",
       shortLabel: codes[0] ? `1 esc · ${codes[0]}` : "1 esc",
       title,
       tone: "one-stop" as const,
@@ -272,6 +297,8 @@ function stopsForItinerary(itinerary: Itinerary | null) {
    */
   return {
     label: `${stopCount} escalas${codeSuffix}`,
+    countLabel: `${stopCount} escalas`,
+    codesLabel: shown ? ` · ${shown}${overflow}` : "",
     shortLabel: `${stopCount} esc`,
     title,
     tone: "many-stops" as const,

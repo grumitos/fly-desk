@@ -439,7 +439,12 @@
   .fd-card__legs {
     position: relative;
     display: grid;
-    grid-template-columns: 56px 126px 66px minmax(0, 1fr);
+    /* Five tracks, not four: the stops lane is the count and the airports, and
+       they are separate tracks so both legs of a card share the count's width.
+       The fifth is the `1fr` the fourth used to be, so the lane the threshold
+       arithmetic below is derived from is unchanged — the count track is paid
+       for out of it, and out of nothing else. */
+    grid-template-columns: 56px 126px 66px auto minmax(0, 1fr);
     min-width: 0;
     row-gap: 4px;
     column-gap: 12px;
@@ -542,6 +547,43 @@
     white-space: nowrap;
   }
 
+  /*
+   * «2 escalas · CDG, AMS» over «1 escala · CDG» put the second row's codes a
+   * whole word left of the first row's, and the codes are what the agent reads
+   * down the column. The two wrappers step out of the way so the count and the
+   * airports land in the row's own tracks: the subgrid gives them one `auto`
+   * track each leg draws into, so the wider count sizes it and both rows start
+   * their codes on the same pixel.
+   *
+   * The lane is not paid for. `· ` used to be text — a space, the dot, a space,
+   * 9.06 at this face — and the two cells are separated by the row's 12px
+   * gutter instead. So the count gives that gutter back with `-12px` and the
+   * codes carry their own `0.25em` where the leading space was: the string
+   * measures what it always measured, and «1 escala · BOG» is still the 75 the
+   * threshold below is derived from.
+   */
+  .fd-card__leg > .fd-card__leg-stops,
+  .fd-card__leg-stops-long {
+    display: contents;
+  }
+
+  .fd-card__leg-stops-count {
+    margin-right: -12px;
+    white-space: nowrap;
+  }
+
+  .fd-card__leg-stops-codes {
+    min-width: 0;
+    overflow: hidden;
+    padding-left: 0.25em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .fd-card__leg-stops-codes:empty {
+    padding-left: 0;
+  }
+
   .fd-card__leg-stops-short {
     display: none;
   }
@@ -613,13 +655,18 @@
   }
 
   /* ---- alternative schedules strip -------------------------------------
-   * The row has no vertical padding to give back any more — it never had any
-   * to begin with, and 52 is a `min-height` a plain fare row reaches on its
-   * own. So a row that carries a strip is the fare row plus the strip and
-   * nothing else: 38 of legs (the tallest thing on the row, and what the row
-   * really measures once the `min-height` stops binding), 8 of air, the strip's
-   * own rule, 8 above the chips, the 26px chip and 2 below it, and the row's
-   * own hairline — 84, which is the 1.62 `RESULT_GROUP_CARD_WEIGHT` carries. */
+   * A row that carries a strip is the fare row plus the strip and nothing
+   * else. The fare row is 52 — `min-height` on a plain row, the named track
+   * here — and 38 of that is legs, so it already ends in 7px of air.
+   *
+   * The strip used to add 8 of margin and 8 of padding to that 7, and give 2
+   * back underneath: 23 above the chips against 2 below them. The chips read
+   * as pushed to the bottom of a band that was mostly empty, and the fare row
+   * above them read as a row with a hole under it — neither is what the extra
+   * schedules are worth. So the rule sits on the fare band's own edge and the
+   * chips are centred in what is left: 1px of rule, 6, the 26px chip, 6. The
+   * strip is 39, the row 92 with its own hairline, and 92 over 52 is the 1.77
+   * `RESULT_GROUP_CARD_WEIGHT` carries. */
   .fd-card__alts {
     position: relative;
     z-index: 2;
@@ -628,8 +675,7 @@
     min-width: 0;
     align-items: center;
     gap: 10px;
-    margin-top: 8px;
-    padding: 8px 0 2px;
+    padding: 6px 0;
     border-top: 1px solid var(--color-border);
   }
 
@@ -880,7 +926,14 @@
   }
 
   /* The three deterministic lanes of a leg: date, schedule, duration. The
-     fourth — the stops — is the elastic one and arrives as a % per row. */
+     fourth — the stops — is the elastic one and arrives as a % per row.
+     The real row spends two tracks on it, the count and the airports; a bone
+     has neither, so it takes both as one lane and its % resolves against the
+     whole of it, exactly as it did while the lane was a single track. */
+  .fd-card--skeleton .fd-card__leg > :nth-child(4) {
+    grid-column: 4 / -1;
+  }
+
   .fd-card--skeleton .fd-card__leg > :nth-child(1) {
     width: 40px;
   }
@@ -1275,6 +1328,23 @@
     .fd-card .fd-card__leg-duration,
     .fd-card .fd-card__leg-stops {
       font-size: var(--fd-text-micro);
+    }
+
+    /* One cell again. The stacked lane is 96 at its widest and the two-track
+       split spends the row's gutter on a separator that is already a dot, so
+       the count and the airports go back to being one string in one box. */
+    .fd-card .fd-card__leg-stops {
+      display: block;
+    }
+
+    .fd-card .fd-card__leg-stops-count {
+      margin-right: 0;
+    }
+
+    /* One string again, so the separator's own space is back in the text and
+       the lane pays for it once rather than twice. */
+    .fd-card .fd-card__leg-stops-codes {
+      padding-left: 0;
     }
 
     .fd-card .fd-card__leg-stops-long {
