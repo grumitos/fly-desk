@@ -48,6 +48,10 @@ import {
   parseIsoDiffMinutes,
   parseLimitDate,
 } from "./core/agil-normalization";
+import {
+  resolveItineraryDurationMinutes,
+  resolveSegmentDurationMinutes,
+} from "./core/flight-duration";
 import { PROVIDER_OFFER_VARIANT_LIMIT, takeProviderOfferVariants } from "./core/provider-offer-limits";
 import { buildFlexibleVariantGroupKey } from "./core/variant-group-key";
 import {
@@ -2364,6 +2368,10 @@ function normalizeJourneyCandidates(
 
       const normalizedSegments: Segment[] = flightSegments.map((flight, flightIndex) => {
         const marketingCarrier = segmentCarrierCode(flight, fallbackCarrier);
+        const origin = flight.departureAirport?.code ?? "";
+        const destination = flight.arrivalAirport?.code ?? "";
+        const departureAt = flight.departureDateTime ?? option.startDateTime ?? "";
+        const arrivalAt = flight.arrivalDateTime ?? option.endDateTime ?? "";
         return {
           id: `${direction}-${sliceIndex}-${option.segmentId ?? optionIndex}-${flightIndex}`,
           marketingCarrier,
@@ -2371,32 +2379,35 @@ function normalizeJourneyCandidates(
           operatingCarrier: normalizeCarrierCode(flight.operatingAirline?.code) ?? marketingCarrier,
           operatingCarrierName: normalizeAirlineDisplayName(flight.operatingAirline?.name) || undefined,
           flightNumber: String(flight.flightNumber ?? ""),
-          origin: flight.departureAirport?.code ?? "",
+          origin,
           originName: flight.departureAirport?.name ?? undefined,
-          destination: flight.arrivalAirport?.code ?? "",
+          destination,
           destinationName: flight.arrivalAirport?.name ?? undefined,
-          departureAt: flight.departureDateTime ?? option.startDateTime ?? "",
-          arrivalAt: flight.arrivalDateTime ?? option.endDateTime ?? "",
-          durationMinutes: parseAgilDurationMinutes(
-            flight.elapsedTime,
-            flight.departureDateTime,
-            flight.arrivalDateTime,
+          departureAt,
+          arrivalAt,
+          durationMinutes: resolveSegmentDurationMinutes(
+            { origin, destination, departureAt, arrivalAt },
+            parseAgilDurationMinutes(flight.elapsedTime),
           ),
         };
       });
 
+      const layoverMinutes = computeLayoverMinutes(normalizedSegments);
       const itinerary: Itinerary = {
         id: `${direction}-${sliceIndex}-${option.segmentId ?? optionIndex}`,
         direction,
-        durationMinutes: parseAgilDurationMinutes(
-          option.flightDuration,
-          option.startDateTime ?? normalizedSegments[0]?.departureAt,
-          option.endDateTime ?? normalizedSegments[normalizedSegments.length - 1]?.arrivalAt,
+        /* `flightDuration` is `HHMM`, which cannot hold a day: a Lima-Madrid
+           connection of 26h50m arrives as `0250`. It is the last thing asked,
+           not the first. */
+        durationMinutes: resolveItineraryDurationMinutes(
+          normalizedSegments,
+          layoverMinutes,
+          parseAgilDurationMinutes(option.flightDuration),
         ),
         stops: typeof option.stops === "number"
           ? option.stops
           : Math.max(0, normalizedSegments.length - 1),
-        layoverMinutes: computeLayoverMinutes(normalizedSegments),
+        layoverMinutes,
         segments: normalizedSegments,
       };
 
