@@ -4368,13 +4368,9 @@ test("the three headings across the desk are one line with one rule", async () =
 });
 
 /*
- * The drawn scrollbar (`ResultsScrollbar`).
+ * The result list keeps one internal scroll owner on every armazón. The visible
+ * scrollbar overlay is not part of that behavior.
  *
- * Three things only a browser can say: that the new sheet really wins — it is
- * unlayered, and in this project a rule in `@layer utilities` can sit inert
- * without warning because the tail of `index.css` is in no layer —, that the
- * thumb measures the real viewport and not a row count, and that dragging it
- * scrolls the list.
  */
 async function routeLongCompletedSearch(page: Page, count: number): Promise<void> {
   await routeCompletedSearch(page, {
@@ -4382,184 +4378,56 @@ async function routeLongCompletedSearch(page: Page, count: number): Promise<void
   });
 }
 
-test("the list draws its own scrollbar, and the sheet that draws it wins", async () => {
+test("results keep internal scrolling without a visible scrollbar", async () => {
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 1440, height: 820 });
     await routeLongCompletedSearch(page, 40);
-    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
-    await page.getByTestId("results-scrollbar-thumb").waitFor();
-
-    const drawn = await page.evaluate(() => {
-      const bar = document.querySelector<HTMLElement>('[data-testid="results-scrollbar"]')!;
-      const thumb = document.querySelector<HTMLElement>('[data-testid="results-scrollbar-thumb"]')!;
-      const viewport = document.querySelector<HTMLElement>('[data-testid="results-list-body"]')!;
-      const barStyle = getComputedStyle(bar);
-      const thumbStyle = getComputedStyle(thumb);
-
-      return {
-        display: barStyle.display,
-        /* If these three are not the new sheet's, the sheet is in a layer that
-           loses and the bar is being drawn with whatever it inherits. */
-        barWidth: barStyle.width,
-        thumbWidth: thumbStyle.width,
-        thumbRadius: thumbStyle.borderRadius,
-        thumbOpaque: thumbStyle.backgroundColor !== "rgba(0, 0, 0, 0)",
-        /* The thumb is not animated: it goes where the reader is, not after. */
-        transitionProperty: thumbStyle.transitionProperty,
-        ariaHidden: bar.getAttribute("aria-hidden"),
-        focusable: bar.hasAttribute("tabindex") || thumb.hasAttribute("tabindex"),
-        trackHeight: Math.round(bar.getBoundingClientRect().height),
-        thumbHeight: Math.round(thumb.getBoundingClientRect().height),
-        clientHeight: viewport.clientHeight,
-        scrollHeight: viewport.scrollHeight,
-        /* Inside the clipped body, never hanging off the edge. */
-        withinListBody: bar.getBoundingClientRect().right
-          <= (viewport.parentElement as HTMLElement).getBoundingClientRect().right,
-        documentOverflows: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
-        /* The channel. Its `padding-right` is declared in the same unlayered
-           sheet and nowhere else, so reading it back at 10 is a second proof
-           that the sheet wins — and the bar sitting clear of the row is what
-           the channel is *for*: 18px of every row used to be the track's. */
-        channel: getComputedStyle(viewport.parentElement as HTMLElement).paddingRight,
-        rowRight: document.querySelector<HTMLElement>(".fd-results-list .fd-card")!
-          .getBoundingClientRect().right,
-        headRight: document.querySelector<HTMLElement>(".fd-card--head")!
-          .getBoundingClientRect().right,
-        barLeft: bar.getBoundingClientRect().left,
-      };
-    });
-
-    assert.equal(drawn.display, "block");
-    assert.equal(drawn.barWidth, "10px");
-    assert.equal(drawn.channel, "10px");
-    /* Not one pixel of the row under the bar — and the header still ends where
-       the rows do, because the channel is reserved on the body they are both
-       in, so the columns stay under the names that title them. */
-    assert.ok(
-      drawn.barLeft >= drawn.rowRight,
-      `the bar starts at ${drawn.barLeft} and the row ends at ${drawn.rowRight}`,
-    );
-    assert.equal(Math.round(drawn.headRight), Math.round(drawn.rowRight));
-    assert.equal(drawn.thumbWidth, "6px");
-    assert.equal(drawn.thumbRadius, "4px");
-    assert.equal(drawn.thumbOpaque, true);
-    assert.equal(drawn.transitionProperty, "background-color");
-    assert.equal(drawn.ariaHidden, "true");
-    assert.equal(drawn.focusable, false);
-    assert.equal(drawn.withinListBody, true);
-    assert.equal(drawn.documentOverflows, false);
-
-    /* The proportion comes from the viewport, not from how many cards there
-       are: visible height over total height. One point of slack for the
-       rounding to whole pixels. */
-    assert.equal(drawn.trackHeight, drawn.clientHeight);
-    const expected = Math.round(drawn.trackHeight * (drawn.clientHeight / drawn.scrollHeight));
-    assert.ok(
-      Math.abs(drawn.thumbHeight - expected) <= 1,
-      `thumb ${drawn.thumbHeight} against ${expected}: ${JSON.stringify(drawn)}`,
-    );
-  }, { autoOpen: false });
-});
-
-test("dragging the drawn thumb scrolls the list it belongs to", async () => {
-  await withDesktopPage(async ({ baseUrl, page }) => {
-    await page.setViewportSize({ width: 1440, height: 820 });
-    await routeLongCompletedSearch(page, 40);
-    await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
-    const thumb = page.getByTestId("results-scrollbar-thumb");
-    await thumb.waitFor();
-
-    const before = await page.getByTestId("results-list-body").evaluate((node) => node.scrollTop);
-    assert.equal(before, 0);
-
-    const box = (await thumb.boundingBox())!;
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 120, { steps: 6 });
-    await page.mouse.up();
-
-    const after = await page.getByTestId("results-list-body").evaluate((node) => ({
-      scrollTop: node.scrollTop,
-      maxScroll: node.scrollHeight - node.clientHeight,
-      thumbTop: document.querySelector<HTMLElement>('[data-testid="results-scrollbar-thumb"]')
-        ?.getBoundingClientRect().top ?? 0,
-      trackTop: document.querySelector<HTMLElement>('[data-testid="results-scrollbar"]')
-        ?.getBoundingClientRect().top ?? 0,
-    }));
-
-    /* It went down, and the thumb went down with it: the bar did not stay put
-       while the list moved underneath it. */
-    assert.ok(after.scrollTop > 0, JSON.stringify(after));
-    assert.ok(after.scrollTop <= after.maxScroll + 1, JSON.stringify(after));
-    assert.ok(after.thumbTop > after.trackTop, JSON.stringify(after));
-  }, { autoOpen: false });
-});
-
-test("a list that fits its column draws no bar at all", async () => {
-  await withDesktopPage(async ({ baseUrl, page }) => {
-    await page.setViewportSize({ width: 1440, height: 960 });
-    await routeLongCompletedSearch(page, 2);
     await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
     await page.getByTestId("result-card").first().waitFor();
-    await page.waitForFunction(() => {
-      const viewport = document.querySelector<HTMLElement>('[data-testid="results-list-body"]');
-      return Boolean(viewport) && viewport!.scrollHeight <= viewport!.clientHeight + 1;
+
+    const desktop = await page.evaluate(() => {
+      const viewport = document.querySelector<HTMLElement>('[data-testid="results-list-body"]')!;
+      const before = viewport.scrollTop;
+      viewport.scrollTop = 160;
+      return {
+        before,
+        after: viewport.scrollTop,
+        overflowY: getComputedStyle(viewport).overflowY,
+        scrollbarWidth: getComputedStyle(viewport).scrollbarWidth,
+        visibleBarCount: document.querySelectorAll('[data-testid="results-scrollbar"], [data-testid="results-scrollbar-thumb"]').length,
+      };
     });
-
-    assert.equal(await page.getByTestId("results-scrollbar").count(), 0);
+    const desktopAt = JSON.stringify(desktop);
+    assert.equal(desktop.before, 0, desktopAt);
+    assert.equal(desktop.after, 160, desktopAt);
+    assert.equal(desktop.overflowY, "auto", desktopAt);
+    assert.equal(desktop.scrollbarWidth, "none", desktopAt);
+    assert.equal(desktop.visibleBarCount, 0, desktopAt);
   }, { autoOpen: false });
-});
 
-test("on a phone the drawn bar is four pixels of message and nothing to grab", async () => {
-  /*
-   * This case used to assert the bar was `display: none` here, on the
-   * argument that a drawn bar competes with the edge of the screen. That is
-   * true of the ten-pixel pointer target a desk row pays a channel for, and it
-   * is not what the phone plates draw: `Movil.dc.html` and
-   * `MovilCompacta.dc.html` both draw four pixels three from the edge and say
-   * what for — «con desplazamiento infinito, ver lo que falta *es* el
-   * mensaje». So the number is renegotiated against the drawing, and what
-   * keeps the old argument answered is `pointer-events: none`: the gesture is
-   * still the convention, the bar is only ever read.
-   */
   await withDesktopPage(async ({ baseUrl, page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await routeLongCompletedSearch(page, 40);
     await openSharedSearchLink(page, `${baseUrl}${RESULTS_SEARCH_URL}`);
     await page.getByTestId("result-card").first().waitFor();
-    /* The measurement lands a frame after the content — it is `rAF` — so this
-       waits for the node instead of reading one that does not exist yet. */
-    await page.getByTestId("results-scrollbar").waitFor({ state: "attached" });
 
-    const phone = await page.evaluate(() => {
-      const bar = document.querySelector<HTMLElement>('[data-testid="results-scrollbar"]')!;
-      const thumb = document.querySelector<HTMLElement>(".fd-list-scrollbar-thumb");
+    const mobile = await page.evaluate(() => {
       const viewport = document.querySelector<HTMLElement>('[data-testid="results-list-body"]')!;
-      const card = document.querySelector<HTMLElement>("[data-testid='result-card']")!;
-      const style = getComputedStyle(bar);
+      const before = viewport.scrollTop;
+      viewport.scrollTop = 160;
       return {
-        display: style.display,
-        width: style.width,
-        right: style.right,
-        pointerEvents: style.pointerEvents,
-        thumbWidth: thumb ? getComputedStyle(thumb).width : "absent",
-        /* And it stays out of the row: the phone reserves no channel, so what
-           keeps a thumb off the last column of a fare is the list's own 12px
-           of side padding. */
-        clearsTheCard: bar.getBoundingClientRect().left >= card.getBoundingClientRect().right,
-        scrolls: viewport.scrollHeight > viewport.clientHeight + 1,
-        documentOverflows: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+        before,
+        after: viewport.scrollTop,
+        overflowY: getComputedStyle(viewport).overflowY,
+        scrollbarWidth: getComputedStyle(viewport).scrollbarWidth,
+        visibleBarCount: document.querySelectorAll('[data-testid="results-scrollbar"], [data-testid="results-scrollbar-thumb"]').length,
       };
     });
-
-    const at = JSON.stringify(phone);
-    assert.equal(phone.scrolls, true, at);
-    assert.notEqual(phone.display, "none", at);
-    assert.equal(phone.width, "4px", at);
-    assert.equal(phone.right, "3px", at);
-    assert.equal(phone.thumbWidth, "4px", at);
-    assert.equal(phone.pointerEvents, "none", at);
-    assert.equal(phone.clearsTheCard, true, at);
-    assert.equal(phone.documentOverflows, false, at);
+    const mobileAt = JSON.stringify(mobile);
+    assert.equal(mobile.before, 0, mobileAt);
+    assert.equal(mobile.after, 160, mobileAt);
+    assert.equal(mobile.overflowY, "auto", mobileAt);
+    assert.equal(mobile.scrollbarWidth, "none", mobileAt);
+    assert.equal(mobile.visibleBarCount, 0, mobileAt);
   }, { autoOpen: false });
 });

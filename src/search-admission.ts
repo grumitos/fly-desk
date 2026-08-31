@@ -127,12 +127,17 @@ export class SearchAdmissionController {
   private readonly limits: SearchAdmissionLimits;
   private readonly active = new Map<symbol, ActiveEntry>();
   private readonly queued: QueuedEntry[] = [];
+  private accepting = true;
 
   constructor(limits: SearchAdmissionLimits = resolveSearchAdmissionLimits()) {
     this.limits = limits;
   }
 
   acquire(request: SearchAdmissionRequest): Promise<SearchAdmissionLease> {
+    if (!this.accepting) {
+      return Promise.reject(new SearchAdmissionError("cancelled", "Search admission controller is stopping."));
+    }
+
     const costUnits = this.costForKind(request.kind);
     if (request.shouldContinue && !this.shouldContinue(request.shouldContinue)) {
       return Promise.reject(new SearchAdmissionError("cancelled", "Search was cancelled before admission."));
@@ -177,12 +182,25 @@ export class SearchAdmissionController {
   }
 
   dispose(message = "Search admission controller disposed."): void {
+    this.stopAccepting(message);
+    this.active.clear();
+  }
+
+  stopAccepting(message = "Search admission controller is stopping."): void {
+    this.accepting = false;
     const queued = this.queued.splice(0);
     for (const entry of queued) {
       clearTimeout(entry.timeout);
       entry.reject(new SearchAdmissionError("cancelled", message));
     }
-    this.active.clear();
+  }
+
+  async drain(timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    while (this.active.size > 0 && Date.now() < deadline) {
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(50, Math.max(1, deadline - Date.now()))));
+    }
+    return this.active.size === 0;
   }
 
   async run<T>(request: SearchAdmissionRequest, run: () => Promise<T>): Promise<T> {
@@ -272,6 +290,10 @@ export class SearchAdmissionController {
   }
 
   private startQueued(): void {
+    if (!this.accepting) {
+      return;
+    }
+
     for (;;) {
       const entry = this.queued[0];
       if (!entry) {

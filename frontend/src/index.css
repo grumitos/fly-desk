@@ -615,8 +615,8 @@
     height: 28px;
     flex-shrink: 0;
     /* 10 left, so the title stands over the row's first lane; 10 right, which
-       is the scrollbar channel `.fd-list-body` reserves, so the two boxes end
-       at the same pixel. */
+       is the stable gutter `.fd-list-body` reserves, so the two boxes end at
+       the same pixel. */
     padding: 0 10px;
     border-bottom: 1px solid var(--color-rule);
   }
@@ -749,7 +749,8 @@
 
   /* The list body owns the only scroll container of the column, and on a phone
      the only one of the screen (02 §11). `overscroll-behavior: contain` stops
-     the gesture leaking to whatever is behind an open sheet. */
+     the gesture leaking to whatever is behind an open sheet. The ten-pixel
+     right gutter is layout space only; it is not a visible scroll control. */
   .fd-list-body {
     position: relative;
     display: flex;
@@ -757,6 +758,7 @@
     flex: 1;
     flex-direction: column;
     overflow: hidden;
+    padding-right: 10px;
   }
 
   /* 11 §3's «tarda», said beside the skeleton rather than instead of it: one
@@ -1926,6 +1928,10 @@
      second helping of it read off the same plate. */
   .fd-list-viewport {
     padding: 0 12px 22px;
+  }
+
+  .fd-list-body {
+    padding-right: 0;
   }
 
   /* And the 6px between fares comes back, because on this surface they are

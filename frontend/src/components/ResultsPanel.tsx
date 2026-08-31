@@ -23,7 +23,6 @@ import { AllSchedulesPanel } from "@/components/results/AllSchedulesPanel"
 import { MigrationMonthGrid } from "@/components/results/MigrationMonthGrid"
 import { migrationSweepSummary, type DisplayMonth } from "@/components/results/migration-month-model"
 import { ResultsSkeleton } from "@/components/results/ResultsSkeleton"
-import { ResultsScrollbar } from "@/components/results/ResultsScrollbar"
 import { ActiveFilterChips } from "@/components/results/ActiveFilterChips"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Spinner } from "@/components/ui/spinner"
@@ -1144,8 +1143,6 @@ function ResultsList({
           />
         )}
       </div>
-
-      <ResultsScrollbar viewportRef={viewportRef} />
 
       {mobileCollapseEnabled && backToTopVisible && (
         <button
