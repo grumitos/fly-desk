@@ -226,6 +226,34 @@ describe("SearchAdmissionController", () => {
     }
   });
 
+  test("stops admitting new work while allowing active work to drain", async () => {
+    const controller = new SearchAdmissionController({
+      capacityUnits: 1,
+      exactCostUnits: 1,
+      rangeCostUnits: 1,
+      matrixCostUnits: 1,
+      maxQueued: 2,
+      queueTimeoutMs: 10_000,
+    });
+
+    try {
+      const active = await controller.acquire({ kind: "exact", jobId: "active" });
+      const queued = controller.acquire({ kind: "exact", jobId: "queued" });
+
+      controller.stopAccepting();
+      await expectAdmissionError(queued, "cancelled");
+      await expectAdmissionError(controller.acquire({ kind: "exact", jobId: "new" }), "cancelled");
+      expect(controller.getDiagnostics().activeCount).toBe(1);
+      expect(await controller.drain(5)).toBe(false);
+
+      active.release();
+      expect(await controller.drain(100)).toBe(true);
+      expect(controller.getDiagnostics().activeCount).toBe(0);
+    } finally {
+      controller.dispose();
+    }
+  });
+
   test("does not let newer exact searches bypass an older heavy search", async () => {
     const controller = new SearchAdmissionController({
       capacityUnits: 4,

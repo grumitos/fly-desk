@@ -22,6 +22,7 @@ const STARTUP_BACKGROUND_TASK_DELAY_MS = 10_000;
 const SESSION_MAINTENANCE_INTERVAL_MS = 60_000;
 const SHUTDOWN_CANCELLED_WARNING = "Search stopped because Fly Desk was restarted.";
 const SHUTDOWN_CANCEL_GRACE_MS = 1_000;
+const SHUTDOWN_JOB_DRAIN_MS = 4_000;
 
 /*
  * How long a stop may take, and what happens when it takes longer.
@@ -133,7 +134,14 @@ async function main() {
     shuttingDown = true;
     const activeRuntime = getActiveRuntime();
     const activeSessions = startupSessions ?? getSessionStoreIfInitialized();
+    activeRuntime?.searchAdmission.stopAccepting(SHUTDOWN_CANCELLED_WARNING);
+    /* Close the HTTP side while the admission leases finish. The token
+       receiver restarts this unit after every successful C&B installation;
+       cancelling first used to take Agil down with C&B even when its worker
+       was about to return usable offers. */
+    const serverStop = stopServerWithinDrainWindow();
     flushPendingProgressForShutdown();
+    await activeRuntime?.searchAdmission.drain(SHUTDOWN_JOB_DRAIN_MS);
     const cancelled = activeSessions?.cancelRunningJobs(SHUTDOWN_CANCELLED_WARNING, { cachePartial: true })
       ?? { searchJobs: 0, matrixJobs: 0 };
     activeRuntime?.searchAdmission.dispose(SHUTDOWN_CANCELLED_WARNING);
@@ -155,7 +163,7 @@ async function main() {
       clearInterval(providerPrewarmHandle);
     }
     stopSearchWorkerPool();
-    await stopServerWithinDrainWindow();
+    await serverStop;
     await tempCleanupPromise?.catch(() => undefined);
     activeRuntime?.locationSuggestions.purgeExpired(Number.POSITIVE_INFINITY);
     activeSessions?.close();
