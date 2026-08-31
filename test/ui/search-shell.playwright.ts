@@ -678,12 +678,10 @@ test("wide desktop shell expands from the idle measure into the workspace width"
     const listTrackWidth = workspaceBounds.gridWidth - 248 - 316 - 10 * 2
     assert.equal(workspaceBounds.listWidth, listTrackWidth, JSON.stringify(workspaceBounds));
     /*
-     * The row is the track less the scrollbar's channel, and this is the one
-     * place the two numbers are apart. The list draws its own bar
-     * (`results-scrollbar.css`) and the bar used to be drawn *over* the rows:
-     * 18px of every row's right edge belonged to the track, so a click aimed at
-     * the last column paged the list instead of selecting the fare. The channel
-     * that fixes it is paid for out of the row's own `padding-right` — the row
+     * The row is the track less the stable right gutter, and this is the one
+     * place the two numbers are apart. The list keeps its internal scroll
+     * behavior, but has no visible results bar. The gutter is paid for out of
+     * the row's own `padding-right` — the row
      * keeps its 10 on the left, the list body takes 10 on the right — so the
      * row's *border box* shrinks by exactly what its padding lost, every lane
      * stays at the pixel it was at, and `RESULT_ROW_FIXED_PX` is still 428. The

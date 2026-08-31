@@ -55,13 +55,11 @@ const RESULTS_COLUMN_GAP_PX = 10
  * thresholds below, which are questions about the narrow end, are asked at the
  * floors and are the same numbers they were.
  *
- * The two tens are no longer the same kind of thing, and it does not change the
- * sum: the left one is still the row's padding, the right one is the drawn
- * scrollbar's channel, reserved on `.fd-list-body` so the header reserves it
- * with the rows. The row gave up its right padding to pay for it, so the number
- * here, the `@container fdlist` threshold and every lane's position are
- * untouched — which is the reason the channel is ten and not the fourteen the
- * bar was drawn at. See `results-scrollbar.css`.
+ * The row and header still share a ten-pixel right gutter on `.fd-list-body`.
+ * The row gives up its right padding to keep the lane geometry stable, so the
+ * number here, the `@container fdlist` threshold and every lane's position are
+ * untouched. The gutter is layout space only; `.fd-list-viewport` remains the
+ * scroll owner.
  */
 const RESULT_ROW_FIXED_PX = 428
 

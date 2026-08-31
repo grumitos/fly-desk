@@ -82,21 +82,14 @@ sits **on** the boundary at exactly 824, which is where `Juicio.dc.html` draws
 it; a column that changes width moves that, and it moves loudly rather than
 silently, because the whole suite runs in armazón A.
 
-That zero of slack is also what decided the drawn scrollbar's channel. The bar
-was drawn over the rows and took 18px of every row's hit area, so a click aimed
-at the last column paged the list instead of selecting the fare; the branch that
-added it left the channel out over a threshold at 1073, which went with the
-side-by-side leg row. The constraint did not go with it — it moved here and got
-tighter. A channel charged to the row's *content* raises both 787 and 824 by its
-width and takes the commonest desk there is off its third column, so it is
-charged to the row's own `padding-right` instead: the row keeps its 10 on the
-left, `.fd-list-body` takes 10 on the right, the row's border box shrinks by
-exactly the padding it gave up, and `RESULT_ROW_FIXED_PX` is the same 428 with
-ten of it spent on a channel rather than on padding. Every lane is at the pixel
-it was at; what moves is the row's own rule and its hover fill, which now stop
-where the channel begins, and `.fd-card__hit`, which stops reaching under the
-track. Ten is the whole budget, so the bar is ten wide and not the fourteen it
-was drawn at.
+That zero of slack is also what decided the results scrollbar treatment. The
+list still keeps a ten-pixel right gutter on `.fd-list-body`, so the header and
+rows end at the same pixel and `RESULT_ROW_FIXED_PX` remains 428; the gutter is
+layout space only. The visible custom scrollbar overlay was removed because it
+occupied fare hit area and duplicated the browser's scroll affordance. The
+native scrollbar remains hidden with `.fd-list-viewport`'s zero-width rules,
+while that element remains the internal scroll owner and keeps the infinite
+sentinel-driven list intact on desk and phone.
 
 ## Decisions that bind the idle search form
 
@@ -169,9 +162,9 @@ every frame of every flick and each crossing is a state change, while the
 observer fires once per crossing and the batch it renders pushes the sentinel
 out of range until the reader keeps going. The prefetch margin is a column, not
 a screenful, because a batch is a render and not a fetch — every offer is
-already in memory when the job answers. On a desk the growth stays inside the
-list's own scroller (`.fd-list-viewport`), which is what keeps the plates'
-three-column workspace intact; the shell itself never scrolls.
+already in memory when the job answers. On every armazón the growth stays
+inside the list's own scroller (`.fd-list-viewport`), which is what keeps the
+plates' workspace intact; the shell itself never scrolls.
 
 11 §3's «cada filtro y cada orden devuelve la lista al principio» used to happen
 as a side effect of landing on page 1. It is now said outright, keyed on the
@@ -452,9 +445,8 @@ carrying a number that belonged to another surface:
 
 **The numbers this pass renegotiated**, each against the drawing rather than
 against taste: the phone status row from 32 to **37** (`responsive-smoke`), the
-phone's drawn scrollbar from `display: none` to the **4px** both plates draw
-(`results`, and it is `pointer-events: none`, which is what keeps the old
-argument answered), and the collapsed bar's `/· 1 pasajero · Exacto$/` on one
+visible results scrollbar overlay was removed on desktop and phone while the
+internal viewport scroll remains (`results`), and the collapsed bar's `/· 1 pasajero · Exacto$/` on one
 line to two blocks (`typography`).
 
 **The airport code is where it was.** The constraint this pass was most at risk
@@ -463,8 +455,8 @@ against the 68.19 «1 escala · BOG» measures, and 62 in Flexible and Migratori
 against the 53.98 of «1 esc · BOG»; nothing clips and the legs block never
 overflows. **And the desk did not move**: the same probe run against `main` and
 against this branch reports byte-identical readings at 1440, 1920 and 1366 —
-every lane, every gap, the row's `list − legs`, the header, the scrollbar and
-the detail. The two widths that do differ, 1024 and 820, are widths where the
+every lane, every gap, the row's `list − legs`, the header and the detail. The
+two widths that do differ, 1024 and 820, are widths where the
 list is already under 787 and the row is already the stacked anatomy, which is
 the anatomy this pass is about.
 

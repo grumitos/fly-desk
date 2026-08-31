@@ -42,7 +42,7 @@
        all. Take the legs' own 359 off it and what is left is the row's fixed
        measure, `RESULT_ROW_FIXED_PX = 428`, against the `2×13` of padding and
        `2×1` of border that made it 436 while it was a card. The right 10 of
-       that padding is the scrollbar's channel on `.fd-list-body` now; the list
+       that space is the desktop list's gutter; the list
        still spends the same twenty pixels on something that is not a lane.
 
        ---- what a desk wider than that does with the difference ----
@@ -146,13 +146,10 @@
        1440×900 desk where ten fitted.
 
        Left only. The 10px that used to sit on the right is the list's
-       scrollbar channel now (`results-scrollbar.css`), reserved on
+       right gutter, reserved on
        `.fd-list-body` so the header reserves it too. The row's border box
        shrinks by exactly the padding it gave up, so every lane in it is at the
-       same pixel it was at and the fixed measure below is the same 428 — ten
-       of which is the channel instead of this padding. What moves is the row's
-       own rule and its hover fill, which now stop where the channel begins,
-       and the hit area, which stops reaching under the track. */
+       same pixel it was at and the fixed measure below is the same 428. */
     min-height: 52px;
     padding: 0 0 0 10px;
     /* One rule, and it is the whole recipient: no radius, no shadow, no fill.
