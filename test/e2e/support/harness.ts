@@ -14,13 +14,14 @@ import { signIn, type ApiSession } from "./api-client.ts";
 import { startFakeUpstream, type FakeOp, type FakeUpstream } from "./fake-upstream.ts";
 import { isLoopbackHostname } from "./provider-origins.ts";
 import { describeRequests, FALLBACK_OPS, TODAY } from "./scenario.ts";
-import { startStack, type Stack, type StackOptions } from "./stack.ts";
+import { startStack, type LogMark, type Stack, type StackOptions } from "./stack.ts";
 
 /*
  * One spec file = one fake upstream, one stack and one browser, started in
  * `before` and stopped in `after`. Every test gets fresh browser contexts, a
- * reset fake, and — when it fails — screenshots, the stack's logs and the
- * fake's request log under `test-results/e2e/<spec>/<test>/`.
+ * reset fake, and — when it fails — screenshots, what every unit of the stack
+ * wrote while it ran and the fake's request log under
+ * `test-results/e2e/<spec>/<test>/`.
  */
 
 const REPO_ROOT = resolve(import.meta.dirname, "..", "..", "..");
@@ -187,10 +188,13 @@ export class TestScope {
   readonly suite: Suite;
   readonly name: string;
   readonly contexts: TrackedContext[] = [];
+  /** Where the stack's logs stood when the test began. */
+  readonly logMark?: LogMark;
 
-  constructor(suite: Suite, name: string) {
+  constructor(suite: Suite, name: string, logMark?: LogMark) {
     this.suite = suite;
     this.name = name;
+    this.logMark = logMark;
   }
 
   get fake(): FakeUpstream {
@@ -286,7 +290,9 @@ export class TestScope {
         }
       }
       writeFileSync(join(dir, "error.txt"), error instanceof Error ? `${error.stack ?? error.message}` : String(error));
-      writeFileSync(join(dir, "stack.log"), this.suite.stack?.logs() ?? "stack not started");
+      /* Every unit's stdout and stderr, the pooled workers' stderr included,
+         from the moment this test began. */
+      writeFileSync(join(dir, "stack.log"), this.suite.stack?.logs(undefined, this.logMark) ?? "stack not started");
       writeFileSync(join(dir, "fake-requests.txt"), [
         describeRequests(this.suite.fake?.requests() ?? []),
         `blocked backend egress: ${JSON.stringify(this.suite.fake?.blocked ?? [])}`,
@@ -319,7 +325,7 @@ export class Suite {
   test(name: string, run: (scope: TestScope, t: TestContext) => Promise<void>, options: TestOptions = {}): void {
     test(name, { timeout: options.timeout ?? DEFAULT_TEST_TIMEOUT_MS, todo: options.todo, skip: options.skip }, async (t) => {
       this.fake.reset();
-      const scope = new TestScope(this, name);
+      const scope = new TestScope(this, name, this.stack?.mark(`test: ${name}`));
       try {
         await run(scope, t);
         this.assertInvariants(scope, options);

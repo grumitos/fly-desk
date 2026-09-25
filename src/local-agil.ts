@@ -73,7 +73,7 @@ import {
 } from "./core/types";
 import { rankLocationSuggestions } from "./core/location-ranking";
 import { recordProviderFirstHttpRequest } from "./provider-diagnostics";
-import { providerPublicFailureMessage } from "./provider-status";
+import { providerDegradedReasonFromError, providerPublicFailureMessage } from "./provider-status";
 
 interface BrowserStorageSnapshot {
   tokenSearchFlight: string;
@@ -1377,6 +1377,24 @@ async function cleanupTemporaryChromeLaunch(userDataDir: string, chrome?: Bun.Nu
   unregisterActiveTempArtifact(userDataDir);
 }
 
+/* Agil sent nothing back: the connection failed before any response arrived. */
+class AgilUnansweredError extends Error {
+  override name = "AgilUnansweredError";
+}
+
+/*
+ * Every Agil request, under one deadline for all of it.
+ *
+ * A request that fails before Agil answers anything is sent once more, on a
+ * connection of its own. Bun's fetch pools idle connections and can hand out
+ * one the far end closed a moment earlier, more often the busier the host is:
+ * the request dies with ECONNRESET without reaching Agil, and a GDS search that
+ * dies that way takes all of that GDS's fares with it. Nothing Agil is asked
+ * here (a token, a station lookup, the start of a search, a search) changes
+ * anything on its side, and nothing of the failed attempt was received, so the
+ * second attempt can neither repeat an effect nor count a fare twice. An
+ * answer, an error status included, and the deadline are final.
+ */
 async function fetchAgil(
   url: string,
   init: RequestInit,
@@ -1388,29 +1406,74 @@ async function fetchAgil(
   headers.set("Ocp-Apim-Subscription-Key", await resolveAgilApimSubscriptionKey());
   recordProviderFirstHttpRequest(label);
 
+  const attempt = async (connection: "pooled" | "new"): Promise<Response> => {
+    let response: Response | undefined;
+    try {
+      response = await fetch(url, {
+        ...init,
+        headers,
+        signal: controller.signal,
+        /* Bun's per-request way out of the connection pool. */
+        ...(connection === "new" ? { keepalive: false } : {}),
+      });
+      /* The body is read under the same deadline: headers that arrive before a
+         body that stalls would otherwise hold a concurrency slot indefinitely. */
+      const body = await response.arrayBuffer();
+      return new Response(body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    } catch (error) {
+      /* The transport error stays as the cause: the public reason is built
+         from the message, and the service log names what actually failed. */
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+        throw new Error(`${label} timed out after ${AGIL_HTTP_TIMEOUT_MS}ms`, { cause: error });
+      }
+
+      if (response) {
+        throw new Error(`${label} failed while reading the response.`, { cause: error });
+      }
+
+      throw new AgilUnansweredError(`${label} failed before receiving a response.`, { cause: error });
+    }
+  };
+
   try {
-    const response = await fetch(url, {
-      ...init,
-      headers,
-      signal: controller.signal,
-    });
-    /* The body is read under the same deadline: headers that arrive before a
-       body that stalls would otherwise hold a concurrency slot indefinitely. */
-    const body = await response.arrayBuffer();
-    return new Response(body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
+    return await attempt("pooled");
   } catch (error) {
-    if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
-      throw new Error(`${label} timed out after ${AGIL_HTTP_TIMEOUT_MS}ms`);
+    if (!(error instanceof AgilUnansweredError)) {
+      throw error;
     }
 
-    throw new Error(`${label} failed before receiving a response.`);
+    console.warn(`${label} sent again on a new connection: ${describeErrorChain(error.cause)}`);
+    return await attempt("new");
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/*
+ * An error and the causes behind it, one `name[code]: message` a link, for the
+ * service log. A SyntaxError keeps only its name: a JSON parse error quotes
+ * the provider's body, and nothing a provider said belongs in a log.
+ */
+function describeErrorChain(error: unknown): string {
+  const links: string[] = [];
+  let current: unknown = error;
+  while (current !== undefined && current !== null && links.length < 4) {
+    if (!(current instanceof Error)) {
+      links.push(typeof current);
+      break;
+    }
+
+    const code = (current as { code?: unknown }).code;
+    const name = typeof code === "string" && code ? `${current.name}[${code}]` : current.name;
+    links.push(current instanceof SyntaxError ? name : `${name}: ${current.message}`);
+    current = current.cause;
+  }
+
+  return links.join(" <- ").replace(/\s+/g, " ").slice(0, 400);
 }
 
 async function readAgilStorageSnapshotFromNavigable(
@@ -2875,6 +2938,20 @@ async function searchGroupsWithGds(
   }
 }
 
+/*
+ * The service log's account of a part left out of a search (a GDS, or a
+ * matrix cell): the request, the public reason, how long the attempt took and
+ * the error chain behind it, none of which the desk receives.
+ */
+function logAgilOmission(part: string, request: SearchRequest, error: unknown, startedAt: number): void {
+  console.warn(
+    `Agil ${part} omitted: ${requestSummary(request)} `
+    + `reason=${providerDegradedReasonFromError(error)} `
+    + `afterMs=${Math.round(performance.now() - startedAt)} `
+    + `detail=${describeErrorChain(error)}`,
+  );
+}
+
 async function startAgilSearch(
   session: AgilSessionData,
   request: SearchRequest,
@@ -2904,6 +2981,7 @@ async function searchGroupsAcrossGds(
     await startAgilSearch(session, request);
 
     const outcomes = await mapConcurrent(AGIL_GDS_LIST, AGIL_CONCURRENCY.gdsSearch, async (gds) => {
+      const startedAt = performance.now();
       try {
         return {
           gds,
@@ -2914,6 +2992,7 @@ async function searchGroupsAcrossGds(
           throw error;
         }
 
+        logAgilOmission(`GDS ${gds}`, request, error, startedAt);
         return {
           gds,
           groups: [],
@@ -3060,6 +3139,7 @@ export async function resolveLocalAgilExactProgressive(
     await startAgilSearch(session, request);
 
     await mapConcurrent(AGIL_GDS_LIST, AGIL_CONCURRENCY.gdsSearch, async (gds) => {
+      const startedAt = performance.now();
       try {
         const resolvedGroups = await searchGroupsWithGds(session, request, gds);
         for (const group of resolvedGroups) {
@@ -3074,11 +3154,9 @@ export async function resolveLocalAgilExactProgressive(
           stopRequested = true;
         }
       } catch (error) {
+        logAgilOmission(`GDS ${gds}`, request, error, startedAt);
         partial = true;
-        const warning = error instanceof Error
-          ? `Agil GDS ${gds} omitted: ${error.message}`
-          : `Agil GDS ${gds} omitted due to an unknown error.`;
-        warnings.push(warning);
+        warnings.push(`Agil GDS ${gds} omitted: ${providerPublicFailureMessage("agil-local", error)}`);
 
         if (onUpdate?.({
           offers: dedupeAgilOffers(mappedOffers),
@@ -3257,6 +3335,7 @@ export async function resolveLocalAgilMatrixProgressive(
   const prioritizedCells = prioritizeMatrixLoadingCells(draft.cells, draft.axes, request.tripType);
 
   const resolvedLoadingCells = await mapConcurrent(prioritizedCells, AGIL_CONCURRENCY.matrixCell, async (cell) => {
+    const startedAt = performance.now();
     try {
       const quote = await searchCellPrice(session, cell.derivedRequest);
       const nextCell = quote
@@ -3274,6 +3353,7 @@ export async function resolveLocalAgilMatrixProgressive(
       }
       return nextCell;
     } catch (error) {
+      logAgilOmission("matrix cell", cell.derivedRequest, error, startedAt);
       partial = true;
       const nextCell = {
         ...cell,

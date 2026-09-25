@@ -77,7 +77,7 @@ export function appendProviderDiagnosticEvent(
 export function setProviderDiagnosticStatus(
   diagnostics: ProviderDiagnostics,
   status: ProviderDiagnosticStatus,
-  summary?: Pick<ProviderDiagnostics, "offers" | "warningCount" | "error">,
+  summary?: Pick<ProviderDiagnostics, "offers" | "warningCount" | "partial" | "error">,
 ): ProviderDiagnostics {
   diagnostics.status = status;
   if (summary && typeof summary.offers === "number") {
@@ -85,6 +85,9 @@ export function setProviderDiagnosticStatus(
   }
   if (summary && typeof summary.warningCount === "number") {
     diagnostics.warningCount = summary.warningCount;
+  }
+  if (summary?.partial) {
+    diagnostics.partial = true;
   }
   if (summary?.error) {
     diagnostics.error = sanitizeDiagnosticDetail(summary.error);

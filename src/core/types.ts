@@ -156,6 +156,8 @@ export interface ProviderDiagnostics {
   events: ProviderDiagnosticEvent[];
   offers?: number;
   warningCount?: number;
+  /** Completed without part of what it was asked: a day, a GDS or a matrix cell that never answered. */
+  partial?: boolean;
   error?: string;
 }
 

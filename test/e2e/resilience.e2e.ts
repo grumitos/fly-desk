@@ -64,7 +64,9 @@ suite.test("a provider that falls is named in one line, and nothing it said reac
   const line = await notice.line(page).innerText();
   assert.match(line, /Resultados incompletos/);
   assert.match(line, /Click and Book Plus/);
-  assert.doesNotMatch(line, /Agilsmart/, "a GDS that failed while the others answered is not a failed provider");
+  /* A GDS that failed while the others answered leaves Agil short, not failed. */
+  assert.match(line, /Agilsmart respondió en parte/);
+  assert.equal(line.match(/Agilsmart/g)?.length, 1, line);
 
   /* The backend's account of the same search. */
   const job = (await tracked.apiBodies())
@@ -79,7 +81,8 @@ suite.test("a provider that falls is named in one line, and nothing it said reac
   assert.ok((job.warnings ?? []).some((warning) => /GDS 3/.test(warning)), JSON.stringify(job.warnings));
   const route = { origin: "LIM", destination: "SCL", departureDate: departure };
   assert.deepEqual(providerSearches(fake, route).filter((request) => request.op === "cbplus.search").map((request) => request.status), [503]);
-  assert.deepEqual(providerSearches(fake, route).filter((request) => request.query?.gds === 3).map((request) => request.status), [0]);
+  /* Dropped, asked once more on a new connection, dropped again. */
+  assert.deepEqual(providerSearches(fake, route).filter((request) => request.query?.gds === 3).map((request) => request.status), [0, 0]);
 
   await assertCanaryContained(scope, tracked, secret);
 

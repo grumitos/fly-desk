@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import type { FakeOp, FakeUpstream, RecordedRequest } from "./fake-upstream.ts";
+import { formatCaller } from "./provider-origins.ts";
 
 /*
  * What every spec shares that is not a selector: the calendar the stack runs
@@ -165,9 +166,23 @@ export function maxInFlight(requests: readonly RecordedRequest[]): number {
   return peak;
 }
 
+/** UTC time of day to the millisecond: how the request log and the service logs stamp a line. */
+export function logClock(at = Date.now()): string {
+  return new Date(at).toISOString().slice(11, 23);
+}
+
+/** One line a request: when it arrived, what it asked, how and when it was answered, and who asked. */
 export function describeRequests(requests: readonly RecordedRequest[]): string {
   return requests
-    .map((request) => `#${request.seq} ${request.op} ${request.query ? `${request.query.origin}-${request.query.destination} ${request.query.departureDate}${request.query.returnDate ? `/${request.query.returnDate}` : ""}${request.query.gds !== undefined ? ` gds=${request.query.gds}` : ""}` : request.path} -> ${request.status ?? "pending"}${request.aborted ? " (aborted)" : ""}`)
+    .map((request) => [
+      `#${request.seq} ${logClock(request.receivedAt)} ${request.op}`,
+      request.query
+        ? `${request.query.origin}-${request.query.destination} ${request.query.departureDate}${request.query.returnDate ? `/${request.query.returnDate}` : ""}${request.query.gds !== undefined ? ` gds=${request.query.gds}` : ""}`
+        : request.path,
+      `-> ${request.status ?? "pending"}${request.aborted ? " (aborted)" : ""}`,
+      request.respondedAt === undefined ? "" : `in ${request.respondedAt - request.receivedAt} ms`,
+      request.caller ? `from ${formatCaller(request.caller)}` : "",
+    ].filter(Boolean).join(" "))
     .join("\n");
 }
 

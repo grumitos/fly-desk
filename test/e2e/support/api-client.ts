@@ -185,6 +185,8 @@ export interface JobMeta {
 export interface JobProviderDiagnostics {
   providerId: ProviderId;
   status: string;
+  /** Completed without part of what it was asked. */
+  partial?: boolean;
   error?: string;
 }
 

@@ -4578,11 +4578,12 @@ export async function resolveLocalCostamarMatrixProgressive(
   let partial = false;
   let stopRequested = false;
   const refusals: CostamarSearchRejectedError[] = [];
+  /* A seed that fails costs time, not fares: every cell it would have filled is
+     searched on its own below, so it leaves the matrix complete. */
   const seeded = await seedMatrixWithFlexibleSearch(request, providerContext).catch((error: unknown) => {
     if (refusesEveryDate(error)) {
       throw error;
     }
-    partial = true;
     return new Map<string, CanonicalOffer>();
   });
   const seededKeys = new Set<string>();
