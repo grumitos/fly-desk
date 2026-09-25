@@ -555,12 +555,18 @@
 
   .fd-status-row-filters {
     display: none;
-    width: 26px;
-    height: 26px;
+    width: var(--fd-control-chip);
+    height: var(--fd-control-chip);
     flex: 0 0 auto;
     place-items: center;
-    border: 0;
+    border: 1px solid var(--color-input);
     border-radius: var(--fd-radius-8);
+    background: var(--color-secondary);
+    color: var(--color-foreground);
+  }
+
+  .fd-search-stage:has(.fd-filter-strip-count) .fd-status-row-filters {
+    border-color: transparent;
     background: var(--color-primary);
     color: var(--color-primary-foreground);
   }
@@ -1305,6 +1311,7 @@
     height: 0;
   }
 
+  /* Neutral until a filter is on; then it carries the accent and the count. */
   .fd-filter-strip-open {
     display: inline-flex;
     height: var(--fd-control-touch);
@@ -1312,12 +1319,49 @@
     align-items: center;
     gap: 6px;
     padding-inline: 12px;
-    border: 1px solid transparent;
+    border: 1px solid var(--color-input);
     border-radius: var(--fd-radius-10);
-    background: var(--color-primary);
-    color: var(--color-primary-foreground);
+    background: var(--color-secondary);
+    color: var(--color-foreground);
     font-size: var(--fd-text-base);
     font-weight: var(--fd-weight-title);
+  }
+
+  .fd-filter-strip-open:has(.fd-filter-strip-count) {
+    border-color: transparent;
+    background: var(--color-primary);
+    color: var(--color-primary-foreground);
+  }
+
+  /* Small controls keep their drawing and take a touch-sized target. */
+  .fd-status-row-filters,
+  .fd-result-sort-compact,
+  .fd-active-chip-remove,
+  .fd-detail-quote-error-dismiss {
+    position: relative;
+  }
+
+  .fd-status-row-filters::after,
+  .fd-result-sort-compact::after,
+  .fd-active-chip-remove::after,
+  .fd-detail-quote-error-dismiss::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, var(--fd-hit, var(--fd-control-touch-sm)));
+    height: max(100%, var(--fd-hit, var(--fd-control-touch-sm)));
+    content: "";
+    translate: -50% -50%;
+  }
+
+  .fd-active-chip-remove,
+  .fd-detail-quote-error-dismiss {
+    --fd-hit: var(--fd-control-touch);
+  }
+
+  .fd-card__alt-chip,
+  .fd-card__alts-more {
+    height: var(--fd-control-touch-sm);
   }
 
   .fd-active-chip-remove {
