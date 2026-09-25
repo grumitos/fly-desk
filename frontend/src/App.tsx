@@ -1,10 +1,16 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { memo, useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { DetailPanel } from "@/components/DetailPanel"
 import { ProviderRail } from "@/components/ProviderRail"
 import { QuotationPastePreview } from "@/components/QuotationPastePreview"
-import { ResultsPanel, type ActiveFilterChip, type EmptyByFiltersCopy } from "@/components/ResultsPanel"
+import {
+  ResultsPanel,
+  type ActiveFilterChip,
+  type EmptyByFiltersCopy,
+  type ResultsNavigation,
+} from "@/components/ResultsPanel"
 import { ActiveFilterChips } from "@/components/results/ActiveFilterChips"
-import { SearchShell } from "@/components/SearchShell"
+import type { DisplayMonth } from "@/components/results/migration-month-model"
+import { SearchShell, type SearchDraftHandle } from "@/components/SearchShell"
 import { TopBar } from "@/components/TopBar"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Button } from "@/components/ui/button"
@@ -15,9 +21,13 @@ import { Textarea } from "@/components/ui/textarea"
 import { useSearch } from "@/hooks/useSearch"
 import { useShellSize } from "@/hooks/useShellSize"
 import { resolveAirlineDisplayName } from "@/lib/airline-names"
+import { cheapestOffer, migrationRequestForMonth } from "@/lib/api"
+import { formatCount, plural } from "@/lib/format"
 import { isIsoDate } from "@/lib/iso-date"
+import { openInNewTab } from "@/lib/new-tab"
 import { hasOpenOverlay } from "@/lib/overlay-stack"
 import { motionToken } from "@/lib/reduced-motion"
+import { SEARCH_DATE_POLICY } from "@/lib/runtime-config"
 import {
   ENTERING_WINDOW_MS,
   idleExitDuration,
@@ -26,10 +36,7 @@ import {
   useLeaveWindow,
   type FlipRect,
 } from "@/lib/search-choreography"
-import { migrationRequestForMonth } from "@/lib/api"
 import { describeSearchOutcome } from "@/lib/search-outcome"
-import { airlineLogoAssetPath } from "../../src/core/airline-assets"
-import { parseCommercialQuotation, type CommercialQuotationParseResult } from "../../src/core/quotation-parser"
 import {
   readSharedSearchFromText,
   readSharedSearchFromUrl,
@@ -38,7 +45,11 @@ import {
   writeSharedSearchToUrl,
   type SharedSearchState,
 } from "@/lib/search-share"
-import { isSortMode, type CanonicalOffer, type MigrationMonthSummary, type SearchJobResponse, type SearchRequest, type Segment, type SortMode } from "@/types"
+import { isSortMode, type CanonicalOffer, type SearchJobResponse, type SearchRequest, type Segment, type SortMode } from "@/types"
+import { airlineLogoAssetPath } from "../../src/core/airline-assets"
+import { offerAirlineCode, offerMatchesFilters, type OfferFilters } from "../../src/core/filtering"
+import { parseCommercialQuotation, type CommercialQuotationParseResult } from "../../src/core/quotation-parser"
+import { compareOffers } from "../../src/core/ranking"
 
 /** The three shapes the search takes: 07 §1's two ends, plus 11 §2.4's return. */
 type SearchPhase = "idle" | "editing" | "active"
@@ -51,14 +62,22 @@ type Filters = {
   checkedBaggageRequired?: boolean
 }
 
+/* How the list is read. It outlives a search: it rides the link and the
+   session's preferences, and price is the order only until one is chosen. */
+type ListView = { sort: SortMode; filters: Filters; airlines: string[] }
+
 type AirlineFilterOption = {
   id: string
   label: string
-  code: string
   logo: string
+  /** Every selling code drawn under this name: LATAM sells as LA, LP, XL… */
   codes: string[]
   count: number
 }
+
+type Notice = { message: string; tone: "warning" | "error" }
+
+type FormSeed = { id: number; request: SearchRequest }
 
 type StopFilterValue = "any" | "direct" | "1" | "2+"
 type LayoverFilterValue = "any" | "120" | "240" | "360"
@@ -66,31 +85,15 @@ type BaggageFilterValue = "any" | "carry" | "checked"
 
 const DEFAULT_SORT_MODE: SortMode = "cheapest"
 const WORKSPACE_PREFERENCES_KEY = "fly-desk:workspace-preferences:v1"
+const RESTORE_JOB_QUERY_PARAM = "job"
+/* Surfaces that answer their own keys whether or not they sit in the overlay stack. */
+const SELF_KEYED_SURFACES = "[role='dialog'], [role='menu'], [role='listbox'], [role='grid']"
+const INTERACTIVE_TARGETS = "button, a[href], summary, [role='button'], [role='radio'], [role='checkbox'], [role='switch'], [role='option']"
 
-type WorkspacePreferences = {
-  sortMode: SortMode
-  filters: Filters
-  selectedAirlines: string[]
-}
-
-/*
- * Plate 1b closes the filter panel: three of the four groups are the same
- * segmented control with no separator between them, and the separator appears
- * only before Aerolíneas because that is a different kind of filter — a list of
- * things you include, not a constraint you tighten.
- *
- * The sliders these replaced implied a continuum. "Directo · 1 · 2+" is not a
- * continuum; it is four choices, and a segmented control says so.
- */
-/*
- * `relaxTo` is plate 2g's second exit, kept next to the option it loosens.
- *
- * The plate draws exactly one of these — «Permitir 1 escala» when Directo is
- * the filter to blame — and it is a step down the ladder, not a removal: the
- * caption is explicit that the two ways out are "quitar todo o **relajar** el
- * filtro culpable". An option with nothing below it has no `relaxTo`, and there
- * the only relaxation left is taking the filter off.
- */
+/* Plate 1b: three segmented groups and, past a rule, the airlines — a list you
+   include from rather than a constraint you tighten. `relaxTo` is plate 2g's
+   second exit, one step down the ladder; an option with no step below is
+   relaxed by removing it. */
 const STOP_SEGMENTS: Array<{ value: StopFilterValue; label: string; chip?: string; relaxTo?: StopFilterValue; relaxLabel?: string }> = [
   { value: "any", label: "Todos" },
   { value: "direct", label: "Directo", chip: "Directo", relaxTo: "1", relaxLabel: "Permitir 1 escala" },
@@ -114,51 +117,48 @@ export default function App() {
   const [initialSharedSearch] = useState<SharedSearchState | null>(() => readInitialSharedSearch())
   /* Read before the first search of this tab overwrites the answer. */
   const [openedOwnSearchUrl] = useState(() => readSearchUrlWasWrittenHere())
-  const [sessionPreferences] = useState<WorkspacePreferences>(() => readWorkspacePreferences())
-  const initialSharedRequest = initialSharedSearch?.request ?? null
-  const [sortMode, setSortMode] = useState<SortMode>(() => initialSharedSearch?.sortMode ?? sessionPreferences.sortMode)
-  const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null)
-  const [lastRequest, setLastRequest] = useState<SearchRequest | null>(null)
-  const [workspaceReady, setWorkspaceReady] = useState(false)
-  /* Armed at the gesture, so the very first render that mounts the workspace
-     already carries the cues of 07 §1; a search launched from an workspace that
-     is already on screen does not arm it, because nothing is arriving. */
-  const [workspaceEntering, setWorkspaceEntering] = useState(false)
-  /* 11 §2.4: going back to edit. «Los resultados anteriores se quedan detrás,
-     no se borran, hasta que se busca otra vez» — so this is not a way back to
-     the idle screen; it is the form recovering its editing shape over results
-     that stay put. It ends at the next search and nowhere else. */
-  const [searchEditing, setSearchEditing] = useState(false)
-  const [filters, setFilters] = useState<Filters>(() => (
-    initialSharedSearch ? filtersFromRequest(initialSharedSearch.request) : sessionPreferences.filters
-  ))
-  const [selectedAirlines, setSelectedAirlines] = useState<string[]>(() => (
+  const [initialView] = useState<ListView>(() => (
     initialSharedSearch
-      ? initialSharedSearch.request.includedAirlineCodes ?? []
-      : sessionPreferences.selectedAirlines
+      ? viewFromRequest(initialSharedSearch.request, initialSharedSearch.sortMode)
+      : readWorkspacePreferences()
   ))
+  const [sortMode, setSortMode] = useState<SortMode>(initialView.sort)
+  const [filters, setFilters] = useState<Filters>(initialView.filters)
+  const [selectedAirlines, setSelectedAirlines] = useState<string[]>(initialView.airlines)
+  const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null)
+  /* The request of the search on screen, or of the configuration last loaded;
+     the list view is laid over it for the link. */
+  const [lastRequest, setLastRequest] = useState<SearchRequest | null>(null)
+  /* The form is rebuilt from this and nothing else, so a filter or an order
+     never discards a half-typed edit. */
+  const [formSeed, setFormSeed] = useState<FormSeed | null>(() => (
+    initialSharedSearch ? { id: 1, request: initialSharedSearch.request } : null
+  ))
+  const searchDraftRef = useRef<SearchDraftHandle | null>(null)
+  const [formHasDraft, setFormHasDraft] = useState(false)
+  /* Armed at the gesture, so the first render of the workspace already carries
+     the cues of 07 §1; a search from a workspace already on screen arrives nowhere. */
+  const [workspaceEntering, setWorkspaceEntering] = useState(false)
+  /* 11 §2.4: the form back in its editing shape over results that stay put. It
+     ends at the next search. */
+  const [searchEditing, setSearchEditing] = useState(false)
   const [workspaceOverlay, setWorkspaceOverlay] = useState<"filters" | "detail" | null>(null)
   const [mobileToolsCollapsed, setMobileToolsCollapsed] = useState(false)
   const [policyFootTarget, setPolicyFootTarget] = useState<HTMLDivElement | null>(null)
-  /* Armazón B mounts the detail sheet over the results region, so the sheet
-     needs the element to position against — a ref would not re-render it. */
+  /* Armazón B positions the detail sheet over the results region. */
   const [workspaceElement, setWorkspaceElement] = useState<HTMLDivElement | null>(null)
   const [pastedQuotation, setPastedQuotation] = useState<{
     text: string
     result: CommercialQuotationParseResult
   } | null>(null)
   const [plainLogView, setPlainLogView] = useState(false)
-  const [clipboardError, setClipboardError] = useState<string | null>(null)
-  /* The notice is dismissible and does not come back within the same search, so
-     what we remember is the exact text that was dismissed. */
+  /* A failure of the agent's own gesture: the clipboard, a blocked tab. */
+  const [gestureError, setGestureError] = useState<string | null>(null)
   const [dismissedNotice, setDismissedNotice] = useState<string | null>(null)
-  const [searchDraft, setSearchDraft] = useState<SearchRequest | null>(initialSharedRequest)
-  /* Offers the provider has confirmed since this search returned, by id. A new
-     search empties it: a confirmation belongs to the search it was made in. */
+  const [configCopiedAt, setConfigCopiedAt] = useState<number | null>(null)
+  /* Offers the provider confirmed since this search returned; a new search
+     empties it. */
   const [revalidatedOffers, setRevalidatedOffers] = useState<Map<string, CanonicalOffer>>(() => new Map())
-  const filtersRef = useRef(filters)
-  const selectedAirlinesRef = useRef(selectedAirlines)
-  const sortModeRef = useRef(sortMode)
   const searchFrameRef = useRef<HTMLDivElement | null>(null)
   const searchControlsRef = useRef<HTMLDivElement | null>(null)
   const shellRef = useRef<HTMLDivElement | null>(null)
@@ -171,231 +171,55 @@ export default function App() {
   const searchLayoutAnimationRef = useRef<Animation | null>(null)
   const searchControlsAnimationRef = useRef<Animation | null>(null)
   const { shellSize, detailPlacement } = useShellSize(shellRef)
-  /* What the keyboard layer of 11 §7 reads. Refs rather than dependencies: the
-     listener is bound once, and a shortcut that rebinds on every keystroke of a
-     progressive search is a listener nobody can reason about. */
-  const shouldShowWorkspaceRef = useRef(false)
-  const filteredCandidateOffersRef = useRef<CanonicalOffer[]>([])
-  const selectedOfferIdRef = useRef<string | undefined>(undefined)
-  const openFiltersRef = useRef<(() => void) | null>(null)
-  const selectOfferRef = useRef<((offer: CanonicalOffer) => void) | null>(null)
-  /* `C` copies the quotation, which only the detail knows how to produce. It
-     hands the shell the action itself when — and only when — the offer on
-     screen can actually be quoted. */
-  const quotationShortcutRef = useRef<(() => void) | null>(null)
 
-  /*
-   * `?job=` opens a search that already exists, which is how a month of a
-   * migratory sweep reaches its own tab. It is deliberately not a shared-search
-   * link: there is no request to re-run, only a job to read, so the list is on
-   * screen in one round trip and keeps filling if the sweep had not finished.
-   */
+  const resultsNavigationRef = useRef<ResultsNavigation | null>(null)
+  /* `C` quotes through the detail, which fills this only while its offer can
+     be quoted. */
+  const quotationShortcutRef = useRef<(() => void) | null>(null)
+  const shouldShowWorkspace = Boolean(results) || loading
+  const isSearchIdle = !shouldShowWorkspace
+  /* `editing` is not a fourth screen: it is `active` with the form at rest. */
+  const searchPhase: SearchPhase = isSearchIdle ? "idle" : searchEditing ? "editing" : "active"
+
+  useEffect(() => {
+    searchPhaseRef.current = searchPhase
+  }, [searchPhase])
+
+  /* `?job=` reads a job that exists — a month of a sweep in its own tab — rather
+     than paying for its search again. */
   useEffect(() => {
     const jobId = readRestorableJobIdFromUrl()
-    if (!jobId) return
-    void restoreJob(jobId)
+    if (jobId) void restoreJob(jobId)
   }, [restoreJob])
 
   useEffect(() => {
-    filtersRef.current = filters
-  }, [filters])
-
-  useEffect(() => {
-    selectedAirlinesRef.current = selectedAirlines
-  }, [selectedAirlines])
-
-  useEffect(() => {
-    sortModeRef.current = sortMode
-  }, [sortMode])
-
-  useEffect(() => {
-    writeWorkspacePreferences({ sortMode, filters, selectedAirlines })
+    writeWorkspacePreferences({ sort: sortMode, filters, airlines: selectedAirlines })
   }, [filters, selectedAirlines, sortMode])
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!event.ctrlKey || !event.shiftKey || event.key.toLowerCase() !== "l") return
-      event.preventDefault()
-      setPlainLogView((active) => !active)
-    }
-
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [])
-
-  /*
-   * The keyboard contract of 11 §7, in the two contexts the shell owns: "the
-   * searcher" and "the list". The third context — inside a popover or a sheet —
-   * belongs to that surface, which traps focus and answers its own keys, so
-   * this handler stands down whenever one is open.
-   *
-   * A bare letter is only a shortcut when nothing is being typed into. `/`, `C`
-   * and `F` are characters an agent types all day inside a field; the guard on
-   * editable targets is what keeps a shortcut from eating a keystroke.
-   */
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.metaKey || event.ctrlKey || event.altKey) return
-
-      const target = event.target
-      const editing = target instanceof HTMLElement
-        && (target.isContentEditable
-          || target instanceof HTMLInputElement
-          || target instanceof HTMLTextAreaElement
-          || target instanceof HTMLSelectElement)
-
-      // Whatever is being typed into owns every key, including `Esc` — the
-      // field clears itself (11 §7), which is a decision only the field can
-      // make because only it knows whether it holds text.
-      if (editing) return
-
-      // A sheet or popover on top answers for itself (focus trap, 02 §7).
-      if (hasOpenOverlay()) return
-
-      if (event.key === "/") {
-        event.preventDefault()
-        document.querySelector<HTMLInputElement>('[data-fd-location-field="origin"]')?.focus()
-        return
-      }
-
-      if (!shouldShowWorkspaceRef.current) return
-
-      const offers = filteredCandidateOffersRef.current
-      const key = event.key.toLowerCase()
-
-      if (key === "f") {
-        const openFilters = openFiltersRef.current
-        event.preventDefault()
-        if (openFilters) {
-          openFilters()
-          return
-        }
-        // On a desk the filters are already on screen (02 §4), so "open" means
-        // put the caret in them.
-        document
-          .querySelector<HTMLElement>(".fd-filter-column [role='radio'], .fd-filter-column button")
-          ?.focus()
-        return
-      }
-
-      if (key === "c") {
-        const quote = quotationShortcutRef.current
-        if (!quote) return
-        event.preventDefault()
-        quote()
-        return
-      }
-
-      if (event.key === "Escape") {
-        if (!selectedOfferIdRef.current) return
-        event.preventDefault()
-        setSelectedOfferId(null)
-        return
-      }
-
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        if (offers.length === 0) return
-        event.preventDefault()
-        const current = offers.findIndex((offer) => offer.id === selectedOfferIdRef.current)
-        const step = event.key === "ArrowDown" ? 1 : -1
-        // From no selection, Down takes the first and Up takes the last.
-        const next = current < 0
-          ? (step === 1 ? 0 : offers.length - 1)
-          : Math.min(offers.length - 1, Math.max(0, current + step))
-        const offer = offers[next]
-        if (offer) setSelectedOfferId(offer.id)
-        return
-      }
-
-      if (event.key === "Enter") {
-        const offer = offers.find((candidate) => candidate.id === selectedOfferIdRef.current)
-        if (!offer) return
-        event.preventDefault()
-        selectOfferRef.current?.(offer)
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [])
-
-  const candidateOffers = useMemo(() => {
-    /*
-     * The whole search, not the part that survived the request.
-     *
-     * The filters travel in the search payload and the server applies them, so
-     * `results.offers` is already filtered — using it as the base made every
-     * count on this screen compare the filtered list against itself. With
-     * filters on (the normal case: they are sticky and they travel in the link)
-     * the header said «386» flat instead of «386 de 1.240», the active chips sat
-     * beside «0 vuelos ocultos», and 2g's empty panel claimed a total that was
-     * not one and could never find the filter to blame, because the offers it
-     * lifts the filters off had already been thrown away upstream.
-     *
-     * `allOffers` is the unfiltered set and the backend has always sent it.
-     */
-    const sourceOffers = results?.allOffers?.length ? results.allOffers : results?.offers ?? []
-    /* An offer the provider has re-confirmed replaces the one the list is
-       drawing. Revalidation may return a different fare — that is what it is
-       for — and until this the card kept the old figure while the copied text
-       carried the new one, with nothing on screen saying which was which. */
-    const reconciled = revalidatedOffers.size === 0
-      ? sourceOffers
-      : sourceOffers.map((offer) => revalidatedOffers.get(offer.id) ?? offer)
-    return sortOffersForDisplay(reconciled, sortMode)
-  }, [results, revalidatedOffers, sortMode])
-  /* What became of the providers. Until this existed the shell had no way to
-     say that a search had failed: the backend's nominal warning died in the
-     client and a search with both providers down was drawn as a route with no
-     flights (04 §8, 08 §1, 11 §3). */
-  const searchOutcome = useMemo(() => describeSearchOutcome(results), [results])
-  const allAirlines = useMemo(() => {
-    const options = new Map<string, AirlineFilterOption>()
-    candidateOffers.forEach((offer) => {
-      const label = airlineFilterLabel(offer)
-      const codes = airlineFilterCodes(offer)
-      const id = label.toLocaleUpperCase("es-PE")
-      const code = airlineFilterCode(offer)
-      const current = options.get(id) ?? { id, label, code, logo: "", codes: [], count: 0 }
-      const mergedCodes = new Set([...current.codes, ...codes])
-      const resolvedCode = current.code || code
-      options.set(id, {
-        ...current,
-        code: resolvedCode,
-        // The 18px logo in the row is the fastest way to find an airline in a
-        // list of seven; the name is the confirmation, not the target.
-        logo: resolvedCode ? airlineLogoAssetPath(resolvedCode) : "",
-        codes: Array.from(mergedCodes),
-        count: current.count + 1,
-      })
-    })
-    return Array.from(options.values())
-      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
-  }, [candidateOffers])
-
-  const filteredCandidateOffers = useMemo(
-    () => applyClientFilters(candidateOffers, filters, selectedAirlines),
-    [candidateOffers, filters, selectedAirlines],
+  /* The address bar always states the list on screen, so it is the link to share. */
+  const sharedRequest = useMemo(
+    () => (lastRequest ? withListView(lastRequest, filters, selectedAirlines) : null),
+    [filters, lastRequest, selectedAirlines],
   )
+  useEffect(() => {
+    if (sharedRequest) writeSharedSearchToUrl(sharedRequest, sortMode)
+  }, [sharedRequest, sortMode])
+  /* Closing a sheet goes back over its own history entry, onto one written
+     before a filter changed inside the sheet; the URL is restated there. */
+  const restateSharedUrl = useEffectEvent(() => {
+    if (sharedRequest) writeSharedSearchToUrl(sharedRequest, sortMode)
+  })
+  useEffect(() => {
+    const listener = () => restateSharedUrl()
+    window.addEventListener("popstate", listener)
+    return () => window.removeEventListener("popstate", listener)
+  }, [])
 
-  const filteredResults = useMemo(() => {
-    if (!results) return null
-    if (isMigrationResults(results)) {
-      return applyMigrationFilters(results, filteredCandidateOffers, sortMode)
-    }
-
-    return { ...results, offers: filteredCandidateOffers, sortMode }
-  }, [results, filteredCandidateOffers, sortMode])
-
-  const visibleSelectedOffer = useMemo(() => {
-    if (!filteredResults) return null
-    if (selectedOfferId) {
-      const currentOffer = filteredResults.offers.find((offer) => offer.id === selectedOfferId)
-      if (currentOffer) return currentOffer
-    }
-
-    return isMigrationResults(filteredResults) ? filteredResults.offers[0] ?? null : null
-  }, [filteredResults, selectedOfferId])
+  useEffect(() => {
+    if (configCopiedAt === null) return
+    const timer = window.setTimeout(() => setConfigCopiedAt(null), motionToken("--fd-hold-confirmacion"))
+    return () => window.clearTimeout(timer)
+  }, [configCopiedAt])
 
   /* The "first" of both FLIPs of 07 §1, taken at the gesture rather than in a
      layout effect: this is the last instant the two elements are still where
@@ -422,12 +246,141 @@ export default function App() {
     setSearchEditing(editing)
   }, [captureChoreographyRects])
 
-  /* 04 §8 gives every empty list a way out, and for «vacío por búsqueda» that
-     way out is the form itself — the same gesture as 11 §2.4, reached from the
-     column instead of from the summary. */
+  /* 04 §8: the exit of «vacío por búsqueda» is the form itself. */
   const handleEditSearchFromEmptyList = useCallback(() => {
     handleSearchEditingChange(true)
   }, [handleSearchEditingChange])
+
+  const applyListView = useCallback((view: ListView) => {
+    setSortMode(view.sort)
+    setFilters(view.filters)
+    setSelectedAirlines(view.airlines)
+  }, [])
+
+  const seedForm = useCallback((request: SearchRequest) => {
+    setFormSeed((current) => ({ id: (current?.id ?? 0) + 1, request }))
+  }, [])
+
+  const reportGestureError = useCallback((message: string) => {
+    setGestureError(message)
+    setDismissedNotice(null)
+  }, [])
+
+  const launchSearch = useCallback(
+    (request: SearchRequest, view: ListView, { seed = false }: { seed?: boolean } = {}) => {
+      captureChoreographyRects()
+      if (!shouldShowWorkspace) setWorkspaceEntering(true)
+      setSearchEditing(false)
+      setGestureError(null)
+      setDismissedNotice(null)
+      setSelectedOfferId(null)
+      setRevalidatedOffers(new Map())
+      applyListView(view)
+      setLastRequest(request)
+      if (seed) seedForm(request)
+      void runSearch(withListView(request, view.filters, view.airlines), view.sort)
+    },
+    [applyListView, captureChoreographyRects, runSearch, seedForm, shouldShowWorkspace],
+  )
+
+  const handleSearch = useCallback((request: SearchRequest) => {
+    launchSearch(request, { sort: sortMode, filters, airlines: selectedAirlines })
+  }, [filters, launchSearch, selectedAirlines, sortMode])
+
+  /* A shared link runs its search once, after the paint of the filled form,
+     and only an `exact` one: sweeps wait for «Buscar», `?job=` reads a job,
+     and reloading this tab's own address bar is not a link. */
+  const launchSharedLink = useEffectEvent(() => {
+    const shared = initialSharedSearch
+    if (!shared || !isLaunchableSharedRequest(shared.request)) return
+    if (readRestorableJobIdFromUrl() || openedOwnSearchUrl) return
+    launchSearch(shared.request, viewFromRequest(shared.request, shared.sortMode))
+  })
+  useEffect(() => {
+    const timer = window.setTimeout(() => launchSharedLink(), 0)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  /* Loaded into the form and the list view without searching. */
+  const loadConfiguration = useCallback((request: SearchRequest, view: ListView) => {
+    setGestureError(null)
+    setSelectedOfferId(null)
+    applyListView(view)
+    setLastRequest(request)
+    seedForm(request)
+  }, [applyListView, seedForm])
+
+  const handlePasteSearchConfig = useCallback(async () => {
+    let text: string
+    try {
+      text = await navigator.clipboard.readText()
+    } catch {
+      reportGestureError("No se pudo leer el portapapeles. Revisa el permiso del navegador e intenta nuevamente.")
+      return
+    }
+
+    const shared = readSharedSearchFromText(text)
+    if (shared) {
+      setPastedQuotation(null)
+      loadConfiguration(shared.request, viewFromRequest(shared.request, shared.sortMode))
+      return
+    }
+
+    const parsedQuotation = parseCommercialQuotation(text)
+    if (parsedQuotation.fields.format.state !== "parsed") {
+      reportGestureError("No se encontró una configuración ni una cotización comercial válida en el portapapeles.")
+      return
+    }
+    setGestureError(null)
+    setPastedQuotation({ text, result: parsedQuotation })
+  }, [loadConfiguration, reportGestureError])
+
+  /* A pasted quotation starts from a clean view: its own filters, price order. */
+  const handleQuotationDraft = useCallback((request: SearchRequest, execute: boolean) => {
+    captureChoreographyRects()
+    setPastedQuotation(null)
+    const view: ListView = { sort: DEFAULT_SORT_MODE, filters: filtersFromRequest(request), airlines: [] }
+    if (execute) {
+      launchSearch(request, view, { seed: true })
+    } else {
+      loadConfiguration(request, view)
+    }
+  }, [captureChoreographyRects, launchSearch, loadConfiguration])
+
+  const handleCopySearchConfig = useCallback(async () => {
+    const base = searchDraftRef.current?.read() ?? lastRequest ?? formSeed?.request
+    if (!base) return
+
+    if (await writeSharedSearchToClipboard(withListView(base, filters, selectedAirlines), sortMode)) {
+      setGestureError(null)
+      setConfigCopiedAt(Date.now())
+    } else {
+      reportGestureError("No se pudo copiar la configuración. Revisa el permiso del navegador e intenta nuevamente.")
+    }
+  }, [filters, formSeed, lastRequest, reportGestureError, selectedAirlines, sortMode])
+
+  /* 06 §1.3 and 11 §5: a month opens as its own list. The sweep's job is read
+     in a new tab when the server still holds it; otherwise the month's search
+     runs here, rebuilt from the sweep's request under the current view. */
+  const handleOpenMigrationMonth = useCallback((month: DisplayMonth) => {
+    if (month.searchJobId) {
+      const url = new URL(window.location.href)
+      url.search = `?${RESTORE_JOB_QUERY_PARAM}=${encodeURIComponent(month.searchJobId)}`
+      url.hash = ""
+      if (!openInNewTab(url.toString())) {
+        reportGestureError("El navegador bloqueó la pestaña nueva. Permite las ventanas emergentes de Fly Desk e intenta nuevamente.")
+      }
+      return
+    }
+
+    const base = lastRequest ?? searchDraftRef.current?.read()
+    if (!base || !month.departureStart || !month.departureEnd) return
+    launchSearch(
+      migrationRequestForMonth(base, month),
+      { sort: sortMode, filters, airlines: selectedAirlines },
+      { seed: true },
+    )
+  }, [filters, lastRequest, launchSearch, reportGestureError, selectedAirlines, sortMode])
 
   const handleOfferRevalidated = useCallback((offer: CanonicalOffer) => {
     setRevalidatedOffers((current) => {
@@ -438,343 +391,97 @@ export default function App() {
     })
   }, [])
 
-  const handleSearch = useCallback(
-    (request: SearchRequest, sort?: SortMode) => {
-      captureChoreographyRects()
-      if (!shouldShowWorkspaceRef.current) setWorkspaceEntering(true)
-      setSearchEditing(false)
-      const merged = {
-        ...request,
-        ...filtersRef.current,
-        baggageRequired: undefined,
-        includedAirlineCodes: selectedAirlinesRef.current,
-      }
-      /* The order survives the search. It used to reset to price on every
-         «Buscar» — the agent chose «Escalas», pressed the button that runs the
-         same search again, and got the list back by price with the header
-         saying so. A chosen order is a way of reading the list, not a property
-         of one search's results, so it is carried, and price is only the
-         default while nothing has been chosen. The callers that pass a sort
-         explicitly still win: a shared link brings its own, and loading a
-         quotation is the one way back to the idle screen and resets it. */
-      const nextSort = sort ?? sortModeRef.current
-      setClipboardError(null)
-      setSelectedOfferId(null)
-      setRevalidatedOffers(new Map())
-      setSortMode(nextSort)
-      setWorkspaceReady(false)
-      setSearchDraft(merged)
-      setLastRequest(merged)
-      writeSharedSearchToUrl(merged, nextSort)
-      void runSearch(merged, nextSort).then((started) => {
-        if (started) {
-          setWorkspaceReady(true)
-        }
-      })
-    },
-    [captureChoreographyRects, runSearch]
-  )
-
-  /*
-   * A shared link carries a whole request, but until now it only filled the
-   * form. Whoever opened one saw a page that looked ready and did nothing,
-   * which reads as "the link is broken" rather than "press Buscar" — the link
-   * always implied the search, so it runs it, once.
-   *
-   * Only `exact` launches. The other three modes are sweeps that cost many
-   * searches, and starting one from a pasted URL is a surprise nobody asked
-   * for; those still arrive with the form filled and wait for the gesture.
-   * `?job=` wins over both: it has results to read rather than a search to pay
-   * for. And a reload is not a link — see `searchUrlWasWrittenHere`.
-   */
-  const sharedSearchLaunched = useRef(false)
-  useEffect(() => {
-    if (sharedSearchLaunched.current) return
-    if (!initialSharedRequest || !isLaunchableSharedRequest(initialSharedRequest)) return
-    if (readRestorableJobIdFromUrl()) return
-    if (openedOwnSearchUrl) return
-    /* Deferred a tick for the same reason `restoreJob` above gets away with it:
-       the launch belongs after the paint that shows the filled form, not inside
-       it. The guard is set in the callback, not here, so React's development
-       double-invoke cancels the first timer and still leaves one that fires. */
-    const timer = window.setTimeout(() => {
-      sharedSearchLaunched.current = true
-      handleSearch(initialSharedRequest, initialSharedSearch?.sortMode)
-    }, 0)
-    return () => window.clearTimeout(timer)
-  }, [handleSearch, initialSharedRequest, initialSharedSearch, openedOwnSearchUrl])
-
-  /* 06 §1.3 and 11 §5: «al elegir un mes se entra en la lista normal de ese mes»
-     — the same one-way range search the sweep ran for it, dates already in the
-     form. The month's own request is rebuilt from the sweep's, so the list that
-     opens is the month that was swept and not a near-miss of it. `handleSearch`
-     puts the agent's current filters back on top. */
-  const handleOpenMigrationMonth = useCallback((month: MigrationMonthSummary) => {
-    /* The sweep already ran this month and the server still holds its job, so
-       the new tab reads it rather than paying for it twice: the list is there
-       on the first round trip and keeps filling if the month had not finished.
-       A month whose job the server no longer has falls back to re-running it
-       here, which is the old behaviour and still better than a dead click. */
-    if (month.searchJobId) {
-      const url = new URL(window.location.href)
-      url.search = `?${RESTORE_JOB_QUERY_PARAM}=${encodeURIComponent(month.searchJobId)}`
-      url.hash = ""
-      window.open(url.toString(), "_blank", "noopener")
-      return
-    }
-
-    const base = lastRequest ?? searchDraft ?? initialSharedRequest
-    if (!base || !month.departureStart || !month.departureEnd) return
-    handleSearch(migrationRequestForMonth(base, {
-      departureStart: month.departureStart,
-      departureEnd: month.departureEnd,
-    }))
-  }, [handleSearch, initialSharedRequest, lastRequest, searchDraft])
-
-  const handlePasteSearchConfig = useCallback(async () => {
-    try {
-      const text = await navigator.clipboard.readText()
-      const sharedSearch = readSharedSearchFromText(text)
-      if (!sharedSearch) {
-        const parsedQuotation = parseCommercialQuotation(text)
-        if (parsedQuotation.fields.format.state !== "parsed") {
-          setClipboardError("No se encontró una configuración ni una cotización comercial válida en el portapapeles.")
-          return
-        }
-        setClipboardError(null)
-        setPastedQuotation({ text, result: parsedQuotation })
-        return
-      }
-
-      setPastedQuotation(null)
-      const nextFilters = filtersFromRequest(sharedSearch.request)
-      filtersRef.current = nextFilters
-      selectedAirlinesRef.current = sharedSearch.request.includedAirlineCodes ?? []
-      sortModeRef.current = sharedSearch.sortMode
-      setClipboardError(null)
-      setSelectedOfferId(null)
-      setWorkspaceReady(false)
-      setSortMode(sharedSearch.sortMode)
-      setFilters(nextFilters)
-      setSelectedAirlines(sharedSearch.request.includedAirlineCodes ?? [])
-      setLastRequest(sharedSearch.request)
-      setSearchDraft(sharedSearch.request)
-      writeSharedSearchToUrl(sharedSearch.request, sharedSearch.sortMode)
-    } catch {
-      setClipboardError("No se pudo leer el portapapeles. Revisa el permiso del navegador e intenta nuevamente.")
-    }
-  }, [])
-
-  const handleQuotationDraft = useCallback((request: SearchRequest, execute: boolean) => {
-    /* Loading a configuration without running it is the one way back to the
-       idle screen, and 07 §1 gives the way back its own budget. */
-    captureChoreographyRects()
-    const nextFilters = filtersFromRequest(request)
-    filtersRef.current = nextFilters
-    selectedAirlinesRef.current = []
-    sortModeRef.current = DEFAULT_SORT_MODE
-    setPastedQuotation(null)
-    setClipboardError(null)
-    setSelectedOfferId(null)
-    setWorkspaceReady(false)
-    setFilters(nextFilters)
-    setSelectedAirlines([])
-    setSortMode(DEFAULT_SORT_MODE)
-
-    if (execute) {
-      handleSearch(request, DEFAULT_SORT_MODE)
-      return
-    }
-
-    setLastRequest(request)
-    setSearchDraft(request)
-    writeSharedSearchToUrl(request, DEFAULT_SORT_MODE)
-  }, [captureChoreographyRects, handleSearch])
-
-  const handleSelectOffer = useCallback((offer: CanonicalOffer) => {
-    setSelectedOfferId(offer.id)
-    /* Keyed on where the detail is, not on which armazón the form is wearing:
-       between 1100 and 1436 the shell is still A and the detail is a sheet. */
+  const handleSelectOffer = useCallback((offerId: string) => {
+    setSelectedOfferId(offerId)
+    /* Keyed on where the detail is, not on the armazón: between 1100 and 1436
+       the shell is A and the detail a sheet. */
     if (detailPlacement !== "column") setWorkspaceOverlay("detail")
   }, [detailPlacement])
 
-  useEffect(() => {
-    selectOfferRef.current = handleSelectOffer
-  }, [handleSelectOffer])
-
-  const handleCopySearchConfig = useCallback(async () => {
-    const draft = searchDraft ?? lastRequest ?? initialSharedRequest
-    if (!draft) return
-
-    const request = {
-      ...draft,
-      ...filtersRef.current,
-      baggageRequired: undefined,
-      includedAirlineCodes: selectedAirlinesRef.current.length ? selectedAirlinesRef.current : undefined,
-    }
-
-    try {
-      await writeSharedSearchToClipboard(request, sortModeRef.current)
-      setClipboardError(null)
-    } catch {
-      setClipboardError("No se pudo copiar la configuración. Revisa el permiso del navegador e intenta nuevamente.")
-    }
-  }, [initialSharedRequest, lastRequest, searchDraft])
-
-  const handleSort = useCallback(
-    (sort: SortMode) => {
-      sortModeRef.current = sort
-      setSortMode(sort)
-      if (lastRequest) {
-        const nextRequest = { ...lastRequest, sortMode: sort }
-        setLastRequest(nextRequest)
-        writeSharedSearchToUrl(nextRequest, sort)
-      }
-    },
-    [lastRequest]
-  )
-
-  const handleFilterChange = useCallback(
-    (next: Partial<Filters>) => {
-      const merged = { ...filters, ...next }
-      filtersRef.current = merged
-      setFilters(merged)
-      if (lastRequest) {
-        const nextRequest = { ...lastRequest, ...merged, baggageRequired: undefined, includedAirlineCodes: selectedAirlines }
-        setLastRequest(nextRequest)
-        writeSharedSearchToUrl(nextRequest, sortMode)
-      }
-    },
-    [filters, lastRequest, selectedAirlines, sortMode]
-  )
+  const handleFilterChange = useCallback((patch: Partial<Filters>) => {
+    setFilters((current) => ({ ...current, ...patch }))
+  }, [])
 
   const handleClearFilters = useCallback(() => {
-    filtersRef.current = {}
-    selectedAirlinesRef.current = []
     setFilters({})
     setSelectedAirlines([])
-    if (lastRequest) {
-      const nextRequest = {
-        ...lastRequest,
-        nonStop: undefined,
-        maxStopsFilter: undefined,
-        maxLayoverMinutes: undefined,
-        carryOnRequired: undefined,
-        checkedBaggageRequired: undefined,
-        baggageRequired: undefined,
-        includedAirlineCodes: undefined,
-      }
-      setLastRequest(nextRequest)
-      writeSharedSearchToUrl(nextRequest, sortMode)
-    }
-  }, [lastRequest, sortMode])
+  }, [])
 
   const toggleAirline = useCallback((airline: AirlineFilterOption) => {
-    const tokens = airline.codes.length > 0 ? airline.codes : [airline.label]
-    const current = new Set(selectedAirlines)
-    const selected = tokens.every((token) => current.has(token))
-    tokens.forEach((token) => {
-      if (selected) {
-        current.delete(token)
-      } else {
-        current.add(token)
+    setSelectedAirlines((current) => {
+      if (isAirlineFilterSelected(airline, current)) {
+        return current.filter((code) => !airline.codes.includes(code))
       }
+      return Array.from(new Set([...current, ...airline.codes]))
     })
-    const nextAirlines = Array.from(current)
-    selectedAirlinesRef.current = nextAirlines
-    setSelectedAirlines(nextAirlines)
-    if (lastRequest) {
-      const nextRequest = { ...lastRequest, ...filters, baggageRequired: undefined, includedAirlineCodes: nextAirlines }
-      setLastRequest(nextRequest)
-      writeSharedSearchToUrl(nextRequest, sortMode)
-    }
-  }, [filters, lastRequest, selectedAirlines, sortMode])
+  }, [])
 
-  const clearAirlineFilter = useCallback(() => {
-    selectedAirlinesRef.current = []
-    setSelectedAirlines([])
-    if (lastRequest) {
-      const nextRequest = { ...lastRequest, ...filters, baggageRequired: undefined, includedAirlineCodes: undefined }
-      setLastRequest(nextRequest)
-      writeSharedSearchToUrl(nextRequest, sortMode)
-    }
-  }, [filters, lastRequest, sortMode])
+  const clearAirlineFilter = useCallback(() => setSelectedAirlines([]), [])
+  const openFiltersSheet = useCallback(() => setWorkspaceOverlay("filters"), [])
+  const closeWorkspaceOverlay = useCallback(() => setWorkspaceOverlay(null), [])
 
-  const activeFilterChips = useMemo(
-    () => buildActiveFilterChips(filters, selectedAirlines, allAirlines),
-    [allAirlines, filters, selectedAirlines],
+  /* The whole search in the chosen order, confirmed fares swapped in. The order
+     is the backend's comparator, so the list reads as the server serves it. */
+  const candidateOffers = useMemo(() => {
+    const source = results?.allOffers ?? []
+    const reconciled = revalidatedOffers.size === 0
+      ? source
+      : source.map((offer) => revalidatedOffers.get(offer.id) ?? offer)
+    return [...reconciled].sort(compareOffers(sortMode))
+  }, [results, revalidatedOffers, sortMode])
+  const railFilters = useMemo(() => railOfferFilters(filters, selectedAirlines), [filters, selectedAirlines])
+  const filteredOffers = useMemo(
+    () => candidateOffers.filter((offer) => offerMatchesFilters(offer, railFilters)),
+    [candidateOffers, railFilters],
   )
-  const hiddenByFiltersCount = Math.max(0, candidateOffers.length - filteredCandidateOffers.length)
-  const shouldShowWorkspace = workspaceReady || Boolean(results) || loading
-  const isSearchIdle = !shouldShowWorkspace
-  const loadingLabel = "Buscando"
-  /* The three shapes the search can take. `editing` is not a fourth screen: it
-     is `active` with the form back in its resting anatomy (11 §2.4). */
-  const searchPhase: SearchPhase = isSearchIdle ? "idle" : searchEditing ? "editing" : "active"
-
-  useEffect(() => {
-    shouldShowWorkspaceRef.current = shouldShowWorkspace
-  }, [shouldShowWorkspace])
-
-  useEffect(() => {
-    searchPhaseRef.current = searchPhase
-  }, [searchPhase])
-
-  useEffect(() => {
-    filteredCandidateOffersRef.current = filteredCandidateOffers
-  }, [filteredCandidateOffers])
-
-  useEffect(() => {
-    selectedOfferIdRef.current = selectedOfferId ?? undefined
-  }, [selectedOfferId])
-
-  useEffect(() => {
-    openFiltersRef.current = shellSize === "C"
-      ? () => setWorkspaceOverlay("filters")
-      : null
-  }, [shellSize])
+  const months = useMemo(() => migrationMonthsForDisplay(results, filteredOffers), [filteredOffers, results])
+  const displayOffers = useMemo(
+    () => (months ? months.flatMap((month) => (month.offer ? [month.offer] : [])) : filteredOffers),
+    [filteredOffers, months],
+  )
+  const visibleSelectedOffer = useMemo(() => {
+    const selected = selectedOfferId ? displayOffers.find((offer) => offer.id === selectedOfferId) : undefined
+    if (selected) return selected
+    /* A sweep always has a month in the detail. */
+    return months ? displayOffers[0] ?? null : null
+  }, [displayOffers, months, selectedOfferId])
+  const outcome = useMemo(() => describeSearchOutcome(results), [results])
+  /* From the offers, not the ordered list: an order changes nothing here. */
+  const airlineOptions = useMemo(() => buildAirlineOptions(results?.allOffers ?? []), [results])
+  const activeFilterChips = useMemo(
+    () => buildActiveFilterChips(filters, selectedAirlines, airlineOptions),
+    [airlineOptions, filters, selectedAirlines],
+  )
+  const hiddenByFiltersCount = Math.max(0, candidateOffers.length - filteredOffers.length)
 
   const handleRemoveFilterChip = useCallback((id: string) => {
     if (id === "stops") {
-      handleFilterChange({ nonStop: undefined, maxStopsFilter: undefined })
-      return
+      handleFilterChange(stopFilterPatch("any"))
+    } else if (id === "layover") {
+      handleFilterChange(layoverFilterPatch("any"))
+    } else if (id === "baggage") {
+      handleFilterChange(baggageFilterPatch("any"))
+    } else {
+      const airline = airlineOptions.find((option) => airlineChipId(option) === id)
+      if (airline) toggleAirline(airline)
     }
-    if (id === "layover") {
-      handleFilterChange({ maxLayoverMinutes: undefined })
-      return
-    }
-    if (id === "baggage") {
-      handleFilterChange({ carryOnRequired: undefined, checkedBaggageRequired: undefined })
-      return
-    }
+  }, [airlineOptions, handleFilterChange, toggleAirline])
 
-    const airlineId = id.startsWith("airline:") ? id.slice("airline:".length) : null
-    const airline = airlineId ? allAirlines.find((option) => option.id === airlineId) : undefined
-    if (airline) toggleAirline(airline)
-  }, [allAirlines, handleFilterChange, toggleAirline])
-
-  /**
-   * Plate 2g's second exit, which only this file can work out: with the list
-   * empty, each active filter is lifted in turn and the offers that come back
-   * are counted. The one that recovers most is the filter to blame.
-   *
-   * A tie, or nothing recovered, yields no copy at all. Naming the wrong filter
-   * sends the agent to undo one that was not the problem, so the panel is
-   * written to say the count and stop there.
-   */
+  /* Plate 2g: with the list empty, the filter whose removal recovers most
+     offers is named; a tie or no recovery names none rather than guess. */
   const emptyByFilters = useMemo<EmptyByFiltersCopy | undefined>(() => {
-    if (filteredCandidateOffers.length > 0 || candidateOffers.length === 0) return undefined
+    if (filteredOffers.length > 0 || candidateOffers.length === 0) return undefined
 
     const axes = activeFilterAxes(filters, selectedAirlines)
     let culprit: FilterAxis | undefined
     let best = 0
     let tied = false
     for (const axis of axes) {
-      const recovered = applyClientFilters(
-        candidateOffers,
+      const lifted = railOfferFilters(
         filtersWithoutAxis(filters, axis),
         axis === "airlines" ? [] : selectedAirlines,
-      ).length
+      )
+      const recovered = candidateOffers.filter((offer) => offerMatchesFilters(offer, lifted)).length
       if (recovered > best) {
         best = recovered
         culprit = axis
@@ -787,14 +494,12 @@ export default function App() {
 
     const name = culpritFilterName(culprit, filters)
     const step = relaxFilterStep(culprit, filters)
-    const onlyAirline = culprit === "airlines" && selectedAirlines.length > 0
-      ? allAirlines.filter((airline) => isAirlineFilterSelected(airline, selectedAirlines))
+    const selectedOptions = culprit === "airlines"
+      ? airlineOptions.filter((airline) => isAirlineFilterSelected(airline, selectedAirlines))
       : []
 
     return {
-      /* "El que descarta más" is a comparison, so it needs something to compare
-         against: with a single filter on there is no more and no less, and the
-         panel's own title already names it. The way out still applies. */
+      /* «El que descarta más» needs something to compare against. */
       culpritSentence: name && axes.length > 1
         ? `El filtro de ${name.toLocaleLowerCase("es-PE")} es el que descarta más.`
         : undefined,
@@ -802,22 +507,122 @@ export default function App() {
         ? { label: step.label, onClick: () => handleFilterChange(step.patch) }
         : culprit === "airlines"
           ? {
-              label: onlyAirline.length === 1 && onlyAirline[0]
-                ? removeFilterLabel(onlyAirline[0].label)
+              label: selectedOptions.length === 1 && selectedOptions[0]
+                ? removeFilterLabel(selectedOptions[0].label)
                 : "Quitar el filtro de aerolíneas",
               onClick: clearAirlineFilter,
             }
           : undefined,
     }
   }, [
-    allAirlines,
+    airlineOptions,
     candidateOffers,
     clearAirlineFilter,
-    filteredCandidateOffers.length,
+    filteredOffers.length,
     filters,
     handleFilterChange,
     selectedAirlines,
   ])
+
+  /* 11 §3: one notice and one line. The agent's own gesture speaks before the
+     search behind it. */
+  const notice = useMemo<Notice | null>(() => {
+    if (gestureError) return { message: gestureError, tone: "error" }
+    if (error) return { message: error, tone: "error" }
+    if (statusMessage) return { message: statusMessage, tone: "warning" }
+    if (outcome.notice) {
+      return { message: outcome.notice, tone: outcome.allFailed || outcome.jobFailed ? "error" : "warning" }
+    }
+    return null
+  }, [error, gestureError, outcome, statusMessage])
+  const visibleNotice = notice && notice.message !== dismissedNotice ? notice : null
+
+  const dismissNotice = useCallback(() => {
+    setGestureError(null)
+    setDismissedNotice(notice?.message ?? null)
+  }, [notice])
+
+  const listAnnouncement = describeListForScreenReaders({
+    loading,
+    hasResults: Boolean(results),
+    searchFailed: outcome.allFailed || outcome.jobFailed,
+    months,
+    visibleCount: displayOffers.length,
+    totalCount: candidateOffers.length,
+  })
+
+  /*
+   * The keyboard layer of 11 §7, for «the searcher» and «the list». Whatever is
+   * typed into owns every key, `Esc` included; a sheet, popover or menu answers
+   * its own; a key a control already handled is not handled twice.
+   */
+  const handleWindowKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "l") {
+      event.preventDefault()
+      setPlainLogView((active) => !active)
+      return
+    }
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
+
+    const target = event.target instanceof Element ? event.target : null
+    if (target && isEditableTarget(target)) return
+    if (hasOpenOverlay() || target?.closest(SELF_KEYED_SURFACES)) return
+    if (target?.getAttribute("aria-expanded") === "true") return
+
+    if (event.key === "/") {
+      event.preventDefault()
+      document.querySelector<HTMLInputElement>('[data-fd-location-field="origin"]')?.focus()
+      return
+    }
+
+    if (!shouldShowWorkspace) return
+    const key = event.key.toLowerCase()
+
+    if (key === "f") {
+      event.preventDefault()
+      if (shellSize === "C") {
+        openFiltersSheet()
+      } else {
+        /* On a desk the filters are on screen already (02 §4): put the caret in them. */
+        document.querySelector<HTMLElement>(".fd-filter-column [role='radio'][aria-checked='true']")?.focus()
+      }
+      return
+    }
+
+    if (key === "c") {
+      const quote = quotationShortcutRef.current
+      if (!quote) return
+      event.preventDefault()
+      quote()
+      return
+    }
+
+    if (event.key === "Escape") {
+      if (!selectedOfferId) return
+      event.preventDefault()
+      setSelectedOfferId(null)
+      return
+    }
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      const next = resultsNavigationRef.current?.step(event.key === "ArrowDown" ? 1 : -1)
+      if (!next) return
+      event.preventDefault()
+      setSelectedOfferId(next)
+      return
+    }
+
+    if (event.key === "Enter" && !target?.closest(INTERACTIVE_TARGETS) && visibleSelectedOffer) {
+      event.preventDefault()
+      handleSelectOffer(visibleSelectedOffer.id)
+    }
+  })
+
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => handleWindowKeyDown(event)
+    window.addEventListener("keydown", listener)
+    return () => window.removeEventListener("keydown", listener)
+  }, [])
 
   /*
    * The two rows of 07 §1 that CSS cannot reach, both at the 60ms cue:
@@ -890,10 +695,11 @@ export default function App() {
      long as their row of the table lasts. */
   const idleChrome = useLeaveWindow(isSearchIdle, idleExitDuration)
 
-  /* One fact — "does the desk know a search configuration?" — behind both
-     capsule cells: Copy is disabled by it, Paste is only dimmed by it. */
-  const hasSearchConfig = Boolean(searchDraft || lastRequest || initialSharedRequest)
-  const visibleMobileToolsCollapsed = shellSize === "C" && mobileToolsCollapsed
+  /* Copy is disabled and paste dimmed while the desk knows no configuration. */
+  const hasSearchConfig = formHasDraft || lastRequest !== null || formSeed !== null
+  const phone = shellSize === "C"
+  const visibleMobileToolsCollapsed = phone && mobileToolsCollapsed
+  const configCopied = configCopiedAt !== null
 
   /* `dvh`, never `vh` (02 §10): Tailwind's `h-screen` is `100vh`, which on a
      phone measures the window without the virtual keyboard and cut the open
@@ -907,11 +713,15 @@ export default function App() {
     >
       <TopBar
         copySearchDisabled={!hasSearchConfig}
+        copyConfirmed={configCopied}
         pasteSearchDimmed={!hasSearchConfig}
         onCopySearchConfig={handleCopySearchConfig}
         onPasteSearchConfig={handlePasteSearchConfig}
         workspaceActive={shouldShowWorkspace}
       />
+
+      <p className="sr-only" role="status">{listAnnouncement}</p>
+      <p className="sr-only" role="status">{configCopied ? "Configuración copiada" : ""}</p>
 
       {plainLogView ? (
         <PlainLogView lines={diagnosticLog} />
@@ -922,27 +732,19 @@ export default function App() {
           }`}
           data-entering={workspaceEntering ? "" : undefined}
         >
-          {/* Plate 1a spaces the idle screen with two unequal spacers — 1 above
-              the form, 1.3 below — which is what leaves the form slightly above
-              centre and the rail on the bottom edge. */}
+          {/* Plate 1a: two unequal spacers leave the form slightly above centre
+              and the rail on the bottom edge. */}
           {isSearchIdle && <div className="fd-search-stage-spacer-top" aria-hidden="true" />}
 
-          {/*
-            Plate 1d draws the retractable block as ONE container: search
-            summary, filter chips and notice inside a single `max-height`. They
-            used to live in two subtrees with two collapse mechanisms, which is
-            why the layout tore when the bar undocked. The status row and the
-            list are its siblings and never retract (02 §9).
-          */}
+          {/* Plate 1d: summary, filter chips and notice retract as one block
+              (02 §9); the status row and the list are its siblings. */}
           <div
             ref={toolsBlockRef}
             className="fd-tools-block"
             data-collapsed={visibleMobileToolsCollapsed}
             data-active={shouldShowWorkspace}
-            /* The 182px ceiling of 02 §9 measures the *summary* band. While the
-               form is open for editing the block is the form, and «el bloque
-               crece a su alto natural» (2h): left capped, the passenger field
-               and the CTA sit 301px below the clip. */
+            /* While the form is open for editing the block grows to its natural
+               height (2h) instead of the summary band's 182px. */
             data-editing={searchEditing ? "" : undefined}
           >
           <div
@@ -951,95 +753,61 @@ export default function App() {
             className="fd-search-frame"
           >
             <SearchShell
+              key={formSeed?.id ?? 0}
+              seed={formSeed?.request ?? null}
+              draftRef={searchDraftRef}
+              onDraftValidityChange={setFormHasDraft}
               onSearch={handleSearch}
               loading={loading}
-              loadingLabel={loadingLabel}
               onCancelSearch={cancel}
-              /* The segments have two homes and no third: above the form while
-                 the screen is at rest, and centred in the title bar for as long
-                 as a search exists. Editing used to hand them back down — the
-                 inverse FLIP of 07 §1 — which meant every click on a field made
-                 the pills jump out of the bar and back into the form. That is
-                 not a state worth drawing: `editing` reopens the *fields*, and
-                 the mode of the search is not one of them. */
-              controlsPlacement={searchPhase !== "idle" && shellSize !== "C" ? "topbar" : "inline"}
-              compactActive={shouldShowWorkspace && shellSize === "C"}
-              mobilePresentation={shellSize === "C"}
+              /* Above the form at rest, in the title bar while a search exists. */
+              controlsPlacement={searchPhase !== "idle" && !phone ? "topbar" : "inline"}
+              compactActive={shouldShowWorkspace && phone}
+              mobilePresentation={phone}
               policyFootTarget={policyFootTarget}
-              /* Idle only. Editing is the form at rest with results behind
-                 it, but the shortcuts are furniture of the empty screen: once a
-                 search exists they compete with the results for the same eye.
-                 The provider rail already stays behind for the same reason
-                 (03 §1). */
-              showLocationUsageSuggestions={isSearchIdle}
               idle={isSearchIdle}
               usageSuggestionsLeaving={idleChrome.leaving}
               workspaceActive={shouldShowWorkspace}
               editing={searchEditing}
               onEditingChange={handleSearchEditingChange}
               controlsRef={searchControlsRef}
-              syncedRequest={lastRequest ?? initialSharedRequest}
-              onSearchConfigDraftChange={setSearchDraft}
             />
 
           </div>
 
-            {/* Armazón C mounts the strip here, between the summary and the
-                notice, so the three retract as one (02 §4). Elsewhere it is the
-                list header's own row. */}
-            {shouldShowWorkspace && shellSize === "C" && (
+            {/* Armazón C: the strip sits between the summary and the notice so
+                the three retract as one (02 §4). */}
+            {shouldShowWorkspace && phone && (
               <ActiveFilterChips
                 chips={activeFilterChips}
-                activeFilterCount={activeFilterChips.length}
                 hiddenByFiltersCount={hiddenByFiltersCount}
-                onOpenFilters={() => setWorkspaceOverlay("filters")}
+                onOpenFilters={openFiltersSheet}
                 onRemoveFilter={handleRemoveFilterChip}
-                /* The title bar is gone from this armazón once a search
-                   exists, so its one surviving action lives here. */
+                /* On a phone the title bar hides once a search exists. */
                 onCopySearchConfig={handleCopySearchConfig}
                 copyDisabled={!hasSearchConfig}
+                copyConfirmed={configCopied}
               />
             )}
 
-            {/* 11 §3 keeps one notice and one line. The provider outcome comes
-                last because a request that never left, a cancellation and a
-                clipboard failure are all about the gesture the agent just made;
-                a provider falling over is about the search behind it. */}
-            <SearchNotice
-              message={clipboardError || error || statusMessage || searchOutcome.notice || ""}
-              tone={clipboardError || error || searchOutcome.allFailed || searchOutcome.jobFailed
-                ? "error"
-                : "warning"}
-              onDismiss={() => {
-                setClipboardError(null)
-                setDismissedNotice(clipboardError || error || statusMessage || searchOutcome.notice || "")
-              }}
-              dismissed={dismissedNotice}
-            />
+            <SearchNotice notice={visibleNotice} onDismiss={dismissNotice} />
           </div>
 
           {isSearchIdle && <div className="fd-search-stage-spacer-bottom" aria-hidden="true" />}
-          {/* 03 §8 puts the policy lines «al pie del reposo», next to the
-              provider rail — not tucked under the fields, where they came
-              between the form and its own errors. The slot is here on every
-              armazón; only the wording narrows on a phone. */}
+          {/* 03 §8: the policy lines at the foot of the idle screen, next to the rail. */}
           {isSearchIdle && <div ref={setPolicyFootTarget} className="fd-policy-foot" />}
           {idleChrome.mounted && <ProviderRail leaving={idleChrome.leaving} />}
 
           {shouldShowWorkspace && (
             <div ref={setWorkspaceElement} className="fd-shell-workspace">
               <div className="fd-results">
-                {/* Armazón A and B keep the 248px column; C turns it into a
-                    partial sheet (02 §4). Like the detail below, the column is
-                    not built rather than hidden: a second live `FiltersPanel`
-                    behind `display:none` was two copies of the same state, and
-                    02 §5 forbids the `display:none` besides. */}
-                {shellSize !== "C" && (
+                {/* A and B keep the 248px column; C turns it into a sheet (02 §4). */}
+                {!phone && (
                   <div className="fd-filter-column">
                     <FiltersPanel
                       activeFilterCount={activeFilterChips.length}
                       filters={filters}
-                      allAirlines={allAirlines}
+                      allAirlines={airlineOptions}
                       selectedAirlines={selectedAirlines}
                       onClear={handleClearFilters}
                       onFilterChange={handleFilterChange}
@@ -1050,38 +818,38 @@ export default function App() {
 
                 <div className="fd-list">
                   <ResultsPanel
-                    key={`${results?.searchJobId ?? "idle"}:${shellSize}`}
-                    results={filteredResults}
+                    key={results?.searchJobId ?? "idle"}
+                    results={results}
+                    offers={displayOffers}
+                    months={months}
+                    outcome={outcome}
                     unfilteredOfferCount={candidateOffers.length}
                     loading={loading}
                     sort={sortMode}
-                    onSort={handleSort}
+                    onSort={setSortMode}
                     onSelectOffer={handleSelectOffer}
                     selectedOfferId={visibleSelectedOffer?.id}
                     activeFilterChips={activeFilterChips}
                     hiddenByFiltersCount={hiddenByFiltersCount}
-                    onRemoveFilter={handleRemoveFilterChip}
                     onClearFilters={handleClearFilters}
                     emptyByFilters={emptyByFilters}
                     onEditSearch={handleEditSearchFromEmptyList}
                     onOpenMigrationMonth={handleOpenMigrationMonth}
-                    onOpenFilters={shellSize === "C" ? () => setWorkspaceOverlay("filters") : undefined}
+                    phone={phone}
+                    onOpenFilters={openFiltersSheet}
+                    mobileToolsCollapsed={visibleMobileToolsCollapsed}
                     onMobileToolsCollapsedChange={setMobileToolsCollapsed}
-                    mobileCollapseEnabled={shellSize === "C"}
-                    chipsPlacement={shellSize === "C" ? "external" : "none"}
+                    navigationRef={resultsNavigationRef}
                   />
                 </div>
 
-                {/* Only while the list can still afford it. Below that the
-                    detail leaves the grid entirely and overlays the results as
-                    a side sheet (02 §1, plate 8a); on a phone it is a full
-                    sheet. The column is not hidden with `display:none` — it is
-                    not built. */}
+                {/* Only while the list can afford it; below that the detail is a
+                    side sheet (8a) or a full sheet, never a hidden column. */}
                 {detailPlacement === "column" && (
                   <div className="fd-detail-column">
                     <DetailPanel
                       offer={visibleSelectedOffer}
-                      request={filteredResults?.request}
+                      request={results?.request}
                       searchJobId={results?.searchJobId}
                       onOfferRevalidated={handleOfferRevalidated}
                       quotationShortcutRef={quotationShortcutRef}
@@ -1090,7 +858,7 @@ export default function App() {
                 )}
               </div>
               <Sheet
-                open={workspaceOverlay === "filters" && shellSize === "C"}
+                open={workspaceOverlay === "filters" && phone}
                 onOpenChange={(open) => setWorkspaceOverlay(open ? "filters" : null)}
                 title="Filtros"
                 size="partial"
@@ -1098,10 +866,8 @@ export default function App() {
                 meta={activeFilterChips.length > 0
                   ? <span className="fd-status-pill fd-status-pill-count">{activeFilterChips.length}</span>
                   : undefined}
-                /* Plate 1e: the shared sheet-footer pattern — «Limpiar» at 40 and
-                   content-sized, the primary at 46 taking the rest of the row and
-                   saying how many flights survive the filters. (It said 44 and 52,
-                   the mobile pair the geometry catalogue retired.) */
+                /* Plate 1e: «Limpiar» content-sized, the primary taking the
+                   rest of the row with the count that survives the filters. */
                 footer={(
                   <>
                     <button
@@ -1109,22 +875,16 @@ export default function App() {
                       className="fd-sheet-action fd-sheet-action--secondary fd-focus-ring"
                       onClick={handleClearFilters}
                     >
-                      {/* The same cross the rail's «Limpiar» wears: `Controles`
-                          allows this action to change size between surfaces and
-                          not to change weight or lose its glyph. The size comes
-                          from the sheet, which binds it to the control. */}
                       <AppIcon name="x" size={18} />
                       Limpiar
                     </button>
                     <button
                       type="button"
                       className="fd-sheet-action fd-focus-ring"
-                      onClick={() => setWorkspaceOverlay(null)}
+                      onClick={closeWorkspaceOverlay}
                     >
                       <AppIcon name="check" size={16} />
-                      {filteredCandidateOffers.length === 1
-                        ? "Ver 1 vuelo"
-                        : `Ver ${filteredCandidateOffers.length.toLocaleString("es-PE")} vuelos`}
+                      Ver {formatCount(filteredOffers.length)} {plural(filteredOffers.length, "vuelo")}
                     </button>
                   </>
                 )}
@@ -1132,7 +892,7 @@ export default function App() {
                 <FiltersPanel
                   activeFilterCount={activeFilterChips.length}
                   filters={filters}
-                  allAirlines={allAirlines}
+                  allAirlines={airlineOptions}
                   selectedAirlines={selectedAirlines}
                   onClear={handleClearFilters}
                   onFilterChange={handleFilterChange}
@@ -1140,40 +900,33 @@ export default function App() {
                   embedded
                 />
               </Sheet>
-              <Sheet
-                open={workspaceOverlay === "detail" && detailPlacement !== "column"}
-                onOpenChange={(open) => setWorkspaceOverlay(open ? "detail" : null)}
-                title="Oferta"
-                size="full"
-                placement={detailPlacement === "side" ? "side" : "bottom"}
-                container={detailPlacement === "side" ? workspaceElement : undefined}
-                className="fd-detail-sheet"
-                /* Neither sheet draws chrome of its own: 8a gives the side sheet
-                   the detail's header with a 32px cross, and 1f gives the full
-                   sheet the same header with a 44px back chevron — no second
-                   title bar saying less than the first. So the close comes from
-                   the panel on both, and the dialog keeps its name. The grabber
-                   does come back: it is the gesture, not the chrome, and without
-                   it this was the sheet that opens most often and the only one a
-                   thumb could not dismiss. */
-                chrome={false}
-                /* The one sheet where the whole vocabulary already said «atrás»:
-                   the 44px chevron points left, and on the desk this same sheet
-                   arrives and leaves from the right. Only the gesture was
-                   missing. */
-                backSwipe
-              >
-                <DetailPanel
-                  offer={visibleSelectedOffer}
-                  request={filteredResults?.request}
-                  searchJobId={results?.searchJobId}
-                  onOfferRevalidated={handleOfferRevalidated}
-                  embedded
-                  mobileDirect={shellSize === "C"}
-                  onClose={() => setWorkspaceOverlay(null)}
-                  quotationShortcutRef={quotationShortcutRef}
-                />
-              </Sheet>
+              {/* Not built while the detail is a column, so one detail exists at a time. */}
+              {detailPlacement !== "column" && (
+                <Sheet
+                  open={workspaceOverlay === "detail"}
+                  onOpenChange={(open) => setWorkspaceOverlay(open ? "detail" : null)}
+                  title="Oferta"
+                  size="full"
+                  placement={detailPlacement === "side" ? "side" : "bottom"}
+                  container={detailPlacement === "side" ? workspaceElement : undefined}
+                  className="fd-detail-sheet"
+                  /* 8a and 1f give the sheet the detail's own header, so the close
+                     comes from the panel; the grabber and the back swipe stay. */
+                  chrome={false}
+                  backSwipe
+                >
+                  <DetailPanel
+                    offer={visibleSelectedOffer}
+                    request={results?.request}
+                    searchJobId={results?.searchJobId}
+                    onOfferRevalidated={handleOfferRevalidated}
+                    embedded
+                    mobileDirect={phone}
+                    onClose={closeWorkspaceOverlay}
+                    quotationShortcutRef={quotationShortcutRef}
+                  />
+                </Sheet>
+              )}
             </div>
           )}
         </main>
@@ -1185,7 +938,7 @@ export default function App() {
           if (!open) setPastedQuotation(null)
         }}
         title="Cotización pegada"
-        placement={shellSize === "C" ? "bottom" : "modal"}
+        placement={phone ? "bottom" : "modal"}
         size="full"
         className="fd-quotation-paste-sheet"
       >
@@ -1202,37 +955,30 @@ export default function App() {
   )
 }
 
-/**
- * Plate 1b — one notice, one line.
- *
- * This replaced a chain of technical warnings that stacked up and pushed the
- * results down. It appears only when the search actually failed, states the
- * reason, and can be dismissed; once dismissed it does not return within the
- * same search, because an agent who has read it does not need it again.
+/*
+ * Plate 1b — one notice, one line, dismissible. Both live regions stay
+ * mounted so the line is announced when it appears: politely for a warning,
+ * at once for an error.
  */
-function SearchNotice({
-  message,
-  tone,
-  dismissed,
-  onDismiss,
-}: {
-  message: string
-  tone: "warning" | "error"
-  dismissed: string | null
-  onDismiss: () => void
-}) {
-  if (!message || message === dismissed) return null
+function SearchNotice({ notice, onDismiss }: { notice: Notice | null; onDismiss: () => void }) {
+  const line = notice ? <NoticeLine notice={notice} onDismiss={onDismiss} /> : null
 
-  const [headline, ...rest] = formatAlertLines(message)
+  return (
+    <>
+      <div role="status">{notice?.tone === "warning" ? line : null}</div>
+      <div role="alert">{notice?.tone === "error" ? line : null}</div>
+    </>
+  )
+}
+
+function NoticeLine({ notice, onDismiss }: { notice: Notice; onDismiss: () => void }) {
+  const [headline, ...rest] = formatAlertLines(notice.message)
   const detail = rest.join(" · ")
 
   return (
-    <div
-      className={`fd-alert-line fd-motion-emergente mt-2 ${tone === "error" ? "fd-alert-line-error" : ""}`}
-      role="status"
-    >
+    <div className={`fd-alert-line fd-motion-emergente mt-2 ${notice.tone === "error" ? "fd-alert-line-error" : ""}`}>
       <AppIcon name="alert" />
-      <span className="fd-alert-line-text" title={message}>
+      <span className="fd-alert-line-text" title={notice.message}>
         <span className="font-bold">{headline}</span>
         {detail && (
           <>
@@ -1295,15 +1041,8 @@ const FiltersPanel = memo(function FiltersPanel({
   const baggageValue = baggageFilterValue(filters)
 
   return (
-    /* One component, two containers (rule of 02 §7), and the fork between them
-       is one class shorter than it was. The desk column used to be a card and
-       the sheet was not, so the panel carried `.fd-panel` in one branch and
-       dropped it in the other; the column is now the same flat rail the sheet
-       has always drawn — a filter panel is not an object, it is the control of
-       the list beside it, and a box around it presents it as a thing apart from
-       the results it governs. What is left in the branch is what the sheet
-       genuinely does differently: it does not scroll itself and it has no
-       header, because the sheet draws one. */
+    /* One panel in two containers (02 §7): the sheet draws its own header and
+       scrolls it, the desk column does neither. */
     <aside className={embedded ? "fd-filter-panel fd-filter-panel--sheet" : "fd-filter-panel"}>
       {!embedded && <header className="fd-filter-panel-header">
         <div className="fd-filter-panel-heading">
@@ -1328,7 +1067,6 @@ const FiltersPanel = memo(function FiltersPanel({
       </header>}
 
       <div className="fd-filter-body fd-scrollbar-hidden">
-        {/* Three constraints, one control, no separators between them. */}
         <FilterGroup label="Escalas" used={stopValue !== "any"}>
           <SegmentedControl
             aria-label="Escalas"
@@ -1371,8 +1109,6 @@ const FiltersPanel = memo(function FiltersPanel({
           </SegmentedControl>
         </FilterGroup>
 
-        {/* The separator goes here and nowhere else: this is a different kind of
-            filter, and the rule is a cheaper signal than a heading change. */}
         {allAirlines.length > 0 && (
           <div className="fd-filter-group fd-filter-group--airlines">
             <div className="fd-filter-group-head">
@@ -1383,8 +1119,7 @@ const FiltersPanel = memo(function FiltersPanel({
                   : allAirlines.length}
               </span>
             </div>
-            {/* No scroller of its own: the panel body on a desk and the sheet
-                body on a phone are the single scroll surface (02 §7). */}
+            {/* No scroller of its own: the panel or the sheet body is the one scroll surface (02 §7). */}
             <div className="fd-airline-list">
               {allAirlines.map((airline) => (
                 <label key={airline.id} className="fd-airline-row">
@@ -1414,12 +1149,8 @@ const FiltersPanel = memo(function FiltersPanel({
   )
 })
 
-/**
- * A group nobody has touched sits at 72% opacity and says "sin usar". Greying it
- * out is what lets the agent see, without reading, which constraints are on —
- * and an untouched group at full contrast is indistinguishable from one set to
- * its widest value, which is the same picture with a different meaning.
- */
+/* An untouched group sits dimmed and says «sin usar», so the constraints that
+   are on can be seen without reading. */
 function FilterGroup({
   label,
   used,
@@ -1427,7 +1158,7 @@ function FilterGroup({
 }: {
   label: string
   used: boolean
-  children: React.ReactNode
+  children: ReactNode
 }) {
   return (
     <div className="fd-filter-group" data-used={used}>
@@ -1444,11 +1175,11 @@ function countSelectedAirlines(allAirlines: AirlineFilterOption[], selectedAirli
   return allAirlines.filter((airline) => isAirlineFilterSelected(airline, selectedAirlines)).length
 }
 
-/**
- * The chips above the list, and the way back out of each one. Every active
- * constraint gets exactly one chip, so removing them one at a time is possible
- * without opening the panel.
- */
+function airlineChipId(airline: AirlineFilterOption): string {
+  return `airline:${airline.id}`
+}
+
+/* One chip per active constraint, so each can be removed without the panel. */
 function buildActiveFilterChips(
   filters: Filters,
   selectedAirlines: string[],
@@ -1456,21 +1187,18 @@ function buildActiveFilterChips(
 ): ActiveFilterChip[] {
   const chips: ActiveFilterChip[] = []
 
-  const stopValue = stopFilterValue(filters)
-  const stopSegment = STOP_SEGMENTS.find((segment) => segment.value === stopValue)
+  const stopSegment = STOP_SEGMENTS.find((segment) => segment.value === stopFilterValue(filters))
   if (stopSegment?.chip) chips.push({ id: "stops", label: stopSegment.chip })
 
-  const layoverValue = layoverFilterValue(filters)
-  const layoverSegment = LAYOVER_SEGMENTS.find((segment) => segment.value === layoverValue)
+  const layoverSegment = LAYOVER_SEGMENTS.find((segment) => segment.value === layoverFilterValue(filters))
   if (layoverSegment?.chip) chips.push({ id: "layover", label: layoverSegment.chip })
 
-  const baggageValue = baggageFilterValue(filters)
-  const baggageSegment = BAGGAGE_SEGMENTS.find((segment) => segment.value === baggageValue)
+  const baggageSegment = BAGGAGE_SEGMENTS.find((segment) => segment.value === baggageFilterValue(filters))
   if (baggageSegment?.chip) chips.push({ id: "baggage", label: baggageSegment.chip })
 
   allAirlines
     .filter((airline) => isAirlineFilterSelected(airline, selectedAirlines))
-    .forEach((airline) => chips.push({ id: `airline:${airline.id}`, label: airline.label }))
+    .forEach((airline) => chips.push({ id: airlineChipId(airline), label: airline.label }))
 
   return chips
 }
@@ -1481,8 +1209,7 @@ function stopFilterValue(filters: Filters): StopFilterValue {
   return "any"
 }
 
-/* One place per group where a chosen segment becomes a patch, because the panel
-   and plate 2g's relax button both have to produce the same one. */
+/* The panel and plate 2g's relax button produce the same patch from here. */
 function stopFilterPatch(value: StopFilterValue): Partial<Filters> {
   return {
     nonStop: value === "direct" ? true : undefined,
@@ -1501,11 +1228,7 @@ function baggageFilterPatch(value: BaggageFilterValue): Partial<Filters> {
   }
 }
 
-/**
- * The four things a filter panel can constrain. Plate 2g asks which one is
- * throwing the most offers away, and that is a question about axes, not about
- * chips: three selected airlines are one filter with one way out, not three.
- */
+/* Plate 2g asks about axes, not chips: three airlines are one filter with one way out. */
 type FilterAxis = "stops" | "layover" | "baggage" | "airlines"
 
 function activeFilterAxes(filters: Filters, selectedAirlines: string[]): FilterAxis[] {
@@ -1517,7 +1240,6 @@ function activeFilterAxes(filters: Filters, selectedAirlines: string[]): FilterA
   return axes
 }
 
-/** Lifting one axis is both how it is measured and how it is undone. */
 function filtersWithoutAxis(filters: Filters, axis: FilterAxis): Filters {
   switch (axis) {
     case "stops":
@@ -1531,7 +1253,7 @@ function filtersWithoutAxis(filters: Filters, axis: FilterAxis): Filters {
   }
 }
 
-/** How plate 2g names it: "El filtro de **directo** es el que descarta más." */
+/** «El filtro de **directo** es el que descarta más.» */
 function culpritFilterName(axis: FilterAxis, filters: Filters): string {
   switch (axis) {
     case "stops":
@@ -1545,11 +1267,7 @@ function culpritFilterName(axis: FilterAxis, filters: Filters): string {
   }
 }
 
-/**
- * The lesser way out: one step down the ladder where there is a step, and off
- * where there is not. Only the segmented groups have a ladder — a list of
- * airlines you include has no "one notch wider".
- */
+/* One step down the ladder where there is one, off where there is not. */
 function relaxFilterStep(axis: FilterAxis, filters: Filters): { label: string; patch: Partial<Filters> } | undefined {
   switch (axis) {
     case "stops": {
@@ -1583,15 +1301,8 @@ function removeFilterLabel(chip: string): string {
 }
 
 function layoverFilterValue(filters: Filters): LayoverFilterValue {
-  if (
-    filters.maxLayoverMinutes === "120" ||
-    filters.maxLayoverMinutes === "240" ||
-    filters.maxLayoverMinutes === "360"
-  ) {
-    return filters.maxLayoverMinutes
-  }
-
-  return "any"
+  const value = filters.maxLayoverMinutes
+  return value === "120" || value === "240" || value === "360" ? value : "any"
 }
 
 function baggageFilterValue(filters: Filters): BaggageFilterValue {
@@ -1600,16 +1311,60 @@ function baggageFilterValue(filters: Filters): BaggageFilterValue {
   return "any"
 }
 
-function airlineToken(value: unknown): string {
-  return String(value ?? "").trim().toUpperCase()
+/* The rail as the shared filter reads it, so the list keeps what the backend would. */
+function railOfferFilters(filters: Filters, selectedAirlines: string[]): OfferFilters {
+  const maxLayover = Number(filters.maxLayoverMinutes)
+  return {
+    nonStop: filters.nonStop,
+    maxStops: filters.maxStopsFilter === "1" ? 1 : undefined,
+    minStops: filters.maxStopsFilter === "2+" ? 2 : undefined,
+    maxLayoverMinutes: filters.maxLayoverMinutes && Number.isFinite(maxLayover) ? maxLayover : undefined,
+    carryOnRequired: filters.carryOnRequired,
+    checkedBaggageRequired: filters.checkedBaggageRequired,
+    includedAirlineCodes: selectedAirlines.length > 0 ? selectedAirlines : undefined,
+  }
 }
 
-function airlineFilterCode(offer: CanonicalOffer): string {
-  return String(offer.mainCarrier ?? offer.validatingCarrier ?? "").trim()
+/* The request the list stands for: the search with the rail laid over it. */
+function withListView(request: SearchRequest, filters: Filters, airlines: string[]): SearchRequest {
+  return {
+    ...request,
+    nonStop: filters.nonStop,
+    maxStopsFilter: filters.maxStopsFilter,
+    maxLayoverMinutes: filters.maxLayoverMinutes,
+    carryOnRequired: filters.carryOnRequired,
+    checkedBaggageRequired: filters.checkedBaggageRequired,
+    baggageRequired: undefined,
+    includedAirlineCodes: airlines.length > 0 ? airlines : undefined,
+  }
 }
 
-function airlineFilterLabel(offer: CanonicalOffer): string {
-  const code = airlineFilterCode(offer)
+function viewFromRequest(request: SearchRequest, sort: SortMode): ListView {
+  return { sort, filters: filtersFromRequest(request), airlines: request.includedAirlineCodes ?? [] }
+}
+
+/* An airline is the one that sells the offer (`offerAirlineCode`); codes that
+   share a name are one option. */
+function buildAirlineOptions(offers: CanonicalOffer[]): AirlineFilterOption[] {
+  const options = new Map<string, AirlineFilterOption>()
+  for (const offer of offers) {
+    const code = offerAirlineCode(offer)
+    if (!code) continue
+    const label = airlineFilterLabel(offer, code)
+    const id = label.toLocaleUpperCase("es-PE")
+    const option = options.get(id)
+    if (option) {
+      option.count += 1
+      if (!option.codes.includes(code)) option.codes.push(code)
+    } else {
+      options.set(id, { id, label, logo: airlineLogoAssetPath(code), codes: [code], count: 1 })
+    }
+  }
+  return Array.from(options.values())
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+}
+
+function airlineFilterLabel(offer: CanonicalOffer, code: string): string {
   const codeToken = airlineToken(code)
   const segments = (offer.itineraries ?? []).flatMap((itinerary) => itinerary.segments ?? [])
   const segment = airlineNameSegmentForCode(segments, codeToken)
@@ -1626,14 +1381,13 @@ function airlineFilterLabel(offer: CanonicalOffer): string {
       offer.airline,
       segment?.operatingCarrierName,
     ],
-    codes: [
-      code,
-      offer.validatingCarrier,
-      segment?.marketingCarrier,
-      segment?.operatingCarrier,
-    ],
+    codes: [code, offer.validatingCarrier, segment?.marketingCarrier, segment?.operatingCarrier],
     fallback: "Aerolínea",
   })
+}
+
+function airlineToken(value: unknown): string {
+  return String(value ?? "").trim().toUpperCase()
 }
 
 function airlineNameSegmentForCode(segments: Segment[], codeToken: string): Segment | undefined {
@@ -1645,41 +1399,74 @@ function airlineNameSegmentForCode(segments: Segment[], codeToken: string): Segm
   ))
 }
 
-function airlineFilterCodes(offer: CanonicalOffer): string[] {
-  return Array.from(new Set([
-    airlineFilterCode(offer),
-    String(offer.validatingCarrier ?? "").trim(),
-    !airlineFilterCode(offer) ? String(offer.airline ?? "").trim() : "",
-  ].filter(Boolean)))
-}
-
 function isAirlineFilterSelected(airline: AirlineFilterOption, selectedAirlines: string[]): boolean {
-  const tokens = airline.codes.length > 0 ? airline.codes : [airline.label]
-  return tokens.every((token) => selectedAirlines.includes(token))
+  return airline.codes.every((code) => selectedAirlines.includes(code))
 }
 
-function offerMatchesSelectedAirlines(offer: CanonicalOffer, selectedAirlines: string[]): boolean {
-  if (selectedAirlines.length === 0) return true
-
-  const tokens = new Set([
-    ...airlineFilterCodes(offer),
-    String(offer.airline ?? "").trim(),
-  ].filter(Boolean))
-  return selectedAirlines.some((airline) => tokens.has(airline))
+function isMigrationResults(results: SearchJobResponse): boolean {
+  return results.request.searchMode === "month-view" || Boolean(results.migrationMonths?.length)
 }
 
-function maxLayoverForOffer(offer: CanonicalOffer): number {
-  return (offer.itineraries ?? [])
-    .flatMap((itinerary) => itinerary.layoverMinutes ?? [])
-    .reduce((max, minutes) => Math.max(max, minutes), 0)
+/* A month of a sweep shows the cheapest of its offers the rail keeps; the
+   offers are the list's own objects, so a confirmed fare shows there too. */
+function migrationMonthsForDisplay(
+  results: SearchJobResponse | null,
+  visibleOffers: CanonicalOffer[],
+): DisplayMonth[] | null {
+  if (!results || !isMigrationResults(results)) return null
+
+  const visibleById = new Map(visibleOffers.map((offer) => [offer.id, offer]))
+  return (results.migrationMonths ?? []).map((month) => {
+    const monthOffers = month.offers?.length ? month.offers : month.offer ? [month.offer] : []
+    const kept = monthOffers.flatMap((offer) => visibleById.get(offer.id) ?? [])
+    const offer = cheapestOffer(kept)
+    return {
+      ...month,
+      offer,
+      offers: kept,
+      filtered: !offer && monthOffers.length > 0 && month.status !== "loading",
+    }
+  })
 }
 
-function readWorkspacePreferences(): WorkspacePreferences {
-  const fallback: WorkspacePreferences = {
-    sortMode: DEFAULT_SORT_MODE,
-    filters: {},
-    selectedAirlines: [],
+/* What the polite region says about the list; a failed search is the alert's to say. */
+function describeListForScreenReaders({
+  loading,
+  hasResults,
+  searchFailed,
+  months,
+  visibleCount,
+  totalCount,
+}: {
+  loading: boolean
+  hasResults: boolean
+  searchFailed: boolean
+  months: DisplayMonth[] | null
+  visibleCount: number
+  totalCount: number
+}): string {
+  if (loading) return "Buscando vuelos"
+  if (!hasResults || searchFailed) return ""
+  if (months) {
+    const priced = months.filter((month) => month.offer).length
+    return `${priced} de ${months.length} ${months.length === 1 ? "mes" : "meses"} con tarifa`
   }
+  if (visibleCount === 0) return totalCount > 0 ? "Ningún vuelo cumple los filtros" : "Sin vuelos para esta búsqueda"
+  const flights = `${formatCount(visibleCount)} ${plural(visibleCount, "vuelo")}`
+  return visibleCount < totalCount ? `${flights} de ${formatCount(totalCount)}` : flights
+}
+
+function isEditableTarget(target: Element): boolean {
+  return target instanceof HTMLElement && (
+    target.isContentEditable
+    || target instanceof HTMLInputElement
+    || target instanceof HTMLTextAreaElement
+    || target instanceof HTMLSelectElement
+  )
+}
+
+function readWorkspacePreferences(): ListView {
+  const fallback: ListView = { sort: DEFAULT_SORT_MODE, filters: {}, airlines: [] }
 
   try {
     const parsed = JSON.parse(sessionStorage.getItem(WORKSPACE_PREFERENCES_KEY) ?? "null") as {
@@ -1689,34 +1476,20 @@ function readWorkspacePreferences(): WorkspacePreferences {
     } | null
     if (!parsed) return fallback
 
+    const stored = parsed.filters ?? {}
     const filters: Filters = {}
-    if (typeof parsed.filters?.nonStop === "boolean") {
-      filters.nonStop = parsed.filters.nonStop
+    if (typeof stored.nonStop === "boolean") filters.nonStop = stored.nonStop
+    if (stored.maxStopsFilter === "1" || stored.maxStopsFilter === "2+") filters.maxStopsFilter = stored.maxStopsFilter
+    if (stored.maxLayoverMinutes === "120" || stored.maxLayoverMinutes === "240" || stored.maxLayoverMinutes === "360") {
+      filters.maxLayoverMinutes = stored.maxLayoverMinutes
     }
-    if (parsed.filters?.maxStopsFilter === "1" || parsed.filters?.maxStopsFilter === "2+") {
-      filters.maxStopsFilter = parsed.filters.maxStopsFilter
-    }
-    if (
-      parsed.filters?.maxLayoverMinutes === "120"
-      || parsed.filters?.maxLayoverMinutes === "240"
-      || parsed.filters?.maxLayoverMinutes === "360"
-    ) {
-      filters.maxLayoverMinutes = parsed.filters.maxLayoverMinutes
-    }
-    if (typeof parsed.filters?.carryOnRequired === "boolean") {
-      filters.carryOnRequired = parsed.filters.carryOnRequired
-    }
-    if (typeof parsed.filters?.checkedBaggageRequired === "boolean") {
-      filters.checkedBaggageRequired = parsed.filters.checkedBaggageRequired
-    }
+    if (typeof stored.carryOnRequired === "boolean") filters.carryOnRequired = stored.carryOnRequired
+    if (typeof stored.checkedBaggageRequired === "boolean") filters.checkedBaggageRequired = stored.checkedBaggageRequired
 
     return {
-      /* From the catalogue, not from a pair written out here: this read was
-         still narrowing every order but price and duration back to price, so a
-         tab that had been sorting by departure came back sorted by price. */
-      sortMode: isSortMode(parsed.sortMode) ? parsed.sortMode : DEFAULT_SORT_MODE,
+      sort: isSortMode(parsed.sortMode) ? parsed.sortMode : DEFAULT_SORT_MODE,
       filters,
-      selectedAirlines: Array.isArray(parsed.selectedAirlines)
+      airlines: Array.isArray(parsed.selectedAirlines)
         ? parsed.selectedAirlines
           .filter((value): value is string => typeof value === "string" && value.length <= 80)
           .slice(0, 32)
@@ -1727,244 +1500,16 @@ function readWorkspacePreferences(): WorkspacePreferences {
   }
 }
 
-function writeWorkspacePreferences(preferences: WorkspacePreferences) {
+function writeWorkspacePreferences(view: ListView) {
   try {
-    sessionStorage.setItem(WORKSPACE_PREFERENCES_KEY, JSON.stringify(preferences))
+    sessionStorage.setItem(WORKSPACE_PREFERENCES_KEY, JSON.stringify({
+      sortMode: view.sort,
+      filters: view.filters,
+      selectedAirlines: view.airlines,
+    }))
   } catch {
-    // Workspace memory is a convenience; private browsing must not block search.
+    // A convenience: private browsing must not block the search.
   }
-}
-
-function applyClientFilters(offers: CanonicalOffer[], filters: Filters, selectedAirlines: string[]) {
-  let list = offers
-  if (filters.nonStop) list = list.filter((offer) => maxStopsForFilter(offer) === 0)
-  if (filters.maxStopsFilter === "1") list = list.filter((offer) => maxStopsForFilter(offer) <= 1)
-  if (filters.maxStopsFilter === "2+") list = list.filter((offer) => maxStopsForFilter(offer) >= 2)
-  if (filters.maxLayoverMinutes) {
-    const maxMinutes = Number(filters.maxLayoverMinutes)
-    list = list.filter((offer) => maxLayoverForOffer(offer) <= maxMinutes)
-  }
-  if (filters.carryOnRequired) list = list.filter((offer) => offer.baggage?.carryOnIncluded === true)
-  if (filters.checkedBaggageRequired) list = list.filter((offer) => offer.baggage?.checkedIncluded === true)
-  if (selectedAirlines.length > 0) list = list.filter((offer) => offerMatchesSelectedAirlines(offer, selectedAirlines))
-  return list
-}
-
-function isMigrationResults(results: { migrationMonths?: unknown[]; request: SearchRequest }) {
-  return results.request.searchMode === "month-view" || Boolean(results.migrationMonths?.length)
-}
-
-// eslint-disable-next-line react-refresh/only-export-components -- Pure result transformer exercised directly in unit tests.
-export function applyMigrationFilters(results: SearchJobResponse, filteredOffers: CanonicalOffer[], sortMode: SortMode) {
-  const visibleOfferIds = new Set(filteredOffers.map((offer) => offer.id))
-  const migrationMonths = (results.migrationMonths ?? []).map((month) => {
-    const monthOffers = month.offers?.length
-      ? month.offers
-      : month.offer ? [month.offer] : []
-    const visibleMonthOffers = monthOffers.filter((offer) => visibleOfferIds.has(offer.id))
-    const selectedOffer = cheapestOfferForMonth(visibleMonthOffers)
-
-    return {
-      ...month,
-      offer: selectedOffer,
-      offers: visibleMonthOffers,
-      filtered: !selectedOffer && monthOffers.length > 0 && month.status !== "loading",
-    }
-  })
-  const offers = migrationMonths.flatMap((month) => month.offer ? [month.offer] : [])
-
-  return {
-    ...results,
-    offers,
-    migrationMonths,
-    sortMode,
-  }
-}
-
-function cheapestOfferForMonth(offers: CanonicalOffer[]) {
-  return offers.reduce<CanonicalOffer | undefined>((best, offer) => {
-    if (!best) return offer
-    const compared = compareNumber(priceAmount(offer), priceAmount(best))
-      || compareNumber(totalDurationForDisplay(offer), totalDurationForDisplay(best))
-    return compared < 0 ? offer : best
-  }, undefined)
-}
-
-function sortOffersForDisplay(offers: CanonicalOffer[], sortMode: SortMode): CanonicalOffer[] {
-  if (offers.length <= 1) return offers
-
-  return offers
-    .map((offer, index) => ({ offer, index }))
-    .sort((left, right) => {
-      const compared = compareOffersForDisplay(left.offer, right.offer, sortMode)
-      return compared !== 0 ? compared : left.index - right.index
-    })
-    .map((item) => item.offer)
-}
-
-/*
- * The order, applied a second time — here, on what is on screen.
- *
- * The backend sorts (`src/core/ranking.ts::sortOffers`) and this is not a copy
- * of it doing the same work twice: what the list draws is that answer filtered
- * by the rail, with revalidated offers swapped in and a sweep's months folded
- * to one row each, so the order has to survive all of that. It did not for two
- * of the four criteria — this function knew `cheapest` and `fastest` and
- * returned 0 for everything else, and because the re-sort is stable, returning
- * 0 for every pair leaves the list exactly where it was. The header said
- * «Escalas» and nothing moved.
- *
- * The tie-breaks of the two new criteria are `ranking.ts`'s, copied rather than
- * invented: price, then the offer's own dates, then its id. Two surfaces that
- * order the same offers differently would be worse than one that does not
- * order at all — the link would open the list in a sequence the desk that
- * shared it never saw. `cheapest` and `fastest` keep the second key they
- * already had, for the same reason `ranking.ts` left them alone: changing it
- * would move lists nobody is disputing.
- */
-function compareOffersForDisplay(left: CanonicalOffer, right: CanonicalOffer, sortMode: SortMode): number {
-  if (sortMode === "cheapest") {
-    return compareNumber(priceAmount(left), priceAmount(right))
-      || compareNumber(totalDurationForDisplay(left), totalDurationForDisplay(right))
-  }
-
-  if (sortMode === "fastest") {
-    return compareNumber(totalDurationForDisplay(left), totalDurationForDisplay(right))
-      || compareNumber(priceAmount(left), priceAmount(right))
-  }
-
-  if (sortMode === "departure") {
-    return compareNumber(departureInstantForDisplay(left), departureInstantForDisplay(right))
-      || compareNumber(priceAmount(left), priceAmount(right))
-      || compareOfferTravelDates(left, right)
-  }
-
-  if (sortMode === "stops") {
-    return compareNumber(totalStopsForDisplay(left), totalStopsForDisplay(right))
-      || compareNumber(priceAmount(left), priceAmount(right))
-      || compareOfferTravelDates(left, right)
-  }
-
-  return 0
-}
-
-function outboundItinerary(offer: CanonicalOffer) {
-  const itineraries = offer.itineraries ?? []
-  return itineraries.find((itinerary) => itinerary.direction === "outbound") ?? itineraries[0]
-}
-
-/*
- * What «Horario» orders by: the departure of the first leg, as a whole instant.
- *
- * The same leg the backend picks and for the same reason — a round trip has two
- * departures and only the outbound is the one being chosen; ordering by the
- * return would put a trip that starts next month at the top. It is also the leg
- * the departure filters already read, so ordering and filtering by departure
- * talk about one flight.
- *
- * The instant and not the time of day, because a flexible search spreads its
- * offers over different days and «07:00» on two of them is not one value.
- *
- * A departure that cannot be read sinks to the end rather than leading the list
- * as a 0 would. `compareNumber` compares with `<` instead of subtracting, so
- * two of those tie at 0 rather than producing the `NaN` that
- * `Infinity - Infinity` gives — and a comparator that returns `NaN` leaves the
- * order to whatever the engine feels like.
- */
-function departureInstantForDisplay(offer: CanonicalOffer): number {
-  const departureAt = outboundItinerary(offer)?.segments?.[0]?.departureAt
-  const parsed = departureAt ? Date.parse(departureAt) : Number.NaN
-  return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY
-}
-
-/*
- * What «Escalas» orders by: the stops of the whole trip with both legs added,
- * which is `ranking.ts::totalStops`. The enriched metric first, so the figure
- * is the one the backend computed, and the sum of the itineraries when a
- * provider answered without it — the fallback `totalDurationForDisplay` uses.
- *
- * Not `maxStopsForFilter`, which takes the maximum across the legs: «directo»
- * is a promise about every leg, which is the right question for a filter and
- * the wrong one for an order. By the maximum, a trip out direct and back
- * through two stops sorts level with one that stops twice each way.
- */
-function totalStopsForDisplay(offer: CanonicalOffer): number {
-  const metricStops = normalizedNumber(offer.comparisonMetrics?.totalStops)
-  if (metricStops !== null) return metricStops
-
-  return (offer.itineraries ?? []).reduce((sum, itinerary) => {
-    const stops = normalizedNumber(itinerary.stops)
-    return sum + (stops ?? Math.max(0, (itinerary.segments?.length ?? 1) - 1))
-  }, 0)
-}
-
-/*
- * The last key of both new orders, and it is `ranking.ts::compareOffersByDate`
- * written for the offers this side holds: the outbound date, the return date,
- * and then the offer id, which is unique.
- *
- * It ends at a total key on purpose. Stops ties constantly — half an ordinary
- * route is direct — and a criterion that stopped at its primary key would hand
- * that whole block back in whatever sequence the two providers happened to
- * answer in, which is not the same sequence twice.
- */
-function compareOfferTravelDates(left: CanonicalOffer, right: CanonicalOffer): number {
-  const leftDates = offerTravelDatesForDisplay(left)
-  const rightDates = offerTravelDatesForDisplay(right)
-
-  return leftDates.departureDate.localeCompare(rightDates.departureDate)
-    || leftDates.returnDate.localeCompare(rightDates.returnDate)
-    || left.id.localeCompare(right.id)
-}
-
-function offerTravelDatesForDisplay(offer: CanonicalOffer): { departureDate: string; returnDate: string } {
-  const inbound = (offer.itineraries ?? []).find((itinerary) => itinerary.direction === "inbound")
-
-  return {
-    departureDate: outboundItinerary(offer)?.segments?.[0]?.departureAt?.slice(0, 10) ?? "",
-    returnDate: inbound?.segments?.[0]?.departureAt?.slice(0, 10) ?? "",
-  }
-}
-
-function compareNumber(left: number, right: number): number {
-  if (left === right) return 0
-  return left < right ? -1 : 1
-}
-
-function priceAmount(offer: CanonicalOffer): number {
-  return normalizedNumber(offer.price?.total?.amount) ?? Number.POSITIVE_INFINITY
-}
-
-function totalDurationForDisplay(offer: CanonicalOffer): number {
-  const metricDuration = normalizedNumber(offer.comparisonMetrics?.totalDurationMinutes)
-  if (metricDuration !== null) return metricDuration
-
-  const itineraryDuration = (offer.itineraries ?? [])
-    .map((itinerary) => normalizedNumber(itinerary.durationMinutes) ?? 0)
-    .reduce((sum, minutes) => sum + minutes, 0)
-
-  return itineraryDuration > 0 ? itineraryDuration : Number.POSITIVE_INFINITY
-}
-
-function normalizedNumber(value: unknown): number | null {
-  const numberValue = Number(value)
-  return Number.isFinite(numberValue) ? numberValue : null
-}
-
-function maxStopsForFilter(offer: CanonicalOffer): number {
-  const itineraryStops = (offer.itineraries ?? [])
-    .map((itinerary) => {
-      if (typeof itinerary.stops === "number" && Number.isFinite(itinerary.stops)) {
-        return itinerary.stops
-      }
-
-      return Math.max(0, (itinerary.segments?.length ?? 1) - 1)
-    })
-    .filter((stops) => Number.isFinite(stops))
-
-  return itineraryStops.length > 0
-    ? Math.max(...itineraryStops)
-    : offer.stops
 }
 
 function formatAlertLines(message: string) {
@@ -1982,7 +1527,6 @@ function readInitialSharedSearch(): SharedSearchState | null {
   }
 }
 
-/** Whether this tab is looking at its own address bar rather than at a link. */
 function readSearchUrlWasWrittenHere(): boolean {
   try {
     return searchUrlWasWrittenHere(new URL(window.location.href))
@@ -1991,20 +1535,8 @@ function readSearchUrlWasWrittenHere(): boolean {
   }
 }
 
-/*
- * The readable share parameters only guarantee an origin and a destination, so
- * a link can arrive without the dates a search needs — or with dates the form
- * itself refuses, since `?departure=2026-06-31` reads as a date and is not one.
- * Those still fill the form; they just do not launch anything on their own, and
- * the form says why in the place it always says it.
- *
- * The runtime's floor is read from the same global `SearchShell` reads, so a
- * link shared last month prefills a route instead of paying for a search of a
- * day that has gone. Everything above that floor — the far end of the window,
- * the longest stay — stays the form's to judge: it has the whole ladder and the
- * words for each rung, and a link that trips one of those arrives filled with
- * the sentence that explains it.
- */
+/* A link that lacks dates, or carries dates before the window, fills the
+   form and waits; the form judges and explains everything else. */
 function isLaunchableSharedRequest(request: SearchRequest): boolean {
   if (request.searchMode !== "exact") return false
   if (!/^[A-Z]{3}$/.test(request.origin ?? "")) return false
@@ -2013,14 +1545,9 @@ function isLaunchableSharedRequest(request: SearchRequest): boolean {
   if (!isIsoDate(request.departureDate)) return false
   if (request.tripType === "round-trip" && !isIsoDate(request.returnDate)) return false
   if (request.returnDate && request.returnDate < request.departureDate) return false
-
-  const minSearchDate = window.__FLYDESK_RUNTIME__?.searchDatePolicy?.minSearchDate
-  return !isIsoDate(minSearchDate) || request.departureDate >= minSearchDate
+  return request.departureDate >= SEARCH_DATE_POLICY.minSearchDate
 }
 
-export const RESTORE_JOB_QUERY_PARAM = "job"
-
-/** The id of a server-side job this tab should read instead of starting one. */
 function readRestorableJobIdFromUrl(): string | null {
   try {
     const value = new URL(window.location.href).searchParams.get(RESTORE_JOB_QUERY_PARAM)?.trim()

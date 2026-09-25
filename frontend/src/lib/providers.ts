@@ -1,58 +1,30 @@
+import { PROVIDER_LABELS } from "../../../src/core/offer-grouping"
+import type { ProviderId } from "../../../src/core/types"
+
+const PROVIDER_ICONS: Record<ProviderId, string> = {
+  "agil-local": "/assets/provider-icons/agilsmart-128.png",
+  costamar: "/assets/provider-icons/click-and-book-plus-128.png",
+}
+
+function isProviderId(value: string): value is ProviderId {
+  return Object.hasOwn(PROVIDER_LABELS, value)
+}
+
 export function providerDisplayName(providerId?: string | null): string {
-  const id = String(providerId ?? "").trim().toLowerCase()
+  const id = String(providerId ?? "").trim()
   if (!id) return "Proveedor"
-  if (id === "agil-local" || id === "agil") return "Agilsmart"
-  if (id === "costamar" || id === "cbplus" || id === "click-and-book-plus") return "Click and Book Plus"
-  return providerId ?? "Proveedor"
+  return isProviderId(id) ? PROVIDER_LABELS[id] : id
 }
 
-const PROVIDER_DEFINITIONS = [
-  {
-    id: "agil-local",
-    label: "Agilsmart",
-    icon: "/assets/provider-icons/agilsmart-128.png",
-  },
-  {
-    id: "costamar",
-    label: "Click and Book Plus",
-    icon: "/assets/provider-icons/click-and-book-plus-128.png",
-  },
-] as const
-
-export type SearchProviderId = (typeof PROVIDER_DEFINITIONS)[number]["id"]
-
-/**
- * The icon file a provider is painted with, by id.
- *
- * The paths live once, in `PROVIDER_DEFINITIONS` above, so the rail on the idle
- * screen and the badge on a result card cannot end up pointing at different
- * files for the same provider. An id with no definition gets "", which is what
- * the badge reads as «no icon» before it falls back to its short label.
- */
+/** "" for an id with no icon, which the badge reads as «draw the short label». */
 export function providerIconPath(providerId?: string | null): string {
-  const id = String(providerId ?? "").trim().toLowerCase()
-  return PROVIDER_DEFINITIONS.find((provider) => provider.id === id)?.icon ?? ""
+  const id = String(providerId ?? "").trim()
+  return isProviderId(id) ? PROVIDER_ICONS[id] : ""
 }
 
-export type SearchProvider = {
-  id: SearchProviderId
-  label: string
-  icon: string
-}
-
-/**
- * The providers the rail on the idle screen lists (plate 1a).
- *
- * It is a statement of coverage — «Buscando en» — not a health widget. It used
- * to be filtered by a live readiness observation, and the effect was the
- * opposite of informative: Click and Book Plus can only reach `ready` after a
- * real search has come back, so on the screen where this rail lives it was
- * never listed at all and the desk looked like it searched one provider.
- *
- * Health belongs to the authenticated `/api/provider-status` surface, which the
- * backend keeps for diagnosis. A failure in a search is already said in one
- * line above the list (04 §8).
- */
-export function configuredSearchProviders(): SearchProvider[] {
-  return PROVIDER_DEFINITIONS.map((provider) => ({ ...provider }))
-}
+/** The providers this desk searches, for the idle rail. Coverage, not health. */
+export const SEARCH_PROVIDERS = (Object.keys(PROVIDER_LABELS) as ProviderId[]).map((id) => ({
+  id,
+  label: PROVIDER_LABELS[id],
+  icon: PROVIDER_ICONS[id],
+}))

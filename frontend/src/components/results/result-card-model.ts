@@ -1,8 +1,9 @@
 import type { CanonicalOffer, Itinerary, RedirectVerification, Segment } from "@/types"
 import { airlineLogoAssetPath } from "../../../../src/core/airline-assets"
 import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
+import { formatAmount, formatDayMonthNumeric, formatMoney } from "@/lib/format"
+import { diffDays } from "@/lib/iso-date"
 import {
-  diffDaysIso,
   formatJourneyDuration,
   isoDatePart,
   layoverItemsForItinerary,
@@ -14,56 +15,30 @@ import {
 import { providerDisplayName, providerIconPath } from "@/lib/providers"
 
 /*
- * The card model for plate 1b.
- *
- * Two decisions from the plate shape this file:
- *
- * 1. Duration and stops are *per leg*. The old card added outbound and inbound
- *    together, which produced a number ("19h 05m") that matches no flight the
- *    agent is about to sell.
- * 2. The "Ruta" column is gone. It restated the origin and destination that were
- *    typed into the search, and with its width returned the two schedules sit
- *    together and the price has nothing to its left.
+ * The card model for plate 1b. Duration and stops are per leg: a sum of the
+ * two legs is a number that matches no flight the agent is selling.
  */
 
 export type ResultLegModel = {
-  /** "Ida" / "Vta" — the short form the 56px label column can hold. */
+  /** "Ida" / "Vta" — what the 56px label column holds. */
   label: string
   ariaLabel: string
-  /** dd/MM next to the label, so the row says which day it departs. */
+  /** dd/MM next to the label. */
   dateLabel: string
   departureTime: string
   arrivalTime: string
   hasKnownSchedule: boolean
-  /** "+1" when the flight lands on a later day; lives in its own lane. */
+  /** "+1" when the flight lands on a later day. */
   dayOffset: string
   duration: string
   /** "Directo" · "1 escala · PTY" · "2 escalas · PTY, BOG +1". */
   stopsLabel: string
-  /**
-   * The same wording, cut where the desk reads it in two lanes: the count on
-   * its own and the airports on theirs. A card's two legs rarely carry the
-   * same count, and «2 escalas · CDG, AMS» over «1 escala · CDG» pushed the
-   * second row's codes a whole word to the left of the first row's — the
-   * airports are what the agent scans down, so they are what has to line up.
-   */
+  /* The desk draws the count and the airports in two lanes so the codes line
+     up down the list; the phone draws them as one string. */
   stopsCountLabel: string
-  /**
-   * " · PTY, BOG +1" — the separator travels with the codes, and so does the
-   * space in front of it. On a desk the two are separate cells and a leading
-   * space at the start of a cell is dropped, so the lane pays for that space
-   * once, in `padding-left`; on a phone they are one string again and the
-   * space is the one that was always there. Either way the text a reader
-   * selects, and a screen reader speaks, is «1 escala · BOG».
-   */
+  /** " · PTY, BOG +1": the separator and its space travel with the codes. */
   stopsCodesLabel: string
-  /**
-   * The same fact in the 57px the stacked card can spare ("1 esc · PTY").
-   * Plate 8c abbreviates here for a reason that is arithmetic, not taste: the
-   * full wording overflows by a few pixels and takes the airport code with it,
-   * and the code is the part the agent is reading. From two stops even the
-   * abbreviation cannot carry the codes, so it stops trying — see below.
-   */
+  /** The 57px stacked lane's form ("1 esc · PTY"); from two stops, the count alone. */
   stopsShortLabel: string
   stopsTitle: string
   stopsTone: "direct" | "one-stop" | "many-stops" | "unknown"
@@ -74,7 +49,7 @@ export type ResultCardModel = {
     code: string
     name: string
     logo: string
-    /** "LATAM" — the codeshare operator, when it differs from the marketer. */
+    /** The codeshare operator, when it differs from the marketer. */
     operatedBy: string
   }
   baggage: {
@@ -83,7 +58,6 @@ export type ResultCardModel = {
     /** True when the provider said anything at all, included or not. */
     shown: boolean
     label: string
-    /** What the pair means on hover, including when it means «nothing». */
     title: string
     ariaLabel: string
   }
@@ -93,74 +67,83 @@ export type ResultCardModel = {
     perPersonLabel: string
     ariaLabel: string
   }
-  provider: {
-    label: string
-    shortLabel: string
-    icon: string
-  }
+  provider: ResultProviderBadge
   costamarRedirect?: ResultRedirectStatus
   tripType: "one-way" | "round-trip"
 }
 
-export type ResultAlternateScheduleModel = {
+type ResultAlternateScheduleModel = {
   legAriaLabel: string
   time: string
   meta: string
 }
 
-export type ResultCardModelOptions = {
-  showPerPerson?: boolean
-}
-
-export type ResultRedirectStatus = {
+type ResultRedirectStatus = {
   label: string
   title: string
   tone: "verified" | "pending" | "blocked"
 }
 
-export type ResultProviderBadge = ResultCardModel["provider"]
+type ResultProviderBadge = {
+  label: string
+  shortLabel: string
+  icon: string
+}
+
+type OfferModelParts = Omit<ResultCardModel, "price">
+
+/* Everything but the price depends on the offer alone, and one offer is drawn
+   by its card, its group, the chips of its siblings and the detail panel. The
+   offer objects live as long as their job revision, and so does this. */
+const offerModelCache = new WeakMap<CanonicalOffer, OfferModelParts>()
+
+function offerModelParts(offer: CanonicalOffer): OfferModelParts {
+  const cached = offerModelCache.get(offer)
+  if (cached) return cached
+
+  const inbound = returnItineraryForOffer(offer)
+  const legs = [legModel(primaryItineraryForOffer(offer), offer, "outbound")]
+  if (inbound) legs.push(legModel(inbound, offer, "inbound"))
+  const parts: OfferModelParts = {
+    carrier: carrierParts(offer),
+    baggage: baggageParts(offer),
+    legs,
+    provider: providerBadge(offer),
+    costamarRedirect: costamarRedirectStatus(offer),
+    tripType: inbound ? "round-trip" : "one-way",
+  }
+  offerModelCache.set(offer, parts)
+  return parts
+}
+
+export function resultLegModels(offer: CanonicalOffer): ResultLegModel[] {
+  return offerModelParts(offer).legs
+}
 
 export function buildResultCardModel(
   offer: CanonicalOffer,
   passengerCount: number,
-  options: ResultCardModelOptions = {},
+  { showPerPerson = true }: { showPerPerson?: boolean } = {},
 ): ResultCardModel {
-  const outbound = primaryItineraryForOffer(offer)
-  const inbound = returnItineraryForOffer(offer)
-  const outboundLeg = legModel(outbound, offer, "outbound")
-  const inboundLeg = inbound ? legModel(inbound, offer, "inbound") : null
-
   return {
-    carrier: carrierParts(offer),
-    baggage: baggageParts(offer),
-    legs: [outboundLeg, inboundLeg].filter((leg): leg is ResultLegModel => Boolean(leg)),
-    price: priceParts(offer, passengerCount, options.showPerPerson ?? true),
-    provider: providerBadge(offer),
-    costamarRedirect: costamarRedirectStatus(offer),
-    tripType: inboundLeg ? "round-trip" : "one-way",
+    ...offerModelParts(offer),
+    price: priceParts(offer, passengerCount, showPerPerson),
   }
 }
 
+/* The duration alone: a schedule group shares one price and baggage, which
+   the card already states. */
 export function buildAlternateScheduleModel(
   alternateOffer: CanonicalOffer,
   currentOffer: CanonicalOffer,
 ): ResultAlternateScheduleModel {
-  const alternate = buildResultCardModel(alternateOffer, 1)
-  const current = buildResultCardModel(currentOffer, 1)
-  const changedLegIndex = alternate.legs.findIndex(
-    (leg, index) => !sameDisplayedSchedule(leg, current.legs[index]),
+  const alternateLegs = resultLegModels(alternateOffer)
+  const currentLegs = resultLegModels(currentOffer)
+  const changedLegIndex = alternateLegs.findIndex(
+    (leg, index) => !sameDisplayedSchedule(leg, currentLegs[index]),
   )
-  const leg = alternate.legs[changedLegIndex >= 0 ? changedLegIndex : 0]
+  const leg = alternateLegs[changedLegIndex >= 0 ? changedLegIndex : 0]
 
-  /*
-   * The duration, and only the duration. This used to show a price difference
-   * whenever there was one, and there never is: a schedule group refuses to
-   * hold two offers whose currency, amount and baggage do not match
-   * (`offer-schedule-groups.ts::groupKeyForOffer`, and the fold rule in the
-   * contract), so every chip in a strip carries the price the card already
-   * states. The delta was arithmetic that could only ever produce zero, drawn
-   * as «mismo precio» in the full list and as nothing here.
-   */
   return {
     legAriaLabel: leg?.ariaLabel ?? "Tramo",
     time: leg?.departureTime ?? "--:--",
@@ -196,17 +179,16 @@ function legModel(
   const arrivalDate = isoDatePart(arrivalIso)
   const departureTime = timeOfIso(departureIso)
   const arrivalTime = timeOfIso(arrivalIso)
-  const hasKnownSchedule = Boolean(departureTime || arrivalTime)
-  const dayOffset = departureDate && arrivalDate ? Math.max(0, diffDaysIso(departureDate, arrivalDate)) : 0
+  const dayOffset = departureDate && arrivalDate ? Math.max(0, diffDays(departureDate, arrivalDate)) : 0
   const stops = stopsForItinerary(itinerary)
 
   return {
     label: direction === "outbound" ? "Ida" : "Vta",
     ariaLabel: direction === "outbound" ? "Ida" : "Vuelta",
-    dateLabel: dayMonthLabel(departureDate),
+    dateLabel: formatDayMonthNumeric(departureDate),
     departureTime: departureTime || "--:--",
     arrivalTime: arrivalTime || "--:--",
-    hasKnownSchedule,
+    hasKnownSchedule: Boolean(departureTime || arrivalTime),
     dayOffset: dayOffset > 0 ? `+${dayOffset}` : "",
     duration: legDuration(itinerary),
     stopsLabel: stops.label,
@@ -218,7 +200,7 @@ function legModel(
   }
 }
 
-/** Per-leg duration; a whole-offer duration cannot stand in for a missing leg. */
+/** Per leg; a whole-offer duration cannot stand in for a missing leg. */
 function legDuration(itinerary: Itinerary | null): string {
   const minutes = itinerary?.durationMinutes
   if (typeof minutes === "number" && Number.isFinite(minutes) && minutes > 0) {
@@ -228,11 +210,7 @@ function legDuration(itinerary: Itinerary | null): string {
   return "--"
 }
 
-/**
- * Stops for one leg, named by airport. From three stops the label shows two
- * codes and `+n`: the third code costs more width than it buys, and the agent
- * who cares opens the detail panel anyway.
- */
+/* From three stops the label shows two codes and `+n`; the detail names them all. */
 function stopsForItinerary(itinerary: Itinerary | null) {
   if (!itinerary) {
     return {
@@ -245,9 +223,8 @@ function stopsForItinerary(itinerary: Itinerary | null) {
     }
   }
 
-  const segments = itinerary?.segments ?? []
-  const stopCount = stopsCountFromItinerary(itinerary)
-    ?? Math.max(0, segments.length - 1)
+  const segments = itinerary.segments ?? []
+  const stopCount = stopsCountFromItinerary(itinerary) ?? Math.max(0, segments.length - 1)
 
   if (stopCount === 0) {
     return {
@@ -264,18 +241,15 @@ function stopsForItinerary(itinerary: Itinerary | null) {
     .slice(0, -1)
     .map((segment) => String(segment.destination ?? "").trim().toUpperCase())
     .filter(Boolean)
-  const layovers = itinerary ? layoverItemsForItinerary(itinerary) : []
+  const layovers = layoverItemsForItinerary(itinerary)
   const title = layovers.length
     ? layovers.map((item) => `${item.city}: ${formatJourneyDuration(item.minutes)}`).join(" · ")
     : `${stopCount} ${stopCount === 1 ? "escala" : "escalas"}`
 
   const shown = codes.slice(0, 2).join(", ")
   const overflow = codes.length > 2 ? ` +${codes.length - 2}` : ""
-  const codeSuffix = shown ? ` · ${shown}${overflow}` : ""
 
   if (stopCount === 1) {
-    // "1 escala · BOG" — the same separator the multi-stop label uses, so the
-    // column reads as one shape whatever the count (plate 8c).
     return {
       label: codes[0] ? `1 escala · ${codes[0]}` : "1 escala",
       countLabel: "1 escala",
@@ -286,17 +260,10 @@ function stopsForItinerary(itinerary: Itinerary | null) {
     }
   }
 
-  /*
-   * From two stops the short form drops the airports and keeps the count. The
-   * stacked lane is 60px on the narrowest phone this application draws, and
-   * «2 esc · BOG, PTY» measures 82 and «3 esc · BOG, PTY
-   * +1» 95, so the lane ellipsised them back to «2 esc…» — a dangling ellipsis
-   * that hid the very codes it was cut to show. A bare count says the same
-   * thing and says all of it; the airports are still in the long form the desk
-   * shows, in the `title`, and named one by one in the detail sheet.
-   */
+  /* The narrowest phone lane is 60px and «2 esc · BOG, PTY» measures 82: the
+     short form keeps the count and the title and detail keep the airports. */
   return {
-    label: `${stopCount} escalas${codeSuffix}`,
+    label: `${stopCount} escalas${shown ? ` · ${shown}${overflow}` : ""}`,
     countLabel: `${stopCount} escalas`,
     codesLabel: shown ? ` · ${shown}${overflow}` : "",
     shortLabel: `${stopCount} esc`,
@@ -327,17 +294,7 @@ function carrierParts(offer: CanonicalOffer) {
   }
 }
 
-/**
- * The codeshare operator, bare — the agent needs to know who actually flies
- * it, because that is who the passenger will deal with at the gate. Only the
- * operators that differ from the marketing carrier appear.
- *
- * The name and nothing else, because the two surfaces introduce it differently
- * and neither wording is data: `Main.dc.html` writes «Operado por Level» on
- * its own line under the airline, and `Movil.dc.html` writes «· Level» glued
- * to it. Both prefixes live in `result-card.css`, where the disposition that
- * chooses between them already lives.
- */
+/* The operator's bare name; the card adds the words around it. */
 function operatingCopy(offer: CanonicalOffer, knownTokens: Set<string>): string {
   const operators = new Set<string>()
 
@@ -357,28 +314,15 @@ function operatingCopy(offer: CanonicalOffer, knownTokens: Set<string>): string 
   return operators.size > 0 ? Array.from(operators).join(" / ") : ""
 }
 
-/*
- * The visible label names what the fare *includes*, and nothing else.
- *
- * It used to enumerate absences too, which produced «mano + bodega: no
- * incluido» — a line that reads as a fare with hold luggage until you get to
- * the last word. Absence is already said, and said better, by the two 14px
- * icons the card dims (04 §4: «Nunca texto»). The screen-reader label below
- * still states both, because there the icons say nothing.
- *
- * «Mano y bodega», which is what `Main.dc.html` and `MovilDetalle.dc.html`
- * both write in the detail's condition row. Not «Cabina + Bodega»: the filter
- * that switches this fact on is labelled «Mano», so the panel that reports it
- * has to use the same word, and «y» is the conjunction the sentence takes —
- * the «+» belonged to a list of tokens, not to a phrase an agent reads.
- */
+/* The label names what the fare includes, in the filter's words; absence is
+   drawn by dimmed icons and spoken in the aria label. An explicit «no bodega»
+   is evidence too, so the pair shows whenever the provider said anything. */
 function baggageParts(offer: CanonicalOffer) {
   const carryOnIncluded = offer.baggage?.carryOnIncluded
   const checkedIncluded = offer.baggage?.checkedIncluded
-  const included = [carryOnIncluded === true, checkedIncluded === true]
-  const label = included[0] && included[1]
+  const label = carryOnIncluded === true && checkedIncluded === true
     ? "Mano y bodega"
-    : included[0] ? "Mano" : included[1] ? "Bodega" : ""
+    : carryOnIncluded === true ? "Mano" : checkedIncluded === true ? "Bodega" : ""
   const ariaLabels = [
     carryOnIncluded === true
       ? "Equipaje de mano incluido"
@@ -387,15 +331,6 @@ function baggageParts(offer: CanonicalOffer) {
       ? "Equipaje de bodega incluido"
       : checkedIncluded === false ? "Equipaje de bodega no incluido" : "",
   ].filter(Boolean)
-
-  /*
-   * `label` names what the fare includes, so it is empty for a fare that
-   * includes neither — and the card used to hang the whole pair on it. But an
-   * explicit `false` is evidence too: it is what the greyed-out icon draws, and
-   * «no lleva bodega» is the fact an agent needs before the counter. What
-   * decides whether the pair is drawn is therefore whether the provider said
-   * anything at all, and only a fare it said nothing about goes without.
-   */
   const shown = carryOnIncluded !== undefined || checkedIncluded !== undefined
 
   return {
@@ -416,11 +351,8 @@ function priceParts(offer: CanonicalOffer, passengerCount: number, showPerPerson
 
   const label = formatMoney(money)
   const canShowPerPerson = showPerPerson && Number.isFinite(passengerCount) && passengerCount > 1
-  /* The figure above it already says which currency this is, and every plate
-     that draws the pair — `Main`, `Movil`, `MovilCompacta` — writes the second
-     line bare: «512.00 p/p». Repeating the code under a total that carries it
-     spends 30 of the 116px lane restating what the eye read a line earlier. It
-     stays in the spoken label, where there is no line above to carry it. */
+  /* The line under the total is bare («512.00 p/p»): the currency is on the
+     line above, and it stays in the spoken label, which has no line above. */
   const perPersonLabel = canShowPerPerson ? formatAmount(money.amount / passengerCount) : ""
 
   return {
@@ -438,7 +370,7 @@ function costamarRedirectStatus(offer: CanonicalOffer): ResultRedirectStatus | u
 
   if (verification.verified) {
     return {
-      label: "Redirect verificado",
+      label: "Enlace del proveedor verificado",
       title: "El enlace de Click and Book Plus fue validado antes de mostrar la oferta.",
       tone: "verified",
     }
@@ -446,8 +378,8 @@ function costamarRedirectStatus(offer: CanonicalOffer): ResultRedirectStatus | u
 
   if (verification.state === "blocked") {
     return {
-      label: "Redirect bloqueado",
-      title: "Click and Book Plus no devolvió un redirect usable para esta búsqueda.",
+      label: "Enlace del proveedor bloqueado",
+      title: "Click and Book Plus no devolvió un enlace utilizable para esta búsqueda.",
       tone: "blocked",
     }
   }
@@ -456,7 +388,7 @@ function costamarRedirectStatus(offer: CanonicalOffer): ResultRedirectStatus | u
 }
 
 function resolveCostamarRedirectVerification(offer: CanonicalOffer): RedirectVerification | undefined {
-  if (!/costamar/i.test(String(offer.providerSource ?? ""))) {
+  if (offer.providerSource !== "costamar") {
     return undefined
   }
 
@@ -465,68 +397,19 @@ function resolveCostamarRedirectVerification(offer: CanonicalOffer): RedirectVer
   }
 
   return offer.purchasePaths?.find((path) =>
-    /costamar/i.test(String(path.provider ?? "")) &&
+    path.provider === "costamar" &&
     path.type === "search-redirect" &&
     path.redirectVerification
   )?.redirectVerification
 }
 
-function formatMoney(money: CanonicalOffer["price"]["total"]) {
-  return `${money.currencyCode} ${formatAmount(money.amount)}`
-}
-
-function formatAmount(amount: number) {
-  return amount.toLocaleString("es-PE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })
-}
-
-function dayMonthLabel(isoDate: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return ""
-  return `${isoDate.slice(8)}/${isoDate.slice(5, 7)}`
-}
-
-function providerBadge(offer: CanonicalOffer) {
-  const primaryProviderId = normalizedProviderId(offer.providerSource)
-  if (primaryProviderId) {
-    return providerBadgeForId(primaryProviderId)
-  }
-
-  const fallbackProviderId = normalizedProviderId(offer.purchasePaths?.find((path) => path.provider)?.provider)
-  return providerBadgeForId(fallbackProviderId)
-}
-
-function normalizedProviderId(providerId?: string) {
-  const value = String(providerId ?? "").trim()
-  if (!value) return undefined
-  if (/costamar/i.test(value)) return "costamar"
-  if (/agil/i.test(value)) return "agil-local"
-
-  return value
+function providerBadge(offer: CanonicalOffer): ResultProviderBadge {
+  return providerBadgeForId(offer.providerSource || offer.purchasePaths?.find((path) => path.provider)?.provider)
 }
 
 export function providerBadgeForId(providerId?: string): ResultProviderBadge {
-  if (providerId === "costamar") {
-    return {
-      label: providerDisplayName(providerId),
-      shortLabel: "CB+",
-      icon: providerIconPath(providerId),
-    }
-  }
-
-  if (providerId === "agil-local") {
-    return {
-      label: providerDisplayName(providerId),
-      shortLabel: "AG",
-      icon: providerIconPath(providerId),
-    }
-  }
-
   const label = providerDisplayName(providerId)
-  return {
-    label,
-    shortLabel: label.slice(0, 2).toUpperCase(),
-    icon: "",
-  }
+  const icon = providerIconPath(providerId)
+  const shortLabel = providerId === "costamar" ? "CB+" : providerId === "agil-local" ? "AG" : label.slice(0, 2).toUpperCase()
+  return { label, shortLabel, icon }
 }

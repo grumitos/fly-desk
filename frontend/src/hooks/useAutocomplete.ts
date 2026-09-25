@@ -10,8 +10,8 @@ interface UpdateQueryOptions {
 /** 11 §2.1 · «Recientes» only becomes «Coincidencias» at two letters. */
 export const MIN_MATCH_QUERY = 2
 
-export function useAutocomplete(onResolved?: (suggestion: LocationSuggestion) => void) {
-  const [query, setQuery] = useState("")
+export function useAutocomplete(onResolved: (suggestion: LocationSuggestion) => void, initialQuery = "") {
+  const [query, setQuery] = useState(initialQuery)
   const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([])
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
@@ -19,7 +19,7 @@ export function useAutocomplete(onResolved?: (suggestion: LocationSuggestion) =>
   const inputRef = useRef<HTMLInputElement | null>(null)
   const requestSeqRef = useRef(0)
   const resolvedLabelRef = useRef("")
-  const queryRef = useRef("")
+  const queryRef = useRef(initialQuery)
   const onResolvedRef = useRef(onResolved)
   const shouldWarmQueryRef = useRef(false)
 
@@ -45,11 +45,8 @@ export function useAutocomplete(onResolved?: (suggestion: LocationSuggestion) =>
     }
   }, [closeSuggestions])
 
-  /* 11 §2.1: with two letters or more «se resalta la primera fila» — and the
-     row after it, «resaltado ≠ elegido»: the highlight is where `Enter` would
-     land, not a value the field has taken. Left at -1 the agent had to press ↓
-     before `Enter` did anything, which is the one keystroke the ficha spends a
-     whole row saying should not be needed. */
+  /* 11 §2.1: the first match is highlighted — where `Enter` lands, not a
+     value the field has taken. */
   const showSuggestions = useCallback((available: LocationSuggestion[]) => {
     setOpen(inputHasFocus() && available.length > 0)
     setActiveIndex(available.length > 0 ? 0 : -1)
@@ -61,10 +58,7 @@ export function useAutocomplete(onResolved?: (suggestion: LocationSuggestion) =>
 
   const warmSuggestions = useCallback(async (q: string) => {
     const requestSeq = ++requestSeqRef.current
-    /* 11 §2.1 draws the threshold at two: «escribir 1 letra · nada cambia en la
-       lista, se sigue viendo Recientes». So one letter clears the matches but
-       does **not** close the panel — closing it would take Recientes away, which
-       is the very thing that row says stays. */
+    /* Below two letters the matches clear but the panel stays, showing «Recientes». */
     if (q.trim().length < MIN_MATCH_QUERY) {
       setSuggestions([])
       setActiveIndex(-1)

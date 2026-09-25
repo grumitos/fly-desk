@@ -1,6 +1,6 @@
 import type { CanonicalOffer, SearchJobResponse } from "@/types"
 import { providerDisplayName } from "@/lib/providers"
-import { buildResultCardModel } from "./result-card-model"
+import { resultLegModels, type ResultLegModel } from "./result-card-model"
 
 export type ResultListItem =
   | { type: "offer"; id: string; offer: CanonicalOffer; offerCount: 1 }
@@ -40,18 +40,14 @@ export function buildResultListItems(
       memberOffers.push(offer)
     }
 
-    // A partially filtered or stale group is not a group in the visible list.
-    // Its one remaining offer stays selectable as the complete backend offer.
-    // Checked here, on the combinations alone: the absorption below only ever
-    // adds a schedule the group is already showing, so it can never turn a
-    // group the filters emptied back into one.
+    // A group the filters left with one offer is that offer, drawn on its own.
     if (memberOffers.length <= 1) continue
 
     const id = `result-group:${scheduleGroup.id}`
     const group: ResultOfferGroup = {
       id,
       key: scheduleGroup.id,
-      providerLabel: providerLabelForScheduleGroup(scheduleGroup.providerSource),
+      providerLabel: providerDisplayName(scheduleGroup.providerSource),
       offers: memberOffers,
     }
 
@@ -94,37 +90,10 @@ export function buildResultListItems(
   })
 }
 
-/**
- * The same flight, arriving twice.
- *
- * Membership used to be `combinations[].offerId` and nothing else, which trusts
- * the provider to have listed every offer its own group covers. Two things
- * break that trust, and both were reported from the desk as «uno que ya está en
- * otro grupo se muestra como independiente repitiendo los horarios ya antes
- * mostrados»: a `truncated` group, where the provider stopped enumerating
- * combinations while the family kept its offers, and the same physical schedule
- * quoted under two offer ids — a second fare on one flight. Either way the list
- * drew a card whose two legs the agent had just read inside the panel above it,
- * and the pager counted it as a further result.
- *
- * So an offer is inside a group when its itinerary is, not only when its id is.
- * The key is the canonical flight signature — every leg, its flight numbers,
- * airports and times — which is the identity
- * `src/core/offer-signature.ts::buildOfferSignature` demands when a quotation is
- * revalidated, and for the same reason: it is what makes two rows the same
- * flight rather than two flights that resemble each other.
- *
- * The fare rides along with it, and that is the edge worth stating. Two offers
- * on one schedule at two prices are two things to sell, and folding the second
- * away would hide a price from the agent — so it stays an independent card even
- * though its times repeat. This is not a new opinion: a group is already
- * defined that way upstream, where `offer-schedule-groups.ts::groupKeyForOffer`
- * refuses to put two offers in one group unless their currency, amount and
- * baggage all match. The browser folds on exactly the bar the provider grouped
- * on, and never on a looser one.
- *
- * It reads the already-filtered offers, so a member the filters removed cannot
- * come back through this door.
+/*
+ * A flight arriving twice — a truncated group, or one schedule under two offer
+ * ids — joins the group that shows it. Identity is the flight plus the fare, as
+ * `offer-schedule-groups.ts` groups: two prices are two cards.
  */
 function absorbOffersAlreadyInsideAGroup(
   offers: CanonicalOffer[],
@@ -156,18 +125,9 @@ function absorbOffersAlreadyInsideAGroup(
   }
 }
 
-/**
- * Every leg of the trip to the flight number and the minute, and the fare it is
- * sold at.
- *
- * The itinerary half is `buildOfferSignature`'s field list and order,
- * transcribed rather than imported because the browser's `CanonicalOffer` is the
- * partial facade of the core type and the core function asks for the whole
- * thing. The commercial half is `commercialTermsSignature`'s, for the same
- * reason. An offer with no itinerary, or with no price to compare, has no
- * signature at all and is never folded into anything: silence here costs one
- * repeated card, and a wrong match costs a fare the agent never sees.
- */
+/* `buildOfferSignature` and `commercialTermsSignature`, transcribed for the
+   browser's offer. No itinerary or price means no signature: a missed fold
+   repeats a card, a wrong one would hide a fare. */
 function offerCanonicalSignature(offer: CanonicalOffer): string | null {
   const itineraries = offer.itineraries ?? []
   const amount = offer.price?.total?.amount
@@ -202,163 +162,97 @@ function offerCanonicalSignature(offer: CanonicalOffer): string | null {
   ].join("::")
 }
 
-function providerLabelForScheduleGroup(providerSource: ScheduleGroup["providerSource"]): string {
-  /* The two names the desk shows come from `providerDisplayName`, so the group
-     heading and the card badge cannot drift apart. An id that helper does not
-     know is still shown verbatim here rather than as its «Proveedor» stand-in:
-     inside a group heading a bare id is a legible symptom, a placeholder is not. */
-  return providerSource === "costamar" || providerSource === "agil-local"
-    ? providerDisplayName(providerSource)
-    : providerSource
-}
-
 export function resultListItemContainsOffer(item: ResultListItem, offerId: string): boolean {
   return item.type === "offer"
     ? item.offer.id === offerId
     : item.group.offers.some((offer) => offer.id === offerId)
 }
 
-/**
- * What a group row costs, in plain-row slots.
- *
- * A group used to cost one card per alternative schedule. Plate 1b folds them
- * into a single strip inside the row that owns them, so the whole group is now
- * one row and part of another — regardless of how many alternatives it holds,
- * because the strip scrolls sideways instead of growing.
- *
- * A row that carries the strip is the fare row plus the strip, and its two grid
- * rows are now 52 and 45. 52 because the fare band is a fare row: the row's
- * `min-height` belongs to the whole row and stopped binding the moment the
- * strip carried the content past it, so the band used to collapse to the legs
- * block — 38 with the tallest leg pair, 26 with two plain ones — and the offer
- * sat against the top rule with none of the air a plain row centres it in.
- * `result-card.css` names the track instead (`minmax(52px, auto)`), which is
- * also what the hit area has claimed all along. 39 is the strip: a 1px rule on
- * the fare band's own edge, 6 above the chips, the 26px chip, 6 below it. With
- * the row's hairline that is 92 against the plain row's 52, and with the list's
- * gap now 0 a slot is 52 and a group is 92, which is 1.77.
- *
- * It was 1.88 (98 over 52) while the strip carried 8 of margin and 8 of padding
- * over 2, 1.62 (84 over 52) while the fare band collapsed, and 1.67 (107 over
- * 64) while the row was a 58px card with a 6px gap under it. Left alone at any
- * of those the column would be measured with a group counted heavier or lighter
- * than it is, and a list that opens on a measured number opens wrong.
- *
- * Exported because `ResultsPanel` divides a measured row height by the same
- * number to recover the plain-row unit from a column that holds nothing but
- * groups. It restated the literal instead, which left the two one edit apart
- * from disagreeing about what a group costs.
+/*
+ * A group row in plain-row slots: the 52px fare band plus the 39px strip of
+ * alternatives, with the row's hairline — 92 over 52. `result-card.css` owns
+ * the geometry; `ResultsPanel` divides by this to recover the plain-row unit.
  */
 export const RESULT_GROUP_CARD_WEIGHT = 1.77
 
-/* Module-private: the window below is the only thing that weighs an item now.
-   It was exported for the paginator, which is gone. */
-function resultListItemDisplayWeight(item: ResultListItem): number {
-  return item.type === "offer" ? 1 : RESULT_GROUP_CARD_WEIGHT
-}
-
-/**
- * How many leading items it takes to cover `capacity` plain-card slots.
- *
- * The list scrolls now, so the first window is not a page to be fitted exactly
- * — it is the part of the list that has to be on screen before the reader can
- * scroll at all. Counting items would get that wrong in the one case the
- * weights exist for: five items that happen to be groups are eight slots, and
- * five that are flights are five. Reaching the capacity is what matters, so a
- * window overshoots by at most the last item rather than opening a column with
- * a gap under the cards.
- */
+/** How many leading items it takes to cover `capacity` plain-card slots. */
 export function resultItemsFillingCapacity(items: ResultListItem[], capacity: number): number {
   const target = Math.max(1, capacity)
   let weight = 0
 
   for (let index = 0; index < items.length; index += 1) {
-    weight += resultListItemDisplayWeight(items[index]!)
+    weight += items[index]!.type === "offer" ? 1 : RESULT_GROUP_CARD_WEIGHT
     if (weight >= target) return index + 1
   }
 
   return items.length
 }
 
+type RankedGroupOffer = {
+  offer: CanonicalOffer
+  index: number
+  duration: number
+  schedule: string[]
+}
+
+function rankedGroupOffers(offers: CanonicalOffer[]): RankedGroupOffer[] {
+  return offers.map((offer, index) => ({
+    offer,
+    index,
+    duration: offerTotalDurationMinutes(offer),
+    schedule: offerScheduleSignature(offer),
+  }))
+}
+
+/* The shortest schedule leads; the rest follow by duration, then by how much
+   of the lead's schedule they change. Keys are computed once per offer. */
 function orderVisibleGroupOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
-  const visibleOffers = uniqueVisibleGroupOffers(sortGroupOffersByBestOption(offers))
-  const primary = visibleOffers[0]
-  if (!primary || visibleOffers.length <= 2) return visibleOffers
+  const ranked = rankedGroupOffers(offers).sort((left, right) => (
+    compareNumber(left.duration, right.duration)
+      || compareSchedule(left.schedule, right.schedule)
+      || left.index - right.index
+  ))
+  const visible = uniqueVisibleGroupOffers(ranked)
+  const primary = visible[0]
+  if (!primary || visible.length <= 2) return visible.map((entry) => entry.offer)
 
-  return [
-    primary,
-    ...sortGroupVariantOffers(primary, visibleOffers.slice(1)),
-  ]
+  const primaryLegs = resultLegModels(primary.offer)
+  const variants = visible.slice(1).map((entry) => ({
+    ...entry,
+    differences: offerVariantDifferenceCount(primaryLegs, resultLegModels(entry.offer)),
+  }))
+  variants.sort((left, right) => (
+    compareNumber(left.duration, right.duration)
+      || compareNumber(left.differences, right.differences)
+      || compareSchedule(left.schedule, right.schedule)
+      || left.index - right.index
+  ))
+
+  return [primary.offer, ...variants.map((entry) => entry.offer)]
 }
 
-function sortGroupOffersByBestOption(offers: CanonicalOffer[]): CanonicalOffer[] {
-  if (offers.length <= 1) return offers
-
-  return offers
-    .map((offer, index) => ({ offer, index }))
-    .sort((left, right) => {
-      return compareGroupOfferRank(left.offer, right.offer)
-        || left.index - right.index
-    })
-    .map((item) => item.offer)
-}
-
-function sortGroupVariantOffers(primary: CanonicalOffer, offers: CanonicalOffer[]): CanonicalOffer[] {
-  if (offers.length <= 1) return offers
-
-  return offers
-    .map((offer, index) => ({ offer, index }))
-    .sort((left, right) => {
-      return compareNumber(offerTotalDurationMinutes(left.offer), offerTotalDurationMinutes(right.offer))
-        || compareNumber(offerVariantDifferenceCount(primary, left.offer), offerVariantDifferenceCount(primary, right.offer))
-        || compareScheduleSignature(left.offer, right.offer)
-        || left.index - right.index
-    })
-    .map((item) => item.offer)
-}
-
-function compareGroupOfferRank(left: CanonicalOffer, right: CanonicalOffer): number {
-  return compareNumber(offerTotalDurationMinutes(left), offerTotalDurationMinutes(right))
-    || compareScheduleSignature(left, right)
-}
-
-function uniqueVisibleGroupOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
+/* Offers that differ only in what the card does not draw are one choice. */
+function uniqueVisibleGroupOffers(ranked: RankedGroupOffer[]): RankedGroupOffer[] {
   const seen = new Set<string>()
-  const visibleOffers: CanonicalOffer[] = []
-
-  for (const offer of offers) {
-    const signature = offerVisibleVariantSignature(offer)
-    if (seen.has(signature)) continue
-
+  return ranked.filter((entry) => {
+    const signature = resultLegModels(entry.offer)
+      .map((leg) => [
+        leg.label,
+        leg.hasKnownSchedule,
+        leg.departureTime,
+        leg.arrivalTime,
+        leg.dayOffset,
+        leg.duration,
+        leg.stopsLabel,
+      ].join(":"))
+      .join(";")
+    if (seen.has(signature)) return false
     seen.add(signature)
-    visibleOffers.push(offer)
-  }
-
-  return visibleOffers
+    return true
+  })
 }
 
-/**
- * What makes two offers in the same bucket worth showing separately. Duration
- * and stops are per leg now (plate 1b), so the signature is too — two offers
- * that differ only in a total we no longer display are the same offer here.
- */
-function offerVisibleVariantSignature(offer: CanonicalOffer): string {
-  return buildResultCardModel(offer, 1).legs
-    .map((leg) => [
-      leg.label,
-      leg.hasKnownSchedule,
-      leg.departureTime,
-      leg.arrivalTime,
-      leg.dayOffset,
-      leg.duration,
-      leg.stopsLabel,
-    ].join(":"))
-    .join(";")
-}
-
-function offerVariantDifferenceCount(primary: CanonicalOffer, variant: CanonicalOffer): number {
-  const primaryLegs = buildResultCardModel(primary, 1).legs
-  const variantLegs = buildResultCardModel(variant, 1).legs
+function offerVariantDifferenceCount(primaryLegs: ResultLegModel[], variantLegs: ResultLegModel[]): number {
   let count = 0
 
   for (let index = 0; index < Math.max(primaryLegs.length, variantLegs.length); index += 1) {
@@ -387,20 +281,17 @@ function offerVariantDifferenceCount(primary: CanonicalOffer, variant: Canonical
 }
 
 function offerTotalDurationMinutes(offer: CanonicalOffer): number {
-  const metricDuration = finiteNumber(offer.comparisonMetrics?.totalDurationMinutes)
-  if (metricDuration !== null) return metricDuration
+  const metricDuration = Number(offer.comparisonMetrics?.totalDurationMinutes)
+  if (Number.isFinite(metricDuration)) return metricDuration
 
   const itineraryDuration = (offer.itineraries ?? [])
-    .map((itinerary) => finiteNumber(itinerary.durationMinutes) ?? 0)
+    .map((itinerary) => {
+      const minutes = Number(itinerary.durationMinutes)
+      return Number.isFinite(minutes) ? minutes : 0
+    })
     .reduce((sum, minutes) => sum + minutes, 0)
-  if (itineraryDuration > 0) return itineraryDuration
 
-  return Number.POSITIVE_INFINITY
-}
-
-function finiteNumber(value: unknown): number | null {
-  const numberValue = Number(value)
-  return Number.isFinite(numberValue) ? numberValue : null
+  return itineraryDuration > 0 ? itineraryDuration : Number.POSITIVE_INFINITY
 }
 
 function compareNumber(left: number, right: number): number {
@@ -408,14 +299,9 @@ function compareNumber(left: number, right: number): number {
   return left < right ? -1 : 1
 }
 
-function compareScheduleSignature(left: CanonicalOffer, right: CanonicalOffer): number {
-  const leftSignature = offerScheduleSignature(left)
-  const rightSignature = offerScheduleSignature(right)
-
-  for (let index = 0; index < Math.max(leftSignature.length, rightSignature.length); index += 1) {
-    const leftPart = leftSignature[index] ?? ""
-    const rightPart = rightSignature[index] ?? ""
-    const compared = leftPart.localeCompare(rightPart)
+function compareSchedule(left: string[], right: string[]): number {
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const compared = (left[index] ?? "").localeCompare(right[index] ?? "")
     if (compared !== 0) return compared
   }
 

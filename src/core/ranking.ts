@@ -1,38 +1,61 @@
 import { wallClockMs } from "./flight-duration";
-import { CanonicalOffer, Itinerary, PurchasePath, SortMode } from "./types";
+import type { CanonicalOffer, PurchasePath, SortMode } from "./types";
 
-export function totalDuration(offer: CanonicalOffer): number {
-  return offer.itineraries.reduce(
-    (sum: number, itinerary: Itinerary) => sum + itinerary.durationMinutes,
+/* The fields an order reads, structural so the browser re-sorts its offers
+   with this same comparator and cannot disagree with the backend. */
+export interface RankableItinerary {
+  direction?: string;
+  durationMinutes?: number;
+  stops?: number;
+  segments?: ReadonlyArray<{ departureAt?: string }>;
+}
+
+export interface RankableOffer {
+  id: string;
+  price: { total: { amount: number } };
+  itineraries?: readonly RankableItinerary[];
+}
+
+function itineraryStops(itinerary: RankableItinerary): number {
+  return itinerary.stops ?? Math.max(0, (itinerary.segments?.length ?? 1) - 1);
+}
+
+export function totalDuration(offer: RankableOffer): number {
+  return (offer.itineraries ?? []).reduce(
+    (sum: number, itinerary: RankableItinerary) => sum + (itinerary.durationMinutes ?? 0),
     0,
   );
 }
 
-export function totalStops(offer: CanonicalOffer): number {
-  return offer.itineraries.reduce(
-    (sum: number, itinerary: Itinerary) => sum + itinerary.stops,
+export function totalStops(offer: RankableOffer): number {
+  return (offer.itineraries ?? []).reduce(
+    (sum: number, itinerary: RankableItinerary) => sum + itineraryStops(itinerary),
     0,
   );
 }
 
-export function maxStopsAcrossItineraries(itineraries: Itinerary[]): number {
+export function maxStopsAcrossItineraries(itineraries: readonly RankableItinerary[]): number {
   return itineraries.reduce(
-    (max: number, itinerary: Itinerary) => Math.max(max, itinerary.stops),
+    (max: number, itinerary: RankableItinerary) => Math.max(max, itineraryStops(itinerary)),
     0,
   );
 }
 
-function offerTravelDates(offer: CanonicalOffer): { departureDate: string; returnDate: string } {
-  const outbound = offer.itineraries.find((itinerary: Itinerary) => itinerary.direction === "outbound") ?? offer.itineraries[0];
-  const inbound = offer.itineraries.find((itinerary: Itinerary) => itinerary.direction === "inbound");
+function outboundItinerary(offer: RankableOffer): RankableItinerary | undefined {
+  const itineraries = offer.itineraries ?? [];
+  return itineraries.find((itinerary) => itinerary.direction === "outbound") ?? itineraries[0];
+}
+
+function offerTravelDates(offer: RankableOffer): { departureDate: string; returnDate: string } {
+  const inbound = offer.itineraries?.find((itinerary) => itinerary.direction === "inbound");
 
   return {
-    departureDate: outbound?.segments[0]?.departureAt?.slice(0, 10) ?? "",
-    returnDate: inbound?.segments[0]?.departureAt?.slice(0, 10) ?? "",
+    departureDate: outboundItinerary(offer)?.segments?.[0]?.departureAt?.slice(0, 10) ?? "",
+    returnDate: inbound?.segments?.[0]?.departureAt?.slice(0, 10) ?? "",
   };
 }
 
-function compareOffersByDate(left: CanonicalOffer, right: CanonicalOffer): number {
+function compareOffersByDate(left: RankableOffer, right: RankableOffer): number {
   const leftDates = offerTravelDates(left);
   const rightDates = offerTravelDates(right);
 
@@ -48,25 +71,15 @@ function compareOffersByDate(left: CanonicalOffer, right: CanonicalOffer): numbe
 }
 
 /*
- * Departure order is the outbound's first departure: on a round trip the return
- * is weeks later and is not what the agent is choosing. It is compared as the
- * wall clock the card shows, because providers stamp offsets inconsistently (an
- * Agil time has none, a Click and Book Plus time always says -05:00), so the
- * instant would order the server and the browser differently. A departure that
- * cannot be read sinks to the end instead of leading as a 0 would.
+ * The outbound's first departure, as the wall clock the card shows: providers
+ * stamp offsets inconsistently (Agil none, Click and Book Plus -05:00), so the
+ * instant would order differently. An unreadable departure sinks to the end.
  */
-function offerDepartureTimestamp(offer: CanonicalOffer): number {
-  const outbound = offer.itineraries.find((itinerary: Itinerary) => itinerary.direction === "outbound")
-    ?? offer.itineraries[0];
-  return wallClockMs(outbound?.segments[0]?.departureAt) ?? Number.POSITIVE_INFINITY;
+function offerDepartureTimestamp(offer: RankableOffer): number {
+  return wallClockMs(outboundItinerary(offer)?.segments?.[0]?.departureAt) ?? Number.POSITIVE_INFINITY;
 }
 
-/*
- * Not subtraction: `Infinity - Infinity` is `NaN`, and a comparator that
- * returns `NaN` leaves the order to whatever the engine feels like. Comparing
- * with `<` keeps the total order `sort` needs even when both sides are the
- * same infinity.
- */
+/* Not subtraction: `Infinity - Infinity` is `NaN`, which breaks the sort. */
 function compareNumbers(left: number, right: number): number {
   if (left === right) {
     return 0;
@@ -115,30 +128,22 @@ export function enrichComparisonMetrics(offers: CanonicalOffer[]): CanonicalOffe
   }));
 }
 
-/*
- * Every order ends in a total key (price, then the offer id through
- * `compareOffersByDate`), because two providers answer in parallel and "arrival
- * order" differs between two runs of one search.
- */
-export function sortOffers(
-  offers: CanonicalOffer[],
-  mode: SortMode,
-): CanonicalOffer[] {
-  const cloned = [...offers];
-
+/* Every order ends in a total key (price, then dates and the offer id): two
+   providers answer in parallel, so arrival order differs between runs. */
+export function compareOffers(mode: SortMode): (left: RankableOffer, right: RankableOffer) => number {
   switch (mode) {
     case "cheapest":
-      return cloned.sort((a, b) => {
+      return (a, b) => {
         const priceDiff = a.price.total.amount - b.price.total.amount;
         return priceDiff !== 0 ? priceDiff : compareOffersByDate(a, b);
-      });
+      };
     case "fastest":
-      return cloned.sort((a, b) => {
+      return (a, b) => {
         const durationDiff = totalDuration(a) - totalDuration(b);
         return durationDiff !== 0 ? durationDiff : compareOffersByDate(a, b);
-      });
+      };
     case "departure":
-      return cloned.sort((a, b) => {
+      return (a, b) => {
         const departureDiff = compareNumbers(offerDepartureTimestamp(a), offerDepartureTimestamp(b));
         if (departureDiff !== 0) {
           return departureDiff;
@@ -146,9 +151,9 @@ export function sortOffers(
 
         const priceDiff = compareNumbers(a.price.total.amount, b.price.total.amount);
         return priceDiff !== 0 ? priceDiff : compareOffersByDate(a, b);
-      });
+      };
     case "stops":
-      return cloned.sort((a, b) => {
+      return (a, b) => {
         const stopsDiff = compareNumbers(totalStops(a), totalStops(b));
         if (stopsDiff !== 0) {
           return stopsDiff;
@@ -156,8 +161,12 @@ export function sortOffers(
 
         const priceDiff = compareNumbers(a.price.total.amount, b.price.total.amount);
         return priceDiff !== 0 ? priceDiff : compareOffersByDate(a, b);
-      });
+      };
     default:
-      return cloned;
+      return () => 0;
   }
+}
+
+export function sortOffers<T extends RankableOffer>(offers: readonly T[], mode: SortMode): T[] {
+  return [...offers].sort(compareOffers(mode));
 }

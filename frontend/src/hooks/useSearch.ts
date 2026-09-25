@@ -3,24 +3,31 @@ import type { SearchRequest, SearchJobResponse, SortMode } from "@/types"
 import {
   cancelSearchJob,
   diagnosticLogFromError,
+  followJob,
   FlyDeskSearchCancelledError,
-  FlyDeskSessionExpiredError,
   pollMatrix,
   pollSearch,
   startMatrix,
   startMigrationSearch,
   startSearch,
+  uniqueStrings,
   userMessageFromError,
 } from "@/lib/api"
-import {
-  nextPollDelayMs,
-  POLL_FAST_MS,
-  POLL_MAX_CONSECUTIVE_FAILURES,
-  POLL_RETRY_DELAY_MS,
-} from "@/lib/poll-schedule"
+import { POLL_MAX_CONSECUTIVE_FAILURES } from "@/lib/poll-schedule"
 
 const CANCELLED_SEARCH_MESSAGE = "Búsqueda detenida. Puedes ajustar los campos y buscar de nuevo."
+
 type ActiveJob = { id: string; type: "search" | "matrix" }
+type CancelOptions = { cachePartial?: boolean; keepalive?: boolean }
+
+/* One search from its first request to its last poll. A job id that arrives
+   after the run was stopped is cancelled on arrival: the POST cannot be
+   aborted without losing the id of the job the server already created. */
+type Run = {
+  controller: AbortController
+  jobs: Map<string, ActiveJob>
+  stopped: CancelOptions | null
+}
 
 export function useSearch() {
   const [results, setResults] = useState<SearchJobResponse | null>(null)
@@ -28,20 +35,9 @@ export function useSearch() {
   const [error, setError] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [diagnosticLog, setDiagnosticLog] = useState<string[]>([])
-  const pollRef = useRef<number | null>(null)
-  const abortRef = useRef(false)
-  const abortControllerRef = useRef<AbortController | null>(null)
-  const activeJobsRef = useRef<Map<string, ActiveJob>>(new Map())
+  const runRef = useRef<Run | null>(null)
   const latestResultsRef = useRef<SearchJobResponse | null>(null)
-  const runIdRef = useRef(0)
-  const pendingCancellationRef = useRef<Promise<void>>(Promise.resolve())
-
-  const clearPoll = useCallback(() => {
-    if (pollRef.current) {
-      window.clearTimeout(pollRef.current)
-      pollRef.current = null
-    }
-  }, [])
+  const pendingCancellationRef = useRef<Promise<unknown>>(Promise.resolve())
 
   const appendDiagnosticLog = useCallback((title: string, lines: string[] = []) => {
     setDiagnosticLog((current) => [
@@ -51,362 +47,184 @@ export function useSearch() {
     ])
   }, [])
 
-  const registerActiveJob = useCallback((job: ActiveJob) => {
-    activeJobsRef.current.set(`${job.type}:${job.id}`, job)
+  const publish = useCallback((job: SearchJobResponse | null) => {
+    latestResultsRef.current = job
+    setResults(job)
   }, [])
 
-  const finishActiveJob = useCallback((job: ActiveJob) => {
-    activeJobsRef.current.delete(`${job.type}:${job.id}`)
+  const cancelJobs = useCallback((jobs: ActiveJob[], options: CancelOptions) => {
+    if (jobs.length === 0) return
+    pendingCancellationRef.current = Promise.allSettled([
+      pendingCancellationRef.current,
+      ...jobs.map((job) => cancelSearchJob(job, options)),
+    ])
   }, [])
 
-  const cancelActiveJobs = useCallback((options: {
-    cachePartial?: boolean
-    keepalive?: boolean
-    showFeedback?: boolean
-    setIdle?: boolean
-  } = {}) => {
-    const cachePartial = options.cachePartial ?? false
-    const keepalive = options.keepalive ?? false
-    const showFeedback = options.showFeedback ?? false
-    const setIdle = options.setIdle ?? false
-    const jobs = [...activeJobsRef.current.values()]
+  const stopRun = useCallback((options: CancelOptions = {}) => {
+    const run = runRef.current
+    runRef.current = null
+    if (!run) return
+    run.stopped = options
+    run.controller.abort()
+    cancelJobs([...run.jobs.values()], options)
+    run.jobs.clear()
+  }, [cancelJobs])
 
-    runIdRef.current += 1
-    abortRef.current = true
-    abortControllerRef.current?.abort()
-    abortControllerRef.current = null
-    activeJobsRef.current.clear()
-    clearPoll()
-
-    if (setIdle) {
-      setLoading(false)
-    }
-
-    if (showFeedback) {
-      setError(null)
-      setStatusMessage(CANCELLED_SEARCH_MESSAGE)
-      setResults((current) => {
-        const next = finalizeCancelledResults(current ?? latestResultsRef.current)
-        latestResultsRef.current = next
-        return next
-      })
-      appendDiagnosticLog("Búsqueda detenida por el usuario")
-    }
-
-    if (jobs.length > 0) {
-      const cancellation = Promise.allSettled(
-        jobs.map((job) => cancelSearchJob(job, { cachePartial, keepalive })),
-      ).then(() => undefined)
-      pendingCancellationRef.current = cancellation
-      return cancellation
-    }
-
-    return Promise.resolve()
-  }, [appendDiagnosticLog, clearPoll])
-
-  useEffect(() => {
-    let sent = false
-    const cancelForPageExit = () => {
-      if (sent) return
-      sent = true
-      cancelActiveJobs({ cachePartial: true, keepalive: true, showFeedback: false, setIdle: false })
-    }
-
-    window.addEventListener("pagehide", cancelForPageExit)
-    window.addEventListener("beforeunload", cancelForPageExit)
-    return () => {
-      window.removeEventListener("pagehide", cancelForPageExit)
-      window.removeEventListener("beforeunload", cancelForPageExit)
-    }
-  }, [cancelActiveJobs])
-
-  const runSearch = useCallback(
-    async (
-      request: SearchRequest,
-      sortMode: SortMode,
-      options: { keepPreviousResults?: boolean } = {}
-    ): Promise<boolean> => {
-      await pendingCancellationRef.current
-      cancelActiveJobs({ showFeedback: false, setIdle: false })
-      const runId = runIdRef.current + 1
-      runIdRef.current = runId
-      const abortController = new AbortController()
-      abortControllerRef.current = abortController
-      abortRef.current = false
-      setLoading(true)
-      setError(null)
-      setStatusMessage(null)
-      if (!options.keepPreviousResults) {
-        setDiagnosticLog(buildSearchLogHeader(request, sortMode))
-      } else {
-        appendDiagnosticLog(`Reconsulta ${request.origin} -> ${request.destination} (${sortMode})`)
-      }
-      if (!options.keepPreviousResults) {
-        latestResultsRef.current = null
-        setResults(null)
-      }
-
-      const isCurrentRun = () => runIdRef.current === runId && !abortRef.current
-      const requestOptions = {
-        signal: abortController.signal,
-        onJobStart: registerActiveJob,
-      }
-
-      try {
-        if (request.searchMode === "month-view") {
-          const job = await startMigrationSearch(request, sortMode, {
-            ...requestOptions,
-            onMigrationProgress: (progressJob) => {
-              if (!isCurrentRun()) return
-              latestResultsRef.current = progressJob
-              setResults(progressJob)
-            },
-          })
-          if (!isCurrentRun()) return false
-          latestResultsRef.current = job
-          setResults(job)
-          appendDiagnosticLog(`Migratorio finalizado: ${job.offers.length} oferta${job.offers.length === 1 ? "" : "s"}`, job.diagnosticLog)
-          setLoading(false)
-          activeJobsRef.current.clear()
-          abortControllerRef.current = null
-          return true
-        }
-
-        const flexibleMatrix = request.searchMode === "roundtrip-grid"
-        const job = flexibleMatrix
-          ? await startMatrix(request, sortMode, requestOptions)
-          : await startSearch(request, sortMode, requestOptions)
-        if (!isCurrentRun()) return false
-        latestResultsRef.current = job
-        setResults(job)
-        appendDiagnosticLog(`Respuesta inicial ${job.searchJobId}: ${job.searchStatus}`, job.diagnosticLog)
-
-        if (!job.searchComplete) {
-          let lastRevision = job.revision
-          /*
-           * A poll that fails does not end a search that is still running.
-           *
-           * The job lives on the server and keeps working; this loop is only
-           * the window onto it, and one lost answer — a hop that timed out, a
-           * network blip while the agent's laptop changed wifi — used to close
-           * that window for good and report a failure the search had not had.
-           * Two more tries, then the error is real and is shown.
-           */
-          let consecutiveFailures = 0
-          const doPoll = async () => {
-            if (!isCurrentRun()) return
-            const startedAt = Date.now()
-            try {
-              const updated = flexibleMatrix
-                ? await pollMatrix(job.searchJobId, sortMode, lastRevision, { signal: abortController.signal })
-                : await pollSearch(job.searchJobId, lastRevision, { signal: abortController.signal })
-              if (!isCurrentRun()) return
-              if (!updated.unchanged) {
-                const hydratedUpdate = hydrateSearchJobUpdate(updated, latestResultsRef.current)
-                lastRevision = hydratedUpdate.revision
-                latestResultsRef.current = hydratedUpdate
-                setResults(hydratedUpdate)
-                appendDiagnosticLog(`Actualización ${hydratedUpdate.searchJobId}: revisión ${hydratedUpdate.revision}`, hydratedUpdate.diagnosticLog)
-              }
-              consecutiveFailures = 0
-              if (!updated.searchComplete) {
-                pollRef.current = window.setTimeout(doPoll, nextPollDelayMs({
-                  unchanged: Boolean(updated.unchanged),
-                  elapsedMs: Date.now() - startedAt,
-                }))
-              } else if (updated.searchComplete) {
-                finishActiveJob({ id: job.searchJobId, type: flexibleMatrix ? "matrix" : "search" })
-                setLoading(false)
-                abortControllerRef.current = null
-              }
-            } catch (err) {
-              if (!isCurrentRun() || err instanceof FlyDeskSearchCancelledError) {
-                return
-              }
-
-              consecutiveFailures += 1
-              appendDiagnosticLog(
-                `Error durante actualización (intento ${consecutiveFailures} de ${POLL_MAX_CONSECUTIVE_FAILURES})`,
-                diagnosticLogFromError(err),
-              )
-              /* The retries are for a lost answer — a hop that timed out, a
-                 laptop changing wifi. An expired session is not that: the
-                 browser is already on its way to the gate, and the attempts
-                 would only be spent on answers that cannot come. */
-              if (consecutiveFailures < POLL_MAX_CONSECUTIVE_FAILURES && !(err instanceof FlyDeskSessionExpiredError)) {
-                pollRef.current = window.setTimeout(doPoll, POLL_RETRY_DELAY_MS)
-                return
-              }
-
-              setStatusMessage(userMessageFromError(err))
-              setLoading(false)
-              abortControllerRef.current = null
-            }
-          }
-          pollRef.current = window.setTimeout(doPoll, POLL_FAST_MS)
-        } else {
-          finishActiveJob({ id: job.searchJobId, type: flexibleMatrix ? "matrix" : "search" })
-          setLoading(false)
-          abortControllerRef.current = null
-        }
-        return true
-      } catch (err) {
-        if (!isCurrentRun() || err instanceof FlyDeskSearchCancelledError) {
-          return false
-        }
-
-        setLoading(false)
-        abortControllerRef.current = null
-        appendDiagnosticLog("Error de búsqueda", diagnosticLogFromError(err))
-        setError(userMessageFromError(err))
-        return false
-      }
-    },
-    [appendDiagnosticLog, cancelActiveJobs, finishActiveJob, registerActiveJob]
-  )
-
-  /**
-   * Open a job that already exists instead of asking for it again.
-   *
-   * A migratory sweep is a search per month, and each of those months keeps its
-   * own job on the server. Opening one used to re-run it from scratch — the
-   * agent watched a spinner for work that had already been paid for. Here the
-   * first response is whatever the job holds right now, which is why the list
-   * appears at once, and an unfinished job keeps polling exactly like a search
-   * this tab had started itself.
-   */
-  const restoreJob = useCallback(async (jobId: string): Promise<boolean> => {
-    await pendingCancellationRef.current
-    cancelActiveJobs({ showFeedback: false, setIdle: false })
-    const runId = runIdRef.current + 1
-    runIdRef.current = runId
-    const abortController = new AbortController()
-    abortControllerRef.current = abortController
-    abortRef.current = false
+  const beginRun = useCallback((): Run => {
+    stopRun()
+    const run: Run = { controller: new AbortController(), jobs: new Map(), stopped: null }
+    runRef.current = run
     setLoading(true)
     setError(null)
     setStatusMessage(null)
-    setDiagnosticLog([`Recuperando la búsqueda ${jobId}`])
+    return run
+  }, [stopRun])
 
-    const isCurrentRun = () => runIdRef.current === runId && !abortRef.current
+  const jobStarter = useCallback((run: Run) => (job: ActiveJob) => {
+    if (run.stopped) {
+      cancelJobs([job], run.stopped)
+      return
+    }
+    run.jobs.set(`${job.type}:${job.id}`, job)
+  }, [cancelJobs])
+
+  const endRun = useCallback((run: Run) => {
+    if (runRef.current !== run) return
+    runRef.current = null
+    setLoading(false)
+  }, [])
+
+  const failRun = useCallback((run: Run, err: unknown, title: string) => {
+    if (runRef.current !== run || err instanceof FlyDeskSearchCancelledError) return
+    appendDiagnosticLog(title, diagnosticLogFromError(err))
+    setError(userMessageFromError(err))
+    endRun(run)
+  }, [appendDiagnosticLog, endRun])
+
+  const follow = useCallback(async (run: Run, first: SearchJobResponse, type: ActiveJob["type"]) => {
+    const isCurrent = () => runRef.current === run
+    try {
+      await followJob(first, (since, signal) => (
+        type === "matrix"
+          ? pollMatrix(first.searchJobId, first.sortMode, since, signal)
+          : pollSearch(first.searchJobId, since, signal)
+      ), {
+        signal: run.controller.signal,
+        onUpdate: (job) => {
+          if (!isCurrent()) return
+          publish(job)
+          appendDiagnosticLog(`Actualización ${job.searchJobId}: revisión ${job.revision}`, job.diagnosticLog)
+        },
+        onRetry: (err, attempt) => {
+          if (!isCurrent()) return
+          appendDiagnosticLog(
+            `Error durante actualización (intento ${attempt} de ${POLL_MAX_CONSECUTIVE_FAILURES})`,
+            diagnosticLogFromError(err),
+          )
+        },
+      })
+      run.jobs.delete(`${type}:${first.searchJobId}`)
+      endRun(run)
+    } catch (err) {
+      if (!isCurrent() || err instanceof FlyDeskSearchCancelledError) return
+      /* The job may still be running on the server; the run stays registered
+         so the next search or leaving the page cancels it. */
+      setError(userMessageFromError(err))
+      setLoading(false)
+    }
+  }, [appendDiagnosticLog, endRun, publish])
+
+  useEffect(() => {
+    const cancelForPageExit = () => stopRun({ cachePartial: true, keepalive: true })
+    window.addEventListener("pagehide", cancelForPageExit)
+    return () => window.removeEventListener("pagehide", cancelForPageExit)
+  }, [stopRun])
+
+  /** Resolves `true` once the search has a first answer to draw. */
+  const runSearch = useCallback(async (request: SearchRequest, sortMode: SortMode): Promise<boolean> => {
+    const run = beginRun()
+    const isCurrent = () => runRef.current === run
+    publish(null)
+    setDiagnosticLog(buildSearchLogHeader(request, sortMode))
+    const onJobStart = jobStarter(run)
+
+    /* The previous search's cancellation frees its admission units first. */
+    await pendingCancellationRef.current
+    if (!isCurrent()) return false
 
     try {
-      const job = await pollSearch(jobId, undefined, { signal: abortController.signal })
-      if (!isCurrentRun()) return false
-
-      latestResultsRef.current = job
-      setResults(job)
-      appendDiagnosticLog(`Búsqueda recuperada ${job.searchJobId}: ${job.searchStatus}`, job.diagnosticLog)
-
-      if (job.searchComplete) {
-        setLoading(false)
-        abortControllerRef.current = null
+      if (request.searchMode === "month-view") {
+        const job = await startMigrationSearch(request, sortMode, {
+          signal: run.controller.signal,
+          onJobStart,
+          onMigrationProgress: (progress) => {
+            if (isCurrent()) publish(progress)
+          },
+        })
+        if (!isCurrent()) return false
+        publish(job)
+        appendDiagnosticLog(
+          `Migratorio finalizado: ${job.migrationMonths?.filter((month) => month.offer).length ?? 0} meses con tarifa`,
+          job.diagnosticLog,
+        )
+        endRun(run)
         return true
       }
 
-      registerActiveJob({ id: job.searchJobId, type: "search" })
-      let lastRevision = job.revision
-      /* Same rule as the search loop above: the job runs on the server, and one
-         lost answer is a hop that timed out, not a search that stopped. */
-      let consecutiveFailures = 0
-      const doPoll = async () => {
-        if (!isCurrentRun()) return
-        const startedAt = Date.now()
-        try {
-          const updated = await pollSearch(job.searchJobId, lastRevision, { signal: abortController.signal })
-          if (!isCurrentRun()) return
-          consecutiveFailures = 0
-          if (!updated.unchanged) {
-            const hydrated = hydrateSearchJobUpdate(updated, latestResultsRef.current)
-            lastRevision = hydrated.revision
-            latestResultsRef.current = hydrated
-            setResults(hydrated)
-          }
-          if (!updated.searchComplete) {
-            pollRef.current = window.setTimeout(doPoll, nextPollDelayMs({
-              unchanged: Boolean(updated.unchanged),
-              elapsedMs: Date.now() - startedAt,
-            }))
-            return
-          }
-          finishActiveJob({ id: job.searchJobId, type: "search" })
-          setLoading(false)
-          abortControllerRef.current = null
-        } catch (err) {
-          if (!isCurrentRun() || err instanceof FlyDeskSearchCancelledError) return
-          consecutiveFailures += 1
-          appendDiagnosticLog(
-            `Error durante actualización (intento ${consecutiveFailures} de ${POLL_MAX_CONSECUTIVE_FAILURES})`,
-            diagnosticLogFromError(err),
-          )
-          if (consecutiveFailures < POLL_MAX_CONSECUTIVE_FAILURES && !(err instanceof FlyDeskSessionExpiredError)) {
-            pollRef.current = window.setTimeout(doPoll, POLL_RETRY_DELAY_MS)
-            return
-          }
-
-          setStatusMessage(userMessageFromError(err))
-          setLoading(false)
-          abortControllerRef.current = null
-        }
-      }
-      pollRef.current = window.setTimeout(doPoll, POLL_FAST_MS)
+      const type: ActiveJob["type"] = request.searchMode === "roundtrip-grid" ? "matrix" : "search"
+      const first = type === "matrix"
+        ? await startMatrix(request, sortMode, { onJobStart })
+        : await startSearch(request, sortMode, { onJobStart })
+      if (!isCurrent()) return false
+      publish(first)
+      appendDiagnosticLog(`Respuesta inicial ${first.searchJobId}: ${first.searchStatus}`, first.diagnosticLog)
+      void follow(run, first, type)
       return true
     } catch (err) {
-      if (!isCurrentRun() || err instanceof FlyDeskSearchCancelledError) return false
-
-      setLoading(false)
-      abortControllerRef.current = null
-      appendDiagnosticLog("No se pudo recuperar la búsqueda", diagnosticLogFromError(err))
-      setError(userMessageFromError(err))
+      failRun(run, err, "Error de búsqueda")
       return false
     }
-  }, [appendDiagnosticLog, cancelActiveJobs, finishActiveJob, registerActiveJob])
+  }, [appendDiagnosticLog, beginRun, endRun, failRun, follow, jobStarter, publish])
+
+  /** Reads a job that already exists instead of paying for it again (a month of a sweep in its own tab). */
+  const restoreJob = useCallback(async (jobId: string): Promise<boolean> => {
+    const run = beginRun()
+    const isCurrent = () => runRef.current === run
+    setDiagnosticLog([`Recuperando la búsqueda ${jobId}`])
+
+    await pendingCancellationRef.current
+    if (!isCurrent()) return false
+
+    try {
+      const first = await pollSearch(jobId, undefined, run.controller.signal)
+      if (!isCurrent()) return false
+      publish(first)
+      appendDiagnosticLog(`Búsqueda recuperada ${first.searchJobId}: ${first.searchStatus}`, first.diagnosticLog)
+      if (!first.searchComplete) run.jobs.set(`search:${first.searchJobId}`, { id: first.searchJobId, type: "search" })
+      void follow(run, first, "search")
+      return true
+    } catch (err) {
+      failRun(run, err, "No se pudo recuperar la búsqueda")
+      return false
+    }
+  }, [appendDiagnosticLog, beginRun, failRun, follow, publish])
 
   const cancel = useCallback(() => {
-    cancelActiveJobs({ cachePartial: true, showFeedback: true, setIdle: true })
-  }, [cancelActiveJobs])
-
-  const reset = useCallback(() => {
-    cancelActiveJobs({ showFeedback: false, setIdle: true })
-    latestResultsRef.current = null
-    setResults(null)
+    stopRun({ cachePartial: true })
+    setLoading(false)
     setError(null)
-    setStatusMessage(null)
-    setDiagnosticLog([])
-  }, [cancelActiveJobs])
+    setStatusMessage(CANCELLED_SEARCH_MESSAGE)
+    publish(finalizeCancelledResults(latestResultsRef.current))
+    appendDiagnosticLog("Búsqueda detenida por el usuario")
+  }, [appendDiagnosticLog, publish, stopRun])
 
-  return { results, loading, error, statusMessage, diagnosticLog, runSearch, restoreJob, cancel, reset }
-}
-
-function hydrateSearchJobUpdate(
-  next: SearchJobResponse,
-  previous: SearchJobResponse | null,
-): SearchJobResponse {
-  if (!previous) return next
-
-  return {
-    ...next,
-    request: isPlaceholderRequest(next.request) ? previous.request : next.request,
-    searchMeta: next.searchMeta ?? previous.searchMeta,
-    providerMeta: next.providerMeta ?? previous.providerMeta,
-  }
-}
-
-function isPlaceholderRequest(request: SearchRequest) {
-  return request.origin === ""
-    && request.destination === ""
-    && request.searchMode === "exact"
-    && request.tripType === "round-trip"
-    && !request.departureDate
-    && !request.departureStart
-    && !request.returnDate
-    && !request.returnStart
+  return { results, loading, error, statusMessage, diagnosticLog, runSearch, restoreJob, cancel }
 }
 
 function finalizeCancelledResults(current: SearchJobResponse | null): SearchJobResponse | null {
   if (!current) return current
 
-  const hasOffers = current.offers.length > 0
+  const hasOffers = current.allOffers.length > 0
   const hasMigrationMonths = Boolean(current.migrationMonths?.length)
   const cancelledWarnings = hasMigrationMonths
     ? [
@@ -451,10 +269,6 @@ function finalizeCancelledResults(current: SearchJobResponse | null): SearchJobR
     },
     warnings: uniqueStrings(cancelledWarnings),
   }
-}
-
-function uniqueStrings(values: Array<string | undefined>): string[] {
-  return Array.from(new Set(values.map((value) => value?.trim()).filter((value): value is string => Boolean(value))))
 }
 
 function buildSearchLogHeader(request: SearchRequest, sortMode: SortMode): string[] {
