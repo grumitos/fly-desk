@@ -1,4 +1,5 @@
-import type { BaggageSummary, CanonicalOffer, Itinerary, Segment } from "@/types"
+import type { CanonicalOffer, Itinerary, Segment } from "@/types"
+import { formatDate } from "@/lib/format"
 import {
   cityNameForIataCode,
   isAirportFacilityLabel,
@@ -32,14 +33,6 @@ export function lastSegmentForItinerary(itinerary?: Itinerary | null): Segment |
   return segments[segments.length - 1]
 }
 
-export function itineraryRouteLabel(
-  itinerary?: Itinerary | null,
-  fallback: { origin?: unknown; destination?: unknown } = {},
-): string {
-  const route = itineraryRouteCodes(itinerary, fallback)
-  return route.length > 0 ? route.join(" - ") : "Ruta por confirmar"
-}
-
 export function layoverItemsForItinerary(itinerary: Itinerary): LayoverItem[] {
   if (itinerary.segments.length < 2) return []
 
@@ -55,35 +48,9 @@ export function layoverItemsForItinerary(itinerary: Itinerary): LayoverItem[] {
   })
 }
 
-export function formatOfferBaggageLabel(baggage: unknown): string | undefined {
-  if (!baggage) return undefined
-  if (typeof baggage === "string") return baggage
-  if (typeof baggage !== "object") return undefined
-
-  const value = baggage as BaggageSummary
-  const parts: string[] = []
-  if (value.carryOnIncluded) parts.push("Cabina")
-  if (value.checkedIncluded) {
-    parts.push(value.checkedBags && value.checkedBags > 1 ? `${value.checkedBags} maletas` : "Bodega")
-  }
-  if (!parts.length && value.description) return value.description
-  return parts.length ? parts.join(" + ") : undefined
-}
-
-/**
- * Hours and minutes, however many hours it takes.
- *
- * It used to break a day out — «1d 5h 50m» — and for as long as every duration
- * in the product was silently reduced modulo 24 hours, no row ever reached the
- * branch. With the clocks read properly a Lima-Madrid connection is 29h 50m,
- * and the column that names it is the one the agent sorts on: «19h 55m» over
- * «1d 5h 50m» over «22h 20m» cannot be compared by eye, and two of those three
- * need arithmetic before they can even be ranked. One unit, always the same
- * one, and the figures line up as figures.
- *
- * The minutes stay when they are zero — «32h 0m», beside «19h 55m» — because
- * this is a lane of tabular numerals and a row that drops its last term is a
- * row that stops lining up with the rest.
+/*
+ * Hours and minutes however many hours it takes, and «0m» kept: the column is
+ * sorted by eye, and «29h 50m» over «1d 5h 50m» cannot be compared.
  */
 export function formatJourneyDuration(minutes: number): string {
   const total = Math.round(minutes)
@@ -93,26 +60,9 @@ export function formatJourneyDuration(minutes: number): string {
   return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`
 }
 
-const OFFER_DATE_MONTHS = [
-  "ene", "feb", "mar", "abr", "may", "jun",
-  "jul", "ago", "sep", "oct", "nov", "dic",
-]
-
-/**
- * «26 may 2026», the way both detail plates write a ticketing date.
- *
- * Not `26/05/2026`. A slashed date is a field the agent types into; this one is
- * read, and the month in letters is what stops it being confused with the
- * day — the panel it sits in already carries four other figures.
- */
+/** «26 set 2026», a date that is read rather than typed. */
 export function formatOfferDate(value?: string): string {
-  const date = isoDatePart(value)
-  if (!date) return "-"
-
-  const [year, month, day] = date.split("-")
-  if (!year || !month || !day) return date
-  const name = OFFER_DATE_MONTHS[Number(month) - 1]
-  return name ? `${Number(day)} ${name} ${year}` : `${day}/${month}/${year}`
+  return formatDate(isoDatePart(value), { padDay: false }) || "-"
 }
 
 export function timeOfIso(value?: string): string {
@@ -141,44 +91,15 @@ export function diffDaysIso(from: string, to: string): number {
   return Math.round((toMs - fromMs) / 86400000)
 }
 
-function itineraryRouteCodes(
-  itinerary?: Itinerary | null,
-  fallback: { origin?: unknown; destination?: unknown } = {},
-): string[] {
-  const segments = itinerary?.segments ?? []
-  const route: string[] = []
-
-  if (segments.length > 0) {
-    appendRouteToken(route, segments[0]?.origin ?? fallback.origin)
-    segments.forEach((segment) => appendRouteToken(route, segment.destination))
-  } else {
-    appendRouteToken(route, fallback.origin)
-    appendRouteToken(route, fallback.destination)
-  }
-
-  return route
-}
-
-function appendRouteToken(route: string[], value: unknown): void {
-  const token = routeLocationToken(value)
-  if (!token || route[route.length - 1] === token) return
-  route.push(token)
-}
-
 function routeLocationToken(value: unknown): string {
   const normalized = normalizeIataCode(String(value ?? ""))
   if (!normalized) return ""
   return normalized.match(/\b[A-Z]{3}\b/)?.[0] ?? normalized
 }
 
-/**
- * Stops on one leg.
- *
- * When the declared count disagrees with the segments, the larger wins. A
- * provider that sends two segments but declares zero stops is simply wrong —
- * there is demonstrably a plane change. The reverse can be legitimate: a
- * technical stop keeps one flight number and one segment, so a declared count
- * above the segment boundaries is believed.
+/*
+ * The larger count wins: two segments declared as zero stops is a plane change
+ * the provider forgot, while a technical stop keeps one segment and is believed.
  */
 export function stopsCountFromItinerary(itinerary: Itinerary): number | undefined {
   const explicit = nonNegativeNumber(itinerary.stops)
@@ -197,9 +118,6 @@ function stopCityLabel(segment: Segment): string {
 }
 
 function normalizeCityLabel(value: unknown): string {
-  // One parser for both surfaces: the card's stop label and the detail's
-  // station line used to strip different things, which is how «(todos los
-  // aeropuertos)» survived into the itinerary.
   const normalized = stripStationNoise(String(value ?? ""))
 
   if (!normalized) return ""
@@ -230,24 +148,11 @@ function positiveNumber(value: unknown): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : undefined
 }
 
-/*
- * Plate 1b writes the stop as «LIM · Jorge Chávez», in the case a person would
- * write it. Agil hands the airport name straight through and Click and Book
- * Plus falls back to its own label, and both providers shout: «SAO PAULO
- * GUARULHOS». Shouting is not a fact about the airport, so it is corrected on
- * the way to the screen — and only when there is nothing to lose, i.e. when the
- * provider sent no lowercase of its own.
- */
+/* Providers shout station names («SAO PAULO GUARULHOS»); a name with no
+   lowercase of its own is re-cased, keeping Spanish connectors lowercase. */
 const SPANISH_CONNECTORS = new Set(["de", "del", "la", "las", "el", "los", "y", "e", "da", "do", "dos"])
 
-/**
- * Everything a provider bolts onto a station name that is not the station.
- *
- * «(todos los aeropuertos)» is a *search* concept — it means the query covered
- * a whole city — and it has no business on a leg of an itinerary that departs
- * from one runway. The `LIM ·` prefix and the trailing `(LIM)` are the code the
- * label is already paired with, so leaving them in prints it twice.
- */
+/** «(todos los aeropuertos)» is a search concept, and the code prefix/suffix repeats the code. */
 function stripStationNoise(value: string): string {
   return stripAllAirportsLabel(value)
     .replace(/^[A-Z]{3}\s*[·-]\s*/iu, "")
@@ -256,38 +161,19 @@ function stripStationNoise(value: string): string {
 }
 
 /**
- * What the itinerary calls the place a code names.
- *
- * The code decides it, not the provider: Agil answers «Lima» for LIM and Click
- * and Book Plus answers «Aeropuerto Internacional Jorge Chávez», and the same
- * flight read one way in one search and the other way in the next. The
- * catalogue behind `cityNameForIataCode` is the one the card's stop label
- * already falls back to, so this is the *same* parser reaching the detail
- * rather than a second opinion about the same station.
- *
- * A code the catalogue does not know keeps the provider's own name, cleaned:
- * no catalogue can derive «Lima» from «Jorge Chávez», and a name is more than
- * three letters of nothing.
+ * What the itinerary calls the place a code names. The catalogue decides, so
+ * two providers describing one runway read alike; an unknown code keeps the
+ * provider's own name without the facility words.
  */
 export function stationPlaceName(code?: string, name?: string): string {
   const city = cityNameForIataCode(code)
   if (city) return city
 
-  /* Plate 1b's shape, for a code the catalogue cannot answer: «SYD · Sydney
-     Kingsford Smith», not «SYD · Sydney Kingsford Smith International
-     Airport». The words that name the facility are not the name of the place,
-     and dropping them is what makes two providers describing the same runway
-     at different lengths read alike. Only applied to a label that announces
-     itself as one, so a station whose real name happens to be long is left as
-     the provider wrote it.
-
-     LIM is deliberately not the example: it is catalogued, so it never reaches
-     this branch — the line above answers «Lima» whichever provider asked. */
   const provider = stationDisplayName(name)
   return isAirportFacilityLabel(provider) ? stripAirportFacilityWords(provider) : provider
 }
 
-export function stationDisplayName(value?: string): string {
+function stationDisplayName(value?: string): string {
   const name = stripStationNoise(String(value ?? "").trim())
   if (!name || /\p{Ll}/u.test(name)) return name
 

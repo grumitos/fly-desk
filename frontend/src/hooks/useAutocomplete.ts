@@ -10,8 +10,8 @@ interface UpdateQueryOptions {
 /** 11 §2.1 · «Recientes» only becomes «Coincidencias» at two letters. */
 export const MIN_MATCH_QUERY = 2
 
-export function useAutocomplete(onResolved?: (suggestion: LocationSuggestion) => void) {
-  const [query, setQuery] = useState("")
+export function useAutocomplete(onResolved: (suggestion: LocationSuggestion) => void, initialQuery = "") {
+  const [query, setQuery] = useState(initialQuery)
   const [suggestions, setSuggestions] = useState<LocationSuggestion[]>([])
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
@@ -19,7 +19,7 @@ export function useAutocomplete(onResolved?: (suggestion: LocationSuggestion) =>
   const inputRef = useRef<HTMLInputElement | null>(null)
   const requestSeqRef = useRef(0)
   const resolvedLabelRef = useRef("")
-  const queryRef = useRef("")
+  const queryRef = useRef(initialQuery)
   const onResolvedRef = useRef(onResolved)
   const shouldWarmQueryRef = useRef(false)
 

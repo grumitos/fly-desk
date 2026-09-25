@@ -2,10 +2,12 @@ import {
   memo,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent,
   type ReactNode,
   type RefObject,
 } from "react"
@@ -23,69 +25,31 @@ import { AllSchedulesPanel } from "@/components/results/AllSchedulesPanel"
 import { MigrationMonthGrid } from "@/components/results/MigrationMonthGrid"
 import { migrationSweepSummary, type DisplayMonth } from "@/components/results/migration-month-model"
 import { ResultsSkeleton } from "@/components/results/ResultsSkeleton"
-import { ActiveFilterChips } from "@/components/results/ActiveFilterChips"
 import { AppIcon } from "@/components/ui/app-icon"
 import { Spinner } from "@/components/ui/spinner"
 import { Kbd } from "@/components/ui/kbd"
 import { ShortcutTooltip } from "@/components/ui/tooltip"
-import {
-  describeSearchOutcome,
-  failureSentences,
-  type SearchOutcome,
-} from "@/lib/search-outcome"
+import { formatCount } from "@/lib/format"
+import { passengerCount as countPassengers, showsPerPersonPrice } from "@/lib/passengers"
+import { failureSentences, type SearchOutcome } from "@/lib/search-outcome"
 import { cn } from "@/lib/utils"
 import { SORT_MODES, type CanonicalOffer, type SearchJobResponse, type SortMode } from "@/types"
 
 /*
  * Plates 1b (active desktop), 2g (list states), 3b (all schedules), 4a
- * (skeletons) and 1i (migration grid).
- *
- * The panel is one header, one column header and one list of rows that grows as
- * it is scrolled. The strip of active filters left the desk with this change:
- * on a desk the filter column is on screen the whole time and the strip was
- * repeating it 250px away, so only its one original sentence — «N ocultos por
- * filtros» — survives, on the count line. On a phone the strip is the only
- * voice the filters have and it stays, mounted by the shell.
- *
- * The column-width editor that used to live here is gone: plate 1b closes the
- * row grid at 28 / 142 / 1fr / 36 / 116 / 26, with the baggage in a track of
- * its own and the duration lane fixed so the header above can name it, so there
- * is nothing left for it to tune.
+ * (skeletons) and 1i (migration grid): one header, one column header and one
+ * list that grows as it is scrolled.
  */
 
-/*
- * The ceiling is a guard against a pathological viewport, not a window size. 12
- * was the fit of a 1440-tall desk when it was written and became a cap the
- * moment screens grew past it: a 1920×1080 column fits 13 plain rows and a
- * 1440-tall one fits 19, so the column stopped one and seven rows short of the
- * space it had just measured — the same half-empty column the skeleton was
- * reported with. 20 is that 19 plus a row of slack; past it the wins are
- * hypothetical and the cost of drawing the bones is not.
- */
+/* A guard against a pathological viewport: a 1440-tall column fits 19 rows. */
 const RESULTS_COLUMN_ROWS_MAX = 20
 const RESULTS_COLUMN_ROWS_FALLBACK = 4
-/*
- * What the list adds each time the reader reaches the end of it.
- *
- * A search here answers with hundreds of offers — 520 on a plain LIM–MIA, 2,500
- * on a week-long range — and building every card up front is the one thing an
- * infinite list must not do. The window opens at whatever fills the column and
- * grows by two columns at a time, which is the amount that keeps the sentinel
- * out of reach for a whole flick of the thumb; the floor covers the case where
- * the column has not been measured yet.
- */
+/* The window opens on what the column fits and grows by two columns, so a
+   flick of the thumb never reaches the sentinel; this is the floor. */
 const RESULTS_WINDOW_MIN_BATCH = 12
-/*
- * How far below the last card the list starts building the next batch. A batch
- * is already in memory — this is a render, not a fetch — so the margin only has
- * to cover the frame it costs, and one column of slack does that at any scroll
- * speed a thumb produces.
- */
+/* A batch is a render, not a fetch: one column of slack covers its frame. */
 const RESULTS_WINDOW_PREFETCH_PX = 900
-/* The plain row of plate 1b, which is the unit a display weight of 1 means:
-   52 of row with its own hairline inside it, and nothing between one row and
-   the next — the list's 6px gap went with the card frame the gap existed to
-   separate. The measurement below replaces both on the first frame. */
+/* The plain row of plate 1b; the first frame measures the real one. */
 const RESULTS_CARD_HEIGHT_ESTIMATE_PX = 52
 const RESULTS_CARD_GAP_PX = 0
 const RESULTS_LIST_TOP_INSET_PX = 4
@@ -97,134 +61,109 @@ export type ActiveFilterChip = {
   label: string
 }
 
-/**
- * Plate 2g: what an empty-by-filters list needs to say. The count comes from
- * the search; the culprit and the way to relax it can only be worked out where
- * the filters are applied, so they arrive from above — and both are optional,
- * because a list that cannot tell which filter is to blame says so by staying
- * quiet rather than by guessing.
- */
+/** What ↑/↓ reach: the offer one row away from the selection, drawn and in view. */
+export type ResultsNavigation = {
+  step: (direction: 1 | -1) => string | undefined
+}
+
+/** Plate 2g: the filter to blame and the way to relax it, when they can be told. */
 export type EmptyByFiltersCopy = {
-  /** "El filtro de directo es el que descarta más." */
   culpritSentence?: string
-  /** "Permitir 1 escala" — relaxes only the culprit. */
   relax?: { label: string; onClick: () => void }
 }
 
 interface ResultsPanelProps {
   results: SearchJobResponse | null
+  /** What the list draws: the search filtered by the rail and in the chosen order. */
+  offers: CanonicalOffer[]
+  /** The sweep's months after the filters; `null` when the search is not a sweep. */
+  months: DisplayMonth[] | null
+  outcome: SearchOutcome
   unfilteredOfferCount: number
   loading: boolean
   sort: SortMode
   onSort: (sort: SortMode) => void
-  onSelectOffer: (offer: CanonicalOffer) => void
+  onSelectOffer: (offerId: string) => void
   selectedOfferId?: string
-  activeFilterChips?: ActiveFilterChip[]
-  hiddenByFiltersCount?: number
-  onRemoveFilter?: (id: string) => void
-  onClearFilters?: () => void
-  onOpenFilters?: () => void
-  /** Plate 2g's second exit, supplied by whoever applies the filters. */
+  activeFilterChips: ActiveFilterChip[]
+  hiddenByFiltersCount: number
+  onClearFilters: () => void
   emptyByFilters?: EmptyByFiltersCopy
   /** 04 §8's exit for «vacío por búsqueda»: back to editing the search. */
-  onEditSearch?: () => void
-  /** 06 §1.3: choosing a month of the sweep opens that month's normal list. */
-  onOpenMigrationMonth?: (month: DisplayMonth) => void
-  onMobileToolsCollapsedChange?: (collapsed: boolean) => void
-  mobileCollapseEnabled?: boolean
-  /**
-   * Where the strip of active filters mounts — or whether it mounts at all.
-   * In armazón C it is the middle band of the retractable tools block, which
-   * the shell owns because the search summary above it retracts with it as one
-   * piece (plate 1d, 02 §9). In A and B it is `"none"`: the filter column is
-   * always on screen there, so the strip was saying a second time, in 35px of
-   * list height, what the rail 250px to its left already said. `"list"` is the
-   * third mount and the one nothing passes today; it is kept because the
-   * component still supports it and the default has to be something.
-   */
-  chipsPlacement?: "list" | "external" | "none"
+  onEditSearch: () => void
+  onOpenMigrationMonth: (month: DisplayMonth) => void
+  /** Armazón C: the status row carries the filters and the list retracts the tools. */
+  phone: boolean
+  onOpenFilters: () => void
+  mobileToolsCollapsed: boolean
+  onMobileToolsCollapsedChange: (collapsed: boolean) => void
+  navigationRef: RefObject<ResultsNavigation | null>
 }
 
 function ResultsPanelBase({
   results,
+  offers,
+  months,
+  outcome,
   unfilteredOfferCount,
   loading,
   sort,
   onSort,
   onSelectOffer,
   selectedOfferId,
-  activeFilterChips = [],
-  hiddenByFiltersCount = 0,
-  onRemoveFilter,
+  activeFilterChips,
+  hiddenByFiltersCount,
   onClearFilters,
-  onOpenFilters,
   emptyByFilters,
   onEditSearch,
   onOpenMigrationMonth,
+  phone,
+  onOpenFilters,
+  mobileToolsCollapsed,
   onMobileToolsCollapsedChange,
-  mobileCollapseEnabled = false,
-  chipsPlacement = "list",
+  navigationRef,
 }: ResultsPanelProps) {
-  const [mobileToolsCollapsed, setMobileToolsCollapsed] = useState(false)
-  const offers = results?.offers ?? []
+  const sectionRef = useRef<HTMLElement | null>(null)
+  const listNavigationRef = useRef<ResultsNavigation | null>(null)
+  /* The month a key moved to, scrolled into view once it is the selection. */
+  const monthRevealRef = useRef<string | null>(null)
   const meta = results?.searchMeta
-  const isMigration = results?.request.searchMode === "month-view" || Boolean(results?.migrationMonths?.length)
   const isCancelled = results?.searchStatus === "cancelled"
-  /*
-   * 11 §3 separates «tarda» from «falla»: the first is a pill that goes away,
-   * the second is a line of text. Keyed on `meta.partial` alone the pill spun
-   * for ever whenever a provider fell over, because `partial` stays true after
-   * the job completes — the search was said to be in progress long after it had
-   * stopped. Progress is what the pill reports, so it lives exactly as long as
-   * the search does, and the failure is left to the notice above.
-   */
+  /* 11 §3: the pill reports progress and lives as long as the search does;
+     `partial` stays true after a provider failure, which the notice reports. */
   const isPartial = loading && (Boolean(meta?.partial) || offers.length > 0)
-  /* What became of the providers, read once here so the count, the column and
-     the still-searching copy cannot tell three different stories. */
-  const outcome = useMemo(() => describeSearchOutcome(results), [results])
-  const passengerCount = passengerCountForRequest(results?.request)
-  const showPerPerson = canShowPerPersonForRequest(results?.request)
+  const sweep = useMemo(() => (months ? migrationSweepSummary(months) : null), [months])
 
-  const visibleMobileToolsCollapsed = mobileCollapseEnabled && mobileToolsCollapsed
-  /* 1i and 2f give the sweep its own two facts in the header — months with a
-     fare, and the range of prices. Computed once here so the grid below has one
-     header above it instead of a second one of its own. */
-  const sweep = isMigration && results ? migrationSweepSummary(results, offers) : null
-
-  /*
-   * What the agent asked to see, as opposed to what the providers have sent so
-   * far. Only a gesture changes it — a filter, a sort — so it is what the list
-   * cross-fades on and what returns the pager to page 1 (04 §2/§6, 11 §3).
-   *
-   * Deriving that from the offers instead was a real defect: a progressive
-   * search appends offers, which would have re-keyed the list and rebuilt every
-   * card the agent was already reading.
-   */
+  /* What the agent asked to see: a filter or a sort, values included, and not
+     the offers a progressive search appends. The list scrolls to its top and
+     cross-fades on this and nothing else. */
   const viewKey = useMemo(
-    () => [sort, ...activeFilterChips.map((chip) => chip.id)].join("|"),
+    () => [sort, ...activeFilterChips.map((chip) => `${chip.id}=${chip.label}`)].join("|"),
     [activeFilterChips, sort],
   )
 
-  useEffect(() => {
-    onMobileToolsCollapsedChange?.(visibleMobileToolsCollapsed)
-  }, [onMobileToolsCollapsedChange, visibleMobileToolsCollapsed])
+  useImperativeHandle(navigationRef, () => ({
+    step(direction) {
+      if (!months) return listNavigationRef.current?.step(direction)
+      const monthOfferIds = months.flatMap((month) => (month.offer ? [month.offer.id] : []))
+      const next = stepThrough(monthOfferIds, selectedOfferId, direction)
+      monthRevealRef.current = next ?? null
+      return next
+    },
+  }), [months, selectedOfferId])
 
-  /*
-   * Plate 8a: the list column is not a card. Filters and detail are panels
-   * because they sit beside the list; the list itself is the page, so wrapping
-   * it in a second card put a border between the agent and the results.
-   *
-   * The header has two shapes and one job. On a desk (04 §3) it is title +
-   * count + state pill on the left and the order on the right. On a phone it
-   * collapses to the 32px status row of plate 1d — no title, because there is
-   * nothing else on screen to tell it apart from — and that row is the one
-   * thing that never retracts.
-   */
+  useLayoutEffect(() => {
+    const offerId = monthRevealRef.current
+    if (!offerId || offerId !== selectedOfferId) return
+    monthRevealRef.current = null
+    revealOffer(sectionRef.current, offerId)
+  }, [selectedOfferId])
+
   return (
-    <section className="fd-list-shell" aria-busy={loading}>
+    <section ref={sectionRef} className="fd-list-shell" aria-busy={loading}>
       <div className="fd-list-header">
         <div className="fd-list-header-lead">
-          <h2 className="fd-list-title">{isMigration ? "Vuelo migratorio" : "Resultados"}</h2>
+          <h2 className="fd-list-title">{months ? "Vuelo migratorio" : "Resultados"}</h2>
           {sweep ? (
             <span className="fd-panel-count">
               {sweep.priced} de {sweep.monthCount} {sweep.monthCount === 1 ? "mes" : "meses"}
@@ -237,23 +176,13 @@ function ResultsPanelBase({
               loading={loading}
               hasResults={Boolean(results)}
               searchFailed={outcome.allFailed || outcome.jobFailed}
-              hiddenByFilters={chipsPlacement === "none" ? hiddenByFiltersCount : 0}
+              hiddenByFilters={phone ? 0 : hiddenByFiltersCount}
             />
           )}
-          {/* A sweep says how many months are still out rather than that it is
-              «Parcial»: on this view the unit of progress is the month (1i). */}
           {sweep && sweep.searching > 0 && (
             <span className="fd-status-pill">
               <Spinner size={12} />
-              {/* A mixed value splits: the figure is the system's counter and
-                  the rest is prose, which has no reason to move into the
-                  monospace just for sharing a pill with a number.
-
-                  The phrase stays inside one element. The pill is
-                  `inline-flex`, so a figure and a noun left as two children of
-                  it become two flex items and the literal space between them is
-                  dropped — 4px of gap would still draw them apart, and the pill
-                  would read «1buscando» to anything that takes its text. */}
+              {/* One element: the pill is `inline-flex` and would drop the space. */}
               <span>
                 <span className="fd-count">{sweep.searching}</span> buscando
               </span>
@@ -273,9 +202,6 @@ function ResultsPanelBase({
           )}
         </div>
 
-        {/* 1i puts the sweep's price range where an ordinary list puts the
-            order — there is nothing to sort here, every month is one fare. On a
-            phone 2f keeps it in the same row, which is what this already is. */}
         {sweep && (
           <div className="fd-list-header-trail">
             <span className="fd-result-sort-label fd-type-micro">Rango</span>
@@ -284,32 +210,16 @@ function ResultsPanelBase({
           </div>
         )}
 
-        {!isMigration && (
+        {!months && (
           <div className="fd-list-header-trail">
-            {/* The desk's «Ordenar · Precio | Duración» is gone from this row:
-                a column header already sorts, in the place everybody looks for
-                it, so the sortable columns became the control (see
-                `ResultsColumnHead`). What is left here is the phone's, because
-                a phone has no column header to put it in.
-
-                Plate 1d: a 32px status row has no space for a segmented, so the
-                order collapses into whichever criterion is on and tapping moves
-                to the next. The order never disappears on a phone — 02 §5 lists
-                what may, and this is not on the list.
-
-                All four, not two. The desk reaches «Salida» and «Escalas»
-                through the column header, and this surface has no header — so
-                on a phone those two orders could only be arrived at by opening
-                someone else's link, which is not reaching them. */}
+            {/* The desk sorts from the column header; a phone has none. */}
             <SortCompactButton sort={sort} onSort={onSort} />
-            {/* 02 §9 step 6: once the tools retract, the status row grows a
-                26px filter button so the filters are never out of reach. */}
-            {onOpenFilters && (
+            {phone && (
               <ShortcutTooltip label="Abrir filtros" shortcut={<Kbd>F</Kbd>}>
                 <button
                   type="button"
                   className="fd-status-row-filters fd-focus-ring"
-                  data-collapsed={visibleMobileToolsCollapsed}
+                  data-collapsed={mobileToolsCollapsed}
                   aria-label="Abrir filtros"
                   onClick={onOpenFilters}
                 >
@@ -321,58 +231,35 @@ function ResultsPanelBase({
         )}
       </div>
 
-      {chipsPlacement === "list" && (
-        <ActiveFilterChips
-          chips={activeFilterChips}
-          activeFilterCount={activeFilterChips.length}
-          hiddenByFiltersCount={hiddenByFiltersCount}
-          onRemoveFilter={onRemoveFilter}
-        />
-      )}
-
       <ResultsBody
         sort={sort}
         onSort={onSort}
         results={results}
-        outcome={outcome}
         offers={offers}
+        months={months}
+        outcome={outcome}
         loading={loading}
         isCancelled={isCancelled}
-        isMigration={isMigration}
         unfilteredOfferCount={unfilteredOfferCount}
-        passengerCount={passengerCount}
-        showPerPerson={showPerPerson}
         selectedOfferId={selectedOfferId}
         onSelectOffer={onSelectOffer}
         onClearFilters={onClearFilters}
         emptyByFilters={emptyByFilters}
         onEditSearch={onEditSearch}
         onOpenMigrationMonth={onOpenMigrationMonth}
-        activeFilterChips={activeFilterChips}
+        activeFilterCount={activeFilterChips.length}
         viewKey={viewKey}
-        onMobileToolsCollapsedChange={setMobileToolsCollapsed}
-        mobileCollapseEnabled={mobileCollapseEnabled}
+        onMobileToolsCollapsedChange={onMobileToolsCollapsedChange}
+        phone={phone}
+        navigationRef={listNavigationRef}
       />
     </section>
   )
 }
 
-/**
- * The phone's order control: one button that names the order in force and
- * moves to the next one when it is pressed.
- *
- * The cycle is `SORT_MODES` itself rather than a list written out here, so the
- * button cannot come to offer fewer criteria than the backend serves — which
- * is what had already happened: the catalogue grew to four and this stayed a
- * two-way switch between price and duration.
- *
- * The words are the criterion's and not the desk column's — «Salida», not the
- * header's «Horario» — because the header labels name columns and this surface
- * draws none of them. The accessible name is the same sentence on both.
- *
- * That name says what pressing does, not what is on: the visible label is the
- * state and the label a screen reader hears is the action, which is the shape
- * plate 1d gives a control that is its own toggle.
+/*
+ * The phone's order control names the order in force and moves to the next of
+ * `SORT_MODES` when pressed; its accessible name says what pressing does.
  */
 const SORT_COMPACT_LABELS: Record<SortMode, string> = {
   cheapest: "Precio",
@@ -381,7 +268,7 @@ const SORT_COMPACT_LABELS: Record<SortMode, string> = {
   stops: "Escalas",
 }
 
-const SORT_COMPACT_CRITERIA: Record<SortMode, string> = {
+const SORT_CRITERIA: Record<SortMode, string> = {
   cheapest: "precio",
   fastest: "duración",
   departure: "hora de salida",
@@ -394,7 +281,7 @@ function SortCompactButton({ sort, onSort }: { sort: SortMode; onSort: (sort: So
     <button
       type="button"
       className="fd-result-sort-compact fd-focus-ring"
-      aria-label={`Ordenar por ${SORT_COMPACT_CRITERIA[next]}`}
+      aria-label={`Ordenar por ${SORT_CRITERIA[next]}`}
       onClick={() => onSort(next)}
     >
       <AppIcon name="sort" size={14} />
@@ -403,112 +290,72 @@ function SortCompactButton({ sort, onSort }: { sort: SortMode; onSort: (sort: So
   )
 }
 
+/* The sortable columns in the order the header draws them. */
+const HEAD_SORT_ORDER: SortMode[] = ["departure", "fastest", "stops", "cheapest"]
+
 /**
- * The column header — plate 1b's answer to what the grey plinth was doing.
- *
- * It carries `.fd-card` so the lanes come from the row's own stylesheet rather
- * than from a copy of it, and the order lives in it: the sortable columns are
- * the radios of the same group the segmented used to be, with the same
- * accessible names, so what changed is the shape and not the semantics.
- *
- * Four of them, not two. «Salida» and «Escalas» arrived as two more options of
- * a segmented control that no longer exists — but they did not need controls of
- * their own: «Horario» and «Escalas» are already columns of this header, and
- * making a column sort is what the header of a table is for. So the group grew
- * where the data already is instead of growing a second control beside it, and
- * the four arrive in column order rather than in the segmented's.
- *
- * The lanes that do not sort stay labels. A header where everything is a
- * button says every column can be ordered, and «Aerolínea», «Tramo», «Eq.» and
- * «Prov.» cannot: the backend has four criteria and this group offers exactly
- * those four.
+ * The column header, carrying `.fd-card` so its lanes are the row's. The four
+ * sortable columns are the radios of the order: one tab stop, arrows move and
+ * choose, like every segmented control. The lanes that do not sort stay labels.
  */
-function ResultsColumnHead({ sort, onSort }: { sort: SortMode; onSort: (sort: SortMode) => void }) {
+const ResultsColumnHead = memo(function ResultsColumnHead({ sort, onSort }: { sort: SortMode; onSort: (sort: SortMode) => void }) {
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const step = event.key === "ArrowRight" || event.key === "ArrowDown"
+      ? 1
+      : event.key === "ArrowLeft" || event.key === "ArrowUp"
+        ? -1
+        : 0
+    if (step === 0) return
+
+    event.preventDefault()
+    const current = HEAD_SORT_ORDER.indexOf(sort)
+    const next = HEAD_SORT_ORDER[(current + step + HEAD_SORT_ORDER.length) % HEAD_SORT_ORDER.length]!
+    onSort(next)
+    event.currentTarget.querySelector<HTMLButtonElement>(`[data-segment="${next}"]`)?.focus()
+  }
+
   return (
     <div
       className="fd-card fd-card--head"
       role="radiogroup"
       aria-label="Orden de resultados"
       data-testid="results-column-head"
+      onKeyDown={handleKeyDown}
     >
-      {/* The logo lane has no name: a mark is not a column of values. */}
       <span aria-hidden="true" />
       <span className="fd-card__head-label">Aerolínea</span>
       <div className="fd-card__legs">
         <div className="fd-card__leg">
           <span className="fd-card__head-label">Tramo</span>
-          <SortableColumnHead
-            sort={sort}
-            onSort={onSort}
-            mode="departure"
-            label="Horario"
-            criterion="hora de salida"
-          />
-          <SortableColumnHead
-            sort={sort}
-            onSort={onSort}
-            mode="fastest"
-            label="Duración"
-            criterion="duración"
-            align="end"
-          />
-          <SortableColumnHead
-            sort={sort}
-            onSort={onSort}
-            mode="stops"
-            label="Escalas"
-            criterion="número de escalas"
-          />
+          <SortableColumnHead sort={sort} onSort={onSort} mode="departure" label="Horario" />
+          <SortableColumnHead sort={sort} onSort={onSort} mode="fastest" label="Duración" align="end" />
+          <SortableColumnHead sort={sort} onSort={onSort} mode="stops" label="Escalas" />
         </div>
       </div>
       <span className="fd-card__head-label fd-card__head-label--center">Eq.</span>
-      <SortableColumnHead
-        sort={sort}
-        onSort={onSort}
-        mode="cheapest"
-        label="Precio"
-        criterion="precio"
-        align="end"
-      />
+      <SortableColumnHead sort={sort} onSort={onSort} mode="cheapest" label="Precio" align="end" />
       <span className="fd-card__head-label fd-card__head-label--end">Prov.</span>
     </div>
   )
-}
+})
 
-/**
- * One sortable column of the header.
- *
- * The active mark is the arrow the redesign drew beside «Precio», and it is
- * drawn only on the column that is ordering — one arrow on screen, on the lane
- * the list is sorted by.
- *
- * It costs the cell 15px (12 of icon, 3 of gap) and one lane cannot pay it out
- * of its own track: «Duración» measures 56.89 in a lane of 66, so with the
- * arrow the cell is 71.89 and hangs 5.89px past its track. That is left as an
- * overflow rather than repaired, and the reason is that the alternatives are
- * worse: widening the duration lane moves `RESULT_LEG_FIXED_PX`, which moves
- * the 787 stacking threshold and the 824 the detail column asks for, and a
- * 1440 desk sits *on* 824 — the commonest desk there is would lose its third
- * column to a 12px arrow. The 5.89 falls into the 12px column gap that follows
- * the lane and reaches nothing; `test/ui/results.playwright.ts` measures it
- * against the neighbouring label rather than trusting the arithmetic.
- *
- * The label follows the lane it names: right over the figures, left over the
- * text, which is where the values under it already are.
+/*
+ * The arrow on the ordering column costs 15px, which «Duración» cannot pay out
+ * of its 66px lane: it overflows 5.89px into the 12px gap that follows rather
+ * than widen the lane, which would move the 824px detail-column threshold a
+ * 1440 desk sits on (`hooks/useShellSize.ts`).
  */
 function SortableColumnHead({
   sort,
   onSort,
   mode,
   label,
-  criterion,
   align,
 }: {
   sort: SortMode
   onSort: (sort: SortMode) => void
   mode: SortMode
   label: string
-  criterion: string
   align?: "end"
 }) {
   const active = sort === mode
@@ -518,7 +365,8 @@ function SortableColumnHead({
       role="radio"
       data-segment={mode}
       aria-checked={active}
-      aria-label={`Ordenar por ${criterion}`}
+      aria-label={`Ordenar por ${SORT_CRITERIA[mode]}`}
+      tabIndex={active ? 0 : -1}
       className={cn(
         "fd-card__head-label fd-card__head-sort fd-focus-ring",
         align === "end" && "fd-card__head-label--end",
@@ -543,14 +391,8 @@ function ResultCount({
   total: number
   loading: boolean
   hasResults: boolean
-  /** Nothing was searched, so there is no count to state — only a notice. */
   searchFailed: boolean
-  /**
-   * The one sentence the desk's chip strip said that the filter rail does not.
-   * It moves here when the strip does not mount: a rail full of active filters
-   * says which constraints are on, and nothing on the screen said what they
-   * cost until this line did.
-   */
+  /** Only where the phone's chip strip is not there to say it. */
   hiddenByFilters: number
 }) {
   if (visible === 0) {
@@ -558,22 +400,18 @@ function ResultCount({
     return <span className="fd-panel-count">{hasResults ? "sin vuelos visibles" : "sin consulta"}</span>
   }
 
-  // "386 de 1,240" only when filters are actually hiding something; otherwise
-  // the second number is the first number and says nothing.
   const label = total > visible
-    ? `${visible.toLocaleString("es-PE")} de ${total.toLocaleString("es-PE")}`
-    : visible.toLocaleString("es-PE")
+    ? `${formatCount(visible)} de ${formatCount(total)}`
+    : formatCount(visible)
 
   return (
     <>
       <span className="fd-panel-count">{label}</span>
       {hiddenByFilters > 0 && (
-        /* Its own class, not a second `.fd-panel-count`: that one is the mono
-           figure beside a heading, and this is a sentence. */
         <span className="fd-list-hidden-count">
           {hiddenByFilters === 1
             ? "· 1 vuelo oculto por filtros"
-            : `· ${hiddenByFilters.toLocaleString("es-PE")} vuelos ocultos por filtros`}
+            : `· ${formatCount(hiddenByFilters)} vuelos ocultos por filtros`}
         </span>
       )}
     </>
@@ -584,79 +422,60 @@ function ResultsBody({
   sort,
   onSort,
   results,
-  outcome,
   offers,
+  months,
+  outcome,
   loading,
   isCancelled,
-  isMigration,
   unfilteredOfferCount,
-  passengerCount,
-  showPerPerson,
   selectedOfferId,
   onSelectOffer,
   onClearFilters,
   emptyByFilters,
   onEditSearch,
   onOpenMigrationMonth,
-  activeFilterChips,
+  activeFilterCount,
   viewKey,
   onMobileToolsCollapsedChange,
-  mobileCollapseEnabled,
+  phone,
+  navigationRef,
 }: {
   sort: SortMode
   onSort: (sort: SortMode) => void
   results: SearchJobResponse | null
-  outcome: SearchOutcome
   offers: CanonicalOffer[]
+  months: DisplayMonth[] | null
+  outcome: SearchOutcome
   loading: boolean
   isCancelled: boolean
-  isMigration: boolean
   unfilteredOfferCount: number
-  passengerCount: number
-  showPerPerson: boolean
   selectedOfferId?: string
-  onSelectOffer: (offer: CanonicalOffer) => void
-  onClearFilters?: () => void
+  onSelectOffer: (offerId: string) => void
+  onClearFilters: () => void
   emptyByFilters?: EmptyByFiltersCopy
-  onEditSearch?: () => void
-  onOpenMigrationMonth?: (month: DisplayMonth) => void
-  activeFilterChips: ActiveFilterChip[]
+  onEditSearch: () => void
+  onOpenMigrationMonth: (month: DisplayMonth) => void
+  activeFilterCount: number
   viewKey: string
   onMobileToolsCollapsedChange: (collapsed: boolean) => void
-  mobileCollapseEnabled: boolean
+  phone: boolean
+  navigationRef: RefObject<ResultsNavigation | null>
 }) {
-  /*
-   * One measurement, two consumers. The page of results and the skeleton that
-   * stands in for it are drawn in the same column and have to hold the same
-   * number of rows, so the count is taken once here — above the branch that
-   * chooses between them — rather than by each of them separately. The skeleton
-   * is what proves it matters: it renders before a single result exists, and
-   * for as long as it carried a constant of its own it filled half a column its
-   * own results were about to fill.
-   */
+  /* One measurement for the list and the skeleton that stands in for it:
+     both are drawn in this column and must hold the same number of rows. */
   const resultItems = useMemo(
     () => buildResultListItems(offers, results?.scheduleGroups),
     [offers, results?.scheduleGroups],
   )
   const { columnRows, viewportRef, attachViewport } = useResultsColumnCapacity()
-  /*
-   * The mode the rows are drawn in, stamped on the list for the stylesheet to
-   * read. It decides one thing — whether the stacked leg keeps the date in its
-   * rótulo — and it is an attribute rather than a prop threaded down to every
-   * leg because that is a fact about the list, not about a row: in Exacto both
-   * dates are already on the search bar above, and the rótulo would repeat them
-   * twice per row for the length of the list.
-   *
-   * The default matters. A search that has not answered yet has no request, and
-   * the skeleton is drawn in that gap; Exacto is what the app opens on and what
-   * the overwhelming majority of searches are, so it is what the bones stand
-   * in for.
-   */
+  /* Stamped on the list for the stylesheet: in Exacto the dates are on the
+     search bar, so the stacked leg drops them. Exacto is also what the
+     skeleton stands in for before a request exists. */
   const mode = results?.request.searchMode ?? "exact"
-  /* Built here, above the branch, because the bones and the rows are drawn in
-     the same box and the header is part of that box: a column that gains 27px
-     of header when the data lands is the value jump 04 §7 forbids, and the row
-     count both of them are measured into would change with it. */
+  const passengerCount = countPassengers(results?.request)
+  const showPerPerson = showsPerPersonPrice(results?.request)
+  /* Built above the branch: the header is part of the box the rows are
+     counted into, and it must not appear with the data (04 §7). */
   const head = <ResultsColumnHead sort={sort} onSort={onSort} />
 
   if (!results && !loading) {
@@ -679,11 +498,10 @@ function ResultsBody({
     )
   }
 
-  if (isMigration && results) {
+  if (months && results) {
     return (
       <MigrationMonthGrid
-        results={results}
-        offers={offers}
+        months={months}
         passengerCount={passengerCount}
         selectedOfferId={selectedOfferId}
         onSelectOffer={onSelectOffer}
@@ -692,61 +510,38 @@ function ResultsBody({
     )
   }
 
-  /*
-   * 04 §7: a search with nothing to show yet is the skeleton, and the skeleton
-   * stands for as long as the search is alive.
-   *
-   * It used to grow a line of words at eight seconds — «X está tardando más de
-   * lo habitual» — and hand the whole column to those words for a reader who
-   * had asked for no movement. Both are gone by decision: a real search here
-   * takes fifteen to forty seconds and more, so «tarda» is the ordinary case
-   * and a notice that announces it tells the agent nothing they can act on.
-   * What still speaks is failure, and it speaks in the states below: a provider
-   * that fell, or a search that reached nobody.
-   */
+  /* 04 §7: with nothing to show yet, the skeleton stands for as long as the
+     search is alive; only failure speaks, in the states below. */
   if (loading && offers.length === 0) {
     return <ResultsSkeleton rows={columnRows} mode={mode} head={head} attachViewport={attachViewport} />
   }
 
   if (offers.length === 0 && results) {
-    // Plate 2g: an empty list caused by filters names the filter to blame and
-    // offers two ways out. An empty list with no filters on is a different
-    // problem and gets different words.
-    const filteredEmpty = unfilteredOfferCount > 0 || (results.allOffers?.length ?? 0) > 0
-
-    if (filteredEmpty) {
-      const count = activeFilterChips.length
+    if (unfilteredOfferCount > 0) {
       return (
         <EmptyState
           icon="filtersOff"
-          title={count === 1
+          title={activeFilterCount === 1
             ? "Ningún vuelo cumple el filtro"
-            : `Ningún vuelo cumple los ${spellOutCount(count)} filtros`}
+            : `Ningún vuelo cumple los ${spellOutCount(activeFilterCount)} filtros`}
           body={filteredEmptyBody(unfilteredOfferCount, emptyByFilters?.culpritSentence)}
-          action={onClearFilters
-            ? {
-                label: count === 1 ? "Quitar el filtro" : `Quitar los ${count} filtros`,
-                onClick: onClearFilters,
-              }
-            : undefined}
+          action={{
+            label: activeFilterCount === 1 ? "Quitar el filtro" : `Quitar los ${activeFilterCount} filtros`,
+            onClick: onClearFilters,
+          }}
           secondaryAction={emptyByFilters?.relax}
         />
       )
     }
 
-    /*
-     * Nobody answered. 04 §8 keeps the reason in the one-line notice above, but
-     * the column underneath still has to say something, and «Sin resultados
-     * para esta consulta · Ajusta fechas, escalas, equipaje o aerolíneas» was
-     * the wrong something: it asks the agent to widen a search that never ran.
-     */
+    /* Nobody answered: asking to widen a search that never ran is the wrong exit. */
     if (outcome.allFailed || (outcome.jobFailed && outcome.failed.length > 0)) {
       return (
         <EmptyState
           icon="alert"
           title="No se pudo consultar a los proveedores"
           body={`${failureSentences(outcome).join(" ")} La búsqueda no llegó a ejecutarse, así que esta ruta puede tener vuelos.`}
-          action={onEditSearch ? { label: "Volver a editar la búsqueda", onClick: onEditSearch, icon: "search" } : undefined}
+          action={{ label: "Volver a editar la búsqueda", onClick: onEditSearch, icon: "search" }}
         />
       )
     }
@@ -757,18 +552,17 @@ function ResultsBody({
           icon="alert"
           title="La búsqueda no se pudo completar"
           body={results.error}
-          action={onEditSearch ? { label: "Volver a editar la búsqueda", onClick: onEditSearch, icon: "search" } : undefined}
+          action={{ label: "Volver a editar la búsqueda", onClick: onEditSearch, icon: "search" }}
         />
       )
     }
 
-    // 04 §8, «vacío por búsqueda»: mensaje + volver a editar la búsqueda.
     return (
       <EmptyState
         icon="sort"
         title="Sin resultados para esta consulta"
         body="Ajusta fechas, escalas, equipaje o aerolíneas para ampliar la cobertura."
-        action={onEditSearch ? { label: "Volver a editar la búsqueda", onClick: onEditSearch, icon: "search" } : undefined}
+        action={{ label: "Volver a editar la búsqueda", onClick: onEditSearch, icon: "search" }}
       />
     )
   }
@@ -789,19 +583,15 @@ function ResultsBody({
       partial={loading}
       viewKey={viewKey}
       onMobileToolsCollapsedChange={onMobileToolsCollapsedChange}
-      mobileCollapseEnabled={mobileCollapseEnabled}
+      phone={phone}
+      navigationRef={navigationRef}
     />
   )
 }
 
-/**
- * How many results the search *does* hold, and — when it can be worked out —
- * which filter is throwing most of them away. The second sentence is omitted
- * rather than guessed: naming the wrong culprit sends the agent to undo a
- * filter that was not the problem.
- */
+/* The culprit sentence is omitted rather than guessed. */
 function filteredEmptyBody(totalCount: number, culpritSentence?: string): string {
-  const held = `Hay ${totalCount.toLocaleString("es-PE")} ${totalCount === 1 ? "resultado" : "resultados"} en esta búsqueda.`
+  const held = `Hay ${formatCount(totalCount)} ${totalCount === 1 ? "resultado" : "resultados"} en esta búsqueda.`
   return culpritSentence ? `${held} ${culpritSentence}` : held
 }
 
@@ -811,6 +601,14 @@ const COUNT_WORDS = ["cero", "un", "dos", "tres", "cuatro", "cinco", "seis", "si
 function spellOutCount(count: number): string {
   return COUNT_WORDS[count] ?? String(count)
 }
+
+type ScheduleState = {
+  key: string
+  choice: Record<string, string>
+  expandedGroupId: string | null
+}
+
+const NO_SCHEDULE_CHOICE: Record<string, string> = {}
 
 function ResultsList({
   resultItems,
@@ -827,76 +625,41 @@ function ResultsList({
   partial,
   viewKey,
   onMobileToolsCollapsedChange,
-  mobileCollapseEnabled,
+  phone,
+  navigationRef,
 }: {
-  /** Built above, so the skeleton and the list weigh the same column. */
   resultItems: ResultListItem[]
-  /**
-   * The search these items belong to.
-   *
-   * What the per-job state below is stamped with. It used to be a digest of the
-   * items themselves, which changes on every progressive batch — so a search
-   * that answers in parts, which is every search now, dropped that state
-   * several times while the reader was using it.
-   */
+  /** The search these items belong to: per-job state is stamped with it. */
   jobKey: string
-  /** Which search this list is drawing, for the lanes that answer to it. */
   mode: string
-  /** The column header, built above so the skeleton and the list share one. */
   head: ReactNode
-  /** Whole rows: what the column fits, for the things that draw rows. */
   columnRows: number
   viewportRef: RefObject<HTMLDivElement | null>
   attachViewport: (node: HTMLDivElement | null) => void
   passengerCount: number
   showPerPerson: boolean
   selectedOfferId?: string
-  onSelectOffer: (offer: CanonicalOffer) => void
+  onSelectOffer: (offerId: string) => void
   partial: boolean
   viewKey: string
   onMobileToolsCollapsedChange: (collapsed: boolean) => void
-  mobileCollapseEnabled: boolean
+  phone: boolean
+  navigationRef: RefObject<ResultsNavigation | null>
 }) {
-
-  /* Which schedule each group is currently showing, and which group has its full
-     list open. Both are stamped with the result set they belong to, so a new
-     search drops them in the same render instead of briefly pinning a stale
-     schedule onto a group id that has been reused for different offers. */
-  const [scheduleState, setScheduleState] = useState<{
-    key: string
-    choice: Record<string, string>
-    expandedGroupId: string | null
-  }>({ key: "", choice: {}, expandedGroupId: null })
-  const scheduleChoice = scheduleState.key === jobKey ? scheduleState.choice : {}
+  /* Which schedule each group shows and which group has its full list open,
+     stamped with the job so a new search drops them in the same render. */
+  const [scheduleState, setScheduleState] = useState<ScheduleState>({ key: "", choice: {}, expandedGroupId: null })
+  const scheduleChoice = scheduleState.key === jobKey ? scheduleState.choice : NO_SCHEDULE_CHOICE
   const expandedGroupId = scheduleState.key === jobKey ? scheduleState.expandedGroupId : null
-  /*
-   * The first window is what the column holds; every flick of the thumb adds
-   * two more. `batchSize` is whole cards because a batch is an amount to add,
-   * not a column to fit — the fitting is the first window's job alone.
-   */
   const batchSize = Math.max(RESULTS_WINDOW_MIN_BATCH, columnRows * 2)
   const firstWindowSize = useMemo(
     () => resultItemsFillingCapacity(resultItems, columnRows),
     [columnRows, resultItems],
   )
 
-  /*
-   * 11 §3: every filter and sort gesture returns the list to the top — but a
-   * provider answering does not. Keyed on `viewKey` rather than on the offers,
-   * so a progressive batch leaves the reader where they were and keeps whatever
-   * they had already scrolled past.
-   *
-   * The exception is the first view: a shared link arrives with an offer
-   * already selected, and opening one column short of it would hide the flight
-   * the link was sent about.
-   */
-  /*
-   * Once, on arrival — not "whenever the view happens to look like the one we
-   * mounted with". Comparing keys made a filter and its undo, or a sort and its
-   * undo, count as arriving again: the entrance cascade replayed on a plain
-   * re-sort, and the selected-offer reveal below re-engaged, which on a set of
-   * hundreds means building every card down to the selection a second time.
-   */
+  /* A shared link arrives with an offer selected, and the first view opens far
+     enough to show it. Only once: past arrival the reader's scrolling owns the
+     window, and a filter and its undo are not an arrival. */
   const [firstViewKey] = useState(viewKey)
   const [leftFirstView, setLeftFirstView] = useState(false)
   const isFirstView = !leftFirstView && firstViewKey === viewKey
@@ -912,9 +675,6 @@ function ResultsList({
     Math.max(
       firstWindowSize,
       requestedWindowSize,
-      /* Only on arrival: past the first view the reader's own scrolling owns
-         the window, and jumping it to a selection they made themselves would
-         build hundreds of cards nobody asked to see. */
       isFirstView && selectedItemIndex >= 0 ? selectedItemIndex + 1 : 0,
     ),
   )
@@ -928,6 +688,60 @@ function ResultsList({
     })
   }, [batchSize, viewKey, visibleCount])
 
+  /* A key can move past the drawn rows: the window grows to the target, and
+     the row is scrolled into view once it is the selection. */
+  const revealRef = useRef<string | null>(null)
+  useImperativeHandle(navigationRef, () => ({
+    step(direction) {
+      const current = selectedOfferId
+        ? resultItems.findIndex((item) => resultListItemContainsOffer(item, selectedOfferId))
+        : -1
+      const index = current < 0
+        ? (direction === 1 ? 0 : resultItems.length - 1)
+        : Math.min(resultItems.length - 1, Math.max(0, current + direction))
+      const item = resultItems[index]
+      if (!item) return undefined
+
+      const offerId = item.type === "offer"
+        ? item.offer.id
+        : (item.group.offers.find((offer) => offer.id === scheduleChoice[item.id]) ?? item.group.offers[0])?.id
+      if (!offerId) return undefined
+      if (index >= visibleCount) {
+        setWindowState({ key: viewKey, size: Math.max(index + 1, visibleCount + batchSize) })
+      }
+      if (offerId === selectedOfferId) {
+        revealOffer(viewportRef.current, offerId)
+      } else {
+        revealRef.current = offerId
+      }
+      return offerId
+    },
+  }), [batchSize, resultItems, scheduleChoice, selectedOfferId, viewKey, viewportRef, visibleCount])
+
+  useLayoutEffect(() => {
+    const offerId = revealRef.current
+    if (!offerId || offerId !== selectedOfferId) return
+    revealRef.current = null
+    revealOffer(viewportRef.current, offerId)
+  }, [selectedOfferId, viewportRef, visibleCount])
+
+  const handleChooseSchedule = useCallback((groupId: string, offerId: string) => {
+    setScheduleState((current) => ({
+      key: jobKey,
+      choice: { ...(current.key === jobKey ? current.choice : {}), [groupId]: offerId },
+      expandedGroupId: current.key === jobKey ? current.expandedGroupId : null,
+    }))
+    onSelectOffer(offerId)
+  }, [jobKey, onSelectOffer])
+
+  const handleToggleExpanded = useCallback((groupId: string) => {
+    setScheduleState((current) => ({
+      key: jobKey,
+      choice: current.key === jobKey ? current.choice : {},
+      expandedGroupId: current.key === jobKey && current.expandedGroupId === groupId ? null : groupId,
+    }))
+  }, [jobKey])
+
   const sentinelRef = useRef<HTMLDivElement | null>(null)
   const scrollStateRef = useRef({
     lastTop: 0,
@@ -936,48 +750,40 @@ function ResultsList({
     lockedUntil: 0,
     collapsed: false,
   })
-  /* 02 §9, last paragraph: past 300px of list scroll a way back to the top
-     appears. It belongs to the same mobile block as the retraction — on a desk
-     the list is short enough and the wheel is fast enough that it would be one
-     more thing floating over the results. */
   const [backToTopVisible, setBackToTopVisible] = useState(false)
 
-  /*
-   * A filter or a sort is a new list, and the reader reads a new list from its
-   * first row. The pager used to do this as a side effect of landing on page 1;
-   * with one continuous list it is said outright — and only for `viewKey`, so
-   * the progressive batches that re-render this list all the way through a
-   * search never move anybody.
-   *
-   * 02 §11: back to the top with no animated scroll (07 §0 rule 2).
-   */
+  const resetScrollState = useCallback(() => {
+    scrollStateRef.current = { lastTop: 0, accumulated: 0, direction: 0, lockedUntil: 0, collapsed: false }
+    onMobileToolsCollapsedChange(false)
+  }, [onMobileToolsCollapsedChange])
+
+  /* A filter or a sort is a new list, read from its first row, without an
+     animated scroll (02 §11). */
   const viewKeyRef = useRef(viewKey)
   useEffect(() => {
     if (viewKeyRef.current === viewKey) return
     viewKeyRef.current = viewKey
     setLeftFirstView(true)
     viewportRef.current?.scrollTo({ top: 0 })
-    scrollStateRef.current = {
-      lastTop: 0,
-      accumulated: 0,
-      direction: 0,
-      lockedUntil: 0,
-      collapsed: false,
-    }
     setBackToTopVisible(false)
-    onMobileToolsCollapsedChange(false)
-  }, [onMobileToolsCollapsedChange, viewKey, viewportRef])
+    resetScrollState()
+  }, [resetScrollState, viewKey, viewportRef])
+
+  useEffect(() => {
+    resetScrollState()
+  }, [jobKey, resetScrollState])
 
   const handleBackToTop = useCallback(() => {
     viewportRef.current?.scrollTo({ top: 0 })
     setBackToTopVisible(false)
   }, [viewportRef])
 
+  /* 02 §9: on a phone, 88px of scroll in one direction retracts or restores
+     the tools block, with 300ms of hysteresis after each change. */
   const handleResultsScroll = useCallback(() => {
     const viewport = viewportRef.current
-    if (!viewport) return
+    if (!viewport || !phone) return
     const top = viewport.scrollTop
-    if (!mobileCollapseEnabled) return
     setBackToTopVisible(top > BACK_TO_TOP_AFTER_PX)
     const state = scrollStateRef.current
     const now = performance.now()
@@ -1010,30 +816,11 @@ function ResultsList({
     state.collapsed = nextCollapsed
     state.lockedUntil = now + 300
     onMobileToolsCollapsedChange(nextCollapsed)
-  }, [mobileCollapseEnabled, onMobileToolsCollapsedChange, viewportRef])
+  }, [onMobileToolsCollapsedChange, phone, viewportRef])
 
-  useEffect(() => {
-    scrollStateRef.current = {
-      lastTop: 0,
-      accumulated: 0,
-      direction: 0,
-      lockedUntil: 0,
-      collapsed: false,
-    }
-    onMobileToolsCollapsedChange(false)
-  }, [onMobileToolsCollapsedChange, jobKey])
-
-  /*
-   * The window grows when the end of it comes within a column of the viewport.
-   *
-   * The observer is re-created whenever the sentinel is remounted or the batch
-   * changes, and `showMore` is re-created whenever the window moves, so one
-   * crossing adds exactly one batch: the sentinel is pushed a column further
-   * down by the cards that batch renders, and only comes back into range when
-   * the reader keeps going. Where there is no `IntersectionObserver` the list
-   * still works — it just opens at the size of the column, which is the whole
-   * list on every viewport small enough for that to be an issue.
-   */
+  /* The window grows when its end comes within a column of the viewport. The
+     observer is rebuilt whenever the window moves, so one crossing adds one
+     batch; without `IntersectionObserver` the list opens at the column size. */
   useEffect(() => {
     const sentinel = sentinelRef.current
     const viewport = viewportRef.current
@@ -1059,19 +846,8 @@ function ResultsList({
         className="fd-list-viewport"
         data-testid="results-list-body"
       >
-        {/* Keyed on the requested view, so a filter and a sort each cross-fade
-            in 140ms rather than animating a height (rule 2), while the batches
-            this list appends do not: they are the same view with more of it on
-            screen.
-
-            The cascade of 04 §9 belongs to *arrival* — the first cards of a new
-            search. A filter and a sort are repaints, and 04 §2 and §6 give
-            those the cross-fade alone; replaying seven staggered entries on
-            every filter click turns a refinement into an event. An appended
-            batch is left out of the cascade by its cap rather than by turning
-            the cascade off — 04 §9 stops at seven cards on a desk and six on a
-            phone, so a card appended past those positions is drawn the frame it
-            exists, which is what a card the reader has scrolled to has to be. */}
+        {/* Keyed on the requested view: a filter or a sort cross-fades, and the
+            arrival cascade (04 §9) plays only on a search's first view. */}
         <div
           key={viewKey}
           className="fd-results-list fd-motion-crossfade"
@@ -1085,22 +861,11 @@ function ResultsList({
                 group={item.group}
                 passengerCount={passengerCount}
                 showPerPerson={showPerPerson}
-                selectedOfferId={selectedOfferId}
+                selectedOfferId={selectedOfferId && resultListItemContainsOffer(item, selectedOfferId) ? selectedOfferId : undefined}
                 chosenOfferId={scheduleChoice[item.id]}
                 expanded={expandedGroupId === item.id}
-                onChooseSchedule={(offer) => {
-                  setScheduleState((current) => ({
-                    key: jobKey,
-                    choice: { ...(current.key === jobKey ? current.choice : {}), [item.id]: offer.id },
-                    expandedGroupId: current.key === jobKey ? current.expandedGroupId : null,
-                  }))
-                  onSelectOffer(offer)
-                }}
-                onToggleExpanded={() => setScheduleState((current) => ({
-                  key: jobKey,
-                  choice: current.key === jobKey ? current.choice : {},
-                  expandedGroupId: current.key === jobKey && current.expandedGroupId === item.id ? null : item.id,
-                }))}
+                onChooseSchedule={handleChooseSchedule}
+                onToggleExpanded={handleToggleExpanded}
                 onSelectOffer={onSelectOffer}
               />
             ) : (
@@ -1115,11 +880,8 @@ function ResultsList({
             )
           ))}
 
-          {/* In a partial search the skeleton fills only the rows still missing,
-              and it fills them at the end. Only while the whole list is still
-              shorter than the column: once it scrolls, the end of the list is
-              wherever the reader is, and bones down there would be a promise
-              about offers that have already arrived. */}
+          {/* In a partial search the bones fill only the rows still missing,
+              and only while the list is shorter than the column. */}
           {partial && !hasMore && visibleItems.length > 0 && visibleItems.length < columnRows && (
             <ResultsSkeleton
               rows={columnRows - visibleItems.length}
@@ -1129,11 +891,7 @@ function ResultsList({
           )}
         </div>
 
-        {/* The end of the window, one column of slack above the end of the
-            cards. Reaching it is what asks for the next batch — a scroll
-            handler would ask on every frame of every flick instead, and asking
-            is a state change. `aria-hidden` because it says nothing: what it
-            does is already announced by the count in the header. */}
+        {/* Reaching it asks for the next batch; it says nothing itself. */}
         {hasMore && (
           <div
             ref={sentinelRef}
@@ -1144,7 +902,7 @@ function ResultsList({
         )}
       </div>
 
-      {mobileCollapseEnabled && backToTopVisible && (
+      {phone && backToTopVisible && (
         <button
           type="button"
           className="fd-back-to-top fd-motion-emergente fd-focus-ring"
@@ -1155,12 +913,11 @@ function ResultsList({
           <AppIcon name="chevronUp" size={18} />
         </button>
       )}
-
     </div>
   )
 }
 
-function GroupCard({
+const GroupCard = memo(function GroupCard({
   group,
   passengerCount,
   showPerPerson,
@@ -1174,28 +931,27 @@ function GroupCard({
   group: ResultOfferGroup
   passengerCount: number
   showPerPerson: boolean
+  /** Set only when the selection is one of this group's offers. */
   selectedOfferId?: string
   chosenOfferId?: string
   expanded: boolean
-  onChooseSchedule: (offer: CanonicalOffer) => void
-  onToggleExpanded: () => void
-  onSelectOffer: (offer: CanonicalOffer) => void
+  onChooseSchedule: (groupId: string, offerId: string) => void
+  onToggleExpanded: (groupId: string) => void
+  onSelectOffer: (offerId: string) => void
 }) {
   const defaultOffer = group.offers[0]
   const shownOffer = group.offers.find((offer) => offer.id === chosenOfferId) ?? defaultOffer
-  if (!shownOffer) return null
+  if (!shownOffer || !defaultOffer) return null
 
-  const alternates = group.offers.filter((offer) => offer.id !== shownOffer.id)
+  const alternates = group.offers
+    .filter((offer) => offer.id !== shownOffer.id)
+    .map((offer) => alternateChip(offer, shownOffer))
+  const chooseSchedule = (offerId: string) => onChooseSchedule(group.id, offerId)
+  const toggleExpanded = () => onToggleExpanded(group.id)
 
   return (
-    /* The panel of 3b opens `absolute` out of this row and has to cover the
-       cards below it. Its own `z-30` only orders it inside this row, so the row
-       has to win against its siblings too — while any of them is a stacking
-       context (the entrance cascade makes every row one for the length of its
-       movement, and progressive results can start a fresh one over an open
-       panel), a row at `z-index: auto` loses to whatever comes after it in the
-       list. Only while open: a permanent z-index would order the whole list
-       against itself for a panel that is not there. */
+    /* The 3b panel opens `absolute` over the rows below, so the row lifts
+       itself above its siblings while it is open. */
     <div className={cn("relative min-w-0", expanded && "z-30")}>
       <ResultCard
         offer={shownOffer}
@@ -1203,10 +959,10 @@ function GroupCard({
         passengerCount={passengerCount}
         showPerPerson={showPerPerson}
         onSelect={onSelectOffer}
-        alternates={alternates.map((offer) => alternateChip(offer, shownOffer))}
+        alternates={alternates}
         alternateCount={alternates.length}
-        onSelectAlternate={onChooseSchedule}
-        onShowAllAlternates={onToggleExpanded}
+        onSelectAlternate={chooseSchedule}
+        onShowAllAlternates={toggleExpanded}
         scheduleChanged={Boolean(chosenOfferId) && chosenOfferId !== defaultOffer.id}
       />
 
@@ -1214,40 +970,37 @@ function GroupCard({
         <AllSchedulesPanel
           offers={group.offers}
           currentOfferId={shownOffer.id}
-          passengerCount={passengerCount}
           providerLabel={group.providerLabel}
-          onChoose={(offer) => {
-            onChooseSchedule(offer)
-            onToggleExpanded()
+          onChoose={(offerId) => {
+            chooseSchedule(offerId)
+            toggleExpanded()
           }}
-          onClose={onToggleExpanded}
+          onClose={toggleExpanded}
         />
       )}
     </div>
   )
+})
+
+function alternateChip(offer: CanonicalOffer, currentOffer: CanonicalOffer): AlternateSchedule {
+  return { offer, ...buildAlternateScheduleModel(offer, currentOffer) }
 }
 
-/**
- * A chip carries the departure time it would switch to, and — because the fare
- * is the reason to hesitate — the price difference against what is on the card.
- * When the fare is identical the chip shows the duration instead, which is the
- * next thing that decides it.
- */
-function alternateChip(offer: CanonicalOffer, currentOffer: CanonicalOffer): AlternateSchedule {
-  const model = buildAlternateScheduleModel(offer, currentOffer)
+function stepThrough(ids: string[], current: string | undefined, direction: 1 | -1): string | undefined {
+  if (ids.length === 0) return undefined
+  const index = current ? ids.indexOf(current) : -1
+  /* From no selection, ↓ takes the first and ↑ the last. */
+  if (index < 0) return direction === 1 ? ids[0] : ids[ids.length - 1]
+  return ids[Math.min(ids.length - 1, Math.max(0, index + direction))]
+}
 
-  return {
-    offer,
-    legAriaLabel: model.legAriaLabel,
-    time: model.time,
-    meta: model.meta,
-    /* Never on, by construction. 04 §5's «el chip elegido queda activo» lands
-       in the full list (`3b`), which draws every schedule including the current
-       one; the strip on the card is labelled «N horarios más» and holds only
-       the ones the card is not showing, so the chosen schedule is the card
-       itself. A chip marked active here would be a fourth schedule that does
-       not exist. */
-    selected: false,
+/* The card comes into view; when the list already had the focus, it moves there. */
+function revealOffer(container: HTMLElement | null, offerId: string) {
+  const card = container?.querySelector<HTMLElement>(`[data-offer-id="${CSS.escape(offerId)}"]`)
+  if (!card) return
+  card.scrollIntoView({ block: "nearest" })
+  if (container?.contains(document.activeElement)) {
+    card.querySelector<HTMLElement>(".fd-card__hit, .fd-month-card__hit")?.focus({ preventScroll: true })
   }
 }
 
@@ -1263,13 +1016,9 @@ function EmptyState({
   icon: "flight" | "x" | "sort" | "filtersOff" | "clock" | "alert"
   title: string
   body: string
-  /**
-   * The whole way out. Dropping every filter carries the `x`, like every
-   * remove; going back to edit the search (04 §8) is not a removal, so it
-   * carries the search glyph instead.
-   */
+  /** Removing filters carries the `x`; going back to the search carries its glyph. */
   action?: EmptyStateAction
-  /** The lesser way out: relax the one filter to blame (plate 2g). */
+  /** Relaxing the one filter to blame (plate 2g). */
   secondaryAction?: EmptyStateAction
 }) {
   return (
@@ -1304,30 +1053,14 @@ function EmptyState({
   )
 }
 
-
 /**
- * How many plain cards the column holds.
- *
- * Two consumers, one measurement. The skeleton draws exactly this many bones,
- * so the column the reader waits in is the column the results land in; and the
- * list opens on exactly this much, so the first screen is full and nothing
- * below it has been built yet.
- *
- * It is a count of *plain* rows — a group row is 1.62 of one — because that
- * is the unit both consumers work in. The list is scrollable on every armazón
- * now, so unlike the page it replaces this is not a fit to be exact about: it
- * is the amount that has to exist before the reader can scroll at all.
+ * How many plain cards the column holds — what the skeleton draws and what the
+ * list opens on. A group row counts `RESULT_GROUP_CARD_WEIGHT` plain rows.
+ * The viewport is a callback ref because the skeleton owns it first and the
+ * list takes it over, and each owner needs a measurement.
  */
 function useResultsColumnCapacity() {
   const viewportRef = useRef<HTMLDivElement | null>(null)
-  /*
-   * The column is measured through a callback ref rather than read off
-   * `viewportRef.current` alone, because the element the count belongs to is
-   * swapped under this hook: the skeleton owns it first and the list takes it
-   * over. The node is state, so a new one is a new measurement — read off the
-   * ref alone, the handover happened without one and the column kept the
-   * fallback of four.
-   */
   const [viewportNode, setViewportNode] = useState<HTMLDivElement | null>(null)
   const attachViewport = useCallback((node: HTMLDivElement | null) => {
     viewportRef.current = node
@@ -1344,13 +1077,7 @@ function useResultsColumnCapacity() {
     const update = () => {
       const list = node.querySelector<HTMLElement>(".fd-results-list")
       const availableHeight = Math.max(0, node.clientHeight - RESULTS_LIST_TOP_INSET_PX)
-      /*
-       * Real cards when there are any, skeleton rows when there are not. The
-       * skeleton is this card with the data switched off and stands at the same
-       * height by construction, which is what lets the count survive the
-       * handover: the column the bones were counted into is the column the
-       * results land in.
-       */
+      /* Real cards when there are any, bones otherwise: they share a height. */
       const realCards = list ? Array.from(list.querySelectorAll<HTMLElement>(".fd-card:not(.fd-card--skeleton)")) : []
       const cards = realCards.length > 0
         ? realCards
@@ -1360,14 +1087,7 @@ function useResultsColumnCapacity() {
         ? Number.parseFloat(listStyle.rowGap || listStyle.gap || `${RESULTS_CARD_GAP_PX}`)
         : RESULTS_CARD_GAP_PX
       const gap = Number.isFinite(measuredGap) ? measuredGap : RESULTS_CARD_GAP_PX
-      /*
-       * The unit is the plain card, because that is what a weight of 1 means.
-       * Taking the tallest row instead made one group row — 84px against 52 —
-       * the row height for the whole column: capacity fell by a third and the
-       * list opened well short of the bottom, which is exactly the empty space
-       * the desk was reported with. A column of nothing but groups is rare, and
-       * dividing by the group weight recovers the same unit from it.
-       */
+      /* The unit is the plain card; a column of groups divides back to it. */
       const plainCards = cards.filter((card) => !card.querySelector(".fd-card__alts"))
       const measuredHeight = plainCards.length > 0
         ? Math.min(...plainCards.map((card) => card.getBoundingClientRect().height))
@@ -1381,12 +1101,7 @@ function useResultsColumnCapacity() {
       }
 
       const rowHeight = rowHeightRef.current
-      /* Whole rows, and never the one that would be cut in half: 04 §7 asks the
-         skeleton for «never more rows than the real list», and a bone hanging
-         off the bottom of the column is the value jump it forbids. The list
-         opens on the same count and reaches the rest through the sentinel,
-         which starts a column below the fold and so fires straight away on a
-         column this exact. */
+      /* Whole rows only: a bone cut in half is the jump 04 §7 forbids. */
       const rows = Math.floor((availableHeight + gap) / (rowHeight + gap) + 0.01)
       const next = Math.max(1, Math.min(RESULTS_COLUMN_ROWS_MAX, rows))
 
@@ -1397,16 +1112,7 @@ function useResultsColumnCapacity() {
       frame = window.requestAnimationFrame(update)
     }
 
-    /*
-     * Measured now, not on the next frame. The rAF was the whole of the live
-     * defect: on the skeleton's first mount, and again when the arriving
-     * `searchJobId` re-keys this panel, the column was painted at
-     * `RESULTS_COLUMN_ROWS_FALLBACK` and only corrected a frame later — four
-     * bones in a column that holds eleven. Inside a layout effect the DOM is
-     * laid out and `clientHeight` is final, so the first answer is available
-     * before the first paint; the frame is only needed to coalesce the
-     * observer's later ones.
-     */
+    /* Now, not on the next frame: the first paint must hold the real count. */
     update()
 
     if (typeof ResizeObserver === "undefined") {
@@ -1427,15 +1133,6 @@ function useResultsColumnCapacity() {
   }, [viewportNode])
 
   return { columnRows, viewportRef, attachViewport }
-}
-
-function passengerCountForRequest(request: SearchJobResponse["request"] | undefined) {
-  if (!request) return 1
-  return Math.max(1, request.adults + request.children + request.infants)
-}
-
-function canShowPerPersonForRequest(request: SearchJobResponse["request"] | undefined) {
-  return Boolean(request && request.children === 0 && request.infants === 0)
 }
 
 export const ResultsPanel = memo(ResultsPanelBase)

@@ -24,7 +24,7 @@ export type LocationSuggestion = CoreLocationSuggestion & {
   providerIds?: string[]
 }
 
-// Frontend-only: flat form/share state converted to the core SearchRequest in lib/api.ts.
+// The form's flat request; `lib/api.ts` converts it to the core request.
 export interface SearchRequest {
   origin: string
   destination: string
@@ -84,7 +84,7 @@ export type PurchasePath = Omit<
 
 export type ComparisonMetrics = Partial<CoreComparisonMetrics>
 
-// Frontend-only facade: core offer plus normalized display fields used by result cards.
+// The core offer as the browser receives it, plus the display fields `lib/api.ts` derives.
 export type CanonicalOffer = Partial<Omit<
   CoreCanonicalOffer,
   | "comparisonMetrics"
@@ -95,6 +95,8 @@ export type CanonicalOffer = Partial<Omit<
   | "providerSource"
   | "purchasePaths"
   | "redirectVerification"
+  | "rawRefs"
+  | "signature"
 >> & {
   id: string
   sourceOfferId?: string
@@ -110,12 +112,7 @@ export type CanonicalOffer = Partial<Omit<
   departureDate: string
   arrivalDate?: string
   returnDate?: string
-  duration: string
-  stops: number
-  stopMeta?: string
   baggage?: BaggageSummary
-  baggageLabel?: string
-  hasCheckedBaggage?: boolean
   fareMeta?: FareMeta
   priceConfidence?: OpenString<CoreCanonicalOffer["priceConfidence"]>
   priceStatus?: OpenString<CoreCanonicalOffer["priceStatus"]>
@@ -128,7 +125,7 @@ export type CanonicalOffer = Partial<Omit<
   price: CoreCanonicalOffer["price"]
 }
 
-// Frontend-only: month-view aggregation produced in the browser from search jobs.
+// A month of the migratory sweep, aggregated in the browser from its search job.
 export interface MigrationMonthSummary {
   key: string
   label: string
@@ -155,12 +152,13 @@ export type ProviderMeta = Omit<CoreSearchResponse["providerMeta"], "coverageMod
   coverageMode: OpenString<CoreSearchResponse["providerMeta"]["coverageMode"]>
 }
 
+/* The backend sends every offer once, in `allOffers`; what a list draws is
+   derived from it on this side. */
 export interface SearchResponse extends Omit<
   CoreSearchResponse,
   "allOffers" | "matrix" | "offers" | "providerDiagnostics" | "providerMeta" | "searchMeta"
 > {
-  offers: CanonicalOffer[]
-  allOffers?: CanonicalOffer[]
+  allOffers: CanonicalOffer[]
   searchMeta: SearchMeta
   providerMeta: ProviderMeta
   providerDiagnostics?: ProviderDiagnostics[]
@@ -176,12 +174,7 @@ export interface SearchJobResponse extends SearchResponse {
   migrationMonths?: MigrationMonthSummary[]
   diagnosticLog?: string[]
   unchanged?: boolean
-  /**
-   * Why the job ended in `failed`. The backend has always sent it; leaving it
-   * undeclared here is what kept the shell from being able to say that a search
-   * failed at all, so a job that died on admission was drawn as a route with no
-   * flights.
-   */
+  /** Why the job ended in `failed`. */
   error?: string
 }
 
@@ -202,14 +195,8 @@ export interface MatrixCell extends Omit<
   offer?: CanonicalOffer
 }
 
-/*
- * The order is a contract, not a screen preference: the criterion travels in
- * `POST /api/search` and the backend is what sorts. So the type is not written
- * out again here as a union of its own — it comes from the same catalogue that
- * validates the request, the way `airline-names` and `location-display` come
- * from the core. A hand-copied union is what leaves the frontend offering an
- * order the server does not know how to serve.
- */
+/* The order travels in `POST /api/search` and is validated against this same
+   catalogue, so the browser cannot offer an order the server cannot serve. */
 export { SORT_MODES }
 
 export type SortMode = (typeof SORT_MODES)[number]

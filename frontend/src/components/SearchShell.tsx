@@ -1,4 +1,19 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type MouseEvent, type RefObject } from "react"
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type KeyboardEvent,
+  type MouseEvent,
+  type RefObject,
+} from "react"
 import { createPortal } from "react-dom"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup, ButtonGroupText } from "@/components/ui/button-group"
@@ -16,299 +31,159 @@ import { Sheet } from "@/components/ui/sheet"
 import { TOPBAR_SEARCH_CONTROLS_ID } from "@/components/TopBar"
 import { AppIcon, type AppIconName } from "@/components/ui/app-icon"
 import { MIN_MATCH_QUERY, useAutocomplete } from "@/hooks/useAutocomplete"
-import { clampIsoDate, isIsoDate } from "@/lib/iso-date"
+import { MIGRATION_MONTH_LIMIT } from "@/lib/api"
+import { formatDate, formatDateShortYear, monthName, plural } from "@/lib/format"
+import { addDays, addMonths, clampIsoDate, diffDays, isIsoDate, isIsoMonth, maxIsoDate, minIsoDate } from "@/lib/iso-date"
 import {
   emptyLocationUsageSuggestions,
   getLocationUsageSuggestions,
   type LocationUsageSuggestionGroups,
 } from "@/lib/location-usage-suggestions"
+import { SEARCH_DATE_POLICY, SEARCH_LIMITS } from "@/lib/runtime-config"
 import { returnExitDuration, useLeaveWindow } from "@/lib/search-choreography"
 import { cn } from "@/lib/utils"
-import type { LocationSuggestion, SearchRequest, SortMode } from "@/types"
+import type { LocationSuggestion, SearchRequest } from "@/types"
 
-const DATE_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
-  day: "2-digit",
-  month: "short",
-  year: "numeric",
-  timeZone: "UTC",
-})
-const COMPACT_POLICY_DATE_FORMATTER = new Intl.DateTimeFormat("es-PE", {
-  day: "2-digit",
-  month: "short",
-  year: "2-digit",
-  timeZone: "UTC",
-})
-const MIGRATION_MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat("es-PE", {
-  month: "long",
-  year: "numeric",
-  timeZone: "UTC",
-})
-const MIGRATION_MONTH_NAME_FORMATTER = new Intl.DateTimeFormat("es-PE", {
-  month: "long",
-  timeZone: "UTC",
-})
-/* One 52px field (plate 1a) shared by Origen, Destino, Pasajeros and both halves
-   of the merged date control, so the value baseline lands on the same y in all
-   six. Geometry lives in `.fd-field-control` / `.fd-field-value`. */
+/* One 52px field (plate 1a) shared by Origen, Destino, Pasajeros and both
+   halves of the date control, so the value baseline lands on one y. */
 const SEARCH_FIELD_CONTROL_CLASS = "fd-field-control w-full"
 const SEARCH_FIELD_VALUE_CLASS = "fd-field-value"
-const SEARCH_MAX_FUTURE_DAYS_FALLBACK = 365
-/* Used only if the server did not inject the limits; they mirror the backend's
-   own ceilings so the fallback advertises the truth rather than a guess. */
-const MAX_STAY_NIGHTS_FALLBACK = 90
-const MAX_PASSENGERS_FALLBACK = 9
-const MAX_LAP_INFANTS_PER_ADULT_FALLBACK = 1
-
-/* Resolved once at module scope: the server writes `__FLYDESK_RUNTIME__` into
-   `<head>` and this bundle is the last script in `<body>`, so the value is
-   already there — and it cannot change during a session. */
 const {
   maxStayNights: MAX_STAY_NIGHTS,
   maxPassengers: MAX_PASSENGERS,
   maxLapInfantsPerAdult: MAX_LAP_INFANTS_PER_ADULT,
-} = getRuntimeSearchLimits()
+} = SEARCH_LIMITS
 const MAX_CHILDREN = 8
-/* The Migratorio sweep is capped at twelve months, which is also the length of
-   the search window, so the picker can never offer a range it cannot search. */
-const MAX_MIGRATION_MONTHS = 12
-
-/*
- * The plural of a counter, in one place.
- *
- * This file built it two ways — `n === 1 ? "" : "s"` in the collapsed summary
- * and `n > 1 ? "s" : ""` in the passenger trigger. For every n ≥ 1 they agree,
- * so the divergence never showed; they stop agreeing the moment a counter
- * reaches zero, and then one of them writes «0 pasajero». Two expressions for
- * one rule is one too many even while they happen to match.
- */
-function plural(count: number, singular: string): string {
-  return count === 1 ? singular : `${singular}s`
+/* The twelve months a sweep can reach, from the month of the first search
+   date: the picker never offers a range the search refuses. */
+const MIGRATION_MONTHS = Array.from(
+  { length: MIGRATION_MONTH_LIMIT },
+  (_, index) => addMonths(SEARCH_DATE_POLICY.minSearchDate.slice(0, 7), index),
+)
+const UNTOUCHED: Record<SearchTouchedField, boolean> = {
+  origin: false,
+  destination: false,
+  departureDate: false,
+  returnDate: false,
+  passengers: false,
+  migrationMonths: false,
 }
 
 type SearchModeControl = "exact" | "flexible" | "migration"
 type SearchTouchedField = "origin" | "destination" | "departureDate" | "returnDate" | "passengers" | "migrationMonths"
 type SearchLocationMeta = Partial<Pick<LocationSuggestion, "label" | "countryCode">>
-type MigrationMonthOption = {
-  key: string
-  label: string
-  monthLabel: string
-  shortLabel: string
-  disabled: boolean
-}
+
+/** The form's request, or `null` while it could not be searched. */
+export type SearchDraftHandle = { read: () => SearchRequest | null }
 
 interface SearchShellProps {
-  onSearch: (req: SearchRequest, sort?: SortMode) => void
-  onCancelSearch?: () => void
+  /** What the form starts from. Another request is loaded by remounting the shell. */
+  seed: SearchRequest | null
+  draftRef: RefObject<SearchDraftHandle | null>
+  onDraftValidityChange: (valid: boolean) => void
+  onSearch: (request: SearchRequest) => void
+  onCancelSearch: () => void
   loading: boolean
-  loadingLabel?: string
-  controlsPlacement?: "inline" | "topbar"
-  compactActive?: boolean
-  mobilePresentation?: boolean
+  controlsPlacement: "inline" | "topbar"
+  compactActive: boolean
+  mobilePresentation: boolean
   /** The foot of the idle screen, where 03 §8 puts the policy lines. */
-  policyFootTarget?: HTMLElement | null
-  showLocationUsageSuggestions?: boolean
-  /** The idle screen itself, which is the only place the policy line belongs. */
-  idle?: boolean
+  policyFootTarget: HTMLElement | null
+  /** The idle screen: the usage shortcuts and the policy lines belong to it alone. */
+  idle: boolean
   /** The 120ms of 07 §1 during which the frequent chips are still on screen. */
-  usageSuggestionsLeaving?: boolean
-  /** True once the workspace is on screen, on any armazón. */
-  workspaceActive?: boolean
+  usageSuggestionsLeaving: boolean
+  workspaceActive: boolean
   /** 11 §2.4 · the agent has gone back to edit, with the results behind. */
-  editing?: boolean
-  onEditingChange?: (editing: boolean) => void
-  /** The stage FLIPs these into the title bar; it needs to be able to measure them. */
-  controlsRef?: RefObject<HTMLDivElement | null>
-  syncedRequest?: SearchRequest | null
-  resetToken?: number
-  onSearchConfigDraftChange?: (request: SearchRequest | null) => void
+  editing: boolean
+  onEditingChange: (editing: boolean) => void
+  /** The stage FLIPs these into the title bar and measures them. */
+  controlsRef: RefObject<HTMLDivElement | null>
 }
 
-export function SearchShell({
+export const SearchShell = memo(function SearchShell({
+  seed,
+  draftRef,
+  onDraftValidityChange,
   onSearch,
   onCancelSearch,
   loading,
-  loadingLabel = "Buscando",
-  controlsPlacement = "inline",
-  compactActive = false,
-  mobilePresentation = false,
-  policyFootTarget = null,
-  showLocationUsageSuggestions = false,
-  idle = false,
-  usageSuggestionsLeaving = false,
-  workspaceActive = false,
-  editing = false,
+  controlsPlacement,
+  compactActive,
+  mobilePresentation,
+  policyFootTarget,
+  idle,
+  usageSuggestionsLeaving,
+  workspaceActive,
+  editing,
   onEditingChange,
   controlsRef,
-  syncedRequest = null,
-  resetToken = 0,
-  onSearchConfigDraftChange,
 }: SearchShellProps) {
-  const [mode, setMode] = useState<SearchModeControl>("exact")
-  const [trip, setTrip] = useState<"round-trip" | "one-way">("round-trip")
-  const [originCode, setOriginCode] = useState("")
-  const [destCode, setDestCode] = useState("")
+  const [mode, setMode] = useState<SearchModeControl>(() => (seed ? modeFromSearchRequest(seed) : "exact"))
+  const [trip, setTrip] = useState<"round-trip" | "one-way">(() => (
+    !seed ? "round-trip" : seed.searchMode === "month-view" ? "one-way" : seed.tripType
+  ))
+  const [originCode, setOriginCode] = useState(() => seedLocationCode(seed?.origin))
+  const [destCode, setDestCode] = useState(() => seedLocationCode(seed?.destination))
   /** Bumped by `swapRoute`, so the two field values re-enter with movement 10. */
   const [swapToken, setSwapToken] = useState(0)
-  const [originMeta, setOriginMeta] = useState<SearchLocationMeta>({})
-  const [destinationMeta, setDestinationMeta] = useState<SearchLocationMeta>({})
-  const [departureDate, setDepartureDate] = useState("")
-  const [returnDate, setReturnDate] = useState("")
-  const [stayNights, setStayNights] = useState(7)
-  const [adults, setAdults] = useState(1)
-  const [children, setChildren] = useState(0)
-  const [infants, setInfants] = useState(0)
+  const [originMeta, setOriginMeta] = useState<SearchLocationMeta>(() => ({
+    label: seed?.originLabel,
+    countryCode: seed?.originCountryCode,
+  }))
+  const [destinationMeta, setDestinationMeta] = useState<SearchLocationMeta>(() => ({
+    label: seed?.destinationLabel,
+    countryCode: seed?.destinationCountryCode,
+  }))
+  const [departureDate, setDepartureDate] = useState(() => (seed ? dateStartFromSearchRequest(seed) : ""))
+  const [returnDate, setReturnDate] = useState(() => (seed ? dateEndFromSearchRequest(seed) : ""))
+  const [stayNights, setStayNights] = useState(() => clampStayNights(seed?.stayNights ?? 7))
+  const [seededPassengers] = useState(() => seedPassengers(seed))
+  const [adults, setAdults] = useState(seededPassengers.adults)
+  const [children, setChildren] = useState(seededPassengers.children)
+  const [infants, setInfants] = useState(seededPassengers.infants)
   const [paxOpen, setPaxOpen] = useState(false)
-  const [usageSuggestions, setUsageSuggestions] = useState<LocationUsageSuggestionGroups>(() => emptyLocationUsageSuggestions())
-  const datePolicy = useMemo(() => getRuntimeSearchDatePolicy(), [])
-  const migrationMonthOptions = useMemo(
-    () => buildMigrationMonthOptions(datePolicy.minSearchDate),
-    [datePolicy.minSearchDate],
+  const [usageSuggestions, setUsageSuggestions] = useState<LocationUsageSuggestionGroups>(emptyLocationUsageSuggestions)
+  const [selectedMigrationMonths, setSelectedMigrationMonths] = useState<string[]>(
+    () => resolveMigrationMonthSelection(seed?.migrationMonths),
   )
-  const [selectedMigrationMonths, setSelectedMigrationMonths] = useState<string[]>([])
   const migrationMonthRange = useMemo(
-    () => resolveMigrationMonthRange(selectedMigrationMonths, migrationMonthOptions),
-    [migrationMonthOptions, selectedMigrationMonths],
+    () => resolveMigrationMonthRange(selectedMigrationMonths),
+    [selectedMigrationMonths],
   )
-  /* The pickable window, taken from the options the date policy produced rather
-     than recomputed — one source for "how far ahead can this search reach". */
-  const migrationMonthBounds = useMemo(() => {
-    const selectable = migrationMonthOptions.filter((month) => !month.disabled)
-    return {
-      min: selectable[0]?.key ?? migrationMonthOptions[0]?.key ?? "",
-      max: selectable[selectable.length - 1]?.key ?? migrationMonthOptions[migrationMonthOptions.length - 1]?.key ?? "",
-    }
-  }, [migrationMonthOptions])
-  const lastResetTokenRef = useRef(resetToken)
-  const [touched, setTouched] = useState<Record<SearchTouchedField, boolean>>({
-    origin: false,
-    destination: false,
-    departureDate: false,
-    returnDate: false,
-    passengers: false,
-    migrationMonths: false,
-  })
+  const [touched, setTouched] = useState<Record<SearchTouchedField, boolean>>(UNTOUCHED)
   const validDepartureDate = isIsoDate(departureDate) ? departureDate : ""
-  const returnMinDate = maxIsoDate(datePolicy.minSearchDate, validDepartureDate || datePolicy.minSearchDate)
-  /* The merged control owns the stay ceiling now: it derives the return's upper
-     bound from the departure the agent just picked, in one place. */
+  const returnMinDate = maxIsoDate(SEARCH_DATE_POLICY.minSearchDate, validDepartureDate || SEARCH_DATE_POLICY.minSearchDate)
   const departureLabel = mode === "flexible" ? "Salida desde" : "Salida"
   const endDateLabel = mode === "flexible" ? "Salida hasta" : "Regreso"
 
   const origin = useAutocomplete((suggestion) => {
     setOriginCode(suggestion.code)
     setOriginMeta({ label: suggestion.label, countryCode: suggestion.countryCode })
-  })
+  }, seedLocationCode(seed?.origin))
   const destination = useAutocomplete((suggestion) => {
     setDestCode(suggestion.code)
     setDestinationMeta({ label: suggestion.label, countryCode: suggestion.countryCode })
+  }, seedLocationCode(seed?.destination))
+
+  /* A seeded code becomes the station it names, once, when the form loads. */
+  const resolveSeededLocations = useEffectEvent(() => {
+    void origin.resolveCurrentQuery()
+    void destination.resolveCurrentQuery()
   })
-  const setOriginQuery = origin.setQuery
-  const setDestinationQuery = destination.setQuery
-  const resolveOriginQuery = origin.resolveCurrentQuery
-  const resolveDestinationQuery = destination.resolveCurrentQuery
   useEffect(() => {
-    if (!syncedRequest) return
-
-    const frame = window.requestAnimationFrame(() => {
-      onEditingChange?.(false)
-      const nextMode = modeFromSearchRequest(syncedRequest)
-      const nextTrip = syncedRequest.searchMode === "month-view" ? "one-way" : syncedRequest.tripType
-      const nextOrigin = syncedRequest.origin.toUpperCase().trim()
-      const nextDestination = syncedRequest.destination.toUpperCase().trim()
-
-      setMode(nextMode)
-      setTrip(nextTrip)
-      setOriginCode(nextOrigin)
-      setDestCode(nextDestination)
-      setOriginMeta({ label: syncedRequest.originLabel, countryCode: syncedRequest.originCountryCode })
-      setDestinationMeta({ label: syncedRequest.destinationLabel, countryCode: syncedRequest.destinationCountryCode })
-      setOriginQuery(nextOrigin)
-      setDestinationQuery(nextDestination)
-      setDepartureDate(dateStartFromSearchRequest(syncedRequest))
-      setReturnDate(dateEndFromSearchRequest(syncedRequest))
-      setStayNights(clampStayNights(syncedRequest.stayNights ?? 7))
-      setSelectedMigrationMonths(resolveMigrationMonthSelection(syncedRequest.migrationMonths, migrationMonthOptions))
-      const nextAdults = clampInteger(syncedRequest.adults, 1, MAX_PASSENGERS, 1)
-      const nextChildren = clampInteger(syncedRequest.children, 0, Math.max(0, MAX_PASSENGERS - nextAdults), 0)
-      const nextInfants = clampInteger(
-        syncedRequest.infants,
-        0,
-        Math.min(
-          nextAdults * MAX_LAP_INFANTS_PER_ADULT,
-          Math.max(0, MAX_PASSENGERS - nextAdults - nextChildren),
-        ),
-        0,
-      )
-      setAdults(nextAdults)
-      setChildren(nextChildren)
-      setInfants(nextInfants)
-      setTouched({
-        origin: false,
-        destination: false,
-        departureDate: false,
-        returnDate: false,
-        passengers: false,
-        migrationMonths: false,
-      })
-      void resolveOriginQuery()
-      void resolveDestinationQuery()
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [migrationMonthOptions, onEditingChange, resolveDestinationQuery, resolveOriginQuery, setDestinationQuery, setOriginQuery, syncedRequest])
+    if (seed) resolveSeededLocations()
+  }, [seed])
 
   useEffect(() => {
-    if (!showLocationUsageSuggestions || loading) return
+    if (!idle || loading) return
 
     const controller = new AbortController()
-    void getLocationUsageSuggestions({ signal: controller.signal })
-      .then((nextSuggestions) => {
-        if (!controller.signal.aborted) {
-          setUsageSuggestions(nextSuggestions)
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setUsageSuggestions(emptyLocationUsageSuggestions())
-        }
-      })
-
-    return () => controller.abort()
-  }, [loading, showLocationUsageSuggestions])
-
-  useEffect(() => {
-    if (resetToken === lastResetTokenRef.current) return
-    lastResetTokenRef.current = resetToken
-
-    const frame = window.requestAnimationFrame(() => {
-      setMode("exact")
-      setTrip("round-trip")
-      setOriginCode("")
-      setDestCode("")
-      setOriginMeta({})
-      setDestinationMeta({})
-      setOriginQuery("")
-      setDestinationQuery("")
-      setDepartureDate("")
-      setReturnDate("")
-      setStayNights(7)
-      setSelectedMigrationMonths([])
-      setAdults(1)
-      setChildren(0)
-      setInfants(0)
-      setPaxOpen(false)
-      setTouched({
-        origin: false,
-        destination: false,
-        departureDate: false,
-        returnDate: false,
-        passengers: false,
-        migrationMonths: false,
-      })
-      onSearchConfigDraftChange?.(null)
+    void getLocationUsageSuggestions({ signal: controller.signal }).then((nextSuggestions) => {
+      if (!controller.signal.aborted) setUsageSuggestions(nextSuggestions)
     })
-
-    return () => window.cancelAnimationFrame(frame)
-  }, [onSearchConfigDraftChange, resetToken, setDestinationQuery, setOriginQuery])
+    return () => controller.abort()
+  }, [idle, loading])
 
   const updateAdults = (nextAdults: number) => {
     const clampedAdults = Math.max(1, Math.min(nextAdults, MAX_PASSENGERS))
@@ -345,15 +220,15 @@ export function SearchShell({
   }
 
   const handleDepartureDateChange = (nextDate: string) => {
-    const clampedDate = clampIsoDate(nextDate, datePolicy.minSearchDate, datePolicy.maxSearchDate)
+    const clampedDate = clampIsoDate(nextDate, SEARCH_DATE_POLICY.minSearchDate, SEARCH_DATE_POLICY.maxSearchDate)
     /* 11 §2.2 · «el aspa borra **las dos** fechas». Emptying the departure is a
        gesture of the ficha, not an edge case, and there is no ceiling to derive
        from a date that no longer exists: `addDays("")` builds an Invalid Date
        and `toISOString()` throws, which aborted the update and left the control
        showing the dates the agent had just asked to remove. */
     const maxReturnDate = mode === "exact" && trip === "round-trip" && isIsoDate(clampedDate)
-      ? minIsoDate(datePolicy.maxSearchDate, addDays(clampedDate, MAX_STAY_NIGHTS))
-      : datePolicy.maxSearchDate
+      ? minIsoDate(SEARCH_DATE_POLICY.maxSearchDate, addDays(clampedDate, MAX_STAY_NIGHTS))
+      : SEARCH_DATE_POLICY.maxSearchDate
     setDepartureDate(clampedDate)
     setReturnDate((current) => {
       if (!current) return current
@@ -371,7 +246,7 @@ export function SearchShell({
       setReturnDate((current) => clampIsoDate(
         current,
         returnMinDate,
-        minIsoDate(datePolicy.maxSearchDate, addDays(departureDate, MAX_STAY_NIGHTS)),
+        minIsoDate(SEARCH_DATE_POLICY.maxSearchDate, addDays(departureDate, MAX_STAY_NIGHTS)),
       ))
     }
   }
@@ -389,7 +264,7 @@ export function SearchShell({
   /* The month picker hands back a range; the request still travels as the list
      of months it covers, because that is what the backend fans out over. */
   const handleMigrationRangeChange = ({ startMonth, endMonth }: { startMonth: string; endMonth: string }) => {
-    setSelectedMigrationMonths(buildMigrationMonthRangeSelection(startMonth, endMonth, migrationMonthOptions))
+    setSelectedMigrationMonths(buildMigrationMonthRangeSelection(startMonth, endMonth))
     setTouched((current) => ({ ...current, migrationMonths: true }))
   }
 
@@ -397,7 +272,7 @@ export function SearchShell({
      against the new departure happens in one place instead of two. */
   const handleDateRangeChange = ({ startDate, endDate }: { startDate: string; endDate: string }) => {
     handleDepartureDateChange(startDate)
-    setReturnDate(endDate ? clampIsoDate(endDate, datePolicy.minSearchDate, datePolicy.maxSearchDate) : "")
+    setReturnDate(endDate ? clampIsoDate(endDate, SEARCH_DATE_POLICY.minSearchDate, SEARCH_DATE_POLICY.maxSearchDate) : "")
     setTouched((current) => ({ ...current, departureDate: true, returnDate: Boolean(endDate) || current.returnDate }))
   }
 
@@ -460,20 +335,20 @@ export function SearchShell({
     trip,
     mode,
     migrationMonths: selectedMigrationMonths,
-    minDepartureDate: datePolicy.minSearchDate,
-    maxDate: datePolicy.maxSearchDate,
+    minDepartureDate: SEARCH_DATE_POLICY.minSearchDate,
+    maxDate: SEARCH_DATE_POLICY.maxSearchDate,
     minReturnDate: returnMinDate,
     maxStayNights: MAX_STAY_NIGHTS,
   })
 
   const buildRequest = useCallback((origin: string, destination: string): SearchRequest => {
     const flexibleDepartureStart = mode === "migration"
-      ? datePolicy.minSearchDate
+      ? SEARCH_DATE_POLICY.minSearchDate
       : mode === "flexible"
-      ? clampIsoDate(departureDate, datePolicy.minSearchDate, datePolicy.maxSearchDate)
+      ? clampIsoDate(departureDate, SEARCH_DATE_POLICY.minSearchDate, SEARCH_DATE_POLICY.maxSearchDate)
       : undefined
     const flexibleDepartureEnd = mode === "flexible"
-      ? clampIsoDate(returnDate, datePolicy.minSearchDate, datePolicy.maxSearchDate)
+      ? clampIsoDate(returnDate, SEARCH_DATE_POLICY.minSearchDate, SEARCH_DATE_POLICY.maxSearchDate)
       : undefined
 
     return {
@@ -503,8 +378,6 @@ export function SearchShell({
   }, [
     adults,
     children,
-    datePolicy.maxSearchDate,
-    datePolicy.minSearchDate,
     departureDate,
     infants,
     mode,
@@ -517,46 +390,24 @@ export function SearchShell({
   ])
 
   const hasValidationError = hasBlockingValidationError(validation)
+  const draftOrigin = normalizeLocationCandidate(originCode || origin.query)
+  const draftDestination = normalizeLocationCandidate(destCode || destination.query)
 
+  /* The shell reads the draft when it copies the configuration; only whether
+     one exists is lifted, so typing never re-renders the workspace. A form
+     without validation errors has two valid stations. */
+  useImperativeHandle(draftRef, () => ({
+    read: () => (hasValidationError ? null : buildRequest(draftOrigin, draftDestination)),
+  }), [buildRequest, draftDestination, draftOrigin, hasValidationError])
   useEffect(() => {
-    if (hasValidationError) {
-      onSearchConfigDraftChange?.(null)
-      return
-    }
-
-    const draftOrigin = normalizeLocationCandidate(originCode || origin.query)
-    const draftDestination = normalizeLocationCandidate(destCode || destination.query)
-    const draft = isValidLocationCandidate(draftOrigin) && isValidLocationCandidate(draftDestination)
-      ? buildRequest(draftOrigin, draftDestination)
-      : null
-
-    onSearchConfigDraftChange?.(draft)
-  }, [
-    adults,
-    children,
-    datePolicy.maxSearchDate,
-    datePolicy.minSearchDate,
-    departureDate,
-    destCode,
-    destination.query,
-    infants,
-    hasValidationError,
-    buildRequest,
-    mode,
-    onSearchConfigDraftChange,
-    origin.query,
-    originCode,
-    returnDate,
-    selectedMigrationMonths,
-    stayNights,
-    trip,
-  ])
+    onDraftValidityChange(!hasValidationError)
+  }, [hasValidationError, onDraftValidityChange])
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
 
     if (loading) {
-      onCancelSearch?.()
+      onCancelSearch()
       return
     }
 
@@ -592,8 +443,8 @@ export function SearchShell({
       trip,
       mode,
       migrationMonths: selectedMigrationMonths,
-      minDepartureDate: datePolicy.minSearchDate,
-      maxDate: datePolicy.maxSearchDate,
+      minDepartureDate: SEARCH_DATE_POLICY.minSearchDate,
+      maxDate: SEARCH_DATE_POLICY.maxSearchDate,
       minReturnDate: returnMinDate,
       maxStayNights: MAX_STAY_NIGHTS,
     })
@@ -608,7 +459,6 @@ export function SearchShell({
       originCountryCode: resolvedOrigin?.countryCode ?? originMeta.countryCode,
       destinationCountryCode: resolvedDestination?.countryCode ?? destinationMeta.countryCode,
     }
-    onEditingChange?.(false)
     onSearch(nextRequest)
   }
 
@@ -623,32 +473,17 @@ export function SearchShell({
     ? validation.returnDate
     : undefined
   const visiblePassengerError = touched.passengers ? validation.passengers : undefined
-  const shouldShowUsageSuggestions = showLocationUsageSuggestions && !loading
+  const shouldShowUsageSuggestions = idle && !loading
   const mobileSummaryExit = useLeaveWindow(compactActive && !editing, returnExitDuration)
-  /* The chips outlive the screen they belong to by the 180ms of their row in
-     07 §1 — but only the chips. The space the fields reserve for them is
-     released at once, because what the table has travelling upward is the block
-     of fields, and it cannot travel while it is still holding their height. */
-  /* The row answers to the screen, not to the field's focus. It used to be
-     hidden while a field was open, on the assumption that the panel below the
-     field replaces it — but the panel only opens on an empty field or on real
-     matches, so going back to correct a *finished* form (11 §2.4) emptied the
-     strip and left a blank band where the chips had been: no panel, no chips,
-     and the row's height held open by the reserve. The chips stay pressable
-     while the agent edits, and when a panel does open it covers them, which is
-     the one case where hiding them changed nothing anybody could see. */
+  /* The chips outlive the idle screen by their 180ms row of 07 §1, while the
+     space reserved for them is released at once so the fields can travel. They
+     answer to the screen, not to a field's focus: an open panel covers them. */
   const shouldRenderQuickChips = shouldShowUsageSuggestions || usageSuggestionsLeaving
   const reserveIdleHelperSpace = shouldShowUsageSuggestions
-  const reserveOriginSuggestionSpace = shouldShowUsageSuggestions
-  const reserveDestinationSuggestionSpace = shouldShowUsageSuggestions
   const mobileQuickSuggestions = Array.from(new Set([
     ...usageSuggestions.frequent.origin,
     ...usageSuggestions.frequent.destination,
   ])).slice(0, 5)
-  /* No transition on the tracks: no plate animates a grid re-flowing. Plate 2h
-     moves the block of fields with `translateY`, and the tracks simply arrive
-     at their new widths. */
-  const searchGridClassName = "fd-search-grid"
   const visibleMigrationMonthsError = mode === "migration" && touched.migrationMonths
     ? validation.migrationMonths
     : undefined
@@ -676,8 +511,8 @@ export function SearchShell({
 
   const dateSummary = mode === "migration"
     ? [
-        migrationMonthRange.start ? formatMigrationMonthName(migrationMonthRange.start) : "Meses",
-        migrationMonthRange.end ? formatMigrationMonthName(migrationMonthRange.end) : "seleccionar",
+        migrationMonthRange.start ? monthName(migrationMonthRange.start) : "Meses",
+        migrationMonthRange.end ? monthName(migrationMonthRange.end) : "seleccionar",
       ].join(" – ")
     : [departureDate, trip === "round-trip" ? returnDate : null]
         .filter((value): value is string => Boolean(value))
@@ -695,7 +530,7 @@ export function SearchShell({
       type="button"
       className="fd-mobile-search-summary fd-focus-ring"
       aria-label="Editar búsqueda"
-      onClick={() => onEditingChange?.(true)}
+      onClick={() => onEditingChange(true)}
     >
       {/*
         * Two blocks, not one line. `Movil.dc.html` says why in as many words:
@@ -810,7 +645,7 @@ export function SearchShell({
 
         <form onSubmit={handleSubmit}>
           <div
-            className={searchGridClassName}
+            className="fd-search-grid"
             /* 11 §2.4 · «Editar la búsqueda (escritorio: clic en un campo)».
                Capture, because the focus lands on an input three components
                down and this only needs to know that it happened. The CTA is in
@@ -825,7 +660,7 @@ export function SearchShell({
                  popover, not a box you retype, and its focus must not send the
                  segments back down to the form. */
               if (target.closest("[data-fd-search-menu]")) return
-              onEditingChange?.(true)
+              onEditingChange(true)
             }}
           >
             <div className="fd-route-fields">
@@ -861,7 +696,7 @@ export function SearchShell({
               quickSuggestionsLeavingIdle={usageSuggestionsLeaving}
               onQuickSuggestionSelect={applyOriginUsageSuggestion}
               reserveHelperSpace={reserveIdleHelperSpace && !mobilePresentation}
-              reserveSuggestionSpace={reserveOriginSuggestionSpace && !mobilePresentation}
+              reserveSuggestionSpace={reserveIdleHelperSpace && !mobilePresentation}
               invalid={Boolean(visibleOriginError)}
               helperText={visibleOriginError}
               mobilePresentation={mobilePresentation}
@@ -913,7 +748,7 @@ export function SearchShell({
             quickSuggestionsLeavingIdle={usageSuggestionsLeaving}
             onQuickSuggestionSelect={applyDestinationUsageSuggestion}
             reserveHelperSpace={reserveIdleHelperSpace && !mobilePresentation}
-            reserveSuggestionSpace={reserveDestinationSuggestionSpace && !mobilePresentation}
+            reserveSuggestionSpace={reserveIdleHelperSpace && !mobilePresentation}
             invalid={Boolean(visibleDestinationError)}
             helperText={visibleDestinationError}
             mobilePresentation={mobilePresentation}
@@ -933,9 +768,9 @@ export function SearchShell({
                 label="Meses"
                 startMonth={migrationMonthRange.start}
                 endMonth={migrationMonthRange.end}
-                minMonth={migrationMonthBounds.min}
-                maxMonth={migrationMonthBounds.max}
-                maxSpan={MAX_MIGRATION_MONTHS}
+                minMonth={MIGRATION_MONTHS[0]!}
+                maxMonth={MIGRATION_MONTHS[MIGRATION_MONTHS.length - 1]!}
+                maxSpan={MIGRATION_MONTH_LIMIT}
                 invalid={Boolean(visibleMigrationMonthsError)}
                 onChange={handleMigrationRangeChange}
                 onTouch={() => setTouched((current) => ({ ...current, migrationMonths: true }))}
@@ -947,8 +782,8 @@ export function SearchShell({
                 endLabel={endDateLabel}
                 startDate={departureDate}
                 endDate={returnDate}
-                minDate={datePolicy.minSearchDate}
-                maxDate={datePolicy.maxSearchDate}
+                minDate={SEARCH_DATE_POLICY.minSearchDate}
+                maxDate={SEARCH_DATE_POLICY.maxSearchDate}
                 maxStayNights={MAX_STAY_NIGHTS}
                 endDisabled={mode === "exact" && trip === "one-way"}
                 startInvalid={Boolean(visibleDepartureDateError)}
@@ -1020,6 +855,8 @@ export function SearchShell({
             </Popover>
           )}
 
+          {/* Busy, the button stops the search and says so on every input type;
+              under a pointer the spinner turns into the cross. */}
           <ShortcutTooltip label={loading ? "Detener búsqueda" : "Buscar"} shortcut={<Kbd icon="enter" />}>
           <Button
             type={loading ? "button" : "submit"}
@@ -1027,11 +864,10 @@ export function SearchShell({
               ? (event) => {
                   event.preventDefault()
                   event.stopPropagation()
-                  onCancelSearch?.()
+                  onCancelSearch()
                 }
               : undefined}
             aria-label={loading ? "Detener búsqueda" : "Buscar"}
-            title={loading ? "Detener búsqueda" : undefined}
             data-fd-search-submit=""
             disabled={!loading && hasValidationError}
             size="xl"
@@ -1045,12 +881,7 @@ export function SearchShell({
                   <AppIcon name="loading" spin className="transition-opacity duration-[var(--fd-dur-tacto)] ease-[var(--fd-ease-tacto)] group-hover:opacity-0" />
                   <AppIcon name="x" className="absolute opacity-0 transition-opacity duration-[var(--fd-dur-tacto)] ease-[var(--fd-ease-tacto)] group-hover:opacity-100" />
                 </span>
-                <span className="relative inline-grid min-w-16">
-                  <span className="transition-opacity duration-[var(--fd-dur-tacto)] ease-[var(--fd-ease-tacto)] group-hover:opacity-0">{loadingLabel}</span>
-                  <span className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-[var(--fd-dur-tacto)] ease-[var(--fd-ease-tacto)] group-hover:opacity-100">
-                    Detener
-                  </span>
-                </span>
+                <span className="inline-grid min-w-16 justify-items-center">Detener</span>
               </>
             ) : (
               <>
@@ -1098,7 +929,7 @@ export function SearchShell({
                   <div className="fd-policy-line fd-policy-line--mobile">
                     <p className="m-0">
                       Ventana{" "}
-                      <b>{formatCompactPolicyDateLabel(datePolicy.minSearchDate)} – {formatCompactPolicyDateLabel(datePolicy.maxSearchDate)}</b>
+                      <b>{formatDateShortYear(SEARCH_DATE_POLICY.minSearchDate)} – {formatDateShortYear(SEARCH_DATE_POLICY.maxSearchDate)}</b>
                       <span className="fd-policy-sep">·</span>
                       hasta <b>{MAX_STAY_NIGHTS}</b> noches
                     </p>
@@ -1107,7 +938,7 @@ export function SearchShell({
                   <div className="fd-policy-line">
                     <p className="m-0">
                       Ventana de búsqueda{" "}
-                      <b>{formatDateLabel(datePolicy.minSearchDate)} – {formatDateLabel(datePolicy.maxSearchDate)}</b>
+                      <b>{formatDateLabel(SEARCH_DATE_POLICY.minSearchDate)} – {formatDateLabel(SEARCH_DATE_POLICY.maxSearchDate)}</b>
                       <span className="fd-policy-sep">·</span>
                       hasta <b>{MAX_STAY_NIGHTS}</b> noches en ida y vuelta
                       <span className="fd-policy-sep">·</span>
@@ -1122,7 +953,7 @@ export function SearchShell({
       </section>
     </>
   )
-}
+})
 
 function SearchModeControls({
   ref,
@@ -1226,7 +1057,6 @@ function LocationField({
   quickSuggestions = [],
   recentSuggestions = [],
   frequentSuggestions = [],
-  quickSuggestionsExiting = false,
   quickSuggestionsLeavingIdle = false,
   onQuickSuggestionSelect,
   reserveHelperSpace = false,
@@ -1252,7 +1082,6 @@ function LocationField({
   quickSuggestions?: string[]
   recentSuggestions?: string[]
   frequentSuggestions?: string[]
-  quickSuggestionsExiting?: boolean
   quickSuggestionsLeavingIdle?: boolean
   onQuickSuggestionSelect?: (code: string) => void | Promise<void>
   reserveHelperSpace?: boolean
@@ -1355,7 +1184,7 @@ function LocationField({
       })
     }
 
-    const frame = window.requestAnimationFrame(updateListboxStyle)
+    updateListboxStyle()
     const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateListboxStyle)
     if (controlRef.current) {
       resizeObserver?.observe(controlRef.current)
@@ -1363,7 +1192,6 @@ function LocationField({
     window.addEventListener("resize", updateListboxStyle)
     window.addEventListener("scroll", updateListboxStyle, true)
     return () => {
-      window.cancelAnimationFrame(frame)
       resizeObserver?.disconnect()
       window.removeEventListener("resize", updateListboxStyle)
       window.removeEventListener("scroll", updateListboxStyle, true)
@@ -1499,7 +1327,7 @@ function LocationField({
           ref={mobilePresentation ? fieldInputRef : inputRef}
           aria-label={label}
           aria-autocomplete="list"
-          aria-controls={listboxId}
+          aria-controls={shouldShowListbox ? listboxId : undefined}
           aria-describedby={helperText ? `${fieldId}-helper` : undefined}
           aria-expanded={mobilePresentation ? mobileSheetOpen : shouldShowListbox}
           aria-activedescendant={activeOptionId}
@@ -1562,7 +1390,6 @@ function LocationField({
         fieldId={fieldId}
         label={`como ${label}`}
         suggestions={quickSuggestions}
-        exiting={quickSuggestionsExiting}
         leavingIdle={quickSuggestionsLeavingIdle}
         onSelect={onQuickSuggestionSelect}
       />
@@ -1587,7 +1414,7 @@ function LocationField({
                 data-sheet-autofocus
                 aria-label={`${label}: buscar ciudad o IATA`}
                 aria-autocomplete="list"
-                aria-controls={listboxId}
+                aria-controls={shouldShowListbox ? listboxId : undefined}
                 aria-expanded={shouldShowListbox}
                 aria-activedescendant={activeOptionId}
                 autoComplete="off"
@@ -1678,7 +1505,6 @@ function LocationUsageSuggestionRow({
   label,
   heading,
   suggestions,
-  exiting = false,
   leavingIdle = false,
   onSelect,
 }: {
@@ -1688,7 +1514,6 @@ function LocationUsageSuggestionRow({
   /** Only the phone titles the strip: there it is one row for both fields. */
   heading?: string
   suggestions: string[]
-  exiting?: boolean
   leavingIdle?: boolean
   onSelect?: (code: string) => void | Promise<void>
 }) {
@@ -1712,16 +1537,12 @@ function LocationUsageSuggestionRow({
 
   return (
     <div
-      /* Two different exits. `exiting` is the agent dismissing the row, which
-         is rule 1's 70ms; `leavingIdle` is the search starting, which is the
-         60ms cue and 120ms of 07 §1 — and that one also has to stop holding
-         height, because the field it hangs from is about to travel. */
-      className={cn("fd-quick-chips", exiting && "fd-motion-exit", leavingIdle && "fd-motion-idle-exit")}
+      /* Leaving the idle screen is the 60ms cue and 120ms of 07 §1, and the row
+         stops holding height: the field it hangs from is about to travel. */
+      className={cn("fd-quick-chips", leavingIdle && "fd-motion-idle-exit")}
       data-leaving={leavingIdle ? "true" : undefined}
       aria-label={`Estaciones frecuentes ${label.toLowerCase()}`}
     >
-      {/* Real material in the space the old layout reserved and left blank: the
-          stations this desk actually searches, already ranked by the backend. */}
       {suggestions.map((code) => (
         <button
           key={`${fieldId}-${code}`}
@@ -1895,95 +1716,6 @@ function PaxRow({
   )
 }
 
-/*
- * The search policy the idle screen advertises (plate 1a) and the form enforces.
- *
- * The server injects `window.__FLYDESK_RUNTIME__` (see `src/server.ts`), so the
- * date window already comes from the backend and honours `SEARCH_MAX_FUTURE_DAYS`
- * / `SEARCH_TODAY_OVERRIDE`. The three ceilings did not: they were frontend
- * constants that happened to agree with the backend's own limits
- * (`MAX_FLEXIBLE_STAY_NIGHTS` in `src/core/flexible-search.ts`, and the
- * passenger and lap-infant checks in `src/http-search-contract.ts`).
- *
- * That is the failure mode plate 1a exists to prevent: the line promises a
- * policy, so if the backend tightened its ceiling to 8 the screen would keep
- * advertising 9 and the agent would find out only after being rejected. They are
- * read from the runtime config now, with the current values as the fallback, so
- * adding the fields server-side is enough — no second change here.
- */
-interface RuntimeSearchDatePolicy {
-  minSearchDate: string
-  maxSearchDate: string
-  maxFutureDays?: number
-}
-
-interface RuntimeSearchLimits {
-  maxStayNights: number
-  maxPassengers: number
-  maxLapInfantsPerAdult: number
-}
-
-declare global {
-  interface Window {
-    __FLYDESK_RUNTIME__?: {
-      searchDatePolicy?: RuntimeSearchDatePolicy
-      maxStayNights?: number
-      maxPassengers?: number
-      maxLapInfantsPerAdult?: number
-    }
-  }
-}
-
-function getRuntimeSearchDatePolicy(): RuntimeSearchDatePolicy {
-  const configured = window.__FLYDESK_RUNTIME__?.searchDatePolicy
-  const minSearchDate = isIsoDate(configured?.minSearchDate) ? configured.minSearchDate : todayIso()
-  const maxSearchDate = isIsoDate(configured?.maxSearchDate)
-    ? configured.maxSearchDate
-    : addDays(minSearchDate, configured?.maxFutureDays ?? SEARCH_MAX_FUTURE_DAYS_FALLBACK)
-
-  return { minSearchDate, maxSearchDate, maxFutureDays: configured?.maxFutureDays }
-}
-
-function getRuntimeSearchLimits(): RuntimeSearchLimits {
-  const runtime = window.__FLYDESK_RUNTIME__
-
-  return {
-    maxStayNights: positiveInteger(runtime?.maxStayNights) ?? MAX_STAY_NIGHTS_FALLBACK,
-    maxPassengers: positiveInteger(runtime?.maxPassengers) ?? MAX_PASSENGERS_FALLBACK,
-    maxLapInfantsPerAdult: positiveInteger(runtime?.maxLapInfantsPerAdult) ?? MAX_LAP_INFANTS_PER_ADULT_FALLBACK,
-  }
-}
-
-function positiveInteger(value: unknown): number | undefined {
-  const numeric = Number(value)
-  return Number.isInteger(numeric) && numeric > 0 ? numeric : undefined
-}
-
-function todayIso() {
-  const date = new Date()
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
-}
-
-function addDays(value: string, days: number) {
-  const date = new Date(`${value}T00:00:00Z`)
-  date.setUTCDate(date.getUTCDate() + days)
-  return date.toISOString().slice(0, 10)
-}
-
-function maxIsoDate(left: string, right: string) {
-  return left > right ? left : right
-}
-
-function minIsoDate(left: string, right: string) {
-  return left < right ? left : right
-}
-
-function diffDays(fromIso: string, toIso: string) {
-  const from = new Date(`${fromIso}T00:00:00Z`).getTime()
-  const to = new Date(`${toIso}T00:00:00Z`).getTime()
-  return Math.round((to - from) / 86400000)
-}
-
 function clampStayNights(value: number) {
   const numeric = Number.isFinite(value) ? Math.trunc(value) : 7
   return Math.max(1, Math.min(MAX_STAY_NIGHTS, numeric))
@@ -1994,90 +1726,43 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
   return Math.max(min, Math.min(max, numeric))
 }
 
-function buildMigrationMonthOptions(startIso: string): MigrationMonthOption[] {
-  const start = isIsoDate(startIso) ? startIso : todayIso()
-  const [year, startMonth] = start.split("-").map(Number)
-  const lastMonthIndex = startMonth + MAX_MIGRATION_MONTHS - 2
-
-  return Array.from({ length: lastMonthIndex + 1 }, (_, index) => {
-    const optionYear = year + Math.floor(index / 12)
-    const month = index % 12 + 1
-    const key = `${optionYear}-${String(month).padStart(2, "0")}`
-    const label = formatMigrationMonthLabel(key)
-    const monthLabel = formatMigrationMonthName(key)
-    return {
-      key,
-      label,
-      monthLabel,
-      shortLabel: label.replace(/\s+de\s+/i, " "),
-      disabled: key < start.slice(0, 7),
-    }
-  })
+function seedLocationCode(value: string | undefined): string {
+  return (value ?? "").toUpperCase().trim()
 }
 
-/*
- * Migratorio starts empty.
- *
- * 11 §0.2 — «nada se confirma sin un gesto explícito» — and a sweep is the most
- * expensive thing this form can ask for: every day of every selected month
- * against both providers. Arriving with eight months already chosen made one
- * click on Buscar launch a search the agent never picked. The field says
- * «Elegir» until they do, and `validateSearch` already refuses an empty
- * selection with «Selecciona al menos un mes».
- */
-function resolveMigrationMonthSelection(values: string[] | undefined, options: MigrationMonthOption[]) {
-  if (!values?.length) return []
-
-  const allowed = new Set(options.filter((month) => !month.disabled).map((month) => month.key))
-  const selected = orderMigrationMonths(uniqueMonthKeys(values.filter((month) => allowed.has(month))), options)
-  return selected.length ? buildMigrationMonthRangeSelection(selected[0], selected[selected.length - 1], options) : []
+function seedPassengers(seed: SearchRequest | null) {
+  const adults = clampInteger(seed?.adults, 1, MAX_PASSENGERS, 1)
+  const children = clampInteger(seed?.children, 0, Math.max(0, MAX_PASSENGERS - adults), 0)
+  const infants = clampInteger(
+    seed?.infants,
+    0,
+    Math.min(adults * MAX_LAP_INFANTS_PER_ADULT, Math.max(0, MAX_PASSENGERS - adults - children)),
+    0,
+  )
+  return { adults, children, infants }
 }
 
-function resolveMigrationMonthRange(values: string[], options: MigrationMonthOption[]) {
-  const selected = resolveMigrationMonthSelection(values, options)
+/* Migratorio starts empty (11 §0.2): a sweep is the most expensive search the
+   form can ask for, so the months are always an explicit choice. A selection is
+   one contiguous run of the reachable months. */
+function resolveMigrationMonthSelection(values: string[] | undefined): string[] {
+  const chosen = new Set((values ?? []).filter(isIsoMonth))
+  const selected = MIGRATION_MONTHS.filter((key) => chosen.has(key))
+  return selected.length ? buildMigrationMonthRangeSelection(selected[0]!, selected[selected.length - 1]!) : []
+}
+
+function resolveMigrationMonthRange(values: string[]) {
+  const selected = resolveMigrationMonthSelection(values)
   const start = selected[0] ?? ""
-
-  return {
-    start,
-    end: selected[selected.length - 1] ?? start,
-  }
+  return { start, end: selected[selected.length - 1] ?? start }
 }
 
-function buildMigrationMonthRangeSelection(start: string, end: string, options: MigrationMonthOption[]) {
-  const enabledKeys = options.filter((month) => !month.disabled).map((month) => month.key)
-  if (enabledKeys.length === 0) return []
-
-  const startIndex = enabledKeys.indexOf(start)
-  const endIndex = enabledKeys.indexOf(end)
-  const resolvedStartIndex = startIndex >= 0 ? startIndex : Math.max(0, endIndex)
-  const resolvedEndIndex = endIndex >= 0 ? endIndex : resolvedStartIndex
-  const from = Math.min(resolvedStartIndex, resolvedEndIndex)
-  const to = Math.max(resolvedStartIndex, resolvedEndIndex)
-
-  return enabledKeys.slice(from, to + 1).slice(0, MAX_MIGRATION_MONTHS)
-}
-
-function uniqueMonthKeys(values: string[]) {
-  return Array.from(new Set(values.filter(isMigrationMonthKey)))
-}
-
-function orderMigrationMonths(values: string[], options: MigrationMonthOption[]) {
-  const selected = new Set(values)
-  return options.map((month) => month.key).filter((key) => selected.has(key))
-}
-
-function isMigrationMonthKey(value: string) {
-  return /^\d{4}-(0[1-9]|1[0-2])$/.test(value)
-}
-
-function formatMigrationMonthLabel(monthValue: string) {
-  const label = MIGRATION_MONTH_LABEL_FORMATTER.format(new Date(`${monthValue}-01T00:00:00Z`))
-  return label.charAt(0).toUpperCase() + label.slice(1)
-}
-
-function formatMigrationMonthName(monthValue: string) {
-  const label = MIGRATION_MONTH_NAME_FORMATTER.format(new Date(`${monthValue}-01T00:00:00Z`))
-  return label.charAt(0).toUpperCase() + label.slice(1)
+function buildMigrationMonthRangeSelection(start: string, end: string): string[] {
+  const startIndex = MIGRATION_MONTHS.indexOf(start)
+  const endIndex = MIGRATION_MONTHS.indexOf(end)
+  const from = startIndex >= 0 ? startIndex : Math.max(0, endIndex)
+  const to = endIndex >= 0 ? endIndex : from
+  return MIGRATION_MONTHS.slice(Math.min(from, to), Math.max(from, to) + 1)
 }
 
 interface SearchValidationInput {
@@ -2139,8 +1824,8 @@ function buildSearchValidation(input: SearchValidationInput): SearchValidationSt
   if (input.mode === "migration") {
     if (input.migrationMonths.length === 0) {
       state.migrationMonths = "Selecciona al menos un mes."
-    } else if (input.migrationMonths.length > MAX_MIGRATION_MONTHS) {
-      state.migrationMonths = `Selecciona hasta ${MAX_MIGRATION_MONTHS} meses.`
+    } else if (input.migrationMonths.length > MIGRATION_MONTH_LIMIT) {
+      state.migrationMonths = `Selecciona hasta ${MIGRATION_MONTH_LIMIT} meses.`
     }
     return state
   }
@@ -2199,13 +1884,7 @@ function isValidLocationCandidate(value: string) {
 }
 
 function formatDateLabel(value: string) {
-  if (!isIsoDate(value)) return "Fecha inválida"
-  return DATE_LABEL_FORMATTER.format(new Date(`${value}T00:00:00Z`)).replace(".", "")
-}
-
-function formatCompactPolicyDateLabel(value: string) {
-  if (!isIsoDate(value)) return "Fecha inválida"
-  return COMPACT_POLICY_DATE_FORMATTER.format(new Date(`${value}T00:00:00Z`)).replace(".", "")
+  return isIsoDate(value) ? formatDate(value) : "Fecha inválida"
 }
 
 function modeFromSearchRequest(request: SearchRequest): SearchModeControl {

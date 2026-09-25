@@ -1,16 +1,15 @@
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react"
 import { AppIcon } from "@/components/ui/app-icon"
+import { formatDateLong, monthAbbreviation, monthCaption } from "@/lib/format"
 import {
   addMonths,
   dayKind,
-  monthCaption,
   monthDayCells,
   monthKeyOf,
-  monthShortLabel,
   monthSpan,
-  todayIso,
   type DayKind,
 } from "@/lib/iso-date"
+import { deskToday } from "@/lib/runtime-config"
 import { cn } from "@/lib/utils"
 
 /*
@@ -66,7 +65,7 @@ export function DayRangeCalendar({
   /** Which end the agent picked first: movement 5 grows away from it. */
   sweepFrom?: "start" | "end"
 }) {
-  const today = useMemo(() => todayIso(), [])
+  const today = useMemo(() => deskToday(), [])
   /* Only a pointer can produce moment 3, so a touch screen simply never sets
      this and the range paints on the second tap (03 §7). */
   const [hover, setHover] = useState<string | undefined>(undefined)
@@ -231,7 +230,7 @@ export function MonthRangeCalendar({
   /** Which end the agent picked first: movement 5 grows away from it. */
   sweepFrom?: "start" | "end"
 }) {
-  const currentMonth = useMemo(() => monthKeyOf(todayIso()), [])
+  const currentMonth = useMemo(() => monthKeyOf(deskToday()), [])
   const [monthHover, setMonthHover] = useState<string | undefined>(undefined)
   const tentativeOpen = Boolean(start) && !end
   const sweep = useRangeSweep(start, end, sweepFrom, monthSpan)
@@ -306,7 +305,7 @@ export function MonthRangeCalendar({
                     onPointerEnter={tentativeOpen && !unavailable ? () => setMonthHover(monthKey) : undefined}
                     onClick={() => onSelectMonth(monthKey)}
                   >
-                    <span className="fd-cal-cell-label">{monthShortLabel(monthKey)}</span>
+                    <span className="fd-cal-cell-label">{monthAbbreviation(monthKey)}</span>
                   </button>
                 )
               })}
@@ -316,7 +315,7 @@ export function MonthRangeCalendar({
       </div>
 
       <div className="fd-cal-legend">
-        <LegendItem swatch={<span className="fd-cal-legend-swatch" style={todaySwatchStyle}>{monthShortLabel(currentMonth)}</span>}>
+        <LegendItem swatch={<span className="fd-cal-legend-swatch" style={todaySwatchStyle}>{monthAbbreviation(currentMonth)}</span>}>
           mes en curso
         </LegendItem>
         <LegendItem swatch={<span className="fd-cal-legend-swatch" style={unavailableSwatchStyle}>may</span>}>
@@ -496,13 +495,7 @@ const KIND_LABEL: Partial<Record<DayKind, string>> = {
 }
 
 function dayAriaLabel(day: string, kind: DayKind): string {
-  const parts = [new Intl.DateTimeFormat("es-PE", {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(`${day}T00:00:00Z`))]
-
+  const parts = [formatDateLong(day)]
   const label = KIND_LABEL[kind]
   if (label) parts.push(label)
   return parts.join(", ")

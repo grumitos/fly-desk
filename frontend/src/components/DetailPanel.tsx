@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react"
-import { buildResultCardModel } from "@/components/results/result-card-model"
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type MutableRefObject } from "react"
+import { buildResultCardModel, providerBadgeForId } from "@/components/results/result-card-model"
 import { QuotationOverlay } from "@/components/QuotationOverlay"
 import { Button } from "@/components/ui/button"
 import { AppIcon } from "@/components/ui/app-icon"
@@ -7,48 +7,31 @@ import { Switch } from "@/components/ui/switch"
 import { Kbd } from "@/components/ui/kbd"
 import { ShortcutTooltip } from "@/components/ui/tooltip"
 import { requestQuotation, toBackendPayload } from "@/lib/api"
-import { diffDaysIso, formatJourneyDuration, formatOfferDate, isoDatePart, stationPlaceName } from "@/lib/offer-display"
+import { writeClipboardText } from "@/lib/clipboard"
+import { formatDayMonth } from "@/lib/format"
+import { openInNewTab } from "@/lib/new-tab"
+import { diffDaysIso, formatJourneyDuration, formatOfferDate, isoDatePart, stationPlaceName, timeOfIso } from "@/lib/offer-display"
+import { passengerCount } from "@/lib/passengers"
 import { bestPurchasePath, normalizeSafePurchaseUrl } from "@/lib/purchase-path"
 import { motionToken } from "@/lib/reduced-motion"
-import { providerBadgeForId } from "@/components/results/result-card-model"
 import { cn } from "@/lib/utils"
 import type { CanonicalOffer, Itinerary, SearchRequest, Segment } from "@/types"
 import { buildCommercialQuotation } from "../../../src/core/quotation"
 import { normalizeQuotationOfferSnapshot, normalizeQuotationRequestSnapshot } from "../../../src/http-quotation-snapshot"
 
 /*
- * Plate 1b (detail column of 316), 8a (the same panel as the 380 side sheet),
- * 1f (edge-to-edge sheet), 1h (the 620 quotation panel) and 3c (the error).
+ * Plate 1b (detail column), 8a (side sheet), 1f (full sheet), 1h (quotation
+ * panel) and 3c (the quote error). One component in three containers; the
+ * container queries in `components.css` decide the differences (02 §2).
  *
- * One component, three containers. Nothing here asks how wide the window is:
- * the column, the side sheet and the full sheet differ only in the container
- * query that `components.css` answers (02 §2).
- *
- * The itinerary is a rail: one hairline from the first stop to the last, with
- * an outlined dot at every stop and no change of material at the waiting
- * stretch — a journey that is one line is drawn as one line. It replaced a
- * list of label/value pairs because an itinerary is a sequence, and a sequence
- * drawn as a table makes the agent reconstruct the order in their head.
- *
- * The quote error is the only error resolved *inside* this panel rather than in
- * the notice at the top of the page (11 §4): it is the one failure that happens
- * with the work already done, so the way out has to be where the work is. Plate
- * 3c draws it in the footer, taking the place of the row that produced it.
+ * The quote error is resolved here rather than in the page notice (11 §4):
+ * it is the one failure that happens with the work already done.
  */
 
-const LEG_DATE_FORMATTER = new Intl.DateTimeFormat("es-PE", {
-  day: "numeric",
-  month: "short",
-  timeZone: "UTC",
-})
 const MIGRATION_PLAN_SESSION_KEY = "fly-desk:migration-plan:v1"
-/* 07 §4 row 6 / 05 §6: the copy confirmation enters in 180 ms, stays 2.4 s and
-   leaves in 140 ms. The two waits are timers and live here, but the numbers do
-   not: all three are in the catalog, and a copy in JS of a row of the table is a
-   row that can fall behind. The long wait is read from `--fd-hold-confirmacion`,
-   which deliberately does **not** go to zero under reduced motion — it is not
-   movement, it is how long it takes to read that the text was copied — and the
-   exit from `--fd-dur-exit-confirmacion`, which does. */
+/* The copy confirmation holds for `--fd-hold-confirmacion`, which reduced
+   motion does not zero (it is reading time), and leaves in
+   `--fd-dur-exit-confirmacion`, which it does. */
 function confirmationHold(): number {
   return motionToken("--fd-hold-confirmacion")
 }
@@ -56,10 +39,8 @@ function confirmationHold(): number {
 function confirmationExit(): number {
   return motionToken("--fd-dur-exit-confirmacion")
 }
-/* Plate 3c: the two facts an agent needs, in the order they need them, and it
-   is *about* the quotation — never *instead of* it (11 §4). The phone gets the
-   shorter pair because the notice shares its row with the retry. Which one
-   shows is a container query, so the two cannot drift apart. */
+/* Plate 3c: the long pair on a desk, the short one where the notice shares its
+   row with the retry; a container query picks. */
 const QUOTATION_ERROR_TITLE = "No se pudo confirmar la tarifa"
 const QUOTATION_ERROR_DETAIL = "El proveedor no respondió. El texto no se copió."
 const QUOTATION_ERROR_TITLE_SHORT = "No se copió"
@@ -69,30 +50,13 @@ interface DetailPanelProps {
   offer: CanonicalOffer | null
   request?: SearchRequest
   searchJobId?: string
-  /**
-   * The offer the provider has just confirmed, on its way up to the list.
-   *
-   * Revalidation is allowed to come back with a different fare — that is what
-   * it is for. What was not allowed is for the card and this header to keep the
-   * old figure while the copied text carries the new one, with nothing on
-   * screen saying which is which.
-   */
+  /** A confirmed fare on its way up to the list, which draws it instead. */
   onOfferRevalidated?: (offer: CanonicalOffer) => void
   embedded?: boolean
   mobileDirect?: boolean
-  /**
-   * Present when the panel is the whole surface and owns its own way out —
-   * the armazón B side sheet (8a) and the armazón C full sheet (1f), whose
-   * header is this one. The control's shape is decided in CSS: a 32px cross on
-   * the right on a desk, a 44px back chevron on the left on a phone.
-   */
+  /** The sheets' own way out; the desk column has none. */
   onClose?: () => void
-  /**
-   * Where the panel leaves its «Cotizar» action for the shell's `C` shortcut
-   * (11 §7). It is filled only while the offer on screen can actually be
-   * quoted, so a keypress can never start a quotation the button would have
-   * refused.
-   */
+  /** Filled only while the offer can be quoted, so `C` never starts a quote the button would refuse. */
   quotationShortcutRef?: MutableRefObject<(() => void) | null>
 }
 
@@ -109,7 +73,6 @@ type VerifiedQuotation = {
   commercialText: string
 }
 
-/** The confirmation of 1f while it is on screen, and again while it leaves. */
 type CopyConfirmation = { key: string; closing: boolean }
 
 export function DetailPanel({
@@ -122,6 +85,7 @@ export function DetailPanel({
   onClose,
   quotationShortcutRef,
 }: DetailPanelProps) {
+  const migrationSwitchId = useId()
   const [visibleQuotationKey, setVisibleQuotationKey] = useState<string | null>(null)
   const [migrationPlanChoice, setMigrationPlanChoiceState] = useState<boolean | null>(() => readMigrationPlanChoice())
   const [confirmation, setConfirmation] = useState<CopyConfirmation | null>(null)
@@ -149,26 +113,18 @@ export function DetailPanel({
       return { key: copyKey, text: verifiedQuotation.commercialText }
     }
 
-    /* 05 §5: the toggle rewrites the text live. It rewrites it from the offer
-       the provider confirmed and from the rate that came with it — never from a
-       rate borrowed off some other offer in the list, which is how a confirmed
-       «S/ 361 por adulto» used to become «USD 100 por adulto». */
+    /* 05 §5: the toggle rewrites the text live, from the confirmed offer and
+       the rate that came with it, never from another offer's rate. */
     return composeQuotation(verifiedQuotation.offer, request, copyKey, migrationPlan)
   }, [copyKey, migrationPlan, quoteKey, request, verifiedQuotation])
-  /* Once the provider has confirmed a fare, that is the offer this panel is
-     about: price, confidence and conditions all come from it. */
   const displayOffer = verifiedQuotation && verifiedQuotation.quoteKey === quoteKey
     ? verifiedQuotation.offer
     : offer
   /*
-   * 11 §4 asks the failure to stay in the panel with a retry, and 05 §7 offers
-   * «copiar sin tarifa confirmada» as a second exit. This repository holds a
-   * stronger rule and keeps it on both surfaces: a locally composed quotation
-   * that the provider has not confirmed is never shown and never copied
-   * (`docs/REDESIGN_CONTRACT.md`, covered by a test). A fare that
-   * turns out not to exist reaches a customer as a price the agency has to
-   * honour, so the failure never opens the 620 panel and the draft does not
-   * survive it.
+   * A quotation the provider has not confirmed is never shown and never copied
+   * (`docs/REDESIGN_CONTRACT.md`): a fare that turns out not to exist reaches a
+   * customer as a price the agency has to honour. So a failure never opens the
+   * quotation panel.
    */
   const quotationFailed = Boolean(quoteKey) && quotationFailureKey === quoteKey
   const activeQuotation = visibleQuotationKey === quoteKey && !quotationFailed
@@ -243,13 +199,10 @@ export function DetailPanel({
       || loadingQuotationKey === quoteKey
     ) return
 
-    /* 05 §6: «Cotizar» copies first and confirms second. The write has to be
-       issued inside the gesture that asked for it — Safari and Firefox drop the
-       clipboard permission the moment the user-activation window closes, and
-       the round trip that confirms the fare is longer than that window. So the
-       write is claimed now and fed later, which is exactly what `ClipboardItem`
-       takes a promise for. What must never happen is the confirmation of 1f
-       over an empty clipboard, so it is only shown once a write reports back. */
+    /* 05 §6: the clipboard write is claimed inside the gesture — Safari and
+       Firefox drop the permission when the user activation ends, and the
+       confirming round trip is longer than that — and fed once the fare is
+       confirmed. The confirmation only shows after a write reports back. */
     const deferredCopy = beginDeferredCopy()
     setQuotationFailureKey(null)
     setLoadingQuotationKey(quoteKey)
@@ -279,15 +232,14 @@ export function DetailPanel({
     }
   }
 
-  /* No dependency array on purpose: `handleQuotation` closes over state that
-     changes every render, and the shell must never be holding last render's
-     version of it. Publishing a fresh closure each commit is cheaper than
-     memoising a handler with eight dependencies. */
+  /* Refreshed on every render so `C` never runs a stale closure; a detail
+     leaving the screen clears only its own. */
   useEffect(() => {
     if (!quotationShortcutRef) return
-    quotationShortcutRef.current = canQuote ? () => { void handleQuotation() } : null
+    const quote = canQuote ? () => { void handleQuotation() } : null
+    quotationShortcutRef.current = quote
     return () => {
-      quotationShortcutRef.current = null
+      if (quotationShortcutRef.current === quote) quotationShortcutRef.current = null
     }
   })
 
@@ -302,17 +254,18 @@ export function DetailPanel({
         return
       }
 
-      window.open(safeUrl, purchasePath.requiresNewTab ? "_blank" : "_self", "noopener,noreferrer")
+      if (!openProviderUrl(safeUrl, purchasePath.requiresNewTab)) {
+        setPathFeedback({
+          offerId: offer.id,
+          message: "El navegador bloqueó la ventana del proveedor. Permite las ventanas emergentes de Fly Desk e intenta nuevamente.",
+        })
+      }
       return
     }
 
     if (purchasePath.referenceText) {
-      try {
-        await navigator.clipboard.writeText(purchasePath.referenceText)
-        setPathFeedback({ offerId: offer.id, message: "Referencia copiada." })
-      } catch {
-        setPathFeedback({ offerId: offer.id, message: "No se pudo copiar la referencia." })
-      }
+      const copiedReference = await writeClipboardText(purchasePath.referenceText)
+      setPathFeedback({ offerId: offer.id, message: copiedReference ? "Referencia copiada." : "No se pudo copiar la referencia." })
       return
     }
 
@@ -341,41 +294,22 @@ export function DetailPanel({
     )
   }
 
-  /* Everything the panel states about the fare comes from the offer the
-     provider last confirmed, so the header cannot go on showing the figure the
-     list was drawing while the copied text carries a different one. */
+  /* Everything stated about the fare comes from the offer last confirmed. */
   const shown = displayOffer ?? offer
-  const model = buildResultCardModel(shown, passengerCountForRequest(request))
+  const model = buildResultCardModel(shown, passengerCount(request))
   const provider = providerBadgeForId(shown.providerSource)
   const legs = itineraryLegs(shown)
   const conditions = conditionPairs(shown, model.baggage.label)
 
   return (
     <section
-      /* 05 §8 row 1: on a desk the panel arrives with `estructura`, 8px from the
-         right. The key is what makes it arrive again for the next offer — the
-         column is always mounted, so without it the animation would play once
-         in the life of the page and never for a selection. */
+      /* Keyed so the panel arrives again for every offer (05 §8). */
       key={offer.id}
       className={cn("fd-detail-panel flex h-full min-h-0 flex-col overflow-hidden", embedded && "fd-detail-panel--embedded")}
-      /* 3c dims the conditions while the failure is up: the work is still
-         there, it just is not the thing to read right now. */
       data-quote-error={quotationFailed || undefined}
     >
-      {/*
-        * The header is two blocks, and the first of them is the reason: a 28px
-        * line with «Oferta» on the left and the provider on the right, drawn
-        * with the same rule at the same height as «Filtros» and «Resultados»,
-        * so one line crosses the whole screen and the three columns read as one
-        * material rather than as three boxes of different weights.
-        *
-        * One close, two shapes. 8a draws a 32px cross at the head of the line;
-        * 1f draws a 44px back chevron in the same place. Which glyph shows is a
-        * container query, so the accessible name — and the gesture the sheet
-        * answers — stay the same on every surface. The desk column has no close
-        * at all: it is mounted without `onClose` because selecting another fare
-        * already replaces what is in it.
-        */}
+      {/* One close, two shapes: a cross on a desk sheet, a back chevron on a
+          phone, chosen by container query under one accessible name. */}
       <div className="fd-detail-header">
         {onClose && (
           <button
@@ -397,11 +331,6 @@ export function DetailPanel({
         </p>
       </div>
 
-      {/* And the second: the fare itself, on no band at all. What used to be a
-          title line inside a grey header is a block — airline, price and who
-          the price is for, stacked at the left, with the carrier's mark at 32
-          on the right. Nothing here is a control, so nothing here needs a
-          surface to sit on. */}
       <div className="fd-detail-hero">
         <div className="fd-detail-hero-lead">
           <span className="fd-detail-carrier" title={model.carrier.name}>{model.carrier.name}</span>
@@ -436,8 +365,6 @@ export function DetailPanel({
                 <div key={pair.label} className="fd-condition-row">
                   <span className="fd-condition-label">{pair.label}</span>
                   <span className={cn("fd-condition-value", pair.figure && "fd-condition-value--figure")}>
-                    {/* 8a and 1f put the two bags in front of the words, dimmed
-                        when the fare does not include them (02 §6). */}
                     {pair.label === "Equipaje" && (
                       <span className="fd-condition-bags" aria-hidden="true">
                         <AppIcon
@@ -475,8 +402,7 @@ export function DetailPanel({
 
       </div>
 
-      {/* The quote leaves this 316px column and opens as a 620px panel (1h).
-          On a phone there is no panel at all (05 §6). */}
+      {/* The quote opens as the 620px panel of 1h; a phone has none (05 §6). */}
       {activeQuotation && !mobileDirect && (
         <QuotationOverlay
           state={{
@@ -496,11 +422,6 @@ export function DetailPanel({
         />
       )}
 
-      {/* 1f: the confirmation is a line of its own between the body and the
-          anchored actions, not a row inside them. 3c puts the failure in that
-          same slot on a phone — «ocupa el sitio de la confirmación» — so both
-          live here, and on a desk the failure joins the footer surface from
-          above instead (the footer drops its own top border for it). */}
       {mobileDirect && copied && (
         <p className="fd-detail-copy-confirm" role="status" data-closing={confirmation?.closing || undefined}>
           <AppIcon name="check" size={16} />
@@ -508,8 +429,8 @@ export function DetailPanel({
         </p>
       )}
 
-      {/* 3c: the failure takes the place of the row that produced it, and it
-          does not leave on its own — a retry or another offer closes it. */}
+      {/* 3c: the failure takes the place of the row that produced it and stays
+          until a retry, another offer or its dismiss (05 §7). */}
       {quotationFailed && (
         <div className="fd-detail-quote-error" role="alert">
           <p className="fd-detail-quote-error-message">
@@ -525,10 +446,6 @@ export function DetailPanel({
                 {QUOTATION_ERROR_DETAIL_SHORT}
               </span>
             </span>
-            {/* 3c draws no dismiss, but 05 §7 names two ways out — «se cierra
-                al reintentar o al descartar» — and without the second one a
-                provider that stays down leaves the footer stuck on the
-                error. It still never leaves on its own (08 §1). */}
             <button
               type="button"
               className="fd-detail-quote-error-dismiss fd-focus-ring"
@@ -571,27 +488,22 @@ export function DetailPanel({
 
       <div className="fd-detail-footer" data-quote-error={quotationFailed || undefined}>
         {activePathFeedback && (
-          <p className="fd-motion-emergente mb-2 rounded-lg border border-border bg-card px-2.5 py-2 text-xs text-muted-foreground">
+          <p className="fd-motion-emergente mb-2 rounded-lg border border-border bg-card px-2.5 py-2 text-xs text-muted-foreground" role="status">
             {activePathFeedback}
           </p>
         )}
         <div className="fd-detail-action-row">
-          {/* The switch is not decorative: turning it on rebuilds the text as the
-              migration package, live. */}
-          <label htmlFor="migration-plan" className="fd-detail-migration">
+          {/* The switch rebuilds the text as the migration package. Its
+              accessible name contains the visible word (2.5.3). The id is per
+              instance: a closing sheet and the column can both be mounted. */}
+          <label htmlFor={migrationSwitchId} className="fd-detail-migration">
             <Switch
-              id="migration-plan"
+              id={migrationSwitchId}
               className="fd-detail-migration-switch"
               checked={migrationPlan}
               aria-label="Paquete migratorio"
               onCheckedChange={setMigrationPlanChoice}
             />
-            {/* One word on every surface. The label used to swap between
-                «Migratorio» and «Paquete migratorio» by container query, which
-                made the same control read differently depending on how wide the
-                panel happened to be. The switch keeps the long form as its
-                accessible name on purpose: the visible word is contained in it,
-                so voice control still reaches it by what is written (2.5.3). */}
             <span>Migratorio</span>
           </label>
           <div className="fd-detail-action-group">
@@ -635,11 +547,16 @@ export function DetailPanel({
   )
 }
 
+function openProviderUrl(url: string, newTab: boolean): boolean {
+  if (newTab) return openInNewTab(url)
+  window.location.assign(url)
+  return true
+}
+
 /**
- * A clipboard write claimed inside the gesture and fed once the provider has
- * confirmed the fare (05 §6). Where `ClipboardItem` cannot take a promise the
- * caller falls back to writing after the await, which is what the browser
- * allowed before and still works wherever the permission survives.
+ * A clipboard write claimed inside the gesture and fed once the fare is
+ * confirmed. Where `ClipboardItem` cannot take a promise the caller writes
+ * after the await instead.
  */
 function beginDeferredCopy(): {
   settle: (text: string) => void
@@ -652,8 +569,6 @@ function beginDeferredCopy(): {
     settle = resolve
     abandon = () => reject(new Error("La tarifa no se confirmó"))
   })
-  /* The clipboard is the only consumer; without this an abandoned quote would
-     surface as an unhandled rejection on the page. */
   pending.catch(() => {})
 
   const clipboard = navigator.clipboard
@@ -662,10 +577,7 @@ function beginDeferredCopy(): {
   }
 
   try {
-    /* `ClipboardItem` needs the derived promise, and a derived promise carries
-       its own rejection: guarding `pending` alone left this one unhandled, so a
-       provider that failed printed an error on the page for a copy nobody had
-       asked to keep. */
+    /* The derived promise carries its own rejection and needs its own guard. */
     const payload = pending.then((text) => new Blob([text], { type: "text/plain" }))
     payload.catch(() => {})
     const item = new ClipboardItem({ "text/plain": payload })
@@ -688,11 +600,8 @@ function composeQuotation(
 
     return {
       key,
-      /* Only this offer's own rate. The backend already shares one rate across
-         a search (`prepareOffersForQuotation`) and attaches it to whatever it
-         confirms, so an offer that reaches here without one is an offer the
-         backend declined to price in soles — and inventing a rate for it is
-         exactly the unconfirmed figure the repository rule forbids. */
+      /* Only this offer's own rate: an offer the backend did not price in
+         soles is not given a rate borrowed from another. */
       text: buildCommercialQuotation(normalizedOffer, normalizedRequest, {
         migrationPlan,
         usdToPenRate: normalizedOffer.usdToPenRate,
@@ -713,21 +622,21 @@ function readMigrationPlanChoice(): boolean | null {
     if (value === "1") return true
     if (value === "0") return false
   } catch {
-    // Use the request-derived default when session storage is unavailable.
+    // The request decides when session storage is unavailable.
   }
 
   return null
 }
 
-/** "LIM – MIA · 12 – 19 set · 1 adulto" — the header line that gets verified. */
+/** "LIM – MIA · 12 set – 19 set · 1 adulto" — the header line that gets verified. */
 function quotationSubtitle(offer: CanonicalOffer, request?: SearchRequest): string {
   const route = [
     request?.origin || offer.origin,
     request?.destination || offer.destination,
   ].filter(Boolean).join(" – ")
   const dates = [offer.departureDate, offer.returnDate]
-    .filter((value): value is string => Boolean(value))
-    .map((value) => LEG_DATE_FORMATTER.format(new Date(`${value.slice(0, 10)}T00:00:00Z`)))
+    .map((value) => formatDayMonth(value ?? ""))
+    .filter(Boolean)
     .join(" – ")
 
   return [route, dates, passengerSummary(request).replace(" · total", "")].filter(Boolean).join(" · ")
@@ -737,14 +646,10 @@ type RailRow = {
   time: string
   kind: "first" | "stop" | "last" | "flight" | "layover"
   text: string
-  /** "+1" on a stop the aeroplane reaches after midnight. Its own leaf, so the
-      station keeps the station's type and the jump keeps the micro rung both
-      plates draw it at. */
+  /** "+1" on a stop reached after midnight, in a leaf of its own. */
   dayOffset?: string
 }
 
-/* Two kinds of row, two treatments: the stops the aeroplane touches and the
-   lines between them. */
 function RailRow({ row }: { row: RailRow }) {
   const isStop = row.kind === "first" || row.kind === "stop" || row.kind === "last"
 
@@ -756,9 +661,6 @@ function RailRow({ row }: { row: RailRow }) {
       </span>
       <span className={isStop ? "fd-rail-stop" : "fd-rail-leg"}>
         {row.text}
-        {/* Two children with a literal space between them: the parent is not a
-            flex container, so this space survives — and it is the space the
-            plate draws between «MAD · Madrid» and «+1». */}
         {row.dayOffset ? <> <span className="fd-rail-day">{row.dayOffset}</span></> : null}
       </span>
     </>
@@ -794,10 +696,9 @@ function detailLeg(itinerary: Itinerary, label: string): DetailLeg {
   const rows: RailRow[] = []
 
   segments.forEach((segment, index) => {
-    const isFirst = index === 0
     rows.push({
-      time: timeOf(segment.departureAt),
-      kind: isFirst ? "first" : "stop",
+      time: timeOfIso(segment.departureAt),
+      kind: index === 0 ? "first" : "stop",
       text: stationLabel(segment.origin, segment.originName),
       dayOffset: dayOffsetOf(departureDate, segment.departureAt),
     })
@@ -810,7 +711,7 @@ function detailLeg(itinerary: Itinerary, label: string): DetailLeg {
     const nextSegment = segments[index + 1]
     if (!nextSegment) {
       rows.push({
-        time: timeOf(segment.arrivalAt),
+        time: timeOfIso(segment.arrivalAt),
         kind: "last",
         text: stationLabel(segment.destination, segment.destinationName),
         dayOffset: dayOffsetOf(departureDate, segment.arrivalAt),
@@ -818,10 +719,9 @@ function detailLeg(itinerary: Itinerary, label: string): DetailLeg {
       return
     }
 
-    // A stop is one dot with two things attached: when the plane lands, and how
-    // long the passenger waits before the next one leaves.
+    // A stop: when the plane lands, then how long the passenger waits.
     rows.push({
-      time: timeOf(segment.arrivalAt),
+      time: timeOfIso(segment.arrivalAt),
       kind: "stop",
       text: stationLabel(segment.destination, segment.destinationName),
       dayOffset: dayOffsetOf(departureDate, segment.arrivalAt),
@@ -835,14 +735,9 @@ function detailLeg(itinerary: Itinerary, label: string): DetailLeg {
 
   return {
     key: `${itinerary.direction}-${label}`,
-    /* The eyebrow is «Ida», and the date rides with the rest of the facts on
-       the right — which is where both plates put it: «IDA» over
-       «28 may · 15h 15m · 1 escala». The date had been glued to the eyebrow,
-       so a micro rótulo in tracked uppercase was carrying a figure and the
-       line on the right was one fact short of the summary it is. */
     title: label,
     summary: [
-      departureDate ? LEG_DATE_FORMATTER.format(new Date(`${departureDate}T00:00:00Z`)).replace(/\.$/, "") : "",
+      departureDate ? formatDayMonth(departureDate) : "",
       duration,
       stops === 0 ? "directo" : stops === 1 ? "1 escala" : `${stops} escalas`,
     ]
@@ -852,7 +747,6 @@ function detailLeg(itinerary: Itinerary, label: string): DetailLeg {
   }
 }
 
-/** "+1" on the stops that happen after midnight, as 1f draws them. */
 function dayOffsetOf(legDate: string | undefined, at?: string): string {
   const stopDate = isoDatePart(at)
   if (!legDate || !stopDate) return ""
@@ -866,22 +760,13 @@ function stationLabel(code?: string, name?: string): string {
   return iata && place ? `${iata} · ${place}` : iata || place || "Estación por confirmar"
 }
 
-/**
- * «5h 50m · LATAM 8062», which is the order both plates write it in.
- *
- * How long the passenger is on this aeroplane comes first, because that is the
- * fact the line exists for and the one the eye is running down; the flight is
- * what identifies it afterwards, and it is named — «LATAM 8062», not the
- * «LA800» the code was writing, because the airline is spelled out everywhere
- * else on this panel and a two-letter code is one more thing to decode.
- */
+/* «5h 50m · LATAM 8062»: how long this aeroplane flies, then which one it is,
+   named, since the airline is spelled out everywhere else on the panel. */
 function flightLabel(segment: Segment): string {
   const carrier = String(segment.marketingCarrier ?? "").trim().toUpperCase()
   const carrierName = segment.marketingCarrierName?.trim() ?? ""
   const number = String(segment.flightNumber ?? "").trim().toUpperCase().replace(/\s+/g, "")
   const bareNumber = carrier && number.startsWith(carrier) ? number.slice(carrier.length) : number
-  /* Named when the provider sent a name; a bare code otherwise, and then it
-     closes up — «LA800» is a flight number, «LA 800» is a name and a figure. */
   const flight = carrierName
     ? `${carrierName} ${bareNumber}`.trim()
     : `${carrier}${bareNumber}` || carrier
@@ -895,14 +780,7 @@ function flightLabel(segment: Segment): string {
   return [duration, flight, operator].filter(Boolean).join(" · ") || "Vuelo"
 }
 
-/**
- * «Escala 2h 10m».
- *
- * Without the airport, which both plates leave out and which the two rail rows
- * this line sits between already carry — the aeroplane lands at «GRU · São
- * Paulo» and the next one leaves from «GRU · São Paulo». Naming it a third
- * time between them was the longest line on the rail saying the least.
- */
+/* «Escala 2h 10m», without the airport the rows either side already name. */
 function layoverLabel(itinerary: Itinerary, segmentIndex: number, destination?: string): string {
   const minutes = itinerary.layoverMinutes?.[segmentIndex]
   const station = String(destination ?? "").trim().toUpperCase()
@@ -913,24 +791,14 @@ function layoverLabel(itinerary: Itinerary, segmentIndex: number, destination?: 
 }
 
 /*
- * Only what a provider actually confirms.
- *
- * «Asientos» and «Tarifa» are gone by decision. Neither Agil nor Click and Book
- * Plus reports a seat count natively — CB+ never sends one and Agil sent
- * «Asientos 0» on a live LATAM fare, which reads as a sold-out flight that is
- * on sale. And the confidence word said «En vivo» on every unquoted offer,
- * which is the provider's internal state, not a fact about the fare. A panel
- * that an agent quotes from states what was confirmed and stays quiet about the
- * rest; a row that is always there and never means anything trains them to stop
- * reading the ones that do.
+ * Only what a provider confirms. No seat count (Click and Book Plus never
+ * sends one and Agil sends 0 on live fares) and no confidence word.
  */
 function conditionPairs(offer: CanonicalOffer, baggageLabel: string) {
   return [
     { label: "Equipaje", value: baggageLabel, figure: false },
     { label: "Cambios", value: permissionLabel(offer.fareMeta?.changeable), figure: false },
     { label: "Reembolso", value: permissionLabel(offer.fareMeta?.refundable), figure: false },
-    // A ticketing date is a hard figure, so it goes mono (the one typography
-    // rule that holds everywhere).
     {
       label: "Emisión",
       value: offer.fareMeta?.lastTicketingDate ? formatOfferDate(offer.fareMeta.lastTicketingDate) : "",
@@ -951,52 +819,10 @@ function purchasePathTitle(type: string): string {
     : "Abrir proveedor"
 }
 
-function timeOf(value?: string): string {
-  const match = String(value ?? "").match(/T(\d{2}):(\d{2})/)
-  return match ? `${match[1]}:${match[2]}` : ""
-}
-
 function passengerSummary(request?: SearchRequest): string {
-  const count = passengerCountForRequest(request)
+  const count = passengerCount(request)
   const adults = request?.adults ?? 1
   if (count === 1) return "1 adulto · total"
   if (count === adults) return `${adults} adultos · total`
   return `${count} pasajeros · total`
-}
-
-function passengerCountForRequest(request: SearchRequest | undefined) {
-  if (!request) return 1
-  const adults = Number.isFinite(request.adults) ? request.adults : 1
-  const children = Number.isFinite(request.children) ? request.children : 0
-  const infants = Number.isFinite(request.infants) ? request.infants : 0
-  return Math.max(1, adults + children + infants)
-}
-
-async function writeClipboardText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-    return true
-  } catch {
-    return fallbackCopyText(text)
-  }
-}
-
-function fallbackCopyText(text: string) {
-  const textarea = document.createElement("textarea")
-  textarea.value = text
-  textarea.setAttribute("readonly", "")
-  textarea.style.position = "fixed"
-  textarea.style.left = "-9999px"
-  textarea.style.top = "0"
-  document.body.append(textarea)
-  textarea.focus()
-  textarea.select()
-
-  try {
-    return document.execCommand("copy")
-  } catch {
-    return false
-  } finally {
-    textarea.remove()
-  }
 }
