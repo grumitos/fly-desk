@@ -50,6 +50,10 @@ async function main() {
   } else {
     logPerfSpan("startup.runtime.skipped", runtimeStart);
   }
+  /* The unit that runs searches owns the session cache, and before its port
+     opens no request waits on it. The web unit delegates searches to this one,
+     and the redirect unit only reads the file, which WAL does not block. */
+  startupSessions?.vacuumIfWorthwhile();
 
   const port = Math.trunc(envNumber("PORT", 3000, { min: 0, max: 65535 }));
   const host = resolveServerHost();

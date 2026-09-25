@@ -89,6 +89,28 @@ const SWEEPABLE_JOB_STATUS_LIST = SWEEPABLE_JOB_STATUSES.map((status) => `'${sta
 /** How long after the port opens the covering indexes are built. */
 const RESTORE_INDEX_BUILD_DELAY_MS = 10_000;
 
+/* `PRAGMA auto_vacuum`: the file hands the pages a sweep frees back to the
+   filesystem only in this mode, and only when `incremental_vacuum` asks. */
+const AUTO_VACUUM_INCREMENTAL = 2;
+
+/*
+ * The largest cache the boot VACUUM rewrites. A VACUUM copies every live page
+ * before the port opens, and the release engine gives a unit that refuses
+ * connections about a minute (30 probes, 2 s apart) before it rolls back. On a
+ * workstation 200 MiB live took 3.4–9.4 s, so this bound stays inside it.
+ */
+const BOOT_VACUUM_MAX_LIVE_BYTES = 512 * 1024 * 1024;
+
+/*
+ * What one sweep hands back. Moving a page is a write on the event loop: on a
+ * workstation 8 MiB took about 0.1 s. What is left waits for the next sweep, a
+ * minute later.
+ */
+const SWEEP_RECLAIM_MAX_BYTES = 8 * 1024 * 1024;
+
+/* Past this, a reclaim is worth a line in the journal. */
+const RECLAIM_REPORT_MS = 250;
+
 /**
  * The covering indexes the restore reads, and nothing else does.
  *
@@ -432,6 +454,26 @@ function allSql<T>(db: Database, sql: string, ...params: any[]): T[] {
   }
 }
 
+interface SqlitePageStats {
+  pageCount: number;
+  freePages: number;
+  pageSize: number;
+  autoVacuum: number;
+}
+
+function readPageStats(db: Database): SqlitePageStats {
+  const pragma = (name: string): number => {
+    const row = getSql<Record<string, unknown>>(db, `PRAGMA ${name}`);
+    return Number(row ? Object.values(row)[0] : 0) || 0;
+  };
+  return {
+    pageCount: pragma("page_count"),
+    freePages: pragma("freelist_count"),
+    pageSize: pragma("page_size"),
+    autoVacuum: pragma("auto_vacuum"),
+  };
+}
+
 function resolveIdleTimestampMs(record: {
   updatedAt?: string;
   lastAccessedAt?: string;
@@ -739,6 +781,10 @@ export class SearchSessionStore {
       mkdirSync(dirname(dbPath), { recursive: true });
       this.db = new Database(dbPath);
       this.db.run("PRAGMA busy_timeout = 5000;");
+      /* Ahead of WAL: a new file takes a vacuum mode only while it is empty,
+         and switching to WAL writes its first page. A file created without
+         one keeps it until a VACUUM rewrites it (`vacuumIfWorthwhile`). */
+      this.db.run("PRAGMA auto_vacuum = INCREMENTAL;");
       this.db.run("PRAGMA journal_mode = WAL;");
       this.db.run("PRAGMA synchronous = NORMAL;");
       this.db.run("PRAGMA temp_store = MEMORY;");
@@ -1641,6 +1687,91 @@ export class SearchSessionStore {
       sessions: Math.max(0, beforeSessions - this.sessions.size),
       purchasePaths: Math.max(0, beforePurchasePaths - this.purchasePaths.size),
     };
+  }
+
+  /*
+   * The one full VACUUM, run by the process that owns the file before its port
+   * opens. It pays only once free pages are most of the file: its cost follows
+   * the live pages it copies, and what it buys is the free ones. It also gives a
+   * file created without a vacuum mode the incremental one, after which
+   * `reclaimFreePages` keeps the file compact and this rarely finds work. The
+   * copy goes to a temporary file rather than memory: it is the whole live
+   * cache, on a host where the runner already peaks near a gigabyte.
+   */
+  vacuumIfWorthwhile(): void {
+    const db = this.db;
+    if (!db) {
+      return;
+    }
+
+    const before = readPageStats(db);
+    const liveBytes = (before.pageCount - before.freePages) * before.pageSize;
+    if (before.freePages * 2 <= before.pageCount || liveBytes > BOOT_VACUUM_MAX_LIVE_BYTES) {
+      return;
+    }
+
+    const startedAt = Date.now();
+    try {
+      db.run("PRAGMA temp_store = FILE;");
+      db.run("VACUUM;");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "unknown failure";
+      console.warn(`Fly Desk session cache VACUUM skipped: ${detail}`);
+      return;
+    } finally {
+      db.run("PRAGMA temp_store = MEMORY;");
+    }
+
+    /* The VACUUM wrote every live page through the WAL, and the WAL file keeps
+       that size until a checkpoint truncates it. */
+    const vacuumedAt = Date.now();
+    let checkpoint = "failed";
+    try {
+      checkpoint = getSql<{ busy: number }>(db, "PRAGMA wal_checkpoint(TRUNCATE);")?.busy ? "busy" : "truncated";
+    } catch {
+      // Only the WAL file's size waits for the next checkpoint.
+    }
+    const after = readPageStats(db);
+    console.warn(
+      "Fly Desk session cache compacted: "
+      + `vacuumMs=${vacuumedAt - startedAt} checkpointMs=${Date.now() - vacuumedAt} checkpoint=${checkpoint} `
+      + `fileBytes=${before.pageCount * before.pageSize}->${after.pageCount * after.pageSize} `
+      + `freePages=${before.freePages}->${after.freePages} autoVacuum=${before.autoVacuum}->${after.autoVacuum}`,
+    );
+  }
+
+  /*
+   * After a sweep, hands the pages it freed back to the filesystem, a bounded
+   * amount at a time. What the sweep removed in memory is written first, so its
+   * rows are gone before their pages are counted. A file without the incremental
+   * mode is left as it is until `vacuumIfWorthwhile` gives it one.
+   */
+  reclaimFreePages(): void {
+    const db = this.db;
+    if (!db) {
+      return;
+    }
+
+    this.persistNow();
+    const stats = readPageStats(db);
+    if (stats.autoVacuum !== AUTO_VACUUM_INCREMENTAL || stats.freePages === 0 || stats.pageSize <= 0) {
+      return;
+    }
+
+    const pages = Math.min(stats.freePages, Math.max(1, Math.floor(SWEEP_RECLAIM_MAX_BYTES / stats.pageSize)));
+    const startedAt = Date.now();
+    try {
+      runSql(db, `PRAGMA incremental_vacuum(${pages});`);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "unknown failure";
+      console.warn(`Fly Desk session cache reclaim skipped: ${detail}`);
+      return;
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs >= RECLAIM_REPORT_MS) {
+      console.warn(`Fly Desk session cache reclaimed free pages: pages=${pages} ms=${elapsedMs}`);
+    }
   }
 
   getDiagnostics(): StoreDiagnostics {
