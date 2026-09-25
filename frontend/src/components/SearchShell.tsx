@@ -826,7 +826,7 @@ export const SearchShell = memo(function SearchShell({
             disabled={!loading && hasValidationError}
             size="xl"
             className={cn(
-              loading && "group border border-primary/40 hover:border-destructive hover:bg-destructive hover:text-destructive-foreground",
+              loading && "group hover:bg-destructive hover:text-destructive-foreground",
             )}
           >
             {loading ? (

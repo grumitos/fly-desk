@@ -375,7 +375,7 @@ export function DetailPanel({
             {shown.warnings.map((warning, index) => (
               <p
                 key={`${warning}-${index}`}
-                className="rounded-lg border border-warning/45 bg-warning-soft px-2.5 py-2 text-xs leading-5 text-warning-soft-foreground"
+                className="rounded-lg border border-warning-border bg-warning-soft px-2.5 py-2 text-xs leading-5 text-warning-soft-foreground"
               >
                 {warning}
               </p>
