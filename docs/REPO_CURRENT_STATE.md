@@ -181,8 +181,9 @@ The React UI must not display simulated controls. The following remain outside t
 - `scripts/generate-web-password-hash.ts`: generates the scrypt hash from a
   hidden terminal prompt or controlled standard input and rejects plaintext
   arguments and environment input
+- `scripts/run-e2e.ts`: runs the end-to-end spec files in parallel
 - `docs/DEPLOY_APP.md`: application deployment and rollback
-- `.github/workflows/ci.yml`: Bun CI for typecheck, lint, test, and build
+- `.github/workflows/ci.yml`: CI for typecheck, lint, build, and unit tests, with the end-to-end suite in a parallel job
 - `.github/workflows/deploy-vps.yml`: manual deployment and rollback by exact SHA through the fixed platform release wrapper
 
 Shared VPS infrastructure no longer lives in this repository. Caddy, systemd, Caddy rollback, and the platform plan are maintained in `grumitos/vps-platform` (`D:\Dev\VPS\vps-platform`). This repository retains the application, CI, revision deployment, and release rollback.
@@ -199,39 +200,27 @@ Main commands:
 - `bun run build`
 - `bun run test`
 - `bun run test:unit`
-- `bun run test:integration`
-- `bun run test:ui`
-- `bun run test:coverage`
+- `bun run test:e2e`
 
-Bun suites use `.unit.test.ts` and `.integration.test.ts` suffixes. The modular UI suite lives in `test/ui/`, and `scripts/run-ui-tests.ts` runs those files in parallel as independent `node --test` files. Shared helpers are in `test/helpers/`. Each UI file owns its own server and Chromium through `registerDesktopHarness()` and creates an isolated context for each case. Its permanent responsive smoke exercises the active workspace at `1440x900`, `1024x768`, and `390x844`. See `docs/TESTING.md`.
+The suite is end to end: `test/e2e/*.e2e.ts` runs the web unit, the search runner with its pooled workers, and the redirect service on loopback behind a Caddy-like proxy, against fake provider upstreams, and drives the desk in Chromium. A Bun preload in every process of the stack sends provider traffic to the fakes and blocks anything else. `scripts/run-e2e.ts` runs the spec files in parallel; each file owns one fake upstream, one stack, and one browser, and each test gets fresh browser contexts. `test/unit/` holds pure-logic tests and is empty today. See `docs/TESTING.md`.
 
-Current important coverage:
+Current coverage:
 
-- loopback binding by default and override through `HOST`
-- web authentication with a signed cookie and optional loopback disabling
-- API token for non-loopback clients
-- loopback-only endpoints
-- shared validation of the moving date window
-- hardened Click and Book Plus context
-- required or recoverable key for live Agil
-- Bun workers enabled by default to isolate heavy provider searches
-- SQLite persistence for sessions/autocomplete
-- resident budget with disk-only fallback and lazy web runtime when search is delegated
-- server-side ranking of frequent suggestions over a rolling 30-day window plus 30-day per-session recents, both capped at three cards per role, recorded from `/api/search` and `/api/matrix`, and shared coherently by the web and search processes
-- authenticated/no-store provider status with runner proxying, closed reason codes, prewarm/search precedence, and no provider diagnostic payloads
-- removed `/api/results-layout` returns 404 for GET and POST
-- search rail, stable ranking/notice geometry, filters, theme, autocomplete, provider links, and quotation
-- exact desktop/tablet/mobile smoke from idle through the active workspace, with no browser errors or global/internal horizontal overflow, visible keyboard focus, light/dark rendering, and reachable results, filters, and detail panels
-- shared standard/migratory quotation composition, freshness-bounded exact-flight provider revalidation through `/api/quotation`, preservation of offset-bearing times, and hiding of fully disabled monthly rows
+- the sign-in gate: a shared link kept through it, renewal of both cookies past half of the session window, the hard cap sending a busy desk to the gate once and back to its search, sign-out, per-client login lockout with `Retry-After`, hostile return paths, and security headers
+- no provider reached without a session or through spoofed trust headers, client-supplied provider addresses ignored, oversized bodies refused by the proxy and by the web unit, and forged quotation requests refused
+- an exact round trip merged from both providers, with filters and sorting in the address bar, quotation revalidation, and both providers' purchase redirects, the Click and Book Plus token appearing only in its 302
+- the flexible matrix filled cell by cell with the cards already drawn kept, price-only cells never drawn, and a repriced fare carried to the card and the quotation
+- a range of three hundred fares with none dropped, the same order on two runs whatever order the providers answer in, and the desk's order matching the backend's
+- the migratory sweep across the year boundary: priced, failed, and empty months, a month opened without searching again, and the route counted once
+- a failed provider named in one line with nothing it said reaching the page, web storage, the console, `/api` answers, or service logs; a token refused inside a 200; both providers down
+- stopping a search (its fan-out halts and its partial list is kept and reused) and closing the tab mid-search (the search is cancelled and its purchase paths still work)
+- admission in arrival order with no overtaking, the queue limit, queue timeout, and cancelled waiters, the Agil in-flight ceiling, a restart of every unit reading results, purchase paths, and suggestions back from SQLite, and a renewed Click and Book Plus token file picked up with nothing restarted
+- phone sheets and the system back at 390×844, every mode at 360×740, and the 1024×768 desk, with no horizontal overflow
+- suggestions from both providers, recent stations per browser and frequent ones for the whole desk, a domestic quote in soles pasted back, and an exchange rate that never answers
 
-QA note: `test/helpers/server.ts` sets `FLY_DESK_DISABLE_BACKGROUND_SEARCH_JOBS=1` during HTTP tests to validate immediate contracts without leaving progressive jobs alive. The normal runtime does not define that variable.
+Tests marked `todo` pin known product gaps; each names its cause, and the runner counts them apart from failures.
 
-The redesign gate on 2026-08-09 completed with 503/503 core tests and 71/71
-Playwright tests, on top of the Click and Book Plus baseline restored in #39 and
-fixed in #40. The responsive smoke reads the result card's disposition off the
-list container rather than the shell, and asserts the stops lane always has a
-box: that is the regression behind the corrected stacking threshold recorded in
-`docs/REDESIGN_CONTRACT.md`.
+The redesign gate on 2026-08-09 passed on the previous suite (503 core tests and 71 Playwright tests), which the end-to-end suite has since replaced.
 
 ## Current Documentation
 

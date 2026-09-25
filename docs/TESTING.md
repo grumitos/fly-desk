@@ -1,79 +1,117 @@
 # Testing Strategy
 
-Fly Desk separates tests by the resources they consume and the type of contract they protect.
+Fly Desk is tested end to end. The real web unit, search runner (with its
+pooled worker children) and redirect service run on loopback against fake
+provider upstreams, and a real browser drives the Spanish desk the way an agent
+does. Each test asserts through the UI and through backend evidence: the fake
+upstream's request log, the API, and process ids.
 
 ## Commands
 
-- `bun run test:unit`: pure logic and small contracts, without external processes.
-- `bun run test:integration`: HTTP, SQLite, filesystem, workers, and controlled providers.
-- `bun run test:core`: unit and integration tests in one `bun test --parallel` run.
-- `bun run test:ui`: React flows in Chromium against the local build.
-- `bun run test:coverage`: coverage for the Bun suites. Browser coverage is not included in this report.
-- `bun run test`: complete core and UI gate.
+- `bun run test`: `test:unit`, then `test:e2e`. `deploy-vps.yml` runs it before
+  it builds a release.
+- `bun run test:unit`: `bun test test/unit`, for pure logic that needs no
+  process or browser. It passes while the folder is empty.
+- `bun run test:e2e`: `bun run build`, then `scripts/run-e2e.ts`.
+- `bun scripts/run-e2e.ts [spec files…] [-- node --test options…]`: runs the
+  suite, or some of its files, on an existing build. For example:
+  `bun scripts/run-e2e.ts test/e2e/capacity.e2e.ts -- --test-name-pattern="queue"`.
+- `bun run typecheck` also checks `test/**/*.ts` and `scripts/run-e2e.ts`
+  through `tsconfig.test.json`.
 
-Bun test files must end in `.unit.test.ts` or `.integration.test.ts`; the scripts pass those suffixes directly to `bun test`.
+The suite needs Bun 1.4, Node 22.6 or later, and a Chromium for Playwright.
+Node strips TypeScript types on its own from 22.18; before that, the runner
+passes `--experimental-strip-types`. CI uses Node 26.
 
-## Core Suite Parallelism
+| Variable | Effect |
+| --- | --- |
+| `FLY_DESK_E2E_CONCURRENCY` | Spec files run at once. Default: one less than the available cores, at most three. |
+| `FLY_DESK_TEST_BROWSER_CHANNEL` | Playwright browser channel. CI uses `chrome`, which the runner image already has; unset, Playwright uses its installed Chromium. |
 
-`test:core` runs `bun test --parallel`: one worker process per core, one test file
-at a time inside each. `--parallel` implies `--isolate`, so a file gets a fresh
-global and module registry and cannot be reached by another file's leftovers —
-which is a stronger guarantee than the single shared process the suite used to
-run in, not a weaker one. Nothing in the suite binds a fixed port
-(`test/helpers/server.ts` asks for port 0) and every temporary directory comes
-from `mkdtempSync`, so files do not compete for names.
+## How the suite runs
 
-Two things it did surface, both now fixed rather than worked around:
+`scripts/run-e2e.ts` runs every `test/e2e/*.e2e.ts` file in its own
+`node --test` process, several files at once, and prints each file's report
+whole, followed by a summary with the wall time of every file. A spec file
+starts one fake upstream, one stack and one browser in `before` and stops them
+in `after`. Its tests run one after another, each with fresh browser contexts
+and a reset fake. A test has three minutes. The harness lives in
+`test/e2e/support/`:
 
-- Deleting a temp directory that just held an open `bun:sqlite` database answers
-  `EBUSY` on Windows, for as long as the machine and its file scanner feel like.
-  That was an occasional flake in `redirect-service.integration`; a busy machine
-  made it a failure on nearly every run, in a different suite each time. Use
-  `removeTempRoot()` from `test/helpers/temp.ts` for any temp root with a
-  database in it, never a bare `rmSync`. It retries and then, if it still loses,
-  leaves the directory behind: this runs from `finally` and `afterEach`, where
-  throwing fails a test that already passed and blames the code under test for
-  an operating system's timing.
-- What `--parallel` cannot do is beat its slowest file, and this suite is nearly
-  one file long: `http-router.integration.test.ts` is 84 tests and about 120s of
-  a ~145s sequential run, because 45 of them stand up a server of their own.
-  Splitting that file is what would make the rest of the parallelism visible.
+- `support/stack.ts`: the topology of the `fly-desk*.service` units on
+  loopback. It runs the search runner, the web unit delegating to it, the
+  redirect service and one shared app-data directory. In front of them,
+  `support/front-proxy.ts` does what Caddy does: it routes `/r/*`, strips the
+  headers Caddy strips, refuses bodies over 1 MB, and retries a refused
+  connection for five seconds, so a restarting unit stays invisible.
+- `support/egress-preload.ts`: a Bun preload in every process of the stack,
+  worker children included, delivered through `BUN_OPTIONS`. It rewrites the
+  provider origins in `support/provider-origins.ts` to the fake upstream, lets
+  loopback through, and blocks and records everything else. No test reaches
+  the internet.
+- `support/fake-upstream.ts` and `support/fixtures.ts`: Agil, Click and Book
+  Plus, the brand host and the exchange rate, answered from per-route
+  fixtures. A test can make an operation fail, slow down, or wait at a gate
+  (`hold`) until the test releases it. The request log records every call with
+  its calling process, status, and whether the caller aborted it.
+- `support/harness.ts`: suites, tests and browser contexts. A context aborts
+  every non-loopback request, captures `/r/*` answers without following their
+  redirects, and records `/api` traffic, console output and page errors. After
+  every test it asserts that nothing tried to leave the machine, that no
+  provider fallback path ran, that the fake built every answer it was asked
+  for, and that no page threw.
+- `support/ui.ts`: every selector the specs use. Selectors are roles,
+  accessible names and visible text; never CSS classes or pixel positions.
+- `support/api-client.ts`, `support/flows.ts`, `support/scenario.ts` and
+  `support/sessions.ts`: the API, common desk flows, dates and request-log
+  helpers, and session cookies minted with the stack's secret.
+- `support/prove-stack.ts`: a standalone check of the foundation over HTTP.
 
-Do **not** add `--concurrent`. It runs the tests inside a file at the same time,
-and it ignores the per-test `{ concurrency: false }` option some tests here carry
-— Bun 1.4 accepts that option and does nothing with it, so it protects nothing.
-Measured on `http-router.integration.test.ts`, `--concurrent` fails 14 of 84.
+Every stack uses the same "today" (`SEARCH_TODAY_OVERRIDE`): the next
+20 November on or after Lima's date. Calendars and migratory sweeps look the
+same on every run, and a year boundary is always six weeks away.
 
-## UI Suite
+## Spec files
 
-`scripts/run-ui-tests.ts` runs every capability-based module in `test/ui/` as an independent `node --test` file, in parallel. Each file calls `registerDesktopHarness()` from `test/helpers/ui.ts` and therefore owns its own server instance and its own Chromium instance; each test receives a fresh `BrowserContext` to isolate cookies, storage, routes, and pages. The number of files running at once is `FLY_DESK_UI_TEST_CONCURRENCY` when set, and otherwise one less than the available parallelism, capped at four.
+| File | Covers |
+| --- | --- |
+| `desk-search.e2e.ts` | A shared link through the sign-in gate; merged results, filters and sorting; quotation revalidation; both providers' purchase redirects; the flexible matrix filled cell by cell; a range of three hundred fares in a stable order that matches the backend's |
+| `migration.e2e.ts` | A migratory sweep across the year boundary: priced, failed and empty months, a month opened without a new search, and the route counted once |
+| `resilience.e2e.ts` | A failed provider named in one line with nothing it said reaching the page or the logs; both providers down; stopping a search; closing the tab mid-search |
+| `capacity.e2e.ts` | Admission order, the queue limit and its timeout, the Agil in-flight ceiling, a restart of every unit, and a renewed Click and Book Plus token file |
+| `mobile.e2e.ts` | Phone sheets and the system back at 390×844, every mode at 360×740, and the 1024×768 desk |
+| `session-security.e2e.ts` | Session renewal and its cap, sign-out, login lockout, hostile return paths, security headers, spoofed trust headers, oversized bodies and forged quotations |
+| `suggestions-quotes.e2e.ts` | Suggestions from both providers, recent and frequent stations, a quote in soles pasted back, and an exchange rate that never answers |
 
-`test/ui/responsive-smoke.playwright.ts` fixes the frontend QA viewports at
-desktop `1440x900`, tablet `1024x768`, and mobile `390x844`. Each case drives the
-workspace from idle into an active result, checks global horizontal overflow and
-the search grid's own `scrollWidth`, visits the panels available at that
-breakpoint, renders light and dark themes, and proves that the first keyboard
-focus is visible. The shared harness fails every case on an uncaught browser
-error.
+## Writing a test
 
-GitHub Actions uses the `chrome` channel included in the official runner image through `FLY_DESK_TEST_BROWSER_CHANNEL=chrome`. When that variable is not set locally, Playwright uses its installed Chromium. This avoids downloading a full browser in every job.
+- Assert what the agent sees and what the backend did. Assert every fake
+  interaction a test relies on from the request log.
+- Wait for conditions: `eventually`, Playwright's waits, or a fake gate.
+  Never wait for time, except to let a documented propagation window pass
+  before asserting that something did not happen, such as the pooled worker's
+  cancellation poll.
+- Keep state from crossing tests. The fake is reset before each test; where the
+  stack keeps state (location usage, login lockout, cached searches), each test
+  uses its own routes, dates or client addresses.
+- Add selectors to `support/ui.ts` only.
+- Never follow a provider redirect in the browser. Assert the 302 and its
+  `Location`.
+- A known product gap is a test marked `todo` with its cause and the file and
+  line behind it. It still runs, and the runner counts it as a known gap
+  instead of a failure. Remove the mark with the fix.
 
-UI tests should prioritize:
+## Failures
 
-- roles, accessible names, and keyboard navigation
-- submitted payloads and visible states
-- overflow, control availability, and panel changes
-- critical search, results, filtering, detail, and quotation flows
+A failing test leaves screenshots of its open pages, the stack's service logs,
+the fake's request log and the browser's record under
+`test-results/e2e/<spec>/<test>/`. The runner clears `test-results/e2e` when it
+starts.
 
-Avoid assertions against Tailwind class fragments, internal component hierarchy, or subpixel tolerances unless they represent a deliberate visual contract. When a UI test fails, the harness saves a screenshot under `test-results/ui/`; CI publishes that directory as an artifact.
+## CI
 
-## Coverage
-
-Coverage is a signal, not an isolated global target. New tests should prioritize branches involving:
-
-- security and authentication
-- orchestration and provider contracts
-- persistence, caching, cancellation, and redirects
-- conversion of shared requests between frontend and backend
-
-Do not remove `costamar` compatibility tests solely because they use the legacy name: they still protect the Click and Book Plus integration. Before removing a test, establish that the contract no longer exists or is covered by a more direct test.
+`.github/workflows/ci.yml` runs two jobs in parallel on pull requests, pushes
+to `main` and manual dispatch. `quality` installs, typechecks, lints, builds and
+runs the unit tests. `e2e` installs, builds and runs the end-to-end suite on
+the runner image's Chrome, and uploads `test-results/e2e/` as
+`fly-desk-e2e-failures` when it fails.
