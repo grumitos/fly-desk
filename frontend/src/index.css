@@ -411,12 +411,13 @@
   }
 
   /* Fields reserve their helper line, and the frequent chips when there are
-     any, so a validation message never moves the idle form. */
+     any, so a validation message never moves the idle form. A desk with no
+     history has no chips, and no blank band where they would be. */
   .fd-search-field-shell {
     min-height: calc(52px + 0.25rem + 1.2 * var(--fd-text-meta));
   }
 
-  .fd-location-field-shell-reserve-suggestions {
+  .fd-location-field-shell-reserve-suggestions:has(.fd-quick-chips:not([data-leaving])) {
     min-height: calc(52px + 5px + var(--fd-control-standard) + 0.25rem + 1.2 * var(--fd-text-meta));
   }
 
