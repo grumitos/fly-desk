@@ -186,9 +186,11 @@ The React UI must not display simulated controls. The following remain outside t
   hidden terminal prompt or controlled standard input and rejects plaintext
   arguments and environment input
 - `scripts/run-e2e.ts`: runs the end-to-end spec files in parallel
+- `scripts/pack-release.sh`: the deterministic release artifact of a revision
+- `scripts/release-smoke.ts`: unpacks an artifact, prepares it as the platform does, and boots web, search and redirect from it
 - `docs/DEPLOY_APP.md`: application deployment and rollback
-- `.github/workflows/ci.yml`: CI for typecheck, lint, build, and unit tests, with the end-to-end suite in a parallel job
-- `.github/workflows/deploy-vps.yml`: manual deployment and rollback by exact SHA through the fixed platform release wrapper
+- `.github/workflows/ci.yml`: CI for typecheck, lint, build, the release smoke, and unit tests, with the end-to-end suite in a parallel job
+- `.github/workflows/deploy-vps.yml`: manual deployment and rollback by exact SHA through the fixed platform release wrapper; a deployment builds, packs and smokes the artifact
 
 Shared VPS infrastructure no longer lives in this repository. Caddy, systemd, Caddy rollback, and the platform plan are maintained in `grumitos/vps-platform` (`D:\Dev\VPS\vps-platform`). This repository retains the application, CI, revision deployment, and release rollback.
 

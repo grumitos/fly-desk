@@ -36,12 +36,15 @@ bun run test
 
 `.github/workflows/deploy-vps.yml` has two modes:
 
-- `deploy`: verifies that the exact SHA belongs to `main`, runs the gate,
-  builds a deterministic tar archive with a single `app/` root, computes its
-  SHA-256 digest and stores it as a short-lived artifact. A separate
-  production-environment job downloads it, verifies the digest, configures the
-  pinned SSH identity, streams the archive through the forced `upload` command,
-  activates it with `deploy` and confirms it with `verify`.
+- `deploy`: verifies that the exact SHA belongs to `main`, installs and builds
+  it, packs a deterministic tar archive with a single `app/` root
+  (`scripts/pack-release.sh`), smokes that archive (`scripts/release-smoke.ts`,
+  below), computes its SHA-256 digest and stores it as a short-lived artifact.
+  The revision's typecheck, lint and end-to-end suite already passed as the
+  pull request's required checks, so they are not run again here. A separate
+  production-environment job downloads the artifact, verifies the digest,
+  configures the pinned SSH identity, streams the archive through the forced
+  `upload` command, activates it with `deploy` and confirms it with `verify`.
 - `rollback`: activates an already installed release by SHA through the forced
   `rollback` command and confirms it with `verify`.
 
@@ -73,6 +76,19 @@ The release source is `git archive` of the requested SHA plus the frontend
 built from that checkout and a `REVISION` file; ordering, timestamps,
 ownership and gzip metadata are normalized, so untracked files cannot enter a
 release.
+
+The release smoke unpacks the archive into an empty directory, runs its
+prepare hook with only the build user's environment, and starts web, search
+and redirect from it as their units do, with prewarm off so no provider is
+called. It requires each unit's `/api/health`, a sign-in, the signed-in shell
+and one of its built assets. The environment carries a `SEARCH_TODAY_OVERRIDE`
+that production must ignore and empty numeric settings that must keep their
+defaults, and the smoke checks both through the shell's runtime settings and
+the session cookie. It also requires a released `src/**/*.ts` naming
+`CBPLUS_TOKEN_FILE`, which is how the platform tells that a release re-reads
+the token file, and an import of an uncarried package to fail instead of
+downloading it. The Core quality gate runs the same smoke on every pull
+request.
 
 ## Release Preparation
 

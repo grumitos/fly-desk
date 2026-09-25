@@ -8,8 +8,7 @@ upstream's request log, the API, and process ids.
 
 ## Commands
 
-- `bun run test`: `test:unit`, then `test:e2e`. `deploy-vps.yml` runs it before
-  it builds a release.
+- `bun run test`: `test:unit`, then `test:e2e`.
 - `bun run test:unit`: `bun test test/unit`, for what an end-to-end run cannot
   reach deterministically: pure logic and the session cache on a temporary
   SQLite file. It passes while the folder is empty.
@@ -121,7 +120,8 @@ starts.
 ## CI
 
 `.github/workflows/ci.yml` runs two jobs in parallel on pull requests, pushes
-to `main` and manual dispatch. `quality` installs, typechecks, lints, builds and
-runs the unit tests. `e2e` installs, builds and runs the end-to-end suite on
-the runner image's Chrome, and uploads `test-results/e2e/` as
-`fly-desk-e2e-failures` when it fails.
+to `main` and manual dispatch. `quality` installs, typechecks, lints, builds,
+smokes the release artifact (`scripts/release-smoke.ts`, described in
+[`DEPLOY_APP.md`](./DEPLOY_APP.md)) and runs the unit tests. `e2e` installs,
+builds and runs the end-to-end suite on the runner image's Chrome, and uploads
+`test-results/e2e/` as `fly-desk-e2e-failures` when it fails.

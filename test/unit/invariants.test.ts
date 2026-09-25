@@ -302,7 +302,7 @@ describe("deployment", () => {
     expect(workflow).toContain('git merge-base --is-ancestor "$REVISION" HEAD');
     const buildJob = workflow.slice(workflow.indexOf("  build_release:"), workflow.indexOf("  deploy:"));
     expect(buildJob).not.toContain("secrets.");
-    expect(buildJob).toContain("git archive");
+    expect(buildJob).toContain("scripts/pack-release.sh");
     expect(workflow).toContain("sha256sum --check --strict");
   });
 

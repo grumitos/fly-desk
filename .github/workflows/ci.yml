@@ -49,6 +49,12 @@ jobs:
       - name: Build
         run: bun run build
 
+      - name: Smoke the release artifact
+        run: |
+          set -euo pipefail
+          bash scripts/pack-release.sh "$(git rev-parse HEAD)" "$RUNNER_TEMP/fly-desk.tar.gz"
+          bun scripts/release-smoke.ts "$RUNNER_TEMP/fly-desk.tar.gz"
+
       - name: Unit tests
         run: bun run test:unit
 
