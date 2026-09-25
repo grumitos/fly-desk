@@ -185,10 +185,7 @@ When working on another machine, do not send `.env` as plaintext through chat, e
 - `bun run lint`
 - `bun run test`
 - `bun run test:unit`
-- `bun run test:integration`
-- `bun run test:core`
-- `bun run test:ui`
-- `bun run test:coverage`
+- `bun run test:e2e`
 - `bun run demo`
 
 ## Verification
@@ -212,7 +209,7 @@ rg -n "\]\([^)]*\.md\)" README.md docs frontend/README.md
 
 ## CI
 
-GitHub Actions runs `.github/workflows/ci.yml` on pull requests, pushes to `main`, and manual dispatch. The gate separates core and UI into parallel jobs: core runs typecheck, lint, build, and Bun tests; UI installs Chromium, builds the frontend, and runs browser flows. UI failures publish screenshots as artifacts.
+GitHub Actions runs `.github/workflows/ci.yml` on pull requests, pushes to `main`, and manual dispatch. Two jobs run in parallel: quality runs typecheck, lint, build, and unit tests; end-to-end builds the application and runs the end-to-end suite in the runner image's Chrome against fake provider upstreams. End-to-end failures publish screenshots, service logs, and the fake upstream's request log as artifacts. See [`docs/TESTING.md`](./docs/TESTING.md).
 
 ## Current Documentation
 
@@ -222,7 +219,7 @@ GitHub Actions runs `.github/workflows/ci.yml` on pull requests, pushes to `main
 - [`docs/CBPLUS_SESSION_RECOVERY.md`](./docs/CBPLUS_SESSION_RECOVERY.md): secure Click and Book Plus regeneration and recovery without copying a session
 - [`docs/FRONTEND_IDENTITY.md`](./docs/FRONTEND_IDENTITY.md): React visual identity and UI rules
 - [`docs/REDESIGN_CONTRACT.md`](./docs/REDESIGN_CONTRACT.md): what the search redesign commits the code to, where it departs from the design manual, and what is still missing
-- [`docs/TESTING.md`](./docs/TESTING.md): test classification, execution, and relevance criteria
+- [`docs/TESTING.md`](./docs/TESTING.md): the end-to-end suite, how to run it, and how to write a test
 - [`frontend/README.md`](./frontend/README.md): brief frontend workspace notes
 
 ## Deployment
