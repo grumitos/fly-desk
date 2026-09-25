@@ -8,7 +8,9 @@ import { defineSuite } from "./support/harness.ts";
 import type { OfferSpec } from "./support/fixtures.ts";
 import { day, eventually, providerSearches } from "./support/scenario.ts";
 import {
+  announcement,
   detail,
+  notice,
   pastedQuotation,
   quotation,
   results,
@@ -20,7 +22,7 @@ import {
 /*
  * The desk's shortcuts: suggestions from both providers, the stations a
  * browser and the whole desk use most, a commercial quotation pasted back in,
- * and prices quoted in soles for a domestic trip.
+ * prices quoted in soles for a domestic trip, and a search copied to share.
  */
 
 const suite = defineSuite({ file: import.meta.filename });
@@ -34,9 +36,15 @@ suite.test("a city and its airports come back from both providers, typed by name
   const { fake } = scope;
   const { page } = await scope.signedInPage("/");
 
-  await searchForm.location(page, "Origen").fill("buenos");
+  /* The field names its list of suggestions while there is one, and only then. */
+  const originField = searchForm.location(page, "Origen");
+  assert.equal(await originField.getAttribute("aria-controls"), null, "a closed field names a list of suggestions");
+  await originField.fill("buenos");
   await searchForm.suggestion(page, "BUE").waitFor();
   await searchForm.suggestion(page, "EZE").waitFor();
+  const controls = await originField.getAttribute("aria-controls");
+  assert.ok(controls, "an open field names no list of suggestions");
+  assert.equal(await page.getByRole("listbox").getAttribute("id"), controls, "the field names a list that is not there");
   const asked = fake.requests((request) => request.op === "agil.locations" || request.op === "cbplus.locations");
   assert.deepEqual([...new Set(asked.map((request) => request.op))].sort(), ["agil.locations", "cbplus.locations"]);
 
@@ -102,15 +110,19 @@ suite.test("a new tab offers this browser's recent stations and the desk's frequ
   );
 });
 
-suite.test("a domestic quote is priced in soles, and pasting it back searches only once confirmed", async (scope) => {
+suite.test("a domestic quote is priced in soles and ages while open, pasting it back searches only once confirmed, and copying the search says how it went", async (scope) => {
   const { fake, stack } = scope;
   fake.setFlights("both", { origin: "LIM", destination: "CUZ" }, CUSCO);
   const departure = day(50);
   const returning = day(54);
-  const { tracked, page } = await scope.signedInPage(searchLink({ mode: "exact", trip: "round-trip", origin: "LIM", destination: "CUZ", departure, return: returning }), { clipboard: true });
+  const tracked = await scope.newContext({ signedIn: true, clipboard: true });
+  /* The page's clock, so the fare's age can be moved on instead of waited for. */
+  await tracked.context.clock.install();
+  const page = await tracked.newPage();
+  await page.goto(`${stack.baseUrl}${searchLink({ mode: "exact", trip: "round-trip", origin: "LIM", destination: "CUZ", departure, return: returning })}`);
   await waitForResults(page, 4);
 
-  /* The quote: soles for a trip inside Peru. */
+  /* The quote: soles for a trip inside Peru, and a fare whose age moves while it is open. */
   await results.card(page, /USD 142\.80 total.*Agilsmart$/).click();
   const panel = detail.surface(page);
   await detail.quote(panel).click();
@@ -118,6 +130,10 @@ suite.test("a domestic quote is priced in soles, and pasting it back searches on
   await quoteDialog.waitFor();
   const quoted = await quoteDialog.innerText();
   assert.match(quoted, /S\/\s*[\d.,]+ por adulto/, "a domestic quote is not in soles");
+  const fareAge = quotation.fareAge(page);
+  assert.match(await fareAge.innerText(), /^Tarifa preparada hace menos de 1 min/);
+  await page.clock.runFor(125_000);
+  await eventually(async () => assert.match(await fareAge.innerText(), /^Tarifa preparada hace 2 min/), { timeoutMs: 3_000, message: "the fare's age stood still" });
   await quotation.close(page).click();
   await quoteDialog.waitFor({ state: "hidden" });
 
@@ -159,6 +175,17 @@ suite.test("a domestic quote is priced in soles, and pasting it back searches on
   const url = new URL(page.url());
   assert.equal(url.searchParams.get("departure"), departure);
   assert.equal(url.searchParams.get("return"), returning);
+
+  /* Copying the search says so; a clipboard that refuses is named instead. */
+  await topBar.copyConfig(page).click();
+  await announcement.status(page, "Configuración copiada").waitFor({ timeout: 5_000 });
+  assert.match(await page.evaluate(() => navigator.clipboard.readText()), /\bCUZ\b/);
+  await page.evaluate(() => {
+    navigator.clipboard.writeText = () => Promise.reject(new DOMException("Refused.", "NotAllowedError"));
+    document.execCommand = () => false;
+  });
+  await topBar.copyConfig(page).click();
+  await notice.error(page).filter({ hasText: /^No se pudo copiar la configuración\./ }).waitFor({ timeout: 5_000 });
 });
 
 suite.test("an exchange rate that never answers delays nothing and makes up no price in soles", async (scope) => {

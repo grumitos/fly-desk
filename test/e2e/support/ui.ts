@@ -77,6 +77,7 @@ export async function signInThroughGate(page: Page, password: string): Promise<v
 
 export const topBar = {
   themeToggle: (page: Page) => page.getByRole("banner").getByRole("button", { name: "Cambiar tema" }),
+  copyConfig: (page: Page) => page.getByRole("banner").getByRole("button", { name: "Copiar configuración" }),
   pasteConfig: (page: Page) => page.getByRole("button", { name: "Pegar configuración" }),
 };
 
@@ -109,6 +110,10 @@ export const searchForm = {
   returnHalf: (page: Page) => page.getByRole("button", { name: /^(Regreso|Salida hasta):/ }),
   calendarDay: (root: Root, isoDate: string) =>
     root.getByRole("button", { name: new RegExp(`^${escapeRegExp(spanishDayName(isoDate))}(,|$)`) }),
+  /** The day or month the calendar marks as the desk's today: «20 de noviembre de 2026, hoy». */
+  calendarToday: (root: Root) => root.getByRole("button", { name: /, hoy$/ }),
+  /** The cross on the return half, which empties both dates. */
+  clearDates: (page: Page) => page.getByRole("button", { name: "Borrar las fechas" }),
   calendarSheet: (page: Page) => page.getByRole("dialog", { name: "Fechas", exact: true }),
   /** The desk's calendar, a popover under the date field. */
   calendarPopover: (page: Page) => page.getByRole("dialog", { name: "Calendario de fechas", exact: true }),
@@ -126,6 +131,8 @@ export const searchForm = {
   addPassenger: (root: Root, kind: "adultos" | "niños" | "bebés") => root.getByRole("button", { name: `Agregar ${kind}` }),
   /** «Aplicar» at the foot of a phone sheet. */
   applySheet: (sheet: Locator) => sheet.getByRole("button", { name: "Aplicar" }),
+  /** The cross in a phone sheet's header, «Cerrar meses» for the sheet «Meses». */
+  closeSheet: (sheet: Locator, title: string) => sheet.getByRole("button", { name: `Cerrar ${title.toLocaleLowerCase("es-PE")}`, exact: true }),
   submit: (page: Page) => page.locator("form").getByRole("button", { name: "Buscar", exact: true }),
   stop: (page: Page) => page.getByRole("button", { name: "Detener búsqueda" }),
   /** The phone's one-line summary of a search, which reopens the form. */
@@ -145,6 +152,14 @@ export const notice = {
   line: (page: Page) => noticeIn(page, page.getByRole("status").or(page.getByRole("alert"))),
   /** The line when it is an error. */
   error: (page: Page) => noticeIn(page, page.getByRole("alert")),
+  dismiss: (page: Page) => page.getByRole("button", { name: "Descartar el aviso", exact: true }),
+};
+
+/* ---- What the polite live regions read out without being asked ---- */
+
+export const announcement = {
+  /** An announcement by its whole text: «6 vuelos», «2 vuelos de 6», «Configuración copiada». */
+  status: (page: Page, text: string) => page.getByRole("status").filter({ hasText: new RegExp(`^${escapeRegExp(text)}$`) }),
 };
 
 /* ---- Results ---- */
@@ -162,8 +177,11 @@ export const results = {
     page.getByRole("heading", { name: /^(Resultados|Vuelo migratorio)$/, level: 2, includeHidden: true }).locator(".."),
   sort: (page: Page, criterion: SortCriterion) =>
     page.getByRole("radiogroup", { name: "Orden de resultados" }).getByRole("radio", { name: `Ordenar por ${criterion}` }),
+  /** The column head's four orders, in the order it draws them. */
+  sorts: (page: Page) => page.getByRole("radiogroup", { name: "Orden de resultados" }).getByRole("radio"),
   /** A result row is one button whose name reads the whole fare. */
   cards: (page: Page) => page.getByRole("button", { name: /^(Seleccionar oferta|Oferta seleccionada)\./ }),
+  selectedCard: (page: Page) => page.getByRole("button", { name: /^Oferta seleccionada\./ }),
   /** The row whose name also matches `pattern` (airline, times, price, provider…). */
   card: (page: Page, pattern: RegExp) =>
     page.getByRole("button", { name: new RegExp(`^(?:Seleccionar oferta|Oferta seleccionada)\\..*${pattern.source}`) }),
@@ -205,6 +223,8 @@ export const detail = {
       }))
       .first(),
   quote: (root: Locator) => root.getByRole("button", { name: /^(Cotizar|Validando|Copiado)$/ }),
+  /** The desk's offer column before an offer is chosen. */
+  nothingSelected: (page: Page) => page.getByRole("heading", { name: "Selecciona una oferta", level: 3 }),
   /** The provider's own search, through `/r/<id>`. */
   purchase: (root: Locator) => root.getByRole("button", { name: /^(Buscar|Abrir)$/ }),
   close: (root: Locator) => root.getByRole("button", { name: "Cerrar oferta" }),
@@ -214,12 +234,16 @@ export const detail = {
   flightRow: (root: Locator, flight: string) => root.getByText(new RegExp(`· ${escapeRegExp(flight)}$`)),
   /** The phone's «Cotización copiada» line. */
   copied: (root: Locator) => root.getByRole("status").filter({ hasText: "Cotización copiada" }),
+  /** What the panel says about the provider's window it was asked to open. */
+  purchaseFeedback: (root: Locator) => root.getByRole("status").filter({ hasNotText: "Cotización copiada" }),
   quoteError: (root: Locator) => root.getByRole("alert"),
 };
 
 export const quotation = {
   dialog: (page: Page) => page.getByRole("dialog", { name: "Cotización lista para pegar" }),
   close: (page: Page) => page.getByRole("button", { name: "Cerrar la cotización" }),
+  /** «Tarifa preparada hace 2 min · …», at the dialog's foot. */
+  fareAge: (page: Page) => quotation.dialog(page).getByText(/^Tarifa preparada /),
 };
 
 /* ---- A pasted commercial quotation ---- */
@@ -340,9 +364,95 @@ export async function isFullyInViewport(locator: Locator): Promise<boolean> {
   });
 }
 
+/** Whether all of an element's box is inside another's: a row inside the list's viewport. */
+export async function isWithin(locator: Locator, container: Locator): Promise<boolean> {
+  const [box, frame] = await Promise.all([locator.boundingBox(), container.boundingBox()]);
+  return Boolean(box && frame
+    && box.y >= frame.y - 1 && box.y + box.height <= frame.y + frame.height + 1
+    && box.x >= frame.x - 1 && box.x + box.width <= frame.x + frame.width + 1);
+}
+
+/** How far the nearest ancestor that scrolls an element has been scrolled. */
+export async function scrollerOffset(locator: Locator): Promise<number> {
+  return locator.evaluate((element) => {
+    for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      const overflow = window.getComputedStyle(ancestor).overflowY;
+      if ((overflow === "auto" || overflow === "scroll") && ancestor.scrollHeight > ancestor.clientHeight) return ancestor.scrollTop;
+    }
+    return document.scrollingElement?.scrollTop ?? 0;
+  });
+}
+
 /** Whether a text element shows all of its text (no ellipsis, no clip). */
 export async function showsWholeText(locator: Locator): Promise<boolean> {
   return locator.evaluate((element) => element.scrollWidth <= element.clientWidth + 1);
+}
+
+/** The opacity an element is drawn with, its ancestors' included. */
+export async function drawnOpacity(locator: Locator): Promise<number> {
+  return locator.evaluate((element) => {
+    let opacity = 1;
+    for (let node: Element | null = element; node; node = node.parentElement) {
+      opacity *= Number(window.getComputedStyle(node).opacity);
+    }
+    return opacity;
+  });
+}
+
+/* ---- Focus and structure ---- */
+
+export async function isFocused(locator: Locator): Promise<boolean> {
+  return locator.evaluate((element) => element === document.activeElement);
+}
+
+/** Ids the document holds more than once. */
+export async function duplicateIds(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const ids = [...document.querySelectorAll("[id]")].map((element) => element.id);
+    return [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
+  });
+}
+
+/**
+ * Records, from before the page's first script, the `aria-label` of every
+ * element the page takes out of its document, and returns a reader of what was
+ * taken out so far. A control that is built once is never on the list.
+ */
+export async function recordRemovedControls(page: Page): Promise<() => Promise<string[]>> {
+  await page.addInitScript(() => {
+    const removed: string[] = [];
+    (window as unknown as { __e2eRemovedControls: string[] }).__e2eRemovedControls = removed;
+    new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.removedNodes) {
+          if (!(node instanceof Element)) continue;
+          for (const element of [node, ...node.querySelectorAll("[aria-label]")]) {
+            const name = element.getAttribute("aria-label");
+            if (name) removed.push(name);
+          }
+        }
+      }
+    }).observe(document, { childList: true, subtree: true });
+  });
+  return () => page.evaluate(() => (window as unknown as { __e2eRemovedControls?: string[] }).__e2eRemovedControls ?? []);
+}
+
+/**
+ * Counts, from now on and at every change of the document, the offer panels it
+ * holds — a panel is its «Cotizar» — and returns a reader of the most it has
+ * held at once.
+ */
+export async function watchOfferPanels(page: Page): Promise<() => Promise<number>> {
+  await page.evaluate(() => {
+    const count = () => [...document.querySelectorAll("button")]
+      .filter((button) => /^(Cotizar|Validando|Copiado)$/.test(button.textContent?.trim() ?? "")).length;
+    const seen = { most: count() };
+    (window as unknown as { __e2eOfferPanels: typeof seen }).__e2eOfferPanels = seen;
+    new MutationObserver(() => {
+      seen.most = Math.max(seen.most, count());
+    }).observe(document, { childList: true, subtree: true });
+  });
+  return () => page.evaluate(() => (window as unknown as { __e2eOfferPanels: { most: number } }).__e2eOfferPanels.most);
 }
 
 /**

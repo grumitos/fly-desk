@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import type { Page } from "playwright";
-import { runSearch, waitForMotion, waitForResults, waitForSweep } from "./support/flows.ts";
+import type { Locator, Page } from "playwright";
+import { nextFrames, runSearch, waitForMotion, waitForResults, waitForSweep } from "./support/flows.ts";
 import { defineSuite, type ContextOptions } from "./support/harness.ts";
 import type { OfferSpec } from "./support/fixtures.ts";
-import { addMonths, day, eventually, monthKey, providerSearches, TODAY } from "./support/scenario.ts";
+import { addMonths, day, deskMonth, eventually, monthKey, providerSearches, TODAY } from "./support/scenario.ts";
 import {
   detail,
+  duplicateIds,
   filters,
   horizontalOverflow,
   isDarkTheme,
@@ -15,17 +16,20 @@ import {
   migration,
   oneStopLabels,
   readResultCount,
+  recordRemovedControls,
   results,
+  scrollerOffset,
   searchForm,
   searchLink,
   topBar,
+  watchOfferPanels,
   type SearchLink,
 } from "./support/ui.ts";
 
 /*
  * The phone and the in-between sizes: the sheets that stand in for the desk's
- * popovers and columns, the system back, and a page that never scrolls
- * sideways.
+ * popovers and columns, the system back, a page that never scrolls sideways,
+ * and a desk resized under a search.
  */
 
 const suite = defineSuite({ file: import.meta.filename });
@@ -49,12 +53,15 @@ suite.test("on a phone the whole search runs through sheets, the back button clo
   fake.setFlights("both", { origin: "LIM", destination: "CUZ" }, CUSCO);
   const tracked = await scope.newContext({ ...PHONE, signedIn: true, clipboard: true });
   const page = await tracked.newPage();
+  const removedControls = await recordRemovedControls(page);
   /* Something to go back to that is not the desk. */
   const before = `${stack.baseUrl}/favicon.svg`;
   await page.goto(before);
   await page.goto(stack.baseUrl);
   await searchForm.location(page, "Origen").waitFor();
   await assertNoHorizontalOverflow(page, "idle");
+  /* The phone's form is the first one built: no desk control is put up to be replaced. */
+  assert.deepEqual(await removedControls(), [], "the phone built the desk's controls and then replaced them");
 
   /* Dark, chosen at rest: the title bar steps aside once a search exists. */
   await topBar.themeToggle(page).tap();
@@ -73,7 +80,8 @@ suite.test("on a phone the whole search runs through sheets, the back button clo
     await eventually(async () => assert.match(await searchForm.location(page, field).inputValue(), new RegExp(`^${code}\\b`)));
   }
 
-  /* Dates in the calendar sheet. */
+  /* Dates in the calendar sheet, which scrolls where the thumb leaves it: a
+     tap chooses a day and moves nothing. */
   const departure = day(20);
   const returning = day(24);
   await searchForm.departureHalf(page).tap();
@@ -83,7 +91,10 @@ suite.test("on a phone the whole search runs through sheets, the back button clo
   for (const date of [departure, returning]) {
     const cell = searchForm.calendarDay(calendar, date);
     await cell.scrollIntoViewIfNeeded();
+    const scrolled = await scrollerOffset(cell);
     await cell.tap();
+    await nextFrames(page);
+    assert.ok(Math.abs(await scrollerOffset(cell) - scrolled) < 2, `tapping ${date} scrolled the calendar`);
   }
   await searchForm.applySheet(calendar).tap();
   await calendar.waitFor({ state: "hidden" });
@@ -250,12 +261,29 @@ suite.test("a phone held sideways shows the offer's itinerary with «Cotizar» f
   }
 });
 
-suite.test("the dates ask for a departure once the calendar is left without one, and not while it is open", async (scope) => {
-  const missing = "Selecciona una fecha de salida.";
-  /* Each left without a choice: the system back on a phone, Escape on a desk. */
+suite.test("the dates and the months ask for a choice once their calendar is left without one, and not while it is open", async (scope) => {
+  const missingDate = "Selecciona una fecha de salida.";
+  const missingMonths = "Selecciona al menos un mes.";
+  const firstMonth = addMonths(monthKey(TODAY), 1);
+  const lastMonth = addMonths(monthKey(TODAY), 3);
+  /* Each left without a choice: the system back on a phone, Escape on a desk.
+     With a choice, the phone's sheet keeps it on every way out, its cross
+     included; on a desk the second month confirms the range and closes. */
   const surfaces = [
-    { name: "phone sheet", options: PHONE, calendar: searchForm.calendarSheet, leave: (page: Page) => page.goBack() },
-    { name: "desk popover", options: TABLET, calendar: searchForm.calendarPopover, leave: (page: Page) => page.keyboard.press("Escape") },
+    {
+      name: "phone sheet",
+      options: PHONE,
+      calendar: searchForm.calendarSheet,
+      leave: (page: Page) => page.goBack(),
+      leaveWithChoice: (picker: Locator) => searchForm.closeSheet(picker, "Meses").click(),
+    },
+    {
+      name: "desk popover",
+      options: TABLET,
+      calendar: searchForm.calendarPopover,
+      leave: (page: Page) => page.keyboard.press("Escape"),
+      leaveWithChoice: async () => undefined,
+    },
   ];
   for (const surface of surfaces) {
     const { page } = await scope.signedInPage("/", surface.options);
@@ -263,14 +291,81 @@ suite.test("the dates ask for a departure once the calendar is left without one,
     await departure.click();
     const calendar = surface.calendar(page);
     await calendar.waitFor();
-    assert.equal(await searchForm.fieldMessage(page, missing).count(), 0, `${surface.name}: the calendar asked for a date as it opened`);
+    assert.equal(await searchForm.fieldMessage(page, missingDate).count(), 0, `${surface.name}: the calendar asked for a date as it opened`);
     assert.equal(await departure.getAttribute("aria-invalid"), "false", surface.name);
 
     await surface.leave(page);
     await calendar.waitFor({ state: "hidden" });
-    await searchForm.fieldMessage(page, missing).waitFor();
+    await searchForm.fieldMessage(page, missingDate).waitFor();
     assert.equal(await departure.getAttribute("aria-invalid"), "true", surface.name);
+
+    await searchForm.mode(page, "Migratorio").click();
+    const months = searchForm.months(page);
+    await months.click();
+    const picker = searchForm.monthPicker(page);
+    await picker.waitFor();
+    assert.equal(await searchForm.fieldMessage(page, missingMonths).count(), 0, `${surface.name}: the month picker asked for a month as it opened`);
+    await surface.leave(page);
+    await picker.waitFor({ state: "hidden" });
+    await searchForm.fieldMessage(page, missingMonths).waitFor();
+
+    await months.click();
+    await picker.waitFor();
+    await searchForm.monthCell(picker, firstMonth).click();
+    await searchForm.monthCell(picker, lastMonth).click();
+    await surface.leaveWithChoice(picker);
+    await picker.waitFor({ state: "hidden" });
+    assert.equal(
+      await months.getAttribute("aria-label"),
+      `Meses: ${deskMonth(firstMonth)} – ${deskMonth(lastMonth)}`,
+      `${surface.name}: the months chosen were lost on the way out`,
+    );
+    await searchForm.fieldMessage(page, missingMonths).waitFor({ state: "hidden" });
   }
+});
+
+/* ---- A window resized under a search ---- */
+
+/* Twelve fares a provider, one row each: more than the column shows at once. */
+const MEDELLIN: OfferSpec[] = Array.from({ length: 12 }, (_, index): OfferSpec => {
+  const hour = String(6 + index).padStart(2, "0");
+  return {
+    outbound: [`AV${9300 + index} LIM-MDE ${hour}:10-${String(9 + index).padStart(2, "0")}:05`],
+    price: 280 + index * 13,
+    baggage: { carryOn: true, checked: 1 },
+  };
+});
+
+suite.test("resizing the desk keeps the list and where it was read, and never holds two offer panels", async (scope) => {
+  const { fake } = scope;
+  fake.setFlights("both", { origin: "LIM", destination: "MDE" }, MEDELLIN);
+  const { page } = await scope.signedInPage(searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "MDE", departure: day(55) }));
+  await waitForResults(page, MEDELLIN.length * 2);
+
+  /* Three columns to two: the offer column goes, the list stays the list it was, scrolled. */
+  const list = results.viewport(page);
+  await list.evaluate((element) => {
+    element.setAttribute("data-e2e-identity", "read-before-the-resize");
+    element.scrollTo({ top: 300 });
+  });
+  await eventually(async () => assert.ok(await list.evaluate((element) => element.scrollTop) > 0));
+  await page.setViewportSize({ width: 900, height: 900 });
+  await detail.nothingSelected(page).waitFor({ state: "hidden" });
+  assert.equal(await list.getAttribute("data-e2e-identity"), "read-before-the-resize", "the resize built the list again");
+  assert.ok(await list.evaluate((element) => element.scrollTop) > 0, "the resize lost the list's scroll");
+
+  /* At 1300 an offer opens as a side sheet; widened to 1600 it moves to the
+     third column, and the sheet is not kept beside it. */
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await results.cards(page).first().click();
+  const sheet = page.getByRole("dialog", { name: "Oferta", exact: true });
+  await sheet.waitFor();
+  const offerPanels = await watchOfferPanels(page);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await sheet.waitFor({ state: "detached" });
+  await detail.quote(detail.surface(page)).waitFor();
+  assert.equal(await offerPanels(), 1, "the offer was drawn twice while it moved to its column");
+  assert.deepEqual(await duplicateIds(page), []);
 });
 
 suite.test("a filter changed in the phone's filter sheet stays on the address bar after back closes the sheet", async (scope) => {

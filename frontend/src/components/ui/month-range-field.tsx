@@ -64,13 +64,15 @@ export function MonthRangeField({
 
   const handleOpenChange = (next: boolean) => {
     if (next) {
-      onTouch?.()
       if (mobile) {
         setDraftStartMonth(validStart ?? "")
         setDraftEndMonth(validEnd ?? "")
       }
       setVisibleYear(Number((validStart ?? minMonth).slice(0, 4)))
     } else {
+      /* The field counts as visited once the picker is left, so its message
+         waits until the agent has had the chance to choose. */
+      onTouch?.()
       setAnchorMonth(null)
     }
     setOpen(next)

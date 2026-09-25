@@ -8,13 +8,31 @@ import {
   type QuotationAnswer,
   type SearchJob,
 } from "./support/api-client.ts";
-import { readWholeList, rowKey, runSearch, waitForResults } from "./support/flows.ts";
+import { readWholeList, rowKey, runSearch, waitForMotion, waitForResults } from "./support/flows.ts";
 import { defineSuite, type TestScope } from "./support/harness.ts";
 import { fakeCbplusToken, FAKE_CBPLUS_TERMINAL_ID, type OfferSpec, type SearchQuery } from "./support/fixtures.ts";
-import { AGIL_GDS_IDS, addDays, day, eventually, providerSearches } from "./support/scenario.ts";
 import {
+  AGIL_GDS_IDS,
+  addDays,
+  addMonths,
+  day,
+  deskDate,
+  deskMonth,
+  eventually,
+  monthKey,
+  providerSearches,
+  spanishDayName,
+  spanishMonthName,
+  TODAY,
+  weekday,
+} from "./support/scenario.ts";
+import {
+  announcement,
   detail,
+  drawnOpacity,
   filters,
+  isFocused,
+  isWithin,
   login,
   quotation,
   readCards,
@@ -23,12 +41,13 @@ import {
   searchForm,
   searchLink,
   signInThroughGate,
+  topBar,
 } from "./support/ui.ts";
 
 /*
  * The desk at 1440×900: a shared link through the sign-in gate, a flexible
- * round trip over the matrix, and a week-long range that returns hundreds of
- * fares.
+ * round trip over the matrix, a week-long range that returns hundreds of
+ * fares, and the list, the form and both calendars from the keyboard.
  */
 
 const CBPLUS_TOKEN = fakeCbplusToken();
@@ -114,21 +133,30 @@ suite.test("a shared round-trip link survives the sign-in gate and carries the s
   assert.ok(agilCalls.every((request) => request.query?.origin === "LIM" && request.query.returnDate === returning));
   assert.equal(providerSearches(fake, route).filter((request) => request.op === "cbplus.search").length, 1);
 
-  /* Merged: both providers in one list, cheapest first. */
+  /* The link's two stations were each looked up once. */
+  const lookedUp = tracked.apiRequests
+    .filter((request) => new URL(request.url).pathname === "/api/locations")
+    .map((request) => new URL(request.url).searchParams.get("q"));
+  assert.deepEqual(lookedUp.sort(), ["LIM", "MIA"], "a station of the link was looked up more than once");
+
+  /* Merged: both providers in one list, cheapest first, and read out. */
   const merged = await readCards(page);
   assert.deepEqual([...new Set(merged.map((card) => card.provider))].sort(), ["Agilsmart", "Click and Book Plus"]);
   assert.deepEqual(merged.map((card) => card.amount), [455, 498, 540, 612, 689, 700]);
+  await announcement.status(page, "6 vuelos").waitFor({ timeout: 5_000 });
 
-  /* An airline, then stops: the count and the rows move together. */
+  /* An airline, then stops: the count, the rows and what is read out move together. */
   await filters.airline(page, "LATAM").click();
   await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: 2, total: 6 }));
   assert.match(await results.headerLine(page).innerText(), /4 vuelos ocultos por filtros/);
+  await announcement.status(page, "2 vuelos de 6").waitFor({ timeout: 5_000 });
   let rows = await readCards(page);
   assert.deepEqual(rows.map((card) => card.airline), ["LATAM", "LATAM"]);
   assert.deepEqual(rows.map((card) => card.provider).sort(), ["Agilsmart", "Click and Book Plus"]);
 
   await filters.stops(page, "Directo").click();
   await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: 1, total: 6 }));
+  await announcement.status(page, "1 vuelo de 6").waitFor({ timeout: 5_000 });
   rows = await readCards(page);
   assert.equal(rows.length, 1);
   assert.deepEqual(rows[0]!.legs.map((leg) => leg.stops), ["Directo", "Directo"]);
@@ -198,6 +226,14 @@ suite.test("a shared round-trip link survives the sign-in gate and carries the s
   assert.equal(agilLocation.searchParams.get("departureLocation"), "LIM");
   assert.equal(agilLocation.searchParams.get("departureDate"), departure.split("-").reverse().join("/"));
   await agilPage.close();
+
+  /* A popup blocker is named on the panel, and nothing is asked for. */
+  await page.evaluate(() => {
+    window.open = () => null;
+  });
+  await detail.purchase(offerPanel).click();
+  await detail.purchaseFeedback(offerPanel).filter({ hasText: /^El navegador bloqueó la ventana del proveedor\./ }).waitFor({ timeout: 5_000 });
+  assert.equal(tracked.redirects.length, 2, "a blocked window still asked for its purchase path");
 
   /* The Click and Book Plus token only ever travels inside that 302. */
   const html = await page.content();
@@ -537,6 +573,15 @@ suite.test("a week of one-way fares keeps every one of three hundred, in the sam
   await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: oneStopOrLess.length, total: RANGE_TOTAL }));
   assert.equal(await results.viewport(page).evaluate((element) => element.scrollTop), 0, "the filtered list did not start at its first row");
   assert.equal((await readCards(page))[0]!.label, oneStopOrLess[0]!.label);
+
+  /* So is another value of the same filter. */
+  await results.viewport(page).evaluate((element) => element.scrollTo({ top: element.scrollHeight / 2 }));
+  await eventually(async () => assert.ok(await results.viewport(page).evaluate((element) => element.scrollTop) > 0));
+  await filters.stops(page, "Directo").click();
+  const direct = byPrice.filter((card) => card.legs[0]!.stops === "Directo");
+  await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: direct.length, total: RANGE_TOTAL }));
+  assert.equal(await results.viewport(page).evaluate((element) => element.scrollTop), 0, "another value of the same filter kept the scroll");
+  assert.equal((await readCards(page))[0]!.label, direct[0]!.label);
   await filters.clear(page).click();
   await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: RANGE_TOTAL, total: RANGE_TOTAL }));
 
@@ -566,4 +611,146 @@ suite.test("a week of one-way fares keeps every one of three hundred, in the sam
     return `${offer.providerSource === "costamar" ? "Click and Book Plus" : "Agilsmart"}|${segments[0]!.departureAt.slice(11, 16)}|${segments.at(-1)!.arrivalAt.slice(11, 16)}|${offer.itineraries[0]!.stops}|${offer.price.total.amount.toFixed(2)}`;
   });
   assert.deepEqual(secondByStops.map(rowKey), backendByStops, "the desk and the backend disagree about the stops order");
+});
+
+/* ---- The keyboard ---- */
+
+/* Fifteen direct fares a provider on one day, one row each: more than the
+   column shows at once. */
+const BOGOTA: OfferSpec[] = Array.from({ length: 15 }, (_, index): OfferSpec => {
+  const departs = 360 + index * 45;
+  return {
+    outbound: [`AV${8100 + index} LIM-BOG ${clockOf(departs)}-${clockOf(departs + 200)}`],
+    price: 300 + index * 11,
+    baggage: { carryOn: true, checked: index % 2 },
+  };
+});
+
+suite.test("the list, its column head and the passenger popover answer the keyboard, and a filter or an order keeps an edit of the form", async (scope) => {
+  const { fake } = scope;
+  fake.setFlights("both", { origin: "LIM", destination: "BOG" }, BOGOTA);
+  const providers = fake.hold("*", (request) => request.op === "agil.search" || request.op === "cbplus.search");
+  const { page } = await scope.signedInPage(searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "BOG", departure: day(45) }));
+
+  /* Busy, the search button says «Detener» with no pointer over it. */
+  const stop = searchForm.stop(page);
+  await stop.waitFor();
+  await waitForMotion(page);
+  assert.equal(await drawnOpacity(stop.getByText("Detener", { exact: true })), 1, "«Detener» shows only under a pointer");
+  providers.release();
+  await waitForResults(page, BOGOTA.length * 2);
+
+  /* The column head is one tab stop; an arrow changes the order and takes the focus with it. */
+  const tabStops = await results.sorts(page).evaluateAll((radios) => radios.filter((radio) => (radio as HTMLElement).tabIndex === 0).length);
+  assert.equal(tabStops, 1, "the column head is more than one tab stop");
+  await results.sort(page, "precio").focus();
+  await page.keyboard.press("ArrowLeft");
+  await page.waitForURL((url) => url.searchParams.get("sort") === "stops");
+  assert.equal(await results.sort(page, "número de escalas").getAttribute("aria-checked"), "true");
+  assert.ok(await isFocused(results.sort(page, "número de escalas")), "the arrow left the focus behind");
+  await page.keyboard.press("ArrowRight");
+  await page.waitForURL((url) => url.searchParams.get("sort") === "cheapest");
+
+  /* ↓ walks the list and keeps the offer it lands on in view; ↑ too. */
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  const list = results.viewport(page);
+  const selected = results.selectedCard(page);
+  const visited = new Set<string>();
+  for (const [key, presses] of [["ArrowDown", 20], ["ArrowUp", 6]] as const) {
+    for (let press = 1; press <= presses; press += 1) {
+      await page.keyboard.press(key);
+      await eventually(async () => assert.ok(await isWithin(selected, list), `${key} ${press} left the offer it chose out of view`), { timeoutMs: 2_000 });
+      visited.add(await selected.getAttribute("aria-label") ?? "");
+    }
+  }
+  assert.equal(visited.size, 20, "the arrows did not move the selection one row at a time");
+
+  /* ↓ inside the passenger popover is the popover's; Esc closes it and keeps the offer. */
+  const chosen = await selected.getAttribute("aria-label");
+  await searchForm.passengers(page).click();
+  const addChild = searchForm.addPassenger(page, "niños");
+  await addChild.waitFor();
+  await page.keyboard.press("ArrowDown");
+  assert.equal(await selected.getAttribute("aria-label"), chosen, "↓ in the passenger popover moved the list's selection");
+  await page.keyboard.press("Escape");
+  await addChild.waitFor({ state: "hidden" });
+  assert.equal(await selected.getAttribute("aria-label"), chosen, "Esc in the passenger popover dropped the offer");
+
+  /* A filter and an order leave a destination being typed as it is. */
+  const destination = searchForm.location(page, "Destino");
+  await destination.fill("CUZ");
+  await filters.stops(page, "Directo").click();
+  await page.waitForURL((url) => url.searchParams.get("nonStop") === "1");
+  assert.match(await destination.inputValue(), /^CUZ\b/, "a filter discarded the destination being typed");
+  await results.sort(page, "duración").click();
+  await page.waitForURL((url) => url.searchParams.get("sort") === "fastest");
+  assert.match(await destination.inputValue(), /^CUZ\b/, "an order discarded the destination being typed");
+});
+
+suite.test("at rest the desk is worked from the keyboard: a copy button with nothing to copy, both calendars, and «hoy» on the desk's day whatever the browser's clock says", async (scope) => {
+  const tracked = await scope.newContext({ signedIn: true });
+  /* Eight in the evening in Lima, when UTC is already on the next day. */
+  await tracked.context.clock.install({ time: new Date(`${addDays(TODAY, 1)}T01:00:00Z`) });
+  const page = await tracked.newPage();
+  await page.goto(scope.stack.baseUrl);
+
+  /* With nothing to copy yet, «Copiar configuración» says so and still takes
+     the focus, for the tooltip that tells why. */
+  const copy = topBar.copyConfig(page);
+  assert.equal(await copy.getAttribute("aria-disabled"), "true", "«Copiar configuración» does not say it has nothing to copy");
+  await copy.focus();
+  assert.ok(await isFocused(copy), "«Copiar configuración» cannot take the focus");
+
+  /* Enter opens the days on today, the one day in the tab order. */
+  const departureHalf = searchForm.departureHalf(page);
+  await departureHalf.focus();
+  await page.keyboard.press("Enter");
+  const calendar = searchForm.calendarPopover(page);
+  await calendar.waitFor();
+  const today = searchForm.calendarToday(calendar);
+  assert.equal(await today.getAttribute("aria-label"), `${spanishDayName(TODAY)}, hoy`, "the calendar marks another day as today");
+  await eventually(async () => assert.ok(await isFocused(today), "the calendar opened with the focus elsewhere"), { timeoutMs: 2_000 });
+
+  /* Two days on, a week down, a month on and back to Monday: the departure.
+     November's 29th has a twin in December. */
+  const weekDown = addDays(TODAY, 2 + 7);
+  const monthOn = `${addMonths(monthKey(weekDown), 1)}-${weekDown.slice(8)}`;
+  const outbound = addDays(monthOn, -weekday(monthOn));
+  for (const key of ["ArrowRight", "ArrowRight", "ArrowDown", "PageDown", "Home"]) {
+    await page.keyboard.press(key);
+  }
+  assert.ok(await isFocused(searchForm.calendarDay(calendar, outbound)), "the keys did not lead to the departure");
+  await page.keyboard.press("Enter");
+  assert.equal(await departureHalf.getAttribute("aria-label"), `Salida: ${deskDate(outbound)}`);
+
+  /* A week down and on to Sunday: the return. */
+  for (const key of ["ArrowDown", "End", "Enter"]) {
+    await page.keyboard.press(key);
+  }
+  assert.equal(await searchForm.returnHalf(page).getAttribute("aria-label"), `Regreso: ${deskDate(addDays(outbound, 13))}`);
+
+  /* Esc gives the focus back to the half that opened the calendar, and the
+     cross is named for both dates it empties. */
+  await page.keyboard.press("Escape");
+  await calendar.waitFor({ state: "hidden" });
+  assert.ok(await isFocused(departureHalf), "Esc did not give the focus back to the departure");
+  await searchForm.clearDates(page).waitFor();
+
+  /* The months the same way: this month, one on, then a row down. */
+  await searchForm.mode(page, "Migratorio").click();
+  const months = searchForm.months(page);
+  await months.focus();
+  await page.keyboard.press("Enter");
+  const picker = searchForm.monthPicker(page);
+  await picker.waitFor();
+  const thisMonth = searchForm.calendarToday(picker);
+  assert.equal(await thisMonth.getAttribute("aria-label"), `${spanishMonthName(monthKey(TODAY))}, hoy`);
+  await eventually(async () => assert.ok(await isFocused(thisMonth), "the month picker opened with the focus elsewhere"), { timeoutMs: 2_000 });
+  for (const key of ["ArrowRight", "Enter", "ArrowDown", "Enter"]) {
+    await page.keyboard.press(key);
+  }
+  await picker.waitFor({ state: "hidden" });
+  const first = addMonths(monthKey(TODAY), 1);
+  assert.equal(await months.getAttribute("aria-label"), `Meses: ${deskMonth(first)} – ${deskMonth(addMonths(first, 4))}`);
+  assert.ok(await isFocused(months), "the months were chosen but the focus did not come back to the field");
 });

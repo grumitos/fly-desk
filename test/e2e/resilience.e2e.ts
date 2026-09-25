@@ -13,7 +13,7 @@ import { runSearch, waitForResults } from "./support/flows.ts";
 import { defineSuite, type TestScope, type TrackedContext } from "./support/harness.ts";
 import type { OfferSpec } from "./support/fixtures.ts";
 import { day, eventually, providerSearches, sleep } from "./support/scenario.ts";
-import { notice, readCards, results, searchForm, searchLink } from "./support/ui.ts";
+import { announcement, notice, readCards, results, searchForm, searchLink } from "./support/ui.ts";
 
 /*
  * What the desk does when providers fail and when the agent changes their
@@ -82,6 +82,14 @@ suite.test("a provider that falls is named in one line, and nothing it said reac
   assert.deepEqual(providerSearches(fake, route).filter((request) => request.query?.gds === 3).map((request) => request.status), [0]);
 
   await assertCanaryContained(scope, tracked, secret);
+
+  /* Dismissed, the line goes; the next search that has the same to say says it again. */
+  await notice.dismiss(page).click();
+  await notice.line(page).waitFor({ state: "hidden" });
+  await runSearch(page);
+  await waitForResults(page, 2);
+  await eventually(async () => assert.equal(await notice.line(page).count(), 1, "a dismissed notice did not come back with the next search"), { timeoutMs: 3_000 });
+  assert.match(await notice.line(page).innerText(), /Click and Book Plus/);
 });
 
 suite.test("a token refused inside a 200 leaves the other provider's list and leaks nothing", async (scope) => {
@@ -199,6 +207,7 @@ suite.test("with both providers down the desk says nothing was searched instead 
   assert.match(line, /Click and Book Plus/);
   assert.equal(await results.cards(page).count(), 0);
   assert.equal(await results.emptyTitle(page, "Sin resultados para esta consulta").count(), 0, "a failed search was drawn as an empty route");
+  assert.equal(await announcement.status(page, "Sin vuelos para esta búsqueda").count(), 0, "a failed search was read out as an empty route");
 
   const route = { origin: "LIM", destination: "SCL", departureDate: departure };
   assert.ok(providerSearches(fake, route).length > 0);

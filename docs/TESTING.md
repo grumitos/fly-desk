@@ -78,13 +78,13 @@ same on every run, and a year boundary is always six weeks away.
 
 | File | Covers |
 | --- | --- |
-| `desk-search.e2e.ts` | A shared link through the sign-in gate; merged results, filters and sorting; quotation revalidation and a confirmed fare quoted again; both providers' purchase redirects; the flexible matrix filled cell by cell; a range of three hundred fares in a stable order that matches the backend's |
-| `migration.e2e.ts` | A migratory sweep across the year boundary: priced, failed and empty months, a month opened without a new search, and the route counted once |
-| `resilience.e2e.ts` | A failed provider named in one line with nothing it said reaching the page or the logs; a token refused inside a 200 named the same way in an exact search, a range and a matrix, the last two stopping at the first refusal; both providers down; stopping a search; closing the tab mid-search |
-| `capacity.e2e.ts` | Admission order, the queue limit and its timeout, the Agil in-flight ceiling, a restart of every unit, and a renewed Click and Book Plus token file |
-| `mobile.e2e.ts` | Phone sheets and the system back at 390×844, every mode at 360×740, and the 1024×768 desk |
+| `desk-search.e2e.ts` | A shared link through the sign-in gate, each of its stations looked up once; merged results, filters and sorting, and the list's outcome read out; quotation revalidation and a confirmed fare quoted again; both providers' purchase redirects, and a blocked provider window named; the flexible matrix filled cell by cell; a range of three hundred fares in a stable order that matches the backend's, back at its top after any change of filter; the list, its column head, the passenger popover and both calendars from the keyboard, with «hoy» on the desk's day |
+| `migration.e2e.ts` | A migratory sweep across the year boundary: priced, failed and empty months, a month opened without a new search, and the route counted once; each month followed from the moment its search starts |
+| `resilience.e2e.ts` | A failed provider named in one line with nothing it said reaching the page or the logs, and named again by the next search after the line is dismissed; a token refused inside a 200 named the same way in an exact search, a range and a matrix, the last two stopping at the first refusal; both providers down, never read out as an empty route; stopping a search; closing the tab mid-search |
+| `capacity.e2e.ts` | Admission order, the queue limit and its timeout, each named in the desk's notice, the Agil in-flight ceiling, a restart of every unit, and a renewed Click and Book Plus token file |
+| `mobile.e2e.ts` | Phone sheets and the system back at 390×844, a phone's form built once and a calendar a tap does not scroll; every mode at 360×740; the 1024×768 desk; dates and months asked for only once their calendar is left; a desk resized under a search |
 | `session-security.e2e.ts` | Session renewal and its cap, sign-out, login lockout, hostile return paths, security headers, spoofed trust headers, oversized bodies and forged quotations |
-| `suggestions-quotes.e2e.ts` | Suggestions from both providers, recent and frequent stations, a quote in soles pasted back, and an exchange rate that never answers |
+| `suggestions-quotes.e2e.ts` | Suggestions from both providers, recent and frequent stations, a quote in soles pasted back, its fare's age moving while it is open, a search copied to share, and an exchange rate that never answers |
 
 ## Writing a test
 
@@ -94,6 +94,9 @@ same on every run, and a year boundary is always six weeks away.
   Never wait for time, except to let a documented propagation window pass
   before asserting that something did not happen, such as the pooled worker's
   cancellation poll.
+- Move the page's own clock instead of waiting for it: a context's `clock`
+  runs a fare's age forward, holds a poll until the test lets it leave, or
+  sets the hour at which Lima and UTC disagree about the date.
 - Keep state from crossing tests. The fake is reset before each test; where the
   stack keeps state (location usage, login lockout, cached searches), each test
   uses its own routes, dates or client addresses.
