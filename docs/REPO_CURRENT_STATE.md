@@ -115,7 +115,10 @@ The React UI must not display simulated controls. The following remain outside t
 - a provider that completes without part of what it was asked (an Agil GDS, a
   day of a range, a matrix cell) completes `partial`: its diagnostics in the
   job say so, and the desk's one line names it as a warning, «Resultados
-  incompletos · Agilsmart respondió en parte», with the rest of the list kept
+  incompletos · Agilsmart respondió en parte», with the rest of the list kept.
+  A migratory sweep's line reads its months the same way: a provider that
+  failed a month or answered one in part, and answered another, answered the
+  sweep in part
 - a provider none of whose parts answered (no GDS of an exact search, no day
   of a range, no matrix cell) has failed: the job marks it `failed` with its
   public reason, and the desk names it as it names a provider that is down,
@@ -229,7 +232,7 @@ Current coverage:
 - an exact round trip merged from both providers, with filters and sorting in the address bar, quotation revalidation, a confirmed fare quoted again from its panel (a domestic one keeping its exchange rate), and both providers' purchase redirects, the Click and Book Plus token appearing only in its 302
 - the flexible matrix filled cell by cell with the cards already drawn kept, price-only cells never drawn, and a repriced fare carried to the card and the quotation
 - a range of three hundred fares with none dropped, the same order on two runs whatever order the providers answer in, and the desk's order matching the backend's
-- the migratory sweep across the year boundary: priced, failed, and empty months, a month opened without searching again, its fares measured on the airports' own clocks over a connection longer than a day, and the route counted once
+- the migratory sweep across the year boundary: priced, failed, and empty months, a month opened without searching again, its fares measured on the airports' own clocks over a connection longer than a day, and the route counted once; a provider that failed a month or answered one in part named «respondió en parte» in the sweep's line
 - a failed provider named in one line with nothing it said reaching the page, web storage, the console, `/api` answers, or service logs; a token refused inside a 200 named the same way in an exact search, a range and a matrix, the last two stopping at the first refusal; both providers down
 - an Agil GDS whose connection drops asked once more with every fare kept; a GDS that never answers a day, stalls past Agil's deadline, or leaves a matrix cell unanswered named «respondió en parte» in the same line, the rest of the list kept; a provider that answered no GDS, no day of a range or no matrix cell named as not answering
 - stopping a search (its fan-out halts and its partial list is kept and reused) and closing the tab mid-search (the search is cancelled and its purchase paths still work)

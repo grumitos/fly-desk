@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readSearchJob, type SearchJob } from "./support/api-client.ts";
+import type { RecordedRequest } from "./support/fake-upstream.ts";
 import { startedJob, waitForResults, waitForSweep } from "./support/flows.ts";
 import { defineSuite } from "./support/harness.ts";
 import type { OfferSpec, SearchQuery } from "./support/fixtures.ts";
@@ -12,7 +13,7 @@ import {
   sweepMonthLabel,
   TODAY,
 } from "./support/scenario.ts";
-import { durationMinutes, migration, results, searchForm, searchLink } from "./support/ui.ts";
+import { durationMinutes, migration, notice, results, searchForm, searchLink } from "./support/ui.ts";
 
 /*
  * The migratory sweep: every day of every chosen month against both
@@ -98,6 +99,15 @@ suite.test("a sweep across the year boundary marks each month priced, failed or 
   assert.match(januaryCard, new RegExp(`0 de ${daysInMonth(JANUARY)} días con tarifa`));
   assert.equal(await migration.pricedMonth(page, january).count(), 0);
 
+  /* The sweep's one line: Click and Book Plus answered every month but
+     December, so it answered the sweep in part. */
+  await notice.line(page).waitFor({ timeout: 3_000 });
+  const line = await notice.line(page).innerText();
+  assert.equal(await notice.error(page).count(), 0, "a sweep with a list was announced as an error");
+  assert.match(line, /Resultados incompletos/);
+  assert.match(line, /Click and Book Plus respondió en parte/);
+  assert.doesNotMatch(line, /Agilsmart/);
+
   /* Every day of every month went to both providers; December's answers
      from Click and Book Plus were all failures. */
   const startedDays = new Set(fake.requests("agil.startSearch").map((request) => request.query?.departureDate));
@@ -141,6 +151,36 @@ suite.test("a sweep across the year boundary marks each month priced, failed or 
     [MADRID_BY_BOGOTA_MINUTES],
     `the month's fares do not read 27 h 50 min: ${monthCards.map((card) => card.legs[0]?.duration).join(", ")}`,
   );
+});
+
+suite.test("a month that a provider answered in part is named in the sweep's one line, as the desk names it", async (scope) => {
+  const { fake } = scope;
+  fake.setFlights("agil", { origin: "LIM", destination: "MIA" }, [
+    { outbound: ["AA918 LIM-MIA 00:45-07:25"], price: 520, baggage: { carryOn: true, checked: 1 } },
+  ]);
+  /* One GDS drops every connection on one December day: December's Agil
+     search leaves it out, and completes in part. */
+  const partialDay = `${DECEMBER}-10`;
+  const dropped = (request: RecordedRequest) => request.op === "agil.search" && request.query?.departureDate === partialDay && request.query?.gds === 3;
+  fake.fail("agil.search", { reset: true }, { where: dropped });
+
+  const { page } = await scope.signedInPage(searchLink({ mode: "migration", trip: "one-way", origin: "LIM", destination: "MIA", months: [DECEMBER, JANUARY] }));
+  await searchForm.submit(page).click();
+  await waitForSweep(page, 2, 2);
+
+  /* A warning, not an error, in the desk's words. */
+  await notice.line(page).waitFor({ timeout: 3_000 });
+  assert.equal(await notice.error(page).count(), 0, "a sweep with a list was announced as an error");
+  const line = await notice.line(page).innerText();
+  assert.match(line, /Resultados incompletos/);
+  assert.match(line, /Agilsmart respondió en parte/);
+  assert.doesNotMatch(line, /Click and Book Plus/);
+
+  /* December gives no coverage figure a partial scan could not honour;
+     January, asked in full, does. */
+  assert.doesNotMatch(await migration.monthCard(page, sweepMonthLabel(DECEMBER)).innerText(), /días con tarifa/);
+  assert.match(await migration.monthCard(page, sweepMonthLabel(JANUARY)).innerText(), /días con tarifa/);
+  assert.deepEqual(fake.requests(dropped).map((request) => request.status), [0, 0]);
 });
 
 suite.test("each month of a sweep asks for its news as soon as its search has started", async (scope) => {

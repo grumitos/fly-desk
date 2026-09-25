@@ -3,6 +3,7 @@ import type {
   LocationSuggestion,
   MatrixCell,
   MigrationMonthSummary,
+  ProviderDiagnostics,
   SearchRequest,
   SearchJobResponse,
   SortMode,
@@ -1116,6 +1117,38 @@ function migrationMonthCoverage(
   }
 }
 
+/*
+ * The sweep's providers, read like one search's by `describeSearchOutcome`, so
+ * the sweep's one line says what the desk's says. Each month is a part of the
+ * sweep: a provider that failed a month, or answered one in part, while it
+ * answered another, answered the sweep in part, as soon as that is known; one
+ * that failed every month failed the sweep. Until every month has finished,
+ * anything else is still being asked.
+ */
+function sweepProviderDiagnostics(monthResults: MigrationMonthWorkResult[]): ProviderDiagnostics[] {
+  const sweepRunning = monthResults.some((result) => !result.complete)
+  const byProvider = new Map<string, ProviderDiagnostics[]>()
+  for (const entry of monthResults.flatMap((result) => result.job?.providerDiagnostics ?? [])) {
+    const providerId = String(entry.providerId)
+    byProvider.set(providerId, [...(byProvider.get(providerId) ?? []), entry])
+  }
+
+  return [...byProvider].flatMap(([providerId, entries]): ProviderDiagnostics[] => {
+    const settled = entries.filter((entry) => entry.status === "completed" || entry.status === "failed")
+    const failed = settled.filter((entry) => entry.status === "failed")
+    const answered = settled.some((entry) => entry.status === "completed")
+    const short = failed.length > 0 || settled.some((entry) => entry.partial)
+    const sweep = { providerId, kind: "range" as const, events: [] }
+
+    if (answered && short) return [{ ...sweep, status: "completed", partial: true }]
+    if (sweepRunning) return [{ ...sweep, status: "running" }]
+    if (settled.length === 0) return []
+    return failed.length === settled.length
+      ? [{ ...sweep, status: "failed", error: failed[0]?.error }]
+      : [{ ...sweep, status: "completed" }]
+  })
+}
+
 async function runWithConcurrency<T, R>(
   items: T[],
   limit: number,
@@ -1403,6 +1436,7 @@ export async function startMigrationSearch(
         searchState: searchComplete && !migrationIsPartial ? "search_live" : "search_partial",
       },
       providerMeta,
+      providerDiagnostics: sweepProviderDiagnostics(monthResults),
       warnings: monthlyWarnings,
       diagnosticLog: toDiagnosticLines(monthResults.flatMap((result) => result.diagnosticLog)),
     }
