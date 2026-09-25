@@ -1480,27 +1480,24 @@
     gap: 8px;
   }
 
+  /* Flush with the column's edge and without a hover fill, as in both
+     sheets: the 303px column needs the room for «Copiado». */
   .fd-detail-migration {
     display: flex;
     height: var(--fd-control-standard);
     flex-shrink: 0;
     align-items: center;
     gap: 8px;
-    border-radius: var(--fd-radius-10);
-    padding-inline: 6px;
     color: var(--color-secondary-foreground);
     cursor: pointer;
     font-size: var(--fd-text-meta);
     font-weight: var(--fd-weight-label);
     white-space: nowrap;
-    transition:
-      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
-      color var(--fd-dur-tacto) var(--fd-ease-tacto);
+    transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
   @media (hover: hover) {
     .fd-detail-migration:hover {
-      background: var(--color-hover);
       color: var(--color-foreground);
     }
   }
@@ -1675,14 +1672,6 @@
 
     .fd-detail-migration {
       height: var(--fd-control-touch-sm);
-      border-radius: 0;
-      padding-inline: 0;
-    }
-
-    @media (hover: hover) {
-      .fd-detail-migration:hover {
-        background: transparent;
-      }
     }
 
     .fd-detail-migration-switch {
@@ -1787,15 +1776,7 @@
 
     .fd-detail-migration {
       height: var(--fd-control-touch);
-      border-radius: var(--fd-radius-12);
-      padding-inline: 0;
       font-size: var(--fd-text-base);
-    }
-
-    @media (hover: hover) {
-      .fd-detail-migration:hover {
-        background: transparent;
-      }
     }
 
     .fd-detail-migration-switch {

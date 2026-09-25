@@ -516,7 +516,9 @@ export function DetailPanel({
                 : copied
                   ? <AppIcon name="check" size={14} />
                   : <AppIcon name="clipboard" size={14} />}
-              {isQuoting ? "Validando" : copied ? "Copiado" : "Cotizar"}
+              {/* Busy, the button keeps its word and turns its icon, as
+                  «Reintentar» does: a longer word does not fit the column. */}
+              {copied && !isQuoting ? "Copiado" : "Cotizar"}
             </Button>
             </ShortcutTooltip>
           </div>

@@ -219,10 +219,10 @@ export const detail = {
   surface: (page: Page) =>
     page.getByRole("dialog", { name: "Oferta", exact: true })
       .or(page.locator("section").filter({ has: page.getByRole("heading", { name: "Oferta", level: 2 }) }).filter({
-        has: page.getByRole("button", { name: /^(Cotizar|Validando|Copiado)$/ }),
+        has: page.getByRole("button", { name: /^(Cotizar|Copiado)$/ }),
       }))
       .first(),
-  quote: (root: Locator) => root.getByRole("button", { name: /^(Cotizar|Validando|Copiado)$/ }),
+  quote: (root: Locator) => root.getByRole("button", { name: /^(Cotizar|Copiado)$/ }),
   /** The desk's offer column before an offer is chosen. */
   nothingSelected: (page: Page) => page.getByText("Selecciona una oferta para ver su detalle.", { exact: true }),
   /** The provider's own search, through `/r/<id>`. */
@@ -445,7 +445,7 @@ export async function recordRemovedControls(page: Page): Promise<() => Promise<s
 export async function watchOfferPanels(page: Page): Promise<() => Promise<number>> {
   await page.evaluate(() => {
     const count = () => [...document.querySelectorAll("button")]
-      .filter((button) => /^(Cotizar|Validando|Copiado)$/.test(button.textContent?.trim() ?? "")).length;
+      .filter((button) => /^(Cotizar|Copiado)$/.test(button.textContent?.trim() ?? "")).length;
     const seen = { most: count() };
     (window as unknown as { __e2eOfferPanels: typeof seen }).__e2eOfferPanels = seen;
     new MutationObserver(() => {
