@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after } from "node:test";
+import { afterAll } from "bun:test";
 import {
   followMatrixJob,
   followSearchJob,
@@ -50,7 +50,7 @@ const tokenDir = mkdtempSync(join(tmpdir(), "fly-desk-e2e-token-"));
 const TOKEN_FILE = join(tokenDir, "cbplus-token");
 const TOKEN_A = fakeCbplusToken(FAKE_CBPLUS_TERMINAL_ID, Date.now() - 60_000);
 writeFileSync(TOKEN_FILE, TOKEN_A);
-after(() => rmSync(tokenDir, { recursive: true, force: true }));
+afterAll(() => rmSync(tokenDir, { recursive: true, force: true }));
 
 const MAX_QUEUED = 3;
 /* The runner's own words for a search it could not admit (`src/http-router.ts`). */

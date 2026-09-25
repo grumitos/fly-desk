@@ -1,9 +1,9 @@
 /*
  * Proves the E2E foundation end to end, over HTTP only:
  *
- *   node --experimental-strip-types test/e2e/support/prove-stack.ts [--cbplus-delay=4000] [--today=YYYY-MM-DD] [--keep] [--verbose]
+ *   bun test/e2e/support/prove-stack.ts [--cbplus-delay=4000] [--today=YYYY-MM-DD] [--keep] [--verbose]
  *
- * (Node 22.18+ strips types without the flag.) Exit code 0 means every claim held.
+ * Exit code 0 means every claim held.
  */
 import assert from "node:assert/strict";
 import type { CanonicalOffer, LocationSuggestion, ProviderId } from "../../../src/core/types.ts";
