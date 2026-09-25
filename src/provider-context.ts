@@ -927,43 +927,54 @@ export function resolveProviderId(providerId?: ProviderId): ProviderId {
  * The branded token lives an hour and is renewed outside the application. When
  * `CBPLUS_TOKEN_FILE` names a file, each process re-reads it whenever its
  * modification time or size changes, so a renewal reaches the search runner, its
- * workers and the redirect service without restarting them. `CBPLUS_TOKEN` is
- * the fallback while the file is absent or empty.
+ * workers and the redirect service without restarting them.
  */
 const TOKEN_FILE_STAT_INTERVAL_MS = 1_000;
 let tokenFileCache: { path: string; checkedAtMs: number; signature: string; token: string } | undefined;
 
-function readConfiguredCostamarToken(nowMs = Date.now()): string | undefined {
-  const path = process.env.CBPLUS_TOKEN_FILE?.trim();
-  if (path) {
-    if (tokenFileCache?.path === path && nowMs - tokenFileCache.checkedAtMs < TOKEN_FILE_STAT_INTERVAL_MS) {
-      if (tokenFileCache.token) {
-        return tokenFileCache.token;
-      }
-    } else {
-      try {
-        const stats = statSync(path);
-        const signature = `${stats.mtimeMs}:${stats.size}`;
-        const token = tokenFileCache?.path === path && tokenFileCache.signature === signature
-          ? tokenFileCache.token
-          : readFileSync(path, "utf8").trim();
-        tokenFileCache = { path, checkedAtMs: nowMs, signature, token };
-        if (token) {
-          return token;
-        }
-      } catch {
-        tokenFileCache = { path, checkedAtMs: nowMs, signature: "", token: "" };
-      }
-    }
+function readCostamarTokenFile(path: string, nowMs: number): string {
+  if (tokenFileCache?.path === path && nowMs - tokenFileCache.checkedAtMs < TOKEN_FILE_STAT_INTERVAL_MS) {
+    return tokenFileCache.token;
   }
 
-  return process.env.CBPLUS_TOKEN ?? process.env.COSTAMAR_TOKEN;
+  try {
+    const stats = statSync(path);
+    const signature = `${stats.mtimeMs}:${stats.size}`;
+    const token = tokenFileCache?.path === path && tokenFileCache.signature === signature
+      ? tokenFileCache.token
+      : readFileSync(path, "utf8").trim();
+    tokenFileCache = { path, checkedAtMs: nowMs, signature, token };
+  } catch {
+    tokenFileCache = { path, checkedAtMs: nowMs, signature: "", token: "" };
+  }
+  return tokenFileCache.token;
+}
+
+/*
+ * The platform installs each renewal in the file and in `CBPLUS_TOKEN`: a
+ * running process sees only the file change, and a worker inherits the
+ * `CBPLUS_TOKEN` its runner started with. A platform release that predates the
+ * file renews only `CBPLUS_TOKEN`, restarting the units, and leaves the file
+ * stale. Either way the current token is the one that expires last; a tie
+ * keeps the file.
+ */
+function readConfiguredCostamarToken(nowMs = Date.now()): string | undefined {
+  const path = process.env.CBPLUS_TOKEN_FILE?.trim();
+  const fileToken = path ? readCostamarTokenFile(path, nowMs) : "";
+  const environmentToken = process.env.CBPLUS_TOKEN?.trim() || process.env.COSTAMAR_TOKEN?.trim() || "";
+  if (!fileToken || !environmentToken) {
+    return fileToken || environmentToken || undefined;
+  }
+
+  return decodeJwtTimes(environmentToken).expMs > decodeJwtTimes(fileToken).expMs ? environmentToken : fileToken;
 }
 
 export function normalizeCostamarProviderContext(
   input?: CostamarProviderConfigInput,
 ): CostamarProviderContext {
-  const normalizedToken = sanitizeCostamarToken(input?.token ?? readConfiguredCostamarToken() ?? "");
+  /* An empty token is no token: a context without one, such as a search job's
+     or a warm-up seed, reads the configured token as it is now. */
+  const normalizedToken = sanitizeCostamarToken(input?.token?.trim() || readConfiguredCostamarToken() || "");
   return {
     apiBaseUrl: normalizeAllowedHttpsUrl(
       process.env.CBPLUS_SEARCH_API_BASE_URL,

@@ -213,6 +213,7 @@ export interface MatrixJob {
   warnings?: string[];
   error?: string;
   searchMeta?: JobMeta;
+  providerDiagnostics?: JobProviderDiagnostics[];
 }
 
 export interface QuotationAnswer {

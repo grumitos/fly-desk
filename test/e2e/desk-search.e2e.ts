@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
-import { readMatrixJob, readSearchJob, type MatrixJob, type SearchJob } from "./support/api-client.ts";
+import type { CanonicalOffer } from "../../src/core/types.ts";
+import {
+  readMatrixJob,
+  readSearchJob,
+  searchOffers,
+  type MatrixJob,
+  type QuotationAnswer,
+  type SearchJob,
+} from "./support/api-client.ts";
 import { readWholeList, rowKey, runSearch, waitForResults } from "./support/flows.ts";
-import { defineSuite } from "./support/harness.ts";
+import { defineSuite, type TestScope } from "./support/harness.ts";
 import { fakeCbplusToken, FAKE_CBPLUS_TERMINAL_ID, type OfferSpec, type SearchQuery } from "./support/fixtures.ts";
 import { AGIL_GDS_IDS, addDays, day, eventually, providerSearches } from "./support/scenario.ts";
 import {
@@ -357,30 +365,31 @@ suite.test("a flexible round trip fills in cell by cell, keeps the cards it drew
   await quotation.close(page).click();
   await quoteDialog.waitFor({ state: "hidden" });
 
-  /* Within fifteen minutes the confirmed fare is reused, not asked for again.
-     Through the API: the desk cannot quote a confirmed offer a second time
-     (the known gap in the next test). */
-  const second = await api.json<{ offer: { price: { total: { amount: number } }; priceStatus: string }; commercialText: string }>(
-    "POST",
-    "/api/quotation",
-    { searchSessionId: started.matrixJobId, offerId: validatedCell!.offer!.id },
-  );
-  assert.equal(second.offer.priceStatus, "verified");
-  assert.equal(second.offer.price.total.amount, 603.5);
-  assert.match(second.commercialText, /US\$\s*603\.50 por adulto/);
+  /* Within fifteen minutes the confirmed fare is reused, not asked for again. */
+  assert.ok(validatedCell?.offer?.quotationPreparedAt, "the matrix keeps the quoted offer unprepared for quoting");
+  await eventually(async () => assert.equal(await detail.quote(panel).isEnabled(), true, "«Cotizar» stays disabled after a quote"), { timeoutMs: 5_000 });
+  await detail.quote(panel).click();
+  await quoteDialog.waitFor();
+  assert.match(await quoteDialog.innerText(), /US\$\s*603\.50 por adulto/);
   assert.equal(fake.requests("cbplus.search").length, cbplusBefore + 1, "a second quote within 15 minutes asked the provider again");
-  assert.equal(tracked.apiRequests.filter((request) => new URL(request.url).pathname === "/api/quotation").length, 1);
+  assert.equal(tracked.apiRequests.filter((request) => new URL(request.url).pathname === "/api/quotation").length, 2);
 });
 
-suite.test("an offer the desk has just quoted can be quoted again from its panel", async (scope) => {
+/**
+ * Quotes the fare on `card` from its panel, then quotes it again. The fare was
+ * confirmed a moment ago, so the second quote reuses it. Returns the first
+ * answer and the quoted offer as the job keeps it.
+ */
+async function quoteTwice(
+  scope: TestScope,
+  link: string,
+  fares: number,
+  card: RegExp,
+): Promise<{ answer: QuotationAnswer; stored: CanonicalOffer | undefined }> {
   const { fake } = scope;
-  const departure = day(34);
-  const returning = day(41);
-  fake.setFlights("cbplus", { origin: "LIM", destination: "MIA" }, LIM_MIA_CBPLUS);
-  const link = searchLink({ mode: "exact", trip: "round-trip", origin: "LIM", destination: "MIA", departure, return: returning });
   const { tracked, page } = await scope.signedInPage(link);
-  await waitForResults(page, 2);
-  await results.card(page, /USD 689\.00 total/).click();
+  await waitForResults(page, fares);
+  await results.card(page, card).click();
   const panel = detail.surface(page);
   await detail.quote(panel).click();
   const quoteDialog = quotation.dialog(page);
@@ -389,14 +398,40 @@ suite.test("an offer the desk has just quoted can be quoted again from its panel
   await quoteDialog.waitFor({ state: "hidden" });
   const calls = fake.requests("cbplus.search").length;
 
-  /* The fare was confirmed a moment ago, so the second quote reuses it. */
   await eventually(async () => assert.equal(await detail.quote(panel).isEnabled(), true, "«Cotizar» stays disabled after a quote"), { timeoutMs: 5_000 });
   await detail.quote(panel).click();
   await quoteDialog.waitFor();
   assert.equal(fake.requests("cbplus.search").length, calls, "the second quote asked the provider again");
-  assert.equal(tracked.apiRequests.filter((request) => new URL(request.url).pathname === "/api/quotation").length, 2);
-}, {
-  todo: "production bug: after a quote the list swaps in the /api/quotation offer, which carries no quotationPreparedAt, so canQuote in frontend/src/components/DetailPanel.tsx:184 disables «Cotizar» for the fare it just confirmed",
+  const answers = (await tracked.apiBodies()).filter((entry) => new URL(entry.url).pathname === "/api/quotation");
+  assert.equal(answers.length, 2);
+
+  const answer = JSON.parse(answers[0]!.body) as QuotationAnswer;
+  const job = await readSearchJob(await scope.api(), answer.searchSessionId);
+  return { answer, stored: searchOffers(job).find((offer) => offer.id === answer.offer.id) };
+}
+
+suite.test("an offer the desk has just quoted can be quoted again from its panel", async (scope) => {
+  scope.fake.setFlights("cbplus", { origin: "LIM", destination: "MIA" }, LIM_MIA_CBPLUS);
+  const link = searchLink({ mode: "exact", trip: "round-trip", origin: "LIM", destination: "MIA", departure: day(34), return: day(41) });
+  const { answer, stored } = await quoteTwice(scope, link, 2, /USD 689\.00 total/);
+  assert.ok(answer.offer.quotationPreparedAt, "the quotation answered with an offer not prepared for quoting");
+  assert.ok(stored, "the job lost the quoted offer");
+  assert.equal(stored.priceStatus, "verified");
+  assert.ok(stored.quotationPreparedAt, "the job keeps the quoted offer unprepared for quoting");
+});
+
+suite.test("a fare inside Peru the desk has just quoted keeps its exchange rate and can be quoted again", async (scope) => {
+  /* Quoted in soles: the fare is quotable only with the rate the list gave it,
+     which the provider's confirmation does not carry. */
+  scope.fake.setFlights("cbplus", { origin: "LIM", destination: "CUZ" }, [
+    { outbound: ["LA2047 LIM-CUZ 07:15-08:40"], price: 151.3, baggage: { carryOn: true, checked: 1 }, brand: "Plus" },
+  ]);
+  const link = searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "CUZ", departure: day(35) });
+  const { stored } = await quoteTwice(scope, link, 1, /USD 151\.30 total/);
+  assert.ok(stored, "the job lost the quoted offer");
+  assert.equal(stored.priceStatus, "verified");
+  assert.ok(stored.quotationPreparedAt, "the job keeps the quoted offer unprepared for quoting");
+  assert.equal(typeof stored.usdToPenRate, "number", "the quoted offer lost the exchange rate the list gave it");
 });
 
 /* ---- A week-long one-way range: some three hundred fares ---- */

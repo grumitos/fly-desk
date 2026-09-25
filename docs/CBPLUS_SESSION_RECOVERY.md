@@ -16,8 +16,11 @@ where the token comes from, how to tell when it is missing, and how to recover.
 - Every Fly Desk process that talks to Click and Book Plus (the search runner,
   its workers and the redirect service) re-reads the file named by
   `CBPLUS_TOKEN_FILE` when its modification time or size changes, so a renewal
-  needs no restart. `CBPLUS_TOKEN` is the fallback while the file is absent or
-  empty.
+  needs no restart. When the file and `CBPLUS_TOKEN` hold different tokens,
+  the one that expires last is used: after a platform rollback to a helper that
+  renews only `CBPLUS_TOKEN`, the file it leaves behind goes stale and is
+  outlived. A search job keeps no token of its own, so a quote revalidated hours
+  after its search uses the token installed last.
 - `src/provider-context.ts` accepts a token only when it is a well-formed,
   unexpired JWT for the configured terminal; anything else is treated as
   missing.

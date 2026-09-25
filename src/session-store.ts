@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
+import { envNumber } from "./env";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import {
   CanonicalOffer,
@@ -59,10 +60,8 @@ const SESSION_STORE_PERSIST_DEBOUNCE_MS = 180;
  * not by asking this number for a guarantee it does not make.
  */
 export const COMPLETED_SEARCH_SESSION_TTL_MS = (() => {
-  const raw = Number(process.env.SEARCH_COMPLETED_SESSION_TTL_MS ?? COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS);
-  return Number.isFinite(raw) && raw >= 0
-    ? raw
-    : COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS;
+  const configured = envNumber("SEARCH_COMPLETED_SESSION_TTL_MS", COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS);
+  return configured >= 0 ? configured : COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS;
 })();
 
 function withCurrentSearchCacheVersion(searchMeta: SearchMeta): SearchMeta {
@@ -457,6 +456,8 @@ function resolveSearchCompletionTimestampMs(record: {
   return 0;
 }
 
+/* The token is not part of the key: a job keeps none, and a cached list only
+   seeds the answer while the providers are asked again with the current one. */
 function normalizeProviderContextForSearchCache(
   providerContext: ProviderContext | undefined,
 ): {
@@ -479,28 +480,6 @@ function normalizeProviderContextForSearchCache(
       lang: String(providerContext.costamar.lang ?? "").trim(),
     },
   };
-}
-
-function hasCompatibleCostamarSearchCacheToken(
-  requestedContext: ProviderContext | undefined,
-  candidateContext: ProviderContext | undefined,
-): boolean {
-  const requestedCostamar = requestedContext?.costamar;
-  const candidateCostamar = candidateContext?.costamar;
-  if (!requestedCostamar && !candidateCostamar) {
-    return true;
-  }
-  if (!requestedCostamar || !candidateCostamar) {
-    return false;
-  }
-
-  const requested = String(requestedCostamar.token ?? "").trim();
-  const candidate = String(candidateCostamar.token ?? "").trim();
-  if (!requested || !candidate) {
-    return false;
-  }
-
-  return requested === candidate;
 }
 
 function normalizeSearchRequestForSearchCache(request: SearchRequest): SearchRequest {
@@ -613,7 +592,9 @@ function redactSearchJobForPersistence(job: SearchJobRecord): SearchJobRecord {
 }
 
 /* `offers` is the filtered, ordered view of `allOffers`, so a stored job keeps
-   it as ids into `allOffers` instead of a second copy of every offer. */
+   it as ids into `allOffers` instead of a second copy of every offer. The row
+   still carries an empty `offers`: a release that stores both lists maps over
+   it when it boots, and a rollback to one has to read rows written here. */
 type PersistedSearchJob = Omit<SearchJobRecord, "offers"> & {
   offers?: CanonicalOffer[];
   offerIds?: string[];
@@ -621,7 +602,7 @@ type PersistedSearchJob = Omit<SearchJobRecord, "offers"> & {
 
 function encodeSearchJobForPersistence(job: SearchJobRecord): PersistedSearchJob {
   const { offers, ...rest } = redactSearchJobForPersistence(job);
-  return { ...rest, offerIds: offers.map((offer) => offer.id) };
+  return { ...rest, offers: [], offerIds: offers.map((offer) => offer.id) };
 }
 
 function decodePersistedSearchJob(parsed: PersistedSearchJob | undefined): SearchJobRecord | undefined {
@@ -1067,10 +1048,6 @@ export class SearchSessionStore {
         continue;
       }
 
-      if (!hasCompatibleCostamarSearchCacheToken(input.providerContext, candidate.providerContext)) {
-        continue;
-      }
-
       const completionTimestamp = resolveSearchCompletionTimestampMs(candidate);
       if ((nowMs - completionTimestamp) > input.maxAgeMs) {
         continue;
@@ -1133,10 +1110,6 @@ export class SearchSessionStore {
         normalizeProviderContextForSearchCache(candidate.providerContext),
       );
       if (candidateContextKey !== providerContextKey) {
-        continue;
-      }
-
-      if (!hasCompatibleCostamarSearchCacheToken(input.providerContext, candidate.providerContext)) {
         continue;
       }
 

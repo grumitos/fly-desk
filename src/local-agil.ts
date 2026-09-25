@@ -275,14 +275,8 @@ const AGIL_TOKEN_STORAGE_KEYS = ["tokenSearchFlight", "tokenTravelC"] as const;
 const AGIL_HTTP_TIMEOUT_MS = envNumber("AGIL_HTTP_TIMEOUT_MS", 20000, { min: 5000 });
 const AGIL_SESSION_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 const AGIL_SESSION_REVALIDATE_MS = envNumber("AGIL_SESSION_REVALIDATE_MS", 60000, { min: 15000 });
-const AGIL_RANGE_DAY_RETRY_ATTEMPTS = Math.max(
-  0,
-  Math.trunc(Number(process.env.AGIL_RANGE_DAY_RETRY_ATTEMPTS ?? 1)) || 0,
-);
-const AGIL_RANGE_DAY_RETRY_DELAY_MS = Math.max(
-  0,
-  Math.trunc(Number(process.env.AGIL_RANGE_DAY_RETRY_DELAY_MS ?? 250)) || 0,
-);
+const AGIL_RANGE_DAY_RETRY_ATTEMPTS = Math.trunc(envNumber("AGIL_RANGE_DAY_RETRY_ATTEMPTS", 1, { min: 0 }));
+const AGIL_RANGE_DAY_RETRY_DELAY_MS = Math.trunc(envNumber("AGIL_RANGE_DAY_RETRY_DELAY_MS", 250, { min: 0 }));
 
 // An exact search fans out over every GDS id at once, so the ceiling can never
 // drop below that or a single search would need more than one wave to finish.

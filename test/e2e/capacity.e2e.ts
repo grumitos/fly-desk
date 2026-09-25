@@ -326,6 +326,15 @@ suite.test("a renewed Click and Book Plus token file reaches searches and redire
     assert.equal(await redirectTokenOf(secondJob), tokenB, "the redirect after the renewal still carries the old token");
     assert.equal(brandTokens().at(-1), tokenB, "the redirect service validated the old token");
 
+    /* A job lives for hours and a token for one: quoting a fare of the job
+       searched before the renewal asks the provider with the renewed token. */
+    const firstFare = searchOffers(await readSearchJob(api, firstJob)).find((offer) => offer.providerSource === "costamar");
+    assert.ok(firstFare, "no Click and Book Plus fare");
+    const searchesBeforeQuote = fake.requests("cbplus.search").length;
+    await api.json("POST", "/api/quotation", { searchSessionId: firstJob, offerId: firstFare.id });
+    assert.equal(fake.requests("cbplus.search").length, searchesBeforeQuote + 1, "the quote did not revalidate the fare");
+    assert.equal(searchTokens().at(-1), tokenB, "the quote on a job from before the renewal used the old token");
+
     /* Nothing was restarted to get there. */
     assert.deepEqual({ runner: stack.pid("runner"), web: stack.pid("web"), redirect: stack.pid("redirect") }, pids);
     assert.equal(fake.requests("cbplus.search").at(-1)!.caller?.pid, cbplusWorker, "the Click and Book Plus worker was replaced");

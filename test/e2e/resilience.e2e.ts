@@ -1,5 +1,14 @@
 import assert from "node:assert/strict";
-import { openPurchasePath, purchasePathOf, readSearchJob, searchOffers, type SearchJob } from "./support/api-client.ts";
+import {
+  openPurchasePath,
+  purchasePathOf,
+  readMatrixJob,
+  readSearchJob,
+  searchOffers,
+  type JobProviderDiagnostics,
+  type MatrixJob,
+  type SearchJob,
+} from "./support/api-client.ts";
 import { runSearch, waitForResults } from "./support/flows.ts";
 import { defineSuite, type TestScope, type TrackedContext } from "./support/harness.ts";
 import type { OfferSpec } from "./support/fixtures.ts";
@@ -85,25 +94,90 @@ suite.test("a token refused inside a 200 leaves the other provider's list and le
   const { tracked, page } = await scope.signedInPage(searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "SCL", departure }));
   const cards = await waitForResults(page, 3);
   assert.ok(cards.every((card) => card.provider === "Agilsmart"));
-  const job = (await tracked.apiBodies())
-    .filter((entry) => new URL(entry.url).pathname.startsWith("/api/search"))
-    .map((entry) => JSON.parse(entry.body) as SearchJob)
-    .find((candidate) => candidate.searchComplete);
-  assert.ok((job?.warnings ?? []).some((warning) => /Click and Book Plus rejected this search/.test(warning)), JSON.stringify(job?.warnings));
+  const job = await finishedSearchJob(tracked);
+  assert.ok((job?.warnings ?? []).some((warning) => /Click and Book Plus authentication or session is unavailable/.test(warning)), JSON.stringify(job?.warnings));
   assert.equal(job?.searchMeta?.partial, true);
   await assertCanaryContained(scope, tracked, secret);
 });
 
+/** The finished job as the page last received it. */
+async function finishedSearchJob(tracked: TrackedContext): Promise<SearchJob | undefined> {
+  return (await tracked.apiBodies())
+    .filter((entry) => new URL(entry.url).pathname.startsWith("/api/search"))
+    .map((entry) => JSON.parse(entry.body) as SearchJob)
+    .find((candidate) => candidate.searchComplete);
+}
+
+/** `providerId:status` for every provider a job was sent to. */
+function providerStatuses(job: { providerDiagnostics?: JobProviderDiagnostics[] } | undefined): string[] {
+  return (job?.providerDiagnostics ?? []).map((entry) => `${entry.providerId}:${entry.status}`).sort();
+}
+
+const REFUSED_TOKEN = { status: 200, body: { status: 401, message: "Token invalido" } };
+
 suite.test("a token refused inside a 200 is named in the notice", async (scope) => {
   const { fake } = scope;
   fake.setFlights("both", { origin: "LIM", destination: "SCL" }, SANTIAGO);
-  fake.fail("cbplus.search", { status: 200, body: { status: 401, message: "Token invalido" } });
-  const { page } = await scope.signedInPage(searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "SCL", departure: day(33) }));
+  fake.fail("cbplus.search", REFUSED_TOKEN);
+  const { tracked, page } = await scope.signedInPage(searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "SCL", departure: day(33) }));
   await waitForResults(page, 3);
   await notice.line(page).waitFor({ timeout: 3_000 });
-  assert.match(await notice.line(page).innerText(), /Click and Book Plus/);
-}, {
-  todo: "production bug: a Click and Book Plus rejection inside a 200 is recorded as a warning with the provider «completed» (src/local-costamar.ts:4205, src/http-router.ts:2681), and frontend/src/lib/search-outcome.ts:72 only names providers whose status is «failed», so the agent is never told a provider was left out",
+  assert.match(await notice.line(page).innerText(), /Click and Book Plus sin sesión activa/);
+  assert.deepEqual(providerStatuses(await finishedSearchJob(tracked)), ["agil-local:completed", "costamar:failed"]);
+});
+
+suite.test("a token refused inside a 200 stops a range at the first refusal and is named in the notice", async (scope) => {
+  const { fake } = scope;
+  fake.setFlights("both", { origin: "LIM", destination: "SCL" }, SANTIAGO);
+  fake.fail("cbplus.search", REFUSED_TOKEN);
+  const days = [day(40), day(41), day(42), day(43)];
+  const { page } = await scope.signedInPage(searchLink({ mode: "flexible", trip: "one-way", origin: "LIM", destination: "SCL", departureStart: days[0], departureEnd: days.at(-1) }));
+  await searchForm.submit(page).waitFor();
+  const started = await runSearch<SearchJob>(page);
+  await waitForResults(page, days.length * SANTIAGO.length);
+  assert.match(await notice.line(page).innerText(), /Click and Book Plus sin sesión activa/);
+  assert.deepEqual(providerStatuses(await readSearchJob(await scope.api(), started.searchJobId)), ["agil-local:completed", "costamar:failed"]);
+
+  /* A refused token is refused for every date: no day is asked twice, and
+     the days after the first refusal are not asked at all. */
+  const asked = providerSearches(fake, { origin: "LIM", destination: "SCL" })
+    .filter((request) => request.op === "cbplus.search")
+    .map((request) => request.query?.departureDate);
+  assert.equal(new Set(asked).size, asked.length, `a refused day was asked again: ${asked.join(", ")}`);
+  assert.ok(asked.length > 0 && asked.length < days.length, `Click and Book Plus was asked for ${asked.length} of ${days.length} days`);
+});
+
+const SANTIAGO_AND_BACK: OfferSpec[] = [
+  { outbound: ["LA2371 LIM-SCL 07:50-13:25"], inbound: ["LA2370 SCL-LIM 14:40-16:25"], price: 402, baggage: { carryOn: true, checked: 1 } },
+];
+
+suite.test("a token refused inside a 200 stops a flexible round trip at the first refusals and is named in the notice", async (scope) => {
+  const { fake } = scope;
+  fake.setFlights("agil", { origin: "LIM", destination: "SCL" }, SANTIAGO_AND_BACK);
+  fake.fail("cbplus.search", REFUSED_TOKEN);
+  /* More departure days than Click and Book Plus asks for at once. */
+  const days = Array.from({ length: 8 }, (_, index) => day(100 + index));
+  const { page } = await scope.signedInPage(searchLink({
+    mode: "flexible",
+    trip: "round-trip",
+    origin: "LIM",
+    destination: "SCL",
+    departureStart: days[0],
+    departureEnd: days.at(-1),
+    stayNights: 7,
+    flexible: "exact-stay",
+  }));
+  await searchForm.submit(page).waitFor();
+  const started = await runSearch<MatrixJob>(page, "/api/matrix");
+  await waitForResults(page, days.length);
+  assert.match(await notice.line(page).innerText(), /Click and Book Plus sin sesión activa/);
+  assert.deepEqual(providerStatuses(await readMatrixJob(await scope.api(), started.matrixJobId)), ["agil-local:completed", "costamar:failed"]);
+
+  const asked = providerSearches(fake, { origin: "LIM", destination: "SCL" })
+    .filter((request) => request.op === "cbplus.search")
+    .map((request) => request.query?.departureDate);
+  assert.equal(new Set(asked).size, asked.length, `a refused cell was asked again: ${asked.join(", ")}`);
+  assert.ok(asked.length > 0 && asked.length < days.length, `Click and Book Plus was asked for ${asked.length} of ${days.length} cells`);
 });
 
 suite.test("with both providers down the desk says nothing was searched instead of drawing an empty route", async (scope) => {

@@ -1,4 +1,5 @@
 import { materializeSearchResponse } from "./core/search-response";
+import { envNumber } from "./env";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
 import { buildOfferScheduleGroups } from "./core/offer-schedule-groups";
 import {
@@ -211,20 +212,16 @@ const PROGRESSIVE_ADAPTERS: Record<ProviderId, ProgressiveSearchAdapter> = {
 
 const SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
 const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
-  const raw = Number(process.env.SEARCH_REVALIDATION_CACHE_TTL_MS ?? SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS);
-  return Number.isFinite(raw) && raw >= 0
-    ? raw
-    : SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS;
+  const configured = envNumber("SEARCH_REVALIDATION_CACHE_TTL_MS", SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS);
+  return configured >= 0 ? configured : SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS;
 })();
 const SEARCH_REVALIDATION_CACHE_WARNING = "Mostrando resultados cacheados mientras actualizamos en segundo plano.";
 const SEARCH_PROGRESS_SYNC_INTERVAL_MS = 900;
 const SEARCH_CANCELLED_WARNING = "Search cancelled by user.";
 const SEARCH_REFRESH_CANCELLED_WARNING = "Search stopped because the page was refreshed.";
 function readNonNegativeEnvMs(name: string, fallbackMs: number): number {
-  const raw = Number(process.env[name] ?? fallbackMs);
-  return Number.isFinite(raw) && raw >= 0
-    ? Math.trunc(raw)
-    : fallbackMs;
+  const configured = envNumber(name, fallbackMs);
+  return configured >= 0 ? Math.trunc(configured) : fallbackMs;
 }
 
 function backgroundSearchStartDelayMs(): number {
@@ -1340,13 +1337,17 @@ async function resolveValidatedQuotationOffer(source: QuotationSource): Promise<
     return undefined;
   }
 
-  return markOfferValidatedForQuotation({
+  /* The provider answers with a raw offer. It is prepared the way the list
+     prepares one, with the rate of the offer it replaces, so the fare it
+     confirms stays quotable. */
+  const [prepared] = prepareOffersForQuotation(source.request, [{
     ...validated,
     // Provider normalizers include the current price in their generated ID.
     // Keep the session-facing ID stable so the refreshed exact flight replaces
     // the selected record instead of becoming an unreferenced response only.
     id: source.offer.id,
-  });
+  }], [source.offer]);
+  return markOfferValidatedForQuotation(prepared);
 }
 
 function storeValidatedQuotationOffer(
@@ -2102,9 +2103,12 @@ function buildInitialProviderContext(
     return undefined;
   }
 
+  /* A job lives for hours and the branded token for one, renewed outside the
+     application. The job keeps no token, so each search it runs, a quote's
+     revalidation included, reads the one configured at that moment. */
   const costamarContext = normalizeCostamarProviderContext(payload?.providerConfig?.costamar);
   return {
-    costamar: costamarContext,
+    costamar: { ...costamarContext, token: "" },
   };
 }
 

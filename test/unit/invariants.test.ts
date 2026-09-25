@@ -1,15 +1,29 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveItineraryDurationMinutes, zonedMinutesBetween } from "../../src/core/flight-duration";
+import type { CanonicalOffer, SearchRequest } from "../../src/core/types";
 import { envFlag, envNumber } from "../../src/env";
-import { deskIsoDate } from "../../src/core/runtime-config";
-import { getSearchDatePolicy } from "../../src/search-date-policy";
+import {
+  DEFAULT_MIGRATION_CONCURRENT_MONTHS,
+  DEFAULT_SEARCH_MAX_FUTURE_DAYS,
+  deskIsoDate,
+} from "../../src/core/runtime-config";
+import { normalizeCostamarProviderContext } from "../../src/provider-context";
+import { providerPrewarmIntervalMs } from "../../src/provider-prewarm";
+import { getPublicRuntimeConfig, getSearchDatePolicy } from "../../src/search-date-policy";
+import { maybeProxySearchServiceRequest } from "../../src/search-service-client";
+import { SearchSessionStore } from "../../src/session-store";
+import { resolveWebSessionMaxLifetimeSeconds, resolveWebSessionTtlSeconds } from "../../src/web-auth";
 
 /*
  * Invariants that are cheap to state and expensive to get wrong: the desk's
- * calendar day, how settings fall back, how a journey is measured across time
- * zones, and what the deployment path is allowed to do.
+ * calendar day, how settings fall back, which Click and Book Plus token is the
+ * current one, what a rollback must still read, what the web unit asks the
+ * runner twice, how a journey is measured across time zones, and what the
+ * deployment path is allowed to do.
  */
 
 const repoRoot = join(import.meta.dir, "..", "..");
@@ -55,6 +69,26 @@ describe("settings", () => {
     expect(envNumber(["FLY_DESK_UNIT_MISSING", "FLY_DESK_UNIT_LEGACY"], 1_000)).toBe(250);
   });
 
+  test("an empty setting keeps its default where the desk reads it", () => {
+    for (const name of [
+      "SEARCH_MAX_FUTURE_DAYS",
+      "FLY_DESK_MIGRATION_CONCURRENT_MONTHS",
+      "FLY_DESK_WEB_SESSION_TTL_SECONDS",
+      "FLY_DESK_WEB_SESSION_MAX_LIFETIME_SECONDS",
+      "FLY_DESK_PROVIDER_PREWARM_INTERVAL_MS",
+    ]) {
+      process.env[name] = "";
+    }
+    /* Read as 0, the window would be today alone, a session would last five
+       minutes, and the periodic prewarm would stop. */
+    const runtime = getPublicRuntimeConfig(new Date("2026-09-25T12:00:00Z"));
+    expect(getSearchDatePolicy(new Date("2026-09-25T12:00:00Z")).maxFutureDays).toBe(DEFAULT_SEARCH_MAX_FUTURE_DAYS);
+    expect(runtime.migrationConcurrentMonths).toBe(DEFAULT_MIGRATION_CONCURRENT_MONTHS);
+    expect(resolveWebSessionTtlSeconds()).toBe(12 * 60 * 60);
+    expect(resolveWebSessionMaxLifetimeSeconds()).toBe(7 * 24 * 60 * 60);
+    expect(providerPrewarmIntervalMs()).toBe(10 * 60 * 1000);
+  });
+
   test("an empty flag keeps its default", () => {
     process.env.FLY_DESK_UNIT_FLAG = "";
     expect(envFlag("FLY_DESK_UNIT_FLAG", false)).toBe(false);
@@ -62,6 +96,176 @@ describe("settings", () => {
     expect(envFlag("FLY_DESK_UNIT_FLAG", true)).toBe(false);
     process.env.FLY_DESK_UNIT_FLAG = "1";
     expect(envFlag("FLY_DESK_UNIT_FLAG", false)).toBe(true);
+  });
+});
+
+describe("Click and Book Plus token", () => {
+  const tokenDir = mkdtempSync(join(tmpdir(), "fly-desk-unit-token-"));
+  afterAll(() => rmSync(tokenDir, { recursive: true, force: true }));
+  let tokenFiles = 0;
+
+  /** A file of its own: the reader re-stats a path at most once a second. */
+  function tokenFile(token: string): string {
+    tokenFiles += 1;
+    const path = join(tokenDir, `token-${tokenFiles}`);
+    writeFileSync(path, `${token}\n`);
+    return path;
+  }
+
+  function brandedToken(expiresInSeconds: number): string {
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const exp = Math.floor(Date.now() / 1000) + expiresInSeconds;
+    return `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ exp })}.${"s".repeat(43)}`;
+  }
+
+  const configuredToken = () => normalizeCostamarProviderContext().token;
+
+  test("a context with an empty token reads the configured one", () => {
+    delete process.env.CBPLUS_TOKEN_FILE;
+    process.env.CBPLUS_TOKEN = "configured-token";
+    expect(normalizeCostamarProviderContext({ token: "" }).token).toBe("configured-token");
+    expect(normalizeCostamarProviderContext({ token: "  " }).token).toBe("configured-token");
+    expect(normalizeCostamarProviderContext({ token: "context-token" }).token).toBe("context-token");
+  });
+
+  test("a renewal in the file wins over the token the process started with", () => {
+    const renewed = brandedToken(3_600);
+    process.env.CBPLUS_TOKEN = brandedToken(600);
+    process.env.CBPLUS_TOKEN_FILE = tokenFile(renewed);
+    expect(configuredToken()).toBe(renewed);
+  });
+
+  test("after a platform rollback, the token renewed in the environment wins over a stale file", () => {
+    const renewed = brandedToken(3_600);
+    process.env.CBPLUS_TOKEN = renewed;
+    process.env.CBPLUS_TOKEN_FILE = tokenFile(brandedToken(-600));
+    expect(configuredToken()).toBe(renewed);
+  });
+
+  test("either source alone is enough, and a tie keeps the file", () => {
+    const token = brandedToken(3_600);
+    process.env.CBPLUS_TOKEN = "";
+    process.env.CBPLUS_TOKEN_FILE = tokenFile(token);
+    expect(configuredToken()).toBe(token);
+    process.env.CBPLUS_TOKEN = token;
+    process.env.CBPLUS_TOKEN_FILE = tokenFile("");
+    expect(configuredToken()).toBe(token);
+    process.env.CBPLUS_TOKEN = "opaque-environment-token";
+    process.env.CBPLUS_TOKEN_FILE = tokenFile("opaque-file-token");
+    expect(configuredToken()).toBe("opaque-file-token");
+  });
+});
+
+describe("rollback", () => {
+  test("a stored search job keeps the `offers` list an older release reads on boot", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fly-desk-unit-rows-"));
+    const dbPath = join(dir, "sessions.sqlite");
+    const offer = (id: string) => ({
+      id,
+      providerSource: "agil-local",
+      price: { total: { amount: 100, currencyCode: "USD" } },
+      purchasePaths: [],
+    }) as unknown as CanonicalOffer;
+    const request: SearchRequest = {
+      tripType: "one-way",
+      searchMode: "exact",
+      legs: [{ origin: "LIM", destination: "CUZ", departureDate: "2026-12-01" }],
+      passengers: { adults: 1, children: 0, infants: 0 },
+      cabin: "ECONOMY",
+      filters: {},
+      coverageMode: "core",
+      redirectMode: "best-effort",
+      currencyCode: "USD",
+    };
+    try {
+      const store = new SearchSessionStore({ dbPath });
+      const job = store.createSearchJob({
+        request,
+        offers: [offer("second")],
+        allOffers: [offer("first"), offer("second")],
+        searchMeta: {
+          requestedAt: "2026-09-25T12:00:00.000Z",
+          completedAt: "2026-09-25T12:00:05.000Z",
+          providersUsed: ["agil-local"],
+          warnings: [],
+          partial: false,
+          searchState: "search_live",
+        },
+        providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+        warnings: [],
+        sortMode: "cheapest",
+        status: "completed",
+      });
+      store.close();
+
+      /* A release that stores both lists maps over `offers` when it restores a
+         row; without the list it cannot boot on rows written by this one. */
+      const db = new Database(dbPath, { readonly: true });
+      const rows = db.query("SELECT payload FROM search_jobs").all() as Array<{ payload: string }>;
+      db.close();
+      expect(rows.map((row) => Array.isArray((JSON.parse(row.payload) as { offers?: unknown }).offers))).toEqual([true]);
+
+      const reopened = new SearchSessionStore({ dbPath });
+      expect(reopened.getSearchJob(job.id)?.offers.map((entry) => entry.id)).toEqual(["second"]);
+      reopened.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the hop to the search runner", () => {
+  /** A loopback port nothing listens on yet, and a runner that starts on it after `delayMs`. */
+  async function lateRunner(delayMs: number) {
+    const probe = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
+    const port = probe.port;
+    await probe.stop(true);
+    const seen: string[] = [];
+    let runner: ReturnType<typeof Bun.serve> | undefined;
+    const start = setTimeout(() => {
+      runner = Bun.serve({
+        port,
+        hostname: "127.0.0.1",
+        fetch: (request) => {
+          seen.push(`${request.method} ${new URL(request.url).pathname}`);
+          return Response.json({ searchJobId: "job-1" });
+        },
+      });
+    }, delayMs);
+    return {
+      serviceUrl: `http://127.0.0.1:${port}`,
+      seen,
+      stop: async () => {
+        clearTimeout(start);
+        await runner?.stop(true);
+      },
+    };
+  }
+
+  test("a poll outlives a runner that is still starting", async () => {
+    const runner = await lateRunner(150);
+    try {
+      const url = new URL("http://desk.test/api/search/job-1?wait=15000");
+      const answer = await maybeProxySearchServiceRequest(new Request(url), url, { serviceUrl: runner.serviceUrl });
+      expect(answer?.status).toBe(200);
+      expect(runner.seen).toEqual(["GET /api/search/job-1"]);
+    } finally {
+      await runner.stop();
+    }
+  });
+
+  test("a write is never sent twice, even one with no body to consume", async () => {
+    const runner = await lateRunner(150);
+    try {
+      const url = new URL("http://desk.test/api/search/job-1/cancel?cachePartial=1");
+      const answer = await maybeProxySearchServiceRequest(new Request(url, { method: "POST" }), url, { serviceUrl: runner.serviceUrl });
+      expect(answer?.status).toBe(503);
+      /* Past the moment a second attempt would have reached the runner. */
+      await Bun.sleep(700);
+      expect(runner.seen).toEqual([]);
+    } finally {
+      await runner.stop();
+    }
   });
 });
 
@@ -104,6 +308,18 @@ describe("deployment", () => {
     const remoteCommands = [...workflow.matchAll(/ssh vps-app "([a-z]+) /g)].map((match) => match[1]);
     expect(new Set(remoteCommands)).toEqual(new Set(["upload", "deploy", "verify", "rollback"]));
     expect(workflow.match(/environment: production/g)?.length).toBe(2);
+  });
+
+  test("keeps reading CBPLUS_TOKEN_FILE where the platform looks for it", () => {
+    const sources = readdirSync(join(repoRoot, "src"), { recursive: true, encoding: "utf8" })
+      .filter((name) => name.endsWith(".ts"))
+      .map((name) => readFileSync(join(repoRoot, "src", name), "utf8"));
+    expect(
+      sources.some((source) => /process\.env\.CBPLUS_TOKEN_FILE\b/.test(source)),
+      "vps-platform (scripts/fly-desk-cbplus-token.sh, scripts/cbplus-renewer/control.py) searches a release's "
+        + "src/**/*.ts for the literal CBPLUS_TOKEN_FILE to decide that it re-reads the token file; a release "
+        + "without it has its search and redirect units restarted on every token renewal",
+    ).toBe(true);
   });
 
   test("prepares a release that carries its own dependencies", () => {

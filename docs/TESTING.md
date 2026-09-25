@@ -75,9 +75,9 @@ same on every run, and a year boundary is always six weeks away.
 
 | File | Covers |
 | --- | --- |
-| `desk-search.e2e.ts` | A shared link through the sign-in gate; merged results, filters and sorting; quotation revalidation; both providers' purchase redirects; the flexible matrix filled cell by cell; a range of three hundred fares in a stable order that matches the backend's |
+| `desk-search.e2e.ts` | A shared link through the sign-in gate; merged results, filters and sorting; quotation revalidation and a confirmed fare quoted again; both providers' purchase redirects; the flexible matrix filled cell by cell; a range of three hundred fares in a stable order that matches the backend's |
 | `migration.e2e.ts` | A migratory sweep across the year boundary: priced, failed and empty months, a month opened without a new search, and the route counted once |
-| `resilience.e2e.ts` | A failed provider named in one line with nothing it said reaching the page or the logs; both providers down; stopping a search; closing the tab mid-search |
+| `resilience.e2e.ts` | A failed provider named in one line with nothing it said reaching the page or the logs; a token refused inside a 200 named the same way in an exact search, a range and a matrix, the last two stopping at the first refusal; both providers down; stopping a search; closing the tab mid-search |
 | `capacity.e2e.ts` | Admission order, the queue limit and its timeout, the Agil in-flight ceiling, a restart of every unit, and a renewed Click and Book Plus token file |
 | `mobile.e2e.ts` | Phone sheets and the system back at 390×844, every mode at 360×740, and the 1024×768 desk |
 | `session-security.e2e.ts` | Session renewal and its cap, sign-out, login lockout, hostile return paths, security headers, spoofed trust headers, oversized bodies and forged quotations |
