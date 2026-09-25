@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomInt } from "node:crypto";
+import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import {
   followSearchJob,
   openPurchasePath,
@@ -344,22 +345,44 @@ suite.test("provider addresses sent by a client are ignored and nothing leaves f
   /* `assertInvariants` also holds: no process tried to reach anything else. */
 });
 
+/**
+ * Sends the headers of an upload that declares `bytes` and none of its body,
+ * and resolves with the answer.
+ */
+function declareUpload(url: string, bytes: number, headers: Record<string, string>): Promise<{ status: number; headers: IncomingHttpHeaders }> {
+  return new Promise((resolve, reject) => {
+    const outgoing = httpRequest(url, { method: "POST", agent: false, headers: { ...headers, "content-length": String(bytes) } }, (incoming) => {
+      incoming.resume();
+      resolve({ status: incoming.statusCode ?? 0, headers: incoming.headers });
+      outgoing.destroy();
+    });
+    outgoing.on("error", reject);
+    outgoing.flushHeaders();
+  });
+}
+
 suite.test("an oversized body is refused at once, by the proxy and by the web unit itself", async (scope) => {
   const { fake, stack } = scope;
   const api = await scope.api();
+  const headers = { "content-type": "application/json", cookie: api.cookieHeader("/api/search") };
   const body = JSON.stringify({ padding: "x".repeat(2 * 1024 * 1024) });
-  for (const [label, url, headers] of [
-    ["through the proxy", `${stack.baseUrl}/api/search`, { cookie: api.cookieHeader("/api/search") }],
-    ["at the web unit", `${stack.urls.web}/api/search`, { cookie: api.cookieHeader("/api/search") }],
-  ] as const) {
-    const startedAt = Date.now();
-    const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body });
-    assert.equal(response.status, 413, label);
-    assert.ok(Date.now() - startedAt < 3_000, `${label}: the refusal took ${Date.now() - startedAt} ms`);
-    if (label === "at the web unit") {
-      assert.equal(response.headers.get("connection"), "close");
-    }
-  }
+
+  /* The proxy counts what arrives, as Caddy's body limit does: the whole
+     upload goes, and the refusal comes past its first megabyte. */
+  let startedAt = Date.now();
+  const atTheProxy = await fetch(`${stack.baseUrl}/api/search`, { method: "POST", headers, body });
+  assert.equal(atTheProxy.status, 413, "through the proxy");
+  assert.ok(Date.now() - startedAt < 3_000, `through the proxy: the refusal took ${Date.now() - startedAt} ms`);
+
+  /* The web unit refuses on the declared length, before a byte of the body,
+     and closes the connection. Only the declaration is sent: the close does
+     not wait for an upload, so a client still sending one mostly reads a reset
+     instead of the 413. */
+  startedAt = Date.now();
+  const atTheWebUnit = await declareUpload(`${stack.urls.web}/api/search`, Buffer.byteLength(body), headers);
+  assert.equal(atTheWebUnit.status, 413, "at the web unit");
+  assert.ok(Date.now() - startedAt < 3_000, `at the web unit: the refusal took ${Date.now() - startedAt} ms`);
+  assert.equal(atTheWebUnit.headers.connection, "close");
   assert.deepEqual(fake.requests().map((request) => request.op), []);
 });
 
