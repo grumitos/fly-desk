@@ -345,20 +345,41 @@ export async function showsWholeText(locator: Locator): Promise<boolean> {
  * Whether an element is drawn and nothing that clips it cuts it: every
  * ancestor that hides overflow holds its whole box, and that ancestor's own
  * content is not wider than it (an ellipsis). Inline labels have no width of
- * their own to compare, so the clipping ancestor is what is measured.
+ * their own to compare, so the clipping ancestor is what is measured. An
+ * element laid out with `display: contents` has no box at all: its text is
+ * what is drawn, so each piece of it is measured against every box between
+ * that text and the page.
  */
 export async function isUnclipped(locator: Locator): Promise<boolean> {
   return locator.evaluate((element) => {
-    const box = element.getBoundingClientRect();
-    if (box.width === 0 || box.height === 0) return false;
-    for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
-      const style = window.getComputedStyle(ancestor);
-      const frame = ancestor.getBoundingClientRect();
-      if (style.overflowX !== "visible" && (box.left < frame.left - 0.5 || box.right > frame.right + 0.5)) return false;
-      if (style.overflowY !== "visible" && (box.top < frame.top - 0.5 || box.bottom > frame.bottom + 0.5)) return false;
-      if (style.textOverflow === "ellipsis" && ancestor.scrollWidth > ancestor.clientWidth + 1) return false;
+    const cut = (box: DOMRect, from: Element | null): boolean => {
+      for (let ancestor = from; ancestor; ancestor = ancestor.parentElement) {
+        const style = window.getComputedStyle(ancestor);
+        /* An element that draws no box clips nothing. */
+        if (style.display === "contents") continue;
+        const frame = ancestor.getBoundingClientRect();
+        if (style.overflowX !== "visible" && (box.left < frame.left - 0.5 || box.right > frame.right + 0.5)) return true;
+        if (style.overflowY !== "visible" && (box.top < frame.top - 0.5 || box.bottom > frame.bottom + 0.5)) return true;
+        if (style.textOverflow === "ellipsis" && ancestor.scrollWidth > ancestor.clientWidth + 1) return true;
+      }
+      return false;
+    };
+    if (window.getComputedStyle(element).display !== "contents") {
+      const box = element.getBoundingClientRect();
+      return box.width > 0 && box.height > 0 && !cut(box, element.parentElement);
     }
-    return true;
+    const texts = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let drawn = false;
+    for (let text = texts.nextNode(); text; text = texts.nextNode()) {
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const box = range.getBoundingClientRect();
+      /* Text under a hidden element takes no room and is not seen. */
+      if (box.width === 0 || box.height === 0) continue;
+      if (cut(box, text.parentElement)) return false;
+      drawn = true;
+    }
+    return drawn;
   });
 }
 

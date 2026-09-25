@@ -45,6 +45,16 @@ export async function waitForResults(page: Page, count: number, timeoutMs = 30_0
   }, { timeoutMs, message: `${count} results on screen` });
 }
 
+/**
+ * Waits until every animation on the page that has an end has reached it, so
+ * what is measured next is where things rest and not a frame of an entrance.
+ */
+export async function waitForMotion(page: Page): Promise<void> {
+  await page.evaluate(() => Promise.all(document.getAnimations()
+    .filter((animation) => animation.playState === "running" && animation.effect?.getComputedTiming().endTime !== Infinity)
+    .map((animation) => animation.finished.catch(() => undefined))).then(() => undefined));
+}
+
 /** Waits until a migratory sweep has settled with `priced` of `months` months fared. */
 export async function waitForSweep(page: Page, months: number, priced: number, timeoutMs = 60_000): Promise<void> {
   await eventually(async () => {

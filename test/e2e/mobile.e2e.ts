@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import type { Page } from "playwright";
-import { runSearch, waitForResults, waitForSweep } from "./support/flows.ts";
+import { runSearch, waitForMotion, waitForResults, waitForSweep } from "./support/flows.ts";
 import { defineSuite, type ContextOptions } from "./support/harness.ts";
 import type { OfferSpec } from "./support/fixtures.ts";
 import { addMonths, day, eventually, monthKey, providerSearches, TODAY } from "./support/scenario.ts";
@@ -223,15 +223,20 @@ suite.test("a phone held sideways shows the offer's itinerary with «Cotizar» f
   fake.setFlights("both", { origin: "LIM", destination: "MIA" }, MIAMI);
   const { page } = await scope.signedInPage(searchLink(MODES[0]!.link), LANDSCAPE_PHONE);
   await waitForResults(page, 4);
+  await waitForMotion(page);
   await assertNoHorizontalOverflow(page, "landscape results");
   assert.ok(await isOnScreen(searchForm.submit(page).or(searchForm.editSummary(page)).first()), "the search action is out of reach");
+  /* A list this wide lays the count and the airport out in tracks of their
+     own, so the label is measured by its text. */
   const label = oneStopLabels(results.viewport(page)).first();
   assert.match(await label.innerText(), /BOG/);
-  assert.ok(await isUnclipped(label));
+  assert.ok(await isUnclipped(label), "a one-stop label is cut off in landscape");
 
   await results.card(page, /USD 540\.00 total.*Agilsmart$/).tap();
   const offer = detail.surface(page);
   await offer.waitFor();
+  /* The sheet rises from below the window: measured once it has arrived. */
+  await waitForMotion(page);
   await assertNoHorizontalOverflow(page, "landscape offer sheet");
   const quote = detail.quote(offer);
   assert.ok(await isFullyInViewport(quote) && await isUnclipped(quote), "«Cotizar» is cut off in landscape");
@@ -243,8 +248,6 @@ suite.test("a phone held sideways shows the offer's itinerary with «Cotizar» f
   for (const flight of ["LATAM 2400", "LATAM 2402", "LATAM 2403", "LATAM 2401"]) {
     await detail.flightRow(offer, flight).waitFor();
   }
-}, {
-  todo: "landscape fix in progress: at 844×390 the offer side sheet spends its height on the header, the fare and the actions, leaves the itinerary a strip with nothing legible in it, and its container clips the bottom of «Cotizar»",
 });
 
 suite.test("a filter changed in the phone's filter sheet stays on the address bar after back closes the sheet", async (scope) => {
