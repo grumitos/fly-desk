@@ -333,7 +333,9 @@ export class Suite {
   }
 
   /* Holds for every test: nothing left the machine, no fallback path ran, no
-     fixture broke, and no page threw. */
+     fixture broke, no page threw, and no answer a page received carried an
+     offer's provider handles (`rawRefs`) or the backend's dedupe key
+     (`signature`), which stay behind the backend boundary. */
   private assertInvariants(scope: TestScope, options: TestOptions): void {
     assert.deepEqual(this.fake.blocked, [], "a stack process tried to reach a host outside the fake upstream");
     const allowedFallbacks = options.allowedFallbacks ?? [];
@@ -347,6 +349,14 @@ export class Suite {
     if (!options.allowPageErrors) {
       assert.deepEqual(scope.contexts.flatMap((tracked) => tracked.pageErrors()), [], "a page threw");
     }
+    /* The answers read so far: a long poll still open when the test ends is left to the context's close. */
+    assert.deepEqual(
+      scope.contexts.flatMap((tracked) => tracked.apiResponses)
+        .filter((answer) => /"(?:rawRefs|signature)"\s*:/.test(answer.body))
+        .map((answer) => new URL(answer.url).pathname),
+      [],
+      "an /api answer carried an offer's provider handles",
+    );
   }
 }
 

@@ -189,7 +189,7 @@ The React UI must not display simulated controls. The following remain outside t
 - `scripts/pack-release.sh`: the deterministic release artifact of a revision
 - `scripts/release-smoke.ts`: unpacks an artifact, prepares it as the platform does, and boots web, search and redirect from it
 - `docs/DEPLOY_APP.md`: application deployment and rollback
-- `.github/workflows/ci.yml`: CI for typecheck, lint, build, the release smoke, and unit tests, with the end-to-end suite in a parallel job
+- `.github/workflows/ci.yml`: CI for typecheck, lint, build, and the release smoke, with the end-to-end suite in a parallel job
 - `.github/workflows/deploy-vps.yml`: manual deployment and rollback by exact SHA through the fixed platform release wrapper; a deployment builds, packs and smokes the artifact
 
 Shared VPS infrastructure no longer lives in this repository. Caddy, systemd, Caddy rollback, and the platform plan are maintained in `grumitos/vps-platform` (`D:\Dev\VPS\vps-platform`). This repository retains the application, CI, revision deployment, and release rollback.
@@ -204,23 +204,21 @@ Main commands:
 - `bun run typecheck`
 - `bun run lint`
 - `bun run build`
-- `bun run test`
-- `bun run test:unit`
-- `bun run test:e2e`
+- `bun run test` (the same as `bun run test:e2e`)
 
-The suite is end to end: `test/e2e/*.e2e.ts` runs the web unit, the search runner with its pooled workers, and the redirect service on loopback behind a Caddy-like proxy, against fake provider upstreams, and drives the desk in Chromium. A Bun preload in every process of the stack sends provider traffic to the fakes and blocks anything else. `scripts/run-e2e.ts` runs the spec files in parallel; each file owns one fake upstream, one stack, and one browser, and each test gets fresh browser contexts. `test/unit/` holds pure-logic tests and is empty today. See `docs/TESTING.md`.
+The suite is end to end: `test/e2e/*.e2e.ts` runs the web unit, the search runner with its pooled workers, and the redirect service on loopback behind a Caddy-like proxy, against fake provider upstreams, and drives the desk in Chromium. A Bun preload in every process of the stack sends provider traffic to the fakes and blocks anything else. `scripts/run-e2e.ts` runs the spec files in parallel; each file owns one fake upstream, one stack, and one browser, and each test gets fresh browser contexts. There is no unit suite; the release artifact itself is smoked by `scripts/release-smoke.ts`. See `docs/TESTING.md`.
 
 Current coverage:
 
-- the sign-in gate: a shared link kept through it, renewal of both cookies past half of the session window, the hard cap sending a busy desk to the gate once and back to its search, sign-out, per-client login lockout with `Retry-After`, hostile return paths, and security headers
-- no provider reached without a session or through spoofed trust headers, client-supplied provider addresses ignored, oversized bodies refused by the proxy and by the web unit, and forged quotation requests refused
+- the sign-in gate: a shared link kept through it, renewal of both cookies past half of the session window, the hard cap sending a busy desk to the gate once and back to its search, sign-out, per-client login lockout with `Retry-After`, hostile return paths and markup in one kept as text, cookies forged, altered, expired or in the old format refused, and security headers
+- no provider reached without a session or through spoofed trust headers, client-supplied provider addresses ignored, a purchase path altered in the cache never redirecting off the provider's own search, oversized bodies refused by the proxy and by the web unit, forged quotation requests refused, and no `/api` answer carrying an offer's `rawRefs` or `signature`
 - an exact round trip merged from both providers, with filters and sorting in the address bar, quotation revalidation, a confirmed fare quoted again from its panel (a domestic one keeping its exchange rate), and both providers' purchase redirects, the Click and Book Plus token appearing only in its 302
 - the flexible matrix filled cell by cell with the cards already drawn kept, price-only cells never drawn, and a repriced fare carried to the card and the quotation
 - a range of three hundred fares with none dropped, the same order on two runs whatever order the providers answer in, and the desk's order matching the backend's
-- the migratory sweep across the year boundary: priced, failed, and empty months, a month opened without searching again, and the route counted once
+- the migratory sweep across the year boundary: priced, failed, and empty months, a month opened without searching again, its fares measured on the airports' own clocks over a connection longer than a day, and the route counted once
 - a failed provider named in one line with nothing it said reaching the page, web storage, the console, `/api` answers, or service logs; a token refused inside a 200 named the same way in an exact search, a range and a matrix, the last two stopping at the first refusal; both providers down
 - stopping a search (its fan-out halts and its partial list is kept and reused) and closing the tab mid-search (the search is cancelled and its purchase paths still work)
-- admission in arrival order with no overtaking, the queue limit, queue timeout, and cancelled waiters, the Agil in-flight ceiling, a restart of every unit reading results, purchase paths, and suggestions back from SQLite, and a renewed Click and Book Plus token file picked up with nothing restarted
+- admission in arrival order with no overtaking, the queue limit, queue timeout, and cancelled waiters, the Agil in-flight ceiling, a restart of every unit reading results, purchase paths, and suggestions back from SQLite on rows a rollback can read, a cache file left mostly free compacted before the runner opens, a renewed Click and Book Plus token file picked up with nothing restarted, and after a platform rollback the newer token in the environment preferred over the file
 - with no stored Agil identity, the session read from the platform Chrome over DevTools in one tab that is closed afterwards, even behind a slow page, and the identity kept so the next start needs no browser; a worker stopped mid-read closes its tab
 - phone sheets and the system back at 390×844, every mode at 360×740, and the 1024×768 desk, with no horizontal overflow
 - suggestions from both providers, recent stations per browser and frequent ones for the whole desk, a domestic quote in soles pasted back, and an exchange rate that never answers

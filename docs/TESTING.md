@@ -4,20 +4,20 @@ Fly Desk is tested end to end. The real web unit, search runner (with its
 pooled worker children) and redirect service run on loopback against fake
 provider upstreams, and a real browser drives the Spanish desk the way an agent
 does. Each test asserts through the UI and through backend evidence: the fake
-upstream's request log, the API, and process ids.
+upstream's request log, the API, the stack's SQLite files, and process ids.
+There is no unit suite. What a release is before it runs, the artifact booted
+the way the platform boots it, is the release smoke's
+(`scripts/release-smoke.ts`, described in [`DEPLOY_APP.md`](./DEPLOY_APP.md)).
 
 ## Commands
 
-- `bun run test`: `test:unit`, then `test:e2e`.
-- `bun run test:unit`: `bun test test/unit`, for what an end-to-end run cannot
-  reach deterministically: pure logic and the session cache on a temporary
-  SQLite file. It passes while the folder is empty.
-- `bun run test:e2e`: `bun run build`, then `scripts/run-e2e.ts`.
+- `bun run test` (or `bun run test:e2e`): `bun run build`, then
+  `scripts/run-e2e.ts`.
 - `bun scripts/run-e2e.ts [spec files…] [-- node --test options…]`: runs the
   suite, or some of its files, on an existing build. For example:
   `bun scripts/run-e2e.ts test/e2e/capacity.e2e.ts -- --test-name-pattern="queue"`.
-- `bun run typecheck` also checks `test/**/*.ts` and `scripts/run-e2e.ts`
-  through `tsconfig.test.json`.
+- `bun run typecheck` also checks `test/**/*.ts`, `scripts/run-e2e.ts` and
+  `scripts/release-smoke.ts` through `tsconfig.test.json`.
 
 The suite needs Bun 1.4, Node 22.6 or later, and a Chromium for Playwright.
 Node strips TypeScript types on its own from 22.18; before that, the runner
@@ -64,12 +64,16 @@ and a reset fake. A test has three minutes. The harness lives in
   redirects, and records `/api` traffic, console output and page errors. After
   every test it asserts that nothing tried to leave the machine, that no
   provider fallback path ran unless the test names it (`allowedFallbacks`),
-  that the fake built every answer it was asked for, and that no page threw.
+  that the fake built every answer it was asked for, that no page threw, and
+  that no `/api` answer a page read carried an offer's `rawRefs` or
+  `signature`.
 - `support/ui.ts`: every selector the specs use. Selectors are roles,
   accessible names and visible text; never CSS classes or pixel positions.
 - `support/api-client.ts`, `support/flows.ts`, `support/scenario.ts` and
-  `support/sessions.ts`: the API, common desk flows, dates and request-log
-  helpers, and session cookies minted with the stack's secret.
+  `support/sessions.ts`: the API, common desk flows, dates, request-log and
+  SQLite helpers (reading and writing a stack's files the way an earlier
+  release or an operator would), and session cookies minted with the stack's
+  secret.
 - `support/prove-stack.ts`: a standalone check of the foundation over HTTP.
 
 Every stack uses the same "today" (`SEARCH_TODAY_OVERRIDE`): the next
@@ -82,11 +86,11 @@ same on every run, and a year boundary is always six weeks away.
 | --- | --- |
 | `agil-session.e2e.ts` | With no stored identity, the Agil session read from the platform Chrome in one tab, behind a page slower than one DevTools command, the tab closed and the identity kept for the next start; a worker stopped mid-read closing its tab (not on Windows, where a stop cannot be intercepted) |
 | `desk-search.e2e.ts` | A shared link through the sign-in gate, each of its stations looked up once; merged results, filters and sorting, and the list's outcome read out; quotation revalidation and a confirmed fare quoted again; both providers' purchase redirects, and a blocked provider window named; the flexible matrix filled cell by cell; a range of three hundred fares in a stable order that matches the backend's, back at its top after any change of filter; the list, its column head, the passenger popover and both calendars from the keyboard, with «hoy» on the desk's day |
-| `migration.e2e.ts` | A migratory sweep across the year boundary: priced, failed and empty months, a month opened without a new search, and the route counted once; each month followed from the moment its search starts |
+| `migration.e2e.ts` | A migratory sweep across the year boundary: priced, failed and empty months, a month opened without a new search, its fares measured on the airports' own clocks over a connection longer than a day, and the route counted once; each month followed from the moment its search starts |
 | `resilience.e2e.ts` | A failed provider named in one line with nothing it said reaching the page or the logs, and named again by the next search after the line is dismissed; a token refused inside a 200 named the same way in an exact search, a range and a matrix, the last two stopping at the first refusal; both providers down, never read out as an empty route; stopping a search; closing the tab mid-search |
-| `capacity.e2e.ts` | Admission order, the queue limit and its timeout, each named in the desk's notice, the Agil in-flight ceiling, a restart of every unit, and a renewed Click and Book Plus token file |
+| `capacity.e2e.ts` | Admission order, the queue limit and its timeout, each named in the desk's notice, the Agil in-flight ceiling, a restart of every unit on rows a rollback can read and a row an earlier release rewrote, a cache file left mostly free compacted before the runner opens, and the Click and Book Plus token installed in both the file and the environment: a renewed file, and a platform rollback's newer environment token |
 | `mobile.e2e.ts` | Phone sheets and the system back at 390×844, a phone's form built once and a calendar a tap does not scroll; every mode at 360×740; the 1024×768 desk; dates and months asked for only once their calendar is left; a desk resized under a search |
-| `session-security.e2e.ts` | Session renewal and its cap, sign-out, login lockout, hostile return paths, security headers, spoofed trust headers, oversized bodies and forged quotations |
+| `session-security.e2e.ts` | Session renewal and its cap, sign-out, login lockout, hostile return paths and one holding markup, cookies forged, altered, expired or in the old format, security headers, spoofed trust headers, purchase paths altered in the cache, oversized bodies and forged quotations |
 | `suggestions-quotes.e2e.ts` | Suggestions from both providers, recent and frequent stations, a quote in soles pasted back, its fare's age moving while it is open, a search copied to share, and an exchange rate that never answers |
 
 ## Writing a test
@@ -121,7 +125,7 @@ starts.
 
 `.github/workflows/ci.yml` runs two jobs in parallel on pull requests, pushes
 to `main` and manual dispatch. `quality` installs, typechecks, lints, builds,
-smokes the release artifact (`scripts/release-smoke.ts`, described in
-[`DEPLOY_APP.md`](./DEPLOY_APP.md)) and runs the unit tests. `e2e` installs,
+and smokes the release artifact (`scripts/release-smoke.ts`, described in
+[`DEPLOY_APP.md`](./DEPLOY_APP.md)). `e2e` installs,
 builds and runs the end-to-end suite on the runner image's Chrome, and uploads
 `test-results/e2e/` as `fly-desk-e2e-failures` when it fails.

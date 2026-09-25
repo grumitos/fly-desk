@@ -22,17 +22,30 @@ import { startedJob, waitForResults } from "./support/flows.ts";
 import { defineSuite } from "./support/harness.ts";
 import { fakeCbplusToken, FAKE_CBPLUS_TERMINAL_ID, type OfferSpec } from "./support/fixtures.ts";
 import type { RecordedRequest } from "./support/fake-upstream.ts";
-import { day, eventually, matchesRoute, maxInFlight, sleep, type RouteFilter } from "./support/scenario.ts";
+import {
+  day,
+  eventually,
+  matchesRoute,
+  maxInFlight,
+  pageStats,
+  PROVIDER_SEARCH_OPS,
+  querySqlite,
+  sleep,
+  writeSqlite,
+  type RouteFilter,
+} from "./support/scenario.ts";
 import { notice, searchForm, searchLink } from "./support/ui.ts";
 
 /*
  * The runner under load and across restarts: the admission budget and its
- * queue, the Agil in-flight ceiling, what survives a restart of every unit,
- * and a Click and Book Plus token renewed on disk while everything runs.
+ * queue, the Agil in-flight ceiling, what survives a restart of every unit and
+ * a rollback, the cache file compacted at start, and a Click and Book Plus token
+ * renewed on disk while everything runs.
  */
 
-/* The token file the whole stack reads (`CBPLUS_TOKEN_FILE`), written before
-   the stack starts so every process begins with token A. */
+/* The token as the platform installs it: in the file every process re-reads
+   (`CBPLUS_TOKEN_FILE`) and in the environment it starts with (`CBPLUS_TOKEN`),
+   token A in both before the stack starts. */
 const tokenDir = mkdtempSync(join(tmpdir(), "fly-desk-e2e-token-"));
 const TOKEN_FILE = join(tokenDir, "cbplus-token");
 const TOKEN_A = fakeCbplusToken(FAKE_CBPLUS_TERMINAL_ID, Date.now() - 60_000);
@@ -46,7 +59,7 @@ const QUEUE_TIMEOUT = "La búsqueda esperó demasiado por capacidad disponible."
 const suite = defineSuite({
   file: import.meta.filename,
   stack: {
-    env: { CBPLUS_TOKEN_FILE: TOKEN_FILE, CBPLUS_TOKEN: undefined },
+    env: { CBPLUS_TOKEN_FILE: TOKEN_FILE, CBPLUS_TOKEN: TOKEN_A },
     serviceEnv: {
       runner: { FLY_DESK_SEARCH_MAX_QUEUED: String(MAX_QUEUED) },
       /* Always check the brand host, so the token a redirect carries is seen. */
@@ -56,6 +69,11 @@ const suite = defineSuite({
 });
 
 const isProviderSearch = (request: RecordedRequest) => request.op === "agil.search" || request.op === "cbplus.search";
+
+/* The search runner's cache file, which the web and redirect units read too. */
+function sessionDbPath(): string {
+  return join(suite.stack.appDataDir, "fly-desk-cache.sqlite");
+}
 
 /** The provider searches of one job, identified by its route. */
 function callsFor(requests: readonly RecordedRequest[], route: RouteFilter): RecordedRequest[] {
@@ -252,7 +270,25 @@ suite.test("results, purchase paths and suggestions survive a restart of every u
   assert.equal(matrixOffers(matrix.job).length, 1);
 
   const pids = { runner: stack.pid("runner"), web: stack.pid("web"), redirect: stack.pid("redirect") };
-  await stack.restart("runner");
+  await stack.restart("runner", {
+    beforeLaunch: () => {
+      /* Every stored job keeps the `offers` list, empty: a release before this
+         one maps over it when it restores a row, so a rollback boots on these. */
+      const rows = querySqlite<{ id: string; payload: string }>(sessionDbPath(), "SELECT id, payload FROM search_jobs");
+      assert.ok(rows.some((row) => row.id === exactJob.searchJobId), "the exact search was not stored");
+      for (const row of rows) {
+        assert.deepEqual((JSON.parse(row.payload) as { offers?: unknown }).offers, [], `job ${row.id} is stored without the empty list a rollback reads`);
+      }
+      /* A rollback and a new deployment later: the earlier release rewrote the
+         row with the filtered copy it keeps, which is not read back. */
+      const exactRow = rows.find((row) => row.id === exactJob.searchJobId)!;
+      const payload = JSON.parse(exactRow.payload) as { allOffers: unknown[] };
+      writeSqlite(sessionDbPath(), [{
+        sql: "UPDATE search_jobs SET payload = ? WHERE id = ?",
+        params: [JSON.stringify({ ...payload, offers: payload.allOffers.slice(0, 1) }), exactJob.searchJobId],
+      }]);
+    },
+  });
   await stack.restart("web");
   await stack.restart("redirect");
   assert.notEqual(stack.pid("runner"), pids.runner);
@@ -356,4 +392,78 @@ suite.test("a renewed Click and Book Plus token file reaches searches and redire
   } finally {
     writeFileSync(TOKEN_FILE, TOKEN_A);
   }
+});
+
+suite.test("after a platform rollback the token renewed in the environment outlives the file left behind", async (scope) => {
+  const { fake, stack } = scope;
+  fake.setFlights("cbplus", { origin: "LIM", destination: "CUZ" }, [
+    { outbound: ["LA2047 LIM-CUZ 07:15-08:40"], price: 151.3, baggage: { carryOn: true, checked: 1 }, brand: "Plus" },
+  ]);
+  /* A rolled-back renewer writes only `CBPLUS_TOKEN` and restarts the units;
+     the file keeps the last token the newer one installed, still valid but
+     an hour older. */
+  const leftBehind = fakeCbplusToken(FAKE_CBPLUS_TERMINAL_ID, Date.now() - 60 * 60_000);
+  const renewed = fakeCbplusToken(FAKE_CBPLUS_TERMINAL_ID, Date.now());
+  writeFileSync(TOKEN_FILE, leftBehind);
+  try {
+    await stack.restart("runner", { env: { CBPLUS_TOKEN: renewed } });
+    await stack.restart("redirect", { env: { CBPLUS_TOKEN: renewed } });
+    const api = await scope.api();
+    const { job } = await followSearchJob(api, await startSearch(api, searchPayloads.exact("LIM", "CUZ", day(205))));
+    assert.deepEqual(fake.requests("cbplus.search").map((request) => (request.body as { token?: unknown }).token), [renewed], "the search used the token left in the file");
+    const fare = searchOffers(job).find((offer) => offer.providerSource === "costamar");
+    assert.ok(fare, "no Click and Book Plus fare");
+    const { response } = await openPurchasePath(api, purchasePathOf(fare));
+    assert.equal(response.status, 302);
+    assert.equal(new URL(response.headers.get("location") ?? "").searchParams.get("token"), renewed, "the redirect carries the token left in the file");
+  } finally {
+    writeFileSync(TOKEN_FILE, TOKEN_A);
+    await stack.restart("runner", { env: { CBPLUS_TOKEN: TOKEN_A } });
+    await stack.restart("redirect", { env: { CBPLUS_TOKEN: TOKEN_A } });
+  }
+});
+
+/* ---- The cache file ---- */
+
+suite.test("a cache file an earlier release left mostly free is compacted before the runner opens, and keeps its searches", async (scope) => {
+  const { fake, stack } = scope;
+  /* A file this release creates hands freed pages back from its first page. */
+  assert.equal(pageStats(sessionDbPath()).autoVacuum, 2, "a new cache file has no incremental vacuum");
+  fake.setFlights("both", { origin: "LIM", destination: "CUZ" }, CUSCO);
+  const api = await scope.api();
+  const { job } = await followSearchJob(api, await startSearch(api, searchPayloads.exact("LIM", "CUZ", day(210), day(214))));
+  assert.equal(searchOffers(job).length, 4);
+  const path = purchasePathOf(searchOffers(job).find((offer) => offer.providerSource === "agil-local")!);
+  assert.equal((await openPurchasePath(api, path)).response.status, 302);
+
+  /* What production ran on: a file written before the store chose a vacuum
+     mode, which SQLite then fixes at none, and whose sweeps freed most of it. */
+  let before = pageStats(sessionDbPath());
+  await stack.restart("runner", {
+    beforeLaunch: () => {
+      writeSqlite(sessionDbPath(), [
+        { sql: "PRAGMA auto_vacuum = NONE" },
+        { sql: "VACUUM" },
+        { sql: "CREATE TABLE e2e_swept (payload BLOB)" },
+        { sql: "INSERT INTO e2e_swept (payload) SELECT randomblob(65536) FROM (WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 400) SELECT i FROM n)" },
+        { sql: "DROP TABLE e2e_swept" },
+        { sql: "PRAGMA wal_checkpoint(TRUNCATE)" },
+      ]);
+      before = pageStats(sessionDbPath());
+      assert.equal(before.autoVacuum, 0);
+      assert.ok(before.freePages * 2 > before.pageCount, `only ${before.freePages} of ${before.pageCount} pages are free`);
+    },
+  });
+
+  const after = pageStats(sessionDbPath());
+  assert.equal(after.autoVacuum, 2, "the file was left without incremental vacuum");
+  assert.ok(after.pageCount * 4 < before.pageCount, `the file went from ${before.pageCount} to ${after.pageCount} pages`);
+  assert.match(stack.logs("runner"), /Fly Desk session cache compacted: .*autoVacuum=0->2/);
+
+  /* The search and its purchase path read back from the compacted file. */
+  fake.clearRequests();
+  const stored = await readSearchJob(api, job.searchJobId);
+  assert.deepEqual(searchOffers(stored).map((offer) => offer.id), searchOffers(job).map((offer) => offer.id));
+  assert.equal((await openPurchasePath(api, path)).response.status, 302);
+  assert.deepEqual(fake.requests((request) => PROVIDER_SEARCH_OPS.includes(request.op)).map((request) => request.op), [], "reading back searched again");
 });

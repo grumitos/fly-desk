@@ -12,7 +12,7 @@ import {
   sweepMonthLabel,
   TODAY,
 } from "./support/scenario.ts";
-import { migration, results, searchForm, searchLink } from "./support/ui.ts";
+import { durationMinutes, migration, results, searchForm, searchLink } from "./support/ui.ts";
 
 /*
  * The migratory sweep: every day of every chosen month against both
@@ -29,13 +29,20 @@ const JANUARY = addMonths(NOVEMBER, 2);
    `frontend/src/lib/poll-schedule.ts`), well inside a poll interval (900 ms). */
 const FIRST_POLL_WITHIN_MS = 100;
 
+/* A connection in Bogotá that lands in Madrid the next day: 27 h 50 min on
+   the airports' own clocks in winter. Longer than a day, which Agil's `HHMM`
+   figure cannot hold, and ending on a Madrid clock that Click and Book Plus
+   stamps with Lima's offset. */
+const MADRID_BY_BOGOTA = ["AV84 LIM-BOG 01:10-04:40", "AV26 BOG-MAD 18:00-11:00+1"];
+const MADRID_BY_BOGOTA_MINUTES = 27 * 60 + 50;
+
 /* November has a fare every third day, from both providers. December: Agil
    has nothing and Click and Book Plus is down. January: nobody has anything. */
 function madridWinter(query: SearchQuery): OfferSpec[] {
   if (!query.departureDate.startsWith(NOVEMBER)) return [];
   const dayOfMonth = Number(query.departureDate.slice(8));
   return dayOfMonth % 3 === 0
-    ? [{ outbound: ["IB6650 LIM-MAD 17:25-11:50+1"], price: 700 + dayOfMonth, baggage: { carryOn: true, checked: 1 } }]
+    ? [{ outbound: MADRID_BY_BOGOTA, price: 700 + dayOfMonth, baggage: { carryOn: true, checked: 1 } }]
     : [];
 }
 
@@ -124,9 +131,16 @@ suite.test("a sweep across the year boundary marks each month priced, failed or 
   assert.equal(new URL(monthTab.url()).searchParams.get("job"), novemberJob.searchJobId);
   const api = await scope.api();
   const storedMonth = await readSearchJob(api, novemberJob.searchJobId);
-  await waitForResults(monthTab, storedMonth.allOffers?.length ?? -1);
+  const monthCards = await waitForResults(monthTab, storedMonth.allOffers?.length ?? -1);
   assert.equal(storedMonth.allOffers?.length, pricedDays.length * 2, "each priced day holds one fare per provider");
   assert.equal(fake.requests().length, providerCallsBefore, "opening a month asked the providers again");
+  /* Whatever either provider's figure or offset says, the journey is measured
+     on each airport's own clock. */
+  assert.deepEqual(
+    [...new Set(monthCards.map((card) => durationMinutes(card.legs[0]?.duration ?? "")))],
+    [MADRID_BY_BOGOTA_MINUTES],
+    `the month's fares do not read 27 h 50 min: ${monthCards.map((card) => card.legs[0]?.duration).join(", ")}`,
+  );
 });
 
 suite.test("each month of a sweep asks for its news as soon as its search has started", async (scope) => {

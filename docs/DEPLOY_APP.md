@@ -29,8 +29,7 @@ bun run build
 bun run test
 ```
 
-`bun run test` runs the unit tests and then the end-to-end suite; see
-[`TESTING.md`](./TESTING.md).
+`bun run test` runs the end-to-end suite; see [`TESTING.md`](./TESTING.md).
 
 ## Deployment Through GitHub Actions
 

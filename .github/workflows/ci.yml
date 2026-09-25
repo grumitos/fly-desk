@@ -55,9 +55,6 @@ jobs:
           bash scripts/pack-release.sh "$(git rev-parse HEAD)" "$RUNNER_TEMP/fly-desk.tar.gz"
           bun scripts/release-smoke.ts "$RUNNER_TEMP/fly-desk.tar.gz"
 
-      - name: Unit tests
-        run: bun run test:unit
-
   e2e:
     name: End-to-end gate
     runs-on: ubuntu-latest
