@@ -2296,12 +2296,6 @@ function recordCostamarWarmupStep(
   }
 }
 
-export function getLastCostamarWarmupDiagnostics(): CostamarWarmupDiagnostics | undefined {
-  return lastCostamarWarmupDiagnostics
-    ? JSON.parse(JSON.stringify(lastCostamarWarmupDiagnostics)) as CostamarWarmupDiagnostics
-    : undefined;
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

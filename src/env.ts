@@ -4,7 +4,7 @@
  * treats as an immediate timeout. The first name that holds a value wins, so a
  * current name can be listed ahead of its legacy alias.
  */
-export function envString(...names: string[]): string | undefined {
+function envString(...names: string[]): string | undefined {
   for (const name of names) {
     const value = process.env[name]?.trim();
     if (value) {

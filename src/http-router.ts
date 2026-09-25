@@ -46,17 +46,14 @@ import {
   buildCostamarPurchasePaths,
   createLocalCostamarMatrixDraft,
   createLocalCostamarSearchDraft,
-  getLastCostamarWarmupDiagnostics,
   resolveLocalCostamarExactProgressive,
   resolveLocalCostamarMatrixProgressive,
   resolveLocalCostamarRangeProgressive,
   suggestLocalCostamarLocations,
 } from "./local-costamar";
 import {
-  getCostamarTokenStatus,
   normalizeCostamarProviderContext,
   resolveProviderId,
-  verifyCostamarTokenLive,
 } from "./provider-context";
 import {
   resolveStandaloneUsdToPenRateInfo,
@@ -2940,8 +2937,8 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
   const runtime = getRuntime();
 
   if (request.method === "GET" && url.pathname === "/api/diagnostics") {
-    if (!isTrustedLocalRequest(request)) {
-      return json({ error: "This diagnostic endpoint is only available on localhost." }, { status: 403 });
+    if (!isTrustedApiRequest(request)) {
+      return apiAuthRequiredResponse();
     }
 
     return json({
@@ -2986,18 +2983,6 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
       },
       { headers: { "Cache-Control": "no-store" } },
     );
-  }
-
-  if (request.method === "GET" && url.pathname === "/api/costamar/token-status") {
-    if (!isTrustedLocalRequest(request)) {
-      return json({ error: "This Click and Book Plus token endpoint is only available on localhost." }, { status: 403 });
-    }
-
-    const status = getCostamarTokenStatus();
-    const verify = url.searchParams.get("verify") === "true";
-    const verification = verify ? await verifyCostamarTokenLive() : undefined;
-    const lastWarmup = getLastCostamarWarmupDiagnostics();
-    return json({ ...status, verification, lastWarmup });
   }
 
   if (request.method === "GET" && url.pathname === "/api/locations") {

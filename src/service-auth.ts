@@ -29,7 +29,7 @@ export function resolveSearchServiceProxyApiToken(): string | undefined {
     ?? resolveDerivedSearchServiceApiToken();
 }
 
-export function resolveAcceptedApiAccessTokens(): string[] {
+function resolveAcceptedApiAccessTokens(): string[] {
   return unique([
     readEnv("FLY_DESK_API_TOKEN"),
     readEnv("FLY_DESK_SEARCH_SERVICE_API_TOKEN"),
