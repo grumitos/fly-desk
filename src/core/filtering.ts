@@ -176,7 +176,3 @@ export function offerMatchesFilters(offer: FilterableOffer, filters: OfferFilter
 
   return true;
 }
-
-export function applySearchFilters<T extends FilterableOffer>(offers: readonly T[], filters: OfferFilters): T[] {
-  return offers.filter((offer) => offerMatchesFilters(offer, filters));
-}

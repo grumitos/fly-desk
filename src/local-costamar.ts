@@ -4277,7 +4277,6 @@ export function createLocalCostamarSearchDraft(
     : "Consultando Click and Book Plus. Los resultados se iran agregando.";
 
   return {
-    offers: [],
     allOffers: [],
     searchMeta: {
       requestedAt,

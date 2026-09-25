@@ -3105,7 +3105,6 @@ export function createLocalAgilSearchDraft(
     : "Consultando Agil. Los resultados se iran agregando.";
 
   return {
-    offers: [],
     allOffers: [],
     searchMeta: {
       requestedAt,

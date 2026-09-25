@@ -351,8 +351,7 @@ export interface ProviderMeta {
 }
 
 export interface SearchResponse {
-  offers: CanonicalOffer[];
-  allOffers?: CanonicalOffer[];
+  allOffers: CanonicalOffer[];
   scheduleGroups?: OfferScheduleGroup[];
   matrix?: MatrixCell[];
   searchMeta: SearchMeta;

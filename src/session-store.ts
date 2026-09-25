@@ -259,7 +259,6 @@ export interface SearchJobRecord {
   id: string;
   request: SearchRequest;
   providerContext?: ProviderContext;
-  offers: CanonicalOffer[];
   allOffers: CanonicalOffer[];
   searchMeta: SearchMeta;
   providerMeta: ProviderMeta;
@@ -628,40 +627,30 @@ function redactSearchJobForPersistence(job: SearchJobRecord): SearchJobRecord {
   return {
     ...job,
     providerContext: redactProviderContextForPersistence(job.providerContext),
-    offers: job.offers.map(redactOfferForPersistence),
     allOffers: job.allOffers.map(redactOfferForPersistence),
   };
 }
 
-/* `offers` is the filtered, ordered view of `allOffers`, so a stored job keeps
-   it as ids into `allOffers` instead of a second copy of every offer. The row
-   still carries an empty `offers`: a release that stores both lists maps over
-   it when it boots, and a rollback to one has to read rows written here. */
-type PersistedSearchJob = Omit<SearchJobRecord, "offers"> & {
+/* A job keeps one list, `allOffers`. The row still carries an empty `offers`:
+   a release that kept a filtered copy maps over it when it boots, and a
+   rollback to one has to read rows written here. What an earlier layout kept
+   beside `allOffers`, the filtered copy or its ids, is not read back. */
+type PersistedSearchJob = SearchJobRecord & {
   offers?: CanonicalOffer[];
   offerIds?: string[];
 };
 
 function encodeSearchJobForPersistence(job: SearchJobRecord): PersistedSearchJob {
-  const { offers, ...rest } = redactSearchJobForPersistence(job);
-  return { ...rest, offers: [], offerIds: offers.map((offer) => offer.id) };
+  return { ...redactSearchJobForPersistence(job), offers: [] };
 }
 
 function decodePersistedSearchJob(parsed: PersistedSearchJob | undefined): SearchJobRecord | undefined {
-  if (!parsed || !Array.isArray(parsed.offerIds)) {
-    /* A row that carries both lists is already a complete record. */
-    return parsed as SearchJobRecord | undefined;
+  if (!parsed) {
+    return undefined;
   }
 
-  const offersById = new Map((parsed.allOffers ?? []).map((offer) => [offer.id, offer] as const));
-  const { offerIds, ...rest } = parsed;
-  return {
-    ...rest,
-    offers: offerIds.flatMap((id) => {
-      const offer = offersById.get(id);
-      return offer ? [offer] : [];
-    }),
-  };
+  const { offers: _offers, offerIds: _offerIds, ...job } = parsed;
+  return job;
 }
 
 function redactMatrixJobForPersistence(job: MatrixJobRecord): MatrixJobRecord {
@@ -994,7 +983,6 @@ export class SearchSessionStore {
       const rewrittenOffer = this.rewriteOfferPaths(sessionId, updatedOffer);
       return {
         ...current,
-        offers: current.offers.map((offer) => offer.id === updatedOffer.id ? rewrittenOffer : offer),
         allOffers: current.allOffers.map((offer) => offer.id === updatedOffer.id ? rewrittenOffer : offer),
       };
     });
@@ -1006,13 +994,10 @@ export class SearchSessionStore {
     const id = crypto.randomUUID();
     const timestamp = nowIso();
     const rewrittenAllOffers = input.allOffers.map((offer) => this.rewriteOfferPaths(id, offer));
-    const rewrittenOffersById = new Map(rewrittenAllOffers.map((offer) => [offer.id, offer] as const));
-    const rewrittenOffers = input.offers.map((offer) => rewrittenOffersById.get(offer.id) ?? this.rewriteOfferPaths(id, offer));
 
     const record: SearchJobRecord = {
       ...input,
       id,
-      offers: rewrittenOffers,
       allOffers: rewrittenAllOffers,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -1026,10 +1011,7 @@ export class SearchSessionStore {
 
     this.searchJobs.set(id, record);
     this.syncSearchSessionMetadata(record);
-    this.pruneSessionOwners(id, new Set([
-      ...rewrittenAllOffers.map((offer) => offer.id),
-      ...rewrittenOffers.map((offer) => offer.id),
-    ]));
+    this.pruneSessionOwners(id, new Set(rewrittenAllOffers.map((offer) => offer.id)));
     this.schedulePersist();
     return record;
   }
@@ -1204,21 +1186,14 @@ export class SearchSessionStore {
       return current;
     }
 
-    const offersUnchanged = updated.offers === current.offers && updated.allOffers === current.allOffers;
+    const offersUnchanged = updated.allOffers === current.allOffers;
     const timestamp = nowIso();
     const rewrittenAllOffers = offersUnchanged
       ? current.allOffers
       : updated.allOffers.map((offer) => this.rewriteOfferPaths(jobId, offer));
-    const rewrittenOffersById = offersUnchanged
-      ? undefined
-      : new Map(rewrittenAllOffers.map((offer) => [offer.id, offer] as const));
-    const rewrittenOffers = offersUnchanged
-      ? current.offers
-      : updated.offers.map((offer) => rewrittenOffersById?.get(offer.id) ?? this.rewriteOfferPaths(jobId, offer));
     const base: SearchJobRecord = {
       ...updated,
       id: current.id,
-      offers: rewrittenOffers,
       allOffers: rewrittenAllOffers,
       createdAt: current.createdAt,
       updatedAt: timestamp,
@@ -1238,10 +1213,7 @@ export class SearchSessionStore {
     this.syncSearchSessionMetadata(next);
     this.wakeJobChangeWaiters(this.searchJobWaiters, jobId);
     if (!offersUnchanged) {
-      this.pruneSessionOwners(jobId, new Set([
-        ...rewrittenAllOffers.map((offer) => offer.id),
-        ...rewrittenOffers.map((offer) => offer.id),
-      ]));
+      this.pruneSessionOwners(jobId, new Set(rewrittenAllOffers.map((offer) => offer.id)));
     }
     if (options.persist === false) {
       this.deferredSearchJobs.add(jobId);
@@ -1265,7 +1237,7 @@ export class SearchSessionStore {
 
       const warnings = uniqueStrings([...current.warnings, message]);
       const metaWarnings = uniqueStrings([...(current.searchMeta.warnings ?? []), message]);
-      const hasPartialResults = current.offers.length > 0 || current.allOffers.length > 0;
+      const hasPartialResults = current.allOffers.length > 0;
       const cachePartial = Boolean(options.cachePartial && hasPartialResults);
       return {
         ...current,
@@ -2956,7 +2928,6 @@ export class SearchSessionStore {
     return {
       request: job.request,
       providerContext: job.providerContext,
-      offers: job.offers,
       allOffers: job.allOffers,
       searchMeta: job.searchMeta,
       providerMeta: job.providerMeta,

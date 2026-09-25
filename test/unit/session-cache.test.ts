@@ -40,7 +40,6 @@ function bulkyOffers(jobIndex: number): CanonicalOffer[] {
 function createCompletedJob(store: SearchSessionStore, jobIndex: number) {
   return store.createSearchJob({
     request,
-    offers: [],
     allOffers: bulkyOffers(jobIndex),
     searchMeta: {
       requestedAt: new Date().toISOString(),
@@ -177,7 +176,6 @@ describe("shutdown", () => {
     }];
     const job = store.createSearchJob({
       request,
-      offers: [],
       allOffers: offers,
       searchMeta: {
         requestedAt: new Date().toISOString(),

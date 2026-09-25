@@ -1,6 +1,4 @@
-import { applySearchFilters } from "./filtering";
 import { groupExactProviderOffers } from "./offer-grouping";
-import { buildOfferScheduleGroups } from "./offer-schedule-groups";
 import { enrichComparisonMetrics, sortOffers } from "./ranking";
 import {
   CanonicalOffer,
@@ -29,6 +27,8 @@ function buildSearchMeta(
   };
 }
 
+/* Every offer the providers returned, grouped, measured and in the requested
+   order: the browser draws it through the rail's filters. */
 export function materializeSearchResponse(
   request: SearchRequest,
   sortMode: SortMode,
@@ -36,17 +36,10 @@ export function materializeSearchResponse(
   exactResult: { offers: CanonicalOffer[]; warnings: string[]; partial: boolean },
   startedAt = new Date().toISOString(),
 ): SearchResponse {
-  let offers = groupExactProviderOffers(exactResult.offers);
-
-  offers = enrichComparisonMetrics(offers);
-  offers = sortOffers(offers, sortMode);
-  const allOffers = offers;
-  offers = applySearchFilters(allOffers, request.filters);
+  const allOffers = sortOffers(enrichComparisonMetrics(groupExactProviderOffers(exactResult.offers)), sortMode);
 
   return {
-    offers,
     allOffers,
-    scheduleGroups: buildOfferScheduleGroups(allOffers),
     searchMeta: buildSearchMeta(
       startedAt,
       [exactProviderId],

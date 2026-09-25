@@ -492,7 +492,6 @@ function createSearchDraftResponse(
       : "Consultando Agil.";
 
   return {
-    offers: [],
     allOffers: [],
     searchMeta: currentSearchMeta({
       requestedAt,
@@ -1630,23 +1629,41 @@ function publicMatrixCell(cell: MatrixCell): MatrixCell | Omit<MatrixCell, "offe
   return cell.offer ? { ...cell, offer: publicOffer(cell.offer) } : cell;
 }
 
-/* A job's offers only change when its revision does, so every poll of one
-   revision shares one serialization-ready view. */
-const publicSearchPayloadCache = new WeakMap<readonly CanonicalOffer[], {
-  allOffers: PublicOffer[];
-  scheduleGroups: ReturnType<typeof buildOfferScheduleGroups>;
-}>();
+/*
+ * A job's offers change only with its revision, and they are nearly all of a
+ * poll's answer, so every poll of one revision sends one serialization of them:
+ * the members `"allOffers":[…],"scheduleGroups":[…]`, encoded once. The rest of
+ * the answer is small and is serialized per poll, because provider diagnostics
+ * change within a revision. The cache keeps the revisions polled last, up to a
+ * byte budget, rather than one copy per resident job.
+ */
+const PUBLIC_OFFERS_JSON_CACHE_MAX_BYTES = 32 * 1024 * 1024;
+const publicOffersJsonCache = new Map<readonly CanonicalOffer[], Uint8Array<ArrayBuffer>>();
+let publicOffersJsonCacheBytes = 0;
+const utf8 = new TextEncoder();
 
-function publicSearchPayload(allOffers: readonly CanonicalOffer[]) {
-  let payload = publicSearchPayloadCache.get(allOffers);
-  if (!payload) {
-    payload = {
-      allOffers: allOffers.map(publicOffer),
-      scheduleGroups: buildOfferScheduleGroups(allOffers),
-    };
-    publicSearchPayloadCache.set(allOffers, payload);
+function publicOffersJson(allOffers: readonly CanonicalOffer[]): Uint8Array<ArrayBuffer> {
+  const cached = publicOffersJsonCache.get(allOffers);
+  if (cached) {
+    publicOffersJsonCache.delete(allOffers);
+    publicOffersJsonCache.set(allOffers, cached);
+    return cached;
   }
-  return payload;
+
+  const members = utf8.encode(JSON.stringify({
+    allOffers: allOffers.map(publicOffer),
+    scheduleGroups: buildOfferScheduleGroups(allOffers),
+  }).slice(1, -1));
+  publicOffersJsonCache.set(allOffers, members);
+  publicOffersJsonCacheBytes += members.byteLength;
+  for (const [key, value] of publicOffersJsonCache) {
+    if (publicOffersJsonCacheBytes <= PUBLIC_OFFERS_JSON_CACHE_MAX_BYTES || key === allOffers) {
+      break;
+    }
+    publicOffersJsonCache.delete(key);
+    publicOffersJsonCacheBytes -= value.byteLength;
+  }
+  return members;
 }
 
 function matrixJobResponse(
@@ -1694,7 +1711,6 @@ function createCachedSearchDraftResponse(
   ]);
 
   return {
-    offers: cachedJob.offers.map(stripQuotationPreparation),
     allOffers: cachedJob.allOffers.map(stripQuotationPreparation),
     searchMeta: currentSearchMeta({
       requestedAt: now,
@@ -1770,13 +1786,9 @@ function recoverCachedCostamarPurchasePaths(
       ],
     };
   };
-  const allOffers = cachedJob.allOffers.map(repairOffer);
-  const offersById = new Map(allOffers.map((offer) => [offer.id, offer] as const));
-
   return {
     ...cachedJob,
-    allOffers,
-    offers: cachedJob.offers.map((offer) => offersById.get(offer.id) ?? repairOffer(offer)),
+    allOffers: cachedJob.allOffers.map(repairOffer),
   };
 }
 
@@ -1909,12 +1921,11 @@ function overlayCachedMatrixCells(
   return { ...response, cells, confidenceSummary: buildMatrixConfidenceSummary(cells) };
 }
 
-function searchJobResponse(
-  job: ReturnType<typeof getRuntime>["sessions"] extends { getSearchJob(jobId: string): infer T } ? NonNullable<T> : never,
-  sinceRevision?: number,
-) {
+/* The same bytes as `json()` of the whole answer, with the offers spliced in
+   from their cached serialization. */
+function searchJobResponse(job: SearchJobRecord, sinceRevision?: number): Response {
   const unchanged = typeof sinceRevision === "number" && sinceRevision >= job.revision;
-  const base = {
+  const base = JSON.stringify({
     searchJobId: job.id,
     searchComplete: job.status === "completed" || job.status === "failed" || job.status === "cancelled",
     searchStatus: job.status,
@@ -1927,16 +1938,14 @@ function searchJobResponse(
     providerDiagnostics: job.providerDiagnostics,
     error: job.error,
     unchanged,
-  };
-
-  if (unchanged) {
-    return base;
-  }
-
-  return {
-    ...base,
-    ...publicSearchPayload(job.allOffers),
-  };
+  });
+  const body = unchanged
+    ? base
+    : new Blob([base.slice(0, -1), ",", publicOffersJson(job.allOffers), "}"]);
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "application/json; charset=utf-8" },
+  });
 }
 
 function isSearchJobRunning(runtime: ReturnType<typeof getRuntime>, jobId: string): boolean {
@@ -2009,7 +2018,7 @@ function failSearchJobForAdmission(
         ...current.searchMeta,
         completedAt: new Date().toISOString(),
         warnings: uniqueStrings([...(current.searchMeta.warnings ?? []), message]),
-        partial: current.offers.length > 0 || current.allOffers.length > 0 || current.searchMeta.partial,
+        partial: current.allOffers.length > 0 || current.searchMeta.partial,
         searchState: "search_failed",
       }),
     };
@@ -2073,7 +2082,7 @@ function cancelSearchJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: 
     return json({ error: "Search job not found." }, { status: 404 });
   }
 
-  return json(searchJobResponse(job));
+  return searchJobResponse(job);
 }
 
 function cancelMatrixJobResponse(runtime: ReturnType<typeof getRuntime>, jobId: string, url: URL): Response {
@@ -2232,8 +2241,7 @@ async function handleSearchRequest(
   const job = runtime.sessions.createSearchJob({
     request: normalizedRequest,
     providerContext,
-    offers: draft.offers,
-    allOffers: draft.allOffers ?? draft.offers,
+    allOffers: draft.allOffers,
     searchMeta: draft.searchMeta,
     providerMeta: draft.providerMeta,
     warnings: draft.warnings,
@@ -2246,7 +2254,7 @@ async function handleSearchRequest(
     mode: normalizedRequest.searchMode,
     providers: providerIds.join(","),
     cached: Boolean(cacheSeedJob),
-    offers: job.offers.length,
+    offers: job.allOffers.length,
   });
   const quotationRateResolver = createSharedQuotationRateResolver();
   let lastPersistedSearchProgressCount = 0;
@@ -2258,7 +2266,7 @@ async function handleSearchRequest(
       providerIds,
       providerStates,
     );
-    const progressCount = (materialized.allOffers ?? materialized.offers).length;
+    const progressCount = materialized.allOffers.length;
     const persist = status === "completed"
       || shouldPersistProgressSnapshot(lastPersistedSearchProgressCount, progressCount);
     if (status === "running" && persist) {
@@ -2271,8 +2279,7 @@ async function handleSearchRequest(
       }
       return {
         ...current,
-        offers: materialized.offers,
-        allOffers: materialized.allOffers ?? materialized.offers,
+        allOffers: materialized.allOffers,
         searchMeta: currentSearchMeta({
           ...materialized.searchMeta,
           requestedAt: current.searchMeta.requestedAt,
@@ -2481,7 +2488,7 @@ async function handleSearchRequest(
             status: "completed",
             providers: providerIds.join(","),
             failedProviders: failedProviderIds.size + settled.filter((result) => result.status === "rejected").length,
-            offers: materialized.offers.length,
+            offers: materialized.allOffers.length,
             partial: materialized.searchMeta.partial,
           });
         },
@@ -2498,7 +2505,7 @@ async function handleSearchRequest(
     }, cacheSeedJob ? cachedBackgroundSearchStartDelayMs() : backgroundSearchStartDelayMs());
   }
 
-  return json(searchJobResponse(job));
+  return searchJobResponse(job);
 }
 
 async function handleMatrixRequest(
@@ -3083,7 +3090,7 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
       return json({ error: "Search job not found." }, { status: 404 });
     }
 
-    return json(searchJobResponse(job, sinceRevision));
+    return searchJobResponse(job, sinceRevision);
   }
 
   if (request.method === "POST" && url.pathname === "/api/matrix") {
