@@ -23,7 +23,7 @@ import { defineSuite } from "./support/harness.ts";
 import { fakeCbplusToken, FAKE_CBPLUS_TERMINAL_ID, type OfferSpec } from "./support/fixtures.ts";
 import type { RecordedRequest } from "./support/fake-upstream.ts";
 import { day, eventually, matchesRoute, maxInFlight, sleep, type RouteFilter } from "./support/scenario.ts";
-import { searchForm, searchLink } from "./support/ui.ts";
+import { notice, searchForm, searchLink } from "./support/ui.ts";
 
 /*
  * The runner under load and across restarts: the admission budget and its
@@ -40,6 +40,9 @@ writeFileSync(TOKEN_FILE, TOKEN_A);
 after(() => rmSync(tokenDir, { recursive: true, force: true }));
 
 const MAX_QUEUED = 3;
+/* The runner's own words for a search it could not admit (`src/http-router.ts`). */
+const QUEUE_FULL = "La cola de búsquedas está llena. Intenta nuevamente en unos minutos.";
+const QUEUE_TIMEOUT = "La búsqueda esperó demasiado por capacidad disponible.";
 const suite = defineSuite({
   file: import.meta.filename,
   stack: {
@@ -134,13 +137,19 @@ suite.test("a full queue refuses the next search, and a cancelled waiter gives i
   for (let index = 0; index < MAX_QUEUED; index += 1) {
     waiting.push(await startSearch(api, searchPayloads.exact("LIM", "CUZ", day(140 + index))));
   }
-  const overflow = await startSearch(api, searchPayloads.exact("LIM", "CUZ", day(150)));
+  /* The one too many comes from the desk, which says why in the notice. */
+  const { page } = await scope.signedInPage("/");
+  const overflow = await startedJob<SearchJob>(page, async () => {
+    await page.goto(`${scope.stack.baseUrl}${searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "CUZ", departure: day(150) })}`);
+  });
   const refused = await eventually(async () => {
     const job = await readSearchJob(api, overflow.searchJobId);
     assert.equal(job.searchStatus, "failed");
     return job;
   });
   assert.match(refused.error ?? "", /La cola de búsquedas está llena\./);
+  await notice.error(page).waitFor();
+  assert.equal(await notice.error(page).innerText(), QUEUE_FULL, "the desk did not say why the search was refused");
 
   /* The second waiter leaves; the next search takes its place instead of
      being refused. */
@@ -171,13 +180,19 @@ suite.test("a search that waits past the queue timeout fails with its reason", a
   try {
     const api = await scope.api();
     const { jobs: blockers, gates } = await fillTheBudget(api, fake, 160);
-    const waiter = await startSearch(api, searchPayloads.exact("LIM", "CUZ", day(170)));
+    /* The waiter is the desk's, which says why in the notice. */
+    const { page } = await scope.signedInPage("/");
+    const waiter = await startedJob<SearchJob>(page, async () => {
+      await page.goto(`${stack.baseUrl}${searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "CUZ", departure: day(170) })}`);
+    });
     const timedOut = await eventually(async () => {
       const job = await readSearchJob(api, waiter.searchJobId);
       assert.equal(job.searchStatus, "failed");
       return job;
     }, { timeoutMs: 10_000 });
     assert.match(timedOut.error ?? "", /La búsqueda esperó demasiado/);
+    await notice.error(page).waitFor();
+    assert.equal(await notice.error(page).innerText(), QUEUE_TIMEOUT, "the desk did not say why the search failed");
     assert.equal(callsFor(fake.requests(), { origin: "LIM", destination: "CUZ", departureDate: day(170) }).length, 0);
     gates.forEach((gate) => gate.release());
     for (const job of blockers) {

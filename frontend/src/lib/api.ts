@@ -207,6 +207,11 @@ const EXACT_TRANSLATIONS: Record<string, string> = {
   "Selecting a cell runs a full Click and Book Plus exact search for offers.": "Selecciona una fecha para ver las ofertas disponibles.",
   "Search cancelled by user.": "Búsqueda detenida por el usuario.",
   "Search stopped because Fly Desk was restarted.": "Búsqueda detenida por reinicio de Fly Desk.",
+  /* The runner's admission refusals are written for the desk already, and are
+     the whole reason a search that never started failed. */
+  "La cola de búsquedas está llena. Intenta nuevamente en unos minutos.": "La cola de búsquedas está llena. Intenta nuevamente en unos minutos.",
+  "La búsqueda esperó demasiado por capacidad disponible.": "La búsqueda esperó demasiado por capacidad disponible.",
+  "La búsqueda fue cancelada antes de iniciar.": "La búsqueda fue cancelada antes de iniciar.",
 }
 
 /* `validateSearchDateInPolicy` labels every date field of the request. */
