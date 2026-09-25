@@ -932,11 +932,12 @@ export class SearchSessionStore {
     const db = this.db;
     if (db) {
       this.db = undefined;
-      try {
-        db.run("PRAGMA wal_checkpoint(TRUNCATE);");
-      } catch {
-        // Closing the database is still the important cleanup path.
-      }
+      /* No checkpoint of its own. `wal_checkpoint(TRUNCATE)` waits out the busy
+         timeout for any reader still on the WAL, the redirect unit reads this
+         file, and nothing interrupts a synchronous call during a stop. SQLite
+         checkpoints the WAL itself, when the last connection closes or once it
+         outgrows the auto-checkpoint size, and the next open reads it either
+         way. */
       db.close(true);
     }
   }

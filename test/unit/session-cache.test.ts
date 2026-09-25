@@ -157,3 +157,58 @@ describe("file size", () => {
     expect(fileStats(dbPath).autoVacuum).toBe(2);
   });
 });
+
+describe("shutdown", () => {
+  test("closing does not wait for a reader on the WAL, and a reopened store has the job and its link", () => {
+    const dbPath = tempDbPath();
+    const store = openStore(dbPath);
+    const offers = bulkyOffers(1);
+    offers[0]!.purchasePaths = [{
+      id: "",
+      type: "search-redirect",
+      provider: "agil-local",
+      label: "Agil",
+      url: "https://agil.example/checkout",
+      precision: "exact-search",
+      score: 1,
+      requiresNewTab: true,
+      commercialMode: "provider",
+      state: "search_redirect",
+    }];
+    const job = store.createSearchJob({
+      request,
+      offers: [],
+      allOffers: offers,
+      searchMeta: {
+        requestedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        providersUsed: ["agil-local"],
+        warnings: [],
+        partial: false,
+        searchState: "search_live",
+      },
+      providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+      warnings: [],
+      sortMode: "cheapest",
+      status: "completed",
+    });
+    const linkId = job.allOffers[0]!.purchasePaths[0]!.id;
+
+    /* A lookup in flight in the redirect unit: a read transaction on the WAL. */
+    const reader = new Database(dbPath, { readonly: true });
+    reader.run("BEGIN;");
+    reader.query("SELECT count(*) FROM search_jobs").get();
+    const closeStartedAt = performance.now();
+    store.close();
+    const closeMs = performance.now() - closeStartedAt;
+    reader.run("COMMIT;");
+    reader.close();
+    /* A TRUNCATE checkpoint here waited out the 5 s busy timeout. */
+    expect(closeMs).toBeLessThan(1_000);
+
+    const reopened = openStore(dbPath);
+    expect(reopened.getSearchJob(job.id)?.allOffers.map((offer) => offer.id)).toEqual(offers.map((offer) => offer.id));
+    expect(reopened.resolvePurchasePath(linkId)?.path.url).toBe("https://agil.example/checkout");
+    reopened.close();
+  });
+});
