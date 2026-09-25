@@ -1,4 +1,6 @@
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+import * as path from "node:path";
 
 export const WEB_SESSION_COOKIE_NAME = "flydesk_session";
 export const REDIRECT_SESSION_COOKIE_NAME = "flydesk_redirect_session";
@@ -501,6 +503,23 @@ export function resolveWebTheme(request: Request): WebTheme {
 }
 
 /*
+ * The sign-in page uses the application's self-hosted faces. The frontend build
+ * writes their hashed URLs into frontend/dist/index.html, so they are read from
+ * there; without a build the page falls back to system fonts.
+ */
+function loginFontHead(): string {
+  let html: string;
+  try {
+    html = readFileSync(path.resolve(process.cwd(), "frontend", "dist", "index.html"), "utf8");
+  } catch {
+    return "";
+  }
+  const preload = html.match(/<link rel="preload"[^>]*data-fd-font="sans"[^>]*>/)?.[0] ?? "";
+  const faces = html.match(/<style data-fd-fonts>[^<]*<\/style>/)?.[0] ?? "";
+  return [preload, faces].filter(Boolean).join("\n    ");
+}
+
+/*
  * The gate, drawn from the same catalogues as the application behind it.
  *
  * It cannot import `frontend/src`: this page is served by the router before any
@@ -549,9 +568,7 @@ export function renderLoginPage(
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
     <title>Fly Desk</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    ${loginFontHead()}
     <script>
       (() => {
         const root = document.documentElement;

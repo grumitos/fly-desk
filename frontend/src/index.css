@@ -61,8 +61,10 @@
   --radius-xl: 12px;
   --radius-2xl: 14px;
 
-  --font-sans: "Inter", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  /* The faces and their metric-matched fallbacks are declared in index.html by
+     scripts/build-frontend.ts. */
+  --font-sans: "Inter", "Inter Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "IBM Plex Mono Fallback", "IBM Plex Mono Fallback Alt", ui-monospace, monospace;
 }
 
 @layer base {
