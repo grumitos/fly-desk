@@ -464,10 +464,8 @@
 
   .fd-card__leg-label {
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-micro);
-    font-weight: var(--fd-weight-title);
-    letter-spacing: var(--fd-tracking-micro);
-    text-transform: uppercase;
+    font-size: var(--fd-text-label);
+    font-weight: var(--fd-weight-label);
     white-space: nowrap;
   }
 
@@ -475,7 +473,6 @@
     font-family: var(--font-mono);
     font-size: var(--fd-text-micro);
     font-weight: var(--fd-weight-title);
-    letter-spacing: 0;
   }
 
   /* On a desk the schedule is a plain row: the day jump is the last thing in
@@ -816,12 +813,10 @@
     min-width: 0;
     overflow: hidden;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-micro);
-    font-weight: var(--fd-weight-title);
-    letter-spacing: var(--fd-tracking-micro);
-    line-height: 1;
+    font-size: var(--fd-text-label);
+    font-weight: var(--fd-weight-label);
+    line-height: 1.3;
     text-overflow: ellipsis;
-    text-transform: uppercase;
     white-space: nowrap;
   }
 

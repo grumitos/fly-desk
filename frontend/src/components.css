@@ -51,12 +51,10 @@
     left: 12px;
     z-index: 1;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-micro);
-    font-weight: var(--fd-weight-title);
-    letter-spacing: var(--fd-tracking-micro);
+    font-size: var(--fd-text-label);
+    font-weight: var(--fd-weight-label);
     line-height: 1;
     pointer-events: none;
-    text-transform: uppercase;
   }
 
   .fd-field-control[data-active="true"] + .fd-field-label,
@@ -121,7 +119,6 @@
     font-family: var(--font-mono);
     font-size: var(--fd-text-meta);
     font-weight: var(--fd-weight-label);
-    letter-spacing: 0;
     transition:
       background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
       border-color var(--fd-dur-tacto) var(--fd-ease-tacto);
@@ -348,10 +345,8 @@
     border-radius: var(--fd-radius-6);
     background: var(--color-secondary);
     color: var(--color-secondary-foreground);
-    font-size: var(--fd-text-micro);
-    font-weight: var(--fd-weight-title);
-    letter-spacing: var(--fd-tracking-micro);
-    text-transform: uppercase;
+    font-size: var(--fd-text-label);
+    font-weight: var(--fd-weight-label);
   }
 
   /* The count of active filters. Mono 11/700 in primary, in both the desk
@@ -374,8 +369,6 @@
     background: var(--color-primary);
     color: var(--color-primary-foreground);
     font-size: var(--fd-text-micro);
-    letter-spacing: 0;
-    text-transform: none;
   }
 
   /* ===== Filters (8a · 1b · 1e) ==========================================
@@ -421,7 +414,6 @@
     overflow: hidden;
     font-size: var(--fd-text-body);
     font-weight: var(--fd-weight-title);
-    letter-spacing: -0.01em;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -457,12 +449,6 @@
     transition: opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  /* A group nobody has touched sits at 72% and says so. Greying it out is
-     what tells the agent, at a glance, which constraints are actually on. */
-  .fd-filter-group[data-used="false"] {
-    opacity: 0.72;
-  }
-
   .fd-filter-group-head {
     display: flex;
     align-items: baseline;
@@ -470,19 +456,10 @@
     gap: 8px;
   }
 
-  /* «sin usar» shares a baseline with the group rótulo beside it, so it shares
-     its three properties: 10/700, uppercase, tracked. `Controles` names this
-     one outright — «va junto a un rótulo de grupo a 10/700 en versales con
-     seguimiento, y se escribe a 10/600 en minúsculas y sin seguimiento. Misma
-     línea base, tres propiedades de diferencia». The surface plates draw the
-     broken version, which is the version that sheet is naming. */
+  /* Which groups are on is said by their segments and the count beside
+     «Filtros», so the markup's «sin usar» hint stays hidden. */
   .fd-filter-group-unused {
-    color: var(--color-muted-foreground);
-    font-size: var(--fd-text-micro);
-    font-weight: var(--fd-weight-title);
-    letter-spacing: var(--fd-tracking-micro);
-    line-height: 1;
-    text-transform: uppercase;
+    display: none;
   }
 
   /* The only separator in the panel. */
@@ -721,7 +698,6 @@
     font-family: var(--font-mono);
     font-size: var(--fd-text-base);
     font-weight: var(--fd-weight-title);
-    letter-spacing: 0.01em;
   }
 
   .fd-suggest-city {
@@ -1154,10 +1130,8 @@
     align-items: center;
     justify-content: center;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-micro);
-    font-weight: var(--fd-weight-title);
-    letter-spacing: var(--fd-tracking-micro);
-    text-transform: uppercase;
+    font-size: var(--fd-text-label);
+    font-weight: var(--fd-weight-label);
   }
 
   .fd-cal-grid {
@@ -1552,7 +1526,6 @@
     overflow: hidden;
     font-size: var(--fd-text-body);
     font-weight: var(--fd-weight-title);
-    letter-spacing: -0.01em;
     line-height: 1.2;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1603,7 +1576,6 @@
     overflow: hidden;
     font-size: var(--fd-text-sheet);
     font-weight: var(--fd-weight-title);
-    letter-spacing: -0.01em;
     line-height: 1.2;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2809,10 +2781,8 @@
     border-radius: var(--fd-radius-6);
     background: var(--color-primary);
     color: var(--color-primary-foreground);
-    font-size: var(--fd-text-micro);
-    font-weight: var(--fd-weight-title);
-    letter-spacing: var(--fd-tracking-micro);
-    text-transform: uppercase;
+    font-size: var(--fd-text-label);
+    font-weight: var(--fd-weight-label);
     white-space: nowrap;
   }
 

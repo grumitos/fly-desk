@@ -33,7 +33,8 @@
     --fd-text-base: 13px; /* buttons · chips · rows · cells */
     --fd-text-meta: 12px; /* metadata · subtitles · counters */
     --fd-text-mono-meta: 11px; /* mono metadata · schedules · specs */
-    --fd-text-micro: 10px; /* uppercase labels, tracking .04em */
+    --fd-text-label: 11px; /* labels: fields, groups, columns, pills, badges */
+    --fd-text-micro: 10px; /* secondary figures and footnotes */
 
     --fd-weight-value: 400;
     --fd-weight-label: 600;
@@ -55,7 +56,6 @@
      */
     --fd-weight-figure: 700;
 
-    --fd-tracking-micro: 0.04em;
 
     /* ---- 5b · control heights ------------------------------------------- */
     /* Desktop. The 30/32 pair was merged into one 32px control. */
@@ -250,14 +250,13 @@
     line-height: 1.2;
   }
 
-  /* The only uppercase style in the system. */
+  /* The label: sentence case, normal tracking, muted. Field labels, column
+     heads, pills and badges share its body and weight. */
   .fd-type-micro {
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-micro);
-    font-weight: var(--fd-weight-title);
-    letter-spacing: var(--fd-tracking-micro);
-    line-height: 1;
-    text-transform: uppercase;
+    font-size: var(--fd-text-label);
+    font-weight: var(--fd-weight-label);
+    line-height: 1.2;
   }
 
   /* Figures: always mono, tabular, and at the heaviest weight the family
@@ -341,10 +340,8 @@
     align-items: center;
     gap: 6px;
     color: var(--color-muted-foreground);
-    font-size: var(--fd-text-micro);
-    font-weight: var(--fd-weight-title);
-    letter-spacing: var(--fd-tracking-micro);
-    text-transform: uppercase;
+    font-size: var(--fd-text-label);
+    font-weight: var(--fd-weight-label);
   }
 
   /* ===== 5b · segmented control =========================================

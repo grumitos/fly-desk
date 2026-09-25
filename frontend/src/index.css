@@ -19,7 +19,7 @@
   --color-secondary-foreground: #373734;
 
   --color-muted: #efeeeb;
-  --color-muted-foreground: #7b7974;
+  --color-muted-foreground: #6e6c67;
 
   --color-accent: #e9e8e3;
   --color-accent-foreground: #1f1f1e;
@@ -266,7 +266,6 @@
     overflow: hidden;
     font-size: var(--fd-text-action);
     font-weight: var(--fd-weight-title);
-    letter-spacing: -0.01em;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -687,7 +686,6 @@
     flex-shrink: 0;
     font-size: var(--fd-text-body);
     font-weight: var(--fd-weight-title);
-    letter-spacing: -0.01em;
   }
 
   /* The count beside the title is a figure at the rung under it, not at the
@@ -2285,10 +2283,8 @@
   border-radius: var(--fd-radius-6);
   background: var(--color-secondary);
   color: var(--color-secondary-foreground);
-  font-size: var(--fd-text-micro);
-  font-weight: var(--fd-weight-title);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: var(--fd-text-label);
+  font-weight: var(--fd-weight-label);
   white-space: nowrap;
 }
 
@@ -2476,7 +2472,6 @@
   margin: 0;
   font-size: var(--fd-text-sheet);
   font-weight: var(--fd-weight-title);
-  letter-spacing: -0.01em;
 }
 
 .fd-sheet-close {

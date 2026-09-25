@@ -593,7 +593,7 @@ export function renderLoginPage(
         --color-primary: #d97757;
         --color-primary-foreground: #ffffff;
         --color-secondary: #efeeeb;
-        --color-muted-foreground: #7b7974;
+        --color-muted-foreground: #6e6c67;
         --color-accent: #e9e8e3;
         --color-border: #1f1f1e26;
         --color-input: #1f1f1e26;
@@ -622,10 +622,9 @@ export function renderLoginPage(
         --fd-text-sheet: 17px;
         --fd-text-body: 14px;
         --fd-text-base: 13px;
-        --fd-text-micro: 10px;
+        --fd-text-label: 11px;
         --fd-weight-label: 600;
         --fd-weight-title: 700;
-        --fd-tracking-micro: 0.04em;
 
         /* §0 · the one duration and the one easing anything here may use. */
         --fd-dur-tacto: 90ms;
@@ -775,7 +774,6 @@ export function renderLoginPage(
         margin: 0;
         font-size: var(--fd-text-sheet);
         font-weight: var(--fd-weight-title);
-        letter-spacing: -0.01em;
         line-height: 1.2;
       }
       form { display: grid; gap: 10px; }
@@ -812,12 +810,10 @@ export function renderLoginPage(
         top: 9px;
         left: 12px;
         color: var(--color-muted-foreground);
-        font-size: var(--fd-text-micro);
-        font-weight: var(--fd-weight-title);
-        letter-spacing: var(--fd-tracking-micro);
+        font-size: var(--fd-text-label);
+        font-weight: var(--fd-weight-label);
         line-height: 1;
         pointer-events: none;
-        text-transform: uppercase;
         transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
       }
       .fd-field-control:focus-within .fd-field-label { color: var(--color-primary); }
