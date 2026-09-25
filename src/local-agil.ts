@@ -68,7 +68,6 @@ import {
   Money,
   ProviderMeta,
   PurchasePath,
-  SearchResponse,
   SearchRequest,
   Segment,
   LocationSuggestionType,
@@ -3097,30 +3096,6 @@ async function searchLocalAgilExact(request: SearchRequest): Promise<ProviderSea
     offers,
     warnings,
     partial: outcome.partial,
-  };
-}
-
-export function createLocalAgilSearchDraft(
-  request: SearchRequest,
-  providerMeta: ProviderMeta,
-): SearchResponse {
-  const requestedAt = new Date().toISOString();
-  const warning = request.searchMode === "stay-range"
-    ? "Consultando Agil en paralelo. Los resultados se iran agregando."
-    : "Consultando Agil. Los resultados se iran agregando.";
-
-  return {
-    allOffers: [],
-    searchMeta: {
-      requestedAt,
-      completedAt: requestedAt,
-      providersUsed: ["agil-local"],
-      warnings: [warning],
-      partial: true,
-      searchState: "search_partial",
-    },
-    providerMeta,
-    warnings: [warning],
   };
 }
 

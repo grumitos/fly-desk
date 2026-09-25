@@ -52,7 +52,6 @@ import {
   ProviderMeta,
   RedirectVerification,
   SearchRequest,
-  SearchResponse,
   Segment,
 } from "./core/types";
 import {
@@ -4269,30 +4268,6 @@ async function searchLocalCostamarExact(
     offers: outcome.offers,
     warnings: outcome.warnings,
     partial: false,
-  };
-}
-
-export function createLocalCostamarSearchDraft(
-  request: SearchRequest,
-  providerMeta: ProviderMeta,
-): SearchResponse {
-  const requestedAt = new Date().toISOString();
-  const warning = request.searchMode === "stay-range"
-    ? "Consultando Click and Book Plus en paralelo. Los resultados se iran agregando."
-    : "Consultando Click and Book Plus. Los resultados se iran agregando.";
-
-  return {
-    allOffers: [],
-    searchMeta: {
-      requestedAt,
-      completedAt: requestedAt,
-      providersUsed: ["costamar"],
-      warnings: [warning],
-      partial: true,
-      searchState: "search_partial",
-    },
-    providerMeta,
-    warnings: [warning],
   };
 }
 
