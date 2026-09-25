@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveItineraryDurationMinutes, zonedMinutesBetween } from "../../src/core/flight-duration";
 import { envFlag, envNumber } from "../../src/env";
@@ -9,8 +10,9 @@ import { getSearchDatePolicy } from "../../src/search-date-policy";
 
 /*
  * Invariants that are cheap to state and expensive to get wrong: the desk's
- * calendar day, how settings fall back, how a journey is measured across time
- * zones, and what the deployment path is allowed to do.
+ * calendar day, how settings fall back, which Click and Book Plus token is the
+ * current one, how a journey is measured across time zones, and what the
+ * deployment path is allowed to do.
  */
 
 const repoRoot = join(import.meta.dir, "..", "..");
@@ -64,13 +66,62 @@ describe("settings", () => {
     process.env.FLY_DESK_UNIT_FLAG = "1";
     expect(envFlag("FLY_DESK_UNIT_FLAG", false)).toBe(true);
   });
+});
 
-  test("a Click and Book Plus context with an empty token reads the configured one", () => {
+describe("Click and Book Plus token", () => {
+  const tokenDir = mkdtempSync(join(tmpdir(), "fly-desk-unit-token-"));
+  afterAll(() => rmSync(tokenDir, { recursive: true, force: true }));
+  let tokenFiles = 0;
+
+  /** A file of its own: the reader re-stats a path at most once a second. */
+  function tokenFile(token: string): string {
+    tokenFiles += 1;
+    const path = join(tokenDir, `token-${tokenFiles}`);
+    writeFileSync(path, `${token}\n`);
+    return path;
+  }
+
+  function brandedToken(expiresInSeconds: number): string {
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const exp = Math.floor(Date.now() / 1000) + expiresInSeconds;
+    return `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ exp })}.${"s".repeat(43)}`;
+  }
+
+  const configuredToken = () => normalizeCostamarProviderContext().token;
+
+  test("a context with an empty token reads the configured one", () => {
     delete process.env.CBPLUS_TOKEN_FILE;
     process.env.CBPLUS_TOKEN = "configured-token";
     expect(normalizeCostamarProviderContext({ token: "" }).token).toBe("configured-token");
     expect(normalizeCostamarProviderContext({ token: "  " }).token).toBe("configured-token");
     expect(normalizeCostamarProviderContext({ token: "context-token" }).token).toBe("context-token");
+  });
+
+  test("a renewal in the file wins over the token the process started with", () => {
+    const renewed = brandedToken(3_600);
+    process.env.CBPLUS_TOKEN = brandedToken(600);
+    process.env.CBPLUS_TOKEN_FILE = tokenFile(renewed);
+    expect(configuredToken()).toBe(renewed);
+  });
+
+  test("after a platform rollback, the token renewed in the environment wins over a stale file", () => {
+    const renewed = brandedToken(3_600);
+    process.env.CBPLUS_TOKEN = renewed;
+    process.env.CBPLUS_TOKEN_FILE = tokenFile(brandedToken(-600));
+    expect(configuredToken()).toBe(renewed);
+  });
+
+  test("either source alone is enough, and a tie keeps the file", () => {
+    const token = brandedToken(3_600);
+    process.env.CBPLUS_TOKEN = "";
+    process.env.CBPLUS_TOKEN_FILE = tokenFile(token);
+    expect(configuredToken()).toBe(token);
+    process.env.CBPLUS_TOKEN = token;
+    process.env.CBPLUS_TOKEN_FILE = tokenFile("");
+    expect(configuredToken()).toBe(token);
+    process.env.CBPLUS_TOKEN = "opaque-environment-token";
+    process.env.CBPLUS_TOKEN_FILE = tokenFile("opaque-file-token");
+    expect(configuredToken()).toBe("opaque-file-token");
   });
 });
 
