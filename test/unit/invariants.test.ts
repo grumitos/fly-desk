@@ -1,12 +1,15 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveItineraryDurationMinutes, zonedMinutesBetween } from "../../src/core/flight-duration";
+import type { CanonicalOffer, SearchRequest } from "../../src/core/types";
 import { envFlag, envNumber } from "../../src/env";
 import { deskIsoDate } from "../../src/core/runtime-config";
 import { normalizeCostamarProviderContext } from "../../src/provider-context";
 import { getSearchDatePolicy } from "../../src/search-date-policy";
+import { SearchSessionStore } from "../../src/session-store";
 
 /*
  * Invariants that are cheap to state and expensive to get wrong: the desk's
@@ -122,6 +125,64 @@ describe("Click and Book Plus token", () => {
     process.env.CBPLUS_TOKEN = "opaque-environment-token";
     process.env.CBPLUS_TOKEN_FILE = tokenFile("opaque-file-token");
     expect(configuredToken()).toBe("opaque-file-token");
+  });
+});
+
+describe("rollback", () => {
+  test("a stored search job keeps the `offers` list an older release reads on boot", () => {
+    const dir = mkdtempSync(join(tmpdir(), "fly-desk-unit-rows-"));
+    const dbPath = join(dir, "sessions.sqlite");
+    const offer = (id: string) => ({
+      id,
+      providerSource: "agil-local",
+      price: { total: { amount: 100, currencyCode: "USD" } },
+      purchasePaths: [],
+    }) as unknown as CanonicalOffer;
+    const request: SearchRequest = {
+      tripType: "one-way",
+      searchMode: "exact",
+      legs: [{ origin: "LIM", destination: "CUZ", departureDate: "2026-12-01" }],
+      passengers: { adults: 1, children: 0, infants: 0 },
+      cabin: "ECONOMY",
+      filters: {},
+      coverageMode: "core",
+      redirectMode: "best-effort",
+      currencyCode: "USD",
+    };
+    try {
+      const store = new SearchSessionStore({ dbPath });
+      const job = store.createSearchJob({
+        request,
+        offers: [offer("second")],
+        allOffers: [offer("first"), offer("second")],
+        searchMeta: {
+          requestedAt: "2026-09-25T12:00:00.000Z",
+          completedAt: "2026-09-25T12:00:05.000Z",
+          providersUsed: ["agil-local"],
+          warnings: [],
+          partial: false,
+          searchState: "search_live",
+        },
+        providerMeta: { exactProvider: "agil-local", coverageMode: "core" },
+        warnings: [],
+        sortMode: "cheapest",
+        status: "completed",
+      });
+      store.close();
+
+      /* A release that stores both lists maps over `offers` when it restores a
+         row; without the list it cannot boot on rows written by this one. */
+      const db = new Database(dbPath, { readonly: true });
+      const rows = db.query("SELECT payload FROM search_jobs").all() as Array<{ payload: string }>;
+      db.close();
+      expect(rows.map((row) => Array.isArray((JSON.parse(row.payload) as { offers?: unknown }).offers))).toEqual([true]);
+
+      const reopened = new SearchSessionStore({ dbPath });
+      expect(reopened.getSearchJob(job.id)?.offers.map((entry) => entry.id)).toEqual(["second"]);
+      reopened.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -593,7 +593,9 @@ function redactSearchJobForPersistence(job: SearchJobRecord): SearchJobRecord {
 }
 
 /* `offers` is the filtered, ordered view of `allOffers`, so a stored job keeps
-   it as ids into `allOffers` instead of a second copy of every offer. */
+   it as ids into `allOffers` instead of a second copy of every offer. The row
+   still carries an empty `offers`: a release that stores both lists maps over
+   it when it boots, and a rollback to one has to read rows written here. */
 type PersistedSearchJob = Omit<SearchJobRecord, "offers"> & {
   offers?: CanonicalOffer[];
   offerIds?: string[];
@@ -601,7 +603,7 @@ type PersistedSearchJob = Omit<SearchJobRecord, "offers"> & {
 
 function encodeSearchJobForPersistence(job: SearchJobRecord): PersistedSearchJob {
   const { offers, ...rest } = redactSearchJobForPersistence(job);
-  return { ...rest, offerIds: offers.map((offer) => offer.id) };
+  return { ...rest, offers: [], offerIds: offers.map((offer) => offer.id) };
 }
 
 function decodePersistedSearchJob(parsed: PersistedSearchJob | undefined): SearchJobRecord | undefined {
