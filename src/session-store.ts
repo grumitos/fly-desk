@@ -457,6 +457,8 @@ function resolveSearchCompletionTimestampMs(record: {
   return 0;
 }
 
+/* The token is not part of the key: a job keeps none, and a cached list only
+   seeds the answer while the providers are asked again with the current one. */
 function normalizeProviderContextForSearchCache(
   providerContext: ProviderContext | undefined,
 ): {
@@ -479,28 +481,6 @@ function normalizeProviderContextForSearchCache(
       lang: String(providerContext.costamar.lang ?? "").trim(),
     },
   };
-}
-
-function hasCompatibleCostamarSearchCacheToken(
-  requestedContext: ProviderContext | undefined,
-  candidateContext: ProviderContext | undefined,
-): boolean {
-  const requestedCostamar = requestedContext?.costamar;
-  const candidateCostamar = candidateContext?.costamar;
-  if (!requestedCostamar && !candidateCostamar) {
-    return true;
-  }
-  if (!requestedCostamar || !candidateCostamar) {
-    return false;
-  }
-
-  const requested = String(requestedCostamar.token ?? "").trim();
-  const candidate = String(candidateCostamar.token ?? "").trim();
-  if (!requested || !candidate) {
-    return false;
-  }
-
-  return requested === candidate;
 }
 
 function normalizeSearchRequestForSearchCache(request: SearchRequest): SearchRequest {
@@ -1067,10 +1047,6 @@ export class SearchSessionStore {
         continue;
       }
 
-      if (!hasCompatibleCostamarSearchCacheToken(input.providerContext, candidate.providerContext)) {
-        continue;
-      }
-
       const completionTimestamp = resolveSearchCompletionTimestampMs(candidate);
       if ((nowMs - completionTimestamp) > input.maxAgeMs) {
         continue;
@@ -1133,10 +1109,6 @@ export class SearchSessionStore {
         normalizeProviderContextForSearchCache(candidate.providerContext),
       );
       if (candidateContextKey !== providerContextKey) {
-        continue;
-      }
-
-      if (!hasCompatibleCostamarSearchCacheToken(input.providerContext, candidate.providerContext)) {
         continue;
       }
 

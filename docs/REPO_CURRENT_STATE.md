@@ -99,7 +99,7 @@ The React UI must not display simulated controls. The following remain outside t
 
 - Agil mints its bearer over plain HTTP from a persisted identity (`agil-identity.json` under the state directory, path override `AGIL_IDENTITY_PATH`); the Chrome profile is consulted only to bootstrap that file when it is absent or the identity is refused. The subscription key comes from the environment or is recovered from the Agil bundle; Linux/VPS defaults to the loopback CDP endpoint on port 9222, explicit browser endpoints win, and Windows keeps discovery explicit
 - Click and Book Plus uses environment-controlled context, a host allowlist, and optional B2B warm-up; B2B automation accepts only HTTPS on the exact `b2b.clickandbook.com` origin and rechecks same-origin navigation before entering credentials or OTP
-- Click and Book Plus does not accept hosts or base URLs per request
+- Click and Book Plus does not accept hosts, base URLs or tokens per request; a search job keeps no token, so every search it runs, a quote's revalidation included, reads the one configured at that moment, and a cached list seeds a new search whatever token it was found with
 - a Click and Book Plus payload status of 400 or more inside an HTTP 200 fails
   the provider like an HTTP error: the job marks it `failed`, the desk names it,
   and the tracker leaves it `degraded` rather than `ready`. A refused token or

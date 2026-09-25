@@ -2106,9 +2106,12 @@ function buildInitialProviderContext(
     return undefined;
   }
 
+  /* A job lives for hours and the branded token for one, renewed outside the
+     application. The job keeps no token, so each search it runs, a quote's
+     revalidation included, reads the one configured at that moment. */
   const costamarContext = normalizeCostamarProviderContext(payload?.providerConfig?.costamar);
   return {
-    costamar: costamarContext,
+    costamar: { ...costamarContext, token: "" },
   };
 }
 

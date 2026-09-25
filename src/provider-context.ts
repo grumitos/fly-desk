@@ -963,7 +963,9 @@ function readConfiguredCostamarToken(nowMs = Date.now()): string | undefined {
 export function normalizeCostamarProviderContext(
   input?: CostamarProviderConfigInput,
 ): CostamarProviderContext {
-  const normalizedToken = sanitizeCostamarToken(input?.token ?? readConfiguredCostamarToken() ?? "");
+  /* An empty token is no token: a context without one, such as a search job's
+     or a warm-up seed, reads the configured token as it is now. */
+  const normalizedToken = sanitizeCostamarToken(input?.token?.trim() || readConfiguredCostamarToken() || "");
   return {
     apiBaseUrl: normalizeAllowedHttpsUrl(
       process.env.CBPLUS_SEARCH_API_BASE_URL,

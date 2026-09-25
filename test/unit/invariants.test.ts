@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { resolveItineraryDurationMinutes, zonedMinutesBetween } from "../../src/core/flight-duration";
 import { envFlag, envNumber } from "../../src/env";
 import { deskIsoDate } from "../../src/core/runtime-config";
+import { normalizeCostamarProviderContext } from "../../src/provider-context";
 import { getSearchDatePolicy } from "../../src/search-date-policy";
 
 /*
@@ -62,6 +63,14 @@ describe("settings", () => {
     expect(envFlag("FLY_DESK_UNIT_FLAG", true)).toBe(false);
     process.env.FLY_DESK_UNIT_FLAG = "1";
     expect(envFlag("FLY_DESK_UNIT_FLAG", false)).toBe(true);
+  });
+
+  test("a Click and Book Plus context with an empty token reads the configured one", () => {
+    delete process.env.CBPLUS_TOKEN_FILE;
+    process.env.CBPLUS_TOKEN = "configured-token";
+    expect(normalizeCostamarProviderContext({ token: "" }).token).toBe("configured-token");
+    expect(normalizeCostamarProviderContext({ token: "  " }).token).toBe("configured-token");
+    expect(normalizeCostamarProviderContext({ token: "context-token" }).token).toBe("context-token");
   });
 });
 

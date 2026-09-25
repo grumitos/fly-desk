@@ -72,7 +72,7 @@ The current React UI does not expose:
 - Operational endpoints accept a valid web cookie or `FLY_DESK_API_TOKEN`.
 - Diagnostics, Click and Book Plus token status, and local browser launch remain loopback-only surfaces.
 - The normal date window moves from `today` to `today + SEARCH_MAX_FUTURE_DAYS`; round trips are limited to 90 nights, searches to nine passengers, and lap infants to one per adult. The same limits are embedded in the public runtime contract.
-- Click and Book Plus does not accept `apiBaseUrl` or `brandBaseUrl` per request; base URLs come from the environment and pass through an allowlist.
+- Click and Book Plus does not accept `apiBaseUrl`, `brandBaseUrl` or a token per request; base URLs come from the environment and pass through an allowlist, and the token is the configured one at the moment each provider call is made.
 - Agil depends on a real Chrome session and a subscription key resolved from the environment or the Agil bundle. Linux/VPS defaults to the platform CDP endpoint on `127.0.0.1:9222`; explicit `AGIL_BROWSER_*` values override it, while Windows keeps discovery explicit.
 - Provider fields remain unknown when absent: the normalizers do not synthesize carrier, flight number, seat count, or baggage evidence.
 - In production, `fly-desk.service` can delegate `/api/search`, `/api/matrix`, polling, cancellation, quotation, and `/api/provider-status` to `fly-desk-search.service` through `FLY_DESK_SEARCH_SERVICE_URL`; that runner stays on loopback and runs providers/workers.
