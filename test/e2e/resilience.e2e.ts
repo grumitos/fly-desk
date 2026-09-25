@@ -118,7 +118,8 @@ suite.test("with both providers down the desk says nothing was searched instead 
   const { tracked, page } = await scope.signedInPage(searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "SCL", departure }));
   await results.emptyTitle(page, "No se pudo consultar a los proveedores").waitFor({ timeout: 30_000 });
   await results.editSearchFromEmpty(page).waitFor();
-  const line = await notice.line(page).innerText();
+  /* Nothing was searched: an error, announced at once. */
+  const line = await notice.error(page).innerText();
   assert.match(line, /No se pudo consultar a ningún proveedor/);
   assert.match(line, /Agilsmart/);
   assert.match(line, /Click and Book Plus/);

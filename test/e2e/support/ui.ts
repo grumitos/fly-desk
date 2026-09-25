@@ -130,9 +130,17 @@ export const searchForm = {
 
 /* ---- The notice line above the results ---- */
 
+/* A warning is read out politely, from a `status` region; an error at once,
+   from an `alert` one. */
+function noticeIn(page: Page, region: Locator): Locator {
+  return region.filter({ has: page.getByRole("button", { name: "Descartar el aviso", exact: true }) });
+}
+
 export const notice = {
-  line: (page: Page) =>
-    page.getByRole("status").filter({ has: page.getByRole("button", { name: "Descartar el aviso", exact: true }) }),
+  /** The line, whatever its tone. */
+  line: (page: Page) => noticeIn(page, page.getByRole("status").or(page.getByRole("alert"))),
+  /** The line when it is an error. */
+  error: (page: Page) => noticeIn(page, page.getByRole("alert")),
 };
 
 /* ---- Results ---- */

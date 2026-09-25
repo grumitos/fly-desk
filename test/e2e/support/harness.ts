@@ -221,9 +221,9 @@ export class TestScope {
     const tracked = new TrackedContext(context);
     this.contexts.push(tracked);
     /* The browser is outside the egress preload: anything that is not the
-       stack is refused here (Google Fonts, mostly), and a `/r/<id>` is asked
-       without following its redirect, so the provider site it names is
-       recorded rather than visited. */
+       stack is refused here, and a `/r/<id>` is asked without following its
+       redirect, so the provider site it names is recorded rather than
+       visited. */
     await context.route((url) => !isLoopbackHostname(url.hostname), (route) => {
       tracked.blocked.push(route.request().url());
       return route.abort("blockedbyclient");
