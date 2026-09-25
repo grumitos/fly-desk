@@ -143,7 +143,6 @@ export function DateRangeField({
 
   /* Opening aims the pager at the month about to be edited. */
   const openHalfFor = (half: Half) => {
-    onTouch?.(half)
     const anchorDate = half === "end" ? validEnd ?? validStart : validStart
     if (mobile) {
       setDraftStartDate(validStart ?? "")
@@ -152,6 +151,13 @@ export function DateRangeField({
     openedFromRef.current = half
     setVisibleMonth(monthKeyOf(anchorDate ?? minDate))
     setOpenHalf(half)
+  }
+
+  /* A half counts as visited once the calendar is left, so its message waits
+     until the agent has had the chance to choose. */
+  const dismiss = () => {
+    onTouch?.(openedFromRef.current)
+    setOpenHalf(null)
   }
 
   /* The phone's calendar scrolls to the month being edited when it opens, not
@@ -260,7 +266,7 @@ export function DateRangeField({
             if (calendarStart) {
               onChange({ startDate: calendarStart, endDate: endDisabled ? "" : calendarEnd ?? "" })
             }
-            setOpenHalf(null)
+            dismiss()
           }}
           title="Fechas"
           meta={nights !== undefined ? `${nights} ${nights === 1 ? "noche" : "noches"}` : undefined}
@@ -302,7 +308,7 @@ export function DateRangeField({
   }
 
   return (
-    <Popover open={activeHalf !== null} onOpenChange={(next) => { if (!next) setOpenHalf(null) }}>
+    <Popover open={activeHalf !== null} onOpenChange={(next) => { if (!next) dismiss() }}>
       <PopoverAnchor asChild>{control}</PopoverAnchor>
       <PopoverContent
         align="start"

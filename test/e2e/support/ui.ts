@@ -110,6 +110,10 @@ export const searchForm = {
   calendarDay: (root: Root, isoDate: string) =>
     root.getByRole("button", { name: new RegExp(`^${escapeRegExp(spanishDayName(isoDate))}(,|$)`) }),
   calendarSheet: (page: Page) => page.getByRole("dialog", { name: "Fechas", exact: true }),
+  /** The desk's calendar, a popover under the date field. */
+  calendarPopover: (page: Page) => page.getByRole("dialog", { name: "Calendario de fechas", exact: true }),
+  /** A field's validation message, by its words. */
+  fieldMessage: (page: Page, text: string) => page.getByText(text, { exact: true }),
   months: (page: Page) => page.getByRole("button", { name: /^Meses:/ }),
   /** The desk's month popover («Selector de meses»); the phone's is the sheet «Meses». */
   monthPicker: (page: Page) =>

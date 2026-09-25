@@ -250,6 +250,29 @@ suite.test("a phone held sideways shows the offer's itinerary with «Cotizar» f
   }
 });
 
+suite.test("the dates ask for a departure once the calendar is left without one, and not while it is open", async (scope) => {
+  const missing = "Selecciona una fecha de salida.";
+  /* Each left without a choice: the system back on a phone, Escape on a desk. */
+  const surfaces = [
+    { name: "phone sheet", options: PHONE, calendar: searchForm.calendarSheet, leave: (page: Page) => page.goBack() },
+    { name: "desk popover", options: TABLET, calendar: searchForm.calendarPopover, leave: (page: Page) => page.keyboard.press("Escape") },
+  ];
+  for (const surface of surfaces) {
+    const { page } = await scope.signedInPage("/", surface.options);
+    const departure = searchForm.departureHalf(page);
+    await departure.click();
+    const calendar = surface.calendar(page);
+    await calendar.waitFor();
+    assert.equal(await searchForm.fieldMessage(page, missing).count(), 0, `${surface.name}: the calendar asked for a date as it opened`);
+    assert.equal(await departure.getAttribute("aria-invalid"), "false", surface.name);
+
+    await surface.leave(page);
+    await calendar.waitFor({ state: "hidden" });
+    await searchForm.fieldMessage(page, missing).waitFor();
+    assert.equal(await departure.getAttribute("aria-invalid"), "true", surface.name);
+  }
+});
+
 suite.test("a filter changed in the phone's filter sheet stays on the address bar after back closes the sheet", async (scope) => {
   const { fake } = scope;
   fake.setFlights("both", { origin: "LIM", destination: "CUZ" }, CUSCO);
