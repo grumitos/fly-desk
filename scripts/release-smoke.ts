@@ -19,11 +19,14 @@ import { join, resolve } from "node:path";
  *
  *   bun scripts/release-smoke.ts <fly-desk.tar.gz>
  *
- * Nothing here reaches a provider: prewarm is off and no search is run.
+ * Nothing here reaches a provider: prewarm is off and no search is run. The
+ * units never outlive the smoke: they are stopped when it passes, fails, runs
+ * past its deadline or is interrupted.
  */
 
 type Unit = "runner" | "web" | "redirect";
 
+const SMOKE_TIMEOUT_MS = 120_000;
 const HEALTH_TIMEOUT_MS = 30_000;
 const STOP_GRACE_MS = 10_000;
 /* The platform's PATH for the prepare hook (`vps-app-release.sh`). */
@@ -58,6 +61,37 @@ const baseEnv: Record<string, string> = { ...hostEnv, HOME: home, TMPDIR: scratc
 const children = new Map<Unit, ChildProcess>();
 const logs = new Map<Unit, string[]>();
 const passed: string[] = [];
+
+/* The last resort, for an exit that skips the orderly stop: each unit's whole
+   tree, pooled search workers included, is killed on the spot. */
+function killTree(child: ChildProcess): void {
+  if (child.pid === undefined) {
+    return;
+  }
+  if (process.platform === "win32") {
+    if (child.exitCode === null && child.signalCode === null) {
+      spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
+    }
+    return;
+  }
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    // Nothing of the group is left.
+  }
+}
+
+process.on("exit", () => children.forEach(killTree));
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.on(signal, () => {
+    console.error(`[release-smoke] ${signal}: stopping the units.`);
+    process.exit(1);
+  });
+}
+setTimeout(() => {
+  console.error(`[release-smoke] no verdict within ${SMOKE_TIMEOUT_MS / 1000} s: stopping the units.`);
+  process.exit(1);
+}, SMOKE_TIMEOUT_MS).unref();
 
 function check(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -152,28 +186,32 @@ async function waitForHealth(unit: Unit, url: string): Promise<void> {
   throw new Error(`The ${unit} unit did not answer /api/health within ${HEALTH_TIMEOUT_MS} ms.`);
 }
 
+function isRunning(child: ChildProcess): boolean {
+  return child.exitCode === null && child.signalCode === null;
+}
+
+/* A unit stops the way systemd stops it; whatever of its process group is left
+   afterwards, pooled search workers included, is killed. */
 async function stop(unit: Unit, child: ChildProcess): Promise<void> {
-  if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
+  if (child.pid === undefined) {
     return;
   }
-  const exited = new Promise<void>((resolveExit) => child.once("exit", () => resolveExit()));
+  const exited = new Promise<void>((resolveExit) => (isRunning(child) ? child.once("exit", () => resolveExit()) : resolveExit()));
   if (process.platform === "win32") {
-    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
+    killTree(child);
   } else {
-    try {
-      process.kill(-child.pid, "SIGTERM");
-    } catch {
-      // Already gone.
+    if (isRunning(child)) {
+      try {
+        process.kill(-child.pid, "SIGTERM");
+      } catch {
+        // Already gone.
+      }
+      await Promise.race([exited, Bun.sleep(STOP_GRACE_MS)]);
     }
-    await Promise.race([exited, Bun.sleep(STOP_GRACE_MS)]);
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch {
-      // Stopped on its own.
-    }
+    killTree(child);
   }
   await Promise.race([exited, Bun.sleep(3_000)]);
-  if (child.exitCode === null && child.signalCode === null) {
+  if (isRunning(child)) {
     console.error(`[release-smoke] the ${unit} unit (pid ${child.pid}) is still running.`);
   }
 }
@@ -288,6 +326,7 @@ try {
   failure = error;
 } finally {
   await Promise.all([...children].map(([unit, child]) => stop(unit, child)));
+  children.clear();
   try {
     rmSync(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   } catch {
