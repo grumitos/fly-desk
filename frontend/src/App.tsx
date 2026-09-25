@@ -1054,7 +1054,7 @@ const FiltersPanel = memo(function FiltersPanel({
       </header>}
 
       <div className="fd-filter-body fd-scrollbar-hidden">
-        <FilterGroup label="Escalas" used={stopValue !== "any"}>
+        <FilterGroup label="Escalas">
           <SegmentedControl
             aria-label="Escalas"
             value={stopValue}
@@ -1068,7 +1068,7 @@ const FiltersPanel = memo(function FiltersPanel({
           </SegmentedControl>
         </FilterGroup>
 
-        <FilterGroup label="Escala máxima" used={layoverValue !== "any"}>
+        <FilterGroup label="Escala máxima">
           <SegmentedControl
             aria-label="Escala máxima"
             value={layoverValue}
@@ -1082,7 +1082,7 @@ const FiltersPanel = memo(function FiltersPanel({
           </SegmentedControl>
         </FilterGroup>
 
-        <FilterGroup label="Equipaje incluido" used={baggageValue !== "any"}>
+        <FilterGroup label="Equipaje incluido">
           <SegmentedControl
             aria-label="Equipaje incluido"
             value={baggageValue}
@@ -1136,22 +1136,11 @@ const FiltersPanel = memo(function FiltersPanel({
   )
 })
 
-/* An untouched group sits dimmed and says «sin usar», so the constraints that
-   are on can be seen without reading. */
-function FilterGroup({
-  label,
-  used,
-  children,
-}: {
-  label: string
-  used: boolean
-  children: ReactNode
-}) {
+function FilterGroup({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="fd-filter-group" data-used={used}>
+    <div className="fd-filter-group">
       <div className="fd-filter-group-head">
         <span className="fd-type-micro">{label}</span>
-        {!used && <span className="fd-filter-group-unused">sin usar</span>}
       </div>
       {children}
     </div>

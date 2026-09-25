@@ -322,7 +322,6 @@
   .fd-filter-group {
     display: grid;
     gap: 6px;
-    transition: opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
   .fd-filter-group-head {
@@ -330,10 +329,6 @@
     align-items: baseline;
     justify-content: space-between;
     gap: 8px;
-  }
-
-  .fd-filter-group-unused {
-    display: none;
   }
 
   /* The only separator in the panel: airlines are a list, not a constraint. */
