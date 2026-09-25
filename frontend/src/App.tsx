@@ -204,6 +204,16 @@ export default function App() {
   useEffect(() => {
     if (sharedRequest) writeSharedSearchToUrl(sharedRequest, sortMode)
   }, [sharedRequest, sortMode])
+  /* Closing a sheet goes back over its own history entry, onto one written
+     before a filter changed inside the sheet; the URL is restated there. */
+  const restateSharedUrl = useEffectEvent(() => {
+    if (sharedRequest) writeSharedSearchToUrl(sharedRequest, sortMode)
+  })
+  useEffect(() => {
+    const listener = () => restateSharedUrl()
+    window.addEventListener("popstate", listener)
+    return () => window.removeEventListener("popstate", listener)
+  }, [])
 
   useEffect(() => {
     if (configCopiedAt === null) return
