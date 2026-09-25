@@ -75,7 +75,7 @@ import {
 } from "./core/types";
 import { rankLocationSuggestions } from "./core/location-ranking";
 import { recordProviderFirstHttpRequest } from "./provider-diagnostics";
-import { providerPublicFailureMessage } from "./provider-status";
+import { providerDegradedReasonFromError, providerPublicFailureMessage } from "./provider-status";
 
 interface BrowserStorageSnapshot {
   tokenSearchFlight: string;
@@ -1408,14 +1408,39 @@ async function fetchAgil(
       headers: response.headers,
     });
   } catch (error) {
+    /* The transport error stays as the cause: the public reason is built from
+       the message, and the service log names what actually failed. */
     if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
-      throw new Error(`${label} timed out after ${AGIL_HTTP_TIMEOUT_MS}ms`);
+      throw new Error(`${label} timed out after ${AGIL_HTTP_TIMEOUT_MS}ms`, { cause: error });
     }
 
-    throw new Error(`${label} failed before receiving a response.`);
+    throw new Error(`${label} failed before receiving a response.`, { cause: error });
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/*
+ * An error and the causes behind it, one `name[code]: message` a link, for the
+ * service log. A SyntaxError keeps only its name: a JSON parse error quotes
+ * the provider's body, and nothing a provider said belongs in a log.
+ */
+function describeErrorChain(error: unknown): string {
+  const links: string[] = [];
+  let current: unknown = error;
+  while (current !== undefined && current !== null && links.length < 4) {
+    if (!(current instanceof Error)) {
+      links.push(typeof current);
+      break;
+    }
+
+    const code = (current as { code?: unknown }).code;
+    const name = typeof code === "string" && code ? `${current.name}[${code}]` : current.name;
+    links.push(current instanceof SyntaxError ? name : `${name}: ${current.message}`);
+    current = current.cause;
+  }
+
+  return links.join(" <- ").replace(/\s+/g, " ").slice(0, 400);
 }
 
 async function readAgilStorageSnapshotFromNavigable(
@@ -2933,6 +2958,20 @@ async function searchGroupsWithGds(
   }
 }
 
+/*
+ * The service log's account of a GDS left out of a search: the request, the
+ * public reason, how long the attempt took and the error chain behind it,
+ * none of which the warning the desk receives carries.
+ */
+function logAgilGdsOmission(request: SearchRequest, gds: number, error: unknown, startedAt: number): void {
+  console.warn(
+    `Agil GDS ${gds} omitted: ${requestSummary(request)} `
+    + `reason=${providerDegradedReasonFromError(error)} `
+    + `afterMs=${Math.round(performance.now() - startedAt)} `
+    + `detail=${describeErrorChain(error)}`,
+  );
+}
+
 async function startAgilSearch(
   session: AgilSessionData,
   request: SearchRequest,
@@ -2962,6 +3001,7 @@ async function searchGroupsAcrossGds(
     await startAgilSearch(session, request);
 
     const outcomes = await mapConcurrent(AGIL_GDS_LIST, AGIL_CONCURRENCY.gdsSearch, async (gds) => {
+      const startedAt = performance.now();
       try {
         return {
           gds,
@@ -2972,6 +3012,7 @@ async function searchGroupsAcrossGds(
           throw error;
         }
 
+        logAgilGdsOmission(request, gds, error, startedAt);
         return {
           gds,
           groups: [],
@@ -3142,6 +3183,7 @@ export async function resolveLocalAgilExactProgressive(
     await startAgilSearch(session, request);
 
     await mapConcurrent(AGIL_GDS_LIST, AGIL_CONCURRENCY.gdsSearch, async (gds) => {
+      const startedAt = performance.now();
       try {
         const resolvedGroups = await searchGroupsWithGds(session, request, gds);
         for (const group of resolvedGroups) {
@@ -3156,6 +3198,7 @@ export async function resolveLocalAgilExactProgressive(
           stopRequested = true;
         }
       } catch (error) {
+        logAgilGdsOmission(request, gds, error, startedAt);
         partial = true;
         const warning = error instanceof Error
           ? `Agil GDS ${gds} omitted: ${error.message}`
