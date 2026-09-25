@@ -668,7 +668,7 @@ export const SearchShell = memo(function SearchShell({
               variant="secondary"
               size="icon"
               onClick={swapRoute}
-              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+              className="text-muted-foreground hover:text-foreground"
               aria-label="Intercambiar ruta"
             >
               <SwapIcon />
@@ -1105,7 +1105,6 @@ function LocationField({
         position: "fixed",
         top: rect.bottom + 4,
         width: rect.width,
-        zIndex: 90,
       })
     }
 
@@ -1282,7 +1281,7 @@ function LocationField({
           }}
           onKeyDown={handleLocationKeyDown}
           placeholder={placeholder}
-          className={`${SEARCH_FIELD_VALUE_CLASS} w-auto rounded-none border-0 bg-transparent p-0 text-foreground shadow-none outline-none focus-visible:border-0 focus-visible:ring-0`}
+          className={`${SEARCH_FIELD_VALUE_CLASS} text-foreground`}
         />
         {/* 11 §2.1: clearing keeps the focus and reopens «Recientes»; the
             mousedown is swallowed so no blur resolves the erased query. */}
@@ -1342,7 +1341,7 @@ function LocationField({
                 }}
                 onKeyDown={handleLocationKeyDown}
                 placeholder={placeholder}
-                className="h-11 flex-1 border-0 bg-transparent px-0 text-base shadow-none focus-visible:ring-0"
+                className="h-11 flex-1 text-base"
               />
             </div>
             <div className="fd-mobile-suggest-panel">

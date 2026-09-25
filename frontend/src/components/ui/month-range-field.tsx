@@ -228,7 +228,8 @@ export function MonthRangeField({
       <PopoverContent
         align="start"
         sideOffset={6}
-        className="w-[min(552px,calc(100vw-2rem))] border-0 bg-transparent p-0 shadow-none"
+        bare
+        className="w-[min(552px,calc(100dvw-2rem))]"
         aria-label="Selector de meses"
         /* The focus goes to the month in the tab order, and back to the field
            unless the agent clicked elsewhere. */

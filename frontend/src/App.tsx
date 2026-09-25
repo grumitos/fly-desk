@@ -29,7 +29,7 @@ import { hasOpenOverlay } from "@/lib/overlay-stack"
 import { motionToken } from "@/lib/reduced-motion"
 import { SEARCH_DATE_POLICY } from "@/lib/runtime-config"
 import {
-  ENTERING_WINDOW_MS,
+  enteringWindow,
   idleExitDuration,
   measureFlip,
   playFlip,
@@ -163,9 +163,13 @@ export default function App() {
   const searchControlsRef = useRef<HTMLDivElement | null>(null)
   const shellRef = useRef<HTMLDivElement | null>(null)
   const toolsBlockRef = useRef<HTMLDivElement | null>(null)
-  const pendingChoreographyRef = useRef<
-    { frame: FlipRect | null; controls: FlipRect | null; tools: FlipRect | null; phase: SearchPhase } | null
-  >(null)
+  const pendingChoreographyRef = useRef<{
+    frame: FlipRect | null
+    fields: FlipRect | null
+    controls: FlipRect | null
+    tools: FlipRect | null
+    phase: SearchPhase
+  } | null>(null)
   const searchPhaseRef = useRef<SearchPhase>("idle")
   const toolsBlockAnimationRef = useRef<Animation | null>(null)
   const searchLayoutAnimationRef = useRef<Animation | null>(null)
@@ -221,16 +225,15 @@ export default function App() {
     return () => window.clearTimeout(timer)
   }, [configCopiedAt])
 
-  /* The "first" of both FLIPs of 07 §1, taken at the gesture rather than in a
-     layout effect: this is the last instant the two elements are still where
-     the plate says they start. The mode and trip segments in particular are
-     about to change parent, so after the commit there is nothing left to
-     measure. `wasIdle` travels with the rects because the measurement is only
-     good for a crossing — a search fired from a workspace that is already on
-     screen measures the same two boxes and moves neither. */
+  /* The "first" of the FLIPs, taken at the gesture: after the commit the
+     segments have changed parent and there is nothing left to measure. The
+     fields are measured on their own because the frame above them loses the
+     segments' row, so aligning frame tops would slide the fields under it. */
   const captureChoreographyRects = useCallback(() => {
+    const frame = searchFrameRef.current
     pendingChoreographyRef.current = {
-      frame: measureFlip(searchFrameRef.current),
+      frame: measureFlip(frame),
+      fields: measureFlip(frame?.querySelector(".fd-search-grid")),
       controls: measureFlip(searchControlsRef.current),
       tools: measureFlip(toolsBlockRef.current),
       phase: searchPhaseRef.current,
@@ -624,17 +627,9 @@ export default function App() {
     return () => window.removeEventListener("keydown", listener)
   }, [])
 
-  /*
-   * The two rows of 07 §1 that CSS cannot reach, both at the 60ms cue:
-   *
-   *    bloque de campos      `translateY` al tope, `estructura`
-   *    modo + tipo de viaje  FLIP del formulario a la barra de título
-   *
-   * Same cue, same token, one effect — they are one movement with two moving
-   * parts, and splitting them would be two clocks for one gesture. The way back
-   * («editar la búsqueda») is the same pair inverted inside the 180ms of
-   * `--fd-dur-vuelta`, with no cue: a cue is what staggers an arrival.
-   */
+  /* The fields rise and the segments move into the title bar, one movement on
+     one cue. The way back (editing) is the same pair reversed, without the cue:
+     a cue staggers an arrival. */
   useLayoutEffect(() => {
     const pending = pendingChoreographyRef.current
     pendingChoreographyRef.current = null
@@ -649,20 +644,18 @@ export default function App() {
     if (!pending || pending.phase === searchPhase) return
 
     const frame = searchFrameRef.current
-    /* Going back — to the idle screen or into editing — is «la misma secuencia
-       invertida en 180 ms», one budget with no cue in front of it: a cue is
-       what staggers an arrival, and nothing is arriving.
-       Read off the frame, not off the root: the cue is 60ms on a desk and 0 on
-       a phone, and which one applies is a container query on the stage the
-       frame lives in. */
+    /* Read off the frame: the cue is 0 on a phone, by the phone's rules. */
     const goingBack = searchPhase !== "active"
     const delay = goingBack ? 0 : motionToken("--fd-cue-campos", frame)
     const duration = goingBack
       ? motionToken("--fd-dur-vuelta", frame)
       : motionToken("--fd-dur-estructura", frame)
 
-    if (frame && pending.frame) {
-      searchLayoutAnimationRef.current = playFlip(frame, pending.frame, { delay, duration, matchWidth: true })
+    const fields = frame?.querySelector(".fd-search-grid")
+    if (frame && fields && pending.fields) {
+      searchLayoutAnimationRef.current = playFlip(frame, pending.fields, { delay, duration, anchor: fields, centered: true })
+    } else if (frame && pending.frame) {
+      searchLayoutAnimationRef.current = playFlip(frame, pending.frame, { delay, duration, centered: true })
     }
 
     const controls = searchControlsRef.current
@@ -670,22 +663,19 @@ export default function App() {
       searchControlsAnimationRef.current = playFlip(controls, pending.controls, { delay, duration })
     }
 
-    /* «El bloque crece a su alto natural» (2h). On a phone the box does not
-       travel on the way back — it stays under the title bar and only gets
-       taller — so this is the only piece of the return that moves there. */
+    /* On a phone the block does not travel on the way back: it stays under the
+       title bar and grows to its natural height. */
     const tools = toolsBlockRef.current
     if (goingBack && tools && pending.tools) {
-      toolsBlockAnimationRef.current = playFlip(tools, pending.tools, { delay, duration, matchHeight: true })
+      toolsBlockAnimationRef.current = playFlip(tools, pending.tools, { delay, duration, reveal: true })
     }
   }, [searchPhase])
 
-  /* The cues come down once the table has run its 420ms, counted from the press
-     as the table counts them. After that what happens is judged on its own: a
-     detail panel picked later arrives with 05 §8's no-delay 8px, not with the
-     140ms this one arrival needed. */
+  /* The arrival cues come down once they have played, so a detail picked later
+     arrives on its own, without the arrival's delay. */
   useEffect(() => {
     if (!workspaceEntering) return
-    const timer = window.setTimeout(() => setWorkspaceEntering(false), ENTERING_WINDOW_MS)
+    const timer = window.setTimeout(() => setWorkspaceEntering(false), enteringWindow())
     return () => window.clearTimeout(timer)
   }, [workspaceEntering])
 
@@ -701,13 +691,10 @@ export default function App() {
   const visibleMobileToolsCollapsed = phone && mobileToolsCollapsed
   const configCopied = configCopiedAt !== null
 
-  /* `dvh`, never `vh` (02 §10): Tailwind's `h-screen` is `100vh`, which on a
-     phone measures the window without the virtual keyboard and cut the open
-     sheet off at the bottom. */
   return (
     <div
       ref={shellRef}
-      className="fd-shell flex h-[100dvh] flex-col overflow-hidden bg-background text-foreground"
+      className="fd-shell"
       data-shell-size={shellSize}
       data-fd-sheet-root=""
     >
@@ -1011,7 +998,7 @@ function PlainLogView({ lines }: { lines: string[] }) {
         readOnly
         spellCheck={false}
         value={text}
-        className="fd-scrollbar h-full min-h-0 w-full resize-none rounded-none border-0 bg-background p-4 font-mono text-xs leading-5 text-foreground shadow-none outline-none focus-visible:ring-0"
+        className="fd-scrollbar h-full min-h-0 resize-none bg-background p-4 font-mono text-xs leading-5 text-foreground"
       />
     </main>
   )
@@ -1057,7 +1044,7 @@ const FiltersPanel = memo(function FiltersPanel({
             variant="ghost"
             size="chip"
             onClick={onClear}
-            className="shrink-0 !px-2 text-xs font-bold text-primary"
+            className="shrink-0 px-2 font-bold text-primary"
             aria-label="Limpiar filtros"
           >
             <AppIcon name="x" size={14} />

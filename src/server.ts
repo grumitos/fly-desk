@@ -102,7 +102,7 @@ function responseHeaders(contentType: string, cacheControl: string): Record<stri
   return {
     "Content-Type": contentType,
     "Cache-Control": cacheControl,
-    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
@@ -386,7 +386,7 @@ async function routeServerRequest(request: Request, server: BunServer<undefined>
     }
 
     const error = url.searchParams.get("error")
-      ? "Password invalido."
+      ? "Contraseña incorrecta."
       : undefined;
     return new Response(renderLoginPage(error, resolveWebTheme(request), next), {
       status: 200,

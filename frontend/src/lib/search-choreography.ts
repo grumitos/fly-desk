@@ -1,40 +1,24 @@
 import { useEffect, useState } from "react"
 import { motionToken } from "@/lib/reduced-motion"
 
-/*
- * 07 §1 — the two halves of the reposo → activo choreography that CSS cannot do
- * on its own.
- *
- * The table is transcribed in `index.css`, where every piece that merely
- * appears or fades is a cue plus one of the six tokens. Two rows are not that:
- *
- *   60 ms  bloque de campos    `translateY` al tope
- *   60 ms  modo + tipo de viaje  FLIP del formulario a la barra de título
- *
- * Both are elements that end up somewhere else in the document — the segments
- * literally change parent — so nothing in CSS knows where they came from. That
- * is a FLIP: measure before, measure after, play the difference away.
- *
- * Every number still comes from the cascade through `motionToken`, so the
- * `prefers-reduced-motion` block reaches these two rows as it reaches the rest.
- */
+/* The idle-to-active moves CSS cannot do alone (the segments change parent),
+   played as transform-only FLIPs on the motion tokens, so reduced motion stops
+   them with everything else. */
 
-/** How long the idle-only furniture stays mounted so it can fade out (07 §1). */
+/** How long the idle-only furniture stays mounted so it can fade out. */
 export function idleExitDuration(): number {
   return motionToken("--fd-cue-salida") + motionToken("--fd-dur-salida-reposo")
 }
 
-/**
- * The phone's one-line summary going out on the way back to editing (2h,
- * «el resumen se funde»). Rule 1 prices a departure at half of the arrival it
- * belongs to, and the arrival here is the 180ms of the whole return.
- */
+/** The phone's one-line summary leaving on the way back to editing. */
 export function returnExitDuration(): number {
   return motionToken("--fd-dur-vuelta") / 2
 }
 
-/** The 420ms the table lasts: how long the arrival cues stay armed. */
-export const ENTERING_WINDOW_MS = 420
+/** How long the arrival cues stay armed: the last cue plus its movement. */
+export function enteringWindow(): number {
+  return motionToken("--fd-cue-esqueleto") + motionToken("--fd-dur-estructura")
+}
 
 export type FlipRect = Pick<DOMRect, "left" | "top" | "width" | "height">
 
@@ -46,19 +30,9 @@ export function measureFlip(node: Element | null | undefined): FlipRect | null {
 }
 
 /**
- * Play `from` → wherever `node` is now.
- *
- * `matchWidth` is for the block of fields, which is 1180px at rest and the full
- * measure once active: without it the FLIP slides a box that is also snapping
- * to a new width, and the snap is what the eye catches. The segments do not
- * take it — 07 §1 is explicit that they keep «mismo tamaño y peso: solo cambia
- * de sitio».
- *
- * `matchHeight` is «el bloque crece a su alto natural» (2h, the mobile return),
- * where the box does not move at all: it stays pinned under the title bar and
- * only gets taller. Hence the bail-out below asks whether *anything* asked for
- * changed, not just the position — measuring position alone is what left that
- * growth as a jump.
+ * Move `node` so `anchor` (default: the node) starts at `from` and eases home.
+ * `centered` travels centre to centre and fades up from half opacity, so a new
+ * width does not jump; `reveal` unclips a box that grew in place.
  */
 export function playFlip(
   node: HTMLElement,
@@ -66,55 +40,45 @@ export function playFlip(
   {
     delay,
     duration,
-    matchWidth = false,
-    matchHeight = false,
-  }: { delay: number; duration: number; matchWidth?: boolean; matchHeight?: boolean },
+    anchor = node,
+    centered = false,
+    reveal = false,
+  }: { delay: number; duration: number; anchor?: Element; centered?: boolean; reveal?: boolean },
 ): Animation | null {
   if (duration <= 0) return null
   if (typeof node.animate !== "function") return null
 
-  const to = node.getBoundingClientRect()
-  const deltaX = from.left - to.left
+  const to = anchor.getBoundingClientRect()
+  const deltaX = centered ? from.left + from.width / 2 - (to.left + to.width / 2) : from.left - to.left
   const deltaY = from.top - to.top
-  const moved = Math.abs(deltaX) >= 0.5 || Math.abs(deltaY) >= 0.5
-  const resized = matchHeight && Math.abs(from.height - to.height) >= 0.5
-  if (!moved && !resized) return null
+  const hidden = reveal ? Math.max(0, to.height - from.height) : 0
+  if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5 && hidden < 0.5) return null
 
-  const start: Keyframe = { transform: `translate3d(${deltaX}px, ${deltaY}px, 0)` }
-  const end: Keyframe = { transform: "translate3d(0, 0, 0)" }
-  if (matchWidth) {
-    start.width = `${from.width}px`
-    end.width = `${to.width}px`
+  const start: Keyframe = { transform: `translate(${deltaX}px, ${deltaY}px)` }
+  const end: Keyframe = { transform: "none" }
+  if (centered && Math.abs(from.width - to.width) >= 1) {
+    start.opacity = 0.5
+    end.opacity = 1
   }
-  if (matchHeight) {
-    start.height = `${from.height}px`
-    end.height = `${to.height}px`
-    start.overflow = "hidden"
-    end.overflow = "hidden"
+  if (hidden >= 0.5) {
+    start.clipPath = `inset(0 0 ${hidden}px 0)`
+    end.clipPath = "inset(0 0 0 0)"
   }
 
   return node.animate([start, end], {
     delay,
     duration,
     easing: getComputedStyle(node).getPropertyValue("--fd-ease-estructura").trim() || "ease",
-    /* The delay is dead time, and dead time in a FLIP means the element is
-       already at its destination while the table says it has not moved yet.
-       `backwards` holds the first frame through the cue. */
+    /* Hold the first frame through the delay, or the node would sit at its
+       destination before it has started to move. */
     fill: "backwards",
   })
 }
 
 /**
- * Keep something mounted for a while after it stops being wanted.
- *
- * The frequent chips and the provider rail belong to the idle screen and 07 §1
- * gives them an exit; React's answer to "not idle any more" is to unmount them,
- * which is the one thing an exit cannot survive. This holds them for exactly
- * the length of their own row of the table and marks them `leaving` meanwhile.
- *
- * The window is read when the exit starts rather than on every render, because
- * that is the moment `prefers-reduced-motion` has to be honoured: under it the
- * tokens are 0ms and the node is dropped in the same tick.
+ * Keep something mounted for `duration()` after it stops being wanted, marked
+ * `leaving`, so it can play an exit. The duration is read when the exit starts,
+ * which is when reduced motion (0ms) has to be honoured.
  */
 export function useLeaveWindow(
   present: boolean,
@@ -123,18 +87,13 @@ export function useLeaveWindow(
   const [leaving, setLeaving] = useState(false)
   const [wasPresent, setWasPresent] = useState(present)
 
-  /* Adjusted while rendering rather than in an effect, which is the one way the
-     mark and the disappearance land in the same commit. From an effect the node
-     would spend a frame unmarked and blink out before it could fade. */
+  /* Adjusted while rendering so the mark and the disappearance land in the
+     same commit; from an effect the node would blink out for a frame. */
   if (wasPresent !== present) {
     setWasPresent(present)
     setLeaving(!present)
   }
 
-  /* `duration` is read here rather than captured earlier because this is the
-     moment `prefers-reduced-motion` has to be honoured: under it the tokens are
-     0ms and the node is dropped on the next tick. Callers pass one of the
-     module-level readers, so the identity is stable. */
   useEffect(() => {
     if (!leaving) return
     const timer = window.setTimeout(() => setLeaving(false), duration())
