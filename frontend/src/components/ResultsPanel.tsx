@@ -35,11 +35,8 @@ import { failureSentences, type SearchOutcome } from "@/lib/search-outcome"
 import { cn } from "@/lib/utils"
 import { SORT_MODES, type CanonicalOffer, type SearchJobResponse, type SortMode } from "@/types"
 
-/*
- * Plates 1b (active desktop), 2g (list states), 3b (all schedules), 4a
- * (skeletons) and 1i (migration grid): one header, one column header and one
- * list that grows as it is scrolled.
- */
+/* Plates 1b, 2g, 3b, 4a and 1i: one header, one column header and one list
+   that grows as it is scrolled. */
 
 /* A guard against a pathological viewport: a 1440-tall column fits 19 rows. */
 const RESULTS_COLUMN_ROWS_MAX = 20
@@ -339,12 +336,8 @@ const ResultsColumnHead = memo(function ResultsColumnHead({ sort, onSort }: { so
   )
 })
 
-/*
- * The arrow on the ordering column costs 15px, which «Duración» cannot pay out
- * of its 66px lane: it overflows 5.89px into the 12px gap that follows rather
- * than widen the lane, which would move the 824px detail-column threshold a
- * 1440 desk sits on (`hooks/useShellSize.ts`).
- */
+/* The sort arrow overflows «Duración»'s lane into the gap rather than widen
+   it, which would move the detail-column threshold (`hooks/useShellSize.ts`). */
 function SortableColumnHead({
   sort,
   onSort,
