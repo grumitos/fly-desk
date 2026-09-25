@@ -21,12 +21,9 @@ import { buildCommercialQuotation } from "../../../src/core/quotation"
 import { normalizeQuotationOfferSnapshot, normalizeQuotationRequestSnapshot } from "../../../src/http-quotation-snapshot"
 
 /*
- * Plate 1b (detail column), 8a (side sheet), 1f (full sheet), 1h (quotation
- * panel) and 3c (the quote error). One component in three containers; the
- * container queries in `components.css` decide the differences (02 §2).
- *
- * The quote error is resolved here rather than in the page notice (11 §4):
- * it is the one failure that happens with the work already done.
+ * Plates 1b, 8a, 1f, 1h and 3c: one component in three containers, told apart
+ * by container queries (02 §2). The quote error lives here, beside the button
+ * that asked for it, not in the page notice (11 §4).
  */
 
 const MIGRATION_PLAN_SESSION_KEY = "fly-desk:migration-plan:v1"
@@ -121,12 +118,8 @@ export function DetailPanel({
   const displayOffer = verifiedQuotation && verifiedQuotation.quoteKey === quoteKey
     ? verifiedQuotation.offer
     : offer
-  /*
-   * A quotation the provider has not confirmed is never shown and never copied
-   * (`docs/REDESIGN_CONTRACT.md`): a fare that turns out not to exist reaches a
-   * customer as a price the agency has to honour. So a failure never opens the
-   * quotation panel.
-   */
+  /* An unconfirmed quotation is never shown or copied: a fare that does not
+     exist reaches the customer as a price the agency must honour. */
   const quotationFailed = Boolean(quoteKey) && quotationFailureKey === quoteKey
   const activeQuotation = visibleQuotationKey === quoteKey && !quotationFailed
     ? verifiedQuotationState
@@ -200,10 +193,9 @@ export function DetailPanel({
       || loadingQuotationKey === quoteKey
     ) return
 
-    /* 05 §6: the clipboard write is claimed inside the gesture — Safari and
-       Firefox drop the permission when the user activation ends, and the
-       confirming round trip is longer than that — and fed once the fare is
-       confirmed. The confirmation only shows after a write reports back. */
+    /* 05 §6: Safari and Firefox drop clipboard access when the user activation
+       ends, which the confirming round trip outlasts, so the write is claimed
+       inside the gesture and fed once the fare is confirmed. */
     const deferredCopy = beginDeferredCopy()
     setQuotationFailureKey(null)
     setLoadingQuotationKey(quoteKey)
@@ -494,9 +486,7 @@ export function DetailPanel({
           </p>
         )}
         <div className="fd-detail-action-row">
-          {/* The switch rebuilds the text as the migration package. Its
-              accessible name contains the visible word (2.5.3). The id is per
-              instance: a closing sheet and the column can both be mounted. */}
+          {/* The accessible name contains the visible word (WCAG 2.5.3). */}
           <label htmlFor={migrationSwitchId} className="fd-detail-migration">
             <Switch
               id={migrationSwitchId}

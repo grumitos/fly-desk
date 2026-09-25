@@ -1,11 +1,8 @@
 import { wallClockMs } from "./flight-duration";
 import type { CanonicalOffer, PurchasePath, SortMode } from "./types";
 
-/*
- * The fields an order reads. Structural, so the browser's partial offer and the
- * backend's canonical one are ordered by the same comparator: the list the UI
- * re-sorts after filtering must come out in the order the backend served.
- */
+/* The fields an order reads, structural so the browser re-sorts its offers
+   with this same comparator and cannot disagree with the backend. */
 export interface RankableItinerary {
   direction?: string;
   durationMinutes?: number;
@@ -74,21 +71,15 @@ function compareOffersByDate(left: RankableOffer, right: RankableOffer): number 
 }
 
 /*
- * Departure order is the outbound's first departure: on a round trip the return
- * is weeks later and is not what the agent is choosing. It is compared as the
- * wall clock the card shows, because providers stamp offsets inconsistently (an
- * Agil time has none, a Click and Book Plus time always says -05:00), so the
- * instant would order the server and the browser differently. A departure that
- * cannot be read sinks to the end instead of leading as a 0 would.
+ * The outbound's first departure, as the wall clock the card shows: providers
+ * stamp offsets inconsistently (Agil none, Click and Book Plus -05:00), so the
+ * instant would order differently. An unreadable departure sinks to the end.
  */
 function offerDepartureTimestamp(offer: RankableOffer): number {
   return wallClockMs(outboundItinerary(offer)?.segments?.[0]?.departureAt) ?? Number.POSITIVE_INFINITY;
 }
 
-/*
- * Not subtraction: `Infinity - Infinity` is `NaN`, and a comparator that
- * returns `NaN` leaves the order to whatever the engine feels like.
- */
+/* Not subtraction: `Infinity - Infinity` is `NaN`, which breaks the sort. */
 function compareNumbers(left: number, right: number): number {
   if (left === right) {
     return 0;
@@ -137,11 +128,8 @@ export function enrichComparisonMetrics(offers: CanonicalOffer[]): CanonicalOffe
   }));
 }
 
-/*
- * Every order ends in a total key (price, then the offer id through
- * `compareOffersByDate`), because two providers answer in parallel and "arrival
- * order" differs between two runs of one search.
- */
+/* Every order ends in a total key (price, then dates and the offer id): two
+   providers answer in parallel, so arrival order differs between runs. */
 export function compareOffers(mode: SortMode): (left: RankableOffer, right: RankableOffer) => number {
   switch (mode) {
     case "cheapest":

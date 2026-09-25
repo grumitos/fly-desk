@@ -2,26 +2,15 @@ import { uniqueStrings } from "@/lib/api"
 import { providerDisplayName } from "@/lib/providers"
 import type { SearchJobResponse } from "@/types"
 
-/**
- * What actually happened to the providers this search was sent to.
- *
- * The backend has always said it — `providerDiagnostics[].status` per provider,
- * `providerPublicFailureMessage` as the reason, `error` on the job — and none of
- * it reached the screen. A search where both providers fell over came back
- * `completed` with zero offers and was drawn as «Sin resultados para esta
- * consulta», which asks the agent to widen a search that never ran.
- *
- * This is the one place that reads those three sources, so the notice, the
- * empty column and the still-searching copy cannot disagree about them.
+/*
+ * What happened to the providers a search was sent to, read in one place from
+ * `providerDiagnostics`, their public failure messages and the job's `error`,
+ * so the notice and the empty column cannot disagree.
  */
 type ProviderFailure = {
   providerId: string
   label: string
-  /**
-   * What the provider did, in one sentence and with no instruction attached.
-   * Each surface closes with its own single line, so a list of two failures
-   * does not end up repeating «Intenta nuevamente» once per provider.
-   */
+  /** One sentence with no instruction: each surface adds its own once. */
   sentence: string
   /** «Agilsmart no disponible» — for the one line of 04 §8. */
   short: string
@@ -36,11 +25,7 @@ export type SearchOutcome = {
   allFailed: boolean
   /** The job itself failed (admission, restart), independent of the providers. */
   jobFailed: boolean
-  /**
-   * The notice, as `SearchNotice` wants it: the first line is the headline and
-   * the rest become the detail after the middot. "" when there is nothing to
-   * report.
-   */
+  /** The headline, then the reasons on following lines; "" when there is nothing to say. */
   notice: string
 }
 
@@ -52,11 +37,8 @@ const EMPTY_OUTCOME: SearchOutcome = {
   notice: "",
 }
 
-/**
- * The reason in two or three words. `providerPublicFailureMessage` builds the
- * English from a fixed set of reason codes, so this reads the code back off it
- * rather than trying to shorten arbitrary prose.
- */
+/* `providerPublicFailureMessage` writes a fixed set of reasons; each is read
+   back as a short form and a sentence. */
 const REASONS: Array<readonly [RegExp, string, string]> = [
   [/Unable to extract Agil session from Chrome profiles/i, "sin sesión local", "no tiene una sesión local abierta"],
   [/authentication or session is unavailable/i, "sin sesión activa", "no tiene una sesión activa"],
@@ -90,9 +72,7 @@ export function describeSearchOutcome(results: SearchJobResponse | null | undefi
 
   const jobFailed = results.searchStatus === "failed"
     || results.searchMeta?.searchState === "search_failed"
-  /* «Everything failed» only counts once nobody is still out. A provider that
-     falls at 2s while the other is still running is a partial search, not a
-     dead one. */
+  /* Only once nobody is still out: one provider down while the other runs is partial. */
   const allFailed = failed.length > 0
     && waitingLabels.length === 0
     && diagnostics.every((entry) => entry.status === "failed")
@@ -117,16 +97,13 @@ function buildNotice({
   allFailed: boolean
   jobFailed: boolean
 }): string {
-  /* A job that died on admission has one reason and it is the whole story; the
-     per-provider lines below would only repeat it. */
+  /* A job that died on admission has one reason, and it is the whole story. */
   if (jobFailed && results.error) return results.error
 
   if (failed.length === 0) return ""
 
-  /* One headline and the reasons behind the middot — `SearchNotice` splits on
-     the newline, so this stays the single line 04 §8 asks for. The headline is
-     the part that changes the decision: «incompletos» means the list is real
-     but short, «ningún proveedor» means there is no list at all. */
+  /* 04 §8's single line: «incompletos» means a real but short list, «ningún
+     proveedor» means no list at all. */
   const headline = allFailed
     ? "No se pudo consultar a ningún proveedor"
     : "Resultados incompletos"

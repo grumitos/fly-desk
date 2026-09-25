@@ -131,11 +131,8 @@ export function buildResultCardModel(
   }
 }
 
-/*
- * The duration and only the duration: a schedule group never holds two offers
- * whose currency, amount and baggage differ, so every chip carries the price
- * the card already states.
- */
+/* The duration alone: a schedule group shares one price and baggage, which
+   the card already states. */
 export function buildAlternateScheduleModel(
   alternateOffer: CanonicalOffer,
   currentOffer: CanonicalOffer,
@@ -297,8 +294,7 @@ function carrierParts(offer: CanonicalOffer) {
   }
 }
 
-/* The operator's bare name; «Operado por» (desk) or «·» (phone) is added by
-   `result-card.css`, which chooses the disposition. */
+/* The operator's bare name; the card adds the words around it. */
 function operatingCopy(offer: CanonicalOffer, knownTokens: Set<string>): string {
   const operators = new Set<string>()
 
@@ -318,12 +314,9 @@ function operatingCopy(offer: CanonicalOffer, knownTokens: Set<string>): string 
   return operators.size > 0 ? Array.from(operators).join(" / ") : ""
 }
 
-/*
- * The visible label names what the fare includes («Mano y bodega», with the
- * filter's own word); absence is drawn by the dimmed icons and spoken in the
- * aria label. The pair is drawn whenever the provider said anything at all:
- * an explicit «no bodega» is evidence too.
- */
+/* The label names what the fare includes, in the filter's words; absence is
+   drawn by dimmed icons and spoken in the aria label. An explicit «no bodega»
+   is evidence too, so the pair shows whenever the provider said anything. */
 function baggageParts(offer: CanonicalOffer) {
   const carryOnIncluded = offer.baggage?.carryOnIncluded
   const checkedIncluded = offer.baggage?.checkedIncluded

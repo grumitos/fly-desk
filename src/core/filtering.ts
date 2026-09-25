@@ -1,11 +1,8 @@
 import type { SearchFilters } from "./types";
 import { maxStopsAcrossItineraries, totalDuration, type RankableItinerary, type RankableOffer } from "./ranking";
 
-/*
- * The fields a filter reads. Structural for the same reason as `RankableOffer`:
- * the browser filters the offers it holds with this implementation, so the
- * rail and the backend cannot disagree about what a constraint keeps.
- */
+/* The fields a filter reads, structural so the browser's rail keeps exactly
+   what the backend would. */
 interface FilterableSegment {
   departureAt?: string;
   arrivalAt?: string;

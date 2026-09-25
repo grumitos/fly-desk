@@ -287,10 +287,9 @@ export default function App() {
     launchSearch(request, { sort: sortMode, filters, airlines: selectedAirlines })
   }, [filters, launchSearch, selectedAirlines, sortMode])
 
-  /* A shared link runs its search, once and only when it is an `exact` search
-     the form itself would accept: sweeps cost many searches and wait for
-     «Buscar», `?job=` has results to read instead, and a reload of this tab's
-     own address bar is not a link. After the paint that shows the filled form. */
+  /* A shared link runs its search once, after the paint of the filled form,
+     and only an `exact` one: sweeps wait for «Buscar», `?job=` reads a job,
+     and reloading this tab's own address bar is not a link. */
   const launchSharedLink = useEffectEvent(() => {
     const shared = initialSharedSearch
     if (!shared || !isLaunchableSharedRequest(shared.request)) return
@@ -468,12 +467,8 @@ export default function App() {
     }
   }, [airlineOptions, handleFilterChange, toggleAirline])
 
-  /*
-   * Plate 2g's second exit: with the list empty, each active filter is lifted
-   * in turn and the one that recovers most offers is the one to blame. A tie,
-   * or nothing recovered, names none: naming the wrong one sends the agent to
-   * undo a filter that was not the problem.
-   */
+  /* Plate 2g: with the list empty, the filter whose removal recovers most
+     offers is named; a tie or no recovery names none rather than guess. */
   const emptyByFilters = useMemo<EmptyByFiltersCopy | undefined>(() => {
     if (filteredOffers.length > 0 || candidateOffers.length === 0) return undefined
 
@@ -788,7 +783,7 @@ export default function App() {
                 hiddenByFiltersCount={hiddenByFiltersCount}
                 onOpenFilters={openFiltersSheet}
                 onRemoveFilter={handleRemoveFilterChip}
-                /* The title bar is gone here once a search exists. */
+                /* On a phone the title bar hides once a search exists. */
                 onCopySearchConfig={handleCopySearchConfig}
                 copyDisabled={!hasSearchConfig}
                 copyConfirmed={configCopied}
@@ -1540,12 +1535,8 @@ function readSearchUrlWasWrittenHere(): boolean {
   }
 }
 
-/*
- * A link guarantees only a route, so it may arrive without the dates a search
- * needs or with dates the form refuses; those fill the form and wait. The floor
- * is the runtime's, so last month's link fills a route instead of paying for a
- * day that has gone; everything above it stays the form's to judge and explain.
- */
+/* A link that lacks dates, or carries dates before the window, fills the
+   form and waits; the form judges and explains everything else. */
 function isLaunchableSharedRequest(request: SearchRequest): boolean {
   if (request.searchMode !== "exact") return false
   if (!/^[A-Z]{3}$/.test(request.origin ?? "")) return false

@@ -19,16 +19,17 @@ function getInitialTheme(): Theme {
   return "light"
 }
 
-/* The cookie is what the server-rendered login page reads. */
+/* The cookie is what the server-rendered login page reads, so it is written
+   even where storage is blocked. */
 function syncTheme(theme: Theme) {
   document.documentElement.classList.toggle("dark", theme === "dark")
   document.documentElement.dataset.theme = theme
+  document.cookie = `flydesk_theme=${theme}; Path=/; Max-Age=31536000; SameSite=Lax`
 
   try {
     localStorage.setItem("flydesk-theme", theme)
-    document.cookie = `flydesk_theme=${theme}; Path=/; Max-Age=31536000; SameSite=Lax`
   } catch {
-    return
+    // The page falls back to the light theme on the next load.
   }
 }
 

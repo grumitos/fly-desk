@@ -221,11 +221,7 @@ export const SearchShell = memo(function SearchShell({
 
   const handleDepartureDateChange = (nextDate: string) => {
     const clampedDate = clampIsoDate(nextDate, SEARCH_DATE_POLICY.minSearchDate, SEARCH_DATE_POLICY.maxSearchDate)
-    /* 11 §2.2 · «el aspa borra **las dos** fechas». Emptying the departure is a
-       gesture of the ficha, not an edge case, and there is no ceiling to derive
-       from a date that no longer exists: `addDays("")` builds an Invalid Date
-       and `toISOString()` throws, which aborted the update and left the control
-       showing the dates the agent had just asked to remove. */
+    /* 11 §2.2: the cross empties both dates, and an empty departure has no stay ceiling. */
     const maxReturnDate = mode === "exact" && trip === "round-trip" && isIsoDate(clampedDate)
       ? minIsoDate(SEARCH_DATE_POLICY.maxSearchDate, addDays(clampedDate, MAX_STAY_NIGHTS))
       : SEARCH_DATE_POLICY.maxSearchDate
@@ -268,21 +264,15 @@ export const SearchShell = memo(function SearchShell({
     setTouched((current) => ({ ...current, migrationMonths: true }))
   }
 
-  /* Both halves of the merged control arrive together, so clamping the return
-     against the new departure happens in one place instead of two. */
+  /* Both halves arrive together, so the return is clamped against the new departure here. */
   const handleDateRangeChange = ({ startDate, endDate }: { startDate: string; endDate: string }) => {
     handleDepartureDateChange(startDate)
     setReturnDate(endDate ? clampIsoDate(endDate, SEARCH_DATE_POLICY.minSearchDate, SEARCH_DATE_POLICY.maxSearchDate) : "")
     setTouched((current) => ({ ...current, departureDate: true, returnDate: Boolean(endDate) || current.returnDate }))
   }
 
-  /*
-   * Movement 10 (07 §4): what crosses is the *content* of the two fields, in
-   * 140ms — the icon does not turn, and 07 §5 names it among the things that
-   * never move. The token bumps on every swap so the two values re-enter with
-   * the cross-fade instead of being replaced between two frames; without it the
-   * only feedback for the gesture was that the words were suddenly elsewhere.
-   */
+  /* Movement 10 (07 §4): the contents of the two fields cross in 140ms, and
+     the token makes both values re-enter on every swap. */
   const swapRoute = () => {
     setOriginCode(destCode)
     setDestCode(originCode)
@@ -293,12 +283,6 @@ export const SearchShell = memo(function SearchShell({
     setSwapToken((current) => current + 1)
   }
 
-  /*
-   * The frequent-station chips are a standing shortcut, not a one-shot prompt.
-   * Using one used to fade its whole row away, so the second field lost the
-   * shortcut the moment the first was filled, and re-picking meant typing. They
-   * stay put now; the idle screen is the only place they appear at all.
-   */
   const applyOriginUsageSuggestion = async (code: string) => {
     setOriginCode(code)
     origin.setQuery(code)
@@ -393,9 +377,8 @@ export const SearchShell = memo(function SearchShell({
   const draftOrigin = normalizeLocationCandidate(originCode || origin.query)
   const draftDestination = normalizeLocationCandidate(destCode || destination.query)
 
-  /* The shell reads the draft when it copies the configuration; only whether
-     one exists is lifted, so typing never re-renders the workspace. A form
-     without validation errors has two valid stations. */
+  /* The shell reads the draft to copy it; only whether one exists is lifted,
+     so typing never re-renders the workspace. */
   useImperativeHandle(draftRef, () => ({
     read: () => (hasValidationError ? null : buildRequest(draftOrigin, draftDestination)),
   }), [buildRequest, draftDestination, draftOrigin, hasValidationError])
@@ -520,31 +503,16 @@ export const SearchShell = memo(function SearchShell({
         .join(" – ")
   const modeLabel = mode === "migration" ? "Migratorio" : mode === "flexible" ? "Flexible" : "Exacto"
   const mobileSummary = (
-    /*
-     * Plate 1d — the search collapsed to one line. The mode is no longer a
-     * control here: it is read as the last word of the summary, and changing
-     * it means going back in to edit (02 §4). The pencil is a 44px target
-     * because it is the only way back out.
-     */
+    /* Plate 1d: the search collapsed to a summary; the 44px pencil is the only
+       way back to editing, the mode included (02 §4). */
     <button
       type="button"
       className="fd-mobile-search-summary fd-focus-ring"
       aria-label="Editar búsqueda"
       onClick={() => onEditingChange(true)}
     >
-      {/*
-        * Two blocks, not one line. `Movil.dc.html` says why in as many words:
-        * «Los IATAs miden 98 px y el renglón tiene 264: el resto del ancho
-        * estaba vacío mientras la línea de abajo se cortaba en “Exa…”.
-        * Pasajeros y modalidad suben a ese hueco y las fechas se quedan
-        * solas.» Measured at 360, the single line asked for 304px of a 262px
-        * box and lost the mode to the ellipsis on every search.
-        *
-        * The date and the count are figures and take the same alphabet as the
-        * form this bar opens when it is touched; the mode and the noun are
-        * names and stay in sans. Each mixed value on one line: breaking the
-        * JSX collapses the literal space and glues the figure to the noun.
-        */}
+      {/* Two blocks: one line cannot hold route, dates, count and mode at 360px.
+          Each mixed value stays on one JSX line, where the space survives. */}
       <span className="fd-mobile-search-lead">
         <span className="fd-mobile-search-block">
           <span className="fd-mobile-search-route">
@@ -575,9 +543,7 @@ export const SearchShell = memo(function SearchShell({
     )
   }
 
-  /* «El resumen se funde» while the block grows underneath it (2h). It has to
-     leave the flow to do that — two forms stacked would double the height the
-     growth is animating towards — so it fades on top of the one replacing it. */
+  /* «El resumen se funde» (2h): out of the flow, over the form that replaces it. */
   const leavingSummary = mobileSummaryExit.leaving ? (
     <section
       className="fd-mobile-search-summary-shell fd-motion-exit"
@@ -610,9 +576,7 @@ export const SearchShell = memo(function SearchShell({
     >
       <FieldLabel>Pasajeros</FieldLabel>
       <AppIcon name="passengers" className="text-muted-foreground" />
-      {/* A mixed value splits: the count is a figure and goes to mono, the noun
-          beside it is a word and stays in sans. One line on purpose — JSX drops
-          the literal space between them if the element is broken across two. */}
+      {/* Figure in mono, noun in sans, on one JSX line so the space survives. */}
       <span className={SEARCH_FIELD_VALUE_CLASS}>
         <span className="fd-mono">{passengerTotal}</span> {plural(passengerTotal, "pasajero")}
       </span>
@@ -646,19 +610,14 @@ export const SearchShell = memo(function SearchShell({
         <form onSubmit={handleSubmit}>
           <div
             className="fd-search-grid"
-            /* 11 §2.4 · «Editar la búsqueda (escritorio: clic en un campo)».
-               Capture, because the focus lands on an input three components
-               down and this only needs to know that it happened. The CTA is in
-               the same grid and is not a field: pressing Buscar is the opposite
-               gesture, and treating it as editing would undo the sequence it
-               just started. */
+            /* 11 §2.4: focusing a field reopens the search for editing; the
+               CTA is the opposite gesture. */
             onFocusCapture={(event) => {
               if (!workspaceActive || editing) return
               const target = event.target as HTMLElement
               if (target.closest("[data-fd-search-submit]")) return
-              /* Opening a menu is not editing the search: Pasajeros is a
-                 popover, not a box you retype, and its focus must not send the
-                 segments back down to the form. */
+              /* A menu is not an edit: the passenger popover leaves the
+                 segments in the title bar. */
               if (target.closest("[data-fd-search-menu]")) return
               onEditingChange(true)
             }}
@@ -816,9 +775,8 @@ export const SearchShell = memo(function SearchShell({
                 size="partial"
                 className="fd-passenger-sheet"
                 footer={(
-                  /* Plate 2d closes the sheet with one 52px primary. It confirms
-                     nothing new — the counters already applied — it just gives
-                     the thumb a target that is not the 44px close. */
+                  /* Plate 2d: a primary that confirms nothing new, a thumb
+                     target that is not the close. */
                   <button
                     type="button"
                     className="fd-sheet-action fd-focus-ring"
@@ -836,14 +794,10 @@ export const SearchShell = memo(function SearchShell({
             <Popover open={paxOpen} onOpenChange={handlePaxOpenChange}>
               <Field className={cn("relative", reserveIdleHelperSpace && "fd-search-field-shell")}>
                 <PopoverTrigger asChild>{passengerButton}</PopoverTrigger>
-                {/* Radix moves focus into the content when the popover opens,
-                    and that focus bubbles to the grid below. Without this the
-                    grid read it as «clic en un campo» and handed the mode and
-                    trip segments back to the form, so the pills dropped 46px
-                    the moment the agent reached for the passenger count. */}
+                {/* Radix focuses the content on open and the focus bubbles
+                    to the grid: marked as a menu, it is not read as an edit. */}
                 <PopoverContent data-fd-search-menu="" align="end" sideOffset={6} className="fd-pax-popover">
-                  {/* The total against the ceiling, so the agent sees how much room
-                      is left before a button goes dim rather than after. */}
+                  {/* The total against the ceiling, before a button dims. */}
                   <div className="fd-pax-popover-head">
                     <span className="fd-type-micro">Pasajeros</span>
                     <span className="fd-count">{passengerTotal} de {MAX_PASSENGERS}</span>
@@ -893,9 +847,7 @@ export const SearchShell = memo(function SearchShell({
           </ShortcutTooltip>
           </div>
 
-          {/* 03 §4 · one row for both fields, pressed in order. It is the same
-              strip as the desk's — the phone only merges the two lists and puts
-              a title on them; the geometry comes from the armazón. */}
+          {/* 03 §4: one row for both fields, pressed in order. */}
           {mobilePresentation && shouldShowUsageSuggestions && mobileQuickSuggestions.length > 0 && (
             <LocationUsageSuggestionRow
               fieldId="mobile-route"
@@ -906,23 +858,9 @@ export const SearchShell = memo(function SearchShell({
             />
           )}
 
-          {/* Plate 1a: the emptiness of the idle state is resolved with real
-              material, not filler. The policy the agent needs *before* typing —
-              the window, the stay ceiling, the passenger ceiling — instead of
-              discovering each one by being rejected.
-
-              Keyed to the idle screen and not to the chips: 03 §8 puts these
-              two lines «al pie del reposo», the same clause that keeps the
-              provider rail there. Going back to edit (11 §2.4) brings the chips
-              back because they are part of the form; it does not bring back the
-              foot of a screen that is no longer on show.
-
-              The foot is a slot the stage owns, below the lower spacer — on a
-              desk as much as on a phone. Rendered here, in the form, the lines
-              were not at the foot of anything: they sat between the fields and
-              the notice the fields had just produced, so an error about a date
-              was announced underneath a paragraph about which dates are
-              allowed. */}
+          {/* Plate 1a and 03 §8: the policy the agent needs before typing,
+              in a slot at the foot of the idle screen, away from the
+              errors the fields produce. */}
           {idle && policyFootTarget
             ? createPortal(
                 mobilePresentation ? (
@@ -980,16 +918,8 @@ function SearchModeControls({
   const tripControlsDisabled = mode === "migration"
   const displayedTrip: "round-trip" | "one-way" = tripControlsDisabled ? "one-way" : trip
 
-  /*
-   * One component, two mounting points (02 §4): the title bar once a search is
-   * running, the form while it is at rest. In armazón C the title-bar slot is
-   * empty and these live in the form, stacked full width at the touch minimum —
-   * which is why the shape comes from a container query and not from a prop.
-   *
-   * Changing mounting point is exactly what makes 07 §1 call this a FLIP: the
-   * element is rebuilt somewhere else, so the stage measures it here before the
-   * move and plays the difference away. Hence the ref reaching in from `App`.
-   */
+  /* Two mounting points (02 §4): the title bar while a search exists, the form
+     at rest. The move is the FLIP of 07 §1, measured by the stage through the ref. */
   return (
     <div ref={ref} className="fd-trip-mode-controls" data-placement={topbar ? "topbar" : "form"}>
       <SegmentedControl
@@ -1105,11 +1035,7 @@ function LocationField({
     ...frequentSuggestions.map((code) => ({ code, heading: "Frecuentes" as const })),
   ], [frequentSuggestions, recentSuggestions])
   const presentationOpen = mobilePresentation ? mobileSheetOpen : open
-  /* 11 §2.1 puts the changeover at two letters, not at one: with a single
-     letter «nada cambia en la lista, se sigue viendo Recientes». Below the
-     threshold the field has not narrowed anything down, and swapping the
-     agent's own history for one stray match was the panel jumping under their
-     hands on the first keystroke. */
+  /* 11 §2.1: «Recientes» becomes «Coincidencias» at two letters. */
   const shouldShowUsagePanel = presentationOpen
     && value.trim().length < MIN_MATCH_QUERY
     && Boolean(onQuickSuggestionSelect)
@@ -1135,9 +1061,8 @@ function LocationField({
       void onBlur()
       return
     }
-    /* 11 §7: in the searcher `Esc` clears the focused field when it holds text.
-       Only then — on an empty field it belongs to whatever is open above, and
-       swallowing it there would strand a popover the agent meant to close. */
+    /* 11 §7: `Esc` clears a field that holds text; on an empty one it belongs
+       to whatever is open above. */
     if (event.key === "Escape" && value.length > 0) {
       event.preventDefault()
       event.stopPropagation()
@@ -1335,14 +1260,10 @@ function LocationField({
           autoComplete="off"
           name={fieldId}
           role="combobox"
-          /* The target of `/` (11 §7). An attribute rather than a ref chain:
-             the field is three components deep and the shell only needs to
-             find it, not to own it. */
+          /* The target of `/` (11 §7). */
           data-fd-location-field={label === "Origen" ? "origin" : "destination"}
-          /* Alternating names because a CSS animation does not replay when only
-             an attribute changes; the parity is what makes the swap visible
-             every time rather than only the first. Absent until the agent has
-             actually swapped, so the field does not fade in on page load. */
+          /* The parity replays the animation on every swap; absent until
+             the first, so nothing fades in on load. */
           data-swap-parity={swapToken > 0 ? swapToken % 2 : undefined}
           value={value}
           onChange={(event) => {
@@ -1355,8 +1276,7 @@ function LocationField({
             onFocus()
           }}
           onBlur={() => {
-            // Mobile moves focus from this field into its full-screen sheet.
-            // Resolve only when that sheet itself closes, not during the handoff.
+            // The phone hands the focus to its sheet, which resolves on close.
             if (mobilePresentation) return
             void onBlur()
           }}
@@ -1364,12 +1284,8 @@ function LocationField({
           placeholder={placeholder}
           className={`${SEARCH_FIELD_VALUE_CLASS} w-auto rounded-none border-0 bg-transparent p-0 text-foreground shadow-none outline-none focus-visible:border-0 focus-visible:ring-0`}
         />
-        {/* 11 §2.1 gives it two rows: it «aparece» once the field holds a query,
-            and pressing it «vacía el campo y **reabre** el panel con Recientes»
-            with the focus still in the field. The reopening is not a second
-            action — an empty field is what the usage panel shows on. The
-            mousedown is swallowed so the blur never happens: losing focus here
-            would resolve the query being erased. */}
+        {/* 11 §2.1: clearing keeps the focus and reopens «Recientes»; the
+            mousedown is swallowed so no blur resolves the erased query. */}
         {value.length > 0 && (
           <button
             type="button"
@@ -1634,10 +1550,7 @@ function FlexibleOptionsBar({
           <AppIcon name="minus" />
         </Button>
         <ButtonGroupText className={cn("fd-stay-value px-1 text-center transition-colors duration-[var(--fd-dur-tacto)] ease-[var(--fd-ease-tacto)]", stayControlsDisabled ? "text-muted-foreground" : "text-foreground")}>
-          {/* Same split as Pasajeros. The wrapper is not decoration: this slot is
-              an `inline-flex`, so a bare figure and a bare noun would be two flex
-              items and flex drops the whitespace between them — «7noches». One
-              child keeps them in a single inline run, space and all. */}
+          {/* One inline run: as two flex items the figure and noun lose their space. */}
           <span>
             <span className="fd-mono fd-stay-figure">{stayNights}</span> {plural(stayNights, "noche")}
           </span>
@@ -1658,14 +1571,7 @@ function FlexibleOptionsBar({
   )
 }
 
-/*
- * Plates 1g and 2d: one row, two surfaces. The popover gives it the 40px touch
- * row with 32px steppers and a mono 15 figure; inside the sheet the same row
- * grows to 64 with 40px steppers and a mono 17 figure. Both 40s were written as
- * 44 here until the catalogue lowered the touch floor and this text did not
- * follow. That growth is CSS on the surface, not a prop — a row that reads the
- * viewport to pick its own height is the platform duplication rule 10 forbids.
- */
+/* Plates 1g and 2d: one row, two surfaces; the sheet's larger row is CSS. */
 function PaxRow({
   label,
   detail,

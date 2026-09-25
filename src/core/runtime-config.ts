@@ -1,9 +1,5 @@
-/*
- * The public runtime contract `src/server.ts` injects as
- * `window.__FLYDESK_RUNTIME__`, with the defaults both sides fall back to.
- * Free of `process` so the browser can import it; `src/search-date-policy.ts`
- * builds the values.
- */
+/* The public runtime contract `src/server.ts` injects as
+   `window.__FLYDESK_RUNTIME__`, free of `process` so the browser imports it. */
 
 export const DEFAULT_SEARCH_MAX_FUTURE_DAYS = 365;
 export const DEFAULT_MIGRATION_CONCURRENT_MONTHS = 2;

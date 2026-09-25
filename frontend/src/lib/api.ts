@@ -914,8 +914,6 @@ function normalizeSearchJob(data: BackendSearchJobResponse): SearchJobResponse {
       ? { ...job.searchMeta, warnings: rawMetaWarnings.map(translateApiMessage) }
       : job.searchMeta,
     warnings: rawWarnings.map(translateApiMessage),
-    /* A failed job carries its reason here, translated like every other
-       backend string. */
     error: job.error ? translateApiMessage(String(job.error)) : undefined,
     request,
     allOffers,

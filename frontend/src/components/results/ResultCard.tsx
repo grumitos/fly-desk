@@ -31,7 +31,6 @@ interface ResultCardProps {
   showPerPerson?: boolean
   onSelect: (offerId: string) => void
   alternates?: AlternateSchedule[]
-  alternateCount?: number
   onSelectAlternate?: (offerId: string) => void
   onShowAllAlternates?: () => void
   /** True once a chip has been used and before the fare is quoted or dropped. */
@@ -45,7 +44,6 @@ export const ResultCard = memo(function ResultCard({
   showPerPerson = true,
   onSelect,
   alternates = [],
-  alternateCount = 0,
   onSelectAlternate,
   onShowAllAlternates,
   scheduleChanged = false,
@@ -53,6 +51,7 @@ export const ResultCard = memo(function ResultCard({
   const model = buildResultCardModel(offer, passengerCount, { showPerPerson })
   const stripRef = useRef<HTMLSpanElement>(null)
   const fittingAlternates = useChipsThatFit(stripRef, alternates.length)
+  const alternateCount = alternates.length
   const hiddenAlternateCount = Math.max(0, alternateCount - fittingAlternates)
   const cardLabel = [
     selected ? "Oferta seleccionada" : "Seleccionar oferta",

@@ -960,7 +960,6 @@ const GroupCard = memo(function GroupCard({
         showPerPerson={showPerPerson}
         onSelect={onSelectOffer}
         alternates={alternates}
-        alternateCount={alternates.length}
         onSelectAlternate={chooseSchedule}
         onShowAllAlternates={toggleExpanded}
         scheduleChanged={Boolean(chosenOfferId) && chosenOfferId !== defaultOffer.id}

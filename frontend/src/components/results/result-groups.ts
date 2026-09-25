@@ -90,15 +90,10 @@ export function buildResultListItems(
   })
 }
 
-/**
- * The same flight arriving twice — a `truncated` group, or one schedule quoted
- * under two offer ids — joins the group that already shows it, so the list does
- * not repeat a schedule the agent just read in the group above.
- *
- * Identity is the canonical flight signature plus the fare, the bar
- * `offer-schedule-groups.ts::groupKeyForOffer` groups on: two prices on one
- * schedule are two things to sell and stay two cards. It reads the filtered
- * offers, so a member the filters removed cannot come back this way.
+/*
+ * A flight arriving twice — a truncated group, or one schedule under two offer
+ * ids — joins the group that shows it. Identity is the flight plus the fare, as
+ * `offer-schedule-groups.ts` groups: two prices are two cards.
  */
 function absorbOffersAlreadyInsideAGroup(
   offers: CanonicalOffer[],
@@ -130,12 +125,9 @@ function absorbOffersAlreadyInsideAGroup(
   }
 }
 
-/*
- * `buildOfferSignature`'s field list and order plus `commercialTermsSignature`'s,
- * transcribed because the core functions take the full core offer. No
- * itinerary or no price means no signature: a missed fold costs a repeated
- * card, a wrong one hides a fare.
- */
+/* `buildOfferSignature` and `commercialTermsSignature`, transcribed for the
+   browser's offer. No itinerary or price means no signature: a missed fold
+   repeats a card, a wrong one would hide a fare. */
 function offerCanonicalSignature(offer: CanonicalOffer): string | null {
   const itineraries = offer.itineraries ?? []
   const amount = offer.price?.total?.amount
@@ -239,8 +231,7 @@ function orderVisibleGroupOffers(offers: CanonicalOffer[]): CanonicalOffer[] {
   return [primary.offer, ...variants.map((entry) => entry.offer)]
 }
 
-/* Two offers that differ only in a total the card no longer draws are the same
-   choice here. */
+/* Offers that differ only in what the card does not draw are one choice. */
 function uniqueVisibleGroupOffers(ranked: RankedGroupOffer[]): RankedGroupOffer[] {
   const seen = new Set<string>()
   return ranked.filter((entry) => {

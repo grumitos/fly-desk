@@ -1,14 +1,7 @@
 /*
- * Which modal surface owns `Esc`.
- *
- * 01 §8: «`Esc` cierra la hoja o el panel **más reciente**». Every modal
- * surface listens on `document`, so without somewhere to agree on order a
- * single keypress reached the quotation panel *and* the detail sheet under it
- * and closed both — the agent lost the offer they were quoting.
- *
- * A stack rather than a counter: sheets and panels do not always close in the
- * order they opened, and `lastIndexOf` lets a layer leave from the middle
- * without renumbering the ones above it.
+ * Which modal surface owns `Esc` (01 §8: the most recent one). Every surface
+ * listens on `document`, so they agree on order here; a stack, because layers
+ * do not always close in the order they opened.
  */
 const stack: symbol[] = []
 
@@ -28,11 +21,7 @@ export function isTopOverlay(token: symbol): boolean {
   return stack.length > 0 && stack[stack.length - 1] === token
 }
 
-/**
- * Whether anything modal is open. The shell's keyboard layer stands down when
- * it is: a popover or a sheet traps focus and answers its own keys (11 §7,
- * column «en un emergente / hoja»).
- */
+/** Whether anything modal is open; the shell's keyboard layer then stands down (11 §7). */
 export function hasOpenOverlay(): boolean {
   return stack.length > 0
 }
