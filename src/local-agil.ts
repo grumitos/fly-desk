@@ -2959,13 +2959,13 @@ async function searchGroupsWithGds(
 }
 
 /*
- * The service log's account of a GDS left out of a search: the request, the
- * public reason, how long the attempt took and the error chain behind it,
- * none of which the warning the desk receives carries.
+ * The service log's account of a part left out of a search (a GDS, or a
+ * matrix cell): the request, the public reason, how long the attempt took and
+ * the error chain behind it, none of which the desk receives.
  */
-function logAgilGdsOmission(request: SearchRequest, gds: number, error: unknown, startedAt: number): void {
+function logAgilOmission(part: string, request: SearchRequest, error: unknown, startedAt: number): void {
   console.warn(
-    `Agil GDS ${gds} omitted: ${requestSummary(request)} `
+    `Agil ${part} omitted: ${requestSummary(request)} `
     + `reason=${providerDegradedReasonFromError(error)} `
     + `afterMs=${Math.round(performance.now() - startedAt)} `
     + `detail=${describeErrorChain(error)}`,
@@ -3012,7 +3012,7 @@ async function searchGroupsAcrossGds(
           throw error;
         }
 
-        logAgilGdsOmission(request, gds, error, startedAt);
+        logAgilOmission(`GDS ${gds}`, request, error, startedAt);
         return {
           gds,
           groups: [],
@@ -3198,7 +3198,7 @@ export async function resolveLocalAgilExactProgressive(
           stopRequested = true;
         }
       } catch (error) {
-        logAgilGdsOmission(request, gds, error, startedAt);
+        logAgilOmission(`GDS ${gds}`, request, error, startedAt);
         partial = true;
         const warning = error instanceof Error
           ? `Agil GDS ${gds} omitted: ${error.message}`
@@ -3382,6 +3382,7 @@ export async function resolveLocalAgilMatrixProgressive(
   const prioritizedCells = prioritizeMatrixLoadingCells(draft.cells, draft.axes, request.tripType);
 
   const resolvedLoadingCells = await mapConcurrent(prioritizedCells, AGIL_CONCURRENCY.matrixCell, async (cell) => {
+    const startedAt = performance.now();
     try {
       const quote = await searchCellPrice(session, cell.derivedRequest);
       const nextCell = quote
@@ -3399,6 +3400,7 @@ export async function resolveLocalAgilMatrixProgressive(
       }
       return nextCell;
     } catch (error) {
+      logAgilOmission("matrix cell", cell.derivedRequest, error, startedAt);
       partial = true;
       const nextCell = {
         ...cell,
