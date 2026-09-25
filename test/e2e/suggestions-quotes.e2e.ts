@@ -36,9 +36,15 @@ suite.test("a city and its airports come back from both providers, typed by name
   const { fake } = scope;
   const { page } = await scope.signedInPage("/");
 
-  await searchForm.location(page, "Origen").fill("buenos");
+  /* The field names its list of suggestions while there is one, and only then. */
+  const originField = searchForm.location(page, "Origen");
+  assert.equal(await originField.getAttribute("aria-controls"), null, "a closed field names a list of suggestions");
+  await originField.fill("buenos");
   await searchForm.suggestion(page, "BUE").waitFor();
   await searchForm.suggestion(page, "EZE").waitFor();
+  const controls = await originField.getAttribute("aria-controls");
+  assert.ok(controls, "an open field names no list of suggestions");
+  assert.equal(await page.getByRole("listbox").getAttribute("id"), controls, "the field names a list that is not there");
   const asked = fake.requests((request) => request.op === "agil.locations" || request.op === "cbplus.locations");
   assert.deepEqual([...new Set(asked.map((request) => request.op))].sort(), ["agil.locations", "cbplus.locations"]);
 

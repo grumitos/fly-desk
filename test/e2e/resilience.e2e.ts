@@ -13,7 +13,7 @@ import { runSearch, waitForResults } from "./support/flows.ts";
 import { defineSuite, type TestScope, type TrackedContext } from "./support/harness.ts";
 import type { OfferSpec } from "./support/fixtures.ts";
 import { day, eventually, providerSearches, sleep } from "./support/scenario.ts";
-import { notice, readCards, results, searchForm, searchLink } from "./support/ui.ts";
+import { announcement, notice, readCards, results, searchForm, searchLink } from "./support/ui.ts";
 
 /*
  * What the desk does when providers fail and when the agent changes their
@@ -207,6 +207,7 @@ suite.test("with both providers down the desk says nothing was searched instead 
   assert.match(line, /Click and Book Plus/);
   assert.equal(await results.cards(page).count(), 0);
   assert.equal(await results.emptyTitle(page, "Sin resultados para esta consulta").count(), 0, "a failed search was drawn as an empty route");
+  assert.equal(await announcement.status(page, "Sin vuelos para esta búsqueda").count(), 0, "a failed search was read out as an empty route");
 
   const route = { origin: "LIM", destination: "SCL", departureDate: departure };
   assert.ok(providerSearches(fake, route).length > 0);

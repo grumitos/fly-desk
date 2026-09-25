@@ -27,6 +27,7 @@ import {
   weekday,
 } from "./support/scenario.ts";
 import {
+  announcement,
   detail,
   drawnOpacity,
   filters,
@@ -132,21 +133,24 @@ suite.test("a shared round-trip link survives the sign-in gate and carries the s
   assert.ok(agilCalls.every((request) => request.query?.origin === "LIM" && request.query.returnDate === returning));
   assert.equal(providerSearches(fake, route).filter((request) => request.op === "cbplus.search").length, 1);
 
-  /* Merged: both providers in one list, cheapest first. */
+  /* Merged: both providers in one list, cheapest first, and read out. */
   const merged = await readCards(page);
   assert.deepEqual([...new Set(merged.map((card) => card.provider))].sort(), ["Agilsmart", "Click and Book Plus"]);
   assert.deepEqual(merged.map((card) => card.amount), [455, 498, 540, 612, 689, 700]);
+  await announcement.status(page, "6 vuelos").waitFor({ timeout: 5_000 });
 
-  /* An airline, then stops: the count and the rows move together. */
+  /* An airline, then stops: the count, the rows and what is read out move together. */
   await filters.airline(page, "LATAM").click();
   await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: 2, total: 6 }));
   assert.match(await results.headerLine(page).innerText(), /4 vuelos ocultos por filtros/);
+  await announcement.status(page, "2 vuelos de 6").waitFor({ timeout: 5_000 });
   let rows = await readCards(page);
   assert.deepEqual(rows.map((card) => card.airline), ["LATAM", "LATAM"]);
   assert.deepEqual(rows.map((card) => card.provider).sort(), ["Agilsmart", "Click and Book Plus"]);
 
   await filters.stops(page, "Directo").click();
   await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: 1, total: 6 }));
+  await announcement.status(page, "1 vuelo de 6").waitFor({ timeout: 5_000 });
   rows = await readCards(page);
   assert.equal(rows.length, 1);
   assert.deepEqual(rows[0]!.legs.map((leg) => leg.stops), ["Directo", "Directo"]);
