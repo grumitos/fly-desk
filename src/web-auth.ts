@@ -134,8 +134,11 @@ export function verifyWebPassword(password: string): PasswordVerificationResult 
   return { ok: verifyScryptPassword(password, resolveWebPasswordHash()!) };
 }
 
+/* Read here rather than through `env.ts`: the end-to-end harness imports this
+   module under Node, which resolves only relative imports that name their
+   extension. A blank value is unset, as it is there. */
 export function resolveWebSessionTtlSeconds(): number {
-  const configured = Number(process.env.FLY_DESK_WEB_SESSION_TTL_SECONDS ?? DEFAULT_WEB_SESSION_TTL_SECONDS);
+  const configured = Number(process.env.FLY_DESK_WEB_SESSION_TTL_SECONDS?.trim() || DEFAULT_WEB_SESSION_TTL_SECONDS);
   if (!Number.isFinite(configured)) {
     return DEFAULT_WEB_SESSION_TTL_SECONDS;
   }
@@ -148,7 +151,7 @@ export function resolveWebSessionTtlSeconds(): number {
 
 export function resolveWebSessionMaxLifetimeSeconds(): number {
   const configured = Number(
-    process.env.FLY_DESK_WEB_SESSION_MAX_LIFETIME_SECONDS ?? DEFAULT_WEB_SESSION_MAX_LIFETIME_SECONDS,
+    process.env.FLY_DESK_WEB_SESSION_MAX_LIFETIME_SECONDS?.trim() || DEFAULT_WEB_SESSION_MAX_LIFETIME_SECONDS,
   );
   if (!Number.isFinite(configured)) {
     return DEFAULT_WEB_SESSION_MAX_LIFETIME_SECONDS;

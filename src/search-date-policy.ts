@@ -6,6 +6,7 @@ import {
   type PublicRuntimeConfig,
   type SearchDatePolicy,
 } from "./core/runtime-config";
+import { envNumber } from "./env";
 import {
   MAX_FLEXIBLE_STAY_NIGHTS,
   MAX_LAP_INFANTS_PER_ADULT,
@@ -46,12 +47,7 @@ function addDaysIso(value: string, days: number): string {
 }
 
 function resolveSearchMaxFutureDays(): number {
-  const raw = Number(process.env.SEARCH_MAX_FUTURE_DAYS ?? DEFAULT_SEARCH_MAX_FUTURE_DAYS);
-  if (!Number.isFinite(raw)) {
-    return DEFAULT_SEARCH_MAX_FUTURE_DAYS;
-  }
-
-  return Math.max(0, Math.trunc(raw));
+  return Math.trunc(envNumber("SEARCH_MAX_FUTURE_DAYS", DEFAULT_SEARCH_MAX_FUTURE_DAYS, { min: 0 }));
 }
 
 function resolveSearchTodayIso(now = new Date()): string {
@@ -75,12 +71,11 @@ export function getSearchDatePolicy(now = new Date()): SearchDatePolicy {
 }
 
 function resolveMigrationConcurrentMonths(): number {
-  const raw = Number(process.env.FLY_DESK_MIGRATION_CONCURRENT_MONTHS ?? DEFAULT_MIGRATION_CONCURRENT_MONTHS);
-  if (!Number.isFinite(raw)) {
-    return DEFAULT_MIGRATION_CONCURRENT_MONTHS;
-  }
-
-  return Math.min(MAX_MIGRATION_CONCURRENT_MONTHS, Math.max(1, Math.trunc(raw)));
+  return Math.trunc(envNumber(
+    "FLY_DESK_MIGRATION_CONCURRENT_MONTHS",
+    DEFAULT_MIGRATION_CONCURRENT_MONTHS,
+    { min: 1, max: MAX_MIGRATION_CONCURRENT_MONTHS },
+  ));
 }
 
 export function validateSearchDateInPolicy(

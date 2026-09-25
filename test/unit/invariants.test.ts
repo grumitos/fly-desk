@@ -6,10 +6,16 @@ import { join } from "node:path";
 import { resolveItineraryDurationMinutes, zonedMinutesBetween } from "../../src/core/flight-duration";
 import type { CanonicalOffer, SearchRequest } from "../../src/core/types";
 import { envFlag, envNumber } from "../../src/env";
-import { deskIsoDate } from "../../src/core/runtime-config";
+import {
+  DEFAULT_MIGRATION_CONCURRENT_MONTHS,
+  DEFAULT_SEARCH_MAX_FUTURE_DAYS,
+  deskIsoDate,
+} from "../../src/core/runtime-config";
 import { normalizeCostamarProviderContext } from "../../src/provider-context";
-import { getSearchDatePolicy } from "../../src/search-date-policy";
+import { providerPrewarmIntervalMs } from "../../src/provider-prewarm";
+import { getPublicRuntimeConfig, getSearchDatePolicy } from "../../src/search-date-policy";
 import { SearchSessionStore } from "../../src/session-store";
+import { resolveWebSessionMaxLifetimeSeconds, resolveWebSessionTtlSeconds } from "../../src/web-auth";
 
 /*
  * Invariants that are cheap to state and expensive to get wrong: the desk's
@@ -59,6 +65,26 @@ describe("settings", () => {
     expect(envNumber("FLY_DESK_UNIT_NUMBER", 1_000, { min: 0, max: 10_000 })).toBe(10_000);
     process.env.FLY_DESK_UNIT_LEGACY = "250";
     expect(envNumber(["FLY_DESK_UNIT_MISSING", "FLY_DESK_UNIT_LEGACY"], 1_000)).toBe(250);
+  });
+
+  test("an empty setting keeps its default where the desk reads it", () => {
+    for (const name of [
+      "SEARCH_MAX_FUTURE_DAYS",
+      "FLY_DESK_MIGRATION_CONCURRENT_MONTHS",
+      "FLY_DESK_WEB_SESSION_TTL_SECONDS",
+      "FLY_DESK_WEB_SESSION_MAX_LIFETIME_SECONDS",
+      "FLY_DESK_PROVIDER_PREWARM_INTERVAL_MS",
+    ]) {
+      process.env[name] = "";
+    }
+    /* Read as 0, the window would be today alone, a session would last five
+       minutes, and the periodic prewarm would stop. */
+    const runtime = getPublicRuntimeConfig(new Date("2026-09-25T12:00:00Z"));
+    expect(getSearchDatePolicy(new Date("2026-09-25T12:00:00Z")).maxFutureDays).toBe(DEFAULT_SEARCH_MAX_FUTURE_DAYS);
+    expect(runtime.migrationConcurrentMonths).toBe(DEFAULT_MIGRATION_CONCURRENT_MONTHS);
+    expect(resolveWebSessionTtlSeconds()).toBe(12 * 60 * 60);
+    expect(resolveWebSessionMaxLifetimeSeconds()).toBe(7 * 24 * 60 * 60);
+    expect(providerPrewarmIntervalMs()).toBe(10 * 60 * 1000);
   });
 
   test("an empty flag keeps its default", () => {

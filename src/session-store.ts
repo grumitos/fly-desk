@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
+import { envNumber } from "./env";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import {
   CanonicalOffer,
@@ -59,10 +60,8 @@ const SESSION_STORE_PERSIST_DEBOUNCE_MS = 180;
  * not by asking this number for a guarantee it does not make.
  */
 export const COMPLETED_SEARCH_SESSION_TTL_MS = (() => {
-  const raw = Number(process.env.SEARCH_COMPLETED_SESSION_TTL_MS ?? COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS);
-  return Number.isFinite(raw) && raw >= 0
-    ? raw
-    : COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS;
+  const configured = envNumber("SEARCH_COMPLETED_SESSION_TTL_MS", COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS);
+  return configured >= 0 ? configured : COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS;
 })();
 
 function withCurrentSearchCacheVersion(searchMeta: SearchMeta): SearchMeta {

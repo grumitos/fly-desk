@@ -1,3 +1,4 @@
+import { envNumber } from "./env";
 import { prewarmLocalAgilSession } from "./local-agil";
 import { prewarmLocalCostamarContext } from "./local-costamar";
 import { logPerfSpan, startPerfTimer } from "./perf";
@@ -15,10 +16,8 @@ import {
 const DEFAULT_PROVIDER_PREWARM_INTERVAL_MS = 10 * 60 * 1000;
 
 function readNonNegativeMs(name: string, fallbackMs: number): number {
-  const raw = Number(process.env[name] ?? fallbackMs);
-  return Number.isFinite(raw) && raw >= 0
-    ? Math.trunc(raw)
-    : fallbackMs;
+  const configured = envNumber(name, fallbackMs);
+  return configured >= 0 ? Math.trunc(configured) : fallbackMs;
 }
 
 export function providerPrewarmEnabled(): boolean {

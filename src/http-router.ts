@@ -1,4 +1,5 @@
 import { materializeSearchResponse } from "./core/search-response";
+import { envNumber } from "./env";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
 import { buildOfferScheduleGroups } from "./core/offer-schedule-groups";
 import {
@@ -211,20 +212,16 @@ const PROGRESSIVE_ADAPTERS: Record<ProviderId, ProgressiveSearchAdapter> = {
 
 const SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
 const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
-  const raw = Number(process.env.SEARCH_REVALIDATION_CACHE_TTL_MS ?? SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS);
-  return Number.isFinite(raw) && raw >= 0
-    ? raw
-    : SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS;
+  const configured = envNumber("SEARCH_REVALIDATION_CACHE_TTL_MS", SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS);
+  return configured >= 0 ? configured : SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS;
 })();
 const SEARCH_REVALIDATION_CACHE_WARNING = "Mostrando resultados cacheados mientras actualizamos en segundo plano.";
 const SEARCH_PROGRESS_SYNC_INTERVAL_MS = 900;
 const SEARCH_CANCELLED_WARNING = "Search cancelled by user.";
 const SEARCH_REFRESH_CANCELLED_WARNING = "Search stopped because the page was refreshed.";
 function readNonNegativeEnvMs(name: string, fallbackMs: number): number {
-  const raw = Number(process.env[name] ?? fallbackMs);
-  return Number.isFinite(raw) && raw >= 0
-    ? Math.trunc(raw)
-    : fallbackMs;
+  const configured = envNumber(name, fallbackMs);
+  return configured >= 0 ? Math.trunc(configured) : fallbackMs;
 }
 
 function backgroundSearchStartDelayMs(): number {

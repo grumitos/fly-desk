@@ -1,4 +1,5 @@
 import { resolveServerHost } from "./config";
+import { envNumber } from "./env";
 import {
   getRuntime,
   getRuntimeIfInitialized,
@@ -50,7 +51,7 @@ async function main() {
     logPerfSpan("startup.runtime.skipped", runtimeStart);
   }
 
-  const port = Number(process.env.PORT ?? "3000");
+  const port = Math.trunc(envNumber("PORT", 3000, { min: 0, max: 65535 }));
   const host = resolveServerHost();
   const server = createServer({ port, hostname: host });
   let providerPrewarmHandle: NodeJS.Timeout | undefined;
