@@ -502,11 +502,9 @@ export function resolveWebTheme(request: Request): WebTheme {
   return theme === "dark" || theme === "light" ? theme : DEFAULT_WEB_THEME;
 }
 
-/*
- * The sign-in page uses the application's self-hosted faces. The frontend build
- * writes their hashed URLs into frontend/dist/index.html, so they are read from
- * there; without a build the page falls back to system fonts.
- */
+/* The sign-in page is served before any bundle, so it borrows the faces the
+   frontend build wrote into frontend/dist/index.html; without a build it falls
+   back to system fonts. */
 function loginFontHead(): string {
   let html: string;
   try {
@@ -520,20 +518,9 @@ function loginFontHead(): string {
 }
 
 /*
- * The gate, drawn from the same catalogues as the application behind it.
- *
- * It cannot import `frontend/src`: this page is served by the router before any
- * bundle is reachable, and it has to render from a single string with no build
- * step. So the values are transcribed rather than shared, and the transcription
- * is deliberately literal — the token names below are the ones in
- * `design-system.css`, so a value that drifts is visible as a difference in a
- * name, not just in a number.
- *
- * Nothing here is off-catalogue: the field is `.fd-field-control` (52 · r12 ·
- * micro label at 9/12), the action is the `xl` button (52 · r12 · pressed 12 %),
- * the notice is `.fd-alert-line`, the brand is the title bar's, and the focus
- * ring is 3d's — 2px of primary at 55 %, keyboard only, drawn inside the border
- * for the reason written where it is drawn.
+ * The gate renders from one string with no build step, so it cannot import the
+ * frontend's stylesheets. Its tokens and classes are transcribed from the
+ * application under the same names, so a value that drifts shows as a name.
  */
 export function renderLoginPage(
   error?: string,
@@ -541,14 +528,13 @@ export function renderLoginPage(
   next?: string,
 ): string {
   const errorMarkup = error
-    ? `<p class="fd-alert-line fd-alert-line-error" role="alert" aria-live="assertive">
+    ? `<p class="fd-alert-line" role="alert" aria-live="assertive">
           <svg class="fd-alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
           <span>${escapeHtml(error)}</span>
         </p>`
     : "";
   const initialTheme = theme === "dark" ? "dark" : "light";
-  /* Re-sanitised on the way out as well as on the way in: whatever put this
-     string here, only a same-origin path is ever written into the page. */
+  /* Sanitised again on the way out: only a same-origin path is ever written. */
   const safeNext = resolveSafeNextPath(next);
   const nextMarkup = safeNext
     ? `<input type="hidden" name="next" value="${escapeHtml(safeNext)}">`
@@ -558,13 +544,8 @@ export function renderLoginPage(
 <html lang="es" class="${initialTheme === "dark" ? "dark" : ""}" data-theme="${initialTheme}">
   <head>
     <meta charset="utf-8">
-    <!-- interactive-widget, because the default resizes-visual lets the
-         keyboard shrink the visual viewport only: the layout viewport, and the
-         fixed body sized from it, stay at the full height of the phone. The
-         card then centres itself in a box roughly twice the visible area and
-         the foot of the form goes under the keyboard. resizes-content makes the
-         layout viewport track what is visible, which is what centring was
-         asking for all along. -->
+    <!-- resizes-content: the keyboard shrinks the layout viewport, so the
+         centred form stays above it. -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
     <title>Fly Desk</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -583,7 +564,6 @@ export function renderLoginPage(
       })();
     </script>
     <style>
-      /* ---- the tokens, by their names in design-system.css ---------------- */
       :root {
         color-scheme: light;
 
@@ -592,51 +572,38 @@ export function renderLoginPage(
         --color-card: #ffffff;
         --color-primary: #d97757;
         --color-primary-foreground: #ffffff;
+        --color-primary-hover: #c36b4e;
         --color-secondary: #efeeeb;
         --color-muted-foreground: #6e6c67;
         --color-accent: #e9e8e3;
-        --color-border: #1f1f1e26;
         --color-input: #1f1f1e26;
-        --color-destructive: #d97757;
         --color-warning-soft: #d977571a;
         --color-warning-soft-foreground: #6f321f;
+        --color-destructive-border: #d9775780;
+        --color-hover: #12121212;
+        --color-pressed: #0000001f;
+        --color-focus: #d977578c;
+        --color-glow: #d977572e;
+        --color-border-hover: #b7674d7d;
+        --color-border-active: #c56d519d;
 
-        /* 5b · the three control heights this page needs, and two radii. The
-           mobile column is 34 / 40 / 46; the square glyph control of a title
-           bar is its smallest rung, the same one .fd-capsule-cell takes in
-           the application. */
         --fd-control-standard: 32px;
         --fd-control-touch-sm: 34px;
         --fd-control-primary: 52px;
         --fd-radius-10: 10px;
         --fd-radius-12: 12px;
-
-        /* 7b · the one pictogram rung this page uses. Named rather than
-           written out, because 7b binds the size of a glyph to the height of
-           the control holding it, and a binding whose two ends are bare
-           numbers is one nobody can check. Desktop 32 and mobile 34 both
-           take 16. */
         --fd-icon-16: 16px;
-
-        /* 5a · four bodies of the scale and its four weights. */
         --fd-text-sheet: 17px;
         --fd-text-body: 14px;
         --fd-text-base: 13px;
         --fd-text-label: 11px;
         --fd-weight-label: 600;
         --fd-weight-title: 700;
-
-        /* §0 · the one duration and the one easing anything here may use. */
         --fd-dur-tacto: 90ms;
         --fd-ease-tacto: cubic-bezier(0.2, 0, 0.4, 1);
 
-        /* The title bar hover of plate 1b: the toggle previews the theme it
-           switches to, so its hover colours are the *other* palette. */
-        --fd-theme-toggle-hover-bg: #1f1f1e;
-        --fd-theme-toggle-hover-fg: #f8f8f6;
-
         --keyboard-shift: 0px;
-        font-family: Inter, "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-family: "Inter", "Inter Fallback", ui-sans-serif, system-ui, sans-serif;
         background: var(--color-background);
         color: var(--color-foreground);
       }
@@ -645,19 +612,16 @@ export function renderLoginPage(
 
         --color-background: #1f1f1e;
         --color-foreground: #f8f8f6;
-        /* Not a lighter grey: in the dark palette a card *is* the background,
-           and a field is read by its border. */
         --color-card: #1f1f1e;
         --color-secondary: #2c2c2a;
         --color-muted-foreground: #97958c;
         --color-accent: #121212;
-        --color-border: #e2e1da26;
         --color-input: #e2e1da26;
         --color-warning-soft: #d9775726;
         --color-warning-soft-foreground: #f2c3b3;
-
-        --fd-theme-toggle-hover-bg: #f8f8f6;
-        --fd-theme-toggle-hover-fg: #121212;
+        --color-hover: #f8f8f612;
+        --color-border-hover: #db8a6f7d;
+        --color-border-active: #da82659d;
       }
       *, *::before, *::after { box-sizing: border-box; }
       html, body { width: 100%; height: 100%; overflow: hidden; overscroll-behavior: none; }
@@ -675,9 +639,7 @@ export function renderLoginPage(
         -webkit-font-smoothing: antialiased;
       }
 
-      /* ---- the title bar (1b) --------------------------------------------
-       * The same bar the application wears, so signing in does not change the
-       * chrome — only what is under it. */
+      /* The application's title bar, so signing in does not change the chrome. */
       .fd-topbar {
         display: flex;
         flex-shrink: 0;
@@ -700,10 +662,6 @@ export function renderLoginPage(
         margin-left: -4px;
         padding-inline: 4px;
       }
-      /* 24, which is not a rung of 7b, and stays: the mark is the wordmark's
-         glyph and not a pictogram, and 24 is what the title bar of the
-         application draws it at. A brand that changed size across the sign-in
-         would be the one thing the agent noticed. */
       .fd-topbar-brand-mark {
         width: 24px;
         height: 24px;
@@ -713,41 +671,26 @@ export function renderLoginPage(
         font-size: var(--fd-text-body);
         font-weight: var(--fd-weight-title);
       }
-      .fd-capsule {
-        display: inline-flex;
-        height: var(--fd-control-standard);
-        align-items: stretch;
-        overflow: hidden;
-        border: 1px solid var(--color-input);
-        border-radius: var(--fd-radius-10);
-        background: var(--color-secondary);
-        color: var(--color-muted-foreground);
-      }
+      .fd-capsule { display: inline-flex; }
       .fd-capsule-cell {
         display: grid;
         width: var(--fd-control-standard);
         height: var(--fd-control-standard);
         place-items: center;
         border: 0;
+        border-radius: var(--fd-radius-10);
         background: transparent;
-        color: inherit;
+        color: var(--color-muted-foreground);
         cursor: pointer;
         transition:
           background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
           color var(--fd-dur-tacto) var(--fd-ease-tacto);
       }
-      .fd-capsule-cell:hover {
-        background: var(--fd-theme-toggle-hover-bg);
-        color: var(--fd-theme-toggle-hover-fg);
-      }
       .fd-capsule-cell svg { width: var(--fd-icon-16); height: var(--fd-icon-16); }
-      /* One glyph per theme, both in the same cell so the swap costs no
-         layout — the chevron pattern of 7b, applied to the switch. */
-      :root:not(.dark) .fd-theme-moon, :root.dark .fd-theme-sun { display: none; }
+      /* It shows the theme it switches to, as the application's does. */
+      :root:not(.dark) .fd-theme-sun, :root.dark .fd-theme-moon { display: none; }
 
-      /* ---- the stage (1a) -------------------------------------------------
-       * Two unequal spacers, 1 above and 1.3 below, which is what leaves the
-       * form slightly above centre on the idle screen. */
+      /* Two unequal spacers leave the form slightly above centre. */
       .fd-stage {
         display: flex;
         flex: 1;
@@ -778,10 +721,8 @@ export function renderLoginPage(
       }
       form { display: grid; gap: 10px; }
 
-      /* ---- the field (1a · 03 §2) -----------------------------------------
-       * 52 · r12, with the micro label parked at 9/12. It does not float: in
-       * this system the label is always up and the value has its own band
-       * underneath, so nothing moves when the agent starts typing. */
+      /* The label stays up and the value has its own band, so nothing moves
+         when typing starts. */
       .fd-field-control {
         position: relative;
         display: flex;
@@ -795,15 +736,10 @@ export function renderLoginPage(
           border-color var(--fd-dur-tacto) var(--fd-ease-tacto),
           box-shadow var(--fd-dur-tacto) var(--fd-ease-tacto);
       }
-      .fd-field-control:hover {
-        border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
-      }
-      /* Inset, like the ring below and for the same reason: the glow is 2px of
-         ink, and outside the box those 2px come out of the 10px between the
-         field and the button under it. */
+      /* Inset, so the glow does not eat into the gap above the button. */
       .fd-field-control:focus-within {
-        border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
-        box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
+        border-color: var(--color-border-active);
+        box-shadow: inset 0 0 0 2px var(--color-glow);
       }
       .fd-field-label {
         position: absolute;
@@ -830,19 +766,14 @@ export function renderLoginPage(
         line-height: 17px;
       }
       .fd-field-value:focus { outline: none; }
-      /* Chrome paints autofilled inputs with its own white and its own text
-         colour, which in the dark palette is white on white. An inset shadow
-         the height of the field is the only way to keep the surface ours. */
+      /* Chrome paints autofill in its own colours, white on white in the dark
+         palette; a full-height inset shadow keeps the surface ours. */
       .fd-field-value:-webkit-autofill,
       .fd-field-value:-webkit-autofill:focus {
         -webkit-text-fill-color: var(--color-foreground);
         box-shadow: inset 0 0 0 60px var(--color-card);
       }
 
-      /* ---- the action (5b · 07 §4 row 11) ---------------------------------
-       * The "xl" button: 52 · r12, primary fill, one step darker on hover and
-       * 12 % of black over the surface while pressed — never a scale, and
-       * never a filter, which would darken the label with the fill. */
       .fd-button {
         display: inline-flex;
         height: var(--fd-control-primary);
@@ -858,36 +789,31 @@ export function renderLoginPage(
         font-size: var(--fd-text-body);
         font-weight: var(--fd-weight-label);
         cursor: pointer;
-        transition:
-          background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
-          box-shadow var(--fd-dur-tacto) var(--fd-ease-tacto);
+        transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
       }
-      .fd-button:hover { background: color-mix(in srgb, var(--color-primary) 90%, black); }
-      .fd-button:active { box-shadow: inset 0 0 0 100px rgb(0 0 0 / 12%); }
+      .fd-button:active { background-image: linear-gradient(var(--color-pressed) 0 0); }
 
-      /* ---- 3d · one ring, inside the border, keyboard only ----------------
-       * 3d draws its ring outside the border box. That reflows nothing, but it
-       * paints: the submit reached 4px past its own edge and left 6 of the 10px
-       * between it and the field, so the focused control read taller than its
-       * neighbour and the form looked like it had moved. Inside the box the
-       * ring cannot change a footprint, whatever the gap above it turns out to
-       * be. An outline rather than a shadow, because the capsule clips what
-       * overflows it and Windows high contrast drops box-shadow but keeps
-       * outline — and this is the one screen nobody gets to skip. */
+      @media (hover: hover) {
+        .fd-capsule-cell:hover {
+          background: var(--color-hover);
+          color: var(--color-foreground);
+        }
+        .fd-field-control:not(:focus-within):hover { border-color: var(--color-border-hover); }
+        .fd-button:hover { background-color: var(--color-primary-hover); }
+      }
+
+      /* Inside the border, so a focused control never looks larger than its
+         neighbour; an outline, because high contrast mode keeps outlines. */
       .fd-focus-ring:focus-visible {
-        outline: 2px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+        outline: 2px solid var(--color-focus);
         outline-offset: -2px;
       }
-      /* Inside a filled control the ring has to contrast with the fill and not
-         with the page, so it takes the colour the label is already written in. */
       .fd-button.fd-focus-ring:focus-visible {
         outline-color: var(--color-primary-foreground);
       }
 
-      /* ---- the notice (11 §3) ---------------------------------------------
-       * ".fd-alert-line", except that it wraps: the application's copy is one
-       * line and ellipsises, and a password error the agent cannot read is
-       * worse than a bar two lines tall. */
+      /* The application's alert line, allowed to wrap: an error nobody can
+         read is worse than a notice two lines tall. */
       .fd-alert-line {
         display: flex;
         align-items: flex-start;
@@ -895,7 +821,7 @@ export function renderLoginPage(
         margin: 0;
         min-height: 36px;
         padding: 9px 12px;
-        border: 1px solid color-mix(in srgb, var(--color-primary) 38%, transparent);
+        border: 1px solid var(--color-destructive-border);
         border-radius: var(--fd-radius-10);
         background: var(--color-warning-soft);
         color: var(--color-warning-soft-foreground);
@@ -903,38 +829,16 @@ export function renderLoginPage(
         font-weight: var(--fd-weight-label);
         line-height: 1.35;
       }
-      .fd-alert-line-error {
-        border-color: color-mix(in srgb, var(--color-destructive) 50%, transparent);
-      }
       .fd-alert-icon { width: var(--fd-icon-16); height: var(--fd-icon-16); flex-shrink: 0; margin-top: 1px; }
 
-      /* ---- armazón C (02 §4) ----------------------------------------------
-       * The same 719.98 the shell's container query uses, as a media query —
-       * this page has no shell to ask. The capsule breaks into a loose button
-       * with its own border, at the smallest rung of the mobile column.
-       *
-       * That rung was 36 here, and 36 has not been a mobile height since the
-       * column became 34 / 40 / 46: it was read off the retired 36 / 44 / 52,
-       * and the 18px glyph it carried was the row 7b bound to the retired 44.
-       * A page served before the bundle exists is a page no pass over the
-       * bundle can reach, which is how a stale pair of numbers outlived both
-       * catalogues it came from. The token below is what the application gives
-       * the same control, and 7b binds 34 to 16 — the size the desktop rule
-       * above already sets, so there is no override left to write. */
-      @media (max-width: 719.98px) {
-        .fd-capsule {
-          height: auto;
-          overflow: visible;
-          border: 0;
-          border-radius: 0;
-          background: transparent;
-        }
+      /* A phone, portrait or sideways: the icon button becomes a touch tile. */
+      @media (max-width: 719.98px), (pointer: coarse) and (max-height: 500px) {
         .fd-capsule-cell {
           width: var(--fd-control-touch-sm);
           height: var(--fd-control-touch-sm);
           border: 1px solid var(--color-input);
-          border-radius: var(--fd-radius-10);
           background: var(--color-secondary);
+          color: var(--color-foreground);
         }
       }
 
@@ -942,11 +846,7 @@ export function renderLoginPage(
         main { transition: none; }
       }
 
-      /* 07 §5 · a change of theme is one of the things that never animates.
-         Every transition on this page is armed against colour, so flipping the
-         palette would retint the page *through* them — a wipe where the plate
-         asks for a switch. The class is up for one frame while the swap lands,
-         and it is the same contract as lib/reduced-motion.ts in the bundle. */
+      /* A theme change never animates: every transition here is on colour. */
       html.fd-theme-swap, html.fd-theme-swap * { transition: none !important; }
     </style>
   </head>
@@ -981,18 +881,9 @@ export function renderLoginPage(
     </div>
     <script>
       (() => {
-        /* The compensation below is what the meta above makes unnecessary —
-           everywhere the meta is read. It stays because Safari does not read
-           it: iOS implements no interactive-widget at all, so there the
-           keyboard still shrinks the visual viewport alone and the layout
-           viewport keeps the full height of the phone. Measured on this page,
-           the two regimes are: obscured 0, so the shift computes 0px and main
-           is left where the stylesheet put it; against obscured 320, where it
-           computes 20px and lifts the field from y=330 to y=310. It is not a
-           second opinion about the same problem, it is the only opinion left
-           on the one platform the directive cannot reach — and it costs
-           nothing where the browser does the work, because there is no
-           obscured height to divide. */
+        /* iOS ignores interactive-widget, so there the keyboard only shrinks
+           the visual viewport: lift the form by a fraction of what it covers.
+           Where the meta works nothing is covered and the shift is 0. */
         const root = document.documentElement;
         const isTextInputFocused = () => {
           const active = document.activeElement;
@@ -1024,10 +915,8 @@ export function renderLoginPage(
         document.addEventListener("focusout", () => window.setTimeout(updateKeyboardShift, 0));
         updateKeyboardShift();
 
-        /* The same switch the title bar carries once the agent is through, and
-           the same two places it writes to: the key the bundle reads on boot,
-           and the cookie the server reads to render this page. Choosing the
-           theme before signing in has to survive signing in. */
+        /* Written where the bundle and the server read it, so a theme chosen
+           here survives signing in. */
         const applyTheme = (next) => {
           root.classList.add("fd-theme-swap");
           root.dataset.theme = next;

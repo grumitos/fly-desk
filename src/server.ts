@@ -385,7 +385,7 @@ async function routeServerRequest(request: Request, server: BunServer<undefined>
     }
 
     const error = url.searchParams.get("error")
-      ? "Password invalido."
+      ? "Contraseña incorrecta."
       : undefined;
     return new Response(renderLoginPage(error, resolveWebTheme(request), next), {
       status: 200,
