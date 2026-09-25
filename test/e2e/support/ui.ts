@@ -152,6 +152,7 @@ export const notice = {
   line: (page: Page) => noticeIn(page, page.getByRole("status").or(page.getByRole("alert"))),
   /** The line when it is an error. */
   error: (page: Page) => noticeIn(page, page.getByRole("alert")),
+  dismiss: (page: Page) => page.getByRole("button", { name: "Descartar el aviso", exact: true }),
 };
 
 /* ---- Results ---- */
@@ -215,6 +216,8 @@ export const detail = {
       }))
       .first(),
   quote: (root: Locator) => root.getByRole("button", { name: /^(Cotizar|Validando|Copiado)$/ }),
+  /** The desk's offer column before an offer is chosen. */
+  nothingSelected: (page: Page) => page.getByRole("heading", { name: "Selecciona una oferta", level: 3 }),
   /** The provider's own search, through `/r/<id>`. */
   purchase: (root: Locator) => root.getByRole("button", { name: /^(Buscar|Abrir)$/ }),
   close: (root: Locator) => root.getByRole("button", { name: "Cerrar oferta" }),
@@ -391,6 +394,14 @@ export async function isFocused(locator: Locator): Promise<boolean> {
   return locator.evaluate((element) => element === document.activeElement);
 }
 
+/** Ids the document holds more than once. */
+export async function duplicateIds(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const ids = [...document.querySelectorAll("[id]")].map((element) => element.id);
+    return [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))];
+  });
+}
+
 /**
  * Records, from before the page's first script, the `aria-label` of every
  * element the page takes out of its document, and returns a reader of what was
@@ -413,6 +424,24 @@ export async function recordRemovedControls(page: Page): Promise<() => Promise<s
     }).observe(document, { childList: true, subtree: true });
   });
   return () => page.evaluate(() => (window as unknown as { __e2eRemovedControls?: string[] }).__e2eRemovedControls ?? []);
+}
+
+/**
+ * Counts, from now on and at every change of the document, the offer panels it
+ * holds — a panel is its «Cotizar» — and returns a reader of the most it has
+ * held at once.
+ */
+export async function watchOfferPanels(page: Page): Promise<() => Promise<number>> {
+  await page.evaluate(() => {
+    const count = () => [...document.querySelectorAll("button")]
+      .filter((button) => /^(Cotizar|Validando|Copiado)$/.test(button.textContent?.trim() ?? "")).length;
+    const seen = { most: count() };
+    (window as unknown as { __e2eOfferPanels: typeof seen }).__e2eOfferPanels = seen;
+    new MutationObserver(() => {
+      seen.most = Math.max(seen.most, count());
+    }).observe(document, { childList: true, subtree: true });
+  });
+  return () => page.evaluate(() => (window as unknown as { __e2eOfferPanels: { most: number } }).__e2eOfferPanels.most);
 }
 
 /**

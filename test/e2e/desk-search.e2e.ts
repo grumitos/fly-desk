@@ -555,6 +555,15 @@ suite.test("a week of one-way fares keeps every one of three hundred, in the sam
   await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: oneStopOrLess.length, total: RANGE_TOTAL }));
   assert.equal(await results.viewport(page).evaluate((element) => element.scrollTop), 0, "the filtered list did not start at its first row");
   assert.equal((await readCards(page))[0]!.label, oneStopOrLess[0]!.label);
+
+  /* So is another value of the same filter. */
+  await results.viewport(page).evaluate((element) => element.scrollTo({ top: element.scrollHeight / 2 }));
+  await eventually(async () => assert.ok(await results.viewport(page).evaluate((element) => element.scrollTop) > 0));
+  await filters.stops(page, "Directo").click();
+  const direct = byPrice.filter((card) => card.legs[0]!.stops === "Directo");
+  await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: direct.length, total: RANGE_TOTAL }));
+  assert.equal(await results.viewport(page).evaluate((element) => element.scrollTop), 0, "another value of the same filter kept the scroll");
+  assert.equal((await readCards(page))[0]!.label, direct[0]!.label);
   await filters.clear(page).click();
   await eventually(async () => assert.deepEqual(await readResultCount(page), { visible: RANGE_TOTAL, total: RANGE_TOTAL }));
 

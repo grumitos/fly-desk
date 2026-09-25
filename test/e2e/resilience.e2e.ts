@@ -82,6 +82,14 @@ suite.test("a provider that falls is named in one line, and nothing it said reac
   assert.deepEqual(providerSearches(fake, route).filter((request) => request.query?.gds === 3).map((request) => request.status), [0]);
 
   await assertCanaryContained(scope, tracked, secret);
+
+  /* Dismissed, the line goes; the next search that has the same to say says it again. */
+  await notice.dismiss(page).click();
+  await notice.line(page).waitFor({ state: "hidden" });
+  await runSearch(page);
+  await waitForResults(page, 2);
+  await eventually(async () => assert.equal(await notice.line(page).count(), 1, "a dismissed notice did not come back with the next search"), { timeoutMs: 3_000 });
+  assert.match(await notice.line(page).innerText(), /Click and Book Plus/);
 });
 
 suite.test("a token refused inside a 200 leaves the other provider's list and leaks nothing", async (scope) => {

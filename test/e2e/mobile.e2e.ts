@@ -6,6 +6,7 @@ import type { OfferSpec } from "./support/fixtures.ts";
 import { addMonths, day, deskMonth, eventually, monthKey, providerSearches, TODAY } from "./support/scenario.ts";
 import {
   detail,
+  duplicateIds,
   filters,
   horizontalOverflow,
   isDarkTheme,
@@ -21,13 +22,14 @@ import {
   searchForm,
   searchLink,
   topBar,
+  watchOfferPanels,
   type SearchLink,
 } from "./support/ui.ts";
 
 /*
  * The phone and the in-between sizes: the sheets that stand in for the desk's
- * popovers and columns, the system back, and a page that never scrolls
- * sideways.
+ * popovers and columns, the system back, a page that never scrolls sideways,
+ * and a desk resized under a search.
  */
 
 const suite = defineSuite({ file: import.meta.filename });
@@ -320,6 +322,50 @@ suite.test("the dates and the months ask for a choice once their calendar is lef
     );
     await searchForm.fieldMessage(page, missingMonths).waitFor({ state: "hidden" });
   }
+});
+
+/* ---- A window resized under a search ---- */
+
+/* Twelve fares a provider, one row each: more than the column shows at once. */
+const MEDELLIN: OfferSpec[] = Array.from({ length: 12 }, (_, index): OfferSpec => {
+  const hour = String(6 + index).padStart(2, "0");
+  return {
+    outbound: [`AV${9300 + index} LIM-MDE ${hour}:10-${String(9 + index).padStart(2, "0")}:05`],
+    price: 280 + index * 13,
+    baggage: { carryOn: true, checked: 1 },
+  };
+});
+
+suite.test("resizing the desk keeps the list and where it was read, and never holds two offer panels", async (scope) => {
+  const { fake } = scope;
+  fake.setFlights("both", { origin: "LIM", destination: "MDE" }, MEDELLIN);
+  const { page } = await scope.signedInPage(searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "MDE", departure: day(55) }));
+  await waitForResults(page, MEDELLIN.length * 2);
+
+  /* Three columns to two: the offer column goes, the list stays the list it was, scrolled. */
+  const list = results.viewport(page);
+  await list.evaluate((element) => {
+    element.setAttribute("data-e2e-identity", "read-before-the-resize");
+    element.scrollTo({ top: 300 });
+  });
+  await eventually(async () => assert.ok(await list.evaluate((element) => element.scrollTop) > 0));
+  await page.setViewportSize({ width: 900, height: 900 });
+  await detail.nothingSelected(page).waitFor({ state: "hidden" });
+  assert.equal(await list.getAttribute("data-e2e-identity"), "read-before-the-resize", "the resize built the list again");
+  assert.ok(await list.evaluate((element) => element.scrollTop) > 0, "the resize lost the list's scroll");
+
+  /* At 1300 an offer opens as a side sheet; widened to 1600 it moves to the
+     third column, and the sheet is not kept beside it. */
+  await page.setViewportSize({ width: 1300, height: 900 });
+  await results.cards(page).first().click();
+  const sheet = page.getByRole("dialog", { name: "Oferta", exact: true });
+  await sheet.waitFor();
+  const offerPanels = await watchOfferPanels(page);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await sheet.waitFor({ state: "detached" });
+  await detail.quote(detail.surface(page)).waitFor();
+  assert.equal(await offerPanels(), 1, "the offer was drawn twice while it moved to its column");
+  assert.deepEqual(await duplicateIds(page), []);
 });
 
 suite.test("a filter changed in the phone's filter sheet stays on the address bar after back closes the sheet", async (scope) => {
