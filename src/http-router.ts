@@ -1,5 +1,4 @@
 import { materializeSearchResponse } from "./core/search-response";
-import { envNumber } from "./env";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
 import { buildOfferScheduleGroups } from "./core/offer-schedule-groups";
 import {
@@ -44,14 +43,10 @@ import {
 } from "./local-agil";
 import {
   COSTAMAR_CONCURRENCY,
-  applyCostamarContextToBrandedSearchUrl,
   buildCostamarPurchasePaths,
   createLocalCostamarMatrixDraft,
   createLocalCostamarSearchDraft,
   getLastCostamarWarmupDiagnostics,
-  isAllowedCostamarBrandedSearchLocation,
-  resolveCostamarRedirectForRequest,
-  safeCostamarRedirectFailureReason,
   resolveLocalCostamarExactProgressive,
   resolveLocalCostamarMatrixProgressive,
   resolveLocalCostamarRangeProgressive,
@@ -61,7 +56,6 @@ import {
   getCostamarTokenStatus,
   normalizeCostamarProviderContext,
   resolveProviderId,
-  resolveUsableCostamarBrandedToken,
   verifyCostamarTokenLive,
 } from "./provider-context";
 import {
@@ -229,8 +223,6 @@ const SEARCH_REVALIDATION_CACHE_WARNING = "Mostrando resultados cacheados mientr
 const SEARCH_PROGRESS_SYNC_INTERVAL_MS = 900;
 const SEARCH_CANCELLED_WARNING = "Search cancelled by user.";
 const SEARCH_REFRESH_CANCELLED_WARNING = "Search stopped because the page was refreshed.";
-const DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS = 55_000;
-const MAX_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS = 240_000;
 function readNonNegativeEnvMs(name: string, fallbackMs: number): number {
   const raw = Number(process.env[name] ?? fallbackMs);
   return Number.isFinite(raw) && raw >= 0
@@ -467,137 +459,6 @@ function json(body: unknown, init?: ResponseInit): Response {
       ...(init?.headers ?? {}),
     },
   });
-}
-
-function html(body: string, init?: ResponseInit): Response {
-  return new Response(body, {
-    status: init?.status ?? 200,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      ...(init?.headers ?? {}),
-    },
-  });
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function costamarRedirectBlockedResponse(reason?: string): Response {
-  const reasonText = reason?.trim() ? escapeHtml(reason.trim()) : "No se pudo validar ni renovar el redirect de Click and Book Plus.";
-  return html(`<!doctype html>
-<html lang="es">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Renueva la autenticación de Click and Book Plus</title>
-    <style>
-      :root { color-scheme: light; }
-      * {
-        box-sizing: border-box;
-      }
-      html {
-        min-height: 100%;
-      }
-      body {
-        margin: 0;
-        min-height: 100dvh;
-        overflow: hidden;
-        display: grid;
-        place-items: center;
-        padding: 20px;
-        font-family: "Segoe UI", Arial, sans-serif;
-        background: #f8f8f6;
-        color: #2d2a26;
-      }
-      main {
-        width: min(560px, 100%);
-        max-width: 560px;
-      }
-      section {
-        background: rgba(255, 255, 255, 0.92);
-        border: 1px solid rgba(112, 77, 31, 0.12);
-        border-radius: 12px;
-        padding: 24px;
-        box-shadow: 0 20px 45px rgba(88, 59, 24, 0.08);
-      }
-      h1 {
-        margin: 0 0 12px;
-        font-size: 28px;
-        line-height: 1.15;
-      }
-      p {
-        margin: 0 0 12px;
-        line-height: 1.55;
-      }
-      p:last-child {
-        margin-bottom: 0;
-      }
-      @media (max-width: 480px) {
-        body {
-          padding: 16px;
-        }
-        section {
-          padding: 20px;
-        }
-        h1 {
-          font-size: 24px;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <section>
-        <h1>Renueva la autenticación de Click and Book Plus</h1>
-        <p>Fly Desk no encontro un redirect verificado para abrir esta busqueda en Click and Book Plus.</p>
-        <p><strong>Motivo:</strong> ${reasonText}</p>
-        <p>Abre Click and Book Plus B2B/Chrome, vuelve a autenticarte y reintenta desde Fly Desk.</p>
-      </section>
-    </main>
-  </body>
-</html>`, {
-    status: 409,
-    headers: {
-      "Cache-Control": "no-store",
-    },
-  });
-}
-
-function costamarRedirectTotalTimeoutMs(): number {
-  return Math.trunc(envNumber(
-    ["CBPLUS_REDIRECT_TOTAL_TIMEOUT_MS", "COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS"],
-    DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS,
-    { min: 1_000, max: MAX_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS },
-  ));
-}
-
-async function withCostamarRedirectTotalTimeout<T>(promise: Promise<T>): Promise<T> {
-  const timeoutMs = costamarRedirectTotalTimeoutMs();
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timeout = setTimeout(() => {
-          reject(new Error(`La validacion del redirect de Click and Book Plus tardo mas de ${timeoutMs}ms.`));
-        }, timeoutMs);
-        if (typeof timeout === "object" && timeout && "unref" in timeout) {
-          (timeout as { unref: () => void }).unref();
-        }
-      }),
-    ]);
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-  }
 }
 
 function stringValue(input: unknown, fallback = ""): string {
@@ -1996,120 +1857,6 @@ function isoDateFromValue(value: string | undefined): string | undefined {
   return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString().slice(0, 10);
 }
 
-function isIsoDateValue(value: string | undefined): value is string {
-  return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
-}
-
-function passengerCountFromPath(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(String(value ?? ""), 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
-function exactCostamarRequestFromFallback(fallback: SearchRequest | undefined): SearchRequest | undefined {
-  const leg = fallback?.legs[0];
-  if (!fallback || !leg || fallback.tripType === "multi-city" || !isIsoDateValue(leg.departureDate)) {
-    return undefined;
-  }
-
-  if (fallback.tripType === "round-trip" && !isIsoDateValue(leg.returnDate)) {
-    return undefined;
-  }
-
-  return {
-    ...fallback,
-    providerId: "costamar",
-    searchMode: "exact",
-    flexibleMode: undefined,
-    legs: [
-      {
-        ...leg,
-        departureStart: undefined,
-        departureEnd: undefined,
-        returnStart: undefined,
-        returnEnd: undefined,
-        stayNights: undefined,
-        minNights: undefined,
-        maxNights: undefined,
-      },
-    ],
-  };
-}
-
-function costamarRedirectRequestFromUrl(
-  location: string,
-  fallback: SearchRequest | undefined,
-): SearchRequest | undefined {
-  try {
-    const parsed = new URL(location);
-    const pathParts = parsed.pathname
-      .split("/")
-      .filter(Boolean)
-      .map((part) => decodeURIComponent(part));
-    const markerIndex = pathParts.lastIndexOf("b");
-    if (markerIndex < 0) {
-      return exactCostamarRequestFromFallback(fallback);
-    }
-
-    const parts = pathParts.slice(markerIndex + 1);
-    if (parts.length !== 6 && parts.length !== 7) {
-      return exactCostamarRequestFromFallback(fallback);
-    }
-
-    const isRoundTrip = parts.length === 7;
-    const origin = parts[0]?.trim().toUpperCase();
-    const destination = parts[1]?.trim().toUpperCase();
-    const departureDate = parts[2]?.trim();
-    const returnDate = isRoundTrip ? parts[3]?.trim() : undefined;
-    const passengerOffset = isRoundTrip ? 4 : 3;
-    const fallbackPassengers = fallback?.passengers ?? { adults: 1, children: 0, infants: 0 };
-
-    if (!origin || !destination || !isIsoDateValue(departureDate)) {
-      return exactCostamarRequestFromFallback(fallback);
-    }
-
-    if (isRoundTrip && !isIsoDateValue(returnDate)) {
-      return exactCostamarRequestFromFallback(fallback);
-    }
-
-    const fallbackLeg = fallback?.legs[0];
-    return {
-      providerId: "costamar",
-      tripType: isRoundTrip ? "round-trip" : "one-way",
-      searchMode: "exact",
-      legs: [
-        {
-          ...(fallbackLeg ?? {}),
-          origin,
-          destination,
-          departureDate,
-          departureStart: undefined,
-          departureEnd: undefined,
-          returnDate,
-          returnStart: undefined,
-          returnEnd: undefined,
-          stayNights: undefined,
-          minNights: undefined,
-          maxNights: undefined,
-        },
-      ],
-      passengers: {
-        adults: passengerCountFromPath(parts[passengerOffset], fallbackPassengers.adults || 1),
-        children: passengerCountFromPath(parts[passengerOffset + 1], fallbackPassengers.children || 0),
-        infants: passengerCountFromPath(parts[passengerOffset + 2], fallbackPassengers.infants || 0),
-      },
-      cabin: fallback?.cabin ?? "ECONOMY",
-      filters: fallback?.filters ?? {},
-      coverageMode: fallback?.coverageMode ?? "core",
-      redirectMode: fallback?.redirectMode ?? "best-effort",
-      currencyCode: fallback?.currencyCode ?? "USD",
-      locale: fallback?.locale ?? "es-PE",
-      market: fallback?.market ?? "PE",
-    };
-  } catch {
-    return exactCostamarRequestFromFallback(fallback);
-  }
-}
-
 function createProviderSearchStates(
   providerIds: ProviderId[],
   cachedJob?: SearchJobRecord,
@@ -2147,35 +1894,40 @@ function stripCachedMatrixCellQuotation(cell: MatrixCell): MatrixCell {
 function createProviderMatrixStates(
   request: SearchRequest,
   providerIds: ProviderId[],
-  cachedJob?: MatrixJobRecord,
 ): Map<ProviderId, ProviderMatrixState> {
-  const cachedCellsByProvider = new Map<ProviderId, Map<string, MatrixCell>>();
-
-  for (const cachedCell of cachedJob?.cells ?? []) {
-    if (!providerIds.includes(cachedCell.providerSource)) {
-      continue;
-    }
-    const providerCells = cachedCellsByProvider.get(cachedCell.providerSource) ?? new Map();
-    providerCells.set(cachedCell.key, stripCachedMatrixCellQuotation(cachedCell));
-    cachedCellsByProvider.set(cachedCell.providerSource, providerCells);
-  }
-
   return new Map<ProviderId, ProviderMatrixState>(providerIds.map((providerId) => {
     const adapter = getProgressiveAdapter(providerId);
     const response = adapter.createMatrixDraft(request, {
       exactProvider: providerId,
       coverageMode: request.coverageMode,
     });
-    const cachedCells = cachedCellsByProvider.get(providerId);
-    const cells = response.cells.map((cell) => cachedCells?.get(cell.key) ?? cell);
-    const seededResponse = { ...response, cells };
 
     return [providerId, {
-      response: seededResponse,
+      response,
       completed: false,
-      cellIndex: buildMatrixCellIndex(cells),
+      cellIndex: buildMatrixCellIndex(response.cells),
     }];
   }));
+}
+
+/* A recent identical matrix answers while every cell is asked again: a cell
+   shows its cached value only until a provider has answered for it. */
+function cachedMatrixCellsByKey(cachedJob?: MatrixJobRecord): Map<string, MatrixCell> | undefined {
+  return cachedJob
+    ? new Map(cachedJob.cells.map((cell) => [cell.key, stripCachedMatrixCellQuotation(cell)] as const))
+    : undefined;
+}
+
+function overlayCachedMatrixCells(
+  response: MatrixResponse,
+  cachedCells?: ReadonlyMap<string, MatrixCell>,
+): MatrixResponse {
+  if (!cachedCells?.size) {
+    return response;
+  }
+
+  const cells = response.cells.map((cell) => (cell.confidence === "loading" ? cachedCells.get(cell.key) : undefined) ?? cell);
+  return { ...response, cells, confidenceSummary: buildMatrixConfidenceSummary(cells) };
 }
 
 function searchJobResponse(
@@ -2801,11 +2553,11 @@ async function handleMatrixRequest(
     providerIds,
     maxAgeMs: SEARCH_REVALIDATION_CACHE_TTL_MS,
   });
-  const providerStates = createProviderMatrixStates(normalizedRequest, providerIds, cachedJob);
-  const materializedDraft = materializeAggregatedMatrixResponse(
-    normalizedRequest,
-    providerIds,
-    providerStates,
+  const providerStates = createProviderMatrixStates(normalizedRequest, providerIds);
+  const cachedCells = cachedMatrixCellsByKey(cachedJob);
+  const materializedDraft = overlayCachedMatrixCells(
+    materializeAggregatedMatrixResponse(normalizedRequest, providerIds, providerStates),
+    cachedCells,
   );
   const draft = cachedJob
     ? createCachedMatrixDraftResponse(materializedDraft, providerIds, cachedJob)
@@ -2834,12 +2586,9 @@ async function handleMatrixRequest(
   let lastPersistedMatrixProgressCount = 0;
 
   const syncMatrixJob = (status: "running" | "completed") => {
-    const materialized = materializeAggregatedMatrixResponse(
-      normalizedRequest,
-      providerIds,
-      providerStates,
-    );
-    const progressCount = materialized.cells.filter((cell) => cell.confidence !== "loading").length;
+    const fresh = materializeAggregatedMatrixResponse(normalizedRequest, providerIds, providerStates);
+    const progressCount = fresh.cells.filter((cell) => cell.confidence !== "loading").length;
+    const materialized = overlayCachedMatrixCells(fresh, cachedCells);
     const persist = status === "completed"
       || shouldPersistProgressSnapshot(lastPersistedMatrixProgressCount, progressCount);
     if (status === "running" && persist) {
@@ -3408,100 +3157,6 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
     }
 
     return json(matrixJobResponse(job, sinceRevision));
-  }
-
-  if (request.method === "GET" && url.pathname.startsWith("/r/")) {
-    if (!isTrustedApiRequest(request)) {
-      return apiAuthRequiredResponse();
-    }
-
-    const purchasePathId = url.pathname.slice(3);
-    const resolved = runtime.sessions.resolvePurchasePath(purchasePathId);
-
-    if (!resolved) {
-      return json({ error: "Purchase path not found." }, { status: 404 });
-    }
-
-    if (resolved.path.url) {
-      let location = resolved.path.url;
-
-      if (resolved.path.provider === "costamar" && resolved.path.type === "search-redirect") {
-        const redirectContext = runtime.sessions.getRedirectContext(resolved.sessionId);
-        const providerContext = redirectContext?.providerContext;
-        const fallbackRequest = redirectContext?.request;
-        let canRedirect = false;
-        let blockedReason: string | undefined;
-
-        try {
-          const parsed = new URL(location);
-          const sessionContext = providerContext?.costamar;
-          const parsedTerminalId = parsed.searchParams.get("terminalId")?.trim() || undefined;
-          const parsedLang = parsed.searchParams.get("lang")?.trim() || undefined;
-          const parsedToken = parsed.searchParams.get("token")?.trim() || undefined;
-          const terminalId = parsedTerminalId || sessionContext?.terminalId;
-          const lang = parsedLang || sessionContext?.lang;
-          const parsedTokenIsUsable = Boolean(resolveUsableCostamarBrandedToken(parsedToken, terminalId));
-          const fastContext = normalizeCostamarProviderContext({
-            ...(sessionContext ?? {}),
-            ...(terminalId ? { terminalId } : {}),
-            ...(lang ? { lang } : {}),
-            token: parsedTokenIsUsable ? parsedToken : sessionContext?.token,
-          });
-          const redirectRequest = costamarRedirectRequestFromUrl(location, fallbackRequest);
-
-          if (
-            redirectRequest
-            && isAllowedCostamarBrandedSearchLocation(location, redirectRequest, fastContext)
-          ) {
-            const redirectResolution = await withCostamarRedirectTotalTimeout(
-              resolveCostamarRedirectForRequest(redirectRequest, fastContext, {
-                force: !parsedTokenIsUsable,
-                validateLive: true,
-                forceOnUnverified: true,
-              }),
-            );
-            blockedReason = redirectResolution.redirectVerification.reason;
-            if (redirectResolution.redirectVerification.verified) {
-              location = applyCostamarContextToBrandedSearchUrl(location, redirectResolution.context);
-              canRedirect = true;
-            }
-          } else if (!redirectRequest) {
-            blockedReason = "No se pudo reconstruir la busqueda Click and Book Plus desde el purchase path.";
-          } else {
-            blockedReason = "El enlace guardado de Click and Book Plus no pertenece a un origen permitido.";
-          }
-        } catch (error) {
-          blockedReason = safeCostamarRedirectFailureReason(error);
-          canRedirect = false;
-        }
-
-        if (!canRedirect) {
-          return costamarRedirectBlockedResponse(blockedReason);
-        }
-      }
-
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: location,
-          "Cache-Control": "no-store",
-          "Referrer-Policy": "no-referrer",
-        },
-      });
-    }
-
-    if (resolved.path.referenceText) {
-      return new Response(resolved.path.referenceText, {
-        status: 200,
-        headers: {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Cache-Control": "no-store",
-          "Referrer-Policy": "no-referrer",
-        },
-      });
-    }
-
-    return json({ error: "Purchase path is unavailable." }, { status: 410 });
   }
 
   if (request.method === "POST" && url.pathname === "/api/quotation") {

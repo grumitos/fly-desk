@@ -707,8 +707,18 @@ function matrixJobPersistenceVersion(job: MatrixJobRecord): string {
   return `${job.revision}\u0000${job.status}\u0000${job.updatedAt}\u0000${job.lastAccessedAt}`;
 }
 
+/* Every save compares the version of each purchase path in memory, and a
+   fingerprint carries the provider's reference text, so the version holds a
+   short digest of it rather than the text. */
+const fingerprintDigests = new WeakMap<StoredPurchasePath, string>();
+
 function purchasePathPersistenceVersion(entry: StoredPurchasePath): string {
-  return `${entry.fingerprint}\u0000${entry.updatedAt}\u0000${entry.lastAccessedAt}`;
+  let digest = fingerprintDigests.get(entry);
+  if (digest === undefined) {
+    digest = Bun.hash(entry.fingerprint).toString(36);
+    fingerprintDigests.set(entry, digest);
+  }
+  return `${digest}\u0000${entry.updatedAt}\u0000${entry.lastAccessedAt}`;
 }
 
 function onlyProviderDiagnosticsChanged(

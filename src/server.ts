@@ -3,6 +3,7 @@ import * as path from "node:path";
 import type { Server as BunServer } from "bun";
 import { ensureAirlineMark } from "./airline-mark-store";
 import { routeRequest } from "./http-router";
+import { requestWithServerTrustHeaders, routeRedirectRequest } from "./redirect-service";
 import { SEARCH_SERVICE_PROXY_HEADER } from "./search-service-client";
 import { hasAcceptedApiAccessToken } from "./service-auth";
 import { logPerfSpan, startPerfTimer } from "./perf";
@@ -429,6 +430,12 @@ async function routeServerRequest(request: Request, server: BunServer<undefined>
 
   if (request.method === "GET" && pathname === "/favicon.ico") {
     return new Response(null, { status: 204 });
+  }
+
+  /* Production routes `/r/*` to the redirect service; a single-process run
+     answers it with the same resolver. */
+  if (pathname.startsWith("/r/")) {
+    return routeRedirectRequest(requestWithServerTrustHeaders(new Request(url, request), server));
   }
 
   return proxyToRouter(request, server, url);

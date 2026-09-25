@@ -1,7 +1,6 @@
 import { Database } from "bun:sqlite";
 import { envFlag, envNumber } from "./env";
 import type { Server as BunServer } from "bun";
-import { timingSafeEqual } from "node:crypto";
 import type { ProviderContext, PurchasePath, SearchRequest } from "./core/types";
 import {
   applyCostamarContextToBrandedSearchUrl,
@@ -14,7 +13,7 @@ import {
   resolveUsableCostamarBrandedToken,
 } from "./provider-context";
 import { resolvePersistPath } from "./runtime-paths";
-import { resolveAcceptedApiAccessTokens } from "./service-auth";
+import { hasAcceptedApiAccessToken } from "./service-auth";
 import { COMPLETED_SEARCH_SESSION_TTL_MS } from "./session-store";
 import {
   hasValidRedirectSession,
@@ -469,7 +468,7 @@ function isLoopbackRemoteAddress(value: string | undefined): boolean {
     || normalized === "::ffff:127.0.0.1";
 }
 
-function requestWithServerTrustHeaders(request: Request, server: Pick<BunServer<undefined>, "requestIP">): Request {
+export function requestWithServerTrustHeaders(request: Request, server: Pick<BunServer<undefined>, "requestIP">): Request {
   const headers = new Headers();
   request.headers.forEach((value, key) => {
     if (!key.toLowerCase().startsWith("x-flydesk-")) {
@@ -504,39 +503,6 @@ function isTrustedLocalRequest(request: Request): boolean {
   return true;
 }
 
-function resolveProvidedApiAccessToken(request: Request): string | undefined {
-  const tokenHeader = String(request.headers.get("x-flydesk-api-token") ?? "").trim();
-  if (tokenHeader) {
-    return tokenHeader;
-  }
-
-  const authorizationHeader = String(request.headers.get("authorization") ?? "").trim();
-  if (authorizationHeader.toLowerCase().startsWith("bearer ")) {
-    const bearer = authorizationHeader.slice("bearer ".length).trim();
-    return bearer || undefined;
-  }
-
-  return undefined;
-}
-
-function hasValidApiAccessToken(request: Request, expectedTokens: readonly string[]): boolean {
-  const providedToken = resolveProvidedApiAccessToken(request);
-  if (!providedToken) {
-    return false;
-  }
-
-  const provided = Buffer.from(providedToken, "utf8");
-
-  return expectedTokens.some((expectedToken) => {
-    const expected = Buffer.from(expectedToken, "utf8");
-    if (expected.length !== provided.length) {
-      return false;
-    }
-
-    return timingSafeEqual(expected, provided);
-  });
-}
-
 function isTrustedRedirectRequest(request: Request): boolean {
   if (isTrustedLocalRequest(request)) {
     return true;
@@ -546,8 +512,7 @@ function isTrustedRedirectRequest(request: Request): boolean {
     return true;
   }
 
-  const tokens = resolveAcceptedApiAccessTokens();
-  return tokens.length > 0 ? hasValidApiAccessToken(request, tokens) : false;
+  return hasAcceptedApiAccessToken(request.headers);
 }
 
 function redirectAuthRequiredResponse(): Response {
@@ -656,7 +621,7 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
   return json({ error: "Purchase path is unavailable." }, { status: 410 });
 }
 
-async function routeRedirectRequest(request: Request, options: RedirectServiceOptions = {}): Promise<Response> {
+export async function routeRedirectRequest(request: Request, options: RedirectServiceOptions = {}): Promise<Response> {
   const url = new URL(request.url);
 
   if (request.method === "GET" && url.pathname === "/api/health") {
