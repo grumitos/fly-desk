@@ -285,7 +285,7 @@ function EmptyMonthCard({ month, index }: { month: DisplayMonth; index: number }
 
 /* 06 §5: the bars grow once, when the month's data lands, 40ms apart. */
 function monthRowStyle(index: number): CSSProperties {
-  return { "--fd-month-index": String(index) } as CSSProperties
+  return { "--i": String(index) } as CSSProperties
 }
 
 /* The cheapest month keeps a 26% stub (1i): an empty bar reads as «no data». */

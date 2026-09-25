@@ -54,7 +54,7 @@ export function AllSchedulesPanel({
       aria-label={`Todos los horarios de ${providerLabel}`}
       className="fd-motion-emergente absolute inset-x-0 top-full z-30 mt-1.5 max-h-[19rem] overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-[var(--fd-shadow-emergente)]"
     >
-      <div className="flex items-center justify-between gap-3 border-b border-border bg-secondary/60 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-3 border-b border-border bg-surface-sunken px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2.5">
           <h3 className="fd-type-base">Todos los horarios</h3>
           <span className="fd-panel-count">{offers.length}</span>

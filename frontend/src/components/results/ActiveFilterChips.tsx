@@ -29,7 +29,7 @@ export function ActiveFilterChips({
 }) {
   /* 07 §1: items enter 40ms apart, counted here rather than by `nth-child`. */
   let position = 0
-  const stagger = () => ({ "--fd-chip-index": position++ } as CSSProperties)
+  const stagger = () => ({ "--i": position++ } as CSSProperties)
 
   return (
     <div className="fd-filter-strip">

@@ -31,6 +31,10 @@
     --fd-control-touch: 40px;
     --fd-control-touch-lg: 46px;
 
+    /* The smallest target any pointer gets (WCAG 2.2, 2.5.8); a control
+       drawn smaller takes it as its hit area. */
+    --fd-target-min: 24px;
+
     --fd-radius-4: 4px; /* checkboxes, skeleton blocks */
     --fd-radius-6: 6px; /* badges, keys */
     --fd-radius-8: 8px; /* 26px chips, calendar cells */
@@ -765,7 +769,8 @@
   }
 
   .fd-motion-giro,
-  .fd-skeleton-block {
+  .fd-skeleton-block,
+  .fd-card--skeleton {
     animation: none !important;
   }
 

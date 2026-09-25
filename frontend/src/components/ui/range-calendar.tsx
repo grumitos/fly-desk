@@ -183,12 +183,8 @@ export function DayRangeCalendar({
       </div>
 
       <div className="fd-cal-legend">
-        <LegendItem swatch={<span className="fd-cal-legend-swatch" style={todaySwatchStyle}>{Number(today.slice(8))}</span>}>
-          hoy
-        </LegendItem>
-        <LegendItem swatch={<span className="fd-cal-legend-swatch" style={unavailableSwatchStyle}>12</span>}>
-          no disponible
-        </LegendItem>
+        <LegendItem kind="today" sample={Number(today.slice(8))}>hoy</LegendItem>
+        <LegendItem kind="past" sample="12">no disponible</LegendItem>
       </div>
     </div>
   )
@@ -355,15 +351,9 @@ export function MonthRangeCalendar({
       </div>
 
       <div className="fd-cal-legend">
-        <LegendItem swatch={<span className="fd-cal-legend-swatch" style={todaySwatchStyle}>{monthAbbreviation(currentMonth)}</span>}>
-          mes en curso
-        </LegendItem>
-        <LegendItem swatch={<span className="fd-cal-legend-swatch" style={unavailableSwatchStyle}>may</span>}>
-          no disponible
-        </LegendItem>
-        <LegendItem swatch={<span className="fd-cal-legend-swatch" style={inRangeSwatchStyle}>set</span>}>
-          en el rango · máx. {maxSpan}
-        </LegendItem>
+        <LegendItem kind="today" sample={monthAbbreviation(currentMonth)}>mes en curso</LegendItem>
+        <LegendItem kind="past" sample="may">no disponible</LegendItem>
+        <LegendItem kind="mid" sample="set">en el rango · máx. {maxSpan}</LegendItem>
       </div>
     </div>
   )
@@ -504,31 +494,16 @@ function CalendarStep({
   )
 }
 
-function LegendItem({ swatch, children }: { swatch: ReactNode; children: ReactNode }) {
+/* A swatch restates a cell's state, drawn by that cell's own rule, rather than
+   reusing a live cell, so the legend never reads as something to click. */
+function LegendItem({ kind, sample, children }: { kind: DayKind; sample: ReactNode; children: ReactNode }) {
   return (
     <span className="fd-cal-legend-item">
-      {swatch}
+      <span className="fd-cal-legend-swatch" data-kind={kind}>{sample}</span>
       {children}
     </span>
   )
 }
-
-/* The legend restates the cell states rather than reusing a live cell, so it
-   never reads as something to click. */
-const todaySwatchStyle = {
-  boxShadow: "inset 0 0 0 1.5px color-mix(in srgb, var(--color-primary) 55%, transparent)",
-  color: "var(--color-foreground)",
-} as const
-
-const unavailableSwatchStyle = {
-  color: "color-mix(in srgb, var(--color-muted-foreground) 38%, transparent)",
-  fontWeight: 400,
-} as const
-
-const inRangeSwatchStyle = {
-  background: "color-mix(in srgb, var(--color-primary) 12%, transparent)",
-  color: "color-mix(in srgb, var(--color-primary) 78%, var(--color-foreground))",
-} as const
 
 /** Confirmed choices only. A tentative sweep is not a selection. */
 function isChosen(kind: DayKind): boolean {

@@ -61,7 +61,7 @@ export function ResultsSkeleton({
 
 function SkeletonRow({ index }: { index: number }) {
   const shape = SKELETON_ROW_RHYTHM[index % SKELETON_ROW_RHYTHM.length]
-  const rowStyle = { "--fd-skeleton-row": String(index % PULSE_WRAP) } as CSSProperties
+  const rowStyle = { "--i": String(index % PULSE_WRAP) } as CSSProperties
 
   return (
     <article className="fd-card fd-card--skeleton" style={rowStyle} aria-hidden="true">

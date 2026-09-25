@@ -322,7 +322,6 @@
   .fd-filter-group {
     display: grid;
     gap: 6px;
-    transition: opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
   .fd-filter-group-head {
@@ -330,10 +329,6 @@
     align-items: baseline;
     justify-content: space-between;
     gap: 8px;
-  }
-
-  .fd-filter-group-unused {
-    display: none;
   }
 
   /* The only separator in the panel: airlines are a list, not a constraint. */
@@ -769,6 +764,25 @@
     }
   }
 
+  /* The 20px controls keep their drawing and hit at the minimum target. */
+  .fd-daterange-clear,
+  .fd-field-clear,
+  .fd-detail-quote-error-dismiss {
+    position: relative;
+  }
+
+  .fd-daterange-clear::after,
+  .fd-field-clear::after,
+  .fd-detail-quote-error-dismiss::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, var(--fd-target-min));
+    height: max(100%, var(--fd-target-min));
+    content: "";
+    translate: -50% -50%;
+  }
+
   /* Trailing controls sit on the field's axis, not on the value line: taking
      the label band off their top centres them without growing the field. */
   .fd-daterange-clear,
@@ -978,16 +992,24 @@
     }
   }
 
-  .fd-cal-cell[data-kind="today"] {
+  /* A state's rule draws its legend swatch too, so the legend cannot drift
+     from the grid. */
+  .fd-cal-cell[data-kind="today"],
+  .fd-cal-legend-swatch[data-kind="today"] {
     box-shadow: inset 0 0 0 1px var(--color-focus);
     color: var(--color-foreground);
     font-weight: var(--fd-weight-title);
   }
 
-  .fd-cal-cell[data-kind="past"] {
+  .fd-cal-cell[data-kind="past"],
+  .fd-cal-legend-swatch[data-kind="past"] {
     color: var(--color-faint);
-    cursor: not-allowed;
     font-weight: var(--fd-weight-value);
+  }
+
+  /* A past cell is a disabled button, dimmed by the disabled rule as well. */
+  .fd-cal-legend-swatch[data-kind="past"] {
+    opacity: var(--fd-disabled-opacity);
   }
 
   .fd-cal-cell[data-kind="solo"] {
@@ -996,8 +1018,12 @@
 
   .fd-cal-cell[data-kind="mid"] {
     border-radius: 0;
-    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-    color: color-mix(in srgb, var(--color-primary) 78%, var(--color-foreground));
+  }
+
+  .fd-cal-cell[data-kind="mid"],
+  .fd-cal-legend-swatch[data-kind="mid"] {
+    background: var(--color-range);
+    color: var(--color-range-foreground);
   }
 
   .fd-cal-cell[data-kind="solo"],
@@ -1048,7 +1074,7 @@
   }
 
   .fd-cal-cell[data-sweep][data-kind="mid"]::before {
-    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    background: var(--color-range);
   }
 
   .fd-cal-cell[data-sweep][data-kind="start"]::before,
@@ -1064,7 +1090,7 @@
 
   .fd-cal-cell[data-kind="pend"] {
     border-radius: 0 var(--fd-radius-8) var(--fd-radius-8) 0;
-    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    background: var(--color-range);
     box-shadow: inset 0 0 0 1px var(--color-focus);
     color: var(--color-foreground);
     font-weight: var(--fd-weight-title);
@@ -1092,6 +1118,8 @@
     gap: 6px;
   }
 
+  /* A cell in miniature, at the cell's own weight until its state says
+     otherwise. */
   .fd-cal-legend-swatch {
     display: inline-grid;
     min-width: 20px;
@@ -1101,7 +1129,7 @@
     border-radius: var(--fd-radius-6);
     font-family: var(--font-mono);
     font-size: var(--fd-text-micro);
-    font-weight: var(--fd-weight-title);
+    font-weight: var(--fd-weight-label);
   }
 
   .fd-cal-popover[data-layout="continuous"] {
@@ -1471,27 +1499,24 @@
     gap: 8px;
   }
 
+  /* Flush with the column's edge and without a hover fill, as in both
+     sheets: the 303px column needs the room for «Copiado». */
   .fd-detail-migration {
     display: flex;
     height: var(--fd-control-standard);
     flex-shrink: 0;
     align-items: center;
     gap: 8px;
-    border-radius: var(--fd-radius-10);
-    padding-inline: 6px;
     color: var(--color-secondary-foreground);
     cursor: pointer;
     font-size: var(--fd-text-meta);
     font-weight: var(--fd-weight-label);
     white-space: nowrap;
-    transition:
-      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
-      color var(--fd-dur-tacto) var(--fd-ease-tacto);
+    transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
   @media (hover: hover) {
     .fd-detail-migration:hover {
-      background: var(--color-hover);
       color: var(--color-foreground);
     }
   }
@@ -1666,14 +1691,6 @@
 
     .fd-detail-migration {
       height: var(--fd-control-touch-sm);
-      border-radius: 0;
-      padding-inline: 0;
-    }
-
-    @media (hover: hover) {
-      .fd-detail-migration:hover {
-        background: transparent;
-      }
     }
 
     .fd-detail-migration-switch {
@@ -1778,15 +1795,7 @@
 
     .fd-detail-migration {
       height: var(--fd-control-touch);
-      border-radius: var(--fd-radius-12);
-      padding-inline: 0;
       font-size: var(--fd-text-base);
-    }
-
-    @media (hover: hover) {
-      .fd-detail-migration:hover {
-        background: transparent;
-      }
     }
 
     .fd-detail-migration-switch {
@@ -2115,9 +2124,8 @@
       border-color var(--fd-dur-tacto) var(--fd-ease-tacto),
       background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
     position: relative;
-    --i: var(--fd-month-index, 0);
     animation: fd-enter-row var(--fd-dur-emergente) var(--fd-ease-estructura)
-      calc(var(--fd-stagger-row) * var(--i)) both;
+      calc(var(--fd-stagger-row) * var(--i, 0)) both;
   }
 
   @media (hover: hover) {
@@ -2173,6 +2181,7 @@
   }
 
   .fd-month-head {
+    container: fd-month-head / inline-size;
     display: flex;
     min-width: 0;
     align-items: center;
@@ -2207,6 +2216,17 @@
   .fd-month-badge--quiet {
     background: var(--color-secondary);
     color: var(--color-muted-foreground);
+  }
+
+  /* A desk's card cannot hold the month, «Más bajo» and a loading word on
+     one line: the quiet badge shows its spinner alone, its word stays for
+     screen readers, and the header line counts the months still loading. */
+  @container fd-month-head (max-width: 319.98px) {
+    .fd-month-badge--quiet {
+      width: 20px;
+      overflow: hidden;
+      padding-inline: 4px;
+    }
   }
 
   .fd-month-hero {
@@ -2253,7 +2273,7 @@
     background: var(--color-placeholder);
     transform-origin: left center;
     animation: fd-month-bar var(--fd-dur-month-bar) var(--fd-ease-estructura) both;
-    animation-delay: calc(var(--fd-stagger-chip) * var(--i));
+    animation-delay: calc(var(--fd-stagger-chip) * var(--i, 0));
   }
 
   .fd-month-card.is-cheapest .fd-month-bar-fill {

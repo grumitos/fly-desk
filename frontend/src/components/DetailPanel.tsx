@@ -267,22 +267,12 @@ export function DetailPanel({
 
   if (!offer) {
     return (
-      <section className={cn("fd-detail-panel flex h-full min-h-0 flex-col overflow-hidden", embedded && "fd-detail-panel--embedded")}>
+      <section className="fd-detail-panel flex h-full min-h-0 flex-col overflow-hidden">
         {!embedded && <div className="fd-detail-header">
           <h2 className="fd-detail-title">Oferta</h2>
           <p className="fd-detail-provider">Sin selección</p>
         </div>}
-        <div className="grid min-h-0 flex-1 place-items-center p-6 text-center">
-          <div>
-            <span className="mx-auto mb-3 grid size-12 place-items-center rounded-xl bg-secondary text-muted-foreground">
-              <AppIcon name="detail" size={18} />
-            </span>
-            <h3 className="fd-type-card">Selecciona una oferta</h3>
-            <p className="mt-1 text-[13px] leading-6 text-muted-foreground">
-              El detalle mostrará el itinerario, las condiciones y la cotización lista para pegar.
-            </p>
-          </div>
-        </div>
+        <p className="fd-detail-empty">Selecciona una oferta para ver su detalle.</p>
       </section>
     )
   }
@@ -298,7 +288,7 @@ export function DetailPanel({
     <section
       /* Keyed so the panel arrives again for every offer (05 §8). */
       key={offer.id}
-      className={cn("fd-detail-panel flex h-full min-h-0 flex-col overflow-hidden", embedded && "fd-detail-panel--embedded")}
+      className="fd-detail-panel flex h-full min-h-0 flex-col overflow-hidden"
       data-quote-error={quotationFailed || undefined}
     >
       {/* One close, two shapes: a cross on a desk sheet, a back chevron on a
@@ -385,7 +375,7 @@ export function DetailPanel({
             {shown.warnings.map((warning, index) => (
               <p
                 key={`${warning}-${index}`}
-                className="rounded-lg border border-warning/45 bg-warning-soft px-2.5 py-2 text-xs leading-5 text-warning-soft-foreground"
+                className="rounded-lg border border-warning-border bg-warning-soft px-2.5 py-2 text-xs leading-5 text-warning-soft-foreground"
               >
                 {warning}
               </p>
@@ -432,10 +422,10 @@ export function DetailPanel({
               <strong className="fd-detail-quote-error-full">{QUOTATION_ERROR_TITLE}</strong>
               <strong className="fd-detail-quote-error-short">{QUOTATION_ERROR_TITLE_SHORT}</strong>
               <br />
-              <span className="fd-detail-quote-error-detail fd-detail-quote-error-full">
+              <span className="fd-detail-quote-error-full">
                 {QUOTATION_ERROR_DETAIL}
               </span>
-              <span className="fd-detail-quote-error-detail fd-detail-quote-error-short">
+              <span className="fd-detail-quote-error-short">
                 {QUOTATION_ERROR_DETAIL_SHORT}
               </span>
             </span>
@@ -507,9 +497,7 @@ export function DetailPanel({
                 onClick={handlePurchasePath}
               >
                 <AppIcon name="externalLink" size={14} />
-                <span className="fd-detail-provider-action-label">
-                  {purchasePath.type === "search-redirect" ? "Buscar" : "Abrir"}
-                </span>
+                {purchasePath.type === "search-redirect" ? "Buscar" : "Abrir"}
               </Button>
             )}
             <ShortcutTooltip
@@ -528,7 +516,9 @@ export function DetailPanel({
                 : copied
                   ? <AppIcon name="check" size={14} />
                   : <AppIcon name="clipboard" size={14} />}
-              {isQuoting ? "Validando" : copied ? "Copiado" : "Cotizar"}
+              {/* Busy, the button keeps its word and turns its icon, as
+                  «Reintentar» does: a longer word does not fit the column. */}
+              {copied && !isQuoting ? "Copiado" : "Cotizar"}
             </Button>
             </ShortcutTooltip>
           </div>

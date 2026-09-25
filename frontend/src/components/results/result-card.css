@@ -500,9 +500,8 @@
   .fd-card--skeleton {
     cursor: default;
     pointer-events: none;
-    --i: var(--fd-skeleton-row, 0);
     animation: fd-pulso var(--fd-dur-pulso) var(--fd-ease-pulso)
-      calc(var(--fd-stagger-skeleton) * var(--i)) infinite;
+      calc(var(--fd-stagger-skeleton) * var(--i, 0)) infinite;
   }
 
   .fd-card--skeleton .fd-skeleton-block {
@@ -546,12 +545,6 @@
 
   .fd-card--skeleton .fd-skeleton-price {
     height: 12px;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .fd-card--skeleton {
-      animation: none;
-    }
   }
 
   /* ---- all-schedules panel ---- */
