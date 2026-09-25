@@ -12,7 +12,6 @@ import {
 const DEFAULT_COSTAMAR_API_BASE_URL = "https://air-search-service-zneith.zdev.tech/v2";
 const DEFAULT_COSTAMAR_BRAND_BASE_URL = "https://flights.zdev.tech/vuelos/pro";
 const DEFAULT_COSTAMAR_ENGINE_BASE_URL = "https://api-zneith.zdev.tech/api-engine";
-const DEFAULT_COSTAMAR_MARKUP_BASE_URL = "https://commons-service-b-zneith.zdev.tech/markup-service";
 const DEFAULT_COSTAMAR_TERMINAL_ID = "0721808110";
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 const COSTAMAR_SESSION_CACHE_TTL_MS = 30000;
@@ -30,7 +29,6 @@ const COSTAMAR_SESSION_FILE_REGEX = /^(?:(?:Session|Tabs)_\d+|(?:Current|Last) (
 const COSTAMAR_API_HOSTS = new Set(["air-search-service-zneith.zdev.tech", "test-api-zneith.zdev.tech"]);
 const COSTAMAR_BRAND_HOSTS = new Set(["flights.zdev.tech"]);
 const COSTAMAR_ENGINE_HOSTS = new Set(["api-zneith.zdev.tech"]);
-const COSTAMAR_MARKUP_HOSTS = new Set(["commons-service-b-zneith.zdev.tech"]);
 
 interface CostamarSessionCandidate {
   terminalId: string;
@@ -984,12 +982,6 @@ export function normalizeCostamarProviderContext(
       DEFAULT_COSTAMAR_ENGINE_BASE_URL,
       COSTAMAR_ENGINE_HOSTS,
       "CBPLUS_ENGINE_API_BASE_URL",
-    ),
-    markupBaseUrl: normalizeAllowedHttpsUrl(
-      process.env.CBPLUS_MARKUP_API_BASE_URL,
-      DEFAULT_COSTAMAR_MARKUP_BASE_URL,
-      COSTAMAR_MARKUP_HOSTS,
-      "CBPLUS_MARKUP_API_BASE_URL",
     ),
     terminalId: stringOrFallback(
       input?.terminalId ?? process.env.CBPLUS_TERMINAL_ID ?? process.env.COSTAMAR_TERMINAL_ID,
