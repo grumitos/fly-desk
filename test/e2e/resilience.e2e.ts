@@ -79,7 +79,8 @@ suite.test("a provider that falls is named in one line, and nothing it said reac
   assert.ok((job.warnings ?? []).some((warning) => /GDS 3/.test(warning)), JSON.stringify(job.warnings));
   const route = { origin: "LIM", destination: "SCL", departureDate: departure };
   assert.deepEqual(providerSearches(fake, route).filter((request) => request.op === "cbplus.search").map((request) => request.status), [503]);
-  assert.deepEqual(providerSearches(fake, route).filter((request) => request.query?.gds === 3).map((request) => request.status), [0]);
+  /* Dropped, asked once more on a new connection, dropped again. */
+  assert.deepEqual(providerSearches(fake, route).filter((request) => request.query?.gds === 3).map((request) => request.status), [0, 0]);
 
   await assertCanaryContained(scope, tracked, secret);
 

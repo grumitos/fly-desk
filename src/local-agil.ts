@@ -1382,6 +1382,24 @@ async function cleanupTemporaryChromeLaunch(userDataDir: string, chrome?: Bun.Nu
   unregisterActiveTempArtifact(userDataDir);
 }
 
+/* Agil sent nothing back: the connection failed before any response arrived. */
+class AgilUnansweredError extends Error {
+  override name = "AgilUnansweredError";
+}
+
+/*
+ * Every Agil request, under one deadline for all of it.
+ *
+ * A request that fails before Agil answers anything is sent once more, on a
+ * connection of its own. Bun's fetch pools idle connections and can hand out
+ * one the far end closed a moment earlier, more often the busier the host is:
+ * the request dies with ECONNRESET without reaching Agil, and a GDS search that
+ * dies that way takes all of that GDS's fares with it. Nothing Agil is asked
+ * here (a token, a station lookup, the start of a search, a search) changes
+ * anything on its side, and nothing of the failed attempt was received, so the
+ * second attempt can neither repeat an effect nor count a fare twice. An
+ * answer, an error status included, and the deadline are final.
+ */
 async function fetchAgil(
   url: string,
   init: RequestInit,
@@ -1393,28 +1411,48 @@ async function fetchAgil(
   headers.set("Ocp-Apim-Subscription-Key", await resolveAgilApimSubscriptionKey());
   recordProviderFirstHttpRequest(label);
 
+  const attempt = async (connection: "pooled" | "new"): Promise<Response> => {
+    let response: Response | undefined;
+    try {
+      response = await fetch(url, {
+        ...init,
+        headers,
+        signal: controller.signal,
+        /* Bun's per-request way out of the connection pool. */
+        ...(connection === "new" ? { keepalive: false } : {}),
+      });
+      /* The body is read under the same deadline: headers that arrive before a
+         body that stalls would otherwise hold a concurrency slot indefinitely. */
+      const body = await response.arrayBuffer();
+      return new Response(body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    } catch (error) {
+      /* The transport error stays as the cause: the public reason is built
+         from the message, and the service log names what actually failed. */
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+        throw new Error(`${label} timed out after ${AGIL_HTTP_TIMEOUT_MS}ms`, { cause: error });
+      }
+
+      if (response) {
+        throw new Error(`${label} failed while reading the response.`, { cause: error });
+      }
+
+      throw new AgilUnansweredError(`${label} failed before receiving a response.`, { cause: error });
+    }
+  };
+
   try {
-    const response = await fetch(url, {
-      ...init,
-      headers,
-      signal: controller.signal,
-    });
-    /* The body is read under the same deadline: headers that arrive before a
-       body that stalls would otherwise hold a concurrency slot indefinitely. */
-    const body = await response.arrayBuffer();
-    return new Response(body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    });
+    return await attempt("pooled");
   } catch (error) {
-    /* The transport error stays as the cause: the public reason is built from
-       the message, and the service log names what actually failed. */
-    if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
-      throw new Error(`${label} timed out after ${AGIL_HTTP_TIMEOUT_MS}ms`, { cause: error });
+    if (!(error instanceof AgilUnansweredError)) {
+      throw error;
     }
 
-    throw new Error(`${label} failed before receiving a response.`, { cause: error });
+    console.warn(`${label} sent again on a new connection: ${describeErrorChain(error.cause)}`);
+    return await attempt("new");
   } finally {
     clearTimeout(timeout);
   }
