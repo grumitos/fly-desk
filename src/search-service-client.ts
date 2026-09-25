@@ -260,6 +260,12 @@ export async function maybeProxySearchServiceRequest(
     body,
     signal: AbortSignal.timeout(resolveProxyTimeoutMsForRequest(url, options.timeoutMs)),
     duplex: body ? "half" : undefined,
+    /* Every request on a connection of its own. Bun's fetch keeps an idle
+       connection until the runner closes it and can hand it out as that close
+       arrives; the request then dies unanswered, and a write, such as the
+       start of a search, cannot be sent twice. On loopback a new connection
+       costs about half a millisecond. */
+    keepalive: false,
   };
 
   try {
