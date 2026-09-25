@@ -140,7 +140,7 @@ suite.test("a full queue refuses the next search, and a cancelled waiter gives i
     assert.equal(job.searchStatus, "failed");
     return job;
   });
-  assert.match(refused.error ?? "", /cola de busquedas esta llena/);
+  assert.match(refused.error ?? "", /La cola de búsquedas está llena\./);
 
   /* The second waiter leaves; the next search takes its place instead of
      being refused. */
@@ -177,7 +177,7 @@ suite.test("a search that waits past the queue timeout fails with its reason", a
       assert.equal(job.searchStatus, "failed");
       return job;
     }, { timeoutMs: 10_000 });
-    assert.match(timedOut.error ?? "", /espero demasiado/);
+    assert.match(timedOut.error ?? "", /La búsqueda esperó demasiado/);
     assert.equal(callsFor(fake.requests(), { origin: "LIM", destination: "CUZ", departureDate: day(170) }).length, 0);
     gates.forEach((gate) => gate.release());
     for (const job of blockers) {

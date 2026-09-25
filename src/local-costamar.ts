@@ -1131,7 +1131,7 @@ async function generateCostamarRedirectContextViaB2BHttp(
     });
 
     if (costamarB2bResponseRequiresAuthenticator(login.body)) {
-      const authCode = await promptCostamarB2bAuthCode("Codigo de Google Authenticator");
+      const authCode = await promptCostamarB2bAuthCode("Código de Google Authenticator");
       if (!authCode) {
         return undefined;
       }
@@ -3820,7 +3820,7 @@ async function verifyCostamarRedirectCandidate(
 
 export function safeCostamarRedirectFailureReason(error: unknown): string {
   const message = error instanceof Error ? error.message.trim() : "";
-  if (/^La validacion del redirect de Click and Book Plus tardo mas de \d+ms\.$/.test(message)) {
+  if (/^La validación del redirect de Click and Book Plus tardó más de \d+ms\.$/.test(message)) {
     return message;
   }
   return "No se pudo validar el redirect de Click and Book Plus.";

@@ -144,7 +144,7 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
     <main>
       <section>
         <h1>Renueva la autenticación de Click and Book Plus</h1>
-        <p>Fly Desk no encontro un redirect verificado para abrir esta busqueda en Click and Book Plus.</p>
+        <p>Fly Desk no encontró un redirect verificado para abrir esta búsqueda en Click and Book Plus.</p>
         <p><strong>Motivo:</strong> ${reasonText}</p>
         <p>Abre Click and Book Plus B2B/Chrome, vuelve a autenticarte y reintenta desde Fly Desk.</p>
       </section>
@@ -174,7 +174,7 @@ async function withCostamarRedirectTotalTimeout<T>(promise: Promise<T>): Promise
       promise,
       new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(() => {
-          reject(new Error(`La validacion del redirect de Click and Book Plus tardo mas de ${timeoutMs}ms.`));
+          reject(new Error(`La validación del redirect de Click and Book Plus tardó más de ${timeoutMs}ms.`));
         }, timeoutMs);
         if (typeof timeout === "object" && timeout && "unref" in timeout) {
           (timeout as { unref: () => void }).unref();
@@ -568,7 +568,7 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
         // that happens to be valid must never be enough to forward the user to a URL that
         // is not our own branded search.
         if (!redirectRequest) {
-          blockedReason = "No se pudo reconstruir la busqueda Click and Book Plus desde el purchase path.";
+          blockedReason = "No se pudo reconstruir la búsqueda Click and Book Plus desde el purchase path.";
         } else if (!isAllowedCostamarBrandedSearchLocation(location, redirectRequest, fastContext)) {
           blockedReason = "El enlace guardado de Click and Book Plus no pertenece a un origen permitido.";
         } else if (tokenIsUsable && costamarRedirectTrustUsableToken()) {

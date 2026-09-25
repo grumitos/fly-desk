@@ -1954,15 +1954,15 @@ function searchAdmissionErrorMessage(error: unknown): string {
   if (error instanceof SearchAdmissionError) {
     switch (error.code) {
       case "queue-full":
-        return "La cola de busquedas esta llena. Intenta nuevamente en unos minutos.";
+        return "La cola de búsquedas está llena. Intenta nuevamente en unos minutos.";
       case "queue-timeout":
-        return "La busqueda espero demasiado por capacidad disponible.";
+        return "La búsqueda esperó demasiado por capacidad disponible.";
       case "cancelled":
-        return "La busqueda fue cancelada antes de iniciar.";
+        return "La búsqueda fue cancelada antes de iniciar.";
     }
   }
 
-  return "No se pudo iniciar la busqueda.";
+  return "No se pudo iniciar la búsqueda.";
 }
 
 function admissionFailedProviderDiagnostics(
