@@ -52,7 +52,7 @@ suite.test("a sweep across the year boundary marks each month priced, failed or 
   await searchForm.monthCell(picker, JANUARY).click();
   await page.keyboard.press("Escape");
   await picker.waitFor({ state: "hidden" });
-  assert.equal(await searchForm.months(page).getAttribute("aria-label"), `Meses: Nov ${NOVEMBER.slice(0, 4)} – Ene ${JANUARY.slice(0, 4)}`);
+  assert.equal(await searchForm.months(page).getAttribute("aria-label"), `Meses: nov ${NOVEMBER.slice(0, 4)} – ene ${JANUARY.slice(0, 4)}`);
   assert.equal(fake.requests((request) => request.op === "agil.search" || request.op === "cbplus.search").length, 0, "the link searched on its own");
 
   await searchForm.submit(page).click();
