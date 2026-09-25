@@ -188,8 +188,10 @@ suite.test("signing out clears both cookies, and a purchase path no longer opens
 
 /* ---- Hostile clients, over plain HTTP through the front proxy ---- */
 
-function clientAddress(): string {
-  return `198.51.100.${randomInt(1, 255)}`;
+/* Documentation ranges, one per test, so a client one test locks out is
+   never a client another test signs in with. */
+function clientAddress(network: "198.51.100" | "203.0.113"): string {
+  return `${network}.${randomInt(1, 255)}`;
 }
 
 async function formLogin(scope: TestScope, password: string, options: { client?: string; next?: string } = {}): Promise<Response> {
@@ -208,9 +210,9 @@ async function formLogin(scope: TestScope, password: string, options: { client?:
 suite.test("the sixth failed sign-in of a client is refused with Retry-After, and nobody else pays for it", async (scope) => {
   const { stack } = scope;
   /* The edge stamps each client's address (Pages, `x-fly-desk-login-client-ip`). */
-  const attacker = clientAddress();
-  let bystander = clientAddress();
-  while (bystander === attacker) bystander = clientAddress();
+  const attacker = clientAddress("198.51.100");
+  let bystander = clientAddress("198.51.100");
+  while (bystander === attacker) bystander = clientAddress("198.51.100");
 
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     const wrong = await formLogin(scope, `${stack.password}-${attempt}`, { client: attacker });
@@ -243,7 +245,7 @@ suite.test("a hostile return path lands on the desk and never leaves the origin"
     const gate = await fetch(`${stack.baseUrl}/login?next=${encodeURIComponent(next)}`, { redirect: "manual" });
     assert.equal(gate.status, 200, next);
     assert.doesNotMatch(await gate.text(), /name="next"/, `the gate carried ${next}`);
-    const signedIn = await formLogin(scope, stack.password, { client: clientAddress(), next });
+    const signedIn = await formLogin(scope, stack.password, { client: clientAddress("203.0.113"), next });
     assert.equal(signedIn.status, 303, next);
     assert.equal(signedIn.headers.get("location"), "/", `${next} sent the sign-in to ${signedIn.headers.get("location")}`);
   }
