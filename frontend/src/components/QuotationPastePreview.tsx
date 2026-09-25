@@ -95,12 +95,12 @@ export function QuotationPastePreview({
             <span>La tarifa del texto no se reutiliza: se busca de nuevo</span>
           </p>
           <div className="flex items-center gap-2">
-            <Button type="button" variant="secondary" className="h-9" onClick={() => onReview(draft)}>
+            <Button type="button" variant="secondary" onClick={() => onReview(draft)}>
               Revisar campos
             </Button>
             <Button
               type="button"
-              className="h-9 flex-1"
+              className="flex-1"
               disabled={!canSearch}
               title={canSearch ? undefined : "Revisa los campos ausentes antes de buscar"}
               onClick={() => onSearch(draft)}

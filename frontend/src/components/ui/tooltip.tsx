@@ -3,13 +3,8 @@ import * as TooltipPrimitive from "@radix-ui/react-tooltip"
 
 import { cn } from "@/lib/utils"
 
-/*
- * 01 §7: tooltips exist only on icons with no label. Ink background, page
- * colour for the text, 12px, radius 8, no arrow, 300ms of delay, and they enter
- * with `emergente`. Nothing about them is decorative — a tooltip over text that
- * is already on screen is noise, so those call sites are the bug, not this
- * component.
- */
+/* Tooltips name icons that have no label, or say the shortcut of one that
+   does: never text that is already on screen. */
 function TooltipProvider({
   delayDuration = 300,
   skipDelayDuration = 150,
@@ -53,14 +48,18 @@ function TooltipContent({
   )
 }
 
+type TriggerElementProps = {
+  disabled?: boolean
+  onClick?: React.MouseEventHandler<HTMLElement>
+  "aria-disabled"?: boolean
+}
+
 /**
- * 6b closes the keyboard map with one rule: «cada atajo aparece en el tooltip
- * de su control». That is not the repetition 01 §7 forbids — the key is the one
- * thing about the control that is *not* on screen — so a labelled button may
- * carry a tooltip as long as the tooltip is the shortcut.
+ * The shortcut of a labelled control, or why it is unavailable.
  *
- * A disabled control still explains itself: the trigger is a span around it, so
- * the reason arrives even where the button itself no longer takes a pointer.
+ * A disabled control keeps focus and pointer events (`aria-disabled` instead of
+ * `disabled`), so keyboard and mouse users both reach the explanation, and a
+ * press does nothing.
  */
 function ShortcutTooltip({
   children,
@@ -68,16 +67,22 @@ function ShortcutTooltip({
   shortcut,
   disabled = false,
 }: {
-  children: React.ReactElement
+  children: React.ReactElement<TriggerElementProps>
   label: string
   shortcut: React.ReactNode
   disabled?: boolean
 }) {
+  const trigger = disabled
+    ? React.cloneElement(children, {
+        disabled: false,
+        "aria-disabled": true,
+        onClick: (event: React.MouseEvent<HTMLElement>) => event.preventDefault(),
+      })
+    : children
+
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        {disabled ? <span className="fd-tooltip-trigger-shim">{children}</span> : children}
-      </TooltipTrigger>
+      <TooltipTrigger asChild>{trigger}</TooltipTrigger>
       <TooltipContent className="fd-tooltip-shortcut">
         {label}
         {shortcut}

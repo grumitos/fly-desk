@@ -277,6 +277,10 @@
 
   /* ===== 7b · pictograms ================================================= */
 
+  .fd-icon {
+    flex-shrink: 0;
+  }
+
   .fd-icon-18 {
     width: var(--fd-icon-18);
     height: var(--fd-icon-18);
@@ -497,35 +501,6 @@
     box-shadow:
       0 0 0 2px var(--color-card),
       0 0 0 4px color-mix(in srgb, var(--color-primary) 55%, transparent);
-  }
-
-  /*
-   * 07 §4 row 11 · pressed: «oscurece un 12 % y vuelve», on `tacto`.
-   *
-   * An inset shadow rather than `filter: brightness()`, for two reasons. The
-   * filter darkened the **label** along with the surface, where the plate
-   * darkens only the surface; and `tacto` is «solo color y opacidad», which a
-   * filter is not. An inset box-shadow paints over the background and *under*
-   * the text, so 12 % of black lands exactly where the plate puts it — on every
-   * variant, including the ghost, without a rule per fill.
-   *
-   * The spread is large enough to cover any control in the geometry catalogue;
-   * the shadow is clipped by the border box, so there is nothing to tune.
-   */
-  .fd-pressable {
-    transition: box-shadow var(--fd-dur-tacto) var(--fd-ease-tacto);
-  }
-
-  .fd-pressable:not(:disabled):active {
-    box-shadow: inset 0 0 0 100px rgb(0 0 0 / 12%);
-  }
-
-  /* Composed, because a pressed control can also be the focused one and the two
-     write the same property. */
-  .fd-pressable.fd-focus-ring:not(:disabled):focus-visible:active {
-    box-shadow:
-      0 0 0 2px color-mix(in srgb, var(--color-primary) 55%, transparent),
-      inset 0 0 0 100px rgb(0 0 0 / 12%);
   }
 
   /* ===== §0 · motion =====================================================
@@ -801,6 +776,193 @@
   }
 }
 
+/* Primitives. They sit in `components` so that a utility or a surface class on
+   the same element (both in `utilities`) always wins. */
+@layer components {
+  .fd-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    white-space: nowrap;
+    font-weight: var(--fd-weight-label);
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      border-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      box-shadow var(--fd-dur-tacto) var(--fd-ease-tacto),
+      opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-btn:disabled {
+    pointer-events: none;
+  }
+
+  /* Pressed: 12% of ink over the fill and under the label. */
+  .fd-btn:not(:disabled, [aria-disabled="true"]):active {
+    background-image: linear-gradient(rgb(0 0 0 / 12%), rgb(0 0 0 / 12%));
+  }
+
+  .fd-btn-primary {
+    background-color: var(--color-primary);
+    color: var(--color-primary-foreground);
+  }
+
+  .fd-btn-primary:not([aria-disabled="true"]):hover {
+    background-color: color-mix(in srgb, var(--color-primary) 90%, black);
+  }
+
+  .fd-btn-secondary {
+    border: 1px solid var(--color-input);
+    background-color: var(--color-secondary);
+    color: var(--color-secondary-foreground);
+  }
+
+  .fd-btn-secondary:not([aria-disabled="true"]):hover {
+    background-color: var(--color-accent);
+    color: var(--color-foreground);
+  }
+
+  .fd-btn-ghost:not([aria-disabled="true"]):hover {
+    background-color: var(--color-accent);
+    color: var(--color-accent-foreground);
+  }
+
+  .fd-btn-chip {
+    height: var(--fd-control-chip);
+    padding-inline: 10px;
+    border-radius: var(--fd-radius-8);
+    font-size: var(--fd-text-meta);
+  }
+
+  .fd-btn-sm {
+    height: var(--fd-control-standard);
+    padding-inline: 12px;
+    border-radius: var(--fd-radius-10);
+    font-size: var(--fd-text-meta);
+  }
+
+  .fd-btn-md {
+    height: var(--fd-control-bar);
+    padding-inline: 16px;
+    border-radius: var(--fd-radius-10);
+    font-size: var(--fd-text-base);
+  }
+
+  .fd-btn-xl {
+    height: var(--fd-control-primary);
+    padding-inline: 20px;
+    border-radius: var(--fd-radius-12);
+    font-size: var(--fd-text-body);
+  }
+
+  .fd-btn-icon {
+    width: var(--fd-control-standard);
+    height: var(--fd-control-standard);
+    border-radius: var(--fd-radius-10);
+  }
+
+  /* Inputs are drawn by the field around them. */
+  .fd-input,
+  .fd-textarea {
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    outline: none;
+  }
+
+  .fd-textarea {
+    display: block;
+    width: 100%;
+  }
+
+  .fd-input::placeholder,
+  .fd-textarea::placeholder {
+    color: var(--color-muted-foreground);
+  }
+
+  .fd-popover {
+    z-index: 50;
+    padding: 8px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--fd-radius-12);
+    background: var(--color-popover);
+    color: var(--color-popover-foreground);
+    box-shadow: var(--fd-shadow-emergente);
+    outline: none;
+  }
+
+  .fd-popover--bare {
+    padding: 0;
+    border: 0;
+    background: none;
+    box-shadow: none;
+  }
+
+  .fd-checkbox {
+    appearance: none;
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    margin: 0;
+    border: 1px solid var(--color-input);
+    border-radius: var(--fd-radius-4);
+    background: var(--color-card) no-repeat center / 12px 12px;
+    cursor: pointer;
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      border-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-checkbox:checked {
+    border-color: var(--color-primary);
+    background-color: var(--color-primary);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+  }
+
+  .fd-switch {
+    --fd-switch-width: 28px;
+    --fd-switch-height: 16px;
+    --fd-switch-knob: 12px;
+
+    appearance: none;
+    position: relative;
+    display: inline-block;
+    width: var(--fd-switch-width);
+    height: var(--fd-switch-height);
+    flex-shrink: 0;
+    margin: 0;
+    border-radius: 999px;
+    background: var(--color-input);
+    cursor: pointer;
+    transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-switch::before {
+    position: absolute;
+    top: calc((var(--fd-switch-height) - var(--fd-switch-knob)) / 2);
+    left: calc((var(--fd-switch-height) - var(--fd-switch-knob)) / 2);
+    width: var(--fd-switch-knob);
+    height: var(--fd-switch-knob);
+    border-radius: 999px;
+    background: #ffffff;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 20%);
+    content: "";
+    transition: transform var(--fd-dur-tacto) var(--fd-ease-tacto);
+  }
+
+  .fd-switch:checked {
+    background: var(--color-primary);
+  }
+
+  .fd-switch:checked::before {
+    transform: translateX(calc(var(--fd-switch-width) - var(--fd-switch-height)));
+  }
+}
+
 /*
  * Rule 5: with reduced motion everything collapses to 0ms except 90ms
  * opacities. Loops stop — and because a stopped spinner says nothing, the
@@ -862,7 +1024,7 @@
   /* `tacto` survives here because rule 5 keeps «las opacidades de 90 ms», and
      colour is one of them. Displacement is not: the switch knob is the only
      `tacto` that moves something, so it is the only one that stops. */
-  [data-slot="switch-thumb"] {
+  .fd-switch::before {
     transition: none;
   }
 }

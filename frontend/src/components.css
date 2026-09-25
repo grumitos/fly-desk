@@ -596,9 +596,15 @@
   }
 
   .fd-filter-sheet .fd-airline-row {
+    height: var(--fd-control-touch);
     gap: 12px;
     border-bottom: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
     border-radius: 0;
+  }
+
+  .fd-filter-sheet .fd-airline-row .fd-checkbox {
+    width: var(--fd-icon-18);
+    height: var(--fd-icon-18);
   }
 
   .fd-filter-sheet .fd-airline-row-name {
@@ -2032,7 +2038,11 @@
   /* 3c draws this one on `--card` rather than `--secondary`: it is the quiet
      exit, and it is sitting on a surface that is already secondary. */
   .fd-detail-quote-error-open {
-    background: var(--color-card);
+    background-color: var(--color-card);
+  }
+
+  .fd-detail-quote-error-open:hover {
+    background-color: var(--color-accent);
   }
 
   .fd-detail-quote-error-retry {
@@ -2136,22 +2146,10 @@
       background: transparent;
     }
 
-    /* 05 §5 and both plates: 30 × 17 with a 13px knob once the row is 36 or 44
-       tall. The knob's travel is the track minus its own width and the 2px of
-       padding — written on Tailwind's own variable so the utility that put it
-       there is the utility that moves it. */
     .fd-detail-migration-switch {
-      width: 30px;
-      height: 17px;
-    }
-
-    .fd-detail-migration-switch [data-slot="switch-thumb"] {
-      width: 13px;
-      height: 13px;
-    }
-
-    .fd-detail-migration-switch[data-state="checked"] [data-slot="switch-thumb"] {
-      --tw-translate-x: 15px;
+      --fd-switch-width: 30px;
+      --fd-switch-height: 17px;
+      --fd-switch-knob: 13px;
     }
 
     .fd-detail-quote-action {
@@ -2293,27 +2291,10 @@
       background: transparent;
     }
 
-    /*
-     * 05 §5 gives the switch two sizes and `Controles` names both as defects:
-     * «El interruptor tiene dos contratos … Ninguna de esas cuatro medidas está
-     * en el catálogo de geometría». `MovilDetalle` draws the phone's at 34 × 20
-     * over a 16px knob, and all three of those are catalogue values — 34 is
-     * `--fd-control-touch-sm`, 20 is the pill's height, and 16 is the box a
-     * checkbox and a switch's knob share. The travel is what is left:
-     * 34 − 16 − 2 × 2 = 14.
-     */
     .fd-detail-migration-switch {
-      width: var(--fd-control-touch-sm);
-      height: 20px;
-    }
-
-    .fd-detail-migration-switch [data-slot="switch-thumb"] {
-      width: 16px;
-      height: 16px;
-    }
-
-    .fd-detail-migration-switch[data-state="checked"] [data-slot="switch-thumb"] {
-      --tw-translate-x: 14px;
+      --fd-switch-width: var(--fd-control-touch-sm);
+      --fd-switch-height: 20px;
+      --fd-switch-knob: 16px;
     }
 
     /*
@@ -2328,7 +2309,6 @@
     .fd-detail-provider-action {
       height: var(--fd-control-touch);
       flex-shrink: 0;
-      background: var(--color-secondary);
     }
 
     .fd-detail-provider-action svg {
@@ -2418,13 +2398,13 @@
     .fd-detail-quote-error-retry {
       flex: none;
       padding-inline: 12px;
-      background: color-mix(in srgb, var(--color-background) 22%, transparent);
+      background-color: color-mix(in srgb, var(--color-background) 22%, transparent);
       color: var(--color-background);
       font-size: var(--fd-text-base);
     }
 
     .fd-detail-quote-error-retry:hover {
-      background: color-mix(in srgb, var(--color-background) 32%, transparent);
+      background-color: color-mix(in srgb, var(--color-background) 32%, transparent);
     }
 
     .fd-detail-quote-error-retry svg {
@@ -2626,9 +2606,13 @@
   .fd-quote-open {
     gap: 6px;
     padding-inline: 12px;
-    background: var(--color-card);
+    background-color: var(--color-card);
     font-size: var(--fd-text-base);
     font-weight: var(--fd-weight-label);
+  }
+
+  .fd-quote-open:hover {
+    background-color: var(--color-accent);
   }
 
   .fd-quote-copy {

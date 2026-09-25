@@ -1265,7 +1265,7 @@ function PlainLogView({ lines }: { lines: string[] }) {
         readOnly
         spellCheck={false}
         value={text}
-        className="fd-scrollbar h-full min-h-0 w-full resize-none rounded-none border-0 bg-background p-4 font-mono text-xs leading-5 text-foreground shadow-none outline-none focus-visible:ring-0"
+        className="fd-scrollbar h-full min-h-0 resize-none bg-background p-4 font-mono text-xs leading-5 text-foreground"
       />
     </main>
   )
@@ -1318,7 +1318,7 @@ const FiltersPanel = memo(function FiltersPanel({
             variant="ghost"
             size="chip"
             onClick={onClear}
-            className="shrink-0 !px-2 text-xs font-bold text-primary"
+            className="shrink-0 px-2 font-bold text-primary"
             aria-label="Limpiar filtros"
           >
             <AppIcon name="x" size={14} />

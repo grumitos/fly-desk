@@ -362,7 +362,8 @@ export function DateRangeField({
       <PopoverContent
         align="start"
         sideOffset={6}
-        className="w-[min(552px,calc(100vw-2rem))] border-0 bg-transparent p-0 shadow-none"
+        bare
+        className="w-[min(552px,calc(100dvw-2rem))]"
         aria-label="Calendario de fechas"
         onOpenAutoFocus={(event) => event.preventDefault()}
       >
