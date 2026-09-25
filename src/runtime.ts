@@ -51,8 +51,8 @@ export function getRuntime(): RuntimeServices {
         "location-usage.sqlite",
       ),
     }),
-    /* The rail says «aparecer = disponible» (03 §5), so an observation must
-       not expire before the thing that renews it comes round again. */
+    /* An observation must not expire before the prewarm that renews it comes
+       round again. */
     providerStatus: createProviderStatusTracker({
       ttlMs: providerPrewarmEnabled()
         ? providerStatusTtlMsFor(providerPrewarmIntervalMs())

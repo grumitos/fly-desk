@@ -78,11 +78,9 @@ async function prewarmProvidersSilently(providerStatus?: ProviderStatusTracker):
     }
   });
 
-  /* These are failures, not skips. The old line said "skipped N provider(s)"
-     and listed only the ids, which reads as a benign optimisation - and the
-     reason had been computed one block above and then thrown away. Agil was
-     unreachable for two days and this line was the entire trace of it: no
-     reason, no error, and a word that invited the reader to move on. */
+  /* These are failures, not skips, so each one is logged with its reason and
+     detail: this line can be the only trace of a provider that has been
+     unreachable for days. */
   const failures = outcomes.flatMap((outcome, index) =>
     outcome.status === "rejected"
       ? [{ providerId: providerIds[index]!, reason: outcome.reason }]

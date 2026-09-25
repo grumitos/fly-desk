@@ -20,30 +20,12 @@ const COMPLETED_SEARCH_SESSION_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
 /* Past this, the boot is worth a line in the journal on its own. */
 const BOOT_TIMING_REPORT_MS = 1_000;
 /*
- * How much of the persisted cache is parsed back into memory before the process
- * can serve anything, and why it is not 128 MB any more.
- *
- * This budget is paid on the boot path: `loadPersisted()` runs in the store's
- * constructor, the runtime is built before `createServer()`, and the port opens
- * only once both are done. On 2026-08-19 the production search runner took **84
- * seconds** to reach `Fly Desk running at http://127.0.0.1:8101` with 55 jobs
- * and 1.78 GB on disk, burning 65s of CPU and peaking at 912 MB with 256 MB of
- * swap on a 3.8 GB box. The release engine's health window is shorter than
- * that, so the deployment failed activation, rolled back — and the rollback
- * restarted the previous release into the same 84 seconds, which is what
- * «previous release did not recover cleanly» meant.
- *
- * Measured on a 382 MB store of the same shape, boot falls with the budget:
- * 2.56s at 128 MB, 1.85s at 32, 1.24s at 8. The rest is the fixed floor (prune,
- * the metadata queries, the first persist), and the part that scales with this
- * number is `JSON.parse` and the memory it holds — the exact cost that turns
- * into swap on the box.
- *
- * 16 MB, then, and it is only a *pre-warm*: what is not restored stays on disk
- * and is read on demand, transparently, which is what the disk-only tier has
- * always done for everything past the budget. What a running desk keeps in
- * memory is a different number with its own env var
- * (`SEARCH_COMPLETED_SESSION_RESIDENT_BUDGET_BYTES`), unchanged at 128 MB.
+ * How much of the persisted cache is parsed back into memory at boot. It is
+ * paid before the port opens (`loadPersisted()` runs in the constructor, and
+ * the runtime is built before `createServer()`), so it has to fit the release
+ * engine's health window. It is only a pre-warm: what is not restored stays on
+ * disk and is read on demand. What a running desk keeps in memory is a separate
+ * budget, `SEARCH_COMPLETED_SESSION_RESIDENT_BUDGET_BYTES`.
  */
 const PERSISTED_SEARCH_CACHE_RESTORE_DEFAULT_BUDGET_BYTES = 16 * 1024 * 1024;
 
@@ -60,8 +42,6 @@ function persistedRestoreBudgetBytes(configured?: number): number {
 }
 const COMPLETED_SEARCH_SESSION_RESIDENT_DEFAULT_BUDGET_BYTES = 128 * 1024 * 1024;
 const COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS = 5_000;
-/* The write debounce. Named so a test can advance exactly one debounce rather
-   than sleep for "long enough". */
 const SESSION_STORE_PERSIST_DEBOUNCE_MS = 180;
 /*
  * Durability policy, half two: this is the age a finished job may reach before
@@ -99,26 +79,14 @@ function hasCurrentSearchCacheVersion(searchMeta: SearchMeta): boolean {
 type SearchJobStatus = "running" | "completed" | "failed" | "cancelled";
 
 /*
- * The statuses the sweep removes, written out rather than expressed as
- * «anything but completed».
- *
- * `status <> 'completed'` cannot seek an index, so SQLite answered it by
- * reading the table — and this table's rows carry the payloads, which is how a
- * prune that deletes nothing came to cost 16.6 seconds of a 22-second boot on
- * a 1.78 GB store. `IN` over the three seeks `idx_search_jobs_lookup`, which
- * leads with `status`. The list is exhaustive against the union above; a status
- * added there and forgotten here is still swept by age, the branch beside it.
+ * The statuses the sweep removes, written out because `status <> 'completed'`
+ * cannot seek an index, and these rows carry the payloads; `IN` over the three
+ * seeks the indexes that lead with `status`. The list is exhaustive against
+ * the union above; a status added there and missed here is still swept by age.
  */
 const SWEEPABLE_JOB_STATUSES: readonly SearchJobStatus[] = ["running", "failed", "cancelled"];
 const SWEEPABLE_JOB_STATUS_LIST = SWEEPABLE_JOB_STATUSES.map((status) => `'${status}'`).join(", ");
 
-/**
- * What the sweep runs, in order, with the cutoff bound to `?1`.
- *
- * Exported so a test can hold them against `EXPLAIN QUERY PLAN`: every one of
- * them must seek an index. The single `OR` they replaced could not, so SQLite
- * read the table — and these rows carry the payloads.
- */
 /** How long after the port opens the covering indexes are built. */
 const RESTORE_INDEX_BUILD_DELAY_MS = 10_000;
 
@@ -138,11 +106,8 @@ const RESTORE_INDEX_STATEMENTS: readonly string[] = [
 
 /**
  * What the restore reads to decide what fits its budget, and nothing more.
- *
- * Exported for the same reason as the sweep below: a case holds it against
- * `EXPLAIN QUERY PLAN`, and with `RESTORE_INDEX_STATEMENTS` in place every
- * access must be covering. It is one query over three tables whose rows are
- * the cache, so a plan that fetches a row is a plan that reads a payload.
+ * With `RESTORE_INDEX_STATEMENTS` in place every access is covering: these
+ * rows are the cache, so a plan that fetches a row reads a payload.
  */
 const PERSISTED_RESTORE_SELECT_SQL = `
   SELECT
@@ -171,13 +136,16 @@ const PERSISTED_RESTORE_SELECT_SQL = `
   ORDER BY idleAtMs DESC, kind ASC, id ASC
 `;
 
+/*
+ * What the sweep runs, in order, with the cutoff bound to `?1`. One statement
+ * per condition, so that each one seeks an index: an `OR` across age and status
+ * leaves SQLite nothing to seek, and a table scan here reads every payload.
+ */
 const PERSISTED_SWEEP_STATEMENTS: readonly string[] = [
   /*
-   * The jobs go first and their purchase paths follow as orphans, which is the
-   * same set in a cheaper order. Deleting the paths first meant naming the
-   * doomed jobs inside an `IN (… UNION …)`, and there the planner stopped
-   * seeking: to keep the union's branches in id order it walked the primary
-   * key and read every row to test its age — the table again, payloads and all.
+   * Jobs go first and their purchase paths follow as orphans: deleting the
+   * paths first would name the doomed jobs inside an `IN (… UNION …)`, where the
+   * planner walks the primary key and reads every row to test its age.
    */
   "DELETE FROM search_jobs WHERE idle_at_ms < ?1",
   `DELETE FROM search_jobs WHERE status IN (${SWEEPABLE_JOB_STATUS_LIST})`,
@@ -185,9 +153,8 @@ const PERSISTED_SWEEP_STATEMENTS: readonly string[] = [
   `DELETE FROM matrix_jobs WHERE status IN (${SWEEPABLE_JOB_STATUS_LIST})`,
   /*
    * By rowid, so the search for orphans runs inside `idx_purchase_paths_session`
-   * — session_id and rowid, no payloads — and only the rows that are actually
-   * going get read. Asking for them directly made SQLite scan the table, and
-   * this is the widest table of the three.
+   * (session_id and rowid, no payloads) and reads only the rows being deleted;
+   * selecting them directly scans the widest table of the three.
    */
   `DELETE FROM purchase_paths
      WHERE rowid IN (
@@ -333,19 +300,10 @@ interface PurgeSummary {
 type SessionStoreTimerHandle = unknown;
 
 /*
- * The seam the store reads time through.
- *
- * Two timers make the store's observable behaviour depend on the wall clock:
- * the 180ms persist debounce and the resident-budget grace recheck, which is
- * armed for a full `COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS` after a job
- * completes. A test that wanted to watch either had to sleep for real and then
- * poll against a deadline, which is a race it loses as soon as the machine is
- * busy — and the grace recheck gave it a five-second wait to win.
- *
- * `now` and the timers travel together on purpose. A virtual clock paired with
- * real `setTimeout` is not a coherent world: the store computes its delays as
- * `nextEligibleAt - now`, so a caller that could move one without the other
- * would arm timers against a deadline that no longer means anything.
+ * The seam the store reads time through. `now` and the timers travel together:
+ * the store computes its delays as `nextEligibleAt - now`, so a caller that
+ * could move one without the other would arm timers against a deadline that
+ * no longer means anything.
  */
 interface SessionStoreScheduler {
   now(): number;
@@ -811,20 +769,11 @@ export class SearchSessionStore {
   }
 
   /*
-   * The indexes that make the next boot cheap, built after this one.
-   *
-   * The restore picks what fits its budget by reading `idle_at_ms`,`id` and
-   * `payload_bytes` from every job, and those three do not sit in one index, so
-   * SQLite walks the age index and fetches each row — and a row here is a
-   * payload. Measured on the box once the prune stopped warming the page cache
-   * for it, that select was 15.5s of a 20.5s boot.
-   *
-   * Covering indexes answer it without touching a row, but building them reads
-   * every table once, and the boot is exactly where that cannot happen: the
-   * port waits for it and the release engine waits for the port. So they are
-   * built a few seconds *after* the process is serving, once, and every boot
-   * after this one finds them already there. The build blocks while it runs and
-   * says how long it took.
+   * The indexes that make the next boot cheap, built after this one. Building
+   * them reads every table once, and the boot cannot pay that: the port waits
+   * for it and the release engine waits for the port. So they are built a few
+   * seconds *after* the process is serving, and every later boot finds them
+   * already there. The build blocks while it runs and reports a slow one.
    */
   private scheduleRestoreIndexBuild(): void {
     this.restoreIndexTimer = this.scheduler.setTimeout(() => {
@@ -853,14 +802,10 @@ export class SearchSessionStore {
   }
 
   /*
-   * Hold a poll open until the job it asks about actually moves.
-   *
-   * The UI used to ask every 900ms and so learned about a finished search
-   * ~450ms plus one round trip after it finished. Parking the request here
-   * instead makes the answer leave the moment `updateSearchJob` bumps the
-   * revision. Everything that cannot move — a job the store no longer holds,
-   * one already past the caller's revision, one that has already finished —
-   * resolves at once, so a caller never waits for news that will not come.
+   * Hold a poll open until the job it asks about moves, so the answer leaves
+   * the moment `updateSearchJob` bumps the revision. Everything that cannot
+   * move — a job the store no longer holds, one already past the caller's
+   * revision, one that has already finished — resolves at once.
    */
   waitForSearchJobChange(jobId: string, sinceRevision: number, timeoutMs: number): Promise<void> {
     const job = this.searchJobs.get(jobId);
@@ -1585,18 +1530,10 @@ export class SearchSessionStore {
     }
 
     /*
-     * A running job is resident too.
-     *
-     * The budget used to skip everything that was not `completed`, so the jobs
-     * costing the most memory were exactly the ones it could not see. A
-     * migratory sweep is one server search job per month, up to twelve at once,
-     * each holding its full `allOffers` — and while the later months run, the
-     * finished ones sat resident under a budget that believed it had room.
-     *
-     * Running jobs are counted but never evicted: cancelling live work to save
-     * memory would be answering the wrong question. What they do is bring the
-     * eviction of *completed* jobs forward, which is the relief that was
-     * missing.
+     * A running job is resident too: a migratory sweep is one search job per
+     * month, up to twelve at once, each holding its full `allOffers`. Running
+     * jobs are counted but never evicted — cancelling live work to save memory
+     * is the wrong trade — so they bring the eviction of completed jobs forward.
      */
     const candidates: ResidentJobCandidate[] = [];
     let inFlightBytes = 0;
@@ -2631,24 +2568,10 @@ export class SearchSessionStore {
     }
 
     /*
-     * What a row's payload weighs, written down instead of weighed at boot.
-     *
-     * The restore used to ask SQLite for `length(payload)` on every row of
-     * every table — twice: once to pick what fits the resident budget, once to
-     * fill the maps that decide what a later write owes. `length` on a stored
-     * value is a read, so booting measured the whole store: on the production
-     * box that is 55 jobs and 1.78 GB, and the search runner took **84 seconds
-     * to open its port**, of which 47 went to the first scan and the rest to
-     * the second. The release engine's health window is shorter than that, so
-     * every deployment failed activation, rolled back, and paid the same 84
-     * seconds again on the way out — «previous release did not recover
-     * cleanly», with the port closed throughout.
-     *
-     * The column is filled on write. A row written before it existed keeps
-     * `NULL`, and every read below coalesces that to one byte over the resident
-     * budget: an unmeasured row is treated as too big to hold in memory, which
-     * is what it was being treated as anyway, and no boot ever reads a payload
-     * again to find out.
+     * What a row's payload weighs, recorded on write so that no boot reads a
+     * payload to measure it: `length()` on a stored value is a read. A row
+     * without a recorded size holds `NULL`, which every read coalesces to one
+     * byte over the restore budget: an unmeasured row is too big to restore.
      */
     for (const table of ["search_jobs", "matrix_jobs", "purchase_paths"] as const) {
       const columns = new Set(
@@ -2668,13 +2591,8 @@ export class SearchSessionStore {
 
   private loadPersisted(): void {
     /*
-     * Timed by phase, and said out loud when it is slow.
-     *
-     * This runs before the port opens, so a slow boot is an outage and a failed
-     * deployment (see the restore budget above). Two rounds of local
-     * measurement pointed at the wrong phase before the box's own numbers
-     * settled it, so the phases now report themselves: one line, no perf flag
-     * to remember, and only when the total is worth reading.
+     * Timed by phase and logged when slow, perf flag or not: this runs before
+     * the port opens, so a slow boot is an outage and a failed deployment.
      */
     const startedAt = Date.now();
     const nowMs = this.scheduler.now();
@@ -2739,9 +2657,8 @@ export class SearchSessionStore {
       return retained;
     }
 
-    /* Only what was actually measured is summed. A row written before the size
-       column existed counts as one byte over the budget — a marker, not a
-       weight — and adding those up reported terabytes for a 1.8 GB store. */
+    /* Only what was actually measured is summed: an unmeasured row counts as
+       one byte over the budget, which is a marker, not a weight. */
     let diskOnlyBytes = 0;
     let unmeasuredJobs = 0;
     for (const candidate of diskOnly) {
@@ -2767,16 +2684,6 @@ export class SearchSessionStore {
 
     const cutoffMs = nowMs - COMPLETED_SEARCH_SESSION_TTL_MS;
     const db = this.db;
-    /*
-     * The condition is split in two, and the halves are `UNION`ed rather than
-     * `OR`ed, because an `OR` across two columns leaves SQLite nothing to seek:
-     * it read the table, and this table's rows carry the payloads. Measured on
-     * the production box, the prune alone was 16.6s of a 22.1s boot with 55
-     * jobs and 1.78 GB — while deleting nothing, because none of them had
-     * expired. Each half can use an index now: the age against
-     * `idx_*_idle_at`, and the status against the lookup index it already
-     * leads. What the sweep takes is the rows it actually removes.
-     */
     db.transaction(() => {
       for (const statement of PERSISTED_SWEEP_STATEMENTS) {
         runSql(db, statement, cutoffMs);

@@ -373,9 +373,7 @@ const recentCostamarSessionWarmups = new Map<string, number>();
 let costamarWarmupOpener: typeof openUrlLocally = openUrlLocally;
 /*
  * How long the browser fallback lets Chrome settle between the B2B page and the
- * branded one. A real Chrome needs the pause; a stubbed opener writes its
- * artifact synchronously and only pays for it, so tests may shorten it. The
- * default is the production value and nothing outside a test changes it.
+ * branded one.
  */
 const COSTAMAR_WARMUP_BROWSER_SETTLE_MS = 750;
 let costamarWarmupBrowserSettleMs = COSTAMAR_WARMUP_BROWSER_SETTLE_MS;
@@ -4148,9 +4146,9 @@ async function searchRecommendations(
   ensureCostamarCredentials(context);
 
   // The engine metadata is only needed when mapping, so it travels alongside the
-  // search instead of gating it. Awaiting it after the search keeps today's error
-  // semantics (an engine failure still fails the whole search); the no-op catch
-  // only prevents an unhandled rejection while the search is in flight.
+  // search instead of gating it. An engine failure fails the whole search; the
+  // no-op catch only prevents an unhandled rejection while the search is in
+  // flight.
   const enginePromise = getEngineMetadata(context);
   enginePromise.catch(() => undefined);
   const search = (searchContext: CostamarProviderContext) => fetchCostamarJson<CostamarSearchResponse>(
@@ -4164,8 +4162,7 @@ async function searchRecommendations(
   );
 
   // Start the search without waiting for the metadata, then await the metadata
-  // first so an engine failure still wins over a search failure, as it did when
-  // the two calls were sequential.
+  // first so an engine failure wins over a search failure.
   const initialSearch = (async () => search(context))();
   initialSearch.catch(() => undefined);
   const engine = await enginePromise;

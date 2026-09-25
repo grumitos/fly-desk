@@ -30,8 +30,8 @@ export interface ProviderSearchWorkerPrewarm {
   providerId: ProviderId;
 }
 
-/* The search request stays untyped so older callers keep working; every other
-   inbound message carries a `type`, which is how the worker discriminates. */
+/* The search request carries no `type`; every other inbound message does, which
+   is how the worker discriminates. */
 export type ProviderSearchWorkerInbound =
   | ProviderSearchWorkerRequest
   | ProviderSearchWorkerCancel

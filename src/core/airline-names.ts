@@ -3,9 +3,8 @@ const TRAILING_JETSMART_LEGAL_SUFFIX_PATTERN = /\s+S\.?P\.?A\.?$/i;
 /*
  * A code the map does not know reaches the card, the filter sheet and the
  * detail as the two raw letters, so this list is read as "which carriers does
- * a LIM desk see". It stayed at the LATAM group and its neighbours, which left
- * Copa — the single most frequent connection out of Lima — showing as «CM».
- * Only codes that are certain go in: a wrong name is worse than a code.
+ * a LIM desk see". Only codes that are certain go in: a wrong name is worse
+ * than a code.
  */
 const AIRLINE_CODE_DISPLAY_NAMES: Record<string, string> = {
   "4C": "LATAM",
