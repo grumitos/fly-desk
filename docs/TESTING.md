@@ -123,9 +123,12 @@ starts.
 
 ## CI
 
-`.github/workflows/ci.yml` runs two jobs in parallel on pull requests, pushes
-to `main` and manual dispatch. `quality` installs, typechecks, lints, builds,
-and smokes the release artifact (`scripts/release-smoke.ts`, described in
-[`DEPLOY_APP.md`](./DEPLOY_APP.md)). `e2e` installs,
+`.github/workflows/ci.yml` runs two jobs in parallel on every pull request to
+`main`, and on manual dispatch. `Core quality gate` installs, typechecks,
+lints, builds and smokes the release artifact (`scripts/release-smoke.ts`,
+described in [`DEPLOY_APP.md`](./DEPLOY_APP.md)). `Browser UI gate` installs,
 builds and runs the end-to-end suite on the runner image's Chrome, and uploads
-`test-results/e2e/` as `fly-desk-e2e-failures` when it fails.
+`test-results/e2e/` as `fly-desk-e2e-failures` when it fails. Branch
+protection requires both, on a branch up to date with `main`, so the tree a
+squash merge lands is the tree they passed: nothing runs again on `main`, and
+a deployment builds, packs and smokes the revision without testing it again.

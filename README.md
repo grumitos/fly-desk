@@ -208,7 +208,7 @@ rg -n "\]\([^)]*\.md\)" README.md docs frontend/README.md
 
 ## CI
 
-GitHub Actions runs `.github/workflows/ci.yml` on pull requests, pushes to `main`, and manual dispatch. Two jobs run in parallel: quality runs typecheck, lint, build, and a smoke of the release artifact; end-to-end builds the application and runs the end-to-end suite in the runner image's Chrome against fake provider upstreams. End-to-end failures publish screenshots, service logs, and the fake upstream's request log as artifacts. See [`docs/TESTING.md`](./docs/TESTING.md).
+GitHub Actions runs `.github/workflows/ci.yml` on pull requests and manual dispatch. Two jobs run in parallel, the two checks branch protection requires: `Core quality gate` runs typecheck, lint, build, and a smoke of the release artifact; `Browser UI gate` builds the application and runs the end-to-end suite in the runner image's Chrome against fake provider upstreams. End-to-end failures publish screenshots, service logs, and the fake upstream's request log as artifacts. See [`docs/TESTING.md`](./docs/TESTING.md).
 
 ## Current Documentation
 
