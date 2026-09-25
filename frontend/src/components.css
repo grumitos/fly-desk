@@ -2083,8 +2083,9 @@
     animation: fd-exit-opacity var(--fd-dur-exit-confirmacion) var(--fd-ease-tacto) both;
   }
 
-  /* --- armazón B · the 380 side sheet (8a) ------------------------------ */
-  @container fdshell (max-width: 1099.98px) {
+  /* The detail in a sheet (side or bottom) insets its own blocks; the desk
+     column's inset is the column's padding. */
+  .fd-detail-sheet {
     /* The sheet has no column inset of its own, so the three blocks take one
        here — the 14 the plate draws — while the anatomy above stays exactly the
        anatomy of the desk column. */
@@ -2170,8 +2171,8 @@
     }
   }
 
-  /* --- armazón C · the edge-to-edge sheet (1f, 3c) ---------------------- */
-  :where(.fd-shell[data-shell-size="C"]) {
+  /* The phone's full sheet. */
+  .fd-sheet--bottom {
     /* The sheet's own screen inset. Armazón B gives the four blocks the 14 its
        380px sheet is drawn with, and the phone was taking that number because
        nothing here restated it; `MovilDetalle` pads the whole screen by 16.
