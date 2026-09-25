@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { join } from "node:path";
 import type { FakeOp, FakeUpstream, RecordedRequest } from "./fake-upstream.ts";
 
 /*
@@ -50,6 +51,24 @@ export function addMonths(month: string, delta: number): string {
 export function spanishDayName(isoDate: string): string {
   return new Intl.DateTimeFormat("es-PE", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })
     .format(new Date(`${isoDate}T00:00:00Z`));
+}
+
+/** «diciembre de 2026», as the month picker names a month (`2026-12`). */
+export function spanishMonthName(month: string): string {
+  return new Intl.DateTimeFormat("es-PE", { month: "long", year: "numeric", timeZone: "UTC" })
+    .format(new Date(`${month}-01T00:00:00Z`));
+}
+
+/** «Diciembre de 2026», as a month of the sweep is titled. */
+export function sweepMonthLabel(month: string): string {
+  const name = spanishMonthName(month);
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+/** Days in `month` (`2026-12`). */
+export function daysInMonth(month: string): number {
+  const [year, monthIndex] = month.split("-").map(Number);
+  return new Date(Date.UTC(year!, monthIndex!, 0)).getUTCDate();
 }
 
 /* ---- Waiting ---- */
@@ -136,6 +155,18 @@ export function describeRequests(requests: readonly RecordedRequest[]): string {
 }
 
 /* ---- SQLite, read the way an operator would ---- */
+
+/**
+ * The lifetime use counters of the global station ranking, keyed
+ * `origin:LIM` / `destination:MAD`. What a search "counting once" is measured in.
+ */
+export function locationUses(appDataDir: string): Map<string, number> {
+  const rows = querySqlite<{ role: string; code: string; total_uses: number }>(
+    join(appDataDir, "location-usage.sqlite"),
+    "SELECT role, code, total_uses FROM location_usage",
+  );
+  return new Map(rows.map((row) => [`${row.role}:${row.code}`, Number(row.total_uses)]));
+}
 
 /**
  * Runs one read-only query against a stack database with Bun's SQLite, the

@@ -1,5 +1,5 @@
 import type { Locator, Page } from "playwright";
-import { spanishDayName } from "./scenario.ts";
+import { spanishDayName, spanishMonthName } from "./scenario.ts";
 
 /*
  * Every selector the end-to-end suite uses, and nothing else. Roles and
@@ -111,6 +111,12 @@ export const searchForm = {
     root.getByRole("button", { name: new RegExp(`^${escapeRegExp(spanishDayName(isoDate))}(,|$)`) }),
   calendarSheet: (page: Page) => page.getByRole("dialog", { name: "Fechas", exact: true }),
   months: (page: Page) => page.getByRole("button", { name: /^Meses:/ }),
+  /** The desk's month popover («Selector de meses»); the phone's is the sheet «Meses». */
+  monthPicker: (page: Page) =>
+    page.getByRole("dialog", { name: "Selector de meses", exact: true }).or(page.getByRole("dialog", { name: "Meses", exact: true })),
+  /** A month of the picker, named «noviembre de 2026» plus its state. */
+  monthCell: (root: Root, month: string) =>
+    root.getByRole("button", { name: new RegExp(`^${escapeRegExp(spanishMonthName(month))}(,|$)`) }),
   passengers: (page: Page) => page.getByRole("button", { name: "Seleccionar pasajeros" }),
   passengerSheet: (page: Page) => page.getByRole("dialog", { name: "Pasajeros", exact: true }),
   addPassenger: (root: Root, kind: "adultos" | "niños" | "bebés") => root.getByRole("button", { name: `Agregar ${kind}` }),
@@ -147,6 +153,8 @@ export const results = {
   partialPill: (page: Page) => results.headerLine(page).getByText("Parcial", { exact: true }),
   stoppedPill: (page: Page) => results.headerLine(page).getByText("Detenida", { exact: true }),
   emptyTitle: (page: Page, title: string) => page.getByRole("heading", { name: title, level: 3 }),
+  /** The way out of an empty or failed list: back to the form. */
+  editSearchFromEmpty: (page: Page) => page.getByRole("button", { name: "Volver a editar la búsqueda" }),
   /** The scroller the list grows inside. */
   viewport: (page: Page) => page.getByTestId("results-list-body"),
   openFilters: (page: Page) => page.getByRole("button", { name: "Abrir filtros" }).first(),
@@ -200,7 +208,9 @@ export const pastedQuotation = {
 export const migration = {
   /** A month that came back with a fare: «Noviembre de 2026: USD 700.00 con LATAM». */
   pricedMonth: (page: Page, label: string) => page.getByRole("button", { name: new RegExp(`^${escapeRegExp(label)}: `) }),
+  /** A month's card, fare or not. The grid gives cards no role, hence the test id. */
   monthCard: (page: Page, label: string) => page.getByTestId("migration-month-card").filter({ hasText: label }),
+  monthCards: (page: Page) => page.getByTestId("migration-month-card"),
   openMonth: (page: Page, label: string) => page.getByTitle(`Abrir ${label} en una pestaña nueva`),
 };
 
