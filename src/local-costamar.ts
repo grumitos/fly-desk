@@ -779,9 +779,14 @@ function logCostamarB2bDebug(stage: string, detail?: CostamarB2bDebugDetail): vo
   console.log(`[costamar-b2b] ${stage}`, sanitizeCostamarB2bDebugDetail(detail));
 }
 
+/* The B2B browser path drives Chrome through Playwright, which only a
+   development install carries: a release installs no packages. */
 async function getPlaywright(): Promise<typeof import("playwright")> {
   if (!playwrightPromise) {
-    playwrightPromise = import("playwright");
+    playwrightPromise = import("playwright").catch((error: unknown) => {
+      console.warn("Click and Book Plus browser fallback unavailable: Playwright is not installed, and a release installs no packages.");
+      throw error;
+    });
   }
 
   return playwrightPromise;

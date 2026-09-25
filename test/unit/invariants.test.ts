@@ -326,12 +326,4 @@ describe("deployment", () => {
         + "without it has its search and redirect units restarted on every token renewal",
     ).toBe(true);
   });
-
-  test("prepares a release that carries its own dependencies", () => {
-    const prepare = readFileSync(join(repoRoot, "deploy", "prepare-release.sh"), "utf8");
-    expect(prepare).toContain("--frozen-lockfile");
-    expect(prepare).toContain("--backend copyfile");
-    expect(prepare).toContain("Release install is not self-contained");
-    expect(prepare).toContain("test -f frontend/dist/index.html");
-  });
 });

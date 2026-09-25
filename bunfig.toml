@@ -6,6 +6,10 @@ minimumReleaseAge = 259200
 # Security override: 5.0.8 fixes GHSA-mh99-v99m-4gvg and was published
 # inside the normal age window. Keep the exemption scoped to this package.
 minimumReleaseAgeExcludes = ["brace-expansion"]
+# A release carries no node_modules, and without one Bun would fetch any
+# package the code imports from the registry at run time. Off, such an import
+# fails instead.
+auto = "disable"
 
 [serve.static]
 plugins = ["bun-plugin-tailwind"]

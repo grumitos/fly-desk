@@ -57,7 +57,7 @@ rollback <sha40>
 ```
 
 The release engine takes a lock shared with maintenance, validates the archive
-digest and structure, prepares the candidate as the runtime user, switches the
+digest and structure, prepares the candidate as the build user, switches the
 symlink, restarts web, search and redirect, checks their health, and restores
 the previous release if activation fails.
 
@@ -76,13 +76,17 @@ release.
 
 ## Release Preparation
 
-`deploy/prepare-release.sh` runs as the runtime user with the system Bun. It
-installs the root package's runtime dependencies only (`bun install
---frozen-lockfile --production --backend copyfile --filter ./`): the backend
-needs Playwright to reach Chrome over CDP and nothing else, because the
-frontend is already built into `frontend/dist`. It then refuses a release whose
-`node_modules` links outside the release, and requires
-`frontend/dist/index.html`.
+A release installs no packages. The runtime imports only Bun and Node
+built-ins, the frontend arrives built in `frontend/dist`, and `bunfig.toml`
+disables Bun's install-on-import (`[install] auto = "disable"`), so importing a
+package the release does not carry fails instead of fetching it from the
+registry. Playwright, the one package the source still names, is a development
+dependency: the end-to-end suite and the Click and Book Plus browser fallback
+on a workstation use it.
+
+`deploy/prepare-release.sh` runs as the platform's build user with the system
+Bun. It refuses a `package.json` that declares runtime `dependencies`, and
+requires `frontend/dist/index.html`.
 
 Real configuration lives in `/etc/fly-desk.env` (`.env.example` documents the
 names and defaults, never values). The Click and Book Plus token file

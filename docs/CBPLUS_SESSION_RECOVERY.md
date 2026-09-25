@@ -64,17 +64,18 @@ Click and Book B2B site (`b2b.clickandbook.com`, HTTPS only, exact origin) using
 `CBPLUS_B2B_EMAIL`, `CBPLUS_B2B_PASSWORD` and a TOTP source
 (`CBPLUS_B2B_TOTP_SECRET` in Base32, `otpauth://`, `otpauth-migration://` or JSON
 with `totpUri`). It tries plain HTTP first and, only with
-`CBPLUS_B2B_PLAYWRIGHT_FALLBACK_ENABLED=1`, drives the platform Chrome
-(`fly-desk-chrome.service`, CDP on loopback) with Playwright. The flow keeps
-cookies in memory, re-checks the origin before entering credentials or a code,
-and never persists the resolved token.
+`CBPLUS_B2B_PLAYWRIGHT_FALLBACK_ENABLED=1`, drives a Chrome with Playwright.
+Playwright is a development dependency and a release installs no packages, so
+on the VPS the fallback ends after the HTTP attempt; the browser path runs from
+a workstation checkout. The flow keeps cookies in memory, re-checks the origin
+before entering credentials or a code, and never persists the resolved token.
 
 | Setting | Effect |
 | --- | --- |
 | `CBPLUS_B2B_AUTOMATION_ENABLED` | Allows the B2B sign-in at all |
 | `CBPLUS_SESSION_WARMUP_ENABLED` | Allows warm-up to request a token before a search needs it |
-| `CBPLUS_B2B_PLAYWRIGHT_FALLBACK_ENABLED` | Allows the browser path when HTTP cannot finish the sign-in |
-| `CBPLUS_B2B_USE_LIVE_BROWSER` | Uses the platform Chrome instead of a temporary browser |
+| `CBPLUS_B2B_PLAYWRIGHT_FALLBACK_ENABLED` | Allows the browser path when HTTP cannot finish the sign-in; needs a development install |
+| `CBPLUS_B2B_USE_LIVE_BROWSER` | Uses the running Chrome of the configured profile instead of a temporary browser |
 | `CBPLUS_CDP_TAB_SCAN_ENABLED` | Lets the runtime read branded URLs from open Chrome tabs |
 | `CBPLUS_B2B_CLONE_CHROME_PROFILE` | Must stay `0`; a cloned profile is never the source of truth |
 | `CBPLUS_B2B_DEBUG` | Must stay `0` in production |
