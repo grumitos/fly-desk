@@ -109,12 +109,13 @@ The React UI must not display simulated controls. The following remain outside t
   fail only their day or cell there
 - a provider request that fails before any answer arrives (Bun's connection
   pool can hand out a connection the far end has just closed) is sent once
-  more, on a connection of its own and within the same deadline
-  (`AGIL_HTTP_TIMEOUT_MS`, `CBPLUS_HTTP_TIMEOUT_MS`): every Agil request, and
-  the Click and Book Plus flight search (a quote's revalidation included),
-  engine metadata, station lookup and redirect validation, none of which
-  changes anything at the provider (`src/provider-fetch.ts`). The Click and
-  Book Plus B2B sign-in is never sent twice. An answer, an error status
+  more, on a connection of its own and within the deadline it already had
+  (`AGIL_HTTP_TIMEOUT_MS`, `CBPLUS_HTTP_TIMEOUT_MS`, and
+  `CBPLUS_REDIRECT_VERIFY_TIMEOUT_MS` for the redirect validation): every Agil
+  request, and the Click and Book Plus flight search (a quote's revalidation
+  included), engine metadata, station lookup and redirect validation, none of
+  which changes anything at the provider (`src/provider-fetch.ts`). The Click
+  and Book Plus B2B sign-in is never sent twice. An answer, an error status
   included, and the deadline are final. A GDS or a matrix cell still left out
   is logged with the request and the error behind it
 - a provider that completes without part of what it was asked (an Agil GDS, a
