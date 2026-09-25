@@ -100,9 +100,12 @@ The React UI must not display simulated controls. The following remain outside t
 - Agil mints its bearer over plain HTTP from a persisted identity (`agil-identity.json` under the state directory, path override `AGIL_IDENTITY_PATH`); the Chrome profile is consulted only to bootstrap that file when it is absent or the identity is refused. The subscription key comes from the environment or is recovered from the Agil bundle; Linux/VPS defaults to the loopback CDP endpoint on port 9222, explicit browser endpoints win, and Windows keeps discovery explicit
 - Click and Book Plus uses environment-controlled context, a host allowlist, and optional B2B warm-up; B2B automation accepts only HTTPS on the exact `b2b.clickandbook.com` origin and rechecks same-origin navigation before entering credentials or OTP
 - Click and Book Plus does not accept hosts or base URLs per request
-- Click and Book Plus payload statuses 401/403/429/5xx propagate as partial
-  failures across exact, range, progressive, and matrix searches, leaving the
-  provider `degraded` rather than `ready`
+- a Click and Book Plus payload status of 400 or more inside an HTTP 200 fails
+  the provider like an HTTP error: the job marks it `failed`, the desk names it,
+  and the tracker leaves it `degraded` rather than `ready`. A refused token or
+  agency (401, 402, 403) is refused for every date, so a range or a matrix
+  stops asking at the first refusal and fails the provider; other statuses
+  fail only their day or cell there
 - silent provider prewarm is enabled by default and can be disabled with `FLY_DESK_PROVIDER_PREWARM=0`
 - provider searches must run in the dedicated runner when `FLY_DESK_SEARCH_SERVICE_URL` is configured; within the runner, `FLY_DESK_SEARCH_WORKER_PROCESSES=1` keeps providers in child processes
 - with `FLY_DESK_SEARCH_WORKER_POOL=1` (default) those child processes are a pool of one long-lived worker per provider, started with the runner, multiplexing jobs by id over stdin/stdout, cancelled cooperatively per job, recycled once idle after `FLY_DESK_SEARCH_WORKER_MAX_JOBS` (default 500) jobs, and respawned on death; the prewarm loop warms the pooled workers, not the runner, so the Agil bearer, the Click and Book Plus engine metadata, and provider TLS connections survive between searches. `FLY_DESK_SEARCH_WORKER_POOL=0` restores one cold worker per provider per search
@@ -212,7 +215,7 @@ Current coverage:
 - the flexible matrix filled cell by cell with the cards already drawn kept, price-only cells never drawn, and a repriced fare carried to the card and the quotation
 - a range of three hundred fares with none dropped, the same order on two runs whatever order the providers answer in, and the desk's order matching the backend's
 - the migratory sweep across the year boundary: priced, failed, and empty months, a month opened without searching again, and the route counted once
-- a failed provider named in one line with nothing it said reaching the page, web storage, the console, `/api` answers, or service logs; a token refused inside a 200; both providers down
+- a failed provider named in one line with nothing it said reaching the page, web storage, the console, `/api` answers, or service logs; a token refused inside a 200 named the same way in an exact search, a range and a matrix, the last two stopping at the first refusal; both providers down
 - stopping a search (its fan-out halts and its partial list is kept and reused) and closing the tab mid-search (the search is cancelled and its purchase paths still work)
 - admission in arrival order with no overtaking, the queue limit, queue timeout, and cancelled waiters, the Agil in-flight ceiling, a restart of every unit reading results, purchase paths, and suggestions back from SQLite, and a renewed Click and Book Plus token file picked up with nothing restarted
 - phone sheets and the system back at 390×844, every mode at 360×740, and the 1024×768 desk, with no horizontal overflow

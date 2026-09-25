@@ -273,7 +273,6 @@ interface CostamarAutocompleteAirport {
 interface CostamarSearchOutcome {
   offers: CanonicalOffer[];
   warnings: string[];
-  partial: boolean;
 }
 
 interface CostamarB2bPromptRequest {
@@ -2556,7 +2555,7 @@ async function searchLocalCostamarExactWithRetry(
     try {
       return await searchLocalCostamarExact(request, providerContext);
     } catch (error) {
-      if (attempt >= COSTAMAR_RANGE_DAY_RETRY_ATTEMPTS) {
+      if (attempt >= COSTAMAR_RANGE_DAY_RETRY_ATTEMPTS || refusesEveryDate(error)) {
         throw error;
       }
 
@@ -3507,12 +3506,23 @@ async function getEngineMetadata(context: CostamarProviderContext): Promise<Cost
   return request;
 }
 
-function buildCostamarSearchWarning(payload: CostamarSearchResponse): string | undefined {
-  const status = payload.status;
-  if (typeof status !== "number" || status < 400) {
-    return undefined;
-  }
+/*
+ * Click and Book Plus refuses a search with HTTP 200 and the real status in
+ * the body. The refusal is a failure of the provider, like an HTTP error, and
+ * its message is worded so that `providerPublicFailureMessage` names the
+ * right cause.
+ */
+class CostamarSearchRejectedError extends Error {
+  readonly status: number;
 
+  constructor(status: number) {
+    super(describeCostamarSearchRejection(status));
+    this.name = "CostamarSearchRejectedError";
+    this.status = status;
+  }
+}
+
+function describeCostamarSearchRejection(status: number): string {
   if (status === 401) {
     return "Click and Book Plus rejected this search: the branded token is invalid, expired, or no longer belongs to this agency.";
   }
@@ -3522,11 +3532,11 @@ function buildCostamarSearchWarning(payload: CostamarSearchResponse): string | u
   }
 
   if (status === 403) {
-    return "Click and Book Plus rejected this search: agency or permission validation failed.";
+    return "Click and Book Plus rejected this search: it refused the agency's authorization.";
   }
 
   if (status === 429) {
-    return "Click and Book Plus temporarily rate-limited this search.";
+    return "Click and Book Plus is temporarily unavailable: it rate-limited this search.";
   }
 
   if (status >= 500) {
@@ -3534,6 +3544,12 @@ function buildCostamarSearchWarning(payload: CostamarSearchResponse): string | u
   }
 
   return `Click and Book Plus rejected this search with status ${status}.`;
+}
+
+/* A refused token or agency is refused for every other date of the same
+   search, so a range or a matrix stops asking at the first one. */
+function refusesEveryDate(error: unknown): error is CostamarSearchRejectedError {
+  return error instanceof CostamarSearchRejectedError && [401, 402, 403].includes(error.status);
 }
 
 function normalizeSegment(
@@ -4193,14 +4209,15 @@ async function searchRecommendations(
     }
   }
 
-  const responseWarning = buildCostamarSearchWarning(payload);
+  if (typeof payload.status === "number" && payload.status >= 400) {
+    throw new CostamarSearchRejectedError(payload.status);
+  }
+
   const scheduleGroupScope = buildCostamarScheduleGroupScope(request);
-  const recommendations = responseWarning
-    ? []
-    : extractCostamarRecommendations(payload, request).map((recommendation) => ({
-      ...recommendation,
-      scheduleGroupScope,
-    }));
+  const recommendations = extractCostamarRecommendations(payload, request).map((recommendation) => ({
+    ...recommendation,
+    scheduleGroupScope,
+  }));
   const recommendationVariants = recommendations.flatMap((recommendation) =>
     expandCostamarRecommendationFlightOptions(recommendation, request),
   );
@@ -4220,7 +4237,6 @@ async function searchRecommendations(
     ? buildCostamarRedirectWarning(redirectVerification)
     : undefined;
   const warnings = uniqueStrings([
-    ...(responseWarning ? [responseWarning] : []),
     ...(redirectWarning ? [redirectWarning] : []),
     ...offers.flatMap((offer) => offer.warnings),
   ]);
@@ -4232,7 +4248,6 @@ async function searchRecommendations(
   return {
     offers,
     warnings,
-    partial: Boolean(responseWarning),
   };
 }
 
@@ -4248,7 +4263,7 @@ async function searchLocalCostamarExact(
   return {
     offers: outcome.offers,
     warnings: outcome.warnings,
-    partial: outcome.partial,
+    partial: false,
   };
 }
 
@@ -4341,6 +4356,7 @@ export async function resolveLocalCostamarRangeProgressive(
   const candidates = enumerateRangeRequests(request);
   const aggregatedOffers: CanonicalOffer[] = [];
   const warnings: string[] = [];
+  const refusals: CostamarSearchRejectedError[] = [];
   let partial = false;
   let stopRequested = false;
 
@@ -4355,6 +4371,10 @@ export async function resolveLocalCostamarRangeProgressive(
       warnings.push(...result.warnings);
       partial = partial || result.partial;
     } catch (error) {
+      if (refusesEveryDate(error)) {
+        refusals.push(error);
+        return;
+      }
       const warning = providerPublicFailureMessage("costamar", error);
       partial = true;
       warnings.push(warning);
@@ -4370,8 +4390,13 @@ export async function resolveLocalCostamarRangeProgressive(
       stopRequested = true;
     }
   }, {
-    canContinue: () => !stopRequested,
+    canContinue: () => !stopRequested && refusals.length === 0,
   });
+
+  const [refusal] = refusals;
+  if (refusal) {
+    throw refusal;
+  }
 
   const offers = dedupeCostamarOffers(aggregatedOffers);
   const finalWarnings = uniqueStrings(warnings);
@@ -4470,9 +4495,9 @@ function matchesCostamarNativeFlexibleWindow(request: SearchRequest): boolean {
 async function seedMatrixWithFlexibleSearch(
   request: SearchRequest,
   providerContext?: ProviderContext,
-): Promise<{ offers: Map<string, CanonicalOffer>; partial: boolean }> {
+): Promise<Map<string, CanonicalOffer>> {
   if (!matchesCostamarNativeFlexibleWindow(request)) {
-    return { offers: new Map(), partial: false };
+    return new Map();
   }
 
   const leg = request.legs[0];
@@ -4511,10 +4536,7 @@ async function seedMatrixWithFlexibleSearch(
     }
   }
 
-  return {
-    offers: byKey,
-    partial: search.partial,
-  };
+  return byKey;
 }
 
 function buildMatrixCellFromOffer(
@@ -4550,23 +4572,17 @@ function buildMatrixCellFromOffer(
 async function resolveCellPrice(
   derivedRequest: SearchRequest,
   providerContext?: ProviderContext,
-): Promise<{ offer?: CanonicalOffer; partial: boolean; warnings: string[] }> {
+): Promise<CanonicalOffer | undefined> {
   const search = await searchLocalCostamarExact(derivedRequest, providerContext);
   const offers = enrichComparisonMetrics(search.offers);
 
-  const offer = offers.reduce<CanonicalOffer | undefined>((best, current) => {
+  return offers.reduce<CanonicalOffer | undefined>((best, current) => {
     if (!best || compareByPriceThenDuration(current, best) < 0) {
       return current;
     }
 
     return best;
   }, undefined);
-
-  return {
-    offer,
-    partial: search.partial,
-    warnings: search.warnings,
-  };
 }
 
 export async function resolveLocalCostamarMatrixProgressive(
@@ -4577,12 +4593,14 @@ export async function resolveLocalCostamarMatrixProgressive(
 ): Promise<MatrixResponse> {
   let partial = false;
   let stopRequested = false;
-  const seedResult = await seedMatrixWithFlexibleSearch(request, providerContext).catch(() => ({
-    offers: new Map<string, CanonicalOffer>(),
-    partial: true,
-  }));
-  const seeded = seedResult.offers;
-  partial = seedResult.partial;
+  const refusals: CostamarSearchRejectedError[] = [];
+  const seeded = await seedMatrixWithFlexibleSearch(request, providerContext).catch((error: unknown) => {
+    if (refusesEveryDate(error)) {
+      throw error;
+    }
+    partial = true;
+    return new Map<string, CanonicalOffer>();
+  });
   const seededKeys = new Set<string>();
   const seededCells = draft.cells.map((cell) => {
     if (cell.confidence !== "loading" || !cell.derivedRequest) {
@@ -4610,9 +4628,7 @@ export async function resolveLocalCostamarMatrixProgressive(
     .filter((cell) => !stopRequested && !seededKeys.has(cell.key));
   const resolvedLoadingCells = await mapConcurrent(prioritizedCells, COSTAMAR_CONCURRENCY.matrixCell, async (cell) => {
     try {
-      const resolution = await resolveCellPrice(cell.derivedRequest, providerContext);
-      partial = partial || resolution.partial;
-      const offer = resolution.offer;
+      const offer = await resolveCellPrice(cell.derivedRequest, providerContext);
       const nextCell = offer
         ? buildMatrixCellFromOffer(cell, offer, providerContext)
         : {
@@ -4620,15 +4636,17 @@ export async function resolveLocalCostamarMatrixProgressive(
             confidence: "unavailable" as const,
             selectable: false,
             stateCode: "chg" as const,
-            tooltip: resolution.partial
-              ? resolution.warnings[0] ?? "Click and Book Plus search was only partially available."
-              : "Click and Book Plus returned no live result for this combination.",
+            tooltip: "Click and Book Plus returned no live result for this combination.",
           } satisfies MatrixCell;
       if (onCellResolved?.(nextCell) === false) {
         stopRequested = true;
       }
       return nextCell;
     } catch (error) {
+      if (refusesEveryDate(error)) {
+        refusals.push(error);
+        return cell;
+      }
       partial = true;
       const nextCell = {
         ...cell,
@@ -4643,8 +4661,13 @@ export async function resolveLocalCostamarMatrixProgressive(
       return nextCell;
     }
   }, {
-    canContinue: () => !stopRequested,
+    canContinue: () => !stopRequested && refusals.length === 0,
   });
+
+  const [refusal] = refusals;
+  if (refusal) {
+    throw refusal;
+  }
 
   const resolvedByKey = new Map(resolvedLoadingCells.map((cell) => [cell.key, cell]));
   const resolvedCells = seededCells.map((cell) => resolvedByKey.get(cell.key) ?? cell);

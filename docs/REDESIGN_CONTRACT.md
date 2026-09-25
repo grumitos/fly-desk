@@ -297,8 +297,8 @@ payloads. The tracker distinguishes `unknown`, `checking`, `ready` and
 `degraded` with a five-minute TTL, and a fresh search observation outranks the
 periodic prewarm. Prewarm can prove availability for Agil; for Click and Book
 Plus it only proves local context, so only a real search marks it `ready`. A
-logical 401/403/429/5xx inside an HTTP 200 propagates as a partial result and
-leaves the tracker `degraded`, never `ready`.
+logical 401/403/429/5xx inside an HTTP 200 fails the provider like an HTTP
+error and leaves the tracker `degraded`, never `ready`.
 
 The tracker is what the router consults while a search runs. Nothing in the UI
 reads the endpoint any more: the last consumer was the idle plinth, and that
