@@ -765,7 +765,8 @@
   }
 
   .fd-motion-giro,
-  .fd-skeleton-block {
+  .fd-skeleton-block,
+  .fd-card--skeleton {
     animation: none !important;
   }
 

@@ -547,12 +547,6 @@
     height: 12px;
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .fd-card--skeleton {
-      animation: none;
-    }
-  }
-
   /* ---- all-schedules panel ---- */
 
   .fd-schedule-grid {
