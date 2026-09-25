@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveItineraryDurationMinutes, zonedMinutesBetween } from "../../src/core/flight-duration";
@@ -308,6 +308,18 @@ describe("deployment", () => {
     const remoteCommands = [...workflow.matchAll(/ssh vps-app "([a-z]+) /g)].map((match) => match[1]);
     expect(new Set(remoteCommands)).toEqual(new Set(["upload", "deploy", "verify", "rollback"]));
     expect(workflow.match(/environment: production/g)?.length).toBe(2);
+  });
+
+  test("keeps reading CBPLUS_TOKEN_FILE where the platform looks for it", () => {
+    const sources = readdirSync(join(repoRoot, "src"), { recursive: true, encoding: "utf8" })
+      .filter((name) => name.endsWith(".ts"))
+      .map((name) => readFileSync(join(repoRoot, "src", name), "utf8"));
+    expect(
+      sources.some((source) => /process\.env\.CBPLUS_TOKEN_FILE\b/.test(source)),
+      "vps-platform (scripts/fly-desk-cbplus-token.sh, scripts/cbplus-renewer/control.py) searches a release's "
+        + "src/**/*.ts for the literal CBPLUS_TOKEN_FILE to decide that it re-reads the token file; a release "
+        + "without it has its search and redirect units restarted on every token renewal",
+    ).toBe(true);
   });
 
   test("prepares a release that carries its own dependencies", () => {
