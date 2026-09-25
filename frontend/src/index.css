@@ -630,8 +630,9 @@
   /* The first rows cascade in, capped so an appended batch never replays it.
      Every staggered entrance reads its position from `--i`. `backwards` and
      not `both`: a filled transform would leave every row a stacking context
-     and trap the schedules panel under the next row. */
-  .fd-results-list[data-cascade="true"] > :nth-child(-n + 7) {
+     and trap the schedules panel under the next row. A partial list's
+     skeleton rows keep their pulse instead. */
+  .fd-results-list[data-cascade="true"] > :nth-child(-n + 7):not(.fd-card--skeleton) {
     animation: fd-enter-row var(--fd-dur-emergente) var(--fd-ease-estructura)
       calc(var(--i, 0) * var(--fd-stagger-row)) backwards;
   }
@@ -645,7 +646,7 @@
 
   /* A phone's taller cards put the seventh below the fold. */
   :where(.fd-shell[data-shell-size="C"]) {
-    .fd-results-list[data-cascade="true"] > :nth-child(7) {
+    .fd-results-list[data-cascade="true"] > :nth-child(7):not(.fd-card--skeleton) {
       animation: none;
     }
   }
