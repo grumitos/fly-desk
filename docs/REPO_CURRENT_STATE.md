@@ -116,6 +116,11 @@ The React UI must not display simulated controls. The following remain outside t
   day of a range, a matrix cell) completes `partial`: its diagnostics in the
   job say so, and the desk's one line names it as a warning, «Resultados
   incompletos · Agilsmart respondió en parte», with the rest of the list kept
+- a provider none of whose parts answered (no GDS of an exact search, no day
+  of a range, no matrix cell) has failed: the job marks it `failed` with its
+  public reason, and the desk names it as it names a provider that is down,
+  «Agilsmart no respondió». An error status from an Agil GDS is a GDS that
+  failed, in a matrix cell as in an exact search
 - silent provider prewarm is enabled by default and can be disabled with `FLY_DESK_PROVIDER_PREWARM=0`
 - provider searches must run in the dedicated runner when `FLY_DESK_SEARCH_SERVICE_URL` is configured; within the runner, `FLY_DESK_SEARCH_WORKER_PROCESSES=1` keeps providers in child processes
 - with `FLY_DESK_SEARCH_WORKER_POOL=1` (default) those child processes are a pool of one long-lived worker per provider, started with the runner, multiplexing jobs by id over stdin/stdout, cancelled cooperatively per job, recycled once idle after `FLY_DESK_SEARCH_WORKER_MAX_JOBS` (default 500) jobs, and respawned on death; the prewarm loop warms the pooled workers, not the runner, so the Agil bearer, the Click and Book Plus engine metadata, and provider TLS connections survive between searches. `FLY_DESK_SEARCH_WORKER_POOL=0` restores one cold worker per provider per search
@@ -226,7 +231,7 @@ Current coverage:
 - a range of three hundred fares with none dropped, the same order on two runs whatever order the providers answer in, and the desk's order matching the backend's
 - the migratory sweep across the year boundary: priced, failed, and empty months, a month opened without searching again, its fares measured on the airports' own clocks over a connection longer than a day, and the route counted once
 - a failed provider named in one line with nothing it said reaching the page, web storage, the console, `/api` answers, or service logs; a token refused inside a 200 named the same way in an exact search, a range and a matrix, the last two stopping at the first refusal; both providers down
-- an Agil GDS whose connection drops asked once more with every fare kept; a GDS that never answers a day, stalls past Agil's deadline, or leaves a matrix cell unanswered named «respondió en parte» in the same line, the rest of the list kept
+- an Agil GDS whose connection drops asked once more with every fare kept; a GDS that never answers a day, stalls past Agil's deadline, or leaves a matrix cell unanswered named «respondió en parte» in the same line, the rest of the list kept; a provider that answered no GDS, no day of a range or no matrix cell named as not answering
 - stopping a search (its fan-out halts and its partial list is kept and reused) and closing the tab mid-search (the search is cancelled and its purchase paths still work)
 - admission in arrival order with no overtaking, the queue limit, queue timeout, and cancelled waiters, the Agil in-flight ceiling, a restart of every unit reading results, purchase paths, and suggestions back from SQLite on rows a rollback can read, a cache file left mostly free compacted before the runner opens, a renewed Click and Book Plus token file picked up with nothing restarted, and after a platform rollback the newer token in the environment preferred over the file
 - with no stored Agil identity, the session read from the platform Chrome over DevTools in one tab that is closed afterwards, even behind a slow page, and the identity kept so the next start needs no browser; a worker stopped mid-read closes its tab

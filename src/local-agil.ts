@@ -465,13 +465,19 @@ function sha1Hex(input: string): string {
   return hasher.digest("hex");
 }
 
+/*
+ * A day of a range is asked once more when it fails, unless no GDS answered
+ * it: every GDS was then asked already, each request once more on a new
+ * connection when nothing came back, and asking the day again would only
+ * double its requests and its wait.
+ */
 async function searchLocalAgilExactWithRetry(request: SearchRequest): Promise<ProviderSearchResult> {
   let attempt = 0;
   while (true) {
     try {
       return await searchLocalAgilExact(request);
     } catch (error) {
-      if (attempt >= AGIL_RANGE_DAY_RETRY_ATTEMPTS) {
+      if (attempt >= AGIL_RANGE_DAY_RETRY_ATTEMPTS || error instanceof AgilNoGdsAnsweredError) {
         throw error;
       }
 
@@ -2885,12 +2891,10 @@ async function searchCellWithGds(
       body: JSON.stringify(buildAgilSearchPayload(request, gds)),
     }, `Agil matrix search GDS ${gds}`);
 
-    if (response.status === 401) {
-      throw new Error("AGIL_TOKEN_EXPIRED");
-    }
-
+    /* An error status is a GDS that failed, as in an exact search, and not a
+       GDS that has no fare for the cell. */
     if (!response.ok) {
-      return undefined;
+      await throwAgilHttpResponseError(response, `Agil GDS ${gds}`);
     }
 
     const json = await response.json() as AgilSearchResponse;
@@ -2971,58 +2975,62 @@ async function startAgilSearch(
   }
 }
 
-async function searchGroupsAcrossGds(
+/*
+ * No GDS answered a search: every one of them failed. It carries the first
+ * GDS's message, so the provider fails with that GDS's public reason, and the
+ * GDS's error as its cause, for the service log.
+ */
+class AgilNoGdsAnsweredError extends Error {
+  override name = "AgilNoGdsAnsweredError";
+
+  constructor(firstFailure: unknown) {
+    super(firstFailure instanceof Error ? firstFailure.message : String(firstFailure), { cause: firstFailure });
+  }
+}
+
+interface AgilGdsAnswers<T> {
+  answers: T[];
+  /** The GDS that failed while another answered. */
+  omitted: Array<{ gds: number; error: unknown }>;
+}
+
+/*
+ * One search asked of every GDS. A GDS that fails is left out of it and the
+ * service log says why; the search fails only when no GDS answered at all. An
+ * expired token is renewed once and the whole search asked again.
+ */
+async function searchEveryGds<T>(
   baseSession: AgilSessionData,
   request: SearchRequest,
-): Promise<AgilExactSearchOutcome> {
+  searchGds: (session: AgilSessionData, gds: number) => Promise<T>,
+): Promise<AgilGdsAnswers<T>> {
   let session = baseSession;
 
-  const searchAll = async (): Promise<AgilExactSearchOutcome> => {
+  const searchAll = async (): Promise<AgilGdsAnswers<T>> => {
     await startAgilSearch(session, request);
 
-    const outcomes = await mapConcurrent(AGIL_GDS_LIST, AGIL_CONCURRENCY.gdsSearch, async (gds) => {
+    type GdsOutcome = { gds: number; answered: true; answer: T } | { gds: number; answered: false; error: unknown };
+    const outcomes = await mapConcurrent(AGIL_GDS_LIST, AGIL_CONCURRENCY.gdsSearch, async (gds): Promise<GdsOutcome> => {
       const startedAt = performance.now();
       try {
-        return {
-          gds,
-          groups: await searchGroupsWithGds(session, request, gds),
-        };
+        return { gds, answered: true, answer: await searchGds(session, gds) };
       } catch (error) {
         if (error instanceof Error && error.message === "AGIL_TOKEN_EXPIRED") {
           throw error;
         }
 
         logAgilOmission(`GDS ${gds}`, request, error, startedAt);
-        return {
-          gds,
-          groups: [],
-          error: providerPublicFailureMessage("agil-local", error),
-        };
+        return { gds, answered: false, error };
       }
     });
-
-    const errorOutcomes = outcomes.filter((outcome) => "error" in outcome);
-    const warnings = errorOutcomes
-      .filter((outcome) => "error" in outcome)
-      .map((outcome) => `Agil GDS ${outcome.gds} omitted: ${outcome.error}`);
-
-    if (errorOutcomes.length === outcomes.length) {
-      const firstError = errorOutcomes[0]?.error;
-      return {
-        groups: [],
-        warnings: uniqueStrings([
-          `Agil rejected this search in all configured GDS: ${requestSummary(request)}.`,
-          firstError ? `Agil detail: ${firstError}` : "",
-        ]),
-        partial: true,
-      };
+    const answers = outcomes.flatMap((outcome) => (outcome.answered ? [outcome.answer] : []));
+    const omitted = outcomes.flatMap((outcome) => (outcome.answered ? [] : [{ gds: outcome.gds, error: outcome.error }]));
+    const [firstOmitted] = omitted;
+    if (answers.length === 0 && firstOmitted) {
+      throw new AgilNoGdsAnsweredError(firstOmitted.error);
     }
 
-    return {
-      groups: outcomes.flatMap((outcome) => outcome.groups),
-      warnings: uniqueStrings(warnings),
-      partial: warnings.length > 0,
-    };
+    return { answers, omitted };
   };
 
   try {
@@ -3038,41 +3046,50 @@ async function searchGroupsAcrossGds(
   }
 }
 
-async function searchCellPrice(baseSession: AgilSessionData, request: SearchRequest): Promise<AgilCellQuote | undefined> {
-  let session = baseSession;
+async function searchGroupsAcrossGds(
+  baseSession: AgilSessionData,
+  request: SearchRequest,
+): Promise<AgilExactSearchOutcome> {
+  const { answers, omitted } = await searchEveryGds(
+    baseSession,
+    request,
+    (session, gds) => searchGroupsWithGds(session, request, gds),
+  );
 
-  const searchAll = async () => {
-    await startAgilSearch(session, request);
-
-    const results = await mapConcurrent(
-      AGIL_GDS_LIST,
-      AGIL_CONCURRENCY.gdsSearch,
-      async (gds) => searchCellWithGds(session, request, gds),
-    );
-    return results.reduce<AgilCellQuote | undefined>((best, current) => {
-      if (!current) {
-        return best;
-      }
-
-      if (!best || current.amount < best.amount) {
-        return current;
-      }
-
-      return best;
-    }, undefined);
+  return {
+    groups: answers.flat(),
+    warnings: uniqueStrings(omitted.map(({ gds, error }) =>
+      `Agil GDS ${gds} omitted: ${providerPublicFailureMessage("agil-local", error)}`)),
+    partial: omitted.length > 0,
   };
+}
 
-  try {
-    return await searchAll();
-  } catch (error) {
-    if (error instanceof Error && error.message === "AGIL_TOKEN_EXPIRED") {
-      session = await refreshAgilToken(session);
-      cachedSession = session;
-      return searchAll();
+interface AgilCellSearchOutcome {
+  /** The cheapest fare of the GDS that answered, when any had one. */
+  quote?: AgilCellQuote;
+  /** A GDS failed while another answered. */
+  partial: boolean;
+}
+
+async function searchCellPrice(baseSession: AgilSessionData, request: SearchRequest): Promise<AgilCellSearchOutcome> {
+  const { answers, omitted } = await searchEveryGds(
+    baseSession,
+    request,
+    (session, gds) => searchCellWithGds(session, request, gds),
+  );
+  const quote = answers.reduce<AgilCellQuote | undefined>((best, current) => {
+    if (!current) {
+      return best;
     }
 
-    throw error;
-  }
+    if (!best || current.amount < best.amount) {
+      return current;
+    }
+
+    return best;
+  }, undefined);
+
+  return { quote, partial: omitted.length > 0 };
 }
 
 function buildAgilMatrixCellFromQuote(
@@ -3134,6 +3151,9 @@ export async function resolveLocalAgilExactProgressive(
   const warnings: string[] = [];
   let partial = false;
   let stopRequested = false;
+  /* A GDS that answered, fares or none, and why each of the others failed. */
+  const answeredGds = new Set<number>();
+  const failedGds = new Map<number, unknown>();
 
   const searchAll = async (): Promise<void> => {
     await startAgilSearch(session, request);
@@ -3142,6 +3162,7 @@ export async function resolveLocalAgilExactProgressive(
       const startedAt = performance.now();
       try {
         const resolvedGroups = await searchGroupsWithGds(session, request, gds);
+        answeredGds.add(gds);
         for (const group of resolvedGroups) {
           mappedOffers.push(...mapGroupToOffers(group, request));
         }
@@ -3155,6 +3176,7 @@ export async function resolveLocalAgilExactProgressive(
         }
       } catch (error) {
         logAgilOmission(`GDS ${gds}`, request, error, startedAt);
+        failedGds.set(gds, error);
         partial = true;
         warnings.push(`Agil GDS ${gds} omitted: ${providerPublicFailureMessage("agil-local", error)}`);
 
@@ -3185,6 +3207,11 @@ export async function resolveLocalAgilExactProgressive(
     }
   }
 
+  const firstFailedGds = AGIL_GDS_LIST.find((gds) => failedGds.has(gds));
+  if (answeredGds.size === 0 && firstFailedGds !== undefined) {
+    throw new AgilNoGdsAnsweredError(failedGds.get(firstFailedGds));
+  }
+
   const offers = dedupeAgilOffers(mappedOffers);
   const finalWarnings = uniqueStrings([...warnings]);
 
@@ -3212,12 +3239,16 @@ export async function resolveLocalAgilRangeProgressive(
   const warnings: string[] = [];
   let partial = false;
   let stopRequested = false;
+  /* How many days answered, fares or none, and why each of the others failed. */
+  let answeredDays = 0;
+  const failedDays = new Map<SearchRequest, unknown>();
 
   await mapConcurrent(candidates, AGIL_CONCURRENCY.rangeSearch, async (derivedRequest) => {
     let progressOffers: CanonicalOffer[] = [];
     let progressWarnings: string[] = [];
     try {
       const result = await searchLocalAgilExactWithRetry(derivedRequest);
+      answeredDays += 1;
       aggregatedOffers.push(...result.offers);
       progressOffers = result.offers;
       progressWarnings = result.warnings;
@@ -3226,6 +3257,7 @@ export async function resolveLocalAgilRangeProgressive(
       }
       warnings.push(...result.warnings);
     } catch (error) {
+      failedDays.set(derivedRequest, error);
       const warning = providerPublicFailureMessage("agil-local", error);
       partial = true;
       warnings.push(warning);
@@ -3243,6 +3275,12 @@ export async function resolveLocalAgilRangeProgressive(
   }, {
     canContinue: () => !stopRequested,
   });
+
+  /* No day answered: the provider failed, with the first day's reason. */
+  const firstFailedDay = candidates.find((candidate) => failedDays.has(candidate));
+  if (answeredDays === 0 && firstFailedDay) {
+    throw failedDays.get(firstFailedDay);
+  }
 
   const offers = dedupeAgilOffers(aggregatedOffers);
   const finalWarnings = uniqueStrings([...warnings]);
@@ -3332,12 +3370,19 @@ export async function resolveLocalAgilMatrixProgressive(
   const session = await getAgilSession();
   let partial = false;
   let stopRequested = false;
+  /* How many cells answered, fares or none, and why each of the others failed. */
+  let answeredCells = 0;
+  const failedCells = new Map<string, unknown>();
   const prioritizedCells = prioritizeMatrixLoadingCells(draft.cells, draft.axes, request.tripType);
 
   const resolvedLoadingCells = await mapConcurrent(prioritizedCells, AGIL_CONCURRENCY.matrixCell, async (cell) => {
     const startedAt = performance.now();
     try {
-      const quote = await searchCellPrice(session, cell.derivedRequest);
+      const { quote, partial: cellPartial } = await searchCellPrice(session, cell.derivedRequest);
+      answeredCells += 1;
+      if (cellPartial) {
+        partial = true;
+      }
       const nextCell = quote
         ? buildAgilMatrixCellFromQuote(cell, quote)
         : {
@@ -3354,6 +3399,7 @@ export async function resolveLocalAgilMatrixProgressive(
       return nextCell;
     } catch (error) {
       logAgilOmission("matrix cell", cell.derivedRequest, error, startedAt);
+      failedCells.set(cell.key, error);
       partial = true;
       const nextCell = {
         ...cell,
@@ -3370,6 +3416,13 @@ export async function resolveLocalAgilMatrixProgressive(
   }, {
     canContinue: () => !stopRequested,
   });
+
+  /* No cell answered: the provider failed, with the first cell's reason. */
+  const firstFailedCell = prioritizedCells.find((cell) => failedCells.has(cell.key));
+  if (answeredCells === 0 && firstFailedCell) {
+    throw failedCells.get(firstFailedCell.key);
+  }
+
   const resolvedByKey = new Map(resolvedLoadingCells.map((cell) => [cell.key, cell]));
   const resolvedCells = draft.cells.map((cell) => resolvedByKey.get(cell.key) ?? cell);
 

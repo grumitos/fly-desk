@@ -4343,12 +4343,16 @@ export async function resolveLocalCostamarRangeProgressive(
   const refusals: CostamarSearchRejectedError[] = [];
   let partial = false;
   let stopRequested = false;
+  /* How many days answered, fares or none, and why each of the others failed. */
+  let answeredDays = 0;
+  const failedDays = new Map<SearchRequest, unknown>();
 
   await mapConcurrent(candidates, COSTAMAR_CONCURRENCY.rangeSearch, async (derivedRequest) => {
     let progressOffers: CanonicalOffer[] = [];
     let progressWarnings: string[] = [];
     try {
       const result = await searchLocalCostamarExactWithRetry(derivedRequest, providerContext);
+      answeredDays += 1;
       aggregatedOffers.push(...result.offers);
       progressOffers = result.offers;
       progressWarnings = result.warnings;
@@ -4359,6 +4363,7 @@ export async function resolveLocalCostamarRangeProgressive(
         refusals.push(error);
         return;
       }
+      failedDays.set(derivedRequest, error);
       const warning = providerPublicFailureMessage("costamar", error);
       partial = true;
       warnings.push(warning);
@@ -4380,6 +4385,12 @@ export async function resolveLocalCostamarRangeProgressive(
   const [refusal] = refusals;
   if (refusal) {
     throw refusal;
+  }
+
+  /* No day answered: the provider failed, with the first day's reason. */
+  const firstFailedDay = candidates.find((candidate) => failedDays.has(candidate));
+  if (answeredDays === 0 && firstFailedDay) {
+    throw failedDays.get(firstFailedDay);
   }
 
   const offers = dedupeCostamarOffers(aggregatedOffers);
@@ -4611,9 +4622,14 @@ export async function resolveLocalCostamarMatrixProgressive(
 
   const prioritizedCells = prioritizeMatrixLoadingCells(seededCells, draft.axes, request.tripType)
     .filter((cell) => !stopRequested && !seededKeys.has(cell.key));
+  /* How many cells answered, the seeded ones included, and why each of the
+     others failed. */
+  let answeredCells = seededKeys.size;
+  const failedCells = new Map<string, unknown>();
   const resolvedLoadingCells = await mapConcurrent(prioritizedCells, COSTAMAR_CONCURRENCY.matrixCell, async (cell) => {
     try {
       const offer = await resolveCellPrice(cell.derivedRequest, providerContext);
+      answeredCells += 1;
       const nextCell = offer
         ? buildMatrixCellFromOffer(cell, offer, providerContext)
         : {
@@ -4632,6 +4648,7 @@ export async function resolveLocalCostamarMatrixProgressive(
         refusals.push(error);
         return cell;
       }
+      failedCells.set(cell.key, error);
       partial = true;
       const nextCell = {
         ...cell,
@@ -4652,6 +4669,12 @@ export async function resolveLocalCostamarMatrixProgressive(
   const [refusal] = refusals;
   if (refusal) {
     throw refusal;
+  }
+
+  /* No cell answered: the provider failed, with the first cell's reason. */
+  const firstFailedCell = prioritizedCells.find((cell) => failedCells.has(cell.key));
+  if (answeredCells === 0 && firstFailedCell) {
+    throw failedCells.get(firstFailedCell.key);
   }
 
   const resolvedByKey = new Map(resolvedLoadingCells.map((cell) => [cell.key, cell]));
