@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { randomInt } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
+import { join } from "node:path";
 import {
   followSearchJob,
   openPurchasePath,
@@ -13,14 +14,15 @@ import {
 import { runSearch } from "./support/flows.ts";
 import { defineSuite, type TestScope, type TrackedContext } from "./support/harness.ts";
 import type { OfferSpec } from "./support/fixtures.ts";
-import { addMonths, day, eventually, locationUses, monthKey, TODAY } from "./support/scenario.ts";
+import { addMonths, day, eventually, locationUses, monthKey, querySqlite, TODAY, writeSqlite } from "./support/scenario.ts";
 import { mintSession, readRedirectExpiry, readSessionStamps, REDIRECT_COOKIE, SESSION_COOKIE, type MintedSession } from "./support/sessions.ts";
 import { isDarkTheme, login, searchForm, searchLink, signInThroughGate, topBar } from "./support/ui.ts";
 
 /*
  * The session and the gate in front of the desk: a sliding window with a hard
- * cap, one way back to the gate, and a front door that grants nothing to a
- * client that merely claims to be trusted.
+ * cap, one way back to the gate, a front door that grants nothing to a client
+ * that merely claims to be trusted or brings a cookie it made itself, and
+ * purchase paths that only ever lead to the provider's own search.
  */
 
 /* The product's floors (`src/web-auth.ts`): nothing shorter can be configured,
@@ -251,13 +253,73 @@ suite.test("the sixth failed sign-in of a client is refused with Retry-After, an
 
 suite.test("a hostile return path lands on the desk and never leaves the origin", async (scope) => {
   const { stack } = scope;
-  for (const next of ["//evil.com", "/.//evil.com", "/..//evil.com", "https://evil.com", "/\\evil.com", "/\\/evil.com"]) {
+  for (const next of [
+    "//evil.com", "/.//evil.com", "/..//evil.com", "/%2e//evil.com", "https://evil.com", "/\\evil.com", "/\\/evil.com",
+    "javascript:alert(1)", "relative/path", "/login",
+  ]) {
     const gate = await fetch(`${stack.baseUrl}/login?next=${encodeURIComponent(next)}`, { redirect: "manual" });
     assert.equal(gate.status, 200, next);
     assert.doesNotMatch(await gate.text(), /name="next"/, `the gate carried ${next}`);
     const signedIn = await formLogin(scope, stack.password, { client: clientAddress("203.0.113"), next });
     assert.equal(signedIn.status, 303, next);
     assert.equal(signedIn.headers.get("location"), "/", `${next} sent the sign-in to ${signedIn.headers.get("location")}`);
+  }
+});
+
+suite.test("a return path with markup in it is kept as text by the gate and handed back whole", async (scope) => {
+  const { stack } = scope;
+  const query = "\"><script>alert(1)</script>";
+  const next = `/?origin=${encodeURIComponent(query)}`;
+  const gate = await fetch(`${stack.baseUrl}/login?next=${encodeURIComponent(next)}`, { redirect: "manual" });
+  assert.equal(gate.status, 200);
+  const html = await gate.text();
+  assert.match(html, /name="next"/, "the gate dropped a return path on this origin");
+  assert.doesNotMatch(html, /<script>alert\(1\)<\/script>|"><script>/, "the gate wrote the return path out as markup");
+
+  const signedIn = await formLogin(scope, stack.password, { client: clientAddress("203.0.113"), next });
+  assert.equal(signedIn.status, 303);
+  const landed = new URL(signedIn.headers.get("location") ?? "", stack.baseUrl);
+  assert.equal(landed.origin, new URL(stack.baseUrl).origin);
+  assert.equal(landed.pathname, "/");
+  assert.equal(landed.searchParams.get("origin"), query, "the return path did not come back whole");
+});
+
+suite.test("a session cookie that was forged, altered, expired or issued in the old format opens nothing", async (scope) => {
+  const { fake, stack } = scope;
+  fake.setFlights("both", { origin: "LIM", destination: "CUZ" }, CUSCO);
+  const api = await scope.api();
+  const { job } = await followSearchJob(api, await startSearch(api, searchPayloads.exact("LIM", "CUZ", day(99))));
+  const path = purchasePathOf(searchOffers(job)[0]!);
+  assert.equal((await openPurchasePath(api, path)).response.status, 302);
+
+  const now = Date.now();
+  const stamps = { issuedAtMs: now - 1_000, expiresAtMs: now + 120_000 };
+  const genuine = mintSession(stack.sessionSecret, stamps);
+  const tamper = (value: string, part: number, change: (field: string) => string) =>
+    value.split(".").map((field, index) => (index === part ? change(field) : field)).join(".");
+  const flip = (signature: string) => `${signature.slice(0, -1)}${signature.endsWith("A") ? "B" : "A"}`;
+  const later = (stamp: string) => String(Number(stamp) + 86_400_000);
+  const foreign = mintSession(randomBytes(32).toString("base64url"), stamps);
+  const expired = mintSession(stack.sessionSecret, { issuedAtMs: now - 200_000, expiresAtMs: now - 1_000 });
+  const [, , sessionExpiry, sessionNonce, sessionSignature] = genuine.session.split(".");
+  const forgeries: Array<[string, { session: string; redirect: string }]> = [
+    ["signed with another secret", foreign],
+    ["with its expiry pushed back", { session: tamper(genuine.session, 2, later), redirect: tamper(genuine.redirect, 1, later) }],
+    ["with its signature altered", { session: tamper(genuine.session, 4, flip), redirect: tamper(genuine.redirect, 3, flip) }],
+    ["past its expiry", expired],
+    ["in the old v1 shape", { session: ["v1", sessionExpiry, sessionNonce, sessionSignature].join("."), redirect: expired.redirect }],
+  ];
+
+  const open = (cookie: string, target: string) => fetch(`${stack.baseUrl}${target}`, { headers: { cookie }, redirect: "manual" });
+  assert.equal((await open(`${SESSION_COOKIE}=${genuine.session}`, "/")).status, 200, "the genuine session was refused");
+  assert.equal((await open(`${SESSION_COOKIE}=${genuine.session}`, "/api/diagnostics")).status, 200);
+  assert.equal((await open(`${REDIRECT_COOKIE}=${genuine.redirect}`, path)).status, 302, "the genuine /r cookie was refused");
+  for (const [label, forged] of forgeries) {
+    const desk = await open(`${SESSION_COOKIE}=${forged.session}`, "/");
+    assert.equal(desk.status, 302, `a session ${label} opened the desk`);
+    assert.match(desk.headers.get("location") ?? "", /^\/login\b/, `a session ${label} was not sent to the gate`);
+    assert.equal((await open(`${SESSION_COOKIE}=${forged.session}`, "/api/diagnostics")).status, 401, `a session ${label} reached the API`);
+    assert.equal((await open(`${REDIRECT_COOKIE}=${forged.redirect}`, path)).status, 401, `a /r cookie ${label} opened a purchase path`);
   }
 });
 
@@ -352,6 +414,40 @@ suite.test("provider addresses sent by a client are ignored and nothing leaves f
   assert.equal(response.status, 302);
   assert.equal(new URL(response.headers.get("location") ?? "").host, "flights.zdev.tech");
   /* `assertInvariants` also holds: no process tried to reach anything else. */
+});
+
+suite.test("a purchase path altered in the cache never sends the browser off the provider's own search", async (scope) => {
+  const { fake, stack } = scope;
+  fake.setFlights("cbplus", { origin: "LIM", destination: "CUZ" }, CUSCO);
+  const api = await scope.api();
+  const { job } = await followSearchJob(api, await startSearch(api, searchPayloads.exact("LIM", "CUZ", day(94))));
+  const path = purchasePathOf(searchOffers(job).find((offer) => offer.providerSource === "costamar")!);
+  assert.equal((await openPurchasePath(api, path)).response.status, 302);
+
+  /* The stored row is all that stands between `/r/<id>` and the browser. */
+  const dbPath = join(stack.appDataDir, "fly-desk-cache.sqlite");
+  const id = decodeURIComponent(path.slice("/r/".length));
+  const [row] = querySqlite<{ payload: string }>(dbPath, "SELECT payload FROM purchase_paths WHERE id = ?", [id]);
+  assert.ok(row, "the purchase path was not stored");
+  const stored = JSON.parse(row.payload) as { path: { url: string } };
+  const genuine = new URL(stored.path.url);
+  assert.equal(genuine.host, "flights.zdev.tech");
+  const route = `${genuine.pathname}${genuine.search}`;
+  for (const [label, url] of [
+    ["another host", `https://provider.evil.example${route}`],
+    ["a look-alike host", `https://flights.zdev.tech.evil.example${route}`],
+    ["plain HTTP", `http://flights.zdev.tech${route}`],
+    ["credentials in the address", `https://user:secret@flights.zdev.tech${route}`],
+  ] as const) {
+    writeSqlite(dbPath, [{
+      sql: "UPDATE purchase_paths SET payload = ? WHERE id = ?",
+      params: [JSON.stringify({ ...stored, path: { ...stored.path, url } }), id],
+    }]);
+    const { response } = await openPurchasePath(api, path);
+    assert.equal(response.status, 409, `${label}: answered ${response.status}`);
+    assert.equal(response.headers.get("location"), null, `${label}: redirected to ${response.headers.get("location")}`);
+    await response.body?.cancel();
+  }
 });
 
 /**

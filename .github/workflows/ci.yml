@@ -4,9 +4,6 @@ on:
   pull_request:
     branches:
       - main
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -37,23 +34,20 @@ jobs:
       - name: Typecheck
         run: bun run typecheck
 
-      - name: Lint if configured
-        run: |
-          set -euo pipefail
-          if bun -e "const pkg = await Bun.file('package.json').json(); process.exit(pkg.scripts?.lint ? 0 : 1)"; then
-            bun run lint
-          else
-            echo "No lint script configured; skipping."
-          fi
+      - name: Lint
+        run: bun run lint
 
       - name: Build
         run: bun run build
 
-      - name: Unit tests
-        run: bun run test:unit
+      - name: Smoke the release artifact
+        run: |
+          set -euo pipefail
+          bash scripts/pack-release.sh "$(git rev-parse HEAD)" "$RUNNER_TEMP/fly-desk.tar.gz"
+          bun scripts/release-smoke.ts "$RUNNER_TEMP/fly-desk.tar.gz"
 
   e2e:
-    name: End-to-end gate
+    name: Browser UI gate
     runs-on: ubuntu-latest
     timeout-minutes: 25
 

@@ -29,19 +29,21 @@ bun run build
 bun run test
 ```
 
-`bun run test` runs the unit tests and then the end-to-end suite; see
-[`TESTING.md`](./TESTING.md).
+`bun run test` runs the end-to-end suite; see [`TESTING.md`](./TESTING.md).
 
 ## Deployment Through GitHub Actions
 
 `.github/workflows/deploy-vps.yml` has two modes:
 
-- `deploy`: verifies that the exact SHA belongs to `main`, runs the gate,
-  builds a deterministic tar archive with a single `app/` root, computes its
-  SHA-256 digest and stores it as a short-lived artifact. A separate
-  production-environment job downloads it, verifies the digest, configures the
-  pinned SSH identity, streams the archive through the forced `upload` command,
-  activates it with `deploy` and confirms it with `verify`.
+- `deploy`: verifies that the exact SHA belongs to `main`, installs and builds
+  it, packs a deterministic tar archive with a single `app/` root
+  (`scripts/pack-release.sh`), smokes that archive (`scripts/release-smoke.ts`,
+  below), computes its SHA-256 digest and stores it as a short-lived artifact.
+  The revision's typecheck, lint and end-to-end suite already passed as the
+  pull request's required checks, so they are not run again here. A separate
+  production-environment job downloads the artifact, verifies the digest,
+  configures the pinned SSH identity, streams the archive through the forced
+  `upload` command, activates it with `deploy` and confirms it with `verify`.
 - `rollback`: activates an already installed release by SHA through the forced
   `rollback` command and confirms it with `verify`.
 
@@ -57,7 +59,7 @@ rollback <sha40>
 ```
 
 The release engine takes a lock shared with maintenance, validates the archive
-digest and structure, prepares the candidate as the runtime user, switches the
+digest and structure, prepares the candidate as the build user, switches the
 symlink, restarts web, search and redirect, checks their health, and restores
 the previous release if activation fails.
 
@@ -74,15 +76,32 @@ built from that checkout and a `REVISION` file; ordering, timestamps,
 ownership and gzip metadata are normalized, so untracked files cannot enter a
 release.
 
+The release smoke unpacks the archive into an empty directory, runs its
+prepare hook with only the build user's environment, and starts web, search
+and redirect from it as their units do, with prewarm off so no provider is
+called. It requires each unit's `/api/health`, a sign-in, the signed-in shell
+and one of its built assets. The environment carries a `SEARCH_TODAY_OVERRIDE`
+that production must ignore and empty numeric settings that must keep their
+defaults, and the smoke checks both through the shell's runtime settings and
+the session cookie. It also requires a released `src/**/*.ts` naming
+`CBPLUS_TOKEN_FILE`, which is how the platform tells that a release re-reads
+the token file, and an import of an uncarried package to fail instead of
+downloading it. The Core quality gate runs the same smoke on every pull
+request.
+
 ## Release Preparation
 
-`deploy/prepare-release.sh` runs as the runtime user with the system Bun. It
-installs the root package's runtime dependencies only (`bun install
---frozen-lockfile --production --backend copyfile --filter ./`): the backend
-needs Playwright to reach Chrome over CDP and nothing else, because the
-frontend is already built into `frontend/dist`. It then refuses a release whose
-`node_modules` links outside the release, and requires
-`frontend/dist/index.html`.
+A release installs no packages. The runtime imports only Bun and Node
+built-ins, the frontend arrives built in `frontend/dist`, and `bunfig.toml`
+disables Bun's install-on-import (`[install] auto = "disable"`), so importing a
+package the release does not carry fails instead of fetching it from the
+registry. Playwright, the one package the source still names, is a development
+dependency: the end-to-end suite and the Click and Book Plus browser fallback
+on a workstation use it.
+
+`deploy/prepare-release.sh` runs as the platform's build user with the system
+Bun. It refuses a `package.json` that declares runtime `dependencies`, and
+requires `frontend/dist/index.html`.
 
 Real configuration lives in `/etc/fly-desk.env` (`.env.example` documents the
 names and defaults, never values). The Click and Book Plus token file

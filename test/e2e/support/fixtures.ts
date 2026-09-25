@@ -241,6 +241,22 @@ export function fakeCbplusToken(terminalId = FAKE_CBPLUS_TERMINAL_ID, nowMs = Da
   return fakeJwt({ id: terminalId, terminalId, iat, exp: iat + 30 * 24 * 60 * 60 });
 }
 
+/**
+ * What an Agilsmart page keeps in localStorage for the agent `FAKE_AGIL_IDENTITY`
+ * names: the web app's bearer, and the account and address base64-encoded.
+ */
+export function agilBrowserStorage(): Record<string, string> {
+  const { userCode, internalCode, ip } = FAKE_AGIL_IDENTITY;
+  return {
+    tokenSearchFlight: fakeJwt({ sub: String(userCode), exp: Math.floor(Date.now() / 1000) + 3600 }),
+    user_data: Buffer.from(JSON.stringify({
+      Usuario: { CodigoUsuario: userCode },
+      Cliente: { Vendedor: { CodigoVendedor: internalCode } },
+    })).toString("base64"),
+    ip: Buffer.from(ip).toString("base64"),
+  };
+}
+
 /* ---- Time: wall clocks at each airport, durations through IANA zones ---- */
 
 const zoneFormatters = new Map<string, Intl.DateTimeFormat>();

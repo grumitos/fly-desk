@@ -185,26 +185,54 @@ export function locationUses(appDataDir: string): Map<string, number> {
   return new Map(rows.map((row) => [`${row.role}:${row.code}`, Number(row.total_uses)]));
 }
 
-/**
- * Runs one read-only query against a stack database with Bun's SQLite, the
- * engine that wrote it. A subprocess, so the test process never holds a
- * handle on a file a service is writing.
- */
-export function querySqlite<T>(dbPath: string, sql: string): T[] {
-  const script = [
-    "const { Database } = require('bun:sqlite');",
-    `const db = new Database(${JSON.stringify(dbPath)}, { readonly: true });`,
-    "try {",
-    `  process.stdout.write(JSON.stringify(db.query(${JSON.stringify(sql)}).all()));`,
-    "} finally { db.close(); }",
-  ].join("\n");
+/* Runs a script against a stack database with Bun's SQLite, the engine that
+   wrote it. A subprocess, so the test process never holds a handle on a file a
+   service is writing. */
+function runSqliteScript(script: string, action: string): string {
   const result = spawnSync(process.env.BUN_EXECUTABLE_PATH?.trim() || "bun", ["--no-env-file", "-e", script], {
     encoding: "utf8",
     windowsHide: true,
     env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP },
   });
   if (result.status !== 0) {
-    throw new Error(`SQLite read failed: ${result.stderr || result.stdout}`);
+    throw new Error(`SQLite ${action} failed: ${result.stderr || result.stdout}`);
   }
-  return JSON.parse(result.stdout || "[]") as T[];
+  return result.stdout;
+}
+
+/** Runs one read-only query against a stack database. */
+export function querySqlite<T>(dbPath: string, sql: string, params: readonly unknown[] = []): T[] {
+  const stdout = runSqliteScript([
+    "const { Database } = require('bun:sqlite');",
+    `const db = new Database(${JSON.stringify(dbPath)}, { readonly: true });`,
+    "try {",
+    `  process.stdout.write(JSON.stringify(db.query(${JSON.stringify(sql)}).all(...${JSON.stringify(params)})));`,
+    "} finally { db.close(); }",
+  ].join("\n"), "read");
+  return JSON.parse(stdout || "[]") as T[];
+}
+
+/**
+ * Writes to a stack database the way an earlier release or an operator would:
+ * each statement in order, waiting out a service's lock as the services do.
+ */
+export function writeSqlite(dbPath: string, statements: ReadonlyArray<{ sql: string; params?: readonly unknown[] }>): void {
+  runSqliteScript([
+    "const { Database } = require('bun:sqlite');",
+    `const db = new Database(${JSON.stringify(dbPath)});`,
+    "try {",
+    "  db.run('PRAGMA busy_timeout = 5000;');",
+    `  for (const { sql, params } of ${JSON.stringify(statements)}) db.run(sql, ...(params ?? []));`,
+    "} finally { db.close(); }",
+  ].join("\n"), "write");
+}
+
+/** How big a database file is and how much of it is free, read the way `src/session-store.ts` reads it. */
+export function pageStats(dbPath: string): { pageCount: number; freePages: number; autoVacuum: number } {
+  const [stats] = querySqlite<{ pageCount: number; freePages: number; autoVacuum: number }>(dbPath, [
+    "SELECT (SELECT page_count FROM pragma_page_count()) AS pageCount,",
+    "(SELECT freelist_count FROM pragma_freelist_count()) AS freePages,",
+    "(SELECT auto_vacuum FROM pragma_auto_vacuum()) AS autoVacuum",
+  ].join(" "));
+  return { pageCount: Number(stats?.pageCount), freePages: Number(stats?.freePages), autoVacuum: Number(stats?.autoVacuum) };
 }

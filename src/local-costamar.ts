@@ -52,7 +52,6 @@ import {
   ProviderMeta,
   RedirectVerification,
   SearchRequest,
-  SearchResponse,
   Segment,
 } from "./core/types";
 import {
@@ -780,9 +779,14 @@ function logCostamarB2bDebug(stage: string, detail?: CostamarB2bDebugDetail): vo
   console.log(`[costamar-b2b] ${stage}`, sanitizeCostamarB2bDebugDetail(detail));
 }
 
+/* The B2B browser path drives Chrome through Playwright, which only a
+   development install carries: a release installs no packages. */
 async function getPlaywright(): Promise<typeof import("playwright")> {
   if (!playwrightPromise) {
-    playwrightPromise = import("playwright");
+    playwrightPromise = import("playwright").catch((error: unknown) => {
+      console.warn("Click and Book Plus browser fallback unavailable: Playwright is not installed, and a release installs no packages.");
+      throw error;
+    });
   }
 
   return playwrightPromise;
@@ -4269,30 +4273,6 @@ async function searchLocalCostamarExact(
     offers: outcome.offers,
     warnings: outcome.warnings,
     partial: false,
-  };
-}
-
-export function createLocalCostamarSearchDraft(
-  request: SearchRequest,
-  providerMeta: ProviderMeta,
-): SearchResponse {
-  const requestedAt = new Date().toISOString();
-  const warning = request.searchMode === "stay-range"
-    ? "Consultando Click and Book Plus en paralelo. Los resultados se iran agregando."
-    : "Consultando Click and Book Plus. Los resultados se iran agregando.";
-
-  return {
-    allOffers: [],
-    searchMeta: {
-      requestedAt,
-      completedAt: requestedAt,
-      providersUsed: ["costamar"],
-      warnings: [warning],
-      partial: true,
-      searchState: "search_partial",
-    },
-    providerMeta,
-    warnings: [warning],
   };
 }
 

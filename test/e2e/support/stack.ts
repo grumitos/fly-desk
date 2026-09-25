@@ -59,7 +59,8 @@ export interface Stack {
   appDataDir: string;
   root: string;
   pid: (service: ServiceName) => number | undefined;
-  restart: (service: ServiceName, options?: { env?: Env }) => Promise<void>;
+  /** Stops the unit, runs `beforeLaunch` while it is down, and starts it again. */
+  restart: (service: ServiceName, options?: { env?: Env; beforeLaunch?: () => void | Promise<void> }) => Promise<void>;
   logs: (service?: ServiceName) => string;
   stop: () => Promise<void>;
 }
@@ -419,6 +420,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
         unit.restartEnv = { ...unit.restartEnv, ...restartOptions.env };
       }
       await halt(unit);
+      await restartOptions?.beforeLaunch?.();
       await launch(unit);
     },
     logs: (name) => (name ? [name] : SERVICE_NAMES)

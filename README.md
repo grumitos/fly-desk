@@ -98,7 +98,8 @@ Bun is the supported package manager. Do not add `package-lock.json`, `pnpm-lock
 - Hardening: `bunfig.toml` disables dependency lifecycle scripts and filters versions published less than three days ago.
 - Additional guardrail: `.npmrc` sets `ignore-scripts=true` for accidental npm/pnpm installations; this does not make pnpm part of the normal project workflow.
 - A dependency that needs installation scripts must be deliberately added to `trustedDependencies`, with the reason documented.
-- Faster installs on a workstation, per machine and never versioned: `globalStore = true` under `[install]` in a personal `~/.bunfig.toml` links each package into `node_modules` from one machine-wide copy instead of writing it out again per project. Measured here against the default layout, interleaved, with the package cache warm: 5.4 s down to 0.35 s for a clean install of this tree. With the cache empty, which is what a CI runner starts from, it is 16.1 s against 15.2 s, so it is slightly slower there and buys nothing; this is a workstation setting and not a CI one. It stays out of `bunfig.toml` because that file travels to the VPS and a release has to carry its own dependencies rather than borrow them from a cache that gets emptied. `deploy/prepare-release.sh` checks the installed tree and refuses a release that borrows.
+- A release installs no packages: the runtime imports only Bun and Node built-ins, and `bunfig.toml` disables Bun's install-on-import, so a missing package is an error and never a download. Every dependency is a development one; see [`docs/DEPLOY_APP.md`](./docs/DEPLOY_APP.md).
+- Faster installs on a workstation, per machine and never versioned: `globalStore = true` under `[install]` in a personal `~/.bunfig.toml` links each package into `node_modules` from one machine-wide copy instead of writing it out again per project. Measured here against the default layout, interleaved, with the package cache warm: 5.4 s down to 0.35 s for a clean install of this tree. With the cache empty, which is what a CI runner starts from, it is 16.1 s against 15.2 s, so it is slightly slower there and buys nothing; this is a workstation setting and not a CI one, which is why it stays out of `bunfig.toml`.
 
 ## Structure
 
@@ -183,10 +184,8 @@ When working on another machine, do not send `.env` as plaintext through chat, e
 - `bun run auth:hash`
 - `bun run typecheck`
 - `bun run lint`
-- `bun run test`
-- `bun run test:unit`
-- `bun run test:e2e`
-- `bun run demo`
+- `bun run test`: the end-to-end suite, the same as `bun run test:e2e`
+- `bun run airline-icons:extract`
 
 ## Verification
 
@@ -209,7 +208,7 @@ rg -n "\]\([^)]*\.md\)" README.md docs frontend/README.md
 
 ## CI
 
-GitHub Actions runs `.github/workflows/ci.yml` on pull requests, pushes to `main`, and manual dispatch. Two jobs run in parallel: quality runs typecheck, lint, build, and unit tests; end-to-end builds the application and runs the end-to-end suite in the runner image's Chrome against fake provider upstreams. End-to-end failures publish screenshots, service logs, and the fake upstream's request log as artifacts. See [`docs/TESTING.md`](./docs/TESTING.md).
+GitHub Actions runs `.github/workflows/ci.yml` on pull requests and manual dispatch. Two jobs run in parallel, the two checks branch protection requires: `Core quality gate` runs typecheck, lint, build, and a smoke of the release artifact; `Browser UI gate` builds the application and runs the end-to-end suite in the runner image's Chrome against fake provider upstreams. End-to-end failures publish screenshots, service logs, and the fake upstream's request log as artifacts. See [`docs/TESTING.md`](./docs/TESTING.md).
 
 ## Current Documentation
 

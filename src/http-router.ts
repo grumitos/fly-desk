@@ -35,7 +35,6 @@ import {
 } from "./http-search-contract";
 import {
   AGIL_CONCURRENCY,
-  createLocalAgilSearchDraft,
   resolveLocalAgilExactProgressive,
   createLocalAgilMatrixDraft,
   resolveLocalAgilMatrixProgressive,
@@ -46,7 +45,6 @@ import {
   COSTAMAR_CONCURRENCY,
   buildCostamarPurchasePaths,
   createLocalCostamarMatrixDraft,
-  createLocalCostamarSearchDraft,
   resolveLocalCostamarExactProgressive,
   resolveLocalCostamarMatrixProgressive,
   resolveLocalCostamarRangeProgressive,
@@ -129,7 +127,6 @@ interface QuotationSource {
 }
 
 interface ProgressiveSearchAdapter {
-  createSearchDraft(request: SearchRequest, providerMeta: { exactProvider: ProviderId; coverageMode: SearchRequest["coverageMode"] }): SearchResponse;
   resolveExactProgressive(
     request: SearchRequest,
     providerContext: ProviderContext | undefined,
@@ -189,7 +186,6 @@ interface ProviderMatrixState {
 
 const PROGRESSIVE_ADAPTERS: Record<ProviderId, ProgressiveSearchAdapter> = {
   "agil-local": {
-    createSearchDraft: createLocalAgilSearchDraft,
     resolveExactProgressive: (request, _providerContext, onUpdate) =>
       resolveLocalAgilExactProgressive(request, onUpdate),
     resolveRangeProgressive: (request, _providerContext, onUpdate) =>
@@ -199,7 +195,6 @@ const PROGRESSIVE_ADAPTERS: Record<ProviderId, ProgressiveSearchAdapter> = {
       resolveLocalAgilMatrixProgressive(request, draft, onCellResolved),
   },
   costamar: {
-    createSearchDraft: createLocalCostamarSearchDraft,
     resolveExactProgressive: (request, providerContext, onUpdate) =>
       resolveLocalCostamarExactProgressive(request, providerContext, onUpdate),
     resolveRangeProgressive: (request, providerContext, onUpdate) =>

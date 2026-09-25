@@ -23,6 +23,17 @@ bun run build
 bun run test
 ```
 
+`bun run test` is the end-to-end suite (`docs/TESTING.md`); there is no unit
+suite. When a change touches what a release carries or how it starts
+(`deploy/`, `scripts/pack-release.sh`, `bunfig.toml`, `package.json`, the
+runtime's imports), also pack and smoke a release from a clean commit:
+
+```bash
+artifact="$(mktemp -d)/fly-desk.tar.gz"
+bash scripts/pack-release.sh "$(git rev-parse HEAD)" "$artifact"
+bun scripts/release-smoke.ts "$artifact"
+```
+
 For documentation-only changes:
 
 ```powershell
