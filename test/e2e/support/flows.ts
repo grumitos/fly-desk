@@ -31,13 +31,29 @@ export function runSearch<T extends SearchJob | MatrixJob = SearchJob>(
   return startedJob<T>(page, () => searchForm.submit(page).click(), path);
 }
 
-/** Waits until the search on screen has finished: the stop control is gone and the header counts `count`. */
+/**
+ * Waits until the search on screen has finished: no stop control (the desk),
+ * no «Parcial» pill (every armazón — a phone folds the form away), and the
+ * header counts `count`.
+ */
 export async function waitForResults(page: Page, count: number, timeoutMs = 30_000): Promise<CardReading[]> {
   return eventually(async () => {
     assert.equal(await searchForm.stop(page).count(), 0, "the search is still running");
+    assert.equal(await results.partialPill(page).count(), 0, "the list is still partial");
     assert.equal((await readResultCount(page))?.total, count);
     return readCards(page);
   }, { timeoutMs, message: `${count} results on screen` });
+}
+
+/** Waits until a migratory sweep has settled with `priced` of `months` months fared. */
+export async function waitForSweep(page: Page, months: number, priced: number, timeoutMs = 60_000): Promise<void> {
+  await eventually(async () => {
+    const header = await results.headerLine(page).innerText();
+    /* «con tarifa» is the desk's; a phone keeps the figures only. */
+    assert.match(header, new RegExp(`\\b${priced} de ${months} (meses|mes)\\b`), header);
+    assert.doesNotMatch(header, /buscando/i, "a month is still being searched");
+    assert.equal(await searchForm.stop(page).count(), 0, "the sweep is still running");
+  }, { timeoutMs, message: `the sweep settles with ${priced} of ${months} months fared` });
 }
 
 /**

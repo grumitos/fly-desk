@@ -141,8 +141,13 @@ export type SortCriterion = "precio" | "duración" | "hora de salida" | "número
 
 export const results = {
   heading: (page: Page) => page.getByRole("heading", { name: /^(Resultados|Vuelo migratorio)$/, level: 2 }),
-  /** The heading's line: title, count, «N ocultos por filtros», state pill. */
-  headerLine: (page: Page) => results.heading(page).locator(".."),
+  /**
+   * The heading's line: title, count, «N ocultos por filtros», state pill. A
+   * phone hides the title and keeps the rest, so the line is found through
+   * the title even when it is not drawn.
+   */
+  headerLine: (page: Page) =>
+    page.getByRole("heading", { name: /^(Resultados|Vuelo migratorio)$/, level: 2, includeHidden: true }).locator(".."),
   sort: (page: Page, criterion: SortCriterion) =>
     page.getByRole("radiogroup", { name: "Orden de resultados" }).getByRole("radio", { name: `Ordenar por ${criterion}` }),
   /** A result row is one button whose name reads the whole fare. */
@@ -166,6 +171,8 @@ export type StopsLabel = "Todos" | "Directo" | "1" | "2+";
 
 export const filters = {
   sheet: (page: Page) => page.getByRole("dialog", { name: "Filtros", exact: true }),
+  /** The phone's chip for an active filter, and its way out. */
+  removeChip: (page: Page, label: string) => page.getByRole("button", { name: `Quitar filtro ${label}` }),
   stops: (root: Root, value: StopsLabel) =>
     root.getByRole("radiogroup", { name: "Escalas", exact: true }).getByRole("radio", { name: value, exact: true }),
   airline: (root: Root, name: string) => root.getByRole("checkbox", { name, exact: true }),
@@ -177,15 +184,22 @@ export const filters = {
 /* ---- The offer: the desk's third column, or a sheet named «Oferta» ---- */
 
 export const detail = {
+  /* The sheet when there is one (it holds the same panel, hence `first`: an
+     ancestor comes before what it contains), the desk's column otherwise. */
   surface: (page: Page) =>
     page.getByRole("dialog", { name: "Oferta", exact: true })
       .or(page.locator("section").filter({ has: page.getByRole("heading", { name: "Oferta", level: 2 }) }).filter({
         has: page.getByRole("button", { name: /^(Cotizar|Validando|Copiado)$/ }),
-      })),
+      }))
+      .first(),
   quote: (root: Locator) => root.getByRole("button", { name: /^(Cotizar|Validando|Copiado)$/ }),
   /** The provider's own search, through `/r/<id>`. */
   purchase: (root: Locator) => root.getByRole("button", { name: /^(Buscar|Abrir)$/ }),
   close: (root: Locator) => root.getByRole("button", { name: "Cerrar oferta" }),
+  /** The itinerary's leg eyebrow, «Ida» or «Vuelta». */
+  legTitle: (root: Locator, leg: "Ida" | "Vuelta") => root.getByText(leg, { exact: true }),
+  /** One flight of the itinerary rail, «3h 40m · LATAM 2400». */
+  flightRow: (root: Locator, flight: string) => root.getByText(new RegExp(`· ${escapeRegExp(flight)}$`)),
   /** The phone's «Cotización copiada» line. */
   copied: (root: Locator) => root.getByRole("status").filter({ hasText: "Cotización copiada" }),
   quoteError: (root: Locator) => root.getByRole("alert"),
@@ -317,4 +331,30 @@ export async function isFullyInViewport(locator: Locator): Promise<boolean> {
 /** Whether a text element shows all of its text (no ellipsis, no clip). */
 export async function showsWholeText(locator: Locator): Promise<boolean> {
   return locator.evaluate((element) => element.scrollWidth <= element.clientWidth + 1);
+}
+
+/**
+ * Whether an element is drawn and nothing that clips it cuts it: every
+ * ancestor that hides overflow holds its whole box, and that ancestor's own
+ * content is not wider than it (an ellipsis). Inline labels have no width of
+ * their own to compare, so the clipping ancestor is what is measured.
+ */
+export async function isUnclipped(locator: Locator): Promise<boolean> {
+  return locator.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0) return false;
+    for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      const style = window.getComputedStyle(ancestor);
+      const frame = ancestor.getBoundingClientRect();
+      if (style.overflowX !== "visible" && (box.left < frame.left - 0.5 || box.right > frame.right + 0.5)) return false;
+      if (style.overflowY !== "visible" && (box.top < frame.top - 0.5 || box.bottom > frame.bottom + 0.5)) return false;
+      if (style.textOverflow === "ellipsis" && ancestor.scrollWidth > ancestor.clientWidth + 1) return false;
+    }
+    return true;
+  });
+}
+
+/** The visible stop labels of a row that stops once: «1 escala · BOG» on a desk, «1 esc · BOG» on a phone. */
+export function oneStopLabels(root: Root): Locator {
+  return root.getByText(/^1 esc(ala)? · [A-Z]{3}$/).filter({ visible: true });
 }
