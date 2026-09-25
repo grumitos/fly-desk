@@ -4,9 +4,9 @@
  * Not the marks that exist: a code missing from this list is fetched once from
  * the provider and cached (`airline-mark-store.ts`), so this is the set that is
  * available offline, on the first request, and without trusting anything the
- * network says that day. It holds the carriers eight ordinary LIM routes
- * actually return, which is where a cold fetch would otherwise be paid. It is
- * not a gate: a list nobody can finish should not decide what gets drawn.
+ * network says that day. It holds the carriers ordinary LIM routes return,
+ * which is where a cold fetch would otherwise be paid. It is not a gate: a list
+ * nobody can finish should not decide what gets drawn.
  */
 export const AIRLINE_LOGO_CODES = [
   "4C",

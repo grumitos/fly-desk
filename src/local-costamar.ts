@@ -373,7 +373,7 @@ const recentCostamarSessionWarmups = new Map<string, number>();
 let costamarWarmupOpener: typeof openUrlLocally = openUrlLocally;
 /*
  * How long the browser fallback lets Chrome settle between the B2B page and the
- * branded one. A real Chrome needs the pause.
+ * branded one.
  */
 const COSTAMAR_WARMUP_BROWSER_SETTLE_MS = 750;
 let costamarWarmupBrowserSettleMs = COSTAMAR_WARMUP_BROWSER_SETTLE_MS;

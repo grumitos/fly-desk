@@ -493,8 +493,8 @@ export function validateSearchContract(
  *
  * It is checked against the catalogue rather than against a list written out
  * again here, so widening the order stays a change in one place. What is not in
- * the catalogue is not a bad request: it is an older client, or a link shared
- * before the order existed, and it gets the list by price instead of a 400.
+ * the catalogue is not a bad request: it is an older client or an old shared
+ * link, and it gets the list by price instead of a 400.
  */
 export function resolveSortMode(mode: unknown): SortMode {
   return SORT_MODES.includes(mode as SortMode) ? mode as SortMode : "cheapest";
