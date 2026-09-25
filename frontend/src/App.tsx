@@ -447,7 +447,8 @@ export default function App() {
     return months ? displayOffers[0] ?? null : null
   }, [displayOffers, months, selectedOfferId])
   const outcome = useMemo(() => describeSearchOutcome(results), [results])
-  const airlineOptions = useMemo(() => buildAirlineOptions(candidateOffers), [candidateOffers])
+  /* From the offers, not the ordered list: an order changes nothing here. */
+  const airlineOptions = useMemo(() => buildAirlineOptions(results?.allOffers ?? []), [results])
   const activeFilterChips = useMemo(
     () => buildActiveFilterChips(filters, selectedAirlines, airlineOptions),
     [airlineOptions, filters, selectedAirlines],
