@@ -224,7 +224,7 @@ export const detail = {
       .first(),
   quote: (root: Locator) => root.getByRole("button", { name: /^(Cotizar|Validando|Copiado)$/ }),
   /** The desk's offer column before an offer is chosen. */
-  nothingSelected: (page: Page) => page.getByRole("heading", { name: "Selecciona una oferta", level: 3 }),
+  nothingSelected: (page: Page) => page.getByText("Selecciona una oferta para ver su detalle.", { exact: true }),
   /** The provider's own search, through `/r/<id>`. */
   purchase: (root: Locator) => root.getByRole("button", { name: /^(Buscar|Abrir)$/ }),
   close: (root: Locator) => root.getByRole("button", { name: "Cerrar oferta" }),

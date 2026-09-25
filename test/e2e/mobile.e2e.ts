@@ -343,6 +343,7 @@ suite.test("resizing the desk keeps the list and where it was read, and never ho
   await waitForResults(page, MEDELLIN.length * 2);
 
   /* Three columns to two: the offer column goes, the list stays the list it was, scrolled. */
+  await detail.nothingSelected(page).waitFor();
   const list = results.viewport(page);
   await list.evaluate((element) => {
     element.setAttribute("data-e2e-identity", "read-before-the-resize");

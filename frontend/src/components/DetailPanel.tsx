@@ -272,17 +272,7 @@ export function DetailPanel({
           <h2 className="fd-detail-title">Oferta</h2>
           <p className="fd-detail-provider">Sin selección</p>
         </div>}
-        <div className="grid min-h-0 flex-1 place-items-center p-6 text-center">
-          <div>
-            <span className="mx-auto mb-3 grid size-12 place-items-center rounded-xl bg-secondary text-muted-foreground">
-              <AppIcon name="detail" size={18} />
-            </span>
-            <h3 className="fd-type-card">Selecciona una oferta</h3>
-            <p className="mt-1 text-[13px] leading-6 text-muted-foreground">
-              El detalle mostrará el itinerario, las condiciones y la cotización lista para pegar.
-            </p>
-          </div>
-        </div>
+        <p className="fd-detail-empty">Selecciona una oferta para ver su detalle.</p>
       </section>
     )
   }
