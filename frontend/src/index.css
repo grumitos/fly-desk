@@ -54,6 +54,12 @@
   --color-faint: #6e6c6773;
   --color-surface-sunken: #efeeeb99;
   --color-primary-hover: #c36b4e;
+  /* A count on a primary fill: its white at 20%. */
+  --color-primary-badge: #ffffff33;
+  /* A confirmed range of days or months: the accent at 12%, and the text on
+     it, 78% accent into the ink. */
+  --color-range: #d977571f;
+  --color-range-foreground: #ad6148;
 
   /* Tailwind's `rounded-lg` and `rounded-xl` on the catalogue radii. */
   --radius-lg: var(--fd-radius-10);
@@ -134,6 +140,7 @@
     --color-placeholder: #97958cb3;
     --color-faint: #97958c73;
     --color-surface-sunken: #2c2c2a99;
+    --color-range-foreground: #e0937a;
 
     --fd-shadow-key: 0 1px 0 rgb(0 0 0 / 50%);
     --fd-shadow-card: 0 1px 2px rgb(0 0 0 / 30%);
@@ -1377,7 +1384,7 @@
     height: 18px;
     place-items: center;
     border-radius: var(--fd-radius-6);
-    background: color-mix(in srgb, var(--color-primary-foreground) 20%, transparent);
+    background: var(--color-primary-badge);
     font-size: var(--fd-text-micro);
   }
 
