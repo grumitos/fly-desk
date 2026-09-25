@@ -28,9 +28,11 @@ function TooltipTrigger({ ...props }: React.ComponentProps<typeof TooltipPrimiti
   return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />
 }
 
+/* Kept 8px off the viewport edges, like the page gutter. */
 function TooltipContent({
   className,
   sideOffset = 6,
+  collisionPadding = 8,
   children,
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Content>) {
@@ -39,6 +41,7 @@ function TooltipContent({
       <TooltipPrimitive.Content
         data-slot="tooltip-content"
         sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
         className={cn("fd-tooltip fd-motion-emergente", className)}
         {...props}
       >
