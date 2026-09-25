@@ -107,15 +107,29 @@ The React UI must not display simulated controls. The following remain outside t
   agency (401, 402, 403) is refused for every date, so a range or a matrix
   stops asking at the first refusal and fails the provider; other statuses
   fail only their day or cell there
-- an Agil request that fails before any answer arrives (Bun's connection pool
-  can hand out a connection the far end has just closed) is sent once more, on
-  a connection of its own and within the same `AGIL_HTTP_TIMEOUT_MS` deadline;
-  an answer, an error status included, and the deadline are final. A GDS or a
-  matrix cell still left out is logged with the request and the error behind it
+- a provider request that fails before any answer arrives (Bun's connection
+  pool can hand out a connection the far end has just closed) is sent once
+  more, on a connection of its own and within the deadline it already had
+  (`AGIL_HTTP_TIMEOUT_MS`, `CBPLUS_HTTP_TIMEOUT_MS`, and
+  `CBPLUS_REDIRECT_VERIFY_TIMEOUT_MS` for the redirect validation): every Agil
+  request, and the Click and Book Plus flight search (a quote's revalidation
+  included), engine metadata, station lookup and redirect validation, none of
+  which changes anything at the provider (`src/provider-fetch.ts`). The Click
+  and Book Plus B2B sign-in is never sent twice. An answer, an error status
+  included, and the deadline are final. A GDS or a matrix cell still left out
+  is logged with the request and the error behind it
 - a provider that completes without part of what it was asked (an Agil GDS, a
   day of a range, a matrix cell) completes `partial`: its diagnostics in the
   job say so, and the desk's one line names it as a warning, «Resultados
-  incompletos · Agilsmart respondió en parte», with the rest of the list kept
+  incompletos · Agilsmart respondió en parte», with the rest of the list kept.
+  A migratory sweep's line reads its months the same way: a provider that
+  failed a month or answered one in part, and answered another, answered the
+  sweep in part
+- a provider none of whose parts answered (no GDS of an exact search, no day
+  of a range, no matrix cell) has failed: the job marks it `failed` with its
+  public reason, and the desk names it as it names a provider that is down,
+  «Agilsmart no respondió». An error status from an Agil GDS is a GDS that
+  failed, in a matrix cell as in an exact search
 - silent provider prewarm is enabled by default and can be disabled with `FLY_DESK_PROVIDER_PREWARM=0`
 - provider searches must run in the dedicated runner when `FLY_DESK_SEARCH_SERVICE_URL` is configured; within the runner, `FLY_DESK_SEARCH_WORKER_PROCESSES=1` keeps providers in child processes
 - with `FLY_DESK_SEARCH_WORKER_POOL=1` (default) those child processes are a pool of one long-lived worker per provider, started with the runner, multiplexing jobs by id over stdin/stdout, cancelled cooperatively per job, recycled once idle after `FLY_DESK_SEARCH_WORKER_MAX_JOBS` (default 500) jobs, and respawned on death; the prewarm loop warms the pooled workers, not the runner, so the Agil bearer, the Click and Book Plus engine metadata, and provider TLS connections survive between searches. `FLY_DESK_SEARCH_WORKER_POOL=0` restores one cold worker per provider per search
@@ -131,7 +145,7 @@ The React UI must not display simulated controls. The following remain outside t
 - the USD/PEN rate available from Agil propagates to sibling offers; if a domestic Costamar route remains alone, daily rate resolution occurs within the search and does not query flights again
 - external rate lookup has a short timeout and allows one final retry after a failed prefetch; if unresolved, the search finishes without marking the offer quotable
 - global search admission uses capacity units: default budget `4`, exact `1`, range `2`, matrix `2`, default queue `8`, and default timeout `120000ms`
-- the web proxy streams the runner response without buffering the complete body and retains the timeout during the stream; do not use values below the operational default. A read the runner refuses while it restarts is asked once more 500 ms later; a write is never sent twice
+- the web proxy streams the runner response without buffering the complete body and retains the timeout during the stream; do not use values below the operational default. Every request to the runner goes out on a connection of its own, so none is sent on a connection the runner is closing. A read the runner refuses while it restarts is asked once more 500 ms later; a write is never sent twice
 - capacity is released only when provider work finishes; session and purchase-path caches remain in `src/session-store.ts` until their operational TTL
 - the price-reuse TTL is anchored to `searchMeta.completedAt`, not polling; session idle retention remains separate to preserve redirects
 - completed resident jobs share 128 MiB by default; a timer reevaluates LRU when the five-second grace expires, in addition to 60-second maintenance, leaves excess jobs disk-only with compatible APIs and `/r/<id>`, and deletes them at TTL expiry. Running jobs are not eligible
@@ -224,9 +238,9 @@ Current coverage:
 - an exact round trip merged from both providers, with filters and sorting in the address bar, quotation revalidation, a confirmed fare quoted again from its panel (a domestic one keeping its exchange rate), and both providers' purchase redirects, the Click and Book Plus token appearing only in its 302
 - the flexible matrix filled cell by cell with the cards already drawn kept, price-only cells never drawn, and a repriced fare carried to the card and the quotation
 - a range of three hundred fares with none dropped, the same order on two runs whatever order the providers answer in, and the desk's order matching the backend's
-- the migratory sweep across the year boundary: priced, failed, and empty months, a month opened without searching again, its fares measured on the airports' own clocks over a connection longer than a day, and the route counted once
-- a failed provider named in one line with nothing it said reaching the page, web storage, the console, `/api` answers, or service logs; a token refused inside a 200 named the same way in an exact search, a range and a matrix, the last two stopping at the first refusal; both providers down
-- an Agil GDS whose connection drops asked once more with every fare kept; a GDS that never answers a day, stalls past Agil's deadline, or leaves a matrix cell unanswered named «respondió en parte» in the same line, the rest of the list kept
+- the migratory sweep across the year boundary: priced, failed, and empty months, a month opened without searching again, its fares measured on the airports' own clocks over a connection longer than a day, and the route counted once; a provider that failed a month or answered one in part named «respondió en parte» in the sweep's line
+- a failed provider named in one line with nothing it said reaching the page, web storage, the console, `/api` answers, or service logs; a token refused inside a 200 named the same way in an exact search, a range and a matrix, the last two stopping at the first refusal; both providers down; a connection the runner drops as the web unit reuses it never reaching the desk
+- an Agil GDS whose connection drops asked once more with every fare kept, and a Click and Book Plus search or a quote's revalidation the same way; a GDS that never answers a day, stalls past Agil's deadline, or leaves a matrix cell unanswered named «respondió en parte» in the same line, the rest of the list kept; a provider that answered no GDS, no day of a range or no matrix cell named as not answering
 - stopping a search (its fan-out halts and its partial list is kept and reused) and closing the tab mid-search (the search is cancelled and its purchase paths still work)
 - admission in arrival order with no overtaking, the queue limit, queue timeout, and cancelled waiters, the Agil in-flight ceiling, a restart of every unit reading results, purchase paths, and suggestions back from SQLite on rows a rollback can read, a cache file left mostly free compacted before the runner opens, a renewed Click and Book Plus token file picked up with nothing restarted, and after a platform rollback the newer token in the environment preferred over the file
 - with no stored Agil identity, the session read from the platform Chrome over DevTools in one tab that is closed afterwards, even behind a slow page, and the identity kept so the next start needs no browser; a worker stopped mid-read closes its tab

@@ -13,6 +13,7 @@ import {
   fakeCbplusToken,
 } from "./fixtures.ts";
 import { startFrontProxy, type FrontProxy } from "./front-proxy.ts";
+import { startHopRelay, type HopRelay } from "./hop-relay.ts";
 import { FAKE_CDP_PATH, FAKE_UPSTREAM_ENV } from "./provider-origins.ts";
 import { logClock } from "./scenario.ts";
 
@@ -47,6 +48,8 @@ export interface StackOptions {
   readyTimeoutMs?: number;
   /** Keep databases and logs after `stop()`. */
   keepData?: boolean;
+  /** Puts a relay (`hop-relay.ts`) on the web unit's hop to the runner. */
+  hopRelay?: boolean;
   onLog?: (service: ServiceName, line: string) => void;
 }
 
@@ -69,6 +72,8 @@ export interface Stack {
   mark: (label: string) => LogMark;
   /** What the units wrote, stdout and stderr, since `since` when it is given. */
   logs: (service?: ServiceName, since?: LogMark) => string;
+  /** The relay on the web unit's hop to the runner, when the stack has one. */
+  hopRelay?: HopRelay;
   stop: () => Promise<void>;
 }
 
@@ -260,6 +265,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     ports[name] = await freeChromiumSafePort(taken);
     taken.add(ports[name]);
   }
+  const hopRelay = options.hopRelay ? await startHopRelay(ports.runner) : undefined;
 
   const hostEnv = Object.fromEntries(HOST_ENV.flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]]]));
   const baseEnv: Env = {
@@ -312,7 +318,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
   };
   const unitEnv: Record<ServiceName, Env> = {
     runner: { HOST: "127.0.0.1", PORT: String(ports.runner), FLY_DESK_SEARCH_SERVICE_URL: "" },
-    web: { HOST: "127.0.0.1", PORT: String(ports.web), FLY_DESK_SEARCH_SERVICE_URL: `http://127.0.0.1:${ports.runner}` },
+    web: { HOST: "127.0.0.1", PORT: String(ports.web), FLY_DESK_SEARCH_SERVICE_URL: hopRelay?.url ?? `http://127.0.0.1:${ports.runner}` },
     redirect: { FLY_DESK_REDIRECT_HOST: "127.0.0.1", FLY_DESK_REDIRECT_PORT: String(ports.redirect) },
   };
 
@@ -405,6 +411,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     stopped = true;
     await proxy?.close();
     await Promise.all(SERVICE_NAMES.map((name) => halt(units[name])));
+    await hopRelay?.close();
     await Promise.all(SERVICE_NAMES.map((name) => units[name].log.close()));
     if (!options.keepData) {
       try {
@@ -430,6 +437,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
   return {
     baseUrl: proxy.url,
     urls: { runner: units.runner.url, web: units.web.url, redirect: units.redirect.url },
+    hopRelay,
     password,
     apiToken,
     sessionSecret,

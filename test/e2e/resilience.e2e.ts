@@ -13,7 +13,7 @@ import { runSearch, waitForResults } from "./support/flows.ts";
 import { defineSuite, type TestScope, type TrackedContext } from "./support/harness.ts";
 import type { OfferSpec } from "./support/fixtures.ts";
 import { day, eventually, providerSearches, sleep } from "./support/scenario.ts";
-import { announcement, notice, readCards, results, searchForm, searchLink } from "./support/ui.ts";
+import { announcement, detail, notice, quotation, readCards, results, searchForm, searchLink } from "./support/ui.ts";
 
 /*
  * What the desk does when providers fail and when the agent changes their
@@ -21,7 +21,9 @@ import { announcement, notice, readCards, results, searchForm, searchLink } from
  * the page or the logs, and a stop that stops the work behind it.
  */
 
-const suite = defineSuite({ file: import.meta.filename });
+/* The web unit reaches the runner through a relay that can drop a connection
+   (`support/hop-relay.ts`); it passes everything through unless a test says. */
+const suite = defineSuite({ file: import.meta.filename, stack: { hopRelay: true } });
 
 const SANTIAGO: OfferSpec[] = [
   { outbound: ["LA2371 LIM-SCL 07:50-13:25"], price: 214, baggage: { carryOn: true, checked: 0 }, seats: 8 },
@@ -216,6 +218,38 @@ suite.test("with both providers down the desk says nothing was searched instead 
   assert.ok(providerSearches(fake, route).length > 0);
   assert.ok(providerSearches(fake, route).every((request) => request.status === 503));
   await assertCanaryContained(scope, tracked, secret);
+});
+
+/* ---- The hop from the web unit to the runner ---- */
+
+suite.test("a connection the runner drops as it is reused never reaches the desk: the web unit asks on a new one every time", async (scope) => {
+  const { fake, stack } = scope;
+  const relay = stack.hopRelay!;
+  fake.setFlights("both", { origin: "LIM", destination: "SCL" }, SANTIAGO);
+  const connectionsBefore = relay.connections;
+  const reusedBefore = relay.reused;
+  /* Every request sent on a connection that already carried one dies
+     unanswered: the worst a runner closing idle connections can do. */
+  relay.dropReused = true;
+  try {
+    const { tracked, page } = await scope.signedInPage(searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "SCL", departure: day(36) }));
+    await waitForResults(page, SANTIAGO.length * 2);
+    /* Another search and a quote: more writes through the hop. */
+    await runSearch(page);
+    await waitForResults(page, SANTIAGO.length * 2);
+    await results.card(page, /Click and Book Plus$/).first().click();
+    await detail.quote(detail.surface(page)).click();
+    await quotation.dialog(page).waitFor();
+
+    assert.equal(await notice.line(page).count(), 0, "the desk announced a failure");
+    const hopAnswers = (await tracked.apiBodies()).filter((entry) => /^\/api\/(search|quotation)/.test(new URL(entry.url).pathname));
+    assert.ok(hopAnswers.length > 0);
+    assert.deepEqual(hopAnswers.filter((entry) => entry.status !== 200).map((entry) => `${entry.status} ${new URL(entry.url).pathname}`), []);
+    assert.equal(relay.reused - reusedBefore, 0, "the web unit sent a request on a connection that had carried one");
+    assert.ok(relay.connections - connectionsBefore >= hopAnswers.length, `${relay.connections - connectionsBefore} connections for ${hopAnswers.length} answers`);
+  } finally {
+    relay.dropReused = false;
+  }
 });
 
 /* ---- Stopping ---- */

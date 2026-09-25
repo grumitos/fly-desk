@@ -730,10 +730,12 @@ suite.test("at rest the desk is worked from the keyboard: a copy button with not
   assert.equal(await searchForm.returnHalf(page).getAttribute("aria-label"), `Regreso: ${deskDate(addDays(outbound, 13))}`);
 
   /* Esc gives the focus back to the half that opened the calendar, and the
-     cross is named for both dates it empties. */
+     cross is named for both dates it empties. The calendar leaves the
+     document first: its focus scope hands the focus back on a timer of its
+     own, a task later, which a busy page runs late. */
   await page.keyboard.press("Escape");
   await calendar.waitFor({ state: "hidden" });
-  assert.ok(await isFocused(departureHalf), "Esc did not give the focus back to the departure");
+  await eventually(async () => assert.ok(await isFocused(departureHalf), "Esc did not give the focus back to the departure"), { timeoutMs: 2_000 });
   await searchForm.clearDates(page).waitFor();
 
   /* The months the same way: this month, one on, then a row down. */
@@ -749,8 +751,9 @@ suite.test("at rest the desk is worked from the keyboard: a copy button with not
   for (const key of ["ArrowRight", "Enter", "ArrowDown", "Enter"]) {
     await page.keyboard.press(key);
   }
+  /* The picker leaves before the focus comes back, as the calendar did. */
   await picker.waitFor({ state: "hidden" });
   const first = addMonths(monthKey(TODAY), 1);
   assert.equal(await months.getAttribute("aria-label"), `Meses: ${deskMonth(first)} – ${deskMonth(addMonths(first, 4))}`);
-  assert.ok(await isFocused(months), "the months were chosen but the focus did not come back to the field");
+  await eventually(async () => assert.ok(await isFocused(months), "the months were chosen but the focus did not come back to the field"), { timeoutMs: 2_000 });
 });
