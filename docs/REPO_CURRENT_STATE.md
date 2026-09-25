@@ -211,7 +211,7 @@ Current coverage:
 
 - the sign-in gate: a shared link kept through it, renewal of both cookies past half of the session window, the hard cap sending a busy desk to the gate once and back to its search, sign-out, per-client login lockout with `Retry-After`, hostile return paths, and security headers
 - no provider reached without a session or through spoofed trust headers, client-supplied provider addresses ignored, oversized bodies refused by the proxy and by the web unit, and forged quotation requests refused
-- an exact round trip merged from both providers, with filters and sorting in the address bar, quotation revalidation, and both providers' purchase redirects, the Click and Book Plus token appearing only in its 302
+- an exact round trip merged from both providers, with filters and sorting in the address bar, quotation revalidation, a confirmed fare quoted again from its panel (a domestic one keeping its exchange rate), and both providers' purchase redirects, the Click and Book Plus token appearing only in its 302
 - the flexible matrix filled cell by cell with the cards already drawn kept, price-only cells never drawn, and a repriced fare carried to the card and the quotation
 - a range of three hundred fares with none dropped, the same order on two runs whatever order the providers answer in, and the desk's order matching the backend's
 - the migratory sweep across the year boundary: priced, failed, and empty months, a month opened without searching again, and the route counted once

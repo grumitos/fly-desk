@@ -1340,13 +1340,17 @@ async function resolveValidatedQuotationOffer(source: QuotationSource): Promise<
     return undefined;
   }
 
-  return markOfferValidatedForQuotation({
+  /* The provider answers with a raw offer. It is prepared the way the list
+     prepares one, with the rate of the offer it replaces, so the fare it
+     confirms stays quotable. */
+  const [prepared] = prepareOffersForQuotation(source.request, [{
     ...validated,
     // Provider normalizers include the current price in their generated ID.
     // Keep the session-facing ID stable so the refreshed exact flight replaces
     // the selected record instead of becoming an unreferenced response only.
     id: source.offer.id,
-  });
+  }], [source.offer]);
+  return markOfferValidatedForQuotation(prepared);
 }
 
 function storeValidatedQuotationOffer(
