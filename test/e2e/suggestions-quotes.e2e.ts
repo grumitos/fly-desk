@@ -57,8 +57,8 @@ suite.test("typing a city lists an airport that only Click and Book Plus knows",
   await searchForm.location(page, "Origen").fill("buenos");
   await searchForm.suggestion(page, "BUE").waitFor();
   await searchForm.suggestion(page, "AEP").waitFor({ timeout: 3_000 });
-}, {
-  todo: "production bug: frontend/src/lib/locations.ts:98-105 reads a label with no comma as «city, country» and takes the whole of it as the city, so a Click and Book Plus airport labelled with its own name (src/local-costamar.ts:4694, label = entry.name) loses «Buenos Aires» and no longer matches its city",
+  /* Its label is the airport's own name; the city comes from the suggestion. */
+  assert.match(await searchForm.suggestion(page, "AEP").innerText(), /Buenos Aires/);
 });
 
 suite.test("a new tab offers this browser's recent stations and the desk's frequent ones; another browser only the frequent", async (scope) => {
