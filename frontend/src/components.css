@@ -22,8 +22,10 @@
       box-shadow var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-field-control:hover {
-    border-color: var(--color-border-hover);
+  @media (hover: hover) {
+    .fd-field-control:hover {
+      border-color: var(--color-border-hover);
+    }
   }
 
   .fd-field-control:focus-within,
@@ -102,8 +104,10 @@
       border-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-quick-chip:hover {
-    background-image: var(--fd-hover-layer);
+  @media (hover: hover) {
+    .fd-quick-chip:hover {
+      background-image: var(--fd-hover-layer);
+    }
   }
 
   :where(.fd-shell[data-shell-size="C"]) .fd-quick-chips {
@@ -210,8 +214,10 @@
     transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-alert-line-dismiss:hover {
-    background: var(--color-hover);
+  @media (hover: hover) {
+    .fd-alert-line-dismiss:hover {
+      background: var(--color-hover);
+    }
   }
 
   /* ---- counters: mono, tabular, 700 ---- */
@@ -361,8 +367,10 @@
     transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-airline-row:hover {
-    background: var(--color-hover);
+  @media (hover: hover) {
+    .fd-airline-row:hover {
+      background: var(--color-hover);
+    }
   }
 
   .fd-airline-row-logo {
@@ -442,8 +450,10 @@
     transition: opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-active-chip-remove:hover {
-    opacity: 1;
+  @media (hover: hover) {
+    .fd-active-chip-remove:hover {
+      opacity: 1;
+    }
   }
 
   .fd-list-sentinel {
@@ -494,8 +504,10 @@
     transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-suggest-row:hover {
-    background: var(--color-hover);
+  @media (hover: hover) {
+    .fd-suggest-row:hover {
+      background: var(--color-hover);
+    }
   }
 
   .fd-suggest-row[aria-selected="true"] {
@@ -608,8 +620,10 @@
     transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-pax-step:hover:not(:disabled) {
-    background-image: var(--fd-hover-layer);
+  @media (hover: hover) {
+    .fd-pax-step:hover:not(:disabled) {
+      background-image: var(--fd-hover-layer);
+    }
   }
 
   .fd-pax-figure {
@@ -686,8 +700,10 @@
       box-shadow var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-daterange-control:hover {
-    border-color: var(--color-border-hover);
+  @media (hover: hover) {
+    .fd-daterange-control:hover {
+      border-color: var(--color-border-hover);
+    }
   }
 
   .fd-daterange-control[data-open="true"] {
@@ -746,9 +762,11 @@
     transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-daterange-clear:hover,
-  .fd-field-clear:hover {
-    color: var(--color-foreground);
+  @media (hover: hover) {
+    .fd-daterange-clear:hover,
+    .fd-field-clear:hover {
+      color: var(--color-foreground);
+    }
   }
 
   /* Trailing controls sit on the field's axis, not on the value line: taking
@@ -805,8 +823,10 @@
       color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-cal-preset:hover {
-    background-image: var(--fd-hover-layer);
+  @media (hover: hover) {
+    .fd-cal-preset:hover {
+      background-image: var(--fd-hover-layer);
+    }
   }
 
   .fd-cal-preset[aria-pressed="true"] {
@@ -836,8 +856,10 @@
     transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-cal-step:hover:not(:disabled) {
-    background: var(--color-hover);
+  @media (hover: hover) {
+    .fd-cal-step:hover:not(:disabled) {
+      background: var(--color-hover);
+    }
   }
 
   .fd-cal-step:disabled {
@@ -949,9 +971,11 @@
     color: var(--color-primary);
   }
 
-  .fd-cal-cell[data-kind="normal"]:hover,
-  .fd-cal-cell[data-kind="today"]:hover {
-    background: var(--color-hover);
+  @media (hover: hover) {
+    .fd-cal-cell[data-kind="normal"]:hover,
+    .fd-cal-cell[data-kind="today"]:hover {
+      background: var(--color-hover);
+    }
   }
 
   .fd-cal-cell[data-kind="today"] {
@@ -1234,8 +1258,10 @@
     transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-detail-close:hover {
-    background: var(--color-hover);
+  @media (hover: hover) {
+    .fd-detail-close:hover {
+      background: var(--color-hover);
+    }
   }
 
   .fd-detail-close-back {
@@ -1446,9 +1472,11 @@
       color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-detail-migration:hover {
-    background: var(--color-hover);
-    color: var(--color-foreground);
+  @media (hover: hover) {
+    .fd-detail-migration:hover {
+      background: var(--color-hover);
+      color: var(--color-foreground);
+    }
   }
 
   .fd-detail-migration-switch {
@@ -1522,8 +1550,10 @@
     transition: opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-detail-quote-error-dismiss:hover {
-    opacity: 1;
+  @media (hover: hover) {
+    .fd-detail-quote-error-dismiss:hover {
+      opacity: 1;
+    }
   }
 
   .fd-detail-quote-error-exits {
@@ -1536,8 +1566,10 @@
     background-color: var(--color-card);
   }
 
-  .fd-detail-quote-error-open:hover {
-    background-image: var(--fd-hover-layer);
+  @media (hover: hover) {
+    .fd-detail-quote-error-open:hover {
+      background-image: var(--fd-hover-layer);
+    }
   }
 
   .fd-detail-quote-error-retry {
@@ -1622,8 +1654,10 @@
       padding-inline: 0;
     }
 
-    .fd-detail-migration:hover {
-      background: transparent;
+    @media (hover: hover) {
+      .fd-detail-migration:hover {
+        background: transparent;
+      }
     }
 
     .fd-detail-migration-switch {
@@ -1734,8 +1768,10 @@
       font-size: var(--fd-text-base);
     }
 
-    .fd-detail-migration:hover {
-      background: transparent;
+    @media (hover: hover) {
+      .fd-detail-migration:hover {
+        background: transparent;
+      }
     }
 
     .fd-detail-migration-switch {
@@ -1827,8 +1863,10 @@
       font-size: var(--fd-text-base);
     }
 
-    .fd-detail-quote-error-retry:hover {
-      background-color: color-mix(in srgb, var(--color-background) 32%, transparent);
+    @media (hover: hover) {
+      .fd-detail-quote-error-retry:hover {
+        background-color: color-mix(in srgb, var(--color-background) 32%, transparent);
+      }
     }
 
     .fd-detail-quote-error-retry svg {
@@ -1937,9 +1975,11 @@
       color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-quote-migration:hover {
-    background: var(--color-hover);
-    color: var(--color-foreground);
+  @media (hover: hover) {
+    .fd-quote-migration:hover {
+      background: var(--color-hover);
+      color: var(--color-foreground);
+    }
   }
 
   .fd-quote-migration-switch {
@@ -1959,9 +1999,11 @@
       color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-quote-close:hover {
-    background: var(--color-hover);
-    color: var(--color-foreground);
+  @media (hover: hover) {
+    .fd-quote-close:hover {
+      background: var(--color-hover);
+      color: var(--color-foreground);
+    }
   }
 
   .fd-quote-body {
@@ -2020,8 +2062,10 @@
     font-weight: var(--fd-weight-label);
   }
 
-  .fd-quote-open:hover {
-    background-image: var(--fd-hover-layer);
+  @media (hover: hover) {
+    .fd-quote-open:hover {
+      background-image: var(--fd-hover-layer);
+    }
   }
 
   .fd-quote-copy {
@@ -2082,12 +2126,15 @@
       border-color var(--fd-dur-tacto) var(--fd-ease-tacto),
       background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
     position: relative;
-    animation: fd-enter-row var(--fd-dur-emergente) var(--fd-ease-estructura) both;
-    animation-delay: calc(var(--fd-stagger-row) * var(--fd-month-index, 0));
+    --i: var(--fd-month-index, 0);
+    animation: fd-enter-row var(--fd-dur-emergente) var(--fd-ease-estructura)
+      calc(var(--fd-stagger-row) * var(--i)) both;
   }
 
-  .fd-month-card:hover {
-    border-color: var(--color-border-hover);
+  @media (hover: hover) {
+    .fd-month-card:hover {
+      border-color: var(--color-border-hover);
+    }
   }
 
   .fd-month-card__hit {
@@ -2129,9 +2176,11 @@
       border-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-month-open:hover {
-    border-color: var(--color-border-hover);
-    background-image: var(--fd-hover-layer);
+  @media (hover: hover) {
+    .fd-month-open:hover {
+      border-color: var(--color-border-hover);
+      background-image: var(--fd-hover-layer);
+    }
   }
 
   .fd-month-head {
@@ -2215,7 +2264,7 @@
     background: var(--color-placeholder);
     transform-origin: left center;
     animation: fd-month-bar var(--fd-dur-month-bar) var(--fd-ease-estructura) both;
-    animation-delay: calc(var(--fd-stagger-chip) * var(--fd-month-index, 0));
+    animation-delay: calc(var(--fd-stagger-chip) * var(--i));
   }
 
   .fd-month-card.is-cheapest .fd-month-bar-fill {

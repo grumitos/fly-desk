@@ -36,8 +36,10 @@
     transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-card:hover {
-    background: var(--color-hover);
+  @media (hover: hover) {
+    .fd-card:hover {
+      background: var(--color-hover);
+    }
   }
 
   .fd-card.is-selected {
@@ -390,9 +392,11 @@
       border-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-card__alt-chip:hover {
-    border-color: var(--color-border-hover);
-    background-image: var(--fd-hover-layer);
+  @media (hover: hover) {
+    .fd-card__alt-chip:hover {
+      border-color: var(--color-border-hover);
+      background-image: var(--fd-hover-layer);
+    }
   }
 
   .fd-card__alt-chip.is-selected {
@@ -427,8 +431,10 @@
     transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-card__alts-more:hover {
-    background: var(--color-hover);
+  @media (hover: hover) {
+    .fd-card__alts-more:hover {
+      background: var(--color-hover);
+    }
   }
 
   /* ---- column header: the row's own grid, beside the scroller ---- */
@@ -440,8 +446,10 @@
     cursor: default;
   }
 
-  .fd-card--head:hover {
-    background: transparent;
+  @media (hover: hover) {
+    .fd-card--head:hover {
+      background: transparent;
+    }
   }
 
   .fd-card--head .fd-card__legs {
@@ -480,8 +488,10 @@
     transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-card__head-sort:hover {
-    color: var(--color-foreground);
+  @media (hover: hover) {
+    .fd-card__head-sort:hover {
+      color: var(--color-foreground);
+    }
   }
 
   .fd-card__head-sort[aria-checked="true"] {
@@ -500,8 +510,9 @@
   .fd-card--skeleton {
     cursor: default;
     pointer-events: none;
-    animation: fd-pulso var(--fd-dur-pulso) var(--fd-ease-pulso) infinite;
-    animation-delay: calc(var(--fd-stagger-skeleton) * var(--fd-skeleton-row, 0));
+    --i: var(--fd-skeleton-row, 0);
+    animation: fd-pulso var(--fd-dur-pulso) var(--fd-ease-pulso)
+      calc(var(--fd-stagger-skeleton) * var(--i)) infinite;
   }
 
   .fd-card--skeleton .fd-skeleton-block {
@@ -574,8 +585,10 @@
     transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-schedule-row:hover {
-    background: var(--color-hover);
+  @media (hover: hover) {
+    .fd-schedule-row:hover {
+      background: var(--color-hover);
+    }
   }
 
   .fd-schedule-row.is-current {
@@ -620,9 +633,11 @@
       border-radius: var(--fd-radius-12);
     }
 
-    .fd-card:hover {
-      background-color: var(--color-card);
-      background-image: var(--fd-hover-layer);
+    @media (hover: hover) {
+      .fd-card:hover {
+        background-color: var(--color-card);
+        background-image: var(--fd-hover-layer);
+      }
     }
 
     /* A card has a border to mark with, so selection goes back to it. */

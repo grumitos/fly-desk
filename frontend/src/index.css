@@ -208,8 +208,10 @@
     transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-topbar-brand:hover {
-    color: var(--color-primary);
+  @media (hover: hover) {
+    .fd-topbar-brand:hover {
+      color: var(--color-primary);
+    }
   }
 
   .fd-topbar-brand-mark {
@@ -257,9 +259,11 @@
       color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-capsule-cell:hover:not(:disabled) {
-    background-image: var(--fd-hover-layer);
-    color: var(--color-foreground);
+  @media (hover: hover) {
+    .fd-capsule-cell:hover:not(:disabled) {
+      background-image: var(--fd-hover-layer);
+      color: var(--color-foreground);
+    }
   }
 
   .fd-capsule-cell-dim,
@@ -543,8 +547,10 @@
     transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-result-sort-compact:hover {
-    color: var(--color-foreground);
+  @media (hover: hover) {
+    .fd-result-sort-compact:hover {
+      color: var(--color-foreground);
+    }
   }
 
   .fd-status-row-filters {
@@ -607,39 +613,24 @@
   }
 
   /* The first rows cascade in, capped so an appended batch never replays it.
-     `backwards` and not `both`: a filled transform would leave every row a
-     stacking context and trap the schedules panel under the next row. */
-  .fd-results-list[data-cascade="true"] > *:nth-child(-n+7) {
-    animation: fd-enter-row var(--fd-dur-emergente) var(--fd-ease-estructura) backwards;
-    animation-delay: calc(6 * var(--fd-stagger-row));
+     Every staggered entrance reads its position from `--i`. `backwards` and
+     not `both`: a filled transform would leave every row a stacking context
+     and trap the schedules panel under the next row. */
+  .fd-results-list[data-cascade="true"] > :nth-child(-n + 7) {
+    animation: fd-enter-row var(--fd-dur-emergente) var(--fd-ease-estructura)
+      calc(var(--i, 0) * var(--fd-stagger-row)) backwards;
   }
 
-  .fd-results-list[data-cascade="true"] > *:nth-child(1) {
-    animation-delay: 0ms;
-  }
+  .fd-results-list > :nth-child(2) { --i: 1; }
+  .fd-results-list > :nth-child(3) { --i: 2; }
+  .fd-results-list > :nth-child(4) { --i: 3; }
+  .fd-results-list > :nth-child(5) { --i: 4; }
+  .fd-results-list > :nth-child(6) { --i: 5; }
+  .fd-results-list > :nth-child(7) { --i: 6; }
 
-  .fd-results-list[data-cascade="true"] > *:nth-child(2) {
-    animation-delay: calc(1 * var(--fd-stagger-row));
-  }
-
-  .fd-results-list[data-cascade="true"] > *:nth-child(3) {
-    animation-delay: calc(2 * var(--fd-stagger-row));
-  }
-
-  .fd-results-list[data-cascade="true"] > *:nth-child(4) {
-    animation-delay: calc(3 * var(--fd-stagger-row));
-  }
-
-  .fd-results-list[data-cascade="true"] > *:nth-child(5) {
-    animation-delay: calc(4 * var(--fd-stagger-row));
-  }
-
-  .fd-results-list[data-cascade="true"] > *:nth-child(6) {
-    animation-delay: calc(5 * var(--fd-stagger-row));
-  }
-
+  /* A phone's taller cards put the seventh below the fold. */
   :where(.fd-shell[data-shell-size="C"]) {
-    .fd-results-list[data-cascade="true"] > *:nth-child(7) {
+    .fd-results-list[data-cascade="true"] > :nth-child(7) {
       animation: none;
     }
   }
@@ -884,9 +875,10 @@
 
   .fd-search-stage[data-entering] .fd-filter-strip > * {
     --fd-enter-shift: 12px;
+    --i: var(--fd-chip-index, 0);
 
-    animation: fd-enter-left var(--fd-dur-estructura) var(--fd-ease-estructura) var(--fd-cue-tira-movil) both;
-    animation-delay: calc(var(--fd-cue-tira-movil) + var(--fd-stagger-chip) * var(--fd-chip-index, 0));
+    animation: fd-enter-left var(--fd-dur-estructura) var(--fd-ease-estructura)
+      calc(var(--fd-cue-tira-movil) + var(--fd-stagger-chip) * var(--i)) both;
   }
 
   .fd-search-stage[data-entering] .fd-list-header {
@@ -1183,7 +1175,7 @@
     transition:
       max-height var(--fd-dur-estructura) var(--fd-ease-estructura),
       transform var(--fd-dur-estructura) var(--fd-ease-estructura),
-      opacity 160ms var(--fd-ease-tacto);
+      opacity var(--fd-dur-emergente) var(--fd-ease-tacto);
   }
 
   /* The summary rises from where the form was; the block's clip would hide it
@@ -1295,8 +1287,10 @@
     transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-filter-strip-copy:not(:disabled):hover {
-    color: var(--color-foreground);
+  @media (hover: hover) {
+    .fd-filter-strip-copy:not(:disabled):hover {
+      color: var(--color-foreground);
+    }
   }
 
   .fd-filter-strip {
@@ -1439,8 +1433,10 @@
   transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
 }
 
-.fd-list-empty-action:hover {
-  background: var(--color-primary-hover);
+@media (hover: hover) {
+  .fd-list-empty-action:hover {
+    background: var(--color-primary-hover);
+  }
 }
 
 .fd-list-empty-action--secondary {
@@ -1451,8 +1447,10 @@
   font-weight: var(--fd-weight-label);
 }
 
-.fd-list-empty-action--secondary:hover {
-  background-image: var(--fd-hover-layer);
+@media (hover: hover) {
+  .fd-list-empty-action--secondary:hover {
+    background-image: var(--fd-hover-layer);
+  }
 }
 
 .fd-sheet-layer {
@@ -1694,8 +1692,10 @@
   border-radius: var(--fd-radius-10);
 }
 
-.fd-quotation-paste-field:hover {
-  background: var(--color-hover);
+@media (hover: hover) {
+  .fd-quotation-paste-field:hover {
+    background: var(--color-hover);
+  }
 }
 
 .fd-quotation-paste-field-icon {

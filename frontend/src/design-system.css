@@ -233,8 +233,10 @@
     transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-segmented-item:hover {
-    color: var(--color-foreground);
+  @media (hover: hover) {
+    .fd-segmented-item:hover {
+      color: var(--color-foreground);
+    }
   }
 
   .fd-segmented-item[data-state="on"] {
@@ -491,6 +493,12 @@
     }
   }
 
+  @keyframes fd-giro {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+
   @keyframes fd-pulso {
     0%,
     100% {
@@ -517,7 +525,7 @@
   }
 
   .fd-motion-giro {
-    animation: spin var(--fd-dur-giro) var(--fd-ease-giro) infinite;
+    animation: fd-giro var(--fd-dur-giro) var(--fd-ease-giro) infinite;
   }
 
   .fd-motion-crossfade {
@@ -572,8 +580,10 @@
     color: var(--color-primary-foreground);
   }
 
-  .fd-btn-primary:not([aria-disabled="true"]):hover {
-    background-color: var(--color-primary-hover);
+  @media (hover: hover) {
+    .fd-btn-primary:not([aria-disabled="true"]):hover {
+      background-color: var(--color-primary-hover);
+    }
   }
 
   .fd-btn-secondary {
@@ -582,14 +592,16 @@
     color: var(--color-secondary-foreground);
   }
 
-  .fd-btn-secondary:not([aria-disabled="true"]):hover {
-    background-image: var(--fd-hover-layer);
-    color: var(--color-foreground);
-  }
+  @media (hover: hover) {
+    .fd-btn-secondary:not([aria-disabled="true"]):hover {
+      background-image: var(--fd-hover-layer);
+      color: var(--color-foreground);
+    }
 
-  .fd-btn-ghost:not([aria-disabled="true"]):hover {
-    background-color: var(--color-hover);
-    color: var(--color-foreground);
+    .fd-btn-ghost:not([aria-disabled="true"]):hover {
+      background-color: var(--color-hover);
+      color: var(--color-foreground);
+    }
   }
 
   .fd-btn-chip {
