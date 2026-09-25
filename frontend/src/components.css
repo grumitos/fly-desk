@@ -973,16 +973,24 @@
     }
   }
 
-  .fd-cal-cell[data-kind="today"] {
+  /* A state's rule draws its legend swatch too, so the legend cannot drift
+     from the grid. */
+  .fd-cal-cell[data-kind="today"],
+  .fd-cal-legend-swatch[data-kind="today"] {
     box-shadow: inset 0 0 0 1px var(--color-focus);
     color: var(--color-foreground);
     font-weight: var(--fd-weight-title);
   }
 
-  .fd-cal-cell[data-kind="past"] {
+  .fd-cal-cell[data-kind="past"],
+  .fd-cal-legend-swatch[data-kind="past"] {
     color: var(--color-faint);
-    cursor: not-allowed;
     font-weight: var(--fd-weight-value);
+  }
+
+  /* A past cell is a disabled button, dimmed by the disabled rule as well. */
+  .fd-cal-legend-swatch[data-kind="past"] {
+    opacity: var(--fd-disabled-opacity);
   }
 
   .fd-cal-cell[data-kind="solo"] {
@@ -991,6 +999,10 @@
 
   .fd-cal-cell[data-kind="mid"] {
     border-radius: 0;
+  }
+
+  .fd-cal-cell[data-kind="mid"],
+  .fd-cal-legend-swatch[data-kind="mid"] {
     background: var(--color-range);
     color: var(--color-range-foreground);
   }
@@ -1087,6 +1099,8 @@
     gap: 6px;
   }
 
+  /* A cell in miniature, at the cell's own weight until its state says
+     otherwise. */
   .fd-cal-legend-swatch {
     display: inline-grid;
     min-width: 20px;
@@ -1096,7 +1110,7 @@
     border-radius: var(--fd-radius-6);
     font-family: var(--font-mono);
     font-size: var(--fd-text-micro);
-    font-weight: var(--fd-weight-title);
+    font-weight: var(--fd-weight-label);
   }
 
   .fd-cal-popover[data-layout="continuous"] {
