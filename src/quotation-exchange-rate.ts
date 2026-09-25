@@ -3,7 +3,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, wri
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { CanonicalOffer, QuotationUsdToPenRateInfo } from "./core/types";
-import { deskIsoDate } from "./search-date-policy";
+import { deskIsoDate } from "./core/runtime-config";
 
 interface ResolveQuotationUsdToPenRateOptions {
   now?: Date;

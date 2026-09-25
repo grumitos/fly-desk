@@ -78,7 +78,7 @@ import {
   terminalPromptAvailable,
 } from "./terminal-secret-prompt";
 import { generateTotpCodeWithMetadata, totpCanSubmitSafely } from "./totp";
-import { rankLocationSuggestions } from "./location-suggestions";
+import { rankLocationSuggestions } from "./core/location-ranking";
 import { cityNameForIataCode, normalizeIataCode } from "./core/location-display";
 import {
   buildCostamarB2bWarmupPayload,

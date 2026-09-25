@@ -72,7 +72,7 @@ import {
   Segment,
   LocationSuggestionType,
 } from "./core/types";
-import { rankLocationSuggestions } from "./location-suggestions";
+import { rankLocationSuggestions } from "./core/location-ranking";
 import { recordProviderFirstHttpRequest } from "./provider-diagnostics";
 import { providerPublicFailureMessage } from "./provider-status";
 

@@ -1,44 +1,21 @@
 import {
+  DEFAULT_MIGRATION_CONCURRENT_MONTHS,
+  DEFAULT_SEARCH_MAX_FUTURE_DAYS,
+  MAX_MIGRATION_CONCURRENT_MONTHS,
+  deskIsoDate,
+  type PublicRuntimeConfig,
+  type SearchDatePolicy,
+} from "./core/runtime-config";
+import {
   MAX_FLEXIBLE_STAY_NIGHTS,
   MAX_LAP_INFANTS_PER_ADULT,
   MAX_SEARCH_PASSENGERS,
 } from "./core/search-limits";
 
-const DEFAULT_SEARCH_MAX_FUTURE_DAYS = 365;
-const DEFAULT_MIGRATION_CONCURRENT_MONTHS = 2;
-const MAX_MIGRATION_CONCURRENT_MONTHS = 12;
 const SEARCH_TODAY_OVERRIDE_ENV = "SEARCH_TODAY_OVERRIDE";
-
-interface SearchDatePolicy {
-  minSearchDate: string;
-  maxSearchDate: string;
-  maxFutureDays: number;
-}
-
-interface PublicRuntimeConfig {
-  migrationConcurrentMonths: number;
-  maxStayNights: number;
-  maxPassengers: number;
-  maxLapInfantsPerAdult: number;
-  searchDatePolicy: SearchDatePolicy;
-}
 
 interface SearchDateValidationOptions {
   enforceMaxDate?: boolean;
-}
-
-/* The desk sells from Lima, and the VPS clock is UTC: from 19:00 in Lima the
-   host's calendar day is already tomorrow. Every "today" is Lima's. */
-const DESK_TIME_ZONE = "America/Lima";
-const deskDateFormatter = new Intl.DateTimeFormat("en-CA", {
-  timeZone: DESK_TIME_ZONE,
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-});
-
-export function deskIsoDate(now = new Date()): string {
-  return deskDateFormatter.format(now);
 }
 
 function isIsoDateString(value: string): boolean {

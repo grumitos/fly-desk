@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveItineraryDurationMinutes, zonedMinutesBetween } from "../../src/core/flight-duration";
 import { envFlag, envNumber } from "../../src/env";
-import { deskIsoDate, getSearchDatePolicy } from "../../src/search-date-policy";
+import { deskIsoDate } from "../../src/core/runtime-config";
+import { getSearchDatePolicy } from "../../src/search-date-policy";
 
 /*
  * Invariants that are cheap to state and expensive to get wrong: the desk's
