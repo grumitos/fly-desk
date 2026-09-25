@@ -1234,6 +1234,7 @@
     padding: 12px 12px 8px;
     border-bottom: 0;
     background: transparent;
+    line-height: 1.3;
   }
 
   .fd-list-title {
@@ -1414,10 +1415,6 @@
     display: none;
   }
 
-  .fd-list-header {
-    line-height: 1.3;
-  }
-
   .fd-provider-rail {
     margin-top: auto;
   }
@@ -1566,10 +1563,6 @@
   animation: fd-enter-sheet var(--fd-dur-hoja) var(--fd-ease-estructura) both;
 }
 
-.fd-sheet--modal {
-  animation: fd-enter-emergente var(--fd-dur-emergente) var(--fd-ease-tacto) both;
-}
-
 .fd-sheet-layer[data-closing="true"] {
   pointer-events: none;
 }
@@ -1639,6 +1632,7 @@
   height: min(520px, calc(100dvh - 48px));
   border-radius: var(--fd-radius-14);
   box-shadow: var(--fd-shadow-hoja);
+  animation: fd-enter-emergente var(--fd-dur-emergente) var(--fd-ease-tacto) both;
 }
 
 .fd-sheet--modal .fd-sheet-header {
