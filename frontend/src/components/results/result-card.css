@@ -139,10 +139,6 @@
     white-space: nowrap;
   }
 
-  .fd-card__carrier-operator::before {
-    content: "Operado por ";
-  }
-
   /* Placed by column number, like the lanes after it: a fare that says
      nothing about baggage must not shift the price and provider. */
   .fd-card__baggage {
@@ -667,13 +663,13 @@
       display: flex;
       min-width: 0;
       align-items: center;
-      gap: 10px;
+      gap: 6px;
     }
 
     .fd-card .fd-card__carrier-line {
       display: flex;
       min-width: 0;
-      flex: 1 1 auto;
+      flex: 0 1 auto;
       align-items: baseline;
       gap: 6px;
       overflow: hidden;
@@ -692,6 +688,11 @@
       font-size: var(--fd-text-meta);
       font-weight: var(--fd-weight-value);
       line-height: var(--fd-card-stacked-line);
+    }
+
+    /* Glued to the airline on one line, so a dot instead of the words. */
+    .fd-card .fd-card__carrier-operator-lead {
+      display: none;
     }
 
     .fd-card .fd-card__carrier-operator::before {

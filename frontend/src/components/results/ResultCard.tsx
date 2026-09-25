@@ -124,6 +124,7 @@ export function ResultCard({
         </span>
         {model.carrier.operatedBy && (
           <span className="fd-card__carrier-operator" title={model.carrier.operatedBy}>
+            <span className="fd-card__carrier-operator-lead">Operado por </span>
             {model.carrier.operatedBy}
           </span>
         )}
