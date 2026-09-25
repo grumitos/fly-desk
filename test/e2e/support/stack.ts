@@ -53,6 +53,8 @@ export interface Stack {
   password: string;
   /** `FLY_DESK_API_TOKEN`, accepted by web and runner (the proxy strips it on `/r/*`, as Caddy does). */
   apiToken: string;
+  /** `FLY_DESK_WEB_SESSION_SECRET`: lets a test mint a session that was signed in earlier. */
+  sessionSecret: string;
   /** `FLY_DESK_APP_DATA_DIR`, shared by the three services. */
   appDataDir: string;
   root: string;
@@ -228,6 +230,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
 
   const password = options.password ?? randomBytes(12).toString("base64url");
   const apiToken = randomBytes(24).toString("base64url");
+  const sessionSecret = randomBytes(32).toString("base64url");
   const taken = new Set<number>();
   const ports = {} as Record<ServiceName, number>;
   for (const name of SERVICE_NAMES) {
@@ -260,7 +263,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     AGIL_IDENTITY_PATH: join(appDataDir, "agil-identity.json"),
     FLY_DESK_WEB_AUTH: "1",
     FLY_DESK_WEB_PASSWORD_HASH: createScryptPasswordHash(password),
-    FLY_DESK_WEB_SESSION_SECRET: randomBytes(32).toString("base64url"),
+    FLY_DESK_WEB_SESSION_SECRET: sessionSecret,
     FLY_DESK_COOKIE_SECURE: "0",
     FLY_DESK_TRUST_LOOPBACK_CLIENT: "0",
     FLY_DESK_API_TOKEN: apiToken,
@@ -403,6 +406,7 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     urls: { runner: units.runner.url, web: units.web.url, redirect: units.redirect.url },
     password,
     apiToken,
+    sessionSecret,
     appDataDir,
     root,
     pid: (name) => units[name].child?.pid,

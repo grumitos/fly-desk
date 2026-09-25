@@ -117,17 +117,90 @@ export async function signIn(baseUrl: string, password: string): Promise<ApiSess
   return session;
 }
 
+/* ---- Search payloads, shaped as `frontend/src/lib/api.ts::toBackendPayload` sends them ---- */
+
+export interface SearchPayloadOptions {
+  sortMode?: string;
+  clientSessionId?: string;
+  adults?: number;
+  children?: number;
+  infants?: number;
+  recordLocationUsage?: boolean;
+  /** Merged into the payload as-is: how a hostile client adds what the UI never sends. */
+  extra?: Record<string, unknown>;
+}
+
+function payload(
+  request: Record<string, unknown>,
+  leg: Record<string, unknown>,
+  options: SearchPayloadOptions,
+): Record<string, unknown> {
+  return {
+    sortMode: options.sortMode ?? "cheapest",
+    ...(options.clientSessionId ? { clientSessionId: options.clientSessionId } : {}),
+    ...(options.recordLocationUsage === undefined ? {} : { recordLocationUsage: options.recordLocationUsage }),
+    request: {
+      passengers: { adults: options.adults ?? 1, children: options.children ?? 0, infants: options.infants ?? 0 },
+      filters: {},
+      currencyCode: "USD",
+      locale: "es-PE",
+      market: "PE",
+      ...request,
+      legs: [leg],
+    },
+    ...options.extra,
+  };
+}
+
+export const searchPayloads = {
+  exact: (origin: string, destination: string, departureDate: string, returnDate?: string, options: SearchPayloadOptions = {}) =>
+    payload(
+      { tripType: returnDate ? "round-trip" : "one-way", searchMode: "exact" },
+      { origin, destination, departureDate, ...(returnDate ? { returnDate } : {}) },
+      options,
+    ),
+  /** One-way flexible: every day of the range. */
+  range: (origin: string, destination: string, departureStart: string, departureEnd: string, options: SearchPayloadOptions = {}) =>
+    payload(
+      { tripType: "one-way", searchMode: "stay-range" },
+      { origin, destination, departureStart, departureEnd },
+      options,
+    ),
+  /** Round-trip flexible over `/api/matrix`: one cell per departure day. */
+  matrix: (origin: string, destination: string, departureStart: string, departureEnd: string, stayNights: number, options: SearchPayloadOptions = {}) =>
+    payload(
+      { tripType: "round-trip", searchMode: "roundtrip-grid", flexibleMode: "exact-stay" },
+      { origin, destination, departureStart, departureEnd, stayNights },
+      options,
+    ),
+};
+
+export interface JobMeta {
+  partial?: boolean;
+  searchState?: string;
+  warnings?: string[];
+  completedAt?: string;
+}
+
+export interface JobProviderDiagnostics {
+  providerId: ProviderId;
+  status: string;
+  error?: string;
+}
+
 export interface SearchJob {
   searchJobId: string;
   searchComplete: boolean;
   searchStatus: string;
   revision: number;
+  sortMode?: string;
   unchanged?: boolean;
   offers?: CanonicalOffer[];
   allOffers?: CanonicalOffer[];
   warnings?: string[];
   error?: string;
-  searchMeta?: { partial?: boolean; searchState?: string };
+  searchMeta?: JobMeta;
+  providerDiagnostics?: JobProviderDiagnostics[];
 }
 
 export interface MatrixJob {
@@ -139,6 +212,38 @@ export interface MatrixJob {
   cells?: MatrixCell[];
   warnings?: string[];
   error?: string;
+  searchMeta?: JobMeta;
+}
+
+export interface QuotationAnswer {
+  searchSessionId: string;
+  offer: CanonicalOffer;
+  commercialText: string;
+}
+
+export function startSearch(session: ApiSession, body: Record<string, unknown>): Promise<SearchJob> {
+  return session.json<SearchJob>("POST", "/api/search", body);
+}
+
+export function startMatrix(session: ApiSession, body: Record<string, unknown>): Promise<MatrixJob> {
+  return session.json<MatrixJob>("POST", "/api/matrix", body);
+}
+
+export function readSearchJob(session: ApiSession, jobId: string): Promise<SearchJob> {
+  return session.json<SearchJob>("GET", `/api/search/${encodeURIComponent(jobId)}`);
+}
+
+export function readMatrixJob(session: ApiSession, jobId: string): Promise<MatrixJob> {
+  return session.json<MatrixJob>("GET", `/api/matrix/${encodeURIComponent(jobId)}`);
+}
+
+/** The `/r/<id>` handle of an offer's provider search page. */
+export function purchasePathOf(offer: CanonicalOffer): string {
+  const path = offer.purchasePaths.find((candidate) => candidate.type === "search-redirect" && candidate.url?.startsWith("/r/"));
+  if (!path?.url) {
+    throw new Error(`Offer ${offer.id} has no /r/ purchase path.`);
+  }
+  return path.url;
 }
 
 /** One published revision, as a poller saw it. */

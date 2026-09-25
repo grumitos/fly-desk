@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["test/**/*.ts", "scripts/run-e2e.ts"]
+}

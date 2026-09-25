@@ -54,6 +54,14 @@ export interface ApiResponseRecord {
   body: string;
 }
 
+/** What a page asked of `/api/*`, in order. */
+export interface ApiRequestRecord {
+  at: number;
+  method: string;
+  url: string;
+  body: string | null;
+}
+
 export interface PageRecord {
   page: Page;
   errors: string[];
@@ -80,6 +88,8 @@ export class TrackedContext {
   readonly pages: PageRecord[] = [];
   /** Every `/api/*` answer any page of this context received. */
   readonly apiResponses: ApiResponseRecord[] = [];
+  /** Every `/api/*` request any page of this context sent. */
+  readonly apiRequests: ApiRequestRecord[] = [];
   /** Non-loopback URLs a page asked for; aborted before leaving the machine. */
   readonly blocked: string[] = [];
   /** Every `/r/<id>` answer, in order; a 3xx is recorded and not followed. */
@@ -90,10 +100,36 @@ export class TrackedContext {
     this.context = context;
     context.on("page", (page) => this.#watch(page));
     context.on("response", (response) => this.#record(response));
+    context.on("request", (request) => {
+      let pathname = "";
+      try {
+        pathname = new URL(request.url()).pathname;
+      } catch {
+        return;
+      }
+      if (pathname.startsWith("/api/")) {
+        this.apiRequests.push({ at: Date.now(), method: request.method(), url: request.url(), body: request.postData() });
+      }
+    });
   }
 
   async newPage(): Promise<Page> {
     return this.context.newPage();
+  }
+
+  /**
+   * Closes a tab the way a user does, `beforeunload` and `pagehide` included.
+   *
+   * The routes come off first: Playwright intercepts every request of a routed
+   * context and drops the ones a closing page still has in flight, which is
+   * exactly the cancellation beacon the page sends on its way out. The browser
+   * keeps resolving nothing but loopback (`BROWSER_ARGS`), so nothing can leave
+   * the machine while the routes are gone, and a `/r/<id>` is not asked for
+   * during a close.
+   */
+  async closeTabAsUser(page: Page): Promise<void> {
+    await this.context.unrouteAll({ behavior: "ignoreErrors" });
+    await page.close({ runBeforeUnload: true });
   }
 
   record(page: Page): PageRecord {
@@ -164,6 +200,14 @@ export class TestScope {
   /** A signed-in API client through the front proxy. */
   api(): Promise<ApiSession> {
     return signIn(this.stack.baseUrl, this.stack.password);
+  }
+
+  /** A fresh context, signed in, with one page open on `path`. */
+  async signedInPage(path = "/", options: ContextOptions = {}): Promise<{ tracked: TrackedContext; page: Page }> {
+    const tracked = await this.newContext({ ...options, signedIn: true });
+    const page = await tracked.newPage();
+    await page.goto(`${this.stack.baseUrl}${path}`);
+    return { tracked, page };
   }
 
   async newContext(options: ContextOptions = {}): Promise<TrackedContext> {

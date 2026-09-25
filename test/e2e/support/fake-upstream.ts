@@ -91,9 +91,21 @@ export interface ResponseRule {
   op: FakeOp | FakeProvider | "*";
   where?: (request: RecordedRequest) => boolean;
   delayMs?: number;
+  /** Held until the promise settles, then answered as the scenario says. */
+  gate?: Promise<void>;
   fault?: Fault;
   /** Applies to the next N matching requests only. */
   times?: number;
+}
+
+/** Requests a test holds open until it decides the provider has answered. */
+export interface Gate {
+  /** Answers every held request, and every later one the gate matches. */
+  release: () => void;
+  /** Stops matching new requests; held ones stay held until `release`. */
+  remove: () => void;
+  /** Matching requests received so far. */
+  readonly seen: number;
 }
 
 export type RequestFilter = FakeOp | FakeProvider | ((request: RecordedRequest) => boolean);
@@ -235,6 +247,18 @@ function waitUnlessClosed(delayMs: number, response: ServerResponse): Promise<bo
   });
 }
 
+/* Resolves true once the gate opens, false if the caller hung up first. */
+function waitForGateUnlessClosed(gate: Promise<void>, response: ServerResponse): Promise<boolean> {
+  return new Promise((resolve) => {
+    const onClose = () => resolve(false);
+    response.once("close", onClose);
+    void gate.then(() => {
+      response.off("close", onClose);
+      resolve(!response.destroyed);
+    });
+  });
+}
+
 function limaDay(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(new Date());
 }
@@ -257,6 +281,7 @@ export class FakeUpstream {
   #agilTokens = new Set<string>();
   #waiters = new Set<(request: RecordedRequest) => void>();
   #hung = new Set<ServerResponse>();
+  #gates = new Set<() => void>();
   #seq = 0;
 
   constructor(server: Server, url: string) {
@@ -305,6 +330,39 @@ export class FakeUpstream {
     return this.addRule({ op, fault, ...options });
   }
 
+  /**
+   * Holds every matching request open until `release()`: the provider is
+   * "thinking" for exactly as long as the test needs, with no clock involved.
+   * `reset()` and `close()` release whatever is still held.
+   */
+  hold(op: ResponseRule["op"], where?: ResponseRule["where"]): Gate {
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let seen = 0;
+    const remove = this.addRule({
+      op,
+      gate,
+      where: (request) => {
+        const matches = !where || where(request);
+        if (matches) seen += 1;
+        return matches;
+      },
+    });
+    this.#gates.add(open);
+    return {
+      release: () => {
+        this.#gates.delete(open);
+        open();
+      },
+      remove,
+      get seen() {
+        return seen;
+      },
+    };
+  }
+
   /** Every Agil bearer minted so far answers 401 from now on, as an expired one does. */
   expireAgilTokens(): void {
     this.#agilTokens.clear();
@@ -351,13 +409,16 @@ export class FakeUpstream {
 
   /** Back to an empty scenario. Minted Agil bearers stay valid, as they would upstream. */
   reset(): void {
+    this.#releaseGates();
     this.clearRequests();
     this.#flightRules = [];
     this.#rules = [];
     this.#locations = { agil: defaultLocations("agil"), cbplus: defaultLocations("cbplus") };
+    this.usdToPen = 3.742;
   }
 
   async close(): Promise<void> {
+    this.#releaseGates();
     this.#hung.forEach((response) => response.destroy());
     this.#hung.clear();
     await new Promise<void>((resolve) => {
@@ -411,6 +472,9 @@ export class FakeUpstream {
     });
 
     const rule = this.#takeRule(entry);
+    if (rule?.gate && !(await waitForGateUnlessClosed(rule.gate, response))) {
+      return;
+    }
     if (rule?.delayMs && !(await waitUnlessClosed(rule.delayMs, response))) {
       return;
     }
@@ -445,6 +509,11 @@ export class FakeUpstream {
     response.end(payload);
     entry.status = reply.status;
     entry.respondedAt = Date.now();
+  }
+
+  #releaseGates(): void {
+    this.#gates.forEach((open) => open());
+    this.#gates.clear();
   }
 
   #takeRule(entry: RecordedRequest): ResponseRule | undefined {
