@@ -441,7 +441,7 @@ async function routeServerRequest(request: Request, server: BunServer<undefined>
   return proxyToRouter(request, server, url);
 }
 
-export async function handleRequest(request: Request, server: BunServer<undefined>): Promise<Response> {
+async function handleRequest(request: Request, server: BunServer<undefined>): Promise<Response> {
   const requestStart = startPerfTimer();
   let pathname = "<malformed>";
   let status = 500;
@@ -489,7 +489,7 @@ export async function handleRequest(request: Request, server: BunServer<undefine
   }
 }
 
-export function resolveServerIdleTimeoutSeconds(
+function resolveServerIdleTimeoutSeconds(
   input = process.env.FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS,
 ): number {
   const normalized = String(input ?? "").trim();

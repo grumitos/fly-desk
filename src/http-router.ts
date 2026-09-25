@@ -1019,7 +1019,7 @@ function offerNeedsQuotationRate(offer: CanonicalOffer, request: SearchRequest):
   return domesticPeru ? currencyCode === "USD" : currencyCode === "PEN";
 }
 
-export function prepareOffersForQuotation(
+function prepareOffersForQuotation(
   request: SearchRequest,
   offers: CanonicalOffer[],
   rateCandidates: readonly CanonicalOffer[] = offers,
