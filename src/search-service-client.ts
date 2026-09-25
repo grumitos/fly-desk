@@ -169,6 +169,33 @@ export function resolveProxyTimeoutMsForRequest(url: URL, configured?: number): 
   return Math.min(MAX_SEARCH_SERVICE_TIMEOUT_MS, base + requestedWait);
 }
 
+/* A runner that is restarting refuses connections for a moment. A read is
+   asked once more after this pause; a write is never sent twice. */
+const REFUSED_READ_RETRY_DELAY_MS = 500;
+
+function isConnectionRefused(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === "ConnectionRefused" || code === "ECONNREFUSED";
+}
+
+async function fetchSearchService(
+  fetchImpl: FetchImpl,
+  target: URL,
+  init: RequestInit,
+  isRead: boolean,
+): Promise<Response> {
+  try {
+    return await fetchImpl(target, init);
+  } catch (error) {
+    if (!isRead || !isConnectionRefused(error)) {
+      throw error;
+    }
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, REFUSED_READ_RETRY_DELAY_MS));
+  return fetchImpl(target, init);
+}
+
 function searchServiceUnavailableResponse(): Response {
   return Response.json(
     { error: "Search service is unavailable." },
@@ -236,7 +263,7 @@ export async function maybeProxySearchServiceRequest(
   };
 
   try {
-    const response = await (options.fetchImpl ?? fetch)(target, requestInit);
+    const response = await fetchSearchService(options.fetchImpl ?? fetch, target, requestInit, request.method === "GET");
 
     return new Response(response.body, {
       status: response.status,

@@ -121,7 +121,7 @@ The React UI must not display simulated controls. The following remain outside t
 - the USD/PEN rate available from Agil propagates to sibling offers; if a domestic Costamar route remains alone, daily rate resolution occurs within the search and does not query flights again
 - external rate lookup has a short timeout and allows one final retry after a failed prefetch; if unresolved, the search finishes without marking the offer quotable
 - global search admission uses capacity units: default budget `4`, exact `1`, range `2`, matrix `2`, default queue `8`, and default timeout `120000ms`
-- the web proxy streams the runner response without buffering the complete body and retains the timeout during the stream; do not use values below the operational default
+- the web proxy streams the runner response without buffering the complete body and retains the timeout during the stream; do not use values below the operational default. A read the runner refuses while it restarts is asked once more 500 ms later; a write is never sent twice
 - capacity is released only when provider work finishes; session and purchase-path caches remain in `src/session-store.ts` until their operational TTL
 - the price-reuse TTL is anchored to `searchMeta.completedAt`, not polling; session idle retention remains separate to preserve redirects
 - completed resident jobs share 128 MiB by default; a timer reevaluates LRU when the five-second grace expires, in addition to 60-second maintenance, leaves excess jobs disk-only with compatible APIs and `/r/<id>`, and deletes them at TTL expiry. Running jobs are not eligible

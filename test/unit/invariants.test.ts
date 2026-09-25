@@ -14,13 +14,15 @@ import {
 import { normalizeCostamarProviderContext } from "../../src/provider-context";
 import { providerPrewarmIntervalMs } from "../../src/provider-prewarm";
 import { getPublicRuntimeConfig, getSearchDatePolicy } from "../../src/search-date-policy";
+import { maybeProxySearchServiceRequest } from "../../src/search-service-client";
 import { SearchSessionStore } from "../../src/session-store";
 import { resolveWebSessionMaxLifetimeSeconds, resolveWebSessionTtlSeconds } from "../../src/web-auth";
 
 /*
  * Invariants that are cheap to state and expensive to get wrong: the desk's
  * calendar day, how settings fall back, which Click and Book Plus token is the
- * current one, how a journey is measured across time zones, and what the
+ * current one, what a rollback must still read, what the web unit asks the
+ * runner twice, how a journey is measured across time zones, and what the
  * deployment path is allowed to do.
  */
 
@@ -208,6 +210,61 @@ describe("rollback", () => {
       reopened.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the hop to the search runner", () => {
+  /** A loopback port nothing listens on yet, and a runner that starts on it after `delayMs`. */
+  async function lateRunner(delayMs: number) {
+    const probe = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
+    const port = probe.port;
+    await probe.stop(true);
+    const seen: string[] = [];
+    let runner: ReturnType<typeof Bun.serve> | undefined;
+    const start = setTimeout(() => {
+      runner = Bun.serve({
+        port,
+        hostname: "127.0.0.1",
+        fetch: (request) => {
+          seen.push(`${request.method} ${new URL(request.url).pathname}`);
+          return Response.json({ searchJobId: "job-1" });
+        },
+      });
+    }, delayMs);
+    return {
+      serviceUrl: `http://127.0.0.1:${port}`,
+      seen,
+      stop: async () => {
+        clearTimeout(start);
+        await runner?.stop(true);
+      },
+    };
+  }
+
+  test("a poll outlives a runner that is still starting", async () => {
+    const runner = await lateRunner(150);
+    try {
+      const url = new URL("http://desk.test/api/search/job-1?wait=15000");
+      const answer = await maybeProxySearchServiceRequest(new Request(url), url, { serviceUrl: runner.serviceUrl });
+      expect(answer?.status).toBe(200);
+      expect(runner.seen).toEqual(["GET /api/search/job-1"]);
+    } finally {
+      await runner.stop();
+    }
+  });
+
+  test("a write is never sent twice, even one with no body to consume", async () => {
+    const runner = await lateRunner(150);
+    try {
+      const url = new URL("http://desk.test/api/search/job-1/cancel?cachePartial=1");
+      const answer = await maybeProxySearchServiceRequest(new Request(url, { method: "POST" }), url, { serviceUrl: runner.serviceUrl });
+      expect(answer?.status).toBe(503);
+      /* Past the moment a second attempt would have reached the runner. */
+      await Bun.sleep(700);
+      expect(runner.seen).toEqual([]);
+    } finally {
+      await runner.stop();
     }
   });
 });
