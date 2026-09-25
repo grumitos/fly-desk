@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readSearchJob, type SearchJob } from "./support/api-client.ts";
-import { waitForResults } from "./support/flows.ts";
+import { startedJob, waitForResults, waitForSweep } from "./support/flows.ts";
 import { defineSuite } from "./support/harness.ts";
 import type { OfferSpec, SearchQuery } from "./support/fixtures.ts";
 import {
@@ -16,7 +16,8 @@ import { migration, results, searchForm, searchLink } from "./support/ui.ts";
 
 /*
  * The migratory sweep: every day of every chosen month against both
- * providers, one search per month, drawn as a grid of months.
+ * providers, one search per month, drawn as a grid of months, each month
+ * followed from the moment its search starts.
  */
 
 const suite = defineSuite({ file: import.meta.filename });
@@ -24,6 +25,9 @@ const suite = defineSuite({ file: import.meta.filename });
 const NOVEMBER = monthKey(TODAY);
 const DECEMBER = addMonths(NOVEMBER, 1);
 const JANUARY = addMonths(NOVEMBER, 2);
+/* A month's first poll leaves right behind its search (`POLL_FAST_MS`, 50 ms in
+   `frontend/src/lib/poll-schedule.ts`), well inside a poll interval (900 ms). */
+const FIRST_POLL_WITHIN_MS = 100;
 
 /* November has a fare every third day, from both providers. December: Agil
    has nothing and Click and Book Plus is down. January: nobody has anything. */
@@ -123,4 +127,29 @@ suite.test("a sweep across the year boundary marks each month priced, failed or 
   await waitForResults(monthTab, storedMonth.allOffers?.length ?? -1);
   assert.equal(storedMonth.allOffers?.length, pricedDays.length * 2, "each priced day holds one fare per provider");
   assert.equal(fake.requests().length, providerCallsBefore, "opening a month asked the providers again");
+});
+
+suite.test("each month of a sweep asks for its news as soon as its search has started", async (scope) => {
+  const { fake, stack } = scope;
+  fake.setFlights("both", { origin: "LIM", destination: "BOG" }, [
+    { outbound: ["AV8100 LIM-BOG 06:00-09:20"], price: 310, baggage: { carryOn: true, checked: 1 } },
+  ]);
+  const providers = fake.hold("*", (request) => request.op === "agil.search" || request.op === "cbplus.search");
+  const tracked = await scope.newContext({ signedIn: true });
+  await tracked.context.clock.install();
+  const page = await tracked.newPage();
+  await page.goto(`${stack.baseUrl}${searchLink({ mode: "migration", trip: "one-way", origin: "LIM", destination: "BOG", months: [DECEMBER] })}`);
+  await searchForm.submit(page).waitFor();
+
+  /* From here the page's timers wait for the test: a poll leaves only when the clock is moved. */
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 1_000);
+  const month = await startedJob<SearchJob>(page, () => searchForm.submit(page).click());
+  const polls = () => tracked.apiRequests.filter((request) => request.method === "GET" && new URL(request.url).pathname === `/api/search/${month.searchJobId}`);
+  assert.equal(polls().length, 0);
+  await page.clock.runFor(FIRST_POLL_WITHIN_MS);
+  await eventually(() => assert.equal(polls().length, 1, "the month's first poll waited for a poll interval"), { timeoutMs: 3_000 });
+
+  await page.clock.resume();
+  providers.release();
+  await waitForSweep(page, 1, 1);
 });

@@ -133,6 +133,12 @@ suite.test("a shared round-trip link survives the sign-in gate and carries the s
   assert.ok(agilCalls.every((request) => request.query?.origin === "LIM" && request.query.returnDate === returning));
   assert.equal(providerSearches(fake, route).filter((request) => request.op === "cbplus.search").length, 1);
 
+  /* The link's two stations were each looked up once. */
+  const lookedUp = tracked.apiRequests
+    .filter((request) => new URL(request.url).pathname === "/api/locations")
+    .map((request) => new URL(request.url).searchParams.get("q"));
+  assert.deepEqual(lookedUp.sort(), ["LIM", "MIA"], "a station of the link was looked up more than once");
+
   /* Merged: both providers in one list, cheapest first, and read out. */
   const merged = await readCards(page);
   assert.deepEqual([...new Set(merged.map((card) => card.provider))].sort(), ["Agilsmart", "Click and Book Plus"]);
