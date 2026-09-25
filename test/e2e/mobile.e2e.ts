@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import type { Page } from "playwright";
+import type { Locator, Page } from "playwright";
 import { runSearch, waitForMotion, waitForResults, waitForSweep } from "./support/flows.ts";
 import { defineSuite, type ContextOptions } from "./support/harness.ts";
 import type { OfferSpec } from "./support/fixtures.ts";
-import { addMonths, day, eventually, monthKey, providerSearches, TODAY } from "./support/scenario.ts";
+import { addMonths, day, deskMonth, eventually, monthKey, providerSearches, TODAY } from "./support/scenario.ts";
 import {
   detail,
   filters,
@@ -250,12 +250,29 @@ suite.test("a phone held sideways shows the offer's itinerary with «Cotizar» f
   }
 });
 
-suite.test("the dates ask for a departure once the calendar is left without one, and not while it is open", async (scope) => {
-  const missing = "Selecciona una fecha de salida.";
-  /* Each left without a choice: the system back on a phone, Escape on a desk. */
+suite.test("the dates and the months ask for a choice once their calendar is left without one, and not while it is open", async (scope) => {
+  const missingDate = "Selecciona una fecha de salida.";
+  const missingMonths = "Selecciona al menos un mes.";
+  const firstMonth = addMonths(monthKey(TODAY), 1);
+  const lastMonth = addMonths(monthKey(TODAY), 3);
+  /* Each left without a choice: the system back on a phone, Escape on a desk.
+     With a choice, the phone's sheet keeps it on every way out, its cross
+     included; on a desk the second month confirms the range and closes. */
   const surfaces = [
-    { name: "phone sheet", options: PHONE, calendar: searchForm.calendarSheet, leave: (page: Page) => page.goBack() },
-    { name: "desk popover", options: TABLET, calendar: searchForm.calendarPopover, leave: (page: Page) => page.keyboard.press("Escape") },
+    {
+      name: "phone sheet",
+      options: PHONE,
+      calendar: searchForm.calendarSheet,
+      leave: (page: Page) => page.goBack(),
+      leaveWithChoice: (picker: Locator) => searchForm.closeSheet(picker, "Meses").click(),
+    },
+    {
+      name: "desk popover",
+      options: TABLET,
+      calendar: searchForm.calendarPopover,
+      leave: (page: Page) => page.keyboard.press("Escape"),
+      leaveWithChoice: async () => undefined,
+    },
   ];
   for (const surface of surfaces) {
     const { page } = await scope.signedInPage("/", surface.options);
@@ -263,13 +280,36 @@ suite.test("the dates ask for a departure once the calendar is left without one,
     await departure.click();
     const calendar = surface.calendar(page);
     await calendar.waitFor();
-    assert.equal(await searchForm.fieldMessage(page, missing).count(), 0, `${surface.name}: the calendar asked for a date as it opened`);
+    assert.equal(await searchForm.fieldMessage(page, missingDate).count(), 0, `${surface.name}: the calendar asked for a date as it opened`);
     assert.equal(await departure.getAttribute("aria-invalid"), "false", surface.name);
 
     await surface.leave(page);
     await calendar.waitFor({ state: "hidden" });
-    await searchForm.fieldMessage(page, missing).waitFor();
+    await searchForm.fieldMessage(page, missingDate).waitFor();
     assert.equal(await departure.getAttribute("aria-invalid"), "true", surface.name);
+
+    await searchForm.mode(page, "Migratorio").click();
+    const months = searchForm.months(page);
+    await months.click();
+    const picker = searchForm.monthPicker(page);
+    await picker.waitFor();
+    assert.equal(await searchForm.fieldMessage(page, missingMonths).count(), 0, `${surface.name}: the month picker asked for a month as it opened`);
+    await surface.leave(page);
+    await picker.waitFor({ state: "hidden" });
+    await searchForm.fieldMessage(page, missingMonths).waitFor();
+
+    await months.click();
+    await picker.waitFor();
+    await searchForm.monthCell(picker, firstMonth).click();
+    await searchForm.monthCell(picker, lastMonth).click();
+    await surface.leaveWithChoice(picker);
+    await picker.waitFor({ state: "hidden" });
+    assert.equal(
+      await months.getAttribute("aria-label"),
+      `Meses: ${deskMonth(firstMonth)} – ${deskMonth(lastMonth)}`,
+      `${surface.name}: the months chosen were lost on the way out`,
+    );
+    await searchForm.fieldMessage(page, missingMonths).waitFor({ state: "hidden" });
   }
 });
 

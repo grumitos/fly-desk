@@ -65,6 +65,13 @@ export function sweepMonthLabel(month: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
+const MONTH_ABBREVIATIONS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "set", "oct", "nov", "dic"] as const;
+
+/** «abr 2027», as the month field writes a month (`2027-04`). */
+export function deskMonth(month: string): string {
+  return `${MONTH_ABBREVIATIONS[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
+}
+
 /** Days in `month` (`2026-12`). */
 export function daysInMonth(month: string): number {
   const [year, monthIndex] = month.split("-").map(Number);

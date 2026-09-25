@@ -126,6 +126,8 @@ export const searchForm = {
   addPassenger: (root: Root, kind: "adultos" | "niños" | "bebés") => root.getByRole("button", { name: `Agregar ${kind}` }),
   /** «Aplicar» at the foot of a phone sheet. */
   applySheet: (sheet: Locator) => sheet.getByRole("button", { name: "Aplicar" }),
+  /** The cross in a phone sheet's header, «Cerrar meses» for the sheet «Meses». */
+  closeSheet: (sheet: Locator, title: string) => sheet.getByRole("button", { name: `Cerrar ${title.toLocaleLowerCase("es-PE")}`, exact: true }),
   submit: (page: Page) => page.locator("form").getByRole("button", { name: "Buscar", exact: true }),
   stop: (page: Page) => page.getByRole("button", { name: "Detener búsqueda" }),
   /** The phone's one-line summary of a search, which reopens the form. */
