@@ -2523,9 +2523,9 @@ export class SearchSessionStore {
       CREATE INDEX IF NOT EXISTS idx_search_jobs_lookup
         ON search_jobs (status, sort_mode, request_key, provider_ids_key, provider_context_key, idle_at_ms);
 
-      -- The sweep's own index. idx_search_jobs_lookup leads with status, so a
-      -- range on idle_at_ms alone cannot seek it and the prune fell back to
-      -- reading the table: every row, payload and all.
+      -- The sweep's own index: idx_search_jobs_lookup leads with status, so a
+      -- range on idle_at_ms alone cannot seek it, and scanning the table reads
+      -- every payload.
       CREATE INDEX IF NOT EXISTS idx_search_jobs_idle_at
         ON search_jobs (idle_at_ms);
 
