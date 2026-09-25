@@ -81,6 +81,7 @@ same on every run, and a year boundary is always six weeks away.
 | `desk-search.e2e.ts` | A shared link through the sign-in gate, each of its stations looked up once; merged results, filters and sorting, and the list's outcome read out; quotation revalidation and a confirmed fare quoted again; both providers' purchase redirects, and a blocked provider window named; the flexible matrix filled cell by cell; a range of three hundred fares in a stable order that matches the backend's, back at its top after any change of filter; the list, its column head, the passenger popover and both calendars from the keyboard, with «hoy» on the desk's day |
 | `migration.e2e.ts` | A migratory sweep across the year boundary: priced, failed and empty months, a month opened without a new search, and the route counted once; each month followed from the moment its search starts |
 | `resilience.e2e.ts` | A failed provider named in one line with nothing it said reaching the page or the logs, and named again by the next search after the line is dismissed; a token refused inside a 200 named the same way in an exact search, a range and a matrix, the last two stopping at the first refusal; both providers down, never read out as an empty route; stopping a search; closing the tab mid-search |
+| `partial-answers.e2e.ts` | An Agil GDS whose connection drops asked once more on a connection of its own, every fare kept; a GDS that drops every connection for a day, one that stalls past Agil's deadline (not asked again) and a flexible round-trip cell that never answers, each named «respondió en parte» in the desk's one line with the rest of the list kept. Its stack runs with Agil's shortest deadline, five seconds |
 | `capacity.e2e.ts` | Admission order, the queue limit and its timeout, each named in the desk's notice, the Agil in-flight ceiling, a restart of every unit, and a renewed Click and Book Plus token file |
 | `mobile.e2e.ts` | Phone sheets and the system back at 390×844, a phone's form built once and a calendar a tap does not scroll; every mode at 360×740; the 1024×768 desk; dates and months asked for only once their calendar is left; a desk resized under a search |
 | `session-security.e2e.ts` | Session renewal and its cap, sign-out, login lockout, hostile return paths, security headers, spoofed trust headers, oversized bodies and forged quotations |
@@ -115,7 +116,8 @@ A failing test leaves its artifacts under `test-results/e2e/<spec>/<test>/`:
   stdout and stderr while the test ran, the pooled workers' stderr among the
   runner's. Each line carries its UTC time, and the stack runs with
   `FLY_DESK_PERF_LOG=1`, so every request and every provider's outcome (offers,
-  partial) is in it.
+  partial) is in it. An Agil request sent again, a GDS or a matrix cell left
+  out, each has its own line with the error behind it.
 - `fake-requests.txt`: the fake's request log, each request with the time it
   arrived, its answer, how long that took and the process that asked.
 - `browser.txt` and `page-<n>.png`: the browser's record and a screenshot of
