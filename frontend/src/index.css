@@ -1801,7 +1801,7 @@
   }
 
   .fd-quotation-paste-source {
-    min-height: 220px;
+    min-height: min(220px, 34dvh);
     max-height: 34dvh;
     border-right: 0;
     border-bottom: 1px solid var(--color-border);
@@ -1813,6 +1813,26 @@
 
   .fd-quotation-paste-fields {
     overflow: visible;
+  }
+
+  /* Taller than a phone: the body scrolls and the actions stay in reach. */
+  .fd-quotation-paste-sheet .fd-sheet-body {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* The sunken tint is translucent; over the sheet's own colour it stays
+     opaque while the fields scroll under it. */
+  .fd-quotation-paste-actions {
+    position: sticky;
+    bottom: 0;
+    padding-bottom: calc(11px + env(safe-area-inset-bottom, 0px));
+    background: linear-gradient(var(--color-surface-sunken) 0 0), var(--color-popover);
+  }
+
+  .fd-quotation-paste-actions .fd-btn {
+    height: var(--fd-control-touch);
+    padding-inline: 12px;
   }
 }
 
