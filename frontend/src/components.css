@@ -764,6 +764,25 @@
     }
   }
 
+  /* The 20px controls keep their drawing and hit at the minimum target. */
+  .fd-daterange-clear,
+  .fd-field-clear,
+  .fd-detail-quote-error-dismiss {
+    position: relative;
+  }
+
+  .fd-daterange-clear::after,
+  .fd-field-clear::after,
+  .fd-detail-quote-error-dismiss::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, var(--fd-target-min));
+    height: max(100%, var(--fd-target-min));
+    content: "";
+    translate: -50% -50%;
+  }
+
   /* Trailing controls sit on the field's axis, not on the value line: taking
      the label band off their top centres them without growing the field. */
   .fd-daterange-clear,
