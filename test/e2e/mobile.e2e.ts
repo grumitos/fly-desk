@@ -261,6 +261,4 @@ suite.test("a filter changed in the phone's filter sheet stays on the address ba
   await filterSheet.waitFor({ state: "hidden" });
   await filters.removeChip(page, "Directo").waitFor();
   assert.equal(new URL(page.url()).searchParams.get("nonStop"), "1", "the list is filtered but the address bar no longer says so");
-}, {
-  todo: "production bug: the filter change is written with replaceState onto the history entry the open sheet pushed (frontend/src/lib/search-share.ts:107, frontend/src/hooks/useOverlayHistory.ts:115), so the back that closes the sheet returns to the entry from before the change: the list stays filtered while the address bar — the shareable link — drops the filter",
 });
