@@ -12,18 +12,19 @@ import { runSearch, waitForResults } from "./support/flows.ts";
 import { defineSuite, type TestScope, type TrackedContext } from "./support/harness.ts";
 import type { OfferSpec, SearchQuery } from "./support/fixtures.ts";
 import { addDays, AGIL_GDS_IDS, day, providerSearches } from "./support/scenario.ts";
-import { notice, searchForm, searchLink } from "./support/ui.ts";
+import { detail, notice, quotation, results, searchForm, searchLink } from "./support/ui.ts";
 
 /*
  * A provider that answers only in part, and one that answers nothing. Agil
  * answers per GDS, and a GDS whose connection drops is asked once more, on a
- * connection of its own, so the list keeps every fare. A GDS that never
- * answers a day, a cell, or before Agil's deadline leaves the list short, and
- * the desk says so in its one line instead of presenting the search as
- * complete. A provider none of whose parts answered (no GDS, no day of a
- * range, no cell of a flexible round trip) has failed, and the line names it
- * as one that did not answer. Agil's deadline is the shortest the backend
- * accepts, so a stalled GDS costs five seconds.
+ * connection of its own, so the list keeps every fare; a Click and Book Plus
+ * search, a quote's revalidation among them, is asked again the same way. A
+ * GDS that never answers a day, a cell, or before Agil's deadline leaves the
+ * list short, and the desk says so in its one line instead of presenting the
+ * search as complete. A provider none of whose parts answered (no GDS, no day
+ * of a range, no cell of a flexible round trip) has failed, and the line
+ * names it as one that did not answer. Agil's deadline is the shortest the
+ * backend accepts, so a stalled GDS costs five seconds.
  */
 
 const AGIL_DEADLINE_MS = 5_000;
@@ -153,6 +154,36 @@ suite.test("a GDS whose connection drops is asked once more on a connection of i
   assert.match(scope.stack.logs("runner", scope.logMark), /Agil search GDS 3 sent again on a new connection/);
 });
 
+suite.test("a Click and Book Plus search whose connection drops is asked once more on a connection of its own, and so is a quote's revalidation", async (scope) => {
+  const { fake } = scope;
+  const departure = day(135);
+  fake.setFlights("cbplus", { origin: "LIM", destination: "SCL" }, ONE_FARE);
+  const dropTheNextSearch = () => fake.fail("cbplus.search", { reset: true }, { times: 1 });
+
+  dropTheNextSearch();
+  const { tracked, page } = await scope.signedInPage(searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "SCL", departure }));
+  await waitForResults(page, ONE_FARE.length);
+  assert.equal(await notice.line(page).count(), 0, "a search that answered the second time was reported");
+  const searched = fake.requests("cbplus.search");
+  assert.deepEqual(searched.map((request) => request.status), [0, 200]);
+  assert.notEqual(searched[1]!.headers.connection, "keep-alive", "the second attempt went out on a pooled connection");
+
+  /* A quote confirms the fare with a search of its own: dropped, it would
+     leave the fare unconfirmed and the quote refused. */
+  dropTheNextSearch();
+  await results.card(page, /Click and Book Plus$/).click();
+  await detail.quote(detail.surface(page)).click();
+  await quotation.dialog(page).waitFor();
+  assert.match(await quotation.dialog(page).innerText(), /US\$\s*199(?:\.00)? por adulto/);
+  assert.deepEqual(fake.requests("cbplus.search").slice(searched.length).map((request) => request.status), [0, 200]);
+  const quoted = (await tracked.apiBodies()).filter((entry) => new URL(entry.url).pathname === "/api/quotation");
+  assert.deepEqual(quoted.map((entry) => entry.status), [200]);
+  assert.equal(
+    scope.stack.logs("runner", scope.logMark).match(/Click and Book Plus flight search sent again on a new connection/g)?.length,
+    2,
+  );
+});
+
 suite.test("a GDS that drops every connection for a day is named in the notice, and the rest of the range stays", async (scope) => {
   const { fake } = scope;
   const days = [day(140), day(141), day(142)];
@@ -177,7 +208,7 @@ suite.test("a GDS that drops every connection for a day is named in the notice, 
   /* The service log names the day, the GDS and what became of it. */
   assert.match(
     scope.stack.logs("runner", scope.logMark),
-    new RegExp(`Agil GDS 7 omitted: LIM-SCL ${days[2]} reason=\\S+ afterMs=\\d+ detail=AgilUnansweredError: Agil search GDS 7 failed before receiving a response`),
+    new RegExp(`Agil GDS 7 omitted: LIM-SCL ${days[2]} reason=\\S+ afterMs=\\d+ detail=ProviderUnansweredError: Agil search GDS 7 failed before receiving a response`),
   );
 });
 
@@ -228,7 +259,7 @@ suite.test("a flexible round trip names Agil when a GDS never answers one of its
   assert.deepEqual(providerOutcomes(job), ["agil-local:completed:partial", "costamar:completed"]);
   assert.match(
     scope.stack.logs("runner", scope.logMark),
-    new RegExp(`Agil GDS 0 omitted: LIM-SCL ${days[1]} -> ${addDays(days[1]!, STAY_NIGHTS)} reason=\\S+ afterMs=\\d+ detail=AgilUnansweredError`),
+    new RegExp(`Agil GDS 0 omitted: LIM-SCL ${days[1]} -> ${addDays(days[1]!, STAY_NIGHTS)} reason=\\S+ afterMs=\\d+ detail=ProviderUnansweredError`),
   );
 });
 

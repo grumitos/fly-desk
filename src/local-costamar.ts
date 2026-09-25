@@ -65,6 +65,7 @@ import {
   resolveUsableCostamarBrandedToken,
 } from "./provider-context";
 import { recordProviderFirstHttpRequest } from "./provider-diagnostics";
+import { fetchProvider } from "./provider-fetch";
 import { providerPublicFailureMessage } from "./provider-status";
 import { openUrlLocally } from "./local-browser";
 import {
@@ -3408,39 +3409,31 @@ function ensureCostamarCredentials(context: CostamarProviderContext): void {
   }
 }
 
+/*
+ * A request to the Click and Book Plus API: a flight search or the engine's
+ * metadata, neither of which changes anything at the provider, so one that
+ * got no answer is sent once more on a new connection (`fetchProvider`). A
+ * quote's revalidation is such a search, and one lost that way would leave
+ * the fare unconfirmed.
+ */
 async function fetchCostamar(
   context: CostamarProviderContext,
   path: string,
   init: RequestInit,
   action: string,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), COSTAMAR_HTTP_TIMEOUT_MS);
   recordProviderFirstHttpRequest(action);
-
-  try {
-    return await fetch(`${context.apiBaseUrl}${path}`, {
-      ...init,
-      headers: {
-        accept: "application/json, text/plain, */*",
-        ...(init.body ? { "Content-Type": "application/json" } : {}),
-        "Client-Id": "1d3X65B.e92dCDJss315",
-        "Client-Name": "CBPLUS",
-        "Application-Name": "cbplus-app",
-        ...(init.headers ?? {}),
-      },
-      signal: controller.signal,
-    });
-  } catch (error) {
-    const timedOut = controller.signal.aborted || (error instanceof Error && error.name === "AbortError");
-    throw new Error(
-      timedOut
-        ? `${action} timed out.`
-        : `${action} failed before receiving a response.`,
-    );
-  } finally {
-    clearTimeout(timeout);
-  }
+  return fetchProvider(`${context.apiBaseUrl}${path}`, {
+    ...init,
+    headers: {
+      accept: "application/json, text/plain, */*",
+      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      "Client-Id": "1d3X65B.e92dCDJss315",
+      "Client-Name": "CBPLUS",
+      "Application-Name": "cbplus-app",
+      ...(init.headers ?? {}),
+    },
+  }, { label: action, timeoutMs: COSTAMAR_HTTP_TIMEOUT_MS });
 }
 
 async function fetchCostamarJson<T>(
@@ -3812,21 +3805,21 @@ async function verifyCostamarRedirectCandidate(
     return localVerification;
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS);
+  /* Loading the branded search page reads a search, as an agent's browser
+     does, so one that got no answer is asked once more (`fetchProvider`)
+     rather than taken for a token to refresh. */
   try {
-    const response = await fetch(buildCostamarBrandedSearchUrl(request, context), {
+    const response = await fetchProvider(buildCostamarBrandedSearchUrl(request, context), {
       method: "GET",
       redirect: "manual",
-      signal: controller.signal,
       headers: {
         Accept: "text/html,application/xhtml+xml",
       },
-    });
+    }, { label: "Click and Book Plus redirect validation", timeoutMs: COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS });
     const location = response.headers.get("location") ?? "";
     const body = response.status >= 300 && response.status < 400
       ? ""
-      : (await response.text().catch(() => "")).slice(0, 4096);
+      : (await response.text()).slice(0, 4096);
     if (costamarRedirectResponseLooksValid(response.status, location, body)) {
       return costamarRedirectVerification("verified", true, "The branded redirect accepted the token.");
     }
@@ -3838,8 +3831,6 @@ async function verifyCostamarRedirectCandidate(
       false,
       "Click and Book Plus redirect validation could not be completed.",
     );
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -4739,38 +4730,31 @@ export async function suggestLocalCostamarLocations(
     return [];
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), COSTAMAR_HTTP_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(
-      `${COSTAMAR_AIR_API_BASE_URL}/autocomplete/airports/search?language=es&query=${encodeURIComponent(normalizedQuery)}`,
-      {
-        headers: {
-          accept: "application/json, text/plain, */*",
-        },
-        signal: controller.signal,
+  /* A station lookup: asked once more when it got no answer (`fetchProvider`). */
+  const response = await fetchProvider(
+    `${COSTAMAR_AIR_API_BASE_URL}/autocomplete/airports/search?language=es&query=${encodeURIComponent(normalizedQuery)}`,
+    {
+      headers: {
+        accept: "application/json, text/plain, */*",
       },
-    );
+    },
+    { label: "Click and Book Plus location suggest", timeoutMs: COSTAMAR_HTTP_TIMEOUT_MS },
+  );
 
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new Error(`Click and Book Plus location suggest failed with HTTP ${response.status}.`);
-    }
-
-    const rawPayload = await response.json() as unknown;
-    const rawAirports = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)
-      ? (rawPayload as { airports?: unknown }).airports
-      : undefined;
-    const airports = Array.isArray(rawAirports)
-      ? rawAirports.filter((entry): entry is CostamarAutocompleteAirport => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry))
-      : [];
-    const suggestions = airports
-      .map((entry) => mapCostamarLocationSuggestion(entry))
-      .filter((entry): entry is LocationSuggestion => Boolean(entry));
-
-    return rankLocationSuggestions(normalizedQuery, suggestions, limit);
-  } finally {
-    clearTimeout(timeout);
+  if (!response.ok) {
+    throw new Error(`Click and Book Plus location suggest failed with HTTP ${response.status}.`);
   }
+
+  const rawPayload = await response.json() as unknown;
+  const rawAirports = rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)
+    ? (rawPayload as { airports?: unknown }).airports
+    : undefined;
+  const airports = Array.isArray(rawAirports)
+    ? rawAirports.filter((entry): entry is CostamarAutocompleteAirport => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry))
+    : [];
+  const suggestions = airports
+    .map((entry) => mapCostamarLocationSuggestion(entry))
+    .filter((entry): entry is LocationSuggestion => Boolean(entry));
+
+  return rankLocationSuggestions(normalizedQuery, suggestions, limit);
 }
