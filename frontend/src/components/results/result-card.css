@@ -1056,6 +1056,10 @@
    * inside the card is what replaces it here. */
 
   @container fdlist (max-width: 786.98px) {
+    .fd-results-list {
+      row-gap: 6px;
+    }
+
     /* No header below the threshold, which is also the answer for armazón C:
        the stacked anatomy has three lanes and two rows, so a header drawn on
        the desk's six would name lanes that are not there. It goes with the

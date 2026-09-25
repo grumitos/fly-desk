@@ -895,13 +895,10 @@ export default function App() {
   const hasSearchConfig = Boolean(searchDraft || lastRequest || initialSharedRequest)
   const visibleMobileToolsCollapsed = shellSize === "C" && mobileToolsCollapsed
 
-  /* `dvh`, never `vh` (02 §10): Tailwind's `h-screen` is `100vh`, which on a
-     phone measures the window without the virtual keyboard and cut the open
-     sheet off at the bottom. */
   return (
     <div
       ref={shellRef}
-      className="fd-shell flex h-[100dvh] flex-col overflow-hidden bg-background text-foreground"
+      className="fd-shell"
       data-shell-size={shellSize}
       data-fd-sheet-root=""
     >

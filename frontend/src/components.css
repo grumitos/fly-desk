@@ -134,13 +134,13 @@
   /* Plate 1c: one row of five chips at the touch minimum, `flex: 1`, mono 13.
      They carry no separator because they are pressed in order — first press
      fills Origin, second fills Destination (11 §2.1). */
-  .fd-shell[data-shell-size="C"] .fd-quick-chips {
+  :where(.fd-shell[data-shell-size="C"]) .fd-quick-chips {
     display: flex;
     height: var(--fd-control-touch);
     gap: 6px;
   }
 
-  .fd-shell[data-shell-size="C"] .fd-quick-chip {
+  :where(.fd-shell[data-shell-size="C"]) .fd-quick-chip {
     width: auto;
     min-width: 0;
     height: var(--fd-control-touch);
@@ -2171,7 +2171,7 @@
   }
 
   /* --- armazón C · the edge-to-edge sheet (1f, 3c) ---------------------- */
-  @container fdshell (max-width: 719.98px) {
+  :where(.fd-shell[data-shell-size="C"]) {
     /* The sheet's own screen inset. Armazón B gives the four blocks the 14 its
        380px sheet is drawn with, and the phone was taking that number because
        nothing here restated it; `MovilDetalle` pads the whole screen by 16.
@@ -2261,7 +2261,7 @@
        height with the home indicator absorbed. They stay inside the panel — one component,
        three mounts — because the sheet body is the only thing that scrolls. */
     .fd-detail-footer {
-      padding-bottom: max(22px, env(safe-area-inset-bottom));
+      padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
     }
 
     /* The switch at one end, the two exits at the other: `MovilDetalle` hangs
@@ -3067,9 +3067,9 @@
 
   /* 06 §2: four columns on a desk, one row per month on a phone. That is a
      shell shape, not a list one. */
-  @container fdshell (max-width: 719.98px) {
+  :where(.fd-shell[data-shell-size="C"]) {
     .fd-month-scroller {
-      padding: 10px 12px 22px;
+      padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
     }
 
     /* 2f: the card stops being a fixed-height tile and becomes a row that is as
@@ -3119,7 +3119,7 @@
 
   /* 2f writes the counter and the range short: at 390 that row also carries the
      state pill. */
-  @container fdshell (max-width: 719.98px) {
+  :where(.fd-shell[data-shell-size="C"]) {
     .fd-month-count-tail,
     .fd-month-range {
       display: none;
