@@ -46,7 +46,7 @@ function ThemeToggle({ theme, setTheme }: { theme: Theme; setTheme: (theme: Them
           onClick={() => setTheme(nextTheme)}
           aria-label="Cambiar tema"
           aria-pressed={theme === "dark"}
-          className="fd-capsule-cell fd-theme-toggle"
+          className="fd-capsule-cell"
         >
           <AppIcon name={theme === "dark" ? "sun" : "moon"} />
         </Button>

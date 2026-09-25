@@ -267,7 +267,7 @@ export function DetailPanel({
 
   if (!offer) {
     return (
-      <section className={cn("fd-detail-panel flex h-full min-h-0 flex-col overflow-hidden", embedded && "fd-detail-panel--embedded")}>
+      <section className="fd-detail-panel flex h-full min-h-0 flex-col overflow-hidden">
         {!embedded && <div className="fd-detail-header">
           <h2 className="fd-detail-title">Oferta</h2>
           <p className="fd-detail-provider">Sin selección</p>
@@ -288,7 +288,7 @@ export function DetailPanel({
     <section
       /* Keyed so the panel arrives again for every offer (05 §8). */
       key={offer.id}
-      className={cn("fd-detail-panel flex h-full min-h-0 flex-col overflow-hidden", embedded && "fd-detail-panel--embedded")}
+      className="fd-detail-panel flex h-full min-h-0 flex-col overflow-hidden"
       data-quote-error={quotationFailed || undefined}
     >
       {/* One close, two shapes: a cross on a desk sheet, a back chevron on a
@@ -422,10 +422,10 @@ export function DetailPanel({
               <strong className="fd-detail-quote-error-full">{QUOTATION_ERROR_TITLE}</strong>
               <strong className="fd-detail-quote-error-short">{QUOTATION_ERROR_TITLE_SHORT}</strong>
               <br />
-              <span className="fd-detail-quote-error-detail fd-detail-quote-error-full">
+              <span className="fd-detail-quote-error-full">
                 {QUOTATION_ERROR_DETAIL}
               </span>
-              <span className="fd-detail-quote-error-detail fd-detail-quote-error-short">
+              <span className="fd-detail-quote-error-short">
                 {QUOTATION_ERROR_DETAIL_SHORT}
               </span>
             </span>
@@ -497,9 +497,7 @@ export function DetailPanel({
                 onClick={handlePurchasePath}
               >
                 <AppIcon name="externalLink" size={14} />
-                <span className="fd-detail-provider-action-label">
-                  {purchasePath.type === "search-redirect" ? "Buscar" : "Abrir"}
-                </span>
+                {purchasePath.type === "search-redirect" ? "Buscar" : "Abrir"}
               </Button>
             )}
             <ShortcutTooltip
