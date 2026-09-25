@@ -1,15 +1,15 @@
-export type LocalBrowserPreference = "chrome" | "default";
+type LocalBrowserPreference = "chrome" | "default";
 
 export interface ChromeLaunchOptions {
   userDataDir?: string;
   profileDirectory?: string;
 }
 
-export interface OpenUrlResult {
+interface OpenUrlResult {
   launcher: "chrome" | "default";
 }
 
-export interface BrowserLaunchInvocation {
+interface BrowserLaunchInvocation {
   command: string;
   args: string[];
 }
@@ -56,13 +56,6 @@ function buildDefaultBrowserLaunchInvocation(
     default:
       return { command: "xdg-open", args: [targetUrl] };
   }
-}
-
-export function buildDefaultBrowserLaunchInvocationForTests(
-  targetUrl: string,
-  platform: typeof process.platform = process.platform,
-): BrowserLaunchInvocation {
-  return buildDefaultBrowserLaunchInvocation(targetUrl, platform);
 }
 
 async function openWithDefaultBrowser(targetUrl: string): Promise<void> {

@@ -19,7 +19,7 @@ export interface ProviderSearchWorkerRequest {
 
 /* Cooperative cancellation: the worker keeps serving the job until its provider
    callbacks are asked whether to continue, and answers "no" from then on. */
-export interface ProviderSearchWorkerCancel {
+interface ProviderSearchWorkerCancel {
   id: string;
   type: "cancel";
 }
@@ -37,7 +37,7 @@ export type ProviderSearchWorkerInbound =
   | ProviderSearchWorkerCancel
   | ProviderSearchWorkerPrewarm;
 
-export type ProviderSearchWorkerProgress =
+type ProviderSearchWorkerProgress =
   | {
       id: string;
       type: "search-progress";
@@ -71,7 +71,7 @@ export type ProviderSearchWorkerComplete =
       response: MatrixResponse;
     };
 
-export interface ProviderSearchWorkerPrewarmComplete {
+interface ProviderSearchWorkerPrewarmComplete {
   id: string;
   type: "prewarm-complete";
 }

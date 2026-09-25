@@ -9,8 +9,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
    working sessions, so the strip an agent had built up was routinely empty
    again by the next morning. A month keeps a useful average over time and
    still lets a route that stopped being searched fall out of it. */
-export const LOCATION_USAGE_RECENT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-export const LOCATION_USAGE_RECENT_MAX_ENTRIES = 2_048;
+const LOCATION_USAGE_RECENT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const LOCATION_USAGE_RECENT_MAX_ENTRIES = 2_048;
 
 /* «La idea de mantener una media es que el conteo expire en un mes»: a use
    counts towards the ranking for a month and then stops counting, so a station
@@ -23,7 +23,7 @@ export const LOCATION_USAGE_RECENT_MAX_ENTRIES = 2_048;
    It is counted in whole days rather than milliseconds because the buckets it
    reads are whole days; an option in milliseconds would promise a resolution
    the storage does not have. */
-export const LOCATION_USAGE_RANKING_WINDOW_DAYS = 30;
+const LOCATION_USAGE_RANKING_WINDOW_DAYS = 30;
 
 const CREATE_LOCATION_USAGE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS location_usage (
@@ -107,7 +107,7 @@ export interface LocationUsageSuggestionGroups {
   recent: LocationUsageSuggestions;
 }
 
-export interface LocationUsageStoreOptions {
+interface LocationUsageStoreOptions {
   dbPath?: string;
   rankingWindowDays?: number;
   recentTtlMs?: number;

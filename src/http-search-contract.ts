@@ -44,7 +44,7 @@ export interface SearchPayload {
   sortMode?: SortMode;
 }
 
-export interface PreparedSearchContract {
+interface PreparedSearchContract {
   providerIds: ProviderId[];
   request: SearchRequest;
 }

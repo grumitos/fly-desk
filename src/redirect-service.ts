@@ -68,7 +68,7 @@ interface SqlCompactJobRow {
   provider_context_key?: string;
 }
 
-export interface RedirectServiceOptions {
+interface RedirectServiceOptions {
   dbPath?: string;
   cacheLookupTimeoutMs?: number;
 }
@@ -488,7 +488,7 @@ function isLoopbackRemoteAddress(value: string | undefined): boolean {
     || normalized === "::ffff:127.0.0.1";
 }
 
-export function requestWithServerTrustHeaders(request: Request, server: Pick<BunServer<undefined>, "requestIP">): Request {
+function requestWithServerTrustHeaders(request: Request, server: Pick<BunServer<undefined>, "requestIP">): Request {
   const headers = new Headers();
   request.headers.forEach((value, key) => {
     if (!key.toLowerCase().startsWith("x-flydesk-")) {
@@ -675,7 +675,7 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
   return json({ error: "Purchase path is unavailable." }, { status: 410 });
 }
 
-export async function routeRedirectRequest(request: Request, options: RedirectServiceOptions = {}): Promise<Response> {
+async function routeRedirectRequest(request: Request, options: RedirectServiceOptions = {}): Promise<Response> {
   const url = new URL(request.url);
 
   if (request.method === "GET" && url.pathname === "/api/health") {

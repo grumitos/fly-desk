@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync, un
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-export const FLY_DESK_TEMP_ARTIFACT_PREFIXES = [
+const FLY_DESK_TEMP_ARTIFACT_PREFIXES = [
   "playwright",
   "travel_quote_foundation_agil_",
   "travel_quote_foundation_costamar_",
@@ -14,7 +14,7 @@ export const FLY_DESK_TEMP_ARTIFACT_PREFIXES = [
 
 export const TEMP_ARTIFACT_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 export const TEMP_ARTIFACT_SWEEP_MIN_AGE_MS = 2 * 60 * 60 * 1000;
-export const TEMP_ARTIFACT_ACTIVE_MARKER_NAME = ".flydesk-active.json";
+const TEMP_ARTIFACT_ACTIVE_MARKER_NAME = ".flydesk-active.json";
 
 const activeTempArtifacts = new Set<string>();
 

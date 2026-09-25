@@ -20,7 +20,7 @@ export const SORT_MODES = ["cheapest", "fastest", "departure", "stops"] as const
 
 export type SortMode = (typeof SORT_MODES)[number];
 
-export type SearchState =
+type SearchState =
   | "search_live"
   | "search_cached"
   | "search_partial"
@@ -29,14 +29,14 @@ export type SearchState =
 
 export const SEARCH_CACHE_VERSION = 2;
 
-export type PriceConfidence =
+type PriceConfidence =
   | "indicative"
   | "live"
   | "validated"
   | "landing-page"
   | "stale";
 
-export type OfferPriceStatus =
+type OfferPriceStatus =
   | "unverified"
   | "verified"
   | "stale";
@@ -59,7 +59,7 @@ export interface RedirectVerification {
   checkedAt?: string;
 }
 
-export type PurchasePathType =
+type PurchasePathType =
   | "api-booking"
   | "deeplink"
   | "search-redirect"
@@ -67,7 +67,7 @@ export type PurchasePathType =
   | "manual-reference"
   | "gds-command";
 
-export type PurchasePathState =
+type PurchasePathState =
   | "none"
   | "manual"
   | "search_redirect"

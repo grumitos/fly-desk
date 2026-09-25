@@ -32,7 +32,7 @@ export function providerPrewarmIntervalMs(): number {
 /* A provider error can carry a URL with a token in it, so anything long enough
    to be credential material is masked before it reaches the journal, and the
    message is truncated: this is a breadcrumb for an operator, not a payload. */
-export function describePrewarmFailure(reason: unknown): string {
+function describePrewarmFailure(reason: unknown): string {
   const message = reason instanceof Error ? reason.message : String(reason);
   const scrubbed = message
     /* A JWT first, as one unit. Its segments are individually short enough to
@@ -47,7 +47,7 @@ export function describePrewarmFailure(reason: unknown): string {
   return scrubbed.slice(0, 200) || "(no message)";
 }
 
-export async function prewarmProvidersSilently(providerStatus?: ProviderStatusTracker): Promise<void> {
+async function prewarmProvidersSilently(providerStatus?: ProviderStatusTracker): Promise<void> {
   const prewarmStart = startPerfTimer();
   const providerIds = ["agil-local", "costamar"] as const satisfies readonly ProviderId[];
   providerIds.forEach((providerId) => providerStatus?.markChecking(providerId, "prewarm"));

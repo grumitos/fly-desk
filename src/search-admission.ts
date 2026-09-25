@@ -1,8 +1,8 @@
 export type SearchAdmissionKind = "exact" | "range" | "matrix";
 
-export type SearchAdmissionErrorCode = "queue-full" | "queue-timeout" | "cancelled";
+type SearchAdmissionErrorCode = "queue-full" | "queue-timeout" | "cancelled";
 
-export interface SearchAdmissionLimits {
+interface SearchAdmissionLimits {
   capacityUnits: number;
   exactCostUnits: number;
   rangeCostUnits: number;
@@ -11,13 +11,13 @@ export interface SearchAdmissionLimits {
   queueTimeoutMs: number;
 }
 
-export interface SearchAdmissionRequest {
+interface SearchAdmissionRequest {
   kind: SearchAdmissionKind;
   jobId?: string;
   shouldContinue?: () => boolean;
 }
 
-export interface SearchAdmissionLease {
+interface SearchAdmissionLease {
   kind: SearchAdmissionKind;
   jobId?: string;
   costUnits: number;
@@ -25,7 +25,7 @@ export interface SearchAdmissionLease {
   release: () => void;
 }
 
-export interface SearchAdmissionDiagnostics {
+interface SearchAdmissionDiagnostics {
   capacityUnits: number;
   activeUnits: number;
   queuedUnits: number;
@@ -100,7 +100,7 @@ function readPositiveInteger(
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-export function resolveSearchAdmissionLimits(
+function resolveSearchAdmissionLimits(
   env: Record<string, string | undefined> = process.env,
 ): SearchAdmissionLimits {
   const capacityUnits = readPositiveInteger(env, "FLY_DESK_SEARCH_CAPACITY_UNITS", DEFAULT_LIMITS.capacityUnits);

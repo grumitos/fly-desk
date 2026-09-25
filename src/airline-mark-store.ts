@@ -45,18 +45,13 @@ interface AirlineMarkStoreOptions {
 const missingUntil = new Map<string, number>();
 const inFlight = new Map<string, Promise<string | undefined>>();
 
-export function airlineMarkDirectory(override?: string): string | undefined {
+function airlineMarkDirectory(override?: string): string | undefined {
   if (override) {
     return override;
   }
 
   const path = resolvePersistPath("FLY_DESK_AIRLINE_MARK_DIR", "airline-marks");
   return path;
-}
-
-export function resetAirlineMarkStoreForTests(): void {
-  missingUntil.clear();
-  inFlight.clear();
 }
 
 /**

@@ -13,7 +13,6 @@
   },
   "scripts": {
     "dev": "bun --watch src/index.ts",
-    "demo": "bun src/demo.ts",
     "build": "bun run build:frontend",
     "build:frontend": "bun scripts/build-frontend.ts",
     "start": "bun src/index.ts",

@@ -12,7 +12,7 @@ function unique(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))];
 }
 
-export function resolveDerivedSearchServiceApiToken(): string | undefined {
+function resolveDerivedSearchServiceApiToken(): string | undefined {
   const sessionSecret = readEnv("FLY_DESK_WEB_SESSION_SECRET");
   if (!sessionSecret || sessionSecret.length < MIN_INTERNAL_SECRET_LENGTH) {
     return undefined;

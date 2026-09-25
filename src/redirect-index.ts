@@ -1,10 +1,7 @@
-import { loadRuntimeConfig } from "./config";
 import { createRedirectServer, resolveRedirectServerHost, resolveRedirectServerPort } from "./redirect-service";
 
-/* The same bound as the web entrypoint, and for the same reason: a bare
-   `server.stop()` waits for connections to drain, and a redirect that is
-   mid-validation against the provider can hold one open past this unit's 20s
-   `TimeoutStopSec`. Being killed skips the cleanup; leaving on time does not. */
+/* Same shutdown budget as the web entrypoint: a redirect mid-validation can hold
+   a connection open past this unit's 20 s `TimeoutStopSec`. */
 const SHUTDOWN_DRAIN_MS = 3_000;
 const SHUTDOWN_DEADLINE_MS = 8_000;
 
@@ -13,7 +10,6 @@ function delay(ms: number): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  loadRuntimeConfig();
   const host = resolveRedirectServerHost();
   const port = resolveRedirectServerPort();
   const server = createRedirectServer({ hostname: host, port });

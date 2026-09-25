@@ -4,18 +4,18 @@ import {
   MAX_SEARCH_PASSENGERS,
 } from "./core/search-limits";
 
-export const DEFAULT_SEARCH_MAX_FUTURE_DAYS = 365;
-export const DEFAULT_MIGRATION_CONCURRENT_MONTHS = 2;
-export const MAX_MIGRATION_CONCURRENT_MONTHS = 12;
-export const SEARCH_TODAY_OVERRIDE_ENV = "SEARCH_TODAY_OVERRIDE";
+const DEFAULT_SEARCH_MAX_FUTURE_DAYS = 365;
+const DEFAULT_MIGRATION_CONCURRENT_MONTHS = 2;
+const MAX_MIGRATION_CONCURRENT_MONTHS = 12;
+const SEARCH_TODAY_OVERRIDE_ENV = "SEARCH_TODAY_OVERRIDE";
 
-export interface SearchDatePolicy {
+interface SearchDatePolicy {
   minSearchDate: string;
   maxSearchDate: string;
   maxFutureDays: number;
 }
 
-export interface PublicRuntimeConfig {
+interface PublicRuntimeConfig {
   migrationConcurrentMonths: number;
   maxStayNights: number;
   maxPassengers: number;
@@ -23,7 +23,7 @@ export interface PublicRuntimeConfig {
   searchDatePolicy: SearchDatePolicy;
 }
 
-export interface SearchDateValidationOptions {
+interface SearchDateValidationOptions {
   enforceMaxDate?: boolean;
 }
 
@@ -41,7 +41,7 @@ export function deskIsoDate(now = new Date()): string {
   return deskDateFormatter.format(now);
 }
 
-export function isIsoDateString(value: string): boolean {
+function isIsoDateString(value: string): boolean {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) {
     return false;
@@ -58,7 +58,7 @@ export function isIsoDateString(value: string): boolean {
   return day <= maxDay;
 }
 
-export function addDaysIso(value: string, days: number): string {
+function addDaysIso(value: string, days: number): string {
   if (!isIsoDateString(value)) {
     throw new Error(`Cannot add days to invalid ISO date: ${value}`);
   }
@@ -68,7 +68,7 @@ export function addDaysIso(value: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-export function resolveSearchMaxFutureDays(): number {
+function resolveSearchMaxFutureDays(): number {
   const raw = Number(process.env.SEARCH_MAX_FUTURE_DAYS ?? DEFAULT_SEARCH_MAX_FUTURE_DAYS);
   if (!Number.isFinite(raw)) {
     return DEFAULT_SEARCH_MAX_FUTURE_DAYS;
@@ -77,7 +77,7 @@ export function resolveSearchMaxFutureDays(): number {
   return Math.max(0, Math.trunc(raw));
 }
 
-export function resolveSearchTodayIso(now = new Date()): string {
+function resolveSearchTodayIso(now = new Date()): string {
   const override = process.env[SEARCH_TODAY_OVERRIDE_ENV]?.trim();
   if (process.env.NODE_ENV === "test" && override && isIsoDateString(override)) {
     return override;
@@ -97,7 +97,7 @@ export function getSearchDatePolicy(now = new Date()): SearchDatePolicy {
   };
 }
 
-export function resolveMigrationConcurrentMonths(): number {
+function resolveMigrationConcurrentMonths(): number {
   const raw = Number(process.env.FLY_DESK_MIGRATION_CONCURRENT_MONTHS ?? DEFAULT_MIGRATION_CONCURRENT_MONTHS);
   if (!Number.isFinite(raw)) {
     return DEFAULT_MIGRATION_CONCURRENT_MONTHS;

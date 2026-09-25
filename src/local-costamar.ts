@@ -260,7 +260,7 @@ interface CbPlusPricedItinerary {
   };
 }
 
-export interface CostamarAutocompleteAirport {
+interface CostamarAutocompleteAirport {
   code?: string;
   countryCode?: string;
   cityCode?: string;
@@ -309,7 +309,7 @@ interface CostamarKeyboardInputTarget {
   type(text: string, options?: { delay?: number }): Promise<unknown>;
 }
 
-export interface CostamarB2bAuthChallenge {
+interface CostamarB2bAuthChallenge {
   kind: "single" | "split";
   inputIndexes: number[];
 }
@@ -570,7 +570,7 @@ function costamarB2bInteractivePromptAvailable(): boolean {
   return costamarB2bPromptEnabled() && terminalPromptAvailable();
 }
 
-export async function applyCostamarB2bKeyboardInput(
+async function applyCostamarB2bKeyboardInput(
   target: CostamarKeyboardInputTarget,
   value: string,
   options?: { clear?: boolean; typingDelayMs?: number },
@@ -820,7 +820,7 @@ function normalizeCostamarB2bTokenResponse(rawValue: unknown): string {
   return "";
 }
 
-export function isCostamarB2bAirlineSearchResponse(method: string, url: string): boolean {
+function isCostamarB2bAirlineSearchResponse(method: string, url: string): boolean {
   if (method.toUpperCase() !== "POST") {
     return false;
   }
@@ -987,18 +987,6 @@ function prepareTemporaryCostamarChromeProfile(
   });
 
   return tempRoot;
-}
-
-export function prepareTemporaryCostamarChromeProfileForTests(
-  profileName: string,
-  options: { cloneSourceProfile?: boolean } = {},
-): string {
-  return prepareTemporaryCostamarChromeProfile(profileName, options);
-}
-
-export async function cleanupTemporaryCostamarChromeProfileForTests(tempRoot: string): Promise<void> {
-  await removePathWithRetries(tempRoot, 6, 250);
-  unregisterActiveTempArtifact(tempRoot);
 }
 
 function readSetCookieHeaders(headers: Headers): string[] {
@@ -1235,12 +1223,6 @@ async function generateCostamarRedirectContextViaB2BHttp(
   }
 }
 
-export async function generateCostamarRedirectContextViaB2BHttpForTests(
-  context: CostamarProviderContext,
-): Promise<CostamarProviderContext | undefined> {
-  return generateCostamarRedirectContextViaB2BHttp(context);
-}
-
 function collectCostamarCandidatesFromText(
   pool: Map<string, CostamarSessionCandidate>,
   text: string,
@@ -1369,14 +1351,6 @@ async function collectCostamarCandidatesFromPage(
   } catch {
     // Ignore pages that are not script-accessible yet.
   }
-}
-
-export async function collectCostamarCandidatesFromPageForTests(
-  page: Pick<Page, "url" | "evaluate">,
-): Promise<CostamarSessionCandidate[]> {
-  const pool = new Map<string, CostamarSessionCandidate>();
-  await collectCostamarCandidatesFromPage(page as Page, pool, "test");
-  return [...pool.values()];
 }
 
 function observeCostamarBrowserPages(
@@ -1647,7 +1621,7 @@ function costamarB2bAuthInputPriority(input: CostamarB2bAuthInputDescriptor): nu
   return score + input.index;
 }
 
-export function detectCostamarB2bAuthChallenge(
+function detectCostamarB2bAuthChallenge(
   snapshot: Partial<CostamarB2bAuthSnapshot> | undefined,
 ): CostamarB2bAuthChallenge | undefined {
   const text = String(snapshot?.text ?? "");
@@ -1961,12 +1935,6 @@ async function ensureCostamarB2bSession(page: Page): Promise<boolean> {
 
   clearInteractiveCostamarB2bCredentials();
   return false;
-}
-
-export async function ensureCostamarB2bSessionForTests(
-  page: Pick<Page, "url" | "goto" | "waitForTimeout" | "waitForLoadState" | "locator">,
-): Promise<boolean> {
-  return ensureCostamarB2bSession(page as Page);
 }
 
 async function launchCostamarBrowserContext(): Promise<{
@@ -2398,7 +2366,7 @@ async function closeCostamarBrowser(browser: Browser | undefined): Promise<void>
   }
 }
 
-export async function warmCostamarRedirectContext(
+async function warmCostamarRedirectContext(
   request: SearchRequest,
   context: CostamarProviderContext,
   options: { force?: boolean } = {},
@@ -2489,43 +2457,6 @@ export async function warmCostamarRedirectContext(
   }
 }
 
-export function setCostamarWarmupOpenerForTests(
-  opener?: typeof openUrlLocally,
-): void {
-  costamarWarmupOpener = opener ?? openUrlLocally;
-}
-
-export function setCostamarWarmupGeneratorForTests(
-  generator?: CostamarWarmupGenerator,
-): void {
-  costamarWarmupGenerator = generator ?? generateCostamarRedirectContextViaB2B;
-}
-
-export function setCostamarWarmupBrowserSettleMsForTests(
-  settleMs?: number,
-): void {
-  costamarWarmupBrowserSettleMs = settleMs === undefined
-    ? COSTAMAR_WARMUP_BROWSER_SETTLE_MS
-    : Math.max(0, Math.trunc(settleMs));
-}
-
-export function resetCostamarWarmupStateForTests(): void {
-  engineCache.clear();
-  pendingCostamarSessionWarmups.clear();
-  recentCostamarSessionWarmups.clear();
-  costamarWarmupOpener = openUrlLocally;
-  costamarWarmupBrowserSettleMs = COSTAMAR_WARMUP_BROWSER_SETTLE_MS;
-  costamarWarmupGenerator = generateCostamarRedirectContextViaB2B;
-  costamarB2bPromptProvider = promptCostamarB2bViaTerminal;
-  cachedInteractiveCostamarB2bCredentials = {};
-  pendingCostamarB2bCredentialPrompt = undefined;
-  pendingCostamarB2bAuthPrompt = undefined;
-  lastCostamarWarmupDiagnostics = undefined;
-  void closeLiveCostamarBrowserConnection();
-  liveCostamarBrowserRetryAfterMs = 0;
-  playwrightPromise = undefined;
-}
-
 function readPositiveIntegerEnv(primaryName: string, legacyName: string, fallback: number): number {
   const parsed = Number(cbPlusEnv(primaryName, legacyName) ?? fallback);
   return Number.isFinite(parsed) && parsed > 0
@@ -2547,7 +2478,7 @@ function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-export function buildCostamarPrewarmRequest(now = new Date()): SearchRequest {
+function buildCostamarPrewarmRequest(now = new Date()): SearchRequest {
   const departureOffsetDays = readPositiveIntegerEnv(
     "CBPLUS_PREWARM_DEPARTURE_OFFSET_DAYS",
     "COSTAMAR_PREWARM_DEPARTURE_OFFSET_DAYS",
@@ -3532,7 +3463,7 @@ function isCostamarB2bUrlAllowed(url: string): boolean {
   }
 }
 
-export async function readCostamarJsonResponse<T = Record<string, unknown>>(
+async function readCostamarJsonResponse<T = Record<string, unknown>>(
   response: Response,
   action: string,
 ): Promise<T> {
@@ -3585,7 +3516,7 @@ async function getEngineMetadata(context: CostamarProviderContext): Promise<Cost
   return request;
 }
 
-export function buildCostamarSearchWarning(payload: CostamarSearchResponse): string | undefined {
+function buildCostamarSearchWarning(payload: CostamarSearchResponse): string | undefined {
   const status = payload.status;
   if (typeof status !== "number" || status < 400) {
     return undefined;
@@ -3706,8 +3637,6 @@ function normalizeItinerary(
   }
 
   const layoverMinutes = computeLayovers(segments);
-  const first = segments[0];
-  const last = segments[segments.length - 1];
 
   return {
     rawSegments,
@@ -3858,7 +3787,7 @@ function costamarRedirectResponseLooksValid(status: number, location: string, bo
   return status >= 200 && status < 400;
 }
 
-export async function verifyCostamarRedirectCandidate(
+async function verifyCostamarRedirectCandidate(
   request: SearchRequest,
   context: CostamarProviderContext,
 ): Promise<RedirectVerification> {
@@ -3913,7 +3842,7 @@ function redirectStateRequiresRefresh(state: CostamarRedirectState): boolean {
     || state === "blocked";
 }
 
-export function shouldWarnCostamarRedirectUnavailable(
+function shouldWarnCostamarRedirectUnavailable(
   offerCount: number,
   verification: RedirectVerification,
 ): boolean {
@@ -4015,7 +3944,7 @@ export function buildCostamarPurchasePaths(
   ];
 }
 
-export function buildCostamarBrandedSearchUrl(
+function buildCostamarBrandedSearchUrl(
   request: SearchRequest,
   context: CostamarProviderContext,
 ): string {
@@ -4104,7 +4033,7 @@ export function isAllowedCostamarBrandedSearchLocation(
   });
 }
 
-export function mapCostamarRecommendationToOffer(
+function mapCostamarRecommendationToOffer(
   recommendation: CostamarRecommendation,
   request: SearchRequest,
   context: CostamarProviderContext,
@@ -4317,7 +4246,7 @@ async function searchRecommendations(
   };
 }
 
-export async function searchLocalCostamarExact(
+async function searchLocalCostamarExact(
   request: SearchRequest,
   providerContext?: ProviderContext,
 ): Promise<ProviderSearchResult> {
@@ -4378,7 +4307,7 @@ function enumerateRangeRequests(request: SearchRequest): SearchRequest[] {
   return enumerateUsefulFlexibleRequests(request);
 }
 
-export async function searchLocalCostamarRange(
+async function searchLocalCostamarRange(
   request: SearchRequest,
   providerContext?: ProviderContext,
 ): Promise<ProviderSearchResult> {
@@ -4538,7 +4467,7 @@ function spansExactFlexibleWindow(start?: string, end?: string): boolean {
   return Boolean(start && end && diffDays(start, end) === 6);
 }
 
-export function matchesCostamarNativeFlexibleWindow(request: SearchRequest): boolean {
+function matchesCostamarNativeFlexibleWindow(request: SearchRequest): boolean {
   const leg = request.legs[0];
   if (request.tripType !== "round-trip") {
     return false;
@@ -4757,16 +4686,7 @@ export async function resolveLocalCostamarMatrixProgressive(
   };
 }
 
-export async function buildLocalCostamarMatrix(
-  request: SearchRequest,
-  providerContext: ProviderContext | undefined,
-  providerMeta: ProviderMeta,
-): Promise<MatrixResponse> {
-  const draft = createLocalCostamarMatrixDraft(request, providerMeta);
-  return resolveLocalCostamarMatrixProgressive(request, providerContext, draft);
-}
-
-export function mapCostamarLocationSuggestion(
+function mapCostamarLocationSuggestion(
   entry: CostamarAutocompleteAirport,
 ): LocationSuggestion | undefined {
   const code = entry.code?.trim().toUpperCase();

@@ -1,4 +1,4 @@
-import { IATA_LOCATION_CODES, normalizeIataCode } from "./location-display";
+import { normalizeIataCode } from "./location-display";
 
 /*
  * The clock each IATA code keeps.
@@ -112,13 +112,6 @@ const IATA_TIME_ZONES: Record<string, string> = {
   YVR: "America/Vancouver",
   YYZ: "America/Toronto",
 };
-
-/** Every code the clock catalogue answers for, so a check reads the map. */
-export const IATA_TIME_ZONE_CODES = Object.keys(IATA_TIME_ZONES);
-
-/** The two catalogues are one list read twice; the suite holds them to it. */
-export const IATA_LOCATION_CODES_WITHOUT_TIME_ZONE = IATA_LOCATION_CODES
-  .filter((code) => !IATA_TIME_ZONES[code]);
 
 export function timeZoneForIataCode(code?: string): string | undefined {
   return IATA_TIME_ZONES[normalizeIataCode(code)];

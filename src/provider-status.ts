@@ -1,7 +1,7 @@
 import type { ProviderId } from "./core/types";
 import { PROVIDER_LABELS } from "./core/offer-grouping";
 
-export interface ProviderStatusDefinition {
+interface ProviderStatusDefinition {
   readonly id: ProviderId;
   readonly label: string;
 }
@@ -20,23 +20,23 @@ export const PROVIDER_STATUS_DEFINITIONS: readonly ProviderStatusDefinition[] =
     Object.freeze({ id: "costamar", label: PROVIDER_LABELS.costamar }),
   ]);
 
-export const PROVIDER_STATUS_STATES = Object.freeze([
+const PROVIDER_STATUS_STATES = Object.freeze([
   "unknown",
   "checking",
   "ready",
   "degraded",
 ] as const);
 
-export type ProviderStatusState = (typeof PROVIDER_STATUS_STATES)[number];
+type ProviderStatusState = (typeof PROVIDER_STATUS_STATES)[number];
 
-export const PROVIDER_STATUS_EVIDENCE = Object.freeze([
+const PROVIDER_STATUS_EVIDENCE = Object.freeze([
   "prewarm",
   "search",
 ] as const);
 
-export type ProviderStatusEvidence = (typeof PROVIDER_STATUS_EVIDENCE)[number];
+type ProviderStatusEvidence = (typeof PROVIDER_STATUS_EVIDENCE)[number];
 
-export const PROVIDER_DEGRADED_REASON_CODES = Object.freeze([
+const PROVIDER_DEGRADED_REASON_CODES = Object.freeze([
   "authentication_required",
   "provider_unavailable",
   "timeout",
@@ -45,10 +45,10 @@ export const PROVIDER_DEGRADED_REASON_CODES = Object.freeze([
   "provider_error",
 ] as const);
 
-export type ProviderDegradedReasonCode =
+type ProviderDegradedReasonCode =
   (typeof PROVIDER_DEGRADED_REASON_CODES)[number];
 
-export const PROVIDER_STATUS_REASON_CODES = Object.freeze([
+const PROVIDER_STATUS_REASON_CODES = Object.freeze([
   "not_configured",
   "not_checked",
   "check_in_progress",
@@ -57,10 +57,10 @@ export const PROVIDER_STATUS_REASON_CODES = Object.freeze([
   ...PROVIDER_DEGRADED_REASON_CODES,
 ] as const);
 
-export type ProviderStatusReasonCode =
+type ProviderStatusReasonCode =
   (typeof PROVIDER_STATUS_REASON_CODES)[number];
 
-export interface ProviderStatusSnapshot {
+interface ProviderStatusSnapshot {
   readonly id: ProviderId;
   readonly label: string;
   readonly configured: boolean;
@@ -71,9 +71,9 @@ export interface ProviderStatusSnapshot {
   readonly stale: boolean;
 }
 
-export type ProviderStatusClock = () => number;
+type ProviderStatusClock = () => number;
 
-export interface ProviderStatusTrackerOptions {
+interface ProviderStatusTrackerOptions {
   readonly clock?: ProviderStatusClock;
   readonly ttlMs?: number;
   readonly configuredProviderIds?: readonly ProviderId[];
@@ -87,7 +87,7 @@ interface ProviderStatusRecord {
   readonly observedAtMs: number | null;
 }
 
-export const DEFAULT_PROVIDER_STATUS_TTL_MS = 5 * 60_000;
+const DEFAULT_PROVIDER_STATUS_TTL_MS = 5 * 60_000;
 
 /**
  * How long a `ready` observation stays trusted, given whatever refreshes it.

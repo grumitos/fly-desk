@@ -177,7 +177,7 @@ export function wallClockMinutesBetween(
   return minutes > 0 ? minutes : undefined;
 }
 
-export interface SegmentTiming {
+interface SegmentTiming {
   origin?: string;
   destination?: string;
   departureAt?: string;

@@ -1,4 +1,4 @@
-import { materializeSearchResponse } from "./core/orchestrator";
+import { materializeSearchResponse } from "./core/search-response";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
 import { buildOfferScheduleGroups } from "./core/offer-schedule-groups";
 import {
@@ -39,7 +39,6 @@ import {
   createLocalAgilMatrixDraft,
   resolveLocalAgilMatrixProgressive,
   resolveLocalAgilRangeProgressive,
-  resolveAgilChromeLaunchOptions,
   suggestLocalAgilLocations,
 } from "./local-agil";
 import {
@@ -57,7 +56,6 @@ import {
   resolveLocalCostamarRangeProgressive,
   suggestLocalCostamarLocations,
 } from "./local-costamar";
-import { openUrlLocally } from "./local-browser";
 import {
   getCostamarTokenStatus,
   normalizeCostamarProviderContext,
@@ -127,12 +125,6 @@ interface QuotationPayload extends SessionPayload {
   migrationPlan?: boolean;
 }
 
-interface LocalOpenPayload {
-  url?: string;
-  preferredBrowser?: "chrome" | "default";
-}
-
-type LocalOpenUrlOpener = typeof openUrlLocally;
 interface QuotationSource {
   sessionId: string;
   offerId: string;
@@ -141,15 +133,6 @@ interface QuotationSource {
   offer: CanonicalOffer;
   kind: "search" | "matrix";
   cellKey?: string;
-}
-
-type QuotationOfferValidator = (source: QuotationSource) => Promise<CanonicalOffer | undefined>;
-
-let localOpenUrlOpener: LocalOpenUrlOpener = openUrlLocally;
-let quotationOfferValidatorOverride: QuotationOfferValidator | undefined;
-
-export function setQuotationOfferValidatorForTests(validator?: QuotationOfferValidator): void {
-  quotationOfferValidatorOverride = validator;
 }
 
 interface ProgressiveSearchAdapter {
@@ -184,7 +167,7 @@ interface ProviderSearchState {
   fresh: boolean;
 }
 
-export function mergeProviderSearchProgress(
+function mergeProviderSearchProgress(
   current: ProviderSearchState | undefined,
   update: ProviderSearchResult,
 ): ProviderSearchState {
@@ -205,7 +188,7 @@ export function mergeProviderSearchProgress(
   };
 }
 
-export interface ProviderMatrixState {
+interface ProviderMatrixState {
   response: MatrixResponse;
   completed: boolean;
   cellIndex: Map<string, number>;
@@ -234,8 +217,8 @@ const PROGRESSIVE_ADAPTERS: Record<ProviderId, ProgressiveSearchAdapter> = {
   },
 };
 
-export const SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
-export const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
+const SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS = 4 * 60 * 60 * 1000;
+const SEARCH_REVALIDATION_CACHE_TTL_MS = (() => {
   const raw = Number(process.env.SEARCH_REVALIDATION_CACHE_TTL_MS ?? SEARCH_REVALIDATION_CACHE_DEFAULT_TTL_MS);
   return Number.isFinite(raw) && raw >= 0
     ? raw
@@ -302,7 +285,7 @@ function progressSyncKey(kind: "search" | "matrix", jobId: string): string {
  * at most every `intervalMs`, and only on a geometric milestone — 1, 2, 4, 8 —
  * so seven GDS replies are three publishes, not seven.
  */
-export function createTrailingProgressSync(
+function createTrailingProgressSync(
   sync: () => void,
   intervalMs = SEARCH_PROGRESS_SYNC_INTERVAL_MS,
 ): ProgressSyncController {
@@ -654,7 +637,7 @@ function currentSearchMeta(searchMeta: SearchMeta): SearchMeta {
   };
 }
 
-export function shouldPersistProgressSnapshot(lastPersistedCount: number, currentCount: number): boolean {
+function shouldPersistProgressSnapshot(lastPersistedCount: number, currentCount: number): boolean {
   return currentCount > 0
     && (lastPersistedCount <= 0 || currentCount >= lastPersistedCount * 2);
 }
@@ -802,7 +785,7 @@ function pickAggregatedMatrixCell(
   return selected;
 }
 
-export function materializeAggregatedMatrixResponse(
+function materializeAggregatedMatrixResponse(
   request: SearchRequest,
   providerIds: ProviderId[],
   states: Map<ProviderId, ProviderMatrixState>,
@@ -908,7 +891,7 @@ export function materializeAggregatedMatrixResponse(
   };
 }
 
-export function buildMatrixCellIndex(cells: readonly MatrixCell[]): Map<string, number> {
+function buildMatrixCellIndex(cells: readonly MatrixCell[]): Map<string, number> {
   const index = new Map<string, number>();
   cells.forEach((cell, position) => {
     if (!index.has(cell.key)) {
@@ -918,7 +901,7 @@ export function buildMatrixCellIndex(cells: readonly MatrixCell[]): Map<string, 
   return index;
 }
 
-export function updateMatrixDraftCell(
+function updateMatrixDraftCell(
   response: MatrixResponse,
   cell: MatrixCell,
   cellIndex: ReadonlyMap<string, number>,
@@ -1101,16 +1084,11 @@ async function suggestLocationsForProvider(
   query: string,
   limit: number,
 ): Promise<Awaited<ReturnType<typeof suggestLocalAgilLocations>>> {
-  return runtime.locationSuggestions.getOrLoad(sessionId, providerId, query, limit, async () => {
-    const provider = runtime.orchestrator.getProvider(providerId);
-    if (provider?.suggestLocations) {
-      return provider.suggestLocations(query, limit);
-    }
-
-    return providerId === "costamar"
+  return runtime.locationSuggestions.getOrLoad(sessionId, providerId, query, limit, () => (
+    providerId === "costamar"
       ? suggestLocalCostamarLocations(query, limit)
-      : suggestLocalAgilLocations(query, limit);
-  });
+      : suggestLocalAgilLocations(query, limit)
+  ));
 }
 
 function mergeLocationSuggestions(
@@ -1226,7 +1204,7 @@ export function prepareOffersForQuotation(
   });
 }
 
-export async function resolveQuotationReadyOffers(
+async function resolveQuotationReadyOffers(
   request: SearchRequest,
   offers: CanonicalOffer[],
   resolveRate: QuotationRateResolver = (offer) => resolveStandaloneUsdToPenRateInfo(offer),
@@ -1245,7 +1223,7 @@ export async function resolveQuotationReadyOffers(
   return prepareOffersForQuotation(request, offers.map((offer) => ({ ...offer, usdToPenRate: rateInfo.rate })));
 }
 
-export function createSharedQuotationRateResolver(
+function createSharedQuotationRateResolver(
   lookup: (offer: CanonicalOffer) => Promise<QuotationUsdToPenRateInfo | undefined> = resolveStandaloneUsdToPenRateInfo,
 ): QuotationRateResolver {
   let pending: Promise<QuotationUsdToPenRateInfo | undefined> | undefined;
@@ -1497,10 +1475,9 @@ function validateQuotationOfferOnce(source: QuotationSource): Promise<CanonicalO
     return inFlight;
   }
 
-  const validator = quotationOfferValidatorOverride ?? validateQuotationOfferAgainstProvider;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   const validation = Promise.race([
-    validator(source).catch(() => undefined),
+    validateQuotationOfferAgainstProvider(source).catch(() => undefined),
     new Promise<undefined>((resolve) => {
       deadline = setTimeout(resolve, QUOTATION_VALIDATION_DEADLINE_MS, undefined);
     }),
@@ -1743,24 +1720,6 @@ function handleWebLogout(request: Request, options: { jsonResponse?: boolean } =
   return response;
 }
 
-function validateLocalOpenUrl(input: string): URL | undefined {
-  try {
-    const candidate = new URL(input);
-    const allowedHosts = new Set([
-      "www.agilsmart.com",
-      "agilsmart.com",
-    ]);
-
-    if (candidate.protocol !== "https:" || !allowedHosts.has(candidate.hostname.toLowerCase())) {
-      return undefined;
-    }
-
-    return candidate;
-  } catch {
-    return undefined;
-  }
-}
-
 async function readPayload<T>(request: Request): Promise<T> {
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.includes("application/json")) {
@@ -1797,7 +1756,7 @@ function parseSinceRevision(value: string | null): number | undefined {
  * route with slow providers is exactly that — reached the agent as an error
  * while the runner was still working.
  */
-export const JOB_POLL_MAX_WAIT_MS = 20_000;
+const JOB_POLL_MAX_WAIT_MS = 20_000;
 
 function parseJobPollWaitMs(value: string | null): number {
   if (!value) {
@@ -3380,32 +3339,6 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
         },
       },
     );
-  }
-
-  if (request.method === "POST" && url.pathname === "/api/local/open-url") {
-    if (!isTrustedLocalRequest(request)) {
-      return json({ error: "This local browser action is only available on localhost." }, { status: 403 });
-    }
-
-    const payload = await readPayload<LocalOpenPayload>(request);
-    const targetUrl = validateLocalOpenUrl(stringValue(payload.url));
-    if (!targetUrl) {
-      return json({ error: "Unsupported URL for local browser launch." }, { status: 400 });
-    }
-
-    const preferredBrowser = payload.preferredBrowser === "default" ? "default" : "chrome";
-    const launcher = await localOpenUrlOpener(
-      targetUrl.toString(),
-      preferredBrowser,
-      preferredBrowser === "chrome" ? resolveAgilChromeLaunchOptions() : undefined,
-    );
-
-    return json({
-      ok: true,
-      localOnly: true,
-      launcher: launcher.launcher,
-      url: targetUrl.toString(),
-    });
   }
 
   if (request.method === "POST" && url.pathname === "/api/search") {

@@ -59,10 +59,10 @@ function persistedRestoreBudgetBytes(configured?: number): number {
     : PERSISTED_SEARCH_CACHE_RESTORE_DEFAULT_BUDGET_BYTES;
 }
 const COMPLETED_SEARCH_SESSION_RESIDENT_DEFAULT_BUDGET_BYTES = 128 * 1024 * 1024;
-export const COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS = 5_000;
+const COMPLETED_SEARCH_SESSION_RESIDENT_GRACE_MS = 5_000;
 /* The write debounce. Named so a test can advance exactly one debounce rather
    than sleep for "long enough". */
-export const SESSION_STORE_PERSIST_DEBOUNCE_MS = 180;
+const SESSION_STORE_PERSIST_DEBOUNCE_MS = 180;
 /*
  * Durability policy, half two: this is the age a finished job may reach before
  * a sweep takes it, and nothing else. It is not a switch for whether the desk
@@ -130,7 +130,7 @@ const RESTORE_INDEX_BUILD_DELAY_MS = 10_000;
  * because these are rowid tables: a secondary index carries the rowid, not the
  * TEXT primary key.
  */
-export const RESTORE_INDEX_STATEMENTS: readonly string[] = [
+const RESTORE_INDEX_STATEMENTS: readonly string[] = [
   "CREATE INDEX IF NOT EXISTS idx_search_jobs_restore ON search_jobs (idle_at_ms, id, payload_bytes)",
   "CREATE INDEX IF NOT EXISTS idx_matrix_jobs_restore ON matrix_jobs (idle_at_ms, id, payload_bytes)",
   "CREATE INDEX IF NOT EXISTS idx_purchase_paths_restore ON purchase_paths (session_id, payload_bytes)",
@@ -144,7 +144,7 @@ export const RESTORE_INDEX_STATEMENTS: readonly string[] = [
  * access must be covering. It is one query over three tables whose rows are
  * the cache, so a plan that fetches a row is a plan that reads a payload.
  */
-export const PERSISTED_RESTORE_SELECT_SQL = `
+const PERSISTED_RESTORE_SELECT_SQL = `
   SELECT
     search_jobs.id,
     'search' AS kind,
@@ -171,7 +171,7 @@ export const PERSISTED_RESTORE_SELECT_SQL = `
   ORDER BY idleAtMs DESC, kind ASC, id ASC
 `;
 
-export const PERSISTED_SWEEP_STATEMENTS: readonly string[] = [
+const PERSISTED_SWEEP_STATEMENTS: readonly string[] = [
   /*
    * The jobs go first and their purchase paths follow as orphans, which is the
    * same set in a cheaper order. Deleting the paths first meant naming the
@@ -226,7 +226,7 @@ interface SearchSessionMetadata {
   error?: string;
 }
 
-export interface SearchSessionRecord {
+interface SearchSessionRecord {
   id: string;
   request: SearchRequest;
   providerContext?: ProviderContext;
@@ -318,7 +318,7 @@ interface StoreDiagnostics {
   };
 }
 
-export interface CancelRunningJobsSummary {
+interface CancelRunningJobsSummary {
   searchJobs: number;
   matrixJobs: number;
 }
@@ -330,7 +330,7 @@ interface PurgeSummary {
   purchasePaths: number;
 }
 
-export type SessionStoreTimerHandle = unknown;
+type SessionStoreTimerHandle = unknown;
 
 /*
  * The seam the store reads time through.
@@ -347,7 +347,7 @@ export type SessionStoreTimerHandle = unknown;
  * `nextEligibleAt - now`, so a caller that could move one without the other
  * would arm timers against a deadline that no longer means anything.
  */
-export interface SessionStoreScheduler {
+interface SessionStoreScheduler {
   now(): number;
   setTimeout(callback: () => void, delayMs: number): SessionStoreTimerHandle;
   clearTimeout(handle: SessionStoreTimerHandle): void;

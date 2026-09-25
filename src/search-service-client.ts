@@ -40,7 +40,7 @@ function isLoopbackHostname(hostname: string): boolean {
     || normalized === "0:0:0:0:0:0:0:1";
 }
 
-export function resolveSearchServiceBaseUrl(input = process.env.FLY_DESK_SEARCH_SERVICE_URL): URL | undefined {
+function resolveSearchServiceBaseUrl(input = process.env.FLY_DESK_SEARCH_SERVICE_URL): URL | undefined {
   const raw = input?.trim();
   if (!raw) {
     return undefined;

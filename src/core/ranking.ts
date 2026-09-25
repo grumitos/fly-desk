@@ -55,7 +55,7 @@ function compareOffersByDate(left: CanonicalOffer, right: CanonicalOffer): numbe
  * instant would order the server and the browser differently. A departure that
  * cannot be read sinks to the end instead of leading as a 0 would.
  */
-export function offerDepartureTimestamp(offer: CanonicalOffer): number {
+function offerDepartureTimestamp(offer: CanonicalOffer): number {
   const outbound = offer.itineraries.find((itinerary: Itinerary) => itinerary.direction === "outbound")
     ?? offer.itineraries[0];
   return wallClockMs(outbound?.segments[0]?.departureAt) ?? Number.POSITIVE_INFINITY;

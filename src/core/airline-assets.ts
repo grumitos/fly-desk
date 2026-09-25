@@ -53,8 +53,6 @@ export const AIRLINE_LOGO_CODES = [
   "Y4",
 ] as const;
 
-const AIRLINE_LOGO_CODE_SET = new Set<string>(AIRLINE_LOGO_CODES);
-
 export function normalizeAirlineAssetCode(value: unknown): string {
   const normalized = String(value ?? "").trim().toUpperCase();
   return /^[A-Z0-9]{2}$/.test(normalized) ? normalized : "";
@@ -73,9 +71,4 @@ export function normalizeAirlineAssetCode(value: unknown): string {
 export function airlineLogoAssetPath(value: unknown): string {
   const code = normalizeAirlineAssetCode(value);
   return code ? `/assets/airline-icons/${code}.png` : "";
-}
-
-/** Whether the release itself carries the mark, with nothing to fetch. */
-export function isBundledAirlineLogoCode(value: unknown): boolean {
-  return AIRLINE_LOGO_CODE_SET.has(normalizeAirlineAssetCode(value));
 }

@@ -4,19 +4,18 @@ import { join } from "node:path";
 import {
   CostamarProviderContext,
   CostamarProviderConfigInput,
-  ProviderConfigInput,
   ProviderContext,
   ProviderId,
 } from "./core/types";
 
-export const DEFAULT_COSTAMAR_API_BASE_URL = "https://air-search-service-zneith.zdev.tech/v2";
-export const DEFAULT_COSTAMAR_BRAND_BASE_URL = "https://flights.zdev.tech/vuelos/pro";
-export const DEFAULT_COSTAMAR_ENGINE_BASE_URL = "https://api-zneith.zdev.tech/api-engine";
-export const DEFAULT_COSTAMAR_MARKUP_BASE_URL = "https://commons-service-b-zneith.zdev.tech/markup-service";
-export const DEFAULT_COSTAMAR_TERMINAL_ID = "0721808110";
+const DEFAULT_COSTAMAR_API_BASE_URL = "https://air-search-service-zneith.zdev.tech/v2";
+const DEFAULT_COSTAMAR_BRAND_BASE_URL = "https://flights.zdev.tech/vuelos/pro";
+const DEFAULT_COSTAMAR_ENGINE_BASE_URL = "https://api-zneith.zdev.tech/api-engine";
+const DEFAULT_COSTAMAR_MARKUP_BASE_URL = "https://commons-service-b-zneith.zdev.tech/markup-service";
+const DEFAULT_COSTAMAR_TERMINAL_ID = "0721808110";
 const DEFAULT_CHROME_USER_DATA_DIR = join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 const COSTAMAR_SESSION_CACHE_TTL_MS = 30000;
-export const COSTAMAR_TOKEN_REFRESH_WINDOW_MS = 2 * 60 * 1000;
+const COSTAMAR_TOKEN_REFRESH_WINDOW_MS = 2 * 60 * 1000;
 const COSTAMAR_BRANDED_URL_REGEX =
   /https:\/\/(?:booking\.clickandbook\.com\/vuelos|flights\.zdev\.tech\/vuelos\/pro)\/b\/[^\s\x00?]+\?[^\s\x00]*/gi;
 const COSTAMAR_BRANDED_URL_ENCODED_REGEX =
@@ -40,7 +39,7 @@ interface CostamarSessionCandidate {
   source: string;
 }
 
-export type CostamarTokenIssue =
+type CostamarTokenIssue =
   | "missing"
   | "terminal-mismatch"
   | "expired"
@@ -48,7 +47,7 @@ export type CostamarTokenIssue =
   | "opaque"
   | "usable";
 
-export interface CostamarTokenInspection {
+interface CostamarTokenInspection {
   token: string;
   hasToken: boolean;
   opaque: boolean;
@@ -66,7 +65,6 @@ let cachedCostamarSessions:
   | { readAtMs: number; candidates: CostamarSessionCandidate[] }
   | undefined;
 const runtimeCostamarSessionCandidates = new Map<string, CostamarSessionCandidate>();
-const pendingCostamarProviderContextResolutions = new Map<string, Promise<CostamarProviderContext>>();
 let costamarChromeSessionScanCountForTests = 0;
 
 function costamarCdpTabScanEnabled(): boolean {
@@ -166,7 +164,7 @@ function decodeCostamarTokenTerminalId(token: string): string | undefined {
   return terminalId?.trim() || undefined;
 }
 
-export function sanitizeCostamarToken(token: string | undefined): string {
+function sanitizeCostamarToken(token: string | undefined): string {
   const normalized = token?.trim() ?? "";
   if (!normalized || normalized.length > COSTAMAR_TOKEN_MAX_LENGTH) {
     return "";
@@ -196,7 +194,7 @@ export function sanitizeCostamarToken(token: string | undefined): string {
   return normalized.match(COSTAMAR_TOKEN_SAFE_PREFIX_REGEX)?.[0] ?? "";
 }
 
-export function costamarTokenMatchesTerminal(
+function costamarTokenMatchesTerminal(
   token: string | undefined,
   terminalId: string | undefined,
 ): boolean {
@@ -444,7 +442,7 @@ function readChromeProfileCandidates(userDataDir: string, includeConfiguredOnly 
   return candidates;
 }
 
-export function costamarTokenNearExpiry(
+function costamarTokenNearExpiry(
   token: string | undefined,
   terminalId: string | undefined,
   nowMs = Date.now(),
@@ -926,17 +924,6 @@ function maybeRefreshCostamarSessionCandidate(
   return readCostamarSessionCandidateFromChrome(terminalId, { bypassCache: true }) ?? candidate;
 }
 
-export function resetCostamarSessionCacheForTests(): void {
-  cachedCostamarSessions = undefined;
-  runtimeCostamarSessionCandidates.clear();
-  pendingCostamarProviderContextResolutions.clear();
-  costamarChromeSessionScanCountForTests = 0;
-}
-
-export function getCostamarChromeSessionScanCountForTests(): number {
-  return costamarChromeSessionScanCountForTests;
-}
-
 export function resolveProviderId(providerId?: ProviderId): ProviderId {
   return providerId === "costamar" ? "costamar" : "agil-local";
 }
@@ -1019,7 +1006,7 @@ export function normalizeCostamarProviderContext(
   };
 }
 
-export function resolveCostamarProviderContext(
+function resolveCostamarProviderContext(
   input?: CostamarProviderConfigInput,
 ): CostamarProviderContext {
   const normalized = normalizeCostamarProviderContext(input);
@@ -1048,33 +1035,6 @@ export function resolveCostamarProviderContext(
       ? sessionCandidate?.token || compatibleToken
       : compatibleToken || sessionCandidate?.token,
   });
-}
-
-function resolveCostamarProviderContextDedupKey(
-  input?: CostamarProviderConfigInput,
-): string {
-  const normalized = normalizeCostamarProviderContext(input);
-  return `${normalized.terminalId}::${normalized.lang}::${normalized.token}`;
-}
-
-export async function resolveCostamarProviderContextInFlight(
-  input?: CostamarProviderConfigInput,
-): Promise<CostamarProviderContext> {
-  const key = resolveCostamarProviderContextDedupKey(input);
-  const pending = pendingCostamarProviderContextResolutions.get(key);
-  if (pending) {
-    return pending;
-  }
-
-  const resolution = Promise.resolve()
-    .then(() => resolveCostamarProviderContext(input))
-    .finally(() => {
-      if (pendingCostamarProviderContextResolutions.get(key) === resolution) {
-        pendingCostamarProviderContextResolutions.delete(key);
-      }
-    });
-  pendingCostamarProviderContextResolutions.set(key, resolution);
-  return resolution;
 }
 
 export function resolveLatestCostamarProviderContext(
@@ -1108,37 +1068,11 @@ export function resolveLatestCostamarProviderContext(
   });
 }
 
-export function buildProviderContext(
-  providerId: ProviderId,
-  providerConfig?: ProviderConfigInput,
-): ProviderContext | undefined {
-  if (providerId !== "costamar") {
-    return undefined;
-  }
-
-  return {
-    costamar: resolveCostamarProviderContext(providerConfig?.costamar),
-  };
-}
-
-export async function buildProviderContextAsync(
-  providerId: ProviderId,
-  providerConfig?: ProviderConfigInput,
-): Promise<ProviderContext | undefined> {
-  if (providerId !== "costamar") {
-    return undefined;
-  }
-
-  return {
-    costamar: await resolveCostamarProviderContextInFlight(providerConfig?.costamar),
-  };
-}
-
 export function getCostamarProviderContext(providerContext?: ProviderContext): CostamarProviderContext {
   return resolveCostamarProviderContext(providerContext?.costamar);
 }
 
-export interface CostamarTokenStatus {
+interface CostamarTokenStatus {
   terminalId: string;
   hasToken: boolean;
   tokenUsable: boolean;

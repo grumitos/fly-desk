@@ -3,9 +3,9 @@ import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 import { LocationSuggestion, ProviderId } from "./core/types";
 
-export const LOCATION_SUGGESTION_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const LOCATION_SUGGESTION_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const LOCATION_SUGGESTION_CACHE_MAX_ENTRIES_PER_SESSION = 80;
-export const LOCATION_SUGGESTION_CACHE_MAX_ENTRIES = 1000;
+const LOCATION_SUGGESTION_CACHE_MAX_ENTRIES = 1000;
 export const LOCATION_SUGGESTION_CACHE_MAX_QUERY_CHARS = 120;
 
 interface CacheEntry {

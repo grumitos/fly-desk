@@ -22,7 +22,7 @@ export interface ProviderSearchResult {
   incremental?: boolean;
 }
 
-export interface ProviderSearchWorkerInput {
+interface ProviderSearchWorkerInput {
   kind: "exact" | "range";
   providerId: ProviderId;
   request: SearchRequest;
@@ -32,7 +32,7 @@ export interface ProviderSearchWorkerInput {
   shouldContinue?: () => boolean;
 }
 
-export interface ProviderMatrixWorkerInput {
+interface ProviderMatrixWorkerInput {
   providerId: ProviderId;
   request: SearchRequest;
   providerContext?: ProviderContext;
@@ -122,10 +122,6 @@ function resolveBunExecutable(options: BunExecutableResolverOptions = {}): strin
   ];
 
   return candidates.find((candidate) => candidate && pathExists(candidate)) ?? "bun";
-}
-
-export function resolveSearchWorkerBunExecutableForTests(options: BunExecutableResolverOptions): string {
-  return resolveBunExecutable(options);
 }
 
 export function searchWorkerPathAvailable(): boolean {
@@ -306,13 +302,13 @@ function runInWorker(
  * process per search throws away every time.
  * ------------------------------------------------------------------------ */
 
-export interface SearchWorkerChildStdin {
+interface SearchWorkerChildStdin {
   write: (chunk: Uint8Array) => unknown;
   end: () => unknown;
   flush?: () => unknown;
 }
 
-export interface SearchWorkerChild {
+interface SearchWorkerChild {
   readonly pid?: number;
   readonly stdin: SearchWorkerChildStdin;
   readonly stdout: ReadableStream<Uint8Array>;
@@ -321,9 +317,9 @@ export interface SearchWorkerChild {
   kill: () => void;
 }
 
-export type SearchWorkerSpawn = (providerId: ProviderId) => SearchWorkerChild;
+type SearchWorkerSpawn = (providerId: ProviderId) => SearchWorkerChild;
 
-export interface SearchWorkerPool {
+interface SearchWorkerPool {
   run: (
     input: ProviderSearchWorkerRequest,
     onMessage: (message: ProviderSearchWorkerMessage, child: WorkerHandle) => void,
@@ -578,10 +574,6 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
   };
 }
 
-export function createSearchWorkerPoolForTests(options: SearchWorkerPoolOptions): SearchWorkerPool {
-  return createSearchWorkerPool(options);
-}
-
 function spawnSearchWorkerProcess(): SearchWorkerChild {
   const workerPath = resolveWorkerPath();
   if (!searchWorkerProcessesEnabled() || !workerPath) {
@@ -632,10 +624,6 @@ export async function prewarmProviderInWorker(providerId: ProviderId): Promise<v
     throw new Error("Search worker processes are disabled or unavailable.");
   }
   await getDefaultPool().prewarm(providerId);
-}
-
-export function searchWorkerPoolPidForTests(providerId: ProviderId): number | undefined {
-  return defaultPool?.workerPidForTests(providerId);
 }
 
 function runProviderWorkerJob(

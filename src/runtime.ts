@@ -1,7 +1,3 @@
-import { loadRuntimeConfig } from "./config";
-import { LocalAgilProvider } from "./core/agil-provider";
-import { LocalCostamarProvider } from "./core/costamar-provider";
-import { SearchOrchestrator } from "./core/orchestrator";
 import { LocationSuggestionCacheStore } from "./location-suggestion-cache";
 import { LocationUsageStore } from "./location-usage-store";
 import { resolvePersistPath } from "./runtime-paths";
@@ -15,7 +11,6 @@ import {
 import { providerPrewarmEnabled, providerPrewarmIntervalMs } from "./provider-prewarm";
 
 export interface RuntimeServices {
-  orchestrator: SearchOrchestrator;
   locationSuggestions: LocationSuggestionCacheStore;
   locationUsage: LocationUsageStore;
   providerStatus: ProviderStatusTracker;
@@ -43,12 +38,7 @@ export function getRuntime(): RuntimeServices {
     return runtime;
   }
 
-  loadRuntimeConfig();
   runtime = {
-    orchestrator: new SearchOrchestrator([
-      new LocalAgilProvider(),
-      new LocalCostamarProvider(),
-    ]),
     locationSuggestions: new LocationSuggestionCacheStore({
       dbPath: resolvePersistPath(
         "FLY_DESK_LOCATION_SUGGESTION_DB_PATH",

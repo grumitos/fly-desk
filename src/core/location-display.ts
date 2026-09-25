@@ -113,13 +113,6 @@ const IATA_LOCATION_FALLBACKS: Record<string, { city: string; countryCode: strin
   YYZ: { city: "Toronto", countryCode: "CA" },
 };
 
-/**
- * Every code the catalogue answers for, so a check over it reads the map
- * itself. Restated as a literal somewhere else, the two drift and the entry
- * nobody re-read is the one that reaches a quotation wrong.
- */
-export const IATA_LOCATION_CODES = Object.keys(IATA_LOCATION_FALLBACKS);
-
 export function normalizeIataCode(code?: string): string {
   return String(code ?? "").trim().toUpperCase();
 }

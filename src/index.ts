@@ -1,4 +1,4 @@
-import { loadRuntimeConfig, resolveServerHost } from "./config";
+import { resolveServerHost } from "./config";
 import {
   getRuntime,
   getRuntimeIfInitialized,
@@ -40,7 +40,6 @@ function delay(ms: number): Promise<void> {
 
 async function main() {
   const startupStart = startPerfTimer();
-  loadRuntimeConfig();
   const delegatesSearch = isSearchServiceDelegationConfigured();
   const runtimeStart = startPerfTimer();
   const startupRuntime = delegatesSearch ? undefined : getRuntime();

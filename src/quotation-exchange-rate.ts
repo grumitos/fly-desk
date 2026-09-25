@@ -19,7 +19,7 @@ interface FetchExternalUsdToPenRateOptions {
 const AGIL_RATE_SOURCE_LABEL = "Agil";
 const EXTERNAL_RATE_SOURCE_LABEL = "SUNAT";
 const PERSISTED_RATE_SOURCE_LABEL = "Cache local";
-export const QUOTATION_RATE_TIMEOUT_DEFAULT_MS = 1_500;
+const QUOTATION_RATE_TIMEOUT_DEFAULT_MS = 1_500;
 const QUOTATION_RATE_TIMEOUT_MAX_MS = 10_000;
 
 type CachedUsdToPenRateInfo = QuotationUsdToPenRateInfo & {
@@ -112,7 +112,7 @@ function pickExternalRateInfo(payload: unknown, fallbackDate: string): Quotation
   );
 }
 
-export async function fetchExternalUsdToPenRateInfo(
+async function fetchExternalUsdToPenRateInfo(
   options: FetchExternalUsdToPenRateOptions = {},
 ): Promise<QuotationUsdToPenRateInfo | undefined> {
   try {
@@ -130,10 +130,6 @@ export async function fetchExternalUsdToPenRateInfo(
   } catch {
     return undefined;
   }
-}
-
-export async function fetchExternalUsdToPenRate(): Promise<number | undefined> {
-  return (await fetchExternalUsdToPenRateInfo())?.rate;
 }
 
 function loadPersistedUsdToPenRate(): void {
@@ -250,26 +246,4 @@ export async function resolveStandaloneUsdToPenRateInfo(
     ? buildQuotationUsdToPenRateInfo(await options.fetchExternalRate(), EXTERNAL_RATE_SOURCE_LABEL, currentDay)
     : await fetchExternalUsdToPenRateInfo({ fallbackDate: currentDay });
   return externalRateInfo ? rememberUsdToPenRate(externalRateInfo, now) : undefined;
-}
-
-export async function resolveStandaloneUsdToPenRate(
-  offer: CanonicalOffer,
-  options: ResolveQuotationUsdToPenRateOptions = {},
-): Promise<number | undefined> {
-  return (await resolveStandaloneUsdToPenRateInfo(offer, options))?.rate;
-}
-
-export function resetQuotationUsdToPenRateCacheForTests(
-  options: { preservePersisted?: boolean } = {},
-): void {
-  cachedUsdToPenRate = undefined;
-  persistedUsdToPenRateLoaded = false;
-
-  if (!options.preservePersisted) {
-    try {
-      rmSync(resolveQuotationUsdToPenRateCachePath(), { force: true });
-    } catch {
-      // Ignore cleanup failures in tests.
-    }
-  }
 }

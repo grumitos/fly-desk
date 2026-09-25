@@ -15,18 +15,18 @@ export interface ProviderSearchResult {
   incremental?: boolean;
 }
 
-export interface ProviderMatrixResult {
+interface ProviderMatrixResult {
   cells: MatrixCell[];
   warnings: string[];
   partial: boolean;
 }
 
-export interface PurchasePathResult {
+interface PurchasePathResult {
   paths: PurchasePath[];
   warnings: string[];
 }
 
-export interface ProviderExecutionContext {
+interface ProviderExecutionContext {
   providerContext?: ProviderContext;
 }
 

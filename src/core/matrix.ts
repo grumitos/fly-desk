@@ -1,6 +1,6 @@
 import { MatrixCell, MatrixResponse, SearchRequest } from "./types";
 
-export type LoadingMatrixCell = MatrixCell & {
+type LoadingMatrixCell = MatrixCell & {
   derivedRequest: SearchRequest;
   confidence: "loading";
 };

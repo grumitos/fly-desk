@@ -2,7 +2,7 @@ const DEFAULT_MAX_FAILURES = 5;
 const DEFAULT_WINDOW_MS = 15 * 60 * 1_000;
 const DEFAULT_MAX_CLIENTS = 1_024;
 
-export interface LoginAdmissionDecision {
+interface LoginAdmissionDecision {
   allowed: boolean;
   retryAfterSeconds?: number;
 }
@@ -13,7 +13,7 @@ interface LoginAdmissionOptions {
   maxClients?: number;
 }
 
-export class LoginAdmissionController {
+class LoginAdmissionController {
   private readonly maxFailures: number;
   private readonly windowMs: number;
   private readonly maxClients: number;

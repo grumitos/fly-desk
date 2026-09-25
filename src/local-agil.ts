@@ -1,7 +1,7 @@
 import { chmodSync, lstatSync, readFileSync, mkdirSync, mkdtempSync, existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import type { Browser, BrowserContext, Page } from "playwright";
+import type { Browser, BrowserContext } from "playwright";
 import {
   registerActiveTempArtifact,
   removePathWithRetries,
@@ -75,7 +75,7 @@ import { rankLocationSuggestions } from "./location-suggestions";
 import { recordProviderFirstHttpRequest } from "./provider-diagnostics";
 import { providerPublicFailureMessage } from "./provider-status";
 
-export interface BrowserStorageSnapshot {
+interface BrowserStorageSnapshot {
   tokenSearchFlight: string;
   userData: string;
   ip: string;
@@ -225,7 +225,7 @@ interface AgilCellQuote {
   offer: CanonicalOffer;
 }
 
-export interface AgilGeoTreeLocation {
+interface AgilGeoTreeLocation {
   city?: string;
   country?: string;
   country_id?: string;
@@ -238,7 +238,7 @@ export interface AgilGeoTreeLocation {
   city_code?: string;
 }
 
-export interface AgilLocationSuggestion {
+interface AgilLocationSuggestion {
   code: string;
   city: string;
   country: string;
@@ -396,22 +396,6 @@ function createAgilInflightLimiter(resolveLimit: () => number): AgilInflightLimi
 
 const agilSearchRequestLimiter = createAgilInflightLimiter(resolveAgilMaxInflightSearchRequests);
 
-export function resetAgilInflightLimiterForTests(): void {
-  agilSearchRequestLimiter.reset();
-}
-
-export function readAgilInflightLimiterStateForTests(): {
-  inFlight: number;
-  queued: number;
-  max: number;
-} {
-  return {
-    inFlight: agilSearchRequestLimiter.inFlight,
-    queued: agilSearchRequestLimiter.queued,
-    max: AGIL_CONCURRENCY.maxInflightSearchRequests,
-  };
-}
-
 /*
  * The three values a token is minted from, and why they are worth keeping.
  *
@@ -523,7 +507,7 @@ function agilBundlePriority(url: string): number {
   return 3;
 }
 
-export function parseAgilApimSubscriptionKeyFromFrontendBundle(text: string): string | undefined {
+function parseAgilApimSubscriptionKeyFromFrontendBundle(text: string): string | undefined {
   const directMatch = text.match(/urlHeaderMotor:"([^"]+)"/i)?.[1]?.trim();
   if (directMatch) {
     return directMatch;
@@ -609,11 +593,6 @@ async function resolveAgilApimSubscriptionKey(): Promise<string> {
   return agilApimSubscriptionKeyPromise;
 }
 
-export function resetAgilApimSubscriptionKeyCacheForTests(): void {
-  cachedAgilApimSubscriptionKey = undefined;
-  agilApimSubscriptionKeyPromise = undefined;
-}
-
 function decodeJwtExpiry(token: string): number {
   const payload = token.split(".")[1];
   if (!payload) {
@@ -689,10 +668,6 @@ function extractChromeUserDataDirsFromCommandLines(commandLines: string[]): stri
   return candidates;
 }
 
-export function extractAgilChromeUserDataDirsFromCommandLinesForTests(commandLines: string[]): string[] {
-  return extractChromeUserDataDirsFromCommandLines(commandLines);
-}
-
 function extractChromeDebugPortsFromCommandLines(commandLines: string[]): number[] {
   const ports: number[] = [];
   const seen = new Set<number>();
@@ -713,10 +688,6 @@ function extractChromeDebugPortsFromCommandLines(commandLines: string[]): number
   }
 
   return ports;
-}
-
-export function extractAgilChromeDebugPortsFromCommandLinesForTests(commandLines: string[]): number[] {
-  return extractChromeDebugPortsFromCommandLines(commandLines);
 }
 
 function runningChromeProcessDiscoveryEnabled(): boolean {
@@ -792,7 +763,7 @@ function readAgilChromeUserDataDirCandidates(): string[] {
   return candidates;
 }
 
-export function resolveAgilChromeLaunchOptions(): ChromeLaunchOptions {
+function resolveAgilChromeLaunchOptions(): ChromeLaunchOptions {
   const userDataDir = readAgilChromeUserDataDirCandidates()[0]
     ?? join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
   const profileDirectory = process.env.AGIL_CHROME_PROFILE?.trim() || undefined;
@@ -808,12 +779,12 @@ function resolveBrowserUserDataDir(): string {
     ?? join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "User Data");
 }
 
-export interface AgilBrowserEndpointEnvironment {
+interface AgilBrowserEndpointEnvironment {
   AGIL_BROWSER_URL?: string;
   AGIL_BROWSER_WS_ENDPOINT?: string;
 }
 
-export function resolveAgilBrowserEndpoint(
+function resolveAgilBrowserEndpoint(
   env: AgilBrowserEndpointEnvironment = process.env as AgilBrowserEndpointEnvironment,
   platform = process.platform,
 ): string | undefined {
@@ -854,10 +825,6 @@ function resolveChromeDevToolsBrowserWsEndpoint(userDataDir: string): string | u
   } catch {
     return undefined;
   }
-}
-
-export function resolveAgilChromeDevToolsBrowserWsEndpointForTests(userDataDir: string): string | undefined {
-  return resolveChromeDevToolsBrowserWsEndpoint(userDataDir);
 }
 
 async function resolveChromeDevToolsBrowserWsEndpointFromPort(port: number): Promise<string | undefined> {
@@ -1197,17 +1164,9 @@ function temporaryChromeStorageFallbackEnabled(): boolean {
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
-export function isAgilTemporaryChromeStorageFallbackEnabledForTests(): boolean {
-  return temporaryChromeStorageFallbackEnabled();
-}
-
 function rawChromeStorageFileScanEnabled(): boolean {
   const value = String(process.env.AGIL_RAW_CHROME_STORAGE_FILE_SCAN ?? "0").trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes" || value === "on";
-}
-
-export function isAgilRawChromeStorageFileScanEnabledForTests(): boolean {
-  return rawChromeStorageFileScanEnabled();
 }
 
 function readChromeProfileName(userDataDir = resolveBrowserUserDataDir()): string {
@@ -1270,10 +1229,6 @@ function readChromeProfileCandidates(userDataDir = resolveBrowserUserDataDir()):
 function shouldScanAllChromeProfilesForAgilStorage(): boolean {
   const value = String(process.env.AGIL_SCAN_ALL_CHROME_PROFILES ?? "0").trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes" || value === "on";
-}
-
-export function readAgilChromeProfileCandidatesForTests(): string[] {
-  return readChromeProfileCandidates();
 }
 
 function findChromeExecutable(): string {
@@ -1375,15 +1330,6 @@ function prepareTemporaryChromeProfile(userDataDir: string, profileName: string)
   }
 
   return tempRoot;
-}
-
-export function prepareTemporaryAgilChromeProfileForTests(userDataDir: string, profileName: string): string {
-  return prepareTemporaryChromeProfile(userDataDir, profileName);
-}
-
-export async function cleanupTemporaryAgilChromeProfileForTests(userDataDir: string): Promise<void> {
-  await removePathWithRetries(userDataDir, 6, 250);
-  unregisterActiveTempArtifact(userDataDir);
 }
 
 function launchChromeForCdp(userDataDir: string, profileName: string, port: number): Bun.NullSubprocess {
@@ -1512,37 +1458,6 @@ async function readAgilStorageSnapshotFromNavigable(
   }
 
   return merged;
-}
-
-export async function readAgilStorageSnapshotFromPage(
-  page: Pick<Page, "goto" | "waitForFunction" | "evaluate">,
-): Promise<BrowserStorageSnapshot> {
-  return readAgilStorageSnapshotFromNavigable(async (origin) => {
-    await page.goto(origin, {
-      waitUntil: "domcontentloaded",
-      timeout: 30000,
-    });
-    try {
-      await page.waitForFunction(() => (
-        Boolean(localStorage.getItem("tokenSearchFlight"))
-        || Boolean(localStorage.getItem("tokenTravelC"))
-        || Boolean(localStorage.getItem("user_data"))
-        || Boolean(localStorage.getItem("ip"))
-      ), {
-        timeout: 5000,
-      });
-    } catch {
-      // Some origins may not persist data for the active session.
-    }
-
-    return page.evaluate(() => ({
-      tokenSearchFlight: localStorage.getItem("tokenSearchFlight")
-        || localStorage.getItem("tokenTravelC")
-        || "",
-      userData: localStorage.getItem("user_data") || "",
-      ip: localStorage.getItem("ip") || "",
-    }));
-  });
 }
 
 async function readAgilStorageSnapshotFromContext(
@@ -1937,11 +1852,7 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
   throw new Error(`Unable to extract Agil session from Chrome profiles. ${failures.join(" | ")}`.trim());
 }
 
-export async function extractAgilBrowserStorageSnapshotForTests(): Promise<BrowserStorageSnapshot> {
-  return extractBrowserStorageSnapshot();
-}
-
-export function parseAgilSessionData(snapshot: BrowserStorageSnapshot): AgilSessionData {
+function parseAgilSessionData(snapshot: BrowserStorageSnapshot): AgilSessionData {
   const capturedAtMs = Date.now();
   const expiresAtMs = snapshot.tokenSearchFlight
     ? decodeJwtExpiry(snapshot.tokenSearchFlight)
@@ -1975,7 +1886,7 @@ export function parseAgilSessionData(snapshot: BrowserStorageSnapshot): AgilSess
   };
 }
 
-export function parseAgilRefreshTokenPayload(payload: { token?: string; accessToken?: string }): string {
+function parseAgilRefreshTokenPayload(payload: { token?: string; accessToken?: string }): string {
   if (typeof payload.token === "string" && payload.token) {
     return payload.token;
   }
@@ -2030,7 +1941,7 @@ async function refreshAgilToken(session: AgilSessionData): Promise<AgilSessionDa
   };
 }
 
-export function sameAgilSessionIdentity(
+function sameAgilSessionIdentity(
   left: Pick<AgilSessionData, "userCode" | "internalCode" | "ip">,
   right: Pick<AgilSessionData, "userCode" | "internalCode" | "ip">,
 ): boolean {
@@ -2039,7 +1950,7 @@ export function sameAgilSessionIdentity(
     && left.ip === right.ip;
 }
 
-export function shouldReuseAgilSession(
+function shouldReuseAgilSession(
   session: Pick<AgilSessionData, "expiresAtMs" | "capturedAtMs">,
   now = Date.now(),
 ): boolean {
@@ -2146,30 +2057,6 @@ async function getAgilSession(): Promise<AgilSessionData> {
   return pendingSessionPromise;
 }
 
-export function resetAgilSessionCacheForTests(): void {
-  cachedSession = undefined;
-  pendingSessionPromise = undefined;
-}
-
-export function setAgilSessionForTests(overrides: {
-  token?: string;
-  expiresAtMs?: number;
-  userCode?: number;
-  internalCode?: string;
-  ip?: string;
-  capturedAtMs?: number;
-} = {}): void {
-  cachedSession = {
-    token: overrides.token ?? "test-agil-token",
-    expiresAtMs: overrides.expiresAtMs ?? Date.now() + (60 * 60 * 1000),
-    userCode: overrides.userCode ?? 1,
-    internalCode: overrides.internalCode ?? "TEST",
-    ip: overrides.ip ?? "127.0.0.1",
-    capturedAtMs: overrides.capturedAtMs ?? Date.now(),
-  };
-  pendingSessionPromise = undefined;
-}
-
 export async function prewarmLocalAgilSession(): Promise<void> {
   const now = Date.now();
   if (!pendingSessionPromise) {
@@ -2259,7 +2146,7 @@ function requestSummary(request: SearchRequest): string {
   return `${leg.origin}-${leg.destination} ${leg.departureStart || "?"}..${leg.departureEnd || "?"} / ${leg.returnStart || "?"}..${leg.returnEnd || "?"}`;
 }
 
-export async function throwAgilHttpResponseError(
+async function throwAgilHttpResponseError(
   response: Response,
   action: string,
 ): Promise<never> {
@@ -2485,7 +2372,7 @@ function buildMoney(amount: number | undefined, currencyCode: string): Money | u
     : undefined;
 }
 
-export function buildLocalAgilSearchRedirectUrl(request: SearchRequest): string {
+function buildLocalAgilSearchRedirectUrl(request: SearchRequest): string {
   const leg = request.legs[0];
   const url = new URL("https://www.agilsmart.com/home-user/flight-result");
 
@@ -2537,7 +2424,7 @@ function buildOfferSearchRequest(
   };
 }
 
-export function mapAgilGeoTreeLocation(entry: AgilGeoTreeLocation): AgilLocationSuggestion | undefined {
+function mapAgilGeoTreeLocation(entry: AgilGeoTreeLocation): AgilLocationSuggestion | undefined {
   const code = normalizeLocationText(entry.aerocodiata)?.toUpperCase();
   const city = normalizeLocationText(entry.city);
   const country = normalizeLocationText(entry.country);
@@ -2758,11 +2645,7 @@ function computeAgilTotalAmount(pricingInfo: AgilPricingInfo | undefined): numbe
   return undefined;
 }
 
-export function computeAgilTotalAmountForTests(pricingInfo: unknown): number | undefined {
-  return computeAgilTotalAmount(pricingInfo as AgilPricingInfo | undefined);
-}
-
-export function extractAgilUsdToPenRate(
+function extractAgilUsdToPenRate(
   pricingInfo: AgilPricingInfo | undefined,
   fallbackCurrencyCode?: string,
 ): number | undefined {
@@ -3210,7 +3093,7 @@ function buildAgilMatrixCellFromQuote(
   };
 }
 
-export async function searchLocalAgilExact(request: SearchRequest): Promise<ProviderSearchResult> {
+async function searchLocalAgilExact(request: SearchRequest): Promise<ProviderSearchResult> {
   const session = await getAgilSession();
   const outcome = await searchGroupsAcrossGds(session, request);
   const offers = dedupeAgilOffers(
@@ -3335,42 +3218,6 @@ export async function resolveLocalAgilExactProgressive(
 
 function enumerateStayRangeRequests(request: SearchRequest): SearchRequest[] {
   return enumerateUsefulFlexibleRequests(request);
-}
-
-export async function searchLocalAgilRange(request: SearchRequest): Promise<ProviderSearchResult> {
-  const candidates = enumerateStayRangeRequests(request);
-
-  const outcomes = await mapConcurrent(candidates, AGIL_CONCURRENCY.rangeSearch, async (derivedRequest) => {
-    try {
-      return {
-        result: await searchLocalAgilExactWithRetry(derivedRequest),
-      };
-    } catch (error) {
-      return {
-        error: providerPublicFailureMessage("agil-local", error),
-      };
-    }
-  });
-
-  const warnings = uniqueStrings([
-    ...outcomes.flatMap((outcome) => outcome.result?.warnings ?? []),
-    ...outcomes.flatMap((outcome) => outcome.error ? [outcome.error] : []),
-  ]);
-  const partial = outcomes.some((outcome) => Boolean(outcome.error))
-    || outcomes.some((outcome) => outcome.result?.partial);
-  const offers = dedupeAgilOffers(
-    outcomes.flatMap((outcome) => outcome.result?.offers ?? []),
-  );
-
-  if (offers.length === 0 && warnings.length === 0) {
-    warnings.push("Agil returned no offers for this date range.");
-  }
-
-  return {
-    offers,
-    warnings,
-    partial,
-  };
 }
 
 export async function resolveLocalAgilRangeProgressive(
@@ -3563,12 +3410,4 @@ export async function resolveLocalAgilMatrixProgressive(
     },
     warnings,
   };
-}
-
-export async function buildLocalAgilMatrix(
-  request: SearchRequest,
-  providerMeta: ProviderMeta,
-): Promise<MatrixResponse> {
-  const draft = createLocalAgilMatrixDraft(request, providerMeta);
-  return resolveLocalAgilMatrixProgressive(request, draft);
 }

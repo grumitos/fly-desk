@@ -1,6 +1,6 @@
 type PerfFieldValue = string | number | boolean | undefined | null;
 
-export type PerfFields = Record<string, PerfFieldValue>;
+type PerfFields = Record<string, PerfFieldValue>;
 
 function readFlag(name: string): boolean {
   const value = Bun.env[name]?.trim().toLowerCase();
@@ -50,7 +50,7 @@ export function startPerfTimer(): number {
   return performance.now();
 }
 
-export function elapsedPerfMs(startMs: number): number {
+function elapsedPerfMs(startMs: number): number {
   return Math.max(0, performance.now() - startMs);
 }
 

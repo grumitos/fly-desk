@@ -350,7 +350,7 @@ function normalizeTotpSecretInput(input: string): TotpConfig {
   };
 }
 
-export interface TotpCodeResult {
+interface TotpCodeResult {
   code: string;
   periodSeconds: number;
   remainingSeconds: number;
@@ -393,8 +393,4 @@ export function generateTotpCodeWithMetadata(secretInput: string, nowMs = Date.n
     periodSeconds: period,
     remainingSeconds: period - elapsedSeconds,
   };
-}
-
-export function generateTotpCode(secretInput: string, nowMs = Date.now()): string {
-  return generateTotpCodeWithMetadata(secretInput, nowMs).code;
 }
