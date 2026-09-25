@@ -7,16 +7,21 @@ from three account identifiers persisted in `agil-identity.json` under
 is consulted only to create that file when it is missing, or when the provider
 refuses the persisted identity.
 
-On Linux the runtime reaches that browser at `http://127.0.0.1:9222` unless
-`AGIL_BROWSER_URL` or `AGIL_BROWSER_WS_ENDPOINT` says otherwise; Windows has no
-implicit endpoint.
+The runtime reads that browser over the DevTools protocol with its own client.
+For each page it needs — `/home-user` on Agilsmart, then the flight engine's
+page only if something is still missing — it opens a tab, reads `user_data`,
+`ip` and the search token from `localStorage`, and closes the tab. No browser
+automation library is involved. On Linux it reaches the browser at `http://127.0.0.1:9222`
+unless `AGIL_BROWSER_URL` or `AGIL_BROWSER_WS_ENDPOINT` says otherwise; Windows
+has no implicit endpoint.
 
 ## Symptoms
 
 - Searches return Click and Book Plus results only, and the results notice
   names Agilsmart as the provider that failed.
-- The search runner logs `provider prewarm failed: agil-local reason=… detail=…`
-  on every prewarm cycle (credential-like material in `detail` is masked).
+- The search runner logs
+  `Fly Desk provider prewarm failed: agil-local reason=… detail=…` on every
+  prewarm cycle (credential-like material in `detail` is masked).
 
 ## Preferred recovery: seed the identity file
 
