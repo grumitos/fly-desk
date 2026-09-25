@@ -2124,9 +2124,8 @@
       border-color var(--fd-dur-tacto) var(--fd-ease-tacto),
       background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
     position: relative;
-    --i: var(--fd-month-index, 0);
     animation: fd-enter-row var(--fd-dur-emergente) var(--fd-ease-estructura)
-      calc(var(--fd-stagger-row) * var(--i)) both;
+      calc(var(--fd-stagger-row) * var(--i, 0)) both;
   }
 
   @media (hover: hover) {
@@ -2262,7 +2261,7 @@
     background: var(--color-placeholder);
     transform-origin: left center;
     animation: fd-month-bar var(--fd-dur-month-bar) var(--fd-ease-estructura) both;
-    animation-delay: calc(var(--fd-stagger-chip) * var(--i));
+    animation-delay: calc(var(--fd-stagger-chip) * var(--i, 0));
   }
 
   .fd-month-card.is-cheapest .fd-month-bar-fill {

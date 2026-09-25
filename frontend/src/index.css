@@ -888,10 +888,9 @@
 
   .fd-search-stage[data-entering] .fd-filter-strip > * {
     --fd-enter-shift: 12px;
-    --i: var(--fd-chip-index, 0);
 
     animation: fd-enter-left var(--fd-dur-estructura) var(--fd-ease-estructura)
-      calc(var(--fd-cue-tira-movil) + var(--fd-stagger-chip) * var(--i)) both;
+      calc(var(--fd-cue-tira-movil) + var(--fd-stagger-chip) * var(--i, 0)) both;
   }
 
   .fd-search-stage[data-entering] .fd-list-header {
