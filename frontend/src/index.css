@@ -316,17 +316,17 @@
     flex-shrink: 0;
   }
 
+  /* Raised so the fields stay above the workspace while they rise past it. */
   .fd-search-frame {
+    position: relative;
+    z-index: var(--fd-z-raised);
     width: 100%;
     align-self: center;
     max-width: var(--fd-app-max-width);
     margin-inline: auto;
-    transform-origin: top center;
-    will-change: width, max-width, transform;
   }
 
   .fd-search-stage-idle .fd-search-frame {
-    position: relative;
     flex: none;
     max-width: 1180px;
   }
@@ -351,8 +351,12 @@
     animation: fd-enter-left var(--fd-dur-estructura) var(--fd-ease-estructura) var(--fd-cue-paneles) both;
   }
 
+  .fd-search-stage[data-entering] .fd-detail-column {
+    animation: fd-enter-right var(--fd-dur-estructura) var(--fd-ease-estructura) var(--fd-cue-paneles) both;
+  }
+
   .fd-search-stage[data-entering] .fd-detail-column > .fd-detail-panel {
-    animation-delay: var(--fd-cue-paneles);
+    animation: none;
   }
 
   .fd-search-stage[data-entering] .fd-list {
@@ -1180,6 +1184,12 @@
       max-height var(--fd-dur-estructura) var(--fd-ease-estructura),
       transform var(--fd-dur-estructura) var(--fd-ease-estructura),
       opacity 160ms var(--fd-ease-tacto);
+  }
+
+  /* The summary rises from where the form was; the block's clip would hide it
+     until it arrived. */
+  .fd-search-stage[data-entering] .fd-tools-block[data-active="true"] {
+    overflow: visible;
   }
 
   .fd-tools-block[data-active="true"][data-collapsed="true"] {
