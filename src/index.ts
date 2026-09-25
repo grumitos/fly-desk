@@ -50,6 +50,10 @@ async function main() {
   } else {
     logPerfSpan("startup.runtime.skipped", runtimeStart);
   }
+  /* The unit that runs searches owns the session cache, and before its port
+     opens no request waits on it. The web unit delegates searches to this one,
+     and the redirect unit only reads the file, which WAL does not block. */
+  startupSessions?.vacuumIfWorthwhile();
 
   const port = Math.trunc(envNumber("PORT", 3000, { min: 0, max: 65535 }));
   const host = resolveServerHost();
@@ -112,29 +116,53 @@ async function main() {
   };
 
   let shuttingDown = false;
-  const shutdown = async () => {
+  /* The phase a stop is in, for the deadline to name. */
+  let shutdownPhase = "starting";
+  const shutdown = async (signal: string) => {
     if (shuttingDown) {
       return;
     }
 
     shuttingDown = true;
+    const startedAt = Date.now();
+    /* Each phase logs its duration as it ends, so a stop killed at
+       `TimeoutStopSec` still shows the phases it finished and the one it was
+       in. A phase that throws is logged and the stop goes on: the phases after
+       it are what keep the session cache on disk. */
+    const phase = async (name: string, run: () => unknown): Promise<void> => {
+      shutdownPhase = name;
+      const phaseStartedAt = Date.now();
+      let outcome = "took";
+      try {
+        await run();
+      } catch (error) {
+        outcome = `failed (${error instanceof Error ? error.message : "unknown failure"}) after`;
+      }
+      const now = Date.now();
+      console.log(`Fly Desk shutdown: ${name} ${outcome} ${now - phaseStartedAt}ms, ${now - startedAt}ms after ${signal}`);
+    };
+
     const activeRuntime = getActiveRuntime();
     const activeSessions = startupSessions ?? getSessionStoreIfInitialized();
     activeRuntime?.searchAdmission.stopAccepting(SHUTDOWN_CANCELLED_WARNING);
     /* Close the HTTP side while the admission leases finish, so a provider
        that is about to answer still gets to publish its offers. */
     const serverStop = stopServerWithinDrainWindow();
-    flushPendingProgressForShutdown();
-    await activeRuntime?.searchAdmission.drain(SHUTDOWN_JOB_DRAIN_MS);
-    const cancelled = activeSessions?.cancelRunningJobs(SHUTDOWN_CANCELLED_WARNING, { cachePartial: true })
-      ?? { searchJobs: 0, matrixJobs: 0 };
-    activeRuntime?.searchAdmission.dispose(SHUTDOWN_CANCELLED_WARNING);
-    if (cancelled.searchJobs > 0 || cancelled.matrixJobs > 0) {
-      console.warn(
-        `Fly Desk shutdown cancelled active jobs: search=${cancelled.searchJobs} matrix=${cancelled.matrixJobs}`,
-      );
-      await delay(SHUTDOWN_CANCEL_GRACE_MS);
-    }
+    await phase("drain", async () => {
+      flushPendingProgressForShutdown();
+      await activeRuntime?.searchAdmission.drain(SHUTDOWN_JOB_DRAIN_MS);
+    });
+    await phase("cancel", async () => {
+      const cancelled = activeSessions?.cancelRunningJobs(SHUTDOWN_CANCELLED_WARNING, { cachePartial: true })
+        ?? { searchJobs: 0, matrixJobs: 0 };
+      activeRuntime?.searchAdmission.dispose(SHUTDOWN_CANCELLED_WARNING);
+      if (cancelled.searchJobs > 0 || cancelled.matrixJobs > 0) {
+        console.warn(
+          `Fly Desk shutdown cancelled active jobs: search=${cancelled.searchJobs} matrix=${cancelled.matrixJobs}`,
+        );
+        await delay(SHUTDOWN_CANCEL_GRACE_MS);
+      }
+    });
     clearInterval(maintenanceHandle);
     clearInterval(sessionMaintenanceHandle);
     if (startupCleanupTimer) {
@@ -147,11 +175,12 @@ async function main() {
       clearInterval(providerPrewarmHandle);
     }
     stopSearchWorkerPool();
-    await serverStop;
-    await tempCleanupPromise?.catch(() => undefined);
-    activeRuntime?.locationSuggestions.purgeExpired();
-    activeSessions?.close();
-    await cleanupPrefixedTempArtifacts(undefined, { olderThanMs: TEMP_ARTIFACT_SWEEP_MIN_AGE_MS }).catch(() => undefined);
+    await phase("http", () => serverStop);
+    await phase("temp cleanup", () => tempCleanupPromise?.catch(() => undefined));
+    await phase("location cache", () => activeRuntime?.locationSuggestions.purgeExpired());
+    await phase("session cache", () => activeSessions?.close());
+    await phase("temp artifacts", () =>
+      cleanupPrefixedTempArtifacts(undefined, { olderThanMs: TEMP_ARTIFACT_SWEEP_MIN_AGE_MS }).catch(() => undefined));
   };
 
   /* The deadline is armed by the signal, not by `shutdown()`, so it covers a
@@ -160,12 +189,12 @@ async function main() {
   const exitOnSignal = (signal: string) => {
     const deadline = setTimeout(() => {
       console.warn(
-        `Fly Desk shutdown exceeded ${SHUTDOWN_DEADLINE_MS}ms after ${signal}; exiting anyway.`,
+        `Fly Desk shutdown exceeded ${SHUTDOWN_DEADLINE_MS}ms after ${signal} during ${shutdownPhase}; exiting anyway.`,
       );
       process.exit(0);
     }, SHUTDOWN_DEADLINE_MS);
 
-    void shutdown().finally(() => {
+    void shutdown(signal).finally(() => {
       clearTimeout(deadline);
       process.exit(0);
     });

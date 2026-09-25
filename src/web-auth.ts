@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import * as path from "node:path";
 
 export const WEB_SESSION_COOKIE_NAME = "flydesk_session";
-export const REDIRECT_SESSION_COOKIE_NAME = "flydesk_redirect_session";
-export const WEB_THEME_COOKIE_NAME = "flydesk_theme";
+const REDIRECT_SESSION_COOKIE_NAME = "flydesk_redirect_session";
+const WEB_THEME_COOKIE_NAME = "flydesk_theme";
 
 const DEFAULT_WEB_SESSION_TTL_SECONDS = 12 * 60 * 60;
 const MIN_WEB_SESSION_TTL_SECONDS = 5 * 60;
@@ -325,7 +325,7 @@ export function createWebSessionCookie(request: Request, nowMs = Date.now()): st
   return writeWebSessionCookie(request, nowMs, slidingExpiryMs(nowMs, nowMs), nowMs);
 }
 
-export interface WebSessionRenewal {
+interface WebSessionRenewal {
   sessionCookie: string;
   redirectSessionCookie: string;
   expiresAtMs: number;

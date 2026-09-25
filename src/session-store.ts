@@ -89,6 +89,28 @@ const SWEEPABLE_JOB_STATUS_LIST = SWEEPABLE_JOB_STATUSES.map((status) => `'${sta
 /** How long after the port opens the covering indexes are built. */
 const RESTORE_INDEX_BUILD_DELAY_MS = 10_000;
 
+/* `PRAGMA auto_vacuum`: the file hands the pages a sweep frees back to the
+   filesystem only in this mode, and only when `incremental_vacuum` asks. */
+const AUTO_VACUUM_INCREMENTAL = 2;
+
+/*
+ * The largest cache the boot VACUUM rewrites. A VACUUM copies every live page
+ * before the port opens, and the release engine gives a unit that refuses
+ * connections about a minute (30 probes, 2 s apart) before it rolls back. On a
+ * workstation 200 MiB live took 3.4–9.4 s, so this bound stays inside it.
+ */
+const BOOT_VACUUM_MAX_LIVE_BYTES = 512 * 1024 * 1024;
+
+/*
+ * What one sweep hands back. Moving a page is a write on the event loop: on a
+ * workstation 8 MiB took about 0.1 s. What is left waits for the next sweep, a
+ * minute later.
+ */
+const SWEEP_RECLAIM_MAX_BYTES = 8 * 1024 * 1024;
+
+/* Past this, a reclaim is worth a line in the journal. */
+const RECLAIM_REPORT_MS = 250;
+
 /**
  * The covering indexes the restore reads, and nothing else does.
  *
@@ -237,7 +259,6 @@ export interface SearchJobRecord {
   id: string;
   request: SearchRequest;
   providerContext?: ProviderContext;
-  offers: CanonicalOffer[];
   allOffers: CanonicalOffer[];
   searchMeta: SearchMeta;
   providerMeta: ProviderMeta;
@@ -432,6 +453,26 @@ function allSql<T>(db: Database, sql: string, ...params: any[]): T[] {
   }
 }
 
+interface SqlitePageStats {
+  pageCount: number;
+  freePages: number;
+  pageSize: number;
+  autoVacuum: number;
+}
+
+function readPageStats(db: Database): SqlitePageStats {
+  const pragma = (name: string): number => {
+    const row = getSql<Record<string, unknown>>(db, `PRAGMA ${name}`);
+    return Number(row ? Object.values(row)[0] : 0) || 0;
+  };
+  return {
+    pageCount: pragma("page_count"),
+    freePages: pragma("freelist_count"),
+    pageSize: pragma("page_size"),
+    autoVacuum: pragma("auto_vacuum"),
+  };
+}
+
 function resolveIdleTimestampMs(record: {
   updatedAt?: string;
   lastAccessedAt?: string;
@@ -586,40 +627,30 @@ function redactSearchJobForPersistence(job: SearchJobRecord): SearchJobRecord {
   return {
     ...job,
     providerContext: redactProviderContextForPersistence(job.providerContext),
-    offers: job.offers.map(redactOfferForPersistence),
     allOffers: job.allOffers.map(redactOfferForPersistence),
   };
 }
 
-/* `offers` is the filtered, ordered view of `allOffers`, so a stored job keeps
-   it as ids into `allOffers` instead of a second copy of every offer. The row
-   still carries an empty `offers`: a release that stores both lists maps over
-   it when it boots, and a rollback to one has to read rows written here. */
-type PersistedSearchJob = Omit<SearchJobRecord, "offers"> & {
+/* A job keeps one list, `allOffers`. The row still carries an empty `offers`:
+   a release that kept a filtered copy maps over it when it boots, and a
+   rollback to one has to read rows written here. What an earlier layout kept
+   beside `allOffers`, the filtered copy or its ids, is not read back. */
+type PersistedSearchJob = SearchJobRecord & {
   offers?: CanonicalOffer[];
   offerIds?: string[];
 };
 
 function encodeSearchJobForPersistence(job: SearchJobRecord): PersistedSearchJob {
-  const { offers, ...rest } = redactSearchJobForPersistence(job);
-  return { ...rest, offers: [], offerIds: offers.map((offer) => offer.id) };
+  return { ...redactSearchJobForPersistence(job), offers: [] };
 }
 
 function decodePersistedSearchJob(parsed: PersistedSearchJob | undefined): SearchJobRecord | undefined {
-  if (!parsed || !Array.isArray(parsed.offerIds)) {
-    /* A row that carries both lists is already a complete record. */
-    return parsed as SearchJobRecord | undefined;
+  if (!parsed) {
+    return undefined;
   }
 
-  const offersById = new Map((parsed.allOffers ?? []).map((offer) => [offer.id, offer] as const));
-  const { offerIds, ...rest } = parsed;
-  return {
-    ...rest,
-    offers: offerIds.flatMap((id) => {
-      const offer = offersById.get(id);
-      return offer ? [offer] : [];
-    }),
-  };
+  const { offers: _offers, offerIds: _offerIds, ...job } = parsed;
+  return job;
 }
 
 function redactMatrixJobForPersistence(job: MatrixJobRecord): MatrixJobRecord {
@@ -739,6 +770,10 @@ export class SearchSessionStore {
       mkdirSync(dirname(dbPath), { recursive: true });
       this.db = new Database(dbPath);
       this.db.run("PRAGMA busy_timeout = 5000;");
+      /* Ahead of WAL: a new file takes a vacuum mode only while it is empty,
+         and switching to WAL writes its first page. A file created without
+         one keeps it until a VACUUM rewrites it (`vacuumIfWorthwhile`). */
+      this.db.run("PRAGMA auto_vacuum = INCREMENTAL;");
       this.db.run("PRAGMA journal_mode = WAL;");
       this.db.run("PRAGMA synchronous = NORMAL;");
       this.db.run("PRAGMA temp_store = MEMORY;");
@@ -886,11 +921,12 @@ export class SearchSessionStore {
     const db = this.db;
     if (db) {
       this.db = undefined;
-      try {
-        db.run("PRAGMA wal_checkpoint(TRUNCATE);");
-      } catch {
-        // Closing the database is still the important cleanup path.
-      }
+      /* No checkpoint of its own. `wal_checkpoint(TRUNCATE)` waits out the busy
+         timeout for any reader still on the WAL, the redirect unit reads this
+         file, and nothing interrupts a synchronous call during a stop. SQLite
+         checkpoints the WAL itself, when the last connection closes or once it
+         outgrows the auto-checkpoint size, and the next open reads it either
+         way. */
       db.close(true);
     }
   }
@@ -947,7 +983,6 @@ export class SearchSessionStore {
       const rewrittenOffer = this.rewriteOfferPaths(sessionId, updatedOffer);
       return {
         ...current,
-        offers: current.offers.map((offer) => offer.id === updatedOffer.id ? rewrittenOffer : offer),
         allOffers: current.allOffers.map((offer) => offer.id === updatedOffer.id ? rewrittenOffer : offer),
       };
     });
@@ -959,13 +994,10 @@ export class SearchSessionStore {
     const id = crypto.randomUUID();
     const timestamp = nowIso();
     const rewrittenAllOffers = input.allOffers.map((offer) => this.rewriteOfferPaths(id, offer));
-    const rewrittenOffersById = new Map(rewrittenAllOffers.map((offer) => [offer.id, offer] as const));
-    const rewrittenOffers = input.offers.map((offer) => rewrittenOffersById.get(offer.id) ?? this.rewriteOfferPaths(id, offer));
 
     const record: SearchJobRecord = {
       ...input,
       id,
-      offers: rewrittenOffers,
       allOffers: rewrittenAllOffers,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -979,10 +1011,7 @@ export class SearchSessionStore {
 
     this.searchJobs.set(id, record);
     this.syncSearchSessionMetadata(record);
-    this.pruneSessionOwners(id, new Set([
-      ...rewrittenAllOffers.map((offer) => offer.id),
-      ...rewrittenOffers.map((offer) => offer.id),
-    ]));
+    this.pruneSessionOwners(id, new Set(rewrittenAllOffers.map((offer) => offer.id)));
     this.schedulePersist();
     return record;
   }
@@ -1157,21 +1186,14 @@ export class SearchSessionStore {
       return current;
     }
 
-    const offersUnchanged = updated.offers === current.offers && updated.allOffers === current.allOffers;
+    const offersUnchanged = updated.allOffers === current.allOffers;
     const timestamp = nowIso();
     const rewrittenAllOffers = offersUnchanged
       ? current.allOffers
       : updated.allOffers.map((offer) => this.rewriteOfferPaths(jobId, offer));
-    const rewrittenOffersById = offersUnchanged
-      ? undefined
-      : new Map(rewrittenAllOffers.map((offer) => [offer.id, offer] as const));
-    const rewrittenOffers = offersUnchanged
-      ? current.offers
-      : updated.offers.map((offer) => rewrittenOffersById?.get(offer.id) ?? this.rewriteOfferPaths(jobId, offer));
     const base: SearchJobRecord = {
       ...updated,
       id: current.id,
-      offers: rewrittenOffers,
       allOffers: rewrittenAllOffers,
       createdAt: current.createdAt,
       updatedAt: timestamp,
@@ -1191,10 +1213,7 @@ export class SearchSessionStore {
     this.syncSearchSessionMetadata(next);
     this.wakeJobChangeWaiters(this.searchJobWaiters, jobId);
     if (!offersUnchanged) {
-      this.pruneSessionOwners(jobId, new Set([
-        ...rewrittenAllOffers.map((offer) => offer.id),
-        ...rewrittenOffers.map((offer) => offer.id),
-      ]));
+      this.pruneSessionOwners(jobId, new Set(rewrittenAllOffers.map((offer) => offer.id)));
     }
     if (options.persist === false) {
       this.deferredSearchJobs.add(jobId);
@@ -1218,7 +1237,7 @@ export class SearchSessionStore {
 
       const warnings = uniqueStrings([...current.warnings, message]);
       const metaWarnings = uniqueStrings([...(current.searchMeta.warnings ?? []), message]);
-      const hasPartialResults = current.offers.length > 0 || current.allOffers.length > 0;
+      const hasPartialResults = current.allOffers.length > 0;
       const cachePartial = Boolean(options.cachePartial && hasPartialResults);
       return {
         ...current,
@@ -1641,6 +1660,91 @@ export class SearchSessionStore {
       sessions: Math.max(0, beforeSessions - this.sessions.size),
       purchasePaths: Math.max(0, beforePurchasePaths - this.purchasePaths.size),
     };
+  }
+
+  /*
+   * The one full VACUUM, run by the process that owns the file before its port
+   * opens. It pays only once free pages are most of the file: its cost follows
+   * the live pages it copies, and what it buys is the free ones. It also gives a
+   * file created without a vacuum mode the incremental one, after which
+   * `reclaimFreePages` keeps the file compact and this rarely finds work. The
+   * copy goes to a temporary file rather than memory: it is the whole live
+   * cache, on a host where the runner already peaks near a gigabyte.
+   */
+  vacuumIfWorthwhile(): void {
+    const db = this.db;
+    if (!db) {
+      return;
+    }
+
+    const before = readPageStats(db);
+    const liveBytes = (before.pageCount - before.freePages) * before.pageSize;
+    if (before.freePages * 2 <= before.pageCount || liveBytes > BOOT_VACUUM_MAX_LIVE_BYTES) {
+      return;
+    }
+
+    const startedAt = Date.now();
+    try {
+      db.run("PRAGMA temp_store = FILE;");
+      db.run("VACUUM;");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "unknown failure";
+      console.warn(`Fly Desk session cache VACUUM skipped: ${detail}`);
+      return;
+    } finally {
+      db.run("PRAGMA temp_store = MEMORY;");
+    }
+
+    /* The VACUUM wrote every live page through the WAL, and the WAL file keeps
+       that size until a checkpoint truncates it. */
+    const vacuumedAt = Date.now();
+    let checkpoint = "failed";
+    try {
+      checkpoint = getSql<{ busy: number }>(db, "PRAGMA wal_checkpoint(TRUNCATE);")?.busy ? "busy" : "truncated";
+    } catch {
+      // Only the WAL file's size waits for the next checkpoint.
+    }
+    const after = readPageStats(db);
+    console.warn(
+      "Fly Desk session cache compacted: "
+      + `vacuumMs=${vacuumedAt - startedAt} checkpointMs=${Date.now() - vacuumedAt} checkpoint=${checkpoint} `
+      + `fileBytes=${before.pageCount * before.pageSize}->${after.pageCount * after.pageSize} `
+      + `freePages=${before.freePages}->${after.freePages} autoVacuum=${before.autoVacuum}->${after.autoVacuum}`,
+    );
+  }
+
+  /*
+   * After a sweep, hands the pages it freed back to the filesystem, a bounded
+   * amount at a time. What the sweep removed in memory is written first, so its
+   * rows are gone before their pages are counted. A file without the incremental
+   * mode is left as it is until `vacuumIfWorthwhile` gives it one.
+   */
+  reclaimFreePages(): void {
+    const db = this.db;
+    if (!db) {
+      return;
+    }
+
+    this.persistNow();
+    const stats = readPageStats(db);
+    if (stats.autoVacuum !== AUTO_VACUUM_INCREMENTAL || stats.freePages === 0 || stats.pageSize <= 0) {
+      return;
+    }
+
+    const pages = Math.min(stats.freePages, Math.max(1, Math.floor(SWEEP_RECLAIM_MAX_BYTES / stats.pageSize)));
+    const startedAt = Date.now();
+    try {
+      runSql(db, `PRAGMA incremental_vacuum(${pages});`);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "unknown failure";
+      console.warn(`Fly Desk session cache reclaim skipped: ${detail}`);
+      return;
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs >= RECLAIM_REPORT_MS) {
+      console.warn(`Fly Desk session cache reclaimed free pages: pages=${pages} ms=${elapsedMs}`);
+    }
   }
 
   getDiagnostics(): StoreDiagnostics {
@@ -2824,7 +2928,6 @@ export class SearchSessionStore {
     return {
       request: job.request,
       providerContext: job.providerContext,
-      offers: job.offers,
       allOffers: job.allOffers,
       searchMeta: job.searchMeta,
       providerMeta: job.providerMeta,

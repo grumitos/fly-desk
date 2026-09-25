@@ -64,7 +64,6 @@ let cachedCostamarSessions:
   | { readAtMs: number; candidates: CostamarSessionCandidate[] }
   | undefined;
 const runtimeCostamarSessionCandidates = new Map<string, CostamarSessionCandidate>();
-let costamarChromeSessionScanCountForTests = 0;
 
 function costamarCdpTabScanEnabled(): boolean {
   return envFlag(["CBPLUS_CDP_TAB_SCAN_ENABLED", "COSTAMAR_CDP_TAB_SCAN_ENABLED"], false);
@@ -845,7 +844,6 @@ function readCostamarSessionCandidateFromChrome(
     );
   }
 
-  costamarChromeSessionScanCountForTests += 1;
   const configuredUserDataDirs = readChromeUserDataDirCandidates(true);
   const allUserDataDirs = readChromeUserDataDirCandidates();
   const configuredProfile = resolveConfiguredChromeProfile();

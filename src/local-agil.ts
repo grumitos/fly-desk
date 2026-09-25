@@ -3,6 +3,7 @@ import { envNumber } from "./env";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Browser, BrowserContext } from "playwright";
+import { trackOpenBrowserTarget } from "./browser-targets";
 import {
   registerActiveTempArtifact,
   removePathWithRetries,
@@ -1117,6 +1118,7 @@ async function readAgilStorageSnapshotFromDevToolsEndpoint(endpoint: string): Pr
         throw new Error("Chrome DevTools did not create a target.");
       }
 
+      const forgetTarget = trackOpenBrowserTarget(() => client.send("Target.closeTarget", { targetId }));
       try {
         const attached = await client.send("Target.attachToTarget", {
           targetId,
@@ -1134,6 +1136,7 @@ async function readAgilStorageSnapshotFromDevToolsEndpoint(endpoint: string): Pr
         await domReady;
         return await waitForAgilStorageSnapshotInCdpSession(client, sessionId);
       } finally {
+        forgetTarget();
         await client.send("Target.closeTarget", { targetId }).catch(() => undefined);
       }
     });
@@ -1456,6 +1459,7 @@ async function readAgilStorageSnapshotFromContext(
 ): Promise<BrowserStorageSnapshot> {
   return readAgilStorageSnapshotFromNavigable(async (origin) => {
     const page = await context.newPage();
+    const forgetPage = trackOpenBrowserTarget(() => page.close());
     try {
       await page.goto(origin, {
         waitUntil: "domcontentloaded",
@@ -1482,6 +1486,7 @@ async function readAgilStorageSnapshotFromContext(
         ip: localStorage.getItem("ip") || "",
       }));
     } finally {
+      forgetPage();
       await page.close().catch(() => undefined);
     }
   });
@@ -3105,7 +3110,6 @@ export function createLocalAgilSearchDraft(
     : "Consultando Agil. Los resultados se iran agregando.";
 
   return {
-    offers: [],
     allOffers: [],
     searchMeta: {
       requestedAt,

@@ -236,9 +236,11 @@ export function normalizeQuotationOfferSnapshot(input: unknown, request: SearchR
   const firstSegment = outbound.segments[0];
   const lastSegment = outbound.segments[outbound.segments.length - 1];
 
+  /* An offer reaches the browser without the backend's `signature` and
+     `rawRefs`, so the snapshot has neither to read. */
   return {
     id: offerId,
-    signature: quotationStringValue(offer.signature) ?? offerId,
+    signature: offerId,
     providerSource,
     providerOfferRef: quotationStringValue(offer.providerOfferRef) ?? offerId,
     tripType: request.tripType,
@@ -302,6 +304,5 @@ export function normalizeQuotationOfferSnapshot(input: unknown, request: SearchR
     },
     tags: quotationStringArrayValue(offer.tags),
     warnings: quotationStringArrayValue(offer.warnings),
-    rawRefs: quotationObjectRecord(offer.rawRefs),
   };
 }

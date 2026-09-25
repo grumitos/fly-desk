@@ -11,7 +11,7 @@ interface ProviderStatusDefinition {
  * becomes a name: every public failure message is built from the label found
  * here, and a second copy would let one provider carry two names.
  */
-export const PROVIDER_STATUS_DEFINITIONS: readonly ProviderStatusDefinition[] =
+const PROVIDER_STATUS_DEFINITIONS: readonly ProviderStatusDefinition[] =
   Object.freeze([
     Object.freeze({ id: "agil-local", label: PROVIDER_LABELS["agil-local"] }),
     Object.freeze({ id: "costamar", label: PROVIDER_LABELS.costamar }),

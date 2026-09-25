@@ -31,6 +31,7 @@ export function getSessionStoreIfInitialized(): SearchSessionStore | undefined {
 
 export function maintainSessionStoreIfInitialized(): void {
   sessionStore?.purgeExpired();
+  sessionStore?.reclaimFreePages();
 }
 
 export function getRuntime(): RuntimeServices {

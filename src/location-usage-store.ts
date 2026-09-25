@@ -445,16 +445,6 @@ export class LocationUsageStore {
     };
   }
 
-  clearForTests(): void {
-    this.entries.clear();
-    this.recentEntries.clear();
-    if (this.db) {
-      runSql(this.db, "DELETE FROM location_usage");
-      runSql(this.db, "DELETE FROM location_usage_daily");
-      runSql(this.db, "DELETE FROM location_recent_usage");
-    }
-  }
-
   close(): void {
     if (this.db && !this.closed) {
       try {

@@ -181,7 +181,6 @@ describe("rollback", () => {
       const store = new SearchSessionStore({ dbPath });
       const job = store.createSearchJob({
         request,
-        offers: [offer("second")],
         allOffers: [offer("first"), offer("second")],
         searchMeta: {
           requestedAt: "2026-09-25T12:00:00.000Z",
@@ -198,15 +197,21 @@ describe("rollback", () => {
       });
       store.close();
 
-      /* A release that stores both lists maps over `offers` when it restores a
-         row; without the list it cannot boot on rows written by this one. */
-      const db = new Database(dbPath, { readonly: true });
+      /* A release that kept a filtered copy maps over `offers` when it restores
+         a row; without the list it cannot boot on rows written by this one. */
+      const db = new Database(dbPath);
       const rows = db.query("SELECT payload FROM search_jobs").all() as Array<{ payload: string }>;
+      expect(rows.map((row) => (JSON.parse(row.payload) as { offers?: unknown }).offers)).toEqual([[]]);
+
+      /* What such a release wrote in it is not carried back into memory. */
+      const olderRow = { ...(JSON.parse(rows[0]!.payload) as object), offers: [offer("second")] };
+      db.query("UPDATE search_jobs SET payload = ? WHERE id = ?").run(JSON.stringify(olderRow), job.id);
       db.close();
-      expect(rows.map((row) => Array.isArray((JSON.parse(row.payload) as { offers?: unknown }).offers))).toEqual([true]);
 
       const reopened = new SearchSessionStore({ dbPath });
-      expect(reopened.getSearchJob(job.id)?.offers.map((entry) => entry.id)).toEqual(["second"]);
+      const restored = reopened.getSearchJob(job.id);
+      expect(restored?.allOffers.map((entry) => entry.id)).toEqual(["first", "second"]);
+      expect(restored && Object.hasOwn(restored, "offers")).toBe(false);
       reopened.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
