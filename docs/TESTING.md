@@ -10,8 +10,11 @@ upstream's request log, the API, and process ids.
 
 - `bun run test`: `test:unit`, then `test:e2e`. `deploy-vps.yml` runs it before
   it builds a release.
-- `bun run test:unit`: `bun test test/unit`, for pure logic that needs no
-  process or browser. It passes while the folder is empty.
+- `bun run test:unit`: `bun test test/unit`, for what an end-to-end run cannot
+  reach deterministically: pure logic, the session cache on a temporary SQLite
+  file, and one search worker against a fake Chrome. The worker test sends a
+  real SIGTERM, so it is skipped on Windows, where a signal cannot be caught.
+  It passes while the folder is empty.
 - `bun run test:e2e`: `bun run build`, then `scripts/run-e2e.ts`.
 - `bun scripts/run-e2e.ts [spec files…] [-- node --test options…]`: runs the
   suite, or some of its files, on an existing build. For example:

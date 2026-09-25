@@ -3,6 +3,7 @@ import { envNumber } from "./env";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Browser, BrowserContext, Page } from "playwright";
+import { trackOpenBrowserTarget } from "./browser-targets";
 import {
   removePathWithRetries,
   registerActiveTempArtifact,
@@ -2041,6 +2042,7 @@ async function generateCostamarRedirectContextViaB2B(
   });
   let liveBrowser: Browser | undefined;
   let livePage: Page | undefined;
+  let forgetLivePage: (() => void) | undefined;
   let closeLivePage = false;
   let resetLiveBrowserConnection = false;
   let browserContext: BrowserContext | undefined;
@@ -2065,11 +2067,13 @@ async function generateCostamarRedirectContextViaB2B(
       );
       if (liveSession) {
         liveBrowser = liveSession.browser;
-        livePage = await withCostamarB2bTimeout(
+        const page = await withCostamarB2bTimeout(
           liveSession.context.newPage(),
           warmupTimeoutMs,
           "Click and Book Plus live page creation",
         );
+        livePage = page;
+        forgetLivePage = trackOpenBrowserTarget(() => page.close());
         closeLivePage = true;
 
         observeCostamarControlledPage(livePage, pool, "live-b2b", observedPages);
@@ -2133,6 +2137,7 @@ async function generateCostamarRedirectContextViaB2B(
       resetLiveBrowserConnection = Boolean(liveBrowser);
       // Fall through to the isolated-profile automation below.
     } finally {
+      forgetLivePage?.();
       if (closeLivePage && livePage) {
         await withCostamarB2bTimeout(
           livePage.close().catch(() => undefined),

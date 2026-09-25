@@ -12,6 +12,7 @@ import {
   resolveLocalCostamarMatrixProgressive,
   resolveLocalCostamarRangeProgressive,
 } from "./local-costamar";
+import { closeOpenBrowserTargets } from "./browser-targets";
 import type { CanonicalOffer, MatrixResponse, ProviderId } from "./core/types";
 import {
   createProviderDiagnostics,
@@ -34,13 +35,43 @@ import type {
 const cancelledJobIds = new Set<string>();
 const activeJobIds = new Set<string>();
 
+/*
+ * How long a stopping worker spends closing the tabs it has open in the shared
+ * Chrome, which outlives it. The runner gives its whole stop 8 s, and systemd
+ * kills what is left of the unit 15 s after the stop began.
+ */
+const STOP_TAB_CLOSE_TIMEOUT_MS = 2_000;
+let stopping = false;
+
 function jobIsLive(id: string): boolean {
-  return !cancelledJobIds.has(id);
+  return !stopping && !cancelledJobIds.has(id);
 }
 
 function send(message: ProviderSearchWorkerMessage): void {
+  /* Nobody reads a stopping worker. */
+  if (stopping) {
+    return;
+  }
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
+
+/*
+ * A worker can be stopped mid-search: by the runner, when it shuts down or
+ * gives up on a job, and by systemd, which signals every process of the unit at
+ * once. Left to its default the signal ends the worker before the `finally`
+ * that closes its tab; instead it closes what it has open, within a bound, and
+ * exits. A second signal while it does so changes nothing.
+ */
+function stopOnSignal(): void {
+  if (stopping) {
+    return;
+  }
+  stopping = true;
+  void closeOpenBrowserTargets(STOP_TAB_CLOSE_TIMEOUT_MS).finally(() => process.exit(0));
+}
+
+process.on("SIGTERM", stopOnSignal);
+process.on("SIGINT", stopOnSignal);
 
 function serializeError(
   id: string,
