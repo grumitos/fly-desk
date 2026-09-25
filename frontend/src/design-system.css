@@ -107,6 +107,15 @@
     --fd-icon-14: 14px;
     --fd-icon-12: 12px;
 
+    /* ---- stacking ------------------------------------------------------- */
+    /* One ladder for everything that floats. Local paint order inside a
+       component (a hit area under its content) stays at 1 and 2. */
+    --fd-z-raised: 10; /* sticky heads and controls floating over their own surface */
+    --fd-z-sheet: 80;
+    --fd-z-modal: 120;
+    --fd-z-popover: 130; /* above sheets and modals, which open them */
+    --fd-z-tooltip: 140;
+
     /* ---- 4 · elevation · three levels and no more ------------------------ */
     /* Written as the plate writes them — fixed ink, not "the text colour at
        n %". Deriving elevation from `--color-foreground` inverted every shadow
@@ -472,7 +481,7 @@
   /* ===== 01 §7 · tooltip ================================================ */
 
   .fd-tooltip {
-    z-index: 50;
+    z-index: var(--fd-z-tooltip);
     max-width: 18rem;
     padding: 5px 8px;
     border-radius: var(--fd-radius-8);
@@ -884,7 +893,7 @@
   }
 
   .fd-popover {
-    z-index: 50;
+    z-index: var(--fd-z-popover);
     padding: 8px;
     border: 1px solid var(--color-border);
     border-radius: var(--fd-radius-12);

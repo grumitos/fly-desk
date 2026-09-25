@@ -205,8 +205,11 @@
     min-height: 100dvh;
   }
 
+  /* Raised so the mode and trip segments stay on top while they travel into
+     it from the form. */
   .fd-topbar {
-    @apply sticky top-0 z-50 backdrop-blur-md;
+    position: relative;
+    z-index: var(--fd-z-raised);
     background-color: var(--color-accent);
   }
 
@@ -780,7 +783,7 @@
     position: absolute;
     right: 14px;
     bottom: 18px;
-    z-index: 20;
+    z-index: var(--fd-z-raised);
     display: grid;
     width: var(--fd-control-touch);
     height: var(--fd-control-touch);
@@ -1535,7 +1538,7 @@
 
   .fd-route-fields .fd-route-swap-cell {
     position: absolute;
-    z-index: 4;
+    z-index: var(--fd-z-raised);
     top: 50%;
     right: 10px;
     display: flex !important;
@@ -2045,7 +2048,7 @@
 .fd-sheet-layer {
   position: fixed;
   inset: 0;
-  z-index: 80;
+  z-index: var(--fd-z-sheet);
 }
 
 /* Armazón B: the sheet belongs to the results region, not to the window.
@@ -2193,6 +2196,7 @@
 }
 
 .fd-sheet-layer--modal {
+  z-index: var(--fd-z-modal);
   display: grid;
   place-items: center;
   padding: 24px;
@@ -2505,7 +2509,7 @@
 .fd-mobile-suggest-search {
   position: sticky;
   top: 0;
-  z-index: 4;
+  z-index: var(--fd-z-raised);
   display: flex;
   min-height: 60px;
   flex: 0 0 auto;

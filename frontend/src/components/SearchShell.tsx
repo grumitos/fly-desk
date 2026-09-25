@@ -1351,7 +1351,6 @@ function LocationField({
         position: "fixed",
         top: rect.bottom + 4,
         width: rect.width,
-        zIndex: 90,
       })
     }
 
