@@ -1,12 +1,8 @@
 import { AppIcon, type AppIconSize } from "@/components/ui/app-icon"
 import { cn } from "@/lib/utils"
 
-/**
- * The exchange arrow follows the axis it exchanges along: side by side on a
- * desk (plate 1a), stacked on a phone (plate 1c). It does **not** rotate to get
- * there — rotation is reserved for the one spinner in the system (07 §4), so
- * both glyphs are mounted in the same cell and the container query picks one.
- */
+/* The exchange arrow follows the fields' axis: horizontal on a desk, vertical
+   on a phone. Both glyphs are mounted and CSS shows one. */
 export function SwapIcon({
   size = 16,
   className,

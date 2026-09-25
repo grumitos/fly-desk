@@ -2,23 +2,9 @@ import { Children, isValidElement, useCallback, useId, useRef, type ReactNode } 
 import { AppIcon, type AppIconName } from "@/components/ui/app-icon"
 import { cn } from "@/lib/utils"
 
-/*
- * The segmented control, closed by 01 §3 and 11 §8.
- *
- * Two decisions carry the whole component:
- *
- * 1. `grid-template-columns: repeat(var(--fd-segments), auto)` — the cells
- *    measure by content and the leftover is split evenly, so every option
- *    breathes the same. With `1fr` the cells match and the air does not: in the
- *    248px filter column "Bodega" (icon + label, 65px) was left with 4px a side
- *    while "Todos" (36px) got 19. With `auto` all three get 11px.
- *
- * 2. The pill is the `::before` of the active item, not a floating element that
- *    slides between them. 07 §5 is explicit: the pill changes place with
- *    `tacto`, it does not travel. A sliding indicator also has to measure the
- *    DOM to know where to go, which is a layout read on every render for an
- *    effect the plates never asked for.
- */
+/* A radio group of options that share the free space evenly. The active pill
+   is the item's own `::before`, so it changes place without sliding and
+   without measuring the DOM. */
 
 type SegmentedOptionProps = {
   value: string
@@ -27,9 +13,8 @@ type SegmentedOptionProps = {
   "aria-label"?: string
 }
 
-/* Declarative only: `SegmentedControl` reads these props and renders the
-   buttons itself, so the roving tab order lives in one place instead of in
-   every call site. */
+/* Declarative only: `SegmentedControl` renders the buttons, so the roving tab
+   order lives in one place. */
 export function SegmentedOption(props: SegmentedOptionProps) {
   void props
   return null
@@ -60,10 +45,7 @@ export function SegmentedControl({
       isValidElement<SegmentedOptionProps>(child),
   )
 
-  /* Radio semantics: the arrows move *and* choose, which is what a segmented
-     control means — there is no "highlighted but not applied" state here, and
-     11 §0 rule 2 only forbids confirming without a gesture; an arrow key is
-     one. */
+  /* Radio semantics: the arrows move and choose. */
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       const step = event.key === "ArrowRight" || event.key === "ArrowDown"

@@ -7,7 +7,6 @@
   --color-foreground: #121212;
 
   --color-card: #ffffff;
-  --color-card-foreground: #121212;
 
   --color-popover: #ffffff;
   --color-popover-foreground: #121212;
@@ -28,41 +27,24 @@
   --color-destructive-foreground: #ffffff;
 
   --color-border: #1f1f1e26;
-  /* The rule that crosses the screen. `--color-border` is 15% ink: right for a
-     hairline that only has to bound a control, and invisible as the single line
-     that now separates «Filtros», «Resultados» and «Oferta» from what they head
-     — three columns of the same material, tied together by one line at one
-     height. 25% is the weight the maquetas draw that line at, and it is a token
-     rather than a raw `#1f1f1e40` in six places because it also has to flip in
-     dark, where the ink is `--color-border`'s `#e2e1da`, not `#1f1f1e`. */
+  /* The heavier line under the three column headings. */
   --color-rule: #1f1f1e40;
   --color-input: #1f1f1e26;
   --color-ring: #d97757;
 
-  /* 01 §1. The veil is ink, not "the text colour at 35 %": deriving it from
-     `--color-foreground` inverted it to white in dark mode and every sheet came
-     up on a bright wash. It is the one colour that does NOT flip with the
-     theme, so it is declared once and never overridden below. */
+  /* Ink in both themes: a veil derived from the text colour turns white in dark. */
   --color-scrim: #1f1f1e59;
 
   --color-warning: #d97757;
-  --color-warning-foreground: #ffffff;
   --color-warning-soft: #d977571a;
   --color-warning-soft-foreground: #6f321f;
 
-  /* Plate 5b closes the radius scale at 4 / 6 / 8 / 10 / 12 / 14 / 999. The odd
-     radii the app had accumulated are gone, so each control family is uniform:
-     26px chips at 8, 32 and 36px controls at 10, inputs and cards at 12, window
-     frames at 14. Written in px because that is how the plates specify them. */
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 10px;
-  --radius-xl: 12px;
-  --radius-2xl: 14px;
+  /* Tailwind's `rounded-lg` and `rounded-xl` on the catalogue radii. */
+  --radius-lg: var(--fd-radius-10);
+  --radius-xl: var(--fd-radius-12);
 
-  /* The faces and their metric-matched fallbacks are declared in index.html by
-     scripts/build-frontend.ts. */
+  /* The faces and their metric-matched fallbacks are declared in index.html
+     by scripts/build-frontend.ts. */
   --font-sans: "Inter", "Inter Fallback", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", "IBM Plex Mono Fallback", "IBM Plex Mono Fallback Alt", ui-monospace, monospace;
 }
@@ -99,28 +81,6 @@
   button {
     cursor: pointer;
   }
-
-  button:disabled,
-  input:disabled,
-  select:disabled,
-  textarea:disabled {
-    cursor: not-allowed;
-  }
-}
-
-@layer base {
-  input[type="date"]::-webkit-calendar-picker-indicator {
-    opacity: 0;
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    cursor: pointer;
-  }
-
-  input[type="date"]::-webkit-datetime-edit-fields-wrapper {
-    padding: 0;
-  }
 }
 
 @layer base {
@@ -129,7 +89,6 @@
     --color-foreground: #f8f8f6;
 
     --color-card: #1f1f1e;
-    --color-card-foreground: #f8f8f6;
 
     --color-popover: #2c2c2a;
     --color-popover-foreground: #f8f8f6;
@@ -155,7 +114,6 @@
     --color-ring: #d97757;
 
     --color-warning: #d97757;
-    --color-warning-foreground: #ffffff;
     --color-warning-soft: #d9775726;
     --color-warning-soft-foreground: #f2c3b3;
   }
@@ -193,6 +151,8 @@
     color: var(--fd-theme-toggle-hover-fg) !important;
   }
 
+  /* The one owner of the viewport height; the stage inside it scrolls when
+     its content is taller than the screen. */
   .fd-shell {
     container: fdshell / inline-size;
     display: flex;
@@ -201,17 +161,12 @@
     overflow: hidden;
   }
 
-  /* Raised so the mode and trip segments stay on top while they travel into
-     it from the form. */
   .fd-topbar {
     position: relative;
     z-index: var(--fd-z-raised);
     background-color: var(--color-accent);
   }
 
-  /* The title bar shares the application's measure and its 16px of screen
-     padding (plate 1b), so the brand lines up with the first field of the form
-     below it at every width. */
   .fd-topbar-inner {
     display: flex;
     align-items: center;
@@ -225,8 +180,6 @@
     box-sizing: border-box;
   }
 
-  /* The slot the mode and trip-type segments are handed to when the search goes
-     active (02 §4). In armazón C it is empty and they stay in the form. */
   .fd-topbar-search-slot {
     display: flex;
     min-width: 0;
@@ -253,8 +206,6 @@
     color: var(--color-primary);
   }
 
-  /* 20, and it starts at the shell's own 16: the brand is a mark and a name,
-     and at 24 the mark was the largest glyph on a 44px bar. */
   .fd-topbar-brand-mark {
     width: 20px;
     height: 20px;
@@ -276,12 +227,6 @@
     gap: 4px;
   }
 
-  /* Three 32px squares, and nothing around them. Both plates draw the bar's
-     actions as bare glyphs on the bar's own fill — the capsule's border and
-     `--secondary` fill drew two boxes on a band that is already a box, and
-     with `--secondary` being the bar's own colour the border was the whole of
-     what they said. What marks a square as pressable is the hover fill the
-     cell already carries. */
   .fd-capsule {
     display: inline-flex;
     height: var(--fd-control-standard);
@@ -311,27 +256,11 @@
     color: var(--color-foreground);
   }
 
-  /* Plate 1a dims a capsule cell that has nothing to act on. Copy earns it by
-     being disabled — there is no configuration to copy yet. Paste earns it from
-     the same fact and stays clickable anyway: the clipboard may well hold a
-     configuration, and only a user gesture can tell us. The `:disabled` half of
-     the selector is what lets this win over the generic disabled opacity. */
   .fd-capsule-cell-dim,
   .fd-capsule-cell-dim:disabled {
     opacity: 0.5;
   }
 
-  /* Plates 1a and 1b draw one measure for the whole application: 1760px
-     centred, 16px of screen padding on both sides. The bottom is 12px idle and
-     10px active — the plates give it a slightly tighter foot than flanks
-     because the list already ends in a rule. The sides never change with the
-     viewport; the armazón does that, and it does it by container query. */
-  /* The stage's own rhythm, from the plate: 12 under the title bar, 10 between
-     the form and the workspace, 16 to the bottom edge. It was 8 · 8 · 10, so
-     the form sat closer to the bar than the results sat to the form and the
-     screen ended tighter than it began — three spacings the drawing takes
-     apart on purpose. The idle screen and the phone override all three below;
-     this is the active desk. */
   .fd-search-stage {
     position: relative;
     display: flex;
@@ -347,16 +276,12 @@
     gap: 10px;
   }
 
-  /* Plate 1a: idle is a flex column — a `1fr` spacer, the 1180px form column, a
-     larger `1.3fr` spacer, and the provider rail as the last child so it is
-     pinned to the bottom of the viewport. The asymmetric spacers are what put
-     the form slightly above centre, which is why the optical `translateY` that
-     used to fake it is gone. */
   .fd-search-stage-idle {
     gap: 0;
     padding-block: 0 12px;
   }
 
+  /* Unequal spacers leave the idle form slightly above centre. */
   .fd-search-stage-spacer-top {
     flex: 1 1 0;
   }
@@ -365,11 +290,6 @@
     flex: 1.3 1 0;
   }
 
-  /* 03 §8 · the foot of the idle screen. The policy line used to be the last
-     child of the form, which is not a foot: it stood between the fields and the
-     notice those fields produce, so «hasta 90 noches» was read *above* the error
-     saying the stay was too long. Down here it keeps the form's 1180px measure,
-     so its rule lines up with the grid instead of the whole stage. */
   .fd-policy-foot {
     width: 100%;
     max-width: 1180px;
@@ -377,14 +297,10 @@
     margin-inline: auto;
   }
 
-  /* The spacer above already holds the distance. */
   .fd-policy-foot .fd-policy-line {
     margin-top: 0;
   }
 
-  /* One rule opens the foot and the rail sits inside it. Its own border would be
-     a second rule 12px below the first, which frames the policy line in a box
-     that plate 1a does not draw. */
   .fd-policy-foot:has(.fd-policy-line) + .fd-provider-rail {
     padding-top: 10px;
     border-top: 0;
@@ -403,31 +319,17 @@
     will-change: width, max-width, transform;
   }
 
-  /* In idle this element *is* the plate's form column, so the controls row, the
-     grid and the policy line all share one 1180px measure instead of being
-     clamped one by one — which is how the policy line's border-top used to run
-     wider than the grid above it. The screen padding is already on the stage,
-     so the column only needs its own ceiling. */
   .fd-search-stage-idle .fd-search-frame {
     position: relative;
     flex: none;
     max-width: 1180px;
   }
 
-  /* Idle notices use the lower spacer instead of becoming part of the form's
-     measured height. Otherwise the asymmetric flex spacers recenter the whole
-     form when a one-line error appears, and 07 §0 rule 1 is explicit that what
-     responds to an event is the control, not the page around it.
-     The notice is a sibling of the form, not a child, so the positioned
-     ancestor is the block that holds both — and it keeps the form's own 1180
-     measure (plate 1a), not the full width of the stage. */
   .fd-search-stage-idle .fd-tools-block {
     position: relative;
   }
 
-  /* Centred with auto margins rather than a translate: the notice enters with
-     an animation that owns `transform`, and an animated transform beats a
-     declared one. */
+  /* An idle notice hangs under the form instead of re-centring it. */
   .fd-search-stage-idle .fd-alert-line {
     position: absolute;
     top: 100%;
@@ -437,30 +339,12 @@
     margin-inline: auto;
   }
 
-  /*
-   * ===== 07 §1 · reposo → activo, the table transcribed =====================
-   *
-   *     0 ms  CTA Buscar         `bucle-giro`; the form locks without moving
-   *    60 ms  chips + zócalo     leave by opacity, 120ms   (`fd-motion-idle-exit`)
-   *    60 ms  bloque de campos   `translateY` to the top   (FLIP, App.tsx)
-   *    60 ms  modo + tipo        FLIP into the title bar   (FLIP, App.tsx)
-   *   140 ms  filtros / detalle  8px from their own edge + opacity
-   *   140 ms  lista              opacity only
-   *   180 ms  esqueleto          with the real grid
-   *
-   * Closes at 400ms, inside the 420ms ceiling.
-   *
-   * `data-entering` is up for those 420ms and not a millisecond longer, which is
-   * what keeps the cue attached to *this* arrival: the detail panel remounts
-   * every time another flight is picked, and that later arrival is 05 §8 — the
-   * same 8px from the right, with no delay in front of it.
-   */
+  /* `data-entering` is up only while the idle to active arrival plays; these
+     are its cues. */
   .fd-search-stage[data-entering] .fd-filter-column {
     animation: fd-enter-left var(--fd-dur-estructura) var(--fd-ease-estructura) var(--fd-cue-paneles) both;
   }
 
-  /* The detail already owns `fd-enter-right`; giving the column a second one
-     would play the row twice and travel 16px. Only the cue is added. */
   .fd-search-stage[data-entering] .fd-detail-column > .fd-detail-panel {
     animation-delay: var(--fd-cue-paneles);
   }
@@ -469,15 +353,12 @@
     animation: fd-crossfade var(--fd-dur-estructura) var(--fd-ease-estructura) var(--fd-cue-paneles) both;
   }
 
-  /* «Aparece con la grilla real»: the skeleton is the result card with its text
-     replaced, so what the cue governs is only when it becomes visible. */
   .fd-search-stage[data-entering] .fd-results-list--skeleton {
     animation: fd-crossfade var(--fd-dur-estructura) var(--fd-ease-estructura) var(--fd-cue-esqueleto) both;
   }
 
-  /* The furniture of the idle screen on its way out. It leaves the flow first:
-     the stage is relaying out underneath it, and something that fades while
-     still holding its height drags the column it used to close. */
+  /* Idle furniture leaves the flow while it fades, so the stage can relayout
+     under it. */
   .fd-provider-rail[data-leaving="true"] {
     position: absolute;
     right: 16px;
@@ -492,11 +373,8 @@
     left: 0;
   }
 
-  /* Plate 1a's one row of six tracks:
-       minmax(150,1.2fr) 34 minmax(150,1.2fr) minmax(268,1.7fr) minmax(144,.9fr) 124
-     Origin, swap and destination are written as one nested grid (334 = 150+34+150,
-     2.4fr = 1.2 + 1.2) because armazón B moves those three as a block onto their
-     own row, and a nested grid moves as a block. */
+  /* Origin, swap and destination are one nested grid (`.fd-route-fields`),
+     so layout B can move them to a row of their own. */
   .fd-search-grid {
     display: grid;
     grid-template-columns:
@@ -517,29 +395,16 @@
     margin-inline: auto;
   }
 
-  /* The idle field reserves every row it can end up holding, because it is not
-     the field that pays for growing: the stage centres the form between a 1fr
-     and a 1.3fr spacer, so eighteen pixels of notice move the whole block up by
-     eight under the agent's hands. The lane is derived from the notice's own
-     declarations (`.fd-control-helper`: 0.25rem of margin over a 1.2 line box
-     of `--fd-text-meta`) rather than rounded, so it stays right when the type
-     scale moves. */
+  /* Fields reserve their helper line, and the frequent chips when there are
+     any, so a validation message never moves the idle form. */
   .fd-search-field-shell {
     min-height: calc(52px + 0.25rem + 1.2 * var(--fd-text-meta));
   }
 
-  /* And where the frequent-station chips hang under the field, the field holds
-     three rows at once: the control, the chips (5px over a standard control)
-     and the notice. Reserving only the chips is what let «Ingresa un destino
-     válido» re-centre the idle screen on every deployment that has a ranking to
-     show. */
   .fd-location-field-shell-reserve-suggestions {
     min-height: calc(52px + 5px + var(--fd-control-standard) + 0.25rem + 1.2 * var(--fd-text-meta));
   }
 
-  /* Plate 1a gives the swap its own 34px track, aligned with the top of the
-     52px fields. In armazón C it leaves the track and sits on the divider that
-     splits the single Origin/Destination card (03 §2). */
   .fd-route-swap-cell {
     display: flex;
     align-self: start;
@@ -555,8 +420,6 @@
     min-width: 0;
   }
 
-  /* The workspace owns everything the form does not, and it is the element the
-     armazón B side sheet is positioned against — hence `position: relative`. */
   .fd-shell-workspace {
     position: relative;
     flex: 1;
@@ -572,11 +435,6 @@
     min-height: 0;
   }
 
-  /* The rail's own inset and the line that ends it. Both columns beside the
-     list carry them, in mirror, so the list is bounded left and right by a
-     hairline instead of by two card edges — and the 248 and the 316 the grid
-     hands out are unchanged, because the inset is inside them and the list's
-     width is derived from those two numbers. */
   .fd-filter-column {
     grid-area: filters;
     min-width: 0;
@@ -585,15 +443,6 @@
     border-right: 1px solid var(--color-border);
   }
 
-  /*
-   * Owner-decided, against plate 1b (see REDESIGN_CONTRACT.md): the list is
-   * NOT a card. #45 wrapped the column in a bordered surface because the plate
-   * draws one, and the result on a desk was the cards' own borders running
-   * flush against the wrapper's — a frame touching a frame. The redesign
-   * commit (5172ea6) had the header and the cards floating on the stage, and
-   * the owner holds that as the reference, so the box is gone again and only
-   * the column's structure (container, flex, overflow) remains.
-   */
   .fd-list {
     container: fdlist / inline-size;
     grid-area: list;
@@ -604,20 +453,9 @@
     overflow: hidden;
   }
 
-  /* The header is the first of the three headings that cross the screen, and
-     the plate draws all three the same: 28 tall, one 25% rule under them, and
-     the title starting where the column's content starts. This one was the
-     odd one out — 30px of line box, no rule, and 2px of padding that put
-     «Resultados» eight pixels to the left of the «Aerolínea» it heads. Three
-     headings, one line: `Main.dc.html` puts the filter rail's, the list's and
-     the detail's at the same y with the same rule, and only two of them were
-     drawn that way. */
   .fd-list .fd-list-header {
     height: 28px;
     flex-shrink: 0;
-    /* 10 left, so the title stands over the row's first lane; 10 right, which
-       is the stable gutter `.fd-list-body` reserves, so the two boxes end at
-       the same pixel. */
     padding: 0 10px;
     border-bottom: 1px solid var(--color-rule);
   }
@@ -630,33 +468,16 @@
     border-left: 1px solid var(--color-border);
   }
 
-  /* 05 §8: the panel arrives with `estructura`, 8px from the right. Only here —
-     in armazón B and C the detail is a sheet and the sheet owns its own
-     arrival, so animating the panel too would play the movement twice.
-
-     Named `.fd-detail-panel` since the column stopped being a card: this used
-     to read `.fd-panel`, and `.fd-panel` no longer exists anywhere. A selector
-     that matches nothing loses the entrance in silence, which is why the
-     choreography case names this class outright. */
   .fd-detail-column > .fd-detail-panel {
     animation: fd-enter-right var(--fd-dur-estructura) var(--fd-ease-estructura) both;
   }
 
-  /* ===== List column (plates 1b, 8a, 1d) =================================
-   * Not a card: filters and detail are panels because they sit beside the
-   * list; the list is the page itself. */
-
-  /* No gap: the heading's rule is the separation, exactly as it is under the
-     filter rail's and the detail's. Eight pixels of air under a rule reads as
-     a rule belonging to nothing. The phone, whose header is a status row and
-     not a heading, keeps its own gap in the `fdshell` block below. */
   .fd-list-shell {
     display: flex;
     height: 100%;
     min-width: 0;
     min-height: 0;
     flex-direction: column;
-    gap: 0;
     overflow: hidden;
   }
 
@@ -688,24 +509,10 @@
     font-weight: var(--fd-weight-title);
   }
 
-  /* The count beside the title is a figure at the rung under it, not at the
-     title's own: 12 muted against «Resultados» at 14/700, which is what
-     `Main.dc.html` draws and what the phone's status row was already using.
-     The 13 it had made two headings out of one line.
-
-     The weight stays 700. The plate writes this figure at 600, but `Cifras`
-     §03 puts a counter with the hour and the code in the 700 rung — «lo que se
-     lee de un vistazo» — and 600 is the rung of what accompanies. Between a
-     surface plate and the system sheet that closes the weights, the system
-     sheet wins; the plate is what has to be corrected. */
   .fd-list-header .fd-panel-count {
     font-size: var(--fd-text-meta);
   }
 
-  /* What the chip strip used to say and the filter rail does not: how much the
-     constraints are costing. It rides the count line on a desk, where the strip
-     no longer mounts, and it is prose rather than a figure — so it takes the
-     sans face at the count's own size, not `.fd-panel-count`'s mono. */
   .fd-list-hidden-count {
     min-width: 0;
     overflow: hidden;
@@ -716,9 +523,6 @@
     white-space: nowrap;
   }
 
-  /* Plate 1d's «↕ Precio»: the same order control with the same state, worn
-     small enough for a 32px row. It is the segmented's sibling and only one of
-     the two is ever shown. */
   .fd-result-sort-compact {
     display: none;
     align-items: center;
@@ -733,8 +537,6 @@
     color: var(--color-foreground);
   }
 
-  /* 02 §9 step 6. Hidden until the tools retract, so the filters are never out
-     of reach; it is not a second control, it is the same one relocated. */
   .fd-status-row-filters {
     display: none;
     width: 26px;
@@ -747,10 +549,8 @@
     color: var(--color-primary-foreground);
   }
 
-  /* The list body owns the only scroll container of the column, and on a phone
-     the only one of the screen (02 §11). `overscroll-behavior: contain` stops
-     the gesture leaking to whatever is behind an open sheet. The ten-pixel
-     right gutter is layout space only; it is not a visible scroll control. */
+  /* The right gutter is shared by the header and the rows so their lanes end
+     on the same pixel; the viewport inside is the only scroller. */
   .fd-list-body {
     position: relative;
     display: flex;
@@ -761,19 +561,6 @@
     padding-right: 10px;
   }
 
-  /* 11 §3's «tarda», said beside the skeleton rather than instead of it: one
-     line at the head of the list body, above the bones, naming the provider
-     that is still out. It is not a notice — 04 §8's notice is the strip above
-     the whole workspace and belongs to the search, this belongs to the column
-     — so it takes no border, no surface and no dismissal, only the spinner it
-     shares with the «Parcial» pill. */
-
-  /* 02 §9: one touch square, r999, anchored to the bottom-right of the list —
-     the corner a thumb reaches without moving the hand. It sits over the
-     viewport rather than inside it, so it does not scroll away with the content
-     it undoes.
-     The shadow is the `emergente` level of 01 §4: §9 writes a fourth shadow,
-     and the elevation catalog is closed at three. */
   .fd-back-to-top {
     position: absolute;
     right: 14px;
@@ -804,40 +591,14 @@
     height: 0;
   }
 
-  /* No gap. The 6px between cards was air between forty framed objects; with
-     one hairline under each row the air *is* the separation, and a gap on top
-     of it draws a line floating in the middle of nothing. `RESULTS_CARD_GAP_PX`
-     is 0 for the same reason and reads this back off the element, so the row
-     count and this rule cannot drift apart. */
   .fd-results-list {
     display: grid;
     align-content: start;
   }
 
-  /*
-   * 04 §9 / 07 §4 row 12: cards arrive 6px low and in cascade, 30ms apart, and
-   * the cascade is capped — seven on a desk, six on a phone. The cap is why the
-   * delay is written per position instead of from an index, and why the rule
-   * selects those positions rather than every child: a card past the cap is
-   * drawn the frame it exists, which is what makes the cascade an arrival and
-   * not something the list replays on every batch it appends while it is
-   * scrolled.
-   *
-   * `nth-child` rather than a prop: the list children are two different
-   * components, and the position in the list is a fact about the list.
-   *
-   * `backwards`, not `both`: the fill is only needed *in front* of the movement,
-   * to hold the row 6px low and invisible through its share of the stagger.
-   * Behind it, `both` kept applying the final keyframe forever — and that
-   * keyframe lands on `translateY(0)`, which computes to an identity matrix, not
-   * to `none`. A transform of any kind makes the row a stacking context, so the
-   * `z-30` of the schedules panel (3b) was trapped inside the row that opened it
-   * and every row after it painted over the open panel. Dropping the transform
-   * from the `to` keyframe does not help: Chrome fills the missing property from
-   * the element's own value and still applies it, measured as
-   * `matrix(1, 0, 0, 1, 0, 0)`. Ending the fill is what returns the row to
-   * `transform: none`.
-   */
+  /* The first rows cascade in, capped so an appended batch never replays it.
+     `backwards` and not `both`: a filled transform would leave every row a
+     stacking context and trap the schedules panel under the next row. */
   .fd-results-list[data-cascade="true"] > *:nth-child(-n+7) {
     animation: fd-enter-row var(--fd-dur-emergente) var(--fd-ease-estructura) backwards;
     animation-delay: calc(6 * var(--fd-stagger-row));
@@ -867,17 +628,11 @@
     animation-delay: calc(5 * var(--fd-stagger-row));
   }
 
-  /* 04 §9: seven on a desk, six on a phone. The stacked card is taller, so the
-     seventh is below the fold and animating it would only postpone a card
-     nobody is looking at. Only the seventh position moves — 1 to 6 already
-     carry their own delay. */
   :where(.fd-shell[data-shell-size="C"]) {
     .fd-results-list[data-cascade="true"] > *:nth-child(7) {
       animation: none;
     }
   }
-
-  /* ===== Active filter strip (04 §3 desk · plate 1d phone) ============== */
 
   .fd-filter-strip {
     display: flex;
@@ -907,9 +662,6 @@
     min-width: 0;
   }
 
-  /* Plate 1d: 52px, the route at 15/700 with the swap glyph between the two
-     stations, and the whole search underneath at 12/400 — including the mode,
-     which stops being a control here and becomes the last word of the line. */
   .fd-mobile-search-summary {
     display: flex;
     width: 100%;
@@ -924,10 +676,6 @@
     text-align: left;
   }
 
-  /* The route and its dates at the left, who is flying and in which mode at
-     the right: plate 1d puts the second pair in the width the two station
-     codes leave over, and the whole reason it does is that on one line the
-     mode was the word the ellipsis ate. */
   .fd-mobile-search-lead {
     display: flex;
     min-width: 0;
@@ -969,23 +717,6 @@
     white-space: nowrap;
   }
 
-  /*
-   * The collapsed bar is the search said in one line, and touching it opens the
-   * form that says exactly the same thing. It wrote the route, the date and the
-   * count in sans and the form writes them in mono: the same data changing
-   * alphabet inside a single gesture, which is the most expensive incoherence
-   * in the system because the agent sees both spellings back to back.
-   *
-   * All three are figures — a station code, a date, a counter — so they go mono
-   * and tabular, at the weight each line already carries: 700 for the route
-   * heading and 600 for the summary line, which is the same 600 that
-   * `.fd-daterange-half .fd-field-value` and `.fd-monthrange-value` use for the
-   * date in the form. The mode — "Exacto" — and the noun "pasajeros" stay in
-   * sans: they are names, not figures.
-   *
-   * The route's 15 does not move. It is the rung the catalogue reserves for
-   * station codes and it was already right; what it lacked was the alphabet.
-   */
   .fd-mobile-search-route {
     display: flex;
     align-items: center;
@@ -1022,9 +753,6 @@
     color: var(--color-foreground);
   }
 
-  /* Mode and trip type: inline and content-sized on a desk (plates 1a, 1b),
-     stacked and full width on a phone (plate 1c). Same component, same
-     heights — only the track changes. */
   .fd-trip-mode-controls {
     display: flex;
     min-width: 0;
@@ -1042,9 +770,6 @@
     max-width: 100%;
   }
 
-  /* Sized by their own content, so here the padding is the air. Plate 1b: 13px
-     in the title bar. The 12 that used to sit beside it belonged to the list
-     header's order segmented, which is now the column header. */
   .fd-trip-mode-controls .fd-segmented-item {
     padding-inline: 13px;
   }
@@ -1074,24 +799,6 @@
   .fd-inline-reveal-closed {
     margin-inline: -0.25rem;
   }
-
-  /* Disabled is `.fd-disabled` and nothing else (01 §1): opacity over the whole
-     control. The greyscale filter this replaced was inventing a colour the
-     palette does not have. */
-
-
-  /* `.fd-panel` — the card with its border, radius, shadow and grey header band
-     — had exactly two callers, the filter rail and the detail column, and both
-     have stopped being boxes: three levels of frame on one screen where none of
-     them meant anything. The class and its header, title and subtitle went with
-     them; what is left of the two headers is a 28px line each, declared where
-     the component that owns it is declared. `.fd-panel-count` stays: it is the
-     figure beside a heading, not part of any frame. */
-
-  /* The 52px search field lives in `components.css` as `.fd-field-control` —
-     one implementation for all six fields, including both halves of the merged
-     date control. The second one that used to sit here (radius 12 via `@apply`,
-     but 16px of top padding instead of 15) is gone. */
 
   .fd-control-helper {
     margin: 0.25rem 0 0;
@@ -1129,7 +836,6 @@
     height: 0;
     width: 0;
   }
-
 }
 
 @container fdshell (min-width: 1100px) {
@@ -1138,17 +844,6 @@
   }
 }
 
-/*
- * Armazón B · 720–1099 (plate 8a).
- *
- * Not a third design: A with two mechanical changes. One, the six mínimos of
- * the form add up to 894px and do not fit, so origin/swap/destination take the
- * first row and dates/passengers/Buscar the second — same heights, same type.
- * Two, the detail leaves the third column and overlays the results region as a
- * 380px side sheet with a scrim (see `.fd-detail-sheet`).
- *
- * The filter column stays. That is what separates this armazón from mobile.
- */
 @container fdshell (max-width: 1099.98px) {
   .fd-search-grid {
     grid-template-columns: minmax(268px, 2fr) minmax(144px, 1fr) 124px;
@@ -1159,18 +854,6 @@
   }
 }
 
-/*
- * The detail column, and only it, leaves earlier than the armazón it belongs
- * to. 1100 is the width the *form* stops fitting its six mínimos in one row;
- * the results region inherited that number and paid 326px for a third column
- * out of a list that had nothing to spare. Below 1440 the list would be under
- * the 824 `DETAIL_COLUMN_MIN_LIST_PX` asks for — the row's 428 of fixed
- * measure, the leg's 284, and the 112 of «2 escalas · BOG, PTY», the widest
- * stops label the row draws while still naming its airports — so the detail
- * becomes the same side sheet armazón B gives it and the list keeps its results
- * wide. The placement is decided once, in `useShellSize`, off the same
- * arithmetic; this is the grid agreeing with it.
- */
 @container fdshell (max-width: 1439.98px) {
   .fd-results {
     grid-template-columns: 248px minmax(0, 1fr);
@@ -1178,44 +861,15 @@
   }
 }
 
+/* Phone layout (C). Keyed on the shell's attribute, which `useShellSize`
+   sets, so a phone held sideways stays a phone; `:where` keeps specificity. */
 :where(.fd-shell[data-shell-size="C"]) {
-  /*
-   * ===== 07 §1 · reposo → activo on a phone (`1c` → `1d`) ===================
-   *
-   *     0 ms  teclado + CTA de 52px   the keyboard closes, the CTA spins
-   *     0 ms  campos → resumen        collapse to 52px with `estructura`,
-   *                                   the summary text at half travel
-   *   120 ms  chips de filtro         12px from the left, +40ms
-   *   120 ms  fila de estado          opacity, no displacement
-   *   160 ms  tarjetas                their own cascade (movement 12)
-   *
-   * Its own table, so its own rules: the desk puts the list on the 140ms cue as
-   * one block, and here the strip and the status row are separate rows at 120
-   * and the list itself is not a row at all.
-   */
   .fd-search-stage[data-entering] .fd-list {
     animation: none;
   }
 
-  /* 8a: on the phone the list column is not a card. It runs edge to edge under
-     the 32px status row, so it gives back the surface the desk gives it. */
   .fd-list {
     overflow: visible;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    box-shadow: none;
-  }
-
-  /* The desk closed this gap because there its header is a heading and the
-     rule under it is the separation. A phone's is a status row, and both phone
-     plates draw its air as the row's own padding — 12 over the count and 8
-     under it — rather than as a gap between two boxes. Carried by the row
-     itself, the 8 survives a row that grows a pill; carried by the shell, it
-     was paid again by the viewport's own 10 and the first card sat 18px under
-     the count instead of 8. */
-  .fd-list-shell {
-    gap: 0;
   }
 
   .fd-search-stage[data-entering] .fd-filter-strip > * {
@@ -1229,47 +883,23 @@
     animation: fd-crossfade var(--fd-dur-estructura) var(--fd-ease-estructura) var(--fd-cue-tira-movil) both;
   }
 
-  /* «El texto del resumen entra con opacidad a mitad de recorrido (sin cruce)»:
-     the fields collapse for 110ms with nothing written over them, and only then
-     does the one line that replaces them appear. */
   .fd-search-stage[data-entering] .fd-mobile-search-lead {
     animation: fd-crossfade calc(var(--fd-dur-estructura) / 2) var(--fd-ease-estructura)
       calc(var(--fd-dur-estructura) / 2) both;
   }
 
-  /* The rail leaves against the 14px the idle screen is padded with, not the
-     16px of a desk (`.fd-search-stage-idle` in this same block). */
   .fd-provider-rail[data-leaving="true"] {
     right: 14px;
     bottom: 0;
     left: 14px;
   }
 
-  /* Plate 1c: 48px tall, 12px of screen padding — the same 12px the list below
-     it uses, so the brand and the first card share one left edge. */
   .fd-topbar-inner {
     min-height: 48px;
     height: 48px;
     padding: 0 calc(12px + env(safe-area-inset-right, 0px)) 0 calc(12px + env(safe-area-inset-left, 0px));
   }
 
-  /*
-   * And gone the moment there is a search to read.
-   *
-   * Plate 1c gives the brand the top of the *resting* screen, which is the
-   * screen it belongs to: at rest there is nothing else competing for it. Once
-   * the results exist the same 48px is the most expensive strip on the display
-   * — it holds a wordmark, a link to the page already open and a theme switch,
-   * above a list that has to show flights through a search summary, a filter
-   * row and a status row. 02 §5 lists what a phone may hide and the title bar
-   * is furniture, not one of the controls it protects; the one action that was
-   * not furniture — copy — is not hidden, it is rehoused on the filter row
-   * (`.fd-filter-strip-copy`).
-   *
-   * Hidden rather than unmounted: the theme lives in this component, and a
-   * `data-workspace-active` that unmounted it would drop the stored preference
-   * the next search restored.
-   */
   .fd-topbar[data-workspace-active="true"] {
     display: none;
   }
@@ -1279,23 +909,13 @@
     height: 23px;
   }
 
-  .fd-topbar-brand-name {
-    font-size: var(--fd-text-action);
-  }
-
-  /* The mode and trip-type segments are not in the bar here: the slot goes
-     empty and they mount inside the form (02 §4). */
   .fd-topbar-search-slot {
     display: none;
   }
 
-  /* The capsule breaks into loose buttons, each with its own border. */
   .fd-capsule {
     height: auto;
     overflow: visible;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
     gap: 6px;
   }
 
@@ -1307,15 +927,10 @@
     background-color: var(--color-secondary);
   }
 
-  /* Segmented controls go full width at the mobile control height. The pill
-     moves in by a third pixel because at this size a 2px inset reads as a
-     hairline (plates 1e and 8d; 01 §3). */
   .fd-segmented {
     height: var(--fd-control-touch);
   }
 
-  /* Full width here, so the trip-mode group gives up its content padding and
-     lets the leftover split evenly like every other segmented (plate 1c). */
   .fd-segmented-item,
   .fd-trip-mode-controls .fd-segmented-item {
     padding-inline: 0;
@@ -1326,15 +941,11 @@
     inset: 3px;
   }
 
-  /* 01 §5 ties the pictogram to the height of the control it sits in: a
-     mobile control takes 18, not the 16 of its 32px desktop twin. Sized here
-     rather than by a prop, because the height is decided here too. */
   .fd-segmented-item svg {
     width: var(--fd-icon-18);
     height: var(--fd-icon-18);
   }
 
-  /* Plate 1c stacks both segments full width, one under the other. */
   .fd-trip-mode-controls {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -1351,17 +962,6 @@
     justify-content: space-between;
   }
 
-  /*
-   * 05 §1 and 02 §7.6: on a phone the detail's actions are anchored at the foot
-   * of the sheet, at the mobile control height, with the sheet footer's
-   * padding and the home indicator absorbed. They stay inside the panel — one
-   * component, three mounts (rule 1) — and take the anchoring from `position: sticky` against
-   * the sheet body, which is the only thing that scrolls.
-   */
-  /* 02 §12: every square icon control takes the mobile touch height here,
-     «sin excepciones» — see the catalogue in `design-system.css` for why that
-     height is 40 and no longer 44. The counter grows with its buttons: a touch
-     ± inside a 32px frame would spill. */
   .fd-stay-counter {
     height: var(--fd-control-touch-lg);
   }
@@ -1371,28 +971,12 @@
     height: var(--fd-control-touch);
   }
 
-  /* The cross of the date control is a square icon target like any other, in
-     the merged date halves and in the two location fields alike. Both centre on
-     the field by the band construction in `components.css`, which is what lets
-     a touch target live inside a 58px field: it is centred by a margin the
-     field cannot feel, not by an overflow the row happens to spread evenly. */
   .fd-daterange-clear,
   .fd-field-clear {
     width: var(--fd-control-touch);
     height: var(--fd-control-touch);
   }
 
-  /*
-   * 7b, one more time, and in the last three places the phone still broke it.
-   *
-   * `Controles` lists five controls whose glyph does not answer to the height
-   * it sits in and says four of them are in the filter strip; those were fixed
-   * where the strip is declared. These three are the same fault one screen
-   * over, in the form the thumb uses to correct a search: all three were taken
-   * to the 40px touch height and all three kept the 14 and 16 a 26px chip and
-   * a 32px desktop control take. Swept for with `getComputedStyle` over every
-   * pressable on all four phone surfaces rather than read off the sheet.
-   */
   .fd-daterange-clear svg,
   .fd-field-clear svg,
   .fd-stay-counter-step svg {
@@ -1400,20 +984,11 @@
     height: var(--fd-icon-18);
   }
 
-  /* At rest there is nothing to copy yet, so the bar carries paste alone; the
-     active half of this pair went with the bar itself. */
   .fd-topbar[data-workspace-active="false"] .fd-topbar-copy {
     display: none;
   }
 
-  /* Plate 1c: the resting searcher is centred in the free space with 14px of
-     screen padding, and the plinth sits on the bottom edge. Plate 1d: once
-     active there is no stage padding at all — the retractable block, the status
-     row and the list each carry their own, because they scroll independently. */
   .fd-search-stage {
-    /* `1c` → `1d` collapses the fields at 0ms where the desk waits 60: on a
-       phone nothing else is competing for the movement — there is no segmented
-       pair travelling to a title bar that has no slot for it. */
     --fd-cue-campos: 0ms;
 
     padding: 0 env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
@@ -1425,13 +1000,11 @@
       calc(14px + env(safe-area-inset-left, 0px));
   }
 
-
   .fd-search-stage-active .fd-search-frame {
     max-width: 100%;
     padding: 0;
   }
 
-  /* A phone held sideways keeps the phone form, at a phone's measure. */
   .fd-search-stage-idle .fd-search-frame,
   .fd-policy-foot {
     width: 100%;
@@ -1439,8 +1012,6 @@
     margin-inline: auto;
   }
 
-  /* Both spacers equal: on a phone the form is centred, not optically raised —
-     there is no rail of results below it to balance against. */
   .fd-search-stage-spacer-bottom {
     flex-grow: 1;
   }
@@ -1450,8 +1021,6 @@
     gap: 8px;
   }
 
-  /* Plate 1c: the field grows to 58px and its contents grow with it — value at
-     16/600 on a 19px line, icon 18, floating label at 14/10. */
   .fd-field-control {
     --fd-field-label-band: 16px;
     gap: 10px;
@@ -1475,8 +1044,6 @@
     height: var(--fd-icon-18);
   }
 
-  /* Plate 1c: Origen and Destino are **one** card, 58 + 1 + 58. Two stacked
-     cards was the shape this replaces. */
   .fd-route-fields {
     grid-column: auto;
     grid-template-columns: minmax(0, 1fr);
@@ -1490,9 +1057,6 @@
     box-sizing: border-box;
   }
 
-  /* The division is a line inside the card, not a border under the first
-     field: it starts 14px in, level with the icons, so the card reads as one
-     surface split rather than as two surfaces touching. */
   .fd-route-fields::after {
     content: "";
     position: absolute;
@@ -1509,10 +1073,6 @@
     min-height: 0;
   }
 
-  /* The swap button plus its 10px inset and 6px of air: the value has to stop
-     before the button, not run under it. Derived rather than written out,
-     because the button is a token — the literal 60 this used to be was the sum
-     for a 44px button and stayed behind when the catalogue moved to 40. */
   .fd-route-fields .fd-field-control {
     height: 100%;
     min-height: 0;
@@ -1522,9 +1082,6 @@
     background: transparent;
   }
 
-  /* One card, one ring. The focused half tints at 7% and lets the card carry
-     the ring — the same rule that keeps the merged date control from growing a
-     second border (03 §2). */
   .fd-route-fields:focus-within {
     border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
@@ -1545,7 +1102,6 @@
     z-index: var(--fd-z-raised);
     top: 50%;
     right: 10px;
-    display: flex !important;
     padding: 0;
     transform: translateY(-50%);
   }
@@ -1556,13 +1112,11 @@
     border-radius: var(--fd-radius-12);
   }
 
-  /* 18px is the size a mobile control takes (7b). */
   .fd-route-fields .fd-swap-icon > svg {
     width: var(--fd-icon-18);
     height: var(--fd-icon-18);
   }
 
-  /* Stacked fields, stacked arrow (plate 1c). */
   .fd-swap-icon > :first-child {
     display: none;
   }
@@ -1577,13 +1131,6 @@
     margin-top: 16px;
   }
 
-
-  /* It wrote a raw 11, and 11 is also the catalogue's mono rung being spent
-     here on running text. The line is prose and belongs on the 12 rung, which
-     is the one it already uses on a desk: the phone shortens by text — "Ventana
-     … hasta 90 noches", without the third clause — and did not need to shrink
-     on top of being cut. Measured at 12px with `nowrap`: the line asks for
-     314px and the lane gives 332 at a 360 viewport, so it fits. */
   .fd-policy-line {
     gap: 6px 10px;
     margin-top: 8px;
@@ -1605,9 +1152,6 @@
     height: 58px;
   }
 
-  /* Plate 1c: the two halves take the mobile field padding, and the date sits
-     at 15 rather than the route's 16 — a date is short, and 16 would push
-     «Regreso» against the divider on a 360px screen. */
   .fd-daterange-half {
     --fd-field-label-band: 16px;
     gap: 10px;
@@ -1618,8 +1162,6 @@
     font-size: var(--fd-text-action);
   }
 
-  /* One full-width track, so anything mounted here stretches instead of
-     shrinking to its content (plate 1c). */
   .fd-search-controls-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -1633,23 +1175,9 @@
     gap: 0;
   }
 
-  /* Filters live in a partial sheet here (02 §7), so the column is not
-     rendered at all — see `App.tsx`. It has to actually leave the tree: an
-     element still holding `grid-area: filters` against a template that only
-     names `list` is placed into an implicit column, and the list ends up with
-     half the screen. */
-
-  /*
-   * The retractable block (plate 1d, algorithm in 02 §9).
-   *
-   * One container, one `max-height`, three bands inside: the 52px search
-   * summary, the filter strip and the notice — 182px at most. It retracts as a
-   * unit because it *is* a unit; splitting it across two subtrees with two
-   * collapse mechanisms is what tore the layout when the bar undocked.
-   *
-   * `flex-shrink: 0` matters: without it the block gives up height to the list
-   * instead of scrolling, and the summary gets clipped mid-line.
-   */
+  /* The retractable block: summary, filter strip and notice fold away as one
+     unit while the list scrolls down, and open to their natural height while
+     the form is being edited. */
   .fd-tools-block[data-active="true"] {
     flex-shrink: 0;
     overflow: hidden;
@@ -1669,25 +1197,11 @@
     transform: translateY(-8px);
   }
 
-  /*
-   * 11 §2.4 · back to editing, with the results behind.
-   *
-   * The 182px is the height of the *summary* band, and while the form is open
-   * it is not that band any more — «el bloque crece a su alto natural» (2h).
-   * Measured clipped by 301px on a 390px screen: the passenger field and the
-   * CTA were below the cut, so the way back out of editing did not exist.
-   *
-   * `flex` rather than a plain block so the form gets the space it needs and
-   * gives the rest back to the list, and `overflow: visible` because the
-   * calendar and the passenger popover open out of this box.
-   */
   .fd-tools-block[data-active="true"][data-editing] {
     max-height: none;
     overflow: visible;
   }
 
-  /* The one-line summary fading out on top of the form that replaces it. Out of
-     the flow, or the growth it is fading over would be measuring both. */
   .fd-mobile-search-summary-shell[data-leaving="true"] {
     position: absolute;
     z-index: 1;
@@ -1697,9 +1211,6 @@
     pointer-events: none;
   }
 
-  /* The retraction of 02 §9 measures scroll against a summary; while the form
-     is open there is nothing to retract, and doing it anyway would fold the
-     fields away under the agent's hands. */
   .fd-tools-block[data-active="true"][data-editing][data-collapsed="true"] {
     max-height: none;
     opacity: 1;
@@ -1707,22 +1218,10 @@
     transform: translateY(0);
   }
 
-  /* 12 over the collapsed bar, which is the same 12 the flanks take and what
-     both phone plates draw above it. */
   .fd-tools-block[data-active="true"] > .fd-search-frame {
     padding: 12px 12px 0;
   }
 
-  /*
-   * The status row: it never retracts, and it is the one place the count and
-   * the order live once the title is gone (04 §3).
-   *
-   * 37 and not the 32 it was fixed at, and drawn on nothing. Both phone plates
-   * write this row as `padding: 12px 12px 8px` around a single 17px line and
-   * no rule under it — the count and the order are two values on the stage,
-   * not a band. Fixed at 32 with a hairline it was a header of a list that has
-   * no title, 14px in from an edge the cards below it start 12px from.
-   */
   .fd-list-header {
     height: auto;
     min-height: 0;
@@ -1740,9 +1239,6 @@
     padding-inline: 6px;
   }
 
-  /* 02 §9 and 04 §8 both put the notice at the touch height inside the
-     retractable block; it was inheriting the desk's 36px bar height, which also
-     put the dismiss target under the minimum of 02 §12. */
   .fd-alert-line {
     height: var(--fd-control-touch);
   }
@@ -1752,19 +1248,10 @@
     height: var(--fd-control-touch);
   }
 
-  /* The label goes: it names a control that is no longer here at all — the
-     desk's segmented moved into the column header, which a phone does not
-     draw — and what is left of it on this row is the sweep's «Rango». The
-     order itself stays as the compact swap of plate 1d: 02 §5 is a closed list
-     of what may be hidden on a phone and the order is not in it. */
   .fd-result-sort-label {
     display: none;
   }
 
-  /* Plate 1d's «↕ Precio» is the loud half of this row: 13/700 in full ink
-     with the glyph muted behind it, against the count's 13/600 muted. It was
-     12/600 and muted throughout, which put the one control on the row a rung
-     below the figure beside it. */
   .fd-result-sort-compact {
     display: inline-flex;
     color: var(--color-foreground);
@@ -1776,16 +1263,10 @@
     color: var(--color-muted-foreground);
   }
 
-  /* 13, not the desk's 12: there the count sits beside «Resultados» at 14 and
-     a second 13 made two headings out of one line. Here the title is not
-     drawn at all, so the row is one line of two values and both plates set it
-     at the order's own body. */
   .fd-list-header .fd-panel-count {
     font-size: var(--fd-text-base);
   }
 
-  /* On a phone the notice is a band of the retractable block (plate 1d), so it
-     stays in the flow rather than hanging under the form. */
   .fd-search-stage-idle .fd-alert-line {
     position: static;
     width: auto;
@@ -1796,13 +1277,6 @@
     display: grid;
   }
 
-  /*
-   * The copy action at the end of the filter row: pushed to the free right by
-   * the auto margin, and held there by `sticky` once the chips are wide enough
-   * to scroll under it. It carries the row's own surface so the chips passing
-   * beneath it do not show through, and the same 1px `--input` border the
-   * capsule cells wore in the bar it came from.
-   */
   .fd-filter-strip-copy {
     position: sticky;
     right: 0;
@@ -1819,17 +1293,10 @@
     transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  .fd-filter-strip-copy:disabled {
-    opacity: 0.45;
-  }
-
   .fd-filter-strip-copy:not(:disabled):hover {
     color: var(--color-foreground);
   }
 
-  /* Plate 1d: the strip is the middle band of the block — touch-height chips
-     on one line that scrolls sideways, never wrapping into a second row that
-     would push the list down. */
   .fd-filter-strip {
     flex-wrap: nowrap;
     overflow-x: auto;
@@ -1842,26 +1309,6 @@
     height: 0;
   }
 
-  /*
-   * ===== The icon law, in the band the thumb travels most =================
-   *
-   * "Each icon size is bound to a control height, so the icon is never chosen
-   * by taste" (7b). The binding is: 26 → 12, desktop 32–52 → 16, dense rows →
-   * 14, and **every 40 or 46 control on a phone → 18**.
-   *
-   * This strip broke it three times in a row, in the one band the thumb never
-   * leaves: "Filtros" drew 14 inside 40, the active chip's cross drew 14 inside
-   * 40 — the same 14 it draws inside 26 on a desk, which means the icon was not
-   * looking at its control on either surface — and copy drew 16 inside 40. One
-   * icon chosen by taste barely shows; three in the same row make the row look
-   * like it came from another screen.
-   *
-   * The size is corrected where the control lives rather than in the markup,
-   * because the same component mounts in two armazones: the active chip is 26
-   * on a desk and 40 here, so its cross cannot carry a fixed number in the JSX.
-   * The JSX sets the desk rung; this container query sets the phone's, because
-   * it is the one that knows the height.
-   */
   .fd-filter-strip-open {
     display: inline-flex;
     height: var(--fd-control-touch);
@@ -1877,14 +1324,6 @@
     font-weight: var(--fd-weight-title);
   }
 
-  /* "Filtros" and copy only exist here, so the JSX sets their rung. The cross
-     does not: the active chip mounts in both armazones — 26 on a desk, 40 here
-     — and a number in the markup could only be right in one of them.
-
-     The ink is the plate's too. Both phone plates draw this cross muted at
-     65%, and it was inheriting the chip's own foreground: full black over a
-     7% primary wash, which made the way to drop a filter the darkest thing in
-     the strip. Only the opacity was ever right. */
   .fd-active-chip-remove {
     color: var(--color-muted-foreground);
   }
@@ -1894,11 +1333,6 @@
     height: var(--fd-icon-18);
   }
 
-  /* The strip's counter. The 17px box is the plate's — a badge inside the
-     button, not a control — which is why it is not in the height catalogue; its
-     type does come from the catalogue, through the shared counter rule in
-     `components.css`. The minimum takes the larger of the two: the box the
-     plate draws, and the two-digit column the counter asks for. */
   .fd-filter-strip-count {
     display: inline-grid;
     min-width: max(17px, 2ch);
@@ -1917,20 +1351,12 @@
     font-size: var(--fd-text-base);
   }
 
-  /* 02 §5 is a closed white-list of what a phone may hide, and «N vuelos
-     ocultos por filtros» is not on it: it is the count that tells the agent a
-     filter is costing them flights. It moves to the end of the strip, which
-     scrolls sideways, instead of disappearing. */
   .fd-filter-strip-hidden {
     flex-shrink: 0;
     margin-left: 4px;
     padding-right: 12px;
   }
 
-  /* 12px at the flanks — the same 12px the title bar uses — and 22px at the
-     foot to clear the home indicator. Nothing at the top: the air over the
-     first card is the status row's own 8px of padding, and this 10 was a
-     second helping of it read off the same plate. */
   .fd-list-viewport {
     padding: 0 12px calc(12px + env(safe-area-inset-bottom, 0px));
   }
@@ -1939,22 +1365,10 @@
     padding-right: 0;
   }
 
-  /* And the 6px between fares comes back, because on this surface they are
-     still cards. The desk dropped it when the row stopped being a framed
-     object — «with one hairline under each row the air *is* the separation» —
-     and the phone lost it in the same change, which left forty rounded borders
-     touching. Both phone plates draw 6. `RESULTS_CARD_GAP_PX` reads the gap
-     off the element, so the column's own arithmetic follows this. */
-  /* The status row carries the count and the order, so a list wide enough for
-     desk rows (a phone held sideways) does not repeat them in a header. */
   .fd-card--head {
     display: none;
   }
 
-  /* The status row's two values are set on one line, and it is the line the
-     collapsed bar above it already uses. Left at the document's 1.5 the row
-     measured 39.5 where both plates draw 37 — 12 over a 17px line and 8
-     under it. */
   .fd-list-header {
     line-height: 1.3;
   }
@@ -1964,11 +1378,6 @@
   }
 }
 
-/* Plate 2g — an empty list.
- *
- * Never a sad drawing and a "no results". The list says how many results the
- * search *does* hold, which filter is throwing most of them away, and gives two
- * ways out: clear everything, or relax the one filter to blame. */
 .fd-list-empty {
   display: grid;
   min-height: 0;
@@ -2032,8 +1441,6 @@
   background: color-mix(in srgb, var(--color-primary) 90%, #000);
 }
 
-/* The lesser exit: it relaxes one filter rather than dropping them all, so it
-   reads as the smaller commitment it is. */
 .fd-list-empty-action--secondary {
   padding: 0 12px;
   border: 1px solid var(--color-input);
@@ -2046,20 +1453,14 @@
   background: var(--color-accent);
 }
 
-/* One sheet primitive serves mobile overlays and the narrow-desktop detail. */
 .fd-sheet-layer {
   position: fixed;
   inset: 0;
   z-index: var(--fd-z-sheet);
 }
 
-/* Armazón B: the sheet belongs to the results region, not to the window.
-   Plate 8a veils the results and leaves the form above it live, so the layer is
-   absolute inside `.fd-shell-workspace` — which already sits inside the stage's
-   16px of screen padding, so the plate's `right:16; bottom:12` are the padding
-   itself and the layer only needs `inset: 0`. Anchoring it to the window is
-   what produced a sheet floating at a fixed 112px from the top while the form
-   below it had grown to two rows. */
+/* The side sheet covers the results region, not the window: the form above
+   it stays usable. */
 .fd-sheet-layer--side {
   position: absolute;
 }
@@ -2084,22 +1485,10 @@
   background: var(--color-popover);
   color: var(--color-popover-foreground);
   outline: none;
-  /* Each placement declares the edge it comes from; the base declares none. A
-     shared 8px lift here was what made the bottom sheet appear in place instead
-     of rising from the edge (02 §7). */
 }
 
-/*
- * A finger on the handle owns `transform`, so the entry animation has to let
- * go — an animation with `both` fill outranks an inline style. Once a drag has
- * happened the animation stays off for the life of the sheet: turning it back
- * on at release would replay the entry from the bottom of the screen.
- *
- * Until it closes: the `:not()` is what gives the exit its animation back.
- * Without it a sheet released by the gesture had none — `[data-drag]` outranks
- * the closing rule — and vanished on the spot right after having followed the
- * finger, which is half of the gesture.
- */
+/* A finger owns `transform` while it drags, so the entrance lets go of it; the
+   `:not()` gives a released sheet its exit back. */
 .fd-sheet-layer:not([data-closing="true"]) .fd-sheet[data-drag="active"] {
   animation: none;
   transition: none;
@@ -2107,18 +1496,10 @@
 
 .fd-sheet-layer:not([data-closing="true"]) .fd-sheet[data-drag="settle"] {
   animation: none;
-  /* The elastic return: the sheet goes back on its own when the finger let go
-     short of the threshold. It is `estructura` because it reorders the screen —
-     and because at 0ms, under reduced motion, it still returns, only at once. */
   transition: transform var(--fd-dur-estructura) var(--fd-ease-estructura);
 }
 
-/*
- * The split of axes, declared. `pan-y` leaves the vertical scroll to the body's
- * own scroller and takes the horizontal one from the browser, which is the one
- * that dismisses. Sheets without a swipe dismissal do not declare it: there the
- * horizontal axis means nothing, and there is no reason to take it from anyone.
- */
+/* Vertical scrolling stays native; the horizontal axis dismisses. */
 .fd-sheet[data-back-swipe] {
   touch-action: pan-y;
 }
@@ -2130,9 +1511,6 @@
   max-width: 640px;
   max-height: calc(100dvh - 48px);
   margin-inline: auto;
-  /* 1f and 8d draw the edge-to-edge sheet with a rounded top, a lift and no
-     border at all — the two side hairlines were eating 2px of a 390px screen
-     and putting a line down both edges of the display. */
   border: 0;
   border-radius: 22px 22px 0 0;
   box-shadow: var(--fd-shadow-hoja-inferior);
@@ -2143,11 +1521,6 @@
   animation: fd-enter-emergente var(--fd-dur-emergente) var(--fd-ease-tacto) both;
 }
 
-/*
- * Leaving: 160ms, opacity plus the displacement back to the edge it came from
- * (02 §7, 07 §3). The layer is inert while it plays — a sheet that is on its
- * way out must not still take a tap.
- */
 .fd-sheet-layer[data-closing="true"] {
   pointer-events: none;
 }
@@ -2168,9 +1541,6 @@
   animation: fd-exit-opacity var(--fd-dur-exit-emergente) var(--fd-ease-tacto) both;
 }
 
-/* Thrown sideways: it leaves by the edge it came in through, whatever the
-   placement, and starts where the finger left it. It comes after the three
-   above on purpose — same specificity, and the last one written wins. */
 .fd-sheet-layer[data-closing="true"] .fd-sheet[data-dismiss="swipe"] {
   animation: fd-exit-swipe var(--fd-dur-exit-hoja) var(--fd-ease-estructura) both;
 }
@@ -2203,7 +1573,6 @@
   animation: fd-enter-right var(--fd-dur-estructura) var(--fd-ease-estructura) both;
 }
 
-/* The scrim rounds with the region it covers (plate 8a). */
 .fd-sheet-layer--side .fd-sheet-scrim {
   border-radius: var(--fd-radius-12);
 }
@@ -2404,23 +1773,8 @@
   touch-action: pan-y;
 }
 
-/*
- * The grabber draws 4px and its box measures 16: under the 24px the geometry
- * itself cites as WCAG 2.5.8's floor, and it is the one place on a sheet where
- * the thumb has to land to be able to close it. The 16 are the plate's and they
- * stay; what grows is the sensitive area, downwards, because there is nothing
- * above it.
- *
- * And it grows down the middle only. Across the full width it ate the first two
- * pixels of the header's cross — measured: a 40px control left at 38 — which is
- * trading one gesture for another. Centred on the bar with a finger of margin on
- * each side it reaches the 24px exactly where the thumb looks for them, and
- * leaves the far ends as they were.
- *
- * `::after` rather than real height so nothing drawn moves by a pixel, and
- * `position: relative` on the zone so the extension paints over the header and
- * is the one that takes the touch.
- */
+/* The grabber's touch target reaches 24px down the middle without moving
+   anything drawn. */
 .fd-sheet-handle-zone::after {
   position: absolute;
   top: 100%;
@@ -2494,10 +1848,6 @@
   padding: 16px 14px 8px;
 }
 
-/* The 12px this sheet opens with belong to the pinned calendar head, which
-   carries them itself (`.fd-cal-sticky`): as padding on the scroller they were
-   a gap the scrolled grid showed through, above a header that is meant to close
-   the top of the surface. */
 .fd-calendar-sheet .fd-sheet-body {
   padding-top: 0;
 }
@@ -2553,9 +1903,6 @@
   height: 18px;
 }
 
-/* Three loose literals where the catalogue already has the two rungs: 15 is
-   the one for actions and station codes, 12 the one for metadata. The detail no
-   longer needs to be lowered here — the desk rung is 12 too. */
 .fd-mobile-suggest-panel .fd-suggest-code {
   font-size: var(--fd-text-action);
 }
@@ -2576,7 +1923,6 @@
   text-align: center;
 }
 
-/* A tooltip whose job is the shortcut: the words, then the key, on one line. */
 .fd-tooltip-shortcut {
   display: inline-flex;
   align-items: center;
@@ -2587,28 +1933,13 @@
   height: 100%;
 }
 
-/*
- * Plates 8a and 1f: the detail arrives with its own header, its own scroll and
- * its own anchored foot, so the sheet around it contributes nothing but the
- * surface. The body gives up its padding and its scrollbar — two scroll
- * containers nested inside each other is how a foot stops being anchored.
- */
+/* The detail brings its own header, scroller and anchored foot. */
 .fd-detail-sheet .fd-sheet-body {
   display: flex;
   flex-direction: column;
   padding: 0;
   overflow: hidden;
 }
-
-/* Kept as a hook rather than deleted with the frame it used to strip: the
-   panel is flat everywhere now, so there is nothing left to undo here, and the
-   two sheets that mount it still need a name for «this one is inside a sheet».
-   The declaration that remains is the one thing a sheet does change — it owns
-   the surface, so the panel must not paint one of its own. */
-.fd-detail-panel--embedded {
-  background: transparent;
-}
-
 
 .fd-sheet-footer {
   display: flex;
@@ -2620,18 +1951,6 @@
   background: color-mix(in srgb, var(--color-secondary) 60%, var(--color-popover));
 }
 
-/* Plate 8d: the anchored action of a sheet. 46 — `--fd-control-touch-lg`, the
-   top of the mobile column of the geometry catalogue — for every action in
-   every sheet, so the thumb finds the same target in filters, passengers and
-   the calendar. Only the filter sheet says otherwise, and it says so below.
-
-   This read «52px primary; a pair of secondaries drops to 44
-   (`--fd-sheet-action-secondary`)», which was two errors in one line: 44/52 is
-   the mobile pair the catalogue retired in favour of 34/40/46 (see the
-   pictogram table in `design-system.css`, which had the same numbers and lost
-   them), and there is no `--fd-sheet-action-secondary` token — the smaller
-   action is the class `.fd-sheet-action--secondary`. Measured at 390 and 360:
-   46 here, 40 for the filter sheet's «Limpiar». */
 .fd-sheet-action {
   display: inline-flex;
   height: var(--fd-control-touch-lg);
@@ -2646,17 +1965,11 @@
   font-weight: var(--fd-weight-title);
 }
 
-/* 7b, the law the catalogue states: an icon is chosen by the height of the
-   control it sits in, and a sheet's action is 46 — so 18, not the 16 the two
-   call sites were passing. A sheet only ever opens on a phone, so this is the
-   whole population of the rule. */
 .fd-sheet-action svg {
   width: var(--fd-icon-18);
   height: var(--fd-icon-18);
 }
 
-/* Colour only. The height stays 46 unless a sheet says otherwise — the filter
-   sheet drops its «Limpiar» to 40 (04 §2), the calendar keeps both at 46. */
 .fd-sheet-action--secondary {
   border: 1px solid var(--color-input);
   background: var(--color-secondary);
@@ -2664,37 +1977,10 @@
   font-weight: var(--fd-weight-label);
 }
 
-/* The filter sheet is the one that says otherwise (plate 1e, 04 §2): «Limpiar»
-   is 40 and sized by its label, so «Ver N vuelos» — the button that carries the
-   count — takes the rest of the row. */
 .fd-filter-sheet .fd-sheet-action--secondary {
   height: var(--fd-control-touch);
   flex: 0 0 auto;
   padding-inline: 18px;
   font-size: var(--fd-text-body);
-  /* `Controles` names this one: «“Limpiar” cambia de forma entre superficies …
-     Es la misma acción; que cambie de tamaño está bien, que cambie de peso y
-     pierda el icono no». On a desk it is 12/700 in primary with a cross; here
-     it was 14/600 with nothing. The size is the surface's to change and the
-     other two are not, so the weight comes back and the cross comes back with
-     it, at the 18 a 40px control takes. */
   font-weight: var(--fd-weight-title);
-}
-
-/*
- * Reduced motion is governed in one place — the block at the foot of
- * `design-system.css`, which zeroes the duration tokens and swaps every entry
- * for a 90ms cross-fade (07 §0 rule 5, 11 §8).
- *
- * A blanket `transition-duration: 1ms !important` used to live here, and
- * `!important` beat the tokens: the deliberate 90ms opacity was dead and the
- * setting could not be reasoned about from the catalog. Scroll behaviour is not
- * a motion token, so it is the one thing this block still says.
- */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-  }
 }

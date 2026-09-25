@@ -2,14 +2,8 @@ import type { ReactNode } from "react"
 import { AppIcon, type AppIconName } from "@/components/ui/app-icon"
 import { cn } from "@/lib/utils"
 
-/**
- * The key from plate 7b: one 20px component, radius 6, with a 12px icon inside.
- *
- * The suggestion footer used to draw enter and the arrows as glyphs from the
- * mono font — a different stroke weight and a different optical box from every
- * other mark in the interface. Glyph keys now carry icons from the same set;
- * only literal keys (`esc`, `/`) stay as text.
- */
+/* A 20px key. Glyph keys draw icons from the set; literal keys (`esc`, `/`)
+   stay text. */
 export function Kbd({
   icon,
   children,
@@ -26,7 +20,7 @@ export function Kbd({
   )
 }
 
-/** A key (or key pair) with the action it performs, as used in the 2a footer. */
+/** A key (or key pair) and the action it performs. */
 export function KbdHint({
   keys,
   label,

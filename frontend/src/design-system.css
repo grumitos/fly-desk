@@ -1,200 +1,106 @@
-/*
- * Fly Desk — closed design catalogs.
- *
- * Everything here comes from a plate in `Fly Desk Rediseño.dc.html` and is meant
- * to be the only source for the value it defines:
- *
- *   5a  type scale     eight bodies + one display, four weights
- *   5b  geometry       control heights, radii, gaps — all even
- *   7b  pictograms     four icon sizes tied to control heights, four families
- *   §0  motion         six tokens; nothing animates outside them
- *   3d  keyboard focus a single ring, outside the border, keyboard only
- *
- * Adding a value that is not in a catalog is the bug the plates were drawn to
- * prevent. Widen the catalog instead.
- *
- * A rung with no consumer today is not dead code here: a scale missing the
- * sizes nobody happens to use this month is no longer a scale, and the next
- * screen that needs one would invent a value beside it — which is the bug
- * above. The tokens and the utility classes below are complete on purpose and
- * are removed only when a plate retires them.
- */
+/* Fly Desk design catalogues: type, geometry, icons, stacking, elevation and
+   motion. Components read these tokens; a value outside them is a bug. */
 
 @layer base {
   :root {
-    /* ---- 5a · type scale ------------------------------------------------- */
-    /* Every body has one job. The "uso único" column of the plate is the test:
-       if a size needs a second job, the scale is wrong, not the usage. */
-    --fd-text-display: 22px; /* migration hero price only, at figure weight */
-    --fd-text-sheet: 17px; /* mobile sheet titles · detail price (mono, figure) */
-    --fd-text-card: 16px; /* card titles · list price (mono, figure) · mobile input */
-    --fd-text-action: 15px; /* Cotizar · Aplicar · station codes */
-    --fd-text-body: 14px; /* form values · names · long copy */
-    --fd-text-base: 13px; /* buttons · chips · rows · cells */
-    --fd-text-meta: 12px; /* metadata · subtitles · counters */
-    --fd-text-mono-meta: 11px; /* mono metadata · schedules · specs */
+    /* Type: one job per size. */
+    --fd-text-display: 22px; /* migration hero price */
+    --fd-text-sheet: 17px; /* sheet titles, detail price */
+    --fd-text-card: 16px; /* card titles, list price, phone inputs */
+    --fd-text-action: 15px; /* primary actions, station codes */
+    --fd-text-body: 14px; /* form values, names, long copy */
+    --fd-text-base: 13px; /* buttons, chips, rows */
+    --fd-text-meta: 12px; /* metadata, subtitles, counters */
+    --fd-text-mono-meta: 11px; /* mono metadata: schedules, specs */
     --fd-text-label: 11px; /* labels: fields, groups, columns, pills, badges */
     --fd-text-micro: 10px; /* secondary figures and footnotes */
 
     --fd-weight-value: 400;
     --fd-weight-label: 600;
     --fd-weight-title: 700;
-    /*
-     * The plate asks for 800 on the price, and 800 is a weight this font does
-     * not have. Every consumer of this token is mono — `.fd-type-display`,
-     * `.fd-figure`, `.fd-detail-price`, `.fd-card__price-figure` and the two
-     * logo squares — and IBM Plex Mono is a static family that stops at Bold:
-     * asked for `wght@400;500;600;700;800`, Google Fonts answers with four
-     * faces, 400/500/600/700, and no 800 among them. So the 800 was not picking
-     * a heavier face; it fell back on the 700 and, depending on the browser,
-     * smeared it. A synthesised weight is not a weight.
-     *
-     * 700 is the face the price was already being drawn with, so nothing moves
-     * and the token stops lying. The price is still the heaviest thing on the
-     * card because it is the largest — 22px against 13. If the family ever
-     * ships a real 800, this goes back up and `index.html` asks for the axis.
-     */
+    /* IBM Plex Mono stops at 700; a heavier price would be synthesised. */
     --fd-weight-figure: 700;
 
+    /* Control heights: desktop, then touch (34 / 40 / 46). */
+    --fd-control-chip: 26px;
+    --fd-control-standard: 32px;
+    --fd-control-bar: 36px;
+    --fd-control-primary: 52px;
 
-    /* ---- 5b · control heights ------------------------------------------- */
-    /* Desktop. The 30/32 pair was merged into one 32px control. */
-    --fd-control-chip: 26px; /* fare chips · night counters · stop labels */
-    --fd-control-standard: 32px; /* buttons · chips · filter rows · counters */
-    --fd-control-bar: 36px; /* Buscar · Filtros · date presets */
-    --fd-control-input: 40px; /* secondary inputs */
-    --fd-control-primary: 52px; /* search fields · primary action */
-
-    /*
-     * Mobile: 34 / 40 / 46.
-     *
-     * It was 36 / 44 / 52, and 44 was carried into «every square icon control
-     * on a phone, sin excepciones» (02 §12). Built out, that reading is what
-     * the screen actually looks like: a 44px row for a checkbox, a 44px cell
-     * for a date, a 44px square for a glyph, stacked — every one of them sized
-     * for the worst case of a mis-tap rather than for what it holds. The
-     * mis-tap was worth designing against; paying for it three times in a
-     * column was not.
-     *
-     * 40 is still a comfortable target — well clear of the 24px floor of WCAG
-     * 2.5.8 and within a finger of Apple's 44pt recommendation — and it gives
-     * back 4px on every control and 6 on every counter, which is most of a card
-     * per screen. The three sizes keep their relationship, so nothing that was
-     * built out of them has to be re-thought: only the numbers moved.
-     */
     --fd-control-touch-sm: 34px;
     --fd-control-touch: 40px;
     --fd-control-touch-lg: 46px;
 
-    /* ---- 5b · radii ------------------------------------------------------ */
-    --fd-radius-4: 4px; /* checkboxes · skeleton blocks */
-    --fd-radius-6: 6px; /* badges · keys */
-    --fd-radius-8: 8px; /* 26px chips · calendar cells · pagination cells */
-    --fd-radius-10: 10px; /* 32px and 36px controls */
-    --fd-radius-12: 12px; /* inputs · cards · panels · sheets */
-    --fd-radius-14: 14px; /* window frames only */
+    --fd-radius-4: 4px; /* checkboxes, skeleton blocks */
+    --fd-radius-6: 6px; /* badges, keys */
+    --fd-radius-8: 8px; /* 26px chips, calendar cells */
+    --fd-radius-10: 10px; /* 32 and 36px controls */
+    --fd-radius-12: 12px; /* inputs, cards, panels */
+    --fd-radius-14: 14px; /* window frames */
 
-    /* ---- 7b · pictogram sizes ------------------------------------------- */
-    /* Each size is bound to a control height, so the icon is never chosen by
-       taste. Mobile 40/46 take 18 and mobile 34 takes 16; desktop 32–52 take
-       16; dense desktop rows take 14; keys, badges and 20px checkboxes take 12.
-       The mobile pair read 44/52 for as long as the touch heights did. They
-       became 34/40/46 a few lines above and this table kept the retired
-       numbers, so the sites that had to size an icon on a phone were deriving
-       it from a row the table no longer has. */
+    /* An icon takes its size from the control it sits in: touch controls 18,
+       desktop controls 16, dense rows 14, keys and badges 12. */
     --fd-icon-18: 18px;
     --fd-icon-16: 16px;
     --fd-icon-14: 14px;
     --fd-icon-12: 12px;
 
-    /* ---- stacking ------------------------------------------------------- */
-    /* One ladder for everything that floats. Local paint order inside a
-       component (a hit area under its content) stays at 1 and 2. */
-    --fd-z-raised: 10; /* sticky heads and controls floating over their own surface */
+    /* One ladder for everything that floats. Paint order inside a component
+       (a hit area under its content) stays at 1 and 2. */
+    --fd-z-raised: 10; /* sticky heads, controls over their own surface */
     --fd-z-sheet: 80;
     --fd-z-modal: 120;
-    --fd-z-popover: 130; /* above sheets and modals, which open them */
+    --fd-z-popover: 130; /* above the sheets and modals that open them */
     --fd-z-tooltip: 140;
 
-    /* ---- 4 · elevation · three levels and no more ------------------------ */
-    /* Written as the plate writes them — fixed ink, not "the text colour at
-       n %". Deriving elevation from `--color-foreground` inverted every shadow
-       into a glow in dark mode, the same bug the scrim had. */
-    --fd-shadow-reposo: 0 1px 0 rgba(31, 31, 30, 0.04);
     --fd-shadow-emergente: 0 18px 44px #1f1f1e14;
     --fd-shadow-hoja: 0 26px 60px #1f1f1e1f;
     --fd-shadow-hoja-inferior: 0 -12px 40px #1f1f1e33;
 
-    /* ---- §0 · motion ---------------------------------------------------- */
+    /* Motion. `tacto` is colour and opacity on touch; `estructura` is layout
+       changing; loops have their own curves. */
     --fd-ease-tacto: cubic-bezier(0.2, 0, 0.4, 1);
     --fd-ease-estructura: cubic-bezier(0.22, 1, 0.36, 1);
-
-    /* Rule 2 closes the *transition* curves at two, and two is what they stay.
-       A loop is not a transition: it comes from nowhere and goes nowhere, so
-       neither of the two serves it and its own curve was written by hand —
-       `linear` once, `ease-in-out` in two separate sheets. Naming them does not
-       reopen the rule, it finishes it: no curve in the application lives inside
-       a declaration any more. The plate fixes both — the spinner is linear and
-       infinite, and the pulse travels between 45% and 100% and back, which is
-       what `ease-in-out` says. */
     --fd-ease-giro: linear;
     --fd-ease-pulso: ease-in-out;
 
-    --fd-dur-tacto: 90ms; /* hover, pressed, checkbox, chip, segment */
-    --fd-dur-emergente: 140ms; /* popovers and strips; enters 6px down */
-    --fd-dur-estructura: 220ms; /* idle → active, tool retraction, detail */
-    --fd-dur-hoja: 320ms; /* edge-to-edge mobile sheets */
-    --fd-dur-giro: 1100ms; /* partial-search spinner */
-    --fd-dur-pulso: 1400ms; /* skeleton pulse */
+    --fd-dur-tacto: 90ms; /* hover, press, checkbox, segment */
+    --fd-dur-emergente: 140ms; /* popovers and strips */
+    --fd-dur-estructura: 220ms; /* idle to active, retraction, detail */
+    --fd-dur-hoja: 320ms; /* edge-to-edge sheets */
+    --fd-dur-giro: 1100ms; /* spinner */
+    --fd-dur-pulso: 1400ms; /* skeleton */
 
-    /* Leaving is half of arriving, and opacity only (rule 1) — except a sheet,
-       which 07 §4 row 7 lets keep its displacement so the edge it came from is
-       the edge it goes back to. */
+    /* Leaving takes half of arriving. */
     --fd-dur-exit-emergente: 70ms;
-    --fd-dur-exit-estructura: 110ms;
     --fd-dur-exit-hoja: 160ms;
 
-    /* Named times of the movement catalog (07 §4) that are not one of the six.
-       They are rows of a closed table, not taste, so they live here with the
-       tokens rather than as numbers inside a rule. */
-    --fd-dur-confirmacion: 180ms; /* row 6, in */
-    --fd-dur-exit-confirmacion: 140ms; /* row 6, out */
-    --fd-dur-month-bar: 420ms; /* row 4 */
-    --fd-hold-confirmacion: 2400ms; /* row 6, the wait between the two */
+    --fd-dur-confirmacion: 180ms;
+    --fd-dur-exit-confirmacion: 140ms;
+    --fd-dur-month-bar: 420ms;
+    --fd-hold-confirmacion: 2400ms; /* reading time, not motion */
 
-    /* Rule 3: one element owns a transition; a competing second waits 60ms. */
-    --fd-stagger-conflict: 60ms;
-    --fd-stagger-row: 30ms; /* result cards */
-    --fd-stagger-skeleton: 120ms; /* skeleton rows */
-    --fd-stagger-chip: 40ms; /* mobile filter chips, migration bars */
+    --fd-stagger-row: 30ms;
+    --fd-stagger-skeleton: 120ms;
+    --fd-stagger-chip: 40ms;
 
-    /* The cues of the reposo → activo choreography (07 §1). Offsets, not
-       durations: every piece still moves on one of the six tokens above, it
-       just starts when the table says it starts. Read from CSS by
-       `lib/search-choreography.ts` so the two FLIPs obey the same numbers and
-       the reduced-motion override below reaches them too. */
-    --fd-cue-salida: 60ms; /* frequent chips and the provider rail leave */
-    --fd-cue-campos: 60ms; /* the block of fields, and the mode + trip FLIP */
+    /* Cues of the idle to active choreography, read by CSS and by the FLIPs
+       in `lib/search-choreography.ts`. */
+    --fd-cue-salida: 60ms; /* idle furniture leaves */
+    --fd-cue-campos: 60ms; /* the fields and the segments travel */
     --fd-cue-paneles: 140ms; /* filters, list, detail */
-    --fd-cue-esqueleto: 180ms; /* the skeleton, with the real grid */
-    --fd-cue-tira-movil: 120ms; /* phone: filter strip and status row */
-    --fd-dur-salida-reposo: 120ms; /* how long the idle chrome takes to go */
-    --fd-dur-vuelta: 180ms; /* the same sequence inverted, on going back to edit */
+    --fd-cue-esqueleto: 180ms; /* skeleton */
+    --fd-cue-tira-movil: 120ms; /* phone filter strip and status row */
+    --fd-dur-salida-reposo: 120ms;
+    --fd-dur-vuelta: 180ms; /* the same sequence reversed, back to editing */
 
-    /* How far an entrance travels along its own axis. Rule 1 says 6–8px and
-       every desktop surface takes the 8; the phone's filter strip is the one
-       row of 07 §1 that names its own distance, 12px, so the keyframes read a
-       property instead of hard-coding the number twice. */
     --fd-enter-shift: 8px;
   }
 }
 
 @layer utilities {
-  /* ===== 5a · type scale ================================================= */
+  /* ---- type ---- */
 
-  /* Both plates that draw it — 1i and 2f — set it solid: at 22px the hero price
-     is the tallest thing on the card and leading around it is space the card
-     does not have. */
   .fd-type-display {
     font-family: var(--font-mono);
     font-size: var(--fd-text-display);
@@ -203,50 +109,15 @@
     line-height: 1;
   }
 
-  .fd-type-sheet {
-    font-size: var(--fd-text-sheet);
-    font-weight: var(--fd-weight-title);
-    letter-spacing: -0.01em;
-    line-height: 1.2;
-  }
-
   .fd-type-card {
     font-size: var(--fd-text-card);
     font-weight: var(--fd-weight-title);
-    letter-spacing: -0.01em;
-    line-height: 1.2;
-  }
-
-  .fd-type-action {
-    font-size: var(--fd-text-action);
-    font-weight: var(--fd-weight-title);
-    letter-spacing: -0.01em;
-    line-height: 1.2;
-  }
-
-  .fd-type-body {
-    font-size: var(--fd-text-body);
-    font-weight: var(--fd-weight-label);
     line-height: 1.2;
   }
 
   .fd-type-base {
     font-size: var(--fd-text-base);
     font-weight: var(--fd-weight-label);
-    line-height: 1.2;
-  }
-
-  .fd-type-meta {
-    font-size: var(--fd-text-meta);
-    font-weight: var(--fd-weight-label);
-    line-height: 1.2;
-  }
-
-  .fd-type-mono-meta {
-    font-family: var(--font-mono);
-    font-size: var(--fd-text-mono-meta);
-    font-weight: var(--fd-weight-label);
-    font-variant-numeric: tabular-nums;
     line-height: 1.2;
   }
 
@@ -259,31 +130,13 @@
     line-height: 1.2;
   }
 
-  /* Figures: always mono, tabular, and at the heaviest weight the family
-     actually ships, so columns of prices line up. */
-  .fd-figure {
-    font-family: var(--font-mono);
-    font-weight: var(--fd-weight-figure);
-    font-variant-numeric: tabular-nums;
-  }
-
-  /*
-   * Mono and tabular, and no weight: the surface supplies that.
-   *
-   * This is the half of a figure's alphabet that does not depend on where it
-   * lands — the family and the tabular spacing. The body comes from the height
-   * of the control it lives in, exactly as the icon's does (7b), and the weight
-   * from the surface: 600 for form values, which are all 600 and none of which
-   * claims importance over the one beside it; 700 for the counters of the
-   * results surface, which are what gets read at a glance. The counter itself,
-   * with its digit column, is `.fd-count` in `components.css`.
-   */
+  /* Figures: mono and tabular; the surface supplies the weight. */
   .fd-mono {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
 
-  /* ===== 7b · pictograms ================================================= */
+  /* ---- icons ---- */
 
   .fd-icon {
     flex-shrink: 0;
@@ -309,10 +162,7 @@
     height: var(--fd-icon-12);
   }
 
-  /* ===== 7b · key ========================================================
-   * One 20px component, radius 6, 12px icon. Used in the suggestion footer
-   * and the shortcut legend. Glyphs come from the icon set, never the font —
-   * a mono "↵" is a different weight and a different optical box. */
+  /* ---- keys ---- */
 
   .fd-key {
     display: grid;
@@ -327,7 +177,6 @@
     color: var(--color-foreground);
   }
 
-  /* Literal keys (esc, /) keep mono; glyph keys carry an icon instead. */
   .fd-key-text {
     font-family: var(--font-mono);
     font-size: var(--fd-text-micro);
@@ -344,14 +193,9 @@
     font-weight: var(--fd-weight-label);
   }
 
-  /* ===== 5b · segmented control =========================================
-   * `repeat(n, auto)`: cells measure by content and the free space is split
-   * evenly, so every option gets the same air. `1fr` makes the cells equal and
-   * the air unequal — measured, not guessed: in the 248px filter column
-   * "Bodega" was left with 4px a side and "Todos" with 19 (01 §3).
-   *
-   * The pill is the `::before` of the active item. It changes place; it never
-   * travels (07 §5). */
+  /* ---- segmented control ----
+     `repeat(n, auto)` splits the free space evenly, so every option gets the
+     same air; `1fr` would make the cells equal and the air unequal. */
 
   .fd-segmented {
     display: grid;
@@ -371,12 +215,6 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
-    /* No floor by default. `repeat(n,auto)` only gives equal air (01 §3: 11px a
-       side for three options, 15 for four, 32 in a sheet) if the cells really
-       measure by content and the leftover splits between them; a padding floor
-       makes a stretched group ask for more than its box and get clipped. The
-       groups that size by their own content — the title bar and the list header
-       — carry their padding explicitly, because there it *is* the air. */
     padding-inline: 0;
     color: var(--color-muted-foreground);
     font-size: var(--fd-text-meta);
@@ -408,10 +246,9 @@
     box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-primary) 55%, transparent);
   }
 
-  /* ===== 7b · disclosure chevron ========================================
-   * A chevron means "opens or closes in place". It does not rotate: the glyph
-   * is swapped with a 90ms cross-fade (07 §4, movement 9). Both glyphs share
-   * one grid cell, so the swap costs no layout. */
+  /* ---- glyph swaps ----
+     Chevrons and the exchange arrow swap glyphs in one grid cell instead of
+     rotating: only the spinner rotates. */
 
   .fd-disclosure {
     display: inline-grid;
@@ -433,12 +270,6 @@
     opacity: 1;
   }
 
-  /* ===== 7b · exchange arrow ============================================
-   * Horizontal beside two columns (1a), vertical beside two stacked rows (1c).
-   * The glyph is swapped, never rotated: one rotation exists in the whole
-   * system and it belongs to the spinner (07 §4). The vertical glyph is hidden
-   * here and revealed by the armazón C block. */
-
   .fd-swap-icon {
     display: inline-grid;
     place-items: center;
@@ -448,16 +279,7 @@
     display: none;
   }
 
-  /* ===== disabled · one rule, one place =================================
-   * Never a new grey and never a different border: opacity over the whole
-   * control, no hover and no pointer (01 §1).
-   *
-   * «Una sola regla» is meant literally, so the native `:disabled` controls are
-   * here too rather than repeating `.45` per surface — the pager step, the
-   * passenger step and the button variants each used to carry their own copy,
-   * which is three places to drift from a catalogue that is closed. The class
-   * stays for the controls that are off without being `disabled`: a segmented
-   * option, a calendar half that keeps its value (11 §1). */
+  /* ---- disabled: one rule for every control ---- */
 
   .fd-disabled,
   .fd-disabled:hover,
@@ -475,8 +297,6 @@
     pointer-events: none;
   }
 
-  /* ===== 01 §7 · tooltip ================================================ */
-
   .fd-tooltip {
     z-index: var(--fd-z-tooltip);
     max-width: 18rem;
@@ -489,29 +309,16 @@
     line-height: 1.35;
   }
 
-  /* ===== 3d · keyboard focus ============================================
-   * A 2px ring outside the border, in primary at 55%. It never changes the
-   * size of the control, so nothing reflows. Keyboard only: pointer users
-   * already know where they clicked. */
-
+  /* Keyboard focus: a ring outside the border, so nothing reflows. */
   .fd-focus-ring:focus-visible {
     outline: none;
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 55%, transparent);
     transition: box-shadow var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
-  /* On a primary fill the ring needs 2px of card colour to read as a ring
-     rather than as a thicker button. */
-  .fd-focus-ring-inset:focus-visible {
-    outline: none;
-    box-shadow:
-      0 0 0 2px var(--color-card),
-      0 0 0 4px color-mix(in srgb, var(--color-primary) 55%, transparent);
-  }
-
-  /* ===== §0 · motion =====================================================
-   * Entering = opacity + 6–8px along the axis of origin.
-   * Leaving  = half the duration, opacity only. */
+  /* ---- motion ----
+     Entering is opacity plus 6–8px along the axis it comes from; leaving is
+     opacity alone, in half the time. */
 
   @keyframes fd-enter-emergente {
     from {
@@ -583,7 +390,6 @@
     }
   }
 
-  /* 07 §4 row 6: the copy confirmation enters 8px, waits, and leaves. */
   @keyframes fd-enter-confirmacion {
     from {
       opacity: 0;
@@ -620,12 +426,7 @@
     }
   }
 
-  /* The exit a swipe dismissal asks for. `fd-exit-right` is rule 1's 8px — a
-     sheet going out where it stands — while this is row 7, the one exit that
-     keeps its displacement, and on top of that it has to start where the finger
-     let go: returning to zero to leave again would have the gesture and the
-     movement telling two different stories. `--fd-sheet-drag-x` is written by
-     the sheet on release and is 0 when nothing dragged it. */
+  /* A swiped sheet leaves from where the finger let go. */
   @keyframes fd-exit-swipe {
     from {
       opacity: 1;
@@ -638,16 +439,8 @@
     }
   }
 
-  /* 07 §4 row 5 · the range fill (drawn in 9a, moment 4).
-   *
-   * A width animation would relayout the calendar grid seven times; the plate
-   * draws a band *over* the cells that grows along X, so the cells never move.
-   * `--fd-sweep-origin` is which end the agent picked first: the fill grows
-   * away from it, which is the whole point of the movement — it says "from
-   * here to there", not "these days are now blue".
-   *
-   * Not the same row as the tentative range under the pointer: that one is the
-   * 7% tint following the cursor and it is `tacto` (07 §3). */
+  /* A CSS animation replays only when its name changes, so the movements that
+     must replay on every change come in identical pairs. */
   @keyframes fd-sweep {
     from {
       transform: scaleX(0);
@@ -658,7 +451,6 @@
     }
   }
 
-  /* Same movement, second name — see the note on `fd-crossfade-alt`. */
   @keyframes fd-sweep-alt {
     from {
       transform: scaleX(0);
@@ -666,6 +458,26 @@
 
     to {
       transform: scaleX(1);
+    }
+  }
+
+  @keyframes fd-crossfade {
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes fd-crossfade-alt {
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
     }
   }
 
@@ -680,32 +492,8 @@
     }
   }
 
-  .fd-motion-tacto {
-    transition:
-      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
-      border-color var(--fd-dur-tacto) var(--fd-ease-tacto),
-      color var(--fd-dur-tacto) var(--fd-ease-tacto),
-      opacity var(--fd-dur-tacto) var(--fd-ease-tacto);
-  }
-
   .fd-motion-emergente {
     animation: fd-enter-emergente var(--fd-dur-emergente) var(--fd-ease-tacto) both;
-  }
-
-  .fd-motion-row {
-    animation: fd-enter-row var(--fd-dur-emergente) var(--fd-ease-estructura) both;
-  }
-
-  .fd-motion-from-left {
-    animation: fd-enter-left var(--fd-dur-estructura) var(--fd-ease-estructura) both;
-  }
-
-  .fd-motion-from-right {
-    animation: fd-enter-right var(--fd-dur-estructura) var(--fd-ease-estructura) both;
-  }
-
-  .fd-motion-sheet {
-    animation: fd-enter-sheet var(--fd-dur-hoja) var(--fd-ease-estructura) both;
   }
 
   .fd-motion-exit {
@@ -713,10 +501,6 @@
     animation: fd-exit-opacity var(--fd-dur-exit-emergente) var(--fd-ease-tacto) both;
   }
 
-  /* The one exit of 07 §1: the furniture of the idle screen — the frequent
-     chips and the provider rail — waits 60ms and then fades over 120ms while
-     the form travels to the top. Its own row in the table, so its own class:
-     `fd-motion-exit` is the 70ms of rule 1 and says nothing about a cue. */
   .fd-motion-idle-exit {
     pointer-events: none;
     animation: fd-exit-opacity var(--fd-dur-salida-reposo) var(--fd-ease-tacto) var(--fd-cue-salida) both;
@@ -726,47 +510,11 @@
     animation: spin var(--fd-dur-giro) var(--fd-ease-giro) infinite;
   }
 
-  /* The one movement of the catalog that grows instead of entering. Put it on
-     the band, set `--fd-sweep-origin` to `left` when the departure was chosen
-     first and `right` when the return was. */
-  .fd-motion-sweep {
-    transform-origin: var(--fd-sweep-origin, left) center;
-    animation: fd-sweep var(--fd-dur-emergente) var(--fd-ease-estructura) both;
-  }
-
-  /* Rule 2: the height of the results list is never animated. A page change is
-     a 140ms cross-fade inside a fixed-height container. */
   .fd-motion-crossfade {
-    animation: fd-enter-emergente var(--fd-dur-emergente) var(--fd-ease-tacto) both;
-    animation-name: fd-crossfade;
+    animation: fd-crossfade var(--fd-dur-emergente) var(--fd-ease-tacto) both;
   }
 
-  @keyframes fd-crossfade {
-    from {
-      opacity: 0;
-    }
-
-    to {
-      opacity: 1;
-    }
-  }
-
-  /* The same movement under a second name. Movement 10 has to replay on every
-     swap, and a CSS animation only restarts when its *name* changes — an
-     attribute flipping between two values is not enough on its own. */
-  @keyframes fd-crossfade-alt {
-    from {
-      opacity: 0;
-    }
-
-    to {
-      opacity: 1;
-    }
-  }
-
-  /* 07 §4 row 10 · the exchange of origin and destination: what crosses is the
-     content of the two fields, in 140ms. The icon does not turn — 07 §5 lists
-     it among the things that never move — and neither does the box. */
+  /* Swapping origin and destination cross-fades the two values. */
   [data-swap-parity] {
     animation-duration: var(--fd-dur-emergente);
     animation-timing-function: var(--fd-ease-tacto);
@@ -782,8 +530,8 @@
   }
 }
 
-/* Primitives. They sit in `components` so that a utility or a surface class on
-   the same element (both in `utilities`) always wins. */
+/* Primitives sit in `components`, so a utility or a surface class on the same
+   element (both in `utilities`) always wins. */
 @layer components {
   .fd-btn {
     display: inline-flex;
@@ -969,30 +717,22 @@
   }
 }
 
-/*
- * Rule 5: with reduced motion everything collapses to 0ms except 90ms
- * opacities. Loops stop — and because a stopped spinner says nothing, the
- * partial state has to be readable as text (see the "Parcial" pill).
- */
+/* Reduced motion: movement collapses to 0ms and entrances become a 90ms fade.
+   Loops stop, which is why a partial search also says «Parcial» in words.
+   JavaScript reads the same tokens, so the FLIPs stop with them. */
 @media (prefers-reduced-motion: reduce) {
   :root {
     --fd-dur-emergente: 0ms;
     --fd-dur-estructura: 0ms;
     --fd-dur-hoja: 0ms;
     --fd-dur-exit-emergente: 0ms;
-    --fd-dur-exit-estructura: 0ms;
     --fd-dur-exit-hoja: 0ms;
     --fd-dur-confirmacion: 0ms;
     --fd-dur-exit-confirmacion: 0ms;
     --fd-dur-month-bar: 0ms;
-    --fd-stagger-conflict: 0ms;
     --fd-stagger-row: 0ms;
     --fd-stagger-skeleton: 0ms;
     --fd-stagger-chip: 0ms;
-    /* The choreography collapses into a single frame: with every cue at zero
-       the table still happens, it just happens at once. The two FLIPs read
-       these same properties, so they stop travelling here without a second
-       `matchMedia` check of their own. */
     --fd-cue-salida: 0ms;
     --fd-cue-campos: 0ms;
     --fd-cue-paneles: 0ms;
@@ -1000,8 +740,6 @@
     --fd-cue-tira-movil: 0ms;
     --fd-dur-salida-reposo: 0ms;
     --fd-dur-vuelta: 0ms;
-    /* `--fd-hold-confirmacion` is not motion: it is how long the agent has to
-       read that the text was copied, and it does not shorten here. */
   }
 
   .fd-motion-giro,
@@ -1009,53 +747,25 @@
     animation: none !important;
   }
 
-  /* The range fill lands on its colour with no growth: `both` would otherwise
-     leave every band at `scaleX(0)` once the duration is zero. */
   .fd-cal-cell[data-sweep]::before {
     animation: none;
   }
 
   .fd-motion-emergente,
-  .fd-motion-row,
-  .fd-motion-from-left,
-  .fd-motion-from-right,
-  .fd-motion-sheet,
-  .fd-motion-sweep,
   .fd-motion-crossfade,
   [data-swap-parity] {
     animation-name: fd-crossfade;
     animation-duration: var(--fd-dur-tacto);
   }
 
-  /* `tacto` survives here because rule 5 keeps «las opacidades de 90 ms», and
-     colour is one of them. Displacement is not: the switch knob is the only
-     `tacto` that moves something, so it is the only one that stops. */
   .fd-switch::before {
     transition: none;
   }
 }
 
-/*
- * 07 §5: the change of theme variables is one of the things that never
- * animates. Nothing here declares it — the whole catalog of `tacto` is "colour
- * and opacity", so every one of those transitions is armed against exactly the
- * properties a new palette rewrites. Flipping `.dark` therefore retints the
- * page *through* them: measured on a results page, 132 transitions start in the
- * same frame — 30 on `color`, 68 on the four border colours, 12 on
- * `background-color`. That is a wipe, and the plate asks for a switch.
- *
- * No media query can fix it, because a `background-color` transition looks the
- * same whether a hover or a new palette caused it. So the swap marks the root
- * for one frame and this rule silences transitions while the mark is up:
- * `withoutThemeTransition()` in `lib/reduced-motion.ts` puts it there, and the
- * class name is the contract between the two files.
- *
- * Transitions only. The two loops keep turning — a spinner that stopped because
- * someone changed the theme would be saying the search had finished.
- *
- * Outside `@layer` on purpose: an unlayered rule outranks every layered one, so
- * this needs no specificity race with the components it has to silence.
- */
+/* A theme change never animates. `withoutThemeTransition()` in
+   `lib/reduced-motion.ts` raises this class for one frame; unlayered so it
+   outranks every layered transition. */
 html.fd-theme-swap,
 html.fd-theme-swap *,
 html.fd-theme-swap *::before,

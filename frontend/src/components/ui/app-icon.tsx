@@ -4,15 +4,10 @@ import { cn } from "@/lib/utils"
 export type { AppIconName } from "@/components/ui/app-icon-registry"
 
 /**
- * Four sizes, chosen by the control the icon sits in:
- *
- *   18  mobile 40 and 46px controls · sheet headers
- *   16  desktop 32–52px controls · search fields · mobile 34
- *   14  dense desktop rows · card metadata · lists
- *   12  keys, badges and checkboxes
- *
- * One glyph, one meaning: a chevron opens or closes in place, an arrow is
- * direction, a check confirms, and ✗ closes or removes (never "error").
+ * Four sizes, chosen by the control the icon sits in: 18 for touch controls,
+ * 16 for desktop controls and fields, 14 for dense rows, 12 for keys and
+ * badges. One glyph, one meaning: a chevron opens in place, an arrow is
+ * direction, a check confirms, ✗ closes or removes (never "error").
  */
 export type AppIconSize = 12 | 14 | 16 | 18
 

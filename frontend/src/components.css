@@ -1,18 +1,7 @@
-/*
- * Fly Desk — component surfaces.
- *
- * One block per surface of the coverage map (plate 6b). Values are taken from
- * the plates; when a value is not in the geometry catalog (5b) it is a bug.
- */
+/* Component surfaces, one block per surface. */
 
 @layer utilities {
-  /* ===== Search fields (1a, 1b) ==========================================
-   * 52px, radius 12, floating micro label at 12/9, value 14/600 on a 17px
-   * line so the baseline does not move when the value arrives. */
-
-  .fd-field {
-    position: relative;
-  }
+  /* ---- search fields ---- */
 
   .fd-field-control {
     position: relative;
@@ -20,9 +9,7 @@
     height: var(--fd-control-primary);
     align-items: center;
     gap: 8px;
-    /* The top band belongs to the floating label (03 §2). Named because the
-       trailing affordances have to cancel it — see `.fd-daterange-clear`,
-       `.fd-field-clear` and `.fd-field-control > .fd-disclosure` below. */
+    /* The top band belongs to the label; trailing controls cancel it below. */
     --fd-field-label-band: 15px;
     padding: var(--fd-field-label-band) 12px 0;
     border: 1px solid var(--color-input);
@@ -74,17 +61,11 @@
     white-space: nowrap;
   }
 
-  /* An unfilled value — the typed placeholder of an input and the "Seleccionar"
-     of a picker are the same state, so they carry one colour. */
   .fd-field-value-placeholder,
   .fd-field-value::placeholder {
     color: color-mix(in srgb, var(--color-muted-foreground) 65%, transparent);
   }
 
-  /* 01 §1 closes the soft fills at `warn-soft`. The separate `destructive-soft`
-     pair differed from it by two percent of the same orange and never read as a
-     different state — the `--success` situation again. Error and warning share
-     the fill; the border is what tells them apart. */
   .fd-field-invalid {
     border-color: var(--color-destructive);
     background: var(--color-warning-soft);
@@ -95,10 +76,7 @@
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-destructive) 24%, transparent);
   }
 
-  /* ===== Frequent-station chips (1a) =====================================
-   * Real material in the place the old layout reserved and left blank.
-   * On mobile they carry no separator: they are pressed in order, origin
-   * first, destination second. */
+  /* ---- frequent stations ---- */
 
   .fd-quick-chips {
     display: grid;
@@ -128,9 +106,6 @@
     background: var(--color-accent);
   }
 
-  /* Plate 1c: one row of five chips at the touch minimum, `flex: 1`, mono 13.
-     They carry no separator because they are pressed in order — first press
-     fills Origin, second fills Destination (11 §2.1). */
   :where(.fd-shell[data-shell-size="C"]) .fd-quick-chips {
     display: flex;
     height: var(--fd-control-touch);
@@ -145,10 +120,6 @@
     font-size: var(--fd-text-base);
     flex: 1;
   }
-
-  /* ===== Date policy footer (1a) =========================================
-   * The window, the stay ceiling and the passenger ceiling — what the agent
-   * needs to know before typing, not after being rejected. */
 
   .fd-policy-line {
     display: flex;
@@ -174,9 +145,6 @@
     margin-inline: 8px;
     opacity: 0.5;
   }
-
-  /* ===== Provider rail (1a) ==============================================
-   * Names are canonical; presence itself means a current ready observation. */
 
   .fd-provider-rail {
     display: flex;
@@ -204,10 +172,6 @@
     height: 15px;
     object-fit: contain;
   }
-
-  /* ===== Single-line alert (1b) ==========================================
-   * Replaces the chain of technical warnings. 36px, one line, ellipsised,
-   * dismissible, and it never comes back within the same search. */
 
   .fd-alert-line {
     display: flex;
@@ -250,46 +214,7 @@
     background: color-mix(in srgb, var(--color-primary) 15%, transparent);
   }
 
-  /* ===== The counter · one way of writing it =============================
-   *
-   * "A number that counts things" was written six ways: the list header, the
-   * airline row, the active-filter pill, the phone's filter strip, the month's
-   * coverage line and the flights a filter is hiding. Two alphabets, four
-   * bodies and two weights for one job. None of them was wrong on its own; the
-   * problem was that there was no way to tell which one was right, because it
-   * had never been written down. It is written down here.
-   *
-   * **Alphabet.** A counter is a figure, so mono and tabular. The two that had
-   * left mono — the month's coverage and the hidden flights — come back, but
-   * only the figure: those are mixed strings, and a mixed value splits ("12 de
-   * 30 días con tarifa"). Prose does not inherit the monospace for sharing an
-   * element with a number, which is exactly what `.fd-count` on the bare figure
-   * prevents.
-   *
-   * **Body.** Not unified, and that is the rule rather than the exception: a
-   * figure takes its body from the height of the control it lives in, the same
-   * way the icon has taken its since 7b. These six live in controls from 40 to
-   * 17px tall, which is why they are at 13, 12, 11 and 10. The calendar was
-   * already doing it without anyone asking: a 32px cell with a 13px figure, a
-   * 40px cell with a 15px one.
-   *
-   * **Weight.** 700. The catalogue gives 800 to the price, 700 to what is read
-   * at a glance — a time, a counter, a code — and 600 to what accompanies it. A
-   * counter on the results surface is the second of those. The form is a
-   * different surface and stays at 600: there every field value is 600 and none
-   * of them claims importance over the one beside it. In a monospace the weight
-   * does not move the advance, so none of this re-lays a single box.
-   *
-   * **Width.** The digit column is reserved so the block does not jump between
-   * 9 and 10, which is what the passenger counter already did with its
-   * `min-width: 28px`. Here it is measured in `ch` rather than pixels because
-   * these six live at four different bodies and one fixed number would only fit
-   * one of them: in a monospace 1ch *is* the digit's advance, so `2ch` is
-   * exactly two digits at any of the four. Measured in the browser with the
-   * fonts loaded, at 12px: one digit is 7.20px and two are 14.41 — and `2ch`
-   * gives 14.41. Two digits is the real ceiling for all six: 90 nights, 30
-   * days, and a list of more than 99 airlines does not exist.
-   */
+  /* ---- counters: mono, tabular, 700 ---- */
 
   .fd-count,
   .fd-panel-count,
@@ -301,40 +226,25 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* The digit column, for the counter written bare in the markup. The three
-     that own a box express the same reservation in it — a 32px column, a pill's
-     padding, a 17px badge — because there the reservation is not the digit
-     alone; the `2ch` inside it is the same one. The list header is the one that
-     reserves nothing: it holds "386 de 1,240", whose length varies by far more
-     than a digit, so a two-digit floor would buy it nothing. */
+  /* In a monospace `2ch` is two digits at any size, so a count does not jump
+     between 9 and 10. */
   .fd-count {
     display: inline-block;
     min-width: 2ch;
     text-align: center;
   }
 
-  /* ===== Panel chrome (1b) =============================================== */
-
-  /* The list header's counter. Body 13 because the row that carries it is the
-     title row; on a phone it drops to 12 with the 32px status row. Alphabet and
-     weight come from the block above. */
   .fd-panel-count {
     flex-shrink: 0;
     color: var(--color-muted-foreground);
     font-size: var(--fd-text-base);
   }
 
-  /* "con tarifa" is not a figure: it shares an element with the month counter
-     and inherited the monospace from it. Two words of prose in IBM Plex Mono
-     because the number in front of them sits in the same `<span>`. */
   .fd-month-count-tail {
     font-family: var(--font-sans);
     font-weight: var(--fd-weight-label);
   }
 
-  /* Status pill: 20px, radius 6, micro type. Carries the spinner when the
-     search is partial — and says "Parcial" in words, so reduced motion (which
-     stops the spinner) loses nothing. */
   .fd-status-pill {
     display: inline-flex;
     height: 20px;
@@ -349,18 +259,6 @@
     font-weight: var(--fd-weight-label);
   }
 
-  /* The count of active filters. Mono 11/700 in primary, in both the desk
-     header (8a) and the sheet header (1e). The pill is entirely the figure, so
-     the digit column is its own minimum: two digits plus the 7px of padding on
-     each side, so it does not change width between the ninth filter and the
-     tenth. */
-  /* 18 square at 10, which is what both plates draw beside «Filtros»: it is a
-     badge on a heading, not a pill on a row, and at the pill's 20 × 11 it was
-     the loudest thing in the rail. The two-digit floor stays — a badge that
-     changes width between the ninth filter and the tenth moves the heading it
-     hangs off — and at this body the plates' own two-digit box is 22, so the
-     reservation and the drawing agree wherever there is more than one filter
-     on. */
   .fd-status-pill-count {
     height: 18px;
     min-width: calc(2ch + 10px);
@@ -371,20 +269,6 @@
     font-size: var(--fd-text-micro);
   }
 
-  /* ===== Filters (8a · 1b · 1e) ==========================================
-   * One component, two containers: the 248px column of plate 8a and the
-   * partial sheet of plate 1e. Four groups — three segmented controls with
-   * **no separator between them**, and a 1px rule *only* before Airlines,
-   * because that is a different kind of filter (checkboxes, not segments).
-   *
-   * The column is not a box. It is not an object at all: it is the control of
-   * the list beside it, and a card with its own header band presented it as a
-   * thing apart from the results it governs — while putting segmented controls,
-   * which are already boxes, inside another box. FRONTEND_IDENTITY asks for the
-   * opposite in as many words: «evitar cajas dentro de cajas; preferir secciones
-   * planas, divisores y filas agrupadas». The rail is now what the mobile sheet
-   * has always drawn, with a vertical hairline where the column ends. */
-
   .fd-filter-panel {
     display: flex;
     height: 100%;
@@ -393,10 +277,6 @@
     overflow: hidden;
   }
 
-  /* The 28px line the three columns share. No band, no radius, no shadow: the
-     rule under it is the whole of it, and it lands at the same height as the
-     list's «Resultados» and the detail's «Oferta» so a single line crosses the
-     screen. */
   .fd-filter-panel-header {
     display: flex;
     min-width: 0;
@@ -408,8 +288,6 @@
     border-bottom: 1px solid var(--color-rule);
   }
 
-  /* The same 14/700 the list's «Resultados» and the detail's «Oferta» are set
-     in: three headings on one line have to be one heading in three places. */
   .fd-filter-panel-title {
     overflow: hidden;
     font-size: var(--fd-text-body);
@@ -425,24 +303,16 @@
     gap: 8px;
   }
 
-  /* No side padding: the column owns its inset now (`.fd-filter-column`), so
-     the controls share a left edge with the heading above them and with the
-     rule that ends the column on the right. 14 on top is the air under that
-     rule — the same 14 the detail's hero takes under its own. */
   .fd-filter-body {
     display: grid;
     min-height: 0;
     flex: 1;
     align-content: start;
-    /* 14 between groups against the 6 inside one: the pair has to read as a
-       group before the rail reads as a list of controls, and at 12 over 8 the
-       two spacings were within two pixels of each other. */
     gap: 14px;
     overflow: auto;
     padding-top: 14px;
   }
 
-  /* 6, the plate's: a group rótulo and the control it names are one thing. */
   .fd-filter-group {
     display: grid;
     gap: 6px;
@@ -456,13 +326,11 @@
     gap: 8px;
   }
 
-  /* Which groups are on is said by their segments and the count beside
-     «Filtros», so the markup's «sin usar» hint stays hidden. */
   .fd-filter-group-unused {
     display: none;
   }
 
-  /* The only separator in the panel. */
+  /* The only separator in the panel: airlines are a list, not a constraint. */
   .fd-filter-group--airlines {
     gap: 6px;
     padding-top: 12px;
@@ -477,36 +345,10 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* No gap: the rows are 28 and the pitch is 28, which is how both plates
-     stack them. Six pixels between each pair made eight airlines a list a
-     third longer than the panel draws. */
   .fd-airline-list {
     display: grid;
   }
 
-  /* Airline row: checkbox 16, logo 18, name 13/600, count mono in a fixed
-     32px column so the digits line up. Flush with the group, so the checkbox
-     shares a left edge with the segmented controls above it (8a) — and flush
-     with the row above it, which is what the missing gap is for: the plates
-     draw eight airlines at a pitch of 28 and this list was running at 38.
-
-     The row itself stays 32 and not the plates' 28. 28 is not in the closed
-     table of control heights, `Controles` puts this exact row at «32 → 40»
-     between the two densities, and the 16px checkbox in it is derived from the
-     32 by the icon law — so the plates' 28 costs the rule that sizes the one
-     control inside the row. What was worth fixing was the pitch.
-
-     The 16 is 7b rather than a preference. The row is `--fd-control-standard`,
-     32 on a desk, and the table gives a 32 the 16 rung — which is the size the
-     shared `Checkbox` already ships (`h-4 w-4`), so the desk gets it without a
-     rule. The same row is `--fd-control-touch` on a phone, 40, whose rung is
-     18, and that one has to be written down: it is in `index.css`, unlayered,
-     beside the rule that makes the row 40, because the 16 it has to beat is a
-     Tailwind utility and `@layer utilities` is where this file lives.
-
-     The logo is 18 on both surfaces. It is a carrier's mark and not a pictogram
-     from the set, so the icon table does not size it — it is the smallest box
-     a two-colour livery is still readable in, and it does not follow the row. */
   .fd-airline-row {
     display: flex;
     min-width: 0;
@@ -539,10 +381,6 @@
     white-space: nowrap;
   }
 
-  /* The airline row's counter, at the monospace's own 11 — the plates' body,
-     and one rung under the 13 of the name it follows. The 32px column is
-     already its width mechanism — five digits at this body — so it does not
-     repeat the two-digit minimum. */
   .fd-airline-row-count {
     width: 32px;
     flex-shrink: 0;
@@ -551,23 +389,16 @@
     text-align: right;
   }
 
-  /* ---- the same panel inside the partial sheet (1e) --------------------- */
-
   .fd-filter-panel--sheet {
     height: auto;
     overflow: visible;
   }
 
-  /* Inside the sheet the body does not scroll — the sheet does — and it has no
-     heading above it to leave air under, because the sheet draws one. */
   .fd-filter-panel--sheet > .fd-filter-body {
     overflow: visible;
     padding-top: 0;
   }
 
-  /* On a phone the rows are a ruled list rather than a spaced one: one touch
-     height each, separated by a hairline instead of by air, with the name a
-     notch up and the count in 34 because the mono is a bigger body (01 §10). */
   .fd-filter-sheet .fd-airline-list {
     gap: 0;
   }
@@ -592,8 +423,6 @@
     width: 34px;
   }
 
-  /* ===== Active filter chips (1b) ======================================== */
-
   .fd-active-chip {
     display: inline-flex;
     height: var(--fd-control-chip);
@@ -617,11 +446,6 @@
     opacity: 1;
   }
 
-  /* ===== The end of the window (infinite list) ===========================
-   * Not a control and not a row: a zero-height mark the list watches for, one
-   * column above the last card. It takes no space of its own — the space it
-   * would take is the space this list exists to give back. */
-
   .fd-list-sentinel {
     height: 0;
     margin: 0;
@@ -629,10 +453,7 @@
     pointer-events: none;
   }
 
-  /* ===== Suggestions (2a) ================================================
-   * One row per result. IATA in a fixed column because it is what the agent
-   * reads first and what they type; city in title weight; airport plus
-   * distance when it is an alternative airport. */
+  /* ---- suggestions ---- */
 
   .fd-suggest-panel {
     z-index: var(--fd-z-popover);
@@ -652,23 +473,11 @@
     padding: 10px 12px 8px;
   }
 
-  /* The two counters that sit beside a micro label in a popover header — how
-     many matches there are, how many passengers still fit. They were Tailwind
-     literals, and two different weights between them; now they are the system's
-     counter. Body 12, the metadata rung: the header that carries them is not a
-     control with a height of its own to take it from. */
   .fd-suggest-head .fd-count,
   .fd-pax-popover-head .fd-count {
     font-size: var(--fd-text-meta);
   }
 
-  /* The list of matches and the list of Recientes/Frecuentes are the same
-     scroller under two conditions, and both open over the workspace: running
-     off the last suggestion used to scroll the results behind the panel.
-     It is a class of its own rather than another job for `.fd-scrollbar-hidden`:
-     that one says «hide the bar», and a utility that also decided where a
-     gesture stops would be two rules wearing one name — which the lanes that
-     want the first and not the second would have no way to say. */
   .fd-suggest-scroll {
     overscroll-behavior: contain;
   }
@@ -709,10 +518,6 @@
     white-space: nowrap;
   }
 
-  /* 11 is the catalogue's mono rung — "mono metadata · schedules · specs" —
-     and this is a city and a country, running text in sans. The rung it belongs
-     on is 12. The token said one thing and the line did another, which is the
-     quiet way to spend a scale. */
   .fd-suggest-detail {
     overflow: hidden;
     color: var(--color-muted-foreground);
@@ -722,8 +527,6 @@
     white-space: nowrap;
   }
 
-  /* The key footer is here because this search is used by typing, not by
-     pointing. */
   .fd-suggest-foot {
     display: flex;
     align-items: center;
@@ -737,12 +540,7 @@
     height: 60px;
   }
 
-  /* ===== Passengers (1g, 2d) =============================================
-   * Row 40 — `--fd-control-touch`, named rather than restated, because the
-   * catalogue moved that floor from 44 to 40 and this line stayed behind —
-   * steppers 32, figure mono 15/700 in a 28px column so the row does not twitch
-   * between 9 and 10. Inside the sheet the same row is 64 with touch-height
-   * steppers and a 17px figure (2d) — one component, two surfaces. */
+  /* ---- passengers ---- */
 
   .fd-pax-popover {
     width: 288px;
@@ -785,10 +583,6 @@
     line-height: 1.2;
   }
 
-  /* "12 años o más" is text, not a monospaced spec: the 11 rung is reserved
-     for mono metadata and was being spent here on sans. It goes up to 12, which
-     is what the sheet already used — so the row stops writing its detail two
-     ways depending on the surface. */
   .fd-pax-row-detail {
     display: block;
     color: var(--color-muted-foreground);
@@ -828,7 +622,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* The same rung correction as the row's detail: this is a sentence. */
   .fd-pax-note {
     margin: 8px 4px 2px;
     padding-top: 8px;
@@ -838,8 +631,6 @@
     line-height: 1.45;
   }
 
-  /* The sheet is the mobile surface, so it carries the mobile geometry — no
-     container query needed: this sheet only ever exists in armazón C (02 §7). */
   .fd-passenger-sheet .fd-pax-row {
     height: 64px;
     gap: 12px;
@@ -853,7 +644,6 @@
     line-height: 1.25;
   }
 
-  /* The body is now the same on both surfaces; only the air changes here. */
   .fd-passenger-sheet .fd-pax-row-detail {
     line-height: 1.25;
   }
@@ -881,16 +671,7 @@
     line-height: 1.5;
   }
 
-  /* ===== Calendar (2e, 6c, 7a) ===========================================
-   * One control with two halves, and one cell treatment shared by all four
-   * calendars — days and months, desktop and mobile. What changes between
-   * them is the grid (7 columns of days, 4 of months) and the cell height
-   * (32 desktop — `--fd-control-standard` — and 40 on a phone —
-   * `--fd-control-touch`, measured). Nothing else.
-   *
-   * The mobile number was written 44, which is the touch floor the catalogue
-   * retired when it became 34/40/46; the sheet rule below has read the token
-   * all along, so only this line was wrong. */
+  /* ---- dates and calendar ---- */
 
   .fd-daterange-control {
     display: grid;
@@ -909,7 +690,6 @@
     border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
   }
 
-  /* The primary ring marks the half being chosen, not the whole control. */
   .fd-daterange-control[data-open="true"] {
     border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
@@ -936,27 +716,6 @@
     color: var(--color-primary);
   }
 
-  /* A date is a figure: it is compared and it is typed, and the product already
-     writes it as one everywhere it *reports* one — `28/05` on the card at mono
-     10/700, `28 may` in the detail's leg summary at 12/600, the day in the
-     calendar. The three surfaces that *receive* a date — the two halves and the
-     month field of Migratorio — wrote it in sans, so the same date came in as a
-     word and went out as a figure.
-     The unit is the string, not the word. `28 may 2026` carries figures and goes
-     mono with its month abbreviation, which is exactly how the leg summary
-     already writes it; a month standing alone carries none, and that is why
-     `.fd-cal-cell-month` keeps its sans. The two are not in disagreement — they
-     are the same rule at its two ends.
-     Only once there is a date there. Empty, all three say «Elegir» (and the
-     return half «No aplica»), and that is a word whatever the field holds, so
-     the placeholder keeps the sans it shares with Origen and Destino.
-     Family and figure spacing only — not weight. Every date the product writes at
-     12px or over is already mono 600: the leg summary at 12, the calendar cell at
-     13 and 15. The one that is 700 is the card's `28/05` at 10, where the weight
-     is paying for the size. And every value in a field is 600, so a date at 700
-     would be the only one heavier than the destination beside it, which is a
-     claim about importance that nothing here is making. The body of the line is
-     set without a layer in `index.css` and is not this rule's business either. */
   .fd-daterange-half .fd-field-value:not(.fd-field-value-placeholder),
   .fd-monthrange-value:not(.fd-field-value-placeholder) {
     font-family: var(--font-mono);
@@ -974,9 +733,6 @@
     color: var(--color-muted-foreground);
   }
 
-  /* 11 §2.1 and §2.2 both name «el aspa»: the cross that empties a field. One
-     shape for the two of them — the date halves and the location fields — so
-     the affordance the agent learns in one is the one they find in the other. */
   .fd-daterange-clear,
   .fd-field-clear {
     display: grid;
@@ -995,24 +751,8 @@
     color: var(--color-foreground);
   }
 
-  /*
-   * The label band pushes everything in the row down, which is right for the
-   * leading icon and the value — they are the value line — and wrong for a
-   * trailing affordance, which belongs on the axis of the control itself. With
-   * `align-items: center` the row centres inside the padded box, so the cross
-   * and the chevron sat about 7px low and read as misplaced.
-   *
-   * What puts them back on the axis is the *difference* between the two block
-   * margins, one band's worth: any pair with that difference centres the item
-   * on the whole field instead of on the value line, whatever its size. So the
-   * band is taken off the top rather than added to the bottom. On a desk the
-   * two are the same drawing; they part company under 02 §12, where the cross
-   * grows to 44 inside a 58px field — a bottom margin made its margin box 60
-   * against a 42px content band, which grew the row to 76 and took the value
-   * line down with it. Removing height instead of adding it can never do that,
-   * so the affordance keeps its touch size without ever setting the height of
-   * the line it stands on. Nothing moves for a field with no trailing control.
-   */
+  /* Trailing controls sit on the field's axis, not on the value line: taking
+     the label band off their top centres them without growing the field. */
   .fd-daterange-clear,
   .fd-field-clear,
   .fd-field-control > .fd-disclosure {
@@ -1036,8 +776,6 @@
     border-bottom: 1px solid var(--color-border);
   }
 
-  /* The live range plus its counter: the header answers "what did I pick"
-     without reading the grid. */
   .fd-cal-range {
     display: inline-flex;
     align-items: center;
@@ -1046,9 +784,6 @@
     font-weight: var(--fd-weight-title);
   }
 
-  /* 11 §2.2 moment 3: the range under the pointer is written before it is
-     chosen, and it says so in primary — the same tell the return half of the
-     field uses, so the two never disagree about what is settled. */
   .fd-cal-range[data-tentative] {
     color: var(--color-primary);
   }
@@ -1147,20 +882,8 @@
     margin-top: 2px;
   }
 
-  /*
-   * The cell. No box of its own — the sweep is the box. Rounded ends, flat
-   * middle at 12%. Three states and nothing struck through: `today` carries a
-   * ring, `unavailable` (past, or beyond the one-year window) sits at 38% with
-   * no cursor, and `other month` is simply not drawn. A strikethrough was
-   * doing two jobs at once and told you nothing about which.
-   */
   .fd-cal-cell {
     display: flex;
-    /* The catalogue's standard control, not a literal that happens to equal it.
-       The sheet's cell below already reads `--fd-control-touch` for its 40, and
-       these two heights are what the law of the counter cites when it says a
-       figure takes its body from the control it lives in — a 32 cell with a 13
-       figure, a 40 cell with a 15. */
     height: var(--fd-control-standard);
     align-items: center;
     justify-content: center;
@@ -1178,10 +901,7 @@
     font-family: var(--font-sans);
   }
 
-  /* ===== Flexible stay counter (1a) ======================================
-   * A 32px control on `--secondary`, like every other counter in the system.
-   * It used to carry `sm:` variants, which are media queries: the armazón is
-   * decided by container width, not by the window (02 §2). */
+  /* ---- flexible stay counter ---- */
 
   .fd-stay-counter {
     display: inline-flex;
@@ -1202,34 +922,6 @@
     width: max-content;
   }
 
-  /*
-   * The value slot of the stay counter, and its digit column.
-   *
-   * Body and weight came from Tailwind literals — `text-xs` and `font-semibold`
-   * — which are 12 and 600: the catalogue's own two rungs, written by hand.
-   * They come from the tokens now, and that is all that changes: the drawing
-   * does not move.
-   *
-   * The digit does get a column of its own, which is what this counter lacked
-   * and Pasajeros had. Measured in the browser with the fonts loaded, at 12/600
-   * in IBM Plex Mono: one digit takes 7.20px and two take 14.41. The slot was
-   * therefore 60.9px at "7 noches" and 68.1 at "10 noches", so the whole bar
-   * shifted 7.2px on reaching the tenth night — and this counter goes up to
-   * ninety, so the jump happens once and stays.
-   *
-   * The reservation is written in `ch` rather than pixels because in a
-   * monospace 1ch is exactly the digit's advance: `2ch` gives the same 14.41px
-   * at this body and would still give two digits if the rung moved.
-   * `.fd-pax-figure` reserves the same thing in pixels because it lives at one
-   * fixed body. With the column in place the slot measures 68.1px from the
-   * second night to the ninetieth: the digit's jump is gone.
-   *
-   * One step is left that this does not close: between "1 noche" and "2 noches"
-   * the slot goes from 61.5 to 68.1px. What changes there is the noun, not the
-   * figure, and reserving the width of a word asks for a number that comes from
-   * no scale. The 56px floor is the plate's — it no longer bites, because the
-   * content already clears it — and it stays as a floor.
-   */
   .fd-stay-label,
   .fd-stay-value {
     font-size: var(--fd-text-meta);
@@ -1246,56 +938,38 @@
     text-align: center;
   }
 
-  /* The ± of the stay counter. 32px, the standard control of 5b — it used to be
-     28, which is not a height this system has; armazón C lifts it to the touch
-     minimum. */
   .fd-stay-counter-step {
     width: var(--fd-control-standard);
     height: var(--fd-control-standard);
   }
 
-  /* Moments 2 and 3 write into the return half before anything is chosen, so
-     the half reads in primary to say "this is not settled yet" (plate 9a). */
   .fd-daterange-half[data-tentative] .fd-field-value,
   .fd-daterange-half[data-tentative] .fd-field-label,
   .fd-daterange-half[data-tentative] .fd-daterange-icon {
     color: var(--color-primary);
   }
 
-  /*
-   * The four moments of plate 9a, one rule each. `dayKind()` decides; this only
-   * translates. The tentative pair (`pmid`, `pend`) is deliberately kept apart
-   * from the confirmed pair (`mid`, `end`): share the code and the 7% and the
-   * 12% blend into one another (11 §8).
-   */
-
   .fd-cal-cell[data-kind="normal"]:hover,
   .fd-cal-cell[data-kind="today"]:hover {
     background: var(--color-accent);
   }
 
-  /* Moment 1 · today carries a ring and nothing else. */
   .fd-cal-cell[data-kind="today"] {
     box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-primary) 55%, transparent);
     color: var(--color-foreground);
     font-weight: var(--fd-weight-title);
   }
 
-  /* Unavailable: past, or beyond the one-year window. It does not respond. */
   .fd-cal-cell[data-kind="past"] {
     color: color-mix(in srgb, var(--color-muted-foreground) 38%, transparent);
     cursor: not-allowed;
     font-weight: var(--fd-weight-value);
   }
 
-  /* Moment 2 · the first click fills the day with radius on all four corners:
-     it is a chosen date, not yet an end of anything. */
   .fd-cal-cell[data-kind="solo"] {
     border-radius: var(--fd-radius-8);
   }
 
-  /* Moment 4 · confirmed sweep. The ends round, the middle is flat, and the
-     cell has no box of its own — the sweep is the box. */
   .fd-cal-cell[data-kind="mid"] {
     border-radius: 0;
     background: color-mix(in srgb, var(--color-primary) 12%, transparent);
@@ -1318,21 +992,12 @@
     border-radius: 0 var(--fd-radius-8) var(--fd-radius-8) 0;
   }
 
-  /*
-   * Movement 5 · the confirmed range fills from the end the agent picked. The
-   * colour leaves the cell and becomes a band under it, because a band can be
-   * scaled and a background cannot; the label rides above it on its own
-   * positioned box, which is the only reliable way to get an absolute child
-   * *under* text that has no element of its own.
-   *
-   * The two names are the same movement: an animation replays when its name
-   * changes, not when an attribute does, so a second range of the same shape
-   * would otherwise paint in silence.
-   */
   .fd-cal-cell-label {
     position: relative;
   }
 
+  /* A confirmed range fills from the end chosen first: the colour moves to a
+     band under the label, which can scale where a background cannot. */
   .fd-cal-cell[data-sweep] {
     position: relative;
     background: transparent;
@@ -1367,9 +1032,6 @@
     background: var(--color-primary);
   }
 
-  /* Moment 3 · the tentative sweep under the pointer, at exactly half the
-     intensity of what is confirmed: 7% for the run, 22% and a ring for the day
-     being pointed at. Nothing here is chosen yet. */
   .fd-cal-cell[data-kind="pmid"] {
     border-radius: 0;
     background: color-mix(in srgb, var(--color-primary) 7%, transparent);
@@ -1388,11 +1050,6 @@
     visibility: hidden;
   }
 
-  /* The legend under the calendar. Sans text, so the metadata rung: the mono
-     11 is the monospace's body and this line has no figure in it at all.
-     The swatch's geometry is deliberately left alone — the plate asks for it
-     to be a calendar cell at scale, which is a change to the shape and not to
-     the body, and that is not what this pass is. */
   .fd-cal-legend {
     display: flex;
     align-items: center;
@@ -1430,14 +1087,6 @@
     padding: 0;
   }
 
-  /*
-   * 02 §7: in the sheet the header and the weekday row are one pinned block.
-   * The 12px of air above it is the block's own padding and not the scroller's,
-   * because a scroll container paints its scrolled content *through* its top
-   * padding: as `padding-top` on `.fd-sheet-body` those 12px were a see-through
-   * strip with day cells sliding across it, right above a header that is
-   * supposed to be the top edge of the surface.
-   */
   .fd-cal-popover[data-layout="continuous"] .fd-cal-sticky {
     position: sticky;
     top: 0;
@@ -1451,8 +1100,6 @@
     padding: 0 0 12px;
   }
 
-  /* The 2px belong to the paged layout, where the row follows a month caption.
-     Here it follows the header's rule and sits on it. */
   .fd-cal-popover[data-layout="continuous"] .fd-cal-sticky .fd-cal-weekdays {
     margin-top: 0;
   }
@@ -1462,8 +1109,6 @@
     width: 100%;
   }
 
-  /* 03 §7: on a phone the shortcuts take the touch height and are elastic — they are the only
-     way to move the return date without scrolling a year of months. */
   .fd-cal-popover[data-layout="continuous"] .fd-cal-preset {
     height: var(--fd-control-touch);
     flex: 1;
@@ -1480,36 +1125,13 @@
     display: none;
   }
 
-  /* Sheet calendars use the same touch grid as every other mobile control. */
   .fd-calendar-sheet .fd-cal-cell {
     height: var(--fd-control-touch);
     font-size: var(--fd-text-action);
   }
 
-  /* ===== Detail panel (1b · 8a · 1f · 3c) ================================
-   *
-   * One component, three mounts: the 316px column of armazón A (1b), the 380px
-   * side sheet of B (8a) and the edge-to-edge sheet of C (1f). Nothing below
-   * asks how wide the *window* is — the three geometries are three answers of
-   * the same container query, so the panel cannot drift between them.
-   *
-   * The itinerary is a rail: a 1.5px line, a filled dot at every stop, and the
-   * layover leg dotted with its text in primary at 80%. Its type comes from the
-   * `timeline()` model the handoff shares between 1b and 1f — that model is the
-   * rule, and 8a's hand-written numbers are one drawing of it — while its
-   * geometry comes from the plate of the surface it is standing on.
-   */
+  /* ---- detail panel: the desk column; the sheets restate it below ---- */
 
-  /*
-   * The header is two blocks now, and only the first of them is a header.
-   *
-   * (a) A 28px line: «Oferta» left, the provider right, one hairline under it.
-   * It is the same line, at the same height, with the same rule, as «Filtros»
-   * and «Resultados» — which is the whole argument for flattening this column.
-   * The band went with it: a fill here is what made the detail read as a
-   * different material from the two columns beside it, and what says «this is
-   * where you act» is the action bar anchored at the foot, not a box.
-   */
   .fd-detail-header {
     display: flex;
     min-width: 0;
@@ -1520,8 +1142,6 @@
     border-bottom: 1px solid var(--color-rule);
   }
 
-  /* The same 14/700 with -0.01em that «Filtros» and «Resultados» carry: three
-     headings on one line have to be one heading three times. */
   .fd-detail-title {
     overflow: hidden;
     font-size: var(--fd-text-body);
@@ -1550,11 +1170,6 @@
     object-fit: contain;
   }
 
-  /*
-   * (b) The hero. The fare, on no band: airline at 17/700, the figure under it
-   * at 17 in mono, and who the price is for under that. 14 of air over it,
-   * which is the same 14 the filter rail leaves under its own rule.
-   */
   .fd-detail-hero {
     display: flex;
     flex-shrink: 0;
@@ -1598,9 +1213,6 @@
     white-space: nowrap;
   }
 
-  /* 32 on every surface: the mark is the one thing in the hero that is the same
-     size in the 316 column and in the phone's full sheet, because it is not
-     type and has no scale to follow. */
   .fd-detail-logo {
     width: 32px;
     height: 32px;
@@ -1609,11 +1221,6 @@
     object-fit: contain;
   }
 
-  /* Plate 8a: the side sheet's only close. It now sits at the head of the 28px
-     line, where 1f already drew it, rather than at the right of a price that
-     has moved out of this row — one position for one button, and the 32px
-     control is centred on a 28px line with a 2px overhang on each side that the
-     line has no fill to clip. */
   .fd-detail-close {
     display: grid;
     width: var(--fd-control-standard);
@@ -1635,16 +1242,6 @@
     display: none;
   }
 
-  /* A scroller hands the gesture on when it runs out of content, and nothing
-     above this one can take it: on a desk the panel clips and the stage does not
-     scroll, and inside a sheet `.fd-detail-sheet .fd-sheet-body` is already
-     `overflow: hidden`. So the chain does not stop one level up — it runs past
-     every ancestor to the viewport and pulls the whole page with it. `contain`
-     ends it at this edge, the same line every other nested lane carries. */
-  /* The body opens with a rule instead of a padding: the hero above it is the
-     fare and this is everything else about it, so the two are separated the way
-     every other block in this panel is separated. Side padding is gone with the
-     box — the column's own 12px inset is what holds the content off the rail. */
   .fd-detail-body {
     overscroll-behavior: contain;
     margin-top: 14px;
@@ -1652,8 +1249,6 @@
     border-top: 1px solid var(--color-border);
   }
 
-  /* Every block after the first arrives behind a rule with 14px of air on each
-     side of it (1b); the phone opens both to 18 (1f). */
   .fd-detail-section {
     margin-top: 14px;
     padding-top: 14px;
@@ -1668,12 +1263,6 @@
     margin-bottom: 8px;
   }
 
-  /* «28 may · 15h 15m · 1 escala». Muted at the monospace's own 11, not the
-     foreground 12 it carried: it is the caption of the eyebrow beside it, and
-     drawn in full ink it read as a second title on the same line. Mono because
-     `Cifras` §01 decides the alphabet by what a value is — a date and a
-     duration are figures — and the plate's sans here is the system sheet
-     losing an argument to the surface one. */
   .fd-leg-summary {
     color: var(--color-muted-foreground);
     font-family: var(--font-mono);
@@ -1683,8 +1272,6 @@
   }
 
   .fd-rail {
-    /* The four numbers the three surfaces disagree on, named once so the
-       overrides below restate only what actually changes. */
     --fd-rail-dot: 7px;
     --fd-rail-stop-line: 18px;
     --fd-rail-leg-line: 24px;
@@ -1710,12 +1297,6 @@
     place-items: center;
   }
 
-  /* The line lives on the track cell, so it is continuous between stops
-     regardless of how tall the text next to it is. One pixel, and one
-     treatment for the whole rail: `Main.dc.html` and `MovilDetalle.dc.html`
-     draw a single hairline from the first dot to the last, and dotting the
-     waiting stretch made the rail change material half way down a journey
-     that never leaves the ground. */
   .fd-rail-track::before {
     position: absolute;
     top: 0;
@@ -1727,7 +1308,6 @@
     transform: translateX(-50%);
   }
 
-  /* The rail starts and ends at the centre of a dot, never a stub past it. */
   .fd-rail-track[data-kind="first"]::before {
     top: 50%;
   }
@@ -1736,9 +1316,6 @@
     bottom: 50%;
   }
 
-  /* Outlined, not filled: seven pixels with a 1.5px muted ring and the card
-     behind it, which is how both plates draw every stop. A filled dot in full
-     foreground put eight black discs down a column whose text is 12px. */
   .fd-rail-dot {
     position: relative;
     z-index: 1;
@@ -1759,19 +1336,6 @@
     white-space: nowrap;
   }
 
-  /* The ladder's own line — «2 h 15 min en BOG», «llegada al día siguiente».
-     Sans, so it takes the metadata rung and not the mono one: 11 is the body
-     the catalogue reserves for the monospace, and a sans line borrowing it is
-     the smallest text in the product for no reason anyone wrote down. The
-     phone was already at 12 (the container query below), so this only brings
-     the desk to where the phone had been. */
-  /* 600, not 400: both plates draw this line at the same weight as the station
-     above it and separate the two with colour alone. At 400 it was the only
-     text in the panel lighter than the document's own body.
-
-     The waiting stretch takes no colour of its own either. It was primary at
-     80%, which put the one orange thing in the panel on the fact the agent
-     cares least about — and neither plate tints it. */
   .fd-rail-leg {
     min-width: 0;
     overflow: hidden;
@@ -1783,17 +1347,12 @@
     white-space: nowrap;
   }
 
-  /* The day jump on a stop: the micro rung, muted, beside a station at 12/600
-     — its own leaf, so it does not take the station's body. */
   .fd-rail-day {
     color: var(--color-muted-foreground);
     font-size: var(--fd-text-micro);
     font-weight: var(--fd-weight-title);
   }
 
-  /* Conditions, in pairs, on a 26px line: the label muted at the left and the
-     value at the right, which is how both plates set them and what makes four
-     of them a column of answers instead of two ragged columns. */
   .fd-condition-heading {
     display: block;
     margin-bottom: 8px;
@@ -1826,10 +1385,6 @@
     font-weight: var(--fd-weight-label);
   }
 
-  /* One typography rule across the whole app: a hard figure — a time, a price, a
-     date, a calendar day, a counter, a page number — is mono; interface text is
-     Inter. A ticketing date is a figure, and it takes the monospace's own 11
-     and the 700 `Cifras` §03 gives a date, one rung off the words beside it. */
   .fd-condition-value--figure {
     font-family: var(--font-mono);
     font-size: var(--fd-text-mono-meta);
@@ -1849,22 +1404,10 @@
     height: var(--fd-icon-14);
   }
 
-  /* The same grey the card uses for a bag the fare does not include: absence is
-     a fact, not a warning, and the pictogram says it — never words (04 §4). It
-     is the only thing that says it now that the label names what is included
-     and nothing else, which is why the icons stay on all three surfaces even
-     though 1b draws the 316 column without them. */
   .fd-condition-bag--absent {
     color: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent);
   }
 
-  /* --- the anchored foot, and the failure that lands on top of it -------- */
-
-  /* The foot is what says «this is where you act» now that nothing else does,
-     and it says it by being anchored, not by being filled: the grey band went
-     with the header's. The rule above it is the 25% one, a step heavier than
-     the hairlines inside the body, because it closes the column rather than
-     dividing it. */
   .fd-detail-footer {
     display: grid;
     flex-shrink: 0;
@@ -1874,9 +1417,6 @@
     border-top: 1px solid var(--color-rule);
   }
 
-  /* 3c makes the failure and the actions one surface. The error arrives with
-     the footer's own fill, so a line between them would run through the middle
-     of a single block. */
   .fd-detail-footer[data-quote-error] {
     border-top: 0;
   }
@@ -1896,8 +1436,6 @@
     gap: 8px;
     border-radius: var(--fd-radius-10);
     padding-inline: 6px;
-    /* The plate's `#373734`: this is a control's label, not the panel's
-       metadata, and muted put it a step below the two buttons beside it. */
     color: var(--color-secondary-foreground);
     cursor: pointer;
     font-size: var(--fd-text-meta);
@@ -1913,8 +1451,6 @@
     color: var(--color-foreground);
   }
 
-  /* 28 × 16 with a 12px knob is the switch 1b draws, which is also the shared
-     component's own size — the wider surfaces bump it to 30 × 17 below. */
   .fd-detail-migration-switch {
     flex-shrink: 0;
   }
@@ -1925,15 +1461,6 @@
     gap: 6px;
   }
 
-  /* Both foot actions are the 32px control of 1b, and both are 13/700 in 12 of
-     padding: `Main.dc.html` and `MovilDetalle.dc.html` draw `.btn` and
-     `.btn-p` with the same type and the same box, and differ only in the fill.
-     They were 12/600 and 12/700 here, so the secondary exit read a rung below
-     the primary one and both read a rung below everything else in the panel.
-
-     Scoped to the two of them rather than moved into the button itself: the
-     search form's controls are 600 by decision and this is the results
-     surface, where what is read at a glance is 700. */
   .fd-detail-provider-action,
   .fd-detail-quote-error-open,
   .fd-detail-quote-action,
@@ -1944,9 +1471,6 @@
     font-weight: var(--fd-weight-title);
   }
 
-  /* 3c: two exits and a way to put the notice away, over the fill of the foot
-     it belongs to. It enters with the confirmation's 180ms — the same slot on
-     a phone, so the same arrival — and it never leaves on its own. */
   .fd-detail-quote-error {
     display: grid;
     flex-shrink: 0;
@@ -2008,8 +1532,6 @@
     gap: 6px;
   }
 
-  /* 3c draws this one on `--card` rather than `--secondary`: it is the quiet
-     exit, and it is sitting on a surface that is already secondary. */
   .fd-detail-quote-error-open {
     background-color: var(--color-card);
   }
@@ -2022,15 +1544,10 @@
     flex: 1;
   }
 
-  /* The conditions are still there while the failure is up; they are just not
-     the thing to read (3c). */
   .fd-detail-panel[data-quote-error] .fd-condition-list {
     opacity: 0.4;
   }
 
-  /* 1f · movement 6: the copy confirmation enters in 180ms, stays 2.4s and
-     leaves in 140ms. It is a line of its own between the body and the actions,
-     never a row inside them. */
   .fd-detail-copy-confirm {
     display: flex;
     height: 38px;
@@ -2055,12 +1572,7 @@
     animation: fd-exit-opacity var(--fd-dur-exit-confirmacion) var(--fd-ease-tacto) both;
   }
 
-  /* The detail in a sheet (side or bottom) insets its own blocks; the desk
-     column's inset is the column's padding. */
   .fd-detail-sheet {
-    /* The sheet has no column inset of its own, so the three blocks take one
-       here — the 14 the plate draws — while the anatomy above stays exactly the
-       anatomy of the desk column. */
     .fd-detail-header,
     .fd-detail-hero,
     .fd-detail-body,
@@ -2091,15 +1603,9 @@
     }
 
     .fd-detail-quote-error {
-      padding-inline: 14px;
+      padding: 12px 14px 0;
     }
 
-    .fd-detail-quote-error {
-      padding-block: 12px 0;
-    }
-
-    /* «Cotizar» takes the rest of the row here, so the switch stops being one
-       half of a space-between and becomes the fixed end of a flex row. */
     .fd-detail-action-row {
       justify-content: flex-start;
     }
@@ -2143,12 +1649,7 @@
     }
   }
 
-  /* The phone's full sheet. */
   .fd-sheet--bottom {
-    /* The sheet's own screen inset. Armazón B gives the four blocks the 14 its
-       380px sheet is drawn with, and the phone was taking that number because
-       nothing here restated it; `MovilDetalle` pads the whole screen by 16.
-       Two pixels on each flank, on every block of the sheet at once. */
     .fd-detail-header,
     .fd-detail-hero,
     .fd-detail-body,
@@ -2156,26 +1657,16 @@
       padding-inline: 16px;
     }
 
-    /* `MovilDetalle` confirms the phone takes the same anatomy as the column:
-       the 28px line grows to 40 to hold a 40px back chevron and nothing else
-       about it changes — except the gap, which the plate opens to 10 for the
-       larger button. */
     .fd-detail-header {
       height: var(--fd-control-touch);
       gap: 10px;
     }
 
-    /* Same button, the other glyph: a phone goes back, it does not dismiss. */
     .fd-detail-close {
       width: var(--fd-control-touch);
       height: var(--fd-control-touch);
       margin-left: -8px;
       border-radius: var(--fd-radius-12);
-      background: transparent;
-    }
-
-    .fd-detail-close:hover {
-      background: var(--color-accent);
     }
 
     .fd-detail-close-back {
@@ -2186,9 +1677,6 @@
       display: none;
     }
 
-    /* 16 over the rule and 14 under it, which is what `MovilDetalle` draws and
-       what the desk column already had; the 18/18 here was a phone number
-       nothing measured. */
     .fd-detail-section {
       margin-top: 16px;
       padding-top: 14px;
@@ -2211,11 +1699,6 @@
       margin-bottom: 10px;
     }
 
-    /* No gap: the plate's four conditions are four 32px lines that touch, so
-       the pairs read as one column of answers. The 10 that used to open them
-       turned four rows into four blocks, and it was written twice — the second
-       copy also took the value to 14 against the label's 13, which is the one
-       place in this sheet where a pair of words on one line had two bodies. */
     .fd-condition-label,
     .fd-condition-value {
       font-size: var(--fd-text-base);
@@ -2230,18 +1713,10 @@
       height: var(--fd-icon-16);
     }
 
-    /* 02 §7.6: the actions are anchored at the foot of the sheet at the touch
-       height with the home indicator absorbed. They stay inside the panel — one component,
-       three mounts — because the sheet body is the only thing that scrolls. */
     .fd-detail-footer {
       padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
     }
 
-    /* The switch at one end, the two exits at the other: `MovilDetalle` hangs
-       the pair on an `auto` margin and lets each of them be its own words wide.
-       Armazón B's `flex: 1` belongs to a 380px sheet where «Cotizar» is the
-       whole row; here it stretched one button across whatever the other two
-       left. */
     .fd-detail-action-row {
       justify-content: space-between;
     }
@@ -2255,8 +1730,6 @@
     .fd-detail-migration {
       height: var(--fd-control-touch);
       border-radius: var(--fd-radius-12);
-      /* Flush with the sheet's own inset, which is where the plate starts it:
-         the label has no fill of its own to need room for. */
       padding-inline: 0;
       font-size: var(--fd-text-base);
     }
@@ -2271,15 +1744,6 @@
       --fd-switch-knob: 16px;
     }
 
-    /*
-     * The provider keeps its word.
-     *
-     * This block dropped the label «because at the touch height the row has
-     * room for one set of words», which was measured against a «Cotizar» that
-     * was stretching to fill the row. `MovilDetalle` draws both exits as
-     * ordinary buttons — «Abrir» is 82 wide and «Cotizar» 96, which with the
-     * switch's 107 and two 8px gaps is 301 of a 328px row at 360.
-     */
     .fd-detail-provider-action {
       height: var(--fd-control-touch);
       flex-shrink: 0;
@@ -2290,11 +1754,6 @@
       height: var(--fd-icon-18);
     }
 
-    /* Both exits, one box: `MovilDetalle` draws `.btn` and `.btn-p` with the
-       same 13/700 in 14 of padding at radius 10 — which is also the radius
-       every other 40px control on this phone wears, from the filter strip's
-       «Filtros» to its chips. This sheet had them at 15 in 12 at radius 12,
-       one rung and one radius away from the surface they stand on. */
     .fd-detail-provider-action,
     .fd-detail-quote-action {
       gap: 6px;
@@ -2308,18 +1767,11 @@
       flex: 0 0 auto;
     }
 
-    /* 7b, the same 40 → 18 the button beside it already reads. This one had
-       stayed at 16 inside the same 40, in the action bar of the surface where
-       the sale is closed — and «Cotizar» is the one control on this screen
-       that must not be the hardest to hit. */
     .fd-detail-quote-action svg {
       width: var(--fd-icon-18);
       height: var(--fd-icon-18);
     }
 
-    /* 3c on a phone: the failure takes the confirmation's slot — same margins,
-       same arrival — inverted instead of soft, with the retry inline and no
-       border, because here it is not part of the foot. */
     .fd-detail-quote-error {
       display: flex;
       align-items: flex-start;
@@ -2363,8 +1815,6 @@
       flex-shrink: 0;
     }
 
-    /* The provider is already one tap away in the foot below, so the notice
-       carries the one exit that is not — the retry. */
     .fd-detail-quote-error-open {
       display: none;
     }
@@ -2385,24 +1835,12 @@
       display: none;
     }
 
-    /* The foot keeps its own line here: the notice is a block of its own above
-       it, not the top of the same surface. */
     .fd-detail-panel[data-quote-error] .fd-detail-footer {
       border-top: 1px solid var(--color-border);
     }
   }
 
-  /* ===== Quotation panel (1h, 6a) =======================================
-   *
-   * 620 × 768 over the workspace. This text used to render inside the 316px
-   * detail column, which meant reading a commercial quotation through a
-   * 40-character channel.
-   *
-   * There is no error state here: 3c resolves a failed quotation in the detail
-   * panel's foot, where the button that asked for it lives, and this panel only
-   * ever opens over a fare the provider confirmed. On a phone it does not open
-   * at all — «Cotizar» copies and confirms in one line (05 §6).
-   */
+  /* ---- quotation overlay ---- */
 
   .fd-quote-layer {
     position: fixed;
@@ -2420,7 +1858,6 @@
     height: min(768px, calc(100dvh - 32px));
     flex-direction: column;
     overflow: hidden;
-    /* 5b keeps r14 for window frames, and at 620 × 768 this is one. */
     border: 1px solid var(--color-border);
     border-radius: var(--fd-radius-14);
     background: var(--color-popover);
@@ -2559,8 +1996,6 @@
     background: color-mix(in srgb, var(--color-secondary) 60%, transparent);
   }
 
-  /* How old the fare is, and the rule for when to stop trusting it: a bare
-     timestamp makes the agent do the arithmetic mid-call. */
   .fd-quote-age {
     min-width: 0;
     overflow: hidden;
@@ -2596,11 +2031,7 @@
     font-weight: var(--fd-weight-title);
   }
 
-
-  /* ===== Skeletons (4a) ==================================================
-   * A skeleton is the component with the data switched off: same grid, and
-   * blocks at the exact height of the line they replace, so nothing jumps
-   * when the value arrives. Widths vary in %, deterministic in px. */
+  /* ---- skeletons ---- */
 
   .fd-skeleton-block {
     display: block;
@@ -2621,18 +2052,7 @@
     height: 8px;
   }
 
-  /* ===== Migration grid (1i, 2f) =========================================
-   *
-   * A month sells one thing — the lowest fare — and the 6px bar puts it in
-   * scale against the dearest month, so a year reads in one sweep without
-   * comparing figures. Under it, the flight that gets that price; at the foot,
-   * the month's next two fares.
-   *
-   * Every state is the same six rows: label · hero · bar · flight · spacer ·
-   * foot. A month with no fare keeps its slot in grey with `···` or `—`,
-   * because «la rejilla del barrido es un calendario, no una lista de
-   * ofertas» (06 §3) — a sweep with holes in it is not a sweep.
-   */
+  /* ---- migration sweep ---- */
 
   .fd-month-scroller {
     min-height: 0;
@@ -2642,41 +2062,14 @@
     overscroll-behavior: contain;
   }
 
-  /*
-   * 06 §2 asks for four columns and that is right at the width the plate was
-   * drawn at — but four was written as a constant, and the sweep keeps it from
-   * 1437 all the way down to 720. Measured at 1440, where the detail column is
-   * present and the list is left with 821: the card comes out 192 wide, 166 of
-   * it usable, and the hero it has to hold — `USD 1,132.05` at mono 22/800 plus
-   * the 10 gap and the 28 logo — needs 196. Neither the cell nor the card clips,
-   * so the price paints over the card beside it. At 1024 it is 52 short, at 768
-   * it is 116.
-   *
-   * So the count is asked for instead of stated: a column is 226 or it is not a
-   * column — the hero's 196.4 plus the card's own 26 of padding, rounded up so
-   * the last one does not land on the boundary and spill two pixels. Four
-   * columns survive wherever four fit — 1600 and up — and below that the sweep
-   * gives up a column rather than the price. One pixel of window still swings
-   * the list width when the detail leaves at 1437, but now the swing changes how
-   * many columns there are and not whether the fare is legible.
-   */
+  /* A column is only as narrow as the month's hero price allows. */
   .fd-month-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(226px, 1fr));
-    /* 190 is the height 06 §2 states as a rule. 1i writes `1fr` instead, but
-       that number is emergent from the 560px frame it happens to be drawn in:
-       stretched into a real 900px window the same declaration gives 362px
-       cards with a 117px hole in the middle of each. The rule wins, the rows
-       size to their content, and the sweep stays a straight line. It only ever
-       applies to a month with no fare: a priced card measures about 243. */
     grid-auto-rows: minmax(190px, auto);
     gap: 10px;
   }
 
-  /*
-   * The row track is what makes the footer sit at the bottom of every card
-   * regardless of how much the middle block has to say.
-   */
   .fd-month-card {
     display: grid;
     grid-template-rows: auto auto auto auto 1fr auto;
@@ -2688,21 +2081,15 @@
     transition:
       border-color var(--fd-dur-tacto) var(--fd-ease-tacto),
       background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
-    /* 06 §5: «entra como una tarjeta de resultado», 6px and 30ms apart. */
+    position: relative;
     animation: fd-enter-row var(--fd-dur-emergente) var(--fd-ease-estructura) both;
     animation-delay: calc(var(--fd-stagger-row) * var(--fd-month-index, 0));
-  }
-
-  .fd-month-card {
-    position: relative;
   }
 
   .fd-month-card:hover {
     border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
   }
 
-  /* The whole card selects, the way a result card does. It sits under the
-     content so the «Abrir mes» control keeps its own hit area. */
   .fd-month-card__hit {
     position: absolute;
     inset: 0;
@@ -2713,8 +2100,8 @@
     cursor: pointer;
   }
 
-  /* The content rides above the hit target but lets clicks through to it; the
-     controls that are their own gesture opt back in. */
+  /* The whole card selects; its content lets presses through to the hit area,
+     and «Abrir mes» keeps its own. */
   .fd-month-card > *:not(.fd-month-card__hit, .fd-month-open) {
     position: relative;
     z-index: 2;
@@ -2724,11 +2111,6 @@
   .fd-month-open {
     position: relative;
     z-index: 2;
-  }
-
-  /* 11 §0.3: leaving this screen is a decision, so it gets a control that says
-     so instead of happening on the way past. */
-  .fd-month-open {
     display: inline-flex;
     height: var(--fd-control-chip);
     align-items: center;
@@ -2769,8 +2151,6 @@
     white-space: nowrap;
   }
 
-  /* 06 §2 sets it at 20 r6 — the plate's 19 and r5 are off both catalogues.
-     Two tones: the minimum of the sweep in `primary`, everything else quiet. */
   .fd-month-badge {
     display: inline-flex;
     height: 20px;
@@ -2799,10 +2179,6 @@
     column-gap: 10px;
   }
 
-  /* The column above guarantees the room, and this is the backstop for the day
-     a currency arrives that is wider than the one we sized for: a price that no
-     longer fits is cut at its own edge instead of printing over the month next
-     to it. */
   .fd-month-price {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2816,8 +2192,6 @@
     object-fit: contain;
   }
 
-  /* A month with no fare has no airline either, and the slot has to hold its
-     width or the price would slide right on the cards that lack one. */
   .fd-month-logo--absent {
     display: grid;
     border-radius: var(--fd-radius-8);
@@ -2838,13 +2212,8 @@
     display: block;
     height: 6px;
     border-radius: 999px;
-    /* Only the minimum of the sweep is drawn in `primary`. Twelve primary bars
-       would be twelve highlights, which is none. */
     background: color-mix(in srgb, var(--color-foreground) 40%, transparent);
     transform-origin: left center;
-    /* 06 §5: 420ms, 40ms apart, and only the first time the month's data lands
-       — which is what a CSS animation does by itself, since a refilter keeps
-       the card mounted and a mounted element does not replay its arrival. */
     animation: fd-month-bar var(--fd-dur-month-bar) var(--fd-ease-estructura) both;
     animation-delay: calc(var(--fd-stagger-chip) * var(--fd-month-index, 0));
   }
@@ -2893,22 +2262,6 @@
     object-fit: contain;
   }
 
-  /*
-   * The two lines under the month's flight. They were the same body and the
-   * same weight in different alphabets — 11/400 both, one mono and one sans —
-   * because neither declared a weight and both inherited the document's 400.
-   * Adjacent lines of the same card cannot differ only in family: that is not
-   * hierarchy, it is oversight.
-   *
-   * The schedule is a figure — two times, a day offset and a duration — so it
-   * takes the mono rung the catalogue wrote for exactly this: mono 11/600,
-   * which is `.fd-type-mono-meta` to the letter. Nobody was using it.
-   *
-   * The meta is text — "Directo · Cabina + Bodega" — so it frees the 11 rung,
-   * which is reserved for mono metadata, and moves up to 12. It keeps the muted
-   * grey: the hierarchy between the two is carried by colour, where it does not
-   * compete with the alphabet.
-   */
   .fd-month-schedule {
     overflow: hidden;
     font-family: var(--font-mono);
@@ -2930,8 +2283,6 @@
     white-space: nowrap;
   }
 
-  /* The two next fares of the month, so the agent compares without opening
-     every month and without betting the quote on a single flight. */
   .fd-month-foot {
     display: grid;
     margin-top: 10px;
@@ -2947,11 +2298,6 @@
     column-gap: 8px;
   }
 
-  /* "sáb, 22 · Avianca" is the same shape of data as the "vie, 14 · LATAM
-     Airlines" forty pixels above it, and it was written at 11/400 grey while
-     that one is 12/600 black: one shape, two hierarchies. One shape now — the
-     12 rung at 600 — and the grey carries the hierarchy, which is the only
-     thing that really separates an alternative from the main one. */
   .fd-month-alt-label {
     overflow: hidden;
     color: var(--color-muted-foreground);
@@ -2962,11 +2308,6 @@
     white-space: nowrap;
   }
 
-  /* The month's two alternative fares are prices, compared against each other
-     and against the hero, so they carry the figure weight like every other
-     price in the product. They were at metadata weight: the only two money
-     figures in the system that were. The hierarchy against the hero is carried
-     by the body — 12 against 22 — which is where it shows. */
   .fd-month-alt-price {
     font-family: var(--font-mono);
     font-size: var(--fd-text-meta);
@@ -2976,11 +2317,6 @@
     white-space: nowrap;
   }
 
-  /* The month's coverage: "12 de 30 días con tarifa". The line is a sentence
-     and stays in sans; the two figures inside it take `.fd-count`, the system's
-     counter. Splitting the mixed value is what keeps "días con tarifa" out of
-     the monospace it would otherwise inherit for sharing an element with a
-     number, which is how prose gets into the font for figures. */
   .fd-month-days {
     overflow: hidden;
     color: var(--color-muted-foreground);
@@ -2990,10 +2326,6 @@
     white-space: nowrap;
   }
 
-  /* 06 §3: the sweep minimum sits on `primary 6%`. "Cheapest" is a fact about
-     the data and "selected" is a fact about the agent, so when they land on the
-     same card the selection has to win — which is what puts this rule above it:
-     the two selectors have the same weight, so order is the tie-break. */
   .fd-month-card.is-cheapest {
     background: color-mix(in srgb, var(--color-primary) 6%, var(--color-card));
   }
@@ -3003,12 +2335,10 @@
     background: color-mix(in srgb, var(--color-primary) 7%, var(--color-card));
   }
 
-  /* No fare, an error, filtered out, or still being looked up. */
   .fd-month-card--empty {
     border-color: color-mix(in srgb, var(--color-border) 80%, var(--color-muted-foreground));
     border-style: dashed;
     background: color-mix(in srgb, var(--color-secondary) 55%, var(--color-card));
-    box-shadow: none;
     cursor: default;
   }
 
@@ -3021,9 +2351,6 @@
     color: color-mix(in srgb, var(--color-muted-foreground) 70%, transparent);
   }
 
-  /* The sweep's price range, beside the month counter. It is a price and it
-     shares a line with that counter, so both take the figure weight — otherwise
-     one row would write two numbers at two weights. */
   .fd-month-range {
     font-family: var(--font-mono);
     font-size: var(--fd-text-base);
@@ -3036,15 +2363,11 @@
     display: none;
   }
 
-  /* 06 §2: four columns on a desk, one row per month on a phone. That is a
-     shell shape, not a list one. */
   :where(.fd-shell[data-shell-size="C"]) {
     .fd-month-scroller {
       padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
     }
 
-    /* 2f: the card stops being a fixed-height tile and becomes a row that is as
-       tall as it needs to be, with one gap doing the work of four margins. */
     .fd-month-grid {
       grid-template-columns: minmax(0, 1fr);
       grid-auto-rows: auto;
@@ -3073,12 +2396,6 @@
       margin-top: 0;
     }
 
-    /* On a desk this is a 26px chip inside a card the pointer can hit anywhere.
-       On a phone it is the only target in the month row that is not the row
-       itself, and 26 is fourteen under the floor the system set for a thumb, so
-       it takes the touch height and the radius and body that go with it. The row
-       grows by those fourteen pixels — the 10px above the control were already
-       there and do not move. That is the price of the target, and it is meant. */
     .fd-month-open {
       height: var(--fd-control-touch);
       padding-inline: 14px;
@@ -3086,11 +2403,7 @@
       font-size: var(--fd-text-base);
       font-weight: var(--fd-weight-title);
     }
-  }
 
-  /* 2f writes the counter and the range short: at 390 that row also carries the
-     state pill. */
-  :where(.fd-shell[data-shell-size="C"]) {
     .fd-month-count-tail,
     .fd-month-range {
       display: none;
@@ -3102,5 +2415,4 @@
       font-size: var(--fd-text-meta);
     }
   }
-
 }
