@@ -125,12 +125,8 @@ suite.test("working past half of the window re-issues both cookies from the same
 
 suite.test("a session at its cap sends a busy desk to the gate once, carrying the search it was on", async (scope) => {
   const { fake, stack } = scope;
-  /* Signed in almost ten minutes ago: the cap falls in four seconds, and no
-     amount of polling may push it back. */
-  const now = Date.now();
-  const capAtMs = now + 4_000;
-  const minted = mintSession(stack.sessionSecret, { issuedAtMs: capAtMs - MAX_LIFETIME_SECONDS * 1000, expiresAtMs: capAtMs });
-  const tracked = await contextWithSession(scope, minted);
+  const fresh = Date.now();
+  const tracked = await contextWithSession(scope, mintSession(stack.sessionSecret, { issuedAtMs: fresh, expiresAtMs: fresh + TTL_SECONDS * 1000 }));
   const setCookies = recordSetCookies(tracked);
   const page = await tracked.newPage();
   const gateVisits: string[] = [];
@@ -142,6 +138,19 @@ suite.test("a session at its cap sends a busy desk to the gate once, carrying th
   fake.hold("*", (request) => request.op === "agil.search" || request.op === "cbplus.search");
   const months = [monthKey(TODAY), addMonths(monthKey(TODAY), 1)];
   await page.goto(`${stack.baseUrl}${searchLink({ mode: "migration", trip: "one-way", origin: "LIM", destination: "CUZ", months })}`);
+  await searchForm.submit(page).waitFor();
+
+  /* The desk is on screen; now its session becomes one signed in almost ten
+     minutes ago, whose cap falls in four seconds — and no amount of polling
+     may push it back. */
+  const capAtMs = Date.now() + 4_000;
+  const capped = mintSession(stack.sessionSecret, { issuedAtMs: capAtMs - MAX_LIFETIME_SECONDS * 1000, expiresAtMs: capAtMs });
+  const { hostname } = new URL(stack.baseUrl);
+  const expires = Math.floor(Date.now() / 1000) + 3600;
+  await tracked.context.addCookies([
+    { name: SESSION_COOKIE, value: capped.session, domain: hostname, path: "/", httpOnly: true, sameSite: "Lax", expires },
+    { name: REDIRECT_COOKIE, value: capped.redirect, domain: hostname, path: "/r", httpOnly: true, sameSite: "Lax", expires },
+  ]);
   await runSearch(page);
   const searchPath = `${new URL(page.url()).pathname}${new URL(page.url()).search}`;
   assert.match(searchPath, /months=/);

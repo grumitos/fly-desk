@@ -288,11 +288,19 @@ suite.test("a flexible round trip fills in cell by cell, keeps the cards it drew
   await searchForm.submit(page).waitFor();
   const started = await runSearch<MatrixJob>(page, "/api/matrix");
 
-  /* First milestone: the two cells whose providers answered, and the pill. */
-  await eventually(async () => assert.deepEqual((await readCards(page)).map((card) => card.amount), [598, 612]));
+  /* A partial milestone: cards from the cells whose providers answered, and
+     the pill. Which of the two early cells a milestone has caught depends on
+     when it flushed, so any of them will do; the late ones must be absent. */
+  const partial = await eventually(async () => {
+    const cards = await readCards(page);
+    assert.ok(cards.length > 0, "no card yet");
+    return cards;
+  });
   await results.partialPill(page).waitFor();
+  assert.ok(partial.every((card) => card.amount === 598 || card.amount === 612), `a held cell was drawn: ${partial.map((card) => card.amount)}`);
   assert.ok(lateAgil.seen > 0 && lateCbplus.seen > 0, "the two late cells are still with their providers");
-  const drawnFirst = results.card(page, /USD 612\.00 total/);
+  const keptAmount = partial[0]!.amount.toFixed(2);
+  const drawnFirst = results.card(page, new RegExp(`USD ${keptAmount.replace(".", "\\.")} total`));
   await drawnFirst.evaluate((element) => element.setAttribute("data-e2e-identity", "drawn-at-the-first-milestone"));
 
   lateAgil.release();
@@ -301,7 +309,7 @@ suite.test("a flexible round trip fills in cell by cell, keeps the cards it drew
   assert.deepEqual(settled.map((card) => card.amount), [598, 612, 640, 655]);
   await results.partialPill(page).waitFor({ state: "hidden" });
   assert.equal(
-    await results.card(page, /USD 612\.00 total/).getAttribute("data-e2e-identity"),
+    await drawnFirst.getAttribute("data-e2e-identity"),
     "drawn-at-the-first-milestone",
     "the card drawn at the first milestone was rebuilt instead of kept",
   );
