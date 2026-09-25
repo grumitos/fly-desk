@@ -994,6 +994,16 @@ async function createCdpClient(endpoint: string, timeoutMs: number): Promise<Cdp
     if (typeof message.id === "number") {
       const waiter = pending.get(message.id);
       if (!waiter) {
+        /* A target created after its request timed out has no owner left to
+           close it. */
+        const lateTargetId = (message.result as { targetId?: unknown } | undefined)?.targetId;
+        if (typeof lateTargetId === "string") {
+          try {
+            socket.send(JSON.stringify({ id: nextId++, method: "Target.closeTarget", params: { targetId: lateTargetId } }));
+          } catch {
+            // The socket is already closing.
+          }
+        }
         return;
       }
 
@@ -1025,7 +1035,16 @@ async function createCdpClient(endpoint: string, timeoutMs: number): Promise<Cdp
   });
 
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Chrome DevTools websocket did not open in time.")), timeoutMs);
+    const timer = setTimeout(() => {
+      /* A socket that opens after the caller gave up would stay connected to
+         the shared Chrome for the life of the process. */
+      try {
+        socket.close();
+      } catch {
+        // Already closed.
+      }
+      reject(new Error("Chrome DevTools websocket did not open in time."));
+    }, timeoutMs);
     socket.addEventListener("open", () => {
       clearTimeout(timer);
       resolve();
@@ -1562,15 +1581,10 @@ async function readAgilStorageSnapshotFromContext(
   });
 }
 
+/* On a browser reached with `connectOverCDP`, `close()` drops the connection
+   and the contexts Playwright created, and leaves the shared Chrome running. */
 async function disconnectBrowser(browser: Browser | undefined): Promise<void> {
-  if (!browser) {
-    return;
-  }
-
-  const maybeDisconnectable = browser as Browser & { disconnect?: () => void | Promise<void> };
-  if (typeof maybeDisconnectable.disconnect === "function") {
-    await Promise.resolve(maybeDisconnectable.disconnect()).catch(() => undefined);
-  }
+  await browser?.close().catch(() => undefined);
 }
 
 const AGIL_STORAGE_ORIGIN_HOSTS = new Set(

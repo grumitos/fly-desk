@@ -32,7 +32,7 @@ const WALL_CLOCK = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/;
  * deliberately ignored: Click and Book writes `-0500` on Madrid, and believing
  * it is the whole bug.
  */
-function wallClockMs(value?: string): number | undefined {
+export function wallClockMs(value?: string): number | undefined {
   const match = WALL_CLOCK.exec(String(value ?? "").trim());
   if (!match) {
     return undefined;

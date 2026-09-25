@@ -8,7 +8,6 @@ import {
 } from "./core/quotation";
 import { buildOfferSignature } from "./core/offer-signature";
 import type { ProviderSearchResult } from "./core/provider";
-import { timingSafeEqual } from "node:crypto";
 import {
   CanonicalOffer,
   LocationSuggestion,
@@ -70,11 +69,12 @@ import {
   resolveStandaloneUsdToPenRateInfo,
 } from "./quotation-exchange-rate";
 import { SearchAdmissionError, type SearchAdmissionKind } from "./search-admission";
-import { resolveAcceptedApiAccessTokens } from "./service-auth";
+import { hasAcceptedApiAccessToken } from "./service-auth";
 import {
   isSearchServiceDelegationConfigured,
   isSearchServiceProxiedRequest,
   isSearchServiceRoute,
+  MAX_SEARCH_SERVICE_TIMEOUT_MS,
   maybeProxySearchServiceRequest,
 } from "./search-service-client";
 import { runProviderMatrixInWorker, runProviderSearchInWorker } from "./search-worker-client";
@@ -1157,39 +1157,6 @@ function hasForwardedClientMarker(request: Request): boolean {
   );
 }
 
-function resolveProvidedApiAccessToken(request: Request): string | undefined {
-  const tokenHeader = String(request.headers.get("x-flydesk-api-token") ?? "").trim();
-  if (tokenHeader) {
-    return tokenHeader;
-  }
-
-  const authorizationHeader = String(request.headers.get("authorization") ?? "").trim();
-  if (authorizationHeader.toLowerCase().startsWith("bearer ")) {
-    const bearer = authorizationHeader.slice("bearer ".length).trim();
-    return bearer || undefined;
-  }
-
-  return undefined;
-}
-
-function hasValidApiAccessToken(request: Request, expectedTokens: readonly string[]): boolean {
-  const providedToken = resolveProvidedApiAccessToken(request);
-  if (!providedToken) {
-    return false;
-  }
-
-  const provided = Buffer.from(providedToken, "utf8");
-
-  return expectedTokens.some((expectedToken) => {
-    const expected = Buffer.from(expectedToken, "utf8");
-    if (expected.length !== provided.length) {
-      return false;
-    }
-
-    return timingSafeEqual(expected, provided);
-  });
-}
-
 function isTrustedApiRequest(request: Request): boolean {
   if (isTrustedLocalRequest(request)) {
     return true;
@@ -1199,8 +1166,7 @@ function isTrustedApiRequest(request: Request): boolean {
     return true;
   }
 
-  const tokens = resolveAcceptedApiAccessTokens();
-  return tokens.length > 0 ? hasValidApiAccessToken(request, tokens) : false;
+  return hasAcceptedApiAccessToken(request.headers);
 }
 
 function isOfferValidatedForQuotation(offer: CanonicalOffer): boolean {
@@ -1518,13 +1484,40 @@ async function validateQuotationOfferAgainstProvider(source: QuotationSource): P
   return matched ? markOfferValidatedForQuotation(matched) : undefined;
 }
 
+/* A revalidation is a live provider search. Repeated clicks on one offer share
+   it, and it gives up before the web hop's ceiling so the agent gets an answer
+   rather than a proxy timeout. */
+const QUOTATION_VALIDATION_DEADLINE_MS = MAX_SEARCH_SERVICE_TIMEOUT_MS - 10_000;
+const quotationValidationsInFlight = new Map<string, Promise<CanonicalOffer | undefined>>();
+
+function validateQuotationOfferOnce(source: QuotationSource): Promise<CanonicalOffer | undefined> {
+  const key = `${source.sessionId}:${source.offerId}`;
+  const inFlight = quotationValidationsInFlight.get(key);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const validator = quotationOfferValidatorOverride ?? validateQuotationOfferAgainstProvider;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const validation = Promise.race([
+    validator(source).catch(() => undefined),
+    new Promise<undefined>((resolve) => {
+      deadline = setTimeout(resolve, QUOTATION_VALIDATION_DEADLINE_MS, undefined);
+    }),
+  ]).finally(() => {
+    clearTimeout(deadline);
+    quotationValidationsInFlight.delete(key);
+  });
+  quotationValidationsInFlight.set(key, validation);
+  return validation;
+}
+
 async function resolveValidatedQuotationOffer(source: QuotationSource): Promise<CanonicalOffer | undefined> {
   if (isOfferValidatedForQuotation(source.offer)) {
     return source.offer;
   }
 
-  const validator = quotationOfferValidatorOverride ?? validateQuotationOfferAgainstProvider;
-  const validated = await validator(source);
+  const validated = await validateQuotationOfferOnce(source);
   if (!validated || buildOfferSignature(validated) !== buildOfferSignature(source.offer)) {
     return undefined;
   }
@@ -1543,12 +1536,18 @@ function storeValidatedQuotationOffer(
   source: QuotationSource,
   validatedOffer: CanonicalOffer,
 ): CanonicalOffer {
+  /* The store rewrites provider links to `/r/<id>` handles as it saves. A job
+     that has left memory cannot be updated, and then the answer keeps the
+     stored offer's handles: a provider URL (Click and Book Plus puts its token
+     in it) never reaches the browser. */
+  const unsaved: CanonicalOffer = { ...validatedOffer, purchasePaths: source.offer.purchasePaths };
+
   if (source.kind === "search") {
-    return runtime.sessions.updateOffer(source.sessionId, validatedOffer) ?? validatedOffer;
+    return runtime.sessions.updateOffer(source.sessionId, validatedOffer) ?? unsaved;
   }
 
   if (!source.cellKey) {
-    return validatedOffer;
+    return unsaved;
   }
 
   const updated = runtime.sessions.updateMatrixJob(source.sessionId, (current: MatrixJobRecord) => ({
@@ -1568,7 +1567,7 @@ function storeValidatedQuotationOffer(
       : cell),
   }));
 
-  return updated?.cells.find((cell) => cell.key === source.cellKey)?.offer ?? validatedOffer;
+  return updated?.cells.find((cell) => cell.key === source.cellKey)?.offer ?? unsaved;
 }
 
 function apiAuthRequiredResponse(): Response {
@@ -1823,6 +1822,41 @@ function matrixCellHasResult(cell: MatrixCell): boolean {
     || Boolean(cell.purchasePaths?.length);
 }
 
+/*
+ * What the browser receives of an offer. `rawRefs` are the provider handles the
+ * backend keeps for revalidation and redirects, and `signature` is the
+ * backend's own dedupe key; neither is drawn or sent back.
+ */
+type PublicOffer = Omit<CanonicalOffer, "rawRefs" | "signature">;
+
+function publicOffer(offer: CanonicalOffer): PublicOffer {
+  const { rawRefs: _rawRefs, signature: _signature, ...rest } = offer;
+  return rest;
+}
+
+function publicMatrixCell(cell: MatrixCell): MatrixCell | Omit<MatrixCell, "offer"> & { offer?: PublicOffer } {
+  return cell.offer ? { ...cell, offer: publicOffer(cell.offer) } : cell;
+}
+
+/* A job's offers only change when its revision does, so every poll of one
+   revision shares one serialization-ready view. */
+const publicSearchPayloadCache = new WeakMap<readonly CanonicalOffer[], {
+  allOffers: PublicOffer[];
+  scheduleGroups: ReturnType<typeof buildOfferScheduleGroups>;
+}>();
+
+function publicSearchPayload(allOffers: readonly CanonicalOffer[]) {
+  let payload = publicSearchPayloadCache.get(allOffers);
+  if (!payload) {
+    payload = {
+      allOffers: allOffers.map(publicOffer),
+      scheduleGroups: buildOfferScheduleGroups(allOffers),
+    };
+    publicSearchPayloadCache.set(allOffers, payload);
+  }
+  return payload;
+}
+
 function matrixJobResponse(
   job: ReturnType<typeof getRuntime>["sessions"] extends { getMatrixJob(jobId: string): infer T } ? NonNullable<T> : never,
   sinceRevision?: number,
@@ -1848,7 +1882,7 @@ function matrixJobResponse(
 
   return {
     ...base,
-    cells: job.cells.filter(matrixCellHasResult),
+    cells: job.cells.filter(matrixCellHasResult).map(publicMatrixCell),
     axes: job.axes,
     confidenceSummary: job.confidenceSummary,
     recommendations: job.recommendations,
@@ -2218,9 +2252,7 @@ function searchJobResponse(
 
   return {
     ...base,
-    offers: job.offers,
-    allOffers: job.allOffers,
-    scheduleGroups: buildOfferScheduleGroups(job.allOffers),
+    ...publicSearchPayload(job.allOffers),
   };
 }
 
@@ -3582,7 +3614,7 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
 
     return json({
       searchSessionId: source.sessionId,
-      offer: quotedOffer,
+      offer: publicOffer(quotedOffer),
       commercialText: buildCommercialQuotation(quotedOffer, source.request, {
         usdToPenRateInfo,
         migrationPlan: payload.migrationPlan === true,

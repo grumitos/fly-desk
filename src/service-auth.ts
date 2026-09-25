@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
 const INTERNAL_SEARCH_SERVICE_TOKEN_CONTEXT = "fly-desk:search-service:v1";
 const MIN_INTERNAL_SECRET_LENGTH = 32;
@@ -35,4 +35,31 @@ export function resolveAcceptedApiAccessTokens(): string[] {
     readEnv("FLY_DESK_SEARCH_SERVICE_API_TOKEN"),
     resolveDerivedSearchServiceApiToken(),
   ]);
+}
+
+function providedApiAccessToken(headers: Headers): string | undefined {
+  const tokenHeader = headers.get("x-flydesk-api-token")?.trim();
+  if (tokenHeader) {
+    return tokenHeader;
+  }
+
+  const authorization = headers.get("authorization")?.trim() ?? "";
+  if (authorization.toLowerCase().startsWith("bearer ")) {
+    return authorization.slice("bearer ".length).trim() || undefined;
+  }
+
+  return undefined;
+}
+
+export function hasAcceptedApiAccessToken(headers: Headers): boolean {
+  const providedToken = providedApiAccessToken(headers);
+  if (!providedToken) {
+    return false;
+  }
+
+  const provided = Buffer.from(providedToken, "utf8");
+  return resolveAcceptedApiAccessTokens().some((expectedToken) => {
+    const expected = Buffer.from(expectedToken, "utf8");
+    return expected.length === provided.length && timingSafeEqual(expected, provided);
+  });
 }

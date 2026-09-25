@@ -3,6 +3,8 @@ import * as path from "node:path";
 import type { Server as BunServer } from "bun";
 import { ensureAirlineMark } from "./airline-mark-store";
 import { routeRequest } from "./http-router";
+import { SEARCH_SERVICE_PROXY_HEADER } from "./search-service-client";
+import { hasAcceptedApiAccessToken } from "./service-auth";
 import { logPerfSpan, startPerfTimer } from "./perf";
 import { getPublicRuntimeConfig } from "./search-date-policy";
 import {
@@ -197,6 +199,8 @@ async function readBody(request: Request): Promise<ArrayBuffer | undefined> {
 
   const declaredLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BODY_BYTES) {
+    /* An unread upload keeps its connection open until the idle timeout. */
+    await request.body?.cancel().catch(() => undefined);
     throw new RequestBodyTooLargeError(MAX_REQUEST_BODY_BYTES);
   }
 
@@ -326,6 +330,13 @@ async function proxyToRouter(request: Request, server: BunServer<undefined>, url
     headers.append(key, value);
   });
 
+  /* The web unit marks what it delegates to the search runner, so the runner
+     does not count the search a second time. Only a request that carries a
+     service token may keep that mark. */
+  if (request.headers.get(SEARCH_SERVICE_PROXY_HEADER) === "1" && hasAcceptedApiAccessToken(request.headers)) {
+    headers.set(SEARCH_SERVICE_PROXY_HEADER, "1");
+  }
+
   const remoteAddress = server.requestIP(request)?.address;
   const clientAddress = resolveClientAddress(request, remoteAddress);
   headers.set(
@@ -440,7 +451,7 @@ export async function handleRequest(request: Request, server: BunServer<undefine
       status = 413;
       return Response.json(
         { error: error.message },
-        { status, headers: noStoreHeaders("application/json; charset=utf-8") },
+        { status, headers: { ...noStoreHeaders("application/json; charset=utf-8"), Connection: "close" } },
       );
     }
 

@@ -25,25 +25,11 @@ const SHUTDOWN_CANCEL_GRACE_MS = 1_000;
 const SHUTDOWN_JOB_DRAIN_MS = 4_000;
 
 /*
- * How long a stop may take, and what happens when it takes longer.
- *
- * `server.stop()` with no argument is Bun's graceful stop: it resolves once
- * in-flight requests and their connections have drained. Under a migratory
- * sweep the frontend polls without pause and each proxied call carries its own
- * multi-second timeout, so "drained" can be a minute away — and on 2026-08-14 it
- * was. Every stop took the full 45s `TimeoutStopSec` and ended in SIGKILL, five
- * times in eight minutes, while Caddy had no upstream and the site served 503.
- * The contrast that proves it: at 19:34:23 an idle process with nothing to drain
- * stopped instantly, same code.
- *
- * SIGKILL is not a tidy ending. It skips every `finally`, which is how the
- * provider paths close the CDP tabs they opened — renderers went from 8 to 30
- * across the loop.
- *
- * So the drain gets a short window and then the connections are closed under it,
- * and the whole shutdown gets a deadline shorter than the tightest
- * `TimeoutStopSec` in the unit files (the search runner's 15s). Exiting on our
- * own terms at 8s runs the cleanup; being killed at 15 or 45 does not.
+ * Shutdown budget. Bun's graceful `server.stop()` waits for every in-flight
+ * request, and long-polls keep arriving during a sweep, so the drain gets a
+ * short window before connections are closed under it. The whole shutdown has
+ * a deadline below the search runner's 15 s `TimeoutStopSec`: exiting on our
+ * own terms runs the cleanup (CDP tabs, SQLite) that SIGKILL would skip.
  */
 const SHUTDOWN_DRAIN_MS = 3_000;
 const SHUTDOWN_DEADLINE_MS = 8_000;
@@ -135,10 +121,8 @@ async function main() {
     const activeRuntime = getActiveRuntime();
     const activeSessions = startupSessions ?? getSessionStoreIfInitialized();
     activeRuntime?.searchAdmission.stopAccepting(SHUTDOWN_CANCELLED_WARNING);
-    /* Close the HTTP side while the admission leases finish. The token
-       receiver restarts this unit after every successful C&B installation;
-       cancelling first used to take Agil down with C&B even when its worker
-       was about to return usable offers. */
+    /* Close the HTTP side while the admission leases finish, so a provider
+       that is about to answer still gets to publish its offers. */
     const serverStop = stopServerWithinDrainWindow();
     flushPendingProgressForShutdown();
     await activeRuntime?.searchAdmission.drain(SHUTDOWN_JOB_DRAIN_MS);
@@ -165,7 +149,7 @@ async function main() {
     stopSearchWorkerPool();
     await serverStop;
     await tempCleanupPromise?.catch(() => undefined);
-    activeRuntime?.locationSuggestions.purgeExpired(Number.POSITIVE_INFINITY);
+    activeRuntime?.locationSuggestions.purgeExpired();
     activeSessions?.close();
     await cleanupPrefixedTempArtifacts(undefined, { olderThanMs: 0 }).catch(() => undefined);
   };

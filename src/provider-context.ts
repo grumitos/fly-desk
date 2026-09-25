@@ -941,15 +941,47 @@ export function resolveProviderId(providerId?: ProviderId): ProviderId {
   return providerId === "costamar" ? "costamar" : "agil-local";
 }
 
+/*
+ * The branded token lives an hour and is renewed outside the application. When
+ * `CBPLUS_TOKEN_FILE` names a file, each process re-reads it whenever its
+ * modification time or size changes, so a renewal reaches the search runner, its
+ * workers and the redirect service without restarting them. `CBPLUS_TOKEN` is
+ * the fallback while the file is absent or empty.
+ */
+const TOKEN_FILE_STAT_INTERVAL_MS = 1_000;
+let tokenFileCache: { path: string; checkedAtMs: number; signature: string; token: string } | undefined;
+
+function readConfiguredCostamarToken(nowMs = Date.now()): string | undefined {
+  const path = process.env.CBPLUS_TOKEN_FILE?.trim();
+  if (path) {
+    if (tokenFileCache?.path === path && nowMs - tokenFileCache.checkedAtMs < TOKEN_FILE_STAT_INTERVAL_MS) {
+      if (tokenFileCache.token) {
+        return tokenFileCache.token;
+      }
+    } else {
+      try {
+        const stats = statSync(path);
+        const signature = `${stats.mtimeMs}:${stats.size}`;
+        const token = tokenFileCache?.path === path && tokenFileCache.signature === signature
+          ? tokenFileCache.token
+          : readFileSync(path, "utf8").trim();
+        tokenFileCache = { path, checkedAtMs: nowMs, signature, token };
+        if (token) {
+          return token;
+        }
+      } catch {
+        tokenFileCache = { path, checkedAtMs: nowMs, signature: "", token: "" };
+      }
+    }
+  }
+
+  return process.env.CBPLUS_TOKEN ?? process.env.COSTAMAR_TOKEN;
+}
+
 export function normalizeCostamarProviderContext(
   input?: CostamarProviderConfigInput,
 ): CostamarProviderContext {
-  const normalizedToken = sanitizeCostamarToken(
-    input?.token
-      ?? process.env.CBPLUS_TOKEN
-      ?? process.env.COSTAMAR_TOKEN
-      ?? "",
-  );
+  const normalizedToken = sanitizeCostamarToken(input?.token ?? readConfiguredCostamarToken() ?? "");
   return {
     apiBaseUrl: normalizeAllowedHttpsUrl(
       process.env.CBPLUS_SEARCH_API_BASE_URL,

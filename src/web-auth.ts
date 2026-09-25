@@ -458,7 +458,13 @@ export function resolveSafeNextPath(rawNext: unknown): string | undefined {
     return undefined;
   }
 
-  if (parsed.origin !== NEXT_PATH_BASE) {
+  /* Dot segments are resolved by the parse, so `/.//host` only becomes the
+     protocol-relative `//host` afterwards: the result is checked again. */
+  if (
+    parsed.origin !== NEXT_PATH_BASE
+    || parsed.pathname.startsWith("//")
+    || parsed.pathname.startsWith("/\\")
+  ) {
     return undefined;
   }
 

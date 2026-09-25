@@ -654,6 +654,35 @@ function redactSearchJobForPersistence(job: SearchJobRecord): SearchJobRecord {
   };
 }
 
+/* `offers` is the filtered, ordered view of `allOffers`, so a stored job keeps
+   it as ids into `allOffers` instead of a second copy of every offer. */
+type PersistedSearchJob = Omit<SearchJobRecord, "offers"> & {
+  offers?: CanonicalOffer[];
+  offerIds?: string[];
+};
+
+function encodeSearchJobForPersistence(job: SearchJobRecord): PersistedSearchJob {
+  const { offers, ...rest } = redactSearchJobForPersistence(job);
+  return { ...rest, offerIds: offers.map((offer) => offer.id) };
+}
+
+function decodePersistedSearchJob(parsed: PersistedSearchJob | undefined): SearchJobRecord | undefined {
+  if (!parsed || !Array.isArray(parsed.offerIds)) {
+    /* A row that carries both lists is already a complete record. */
+    return parsed as SearchJobRecord | undefined;
+  }
+
+  const offersById = new Map((parsed.allOffers ?? []).map((offer) => [offer.id, offer] as const));
+  const { offerIds, ...rest } = parsed;
+  return {
+    ...rest,
+    offers: offerIds.flatMap((id) => {
+      const offer = offersById.get(id);
+      return offer ? [offer] : [];
+    }),
+  };
+}
+
 function redactMatrixJobForPersistence(job: MatrixJobRecord): MatrixJobRecord {
   return {
     ...job,
@@ -1914,7 +1943,7 @@ export class SearchSessionStore {
       return undefined;
     }
 
-    const job = parseJsonPayload<SearchJobRecord>(row.payload);
+    const job = decodePersistedSearchJob(parseJsonPayload<PersistedSearchJob>(row.payload));
     return job?.id === jobId && job.status === "completed"
       ? redactSearchJobForPersistence(job)
       : undefined;
@@ -2313,7 +2342,7 @@ export class SearchSessionStore {
       const changedSearchJobs = activeSearchJobs
         .filter((job) => this.persistedSearchJobs.get(job.id)?.version !== searchJobPersistenceVersion(job))
         .map((job) => {
-          const persisted = redactSearchJobForPersistence(job);
+          const persisted = encodeSearchJobForPersistence(job);
           const payload = JSON.stringify(persisted);
           return {
             job: persisted,
@@ -2798,7 +2827,7 @@ export class SearchSessionStore {
       );
       if (row) {
         if (candidate.kind === "search") {
-          const parsed = parseJsonPayload<SearchJobRecord>(row.payload);
+          const parsed = decodePersistedSearchJob(parseJsonPayload<PersistedSearchJob>(row.payload));
           if (parsed) {
             const redacted = redactSearchJobForPersistence(parsed);
             this.persistedSearchJobs.set(row.id, {

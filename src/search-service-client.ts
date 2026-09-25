@@ -1,9 +1,9 @@
 import { resolveSearchServiceProxyApiToken } from "./service-auth";
 
-const SEARCH_SERVICE_PROXY_HEADER = "x-flydesk-search-proxy";
+export const SEARCH_SERVICE_PROXY_HEADER = "x-flydesk-search-proxy";
 const DEFAULT_SEARCH_SERVICE_TIMEOUT_MS = 15_000;
 const MIN_ENV_SEARCH_SERVICE_TIMEOUT_MS = DEFAULT_SEARCH_SERVICE_TIMEOUT_MS;
-const MAX_SEARCH_SERVICE_TIMEOUT_MS = 60_000;
+export const MAX_SEARCH_SERVICE_TIMEOUT_MS = 60_000;
 const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
   "connection",
   "keep-alive",
@@ -159,23 +159,16 @@ function resolveSearchServiceTimeoutMs(input?: number): number {
 }
 
 /**
- * How long this hop waits, for a request that asks the runner to wait too.
- *
- * A job poll carries `wait=<ms>`: the runner holds the response until the job
- * moves or that long passes, so the answer is *expected* not to arrive for the
- * length of the hold. The base timeout is the budget for the request itself —
- * the round trip and a body that can be thousands of offers — and the hold is
- * on top of it. Taking the base alone put a 15s abort against a 15s hold and
- * made the outcome a race the proxy usually won: a search whose providers went
- * quiet for fifteen seconds reached the agent as «Search service is
- * unavailable» while the runner was still working, and any client asking for
- * the 20s the runner permits failed every time.
- *
- * Read from the request rather than from a shared constant, so this cannot go
- * stale the next time the runner's ceiling moves: whatever hold is being asked
- * for is the hold this timeout covers.
+ * How long this hop waits. A job poll carries `wait=<ms>`, and the runner holds
+ * the answer for that long, so the hold is added to the base budget. A
+ * quotation revalidates the fare with a live provider search, which gets the
+ * whole ceiling: the runner stops it before this hop gives up.
  */
 export function resolveProxyTimeoutMsForRequest(url: URL, configured?: number): number {
+  if (url.pathname === "/api/quotation") {
+    return MAX_SEARCH_SERVICE_TIMEOUT_MS;
+  }
+
   const base = resolveSearchServiceTimeoutMs(configured);
   const requestedWait = Number.parseInt(url.searchParams.get("wait") ?? "", 10);
   if (!Number.isFinite(requestedWait) || requestedWait <= 0) {

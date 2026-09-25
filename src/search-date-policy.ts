@@ -27,8 +27,18 @@ export interface SearchDateValidationOptions {
   enforceMaxDate?: boolean;
 }
 
-function formatLocalIsoDate(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+/* The desk sells from Lima, and the VPS clock is UTC: from 19:00 in Lima the
+   host's calendar day is already tomorrow. Every "today" is Lima's. */
+const DESK_TIME_ZONE = "America/Lima";
+const deskDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: DESK_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+export function deskIsoDate(now = new Date()): string {
+  return deskDateFormatter.format(now);
 }
 
 export function isIsoDateString(value: string): boolean {
@@ -73,7 +83,7 @@ export function resolveSearchTodayIso(now = new Date()): string {
     return override;
   }
 
-  return formatLocalIsoDate(now);
+  return deskIsoDate(now);
 }
 
 export function getSearchDatePolicy(now = new Date()): SearchDatePolicy {

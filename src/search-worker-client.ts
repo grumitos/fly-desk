@@ -153,9 +153,18 @@ async function readJsonLines(
   stream: ReadableStream<Uint8Array>,
   onLine: (line: string) => void,
 ): Promise<void> {
+  /* A progress message can be megabytes, so a partial line is kept as chunks
+     and only the newest chunk is searched for the newline. */
   const reader = stream.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
+  let pending: string[] = [];
+
+  const emit = (line: string) => {
+    const trimmed = line.trim();
+    if (trimmed) {
+      onLine(trimmed);
+    }
+  };
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -163,26 +172,23 @@ async function readJsonLines(
       break;
     }
 
-    buffer += decoder.decode(value, { stream: true });
-    for (;;) {
-      const newlineIndex = buffer.indexOf("\n");
-      if (newlineIndex === -1) {
-        break;
-      }
-
-      const line = buffer.slice(0, newlineIndex).trim();
-      buffer = buffer.slice(newlineIndex + 1);
-      if (line) {
-        onLine(line);
-      }
+    const chunk = decoder.decode(value, { stream: true });
+    let start = 0;
+    let newlineIndex = chunk.indexOf("\n");
+    while (newlineIndex !== -1) {
+      pending.push(chunk.slice(start, newlineIndex));
+      emit(pending.join(""));
+      pending = [];
+      start = newlineIndex + 1;
+      newlineIndex = chunk.indexOf("\n", start);
+    }
+    if (start < chunk.length) {
+      pending.push(chunk.slice(start));
     }
   }
 
-  buffer += decoder.decode();
-  const tail = buffer.trim();
-  if (tail) {
-    onLine(tail);
-  }
+  pending.push(decoder.decode());
+  emit(pending.join(""));
 }
 
 function runInWorker(

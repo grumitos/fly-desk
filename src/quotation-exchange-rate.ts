@@ -3,6 +3,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, wri
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { CanonicalOffer, QuotationUsdToPenRateInfo } from "./core/types";
+import { deskIsoDate } from "./search-date-policy";
 
 interface ResolveQuotationUsdToPenRateOptions {
   now?: Date;
@@ -45,15 +46,6 @@ function resolveQuotationUsdToPenRateCachePath(): string {
     || process.env.APPDATA?.trim()
     || join(homedir(), ".local", "state");
   return join(appDataRoot, "fly-desk", "quotation-usd-pen-rate.json");
-}
-
-function resolveLimaDay(now = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Lima",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
 }
 
 function normalizePositiveRate(value: unknown): number | undefined {
@@ -134,7 +126,7 @@ export async function fetchExternalUsdToPenRateInfo(
       return undefined;
     }
 
-    return pickExternalRateInfo(await response.json(), options.fallbackDate ?? resolveLimaDay());
+    return pickExternalRateInfo(await response.json(), options.fallbackDate ?? deskIsoDate());
   } catch {
     return undefined;
   }
@@ -219,7 +211,7 @@ function persistUsdToPenRateCache(): void {
 
 function rememberUsdToPenRate(info: QuotationUsdToPenRateInfo, now: Date): QuotationUsdToPenRateInfo {
   cachedUsdToPenRate = {
-    day: resolveLimaDay(now),
+    day: deskIsoDate(now),
     ...info,
   };
   persistUsdToPenRateCache();
@@ -239,7 +231,7 @@ export async function resolveStandaloneUsdToPenRateInfo(
   loadPersistedUsdToPenRate();
 
   const now = options.now ?? new Date();
-  const currentDay = resolveLimaDay(now);
+  const currentDay = deskIsoDate(now);
 
   const offerRateInfo = buildQuotationUsdToPenRateInfo(offer.usdToPenRate, AGIL_RATE_SOURCE_LABEL, currentDay);
   if (offerRateInfo) {
