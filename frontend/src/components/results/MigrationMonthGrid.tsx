@@ -2,7 +2,7 @@ import type { CSSProperties, ReactNode } from "react"
 import { Spinner } from "@/components/ui/spinner"
 import { buildResultCardModel, providerBadgeForId } from "@/components/results/result-card-model"
 import { cn } from "@/lib/utils"
-import { formatMoney, formatWeekdayDay } from "@/lib/format"
+import { formatDayMonthNumeric, formatMoney, formatWeekdayDay } from "@/lib/format"
 import {
   isMonthSearching,
   monthWarningLine,
@@ -304,14 +304,9 @@ function dayLabel(isoDate?: string): string {
 }
 
 function dateRangeLabel(start?: string, end?: string): string {
-  const left = shortDate(start)
-  const right = shortDate(end)
+  const left = formatDayMonthNumeric(start ?? "")
+  const right = formatDayMonthNumeric(end ?? "")
   if (!left && !right) return "Fechas por confirmar"
   if (left && right && left !== right) return `${left} – ${right}`
   return left || right
-}
-
-function shortDate(value?: string): string {
-  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})/)
-  return match ? `${match[3]}/${match[2]}` : value ?? ""
 }

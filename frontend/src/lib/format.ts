@@ -56,6 +56,12 @@ export function formatMoney(money: { amount: number; currencyCode?: string }, di
   return `${money.currencyCode || "USD"} ${formatAmount(money.amount, digits)}`
 }
 
+/** «05/09», the date beside a leg. */
+export function formatDayMonthNumeric(isoDate: string): string {
+  const parts = dateParts(isoDate)
+  return parts ? `${String(parts.day).padStart(2, "0")}/${String(parts.month).padStart(2, "0")}` : ""
+}
+
 /** «5 set» */
 export function formatDayMonth(isoDate: string): string {
   const parts = dateParts(isoDate)

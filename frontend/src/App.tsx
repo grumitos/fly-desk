@@ -549,6 +549,7 @@ export default function App() {
   const listAnnouncement = describeListForScreenReaders({
     loading,
     hasResults: Boolean(results),
+    searchFailed: outcome.allFailed || outcome.jobFailed,
     months,
     visibleCount: displayOffers.length,
     totalCount: candidateOffers.length,
@@ -1432,21 +1433,24 @@ function migrationMonthsForDisplay(
   })
 }
 
+/* What the polite region says about the list; a failed search is the alert's to say. */
 function describeListForScreenReaders({
   loading,
   hasResults,
+  searchFailed,
   months,
   visibleCount,
   totalCount,
 }: {
   loading: boolean
   hasResults: boolean
+  searchFailed: boolean
   months: DisplayMonth[] | null
   visibleCount: number
   totalCount: number
 }): string {
   if (loading) return "Buscando vuelos"
-  if (!hasResults) return ""
+  if (!hasResults || searchFailed) return ""
   if (months) {
     const priced = months.filter((month) => month.offer).length
     return `${priced} de ${months.length} ${months.length === 1 ? "mes" : "meses"} con tarifa`

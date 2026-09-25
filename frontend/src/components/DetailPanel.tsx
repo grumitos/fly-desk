@@ -10,7 +10,8 @@ import { requestQuotation, toBackendPayload } from "@/lib/api"
 import { writeClipboardText } from "@/lib/clipboard"
 import { formatDayMonth } from "@/lib/format"
 import { openInNewTab } from "@/lib/new-tab"
-import { diffDaysIso, formatJourneyDuration, formatOfferDate, isoDatePart, stationPlaceName, timeOfIso } from "@/lib/offer-display"
+import { diffDays } from "@/lib/iso-date"
+import { formatJourneyDuration, formatOfferDate, isoDatePart, stationPlaceName, timeOfIso } from "@/lib/offer-display"
 import { passengerCount } from "@/lib/passengers"
 import { bestPurchasePath, normalizeSafePurchaseUrl } from "@/lib/purchase-path"
 import { motionToken } from "@/lib/reduced-motion"
@@ -750,7 +751,7 @@ function detailLeg(itinerary: Itinerary, label: string): DetailLeg {
 function dayOffsetOf(legDate: string | undefined, at?: string): string {
   const stopDate = isoDatePart(at)
   if (!legDate || !stopDate) return ""
-  const days = diffDaysIso(legDate, stopDate)
+  const days = diffDays(legDate, stopDate)
   return days > 0 ? `+${days}` : ""
 }
 

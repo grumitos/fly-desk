@@ -1,9 +1,9 @@
 import type { CanonicalOffer, Itinerary, RedirectVerification, Segment } from "@/types"
 import { airlineLogoAssetPath } from "../../../../src/core/airline-assets"
 import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
-import { formatAmount, formatMoney } from "@/lib/format"
+import { formatAmount, formatDayMonthNumeric, formatMoney } from "@/lib/format"
+import { diffDays } from "@/lib/iso-date"
 import {
-  diffDaysIso,
   formatJourneyDuration,
   isoDatePart,
   layoverItemsForItinerary,
@@ -72,19 +72,19 @@ export type ResultCardModel = {
   tripType: "one-way" | "round-trip"
 }
 
-export type ResultAlternateScheduleModel = {
+type ResultAlternateScheduleModel = {
   legAriaLabel: string
   time: string
   meta: string
 }
 
-export type ResultRedirectStatus = {
+type ResultRedirectStatus = {
   label: string
   title: string
   tone: "verified" | "pending" | "blocked"
 }
 
-export type ResultProviderBadge = {
+type ResultProviderBadge = {
   label: string
   shortLabel: string
   icon: string
@@ -182,13 +182,13 @@ function legModel(
   const arrivalDate = isoDatePart(arrivalIso)
   const departureTime = timeOfIso(departureIso)
   const arrivalTime = timeOfIso(arrivalIso)
-  const dayOffset = departureDate && arrivalDate ? Math.max(0, diffDaysIso(departureDate, arrivalDate)) : 0
+  const dayOffset = departureDate && arrivalDate ? Math.max(0, diffDays(departureDate, arrivalDate)) : 0
   const stops = stopsForItinerary(itinerary)
 
   return {
     label: direction === "outbound" ? "Ida" : "Vta",
     ariaLabel: direction === "outbound" ? "Ida" : "Vuelta",
-    dateLabel: dayMonthLabel(departureDate),
+    dateLabel: formatDayMonthNumeric(departureDate),
     departureTime: departureTime || "--:--",
     arrivalTime: arrivalTime || "--:--",
     hasKnownSchedule: Boolean(departureTime || arrivalTime),
@@ -408,11 +408,6 @@ function resolveCostamarRedirectVerification(offer: CanonicalOffer): RedirectVer
     path.type === "search-redirect" &&
     path.redirectVerification
   )?.redirectVerification
-}
-
-function dayMonthLabel(isoDate: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return ""
-  return `${isoDate.slice(8)}/${isoDate.slice(5, 7)}`
 }
 
 function providerBadge(offer: CanonicalOffer): ResultProviderBadge {

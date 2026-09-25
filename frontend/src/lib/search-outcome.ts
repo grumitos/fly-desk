@@ -1,3 +1,4 @@
+import { uniqueStrings } from "@/lib/api"
 import { providerDisplayName } from "@/lib/providers"
 import type { SearchJobResponse } from "@/types"
 
@@ -13,7 +14,7 @@ import type { SearchJobResponse } from "@/types"
  * This is the one place that reads those three sources, so the notice, the
  * empty column and the still-searching copy cannot disagree about them.
  */
-export type ProviderFailure = {
+type ProviderFailure = {
   providerId: string
   label: string
   /**
@@ -130,14 +131,10 @@ function buildNotice({
     ? "No se pudo consultar a ningún proveedor"
     : "Resultados incompletos"
 
-  return [headline, ...uniqueLines(failed.map((entry) => entry.short))].join("\n")
+  return [headline, ...uniqueStrings(failed.map((entry) => entry.short))].join("\n")
 }
 
 /** The reasons as prose, for the surfaces with room for a sentence each. */
 export function failureSentences(outcome: SearchOutcome): string[] {
-  return uniqueLines(outcome.failed.map((entry) => entry.sentence))
-}
-
-function uniqueLines(values: string[]): string[] {
-  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)))
+  return uniqueStrings(outcome.failed.map((entry) => entry.sentence))
 }

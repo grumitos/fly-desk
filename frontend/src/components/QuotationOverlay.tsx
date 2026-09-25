@@ -26,7 +26,7 @@ const FOCUSABLE_SELECTOR = [
 /* The fare age is stated in minutes, so it is recomputed at half that. */
 const FARE_AGE_TICK_MS = 30_000
 
-export type QuotationOverlayState = {
+type QuotationOverlayState = {
   text: string
   /** Backend timestamp for the fare age; verified quotes use `priceVerifiedAt`. */
   preparedAt?: string

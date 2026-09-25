@@ -9,7 +9,7 @@ import type {
 } from "@/types"
 import { normalizeAirlineDisplayName, resolveAirlineDisplayName } from "@/lib/airline-names"
 import { getBrowserClientSessionId } from "@/lib/browser-client-session"
-import { monthCaption } from "@/lib/format"
+import { formatCount, monthCaption } from "@/lib/format"
 import { addMonths, isIsoDate, isIsoMonth, lastDayOfMonth, maxIsoDate } from "@/lib/iso-date"
 import { normalizeLocationSuggestions } from "@/lib/locations"
 import {
@@ -38,7 +38,7 @@ const locationSuggestionCache = new Map<string, LocationSuggestion[]>()
 const locationSuggestionPool = new Map<string, LocationSuggestion>()
 const locationRequestsInFlight = new Map<string, Promise<LocationSuggestion[]>>()
 
-export class FlyDeskApiError extends Error {
+class FlyDeskApiError extends Error {
   readonly diagnosticLog: string[]
 
   constructor(message: string, diagnosticLog: string[]) {
@@ -57,7 +57,7 @@ export class FlyDeskSearchCancelledError extends Error {
 
 /* A 401 from our own API: nothing the page can do fixes it, so polls stop
    retrying instead of spending their attempts on it. */
-export class FlyDeskSessionExpiredError extends FlyDeskApiError {
+class FlyDeskSessionExpiredError extends FlyDeskApiError {
   constructor(diagnosticLog: string[]) {
     super("La sesión expiró. Te llevamos al acceso.", diagnosticLog)
     this.name = "FlyDeskSessionExpiredError"
@@ -105,13 +105,13 @@ function sessionExpiredError(url: string, res: Response, data: unknown): FlyDesk
   return new FlyDeskSessionExpiredError(buildHttpDiagnosticLog(url, res, data))
 }
 
-export type QuotationRequest = {
+type QuotationRequest = {
   searchSessionId: string
   offerId: string
   migrationPlan?: boolean
 }
 
-export type QuotationResponse = {
+type QuotationResponse = {
   searchSessionId: string
   offer: CanonicalOffer
   commercialText: string
@@ -247,9 +247,7 @@ function translateApiMessage(message: string): string {
     /^Round-trip (?:matrix|range) search cannot exceed (\d+) combinations\. Narrow the departure or return ranges\.$/,
   )
   if (combinationCap) {
-    const cap = Number(combinationCap[1])
-    const formatted = Number.isFinite(cap) ? cap.toLocaleString("es-PE") : combinationCap[1]
-    return `El rango pedido supera las ${formatted} combinaciones. Estrecha el rango de salida o el de regreso.`
+    return `El rango pedido supera las ${formatCount(Number(combinationCap[1]))} combinaciones. Estrecha el rango de salida o el de regreso.`
   }
 
   /* `providerPublicFailureMessage`: the two provider labels plus its fallback. */

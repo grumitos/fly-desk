@@ -81,7 +81,7 @@ function compareOffersByDate(left: RankableOffer, right: RankableOffer): number 
  * instant would order the server and the browser differently. A departure that
  * cannot be read sinks to the end instead of leading as a 0 would.
  */
-export function offerDepartureTimestamp(offer: RankableOffer): number {
+function offerDepartureTimestamp(offer: RankableOffer): number {
   return wallClockMs(outboundItinerary(offer)?.segments?.[0]?.departureAt) ?? Number.POSITIVE_INFINITY;
 }
 

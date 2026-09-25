@@ -53,7 +53,6 @@ export interface SearchRequest {
   baggageRequired?: boolean
   includedAirlineCodes?: string[]
   migrationMonths?: string[]
-  sortMode?: string
 }
 
 export type Segment = Partial<CoreSegment> & Pick<CoreSegment, "origin" | "destination" | "departureAt" | "arrivalAt">
@@ -136,7 +135,6 @@ export interface MigrationMonthSummary {
   searchJobId?: string
   offer?: CanonicalOffer
   offers?: CanonicalOffer[]
-  filtered?: boolean
   warnings?: string[]
   status: "loading" | "available" | "partial" | "empty" | "error" | "cancelled"
 }

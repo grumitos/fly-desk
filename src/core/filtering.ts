@@ -16,7 +16,7 @@ interface FilterableItinerary extends RankableItinerary {
   segments?: readonly FilterableSegment[];
 }
 
-export interface FilterableOffer extends RankableOffer {
+interface FilterableOffer extends RankableOffer {
   mainCarrier?: string;
   validatingCarrier?: string;
   itineraries?: readonly FilterableItinerary[];
@@ -68,7 +68,7 @@ function computeLayoverMinutes(itinerary: FilterableItinerary, index: number): n
   return Math.round((nextMs - currentMs) / 60000);
 }
 
-export function maxLayoverMinutes(offer: FilterableOffer): number {
+function maxLayoverMinutes(offer: FilterableOffer): number {
   let max = 0;
 
   for (const itinerary of offer.itineraries ?? []) {

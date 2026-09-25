@@ -25,7 +25,7 @@ export interface PublicRuntimeConfig {
 
 /* The desk sells from Lima, and the VPS clock is UTC: from 19:00 in Lima the
    host's calendar day is already tomorrow. Every "today" is Lima's. */
-export const DESK_TIME_ZONE = "America/Lima";
+const DESK_TIME_ZONE = "America/Lima";
 
 const deskDateFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: DESK_TIME_ZONE,

@@ -8,7 +8,7 @@ import {
   stripAllAirportsLabel,
 } from "../../../src/core/location-display"
 
-export type LayoverItem = {
+type LayoverItem = {
   city: string
   minutes: number
 }
@@ -83,12 +83,6 @@ export function isoDatePart(value?: string): string {
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) return ""
   return parsed.toISOString().slice(0, 10)
-}
-
-export function diffDaysIso(from: string, to: string): number {
-  const fromMs = Date.UTC(Number(from.slice(0, 4)), Number(from.slice(5, 7)) - 1, Number(from.slice(8, 10)))
-  const toMs = Date.UTC(Number(to.slice(0, 4)), Number(to.slice(5, 7)) - 1, Number(to.slice(8, 10)))
-  return Math.round((toMs - fromMs) / 86400000)
 }
 
 function routeLocationToken(value: unknown): string {
