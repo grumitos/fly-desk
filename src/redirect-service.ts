@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { envFlag, envNumber } from "./env";
 import type { Server as BunServer } from "bun";
 import { timingSafeEqual } from "node:crypto";
 import type { ProviderContext, PurchasePath, SearchRequest } from "./core/types";
@@ -153,36 +154,16 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
 </html>`, { status: 409 });
 }
 
-function numberFromEnv(name: string, fallback: number, min: number, max: number): number {
-  const parsed = Number(process.env[name]?.trim() ?? "");
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-
-  return Math.max(min, Math.min(max, Math.trunc(parsed)));
-}
-
 function costamarRedirectTotalTimeoutMs(): number {
-  const configured = Number(
-    process.env.CBPLUS_REDIRECT_TOTAL_TIMEOUT_MS?.trim()
-      ?? process.env.COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS
-      ?? DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS,
-  );
-  if (!Number.isFinite(configured)) {
-    return DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS;
-  }
-
-  return Math.max(
-    1_000,
-    Math.min(MAX_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS, Math.trunc(configured)),
-  );
+  return Math.trunc(envNumber(
+    ["CBPLUS_REDIRECT_TOTAL_TIMEOUT_MS", "COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS"],
+    DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS,
+    { min: 1_000, max: MAX_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS },
+  ));
 }
 
 function costamarRedirectTrustUsableToken(): boolean {
-  const configured = process.env.CBPLUS_REDIRECT_TRUST_USABLE_TOKEN?.trim()
-    ?? process.env.COSTAMAR_REDIRECT_TRUST_USABLE_TOKEN?.trim()
-    ?? "1";
-  return configured !== "0";
+  return envFlag(["CBPLUS_REDIRECT_TRUST_USABLE_TOKEN", "COSTAMAR_REDIRECT_TRUST_USABLE_TOKEN"], true);
 }
 
 async function withCostamarRedirectTotalTimeout<T>(promise: Promise<T>): Promise<T> {
@@ -701,12 +682,11 @@ async function routeRedirectRequest(request: Request, options: RedirectServiceOp
   }
 
   const lookupTimeoutMs = options.cacheLookupTimeoutMs
-    ?? numberFromEnv(
+    ?? Math.trunc(envNumber(
       "FLY_DESK_REDIRECT_CACHE_LOOKUP_TIMEOUT_MS",
       DEFAULT_CACHE_LOOKUP_TIMEOUT_MS,
-      0,
-      MAX_CACHE_LOOKUP_TIMEOUT_MS,
-    );
+      { min: 0, max: MAX_CACHE_LOOKUP_TIMEOUT_MS },
+    ));
   let record: StoredRedirectRecord | undefined;
   try {
     record = lookupTimeoutMs > 0
@@ -728,7 +708,7 @@ export function resolveRedirectServerHost(): string {
 }
 
 export function resolveRedirectServerPort(): number {
-  return numberFromEnv("FLY_DESK_REDIRECT_PORT", DEFAULT_REDIRECT_PORT, 1, 65535);
+  return Math.trunc(envNumber("FLY_DESK_REDIRECT_PORT", DEFAULT_REDIRECT_PORT, { min: 1, max: 65535 }));
 }
 
 export function createRedirectServer(options: {

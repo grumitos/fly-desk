@@ -49,6 +49,46 @@ interface WorkerHandle {
 const POOLED_PROVIDER_IDS = ["agil-local", "costamar"] as const satisfies readonly ProviderId[];
 const DEFAULT_SEARCH_WORKER_MAX_JOBS = 500;
 const CANCELLATION_POLL_INTERVAL_MS = 500;
+/* A hang guard, not a budget: a month of a migratory sweep is the longest
+   legitimate job and takes a few minutes. Past this the job is cancelled and
+   its search capacity released. */
+const DEFAULT_SEARCH_WORKER_JOB_TIMEOUT_MS = 10 * 60_000;
+const WORKER_LOG_LINE_MAX_CHARS = 400;
+
+function searchWorkerJobTimeoutMs(): number {
+  const raw = Number(process.env.FLY_DESK_SEARCH_WORKER_JOB_TIMEOUT_MS ?? DEFAULT_SEARCH_WORKER_JOB_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : DEFAULT_SEARCH_WORKER_JOB_TIMEOUT_MS;
+}
+
+function workerJobTimeoutError(): Error {
+  return new Error("Search worker job exceeded its deadline.");
+}
+
+/* Provider errors can carry URLs with tokens in them, so a worker's stderr
+   reaches the journal with URLs cut to their origin and token-shaped strings
+   removed. */
+function redactWorkerLogLine(line: string): string {
+  return line
+    .replace(/https?:\/\/[^\s"'<>]+/g, (url) => {
+      try {
+        return new URL(url).origin;
+      } catch {
+        return "<url>";
+      }
+    })
+    .replace(/[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{8,}/g, "<jwt>")
+    .replace(/[A-Za-z0-9+/_=-]{40,}/g, "<redacted>")
+    .slice(0, WORKER_LOG_LINE_MAX_CHARS);
+}
+
+/* Resolves, once the stream ends, with whether the worker wrote anything. */
+function forwardWorkerStderr(stream: ReadableStream<Uint8Array>, providerId: ProviderId): Promise<boolean> {
+  let emitted = false;
+  return readLines(stream, (line) => {
+    emitted = true;
+    console.warn(`[search-worker ${providerId}] ${redactWorkerLogLine(line)}`);
+  }).then(() => emitted, () => emitted);
+}
 
 function searchWorkerProcessesEnabled(): boolean {
   return process.env.FLY_DESK_SEARCH_WORKER_PROCESSES !== "0";
@@ -145,7 +185,7 @@ function parseWorkerMessage(line: string): ProviderSearchWorkerMessage | undefin
   }
 }
 
-async function readJsonLines(
+async function readLines(
   stream: ReadableStream<Uint8Array>,
   onLine: (line: string) => void,
 ): Promise<void> {
@@ -199,7 +239,7 @@ function runInWorker(
 
   return new Promise((resolve, reject) => {
     const bunExecutable = resolveBunExecutable();
-    const child = Bun.spawn([bunExecutable, workerPath], {
+    const child = Bun.spawn([bunExecutable, "--no-env-file", workerPath], {
       cwd: process.cwd(),
       env: {
         ...process.env,
@@ -227,9 +267,12 @@ function runInWorker(
       if (cancellationTimer) {
         clearInterval(cancellationTimer);
       }
+      clearTimeout(deadline);
       callback();
       child.kill();
     };
+    const deadline = setTimeout(() => finish(() => reject(workerJobTimeoutError())), searchWorkerJobTimeoutMs());
+    deadline.unref?.();
 
     if (shouldContinue) {
       cancellationTimer = setInterval(() => {
@@ -247,8 +290,8 @@ function runInWorker(
       cancellationTimer.unref?.();
     }
 
-    const stderrPromise = new Response(child.stderr).text();
-    const stdoutDrained = readJsonLines(child.stdout, (line) => {
+    const stderrPromise = forwardWorkerStderr(child.stderr, input.providerId);
+    const stdoutDrained = readLines(child.stdout, (line) => {
       const message = parseWorkerMessage(line);
       if (!message || message.id !== input.id) {
         return;
@@ -265,19 +308,15 @@ function runInWorker(
     });
 
     void Promise.resolve(child.exited).then(async (code) => {
-      /* A worker writes its answer to stdout and then exits, and those are two
-         events this process can observe in either order. On a loaded machine
-         the exit arrives first often enough to matter, and answering it
-         immediately reports "the worker stopped" over a provider error the
-         worker had already sent — which is how the reason a search failed gets
-         replaced by the fact that it did. Reading what is left first costs
-         nothing: this path only runs when the process is already gone. */
+      /* The answer on stdout and the exit can arrive in either order; reading
+         what is left first keeps a provider error from being reported as "the
+         worker stopped". */
       await stdoutDrained;
       if (settled) {
         return;
       }
 
-      const hadDiagnostics = Boolean((await stderrPromise).trim());
+      const hadDiagnostics = await stderrPromise;
       finish(() => reject(new Error(
         `Search worker stopped before completing (exit code ${code ?? "unknown"}).${hadDiagnostics ? " Worker diagnostics were emitted." : ""}`,
       )));
@@ -328,7 +367,6 @@ interface SearchWorkerPool {
   prewarm: (providerId: ProviderId) => Promise<void>;
   start: () => void;
   stop: () => void;
-  workerPidForTests: (providerId: ProviderId) => number | undefined;
 }
 
 interface PooledJob {
@@ -338,6 +376,7 @@ interface PooledJob {
   resolve: (message: ProviderSearchWorkerMessage) => void;
   reject: (error: Error) => void;
   timer?: ReturnType<typeof setInterval>;
+  deadline?: ReturnType<typeof setTimeout>;
 }
 
 interface PooledWorker {
@@ -346,7 +385,7 @@ interface PooledWorker {
   jobs: Map<string, PooledJob>;
   completedJobs: number;
   retiring: boolean;
-  stderr: Promise<string>;
+  stderr: Promise<boolean>;
 }
 
 interface SearchWorkerPoolOptions {
@@ -390,13 +429,14 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
     if (job.timer) {
       clearInterval(job.timer);
     }
+    clearTimeout(job.deadline);
     worker.jobs.delete(job.id);
     worker.completedJobs += 1;
     complete();
     maybeRecycle(worker);
   };
 
-  const cancelJob = (worker: PooledWorker, job: PooledJob): void => {
+  const cancelJob = (worker: PooledWorker, job: PooledJob, reason = new Error("Search worker cancelled.")): void => {
     if (job.settled) {
       return;
     }
@@ -409,7 +449,7 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
            below is what the caller needs either way. */
       }
     }
-    settleJob(worker, job, () => job.reject(new Error("Search worker cancelled.")));
+    settleJob(worker, job, () => job.reject(reason));
   };
 
   const deliver = (worker: PooledWorker, job: PooledJob, message: ProviderSearchWorkerMessage): void => {
@@ -443,11 +483,11 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
       jobs: new Map(),
       completedJobs: 0,
       retiring: false,
-      stderr: new Response(child.stderr).text().catch(() => ""),
+      stderr: forwardWorkerStderr(child.stderr, providerId),
     };
     workers.set(providerId, worker);
 
-    const stdoutDrained = readJsonLines(child.stdout, (line) => {
+    const stdoutDrained = readLines(child.stdout, (line) => {
       const message = parseWorkerMessage(line);
       if (!message) {
         return;
@@ -474,7 +514,7 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
         return;
       }
 
-      const hadDiagnostics = Boolean((await worker.stderr).trim());
+      const hadDiagnostics = await worker.stderr;
       const error = new Error(
         `Search worker stopped before completing (exit code ${code ?? "unknown"}).${hadDiagnostics ? " Worker diagnostics were emitted." : ""}`,
       );
@@ -513,6 +553,8 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
     };
     job.onMessage = (message) => onMessage(message, handle);
     worker.jobs.set(id, job);
+    job.deadline = setTimeout(() => cancelJob(worker, job, workerJobTimeoutError()), searchWorkerJobTimeoutMs());
+    job.deadline.unref?.();
 
     if (shouldContinue) {
       const timer = setInterval(() => {
@@ -570,7 +612,6 @@ function createSearchWorkerPool(options: SearchWorkerPoolOptions): SearchWorkerP
         worker.child.kill();
       });
     },
-    workerPidForTests: (providerId) => workers.get(providerId)?.child.pid,
   };
 }
 
@@ -581,7 +622,7 @@ function spawnSearchWorkerProcess(): SearchWorkerChild {
   }
 
   const bunExecutable = resolveBunExecutable();
-  return Bun.spawn([bunExecutable, workerPath], {
+  return Bun.spawn([bunExecutable, "--no-env-file", workerPath], {
     cwd: process.cwd(),
     env: {
       ...process.env,

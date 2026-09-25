@@ -1,4 +1,5 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { envFlag } from "./env";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -68,11 +69,7 @@ const runtimeCostamarSessionCandidates = new Map<string, CostamarSessionCandidat
 let costamarChromeSessionScanCountForTests = 0;
 
 function costamarCdpTabScanEnabled(): boolean {
-  return String(
-    process.env.CBPLUS_CDP_TAB_SCAN_ENABLED?.trim()
-      ?? process.env.COSTAMAR_CDP_TAB_SCAN_ENABLED
-      ?? "0",
-  ).trim() !== "0";
+  return envFlag(["CBPLUS_CDP_TAB_SCAN_ENABLED", "COSTAMAR_CDP_TAB_SCAN_ENABLED"], false);
 }
 
 function stringOrFallback(value: string | undefined, fallback: string): string {

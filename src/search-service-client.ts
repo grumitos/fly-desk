@@ -1,4 +1,5 @@
 import { resolveSearchServiceProxyApiToken } from "./service-auth";
+import { envNumber } from "./env";
 
 export const SEARCH_SERVICE_PROXY_HEADER = "x-flydesk-search-proxy";
 const DEFAULT_SEARCH_SERVICE_TIMEOUT_MS = 15_000;
@@ -21,15 +22,6 @@ interface ProxySearchServiceOptions {
   serviceUrl?: string;
   timeoutMs?: number;
   fetchImpl?: FetchImpl;
-}
-
-function numberFromEnv(name: string, fallback: number, min: number, max: number): number {
-  const raw = Number(process.env[name] ?? "");
-  if (!Number.isFinite(raw)) {
-    return fallback;
-  }
-
-  return Math.max(min, Math.min(max, Math.trunc(raw)));
 }
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -150,12 +142,11 @@ function resolveSearchServiceTimeoutMs(input?: number): number {
     return Math.max(1, Math.min(MAX_SEARCH_SERVICE_TIMEOUT_MS, Math.trunc(input)));
   }
 
-  return numberFromEnv(
+  return Math.trunc(envNumber(
     "FLY_DESK_SEARCH_SERVICE_TIMEOUT_MS",
     DEFAULT_SEARCH_SERVICE_TIMEOUT_MS,
-    MIN_ENV_SEARCH_SERVICE_TIMEOUT_MS,
-    MAX_SEARCH_SERVICE_TIMEOUT_MS,
-  );
+    { min: MIN_ENV_SEARCH_SERVICE_TIMEOUT_MS, max: MAX_SEARCH_SERVICE_TIMEOUT_MS },
+  ));
 }
 
 /**

@@ -1,4 +1,5 @@
 import { materializeSearchResponse } from "./core/search-response";
+import { envNumber } from "./env";
 import { buildMatrixConfidenceSummary } from "./core/matrix";
 import { buildOfferScheduleGroups } from "./core/offer-schedule-groups";
 import {
@@ -569,19 +570,11 @@ function costamarRedirectBlockedResponse(reason?: string): Response {
 }
 
 function costamarRedirectTotalTimeoutMs(): number {
-  const configured = Number(
-    process.env.CBPLUS_REDIRECT_TOTAL_TIMEOUT_MS?.trim()
-      ?? process.env.COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS
-      ?? DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS,
-  );
-  if (!Number.isFinite(configured)) {
-    return DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS;
-  }
-
-  return Math.max(
-    1_000,
-    Math.min(MAX_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS, Math.trunc(configured)),
-  );
+  return Math.trunc(envNumber(
+    ["CBPLUS_REDIRECT_TOTAL_TIMEOUT_MS", "COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS"],
+    DEFAULT_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS,
+    { min: 1_000, max: MAX_COSTAMAR_REDIRECT_TOTAL_TIMEOUT_MS },
+  ));
 }
 
 async function withCostamarRedirectTotalTimeout<T>(promise: Promise<T>): Promise<T> {
@@ -1629,7 +1622,7 @@ async function handleWebLogin(request: Request, options: { jsonResponse?: boolea
       );
     }
     return new Response(
-      renderLoginPage("Demasiados intentos. Intenta de nuevo mas tarde.", resolveWebTheme(request), next),
+      renderLoginPage("Demasiados intentos. Vuelve a intentarlo en unos minutos.", resolveWebTheme(request), next),
       {
         status: 429,
         headers: {

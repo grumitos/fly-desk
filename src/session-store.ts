@@ -789,10 +789,10 @@ export class SearchSessionStore {
     if (dbPath) {
       mkdirSync(dirname(dbPath), { recursive: true });
       this.db = new Database(dbPath);
+      this.db.run("PRAGMA busy_timeout = 5000;");
       this.db.run("PRAGMA journal_mode = WAL;");
       this.db.run("PRAGMA synchronous = NORMAL;");
       this.db.run("PRAGMA temp_store = MEMORY;");
-      this.db.run("PRAGMA busy_timeout = 5000;");
       this.db.run("PRAGMA foreign_keys = ON;");
       this.initializeDatabase();
       this.loadPersisted();

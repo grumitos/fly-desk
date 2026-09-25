@@ -48,6 +48,8 @@ export function wallClockMs(value?: string): number | undefined {
 }
 
 const zoneFormatters = new Map<string, Intl.DateTimeFormat>();
+/* One entry per zone and hour of a year of departures stays well under this. */
+const ZONE_OFFSET_CACHE_MAX_ENTRIES = 20_000;
 const zoneOffsets = new Map<string, number>();
 
 function formatterFor(timeZone: string): Intl.DateTimeFormat | undefined {
@@ -105,6 +107,9 @@ function offsetMinutesAt(timeZone: string, instantMs: number): number | undefine
   }
 
   const offset = Math.round((local - instantMs) / MINUTE_MS);
+  if (zoneOffsets.size >= ZONE_OFFSET_CACHE_MAX_ENTRIES) {
+    zoneOffsets.clear();
+  }
   zoneOffsets.set(key, offset);
   return offset;
 }

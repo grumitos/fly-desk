@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { envNumber } from "./env";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Browser, BrowserContext, Page } from "playwright";
@@ -345,19 +346,17 @@ function cbPlusEnv(primaryName: string, legacyName: string): string | undefined 
   return process.env[primaryName]?.trim() || process.env[legacyName]?.trim() || undefined;
 }
 
-const COSTAMAR_HTTP_TIMEOUT_MS = Math.max(
-  5000,
-  Number(cbPlusEnv("CBPLUS_HTTP_TIMEOUT_MS", "COSTAMAR_HTTP_TIMEOUT_MS") ?? 20000),
-);
+const COSTAMAR_HTTP_TIMEOUT_MS = envNumber(["CBPLUS_HTTP_TIMEOUT_MS", "COSTAMAR_HTTP_TIMEOUT_MS"], 20000, { min: 5000 });
 const COSTAMAR_AIR_API_BASE_URL = process.env.CBPLUS_AIR_API_BASE_URL?.trim()
   || process.env.COSTAMAR_AIR_API_BASE_URL?.trim()
   || "https://api-zneith.zdev.tech/api-air-0.1";
 const COSTAMAR_REDIRECT_SESSION_WARNING =
   "Click and Book Plus redirect token is missing, expired, or incompatible with this terminal.";
 const COSTAMAR_SESSION_WARMUP_POLL_MS = 500;
-const COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS = Math.max(
-  1500,
-  Number(cbPlusEnv("CBPLUS_REDIRECT_VERIFY_TIMEOUT_MS", "COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS") ?? 6000),
+const COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS = envNumber(
+  ["CBPLUS_REDIRECT_VERIFY_TIMEOUT_MS", "COSTAMAR_REDIRECT_VERIFY_TIMEOUT_MS"],
+  6000,
+  { min: 1500 },
 );
 const COSTAMAR_REDIRECT_VERIFY_FAILURE_PATTERN =
   /login|iniciar\s+sesi[oó]n|google\s+authenticator|auth(?:entication|orization)?\s*(?:required|failed|failure|error)|(?:required|failed|failure|error)\s+auth(?:entication|orization)?|otp|captcha|expired|expirad|invalid|inv[aá]lid|unauthorized|forbidden/i;

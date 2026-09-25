@@ -1,4 +1,5 @@
 import { chmodSync, lstatSync, readFileSync, mkdirSync, mkdtempSync, existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { envNumber } from "./env";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Browser, BrowserContext } from "playwright";
@@ -271,15 +272,9 @@ const AGIL_STORAGE_ORIGINS = [
   "https://motorvuelos.expertiatravel.com/",
 ] as const;
 const AGIL_TOKEN_STORAGE_KEYS = ["tokenSearchFlight", "tokenTravelC"] as const;
-const AGIL_HTTP_TIMEOUT_MS = Math.max(
-  5000,
-  Number(process.env.AGIL_HTTP_TIMEOUT_MS ?? 20000),
-);
+const AGIL_HTTP_TIMEOUT_MS = envNumber("AGIL_HTTP_TIMEOUT_MS", 20000, { min: 5000 });
 const AGIL_SESSION_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
-const AGIL_SESSION_REVALIDATE_MS = Math.max(
-  15000,
-  Number(process.env.AGIL_SESSION_REVALIDATE_MS ?? 60000),
-);
+const AGIL_SESSION_REVALIDATE_MS = envNumber("AGIL_SESSION_REVALIDATE_MS", 60000, { min: 15000 });
 const AGIL_RANGE_DAY_RETRY_ATTEMPTS = Math.max(
   0,
   Math.trunc(Number(process.env.AGIL_RANGE_DAY_RETRY_ATTEMPTS ?? 1)) || 0,
@@ -802,7 +797,7 @@ function resolveAgilBrowserEndpoint(
 }
 
 function resolveAgilBrowserConnectTimeoutMs(): number {
-  return Math.max(500, Number(process.env.AGIL_BROWSER_CONNECT_TIMEOUT_MS ?? 2500));
+  return envNumber("AGIL_BROWSER_CONNECT_TIMEOUT_MS", 2500, { min: 500 });
 }
 
 function resolveChromeDevToolsBrowserWsEndpoint(userDataDir: string): string | undefined {
@@ -1408,10 +1403,18 @@ async function fetchAgil(
   recordProviderFirstHttpRequest(label);
 
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       ...init,
       headers,
       signal: controller.signal,
+    });
+    /* The body is read under the same deadline: headers that arrive before a
+       body that stalls would otherwise hold a concurrency slot indefinitely. */
+    const body = await response.arrayBuffer();
+    return new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
     });
   } catch (error) {
     if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {

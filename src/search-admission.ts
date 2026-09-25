@@ -143,6 +143,8 @@ export class SearchAdmissionController {
       return Promise.reject(new SearchAdmissionError("cancelled", "Search was cancelled before admission."));
     }
 
+    this.dropCancelledQueued();
+
     // Preserve queue order once contention exists. Otherwise a stream of
     // smaller jobs can keep bypassing an older, more expensive job forever.
     if (this.queued.length === 0 && this.canStart(costUnits)) {
@@ -289,22 +291,29 @@ export class SearchAdmissionController {
     };
   }
 
+  /* A search cancelled while it waits leaves the queue now, not when it would
+     have reached the head: until then it counted against `maxQueued`. */
+  private dropCancelledQueued(): void {
+    for (let index = this.queued.length - 1; index >= 0; index -= 1) {
+      const entry = this.queued[index];
+      if (entry.shouldContinue && !this.shouldContinue(entry.shouldContinue)) {
+        this.queued.splice(index, 1);
+        clearTimeout(entry.timeout);
+        entry.reject(new SearchAdmissionError("cancelled", "Search was cancelled before admission."));
+      }
+    }
+  }
+
   private startQueued(): void {
     if (!this.accepting) {
       return;
     }
 
+    this.dropCancelledQueued();
     for (;;) {
       const entry = this.queued[0];
       if (!entry) {
         return;
-      }
-
-      if (entry.shouldContinue && !this.shouldContinue(entry.shouldContinue)) {
-        this.queued.shift();
-        clearTimeout(entry.timeout);
-        entry.reject(new SearchAdmissionError("cancelled", "Search was cancelled before admission."));
-        continue;
       }
 
       if (!this.canStart(entry.costUnits)) {

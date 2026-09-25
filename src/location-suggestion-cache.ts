@@ -276,7 +276,11 @@ export class LocationSuggestionCacheStore {
       return;
     }
 
+    /* The web unit and the search runner open this file at the same time. */
     this.db.exec(`
+      PRAGMA busy_timeout = 5000;
+      PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = NORMAL;
       CREATE TABLE IF NOT EXISTS location_suggestions (
         key TEXT PRIMARY KEY,
         session_id TEXT NOT NULL,

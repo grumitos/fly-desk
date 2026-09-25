@@ -150,7 +150,7 @@ async function main() {
     await tempCleanupPromise?.catch(() => undefined);
     activeRuntime?.locationSuggestions.purgeExpired();
     activeSessions?.close();
-    await cleanupPrefixedTempArtifacts(undefined, { olderThanMs: 0 }).catch(() => undefined);
+    await cleanupPrefixedTempArtifacts(undefined, { olderThanMs: TEMP_ARTIFACT_SWEEP_MIN_AGE_MS }).catch(() => undefined);
   };
 
   /* The deadline is armed by the signal, not by `shutdown()`, so it covers a
@@ -177,7 +177,7 @@ async function main() {
   console.log(`Fly Desk running at http://${host}:${port}`);
   startupCleanupTimer = setTimeout(() => {
     startupCleanupTimer = undefined;
-    runTempCleanup("startup.tempCleanup");
+    runTempCleanup("startup.tempCleanup", { olderThanMs: TEMP_ARTIFACT_SWEEP_MIN_AGE_MS });
   }, STARTUP_BACKGROUND_TASK_DELAY_MS);
   startupCleanupTimer.unref?.();
   if (!delegatesSearch) {
