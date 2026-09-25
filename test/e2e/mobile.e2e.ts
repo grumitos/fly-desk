@@ -15,6 +15,7 @@ import {
   migration,
   oneStopLabels,
   readResultCount,
+  recordRemovedControls,
   results,
   searchForm,
   searchLink,
@@ -49,12 +50,15 @@ suite.test("on a phone the whole search runs through sheets, the back button clo
   fake.setFlights("both", { origin: "LIM", destination: "CUZ" }, CUSCO);
   const tracked = await scope.newContext({ ...PHONE, signedIn: true, clipboard: true });
   const page = await tracked.newPage();
+  const removedControls = await recordRemovedControls(page);
   /* Something to go back to that is not the desk. */
   const before = `${stack.baseUrl}/favicon.svg`;
   await page.goto(before);
   await page.goto(stack.baseUrl);
   await searchForm.location(page, "Origen").waitFor();
   await assertNoHorizontalOverflow(page, "idle");
+  /* The phone's form is the first one built: no desk control is put up to be replaced. */
+  assert.deepEqual(await removedControls(), [], "the phone built the desk's controls and then replaced them");
 
   /* Dark, chosen at rest: the title bar steps aside once a search exists. */
   await topBar.themeToggle(page).tap();

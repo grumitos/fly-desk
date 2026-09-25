@@ -348,6 +348,30 @@ export async function showsWholeText(locator: Locator): Promise<boolean> {
 }
 
 /**
+ * Records, from before the page's first script, the `aria-label` of every
+ * element the page takes out of its document, and returns a reader of what was
+ * taken out so far. A control that is built once is never on the list.
+ */
+export async function recordRemovedControls(page: Page): Promise<() => Promise<string[]>> {
+  await page.addInitScript(() => {
+    const removed: string[] = [];
+    (window as unknown as { __e2eRemovedControls: string[] }).__e2eRemovedControls = removed;
+    new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.removedNodes) {
+          if (!(node instanceof Element)) continue;
+          for (const element of [node, ...node.querySelectorAll("[aria-label]")]) {
+            const name = element.getAttribute("aria-label");
+            if (name) removed.push(name);
+          }
+        }
+      }
+    }).observe(document, { childList: true, subtree: true });
+  });
+  return () => page.evaluate(() => (window as unknown as { __e2eRemovedControls?: string[] }).__e2eRemovedControls ?? []);
+}
+
+/**
  * Whether an element is drawn and nothing that clips it cuts it: every
  * ancestor that hides overflow holds its whole box, and that ancestor's own
  * content is not wider than it (an ellipsis). Inline labels have no width of

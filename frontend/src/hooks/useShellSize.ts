@@ -62,14 +62,18 @@ function detailPlacementForWidth(width: number, shellSize: ShellSize): DetailPla
   return listWidthWithDetailColumn(width) >= DETAIL_COLUMN_MIN_LIST_PX ? "column" : "side"
 }
 
-export function useShellSize(shellRef: RefObject<HTMLElement | null>): {
-  shellSize: ShellSize
-  detailPlacement: DetailPlacement
-} {
-  const [layout, setLayout] = useState<{ shellSize: ShellSize; detailPlacement: DetailPlacement }>({
-    shellSize: "A",
-    detailPlacement: "column",
-  })
+type ShellLayout = { shellSize: ShellSize; detailPlacement: DetailPlacement }
+
+function layoutForWidth(width: number): ShellLayout {
+  const shellSize = shellSizeForWidth(width)
+  return { shellSize, detailPlacement: detailPlacementForWidth(width, shellSize) }
+}
+
+export function useShellSize(shellRef: RefObject<HTMLElement | null>): ShellLayout {
+  /* The shell spans the page, so before it exists the page's width is its
+     width: a phone's first render is already the phone's, and no desk is built
+     only to be replaced. */
+  const [layout, setLayout] = useState<ShellLayout>(() => layoutForWidth(document.documentElement.clientWidth))
 
   useLayoutEffect(() => {
     const shell = shellRef.current
@@ -77,11 +81,10 @@ export function useShellSize(shellRef: RefObject<HTMLElement | null>): {
 
     const update = (width: number) => {
       setLayout((current) => {
-        const shellSize = shellSizeForWidth(width)
-        const detailPlacement = detailPlacementForWidth(width, shellSize)
-        return current.shellSize === shellSize && current.detailPlacement === detailPlacement
+        const next = layoutForWidth(width)
+        return current.shellSize === next.shellSize && current.detailPlacement === next.detailPlacement
           ? current
-          : { shellSize, detailPlacement }
+          : next
       })
     }
 
