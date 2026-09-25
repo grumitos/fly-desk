@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import type { Locator, Page } from "playwright";
-import { runSearch, waitForMotion, waitForResults, waitForSweep } from "./support/flows.ts";
+import { nextFrames, runSearch, waitForMotion, waitForResults, waitForSweep } from "./support/flows.ts";
 import { defineSuite, type ContextOptions } from "./support/harness.ts";
 import type { OfferSpec } from "./support/fixtures.ts";
 import { addMonths, day, deskMonth, eventually, monthKey, providerSearches, TODAY } from "./support/scenario.ts";
@@ -17,6 +17,7 @@ import {
   readResultCount,
   recordRemovedControls,
   results,
+  scrollerOffset,
   searchForm,
   searchLink,
   topBar,
@@ -77,7 +78,8 @@ suite.test("on a phone the whole search runs through sheets, the back button clo
     await eventually(async () => assert.match(await searchForm.location(page, field).inputValue(), new RegExp(`^${code}\\b`)));
   }
 
-  /* Dates in the calendar sheet. */
+  /* Dates in the calendar sheet, which scrolls where the thumb leaves it: a
+     tap chooses a day and moves nothing. */
   const departure = day(20);
   const returning = day(24);
   await searchForm.departureHalf(page).tap();
@@ -87,7 +89,10 @@ suite.test("on a phone the whole search runs through sheets, the back button clo
   for (const date of [departure, returning]) {
     const cell = searchForm.calendarDay(calendar, date);
     await cell.scrollIntoViewIfNeeded();
+    const scrolled = await scrollerOffset(cell);
     await cell.tap();
+    await nextFrames(page);
+    assert.ok(Math.abs(await scrollerOffset(cell) - scrolled) < 2, `tapping ${date} scrolled the calendar`);
   }
   await searchForm.applySheet(calendar).tap();
   await calendar.waitFor({ state: "hidden" });

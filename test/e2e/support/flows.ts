@@ -55,6 +55,17 @@ export async function waitForMotion(page: Page): Promise<void> {
     .map((animation) => animation.finished.catch(() => undefined))).then(() => undefined));
 }
 
+/**
+ * Waits for the page to draw two more frames: what a gesture left for its next
+ * frame (a scroll, a measurement) has run by then. The window to let pass
+ * before asserting that a gesture moved nothing.
+ */
+export async function nextFrames(page: Page): Promise<void> {
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
+}
+
 /** Waits until a migratory sweep has settled with `priced` of `months` months fared. */
 export async function waitForSweep(page: Page, months: number, priced: number, timeoutMs = 60_000): Promise<void> {
   await eventually(async () => {

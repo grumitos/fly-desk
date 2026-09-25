@@ -72,6 +72,16 @@ export function deskMonth(month: string): string {
   return `${MONTH_ABBREVIATIONS[Number(month.slice(5, 7)) - 1]} ${month.slice(0, 4)}`;
 }
 
+/** «28 dic 2026», as the date field writes a day. */
+export function deskDate(isoDate: string): string {
+  return `${isoDate.slice(8, 10)} ${deskMonth(isoDate.slice(0, 7))}`;
+}
+
+/** The day of the week, Monday 0 to Sunday 6, as the calendar lays weeks out. */
+export function weekday(isoDate: string): number {
+  return (new Date(`${isoDate}T00:00:00Z`).getUTCDay() + 6) % 7;
+}
+
 /** Days in `month` (`2026-12`). */
 export function daysInMonth(month: string): number {
   const [year, monthIndex] = month.split("-").map(Number);
