@@ -14,6 +14,7 @@ import {
 } from "./fixtures.ts";
 import { startFrontProxy, type FrontProxy } from "./front-proxy.ts";
 import { FAKE_CDP_PATH, FAKE_UPSTREAM_ENV } from "./provider-origins.ts";
+import { logClock } from "./scenario.ts";
 
 /*
  * The production topology of `vps-platform/systemd/fly-desk*.service`, on
@@ -23,6 +24,9 @@ import { FAKE_CDP_PATH, FAKE_UPSTREAM_ENV } from "./provider-origins.ts";
  */
 
 export type ServiceName = "runner" | "web" | "redirect";
+
+/** Where each unit's log stood at a `Stack.mark`. */
+export type LogMark = Readonly<Record<ServiceName, number>>;
 
 type Env = Record<string, string | undefined>;
 type BunChild = ChildProcessByStdio<null, Readable, Readable>;
@@ -60,7 +64,10 @@ export interface Stack {
   root: string;
   pid: (service: ServiceName) => number | undefined;
   restart: (service: ServiceName, options?: { env?: Env }) => Promise<void>;
-  logs: (service?: ServiceName) => string;
+  /** Notes `label` in every unit's log and returns where each log stands. */
+  mark: (label: string) => LogMark;
+  /** What the units wrote, stdout and stderr, since `since` when it is given. */
+  logs: (service?: ServiceName, since?: LogMark) => string;
   stop: () => Promise<void>;
 }
 
@@ -162,8 +169,12 @@ function mergeEnv(...layers: Array<Env | undefined>): Record<string, string> {
   return Object.fromEntries(Object.entries(merged).filter((entry): entry is [string, string] => entry[1] !== undefined));
 }
 
+/* A unit's stdout and stderr, stderr lines marked `!`, the pooled workers'
+   stderr among the runner's; each line stamped with the time it arrived. */
 class ServiceLog {
   #lines: string[] = [];
+  /* Every line noted so far, kept or not: what a mark counts in. */
+  #noted = 0;
   #partial: Record<"out" | "err", string> = { out: "", err: "" };
   #file: WriteStream;
   #onLine: (line: string) => void;
@@ -183,18 +194,29 @@ class ServiceLog {
   }
 
   note(line: string): void {
-    this.#lines.push(line);
+    const stamped = `${logClock()} ${line}`;
+    this.#lines.push(stamped);
+    this.#noted += 1;
     if (this.#lines.length > LOG_LINES_KEPT) {
       this.#lines.splice(0, this.#lines.length - LOG_LINES_KEPT);
     }
     if (!this.#closed) {
-      this.#file.write(`${line}\n`);
+      this.#file.write(`${stamped}\n`);
     }
-    this.#onLine(line);
+    this.#onLine(stamped);
   }
 
-  text(): string {
-    return this.#lines.join("\n");
+  get position(): number {
+    return this.#noted;
+  }
+
+  /** The lines noted from `since` on, saying so when some are no longer kept. */
+  text(since = 0): string {
+    const firstKept = this.#noted - this.#lines.length;
+    const lines = this.#lines.slice(Math.max(0, since - firstKept));
+    return since < firstKept
+      ? [`(${firstKept - since} earlier lines not kept)`, ...lines].join("\n")
+      : lines.join("\n");
   }
 
   close(): Promise<void> {
@@ -270,6 +292,9 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     FLY_DESK_SEARCH_WORKER_PROCESSES: "1",
     FLY_DESK_SEARCH_WORKER_POOL: "1",
     FLY_DESK_PROVIDER_PREWARM: options.prewarm ? "1" : "0",
+    /* Each request and each provider's outcome (offers, partial) in the log:
+       the timeline a failing test's artifacts are read against. */
+    FLY_DESK_PERF_LOG: "1",
     AGIL_APIM_SUBSCRIPTION_KEY: FAKE_AGIL_SUBSCRIPTION_KEY,
     AGIL_BROWSER_URL: `${options.fakeUpstreamUrl}${FAKE_CDP_PATH}`,
     AGIL_CHROME_PROCESS_DISCOVERY: "0",
@@ -421,8 +446,13 @@ export async function startStack(options: StackOptions): Promise<Stack> {
       await halt(unit);
       await launch(unit);
     },
-    logs: (name) => (name ? [name] : SERVICE_NAMES)
-      .map((serviceName) => `==== ${serviceName} (${units[serviceName].url})\n${units[serviceName].log.text()}`)
+    mark: (label) => Object.fromEntries(SERVICE_NAMES.map((name) => {
+      const unit = units[name];
+      unit.log.note(`---- ${label} (pid ${unit.child?.pid ?? "none"})`);
+      return [name, unit.log.position - 1];
+    })) as LogMark,
+    logs: (name, since) => (name ? [name] : SERVICE_NAMES)
+      .map((serviceName) => `==== ${serviceName} (${units[serviceName].url})\n${units[serviceName].log.text(since?.[serviceName])}`)
       .join("\n"),
     stop,
   };

@@ -109,10 +109,20 @@ same on every run, and a year boundary is always six weeks away.
 
 ## Failures
 
-A failing test leaves screenshots of its open pages, the stack's service logs,
-the fake's request log and the browser's record under
-`test-results/e2e/<spec>/<test>/`. The runner clears `test-results/e2e` when it
-starts.
+A failing test leaves its artifacts under `test-results/e2e/<spec>/<test>/`:
+
+- `stack.log`: what the runner, the web unit and the redirect service wrote to
+  stdout and stderr while the test ran, the pooled workers' stderr among the
+  runner's. Each line carries its UTC time, and the stack runs with
+  `FLY_DESK_PERF_LOG=1`, so every request and every provider's outcome (offers,
+  partial) is in it.
+- `fake-requests.txt`: the fake's request log, each request with the time it
+  arrived, its answer, how long that took and the process that asked.
+- `browser.txt` and `page-<n>.png`: the browser's record and a screenshot of
+  each open page.
+- `error.txt`: the failure itself.
+
+The runner clears `test-results/e2e` when it starts.
 
 ## CI
 
