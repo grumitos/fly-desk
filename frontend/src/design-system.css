@@ -36,7 +36,7 @@
     --fd-radius-8: 8px; /* 26px chips, calendar cells */
     --fd-radius-10: 10px; /* 32 and 36px controls */
     --fd-radius-12: 12px; /* inputs, cards, panels */
-    --fd-radius-14: 14px; /* window frames */
+    --fd-radius-14: 14px; /* window frames and sheets */
 
     /* An icon takes its size from the control it sits in: touch controls 18,
        desktop controls 16, dense rows 14, keys and badges 12. */
@@ -53,6 +53,16 @@
     --fd-z-popover: 130; /* above the sheets and modals that open them */
     --fd-z-tooltip: 140;
 
+    /* Hover is laid over a control's own fill, never instead of it, so it
+       reads on any surface in both themes. */
+    --fd-hover-layer: linear-gradient(var(--color-hover) 0 0);
+    --fd-focus-ring: 0 0 0 2px var(--color-focus);
+    --fd-field-glow: 0 0 0 2px var(--color-glow);
+    --fd-disabled-opacity: 0.45;
+
+    /* Ink shadows; the dark theme redefines them in black (index.css). */
+    --fd-shadow-key: 0 1px 0 #1f1f1e1f;
+    --fd-shadow-card: 0 1px 2px #1f1f1e0a;
     --fd-shadow-emergente: 0 18px 44px #1f1f1e14;
     --fd-shadow-hoja: 0 26px 60px #1f1f1e1f;
     --fd-shadow-hoja-inferior: 0 -12px 40px #1f1f1e33;
@@ -173,7 +183,7 @@
     border: 1px solid var(--color-input);
     border-radius: var(--fd-radius-6);
     background: var(--color-card);
-    box-shadow: 0 1px 0 color-mix(in srgb, var(--color-foreground) 12%, transparent);
+    box-shadow: var(--fd-shadow-key);
     color: var(--color-foreground);
   }
 
@@ -243,7 +253,7 @@
 
   .fd-segmented-item:focus-visible {
     outline: none;
-    box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-primary) 55%, transparent);
+    box-shadow: inset 0 0 0 2px var(--color-focus);
   }
 
   /* ---- glyph swaps ----
@@ -288,7 +298,7 @@
   select:disabled,
   textarea:disabled,
   [aria-disabled="true"] {
-    opacity: 0.45;
+    opacity: var(--fd-disabled-opacity);
     cursor: not-allowed;
   }
 
@@ -312,7 +322,7 @@
   /* Keyboard focus: a ring outside the border, so nothing reflows. */
   .fd-focus-ring:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 55%, transparent);
+    box-shadow: var(--fd-focus-ring);
     transition: box-shadow var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
@@ -554,7 +564,7 @@
 
   /* Pressed: 12% of ink over the fill and under the label. */
   .fd-btn:not(:disabled, [aria-disabled="true"]):active {
-    background-image: linear-gradient(rgb(0 0 0 / 12%), rgb(0 0 0 / 12%));
+    background-image: linear-gradient(var(--color-pressed) 0 0);
   }
 
   .fd-btn-primary {
@@ -563,7 +573,7 @@
   }
 
   .fd-btn-primary:not([aria-disabled="true"]):hover {
-    background-color: color-mix(in srgb, var(--color-primary) 90%, black);
+    background-color: var(--color-primary-hover);
   }
 
   .fd-btn-secondary {
@@ -573,13 +583,13 @@
   }
 
   .fd-btn-secondary:not([aria-disabled="true"]):hover {
-    background-color: var(--color-accent);
+    background-image: var(--fd-hover-layer);
     color: var(--color-foreground);
   }
 
   .fd-btn-ghost:not([aria-disabled="true"]):hover {
-    background-color: var(--color-accent);
-    color: var(--color-accent-foreground);
+    background-color: var(--color-hover);
+    color: var(--color-foreground);
   }
 
   .fd-btn-chip {
@@ -634,7 +644,7 @@
 
   .fd-input::placeholder,
   .fd-textarea::placeholder {
-    color: var(--color-muted-foreground);
+    color: var(--color-placeholder);
   }
 
   .fd-popover {

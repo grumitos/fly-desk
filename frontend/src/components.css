@@ -23,13 +23,13 @@
   }
 
   .fd-field-control:hover {
-    border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
+    border-color: var(--color-border-hover);
   }
 
   .fd-field-control:focus-within,
   .fd-field-control[data-active="true"] {
-    border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
+    border-color: var(--color-border-active);
+    box-shadow: var(--fd-field-glow);
   }
 
   .fd-field-label {
@@ -63,7 +63,7 @@
 
   .fd-field-value-placeholder,
   .fd-field-value::placeholder {
-    color: color-mix(in srgb, var(--color-muted-foreground) 65%, transparent);
+    color: var(--color-placeholder);
   }
 
   .fd-field-invalid {
@@ -73,7 +73,7 @@
 
   .fd-field-invalid:focus-within {
     border-color: var(--color-destructive);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-destructive) 24%, transparent);
+    box-shadow: var(--fd-field-glow);
   }
 
   /* ---- frequent stations ---- */
@@ -103,7 +103,7 @@
   }
 
   .fd-quick-chip:hover {
-    background: var(--color-accent);
+    background-image: var(--fd-hover-layer);
   }
 
   :where(.fd-shell[data-shell-size="C"]) .fd-quick-chips {
@@ -168,8 +168,8 @@
   }
 
   .fd-provider-rail-item img {
-    width: 15px;
-    height: 15px;
+    width: var(--fd-icon-16);
+    height: var(--fd-icon-16);
     object-fit: contain;
   }
 
@@ -211,7 +211,7 @@
   }
 
   .fd-alert-line-dismiss:hover {
-    background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+    background: var(--color-hover);
   }
 
   /* ---- counters: mono, tabular, 700 ---- */
@@ -362,7 +362,7 @@
   }
 
   .fd-airline-row:hover {
-    background: var(--color-muted);
+    background: var(--color-hover);
   }
 
   .fd-airline-row-logo {
@@ -406,7 +406,7 @@
   .fd-filter-sheet .fd-airline-row {
     height: var(--fd-control-touch);
     gap: 12px;
-    border-bottom: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+    border-bottom: 1px solid var(--color-border);
     border-radius: 0;
   }
 
@@ -429,9 +429,9 @@
     align-items: center;
     gap: 6px;
     padding: 0 6px 0 9px;
-    border: 1px solid color-mix(in srgb, var(--color-primary) 34%, transparent);
+    border: 1px solid var(--color-border-active);
     border-radius: var(--fd-radius-8);
-    background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+    background: var(--color-selected);
     color: var(--color-foreground);
     font-size: var(--fd-text-meta);
     font-weight: var(--fd-weight-label);
@@ -495,12 +495,12 @@
   }
 
   .fd-suggest-row:hover {
-    background: var(--color-accent);
+    background: var(--color-hover);
   }
 
   .fd-suggest-row[aria-selected="true"] {
-    background: var(--color-accent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-primary) 40%, transparent);
+    background: var(--color-hover);
+    box-shadow: inset 0 0 0 1px var(--color-border-active);
   }
 
   .fd-suggest-code {
@@ -533,7 +533,7 @@
     gap: 16px;
     padding: 8px 12px;
     border-top: 1px solid var(--color-border);
-    background: color-mix(in srgb, var(--color-secondary) 55%, transparent);
+    background: var(--color-surface-sunken);
   }
 
   .fd-location-sheet .fd-suggest-row {
@@ -609,7 +609,7 @@
   }
 
   .fd-pax-step:hover:not(:disabled) {
-    background: var(--color-accent);
+    background-image: var(--fd-hover-layer);
   }
 
   .fd-pax-figure {
@@ -635,7 +635,7 @@
     height: 64px;
     gap: 12px;
     padding: 0;
-    border-bottom: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+    border-bottom: 1px solid var(--color-border);
     border-radius: 0;
   }
 
@@ -687,12 +687,12 @@
   }
 
   .fd-daterange-control:hover {
-    border-color: color-mix(in srgb, var(--color-primary) 40%, var(--color-border));
+    border-color: var(--color-border-hover);
   }
 
   .fd-daterange-control[data-open="true"] {
-    border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 18%, transparent);
+    border-color: var(--color-border-active);
+    box-shadow: var(--fd-field-glow);
   }
 
   .fd-daterange-half {
@@ -708,7 +708,7 @@
   }
 
   .fd-daterange-half[data-active="true"] {
-    background: color-mix(in srgb, var(--color-primary) 7%, transparent);
+    background: var(--color-selected);
   }
 
   .fd-daterange-half[data-active="true"] .fd-field-label,
@@ -806,12 +806,12 @@
   }
 
   .fd-cal-preset:hover {
-    background: var(--color-accent);
+    background-image: var(--fd-hover-layer);
   }
 
   .fd-cal-preset[aria-pressed="true"] {
-    border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
-    background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+    border-color: var(--color-border-active);
+    background: var(--color-selected);
     color: var(--color-foreground);
     font-weight: var(--fd-weight-title);
   }
@@ -837,11 +837,11 @@
   }
 
   .fd-cal-step:hover:not(:disabled) {
-    background: var(--color-accent);
+    background: var(--color-hover);
   }
 
   .fd-cal-step:disabled {
-    color: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent);
+    color: var(--color-faint);
   }
 
   .fd-cal-caption {
@@ -951,17 +951,17 @@
 
   .fd-cal-cell[data-kind="normal"]:hover,
   .fd-cal-cell[data-kind="today"]:hover {
-    background: var(--color-accent);
+    background: var(--color-hover);
   }
 
   .fd-cal-cell[data-kind="today"] {
-    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-primary) 55%, transparent);
+    box-shadow: inset 0 0 0 1px var(--color-focus);
     color: var(--color-foreground);
     font-weight: var(--fd-weight-title);
   }
 
   .fd-cal-cell[data-kind="past"] {
-    color: color-mix(in srgb, var(--color-muted-foreground) 38%, transparent);
+    color: var(--color-faint);
     cursor: not-allowed;
     font-weight: var(--fd-weight-value);
   }
@@ -1034,14 +1034,14 @@
 
   .fd-cal-cell[data-kind="pmid"] {
     border-radius: 0;
-    background: color-mix(in srgb, var(--color-primary) 7%, transparent);
+    background: var(--color-selected);
     color: var(--color-foreground);
   }
 
   .fd-cal-cell[data-kind="pend"] {
     border-radius: 0 var(--fd-radius-8) var(--fd-radius-8) 0;
-    background: color-mix(in srgb, var(--color-primary) 22%, transparent);
-    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-primary) 55%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+    box-shadow: inset 0 0 0 1px var(--color-focus);
     color: var(--color-foreground);
     font-weight: var(--fd-weight-title);
   }
@@ -1235,7 +1235,7 @@
   }
 
   .fd-detail-close:hover {
-    background: var(--color-accent);
+    background: var(--color-hover);
   }
 
   .fd-detail-close-back {
@@ -1321,7 +1321,7 @@
     z-index: 1;
     width: var(--fd-rail-dot);
     height: var(--fd-rail-dot);
-    border: 1.5px solid var(--color-muted-foreground);
+    border: 1px solid var(--color-muted-foreground);
     border-radius: 999px;
     background: var(--color-card);
   }
@@ -1405,7 +1405,7 @@
   }
 
   .fd-condition-bag--absent {
-    color: color-mix(in srgb, var(--color-muted-foreground) 45%, transparent);
+    color: var(--color-faint);
   }
 
   .fd-detail-footer {
@@ -1447,7 +1447,7 @@
   }
 
   .fd-detail-migration:hover {
-    background: var(--color-accent);
+    background: var(--color-hover);
     color: var(--color-foreground);
   }
 
@@ -1477,7 +1477,7 @@
     gap: 10px;
     padding: 10px 12px 0;
     border-top: 1px solid var(--color-border);
-    background: color-mix(in srgb, var(--color-secondary) 60%, transparent);
+    background: var(--color-surface-sunken);
     animation: fd-enter-confirmacion var(--fd-dur-confirmacion) var(--fd-ease-estructura) both;
   }
 
@@ -1537,7 +1537,7 @@
   }
 
   .fd-detail-quote-error-open:hover {
-    background-color: var(--color-accent);
+    background-image: var(--fd-hover-layer);
   }
 
   .fd-detail-quote-error-retry {
@@ -1545,7 +1545,7 @@
   }
 
   .fd-detail-panel[data-quote-error] .fd-condition-list {
-    opacity: 0.4;
+    opacity: var(--fd-disabled-opacity);
   }
 
   .fd-detail-copy-confirm {
@@ -1938,7 +1938,7 @@
   }
 
   .fd-quote-migration:hover {
-    background: var(--color-accent);
+    background: var(--color-hover);
     color: var(--color-foreground);
   }
 
@@ -1960,7 +1960,7 @@
   }
 
   .fd-quote-close:hover {
-    background: var(--color-accent);
+    background: var(--color-hover);
     color: var(--color-foreground);
   }
 
@@ -1993,7 +1993,7 @@
     gap: 10px;
     padding: 12px 14px;
     border-top: 1px solid var(--color-border);
-    background: color-mix(in srgb, var(--color-secondary) 60%, transparent);
+    background: var(--color-surface-sunken);
   }
 
   .fd-quote-age {
@@ -2021,7 +2021,7 @@
   }
 
   .fd-quote-open:hover {
-    background-color: var(--color-accent);
+    background-image: var(--fd-hover-layer);
   }
 
   .fd-quote-copy {
@@ -2087,7 +2087,7 @@
   }
 
   .fd-month-card:hover {
-    border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
+    border-color: var(--color-border-hover);
   }
 
   .fd-month-card__hit {
@@ -2130,8 +2130,8 @@
   }
 
   .fd-month-open:hover {
-    border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-border));
-    background: var(--color-accent);
+    border-color: var(--color-border-hover);
+    background-image: var(--fd-hover-layer);
   }
 
   .fd-month-head {
@@ -2195,7 +2195,7 @@
   .fd-month-logo--absent {
     display: grid;
     border-radius: var(--fd-radius-8);
-    background: color-mix(in srgb, var(--color-muted-foreground) 12%, transparent);
+    background: var(--color-secondary);
     place-items: center;
   }
 
@@ -2205,14 +2205,14 @@
     margin-top: 11px;
     overflow: hidden;
     border-radius: 999px;
-    background: color-mix(in srgb, var(--color-muted-foreground) 15%, transparent);
+    background: var(--color-secondary);
   }
 
   .fd-month-bar-fill {
     display: block;
     height: 6px;
     border-radius: 999px;
-    background: color-mix(in srgb, var(--color-foreground) 40%, transparent);
+    background: var(--color-placeholder);
     transform-origin: left center;
     animation: fd-month-bar var(--fd-dur-month-bar) var(--fd-ease-estructura) both;
     animation-delay: calc(var(--fd-stagger-chip) * var(--fd-month-index, 0));
@@ -2256,8 +2256,8 @@
   }
 
   .fd-month-provider {
-    width: 13px;
-    height: 13px;
+    width: var(--fd-icon-14);
+    height: var(--fd-icon-14);
     flex-shrink: 0;
     object-fit: contain;
   }
@@ -2327,18 +2327,18 @@
   }
 
   .fd-month-card.is-cheapest {
-    background: color-mix(in srgb, var(--color-primary) 6%, var(--color-card));
+    background: var(--color-selected);
   }
 
   .fd-month-card.is-selected {
-    border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-border));
-    background: color-mix(in srgb, var(--color-primary) 7%, var(--color-card));
+    border-color: var(--color-border-active);
+    background: var(--color-selected);
   }
 
   .fd-month-card--empty {
-    border-color: color-mix(in srgb, var(--color-border) 80%, var(--color-muted-foreground));
+    border-color: var(--color-rule);
     border-style: dashed;
-    background: color-mix(in srgb, var(--color-secondary) 55%, var(--color-card));
+    background: var(--color-surface-sunken);
     cursor: default;
   }
 
@@ -2348,7 +2348,7 @@
   }
 
   .fd-month-card--empty .fd-month-price {
-    color: color-mix(in srgb, var(--color-muted-foreground) 70%, transparent);
+    color: var(--color-placeholder);
   }
 
   .fd-month-range {
@@ -2377,7 +2377,7 @@
     .fd-month-card {
       grid-template-rows: none;
       padding: 12px 13px;
-      border-radius: var(--fd-radius-14);
+      border-radius: var(--fd-radius-12);
       gap: 10px;
     }
 

@@ -37,11 +37,11 @@
   }
 
   .fd-card:hover {
-    background: var(--color-secondary);
+    background: var(--color-hover);
   }
 
   .fd-card.is-selected {
-    background: color-mix(in srgb, var(--color-primary) 7%, var(--color-card));
+    background: var(--color-selected);
   }
 
   /* A row cannot be outlined without becoming a box, so selection and a
@@ -95,7 +95,7 @@
   .fd-card__logo span {
     border: 1px solid var(--color-border);
     border-radius: var(--fd-radius-8);
-    background: color-mix(in srgb, var(--color-card) 88%, var(--color-secondary));
+    background: var(--color-card);
     font-family: var(--font-mono);
     font-size: var(--fd-text-mono-meta);
     font-weight: var(--fd-weight-figure);
@@ -165,7 +165,7 @@
   }
 
   .fd-card__bag.is-missing {
-    color: color-mix(in srgb, var(--color-muted-foreground) 38%, transparent);
+    color: var(--color-faint);
   }
 
   /* Leg lanes: label 56 · schedule 126 · duration 66 · stop count · airports.
@@ -216,7 +216,7 @@
   .fd-card__leg-arrow {
     display: inline-grid;
     place-items: center;
-    color: color-mix(in srgb, var(--color-muted-foreground) 75%, transparent);
+    color: var(--color-placeholder);
   }
 
   .fd-card__leg-offset {
@@ -331,7 +331,7 @@
   .fd-card__provider span {
     border: 1px solid var(--color-border);
     border-radius: var(--fd-radius-8);
-    background: color-mix(in srgb, var(--color-card) 88%, var(--color-secondary));
+    background: var(--color-card);
     font-family: var(--font-mono);
     font-size: var(--fd-text-micro);
     font-weight: var(--fd-weight-figure);
@@ -391,13 +391,13 @@
   }
 
   .fd-card__alt-chip:hover {
-    border-color: color-mix(in srgb, var(--color-primary) 50%, var(--color-border));
-    background: var(--color-accent);
+    border-color: var(--color-border-hover);
+    background-image: var(--fd-hover-layer);
   }
 
   .fd-card__alt-chip.is-selected {
-    border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
-    background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+    border-color: var(--color-border-active);
+    background: var(--color-selected);
   }
 
   .fd-card__alt-time {
@@ -428,7 +428,7 @@
   }
 
   .fd-card__alts-more:hover {
-    background: var(--color-accent);
+    background: var(--color-hover);
   }
 
   /* ---- column header: the row's own grid, beside the scroller ---- */
@@ -575,11 +575,11 @@
   }
 
   .fd-schedule-row:hover {
-    background: var(--color-accent);
+    background: var(--color-hover);
   }
 
   .fd-schedule-row.is-current {
-    background: color-mix(in srgb, var(--color-primary) 7%, transparent);
+    background: var(--color-selected);
   }
 
   .fd-schedule-row__leg {
@@ -611,9 +611,9 @@
       min-height: 0;
       padding: 11px 12px;
       border: 1px solid var(--color-border);
-      border-radius: var(--fd-radius-14);
+      border-radius: var(--fd-radius-12);
       background: var(--color-card);
-      box-shadow: 0 1px 2px color-mix(in srgb, var(--color-foreground) 4%, transparent);
+      box-shadow: var(--fd-shadow-card);
     }
 
     .fd-card__hit {
@@ -621,13 +621,14 @@
     }
 
     .fd-card:hover {
-      background: var(--color-card);
+      background-color: var(--color-card);
+      background-image: var(--fd-hover-layer);
     }
 
     /* A card has a border to mark with, so selection goes back to it. */
     .fd-card.is-selected,
     .fd-card.is-schedule-changed {
-      border-color: color-mix(in srgb, var(--color-primary) 62%, var(--color-card));
+      border-color: var(--color-border-active);
     }
 
     .fd-card.is-selected::before,
@@ -636,7 +637,7 @@
     }
 
     .fd-card:active {
-      background: color-mix(in srgb, black 12%, var(--color-card));
+      background-image: linear-gradient(var(--color-pressed) 0 0);
     }
 
     .fd-card .fd-card__logo,
