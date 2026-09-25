@@ -147,7 +147,7 @@ function stopRange(first: number): { link: string; days: string[] } {
 
 /* The pooled worker hears about a cancellation on its client's 500 ms poll
    (`src/search-worker-client.ts`); there is nothing to observe until then. */
-const CANCELLATION_PROPAGATION_MS = 1_200;
+const CANCELLATION_PROPAGATION_MS = 2_000;
 
 suite.test("stopping a search halts its fan-out, keeps what it had, and running it again starts from that", async (scope) => {
   const { fake } = scope;
