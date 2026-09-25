@@ -21,15 +21,8 @@ firewall, the release engine and its wrappers belong to `grumitos/vps-platform`.
 
 ## Local Gate
 
-```bash
-bun install --frozen-lockfile
-bun run typecheck
-bun run lint
-bun run build
-bun run test
-```
-
-`bun run test` runs the end-to-end suite; see [`TESTING.md`](./TESTING.md).
+Run the gates in [`AGENTS.md`](../AGENTS.md), "Verification", before a change
+reaches `main`; the pull request's required checks run the same ones.
 
 ## Deployment Through GitHub Actions
 
@@ -37,8 +30,8 @@ bun run test
 
 - `deploy`: verifies that the exact SHA belongs to `main`, installs and builds
   it, packs a deterministic tar archive with a single `app/` root
-  (`scripts/pack-release.sh`), smokes that archive (`scripts/release-smoke.ts`,
-  below), computes its SHA-256 digest and stores it as a short-lived artifact.
+  (`scripts/pack-release.sh`), computes its SHA-256 digest, smokes the archive
+  (`scripts/release-smoke.ts`, below) and stores it as a one-day artifact.
   The revision's typecheck, lint and end-to-end suite already passed as the
   pull request's required checks, so they are not run again here. A separate
   production-environment job downloads the artifact, verifies the digest,
@@ -59,9 +52,9 @@ rollback <sha40>
 ```
 
 The release engine takes a lock shared with maintenance, validates the archive
-digest and structure, prepares the candidate as the build user, switches the
-symlink, restarts web, search and redirect, checks their health, and restores
-the previous release if activation fails.
+digest and structure, prepares the candidate as the build user
+`fly-desk-build`, switches the symlink, restarts web, search and redirect,
+checks their health, and restores the previous release if activation fails.
 
 Required secrets: `VPS_HOST`, `VPS_PORT` (optional, defaults to `22`),
 `VPS_USER` (the Fly Desk CI identity), `VPS_SSH_KEY_B64` and
@@ -95,12 +88,13 @@ A release installs no packages. The runtime imports only Bun and Node
 built-ins, the frontend arrives built in `frontend/dist`, and `bunfig.toml`
 disables Bun's install-on-import (`[install] auto = "disable"`), so importing a
 package the release does not carry fails instead of fetching it from the
-registry. Playwright, the one package the source still names, is a development
+registry. Playwright, the one package the source names, is a development
 dependency: the end-to-end suite and the Click and Book Plus browser fallback
 on a workstation use it.
 
-`deploy/prepare-release.sh` runs as the platform's build user with the system
-Bun. It refuses a `package.json` that declares runtime `dependencies`, and
+`deploy/prepare-release.sh` runs as `fly-desk-build` with the system Bun, in an
+environment that holds only `HOME`, `PATH`, `RELEASE_DIR` and `REVISION`. It
+refuses a `package.json` that declares runtime `dependencies`, and
 requires `frontend/dist/index.html`.
 
 Real configuration lives in `/etc/fly-desk.env` (`.env.example` documents the
