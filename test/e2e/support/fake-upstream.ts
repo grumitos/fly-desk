@@ -1,5 +1,6 @@
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { FakeChrome } from "./fake-chrome.ts";
 import {
   agilGeoTreePayload,
   agilSearchGroup,
@@ -272,6 +273,8 @@ export class FakeUpstream {
   readonly url: string;
   /** USD to PEN rate the fake publishes (Agil `tipoCambio`, exchange-rate endpoint). */
   usdToPen = 3.742;
+  /** The platform Chrome `AGIL_BROWSER_URL` points at; closed until a test opens it. */
+  readonly chrome = new FakeChrome();
   #server: Server;
   #requests: RecordedRequest[] = [];
   #blocked: BlockedEgress[] = [];
@@ -295,6 +298,7 @@ export class FakeUpstream {
         response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
       });
     });
+    server.on("upgrade", (request: IncomingMessage, socket, head: Buffer) => this.chrome.upgrade(request, socket, head));
   }
 
   /** The offers `provider` answers for a route; the most recent matching call wins. */
@@ -410,6 +414,7 @@ export class FakeUpstream {
   /** Back to an empty scenario. Minted Agil bearers stay valid, as they would upstream. */
   reset(): void {
     this.#releaseGates();
+    this.chrome.reset();
     this.clearRequests();
     this.#flightRules = [];
     this.#rules = [];
@@ -419,6 +424,7 @@ export class FakeUpstream {
 
   async close(): Promise<void> {
     this.#releaseGates();
+    this.chrome.reset();
     this.#hung.forEach((response) => response.destroy());
     this.#hung.clear();
     await new Promise<void>((resolve) => {
@@ -623,6 +629,10 @@ export class FakeUpstream {
         return { status: 200, body: { fecha: limaDay(), sunat: this.usdToPen, compra: this.usdToPen - 0.006, venta: this.usdToPen } };
       case "airlineMark":
         return { status: 403, contentType: "text/plain; charset=utf-8", body: "Forbidden" };
+      case "cdp":
+        return this.chrome.isOpen && url.pathname === "/json/version"
+          ? { status: 200, body: this.chrome.version(this.url) }
+          : { status: 404, body: { error: "No browser listens here." } };
       default:
         return { status: 404, body: { error: `The fake upstream does not serve ${entry.origin}${entry.path}.` } };
     }

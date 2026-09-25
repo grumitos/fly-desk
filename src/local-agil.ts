@@ -2,7 +2,6 @@ import { chmodSync, lstatSync, readFileSync, mkdirSync, mkdtempSync, existsSync,
 import { envNumber } from "./env";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import type { Browser, BrowserContext } from "playwright";
 import { trackOpenBrowserTarget } from "./browser-targets";
 import {
   registerActiveTempArtifact,
@@ -109,7 +108,8 @@ interface CdpResponse {
 
 interface CdpClient {
   close: () => void;
-  send: (method: string, params?: Record<string, unknown>, sessionId?: string) => Promise<unknown>;
+  /** Rejects after `timeoutMs`, the client's own budget when omitted. */
+  send: (method: string, params?: Record<string, unknown>, sessionId?: string, timeoutMs?: number) => Promise<unknown>;
   waitForEvent: (method: string, sessionId: string | undefined, timeoutMs: number) => Promise<unknown>;
 }
 
@@ -272,6 +272,8 @@ const AGIL_STORAGE_ORIGINS = [
   "https://motorvuelos.expertiatravel.com/",
 ] as const;
 const AGIL_TOKEN_STORAGE_KEYS = ["tokenSearchFlight", "tokenTravelC"] as const;
+/* How long a storage origin may take to load in the shared Chrome. */
+const AGIL_STORAGE_PAGE_LOAD_TIMEOUT_MS = 30_000;
 const AGIL_HTTP_TIMEOUT_MS = envNumber("AGIL_HTTP_TIMEOUT_MS", 20000, { min: 5000 });
 const AGIL_SESSION_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 const AGIL_SESSION_REVALIDATE_MS = envNumber("AGIL_SESSION_REVALIDATE_MS", 60000, { min: 15000 });
@@ -442,7 +444,6 @@ async function writePersistedAgilIdentity(identity: AgilIdentity): Promise<void>
   }
 }
 
-let playwrightPromise: Promise<typeof import("playwright")> | undefined;
 let cachedSession: AgilSessionData | undefined;
 let pendingSessionPromise: Promise<AgilSessionData> | undefined;
 let cachedAgilApimSubscriptionKey: string | undefined;
@@ -1016,7 +1017,7 @@ async function createCdpClient(endpoint: string, timeoutMs: number): Promise<Cdp
         // Ignore close failures.
       }
     },
-    send: (method, params = {}, sessionId) => {
+    send: (method, params = {}, sessionId, commandTimeoutMs = timeoutMs) => {
       const id = nextId;
       nextId += 1;
       const payload: Record<string, unknown> = {
@@ -1033,7 +1034,7 @@ async function createCdpClient(endpoint: string, timeoutMs: number): Promise<Cdp
         const timer = setTimeout(() => {
           pending.delete(id);
           reject(new Error(`${method} timed out.`));
-        }, timeoutMs);
+        }, commandTimeoutMs);
         pending.set(id, {
           method,
           resolve,
@@ -1130,8 +1131,11 @@ async function readAgilStorageSnapshotFromDevToolsEndpoint(endpoint: string): Pr
 
         await client.send("Page.enable", {}, sessionId);
         await client.send("Runtime.enable", {}, sessionId);
-        const domReady = client.waitForEvent("Page.domContentEventFired", sessionId, 30000).catch(() => undefined);
-        await client.send("Page.navigate", { url: origin }, sessionId);
+        const domReady = client.waitForEvent("Page.domContentEventFired", sessionId, AGIL_STORAGE_PAGE_LOAD_TIMEOUT_MS)
+          .catch(() => undefined);
+        /* Chrome answers `Page.navigate` once the page's response has arrived,
+           so the provider's own latency sits inside this call. */
+        await client.send("Page.navigate", { url: origin }, sessionId, AGIL_STORAGE_PAGE_LOAD_TIMEOUT_MS);
         await domReady;
         return await waitForAgilStorageSnapshotInCdpSession(client, sessionId);
       } finally {
@@ -1358,14 +1362,6 @@ async function waitForDebugger(port: number): Promise<void> {
   throw new Error("Chrome debugger port did not open in time.");
 }
 
-async function getPlaywright(): Promise<typeof import("playwright")> {
-  if (!playwrightPromise) {
-    playwrightPromise = import("playwright");
-  }
-
-  return playwrightPromise;
-}
-
 async function cleanupTemporaryChromeLaunch(userDataDir: string, chrome?: Bun.NullSubprocess): Promise<void> {
   if (chrome) {
     try {
@@ -1451,50 +1447,6 @@ async function readAgilStorageSnapshotFromNavigable(
   }
 
   return merged;
-}
-
-async function readAgilStorageSnapshotFromContext(
-  context: Pick<BrowserContext, "newPage">,
-): Promise<BrowserStorageSnapshot> {
-  return readAgilStorageSnapshotFromNavigable(async (origin) => {
-    const page = await context.newPage();
-    const forgetPage = trackOpenBrowserTarget(() => page.close());
-    try {
-      await page.goto(origin, {
-        waitUntil: "domcontentloaded",
-        timeout: 30000,
-      });
-      try {
-        await page.waitForFunction(() => (
-          Boolean(localStorage.getItem("tokenSearchFlight"))
-          || Boolean(localStorage.getItem("tokenTravelC"))
-          || Boolean(localStorage.getItem("user_data"))
-          || Boolean(localStorage.getItem("ip"))
-        ), {
-          timeout: 5000,
-        });
-      } catch {
-        // Some origins may not persist data for the active session.
-      }
-
-      return await page.evaluate(() => ({
-        tokenSearchFlight: localStorage.getItem("tokenSearchFlight")
-          || localStorage.getItem("tokenTravelC")
-          || "",
-        userData: localStorage.getItem("user_data") || "",
-        ip: localStorage.getItem("ip") || "",
-      }));
-    } finally {
-      forgetPage();
-      await page.close().catch(() => undefined);
-    }
-  });
-}
-
-/* On a browser reached with `connectOverCDP`, `close()` drops the connection
-   and the contexts Playwright created, and leaves the shared Chrome running. */
-async function disconnectBrowser(browser: Browser | undefined): Promise<void> {
-  await browser?.close().catch(() => undefined);
 }
 
 const AGIL_STORAGE_ORIGIN_HOSTS = new Set(
@@ -1719,42 +1671,32 @@ function pickBestAgilStorageSnapshotCandidate(
 async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> {
   const userDataDirs = readAgilChromeUserDataDirCandidates();
   const failures: string[] = [];
+  /* One Chrome is often reachable through several of the sources below (the
+     configured endpoint and its profile's `DevToolsActivePort`); each read opens
+     a tab in it, so a browser that failed once is not asked again. */
+  const triedEndpoints = new Set<string>();
 
   const browserEndpoint = resolveAgilBrowserEndpoint();
   if (browserEndpoint) {
-    let browser: Browser | undefined;
-    try {
-      const playwright = await getPlaywright();
-      browser = await playwright.chromium.connectOverCDP(browserEndpoint, {
-        timeout: resolveAgilBrowserConnectTimeoutMs(),
-      });
-      const context = browser.contexts()[0];
-      if (!context) {
-        throw new Error("Connected browser exposed no contexts.");
-      }
-      return await readAgilStorageSnapshotFromContext(context);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
-      failures.push(`connected browser: ${detail}`);
-    } finally {
-      await disconnectBrowser(browser);
-    }
-
     const devToolsEndpoint = await resolveAgilBrowserDevToolsWsEndpoint(browserEndpoint);
     if (devToolsEndpoint) {
+      triedEndpoints.add(devToolsEndpoint);
       try {
         return await readAgilStorageSnapshotFromDevToolsEndpoint(devToolsEndpoint);
       } catch (error) {
         const detail = error instanceof Error ? error.message : "Unable to read Agil storage";
-        failures.push(`connected browser direct CDP: ${detail}`);
+        failures.push(`connected browser: ${detail}`);
       }
+    } else {
+      failures.push("connected browser: no DevTools endpoint answered.");
     }
   }
 
   for (const devToolsEndpoint of await readRunningChromeDevToolsBrowserWsEndpoints()) {
-    if (devToolsEndpoint === browserEndpoint) {
+    if (triedEndpoints.has(devToolsEndpoint)) {
       continue;
     }
+    triedEndpoints.add(devToolsEndpoint);
 
     try {
       return await readAgilStorageSnapshotFromDevToolsEndpoint(devToolsEndpoint);
@@ -1766,9 +1708,10 @@ async function extractBrowserStorageSnapshot(): Promise<BrowserStorageSnapshot> 
 
   for (const userDataDir of userDataDirs) {
     const devToolsEndpoint = resolveChromeDevToolsBrowserWsEndpoint(userDataDir);
-    if (!devToolsEndpoint || devToolsEndpoint === browserEndpoint) {
+    if (!devToolsEndpoint || triedEndpoints.has(devToolsEndpoint)) {
       continue;
     }
+    triedEndpoints.add(devToolsEndpoint);
 
     try {
       return await readAgilStorageSnapshotFromDevToolsEndpoint(devToolsEndpoint);

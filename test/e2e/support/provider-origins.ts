@@ -7,7 +7,8 @@ export const FAKE_UPSTREAM_ENV = "FLY_DESK_E2E_FAKE_UPSTREAM";
 export const CALLER_HEADER = "x-fly-desk-e2e-caller";
 export const ORIGIN_HEADER = "x-fly-desk-e2e-origin";
 export const BLOCKED_EGRESS_PATH = "/__e2e/blocked";
-/* Where `AGIL_BROWSER_URL` points: a Chrome fallback that probes it gets a 404. */
+/* Where `AGIL_BROWSER_URL` points: the fake upstream's Chrome (`fake-chrome.ts`),
+   which answers its probe with a 404 until a test opens it. */
 export const FAKE_CDP_PATH = "/__cdp";
 
 export const PROVIDER_ORIGIN_TAGS: Readonly<Record<string, string>> = {

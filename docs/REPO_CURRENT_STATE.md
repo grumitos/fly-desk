@@ -218,6 +218,7 @@ Current coverage:
 - a failed provider named in one line with nothing it said reaching the page, web storage, the console, `/api` answers, or service logs; a token refused inside a 200 named the same way in an exact search, a range and a matrix, the last two stopping at the first refusal; both providers down
 - stopping a search (its fan-out halts and its partial list is kept and reused) and closing the tab mid-search (the search is cancelled and its purchase paths still work)
 - admission in arrival order with no overtaking, the queue limit, queue timeout, and cancelled waiters, the Agil in-flight ceiling, a restart of every unit reading results, purchase paths, and suggestions back from SQLite, and a renewed Click and Book Plus token file picked up with nothing restarted
+- with no stored Agil identity, the session read from the platform Chrome over DevTools in one tab that is closed afterwards, even behind a slow page, and the identity kept so the next start needs no browser; a worker stopped mid-read closes its tab
 - phone sheets and the system back at 390×844, every mode at 360×740, and the 1024×768 desk, with no horizontal overflow
 - suggestions from both providers, recent stations per browser and frequent ones for the whole desk, a domestic quote in soles pasted back, and an exchange rate that never answers
 

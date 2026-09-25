@@ -11,7 +11,7 @@ import {
   type Response as PlaywrightResponse,
 } from "playwright";
 import { signIn, type ApiSession } from "./api-client.ts";
-import { startFakeUpstream, type FakeUpstream } from "./fake-upstream.ts";
+import { startFakeUpstream, type FakeOp, type FakeUpstream } from "./fake-upstream.ts";
 import { isLoopbackHostname } from "./provider-origins.ts";
 import { describeRequests, FALLBACK_OPS, TODAY } from "./scenario.ts";
 import { startStack, type Stack, type StackOptions } from "./stack.ts";
@@ -37,8 +37,12 @@ export interface TestOptions {
   timeout?: number;
   /** Keeps the test and reports its failure as a known gap instead of a failure. */
   todo?: string;
+  /** Why the test cannot run here; it is reported as skipped. */
+  skip?: string;
   /** Uncaught errors in the page fail the test unless this is set. */
   allowPageErrors?: boolean;
+  /** Fallback operations (`FALLBACK_OPS`) the test exercises on purpose. */
+  allowedFallbacks?: readonly FakeOp[];
 }
 
 export interface ContextOptions extends BrowserContextOptions {
@@ -313,7 +317,7 @@ export class Suite {
   }
 
   test(name: string, run: (scope: TestScope, t: TestContext) => Promise<void>, options: TestOptions = {}): void {
-    test(name, { timeout: options.timeout ?? DEFAULT_TEST_TIMEOUT_MS, todo: options.todo }, async (t) => {
+    test(name, { timeout: options.timeout ?? DEFAULT_TEST_TIMEOUT_MS, todo: options.todo, skip: options.skip }, async (t) => {
       this.fake.reset();
       const scope = new TestScope(this, name);
       try {
@@ -332,8 +336,10 @@ export class Suite {
      fixture broke, and no page threw. */
   private assertInvariants(scope: TestScope, options: TestOptions): void {
     assert.deepEqual(this.fake.blocked, [], "a stack process tried to reach a host outside the fake upstream");
+    const allowedFallbacks = options.allowedFallbacks ?? [];
     assert.deepEqual(
-      this.fake.requests((request) => FALLBACK_OPS.includes(request.op)).map((request) => `${request.op} ${request.origin}${request.path}`),
+      this.fake.requests((request) => FALLBACK_OPS.includes(request.op) && !allowedFallbacks.includes(request.op))
+        .map((request) => `${request.op} ${request.origin}${request.path}`),
       [],
       "a provider fallback path ran",
     );

@@ -11,10 +11,8 @@ upstream's request log, the API, and process ids.
 - `bun run test`: `test:unit`, then `test:e2e`. `deploy-vps.yml` runs it before
   it builds a release.
 - `bun run test:unit`: `bun test test/unit`, for what an end-to-end run cannot
-  reach deterministically: pure logic, the session cache on a temporary SQLite
-  file, and one search worker against a fake Chrome. The worker test sends a
-  real SIGTERM, so it is skipped on Windows, where a signal cannot be caught.
-  It passes while the folder is empty.
+  reach deterministically: pure logic and the session cache on a temporary
+  SQLite file. It passes while the folder is empty.
 - `bun run test:e2e`: `bun run build`, then `scripts/run-e2e.ts`.
 - `bun scripts/run-e2e.ts [spec files…] [-- node --test options…]`: runs the
   suite, or some of its files, on an existing build. For example:
@@ -57,12 +55,17 @@ and a reset fake. A test has three minutes. The harness lives in
   fixtures. A test can make an operation fail, slow down, or wait at a gate
   (`hold`) until the test releases it. The request log records every call with
   its calling process, status, and whether the caller aborted it.
+- `support/fake-chrome.ts`: the platform Chrome behind `AGIL_BROWSER_URL`,
+  served by the fake upstream. Closed unless a test opens it; open, it speaks
+  the DevTools calls the runtime makes, holds per-origin localStorage, answers
+  a navigation only once its page has responded (a delay, or never), and
+  records every tab and whether it was closed.
 - `support/harness.ts`: suites, tests and browser contexts. A context aborts
   every non-loopback request, captures `/r/*` answers without following their
   redirects, and records `/api` traffic, console output and page errors. After
   every test it asserts that nothing tried to leave the machine, that no
-  provider fallback path ran, that the fake built every answer it was asked
-  for, and that no page threw.
+  provider fallback path ran unless the test names it (`allowedFallbacks`),
+  that the fake built every answer it was asked for, and that no page threw.
 - `support/ui.ts`: every selector the specs use. Selectors are roles,
   accessible names and visible text; never CSS classes or pixel positions.
 - `support/api-client.ts`, `support/flows.ts`, `support/scenario.ts` and
@@ -78,6 +81,7 @@ same on every run, and a year boundary is always six weeks away.
 
 | File | Covers |
 | --- | --- |
+| `agil-session.e2e.ts` | With no stored identity, the Agil session read from the platform Chrome in one tab, behind a page slower than one DevTools command, the tab closed and the identity kept for the next start; a worker stopped mid-read closing its tab (not on Windows, where a stop cannot be intercepted) |
 | `desk-search.e2e.ts` | A shared link through the sign-in gate, each of its stations looked up once; merged results, filters and sorting, and the list's outcome read out; quotation revalidation and a confirmed fare quoted again; both providers' purchase redirects, and a blocked provider window named; the flexible matrix filled cell by cell; a range of three hundred fares in a stable order that matches the backend's, back at its top after any change of filter; the list, its column head, the passenger popover and both calendars from the keyboard, with «hoy» on the desk's day |
 | `migration.e2e.ts` | A migratory sweep across the year boundary: priced, failed and empty months, a month opened without a new search, and the route counted once; each month followed from the moment its search starts |
 | `resilience.e2e.ts` | A failed provider named in one line with nothing it said reaching the page or the logs, and named again by the next search after the line is dismissed; a token refused inside a 200 named the same way in an exact search, a range and a matrix, the last two stopping at the first refusal; both providers down, never read out as an empty route; stopping a search; closing the tab mid-search |
