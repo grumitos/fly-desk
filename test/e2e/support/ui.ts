@@ -155,6 +155,13 @@ export const notice = {
   dismiss: (page: Page) => page.getByRole("button", { name: "Descartar el aviso", exact: true }),
 };
 
+/* ---- What the polite live regions read out without being asked ---- */
+
+export const announcement = {
+  /** An announcement by its whole text: «6 vuelos», «2 vuelos de 6», «Configuración copiada». */
+  status: (page: Page, text: string) => page.getByRole("status").filter({ hasText: new RegExp(`^${escapeRegExp(text)}$`) }),
+};
+
 /* ---- Results ---- */
 
 export type SortCriterion = "precio" | "duración" | "hora de salida" | "número de escalas";
@@ -227,12 +234,16 @@ export const detail = {
   flightRow: (root: Locator, flight: string) => root.getByText(new RegExp(`· ${escapeRegExp(flight)}$`)),
   /** The phone's «Cotización copiada» line. */
   copied: (root: Locator) => root.getByRole("status").filter({ hasText: "Cotización copiada" }),
+  /** What the panel says about the provider's window it was asked to open. */
+  purchaseFeedback: (root: Locator) => root.getByRole("status").filter({ hasNotText: "Cotización copiada" }),
   quoteError: (root: Locator) => root.getByRole("alert"),
 };
 
 export const quotation = {
   dialog: (page: Page) => page.getByRole("dialog", { name: "Cotización lista para pegar" }),
   close: (page: Page) => page.getByRole("button", { name: "Cerrar la cotización" }),
+  /** «Tarifa preparada hace 2 min · …», at the dialog's foot. */
+  fareAge: (page: Page) => quotation.dialog(page).getByText(/^Tarifa preparada /),
 };
 
 /* ---- A pasted commercial quotation ---- */

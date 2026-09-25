@@ -217,6 +217,14 @@ suite.test("a shared round-trip link survives the sign-in gate and carries the s
   assert.equal(agilLocation.searchParams.get("departureDate"), departure.split("-").reverse().join("/"));
   await agilPage.close();
 
+  /* A popup blocker is named on the panel, and nothing is asked for. */
+  await page.evaluate(() => {
+    window.open = () => null;
+  });
+  await detail.purchase(offerPanel).click();
+  await detail.purchaseFeedback(offerPanel).filter({ hasText: /^El navegador bloqueó la ventana del proveedor\./ }).waitFor({ timeout: 5_000 });
+  assert.equal(tracked.redirects.length, 2, "a blocked window still asked for its purchase path");
+
   /* The Click and Book Plus token only ever travels inside that 302. */
   const html = await page.content();
   assert.ok(!html.includes(CBPLUS_TOKEN), "the token reached the DOM");
