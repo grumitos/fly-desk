@@ -1,13 +1,9 @@
 import { useEffect, useState } from "react"
 import { motionToken } from "@/lib/reduced-motion"
 
-/*
- * The part of the idle to active choreography CSS cannot do alone: the fields
- * rise to the top and the mode segments move into the title bar (they change
- * parent). Both are FLIPs — measure before, measure after, play the difference
- * away — in transforms only, so no frame relayouts. Durations come from the
- * motion tokens, so reduced motion stops them with everything else.
- */
+/* The idle-to-active moves CSS cannot do alone (the segments change parent),
+   played as transform-only FLIPs on the motion tokens, so reduced motion stops
+   them with everything else. */
 
 /** How long the idle-only furniture stays mounted so it can fade out. */
 export function idleExitDuration(): number {
@@ -34,14 +30,9 @@ export function measureFlip(node: Element | null | undefined): FlipRect | null {
 }
 
 /**
- * Move `node` so that `anchor` (by default the node itself) starts at `from`
- * and eases to where it is now.
- *
- * `centered`: the box changes width around a shared centre (the idle form is
- * narrower than the active one), so it travels from centre to centre and takes
- * its new width at once, fading up from half opacity so the change of width
- * does not read as a jump. `reveal`: the box grew in place (the phone form
- * reopening) and is unclipped from its old height.
+ * Move `node` so `anchor` (default: the node) starts at `from` and eases home.
+ * `centered` travels centre to centre and fades up from half opacity, so a new
+ * width does not jump; `reveal` unclips a box that grew in place.
  */
 export function playFlip(
   node: HTMLElement,

@@ -55,11 +55,9 @@ type TriggerElementProps = {
 }
 
 /**
- * The shortcut of a labelled control, or why it is unavailable.
- *
- * A disabled control keeps focus and pointer events (`aria-disabled` instead of
- * `disabled`), so keyboard and mouse users both reach the explanation, and a
- * press does nothing.
+ * The shortcut of a labelled control, or why it is unavailable. A disabled
+ * control stays focusable (`aria-disabled`), so keyboard and pointer users both
+ * reach the explanation, and a press does nothing.
  */
 function ShortcutTooltip({
   children,

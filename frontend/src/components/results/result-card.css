@@ -3,15 +3,9 @@
    is drawn in. Below 787px of list the row becomes the stacked phone card. */
 
 @layer utilities {
-  /*
-   * Lanes: logo 28 · carrier 142 · legs 359 · baggage 36 · price 116 ·
-   * provider 26, with 12px gaps and 10px of left padding: 787 at their floors,
-   * which is the stacking threshold. A wider list grows the stops lane first
-   * (to 143 inside the legs), then the carrier (to 170, «Operado por …» on a
-   * codeshare) and the price (to 135), and shares whatever is left as spacing
-   * between the named columns (`--fd-row-share`). The fixed 428 and 284 in
-   * `useShellSize.ts` come from these numbers.
-   */
+  /* The lanes at their floors (logo 28, carrier 142, legs 359, baggage 36,
+     price 116, provider 26, 12px gaps, 10px padding) make the 787px stacking
+     threshold; useShellSize.ts derives its 428 and 284 from them. */
   .fd-card {
     position: relative;
     display: grid;

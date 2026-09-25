@@ -20,13 +20,9 @@ function sheetExitDuration(): number {
   return motionToken("--fd-dur-exit-hoja")
 }
 
-/*
- * Gestures: a vertical drag from the grabber closes a bottom sheet; a
- * horizontal drag closes a sheet that asks for `backSwipe`, towards the edge it
- * came from. The axis is decided in the first pixels; anything else is left to
- * the body's native scroll (`touch-action: pan-y` in the CSS keeps that split
- * without `preventDefault`).
- */
+/* A vertical drag from the grabber closes a bottom sheet; a horizontal one
+   closes a `backSwipe` sheet toward its edge. The axis locks in the first
+   pixels and the rest stays native scroll (`touch-action: pan-y`). */
 
 /** Pixels of movement before the gesture is given to one axis or the other. */
 const AXIS_LOCK_PX = 8
