@@ -19,6 +19,8 @@ type ProviderFailure = {
 export type SearchOutcome = {
   /** Providers whose search ended in failure. */
   failed: ProviderFailure[]
+  /** Providers that finished with part of the search unanswered (a day, a GDS, a cell), by display name. */
+  incompleteLabels: string[]
   /** Providers still queued or running, by display name. */
   waitingLabels: string[]
   /** Every provider that was asked ended in failure — nothing was searched. */
@@ -31,6 +33,7 @@ export type SearchOutcome = {
 
 const EMPTY_OUTCOME: SearchOutcome = {
   failed: [],
+  incompleteLabels: [],
   waitingLabels: [],
   allFailed: false,
   jobFailed: false,
@@ -66,6 +69,11 @@ export function describeSearchOutcome(results: SearchJobResponse | null | undefi
         short: `${label} ${reason?.[1] ?? "no respondió"}`,
       }
     })
+  /* A provider that answered in part is not a failed one: its list stands, and
+     only the notice can say that it is short. */
+  const incompleteLabels = diagnostics
+    .filter((entry) => entry.status === "completed" && entry.partial)
+    .map((entry) => providerDisplayName(entry.providerId))
   const waitingLabels = diagnostics
     .filter((entry) => entry.status === "queued" || entry.status === "running")
     .map((entry) => providerDisplayName(entry.providerId))
@@ -79,28 +87,31 @@ export function describeSearchOutcome(results: SearchJobResponse | null | undefi
 
   return {
     failed,
+    incompleteLabels,
     waitingLabels,
     allFailed,
     jobFailed,
-    notice: buildNotice({ results, failed, allFailed, jobFailed }),
+    notice: buildNotice({ results, failed, incompleteLabels, allFailed, jobFailed }),
   }
 }
 
 function buildNotice({
   results,
   failed,
+  incompleteLabels,
   allFailed,
   jobFailed,
 }: {
   results: SearchJobResponse
   failed: ProviderFailure[]
+  incompleteLabels: string[]
   allFailed: boolean
   jobFailed: boolean
 }): string {
   /* A job that died on admission has one reason, and it is the whole story. */
   if (jobFailed && results.error) return results.error
 
-  if (failed.length === 0) return ""
+  if (failed.length === 0 && incompleteLabels.length === 0) return ""
 
   /* 04 §8's single line: «incompletos» means a real but short list, «ningún
      proveedor» means no list at all. */
@@ -108,7 +119,11 @@ function buildNotice({
     ? "No se pudo consultar a ningún proveedor"
     : "Resultados incompletos"
 
-  return [headline, ...uniqueStrings(failed.map((entry) => entry.short))].join("\n")
+  return [
+    headline,
+    ...uniqueStrings(failed.map((entry) => entry.short)),
+    ...uniqueStrings(incompleteLabels.map((label) => `${label} respondió en parte`)),
+  ].join("\n")
 }
 
 /** The reasons as prose, for the surfaces with room for a sentence each. */

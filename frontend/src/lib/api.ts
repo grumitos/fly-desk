@@ -425,6 +425,7 @@ function providerDiagnosticLines(
       `${provider} ${entry.kind}: ${entry.status}`,
       typeof entry.offers === "number" ? `${entry.offers} resultado${entry.offers === 1 ? "" : "s"}` : "",
       typeof entry.warningCount === "number" ? `${entry.warningCount} alerta${entry.warningCount === 1 ? "" : "s"}` : "",
+      entry.partial ? "parcial" : "",
       entry.error ? `error=${entry.error}` : "",
     ].filter(Boolean).join(" · ")
 

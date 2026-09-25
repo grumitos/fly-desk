@@ -431,7 +431,7 @@ function applyProviderDiagnosticSummary(
   entries: ProviderDiagnostics[] | undefined,
   providerId: ProviderId,
   status: ProviderDiagnostics["status"],
-  summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "error">,
+  summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "partial" | "error">,
 ): ProviderDiagnostics[] {
   return updateProviderDiagnosticsEntry(entries, providerId, (entry) => {
     setProviderDiagnosticStatus(entry, status, summary);
@@ -2336,7 +2336,7 @@ async function handleSearchRequest(
             };
             const recordProviderSummary = (
               status: ProviderDiagnostics["status"],
-              summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "error">,
+              summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "partial" | "error">,
             ) => {
               runtime.sessions.updateSearchJob(job.id, (current) => ({
                 ...current,
@@ -2416,9 +2416,12 @@ async function handleSearchRequest(
                 partial: result.partial,
               });
               recordProviderEvent("completed", "completed");
+              /* A provider that completes partial left a day or a GDS out: its
+                 list is real but short, and the desk names it for that. */
               recordProviderSummary("completed", {
                 offers: result.offers.length,
                 warningCount: result.warnings.length,
+                partial: result.partial,
               });
               syncSearchProgress();
             } catch (error) {
@@ -2646,7 +2649,7 @@ async function handleMatrixRequest(
         };
         const recordProviderSummary = (
           status: ProviderDiagnostics["status"],
-          summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "error">,
+          summary: Pick<ProviderDiagnostics, "offers" | "warningCount" | "partial" | "error">,
         ) => {
           runtime.sessions.updateMatrixJob(job.id, (current) => ({
             ...current,
@@ -2741,6 +2744,7 @@ async function handleMatrixRequest(
           recordProviderSummary("completed", {
             offers: result.cells.filter((cell) => typeof cell.price?.amount === "number").length,
             warningCount: result.warnings.length,
+            partial: result.searchMeta.partial,
           });
         } catch (error) {
           if (!isMatrixJobRunning(runtime, job.id)) {

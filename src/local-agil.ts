@@ -3238,10 +3238,7 @@ export async function resolveLocalAgilExactProgressive(
       } catch (error) {
         logAgilOmission(`GDS ${gds}`, request, error, startedAt);
         partial = true;
-        const warning = error instanceof Error
-          ? `Agil GDS ${gds} omitted: ${error.message}`
-          : `Agil GDS ${gds} omitted due to an unknown error.`;
-        warnings.push(warning);
+        warnings.push(`Agil GDS ${gds} omitted: ${providerPublicFailureMessage("agil-local", error)}`);
 
         if (onUpdate?.({
           offers: dedupeAgilOffers(mappedOffers),
