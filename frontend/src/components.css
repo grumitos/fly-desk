@@ -1892,7 +1892,7 @@
 
   .fd-quote-panel {
     display: flex;
-    width: min(620px, calc(100vw - 32px));
+    width: min(620px, calc(100dvw - 32px));
     height: min(768px, calc(100dvh - 32px));
     flex-direction: column;
     overflow: hidden;

@@ -1630,7 +1630,7 @@
 
 .fd-sheet--modal {
   position: relative;
-  width: min(940px, calc(100vw - 48px));
+  width: min(940px, calc(100dvw - 48px));
   height: min(520px, calc(100dvh - 48px));
   border-radius: var(--fd-radius-14);
   box-shadow: var(--fd-shadow-hoja);
@@ -1783,7 +1783,7 @@
   white-space: nowrap;
 }
 
-@container fdpaste (max-width: 719px) {
+@container fdpaste (max-width: 719.98px) {
   .fd-quotation-paste {
     display: flex;
     height: auto;
