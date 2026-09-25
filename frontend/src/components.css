@@ -184,14 +184,14 @@
     gap: 10px;
     height: var(--fd-control-bar);
     padding: 0 8px 0 12px;
-    border: 1px solid color-mix(in srgb, var(--color-primary) 38%, transparent);
+    border: 1px solid var(--color-warning-border);
     border-radius: var(--fd-radius-10);
     background: var(--color-warning-soft);
     color: var(--color-warning-soft-foreground);
   }
 
   .fd-alert-line-error {
-    border-color: color-mix(in srgb, var(--color-destructive) 50%, transparent);
+    border-color: var(--color-destructive-border);
   }
 
   .fd-alert-line-text {
@@ -1254,18 +1254,34 @@
     place-items: center;
     border-radius: var(--fd-radius-10);
     background: transparent;
-    color: var(--color-foreground);
-    transition: background-color var(--fd-dur-tacto) var(--fd-ease-tacto);
+    color: var(--color-muted-foreground);
+    transition:
+      background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+      color var(--fd-dur-tacto) var(--fd-ease-tacto);
   }
 
   @media (hover: hover) {
     .fd-detail-close:hover {
       background: var(--color-hover);
+      color: var(--color-foreground);
     }
   }
 
   .fd-detail-close-back {
     display: none;
+  }
+
+  /* No offer picked yet: one quiet line where the detail will be. */
+  .fd-detail-empty {
+    display: grid;
+    min-height: 0;
+    flex: 1;
+    place-items: center;
+    margin: 0;
+    padding: 24px;
+    color: var(--color-muted-foreground);
+    font-size: var(--fd-text-base);
+    text-align: center;
   }
 
   .fd-detail-body {
@@ -1444,6 +1460,7 @@
   }
 
   .fd-detail-footer[data-quote-error] {
+    margin-top: 0;
     border-top: 0;
   }
 
@@ -1503,9 +1520,12 @@
     display: grid;
     flex-shrink: 0;
     gap: 10px;
-    padding: 10px 12px 0;
-    border-top: 1px solid var(--color-border);
-    background: var(--color-surface-sunken);
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--color-warning-border);
+    border-radius: var(--fd-radius-10);
+    background: var(--color-warning-soft);
+    color: var(--color-warning-soft-foreground);
     animation: fd-enter-confirmacion var(--fd-dur-confirmacion) var(--fd-ease-estructura) both;
   }
 
@@ -1513,11 +1533,7 @@
     display: flex;
     align-items: flex-start;
     gap: 10px;
-    padding: 9px 10px;
-    border: 1px solid color-mix(in srgb, var(--color-primary) 38%, transparent);
-    border-radius: var(--fd-radius-10);
-    background: var(--color-warning-soft);
-    color: var(--color-warning-soft-foreground);
+    margin: 0;
     font-size: var(--fd-text-meta);
     line-height: 1.4;
   }
@@ -1635,7 +1651,7 @@
     }
 
     .fd-detail-quote-error {
-      padding: 12px 14px 0;
+      margin-inline: 14px;
     }
 
     .fd-detail-action-row {
@@ -1700,7 +1716,6 @@
       width: var(--fd-control-touch);
       height: var(--fd-control-touch);
       margin-left: -8px;
-      border-radius: var(--fd-radius-12);
     }
 
     .fd-detail-close-back {
@@ -1811,32 +1826,18 @@
     .fd-detail-quote-error {
       display: flex;
       align-items: flex-start;
-      gap: 10px;
       margin: 0 16px 8px;
-      padding: 11px 12px;
-      border-top: 0;
-      border-radius: var(--fd-radius-12);
-      background: var(--color-foreground);
-      color: var(--color-background);
     }
 
     .fd-detail-quote-error-message {
       min-width: 0;
       flex: 1;
-      padding: 0;
-      border: 0;
-      background: transparent;
-      color: inherit;
       font-size: var(--fd-text-base);
     }
 
     .fd-detail-quote-error-icon {
       width: var(--fd-icon-16);
       height: var(--fd-icon-16);
-    }
-
-    .fd-detail-quote-error-detail {
-      opacity: 0.75;
     }
 
     .fd-detail-quote-error-full {
@@ -1858,15 +1859,7 @@
     .fd-detail-quote-error-retry {
       flex: none;
       padding-inline: 12px;
-      background-color: color-mix(in srgb, var(--color-background) 22%, transparent);
-      color: var(--color-background);
       font-size: var(--fd-text-base);
-    }
-
-    @media (hover: hover) {
-      .fd-detail-quote-error-retry:hover {
-        background-color: color-mix(in srgb, var(--color-background) 32%, transparent);
-      }
     }
 
     .fd-detail-quote-error-retry svg {
@@ -2016,10 +2009,6 @@
 
   .fd-quote-text {
     margin: 0;
-    padding: 14px;
-    border: 1px solid var(--color-border);
-    border-radius: var(--fd-radius-12);
-    background: color-mix(in srgb, var(--color-secondary) 70%, transparent);
     color: var(--color-foreground);
     font-family: var(--font-mono);
     font-size: var(--fd-text-meta);

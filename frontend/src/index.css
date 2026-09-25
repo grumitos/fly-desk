@@ -37,6 +37,9 @@
   --color-warning: #d97757;
   --color-warning-soft: #d977571a;
   --color-warning-soft-foreground: #6f321f;
+  /* The notice's edge; the accent is the same in both themes. */
+  --color-warning-border: #d9775761;
+  --color-destructive-border: #d9775780;
 
   /* States, written out per theme (the build cannot keep a derived colour
      theme-aware). */
@@ -239,10 +242,8 @@
     display: inline-flex;
     height: var(--fd-control-standard);
     align-items: stretch;
-    overflow: hidden;
     gap: 4px;
-    border-radius: var(--fd-radius-10);
-    color: var(--color-secondary-foreground);
+    color: var(--color-muted-foreground);
   }
 
   .fd-capsule-cell {
@@ -251,7 +252,7 @@
     height: var(--fd-control-standard);
     place-items: center;
     border: 0;
-    border-radius: 0;
+    border-radius: var(--fd-radius-10);
     background-color: transparent;
     color: inherit;
     transition:
@@ -755,9 +756,7 @@
     height: var(--fd-control-touch);
     flex-shrink: 0;
     place-items: center;
-    border-radius: var(--fd-radius-12);
-    background: var(--color-secondary);
-    color: var(--color-foreground);
+    color: var(--color-muted-foreground);
   }
 
   .fd-trip-mode-controls {
@@ -918,7 +917,6 @@
 
   .fd-capsule {
     height: auto;
-    overflow: visible;
     gap: 6px;
   }
 
@@ -926,8 +924,8 @@
     width: var(--fd-control-touch-sm);
     height: var(--fd-control-touch-sm);
     border: 1px solid var(--color-input);
-    border-radius: var(--fd-radius-10);
     background-color: var(--color-secondary);
+    color: var(--color-foreground);
   }
 
   .fd-segmented {
@@ -1289,13 +1287,12 @@
     border: 1px solid var(--color-input);
     border-radius: var(--fd-radius-10);
     background: var(--color-secondary);
-    color: var(--color-muted-foreground);
-    transition: color var(--fd-dur-tacto) var(--fd-ease-tacto);
+    color: var(--color-foreground);
   }
 
   @media (hover: hover) {
     .fd-filter-strip-copy:not(:disabled):hover {
-      color: var(--color-foreground);
+      background-image: var(--fd-hover-layer);
     }
   }
 
@@ -1643,9 +1640,21 @@
 }
 
 .fd-sheet--modal .fd-sheet-close {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--fd-radius-10);
+  width: var(--fd-control-standard);
+  height: var(--fd-control-standard);
+  border: 0;
+  background: transparent;
+  color: var(--color-muted-foreground);
+  transition:
+    background-color var(--fd-dur-tacto) var(--fd-ease-tacto),
+    color var(--fd-dur-tacto) var(--fd-ease-tacto);
+}
+
+@media (hover: hover) {
+  .fd-sheet--modal .fd-sheet-close:hover {
+    background: var(--color-hover);
+    color: var(--color-foreground);
+  }
 }
 
 .fd-sheet--modal .fd-sheet-body,
@@ -1764,17 +1773,17 @@
 
 .fd-quotation-paste-warning {
   display: flex;
-  height: 36px;
+  min-width: 0;
   align-items: center;
-  gap: 10px;
-  overflow: hidden;
+  gap: 8px;
   margin: 0;
-  padding: 0 11px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 38%, transparent);
-  border-radius: var(--fd-radius-10);
-  background: var(--color-warning-soft);
-  color: var(--color-warning-soft-foreground);
+  color: var(--color-muted-foreground);
   font-size: var(--fd-text-meta);
+}
+
+.fd-quotation-paste-warning svg {
+  flex-shrink: 0;
+  color: var(--color-warning);
 }
 
 .fd-quotation-paste-warning span {
@@ -1880,8 +1889,8 @@
   height: var(--fd-control-touch);
   flex: 0 0 auto;
   place-items: center;
-  border: 0;
-  border-radius: var(--fd-radius-12);
+  border: 1px solid var(--color-input);
+  border-radius: var(--fd-radius-10);
   background: var(--color-secondary);
   color: var(--color-foreground);
 }
