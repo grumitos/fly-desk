@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
+import { envNumber } from "./env";
 
 export const WEB_SESSION_COOKIE_NAME = "flydesk_session";
 const REDIRECT_SESSION_COOKIE_NAME = "flydesk_redirect_session";
@@ -134,33 +135,18 @@ export function verifyWebPassword(password: string): PasswordVerificationResult 
   return { ok: verifyScryptPassword(password, resolveWebPasswordHash()!) };
 }
 
-/* Read here rather than through `env.ts`: the end-to-end harness imports this
-   module under Node, which resolves only relative imports that name their
-   extension. A blank value is unset, as it is there. */
 export function resolveWebSessionTtlSeconds(): number {
-  const configured = Number(process.env.FLY_DESK_WEB_SESSION_TTL_SECONDS?.trim() || DEFAULT_WEB_SESSION_TTL_SECONDS);
-  if (!Number.isFinite(configured)) {
-    return DEFAULT_WEB_SESSION_TTL_SECONDS;
-  }
-
-  return Math.max(
-    MIN_WEB_SESSION_TTL_SECONDS,
-    Math.min(MAX_WEB_SESSION_TTL_SECONDS, Math.trunc(configured)),
-  );
+  return Math.trunc(envNumber("FLY_DESK_WEB_SESSION_TTL_SECONDS", DEFAULT_WEB_SESSION_TTL_SECONDS, {
+    min: MIN_WEB_SESSION_TTL_SECONDS,
+    max: MAX_WEB_SESSION_TTL_SECONDS,
+  }));
 }
 
 export function resolveWebSessionMaxLifetimeSeconds(): number {
-  const configured = Number(
-    process.env.FLY_DESK_WEB_SESSION_MAX_LIFETIME_SECONDS?.trim() || DEFAULT_WEB_SESSION_MAX_LIFETIME_SECONDS,
-  );
-  if (!Number.isFinite(configured)) {
-    return DEFAULT_WEB_SESSION_MAX_LIFETIME_SECONDS;
-  }
-
-  return Math.max(
-    MIN_WEB_SESSION_MAX_LIFETIME_SECONDS,
-    Math.min(MAX_WEB_SESSION_MAX_LIFETIME_SECONDS, Math.trunc(configured)),
-  );
+  return Math.trunc(envNumber("FLY_DESK_WEB_SESSION_MAX_LIFETIME_SECONDS", DEFAULT_WEB_SESSION_MAX_LIFETIME_SECONDS, {
+    min: MIN_WEB_SESSION_MAX_LIFETIME_SECONDS,
+    max: MAX_WEB_SESSION_MAX_LIFETIME_SECONDS,
+  }));
 }
 
 function parseCookies(headerValue: string | null): Map<string, string> {
