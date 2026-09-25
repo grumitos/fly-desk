@@ -4255,10 +4255,6 @@ async function searchLocalCostamarExact(
   request: SearchRequest,
   providerContext?: ProviderContext,
 ): Promise<ProviderSearchResult> {
-  if (request.searchMode === "stay-range") {
-    return searchLocalCostamarRange(request, providerContext);
-  }
-
   const outcome = await searchRecommendations(request, providerContext, false);
   return {
     offers: outcome.offers,
@@ -4285,42 +4281,6 @@ export async function resolveLocalCostamarExactProgressive(
 
 function enumerateRangeRequests(request: SearchRequest): SearchRequest[] {
   return enumerateUsefulFlexibleRequests(request);
-}
-
-async function searchLocalCostamarRange(
-  request: SearchRequest,
-  providerContext?: ProviderContext,
-): Promise<ProviderSearchResult> {
-  const candidates = enumerateRangeRequests(request);
-  const outcomes = await mapConcurrent(candidates, COSTAMAR_CONCURRENCY.rangeSearch, async (derivedRequest) => {
-    try {
-      return {
-        result: await searchLocalCostamarExactWithRetry(derivedRequest, providerContext),
-      };
-    } catch (error) {
-      return {
-        error: providerPublicFailureMessage("costamar", error),
-      };
-    }
-  });
-
-  const warnings = uniqueStrings([
-    ...outcomes.flatMap((outcome) => outcome.result?.warnings ?? []),
-    ...outcomes.flatMap((outcome) => outcome.error ? [outcome.error] : []),
-  ]);
-  const offers = dedupeCostamarOffers(
-    outcomes.flatMap((outcome) => outcome.result?.offers ?? []),
-  );
-
-  if (offers.length === 0 && warnings.length === 0) {
-    warnings.push("Click and Book Plus returned no offers for this date range.");
-  }
-
-  return {
-    offers,
-    warnings,
-    partial: outcomes.some((outcome) => Boolean(outcome.error) || outcome.result?.partial === true),
-  };
 }
 
 export async function resolveLocalCostamarRangeProgressive(
