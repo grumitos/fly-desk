@@ -2502,7 +2502,7 @@ function buildManualReferenceText(
   currencyCode: string,
 ): string {
   const lines = [
-    "REFERENCIA DE BUSQUEDA",
+    "REFERENCIA DE BÚSQUEDA",
     validatingCarrier ? `Carrier: ${validatingCarrier}` : "",
     `Precio visto: ${currencyCode} ${totalAmount.toFixed(2)}`,
     "",
@@ -2524,7 +2524,7 @@ function buildManualReferenceText(
     lines.push("");
   });
 
-  lines.push("Nota: el boton de Agil abre la busqueda equivalente, no una tarifa exacta bloqueada.");
+  lines.push("Nota: el botón de Agil abre la búsqueda equivalente, no una tarifa exacta bloqueada.");
   return lines.join("\n");
 }
 

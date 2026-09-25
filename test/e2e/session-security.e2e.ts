@@ -298,15 +298,24 @@ suite.test("without a session nothing reaches a provider, and headers claiming t
       ["locations", await fetch(`${stack.baseUrl}/api/locations?q=lim`, { headers })],
       ["provider status", await fetch(`${stack.baseUrl}/api/provider-status`, { headers })],
       ["quotation", await fetch(`${stack.baseUrl}/api/quotation`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: "{}" })],
+      ["diagnostics", await fetch(`${stack.baseUrl}/api/diagnostics`, { headers })],
     ];
     for (const [label, response] of attempts) {
       assert.equal(response.status, 401, `${label} with ${Object.keys(headers).length ? "spoofed headers" : "no session"}`);
     }
   }
-  /* The loopback-only surfaces stay closed to a signed-in browser too. */
+  /* Diagnostics take the credentials the rest of the API takes; the Click and
+     Book Plus token status is retired, and answers nobody. */
   const api = await scope.api();
-  for (const path of ["/api/diagnostics", "/api/costamar/token-status"]) {
-    assert.equal((await api.fetch(path, { headers: spoofed })).status, 403, path);
+  const diagnostics = await api.fetch("/api/diagnostics");
+  assert.equal(diagnostics.status, 200, "diagnostics refused a session");
+  assert.equal((await diagnostics.json() as { ok?: unknown }).ok, true);
+  for (const [label, retired] of [
+    ["no session", await fetch(`${stack.baseUrl}/api/costamar/token-status`)],
+    ["spoofed headers", await fetch(`${stack.baseUrl}/api/costamar/token-status`, { headers: spoofed })],
+    ["a session", await api.fetch("/api/costamar/token-status")],
+  ] as const) {
+    assert.equal(retired.status, 404, `the retired token status answered ${label}`);
   }
   assert.deepEqual(fake.requests().map((request) => request.op), [], "an unauthenticated request reached a provider");
 

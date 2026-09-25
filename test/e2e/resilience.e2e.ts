@@ -192,7 +192,8 @@ suite.test("with both providers down the desk says nothing was searched instead 
   const { tracked, page } = await scope.signedInPage(searchLink({ mode: "exact", trip: "one-way", origin: "LIM", destination: "SCL", departure }));
   await results.emptyTitle(page, "No se pudo consultar a los proveedores").waitFor({ timeout: 30_000 });
   await results.editSearchFromEmpty(page).waitFor();
-  const line = await notice.line(page).innerText();
+  /* Nothing was searched: an error, announced at once. */
+  const line = await notice.error(page).innerText();
   assert.match(line, /No se pudo consultar a ningún proveedor/);
   assert.match(line, /Agilsmart/);
   assert.match(line, /Click and Book Plus/);
@@ -345,6 +346,4 @@ suite.test("stopping before the search request has returned still cancels the se
     const job = await readSearchJob(api, startedJobId);
     assert.notEqual(job.searchStatus, "running", "the stopped search is still running on the server");
   }, { timeoutMs: 5_000 });
-}, {
-  todo: "frontend fix in progress: useSearch cancels only jobs registered by onJobStart (frontend/src/hooks/useSearch.ts:72, frontend/src/lib/api.ts:1510), which runs after POST /api/search answers, so a stop pressed while it is in flight aborts the fetch and never sends the cancel",
 });

@@ -75,8 +75,10 @@ function normalizeLocationSuggestion(suggestion: LocationSuggestion): LocationSu
     .split(",")
     .map((part) => stripLocationPrefix(part))
     .filter(Boolean)
-  const parsedCity = splitParts.length >= 2 ? splitParts[splitParts.length - 2] : splitParts[0] || ""
-  const parsedCountry = splitParts.length >= 1 ? splitParts[splitParts.length - 1] : ""
+  /* Only «city, country» names a place. A label with no comma is the
+     station's own name (Click and Book Plus labels an airport that way), so
+     the suggestion's own city and country stand. */
+  const [parsedCity = "", parsedCountry = ""] = splitParts.length >= 2 ? splitParts.slice(-2) : []
   const city = sanitizeLocationToken(parsedCity || fallbackCity)
   const country = normalizeCountryName(parsedCountry, suggestion.countryCode) || fallbackCountry
   const code = normalizeLocationCode(suggestion.code || labelParts.code)
