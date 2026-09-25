@@ -10,8 +10,7 @@ import { timeZoneForIataCode } from "./airport-time-zones";
  *  - Between two *different* airports, only the clock catalogue can answer.
  *    Subtracting the digits measures the calendar, not the flight.
  *  - Between an arrival and the next departure at the *same* airport the digits
- *    are enough: one clock, so whatever it is, it cancels. That is a layover,
- *    and it is why the layover figures were right all along.
+ *    are enough: one clock, so whatever it is, it cancels. That is a layover.
  *  - A provider's own elapsed time is a fact worth keeping when we have it, but
  *    it is carried in fields that cannot hold a day — Agil sends `HHMM`, so
  *    26h50m reaches us as `0250` and a Lima-Madrid connection reads as under

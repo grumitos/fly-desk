@@ -11,10 +11,8 @@ export type ProviderId = "agil-local" | "costamar";
 
 /*
  * The closed catalogue of orders, and the one list the type, the request
- * validation and the sort `sortOffers` applies all come from. It was written
- * four times as an inline union — the HTTP contract, `ranking`, `orchestrator`
- * and the job record in `session-store` — and a copied union is a union that
- * gets widened in three places out of four.
+ * validation and the sort `sortOffers` applies all come from: a copied union is
+ * a union that gets widened in some places and not in others.
  */
 export const SORT_MODES = ["cheapest", "fastest", "departure", "stops"] as const;
 

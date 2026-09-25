@@ -261,19 +261,12 @@ function progressSyncKey(kind: "search" | "matrix", jobId: string): string {
 /**
  * Publishes a running job's progress on a trailing schedule.
  *
- * Every search mode is published as it resolves. Exact used to be the one that
- * was not: `mark()` returned early for it, so a search whose provider answered
- * in seven parts — Agil resolves its seven GDS ids separately and reports each
- * one — showed nothing until all seven were in. On a long-haul route that is
- * the whole wait: a LIM–MIL round trip published one revision, at 15.3s, while
- * the first GDS had answered around five. Withholding it bought a list that
- * never re-sorts under the reader, which is worth less than seeing the flights:
- * the «Parcial» pill already says more is coming, and the range searches have
- * always worked this way.
- *
- * The trailing schedule is what keeps that from becoming churn: a flush lands
- * at most every `intervalMs`, and only on a geometric milestone — 1, 2, 4, 8 —
- * so seven GDS replies are three publishes, not seven.
+ * Every search mode is published as it resolves, exact included: Agil resolves
+ * its seven GDS ids separately, and seeing the first flights is worth more than
+ * a list that never re-sorts under the reader; the «Parcial» pill already says
+ * more is coming. The trailing schedule keeps that from becoming churn: a flush
+ * lands at most every `intervalMs`, and only on a geometric milestone — 1, 2,
+ * 4, 8 — so seven GDS replies are three publishes, not seven.
  */
 function createTrailingProgressSync(
   sync: () => void,
@@ -463,12 +456,9 @@ function stringValue(input: unknown, fallback = ""): string {
 }
 
 function integerParam(input: string | null, fallback: number, min: number, max: number): number {
-  /* `searchParams.get` returns null for a parameter that is not there, and
-     `Number(null)` is 0, not NaN - so an absent parameter used to sail past the
-     finite check and get clamped up to `min` instead of falling back. Every
-     caller that relies on the fallback silently received its minimum: the
-     location ranking asked for three cards and was given one, which is why two
-     of the three slots under each field were always empty. */
+  /* `searchParams.get` returns null for an absent parameter, and `Number(null)`
+     is 0, not NaN: without this check it would pass the finite test and be
+     clamped up to `min` instead of falling back. */
   if (input === null || input.trim() === "") {
     return fallback;
   }
@@ -1593,19 +1583,10 @@ function parseSinceRevision(value: string | null): number | undefined {
  * How long a job poll may be parked before it has to answer.
  *
  * The browser asks with `wait=<ms>` and the store holds the request open until
- * the job moves, which is what removes the polling interval from the latency of
- * a finished search. `wait=0` — the default for any client that does not ask —
- * is exactly the old behaviour.
- *
- * The hop in front of this one covers the hold rather than racing it: the web
- * unit's proxy reads the same `wait` off the request and adds it to its own
- * timeout (`resolveProxyTimeoutMsForRequest`). This comment used to claim that
- * ceiling stayed "well under the search-service proxy timeout (120s by
- * default)", which was a misreading of `FLY_DESK_SERVER_IDLE_TIMEOUT_SECONDS`:
- * the proxy's own default is 15s, so a 20s ceiling sat above it and a 15s hold
- * tied with it. A search that went quiet for fifteen seconds — a long-haul
- * route with slow providers is exactly that — reached the agent as an error
- * while the runner was still working.
+ * the job moves, which removes the polling interval from the latency of a
+ * finished search; `wait=0`, the default, answers at once. The hop in front of
+ * this one covers the hold rather than racing it: the web unit's proxy adds the
+ * same `wait` to its own timeout (`resolveProxyTimeoutMsForRequest`).
  */
 const JOB_POLL_MAX_WAIT_MS = 20_000;
 
@@ -2145,14 +2126,10 @@ function recordLocationUsageForSearchRequest(
 
 /* The unit that answers `GET /api/location-usage-suggestions` is the unit that
    has to count the search. In production the web unit hands `/api/search` and
-   `/api/matrix` to `fly-desk-search.service` (`FLY_DESK_SEARCH_SERVICE_URL`),
-   so every executed search used to be counted inside the runner — a different
-   process, writing a store the ranking is never read from unless two
-   environment variables happen to name the same file. The chips were global by
-   coincidence, not by construction, and that is what «una búsqueda bastaría
-   para agregar otro comodín» ran into. The web unit now counts the search as it
-   delegates it, and the runner ignores what arrives stamped as proxied, so an
-   executed search is counted exactly once and always where it is served. */
+   `/api/matrix` to `fly-desk-search.service` (`FLY_DESK_SEARCH_SERVICE_URL`), a
+   different process whose store the ranking does not read. So the web unit
+   counts the search as it delegates it, and the runner ignores what arrives
+   stamped as proxied: an executed search is counted once, where it is served. */
 function isDelegatedLocationUsageRoute(method: string, pathname: string): boolean {
   return method.toUpperCase() === "POST"
     && (pathname === "/api/search" || pathname === "/api/matrix");
@@ -2866,8 +2843,7 @@ function alreadyWritesWebSessionCookie(response: Response): boolean {
  * Every authenticated call through here is a sign that somebody is working, and
  * that is what a sliding session is measured in. `renewWebSessionCookies` holds
  * the policy — it returns nothing until the window is more than half spent, so
- * the ordinary response carries no `Set-Cookie` at all and stays as cacheable
- * as it was.
+ * the ordinary response carries no `Set-Cookie` at all and stays cacheable.
  */
 export async function routeRequest(request: Request): Promise<Response> {
   const response = await routeApplicationRequest(request);
@@ -3169,11 +3145,9 @@ async function routeApplicationRequest(request: Request): Promise<Response> {
     const usdToPenRateInfo = offerNeedsQuotationRate(offer, source.request)
       ? await resolveStandaloneUsdToPenRateInfo(offer)
       : undefined;
-    /* The rate that produced the confirmed text travels with the offer. 05 §5
+    /* The rate that produced the confirmed text travels with the offer: 05 §5
        has the «Paquete migratorio» toggle rewrite the text live in the browser,
-       and without the rate on the offer that rewrite had to find one elsewhere
-       — in another provider's offer, or nowhere — which turned a confirmed
-       «S/ 361 por adulto» into «USD 100 por adulto». */
+       and that rewrite reads only the offer's own rate. */
     const quotedOffer = isUsableUsdToPenRate(usdToPenRateInfo?.rate)
       ? { ...offer, usdToPenRate: usdToPenRateInfo.rate }
       : offer;

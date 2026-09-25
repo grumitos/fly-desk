@@ -291,8 +291,8 @@ export class SearchAdmissionController {
     };
   }
 
-  /* A search cancelled while it waits leaves the queue now, not when it would
-     have reached the head: until then it counted against `maxQueued`. */
+  /* A search cancelled while it waits leaves the queue at once, not when it
+     would reach the head, so it stops counting against `maxQueued`. */
   private dropCancelledQueued(): void {
     for (let index = this.queued.length - 1; index >= 0; index -= 1) {
       const entry = this.queued[index];

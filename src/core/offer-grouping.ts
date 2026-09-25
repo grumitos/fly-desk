@@ -2,8 +2,8 @@ import type { CanonicalOffer, Itinerary, ProviderId, PurchasePath, Segment } fro
 import { airlineNameMatchKey } from "./airline-names";
 
 /* The one place a provider id becomes a name on the backend. Exported because
-   the orchestrator needs the same two strings for its matrix recommendation,
-   and a second copy there is how the two surfaces come to disagree. */
+   provider status builds every public failure message from the same two
+   strings, and a second copy is how two surfaces come to disagree. */
 export const PROVIDER_LABELS: Record<ProviderId, string> = {
   "agil-local": "Agilsmart",
   costamar: "Click and Book Plus",

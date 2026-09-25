@@ -15,10 +15,9 @@ import { normalizeIataCode } from "./location-display";
  * this network moves: Santiago is UTC-4 in July and UTC-3 in September, which
  * is exactly when a Lima desk sells the connection through it.
  *
- * The list is the location catalogue's, code for code, and the suite checks
- * that it stays that way. A code with a name but no clock would read as an
- * airport whose durations quietly fall back to the wrong arithmetic, and a
- * clock with no name is a code this desk does not sell.
+ * The list is the location catalogue's, code for code. A code with a name but
+ * no clock would read as an airport whose durations quietly fall back to the
+ * wrong arithmetic, and a clock with no name is a code this desk does not sell.
  */
 const IATA_TIME_ZONES: Record<string, string> = {
   AEP: "America/Argentina/Buenos_Aires",

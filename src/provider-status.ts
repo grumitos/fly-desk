@@ -7,12 +7,9 @@ interface ProviderStatusDefinition {
 }
 
 /*
- * The order is the plinth's reading order and stays written out; the names come
- * from `PROVIDER_LABELS`, which is the one place on the backend an id becomes a
- * name. This file used to carry its own copy, and every public failure message
- * is built from the label it found here — so a rebrand that reached one map and
- * not the other would have shown the agent two names for one provider, one of
- * them in the notice that explains why a search came back short.
+ * The names come from `PROVIDER_LABELS`, the one place on the backend an id
+ * becomes a name: every public failure message is built from the label found
+ * here, and a second copy would let one provider carry two names.
  */
 export const PROVIDER_STATUS_DEFINITIONS: readonly ProviderStatusDefinition[] =
   Object.freeze([
@@ -92,15 +89,9 @@ const DEFAULT_PROVIDER_STATUS_TTL_MS = 5 * 60_000;
 /**
  * How long a `ready` observation stays trusted, given whatever refreshes it.
  *
- * It has to outlive its own refresh. Pinned at five minutes against a
- * ten-minute prewarm cycle, every observation went stale five minutes before
- * the next one arrived, so the idle rail — whose whole contract is 03 §5's
- * «aparecer = disponible» — sat empty for half of every cycle while both
- * providers were up. Disappearing then meant nothing at all.
- *
- * Two cycles plus a minute of margin, so one missed prewarm does not blank it
- * either. With prewarm off the only evidence is a real search, and the shorter
- * default is the honest one.
+ * It has to outlive its own refresh: two prewarm cycles plus a minute of
+ * margin, so one missed prewarm does not turn it stale either. With prewarm off
+ * the only evidence is a real search, and the shorter default is the honest one.
  */
 export function providerStatusTtlMsFor(prewarmIntervalMs: number): number {
   if (!Number.isFinite(prewarmIntervalMs) || prewarmIntervalMs <= 0) {

@@ -556,8 +556,8 @@ async function resolveRedirectResponse(record: StoredRedirectRecord): Promise<Re
         // Neither the stored purchase path nor the persisted session context keeps a
         // branded token, so parsedToken is normally absent and usability has to be judged
         // on the resolved runtime context, which falls back to the configured token.
-        // Judging it on parsedToken alone left `force` permanently true, so every single
-        // redirect asked the provider for a brand new token.
+        // Judged on parsedToken alone, `force` would be true and every redirect would
+        // ask the provider for a new token.
         const tokenIsUsable = Boolean(
           resolveUsableCostamarBrandedToken(fastContext.token, fastContext.terminalId),
         );

@@ -323,11 +323,10 @@ export const AGIL_CONCURRENCY = Object.freeze({
 /*
  * One matrix already puts up to `rangeSearch` x `matrixCell` x `gdsSearch`
  * /mv/search requests in flight, and every Agil search in this process shares a
- * single pooled worker, so concurrent searches from several callers used to add
- * up with no ceiling. This FIFO semaphore is that ceiling: a slot is held from
- * before the request starts until its body has been consumed, and only
- * /mv/search goes through it (start-search, the token mint and the location
- * suggestions stay unthrottled).
+ * single pooled worker, so concurrent searches from several callers add up.
+ * This FIFO semaphore is their ceiling: a slot is held from before the request
+ * starts until its body has been consumed, and only /mv/search goes through it
+ * (start-search, the token mint and the location suggestions stay unthrottled).
  */
 interface AgilInflightLimiter {
   acquire: () => Promise<() => void>;
@@ -396,15 +395,10 @@ const agilSearchRequestLimiter = createAgilInflightLimiter(resolveAgilMaxInfligh
  *
  * Agil does not hold a session for us. `refreshAgilToken` mints a bearer over
  * plain HTTP from `userCode`, `internalCode` and `ip` — no cookie, no browser.
- * The shared Chrome is only a *bootstrap*: it is where those three values were
+ * The shared Chrome is only a *bootstrap*: it is where those three values are
  * first read out of localStorage, and they are account identifiers that do not
- * change between restarts.
- *
- * Keeping them in memory alone meant every restart opened a CDP tab to learn
- * them again, and the prewarm loop repeated it at startup +10s. On 2026-08-14
- * the runner was being SIGKILLed every few minutes, so the `finally` that closes
- * those tabs never ran: renderers went 8 → 30 and Chrome reached 383 of its 384
- * task ceiling, at which point clone() fails inside it and CDP calls hang.
+ * change between restarts. Kept on disk, they spare every restart a CDP tab in
+ * the shared Chrome, which a runner killed before its `finally` never closes.
  *
  * The token itself is deliberately NOT persisted. It is short-lived and
  * re-minted on demand, so a file on disk would be a credential at rest for no
@@ -1978,25 +1972,17 @@ async function mintFromIdentity(
 }
 
 /*
- * The identity is all `/auth/api/auth/token` asks for, and it was written to disk
- * the last time the browser was consulted — so the file answers a cold start and
+ * The identity is all `/auth/api/auth/token` asks for, and it is written to disk
+ * whenever the browser is consulted — so the file answers a cold start and
  * every later revalidation alike. Only if the file cannot answer — none written
  * yet, or the identity has been revoked and the mint refused — is a tab worth
  * opening.
  *
- * The mint used to be attempted under `if (!cachedSession)`, which sent ordinary
- * revalidation to the browser: `shouldReuseAgilSession` stops reusing a session
- * `AGIL_SESSION_REVALIDATE_MS` (60s) after it was captured, while the token it
- * holds lives about an hour. From the 61st second on, every call arrived here
- * with a cached session, skipped the mint and went straight to Chrome. On the
- * VPS, whose shared profile is logged out, that extraction throws — so Agil died
- * roughly a minute after each restart while still holding a valid token and a
- * file that mints a new one on demand.
- *
- * Re-stamping `capturedAtMs` against an unchanged identity file is the same
- * confirmation the browser round-trip was there to give (the mirror of the branch
- * below, which today is only reachable after an extraction), so it costs neither
- * an HTTP call nor a tab. */
+ * Revalidation arrives here `AGIL_SESSION_REVALIDATE_MS` after a session was
+ * captured, while its token lives about an hour. Re-stamping `capturedAtMs`
+ * against an unchanged identity file is the same confirmation a browser
+ * round-trip gives (the mirror of the branch below), and it costs neither an
+ * HTTP call nor a tab. */
 async function loadAgilSession(
   now: number,
   options: { forceRefresh?: boolean } = {},
@@ -3147,7 +3133,7 @@ export async function resolveLocalAgilExactProgressive(
   let session = await getAgilSession();
   // Mapping is quadratic when it re-runs over every accumulated group after each
   // GDS reply, so the mapped offers are memoized and only the newly resolved
-  // groups are appended. Groups still land in completion order, which keeps the
+  // groups are appended. Groups land in completion order, which keeps the
   // deduped result identical to mapping everything at the end.
   const mappedOffers: CanonicalOffer[] = [];
   const warnings: string[] = [];
@@ -3197,8 +3183,8 @@ export async function resolveLocalAgilExactProgressive(
     if (error instanceof Error && error.message === "AGIL_TOKEN_EXPIRED") {
       session = await refreshAgilToken(session);
       cachedSession = session;
-      // The retry keeps whatever was already mapped, exactly as the group
-      // accumulator did; dedupeAgilOffers drops the replayed duplicates.
+      // The retry keeps whatever was already mapped; dedupeAgilOffers drops the
+      // replayed duplicates.
       await searchAll();
     } else {
       throw error;

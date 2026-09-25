@@ -94,8 +94,8 @@ function searchWorkerProcessesEnabled(): boolean {
   return process.env.FLY_DESK_SEARCH_WORKER_PROCESSES !== "0";
 }
 
-/* The pool is the default path; `0` restores the spawn-per-search behaviour,
-   which stays in `runInWorker` untouched so it remains a working escape hatch. */
+/* The pool is the default path; `0` spawns one worker per search through
+   `runInWorker`, which is kept as a working escape hatch. */
 export function searchWorkerPoolEnabled(): boolean {
   return searchWorkerProcessesEnabled()
     && String(process.env.FLY_DESK_SEARCH_WORKER_POOL ?? "1").trim() !== "0";
