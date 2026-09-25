@@ -2181,6 +2181,7 @@
   }
 
   .fd-month-head {
+    container: fd-month-head / inline-size;
     display: flex;
     min-width: 0;
     align-items: center;
@@ -2215,6 +2216,17 @@
   .fd-month-badge--quiet {
     background: var(--color-secondary);
     color: var(--color-muted-foreground);
+  }
+
+  /* A desk's card cannot hold the month, «Más bajo» and a loading word on
+     one line: the quiet badge shows its spinner alone, its word stays for
+     screen readers, and the header line counts the months still loading. */
+  @container fd-month-head (max-width: 319.98px) {
+    .fd-month-badge--quiet {
+      width: 20px;
+      overflow: hidden;
+      padding-inline: 4px;
+    }
   }
 
   .fd-month-hero {
