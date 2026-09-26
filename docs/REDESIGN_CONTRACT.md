@@ -174,9 +174,9 @@ row draws the code alone rather than a guessed name. Opening the panel asks no
 provider. The server resolves the names because the cache lives in the unit
 that answers this route, while a page's own cache starts empty on every load.
 The lists stay arrays of codes, which is all a page loaded before `stations`
-existed reads, so a page left open across a deployment keeps its history, and
-a page served by a release without `stations`, after a rollback, draws its
-codes alone.
+existed reads, so a page left open across a deployment keeps its history; and
+a page left open across a rollback, whose server no longer sends `stations`,
+draws its codes alone.
 
 ## Rules for the results column
 
