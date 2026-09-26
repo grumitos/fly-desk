@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 import { LocationSuggestion, ProviderId } from "./core/types";
+import { allSql, parseJsonPayload, runSql } from "./sqlite";
 
 const LOCATION_SUGGESTION_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const LOCATION_SUGGESTION_CACHE_MAX_ENTRIES_PER_SESSION = 80;
@@ -53,32 +54,6 @@ function cacheKey(parts: CacheKeyParts): string {
     String(Math.max(1, Math.trunc(parts.limit))),
     normalizeQuery(parts.query),
   ].join("::");
-}
-
-function parseJsonPayload<T>(payload: string): T | undefined {
-  try {
-    return JSON.parse(payload) as T;
-  } catch {
-    return undefined;
-  }
-}
-
-function runSql(db: Database, sql: string, ...params: any[]): void {
-  const statement = db.prepare(sql);
-  try {
-    statement.run(...params);
-  } finally {
-    statement.finalize();
-  }
-}
-
-function allSql<T>(db: Database, sql: string, ...params: any[]): T[] {
-  const statement = db.prepare(sql);
-  try {
-    return statement.all(...params) as T[];
-  } finally {
-    statement.finalize();
-  }
 }
 
 export class LocationSuggestionCacheStore {

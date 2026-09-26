@@ -840,46 +840,10 @@ function resolveChromeDevToolsBrowserWsEndpoint(userDataDir: string): string | u
   }
 }
 
-async function resolveChromeDevToolsBrowserWsEndpointFromPort(port: number): Promise<string | undefined> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), resolveAgilBrowserConnectTimeoutMs());
-
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      return undefined;
-    }
-
-    const payload = await response.json() as { webSocketDebuggerUrl?: unknown };
-    return typeof payload.webSocketDebuggerUrl === "string"
-      ? payload.webSocketDebuggerUrl
-      : undefined;
-  } catch {
-    return undefined;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function resolveAgilBrowserDevToolsWsEndpoint(endpoint: string): Promise<string | undefined> {
-  const normalized = endpoint.trim();
-  if (normalized.startsWith("ws://") || normalized.startsWith("wss://")) {
-    return normalized;
-  }
-
-  let versionUrl: URL;
-  try {
-    const parsed = new URL(normalized);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return undefined;
-    }
-    versionUrl = new URL("/json/version", parsed);
-  } catch {
-    return undefined;
-  }
-
+/* The browser's DevTools socket, as a DevTools HTTP endpoint's `/json/version`
+   names it; none when it does not answer within the connect timeout, answers
+   an error status, or names none. */
+async function fetchDevToolsBrowserWsEndpoint(versionUrl: string | URL): Promise<string | undefined> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), resolveAgilBrowserConnectTimeoutMs());
 
@@ -900,6 +864,30 @@ async function resolveAgilBrowserDevToolsWsEndpoint(endpoint: string): Promise<s
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function resolveChromeDevToolsBrowserWsEndpointFromPort(port: number): Promise<string | undefined> {
+  return fetchDevToolsBrowserWsEndpoint(`http://127.0.0.1:${port}/json/version`);
+}
+
+async function resolveAgilBrowserDevToolsWsEndpoint(endpoint: string): Promise<string | undefined> {
+  const normalized = endpoint.trim();
+  if (normalized.startsWith("ws://") || normalized.startsWith("wss://")) {
+    return normalized;
+  }
+
+  let versionUrl: URL;
+  try {
+    const parsed = new URL(normalized);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return undefined;
+    }
+    versionUrl = new URL("/json/version", parsed);
+  } catch {
+    return undefined;
+  }
+
+  return fetchDevToolsBrowserWsEndpoint(versionUrl);
 }
 
 async function readRunningChromeDevToolsBrowserWsEndpoints(): Promise<string[]> {

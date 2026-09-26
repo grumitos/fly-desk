@@ -213,6 +213,7 @@ The React UI must not display simulated controls. The following remain outside t
 - `scripts/pack-release.sh`: the deterministic release artifact of a revision
 - `scripts/release-smoke.ts`: unpacks an artifact, prepares it as the platform does, and boots web, search and redirect from it
 - `deploy/prepare-release.sh`: the prepare hook the platform runs in a release, which checks that it installs nothing
+- `deploy/release-capabilities`: what the release declares to the platform, one capability a line; today `cbplus-token-file`, the token file re-read without a restart ([`DEPLOY_APP.md`](./DEPLOY_APP.md), "Release Capabilities")
 - `.github/workflows/ci.yml`: CI for typecheck, lint, build, and the release smoke, with the end-to-end suite in a parallel job
 - `.github/workflows/deploy-vps.yml`: manual deployment and rollback by exact SHA through the fixed platform release wrapper; a deployment builds, packs and smokes the artifact
 

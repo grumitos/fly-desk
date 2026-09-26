@@ -21,6 +21,12 @@ where the token comes from, how to tell when it is missing, and how to recover.
   renews only `CBPLUS_TOKEN`, the file it leaves behind goes stale and is
   outlived. A search job keeps no token of its own, so a quote revalidated hours
   after its search uses the token installed last.
+- The release declares that behaviour to the platform as the capability
+  `cbplus-token-file` in `deploy/release-capabilities`. The platform restarts
+  the search and redirect units on a renewal when it cannot tell that the
+  active release has it; how it tells, today and after its switch to that
+  declaration, is in [`DEPLOY_APP.md`](./DEPLOY_APP.md), "Release
+  Capabilities".
 - `src/provider-context.ts` treats a token as missing when it has expired or
   names a terminal other than the configured one.
 
@@ -50,8 +56,9 @@ Book Plus offers and a validated `/r/<id>` redirect.
    PC fallback and a manual portal sign-in.
 2. Once an install is accepted, nothing else is needed: the running processes
    pick up the new file. If the journal reports that the units were restarted
-   instead, the active release or the running units predate the token file;
-   that is expected only after a rollback.
+   instead, a running unit started before `CBPLUS_TOKEN_FILE` was configured,
+   or the platform found no `cbplus-token-file` capability in the active
+   release; that is expected only after a rollback.
 3. Verify with the production smoke.
 
 Do not copy a token, a Chrome profile, a cookie database or the session SQLite

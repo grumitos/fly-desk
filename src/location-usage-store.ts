@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
+import { allSql, getSql, runSql } from "./sqlite";
 
 const LOCATION_USAGE_CARD_LIMIT = 3;
 const LOCATION_USAGE_SQLITE_BUSY_TIMEOUT_MS = 5_000;
@@ -146,33 +147,6 @@ function entryKey(role: LocationUsageRole, code: string): string {
 
 function recentEntryKey(sessionId: string, role: LocationUsageRole, code: string): string {
   return `${sessionId}:${role}:${code}`;
-}
-
-function runSql(db: Database, sql: string, ...params: any[]): void {
-  const statement = db.prepare(sql);
-  try {
-    statement.run(...params);
-  } finally {
-    statement.finalize();
-  }
-}
-
-function allSql<T>(db: Database, sql: string, ...params: any[]): T[] {
-  const statement = db.prepare(sql);
-  try {
-    return statement.all(...params) as T[];
-  } finally {
-    statement.finalize();
-  }
-}
-
-function getSql<T>(db: Database, sql: string, ...params: any[]): T | undefined {
-  const statement = db.prepare(sql);
-  try {
-    return statement.get(...params) as T | undefined;
-  } finally {
-    statement.finalize();
-  }
 }
 
 /* The UTC day number: monotone, and the same integer in every process that

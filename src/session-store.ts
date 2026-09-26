@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { Database } from "bun:sqlite";
 import { envNumber } from "./env";
 import { logPerfSpan, startPerfTimer } from "./perf";
+import { allSql, getSql, parseJsonPayload, runSql } from "./sqlite";
 import {
   CanonicalOffer,
   MatrixCell,
@@ -430,41 +431,6 @@ function safeJsonSize(value: unknown): number {
 
 function cloneJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function parseJsonPayload<T>(payload: string): T | undefined {
-  try {
-    return JSON.parse(payload) as T;
-  } catch {
-    return undefined;
-  }
-}
-
-function runSql(db: Database, sql: string, ...params: any[]): void {
-  const statement = db.prepare(sql);
-  try {
-    statement.run(...params);
-  } finally {
-    statement.finalize();
-  }
-}
-
-function getSql<T>(db: Database, sql: string, ...params: any[]): T | undefined {
-  const statement = db.prepare(sql);
-  try {
-    return statement.get(...params) as T | undefined;
-  } finally {
-    statement.finalize();
-  }
-}
-
-function allSql<T>(db: Database, sql: string, ...params: any[]): T[] {
-  const statement = db.prepare(sql);
-  try {
-    return statement.all(...params) as T[];
-  } finally {
-    statement.finalize();
-  }
 }
 
 interface SqlitePageStats {
